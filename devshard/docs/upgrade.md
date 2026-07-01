@@ -11,12 +11,13 @@ The temporary implementation is tracked separately in
 Devshard binaries version independently of mainnet. Changing the devshard
 runtime should not require cosmovisor or a coordinated full-node upgrade.
 
-The stable client contract is path-based:
+The active client contract is path-based:
 
 ```
-/v1/devshard/*        -> legacy path, served directly by dapi
 /devshard/<version>/* -> versioned path, served by versiond-managed binaries
 ```
+
+Clients must choose a versioned route.
 
 The legacy path stays available for backward compatibility while the versioned
 path becomes the normal way to run newer devshard releases.
@@ -68,7 +69,6 @@ a version.
 The user chooses a version by selecting the HTTP path at session start:
 
 ```
-/v1/devshard/*        -> dapi, in-process
 /devshard/<version>/* -> versiond -> devshard binary for <version>
 ```
 

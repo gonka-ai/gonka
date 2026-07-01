@@ -20,7 +20,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/storage"
 	"devshard/transport"
@@ -248,7 +247,10 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
-	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	routePrefix, routePrefixErr := resolveGatewayRoutePrefix()
+	if routePrefixErr != nil {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, routePrefixErr)
+	}
 	participantAdmission := modelScopedParticipantAdmission{
 		limiter: sharedParticipantRequestLimiter,
 		modelID: model,
@@ -300,6 +302,14 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	rt.active.Store(true)
 	rt.activeConfigured = true
 	return rt, nil
+}
+
+func resolveGatewayRoutePrefix() (string, error) {
+	routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	if routePrefix == "" {
+		return "", fmt.Errorf("DEVSHARD_ROUTE_PREFIX is required; use /devshard/{version}")
+	}
+	return routePrefix, nil
 }
 
 func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {

@@ -18,7 +18,6 @@ import (
 
 	json "github.com/goccy/go-json"
 
-	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -46,10 +45,6 @@ func getTransport(baseURL string) *http.Transport {
 	return actual.(*http.Transport)
 }
 
-// DefaultRoutePrefix is the legacy URL prefix dapi mounts the in-process
-// HostManager under. Versioned binaries use devshard.VersionedRoutePrefix(...).
-const DefaultRoutePrefix = devshardpkg.LegacyRoutePrefix
-
 func transportAddress(baseURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err == nil && parsed != nil && parsed.Host != "" {
@@ -65,7 +60,7 @@ type ClientConfig struct {
 	VerifyTimeout    time.Duration                   // verify-timeout, default 3m
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
-	RoutePrefix      string                          // path prefix for all session routes; default /v1/devshard
+	RoutePrefix      string                          // path prefix for all session routes; callers should pass /devshard/{version}
 	ProtocolVersion  types.ProtocolVersion           // runtime protocol version configured for the escrow
 	// ParticipantKey is the canonical participant identifier passed to
 	// the admission controller for both AllowRequest and ObserveResult.
@@ -140,7 +135,6 @@ func DefaultClientConfig() ClientConfig {
 		GossipTimeout:    10 * time.Second,
 		VerifyTimeout:    3 * time.Minute,
 		QueryTimeout:     30 * time.Second,
-		RoutePrefix:      DefaultRoutePrefix,
 	}
 }
 
@@ -161,7 +155,6 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	cfg.RoutePrefix = devshardpkg.NormalizeRoutePrefix(cfg.RoutePrefix)
 	return &HTTPClient{
 		baseURL:     baseURL,
 		routePrefix: cfg.RoutePrefix,

@@ -6,27 +6,13 @@ import (
 	"devshard/types"
 )
 
-func TestNormalizeRoutePrefixDefaultsToLegacy(t *testing.T) {
-	if got := NormalizeRoutePrefix(""); got != LegacyRoutePrefix {
-		t.Fatalf("NormalizeRoutePrefix(\"\") = %q, want %q", got, LegacyRoutePrefix)
-	}
-}
-
 func TestResolveVersionedRoutePrefix(t *testing.T) {
 	if got := ResolveVersionedRoutePrefix("v1", ""); got != VersionedRoutePrefix("v1") {
 		t.Fatalf("ResolveVersionedRoutePrefix(\"v1\", \"\") = %q, want %q", got, VersionedRoutePrefix("v1"))
 	}
-	if got := ResolveVersionedRoutePrefix("v1", LegacyRoutePrefix); got != LegacyRoutePrefix {
-		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
-	}
-}
-
-func TestResolveHostRoutePrefix(t *testing.T) {
-	if got := ResolveHostRoutePrefix(types.ProtocolV1, ""); got != LegacyRoutePrefix {
-		t.Fatalf("ResolveHostRoutePrefix(v1) = %q, want %q", got, LegacyRoutePrefix)
-	}
-	if got := ResolveHostRoutePrefix(types.ProtocolV1, LegacyRoutePrefix); got != LegacyRoutePrefix {
-		t.Fatalf("ResolveHostRoutePrefix override = %q, want %q", got, LegacyRoutePrefix)
+	override := VersionedRoutePrefix("dev")
+	if got := ResolveVersionedRoutePrefix("v1", override); got != override {
+		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, override)
 	}
 }
 
@@ -50,14 +36,9 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "default legacy",
+			name:        "empty route rejected",
 			routePrefix: "",
-			want:        "v1",
-		},
-		{
-			name:        "explicit legacy",
-			routePrefix: LegacyRoutePrefix,
-			want:        "v1",
+			wantErr:     true,
 		},
 		{
 			name:        "old subnet host route rejected",
@@ -102,12 +83,6 @@ func TestSessionPayloadPath(t *testing.T) {
 		escrowID    string
 		want        string
 	}{
-		{
-			name:        "legacy",
-			routePrefix: "",
-			escrowID:    "1",
-			want:        "v1/devshard/sessions/1/payloads",
-		},
 		{
 			name:        "versioned",
 			routePrefix: VersionedRoutePrefix("v1"),

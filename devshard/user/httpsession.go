@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -22,7 +23,7 @@ type HTTPSessionConfig struct {
 	Bridge           bridge.MainnetBridge
 	StoragePath      string                          // SQLite path for session persistence; default ~/.cache/gonka/devshard-<escrowID>
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
-	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	RoutePrefix      string                          // required: HTTP path prefix used to reach hosts, e.g. devshard.VersionedRoutePrefix(...).
 	RequestAdmission transport.RequestAdmissionController
 	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV1
 }
@@ -42,6 +43,11 @@ func resolveHTTPSessionStoragePath(escrowID, configured string) string {
 // It queries the bridge for escrow and group info, then creates transport clients
 // for each slot.
 func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error) {
+	cfg.RoutePrefix = strings.TrimSpace(cfg.RoutePrefix)
+	if cfg.RoutePrefix == "" {
+		return nil, nil, fmt.Errorf("RoutePrefix is required; use /devshard/{version}")
+	}
+
 	signer, err := signing.SignerFromHex(cfg.PrivateKeyHex)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signer: %w", err)
@@ -52,7 +58,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if pv == "" {
 		pv = types.ProtocolV1
 	}
-	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, cfg.RoutePrefix)
+	routePrefix := cfg.RoutePrefix
 	sessionVersion := devshardpkg.ProtocolSessionVersion(pv)
 	if cfg.ProtocolVersion == "" && cfg.RoutePrefix != "" {
 		var versionErr error

@@ -110,8 +110,7 @@ data class DockerGroup(
     val genesisOverridesFile: String,
     // publicUrl is what dapi registers on chain as its participant.inference_url.
     // Mirrors production: chain points at the per-pair proxy, which routes
-    // /v1/devshard/* to dapi (legacy in-process HostManager via the exempt
-    // route mechanism) and /devshard/<version>/* to versiond when configured.
+    // /devshard/<version>/* to versiond when configured.
     val publicUrl: String = "http://$pairName-proxy",
     // pocCallbackUrl stays direct -- it's an internal mlnode -> dapi callback
     // on the ML server port, never routed through nginx.

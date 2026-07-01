@@ -64,7 +64,7 @@ zero, keeping the wire format bit-identical with
   returning `RequiredValidations` / `CompletedValidations` constantly
   at zero.
 - Host-local **validation observability** (outside the state root, exposed
-  on `GET /v1/devshard/stats/shards/{escrow_id}`) is populated when signed
+  on `GET /devshard/<version>/stats/shards/{escrow_id}`) is populated when signed
   diffs are applied; see
   [validation-observability-diff-apply.md](./validation-observability-diff-apply.md).
 

@@ -1,6 +1,9 @@
 package com.productscience
 
 import com.github.kittinunf.fuel.Fuel
+import com.productscience.data.AppState
+import com.productscience.data.Spec
+import com.productscience.data.spec
 import org.tinylog.kotlin.Logger
 import java.nio.file.Files
 import java.nio.file.Path
@@ -111,6 +114,26 @@ fun versiondOverrideEnv(version: String = devshardTestVersion()): Map<String, St
 
 fun devshardVersionedRoutePrefix(version: String = devshardTestVersion()): String =
     "/devshard/$version"
+
+fun devshardVersiondComposeFilesByPairName(
+    pairNames: List<String> = listOf(GENESIS_KEY_NAME, "join1", "join2"),
+): Map<String, List<String>> =
+    pairNames.associateWith { listOf("docker-compose.versiond.yml") }
+
+fun devshardVersiondConfig(
+    genesisSpec: Spec<AppState>,
+    env: Map<String, String>,
+    pairNames: List<String> = listOf(GENESIS_KEY_NAME, "join1", "join2"),
+): ApplicationConfig = inferenceConfig.copy(
+    genesisSpec = genesisSpec,
+    additionalDockerFilesByKeyName = devshardVersiondComposeFilesByPairName(pairNames),
+    additionalEnvVars = env,
+)
+
+fun mergedDevshardGenesisSpec(vararg specs: Spec<AppState>): Spec<AppState> {
+    val base = inferenceConfig.genesisSpec ?: spec<AppState> {}
+    return specs.fold(base) { current, extra -> current.merge(extra) }
+}
 
 /**
  * [local-test-net/docker-compose.versiond.yml] only declares `VERSIOND_OVERRIDE_dev` for

@@ -11,7 +11,6 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
-	"devshard"
 	"net/http"
 	"time"
 
@@ -21,7 +20,10 @@ import (
 	echomw "github.com/labstack/echo/v4/middleware"
 )
 
-const httpClientTimeout = 30 * time.Minute
+const (
+	httpClientTimeout          = 30 * time.Minute
+	deprecatedDevshardV1Prefix = "/v1/devshard"
+)
 
 type Server struct {
 	e                   *echo.Echo
@@ -169,9 +171,23 @@ func NewServer(
 }
 
 // DevshardGroup returns an echo group for mounting devshard routes.
-// Mounted under /v1/devshard so nginx's existing /v1/ location proxies it.
+// The legacy /v1/devshard mount is deprecated; versioned devshard traffic uses
+// /devshard/{version} through versiond/devshardd.
 func (s *Server) DevshardGroup() *echo.Group {
-	return s.e.Group(devshard.LegacyRoutePrefix)
+	g := s.e.Group(deprecatedDevshardV1Prefix)
+	g.Use(legacyDevshardDeprecated)
+	return g
+}
+
+func legacyDevshardDeprecated(next echo.HandlerFunc) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		c.Response().Header().Set("Deprecation", "true")
+		c.Response().Header().Set("Link", `</devshard/{version}>; rel="successor-version"`)
+		return c.JSON(http.StatusGone, map[string]string{
+			"error":   "deprecated",
+			"message": "/v1/devshard is deprecated; use /devshard/{version}",
+		})
+	}
 }
 
 func (s *Server) Start(addr string) {

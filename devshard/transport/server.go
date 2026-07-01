@@ -101,7 +101,7 @@ func (s *Server) Host() *host.Host { return s.host }
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 
 // Register mounts all devshard routes on the given echo group.
-// The caller typically mounts this under /v1/devshard.
+// Public callers should mount this under a versioned /devshard/{version} prefix.
 func (s *Server) Register(g *echo.Group) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)

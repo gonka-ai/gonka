@@ -10,7 +10,7 @@ Devshard uses **two independent version concepts**. Do not mix them.
 |------|--------|---------|
 | **Runtime / binary version** | `DevshardEscrowParams.approved_versions` | Which devshard binary may run. versiond sets `DEVSHARD_LOG_PREFIX` and `DEVSHARD_BINARY_VERSION` to the oracle name; devshardd checks it against its build. |
 | **State root & protocol version** | `types.DevshardStateRootAndProtocolVersion` (`"v2"`) | Tag hashed into state roots and carried on `MsgSettleDevshardEscrow.state_root_and_protocol_version`. Bump only when root composition or settlement rules change. |
-| **Legacy route tag** | `types.LegacyRouteSessionVersion` (`"v1"`) | Storage bind tag for `/v1/devshard` and embedded dapi hosts only. |
+| **Session route tag** | `types.SessionVersionV1` (`"v1"`) | Historical storage bind tag for sessions created before versioned devshardd routing. |
 
 Details: [devshard/docs/protocol-version.md](../devshard/docs/protocol-version.md), [devshard/docs/upgrade.md](../devshard/docs/upgrade.md).
 

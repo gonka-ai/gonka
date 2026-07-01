@@ -12,19 +12,23 @@ import java.time.Instant
  *
  * Postgres is unconditional infrastructure for this cluster (see
  * docker-compose.postgres.yml + DockerGroup.kt), so these tests run in the
- * default suite alongside DevshardTests.
+ * default suite alongside the versioned devshardd tests.
  */
 class DevshardPostgresStorageTests : TestermintTest() {
+    private val standaloneTestVersionName = devshardTestVersion()
+    private val routePrefix = devshardVersionedRoutePrefix(standaloneTestVersionName)
     private val devshardEscrowModel = defaultModel
 
-    private val noRestrictionsConfig = inferenceConfig.copy(
-        genesisSpec = inferenceConfig.genesisSpec?.merge(devshardNoRestrictionsSpec) ?: devshardNoRestrictionsSpec
+    private val noRestrictionsConfig = devshardVersiondConfig(
+        genesisSpec = mergedDevshardGenesisSpec(devshardNoRestrictionsSpec),
+        env = versiondOverrideEnv(standaloneTestVersionName),
     )
 
     @Test
     fun `devshard sessions, diffs, signatures land in postgres`() {
         val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
         genesis.waitForNextEpoch()
+        waitForVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -39,7 +43,11 @@ class DevshardPostgresStorageTests : TestermintTest() {
         logSection("Escrow $escrowId is in epoch $epochIndex")
 
         logSection("Driving inferences through devshard proxy")
-        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
+        val handle = genesis.startDevshardProxy(
+            escrowId = escrowId,
+            keyName = user.keyName,
+            routePrefix = routePrefix,
+        )
         try {
             genesis.waitForDevshardProxyWarmup()
             for (i in 0 until 10) {
@@ -124,6 +132,7 @@ class DevshardPostgresStorageTests : TestermintTest() {
         // so the chain naturally ticks during the test.
         val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
         genesis.waitForNextEpoch()
+        waitForVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -137,7 +146,11 @@ class DevshardPostgresStorageTests : TestermintTest() {
         val firstEpoch = genesis.node.queryDevshardEscrow(firstEscrowId).escrow!!.epochIndex.toLong()
 
         run {
-            val handle = genesis.startDevshardProxy(escrowId = firstEscrowId, keyName = user.keyName)
+            val handle = genesis.startDevshardProxy(
+                escrowId = firstEscrowId,
+                keyName = user.keyName,
+                routePrefix = routePrefix,
+            )
             try {
                 genesis.waitForDevshardProxyWarmup()
                 for (i in 0 until 5) {
@@ -169,7 +182,11 @@ class DevshardPostgresStorageTests : TestermintTest() {
             val tickUser = genesis.createFundedDevshardUser("devshard-pg-prune-tick-${tick++}")
             val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, tickUser.keyName, modelId = devshardEscrowModel)
             lastTickEpoch = genesis.node.queryDevshardEscrow(newEscrowId).escrow!!.epochIndex.toLong()
-            val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = tickUser.keyName)
+            val handle = genesis.startDevshardProxy(
+                escrowId = newEscrowId,
+                keyName = tickUser.keyName,
+                routePrefix = routePrefix,
+            )
             try {
                 genesis.waitForDevshardProxyWarmup()
                 genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "tick")
@@ -206,5 +223,16 @@ class DevshardPostgresStorageTests : TestermintTest() {
                 .describedAs("last-tick epoch $lastTickEpoch sessions partition must survive prune of $firstEpoch")
                 .isTrue()
         }
+    }
+
+    private fun waitForVersionedHealth(genesis: LocalInferencePair) {
+        val deadline = System.currentTimeMillis() + 90_000L
+        while (System.currentTimeMillis() < deadline) {
+            if (genesis.queryVersionedHealth(standaloneTestVersionName) == "200:ok") {
+                return
+            }
+            Thread.sleep(1_000L)
+        }
+        error("Timed out waiting for proxy to serve $routePrefix/healthz")
     }
 }

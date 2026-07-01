@@ -100,8 +100,7 @@ http {
 
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
-    # devshard binary. /v1/devshard/* still goes to the api backend (legacy
-    # in-process HostManager).
+    # devshard binary.
     ${VERSIOND_UPSTREAM}
 
     # Enable gzip compression

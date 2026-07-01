@@ -66,6 +66,18 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	return sm
 }
 
+func TestResolveGatewayRoutePrefixRequiresEnv(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
+	_, err := resolveGatewayRoutePrefix()
+	require.ErrorContains(t, err, "DEVSHARD_ROUTE_PREFIX is required")
+	require.ErrorContains(t, err, "/devshard/{version}")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
+	got, err := resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/test", got)
+}
+
 func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64) *devshardRuntime {
 	t.Helper()
 
@@ -2383,7 +2395,7 @@ func TestMigrateGatewayLegacyStorageRejectsConflictingEpochDB(t *testing.T) {
 	require.NoError(t, sqlStore.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "12",
 		EpochID:        270,
-		Version:        types.LegacyRouteSessionVersion,
+		Version:        types.SessionVersionV1,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: "a"}},
@@ -2469,7 +2481,7 @@ func writeGatewayLegacyStateDB(t *testing.T, path, escrowID string, latestNonce 
 	_, err = db.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		escrowID, types.LegacyRouteSessionVersion, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
+		escrowID, types.SessionVersionV1, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
 	)
 	require.NoError(t, err)
 	for nonce := uint64(1); nonce <= latestNonce; nonce++ {

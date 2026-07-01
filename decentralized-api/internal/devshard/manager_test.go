@@ -33,6 +33,7 @@ import (
 // runtimeTestVersion is the devshard binary tag used in dapi manager tests
 // (matches versiond / embedded devshard without versiond).
 const runtimeTestVersion = "v1"
+const statsTestRoutePrefix = "/devshard/test"
 
 // mockBridge implements bridge.MainnetBridge for testing recovery.
 type mockBridge struct {
@@ -376,7 +377,7 @@ func TestStatsShardsListsCurrentEpochWithoutDetails(t *testing.T) {
 	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
 	mgr.SetReady()
 
-	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards")
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "host_stats")
 	require.NotContains(t, rec.Body.String(), "proof")
@@ -398,7 +399,7 @@ func TestStatsShardsListsCurrentEpochWithoutDetails(t *testing.T) {
 	require.Equal(t, "escrow-current", resp.Shards[0].EscrowID)
 	require.Equal(t, uint64(7), resp.Shards[0].EpochID)
 
-	cached := requestStats(t, mgr, "/v1/devshard", "/stats/shards")
+	cached := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
 	require.Equal(t, http.StatusOK, cached.Code, "body: %s", cached.Body.String())
 	require.Equal(t, rec.Body.String(), cached.Body.String())
 	require.Equal(t, 1, counting.listCalls)
@@ -414,7 +415,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
 	mgr.SetReady()
 
-	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-detail")
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-detail")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.NotContains(t, rec.Body.String(), "inferences")
 	require.NotContains(t, rec.Body.String(), "proof")
@@ -427,7 +428,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 		Nonce                       uint64 `json:"nonce"`
 		Version                     string `json:"version"`
 		StateRootAndProtocolVersion string `json:"state_root_and_protocol_version"`
-		HostStats map[string]struct {
+		HostStats                   map[string]struct {
 			Missed               uint32 `json:"missed"`
 			Invalid              uint32 `json:"invalid"`
 			Cost                 uint64 `json:"cost"`
@@ -455,7 +456,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	require.Len(t, resp.HostStats, len(group))
 	require.Equal(t, group, resp.Group)
 
-	cached := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-detail")
+	cached := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-detail")
 	require.Equal(t, http.StatusOK, cached.Code, "body: %s", cached.Body.String())
 	require.Equal(t, rec.Body.String(), cached.Body.String())
 }
@@ -1317,7 +1318,7 @@ func TestStatsShardDetail_ValidationObservabilityAfterDiffApply(t *testing.T) {
 		return total >= 1
 	}, time.Second, 10*time.Millisecond)
 
-	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/"+escrowID)
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/"+escrowID)
 	require.Equal(t, http.StatusOK, rec.Code)
 	var resp struct {
 		ValidationObservability struct {

@@ -18,7 +18,7 @@ const DevshardStateRootAndProtocolVersion = "v2"
 const DefaultStateRootVersion = DevshardStateRootAndProtocolVersion
 
 // NormalizeVersion returns the state-root / settlement protocol tag, defaulting when empty.
-// It is not used for storage session bind (CreateSessionParams.Version); see LegacyRouteSessionVersion.
+// It is not used for storage session bind (CreateSessionParams.Version).
 func NormalizeVersion(version string) string {
 	if strings.TrimSpace(version) == "" {
 		return DefaultStateRootVersion
@@ -26,10 +26,7 @@ func NormalizeVersion(version string) string {
 	return version
 }
 
-// LegacyRouteSessionVersion is the session/storage bind tag for the historical
-// /v1/devshard HTTP mount and embedded dapi hosts (HostManager boundVersion).
-// It is not DevshardStateRootAndProtocolVersion.
-const LegacyRouteSessionVersion = "v1"
+const SessionVersionV1 = "v1"
 
 // SessionPhase represents the phase of a devshard session.
 type SessionPhase uint8
@@ -102,19 +99,19 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout             int64  // seconds before reason=refused timeout
-	ExecutionTimeout           int64  // seconds before reason=execution timeout
-	TokenPrice                 uint64 // price per input / output token (flat per session)
-	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	RefusalTimeout    int64  // seconds before reason=refused timeout
+	ExecutionTimeout  int64  // seconds before reason=execution timeout
+	TokenPrice        uint64 // price per input / output token (flat per session)
+	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen at session bind (see ApplyLiveSessionParams).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold              uint32
-	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces   uint32
-	InferenceSealGraceSeconds  uint32
-	AutoSealEveryNNonces       uint32
+	VoteThreshold             uint32
+	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 }
 
 // EscrowState is the full state of a devshard session.
@@ -126,16 +123,16 @@ type EscrowState struct {
 	// session must use the same tag. Storage CreateSessionParams.Version is the
 	// separate runtime/bind version for versiond routing, not this field.
 	StateRootAndProtocolVersion string
-	Config        SessionConfig
-	Group         []SlotAssignment
-	Balance       uint64
-	Fees          uint64 // total fees collected (devshard create + per-nonce)
-	Phase         SessionPhase
-	FinalizeNonce uint64
-	Inferences    map[uint64]*InferenceRecord
-	HostStats     map[uint32]*HostStats
-	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce   uint64
+	Config                      SessionConfig
+	Group                       []SlotAssignment
+	Balance                     uint64
+	Fees                        uint64 // total fees collected (devshard create + per-nonce)
+	Phase                       SessionPhase
+	FinalizeNonce               uint64
+	Inferences                  map[uint64]*InferenceRecord
+	HostStats                   map[uint32]*HostStats
+	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
+	LatestNonce                 uint64
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`

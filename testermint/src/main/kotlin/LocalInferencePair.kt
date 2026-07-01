@@ -987,17 +987,14 @@ data class LocalInferencePair(
         escrowId: Long,
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
-        routePrefix: String? = null,
+        routePrefix: String,
         debugLogging: Boolean = false,
         model: String = defaultModel,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
             val stderrFile = devshardProxyLogPath(escrowId)
-            // Tests pin the route prefix explicitly so they are not coupled to
-            // devshardctl's release-default routing choice.
-            val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
-            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
+            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$routePrefix'"
             val logLevelEnv = if (debugLogging) " DEVSHARD_LOG_LEVEL=debug" else ""
             val startCommand = listOf(
                 "sh", "-c",
