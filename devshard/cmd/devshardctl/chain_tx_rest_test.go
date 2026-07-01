@@ -219,9 +219,9 @@ func TestRESTChainTxClient_SettleDevshardEscrow(t *testing.T) {
 	require.NoError(t, err)
 
 	settlement := SettlementJSON{
-		EscrowID:  "42",
-		Version:   "v1",
-		StateRoot: base64.StdEncoding.EncodeToString([]byte("state-root")),
+		EscrowID:                    "42",
+		StateRootAndProtocolVersion: "v1",
+		StateRoot:                   base64.StdEncoding.EncodeToString([]byte("state-root")),
 		Nonce:     17,
 		Fees:      99,
 		RestHash:  base64.StdEncoding.EncodeToString([]byte("rest-hash")),

@@ -11,6 +11,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/bridge"
 	mlnodeclient "devshard/mlnode"
+	"devshard/observability"
 )
 
 // devshardValidator implements devshard.ValidationEngine for the standalone
@@ -64,13 +65,15 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 }
 
 func (v *devshardValidator) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
-	resp, err := v.engine.doWithLockedNode(ctx, model, func(endpoint string) (*http.Response, error) {
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
 			return nil, reqErr
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		observability.InjectRequestContext(ctx, httpReq.Header)
+		observability.AttachRequestID(httpReq)
 		return v.httpClient.Do(httpReq)
 	})
 	if err != nil {

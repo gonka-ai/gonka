@@ -211,6 +211,7 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	mux.HandleFunc("GET /v1/debug/pairwise", proxy.handleDebugPairwise)
 	mux.HandleFunc("GET /v1/debug/signatures", proxy.handleDebugSignatures)
 	mux.HandleFunc("POST /v1/debug/signatures/collect", proxy.handleCollectSignatures)
+	mux.HandleFunc("POST /v1/debug/sync-hosts", proxy.handleSyncHosts)
 	return mux
 }
 
@@ -1067,6 +1068,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/signatures/collect", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/sync-hosts", g.handleSingleOnly)
 	mux.HandleFunc("/devshard/", g.handleDevshard)
 	return mux
 }

@@ -158,6 +158,46 @@ func TestShouldAcceptValidatedArtifacts_NilOrNotSynced(t *testing.T) {
 	assert.False(t, ShouldAcceptValidatedArtifacts(notSynced))
 }
 
+func TestShouldStopValidationForStage(t *testing.T) {
+	tests := []struct {
+		name        string
+		state       *chainphase.EpochState
+		stageHeight int64
+		expect      bool
+	}{
+		{
+			name:        "nil state waits for next tracker update",
+			state:       nil,
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
+			name:        "current validation stage continues",
+			state:       createTestEpochState(types.PoCValidatePhase, 200, 100),
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
+			name:        "non-validation phase stops immediately",
+			state:       createTestEpochState(types.InferencePhase, 500, 100),
+			stageHeight: 100,
+			expect:      true,
+		},
+		{
+			name:        "different PoC stage stops immediately",
+			state:       createTestEpochState(types.PoCValidatePhase, 200, 120),
+			stageHeight: 100,
+			expect:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expect, shouldStopValidationForStage(tt.state, tt.stageHeight))
+		})
+	}
+}
+
 func TestGetCurrentPocStageHeight_RegularPoC(t *testing.T) {
 	tests := []struct {
 		name           string

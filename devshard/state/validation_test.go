@@ -9,6 +9,8 @@ import (
 	"devshard/types"
 )
 
+const legacyPenaltyValidationRate = 10000
+
 func TestDeriveSeed_Basic(t *testing.T) {
 	sig := make([]byte, 65)
 	sig[0] = 0x01
@@ -83,7 +85,7 @@ func TestUint32CeilScaledSum32(t *testing.T) {
 // legacyPenalizeRequiredFloat matches pre-#893 penalizeUnrevealedSeeds: per-term
 // probability capped at 1.0, then sum, then math.Ceil (test reference only).
 func legacyPenalizeRequiredFloat(contributions []struct{ v, d uint64 }) uint32 {
-	rate := float64(penaltyValidationRate) / 10000.0
+	rate := float64(legacyPenaltyValidationRate) / 10000.0
 	var probSum float64
 	for _, c := range contributions {
 		p := rate * float64(c.v) / float64(c.d)
@@ -98,7 +100,7 @@ func legacyPenalizeRequiredFloat(contributions []struct{ v, d uint64 }) uint32 {
 func penalizeRequiredFromScaledTerms(contributions []struct{ v, d uint64 }) uint32 {
 	var sumScaled uint64
 	for _, c := range contributions {
-		sumScaled += penalizePerInferenceScaled32(uint64(penaltyValidationRate), c.v, c.d)
+		sumScaled += penalizePerInferenceScaled32(uint64(legacyPenaltyValidationRate), c.v, c.d)
 	}
 	return uint32CeilScaledSum32(sumScaled)
 }

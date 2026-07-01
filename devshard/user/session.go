@@ -770,7 +770,7 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	return s.clients[p.hostIdx].Send(ctx, host.HostRequest{
+	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
 		Diffs: p.catchUp,
 		Nonce: p.diff.Nonce,
 		Payload: &host.InferencePayload{
@@ -781,6 +781,24 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			StartedAt:   p.params.StartedAt,
 		},
 	}, stream, receiptHandler)
+	if err != nil && state.IsPostStateRootMismatchError(err) {
+		s.logStateRootMismatchUserDiagnostic(p)
+	}
+	return resp, err
+}
+
+func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sm.LogStateRootMismatchDiagnostic(state.StateRootMismatchOpts{
+		Side:          "devshardctl",
+		Nonce:         p.diff.Nonce,
+		DiffPostState: p.diff.PostStateRoot,
+		SealClock:     s.sm.AutoSealStateClock(),
+	})
 }
 
 // SendInference composes diff, sends to correct host, processes response.
@@ -944,6 +962,71 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunkIdx = nextChunkIdx
 	}
 
+	return nil
+}
+
+type physicalHost struct {
+	idx  int
+	addr string
+}
+
+func (s *Session) uniquePhysicalHosts() []physicalHost {
+	n := len(s.group)
+	seen := make(map[string]bool)
+	hosts := make([]physicalHost, 0, n)
+	for i := 0; i < n; i++ {
+		addr := s.group[i].ValidatorAddress
+		if seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		hosts = append(hosts, physicalHost{idx: i, addr: addr})
+	}
+	return hosts
+}
+
+// SyncHosts propagates signed diffs to every unique physical host and drains
+// host-proposed mempool txs (validations, finishes) into new diffs. This is
+// finalize Phase B-style catch-up without entering PhaseFinalizing — use before
+// observability checks when validators on join nodes may be ahead of genesis.
+func (s *Session) SyncHosts(ctx context.Context) error {
+	if s.sm.Phase() != types.PhaseActive {
+		return fmt.Errorf("sync hosts: session phase %d, want active", s.sm.Phase())
+	}
+
+	hosts := s.uniquePhysicalHosts()
+	startNonce := s.Nonce()
+	logging.Info("sync hosts started", "subsystem", "sync", "escrow", s.escrowID,
+		"nonce", startNonce, "unique_hosts", len(hosts))
+
+	const syncCycles = 2
+	for cycle := 0; cycle < syncCycles; cycle++ {
+		for _, h := range hosts {
+			if err := s.sendCatchUp(ctx, h.idx); err != nil {
+				return fmt.Errorf("sync hosts cycle %d catch-up host %d: %w", cycle+1, h.idx, err)
+			}
+		}
+		for i := 0; i < len(s.group); i++ {
+			s.mu.Lock()
+			hasPending := len(s.pendingTxs) > 0
+			s.mu.Unlock()
+			if !hasPending {
+				break
+			}
+			if err := s.sendDiffRound(ctx, nil); err != nil {
+				return fmt.Errorf("sync hosts cycle %d diff round: %w", cycle+1, err)
+			}
+		}
+	}
+
+	for _, h := range hosts {
+		if err := s.sendCatchUp(ctx, h.idx); err != nil {
+			return fmt.Errorf("sync hosts final catch-up host %d: %w", h.idx, err)
+		}
+	}
+
+	logging.Info("sync hosts complete", "subsystem", "sync", "escrow", s.escrowID,
+		"start_nonce", startNonce, "end_nonce", s.Nonce())
 	return nil
 }
 

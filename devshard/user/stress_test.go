@@ -194,7 +194,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 
 	clients := make([]HostClient, numHosts)
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-stress", userKey.Address(), config, group, stressBalance))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-stress", group, nil, host.WithGrace(grace))
@@ -202,7 +202,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 		clients[i] = &ConcurrentClient{inner: &InProcessClient{Host: h}}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-stress", config, group, stressBalance, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-stress", userKey.Address(), config, group, stressBalance))
 	require.NoError(t, err)
 	session, err := NewSession(userSM, userKey, "escrow-stress", group, clients, verifier)
 	require.NoError(t, err)
@@ -228,7 +228,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	// --- State root at peak (pre-finalize, measures raw hashing cost at N inferences) ---
 	preFinSt := session.StateMachine().SnapshotState()
 	srStart := time.Now()
-	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys, preFinSt.Fees)
+	_, err = state.ComputeStateRoot(preFinSt.Balance, preFinSt.HostStats, preFinSt.Inferences, preFinSt.Phase, preFinSt.WarmKeys, preFinSt.Fees, preFinSt.StateRootAndProtocolVersion)
 	require.NoError(t, err)
 	srDuration := time.Since(srStart)
 
@@ -270,8 +270,11 @@ func runStress(t *testing.T, numHosts, rounds int) {
 			"slot %d: cost=%d expected=%d", slot, hs.Cost, expectedCostPerHost)
 	}
 
-	// 3. All 16 seeds revealed.
-	require.Len(t, st.RevealedSeeds, numHosts, "expected %d revealed seeds", numHosts)
+	// 3. Validation compliance counters stay zero after finalization.
+	for slot, hs := range st.HostStats {
+		require.Zero(t, hs.RequiredValidations, "slot %d required validations must stay zero", slot)
+		require.Zero(t, hs.CompletedValidations, "slot %d completed validations must stay zero", slot)
+	}
 
 	// 4. All hosts signed at the final nonce.
 	require.Equal(t, numHosts, len(latestSigs),
@@ -300,7 +303,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	t.Logf("timing:")
 	infTiming.report(t)
 	t.Logf("  state_root_at_N=%d: %v", totalInf, srDuration)
-	t.Logf("  finalize_phase: %v (%d diffs, %d seed reveals)", finDuration, numHosts+1, numHosts)
+	t.Logf("  finalize_phase: %v (%d diffs)", finDuration, numHosts+1)
 	t.Logf("  settlement: %v", settleDuration)
 	t.Logf("  total: %v", totalDuration)
 	t.Logf("")
@@ -315,7 +318,6 @@ func runStress(t *testing.T, numHosts, rounds int) {
 	t.Logf("")
 	t.Logf("correctness:")
 	t.Logf("  final_balance: %d (expected %d)", st.Balance, expectedBalance)
-	t.Logf("  revealed_seeds: %d/%d", len(st.RevealedSeeds), numHosts)
 	t.Logf("  diffs: %d (expected %d)", numDiffs, expectedDiffs)
 	t.Logf("  host_stats:")
 	for slot := uint32(0); slot < uint32(numHosts); slot++ {

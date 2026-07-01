@@ -11,6 +11,7 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -20,8 +21,6 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
-
-	devshardpkg "devshard"
 
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
@@ -117,11 +116,15 @@ func NewEventListener(
 	for _, opt := range opts {
 		opt(el)
 	}
-	return el
-}
 
-func (el *EventListener) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
-	el.dispatcher.SetAvailabilityTracker(tracker)
+	// Filter out tx events the DAPI has no handler for at the producer, before
+	// they take a slot in the bounded tx queue. This uses the exact same gate
+	// (hasHandler) the consumer applies after dequeue, so it never drops an
+	// event that would have been handled. Barrier events bypass this filter in
+	// processBlock, so per-block progress still advances.
+	bo.SetRelevanceFilter(el.hasHandler)
+
+	return el
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
@@ -470,14 +473,19 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 	return len(event.Result.Events["inference_finished.inference_id"]) > 0
 }
 
-func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_finished.inference_id"]
+	_, op := observability.Inference.StartValidationEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.isNodeSynced() {
-		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
+		el.validator.SampleInferenceToValidate(ids, el.transactionRecorder)
 	}
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceFinishedRecords(event.Result.Events)
+	records, recErr := parseInferenceFinishedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -620,11 +628,16 @@ func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRP
 	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
 }
 
-func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_status_updated.inference_id"]
+	_, op := observability.Inference.StartStatusUpdateEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	records, recErr := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
 		return nil
