@@ -336,6 +336,12 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 					Short:          "Query PoC delegation state for a participant",
 					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}, {ProtoField: "model_id", Optional: true}},
 				},
+				{
+					RpcMethod:      "ListClaimRecipients",
+					Use:            "list-claim-recipients [participant]",
+					Short:          "List the scheduled per-epoch claim recipient overrides for a participant",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
+				},
 				// this line is used by ignite scaffolding # autocli/query
 			},
 		},

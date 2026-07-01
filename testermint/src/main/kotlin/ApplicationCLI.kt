@@ -156,6 +156,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
     }
 
+    fun listClaimRecipients(participant: String): ClaimRecipientsResponse = wrapLog("listClaimRecipients", false) {
+        execAndParse(listOf("query", "inference", "list-claim-recipients", participant))
+    }
+
     fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
         execAndParse(listOf("query", "inference", "get-all-participant-current-stats"))
     }
@@ -692,6 +696,25 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
+    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName(), node: String? = null): TxResponse =
+        wrapLog("setClaimRecipients", true) {
+            val nodeArgs = node?.let { listOf("--node", it) } ?: emptyList()
+            val finalArgs = listOf(config.execName, "tx", "inference", "set-claim-recipients", entriesJson) +
+                getTransactionArgs(from) + nodeArgs + listOf("--output", "json")
+            val command = if (passwordInjection != null) {
+                "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
+            } else {
+                finalArgs.joinToString(" ") { shellQuote(it) }
+            }
+            val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+            val txResponse = cosmosJson.fromJson(output, TxResponse::class.java)
+            if (txResponse.code == 0) {
+                waitForTxProcessed(txResponse.txhash)
+            } else {
+                txResponse
+            }
+        }
+
     private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
@@ -707,6 +730,9 @@ data class ApplicationCLI(
         "--from",
         from
     )
+
+    private fun shellQuote(arg: String): String =
+        "'" + arg.replace("'", "'\\''") + "'"
 
     // Returns getTransactionArgs with gas-adjustment replaced by a fixed gas
     // and a --fees flag added. Used by tests that need to assert specific

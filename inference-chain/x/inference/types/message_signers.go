@@ -49,6 +49,7 @@ func (msg *MsgSubmitUnitOfComputePriceProposal) GetSignersStrings() []string {
 }
 func (msg *MsgValidation) GetSignersStrings() []string              { return []string{msg.Creator} }
 func (msg *MsgClaimRewards) GetSignersStrings() []string            { return []string{msg.Creator} }
+func (msg *MsgSetClaimRecipients) GetSignersStrings() []string      { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeMint) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeWithdrawal) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgCancelBridgeOperation) GetSignersStrings() []string   { return []string{msg.Creator} }

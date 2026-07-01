@@ -152,10 +152,6 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 		}
 		paidValidators[addr] = true
 
-		recipientAddr, err := sdk.AccAddressFromBech32(addr)
-		if err != nil {
-			return nil, fmt.Errorf("invalid validator address %s: %w", addr, err)
-		}
 		inCurrentEpoch := treatAsCurrentEpochSettle[addr]
 		if inCurrentEpoch {
 			participant, found := participantByAddr[addr]
@@ -167,6 +163,10 @@ func (k msgServer) SettleDevshardEscrow(goCtx context.Context, msg *types.MsgSet
 			}
 			touchedParticipants[addr] = true
 		} else {
+			recipientAddr, err := k.ResolveClaimRecipientAddress(goCtx, addr, escrow.EpochIndex)
+			if err != nil {
+				return nil, fmt.Errorf("failed to resolve validator recipient %s for epoch %d: %w", addr, escrow.EpochIndex, err)
+			}
 			if err := k.payCoinsDirectly(goCtx, payout, recipientAddr); err != nil {
 				return nil, err
 			}
