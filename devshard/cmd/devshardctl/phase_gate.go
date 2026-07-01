@@ -1261,35 +1261,24 @@ func parseFlexibleUint64(data []byte) (uint64, error) {
 	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
 }
 
-// Return whether the participant has any node that can serve inference during PoC validation (poc_validation_inference).
-func participantHasPocValidationInference(nodes []participantNode, miner string, capable func(miner, nodeID string) bool) bool {
-	if capable == nil {
-		return false
-	}
-	for _, node := range nodes {
-		if capable(miner, node.nodeID) {
-			return true
-		}
-	}
-	return false
-}
-
 // Returns per model chain weight of the participant's PoC-validation-inference-capable nodes.
-func participantValidationInferenceWeights(nodes []participantNode, miner string, capable func(miner, nodeID string) bool) map[string]float64 {
+func participantValidationInferenceWeights(nodes []participantNode, miner string, capable func(miner, nodeID string) bool) (map[string]float64, float64) {
 	weights := map[string]float64{}
 	if capable == nil {
-		return weights
+		return weights, 0
 	}
+	var total float64
 	for _, node := range nodes {
 		if capable(miner, node.nodeID) {
 			weights[node.model] += node.weight
+			total += node.weight
 		}
 	}
-	return weights
+	return weights, total
 }
 
-// Returns the validation-phase availability and weight views: 
-// preserved miners keep their PoC-filtered current weight, and each non-preserved ("excluded") miner 
+// Returns the validation-phase availability and weight views:
+// preserved miners keep their PoC-filtered current weight, and each non-preserved ("excluded") miner
 // that has a validation-inference-capable node is added with the summed weight of those capable nodes (per model).
 func mergePreservedWithValidationCapable(
 	state *participantsState,
@@ -1308,14 +1297,7 @@ func mergePreservedWithValidationCapable(
 
 	for _, miner := range state.excluded {
 		nodes := state.nodesByParticipant[miner]
-		if !participantHasPocValidationInference(nodes, miner, capable) {
-			continue
-		}
-		weightsByModel := participantValidationInferenceWeights(nodes, miner, capable)
-		var total float64
-		for _, weight := range weightsByModel {
-			total += weight
-		}
+		weightsByModel, total := participantValidationInferenceWeights(nodes, miner, capable)
 		if total <= 0 {
 			continue
 		}

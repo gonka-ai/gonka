@@ -13,7 +13,6 @@ type MLNodeClient interface {
 	GenerateV2(ctx context.Context, req PoCGenerateRequestV2) (*PoCGenerateResponseV2, error)
 	GetPowStatusV2(ctx context.Context) (*PoCStatusResponseV2, error)
 	StopPowV2(ctx context.Context) (*PoCStopResponseV2, error)
-	GetPocVersions(ctx context.Context) (*PoCVersionsResponse, error)
 
 	// Inference operations
 	InferenceHealth(ctx context.Context) (bool, error)

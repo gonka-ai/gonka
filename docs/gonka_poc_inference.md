@@ -93,7 +93,6 @@ Every unknown resolves to "not capable", so a miner or node is never offered tra
 
 ### Decentralized API
 - `decentralized-api/mlnodeclient/client.go` - `StateResponse` with `poc_validation_inference`
-- `decentralized-api/mlnodeclient/poc_v2_requests.go` - `GetPocVersions` and the `PoCVersionsResponse` type for direct MLNode `/api/v1/versions` probing
 - `decentralized-api/broker/broker.go` - per-node capability in `queryNodeStatus` and `NodeState`
 - `decentralized-api/internal/server/public/app_info_handlers.go` - the per-node `mlnodes` list on `/v1/versions`
 
