@@ -44,6 +44,9 @@ func CreateUpgradeHandler(
 		if err := backfillDevshardEscrowInferenceSealGrace(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := seedDelegationRewardSnapshotForEffectiveEpoch(ctx, k); err != nil {
+			return nil, err
+		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
 		if err != nil {
@@ -53,6 +56,32 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper.Keeper) error {
+	effectiveEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
+	if !found {
+		k.LogError("seed delegation reward snapshot skipped: effective epoch not found", types.Upgrades)
+		return nil
+	}
+
+	snapshot, snapshotFound := k.GetDelegationRewardTransferSnapshot(ctx)
+	if snapshotFound {
+		if snapshot.EpochIndex != effectiveEpochIndex {
+			k.LogWarn("existing delegation reward snapshot epoch differs from effective epoch", types.Upgrades,
+				"snapshot_epoch", snapshot.EpochIndex, "effective_epoch", effectiveEpochIndex)
+		}
+		return nil
+	}
+
+	if err := k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: effectiveEpochIndex,
+	}); err != nil {
+		return err
+	}
+
+	k.LogInfo("seeded delegation reward snapshot for effective epoch", types.Upgrades, "epoch", effectiveEpochIndex)
+	return nil
 }
 
 // backfillDevshardEscrowParamDefaults seeds zero-valued DevshardEscrowParams

@@ -7,24 +7,20 @@ import (
 )
 
 func (k Keeper) SetDelegationRewardTransferSnapshot(ctx context.Context, snapshot types.DelegationRewardTransferSnapshot) error {
-	return k.DelegationRewardTransferSnapshot.Set(ctx, snapshot.EpochIndex, snapshot)
+	return k.DelegationRewardTransferSnapshot.Set(ctx, snapshot)
 }
 
-func (k Keeper) GetDelegationRewardTransferSnapshot(ctx context.Context, epochIndex uint64) (types.DelegationRewardTransferSnapshot, bool) {
-	snapshot, err := k.DelegationRewardTransferSnapshot.Get(ctx, epochIndex)
+func (k Keeper) GetDelegationRewardTransferSnapshot(ctx context.Context) (types.DelegationRewardTransferSnapshot, bool) {
+	snapshot, err := k.DelegationRewardTransferSnapshot.Get(ctx)
 	if err != nil {
 		return types.DelegationRewardTransferSnapshot{}, false
 	}
 	return snapshot, true
 }
 
-func (k Keeper) RemoveDelegationRewardTransferSnapshot(ctx context.Context, epochIndex uint64) error {
-	return k.DelegationRewardTransferSnapshot.Remove(ctx, epochIndex)
-}
-
 func (k Keeper) GetDelegationRewardTransfersForEpoch(ctx context.Context, epochIndex uint64) ([]*types.DelegationRewardTransfer, error) {
-	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx, epochIndex)
-	if !found {
+	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	if !found || snapshot.EpochIndex != epochIndex {
 		return nil, nil
 	}
 	transfers := make([]*types.DelegationRewardTransfer, len(snapshot.Transfers))
@@ -33,8 +29,8 @@ func (k Keeper) GetDelegationRewardTransfersForEpoch(ctx context.Context, epochI
 }
 
 func (k Keeper) GetDelegationRewardPenaltiesForEpoch(ctx context.Context, epochIndex uint64) ([]*types.DelegationRewardPenalty, error) {
-	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx, epochIndex)
-	if !found {
+	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	if !found || snapshot.EpochIndex != epochIndex {
 		return nil, nil
 	}
 	penalties := make([]*types.DelegationRewardPenalty, len(snapshot.Penalties))
