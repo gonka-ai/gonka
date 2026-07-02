@@ -8,7 +8,10 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"slices"
+	"strconv"
+	"sync"
 
 	"cosmossdk.io/collections"
 	"cosmossdk.io/core/appmodule"
@@ -58,6 +61,12 @@ var (
 const (
 	defaultInferencePruningThreshold = 4
 	defaultPocPruningThreshold       = 4
+	envExitAfterOneBlock             = "INFERENCE_EXIT_AFTER_ONE_BLOCK"
+)
+
+var (
+	exitAfterOneBlockOnce sync.Once
+	exitAfterBlockHeight  int64
 )
 
 // ----------------------------------------------------------------------------
@@ -177,6 +186,21 @@ func (AppModule) ConsensusVersion() uint64 { return 14 }
 
 // BeginBlock contains the logic that is automatically triggered at the beginning of each block.
 func (am AppModule) BeginBlock(ctx context.Context) error {
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	height := sdkCtx.BlockHeight()
+
+	// Exit after one block is committed and computed (for debugging: set INFERENCE_EXIT_AFTER_ONE_BLOCK=1).
+	// We exit at the start of the next block's BeginBlock, so the previous block has already been committed.
+	if v := os.Getenv(envExitAfterOneBlock); v != "" {
+		if on, _ := strconv.ParseBool(v); on {
+			exitAfterOneBlockOnce.Do(func() { exitAfterBlockHeight = height + 1 })
+			if height == exitAfterBlockHeight {
+				sdkCtx.Logger().Info("Exiting after one block committed (INFERENCE_EXIT_AFTER_ONE_BLOCK)", "height", height)
+				os.Exit(0)
+			}
+		}
+	}
+
 	// Precompute SPRT values for the block
 	err := am.keeper.PrecomputeSPRTValues(ctx)
 	// We continue if there is something wrong with SPRT. Invalidation will effectively be turned off, but
@@ -726,11 +750,20 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	acc.Apply(activeParticipants)
+	penalties := acc.RewardPenalties()
+	rewardTransfers := BuildDelegationRewardTransfers(
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	allRewardTransfers := rewardTransfers.Records()
 
-	afterPenalty := make(map[string]int64, len(activeParticipants))
+	beforeCollateral := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
-		afterPenalty[p.Index] = p.Weight
+		beforeCollateral[p.Index] = p.Weight
 	}
 
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
@@ -768,7 +801,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
 		participationState.eligibleModels, activeParticipants,
 		participationState.participationByModel,
-		consensusWeights, afterPenalty, acc)
+		consensusWeights, beforeCollateral, acc)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -804,6 +837,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: upcomingEpoch.Index,
+		Transfers:  allRewardTransfers,
+		Penalties:  penalties,
+	}); err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
+		return
+	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
@@ -1399,6 +1440,7 @@ func GetTxCmd() *cobra.Command {
 
 	cmd.AddCommand(GrantMLOpsPermissionsCmd())
 	cmd.AddCommand(SettleDevshardEscrowCmd())
+	cmd.AddCommand(SetClaimRecipientsCmd())
 
 	return cmd
 }

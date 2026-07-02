@@ -93,6 +93,8 @@ build_docker_images() {
     cd "${WORKSPACE_DIR}"
     
     export GENESIS_OVERRIDES_FILE="inference-chain/test_genesis_overrides.json"
+    # shellcheck source=../scripts/blst-portable.sh
+    source "${WORKSPACE_DIR}/scripts/blst-portable.sh"
     make build-docker
     
     log_success "Docker images built successfully"

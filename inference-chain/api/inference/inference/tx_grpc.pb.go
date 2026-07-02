@@ -28,6 +28,7 @@ const (
 	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
 	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
+	Msg_SetClaimRecipients_FullMethodName               = "/inference.inference.Msg/SetClaimRecipients"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
 	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
 	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
@@ -78,6 +79,7 @@ type MsgClient interface {
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
+	SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error)
@@ -198,6 +200,15 @@ func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateIn
 func (c *msgClient) ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error) {
 	out := new(MsgClaimRewardsResponse)
 	err := c.cc.Invoke(ctx, Msg_ClaimRewards_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error) {
+	out := new(MsgSetClaimRecipientsResponse)
+	err := c.cc.Invoke(ctx, Msg_SetClaimRecipients_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -516,6 +527,7 @@ type MsgServer interface {
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
+	SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error)
@@ -584,6 +596,9 @@ func (UnimplementedMsgServer) RevalidateInference(context.Context, *MsgRevalidat
 }
 func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimRewards not implemented")
+}
+func (UnimplementedMsgServer) SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetClaimRecipients not implemented")
 }
 func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocBatch not implemented")
@@ -855,6 +870,24 @@ func _Msg_ClaimRewards_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).ClaimRewards(ctx, req.(*MsgClaimRewards))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetClaimRecipients_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetClaimRecipients)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetClaimRecipients(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetClaimRecipients_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetClaimRecipients(ctx, req.(*MsgSetClaimRecipients))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1495,6 +1528,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimRewards",
 			Handler:    _Msg_ClaimRewards_Handler,
+		},
+		{
+			MethodName: "SetClaimRecipients",
+			Handler:    _Msg_SetClaimRecipients_Handler,
 		},
 		{
 			MethodName: "SubmitPocBatch",

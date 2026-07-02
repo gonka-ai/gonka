@@ -36,6 +36,7 @@ import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/claim_recipient.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -97,6 +98,10 @@ service Query {
   }
   rpc SettleAmountAll (QueryAllSettleAmountRequest) returns (QueryAllSettleAmountResponse) {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
+
+  }
+  rpc EstimateBitcoinReward (QueryEstimateBitcoinRewardRequest) returns (QueryEstimateBitcoinRewardResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/estimate_bitcoin_reward/{participant}";
 
   }
 
@@ -479,6 +484,11 @@ service Query {
   rpc MaintenanceSchedulability (QueryMaintenanceSchedulabilityRequest) returns (QueryMaintenanceSchedulabilityResponse) {
     option (google.api.http).get = "/productscience/inference/inference/maintenance_schedulability/{participant}/{start_height}/{duration_blocks}";
   }
+
+  // Lists the scheduled per-epoch claim recipient overrides for a participant.
+  rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
+  }
 }
 // QueryParamsRequest is request type for the Query/Params RPC method.
 message QueryParamsRequest {}
@@ -576,6 +586,14 @@ message QueryAllSettleAmountRequest {
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination    = 2;
+}
+
+message QueryEstimateBitcoinRewardRequest {
+  string participant = 1;
+}
+
+message QueryEstimateBitcoinRewardResponse {
+  SettleAmount settle_amount = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryGetEpochGroupValidationsRequest {
@@ -1287,4 +1305,12 @@ message QueryMaintenanceSchedulabilityRequest {
 message QueryMaintenanceSchedulabilityResponse {
   bool   schedulable        = 1;
   string rejection_reason   = 2;
+}
+
+message QueryListClaimRecipientsRequest {
+  string participant = 1;
+}
+
+message QueryListClaimRecipientsResponse {
+  repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
 }

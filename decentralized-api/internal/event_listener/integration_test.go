@@ -54,6 +54,8 @@ type MockOffChainValidator struct{}
 
 func (m *MockOffChainValidator) ValidateAll(pocStartBlockHeight int64, pocStartBlockHash string) {}
 
+func (m *MockOffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochState) {}
+
 type MockOrchestratorChainBridge struct {
 }
 

@@ -60,6 +60,10 @@ func (s *Secp256k1Signer) PublicKeyBytes() []byte {
 	return crypto.FromECDSAPub(&s.key.PublicKey)
 }
 
+func (s *Secp256k1Signer) CompressedPublicKeyBytes() []byte {
+	return crypto.CompressPubkey(&s.key.PublicKey)
+}
+
 func GenerateKey() (*Secp256k1Signer, error) {
 	key, err := crypto.GenerateKey()
 	if err != nil {

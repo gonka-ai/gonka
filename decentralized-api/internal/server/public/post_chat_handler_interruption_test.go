@@ -113,6 +113,7 @@ type interruptionTestSuite struct {
 	mockRecorder    *cosmosclient.MockCosmosMessageClient
 	mockQueryClient *mockInterruptionQueryClient
 	mockMLServer    *httptest.Server
+	mockClientFactory *mlnodeclient.MockClientFactory
 	server          *Server
 	configManager   *apiconfig.ConfigManager
 	nodeBroker      *broker.Broker
@@ -144,10 +145,114 @@ func (s *interruptionTestSuite) clearFinishInferenceCalls() {
 	s.finishInferenceCalls = nil
 }
 
+const (
+	finishInferenceAsyncMaxWait   = 5 * time.Second
+	finishInferenceAsyncPoll      = 10 * time.Millisecond
+	finishInferenceAsyncStable    = 100 * time.Millisecond
+	finishInferenceAsyncMinSettle = 300 * time.Millisecond
+)
+
+// waitForFinishInferenceCallsAtLeast polls until at least minCount FinishInference
+// recordings exist or timeout expires (for slow CI runners).
+func (s *interruptionTestSuite) waitForFinishInferenceCallsAtLeast(minCount int, timeout time.Duration) []*inference.MsgFinishInference {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		calls := s.getFinishInferenceCalls()
+		if len(calls) >= minCount {
+			return calls
+		}
+		time.Sleep(finishInferenceAsyncPoll)
+	}
+	return s.getFinishInferenceCalls()
+}
+
+// awaitAsyncFinishInferenceSettled waits for async FinishInference recording to
+// finish: either the call count is stable for finishInferenceAsyncStable after
+// finishInferenceAsyncMinSettle, or finishInferenceAsyncMaxWait elapses.
+func (s *interruptionTestSuite) awaitAsyncFinishInferenceSettled() {
+	start := time.Now()
+	deadline := start.Add(finishInferenceAsyncMaxWait)
+	var lastCount int = -1
+	var stableSince time.Time
+
+	for time.Now().Before(deadline) {
+		count := len(s.getFinishInferenceCalls())
+		if count != lastCount {
+			lastCount = count
+			stableSince = time.Now()
+		} else if !stableSince.IsZero() &&
+			time.Since(stableSince) >= finishInferenceAsyncStable &&
+			time.Since(start) >= finishInferenceAsyncMinSettle {
+			return
+		}
+		time.Sleep(finishInferenceAsyncPoll)
+	}
+}
+
 func (s *interruptionTestSuite) cleanup() {
 	if s.mockMLServer != nil {
 		s.mockMLServer.Close()
 	}
+}
+
+// waitForInferenceNodeReady blocks until the broker considers the node available
+// for inference (INFERENCE status and no in-flight reconciliation). Without this,
+// ServeHTTP can race reconciliation and return "no nodes available for inference".
+func (s *interruptionTestSuite) waitForInferenceNodeReady(t *testing.T, nodeID string) {
+	t.Helper()
+
+	if !s.pollInferenceNodeReady(nodeID, 2*time.Second) {
+		// Reconciliation may not finish in time on slow CI; force stable INFERENCE status.
+		setStatusCmd := broker.NewSetNodesActualStatusCommand([]broker.StatusUpdate{
+			{
+				NodeId:     nodeID,
+				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+				NewStatus:  types.HardwareNodeStatus_INFERENCE,
+				Timestamp:  time.Now(),
+			},
+		})
+		err := s.nodeBroker.QueueMessage(setStatusCmd)
+		require.NoError(t, err)
+		require.True(t, <-setStatusCmd.Response)
+	}
+
+	if !s.pollInferenceNodeReady(nodeID, 2*time.Second) {
+		t.Fatalf("node %q did not reach stable INFERENCE status in time", nodeID)
+	}
+}
+
+func (s *interruptionTestSuite) pollInferenceNodeReady(nodeID string, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		nodes, err := s.nodeBroker.GetNodes()
+		if err == nil {
+			for _, n := range nodes {
+				if n.Node.Id == nodeID &&
+					n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+					n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+					n.State.ReconcileInfo == nil {
+					return true
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	return false
+}
+
+func (s *interruptionTestSuite) waitForFinishInferenceCalls(t *testing.T, want int, timeout time.Duration) []*inference.MsgFinishInference {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		calls := s.getFinishInferenceCalls()
+		if len(calls) >= want {
+			return calls
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	calls := s.getFinishInferenceCalls()
+	require.Len(t, calls, want, "timed out waiting for FinishInference calls")
+	return calls
 }
 
 // ============================================================================
@@ -483,9 +588,9 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	mockParticipant.On("GetPubKey").Return(suite.taKey.GetPubKeyBase64())
 
 	bridge := broker.NewBrokerChainBridgeImpl(suite.mockRecorder, "")
-	mockClientFactory := mlnodeclient.NewMockClientFactory()
+	suite.mockClientFactory = mlnodeclient.NewMockClientFactory()
 
-	suite.nodeBroker = broker.NewBroker(bridge, suite.phaseTracker, mockParticipant, "", mockClientFactory, suite.configManager)
+	suite.nodeBroker = broker.NewBroker(bridge, suite.phaseTracker, mockParticipant, "", suite.mockClientFactory, suite.configManager)
 
 	// 6. Register a node pointing to mock ML server
 	mlServerURL := suite.mockMLServer.URL
@@ -524,7 +629,7 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	suite.nodeBroker.UpdateNodeEpochData([]*types.MLNodeInfo{&mlNode}, "test-model", model)
 
 	pocURL := fmt.Sprintf("http://%s:%d", host, port+1)
-	mockClient := mockClientFactory.CreateClient(pocURL, fmt.Sprintf("http://%s:%d", host, port)).(*mlnodeclient.MockClient)
+	mockClient := suite.mockClientFactory.CreateClient(pocURL, fmt.Sprintf("http://%s:%d", host, port)).(*mlnodeclient.MockClient)
 	mockClient.Mu.Lock()
 	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
 	mockClient.InferenceIsHealthy = true
@@ -533,56 +638,8 @@ func setupInterruptionTestWithMLServer(t *testing.T, mlBehavior *mockMLNodeBehav
 	inferenceUpCmd := broker.NewInferenceUpAllCommand()
 	err = suite.nodeBroker.QueueMessage(inferenceUpCmd)
 	require.NoError(t, err)
-	<-inferenceUpCmd.Response
-
-	waitForStableInferenceNode := func() bool {
-		nodes, nodesErr := suite.nodeBroker.GetNodes()
-		require.NoError(t, nodesErr)
-		for _, n := range nodes {
-			if n.Node.Id == nodeConfig.Id &&
-				n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.ReconcileInfo == nil {
-				return true
-			}
-		}
-		return false
-	}
-
-	nodeReady := false
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		if waitForStableInferenceNode() {
-			nodeReady = true
-			break
-		}
-		time.Sleep(10 * time.Millisecond)
-	}
-	if !nodeReady {
-		setStatusCommand := broker.NewSetNodesActualStatusCommand(
-			[]broker.StatusUpdate{
-				{
-					NodeId:     nodeConfig.Id,
-					PrevStatus: types.HardwareNodeStatus_UNKNOWN,
-					NewStatus:  types.HardwareNodeStatus_INFERENCE,
-					Timestamp:  time.Now(),
-				},
-			},
-		)
-		err = suite.nodeBroker.QueueMessage(setStatusCommand)
-		require.NoError(t, err)
-		<-setStatusCommand.Response
-
-		deadline = time.Now().Add(2 * time.Second)
-		for time.Now().Before(deadline) {
-			if waitForStableInferenceNode() {
-				nodeReady = true
-				break
-			}
-			time.Sleep(10 * time.Millisecond)
-		}
-	}
-	require.True(t, nodeReady, "node did not reach stable INFERENCE status before test start")
+	require.True(t, <-inferenceUpCmd.Response)
+	suite.waitForInferenceNodeReady(t, nodeConfig.Id)
 
 	// 7. Create the public server
 	payloadStorage := newMockPayloadStorage()
@@ -677,8 +734,7 @@ func TestInterruption_S1_MLNodeClosesStream_VerifyFinishInference(t *testing.T) 
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	// Wait for async processing
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("S1 RESULT: FinishInference calls count = %d", len(calls))
@@ -712,8 +768,7 @@ func TestInterruption_S4_StreamSuccess_VerifyFinishInference(t *testing.T) {
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	// Wait for async processing
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("S4 RESULT: FinishInference calls count = %d", len(calls))
@@ -755,7 +810,7 @@ func TestInterruption_J1_MLNodeClosesJSON_VerifyFinishInference(t *testing.T) {
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("J1 RESULT: FinishInference calls count = %d", len(calls))
@@ -784,7 +839,7 @@ func TestInterruption_J4_JSONSuccess_VerifyFinishInference(t *testing.T) {
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("J4 RESULT: FinishInference calls count = %d", len(calls))
@@ -814,7 +869,7 @@ func TestInterruption_E1_MLNode400_VerifyFinishInference(t *testing.T) {
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("E1 RESULT: FinishInference calls count = %d", len(calls))
@@ -844,7 +899,7 @@ func TestInterruption_E3_MLNode500_VerifyFinishInference(t *testing.T) {
 
 	suite.server.e.ServeHTTP(rec, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("E3 RESULT: FinishInference calls count = %d", len(calls))
@@ -932,10 +987,7 @@ func TestInterruption_ClientDisconnect_StreamingComplete_VerifyFinishInference(t
 
 	suite.server.e.ServeHTTP(disconnectWriter, req)
 
-	// Wait for async processing
-	time.Sleep(500 * time.Millisecond)
-
-	calls := suite.getFinishInferenceCalls()
+	calls := suite.waitForFinishInferenceCallsAtLeast(1, finishInferenceAsyncMaxWait)
 	t.Logf("CLIENT_DISCONNECT_STREAM RESULT: FinishInference calls count = %d", len(calls))
 	t.Logf("CLIENT_DISCONNECT_STREAM: Written bytes before disconnect = %d", disconnectWriter.writtenBytes)
 
@@ -965,7 +1017,7 @@ func TestInterruption_ClientDisconnect_JSONComplete_VerifyFinishInference(t *tes
 
 	suite.server.e.ServeHTTP(disconnectWriter, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("CLIENT_DISCONNECT_JSON RESULT: FinishInference calls count = %d", len(calls))
@@ -1005,7 +1057,7 @@ func TestInterruption_ClientDisconnect_BeforeMLNodeResponse_VerifyFinishInferenc
 
 	suite.server.e.ServeHTTP(disconnectWriter, req)
 
-	time.Sleep(500 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("CLIENT_DISCONNECT_EARLY RESULT: FinishInference calls count = %d", len(calls))
@@ -1063,8 +1115,7 @@ func TestInterruption_MLNodeTimeout_VerifyFinishInference(t *testing.T) {
 	// This should timeout after 500ms (before the 10s delay completes)
 	suite.server.e.ServeHTTP(rr, req)
 
-	// Wait a bit for any async processing
-	time.Sleep(200 * time.Millisecond)
+	suite.awaitAsyncFinishInferenceSettled()
 
 	calls := suite.getFinishInferenceCalls()
 	t.Logf("TIMEOUT TEST RESULT: FinishInference calls count = %d", len(calls))

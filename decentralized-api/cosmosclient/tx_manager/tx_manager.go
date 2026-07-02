@@ -5,6 +5,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -801,10 +802,23 @@ func (m *manager) BroadcastMessages(id string, msgs ...sdk.Msg) (*sdk.TxResponse
 // callers (single-msg, batch, first attempt, retry). attempt=0 sizes
 // gasWanted from the per-msg-type estimate; subsequent attempts bump
 // gasWanted to escape OOG loops. See estimateBatchGas in gas_estimate.go.
-func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (*sdk.TxResponse, time.Time, error) {
+func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.Msg) (resp *sdk.TxResponse, timestamp time.Time, err error) {
 	if len(msgs) == 0 {
 		return nil, time.Time{}, nil
 	}
+
+	batchSize := 0
+	if len(msgs) > 1 {
+		batchSize = len(msgs)
+	}
+	_, op := observability.Chain.StartTxBroadcast(context.Background(), sdk.MsgTypeURL(msgs[0]), batchSize)
+	defer func() {
+		if resp != nil {
+			observability.Chain.SetTxResult(op, resp.TxHash, resp.Code)
+		}
+		op.FinishErr(&err)
+	}()
+
 	factory, err := m.getFactory(id)
 	if err != nil {
 		return nil, time.Time{}, err
@@ -832,7 +846,7 @@ func (m *manager) broadcastMessagesAtAttempt(id string, attempt int, msgs []sdk.
 		return nil, time.Time{}, err
 	}
 
-	resp, err := m.client.Context().BroadcastTxSync(txBytes)
+	resp, err = m.client.Context().BroadcastTxSync(txBytes)
 	if err != nil {
 		return nil, time.Time{}, err
 	}

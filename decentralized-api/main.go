@@ -17,11 +17,12 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/poc/earlyshare"
 	"decentralized-api/statsstorage"
 	"net"
 
 	"decentralized-api/nodemanager"
-	nmgen "decentralized-api/nodemanager/gen"
+	nmgen "devshard/nodemanager/gen"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
@@ -29,10 +30,11 @@ import (
 	internaldevshard "decentralized-api/internal/devshard"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
-	devshardpkg "devshard"
+	devshardlogging "devshard/logging"
+	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
-	devshardtypes "devshard/types"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,6 +49,35 @@ import (
 
 	devshardbridge "devshard/bridge"
 )
+
+// buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
+// Returns nil (a valid disabled guard) when disabled or when the local sqlite
+// database is unavailable.
+func buildEarlyShareGuard(configManager *apiconfig.ConfigManager) *poc.EarlyShareGuard {
+	esgCfg := configManager.GetEarlyShareGuardConfig()
+	cfg := earlyshare.Config{
+		Mode:               earlyshare.Mode(esgCfg.Mode),
+		FirstFraction:      esgCfg.FirstFraction,
+		ThresholdRatio:     esgCfg.ThresholdRatio,
+		RequirePrefixProof: esgCfg.RequirePrefixProof,
+	}.Normalized()
+	if !cfg.Enabled() {
+		return nil
+	}
+
+	sqlDb := configManager.SqlDb()
+	if sqlDb == nil || sqlDb.GetDb() == nil {
+		logging.Warn("Early-share guard enabled but sqlite db unavailable; disabling", types.PoC)
+		return nil
+	}
+
+	store := earlyshare.NewStore(sqlDb.GetDb())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		logging.Error("Failed to initialize early-share guard schema; disabling", types.PoC, "error", err)
+		return nil
+	}
+	return poc.NewEarlyShareGuard(cfg, store)
+}
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
@@ -73,6 +104,9 @@ func main() {
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
+	devshardlogging.SetLogger(devshardlogging.NewSlogAdapter("subsystem", devshardobservability.ServiceName))
+	devshardobservability.SetRuntime("api", configManager.GetCurrentNodeVersion(), "dapi_inprocess")
+	devshardobservability.SetBuildInfo("api", configManager.GetCurrentNodeVersion(), "")
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
 	if err := natssrv.Start(); err != nil {
@@ -101,9 +135,8 @@ func main() {
 		return
 	}
 	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
-	availabilityTracker := devshardpkg.NewAvailabilityTracker(true, 0, 0)
 	if params.Params.DevshardEscrowParams != nil {
-		availabilityTracker.Record(params.Params.DevshardEscrowParams.DevshardRequestsEnabled, time.Now().Unix(), 0)
+		internaldevshard.SeedDevshardVersionsCache(configManager, params.Params.DevshardEscrowParams)
 	}
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
@@ -139,6 +172,11 @@ func main() {
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
+	// DAPI-only early-share guard (disabled by default). When enabled it reuses
+	// the embedded sqlite db for local persistence. See
+	// proposals/poc/early-share-guard-dapi.md.
+	earlyGuard := buildEarlyShareGuard(configManager)
+
 	offChainValidator := poc.NewOffChainValidator(
 		recorder,
 		nodeBroker,
@@ -148,12 +186,30 @@ func main() {
 		participantInfo.GetAddress(),
 		configManager.GetChainNodeConfig().Url,
 		poc.DefaultValidationConfig(),
+		earlyGuard,
 	)
-	logging.Info("PoC off-chain validator initialized", types.PoC)
+	logging.Info("PoC off-chain validator initialized", types.PoC, "earlyShareGuardEnabled", earlyGuard.Enabled())
 
 	// Create a cancellable context for the entire system
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // Ensure resources are cleaned up
+
+	// Initialize OpenTelemetry. Returns a noop shutdown when disabled, so it
+	// is safe to defer unconditionally. Trace context propagation is wired in
+	// either case so downstream services see the trace ids.
+	shutdownObservability, err := observability.Init(ctx, observability.Config{
+		ServiceName:        observability.ServiceName,
+		ParticipantAddress: participantInfo.GetAddress(),
+	})
+	if err != nil {
+		logging.Error("Failed to initialize observability", types.System, "error", err)
+		return
+	}
+	defer func() {
+		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer shutdownCancel()
+		_ = shutdownObservability(shutdownCtx)
+	}()
 
 	// Start periodic config auto-flush of dynamic data to DB
 	configManager.StartAutoFlush(ctx, 60*time.Second)
@@ -186,7 +242,6 @@ func main() {
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
 	)
-	listener.SetAvailabilityTracker(availabilityTracker)
 	go listener.Start(ctx)
 
 	mlnodeBackgroundManager := modelmanager.NewMLNodeBackgroundManager(
@@ -217,6 +272,13 @@ func main() {
 	// Manages per-height directories with automatic pruning (retains last 10)
 	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
 	defer artifactStore.Close()
+
+	// Prune early-share guard checkpoints on the same stage cadence as artifacts.
+	if earlyGuard.Enabled() {
+		artifactStore.AddPruneHook(func(stage int64) {
+			earlyGuard.DeleteStage(context.Background(), stage)
+		})
+	}
 
 	// Create commit worker for time-based artifact commits and weight distribution
 	// Worker owns flush lifecycle, commits periodically (not per-request), and handles distribution
@@ -258,11 +320,17 @@ func main() {
 		if storeErr != nil {
 			logging.Error("devshard storage init failed", types.System, "error", storeErr)
 		} else {
-			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, 30*time.Second, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
+			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
 			defer devshardStore.Close()
 
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, devshardtypes.LegacySessionVersion, devshardBridge, payloadStore, recorder)
-			hostManager.SetAvailabilityProvider(availabilityTracker)
+			configManager.SetEpochChangeHandler(func(_, _ uint64) {
+				devshardStore.PruneOnceAsync(ctx)
+			})
+
+			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, "v1", devshardBridge, payloadStore, recorder)
+			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
+			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
+			hostManager.SetRuntimeParamsProvider(internaldevshard.ConfigManagerRuntimeParams(configManager))
 			hostManager.Register(publicServer.DevshardGroup())
 			go func() {
 				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
@@ -311,7 +379,7 @@ func main() {
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker))
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

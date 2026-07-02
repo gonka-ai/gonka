@@ -42,11 +42,23 @@ class CollateralTests : TestermintTest() {
         }
     }
 
+    /** Stream vesting credits [initial_epoch_reward] at CLAIM_REWARDS; settle through epoch 2 before balance checks. */
+    private fun LocalInferencePair.waitThroughEpochRewardClaim(targetEpoch: Long) {
+        logSection("Waiting through CLAIM_REWARDS until epoch $targetEpoch rewards are settled")
+        while (getEpochData().latestEpoch.index < targetEpoch) {
+            waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        }
+        waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        node.waitForNextBlock(2)
+    }
+
     @Test
     fun `a participant can deposit collateral and withdraw it`() {
         val (cluster, genesis) = initCluster(reboot = true)
         val participant = cluster.genesis
         val participantAddress = participant.node.getColdAddress()
+
+        participant.waitThroughEpochRewardClaim(targetEpoch = 2)
 
         logSection("Despositing collateral")
 
@@ -73,12 +85,12 @@ class CollateralTests : TestermintTest() {
         assertThat(balanceAfterDeposit).isEqualTo(initialBalance - depositAmount)
 
         logSection("Withdrawing $depositAmount nicoin from ${participant.name}")
-        val epochBeforeWithdraw = participant.api.getLatestEpoch().latestEpoch.index-1
+        val currentEpoch = participant.api.getLatestEpoch().latestEpoch.index
         val startLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
-        val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
-        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $epochBeforeWithdraw + $unbondingPeriod)")
+        val expectedCompletionEpoch = currentEpoch + unbondingPeriod
+        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $currentEpoch + $unbondingPeriod)")
         Thread.sleep(10000)
 
         participant.withdrawCollateral(depositAmount)

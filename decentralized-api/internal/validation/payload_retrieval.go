@@ -4,6 +4,7 @@ import (
 	"context"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/payloadstorage"
 	apiutils "decentralized-api/utils"
 	"encoding/json"
@@ -14,6 +15,8 @@ import (
 	"net/url"
 	"strconv"
 	"time"
+
+	devshardobservability "devshard/observability"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
@@ -28,6 +31,13 @@ var ErrHashMismatch = errors.New("hash mismatch: executor served wrong payload w
 // ErrEpochStale indicates inference epoch is too old (currentEpoch >= inferenceEpoch + 2).
 // Validation is no longer useful - abort without invalidation.
 var ErrEpochStale = errors.New("inference epoch too old, validation no longer useful")
+
+// ErrPayloadGone indicates the executor returned 404 for a payload retrieval
+// request. The payload has been pruned (e.g. by per-inference Tier A pruning
+// after the inference reached a terminal status, or by epoch sweep). Callers
+// should propagate this sentinel so the validator skips silently rather than
+// surfacing the retrieval failure as a validation error.
+var ErrPayloadGone = errors.New("payload no longer available on executor")
 
 // HTTP client with timeout for payload retrieval
 var payloadRetrievalClient = &http.Client{
@@ -54,7 +64,10 @@ func FetchPayloadsHTTP(
 	timestamp int64,
 	epochId uint64,
 	signature string,
-) (*PayloadResponse, error) {
+) (_ *PayloadResponse, retErr error) {
+	ctx, op := observability.Inference.StartPayloadFetch(ctx, requestUrl, validatorAddress, int64(epochId))
+	defer func() { op.FinishErr(&retErr) }()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -64,6 +77,8 @@ func FetchPayloadsHTTP(
 	req.Header.Set(apiutils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
 	req.Header.Set(apiutils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
 	req.Header.Set(apiutils.AuthorizationHeader, signature)
+	observability.Inference.InjectRequestContext(ctx, req.Header)
+	devshardobservability.AttachRequestID(req)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -72,7 +87,7 @@ func FetchPayloadsHTTP(
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("payload not found on executor")
+		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
 	}
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)

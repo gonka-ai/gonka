@@ -3,9 +3,10 @@
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= $(VERSION)
-BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORM ?= linux/amd64
@@ -39,6 +40,7 @@ define DOCKER_BUILD
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
@@ -56,6 +58,7 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
+	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
 		--build-arg LDFLAGS='$(ldflags)' \
@@ -88,13 +91,12 @@ build: download-linux-deps
 		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
 		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
-NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-DOCKER_GOARCH ?= $(NATIVE_ARCH)
+include ../scripts/blst-portable.mk
 
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=linux/$(DOCKER_GOARCH))
-	$(eval GOOS=linux)
+	$(eval PLATFORM=$(DOCKER_PLATFORM))
+	$(eval GOOS=$(DOCKER_GOOS))
 	$(eval GOARCH=$(DOCKER_GOARCH))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
@@ -136,9 +138,6 @@ build-for-upgrade:
 		echo "decentralized-api-$(GOARCH).zip $$checksum" >> ../public-html/v2/checksums.txt
 	@echo "--> cleaning up intermediate build output"
 	@rm -rf ./output
-
-build-for-upgrade-arm:
-	@$(MAKE) build-for-upgrade PLATFORM=linux/arm64 GOOS=linux GOARCH=arm64
 
 download-linux-deps:
 	@echo "--> Downloading static wasmvm library for Linux (x86_64)..."

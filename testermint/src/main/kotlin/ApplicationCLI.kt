@@ -110,13 +110,31 @@ data class ApplicationCLI(
         }
     }
 
-    fun waitForMinimumBlock(minBlockHeight: Long, waitingFor: String = ""): Long {
+    fun waitForMinimumBlock(
+        minBlockHeight: Long,
+        waitingFor: String = "",
+        staleTimeout: Duration? = null,
+    ): Long {
         return wrapLog("waitForMinimumBlock", false) {
+            val currentHeight = getStatus().syncInfo.latestBlockHeight
+            val blocksRemaining = (minBlockHeight - currentHeight).coerceAtLeast(0)
+            val effectiveTimeout = staleTimeout ?: staleTimeoutForBlockWait(blocksRemaining)
             waitForState(
                 "$waitingFor:block height $minBlockHeight",
-                check = { it.syncInfo.latestBlockHeight >= minBlockHeight }
+                staleTimeout = effectiveTimeout,
+                check = { it.syncInfo.latestBlockHeight >= minBlockHeight },
             )
         }.syncInfo.latestBlockHeight
+    }
+
+    /**
+     * Scale stale tolerance with blocks still to produce. Local Docker + PoC phases
+     * can pause 15–20s between blocks under load; a fixed 20s window is too tight
+     * for firstValidators / waitForNextEpoch style waits.
+     */
+    private fun staleTimeoutForBlockWait(blocksRemaining: Long): Duration {
+        val seconds = minOf(600L, maxOf(60L, blocksRemaining * 15L + 30L))
+        return Duration.ofSeconds(seconds)
     }
 
     fun waitForNextBlock(blocksToWait: Int = 1) {
@@ -136,6 +154,10 @@ data class ApplicationCLI(
 
     fun getInferenceTimeouts(): InferenceTimeoutsWrapper = wrapLog("getInferenceTimeouts", false) {
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
+    }
+
+    fun listClaimRecipients(participant: String): ClaimRecipientsResponse = wrapLog("listClaimRecipients", false) {
+        execAndParse(listOf("query", "inference", "list-claim-recipients", participant))
     }
 
     fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
@@ -674,6 +696,25 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
+    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName(), node: String? = null): TxResponse =
+        wrapLog("setClaimRecipients", true) {
+            val nodeArgs = node?.let { listOf("--node", it) } ?: emptyList()
+            val finalArgs = listOf(config.execName, "tx", "inference", "set-claim-recipients", entriesJson) +
+                getTransactionArgs(from) + nodeArgs + listOf("--output", "json")
+            val command = if (passwordInjection != null) {
+                "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
+            } else {
+                finalArgs.joinToString(" ") { shellQuote(it) }
+            }
+            val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+            val txResponse = cosmosJson.fromJson(output, TxResponse::class.java)
+            if (txResponse.code == 0) {
+                waitForTxProcessed(txResponse.txhash)
+            } else {
+                txResponse
+            }
+        }
+
     private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
@@ -689,6 +730,9 @@ data class ApplicationCLI(
         "--from",
         from
     )
+
+    private fun shellQuote(arg: String): String =
+        "'" + arg.replace("'", "'\\''") + "'"
 
     // Returns getTransactionArgs with gas-adjustment replaced by a fixed gas
     // and a --fees flag added. Used by tests that need to assert specific

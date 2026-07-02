@@ -1,5 +1,7 @@
 .PHONY: all build-docker release
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
@@ -25,11 +27,8 @@ endef
 
 all: build-docker
 
-NATIVE_ARCH := $(shell uname -m | sed 's/x86_64/amd64/' | sed 's/aarch64/arm64/')
-DOCKER_GOARCH ?= $(NATIVE_ARCH)
-
 build-docker:
-	$(eval PLATFORM=linux/$(DOCKER_GOARCH))
+	$(eval PLATFORM=$(DOCKER_PLATFORM))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/proxy:$(VERSION))
 	$(DOCKER_BUILD)
