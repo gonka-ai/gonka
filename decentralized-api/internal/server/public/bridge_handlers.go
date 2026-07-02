@@ -6,6 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient"
 	cosmos_client "decentralized-api/cosmosclient"
+	"decentralized-api/internal"
 	"errors"
 
 	"fmt"
@@ -61,6 +62,7 @@ type BridgeQueue struct {
 	drainMu       sync.Mutex              // Serializes drains; held WITHOUT the data lock during network I/O
 	recorder      cosmosclient.CosmosMessageClient
 	db            *sql.DB
+	epochCache    *internal.EpochGroupDataCache
 }
 
 // PostBlockResponse is returned by the admin POST handler on success.
@@ -97,12 +99,16 @@ type LatestBridgeBlockResponse struct {
 // NewBlockQueue creates a new queue for blocks with receipts. The latest processed
 // block numbers per chain are loaded once from SQLite at startup into the in-memory
 // latestBlocks map, so subsequent duplicate/out-of-order checks never touch disk.
+// The epoch cache is created internally from the recorder; it provides O(1) cached
+// active-participant checks so the drain skips receipts while the validator is not
+// in the active set (preventing queue stalls and unnecessary Cosmos broadcasts).
 func NewBlockQueue(recorder cosmosclient.CosmosMessageClient, db *sql.DB) *BridgeQueue {
 	q := &BridgeQueue{
 		pendingBlocks: make(map[string]*BridgeBlock),
 		latestBlocks:  make(map[string]uint64),
 		recorder:      recorder,
 		db:            db,
+		epochCache:    internal.NewEpochGroupDataCache(recorder),
 	}
 
 	// Load persisted bridge states from SQLite once on startup.
@@ -315,10 +321,35 @@ func (q *BridgeQueue) GetQueueSize() int {
 	return len(q.pendingBlocks)
 }
 
-// processBlockReceipts commits every receipt in a block. It returns success only
-// when ALL receipts are confirmed recorded on-chain; any unconfirmed receipt
-// returns an error, which the drain turns into log-and-leave-in-queue.
+// checkValidatorActive checks whether the local validator is in the active set
+// for the current epoch. Returns (active, err): active=true means broadcast,
+// active=false+nil means skip & advance, non-nil error means the node can't
+// reach the chain so the drain should pause and retry later.
+func (q *BridgeQueue) checkValidatorActive(ctx context.Context) (bool, error) {
+	epoch, err := q.epochCache.GetCurrentEpochIndex(ctx)
+	if err != nil {
+		return false, fmt.Errorf("failed to resolve current epoch: %w", err)
+	}
+	return q.epochCache.IsActiveParticipant(ctx, epoch, q.recorder.GetAccountAddress())
+}
+
+// processBlockReceipts commits every receipt in a block. Three outcomes:
+//   - active validator: broadcast + confirm each receipt (normal path).
+//   - not active: skip receipts and advance latest — other validators handle them.
+//   - epoch query error: pause the drain (return error), retry on next POST.
 func (q *BridgeQueue) processBlockReceipts(ctx context.Context, block *BridgeBlock) error {
+	if len(block.Receipts) > 0 {
+		active, err := q.checkValidatorActive(ctx)
+		if err != nil {
+			return fmt.Errorf("Bridge: Cannot determine active status, pausing drain: %w", err)
+		}
+		if !active {
+			slog.Info("Bridge: Validator not active; skipping receipts and advancing",
+				"block", block.BlockNumber,
+				"receipts", len(block.Receipts))
+			return nil
+		}
+	}
 	for _, receipt := range block.Receipts {
 		if err := q.commitReceipt(ctx, receipt, *block); err != nil {
 			return err
