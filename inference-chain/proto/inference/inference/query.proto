@@ -101,7 +101,7 @@ service Query {
 
   }
   rpc EstimateBitcoinReward (QueryEstimateBitcoinRewardRequest) returns (QueryEstimateBitcoinRewardResponse) {
-    option (google.api.http).get = "/productscience/inference/inference/estimate_bitcoin_reward/{epoch_index}/{participant}";
+    option (google.api.http).get = "/productscience/inference/inference/estimate_bitcoin_reward/{participant}";
 
   }
 
@@ -589,8 +589,7 @@ message QueryAllSettleAmountResponse {
 }
 
 message QueryEstimateBitcoinRewardRequest {
-  uint64 epoch_index = 1;
-  string participant = 2;
+  string participant = 1;
 }
 
 message QueryEstimateBitcoinRewardResponse {

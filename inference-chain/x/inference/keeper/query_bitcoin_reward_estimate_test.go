@@ -20,23 +20,28 @@ func TestEstimateBitcoinReward_InvalidRequest(t *testing.T) {
 	require.ErrorIs(t, err, status.Error(codes.InvalidArgument, "invalid request"))
 
 	_, err = k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{
-		EpochIndex:  0,
-		Participant: sample.AccAddress(),
-	})
-	require.ErrorIs(t, err, status.Error(codes.InvalidArgument, "epoch_index must be positive"))
-
-	_, err = k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{
-		EpochIndex:  1,
 		Participant: "invalid",
 	})
 	require.ErrorIs(t, err, status.Error(codes.InvalidArgument, "invalid participant address"))
 }
 
-func TestEstimateBitcoinReward_ActiveParticipantsNotFound(t *testing.T) {
+func TestEstimateBitcoinReward_SnapshotNotFound(t *testing.T) {
 	k, ctx := keepertest.InferenceKeeper(t)
 
 	_, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{
-		EpochIndex:  12,
+		Participant: sample.AccAddress(),
+	})
+
+	require.ErrorIs(t, err, status.Error(codes.NotFound, "delegation reward snapshot not found"))
+}
+
+func TestEstimateBitcoinReward_ActiveParticipantsNotFound(t *testing.T) {
+	k, ctx := keepertest.InferenceKeeper(t)
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: 12,
+	}))
+
+	_, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{
 		Participant: sample.AccAddress(),
 	})
 
@@ -73,8 +78,8 @@ func TestEstimateBitcoinReward_AppliesSnapshotPenalty(t *testing.T) {
 			{Index: addr2},
 		},
 	}))
-	_, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{EpochIndex: epoch, Participant: addr1})
-	require.ErrorIs(t, err, status.Error(codes.NotFound, "delegation reward snapshot not found for epoch"))
+	_, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{Participant: addr1})
+	require.ErrorIs(t, err, status.Error(codes.NotFound, "delegation reward snapshot not found"))
 
 	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: epoch,
@@ -83,12 +88,12 @@ func TestEstimateBitcoinReward_AppliesSnapshotPenalty(t *testing.T) {
 		},
 	}))
 
-	resp1, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{EpochIndex: epoch, Participant: addr1})
+	resp1, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{Participant: addr1})
 	require.NoError(t, err)
 	require.Equal(t, addr1, resp1.SettleAmount.Participant)
 	require.Equal(t, epoch, resp1.SettleAmount.EpochIndex)
 
-	resp2, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{EpochIndex: epoch, Participant: addr2})
+	resp2, err := k.EstimateBitcoinReward(ctx, &types.QueryEstimateBitcoinRewardRequest{Participant: addr2})
 	require.NoError(t, err)
 
 	require.Greater(t, resp2.SettleAmount.RewardCoins, uint64(0))

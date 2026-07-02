@@ -13,22 +13,22 @@ func (k Keeper) EstimateBitcoinReward(ctx context.Context, req *types.QueryEstim
 	if req == nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid request")
 	}
-	if req.EpochIndex == 0 {
-		return nil, status.Error(codes.InvalidArgument, "epoch_index must be positive")
-	}
 	if _, err := sdk.AccAddressFromBech32(req.Participant); err != nil {
 		return nil, status.Error(codes.InvalidArgument, "invalid participant address")
 	}
 
-	inputs, found, err := k.loadBitcoinRewardInputs(ctx, req.EpochIndex)
+	snapshot, snapshotFound := k.GetDelegationRewardTransferSnapshot(ctx)
+	if !snapshotFound || snapshot.EpochIndex == 0 {
+		return nil, status.Error(codes.NotFound, "delegation reward snapshot not found")
+	}
+	epochIndex := snapshot.EpochIndex
+
+	inputs, found, err := k.loadBitcoinRewardInputs(ctx, epochIndex)
 	if !found {
 		return nil, status.Error(codes.NotFound, "active participants not found for epoch")
 	}
 	if err != nil {
 		return nil, status.Error(codes.Internal, err.Error())
-	}
-	if snapshot, snapshotFound := k.GetDelegationRewardTransferSnapshot(ctx); !snapshotFound || snapshot.EpochIndex != req.EpochIndex {
-		return nil, status.Error(codes.NotFound, "delegation reward snapshot not found for epoch")
 	}
 
 	amounts, _, err := GetBitcoinSettleAmountsWithTransfers(
@@ -51,7 +51,7 @@ func (k Keeper) EstimateBitcoinReward(ctx context.Context, req *types.QueryEstim
 			continue
 		}
 		settleAmount := *amount.Settle
-		settleAmount.EpochIndex = req.EpochIndex
+		settleAmount.EpochIndex = epochIndex
 
 		if amount.Error != nil {
 			return nil, status.Error(codes.Internal, amount.Error.Error())

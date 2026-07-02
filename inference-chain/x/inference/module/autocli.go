@@ -338,9 +338,9 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 				{
 					RpcMethod:      "EstimateBitcoinReward",
-					Use:            "estimate-bitcoin-reward [epoch-index] [participant]",
-					Short:          "Estimate Bitcoin-style reward for a participant",
-					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "epoch_index"}, {ProtoField: "participant"}},
+					Use:            "estimate-bitcoin-reward [participant]",
+					Short:          "Estimate Bitcoin-style reward for a participant using the current reward snapshot",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{{ProtoField: "participant"}},
 				},
 				{
 					RpcMethod:      "ListClaimRecipients",

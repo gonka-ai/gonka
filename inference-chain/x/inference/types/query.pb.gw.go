@@ -530,17 +530,6 @@ func request_Query_EstimateBitcoinReward_0(ctx context.Context, marshaler runtim
 		_   = err
 	)
 
-	val, ok = pathParams["epoch_index"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
-	}
-
-	protoReq.EpochIndex, err = runtime.Uint64(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
-	}
-
 	val, ok = pathParams["participant"]
 	if !ok {
 		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "participant")
@@ -567,17 +556,6 @@ func local_request_Query_EstimateBitcoinReward_0(ctx context.Context, marshaler 
 		err error
 		_   = err
 	)
-
-	val, ok = pathParams["epoch_index"]
-	if !ok {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "missing parameter %s", "epoch_index")
-	}
-
-	protoReq.EpochIndex, err = runtime.Uint64(val)
-
-	if err != nil {
-		return nil, metadata, status.Errorf(codes.InvalidArgument, "type mismatch, parameter: %s, error: %v", "epoch_index", err)
-	}
 
 	val, ok = pathParams["participant"]
 	if !ok {
@@ -7713,7 +7691,7 @@ var (
 
 	pattern_Query_SettleAmountAll_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2}, []string{"productscience", "inference", "settle_amount"}, "", runtime.AssumeColonVerbOpt(true)))
 
-	pattern_Query_EstimateBitcoinReward_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "estimate_bitcoin_reward", "epoch_index", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
+	pattern_Query_EstimateBitcoinReward_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3}, []string{"productscience", "inference", "estimate_bitcoin_reward", "participant"}, "", runtime.AssumeColonVerbOpt(true)))
 
 	pattern_Query_EpochGroupValidations_0 = runtime.MustPattern(runtime.NewPattern(1, []int{2, 0, 2, 1, 2, 1, 2, 2, 1, 0, 4, 1, 5, 3, 1, 0, 4, 1, 5, 4}, []string{"productscience", "inference", "epoch_group_validations", "participant", "epoch_index"}, "", runtime.AssumeColonVerbOpt(true)))
 
