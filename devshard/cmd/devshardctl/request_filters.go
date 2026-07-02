@@ -139,6 +139,7 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 	case hasMaxCompletionTokens:
 		maxCompletionTokens := capOutputTokens(ctx.Request.MaxCompletionTokens, true, ctx.AdminAuthenticated, limits)
 		ctx.Document.Set("max_completion_tokens", maxCompletionTokens)
+		ctx.Document.Set("max_tokens", maxCompletionTokens)
 		ctx.Request.MaxCompletionTokens = maxCompletionTokens
 		ctx.Request.MaxTokens = maxCompletionTokens
 	default:

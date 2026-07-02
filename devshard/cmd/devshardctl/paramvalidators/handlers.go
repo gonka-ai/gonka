@@ -210,6 +210,74 @@ func (h ValidateUintParameter) HandleParameter(ctx ParameterContext) error {
 	return nil
 }
 
+// RejectNumberParameter rejects the request when the parameter is present and parses as a
+// number but Allow returns false for it. Non-numeric or absent values pass through so the
+// dedicated type/shape validators own those cases. Used for range gates whose lower bound is
+// exclusive (e.g. top_p > 0), where clamping to the bound would itself be an illegal value.
+type RejectNumberParameter struct {
+	Allow   func(float64) bool
+	Message string
+}
+
+func (h RejectNumberParameter) HandleParameter(ctx ParameterContext) error {
+	value, exists := ctx.Document[ctx.Parameter]
+	if !exists {
+		return nil
+	}
+	number, ok := devshard.JSONNumericFloat64(value)
+	if !ok {
+		return nil
+	}
+	if h.Allow == nil || h.Allow(number) {
+		return nil
+	}
+	return fmt.Errorf("%s: %s", ctx.Parameter, h.Message)
+}
+
+// ValidateScalarParameter rejects the request when the parameter is present (non-null) but
+// Valid returns false for its raw JSON value. Catches wrong-typed scalars at the boundary
+// instead of forwarding them for an opaque upstream 400.
+type ValidateScalarParameter struct {
+	Valid   func(any) bool
+	Message string
+}
+
+func (h ValidateScalarParameter) HandleParameter(ctx ParameterContext) error {
+	value, exists := ctx.Document[ctx.Parameter]
+	if !exists || value == nil {
+		return nil
+	}
+	if h.Valid == nil || h.Valid(value) {
+		return nil
+	}
+	return fmt.Errorf("%s: %s", ctx.Parameter, h.Message)
+}
+
+// ValidateListElementsParameter rejects the request when any array element fails Valid.
+// Pass-through when the field is absent or not an array.
+type ValidateListElementsParameter struct {
+	Valid   func(any) bool
+	Message string
+}
+
+func (h ValidateListElementsParameter) HandleParameter(ctx ParameterContext) error {
+	raw, ok := ctx.Document[ctx.Parameter].([]any)
+	if !ok {
+		return nil
+	}
+	for index, item := range raw {
+		if h.Valid != nil && !h.Valid(item) {
+			return fmt.Errorf("%s[%d]: %s", ctx.Parameter, index, h.Message)
+		}
+	}
+	return nil
+}
+
+// JSON type predicates for the Validate*Parameter handlers above.
+func IsJSONBool(value any) bool   { _, ok := value.(bool); return ok }
+func IsJSONString(value any) bool { _, ok := value.(string); return ok }
+func IsJSONUint(value any) bool   { _, ok := devshard.JSONNumericUint64(value); return ok }
+
 // LengthCapListParameter bounds the number of entries in an array field, and
 // optionally the byte length of each string entry. MaxEntries=0 disables the
 // array cap; MaxEntryLen=0 disables the per-string cap.

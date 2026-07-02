@@ -5,7 +5,11 @@ const (
 	MaxChatRequestBodySize       = 10 * 1024 * 1024
 	MaxLoggedResponseFormatBytes = 2048 * 1024
 	MaxChatRequestChoices        = 5
+	MinTemperature               = 0.0
 	MaxTemperature               = 2.0
+	MinPMin                      = 0.0
+	MinPMax                      = 1.0
+	TopPMax                      = 1.0
 	MaxRepetitionPenalty         = 2.0
 )
 
