@@ -36,9 +36,9 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `presence_penalty` | float | 0.0 | clamp `[-2, 2]`; see [Kimi override](kimi-k2.6.md#parameter-overrides) for force-rewrite | [[OpenAI-1]](references.md#openai) |
 | `repetition_penalty` | float | 1.0 | clamp `>2` → `2`; reject `≤0` (must be `>0` — [why](troubleshooting.md#reject-out-of-range-sampling)); vLLM extension | [[vLLM-1]](references.md#vllm) |
 | `logit_bias` | object | — | ≤1024 entries; value range `[-100, 100]` | [[OpenAI-1]](references.md#openai) |
-| `max_tokens` | int | — | must be `≥1` (reject `0` — [why](troubleshooting.md#reject-nonpositive-max-tokens)); capped to model max; Kimi-K2.6 floors small values to 16 ([why](troubleshooting.md#kimi-empty-content-think-burn)) | [[OpenAI-1]](references.md#openai) |
-| `max_completion_tokens` | int | — | alias for max_tokens (same `≥1` reject / cap / Kimi-floor handling) | [[OpenAI-1]](references.md#openai) |
-| `stream` | bool | false | must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)); pass-through | [[OpenAI-1]](references.md#openai) |
+| `max_tokens` | int | — | clamp; silently raised to 64 when below, so the `min_tokens` floor always fits | [[OpenAI-1]](references.md#openai) |
+| `max_completion_tokens` | int | — | alias for max_tokens | [[OpenAI-1]](references.md#openai) |
+| `stream` | bool | false | pass-through | [[OpenAI-1]](references.md#openai) |
 | `stream_options` | object | — | strip when stream≠true; whitelist `include_usage`; strip `continuous_usage_stats` | [[OpenAI-1]](references.md#openai) |
 | `stop` | str\|array | — | array entries must be strings (else reject — [why](troubleshooting.md#reject-malformed-param-types)); ≤16 entries × 256 B each | [[OpenAI-1]](references.md#openai) |
 | `n` | int | 1 | hard cap ≤5; coerce to 1 when temperature==0 ([why](troubleshooting.md#coerce-n-when-temperature-zero)) | [[OpenAI-1]](references.md#openai), [[CVE-9]](references.md#security-advisories) |
@@ -67,9 +67,9 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `enable_thinking` | bool | — | translate to chat_template_kwargs ([why](troubleshooting.md#translate-enable_thinking)) | [[Qwen-3]](references.md#qwen) |
 | `thinking_config` | object | — | silent-strip ([why](troubleshooting.md#strip-thinking_config)) | — |
 | `think` | bool | — | silent-strip ([why](troubleshooting.md#strip-think)) | — |
-| `min_tokens` | int | — | vLLM extension; must be a non-negative integer (else reject — [why](troubleshooting.md#reject-malformed-param-types)); clamp to ≤max_tokens; conditional strip when stop_token_ids set | [[vLLM-1]](references.md#vllm) |
-| `bad_words` | string array | — | vLLM extension; entries must be strings (else reject — [why](troubleshooting.md#reject-malformed-param-types)); ≤64 entries × 128 B per entry | [[vLLM-1]](references.md#vllm) |
-| `stop_token_ids` | int array | — | vLLM extension; entries must be non-negative integers (else reject — [why](troubleshooting.md#reject-malformed-param-types)); ≤64 | [[vLLM-1]](references.md#vllm) |
+| `min_tokens` | int | 64 | vLLM extension; **floored to 64** — set to 64 when absent or below 64, kept when ≥64 (clamped ≤`max_tokens`, which is itself raised to ≥64); applied identically on inference and validation replay so both generate a comparable token count | [[vLLM-1]](references.md#vllm) |
+| `bad_words` | string array | — | vLLM extension; ≤64 entries × 128 B per entry | [[vLLM-1]](references.md#vllm) |
+| `stop_token_ids` | int array | — | **unsupported — silently stripped**: with the always-on `min_tokens` floor, vLLM masks stop-token logits and an out-of-vocab id CUDA-asserts the node; use `stop` (strings) instead | [[vLLM-1]](references.md#vllm) |
 | `skip_special_tokens` | bool | — | vLLM extension; must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)) | [[vLLM-1]](references.md#vllm) |
 | `detokenize` | bool | — | vLLM extension; must be a boolean (else reject — [why](troubleshooting.md#reject-malformed-param-types)) | [[vLLM-1]](references.md#vllm) |
 | `chat_template_kwargs` | object | — | depth ≤16, nodes ≤128, size ≤16 KiB; key denylist (`chat_template`, `tokenize`, `tools`, `documents`, `conversation`, `continue_final_message`, `padding`, `truncation`, `max_length`, `return_tensors`, `return_dict`) — CVE-2025-61620 / CVE-2025-62426 mitigation | [[vLLM-1]](references.md#vllm), [[CVE-5]](references.md#security-advisories), [[CVE-6]](references.md#security-advisories) |

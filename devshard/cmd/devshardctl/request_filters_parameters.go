@@ -452,8 +452,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
 			newParameter("stop_token_ids").
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopTokenIdsMaxEntries}}).
-				withRule(RequestFilterStagePreValidation, elementsMustBeUint),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
 			newParameter("reasoning").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},
@@ -530,15 +529,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
-			newParameter("min_tokens").
-				withRule(RequestFilterStagePreValidation, mustBeUint).
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ConditionalStripParameter{
-					Predicate: func(ctx paramvalidators.ParameterContext) bool {
-						_, ok := ctx.Document["stop_token_ids"]
-						return ok
-					},
-				}}).
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ClampUintToFieldParameter{MaxField: "max_tokens"}}),
+			newParameter("min_tokens"),
 			newParameter("bad_words").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{
