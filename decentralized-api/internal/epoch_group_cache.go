@@ -149,6 +149,33 @@ func (c *EpochGroupDataCache) IsActiveParticipant(ctx context.Context, epochInde
 	return false, nil
 }
 
+// GetCurrentEpochIndex returns the highest epoch index in the multi-epoch cache.
+// On a cache hit this is O(1) with no RPC. On a cold start (empty cache) it
+// issues a single CurrentEpochGroupData query to seed the epoch index.
+func (c *EpochGroupDataCache) GetCurrentEpochIndex(ctx context.Context) (uint64, error) {
+	c.mu.RLock()
+	var max uint64
+	found := false
+	for idx := range c.epochCache {
+		if !found || idx > max {
+			max = idx
+			found = true
+		}
+	}
+	c.mu.RUnlock()
+
+	if found {
+		return max, nil
+	}
+
+	queryClient := c.recorder.NewInferenceQueryClient()
+	resp, err := queryClient.GetCurrentEpoch(ctx, &types.QueryGetCurrentEpochRequest{})
+	if err != nil {
+		return 0, err
+	}
+	return resp.Epoch, nil
+}
+
 // pruneOldest removes epochs older than currentEpoch - 1
 func (c *EpochGroupDataCache) pruneOldest(currentEpoch uint64) {
 	for epochId := range c.epochCache {
