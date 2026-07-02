@@ -21,6 +21,9 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | `extra_body` keys appear at top level | OpenAI Python SDK passthrough | [#unwrap-extra_body](#unwrap-extra_body) |
 | `enable_thinking` lifts into `chat_template_kwargs` | Qwen3 canonical placement | [#translate-enable_thinking](#translate-enable_thinking) |
 | `reasoning` object decomposed to top-level `reasoning_effort` | OpenRouter unified-reasoning convention | [#translate-reasoning](#translate-reasoning) |
+| 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
+| 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
+| 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
 
 ## Silent strips
 
@@ -500,6 +503,42 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 Multiple parallel tool results in one block: one array entry per call.
 
 **Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #reject-out-of-range-sampling
+
+**What**: HTTP 400 on `top_p ≤ 0`, `repetition_penalty ≤ 0`, or a `top_k` that is neither `-1` nor `≥ 1`.
+
+**Why**: These sampling knobs have ranges the backend enforces: `top_p` must be in `(0, 1]` and `repetition_penalty` must be `> 0` per the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm); `top_k` accepts `-1` (disabled) or any integer `≥ 1`. The low end is an *exclusive* bound, so clamping to it would itself be invalid (e.g. `top_p = 0` is not a legal value) — the gateway returns a clear, field-named 400 at the boundary instead of forwarding a value the engine rejects with an opaque error. Values above the *upper* bound are clamped instead (`top_p > 1 → 1`, `repetition_penalty > 2 → 2`), and `temperature` / `min_p` are clamped into `[0, 2]` / `[0, 1]`.
+
+**Fix (client-side)**: send `top_p` in `(0, 1]`, `repetition_penalty > 0`, and `top_k` as `-1` or a positive integer.
+
+**Captured-requests**: n/a — no captures observed.
+
+---
+
+### #reject-nonpositive-max-tokens
+
+**What**: HTTP 400 on `max_tokens: 0` (or `max_completion_tokens: 0`) for non-Kimi routes.
+
+**Why**: A zero output budget is not a meaningful request — vLLM emits no content, and the gateway's redundancy layer then waits for a winner that can never arrive, so the request hangs to the deadline instead of failing fast. The gateway requires `max_tokens ≥ 1` [[OpenAI-1]](references.md#openai). Kimi-K2.6 instead floors small budgets to 16 as part of its think-burn mitigation (see [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn)), so `0` becomes `16` on that route rather than a 400.
+
+**Fix (client-side)**: send `max_tokens ≥ 1`, or omit it to take the route default.
+
+**Captured-requests**: n/a — no captures observed.
+
+---
+
+### #reject-malformed-param-types
+
+**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`; non-integer elements in `stop_token_ids`.
+
+**Why**: vLLM rejects these with type errors at the engine boundary, producing opaque upstream 400s. The gateway type-checks them up front against the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm) so the client gets an immediate, field-named error instead of a backend round-trip.
+
+**Fix (client-side)**: send each field with its declared type — booleans for the flags, non-negative integers for `seed` / `min_tokens` and `stop_token_ids` elements, strings for `stop` / `bad_words` elements.
+
+**Captured-requests**: n/a — no captures observed.
 
 ## Per-model gotchas
 

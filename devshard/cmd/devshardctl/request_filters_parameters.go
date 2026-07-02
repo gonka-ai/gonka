@@ -110,7 +110,6 @@ func (h MinUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLM
 	return nil
 }
 
-
 // DocumentValidator: validators in paramvalidators expose this contract. May mutate
 // vctx.Document for per-model rewrites alongside shape checks.
 type DocumentValidator interface {
@@ -343,18 +342,11 @@ func (ctx *RequestFilterContext) DecodeRequest() error {
 	return nil
 }
 
-// SyncRequestView refreshes ctx.Request after PostLimits rules ran. Why we explicitly
-// preserve the token fields instead of re-reading them from the document:
-//
-//   - When the client sends only `max_completion_tokens` (no `max_tokens`),
-//     `applyOutputTokenLimits` sets `ctx.Request.MaxTokens` from the resolved
-//     `max_completion_tokens` (see request_filters.go:139) but does NOT write a
-//     corresponding `max_tokens` key into the document. Re-reading the document would
-//     therefore reset `req.MaxTokens` to 0.
-//   - In the other three branches of `applyOutputTokenLimits`, the document DOES carry
-//     the same value, so preserving from `ctx.Request` is a no-op. Net effect: this
-//     branch only matters for the max-completion-only path, locked in by
-//     TestNormalizeChatRequestDefaultsAndCapsOutputTokens.
+// SyncRequestView refreshes ctx.Request after PostLimits rules ran. The token fields
+// are preserved from ctx.Request rather than re-read because applyOutputTokenLimits is
+// their source of truth; all four of its branches now write the same max_tokens /
+// max_completion_tokens into the document (the max-completion-only branch mirrors into
+// max_tokens too), so this preservation is a harmless no-op safety net.
 //
 // Other fields are re-read so caps applied by PostLimits rules (for example `n` via
 // paramvalidators.CapUintParameter through the adapter) propagate into the projection.
@@ -416,6 +408,26 @@ type VLLMParameterCatalog struct {
 
 var defaultParameterCatalog = defaultVLLMParameterCatalog()
 
+// Shared stateless parameter handlers reused across catalog entries. The rejectNumber gates
+// enforce exclusive-lower-bound ranges (clamping to the bound would itself be an illegal
+// value, so reject instead); the mustBe*/elementsMustBe* validators reject wrong-typed
+// scalars and array elements at the gateway boundary rather than forwarding them for an
+// opaque upstream 400.
+var (
+	rejectNonPositiveNumber = ParameterHandlerAdapter{Handler: paramvalidators.RejectNumberParameter{
+		Allow:   func(value float64) bool { return value > 0 },
+		Message: "must be greater than 0",
+	}}
+	rejectInvalidTopK = ParameterHandlerAdapter{Handler: paramvalidators.RejectNumberParameter{
+		Allow:   func(value float64) bool { return value == -1 || value >= 1 },
+		Message: "must be -1 or a positive integer",
+	}}
+	mustBeBool           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateScalarParameter{Valid: paramvalidators.IsJSONBool, Message: "must be a boolean"}}
+	mustBeUint           = ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}
+	elementsMustBeUint   = ParameterHandlerAdapter{Handler: paramvalidators.ValidateListElementsParameter{Valid: paramvalidators.IsJSONUint, Message: "must be an integer token id"}}
+	elementsMustBeString = ParameterHandlerAdapter{Handler: paramvalidators.ValidateListElementsParameter{Valid: paramvalidators.IsJSONString, Message: "must be a string"}}
+)
+
 // The catalog is the single source of truth for how each supported OpenAI/vLLM field is treated.
 func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 	parameters := slices.Concat(
@@ -423,22 +435,25 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("messages").
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: MessagesMaxEntries}}),
 			newParameter("seed").
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ValidateUintParameter{}}),
+				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("n").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Min: 1, Max: MaxChatRequestChoices}}).
 				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
 					Validator: paramvalidators.GreedySamplingValidator{},
 				}),
 			newParameter("temperature").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxTemperature)}}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Min: floatPointer(MinTemperature), Max: floatPointer(MaxTemperature)}}),
 			newParameter("repetition_penalty").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(MaxRepetitionPenalty)}}).
+				withRule(RequestFilterStagePostLimits, rejectNonPositiveNumber),
 			newParameter("logit_bias").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatMapParameter{StripNonFinite: true, Min: floatPointer(LogitBiasMinValue), Max: floatPointer(LogitBiasMaxValue), DropFieldIfEmpty: true, MaxEntries: LogitBiasMaxEntries}}),
 			newParameter("stop").
+				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopMaxEntries, MaxEntryLen: StopMaxEntryLen}}),
 			newParameter("stop_token_ids").
-				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopTokenIdsMaxEntries}}),
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.LengthCapListParameter{MaxEntries: StopTokenIdsMaxEntries}}).
+				withRule(RequestFilterStagePreValidation, elementsMustBeUint),
 			newParameter("reasoning").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ReasoningValidator{},
@@ -517,6 +532,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
 			newParameter("min_tokens").
+				withRule(RequestFilterStagePreValidation, mustBeUint).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.ConditionalStripParameter{
 					Predicate: func(ctx paramvalidators.ParameterContext) bool {
 						_, ok := ctx.Document["stop_token_ids"]
@@ -525,6 +541,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				}}).
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ClampUintToFieldParameter{MaxField: "max_tokens"}}),
 			newParameter("bad_words").
+				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{
 					Keep: func(value string) bool {
 						return strings.TrimSpace(value) != ""
@@ -581,18 +598,18 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("structured_outputs").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.StructuredOutputsValidator{
-						RejectedModels:       []string{kimiK26ModelID},
-						MaxDepth:             StructuredOutputsMaxDepth,
-						MaxSize:              StructuredOutputsMaxSize,
-						MaxNodes:             StructuredOutputsMaxNodes,
-						MaxBranch:            StructuredOutputsMaxBranch,
-						MaxEnum:              StructuredOutputsMaxEnum,
-						MaxPatternLen:        StructuredOutputsMaxPatternLen,
-						MaxChoiceEntries:     StructuredOutputsMaxChoiceEntries,
-						MaxChoiceEntryLen:    StructuredOutputsMaxChoiceEntryLen,
-						MaxGrammarLen:        StructuredOutputsMaxGrammarLen,
-						MaxGrammarNesting:    StructuredOutputsMaxGrammarNesting,
-						MaxStructuralTagLen:  StructuredOutputsMaxStructuralTagLen,
+						RejectedModels:      []string{kimiK26ModelID},
+						MaxDepth:            StructuredOutputsMaxDepth,
+						MaxSize:             StructuredOutputsMaxSize,
+						MaxNodes:            StructuredOutputsMaxNodes,
+						MaxBranch:           StructuredOutputsMaxBranch,
+						MaxEnum:             StructuredOutputsMaxEnum,
+						MaxPatternLen:       StructuredOutputsMaxPatternLen,
+						MaxChoiceEntries:    StructuredOutputsMaxChoiceEntries,
+						MaxChoiceEntryLen:   StructuredOutputsMaxChoiceEntryLen,
+						MaxGrammarLen:       StructuredOutputsMaxGrammarLen,
+						MaxGrammarNesting:   StructuredOutputsMaxGrammarNesting,
+						MaxStructuralTagLen: StructuredOutputsMaxStructuralTagLen,
 					},
 				}),
 			newParameter("safety_identifier").
@@ -619,30 +636,46 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 		},
 		[]VLLMParameter{
 			// PreValidation so the floor lands before applyOutputTokenLimits (caps down) and the
-			// thinking_token_budget defaulter (derives ttb from max_tokens).
+			// thinking_token_budget defaulter (derives ttb from max_tokens). Kimi clamps a
+			// too-small budget up to its floor (think-burn mitigation); other models reject a
+			// non-positive budget outright since they have no such floor.
 			newParameter("max_tokens").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
-					Models:  []string{kimiK26ModelID},
-					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
+					Models:           []string{kimiK26ModelID},
+					Handler:          MinUintParameterHandler{Min: kimiMaxTokensMin},
+					UnmatchedHandler: rejectNonPositiveNumber,
 				}),
 			newParameter("max_completion_tokens").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
-					Models:  []string{kimiK26ModelID},
-					Handler: MinUintParameterHandler{Min: kimiMaxTokensMin},
+					Models:           []string{kimiK26ModelID},
+					Handler:          MinUintParameterHandler{Min: kimiMaxTokensMin},
+					UnmatchedHandler: rejectNonPositiveNumber,
 				}),
+			// Sampling knobs with per-field ranges: min_p clamps into [0, 1]; top_p clamps
+			// down to 1 but rejects a non-positive value (exclusive lower bound); top_k
+			// accepts -1 (disabled) or any integer >= 1.
+			newParameter("min_p").
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Min: floatPointer(MinPMin), Max: floatPointer(MinPMax)}}),
+			newParameter("top_p").
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true, Max: floatPointer(TopPMax)}}).
+				withRule(RequestFilterStagePostLimits, rejectNonPositiveNumber),
+			newParameter("top_k").
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true}}).
+				withRule(RequestFilterStagePostLimits, rejectInvalidTopK),
 		},
+		// model and stream are type-checked during the typed parse (string / bool); register
+		// them as known so the whitelist keeps them.
 		newParameters([]string{
 			"model",
 			"stream",
+		}),
+		// The remaining boolean flags are pass-through fields, so validate their type here.
+		newParameters([]string{
 			"skip_special_tokens",
 			"detokenize",
 			"parallel_tool_calls",
-		}),
-		newParameters([]string{"top_p", "top_k", "min_p"},
-			ParameterRule{
-				Stage:   RequestFilterStagePostLimits,
-				Handler: ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true}},
-			},
+		},
+			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),
 		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "cache_key", "extra_headers", "thinking_config", "think"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}},
