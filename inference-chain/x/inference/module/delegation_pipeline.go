@@ -923,7 +923,7 @@ func emitWeightPipelineLogs(
 	eligibleModels []string,
 	participants []*types.ActiveParticipant,
 	modes map[string]map[string]ParticipationMode,
-	consensus, afterPenalty map[string]int64,
+	consensus, beforeCollateral map[string]int64,
 	acc *PenaltyAccumulator,
 ) {
 	for _, g := range groups {
@@ -949,10 +949,8 @@ func emitWeightPipelineLogs(
 			"addr", p.Index,
 			"modes", formatModes(p.Index, eligibleModels, modes),
 			"consensus", consensus[p.Index],
-			"penalty", acc.AppliedFraction(p.Index).String(),
-			"transfer_in", acc.TransferIn(p.Index),
-			"transfer_out", acc.TransferOut(p.Index),
-			"after_penalty", afterPenalty[p.Index],
+			"reward_penalty", acc.AppliedFraction(p.Index).String(),
+			"before_collateral", beforeCollateral[p.Index],
 			"final", p.Weight,
 			"vp", formatVotingPowers(p.VotingPowers),
 		)

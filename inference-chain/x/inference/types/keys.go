@@ -125,7 +125,8 @@ var (
 	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
 	ClaimRecipientsPrefix           = collections.NewPrefix(106)
 	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
-	ParamsKey                       = []byte("p_inference")
+	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
+	ParamsKey                              = []byte("p_inference")
 )
 
 func KeyPrefix(p string) []byte {

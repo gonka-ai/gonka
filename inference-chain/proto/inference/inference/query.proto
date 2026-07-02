@@ -100,6 +100,10 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/settle_amount";
 
   }
+  rpc EstimateBitcoinReward (QueryEstimateBitcoinRewardRequest) returns (QueryEstimateBitcoinRewardResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/estimate_bitcoin_reward/{participant}";
+
+  }
 
   // Queries a list of EpochGroupValidations items.
   rpc EpochGroupValidations    (QueryGetEpochGroupValidationsRequest) returns (QueryGetEpochGroupValidationsResponse) {
@@ -582,6 +586,14 @@ message QueryAllSettleAmountRequest {
 message QueryAllSettleAmountResponse {
   repeated SettleAmount                           settle_amount = 1 [(gogoproto.nullable) = false];
            cosmos.base.query.v1beta1.PageResponse pagination    = 2;
+}
+
+message QueryEstimateBitcoinRewardRequest {
+  string participant = 1;
+}
+
+message QueryEstimateBitcoinRewardResponse {
+  SettleAmount settle_amount = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryGetEpochGroupValidationsRequest {

@@ -143,6 +143,12 @@ func (cm *ConfigManager) GetChainNodeConfig() ChainNodeConfig {
 	return cm.currentConfig.ChainNode
 }
 
+func (cm *ConfigManager) GetEarlyShareGuardConfig() EarlyShareGuardConfig {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	return cm.currentConfig.EarlyShareGuard
+}
+
 func (cm *ConfigManager) GetApiConfig() ApiConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
@@ -608,7 +614,11 @@ func readConfig(provider koanf.Provider) (Config, error) {
 	if err != nil {
 		log.Fatalf("error loading env: %v", err)
 	}
-	var config Config
+	// Pre-seed early-share guard defaults so any field absent from yaml/env keeps
+	// its default while explicitly-set values override. koanf unmarshals with
+	// ZeroFields=false, so only keys actually present overwrite these. This is
+	// the single defaulting mechanism for the guard (works for the bool too).
+	config := Config{EarlyShareGuard: DefaultEarlyShareGuardConfig()}
 	err = k.Unmarshal("", &config)
 	if err != nil {
 		log.Fatalf("error unmarshalling config: %v", err)

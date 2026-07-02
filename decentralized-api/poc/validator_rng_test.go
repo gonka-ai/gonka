@@ -88,6 +88,7 @@ func runValidateParticipant(t *testing.T, pocStrongerRng bool) *mlnodeclient.PoC
 		[]broker.NodeResponse{testNode}, &nodeCounter,
 		1000, "sampling-hash", "start-hash",
 		pocParams, 1,
+		nil,
 	)
 
 	require.Equal(t, validateSuccess, result)

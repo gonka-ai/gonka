@@ -750,11 +750,20 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	acc.Apply(activeParticipants)
+	penalties := acc.RewardPenalties()
+	rewardTransfers := BuildDelegationRewardTransfers(
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	allRewardTransfers := rewardTransfers.Records()
 
-	afterPenalty := make(map[string]int64, len(activeParticipants))
+	beforeCollateral := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
-		afterPenalty[p.Index] = p.Weight
+		beforeCollateral[p.Index] = p.Weight
 	}
 
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
@@ -792,7 +801,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
 		participationState.eligibleModels, activeParticipants,
 		participationState.participationByModel,
-		consensusWeights, afterPenalty, acc)
+		consensusWeights, beforeCollateral, acc)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -828,6 +837,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: upcomingEpoch.Index,
+		Transfers:  allRewardTransfers,
+		Penalties:  penalties,
+	}); err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
+		return
+	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)

@@ -26,6 +26,39 @@ type ManagedArtifactStore struct {
 	retainCount int
 	cancel      context.CancelFunc
 	flushCancel context.CancelFunc
+	// pruneHooks are invoked (best-effort) with the stage height whenever a
+	// stage is pruned. Used to ride other DAPI-local stage data (e.g. the
+	// early-share guard's checkpoints) on the same retention cadence.
+	pruneHooks []func(stageHeight int64)
+}
+
+// AddPruneHook registers a callback invoked with the stage height each time a
+// stage is pruned. Hooks must be added before pruning begins (i.e. at wiring
+// time) and should not block.
+func (m *ManagedArtifactStore) AddPruneHook(fn func(stageHeight int64)) {
+	if fn == nil {
+		return
+	}
+	m.withWriteLock(func() {
+		m.pruneHooks = append(m.pruneHooks, fn)
+	})
+}
+
+func (m *ManagedArtifactStore) runPruneHooks(stageHeight int64) {
+	var hooks []func(stageHeight int64)
+	m.withReadLock(func() {
+		hooks = append(hooks, m.pruneHooks...)
+	})
+	for _, fn := range hooks {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Warn("ManagedArtifactStore: prune hook panicked", types.PoC, "stage", stageHeight, "panic", r)
+				}
+			}()
+			fn(stageHeight)
+		}()
+	}
 }
 
 type storeKey struct {
@@ -310,6 +343,8 @@ func (m *ManagedArtifactStore) PruneStore(pocStageStartHeight int64) error {
 	if err := os.RemoveAll(storeDir); err != nil {
 		errs = append(errs, fmt.Errorf("remove store dir: %w", err))
 	}
+
+	m.runPruneHooks(pocStageStartHeight)
 
 	logging.Info("Pruned artifact store", types.PoC, "height", pocStageStartHeight)
 	if len(errs) > 0 {

@@ -29,6 +29,39 @@ func TestConfigLoad(t *testing.T) {
 	require.Equal(t, "/root/.inference", testManager.GetChainNodeConfig().KeyringDir)
 }
 
+func TestEarlyShareGuardDefaults(t *testing.T) {
+	t.Run("defaults applied when absent from yaml/env", func(t *testing.T) {
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF")
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+
+		got := m.GetEarlyShareGuardConfig()
+		def := apiconfig.DefaultEarlyShareGuardConfig()
+		require.Equal(t, def.Mode, got.Mode)
+		require.Equal(t, def.FirstFraction, got.FirstFraction)
+		require.Equal(t, def.ThresholdRatio, got.ThresholdRatio)
+		require.True(t, got.RequirePrefixProof, "require_prefix_proof should default to true")
+	})
+
+	t.Run("explicit false overrides the true default", func(t *testing.T) {
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__MODE", "enforce")
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF", "false")
+		defer func() {
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF")
+		}()
+		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
+		require.NoError(t, m.Load())
+
+		got := m.GetEarlyShareGuardConfig()
+		require.Equal(t, "enforce", got.Mode)
+		require.False(t, got.RequirePrefixProof, "explicit false must win over default true")
+		// Untouched fields keep their defaults.
+		require.Equal(t, apiconfig.DefaultEarlyShareGuardConfig().FirstFraction, got.FirstFraction)
+	})
+}
+
 func TestNewPoCParamsCache(t *testing.T) {
 	cache := apiconfig.NewPoCParamsCache([]*types.PoCModelConfig{
 		nil,
