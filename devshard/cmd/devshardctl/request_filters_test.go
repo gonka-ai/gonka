@@ -203,6 +203,13 @@ func TestNormalizeChatRequestCapsChoices(t *testing.T) {
 	require.NotContains(t, string(body), `"n"`)
 }
 
+func TestNormalizeChatRequestClampsZeroChoicesToOne(t *testing.T) {
+	body, req, err := normalizeChatRequest([]byte(`{"n":0,"messages":[{"role":"user","content":"hi"}]}`))
+	require.NoError(t, err)
+	require.EqualValues(t, 1, req.N)
+	require.Contains(t, string(body), `"n":1`)
+}
+
 func TestNormalizeChatRequestClampsMinTokensAboveEffectiveMax(t *testing.T) {
 	oldDefault := DefaultRequestMaxTokens
 	oldCap := RequestMaxTokensCap

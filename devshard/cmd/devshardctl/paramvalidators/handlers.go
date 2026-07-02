@@ -155,6 +155,7 @@ func (h ForceLiteralParameter) HandleParameter(ctx ParameterContext) error {
 
 // CapUintParameter caps a uint64-shaped field to Max.
 type CapUintParameter struct {
+	Min uint64
 	Max uint64
 }
 
@@ -162,6 +163,9 @@ func (h CapUintParameter) HandleParameter(ctx ParameterContext) error {
 	value, ok := numericJSONValueAsUint64FromMap(ctx.Document, ctx.Parameter)
 	if !ok {
 		return nil
+	}
+	if value < h.Min {
+		ctx.Document[ctx.Parameter] = h.Min
 	}
 	if value > h.Max {
 		ctx.Document[ctx.Parameter] = h.Max
