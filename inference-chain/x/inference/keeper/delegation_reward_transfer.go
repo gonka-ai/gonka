@@ -18,6 +18,11 @@ func (k Keeper) GetDelegationRewardTransferSnapshot(ctx context.Context) (types.
 	return snapshot, true
 }
 
+// The reward snapshot is intentionally a singleton. Settlement is one-shot:
+// SettleAccounts runs only during the epoch transition for the effective epoch,
+// and failed settlement is not recomputed later. The epoch guard prevents callers
+// from applying the currently stored snapshot to a different epoch; historical
+// reward estimates are available only while that epoch's snapshot is stored.
 func (k Keeper) GetDelegationRewardTransfersForEpoch(ctx context.Context, epochIndex uint64) ([]*types.DelegationRewardTransfer, error) {
 	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
 	if !found || snapshot.EpochIndex != epochIndex {
