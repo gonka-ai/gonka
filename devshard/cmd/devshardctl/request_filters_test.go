@@ -46,7 +46,7 @@ func TestNormalizeChatRequestDefaultsAndCapsOutputTokens(t *testing.T) {
 	require.NoError(t, err)
 	require.EqualValues(t, 64, req.MaxTokens)
 	require.EqualValues(t, 64, req.MaxCompletionTokens)
-	require.NotContains(t, string(body), `"max_tokens"`)
+	require.Contains(t, string(body), `"max_tokens":64`)
 	require.Contains(t, string(body), `"max_completion_tokens":64`)
 
 	body, req, err = normalizeChatRequest([]byte(`{"max_tokens":10001,"max_completion_tokens":20000,"messages":[{"role":"user","content":"hello"}]}`))
@@ -126,7 +126,7 @@ func TestPrepareChatRequestBodyAdminAuthKeepsMaxCompletionTokensAboveDefault(t *
 	require.NoError(t, err)
 	require.EqualValues(t, 30_000, chatReq.MaxTokens)
 	require.EqualValues(t, 30_000, chatReq.MaxCompletionTokens)
-	require.NotContains(t, string(body), `"max_tokens"`)
+	require.Contains(t, string(body), `"max_tokens":30000`)
 	require.Contains(t, string(body), `"max_completion_tokens":30000`)
 }
 
@@ -280,6 +280,141 @@ func TestNormalizeChatRequestKeepsTemperatureWithinMax(t *testing.T) {
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
 	require.EqualValues(t, 1.5, raw["temperature"])
+}
+
+func TestNormalizeChatRequestClampsTemperatureBelowMin(t *testing.T) {
+	body, _, err := normalizeChatRequest([]byte(`{
+		"messages": [{"role": "user", "content": "hi"}],
+		"temperature": -1
+	}`))
+	require.NoError(t, err)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, 0.0, raw["temperature"])
+}
+
+func TestNormalizeChatRequestClampsMinPIntoRange(t *testing.T) {
+	body, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"min_p":-0.5}`))
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, 0.0, raw["min_p"])
+
+	body, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"min_p":2}`))
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, 1.0, raw["min_p"])
+}
+
+func TestNormalizeChatRequestTopPClampsHighRejectsNonPositive(t *testing.T) {
+	body, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"top_p":1.5}`))
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, 1.0, raw["top_p"])
+
+	for _, bad := range []string{"0", "-0.2"} {
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"top_p":` + bad + `}`))
+		require.Error(t, err, "top_p=%s", bad)
+		require.Contains(t, err.Error(), "top_p")
+	}
+}
+
+func TestNormalizeChatRequestRejectsNonPositiveRepetitionPenalty(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"repetition_penalty":0}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "repetition_penalty")
+
+	body, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"repetition_penalty":5}`))
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, 2.0, raw["repetition_penalty"])
+}
+
+func TestNormalizeChatRequestRejectsInvalidTopK(t *testing.T) {
+	for _, bad := range []string{"0", "-2"} {
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"top_k":` + bad + `}`))
+		require.Error(t, err, "top_k=%s", bad)
+		require.Contains(t, err.Error(), "top_k")
+	}
+	for _, good := range []string{"-1", "1", "50"} {
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"top_k":` + good + `}`))
+		require.NoError(t, err, "top_k=%s", good)
+	}
+}
+
+func TestNormalizeChatRequestRejectsZeroMaxTokens(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":0}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max_tokens")
+
+	_, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "max_completion_tokens")
+}
+
+func TestNormalizeChatRequestKimiClampsZeroMaxTokensInsteadOfRejecting(t *testing.T) {
+	body, _, err := normalizeChatRequestForModel([]byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":0}`), kimiK26ModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"])
+}
+
+// Regression (found via e2e against the live Kimi route): a Kimi request that
+// sends only max_completion_tokens must floor it AND mirror into max_tokens, so
+// the thinking_token_budget defaulter (which derives from max_tokens) bounds
+// reasoning. Without the mirror the whole budget is spent thinking → empty content.
+func TestNormalizeChatRequestKimiMaxCompletionTokensZeroMirrorsToMaxTokens(t *testing.T) {
+	body, req, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"hi"}],"max_completion_tokens":0}`), kimiK26ModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(body, &raw))
+	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"], "max_tokens mirrored + floored")
+	require.EqualValues(t, kimiMaxTokensMin, raw["max_completion_tokens"], "max_completion_tokens floored")
+	require.EqualValues(t, kimiMaxTokensMin, req.MaxTokens)
+	require.Contains(t, raw, "thinking_token_budget", "thinking budget derives from the mirrored max_tokens")
+}
+
+func TestNormalizeChatRequestRejectsNonBoolFlags(t *testing.T) {
+	for _, field := range []string{"skip_special_tokens", "detokenize", "parallel_tool_calls"} {
+		_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"` + field + `":"yes"}`))
+		require.Error(t, err, field)
+		require.Contains(t, err.Error(), field)
+	}
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"skip_special_tokens":true,"parallel_tool_calls":false}`))
+	require.NoError(t, err)
+}
+
+func TestNormalizeChatRequestRejectsNonIntStopTokenIds(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,"two",3]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stop_token_ids")
+
+	_, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,2,3]}`))
+	require.NoError(t, err)
+}
+
+func TestNormalizeChatRequestRejectsNonStringStopAndBadWords(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"stop":["ok",5]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "stop")
+
+	_, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"bad_words":["ok",5]}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "bad_words")
+}
+
+func TestNormalizeChatRequestRejectsNonIntMinTokens(t *testing.T) {
+	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"min_tokens":3.5}`))
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "min_tokens")
+
+	_, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"min_tokens":5,"max_tokens":100}`))
+	require.NoError(t, err)
 }
 
 func TestNormalizeChatRequestClampsFrequencyAndPresencePenalty(t *testing.T) {
