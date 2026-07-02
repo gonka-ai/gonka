@@ -102,7 +102,7 @@ func (rt *DelegationRewardTransfers) Records() []*types.DelegationRewardTransfer
 func legacyDecToProto(d mathsdk.LegacyDec) *types.Decimal {
 	parsed, err := decimal.NewFromString(d.String())
 	if err != nil {
-		return &types.DecimalZero
+		return &types.Decimal{Value: 0, Exponent: 0}
 	}
 	return types.DecimalFromDecimal(parsed)
 }
