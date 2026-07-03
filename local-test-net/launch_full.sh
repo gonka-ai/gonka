@@ -104,4 +104,4 @@ export PRYSM_P2P_TCP_PORT=13020
 export PRYSM_P2P_UDP_PORT=12020
 # Don't set DASHBOARD_PORT for join nodes - they don't have explorer
 unset DASHBOARD_PORT
-./launch_add_network_node.sh 
+./launch_add_network_node.sh

@@ -176,4 +176,3 @@ func TestNewStorage_postgresModeNoForkWhenPGDownAfterSessionInPG(t *testing.T) {
 	_, err = os.Stat(MetaDBPath(storeDir))
 	require.True(t, os.IsNotExist(err), "must not open sqlite when postgres mode boot fails")
 }
-

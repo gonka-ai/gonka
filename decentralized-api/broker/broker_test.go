@@ -666,6 +666,125 @@ func TestEnsurePreservedMembershipCached_KeepsCacheWhenParticipantAddressUnavail
 	assert.True(t, broker.nodes["node-1"].State.PreservedModels["model-a"])
 }
 
+func TestNodeAvailable_ValidationInferenceCapableNode(t *testing.T) {
+	const model = "model1"
+	// AdminState enabled with an epoch below the current one keeps the node
+	// operational regardless of phase, isolating the status-bypass under test.
+	const currentEpoch = uint64(5)
+	operationalAdmin := AdminState{Enabled: true, Epoch: 0}
+
+	newNode := func(mutate func(state *NodeState)) *NodeWithState {
+		state := NodeState{
+			IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+			CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+			AdminState:     operationalAdmin,
+			EpochModels:    map[string]types.Model{model: {}},
+		}
+		mutate(&state)
+		return &NodeWithState{
+			Node:  Node{Id: "node1", MaxConcurrent: 1},
+			State: state,
+		}
+	}
+
+	// capableValidating is a fully validation-inference-capable node in the
+	// validation step. It passes every gate on its own; each negative case below
+	// composes it with a single defect to prove that only the INFERENCE-status
+	// gates are bypassed and all remaining gates still apply.
+	capableValidating := func(state *NodeState) {
+		state.IntendedStatus = types.HardwareNodeStatus_POC
+		state.CurrentStatus = types.HardwareNodeStatus_POC
+		state.PocIntendedStatus = PocStatusValidating
+		state.PoCValidationInference = true
+	}
+	withDefect := func(defect func(state *NodeState)) func(state *NodeState) {
+		return func(state *NodeState) {
+			capableValidating(state)
+			defect(state)
+		}
+	}
+
+	testCases := []struct {
+		name          string
+		node          *NodeWithState
+		wantAvailable bool
+	}{
+		{
+			name:          "validation-capable node in validation step is available despite POC status",
+			node:          newNode(capableValidating),
+			wantAvailable: true,
+		},
+		{
+			name: "POC node without capability stays unavailable",
+			node: newNode(func(state *NodeState) {
+				state.IntendedStatus = types.HardwareNodeStatus_POC
+				state.CurrentStatus = types.HardwareNodeStatus_POC
+				state.PocIntendedStatus = PocStatusValidating
+				state.PoCValidationInference = false
+			}),
+			wantAvailable: false,
+		},
+		{
+			name: "validation-capable node in generation step stays unavailable",
+			node: newNode(func(state *NodeState) {
+				state.IntendedStatus = types.HardwareNodeStatus_POC
+				state.CurrentStatus = types.HardwareNodeStatus_POC
+				state.PocIntendedStatus = PocStatusGenerating
+				state.PoCValidationInference = true
+			}),
+			wantAvailable: false,
+		},
+		{
+			name:          "plain inference node remains available",
+			node:          newNode(func(state *NodeState) {}),
+			wantAvailable: true,
+		},
+		{
+			name: "node intended for inference but not yet in inference state stays unavailable",
+			node: newNode(func(state *NodeState) {
+				state.CurrentStatus = types.HardwareNodeStatus_POC // intended INFERENCE, not there yet
+			}),
+			wantAvailable: false,
+		},
+		{
+			name: "capable node still blocked while reconciling",
+			node: newNode(withDefect(func(state *NodeState) {
+				state.ReconcileInfo = &ReconcileInfo{Status: types.HardwareNodeStatus_POC, PocStatus: PocStatusValidating}
+			})),
+			wantAvailable: false,
+		},
+		{
+			name: "capable node still blocked when locked to capacity",
+			node: newNode(withDefect(func(state *NodeState) {
+				state.LockCount = 1 // == MaxConcurrent
+			})),
+			wantAvailable: false,
+		},
+		{
+			name: "capable node still blocked when administratively disabled",
+			node: newNode(withDefect(func(state *NodeState) {
+				state.AdminState = AdminState{Enabled: false, Epoch: 0}
+			})),
+			wantAvailable: false,
+		},
+		{
+			name: "capable node still blocked when it lacks the requested model",
+			node: newNode(withDefect(func(state *NodeState) {
+				state.EpochModels = map[string]types.Model{}
+			})),
+			wantAvailable: false,
+		},
+	}
+
+	broker := &Broker{}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			available, reason := broker.nodeAvailable(testCase.node, model, currentEpoch, types.PoCValidatePhase)
+			assert.Equal(t, testCase.wantAvailable, available, "reason: %s", reason)
+		})
+	}
+}
+
 func TestSingleNode(t *testing.T) {
 	broker := NewTestBroker()
 	node := apiconfig.InferenceNodeConfig{

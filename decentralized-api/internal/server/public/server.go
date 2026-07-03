@@ -31,6 +31,7 @@ type Server struct {
 	blockQueue          *BridgeQueue
 	bandwidthLimiter    *internal.BandwidthLimiter
 	identityCache       *identityCache
+	versionsCache       *versionsCache
 	payloadStorage      payloadstorage.PayloadStorage
 	phaseTracker        *chainphase.ChainPhaseTracker
 	epochGroupDataCache *internal.EpochGroupDataCache
@@ -77,6 +78,7 @@ func NewServer(
 		recorder:            recorder,
 		blockQueue:          blockQueue,
 		identityCache:       newIdentityCache(),
+		versionsCache:       newVersionsCache(),
 		payloadStorage:      payloadStorage,
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),

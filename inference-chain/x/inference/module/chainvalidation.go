@@ -169,11 +169,14 @@ func (wc *PoCWeightCalculator) validatedParticipant(key types.PoCParticipantMode
 		return nil
 	}
 
-	vals := wc.getParticipantValidations(key)
-	if len(vals) == 0 {
+	// Reject only when nobody voted at all. The weight-filtered list may be
+	// empty while guardian votes are still present in the raw list; those must
+	// reach the guardian tiebreaker in pocValidated.
+	if len(wc.Validations[key]) == 0 {
 		wc.Logger.LogError("Calculate: No validations for participant found", types.PoC, "participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return nil
 	}
+	vals := wc.getParticipantValidations(key)
 
 	// Get claimed weight from store commit and per-node weights from distribution
 	nodeWeights, claimedWeight := wc.calculateParticipantWeight(key)
@@ -236,9 +239,11 @@ func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipan
 		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals), "validators", validators)
 
 	// Filter to validations from participants with voting power for this model.
+	// The filtered list feeds the majority math only; the guardian tiebreaker
+	// reads the raw wc.Validations[key] list directly (see guardianProtection).
 	// When no voting-power snapshot exists for the model yet, keep the original
-	// validations list for logging and guardian handling. pocValidated() still
-	// rejects later if the model has no voting-power data.
+	// validations list. pocValidated() still rejects later if the model has no
+	// voting-power data.
 	modelVP := wc.ModelVotingPowers[key.ModelID]
 	filteredVals := make([]types.PoCValidationV2, 0, len(vals))
 	if len(modelVP) == 0 {
@@ -314,7 +319,7 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 				"invalidSlots", invalidSlots, "totalSlots", totalSlots)
 			return false
 		}
-		return wc.guardianProtection(vals, key, ValidationOutcome{
+		return wc.guardianProtection(key, ValidationOutcome{
 			TotalWeight:   totalSlots,
 			ValidWeight:   validSlots,
 			InvalidWeight: invalidSlots,
@@ -337,7 +342,7 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
 		return false
 	}
-	return wc.guardianProtection(vals, key, outcome)
+	return wc.guardianProtection(key, outcome)
 }
 
 // ValidationOutcome holds aggregated vote weight sums.
@@ -349,7 +354,12 @@ type ValidationOutcome struct {
 
 // guardianProtection handles tie-breaking when no clear majority exists.
 // All voting guardians must agree unanimously for the decision to pass.
-func (wc *PoCWeightCalculator) guardianProtection(vals []types.PoCValidationV2, key types.PoCParticipantModelKey, outcome ValidationOutcome) bool {
+// Guardian votes are read from the raw (unfiltered) validation list: a guardian
+// may have no voting weight for the model (e.g. it could not run the model this
+// epoch), and its tiebreaker vote must still count. This does not affect the
+// majority math above, which only ever counts weight-filtered or slot-assigned
+// votes.
+func (wc *PoCWeightCalculator) guardianProtection(key types.PoCParticipantModelKey, outcome ValidationOutcome) bool {
 	if !wc.GuardianEnabled || len(wc.GuardianAddresses) == 0 {
 		wc.Logger.LogWarn("Calculate: No majority and no guardians. Rejecting.", types.PoC,
 			"participant", key.ParticipantAddress,
@@ -362,7 +372,7 @@ func (wc *PoCWeightCalculator) guardianProtection(vals []types.PoCValidationV2, 
 	}
 
 	guardianValidCount, guardianInvalidCount := 0, 0
-	for _, v := range vals {
+	for _, v := range wc.Validations[key] {
 		if wc.GuardianAddresses[v.ValidatorParticipantAddress] {
 			if v.ValidatedWeight > 0 {
 				guardianValidCount++
