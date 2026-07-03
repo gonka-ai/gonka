@@ -88055,7 +88055,6 @@ func (*QueryGetCurrentEpochRequest) Descriptor() ([]byte, []int) {
 	return file_inference_inference_query_proto_rawDescGZIP(), []int{47}
 }
 
-// DEPRECATED: ambiguous query, re-check what it expect as epoch: id, poc_start_block_height, or epoch_group_id
 type QueryGetCurrentEpochResponse struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
