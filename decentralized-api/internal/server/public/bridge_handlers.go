@@ -326,11 +326,12 @@ func (q *BridgeQueue) GetQueueSize() int {
 // active=false+nil means skip & advance, non-nil error means the node can't
 // reach the chain so the drain should pause and retry later.
 func (q *BridgeQueue) checkValidatorActive(ctx context.Context) (bool, error) {
-	epoch, err := q.epochCache.GetCurrentEpochIndex(ctx)
+	queryClient := q.recorder.NewInferenceQueryClient()
+	resp, err := queryClient.GetCurrentEpoch(ctx, &types.QueryGetCurrentEpochRequest{})
 	if err != nil {
 		return false, fmt.Errorf("failed to resolve current epoch: %w", err)
 	}
-	return q.epochCache.IsActiveParticipant(ctx, epoch, q.recorder.GetAccountAddress())
+	return q.epochCache.IsActiveParticipant(ctx, resp.Epoch, q.recorder.GetAccountAddress())
 }
 
 // processBlockReceipts commits every receipt in a block. Three outcomes:
