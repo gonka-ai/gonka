@@ -5,6 +5,7 @@ import (
 	"context"
 	"math/rand/v2"
 	"strconv"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -148,8 +149,7 @@ func TestSseRaceWriterDropReleasesBackingArray(t *testing.T) {
 	require.Equal(t, before, classifyPartialBytes.Load())
 }
 
-// releaseClassifyPartial frees a len-0-but-large-cap buffer (the monitorInflight
-// cleanup case) and leaves the gauge unchanged when len is already 0.
+// releaseClassifyPartial frees a len-0-but-large-cap buffer (the send-goroutine defer after a drop) and leaves the gauge unchanged when len is already 0.
 func TestReleaseClassifyPartialFreesLenZeroBuffer(t *testing.T) {
 	before := classifyPartialBytes.Load()
 	inf := mkRaceWriterInflight(t)
@@ -208,6 +208,34 @@ func TestSseRaceWriterFlushRecoversNewlineLessContent(t *testing.T) {
 	require.Equal(t, 0, len(inf.classifyPartial), "flush must release the buffer")
 }
 
+// Regression: flushClassifyAndCheckEmpty must flush the buffered final event before reading contentChunks (a prior deferred flush ran after the decision, misclassifying content as empty).
+func TestFlushClassifyAndCheckEmptyFlushesBeforeDeciding(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseNewlineLessFinalContent))
+	require.NoError(t, err)
+	require.True(t, isEmptyStreamAttempt(inf),
+		"precondition: unflushed newline-less final event looks empty")
+
+	require.False(t, rw.flushClassifyAndCheckEmpty(),
+		"must flush the buffered final content before the empty-stream decision")
+	require.Equal(t, "delta.content", inf.contentSource)
+}
+
+// Regression: a newline-less final error event must resolve to an error stream, not empty, through the same flush-before-decide path.
+func TestFlushClassifyAndCheckEmptyFinalErrorIsNotEmpty(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+
+	_, err := rw.Write([]byte(sseNewlineLessFinalError))
+	require.NoError(t, err)
+
+	require.False(t, rw.flushClassifyAndCheckEmpty(),
+		"final error event must not be classified as empty_stream")
+	require.True(t, isErrorStreamAttempt(inf))
+}
+
 // Regression: the same recovery must apply to a newline-less final error event
 // so the attempt is classified as an error stream, not an empty one.
 func TestSseRaceWriterFlushRecoversNewlineLessError(t *testing.T) {
@@ -257,6 +285,136 @@ func TestSseRaceWriterFlushProbeNoop(t *testing.T) {
 
 	require.Equal(t, int64(0), inf.contentChunks.Load(), "probe flush must not count content")
 	require.Equal(t, "", inf.contentSource)
+}
+
+// On a cap drop, the raw write chunk is still classified best-effort rather than
+// silently skipped — a complete content line survives even when it can't buffer.
+func TestSseRaceWriterGracefulDegradationOnCapDrop(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	rw := mkRaceWriter(t, inf)
+	_, err := rw.Write(bytes.Repeat([]byte("x"), maxClassifyPartial-10))
+	require.NoError(t, err)
+	_, err = rw.Write([]byte(`data: {"choices":[{"delta":{"content":"ok"}}]}`))
+	require.NoError(t, err)
+	require.False(t, isEmptyStreamAttempt(inf), "capped content chunk must still classify")
+	require.Equal(t, "delta.content", inf.contentSource)
+}
+
+// A hostile participant that fills its own budget must not starve another
+// attempt from a different participant sharing the global pool.
+func TestSseRaceWriterParticipantCapIsolatesParticipants(t *testing.T) {
+	restore := saveClassifyCaps()
+	defer restore()
+	maxClassifyPartial = 100
+	maxClassifyPartialParticipant = 150
+	maxClassifyPartialGlobal = 1 << 30
+
+	hostile := &atomic.Int64{}
+	honest := &atomic.Int64{}
+	infHostile := mkRaceWriterInflight(t)
+	infHostile.participantClassifyBytes = hostile
+	infHonest := mkRaceWriterInflight(t)
+	infHonest.participantClassifyBytes = honest
+
+	_, err := mkRaceWriter(t, infHostile).Write(bytes.Repeat([]byte("x"), 100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), hostile.Load())
+
+	// The honest participant still has its full budget available.
+	_, err = mkRaceWriter(t, infHonest).Write(bytes.Repeat([]byte("y"), 100))
+	require.NoError(t, err)
+	require.Equal(t, 100, len(infHonest.classifyPartial), "honest attempt must not be starved")
+	require.Equal(t, int64(100), honest.Load())
+}
+
+// The same participant is capped across concurrent attempts sharing its counter.
+func TestSseRaceWriterParticipantCapDropsOverBudget(t *testing.T) {
+	restore := saveClassifyCaps()
+	defer restore()
+	maxClassifyPartial = 100
+	maxClassifyPartialParticipant = 150
+	maxClassifyPartialGlobal = 1 << 30
+
+	shared := &atomic.Int64{}
+	first := mkRaceWriterInflight(t)
+	first.participantClassifyBytes = shared
+	second := mkRaceWriterInflight(t)
+	second.participantClassifyBytes = shared
+
+	_, err := mkRaceWriter(t, first).Write(bytes.Repeat([]byte("x"), 100))
+	require.NoError(t, err)
+	_, err = mkRaceWriter(t, second).Write(bytes.Repeat([]byte("y"), 100))
+	require.NoError(t, err)
+
+	require.Equal(t, 0, len(second.classifyPartial), "participant cap must drop the over-budget attempt")
+	require.Equal(t, int64(100), shared.Load(), "over-budget bytes rolled back")
+}
+
+// A global-cap drop must roll back the participant counter it already charged.
+func TestSseRaceWriterGlobalCapRollsBackParticipant(t *testing.T) {
+	restore := saveClassifyCaps()
+	defer restore()
+	maxClassifyPartial = 1000
+	maxClassifyPartialParticipant = 1000
+	maxClassifyPartialGlobal = 50
+
+	participant := &atomic.Int64{}
+	inf := mkRaceWriterInflight(t)
+	inf.participantClassifyBytes = participant
+	before := classifyPartialBytes.Load()
+
+	_, err := mkRaceWriter(t, inf).Write(bytes.Repeat([]byte("x"), 100))
+	require.NoError(t, err)
+
+	require.Equal(t, 0, len(inf.classifyPartial), "global cap drops the attempt")
+	require.Equal(t, int64(0), participant.Load(), "participant counter rolled back")
+	require.Equal(t, before, classifyPartialBytes.Load())
+}
+
+// Releasing the buffer decrements both the global and participant counters.
+func TestReleaseClassifyPartialDecrementsParticipant(t *testing.T) {
+	restore := saveClassifyCaps()
+	defer restore()
+	maxClassifyPartial = 1000
+	maxClassifyPartialParticipant = 1000
+	maxClassifyPartialGlobal = 1 << 30
+
+	participant := &atomic.Int64{}
+	inf := mkRaceWriterInflight(t)
+	inf.participantClassifyBytes = participant
+
+	_, err := mkRaceWriter(t, inf).Write(bytes.Repeat([]byte("x"), 100))
+	require.NoError(t, err)
+	require.Equal(t, int64(100), participant.Load())
+
+	inf.releaseClassifyPartial()
+
+	require.Equal(t, int64(0), participant.Load(), "release decrements participant counter")
+	require.Nil(t, inf.classifyPartial)
+}
+
+func TestConfigureClassifyCapsFromEnv(t *testing.T) {
+	restore := saveClassifyCaps()
+	defer restore()
+	t.Setenv("GATEWAY_CLASSIFY_MAX_ATTEMPT_BYTES", "2048")
+	t.Setenv("GATEWAY_CLASSIFY_MAX_PARTICIPANT_BYTES", "4096")
+	t.Setenv("GATEWAY_CLASSIFY_MAX_GLOBAL_BYTES", "8192")
+
+	configureClassifyCapsFromEnv()
+
+	require.Equal(t, 2048, maxClassifyPartial)
+	require.Equal(t, int64(4096), maxClassifyPartialParticipant)
+	require.Equal(t, int64(8192), maxClassifyPartialGlobal)
+}
+
+// saveClassifyCaps snapshots the tunable caps and returns a restore func.
+func saveClassifyCaps() func() {
+	attempt, participant, global := maxClassifyPartial, maxClassifyPartialParticipant, maxClassifyPartialGlobal
+	return func() {
+		maxClassifyPartial = attempt
+		maxClassifyPartialParticipant = participant
+		maxClassifyPartialGlobal = global
+	}
 }
 
 func mkRaceWriterInflight(t testing.TB) *inflight {
