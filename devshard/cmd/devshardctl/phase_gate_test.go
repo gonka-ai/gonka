@@ -341,11 +341,19 @@ func TestChainPhaseGateUsesPreservedNodePoCWeightDuringPoC(t *testing.T) {
 	require.Equal(t, map[string]float64{
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 40,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
@@ -383,6 +391,9 @@ func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
 	require.Equal(t, map[string]float64{
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 110,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 110,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 50,
@@ -391,6 +402,14 @@ func TestChainPhaseGateUsesRawPoCWeightOutsidePoC(t *testing.T) {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 50,
+		},
+		"Model/B": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestChainPhaseGateUsesPreservedSnapshotDuringPoC(t *testing.T) {
@@ -464,12 +483,22 @@ func TestChainPhaseGateUsesPreservedSnapshotDuringPoC(t *testing.T) {
 		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
 	}, state.weights)
+	require.Equal(t, map[string]float64{
+		"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+		"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 70,
+	}, state.fullWeights)
 	require.Equal(t, map[string]map[string]float64{
 		"Model/A": {
 			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 60,
 			"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 0,
 		},
 	}, state.weightsByModel)
+	require.Equal(t, map[string]map[string]float64{
+		"Model/A": {
+			"gonka1aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1": 100,
+			"gonka1bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb2": 70,
+		},
+	}, state.fullWeightsByModel)
 }
 
 func TestShouldRefreshPoCPreservedParticipantsOnConfirmationGenerationTransition(t *testing.T) {
@@ -818,4 +847,153 @@ func TestChainPhaseGateLogsLoadedPreservedParticipantsSorted(t *testing.T) {
 	// Sorted ASCII order of the last-8-char short labels: aaaaaaaa < zzzzzzzz, bbbbbbbb < yyyyyyyy.
 	require.True(t, strings.Contains(output, "participants=aaaaaaaa,zzzzzzzz"), output)
 	require.True(t, strings.Contains(output, "excluded_participants=bbbbbbbb,yyyyyyyy"), output)
+}
+
+func TestRawPoCGenerationState(t *testing.T) {
+	cases := []struct {
+		name              string
+		epochPhase        string
+		confirmationPhase string
+		want              bool
+	}{
+		{"poc generate", epochPhasePoCGenerate, confirmationPoCInactive, true},
+		{"poc generate winddown", epochPhasePoCGenerateWindDown, confirmationPoCInactive, true},
+		{"confirmation grace", epochPhaseInference, confirmationPoCGracePeriod, true},
+		{"confirmation generation", epochPhaseInference, confirmationPoCGeneration, true},
+		{"poc validate", epochPhasePoCValidate, confirmationPoCInactive, false},
+		{"poc validate winddown", epochPhasePoCValidateWindDown, confirmationPoCInactive, false},
+		{"confirmation validation", epochPhaseInference, confirmationPoCValidation, false},
+		{"steady inference", epochPhaseInference, confirmationPoCInactive, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rawPoCGenerationState(tc.epochPhase, tc.confirmationPhase); got != tc.want {
+				t.Fatalf("rawPoCGenerationState(%q,%q)=%v want %v", tc.epochPhase, tc.confirmationPhase, got, tc.want)
+			}
+		})
+	}
+}
+
+func TestRawPoCValidationState(t *testing.T) {
+	cases := []struct {
+		name              string
+		epochPhase        string
+		confirmationPhase string
+		want              bool
+	}{
+		{"poc validate", epochPhasePoCValidate, confirmationPoCInactive, true},
+		{"poc validate winddown", epochPhasePoCValidateWindDown, confirmationPoCInactive, true},
+		{"confirmation validation", epochPhaseInference, confirmationPoCValidation, true},
+		{"poc generate", epochPhasePoCGenerate, confirmationPoCInactive, false},
+		{"poc generate winddown", epochPhasePoCGenerateWindDown, confirmationPoCInactive, false},
+		{"confirmation generation", epochPhaseInference, confirmationPoCGeneration, false},
+		{"confirmation grace", epochPhaseInference, confirmationPoCGracePeriod, false},
+		{"steady inference", epochPhaseInference, confirmationPoCInactive, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := rawPoCValidationState(tc.epochPhase, tc.confirmationPhase); got != tc.want {
+				t.Fatalf("rawPoCValidationState(%q,%q)=%v want %v", tc.epochPhase, tc.confirmationPhase, got, tc.want)
+			}
+		})
+	}
+}
+
+func newTestGatewayWithSnapshot(t *testing.T, snap ChainPhaseSnapshot) *Gateway {
+	g := &Gateway{
+		phaseGate: &ChainPhaseGate{},
+	}
+	g.phaseGate.storeSnapshot(snap)
+	return g
+}
+
+func TestCurrentMaxConcurrent_GenerationOnly(t *testing.T) {
+	g := newTestGatewayWithSnapshot(t, ChainPhaseSnapshot{EpochPhase: epochPhasePoCGenerate, ConfirmationPoCPhase: confirmationPoCInactive})
+	g.settings.MaxConcurrentPer10000Weight = 5
+	g.settings.PoCMaxConcurrentPer10000Weight = 10
+	if got := g.currentMaxConcurrentPer10000Weight(); got != 10 {
+		t.Fatalf("generation: got %v want 10", got)
+	}
+
+	g2 := newTestGatewayWithSnapshot(t, ChainPhaseSnapshot{EpochPhase: epochPhasePoCValidate, ConfirmationPoCPhase: confirmationPoCInactive})
+	g2.settings.MaxConcurrentPer10000Weight = 5
+	g2.settings.PoCMaxConcurrentPer10000Weight = 10
+	if got := g2.currentMaxConcurrentPer10000Weight(); got != 5 {
+		t.Fatalf("validation: got %v want 5", got)
+	}
+}
+
+func TestMergePreservedWithValidationCapable(t *testing.T) {
+	state := &participantsState{
+		preserved:        []string{"p1"},
+		excluded:         []string{"x1", "x2"},
+		preservedByModel: map[string][]string{"m": {"p1"}},
+		weights:          map[string]float64{"p1": 100},
+		weightsByModel:   map[string]map[string]float64{"m": {"p1": 100}},
+		nodesByParticipant: map[string][]participantNode{
+			"x1": {{model: "m", nodeID: "x1n1", weight: 30}, {model: "m", nodeID: "x1n2", weight: 20}},
+			"x2": {{model: "m", nodeID: "x2n1", weight: 70}},
+		},
+	}
+	// x1n1 capable; x1n2 not; x2n1 not -> x1 available with weight 30, x2 excluded.
+	capable := func(miner, nodeID string) bool { return miner == "x1" && nodeID == "x1n1" }
+
+	preserved, preservedByModel, weights, weightsByModel := mergePreservedWithValidationCapable(state, capable)
+
+	if !contains(preserved, "p1") || !contains(preserved, "x1") || contains(preserved, "x2") {
+		t.Fatalf("preserved = %v, want p1+x1, not x2", preserved)
+	}
+	if weights["x1"] != 30 {
+		t.Fatalf("x1 weight = %v want 30 (only capable node x1n1)", weights["x1"])
+	}
+	if weights["p1"] != 100 {
+		t.Fatalf("p1 weight = %v want 100 (preserved keeps PoC weight)", weights["p1"])
+	}
+	if _, ok := weights["x2"]; ok {
+		t.Fatalf("x2 must not be weighted (no capable node)")
+	}
+	if weightsByModel["m"]["x1"] != 30 {
+		t.Fatalf("weightsByModel[m][x1] = %v want 30", weightsByModel["m"]["x1"])
+	}
+	if !contains(preservedByModel["m"], "x1") {
+		t.Fatalf("preservedByModel[m] = %v want x1 included", preservedByModel["m"])
+	}
+	// purity: inputs unmutated
+	if _, ok := state.weights["x1"]; ok {
+		t.Fatalf("input state.weights mutated")
+	}
+	if len(state.preserved) != 1 {
+		t.Fatalf("input state.preserved mutated")
+	}
+}
+
+func TestParticipantValidationInferenceWeights(t *testing.T) {
+	nodes := []participantNode{
+		{model: "m", nodeID: "n1", weight: 30},
+		{model: "m", nodeID: "n2", weight: 20},
+		{model: "other", nodeID: "n3", weight: 40},
+	}
+
+	capable := func(miner, nodeID string) bool { return nodeID == "n1" || nodeID == "n3" }
+	weights, total := participantValidationInferenceWeights(nodes, "p1", capable)
+	if total != 70 {
+		t.Fatalf("total = %v want 70", total)
+	}
+	if weights["m"] != 30 || weights["other"] != 40 {
+		t.Fatalf("weights = %v want m=30 other=40", weights)
+	}
+
+	weights, total = participantValidationInferenceWeights(nodes, "p1", nil)
+	if total != 0 || len(weights) != 0 {
+		t.Fatalf("nil capable weights=%v total=%v, want empty/0", weights, total)
+	}
+}
+
+func contains(ss []string, s string) bool {
+	for _, v := range ss {
+		if v == s {
+			return true
+		}
+	}
+	return false
 }

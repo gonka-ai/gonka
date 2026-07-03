@@ -49,11 +49,13 @@ func TestCapacityStateLiveAvailabilityScalesWeights(t *testing.T) {
 	require.InDelta(t, 1.0, m.EscrowWeight("X"), 1e-9)
 }
 
-func TestCapacityStateMissingHostFallsBackToWeightOne(t *testing.T) {
+func TestCapacityStateMissingHostHasZeroWeight(t *testing.T) {
 	m := NewCapacityState()
 	m.SetEscrowMembership("X", map[string]int{"A": 1})
-	// No SetHostWeights call - never observed -> fallback to 1.
-	require.InDelta(t, 1.0, m.EscrowWeight("X"), 1e-9)
+	// Unknown capacity must stay zero; inventing weight here breaks
+	// capacity-derived concurrency on cold starts during PoC/CPoC.
+	require.InDelta(t, 0.0, m.EscrowWeight("X"), 1e-9)
+	require.InDelta(t, 0.0, m.BaselineWeight(), 1e-9)
 }
 
 func TestCapacityStateBaselineFromFullWeightsNotFrozen(t *testing.T) {
@@ -116,6 +118,27 @@ func TestCapacityStateUsesModelSpecificPoCWeights(t *testing.T) {
 	require.InDelta(t, 40.0/300.0, m.LimitShareForModel("Model/A"), 1e-9)
 	require.InDelta(t, 50.0/300.0, m.LimitShareForModel("Model/B"), 1e-9)
 	require.InDelta(t, 90.0/300.0, m.ScaleFactorAcrossModels(), 1e-9)
+}
+
+func TestCapacityStateCanSeedFullBaselineDuringPoCColdStart(t *testing.T) {
+	m := NewCapacityState()
+	m.SetEscrowMembership("X", map[string]int{"A": 1, "B": 1})
+
+	m.SetHostWeightViews(
+		map[string]float64{"A": 40, "B": 0},
+		map[string]float64{"A": 100, "B": 50},
+		map[string]map[string]float64{
+			"Model/A": {"A": 40, "B": 0},
+		},
+		map[string]map[string]float64{
+			"Model/A": {"A": 100, "B": 50},
+		},
+	)
+	m.SetPoCPreserved([]string{"A"})
+
+	require.InDelta(t, 40.0, m.TotalWeightForModel("Model/A"), 1e-9)
+	require.InDelta(t, 150.0, m.BaselineWeightForModel("Model/A"), 1e-9)
+	require.InDelta(t, 40.0/150.0, m.ScaleFactorForModel("Model/A"), 1e-9)
 }
 
 func TestGatewayLimiterModelScalesUseIndependentModelCapacity(t *testing.T) {
@@ -307,9 +330,14 @@ func TestGatewaySelectsPoCWeightConcurrencyRate(t *testing.T) {
 	require.InDelta(t, 5.0, regular.MaxConcurrentPer10000Weight, 1e-9)
 
 	g.phaseGate = &ChainPhaseGate{}
-	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{BlockReason: "confirmation_poc"})
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{EpochPhase: epochPhasePoCGenerate, BlockReason: "poc"})
+	t.Cleanup(func() { setPoCPhaseState(false, "") })
 	poc := g.limiterCapacityForModel("Model/A")
 	require.InDelta(t, 10.0, poc.MaxConcurrentPer10000Weight, 1e-9)
+
+	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{ConfirmationPoCPhase: confirmationPoCGeneration, BlockReason: "confirmation_poc"})
+	confirmationPoc := g.limiterCapacityForModel("Model/A")
+	require.InDelta(t, 10.0, confirmationPoc.MaxConcurrentPer10000Weight, 1e-9)
 }
 
 func TestGatewayLimiterAcquireBlocksWhenScaledToZero(t *testing.T) {
