@@ -52,6 +52,7 @@ type Gateway struct {
 	perfStore             *PerfStore
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
+	suspiciousHosts       map[string]struct{}
 	baseStorageDir        string
 	rotatorStop           chan struct{}
 	rotatorDone           chan struct{}
@@ -248,13 +249,17 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
 	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	participantAdmission := modelScopedParticipantAdmission{
+		limiter: sharedParticipantRequestLimiter,
+		modelID: model,
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:    keyHex,
 		EscrowID:         cfg.ID,
 		Bridge:           br,
 		StoragePath:      cfg.StoragePath,
 		RoutePrefix:      routePrefix,
-		RequestAdmission: sharedParticipantRequestLimiter,
+		RequestAdmission: participantAdmission,
 		ProtocolVersion:  pv,
 	})
 	if err != nil {
@@ -269,7 +274,9 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 		perf,
 		len(session.Clients()),
 		model,
-		sharedParticipantRequestLimiter.IsBlocked,
+		func(participantKey string) bool {
+			return sharedParticipantRequestLimiter.IsBlockedForModel(participantKey, model)
+		},
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
 	proxy := &Proxy{
@@ -454,6 +461,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		metrics:            NewDevshardMetrics(),
 		capacity:           NewCapacityState(),
 		chatCache:          newChatResponseCache(chatResponseCacheTTL),
+		suspiciousHosts:    make(map[string]struct{}),
 		settings: GatewaySettings{
 			DefaultModel: defaultModel,
 		},
@@ -476,6 +484,13 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.settings = settings
 	g.baseStorageDir = baseStorageDir
 	g.store = store
+	if store != nil {
+		if hosts, err := store.LoadSuspiciousHosts(); err != nil {
+			log.Printf("load suspicious hosts: %v", err)
+		} else {
+			g.replaceSuspiciousHosts(hosts)
+		}
+	}
 	if len(perfArgs) > 0 && perfArgs[0] != nil {
 		g.perf = perfArgs[0]
 	}
@@ -512,6 +527,9 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		limits := g.outputTokenLimitsForModel(firstNonEmpty(rt.model, g.settings.DefaultModel))
 		rt.proxy.defaultRequestMaxTokens = limits.DefaultMaxTokens
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
+		if rt.proxy.redundancy != nil {
+			rt.proxy.redundancy.suspiciousParticipant = g.isSuspiciousParticipant
+		}
 	}
 	g.attachMetrics(rt)
 	g.attachEscrowChecker(rt)
@@ -716,6 +734,37 @@ func (g *Gateway) requestHasAPIKey(r *http.Request) bool {
 	return ok
 }
 
+func (g *Gateway) isSuspiciousParticipant(participantKey string) bool {
+	if g == nil {
+		return false
+	}
+	participantKey = strings.TrimSpace(participantKey)
+	if participantKey == "" {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.suspiciousHosts[participantKey]
+	return ok
+}
+
+func (g *Gateway) replaceSuspiciousHosts(hosts []GatewaySuspiciousHost) {
+	if g == nil {
+		return
+	}
+	next := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		key := strings.TrimSpace(host.ParticipantKey)
+		if key == "" {
+			continue
+		}
+		next[key] = struct{}{}
+	}
+	g.mu.Lock()
+	g.suspiciousHosts = next
+	g.mu.Unlock()
+}
+
 func bearerToken(r *http.Request) (string, bool) {
 	if r == nil {
 		return "", false
@@ -866,10 +915,20 @@ func (g *Gateway) currentMaxConcurrentPer10000Weight() float64 {
 	g.mu.Lock()
 	settings := g.settings.WithTuningDefaults()
 	g.mu.Unlock()
-	if g.pocOrConfirmationPoCActive() {
+	if g.pocGenerationActive() {
 		return settings.PoCMaxConcurrentPer10000Weight
 	}
 	return settings.MaxConcurrentPer10000Weight
+}
+
+func (g *Gateway) pocGenerationActive() bool {
+	if g != nil && g.phaseGate != nil {
+		snap := g.phaseGate.Snapshot()
+		if rawPoCGenerationState(snap.EpochPhase, snap.ConfirmationPoCPhase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) pocOrConfirmationPoCActive() bool {
@@ -998,6 +1057,7 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/devshards", g.handleAdminDevshards)
 	mux.HandleFunc("/v1/admin/devshards/", g.handleAdminDevshardAction)
 	mux.HandleFunc("/v1/admin/escrows", g.handleAdminEscrows)
+	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
 	mux.HandleFunc("/v1/admin/participants/unquarantine", g.handleAdminUnquarantine)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
 	mux.HandleFunc("/v1/finalize", g.handleSingleOnly)
@@ -1130,9 +1190,9 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	if capture := g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r); capture != nil {
 		sourceRequestID, _ := requestLogFromContext(ctx)
-		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID); ok {
+		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
 			g.chatCache.Set(cacheKey, entry, time.Now())
-			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
+			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "status", entry.StatusCode, "content_type", entry.ContentType, "bytes", len(entry.Body))
 		}
 	}
 }
@@ -1230,9 +1290,9 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
 			sourceRequestID, _ := requestLogFromContext(ctx)
-			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID); ok {
+			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
 				g.chatCache.Set(cacheKey, entry, time.Now())
-				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
+				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "status", entry.StatusCode, "content_type", entry.ContentType, "bytes", len(entry.Body))
 			}
 		}
 		return
@@ -1890,6 +1950,12 @@ type adminSettleEscrowRequest struct {
 	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
+type adminSuspiciousHostsRequest struct {
+	ParticipantKey  string   `json:"participant_key,omitempty"`
+	ParticipantKeys []string `json:"participant_keys,omitempty"`
+	Note            string   `json:"note,omitempty"`
+}
+
 type adminSettingsRequest struct {
 	ChainREST                      *string                          `json:"chain_rest,omitempty"`
 	PublicAPI                      *string                          `json:"public_api,omitempty"`
@@ -2008,10 +2074,11 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		views = append(views, view)
 	}
 	writeJSON(w, map[string]any{
-		"settings":  state.Settings,
-		"devshards": views,
-		"limiter":   g.limiter.SnapshotWithModelCapacities(g.limiterModelCapacities(models, modelRuntimeStatuses)),
-		"capacity":  g.capacityStatus(models, modelRuntimeStatuses),
+		"settings":         state.Settings,
+		"devshards":        views,
+		"suspicious_hosts": state.SuspiciousHosts,
+		"limiter":          g.limiter.SnapshotWithModelCapacities(g.limiterModelCapacities(models, modelRuntimeStatuses)),
+		"capacity":         g.capacityStatus(models, modelRuntimeStatuses),
 	})
 }
 
@@ -2126,6 +2193,59 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
+}
+
+func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Request) {
+	if g.store == nil {
+		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		hosts, err := g.store.LoadSuspiciousHosts()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	case http.MethodPost:
+		var req adminSuspiciousHostsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		hosts, err := g.store.UpsertSuspiciousHosts(adminSuspiciousParticipantKeys(req), req.Note)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	case http.MethodDelete:
+		var req adminSuspiciousHostsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		hosts, err := g.store.DeleteSuspiciousHosts(adminSuspiciousParticipantKeys(req))
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
+func adminSuspiciousParticipantKeys(req adminSuspiciousHostsRequest) []string {
+	keys := append([]string(nil), req.ParticipantKeys...)
+	if strings.TrimSpace(req.ParticipantKey) != "" {
+		keys = append(keys, req.ParticipantKey)
+	}
+	return normalizeParticipantKeys(keys)
 }
 
 func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
