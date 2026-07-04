@@ -17,8 +17,22 @@ import (
 
 const requestCaptureDirName = "captured-requests"
 
+const (
+	defaultShortContentMinOutputChunks  = int64(1000)
+	defaultShortContentMaxContentRatio  = 0.75
+	defaultShortContentResponseMaxBytes = int64(16 * 1024 * 1024)
+)
+
 type requestCaptureStore struct {
 	dir string
+}
+
+type requestCaptureOptions struct {
+	shortContentAttempts    bool
+	shortContentResponses   bool
+	shortContentMinOutput   int64
+	shortContentMaxRatio    float64
+	shortContentMaxResponse int64
 }
 
 type capturedChatRequest struct {
@@ -62,11 +76,15 @@ type capturedChatAttempt struct {
 	ErrorMessage                string `json:"error_message,omitempty"`
 	ResponseBodySample          string `json:"response_body_sample,omitempty"`
 	ResponseBodySampleTruncated bool   `json:"response_body_sample_truncated,omitempty"`
+	ResponseBodyBase64          string `json:"response_body_base64,omitempty"`
+	ResponseBodyTruncated       bool   `json:"response_body_truncated,omitempty"`
+	ResponseBodyBytes           int    `json:"response_body_bytes,omitempty"`
 }
 
 var (
 	requestCaptureMu     sync.RWMutex
 	activeRequestCapture *requestCaptureStore
+	activeCaptureOptions requestCaptureOptions
 )
 
 func configureRequestCaptureStore(baseStorageDir string) {
@@ -79,6 +97,7 @@ func configureRequestCaptureStore(baseStorageDir string) {
 	if dir == "" {
 		dir = filepath.Join(baseStorageDir, requestCaptureDirName)
 	}
+	configureRequestCaptureOptionsFromEnv()
 	setRequestCaptureStore(&requestCaptureStore{dir: dir})
 }
 
@@ -92,6 +111,38 @@ func currentRequestCaptureStore() *requestCaptureStore {
 	requestCaptureMu.RLock()
 	defer requestCaptureMu.RUnlock()
 	return activeRequestCapture
+}
+
+func configureRequestCaptureOptionsFromEnv() {
+	opts := requestCaptureOptions{
+		shortContentAttempts:    readBoolEnv("DEVSHARD_CAPTURE_SHORT_CONTENT_ATTEMPTS", false),
+		shortContentResponses:   readBoolEnv("DEVSHARD_CAPTURE_SHORT_CONTENT_RESPONSES", false),
+		shortContentMinOutput:   readInt64Env("DEVSHARD_CAPTURE_SHORT_CONTENT_MIN_OUTPUT_CHUNKS", defaultShortContentMinOutputChunks),
+		shortContentMaxRatio:    readFloat64Env("DEVSHARD_CAPTURE_SHORT_CONTENT_MAX_CONTENT_RATIO", defaultShortContentMaxContentRatio),
+		shortContentMaxResponse: readInt64Env("DEVSHARD_CAPTURE_SHORT_CONTENT_RESPONSE_MAX_BYTES", defaultShortContentResponseMaxBytes),
+	}
+	setRequestCaptureOptions(opts)
+}
+
+func setRequestCaptureOptions(opts requestCaptureOptions) {
+	if opts.shortContentMinOutput < 1 {
+		opts.shortContentMinOutput = defaultShortContentMinOutputChunks
+	}
+	if opts.shortContentMaxRatio <= 0 || opts.shortContentMaxRatio >= 1 {
+		opts.shortContentMaxRatio = defaultShortContentMaxContentRatio
+	}
+	if opts.shortContentMaxResponse < 0 {
+		opts.shortContentMaxResponse = 0
+	}
+	requestCaptureMu.Lock()
+	defer requestCaptureMu.Unlock()
+	activeCaptureOptions = opts
+}
+
+func currentRequestCaptureOptions() requestCaptureOptions {
+	requestCaptureMu.RLock()
+	defer requestCaptureMu.RUnlock()
+	return activeCaptureOptions
 }
 
 func captureFilterRejectedRequest(r *http.Request, body []byte, err error, model, escrow string) {
@@ -166,6 +217,35 @@ func captureEmptyStreamAttemptRequest(ctx context.Context, escrow string, params
 	_ = store.write(record)
 }
 
+func captureShortContentAttemptRequest(ctx context.Context, escrow string, params user.InferenceParams, attempts []*inflight, winnerNonce uint64) {
+	opts := currentRequestCaptureOptions()
+	if len(params.Prompt) == 0 || !opts.shortContentAttempts || !hasShortContentAttempt(attempts, opts) {
+		return
+	}
+	store := currentRequestCaptureStore()
+	if store == nil {
+		return
+	}
+	record := capturedChatRequest{
+		RequestID:    requestIDOrEmpty(ctx),
+		CapturedAt:   time.Now().UTC().Format(time.RFC3339Nano),
+		Kind:         "short_content_attempt",
+		Error:        shortContentCaptureReason(opts),
+		Path:         "/v1/chat/completions",
+		Model:        params.Model,
+		Escrow:       escrow,
+		Stream:       params.Stream,
+		RequestFlags: requestFlagsForLog(params),
+		Attempts:     capturedAttempts(attempts, winnerNonce),
+	}
+	setCapturedRequestBody(&record, params.Prompt)
+	_ = store.write(record)
+}
+
+func shortContentCaptureReason(opts requestCaptureOptions) string {
+	return fmt.Sprintf("content_chunks/output_chunks below %.4g with output_chunks >= %d", opts.shortContentMaxRatio, opts.shortContentMinOutput)
+}
+
 func hasEmptyStreamAttempt(attempts []*inflight) bool {
 	for _, inf := range attempts {
 		if inf != nil && !inf.probe && isEmptyStreamAttempt(inf) {
@@ -175,7 +255,29 @@ func hasEmptyStreamAttempt(attempts []*inflight) bool {
 	return false
 }
 
+func hasShortContentAttempt(attempts []*inflight, opts requestCaptureOptions) bool {
+	for _, inf := range attempts {
+		if isShortContentAttempt(inf, opts) {
+			return true
+		}
+	}
+	return false
+}
+
+func isShortContentAttempt(inf *inflight, opts requestCaptureOptions) bool {
+	if inf == nil || inf.probe {
+		return false
+	}
+	outputChunks := inf.outputChunks.Load()
+	if outputChunks < opts.shortContentMinOutput {
+		return false
+	}
+	contentChunks := inf.contentChunks.Load()
+	return float64(contentChunks)/float64(outputChunks) < opts.shortContentMaxRatio
+}
+
 func capturedAttempts(attempts []*inflight, winnerNonce uint64) []capturedChatAttempt {
+	opts := currentRequestCaptureOptions()
 	captured := make([]capturedChatAttempt, 0, len(attempts))
 	for _, inf := range attempts {
 		if inf == nil {
@@ -195,7 +297,7 @@ func capturedAttempts(attempts []*inflight, winnerNonce uint64) []capturedChatAt
 		if inf.err != nil {
 			errText = inf.err.Error()
 		}
-		captured = append(captured, capturedChatAttempt{
+		attempt := capturedChatAttempt{
 			Escrow:                      inf.escrowID,
 			Nonce:                       inf.nonce,
 			Host:                        inf.hostID,
@@ -220,7 +322,13 @@ func capturedAttempts(attempts []*inflight, winnerNonce uint64) []capturedChatAt
 			ErrorMessage:                inf.errorMessage,
 			ResponseBodySample:          inf.emptyResponseBodySample,
 			ResponseBodySampleTruncated: inf.emptyResponseBodySampleTruncated,
-		})
+		}
+		if opts.shortContentResponses && isShortContentAttempt(inf, opts) && len(inf.shortContentResponseBody) > 0 {
+			attempt.ResponseBodyBase64 = base64.StdEncoding.EncodeToString(inf.shortContentResponseBody)
+			attempt.ResponseBodyTruncated = inf.shortContentResponseBodyTruncated
+			attempt.ResponseBodyBytes = len(inf.shortContentResponseBody)
+		}
+		captured = append(captured, attempt)
 	}
 	return captured
 }

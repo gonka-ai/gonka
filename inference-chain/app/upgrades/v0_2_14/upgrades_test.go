@@ -180,6 +180,52 @@ func TestBackfillDevshardEscrowParamDefaults_PreservesExistingDefaultInferenceSe
 	require.Equal(t, customGrace, got.DevshardEscrowParams.DefaultInferenceSealGraceNonces)
 }
 
+func TestSeedDelegationRewardSnapshotForEffectiveEpoch(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 7))
+
+	_, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	require.False(t, found)
+
+	require.NoError(t, seedDelegationRewardSnapshotForEffectiveEpoch(ctx, k))
+
+	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	require.True(t, found)
+	require.Equal(t, uint64(7), snapshot.EpochIndex)
+	require.Empty(t, snapshot.Transfers)
+	require.Empty(t, snapshot.Penalties)
+}
+
+func TestSeedDelegationRewardSnapshotForEffectiveEpoch_DoesNotOverrideExisting(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 8))
+	require.NoError(t, k.SetDelegationRewardTransferSnapshot(ctx, inferencetypes.DelegationRewardTransferSnapshot{
+		EpochIndex: 8,
+		Transfers: []*inferencetypes.DelegationRewardTransfer{
+			{
+				ModelId: "m",
+				From:    "a",
+				To:      "b",
+				Share:   inferencetypes.DecimalFromFloat(0.1),
+			},
+		},
+		Penalties: []*inferencetypes.DelegationRewardPenalty{
+			{
+				Participant:     "a",
+				PenaltyFraction: inferencetypes.DecimalFromFloat(0.2),
+			},
+		},
+	}))
+
+	require.NoError(t, seedDelegationRewardSnapshotForEffectiveEpoch(ctx, k))
+
+	snapshot, found := k.GetDelegationRewardTransferSnapshot(ctx)
+	require.True(t, found)
+	require.Equal(t, uint64(8), snapshot.EpochIndex)
+	require.Len(t, snapshot.Transfers, 1)
+	require.Len(t, snapshot.Penalties, 1)
+}
+
 func TestUpdateGenesisTransferParams(t *testing.T) {
 	gtKeeper, ctx := keepertest.GenesistransferKeeper(t)
 
@@ -199,4 +245,3 @@ func TestUpdateGenesisTransferParams(t *testing.T) {
 	require.True(t, migratedParams.RestrictToList)
 	require.Len(t, migratedParams.AllowedAccounts, 43)
 }
-

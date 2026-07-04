@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -221,6 +222,107 @@ func TestRaceWriterDetachedWinnerSinksAfterContextCancel(t *testing.T) {
 
 	rw.Flush()
 	require.Zero(t, w.flushes)
+}
+
+func TestRaceWriterDefersSuspiciousWinnerUntilFallback(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ctx := context.Background()
+	rg := newRaceGroup(ctx, ctx, "escrow-proxy", rec)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-proxy",
+		nonce:        1,
+		suspicious:   true,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+	payload := []byte(`data: {"choices":[{"delta":{"content":"suspect"}}]}` + "\n\n")
+
+	n, err := rw.Write(payload)
+	require.NoError(t, err)
+	require.Equal(t, len(payload), n)
+	require.Zero(t, rg.winnerNonce())
+	require.Empty(t, rec.Body.String())
+	require.Equal(t, payload, inf.pendingBuf)
+
+	require.NoError(t, rg.promoteFallbackWinner(inf))
+	require.EqualValues(t, 1, rg.winnerNonce())
+	require.Equal(t, string(payload), rec.Body.String())
+	require.Empty(t, inf.pendingBuf)
+}
+
+func TestRaceWriterLogsSuspiciousWinnerDeferredOncePerAttempt(t *testing.T) {
+	var logs bytes.Buffer
+	oldOutput := log.Writer()
+	oldFlags := log.Flags()
+	log.SetOutput(&logs)
+	log.SetFlags(0)
+	t.Cleanup(func() {
+		log.SetOutput(oldOutput)
+		log.SetFlags(oldFlags)
+	})
+
+	rec := httptest.NewRecorder()
+	ctx := context.Background()
+	rg := newRaceGroup(ctx, ctx, "escrow-proxy", rec)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-proxy",
+		nonce:        1,
+		suspicious:   true,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+
+	for _, payload := range [][]byte{
+		[]byte(`data: {"choices":[{"delta":{"content":"chunk-1"}}]}` + "\n\n"),
+		[]byte(`data: {"choices":[{"delta":{"content":"chunk-2"}}]}` + "\n\n"),
+		[]byte(`data: {"choices":[{"delta":{"content":"chunk-3"}}]}` + "\n\n"),
+	} {
+		_, err := rw.Write(payload)
+		require.NoError(t, err)
+	}
+
+	require.Equal(t, 1, strings.Count(logs.String(), "stage=suspicious_winner_deferred"))
+	require.Equal(t, int64(3), inf.contentChunks.Load())
+	require.Zero(t, rg.winnerNonce())
+}
+
+func TestRaceWriterNonSuspiciousBeatsSuspiciousAttempt(t *testing.T) {
+	rec := httptest.NewRecorder()
+	ctx := context.Background()
+	rg := newRaceGroup(ctx, ctx, "escrow-proxy", rec)
+	suspicious := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-proxy",
+		nonce:        1,
+		suspicious:   true,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	normal := &inflight{
+		hostID:       "host-2",
+		escrowID:     "escrow-proxy",
+		nonce:        2,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+
+	_, err := (&raceWriter{group: rg, nonce: 1, inf: suspicious}).Write([]byte(`data: {"choices":[{"delta":{"content":"suspect"}}]}` + "\n\n"))
+	require.NoError(t, err)
+	require.Zero(t, rg.winnerNonce())
+
+	normalPayload := []byte(`data: {"choices":[{"delta":{"content":"normal"}}]}` + "\n\n")
+	_, err = (&raceWriter{group: rg, nonce: 2, inf: normal}).Write(normalPayload)
+	require.NoError(t, err)
+	require.EqualValues(t, 2, rg.winnerNonce())
+	require.Equal(t, string(normalPayload), rec.Body.String())
 }
 
 func TestDeferredWriterRewritesCompletionPayloadToStreamingChunks(t *testing.T) {
@@ -921,7 +1023,8 @@ func TestRecordWinnerTerminalFailureRecordsOnlyRecordedStall(t *testing.T) {
 	stats := perf.StatsForParticipant("host:0")
 	require.Equal(t, 2, stats.TotalSamples)
 	require.Equal(t, 2, stats.FailureSamples)
-	require.True(t, limiter.IsBlocked("host:0"))
+	require.False(t, limiter.IsBlocked("host:0"))
+	require.True(t, limiter.IsShadowQuarantined("host:0"))
 }
 
 func TestRunInference_WinnerStallsAfterContentTimesOut(t *testing.T) {
@@ -1040,7 +1143,8 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 	}
 	markStalled(second)
 	env.proxy.redundancy.recordStalledWinnerFailureOnce(second, defaultParams())
-	require.True(t, limiter.IsBlocked(participantKey))
+	require.False(t, limiter.IsBlocked(participantKey))
+	require.True(t, limiter.IsShadowQuarantined(participantKey))
 }
 
 func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T) {
@@ -1205,7 +1309,8 @@ func TestRunInference_IncompleteWinnerAfterContentQuarantinesParticipant(t *test
 	err = env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &second, nil)
 	requireIncompleteWinnerError(t, err)
 	require.Contains(t, second.String(), `"content":"x"`)
-	require.True(t, limiter.IsBlocked(participantKey))
+	require.False(t, limiter.IsBlocked(participantKey))
+	require.True(t, limiter.IsShadowQuarantined(participantKey))
 }
 
 func requireIncompleteWinnerError(t *testing.T, err error) {
@@ -1246,6 +1351,7 @@ func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
 	require.Equal(t, emptyStreamQuarantineThreshold, stats.TotalSamples)
 	require.Zero(t, stats.ResponsiveRate)
 	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
+	require.True(t, limiter.IsShadowQuarantined(env.session.HostParticipantKey(0)))
 
 	unstarted := &inflight{hostIdx: 0, nonce: 99}
 	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{unstarted}, defaultParams(), true)
@@ -1272,6 +1378,33 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamWhenRequestFailed(t *
 	require.Zero(t, stats.TotalSamples)
 	require.Zero(t, stats.FailureSamples)
 	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
+	require.True(t, limiter.IsShadowQuarantined(env.session.HostParticipantKey(0)))
+}
+
+func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *testing.T) {
+	setPoCModeForTest(t, pocRequestModeRelaxed)
+	setPoCPhaseState(true, "confirmation_poc")
+
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	limiter := NewParticipantRequestLimiter(10, 10)
+	env.proxy.redundancy.participantLimiter = limiter
+
+	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+		inf := &inflight{
+			hostIdx:     0,
+			nonce:       uint64(i + 1),
+			sendTime:    time.Now().Add(-time.Second),
+			receiptTime: time.Now().Add(-900 * time.Millisecond),
+		}
+		inf.outputChunks.Store(1)
+		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
+	}
+
+	participantKey := env.session.HostParticipantKey(0)
+	stats := env.proxy.redundancy.perf.Stats(0)
+	require.Zero(t, stats.TotalSamples)
+	require.False(t, limiter.IsBlocked(participantKey))
+	require.False(t, limiter.IsShadowQuarantined(participantKey))
 }
 
 func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) {

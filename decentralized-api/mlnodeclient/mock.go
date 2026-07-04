@@ -59,16 +59,17 @@ type MockClient struct {
 	StopPowV2Called      int
 
 	// PoC v2 state
-	PowStatusV2 string // "IDLE", "GENERATING", etc.
+	PowStatusV2            string // "IDLE", "GENERATING", etc.
+	PoCValidationInference bool
 
 	// Capture parameters
 	LastInferenceModel    string
 	LastInferenceArgs     []string
 	LastInitGenerateV2Req *PoCInitGenerateRequestV2
 	LastGenerateV2Req     *PoCGenerateRequestV2
-	LastModelStatusCheck *Model
-	LastModelDownload    *Model
-	LastModelDelete      *Model
+	LastModelStatusCheck  *Model
+	LastModelDownload     *Model
+	LastModelDelete       *Model
 }
 
 // NewMockClient creates a new mock client with default values
@@ -173,6 +174,7 @@ func (m *MockClient) Reset() {
 	m.LastModelDownload = nil
 	m.LastModelDelete = nil
 	m.PowStatusV2 = ""
+	m.PoCValidationInference = false
 }
 
 func (m *MockClient) Stop(ctx context.Context) error {
@@ -196,7 +198,10 @@ func (m *MockClient) NodeState(ctx context.Context) (*StateResponse, error) {
 	if m.NodeStateError != nil {
 		return nil, m.NodeStateError
 	}
-	return &StateResponse{State: m.CurrentState}, nil
+	return &StateResponse{
+		State:                  m.CurrentState,
+		PoCValidationInference: m.PoCValidationInference,
+	}, nil
 }
 
 func (m *MockClient) InferenceHealth(ctx context.Context) (bool, error) {

@@ -125,6 +125,127 @@ func TestPoCWeightCalculator_PocValidated_SlotSamplingAcceptsWhenGroupControlsEn
 	require.True(t, ok)
 }
 
+// Regression for the guardian-vote-loss incident: a guardian that could not
+// run a model that epoch has no voting weight for it, so its votes were
+// filtered out before the tiebreaker and participants got rejected on split
+// votes. Guardian votes must be counted in the tiebreaker regardless of
+// per-model voting weight.
+func TestPoCWeightCalculator_GuardianTiebreakerCountsWeightlessGuardianVotes(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	guardian := testutil.Creator
+
+	newCalc := func(guardianVote int64) *PoCWeightCalculator {
+		return &PoCWeightCalculator{
+			ModelVotingPowers: map[string]map[string]int64{
+				"model-a": {
+					testutil.Validator:  40,
+					testutil.Validator2: 40,
+					// guardian intentionally absent: no voting weight for model-a
+				},
+			},
+			TotalNetworkWeight: 100,
+			Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+				key: {
+					{ValidatorParticipantAddress: testutil.Validator, ValidatedWeight: 1},
+					{ValidatorParticipantAddress: testutil.Validator2, ValidatedWeight: -1},
+					{ValidatorParticipantAddress: guardian, ValidatedWeight: guardianVote},
+				},
+			},
+			GuardianEnabled:   true,
+			GuardianAddresses: map[string]bool{guardian: true},
+			Logger:            noopLogger{},
+		}
+	}
+
+	t.Run("guardian votes valid - accepted", func(t *testing.T) {
+		wc := newCalc(1)
+		filtered := wc.getParticipantValidations(key)
+		// The guardian vote is dropped from the majority list because the
+		// guardian has no voting weight for the model...
+		require.Len(t, filtered, 2)
+		// ...votes split 40/40 with no 2/3 majority, and the guardian's raw
+		// vote decides the tiebreaker.
+		require.True(t, wc.pocValidated(filtered, key))
+	})
+
+	t.Run("guardian votes invalid - rejected", func(t *testing.T) {
+		wc := newCalc(-1)
+		filtered := wc.getParticipantValidations(key)
+		require.Len(t, filtered, 2)
+		require.False(t, wc.pocValidated(filtered, key))
+	})
+}
+
+// Even when ALL votes come from weightless guardians (the filtered majority
+// list is empty), the participant must not be rejected early: the guardian
+// tiebreaker still applies.
+func TestPoCWeightCalculator_Calculate_GuardianOnlyVotesReachTiebreaker(t *testing.T) {
+	key := types.PoCParticipantModelKey{
+		ParticipantAddress: testutil.Executor,
+		ModelID:            "model-a",
+	}
+	guardian := testutil.Creator
+
+	wc := &PoCWeightCalculator{
+		ModelVotingPowers: map[string]map[string]int64{
+			"model-a": {
+				testutil.Validator: 40,
+			},
+		},
+		TotalNetworkWeight: 100,
+		StoreCommits: map[types.PoCParticipantModelKey]types.PoCV2StoreCommit{
+			key: {
+				ParticipantAddress:       testutil.Executor,
+				PocStageStartBlockHeight: 100,
+				Count:                    10,
+				ModelId:                  "model-a",
+			},
+		},
+		NodeWeightDistributions: map[types.PoCParticipantModelKey]types.MLNodeWeightDistribution{
+			key: {
+				ParticipantAddress:       testutil.Executor,
+				PocStageStartBlockHeight: 100,
+				ModelId:                  "model-a",
+				Weights: []*types.MLNodeWeight{{
+					NodeId: "node-a",
+					Weight: 10,
+				}},
+			},
+		},
+		Validations: map[types.PoCParticipantModelKey][]types.PoCValidationV2{
+			key: {
+				{ValidatorParticipantAddress: guardian, ValidatedWeight: 10},
+			},
+		},
+		GuardianEnabled:   true,
+		GuardianAddresses: map[string]bool{guardian: true},
+		Participants: map[string]types.Participant{
+			testutil.Executor: {
+				Index:        testutil.Executor,
+				Address:      testutil.Executor,
+				ValidatorKey: "validator-key",
+				InferenceUrl: "http://executor.example.com",
+			},
+		},
+		Seeds: map[string]types.RandomSeed{
+			testutil.Executor: {
+				Participant: testutil.Executor,
+				EpochIndex:  1,
+				Signature:   "seed-sig",
+			},
+		},
+		Logger:                  noopLogger{},
+		TimeNormalizationFactor: mathsdk.LegacyOneDec(),
+	}
+
+	result := wc.Calculate()
+	require.Len(t, result, 1)
+	require.Equal(t, testutil.Executor, result[0].Index)
+}
+
 func TestPoCWeightCalculator_CalculateParticipantWeight_ProducesRawWeights(t *testing.T) {
 	modelAKey := types.PoCParticipantModelKey{
 		ParticipantAddress: testutil.Executor,

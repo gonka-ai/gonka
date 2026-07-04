@@ -30,6 +30,7 @@ const (
 	Query_EpochGroupDataAll_FullMethodName                         = "/inference.inference.Query/EpochGroupDataAll"
 	Query_SettleAmount_FullMethodName                              = "/inference.inference.Query/SettleAmount"
 	Query_SettleAmountAll_FullMethodName                           = "/inference.inference.Query/SettleAmountAll"
+	Query_EstimateBitcoinReward_FullMethodName                     = "/inference.inference.Query/EstimateBitcoinReward"
 	Query_EpochGroupValidations_FullMethodName                     = "/inference.inference.Query/EpochGroupValidations"
 	Query_EpochGroupValidationsAll_FullMethodName                  = "/inference.inference.Query/EpochGroupValidationsAll"
 	Query_PocBatchesForStage_FullMethodName                        = "/inference.inference.Query/PocBatchesForStage"
@@ -127,6 +128,7 @@ type QueryClient interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error)
+	EstimateBitcoinReward(ctx context.Context, in *QueryEstimateBitcoinRewardRequest, opts ...grpc.CallOption) (*QueryEstimateBitcoinRewardResponse, error)
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error)
@@ -355,6 +357,15 @@ func (c *queryClient) SettleAmount(ctx context.Context, in *QueryGetSettleAmount
 func (c *queryClient) SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error) {
 	out := new(QueryAllSettleAmountResponse)
 	err := c.cc.Invoke(ctx, Query_SettleAmountAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EstimateBitcoinReward(ctx context.Context, in *QueryEstimateBitcoinRewardRequest, opts ...grpc.CallOption) (*QueryEstimateBitcoinRewardResponse, error) {
+	out := new(QueryEstimateBitcoinRewardResponse)
+	err := c.cc.Invoke(ctx, Query_EstimateBitcoinReward_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -1040,6 +1051,7 @@ type QueryServer interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error)
+	EstimateBitcoinReward(context.Context, *QueryEstimateBitcoinRewardRequest) (*QueryEstimateBitcoinRewardResponse, error)
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error)
@@ -1204,6 +1216,9 @@ func (UnimplementedQueryServer) SettleAmount(context.Context, *QueryGetSettleAmo
 }
 func (UnimplementedQueryServer) SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleAmountAll not implemented")
+}
+func (UnimplementedQueryServer) EstimateBitcoinReward(context.Context, *QueryEstimateBitcoinRewardRequest) (*QueryEstimateBitcoinRewardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EstimateBitcoinReward not implemented")
 }
 func (UnimplementedQueryServer) EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidations not implemented")
@@ -1631,6 +1646,24 @@ func _Query_SettleAmountAll_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).SettleAmountAll(ctx, req.(*QueryAllSettleAmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EstimateBitcoinReward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryEstimateBitcoinRewardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EstimateBitcoinReward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EstimateBitcoinReward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EstimateBitcoinReward(ctx, req.(*QueryEstimateBitcoinRewardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2999,6 +3032,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleAmountAll",
 			Handler:    _Query_SettleAmountAll_Handler,
+		},
+		{
+			MethodName: "EstimateBitcoinReward",
+			Handler:    _Query_EstimateBitcoinReward_Handler,
 		},
 		{
 			MethodName: "EpochGroupValidations",

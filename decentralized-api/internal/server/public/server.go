@@ -31,6 +31,7 @@ type Server struct {
 	blockQueue          *BridgeQueue
 	bandwidthLimiter    *internal.BandwidthLimiter
 	identityCache       *identityCache
+	versionsCache       *versionsCache
 	payloadStorage      payloadstorage.PayloadStorage
 	phaseTracker        *chainphase.ChainPhaseTracker
 	epochGroupDataCache *internal.EpochGroupDataCache
@@ -77,6 +78,7 @@ func NewServer(
 		recorder:            recorder,
 		blockQueue:          blockQueue,
 		identityCache:       newIdentityCache(),
+		versionsCache:       newVersionsCache(),
 		payloadStorage:      payloadStorage,
 		phaseTracker:        phaseTracker,
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
@@ -110,6 +112,7 @@ func NewServer(
 	g.POST("verify-block", s.postVerifyBlock)
 
 	g.GET("pricing", s.getPricing)
+	g.GET("supply/total", s.getTotalSupply)
 	g.GET("models", s.getModels)
 	g.GET("governance/pricing", s.getGovernancePricing)
 	g.GET("governance/models", s.getGovernanceModels)
