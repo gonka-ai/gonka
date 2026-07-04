@@ -225,6 +225,7 @@ func NewStateMachine(
 		"create_devshard_fee", config.CreateDevshardFee,
 		"token_price", config.TokenPrice,
 		"vote_threshold", config.VoteThreshold,
+		"validation_rate", config.ValidationRate,
 		"user_address", userAddress,
 		"protocol_version", sm.ProtocolVersion(),
 	)

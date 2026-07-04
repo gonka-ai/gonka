@@ -30,6 +30,7 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 				"inference_seal_grace_nonces":  160,
 				"inference_seal_grace_seconds": 3600,
 				"auto_seal_every_n_nonces":     150,
+				"validation_rate":              6000,
 			},
 			"found": true,
 		})
@@ -50,6 +51,7 @@ func TestGetEscrow_HappyPath(t *testing.T) {
 	assert.Equal(t, uint32(160), info.InferenceSealGraceNonces)
 	assert.Equal(t, uint32(3600), info.InferenceSealGraceSeconds)
 	assert.Equal(t, uint32(150), info.AutoSealEveryNNonces)
+	assert.Equal(t, uint32(6000), info.ValidationRate)
 }
 
 func TestGetEscrow_GraceFieldsNumeric(t *testing.T) {
@@ -95,6 +97,7 @@ func TestGetEscrow_FeesMissingKeysDecodeZero(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, uint64(0), info.CreateDevshardFee)
 	assert.Equal(t, uint64(0), info.FeePerNonce)
+	assert.Equal(t, uint32(0), info.ValidationRate, "missing validation_rate decodes as zero (unset)")
 }
 
 func TestGetEscrow_DoesNotQueryParams(t *testing.T) {

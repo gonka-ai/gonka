@@ -3,7 +3,7 @@
 ################################################################################
 # Build — runs on the native platform, cross-compiles via GOOS/GOARCH
 ################################################################################
-FROM --platform=$BUILDPLATFORM golang:1.24.2-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24.2-alpine3.21 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
@@ -25,7 +25,7 @@ RUN --mount=type=cache,id=go-build-cache-devshard,target=/root/.cache/go-build \
 ################################################################################
 # Final image
 ################################################################################
-FROM alpine:3.18
+FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates curl && \
     rm -rf /var/cache/apk/*
