@@ -254,6 +254,16 @@ func (s *SQLite) openOrLoadPool(epochID uint64) (*epochPool, error) {
 // (rebuilt at boot from _meta.db); the pool itself is opened on demand so a
 // host that only touches a couple of escrows doesn't pay for opening every
 // epoch_*.db on disk.
+// HasEscrow reports whether escrowID is present in the in-memory routing index
+// (rebuilt at boot from _meta.db). It lets the hybrid router resolve which
+// backend owns an escrow without a disk round trip.
+func (s *SQLite) HasEscrow(escrowID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.escrowIdx[escrowID]
+	return ok
+}
+
 func (s *SQLite) poolFor(escrowID string) (*epochPool, uint64, error) {
 	s.mu.RLock()
 	epochID, ok := s.escrowIdx[escrowID]
