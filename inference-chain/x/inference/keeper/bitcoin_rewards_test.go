@@ -2355,3 +2355,28 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
 }
+
+// Regression: one zero-weight participant in a multi-model settlement must not
+// collapse the entire network to zero capped power (gonka-testnet-4 epoch 15).
+func TestApplyPowerCappingForWeights_SkipsZeroWeightParticipants(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "guardian", Weight: 0},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	total := int64(0)
+	for _, p := range capped {
+		total += p.Weight
+	}
+	require.Positive(t, total, "zero-weight bystander must not zero the network")
+	require.Equal(t, int64(0), capped[0].Weight, "zero-weight participant stays zero")
+	if wasCapped {
+		require.LessOrEqual(t, capped[1].Weight, int64(10238))
+	} else {
+		require.Equal(t, int64(81702), total)
+	}
+}

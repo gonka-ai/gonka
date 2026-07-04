@@ -439,13 +439,21 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 		Index       int
 	}
 
-	participantPowers := make([]ParticipantPowerInfo, participantCount)
+	participantPowers := make([]ParticipantPowerInfo, 0, participantCount)
 	for i, participant := range participants {
-		participantPowers[i] = ParticipantPowerInfo{
+		if participant.Weight <= 0 {
+			continue
+		}
+		participantPowers = append(participantPowers, ParticipantPowerInfo{
 			Participant: participant,
 			Power:       participant.Weight,
 			Index:       i,
-		}
+		})
+	}
+
+	positiveCount := len(participantPowers)
+	if positiveCount <= 1 {
+		return participants, totalPower, false
 	}
 
 	// Sort by power (smallest to largest) - simple bubble sort for small arrays
@@ -460,9 +468,9 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 	// Iterate through sorted powers to find threshold
 	cap := int64(-1)
 	sumPrev := int64(0)
-	for k := 0; k < participantCount; k++ {
+	for k := 0; k < positiveCount; k++ {
 		currentPower := participantPowers[k].Power
-		weightedTotal := sumPrev + currentPower*int64(participantCount-k)
+		weightedTotal := sumPrev + currentPower*int64(positiveCount-k)
 
 		weightedTotalDecimal := decimal.NewFromInt(weightedTotal)
 		threshold := maxPercentageDecimal.Mul(weightedTotalDecimal)
@@ -472,7 +480,7 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 			sumPrevDecimal := decimal.NewFromInt(sumPrev)
 			numerator := maxPercentageDecimal.Mul(sumPrevDecimal)
 
-			remainingParticipants := decimal.NewFromInt(int64(participantCount - k))
+			remainingParticipants := decimal.NewFromInt(int64(positiveCount - k))
 			maxPercentageTimesRemaining := maxPercentageDecimal.Mul(remainingParticipants)
 			denominator := one.Sub(maxPercentageTimesRemaining)
 
@@ -491,6 +499,11 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 
 	// If no threshold found, no capping needed
 	if cap == -1 {
+		return participants, totalPower, false
+	}
+	// A zero cap with positive total power means the threshold math degenerated
+	// (e.g. zero-weight participants were previously counted in the slot budget).
+	if cap <= 0 && totalPower > 0 {
 		return participants, totalPower, false
 	}
 
