@@ -958,10 +958,32 @@ func (h *Host) collectValidationJobs() []validateJob {
 			mySlotCount := uint32(len(h.slotIDs))
 			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
 			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
+			rate := st.Config.ValidationRate
+			selected := state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, rate)
+			logging.Debug("validation_rate_sample",
+				"subsystem", "validation",
+				"escrow_id", h.escrowID,
+				"inference_id", infID,
+				"validation_rate", rate,
+				"validator_slot_count", mySlotCount,
+				"executor_slot_count", executorSlotCount,
+				"total_slots", totalSlots,
+				"selected", selected,
+			)
+			if !selected {
 				continue
 			}
 			flow = validationFlowShouldValidate
+		} else {
+			logging.Debug("validation_rate_sample",
+				"subsystem", "validation",
+				"escrow_id", h.escrowID,
+				"inference_id", infID,
+				"validation_rate", st.Config.ValidationRate,
+				"status", uint8(rec.Status),
+				"selected", true,
+				"flow", string(validationFlowChallenged),
+			)
 		}
 
 		validatorSlot := h.sortedSlots[0]
@@ -1004,6 +1026,14 @@ func (h *Host) enqueueValidation(job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"flow", string(job.flow),
+			"queued", false,
+			"reason", "no_queue",
+		)
 		return
 	}
 
@@ -1011,12 +1041,29 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case h.validationQueue <- job:
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
 		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"validator_slot", job.validatorSlot,
+			"executor_address", job.executorAddress,
+			"flow", string(job.flow),
+			"queued", true,
+		)
 	default:
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
 		observability.IncValidationQueueDrop()
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"flow", string(job.flow),
+			"queued", false,
+			"reason", "queue_full",
+		)
 		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
 	}
 }
@@ -1047,11 +1094,22 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	st := h.sm.SnapshotState()
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
-		"validation_flow", string(job.flow))
+		"validation_flow", string(job.flow),
+		"validation_rate", st.Config.ValidationRate)
+	logging.Debug("validation_triggered",
+		"subsystem", "validation",
+		"escrow_id", h.escrowID,
+		"inference_id", job.inferenceID,
+		"validator_slot", job.validatorSlot,
+		"executor_address", job.executorAddress,
+		"flow", string(job.flow),
+		"validation_rate", st.Config.ValidationRate,
+	)
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)

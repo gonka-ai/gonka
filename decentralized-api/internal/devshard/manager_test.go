@@ -858,13 +858,14 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 			TokenPrice:                1,
 			InferenceSealGraceNonces:  123,
 			InferenceSealGraceSeconds: 99,
+			ValidationRate:            6000,
 		},
 	}
 
 	live := SessionParams{
 		RefusalTimeout:      90,
 		ExecutionTimeout:    1800,
-		ValidationRate:      6000,
+		ValidationRate:      9999, // lane B must not override lane A
 		VoteThresholdFactor: 67,
 	}
 	provider := stubRuntimeParams{params: live}
@@ -883,8 +884,8 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 	require.Equal(t, int64(90), meta.Config.RefusalTimeout)
 	require.Equal(t, int64(1800), meta.Config.ExecutionTimeout)
 
-	live.ValidationRate = 9999
-	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "frozen session must not hot-reload")
+	live.ValidationRate = 1111
+	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "validation_rate comes from escrow (lane A), not live provider")
 	require.Equal(t, uint32(123), meta.Config.InferenceSealGraceNonces, "grace comes from escrow snapshot, not live provider")
 }
 
@@ -924,6 +925,41 @@ func TestHostManager_Create_SnapshotsFeesFromEscrow(t *testing.T) {
 	require.Equal(t, createFee, st.Config.CreateDevshardFee)
 	require.Equal(t, perNonce, st.Config.FeePerNonce)
 	require.Equal(t, createFee, st.Fees)
+}
+
+func TestHostManager_Create_DefaultValidationRateWhenEscrowOmits(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
+			// ValidationRate unset (older chain/dapi)
+		},
+	}
+	provider := stubRuntimeParams{params: SessionParams{ValidationRate: 0}}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetRuntimeParamsProvider(provider)
+	_, err := mgr.getOrCreate("escrow-1")
+	require.NoError(t, err)
+
+	meta, err := store.GetSessionMeta("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultValidationRate, meta.Config.ValidationRate)
 }
 
 func TestCreateSession_RejectsExistingDifferentVersion(t *testing.T) {

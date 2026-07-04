@@ -85,12 +85,16 @@ fun LocalInferencePair.dumpDevshardChallengeTraceLogs(escrowId: Long) {
     val patterns = listOf(
         "execute_ml_",
         "validation_ml_",
+        "validation_rate_bound",
+        "validation_rate_sample",
         "validation_enqueued",
+        "validation_triggered",
         "apply_validation",
         "proxy_inference_",
         "validation started",
         "validation_result",
         "validation_vote",
+        "NewStateMachine",
     )
     val grepExpr = patterns.joinToString("|") { Regex.escape(it) }
     logSection("phase-trace docker logs (escrow=$escrowId, patterns=$grepExpr)")
