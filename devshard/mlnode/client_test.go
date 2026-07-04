@@ -2,6 +2,8 @@ package mlnode
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 
@@ -76,10 +78,14 @@ func TestClient_Acquire_NoNodesAvailable(t *testing.T) {
 	_, err := c.Acquire(context.Background(), "model-a", nil)
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no nodes available")
+	assert.True(t, errors.Is(err, ErrNoNodesAvailable))
+	assert.True(t, IsNoNodesAvailable(err))
+	assert.False(t, IsUnavailable(err))
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	assert.Contains(t, err.Error(), "model-a")
 }
 
-func TestClient_Acquire_ServerError(t *testing.T) {
+func TestClient_Acquire_Unavailable(t *testing.T) {
 	srv := &mockServer{
 		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 			return nil, status.Error(codes.Unavailable, "queue full")
@@ -90,6 +96,50 @@ func TestClient_Acquire_ServerError(t *testing.T) {
 	_, err := c.Acquire(context.Background(), "model-a", nil)
 
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnavailable))
+	assert.True(t, IsUnavailable(err))
+	assert.False(t, IsNoNodesAvailable(err))
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestClient_Acquire_OtherStatusPreserved(t *testing.T) {
+	srv := &mockServer{
+		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.Internal, "boom")
+		},
+	}
+
+	c := startMockServer(t, srv)
+	_, err := c.Acquire(context.Background(), "model-a", nil)
+
+	require.Error(t, err)
+	assert.False(t, IsNoNodesAvailable(err))
+	assert.False(t, IsUnavailable(err))
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Contains(t, err.Error(), "nodemanager: acquire")
+}
+
+func TestClassifyAcquireError_NonStatusIsUnavailable(t *testing.T) {
+	err := classifyAcquireError("model-a", errors.New("connection refused"))
+	assert.True(t, errors.Is(err, ErrUnavailable))
+	assert.True(t, IsUnavailable(err))
+	assert.False(t, IsNoNodesAvailable(err))
+}
+
+func TestIsNoNodesAvailable_And_IsUnavailable(t *testing.T) {
+	assert.False(t, IsNoNodesAvailable(nil))
+	assert.False(t, IsUnavailable(nil))
+
+	assert.True(t, IsNoNodesAvailable(ErrNoNodesAvailable))
+	assert.True(t, IsNoNodesAvailable(status.Error(codes.ResourceExhausted, "x")))
+	assert.True(t, IsNoNodesAvailable(fmt.Errorf("wrap: %w", ErrNoNodesAvailable)))
+
+	assert.True(t, IsUnavailable(ErrUnavailable))
+	assert.True(t, IsUnavailable(status.Error(codes.Unavailable, "x")))
+	assert.True(t, IsUnavailable(fmt.Errorf("wrap: %w", ErrUnavailable)))
+
+	assert.False(t, IsNoNodesAvailable(ErrUnavailable))
+	assert.False(t, IsUnavailable(ErrNoNodesAvailable))
 }
 
 func TestClient_Release_AllOutcomes(t *testing.T) {
