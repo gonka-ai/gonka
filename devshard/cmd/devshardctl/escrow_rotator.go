@@ -607,9 +607,43 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		rt.active.Store(false)
 	}
 	g.mu.Unlock()
+	wasResident := ok
 	if !ok {
-		log.Printf("devshard_settle_failed escrow=%s stage=runtime_lookup error=%q", id, "devshard is not active")
-		return nil, fmt.Errorf("devshard %s is not active", id)
+		// Non-resident devshard (inactive/settled): rehydrate a full runtime
+		// (with chain access) solely to build and broadcast this settlement,
+		// then release it. Concurrent settlement of the same id is guarded by
+		// the caller: auto/reconcile paths hold settlementInFlight[id] via
+		// scheduleAutoSettlement, and the chain rejects any duplicate settle
+		// broadcast, so no additional in-flight guard is taken here (taking
+		// one would deadlock the auto path, which already holds it).
+		cfg, known, cfgErr := g.lazyRuntimeConfig(id)
+		if cfgErr != nil {
+			log.Printf("devshard_settle_failed escrow=%s stage=lazy_config error=%q", id, cfgErr.Error())
+			return nil, cfgErr
+		}
+		if !known {
+			log.Printf("devshard_settle_failed escrow=%s stage=runtime_lookup error=%q", id, "devshard is not active")
+			return nil, fmt.Errorf("devshard %s is not active", id)
+		}
+		g.mu.Lock()
+		settings := g.settings
+		g.mu.Unlock()
+		built, buildErr := gatewayRuntimeBuilder(cfg, settings.ChainREST, settings.DefaultModel, g.perf)
+		if buildErr != nil {
+			log.Printf("devshard_settle_failed escrow=%s stage=rehydrate error=%q", id, buildErr.Error())
+			return nil, fmt.Errorf("rehydrate devshard %s for settlement: %w", id, buildErr)
+		}
+		built.active.Store(false)
+		rt = built
+		log.Printf("devshard_settle_rehydrated escrow=%s (transient, non-resident)", id)
+		defer func() {
+			// Flush a final snapshot: Finalize advances the nonce, so a later
+			// read-only rebuild of this settled escrow would otherwise replay
+			// the diff tail. retireClose captures the finalized state once.
+			if closeErr := rt.retireClose("settled-transient"); closeErr != nil {
+				log.Printf("devshard_settle_transient_close_error escrow=%s error=%v", id, closeErr)
+			}
+		}()
 	}
 	if err := g.store.SetDevshardActive(id, false); err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=persist_deactivate error=%q", id, err.Error())
@@ -661,5 +695,12 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	// A settled escrow is terminal: drop the resident runtime so its memory
+	// (state machine, inference map, SQLite handles) is released now rather
+	// than lingering until the next restart. Transient runtimes are closed by
+	// their own deferred cleanup above.
+	if wasResident {
+		g.retireRuntime(id, "settled")
+	}
 	return result, nil
 }

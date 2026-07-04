@@ -758,20 +758,23 @@ func (p *Proxy) handleDebugPairwise(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
+	// Live counts come from InferenceStatusCounts (computed under the read
+	// lock without deep-copying records); sealed records are evicted from the
+	// live map, so they are reported separately from the seal-nonce index.
+	liveTotal, statusCounts := p.sm.InferenceStatusCounts()
 	sealed := p.sm.ExportSealedNonces()
 
-	liveStatusCounts := make(map[string]int)
-	for _, rec := range st.Inferences {
-		name := inferenceStatusName[rec.Status]
+	liveStatusCounts := make(map[string]int, len(statusCounts))
+	for status, n := range statusCounts {
+		name := inferenceStatusName[status]
 		if name == "" {
-			name = fmt.Sprintf("unknown(%d)", rec.Status)
+			name = fmt.Sprintf("unknown(%d)", status)
 		}
-		liveStatusCounts[name]++
+		liveStatusCounts[name] = n
 	}
 
 	phaseStr := "active"
-	switch st.Phase {
+	switch p.sm.Phase() {
 	case types.PhaseFinalizing:
 		phaseStr = "finalizing"
 	case types.PhaseSettlement:
@@ -779,14 +782,14 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"nonce":              st.LatestNonce,
+		"nonce":              p.sm.LatestNonce(),
 		"phase":              phaseStr,
-		"balance":            st.Balance,
-		"live_inferences":    len(st.Inferences),
+		"balance":            p.sm.Balance(),
+		"live_inferences":    liveTotal,
 		"sealed_inferences":  len(sealed),
 		"live_status_counts": liveStatusCounts,
 		// Deprecated: same as live_inferences; kept for older scripts.
-		"total_inferences": len(st.Inferences),
+		"total_inferences": liveTotal,
 		"status_counts":    liveStatusCounts,
 	})
 }
@@ -810,13 +813,12 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		phaseStr = fmt.Sprintf("unknown(%d)", phase)
 	}
 
-	st := p.sm.SnapshotState()
-	cfg := st.Config
+	cfg := p.sm.Config()
 	status := statusResponse{
 		EscrowID: p.escrowID,
 		Nonce:    p.session.Nonce(),
 		Phase:    phaseStr,
-		Balance:  st.Balance,
+		Balance:  p.sm.Balance(),
 		Config: statusSessionConfig{
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,
@@ -1069,8 +1071,12 @@ func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
 	return entry
 }
 
+// handleState returns the escrow summary: session scalars, config, group, and
+// the small per-slot maps. It deliberately omits the (potentially large)
+// inference map -- that lives at /v1/debug/inferences -- so this endpoint stays
+// bounded regardless of how many inferences an escrow has accumulated.
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
+	st := p.sm.SnapshotStateNoInferences()
 
 	var phaseStr string
 	switch st.Phase {
@@ -1107,9 +1113,38 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	allInferences := p.sm.ExportAllInferenceRecords()
-	inferences := make(map[string]any, len(allInferences))
-	for id, rec := range allInferences {
+	hostStats := make(map[string]any, len(st.HostStats))
+	for slot, hs := range st.HostStats {
+		hostStats[fmt.Sprintf("%d", slot)] = hostStatsDebugEntry(hs)
+	}
+
+	revealedSeeds := map[string]int64{}
+
+	warmKeys := make(map[string]string, len(st.WarmKeys))
+	for slot, addr := range st.WarmKeys {
+		warmKeys[fmt.Sprintf("%d", slot)] = addr
+	}
+
+	resp := map[string]any{
+		"session":        session,
+		"group":          group,
+		"host_stats":     hostStats,
+		"revealed_seeds": revealedSeeds,
+		"warm_keys":      warmKeys,
+	}
+
+	writeJSON(w, resp)
+}
+
+// handleDebugInferences returns the full inference map for the escrow. It is a
+// debug-only endpoint (potentially large: up to the per-escrow inference cap)
+// split out of /v1/state so that summary reads stay cheap. It uses
+// ExportAllInferenceRecords rather than the live map so records already
+// sealed to storage still appear in the dump.
+func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
+	inferenceMap := p.sm.ExportAllInferenceRecords()
+	inferences := make(map[string]any, len(inferenceMap))
+	for id, rec := range inferenceMap {
 		name := inferenceStatusName[rec.Status]
 		if name == "" {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
@@ -1134,26 +1169,8 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hostStats := make(map[string]any, len(st.HostStats))
-	for slot, hs := range st.HostStats {
-		hostStats[fmt.Sprintf("%d", slot)] = hostStatsDebugEntry(hs)
-	}
-
-	revealedSeeds := map[string]int64{}
-
-	warmKeys := make(map[string]string, len(st.WarmKeys))
-	for slot, addr := range st.WarmKeys {
-		warmKeys[fmt.Sprintf("%d", slot)] = addr
-	}
-
-	resp := map[string]any{
-		"session":        session,
-		"group":          group,
-		"inferences":     inferences,
-		"host_stats":     hostStats,
-		"revealed_seeds": revealedSeeds,
-		"warm_keys":      warmKeys,
-	}
-
-	writeJSON(w, resp)
+	writeJSON(w, map[string]any{
+		"total_inferences": len(inferences),
+		"inferences":       inferences,
+	})
 }
