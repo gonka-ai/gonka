@@ -17,8 +17,10 @@ import (
 
 const (
 	defaultChainPhasePollInterval = 5 * time.Second
-	// versionsTTL is how long a /v1/versions fetch stays fresh.
-	versionsTTL = 3 * defaultChainPhasePollInterval
+	// versionsTTLPollMultiplier scales the poll interval into how long a
+	// /v1/versions fetch stays fresh, so entries survive a couple of missed polls
+	// but never outlive the poller's cadence.
+	versionsTTLPollMultiplier = 3
 
 	epochPhaseInference           = "Inference"
 	epochPhasePoCGenerate         = "PoCGenerate"
@@ -255,7 +257,7 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
-		versions:                      NewVersionsCache(client, versionsTTL),
+		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*pollInterval),
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}

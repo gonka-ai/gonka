@@ -248,10 +248,7 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
-	routePrefix := gatewayHostRoutePrefix(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
-	if err := validateGatewayHostRoutePrefix(routePrefix); err != nil {
-		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, err)
-	}
+	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, os.Getenv("DEVSHARD_ROUTE_PREFIX"))
 	participantAdmission := modelScopedParticipantAdmission{
 		limiter: sharedParticipantRequestLimiter,
 		modelID: model,

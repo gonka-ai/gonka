@@ -61,6 +61,161 @@ func createTestValidationWeight(memberAddress string, weight int64, reputation i
 	}
 }
 
+func TestApplyDelegationRewardTransfers_RewardOnlyTransfer(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{
+			ModelId: "model1",
+			From:    "alice",
+			To:      "bob",
+			Share:   types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(600), weights["bob"])
+}
+
+func TestApplyDelegationRewardPenalties_ReducesSourceOnly(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{
+			Participant:     "alice",
+			PenaltyFraction: types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(500), weights["bob"])
+}
+
+func TestApplyDelegationRewardTransfers_RewardOnlyDoesNotReviveZeroWeightDelegatee(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   0,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{
+			ModelId: "model1",
+			From:    "alice",
+			To:      "bob",
+			Share:   types.DecimalFromFloat(0.1),
+		},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(900), weights["alice"])
+	require.Equal(t, uint64(0), weights["bob"])
+}
+
+func TestApplyDelegationRewardTransfers_RewardOnlyMultipleTransfersUseSourceSnapshot(t *testing.T) {
+	// Two 10% delegations from the same source must each be computed from the
+	// pre-transfer snapshot (1000), not the already-mutated weight, so both pay
+	// 100 rather than 100 + 90.
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+		"carol": 500,
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{ModelId: "model1", From: "alice", To: "bob", Share: types.DecimalFromFloat(0.1)},
+		{ModelId: "model2", From: "alice", To: "carol", Share: types.DecimalFromFloat(0.1)},
+	}
+
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(800), weights["alice"])
+	require.Equal(t, uint64(600), weights["bob"])
+	require.Equal(t, uint64(600), weights["carol"])
+}
+
+func TestApplyDelegationRewardPenalties_DuplicateEntriesAreAdditiveAndClamped(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   400,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.7)},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+
+	require.Equal(t, uint64(0), weights["alice"])
+	require.Equal(t, uint64(400), weights["bob"])
+}
+
+func TestApplyDelegationRewardPenaltiesThenTransfers_PenaltyReducesTransferBase(t *testing.T) {
+	weights := map[string]uint64{
+		"alice": 1000,
+		"bob":   500,
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.8)},
+	}
+	transfers := []*types.DelegationRewardTransfer{
+		{ModelId: "model1", From: "alice", To: "bob", Share: types.DecimalFromFloat(0.3)},
+	}
+
+	applyDelegationRewardPenalties(weights, penalties, createTestLogger(t))
+	applyDelegationRewardTransfers(weights, transfers, createTestLogger(t))
+
+	require.Equal(t, uint64(140), weights["alice"])
+	require.Equal(t, uint64(560), weights["bob"])
+}
+
+func TestCalculateBitcoinRewards_PenaltyDoesNotRenormalizeDenominator(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		GenesisEpoch:       1,
+		InitialEpochReward: 1000,
+		DecayRate:          types.DecimalFromFloat(0),
+	}
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			createTestValidationWeight("alice", 1000, 0),
+			createTestValidationWeight("bob", 1000, 0),
+		},
+	}
+	participants := []types.Participant{
+		{Address: "alice", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		{Address: "bob", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+	}
+	penalties := []*types.DelegationRewardPenalty{
+		{Participant: "alice", PenaltyFraction: types.DecimalFromFloat(0.5)},
+	}
+
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewardsWithTransfers(
+		participants,
+		epochGroupData,
+		bitcoinParams,
+		nil,
+		modelNodesAndScales(epochGroupData),
+		nil,
+		penalties,
+		createTestLogger(t),
+	)
+	require.NoError(t, err)
+	require.Len(t, results, 2)
+
+	require.Equal(t, uint64(250), results[0].Settle.RewardCoins)
+	require.Equal(t, uint64(500), results[1].Settle.RewardCoins)
+	require.Equal(t, uint64(500), results[0].ParticipantRewardWeight)
+	require.Equal(t, uint64(2000), results[0].TotalRewardWeight)
+	require.Equal(t, int64(250), bitcoinResult.GovernanceAmount)
+}
+
 func TestExponent(t *testing.T) {
 	tests := []struct {
 		name      string

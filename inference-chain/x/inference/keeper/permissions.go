@@ -112,6 +112,7 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgRevalidateInference)(nil)): {NoPermission},
 
 	reflect.TypeOf((*types.MsgClaimRewards)(nil)):                     {ActiveParticipantPermission, PreviousActiveParticipantPermission},
+	reflect.TypeOf((*types.MsgSetClaimRecipients)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitHardwareDiff)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitPocBatch)(nil)):                   {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitPocValidationsV2)(nil)):           {NoPermission},
@@ -128,6 +129,9 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)):       {EscrowAllowListPermission},
 	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)):       {EscrowAllowListPermission},
 	reflect.TypeOf((*types.MsgSetDevshardRequestsEnabled)(nil)): {GuardianPermission},
+
+	reflect.TypeOf((*types.MsgScheduleMaintenance)(nil)): {AccountPermission},
+	reflect.TypeOf((*types.MsgCancelMaintenance)(nil)):   {AccountPermission},
 
 	reflect.TypeOf((*types.MsgSetPoCDelegation)(nil)):    {ParticipantPermission},
 	reflect.TypeOf((*types.MsgRefusePoCDelegation)(nil)): {ParticipantPermission},

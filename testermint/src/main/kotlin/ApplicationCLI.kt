@@ -156,6 +156,10 @@ data class ApplicationCLI(
         execAndParse(listOf("query", "inference", "list-inference-timeout"))
     }
 
+    fun listClaimRecipients(participant: String): ClaimRecipientsResponse = wrapLog("listClaimRecipients", false) {
+        execAndParse(listOf("query", "inference", "list-claim-recipients", participant))
+    }
+
     fun getParticipantCurrentStats(): ParticipantStatsResponse = wrapLog("getParticipantCurrentStats", false) {
         execAndParse(listOf("query", "inference", "get-all-participant-current-stats"))
     }
@@ -176,6 +180,15 @@ data class ApplicationCLI(
 
     fun getMlNodeVersion(): MlNodeVersionQueryResponse = wrapLog("getMlNodeVersion", infoLevel = false) {
         execAndParse(listOf("query", "inference", "ml-node-version"))
+    }
+
+    fun getLastUpgradeHeight(): LastUpgradeHeightQueryResponse = wrapLog("getLastUpgradeHeight", infoLevel = false) {
+        val canonicalExecName = "${config.stateDirName}/cosmovisor/current/bin/${config.appName}"
+        val command = "$canonicalExecName query inference last-upgrade-height --output json"
+        Logger.debug("Executing shell command for last-upgrade-height: {}", command)
+        val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+        Logger.debug("Output: {}", output)
+        cosmosJson.fromJson(output, LastUpgradeHeightQueryResponse::class.java)
     }
 
     var coldAccountKey: Validator? = null
@@ -434,7 +447,11 @@ data class ApplicationCLI(
         return cosmosJson.fromJson(output, T::class.java)
     }
 
-    fun execCli(args: List<String>, includeOutputFlag: Boolean = true, stdIn: String? = null): String {
+    fun execCli(
+        args: List<String>,
+        includeOutputFlag: Boolean = true,
+        stdIn: String? = null
+    ): String {
         val argsWithJson = listOf(config.execName) +
                 args + if (includeOutputFlag) listOf("--output", "json") else emptyList()
         Logger.debug("Executing command: {}", argsWithJson.joinToString(" "))
@@ -497,7 +514,12 @@ data class ApplicationCLI(
             operationAccountAddress) + getTransactionArgs(coldAccountName)
         val response = this.exec(commands, passwordInjection)
         val fullResponse = response.joinToString("\n")
-        if (!fullResponse.contains("Transaction confirmed successfully!")) {
+        val alreadyGranted =
+            response.any {
+                it.contains("fee allowance already exists") ||
+                    it.contains("authorization already exists")
+            }
+        if (!fullResponse.contains("Transaction confirmed successfully!") && !alreadyGranted) {
             if ((fullResponse.contains(NOT_READY_MESSAGE) || fullResponse.contains("not found: key not found")) && retries > 0) {
                 Thread.sleep(Duration.ofSeconds(5))
                 this.grantMlOpsPermissionsToWarmAccount(retries-1)
@@ -674,6 +696,25 @@ data class ApplicationCLI(
         return execAndParse(finalArgs, stdIn = passwordInjection)
     }
 
+    fun setClaimRecipients(entriesJson: String, from: String = getColdAccountName(), node: String? = null): TxResponse =
+        wrapLog("setClaimRecipients", true) {
+            val nodeArgs = node?.let { listOf("--node", it) } ?: emptyList()
+            val finalArgs = listOf(config.execName, "tx", "inference", "set-claim-recipients", entriesJson) +
+                getTransactionArgs(from) + nodeArgs + listOf("--output", "json")
+            val command = if (passwordInjection != null) {
+                "printf '%s' ${shellQuote(passwordInjection)} | ${finalArgs.joinToString(" ") { shellQuote(it) }}"
+            } else {
+                finalArgs.joinToString(" ") { shellQuote(it) }
+            }
+            val output = exec(listOf("/bin/sh", "-lc", command)).joinToString("")
+            val txResponse = cosmosJson.fromJson(output, TxResponse::class.java)
+            if (txResponse.code == 0) {
+                waitForTxProcessed(txResponse.txhash)
+            } else {
+                txResponse
+            }
+        }
+
     private fun getTransactionArgs(from: String): List<String> = listOf(
         "--keyring-backend",
         this.config.keyringBackend,
@@ -689,6 +730,9 @@ data class ApplicationCLI(
         "--from",
         from
     )
+
+    private fun shellQuote(arg: String): String =
+        "'" + arg.replace("'", "'\\''") + "'"
 
     // Returns getTransactionArgs with gas-adjustment replaced by a fixed gas
     // and a --fees flag added. Used by tests that need to assert specific

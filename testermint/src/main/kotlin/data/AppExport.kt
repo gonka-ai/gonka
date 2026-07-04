@@ -74,6 +74,8 @@ data class InferenceParams(
     val devshardEscrowParams: DevshardEscrowParams? = null,
     @SerializedName("fee_params")
     val feeParams: FeeParamsData? = null,
+    @SerializedName("maintenance_params")
+    val maintenanceParams: MaintenanceParams? = null,
     @SerializedName("delegation_params")
     val delegationParams: DelegationParams? = null,
 )
@@ -532,4 +534,35 @@ data class ExemptionUsageEntry(
     val accountAddress: String,
     @SerializedName("usage_count")
     val usageCount: Long,
+)
+
+// -----------------------
+// Maintenance Window Parameters
+// -----------------------
+// Defaults below mirror the chain's Default* constants in
+// inference-chain/x/inference/types/params.go (DefaultMaintenanceEnabled,
+// DefaultMaintenanceMinScheduleLeadBlocks, DefaultMaintenanceMaxWindowBlocks,
+// DefaultMaintenanceMaxConcurrentValidators, DefaultMaintenanceMaxConcurrentPowerBps,
+// DefaultMaintenanceCreditCapBlocks, DefaultMaintenanceCreditEarnPerEpochBlocks).
+// Keep the two sides in lockstep — testermint exercises real chain genesis,
+// so any drift here will silently mask a bug rather than expose it.
+
+data class MaintenanceParams(
+    @SerializedName("maintenance_enabled")
+    val maintenanceEnabled: Boolean = false,
+    @SerializedName("maintenance_min_schedule_lead_blocks")
+    val maintenanceMinScheduleLeadBlocks: Long = 100,
+    @SerializedName("maintenance_max_window_blocks")
+    val maintenanceMaxWindowBlocks: Long = 200,
+    // Proto types are uint32 (range 0 .. 4_294_967_295). Kotlin Int is signed
+    // and would overflow at 2_147_483_648. Widen to Long so any governance
+    // value the chain accepts can round-trip without silent truncation.
+    @SerializedName("maintenance_max_concurrent_validators")
+    val maintenanceMaxConcurrentValidators: Long = 3,
+    @SerializedName("maintenance_max_concurrent_power_bps")
+    val maintenanceMaxConcurrentPowerBps: Long = 1000,
+    @SerializedName("maintenance_credit_cap_blocks")
+    val maintenanceCreditCapBlocks: Long = 400,
+    @SerializedName("maintenance_credit_earn_per_successful_epoch_blocks")
+    val maintenanceCreditEarnPerSuccessfulEpochBlocks: Long = 20,
 )

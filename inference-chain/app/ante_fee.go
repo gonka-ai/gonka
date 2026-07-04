@@ -115,10 +115,14 @@ func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 // These are already rate-limited by timing windows, duplicate checks, or allowlists.
 func isExemptMessageType(msg sdk.Msg) bool {
 	switch msg.(type) {
-	// PoC duty messages (throttled by PocPeriodValidationDecorator window checks)
+	// PoC duty messages (throttled by PocPeriodValidationDecorator window checks).
+	// MsgPoCV2StoreCommit is intentionally NOT exempt: it carries a
+	// count-proportional sybil-defense gas charge (see chargePoCV2StoreCommitGas
+	// in msg_server_poc_v2_commit.go) that requires the tx to pay fees.
 	case *inferencetypes.MsgSubmitPocBatch,
 		*inferencetypes.MsgSubmitPocValidationsV2,
-		*inferencetypes.MsgMLNodeWeightDistribution:
+		*inferencetypes.MsgMLNodeWeightDistribution,
+		*inferencetypes.MsgSubmitSeed:
 		return true
 
 	// Inference validation duty (throttled by ValidationEarlyRejectDecorator)
@@ -135,11 +139,29 @@ func isExemptMessageType(msg sdk.Msg) bool {
 		*inferencetypes.MsgRevalidateInference:
 		return true
 
+	// Routine host duties on a fixed schedule. Not user-discretionary, not a
+	// sybil-attack vector. Rate-limited implicitly: hardware diff fires only
+	// on changes / per-block heartbeat, claim rewards is once per epoch per
+	// host. Excluding these from fees keeps the per-host yearly budget from
+	// being dominated by mechanical chain bookkeeping.
+	case *inferencetypes.MsgSubmitHardwareDiff,
+		*inferencetypes.MsgClaimRewards:
+		return true
+
+	// Devshard escrow settlement is the protocol-side disbursement tx. It is
+	// allowlist-restricted (EscrowAllowListPermission, see permissions.go:123)
+	// and per-epoch capped via DevshardEscrowParams.MaxEscrowsPerEpoch. The
+	// MsgCreateDevshardEscrow counterpart is user-driven and intentionally
+	// NOT exempted — the escrow creator pays fees like any other user.
+	case *inferencetypes.MsgSettleDevshardEscrow:
+		return true
+
 	// BLS DKG protocol messages (epoch-scoped, duplicate-checked, deadline-enforced)
 	case *blstypes.MsgSubmitDealerPart,
 		*blstypes.MsgSubmitVerificationVector,
 		*blstypes.MsgSubmitGroupKeyValidationSignature,
-		*blstypes.MsgSubmitPartialSignature:
+		*blstypes.MsgSubmitPartialSignature,
+		*blstypes.MsgRespondDealerComplaints:
 		return true
 
 	// NOTE: MsgRequestThresholdSignature is intentionally NOT exempt.

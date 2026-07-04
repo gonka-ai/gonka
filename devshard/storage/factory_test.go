@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
-
 )
 
 func TestNewStorage_postgresWhenPGHOSTAndEmptyMeta(t *testing.T) {
@@ -176,4 +175,3 @@ func TestNewStorage_postgresModeNoForkWhenPGDownAfterSessionInPG(t *testing.T) {
 	_, err = os.Stat(MetaDBPath(storeDir))
 	require.True(t, os.IsNotExist(err), "must not open sqlite when postgres mode boot fails")
 }
-

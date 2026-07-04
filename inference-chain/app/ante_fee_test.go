@@ -43,6 +43,7 @@ func (t testFeeTx) FeeGranter() []byte                     { return nil }
 func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
 	exemptMsgs := map[string]sdk.Msg{
 		"MsgSubmitPocBatch":                    &inferencetypes.MsgSubmitPocBatch{},
+		"MsgSubmitSeed":                        &inferencetypes.MsgSubmitSeed{},
 		"MsgValidation":                        &inferencetypes.MsgValidation{},
 		"MsgStartInference":                    &inferencetypes.MsgStartInference{},
 		"MsgFinishInference":                   &inferencetypes.MsgFinishInference{},
@@ -50,10 +51,14 @@ func TestNetworkDutyBypass_AllExemptMessages(t *testing.T) {
 		"MsgRevalidateInference":               &inferencetypes.MsgRevalidateInference{},
 		"MsgMLNodeWeightDistribution":          &inferencetypes.MsgMLNodeWeightDistribution{},
 		"MsgSubmitPocValidationsV2":            &inferencetypes.MsgSubmitPocValidationsV2{},
+		"MsgSubmitHardwareDiff":                &inferencetypes.MsgSubmitHardwareDiff{},
+		"MsgClaimRewards":                      &inferencetypes.MsgClaimRewards{},
+		"MsgSettleDevshardEscrow":              &inferencetypes.MsgSettleDevshardEscrow{},
 		"MsgSubmitDealerPart":                  &blstypes.MsgSubmitDealerPart{},
 		"MsgSubmitVerificationVector":          &blstypes.MsgSubmitVerificationVector{},
 		"MsgSubmitGroupKeyValidationSignature": &blstypes.MsgSubmitGroupKeyValidationSignature{},
 		"MsgSubmitPartialSignature":            &blstypes.MsgSubmitPartialSignature{},
+		"MsgRespondDealerComplaints":           &blstypes.MsgRespondDealerComplaints{},
 	}
 
 	for name, msg := range exemptMsgs {
@@ -89,7 +94,9 @@ func TestNetworkDutyBypass_NonExemptMessages(t *testing.T) {
 	nonExemptMsgs := []sdk.Msg{
 		&banktypes.MsgSend{},
 		&stakingtypes.MsgDelegate{},
-		&inferencetypes.MsgClaimRewards{},
+		// MsgPoCV2StoreCommit is intentionally non-exempt: it carries the
+		// count-proportional sybil-defense fee defined in FeeParams. See
+		// chargePoCV2StoreCommitGas in msg_server_poc_v2_commit.go.
 		&inferencetypes.MsgPoCV2StoreCommit{},
 		&inferencetypes.MsgSubmitNewParticipant{},
 	}
@@ -163,6 +170,7 @@ func TestNetworkDutyBypass_GasCapEnforced(t *testing.T) {
 func TestIsExemptMessageType(t *testing.T) {
 	// Exempt
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocBatch{}))
+	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitSeed{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitPocValidationsV2{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgValidation{}))
 	require.True(t, isExemptMessageType(&inferencetypes.MsgStartInference{}))
@@ -174,11 +182,15 @@ func TestIsExemptMessageType(t *testing.T) {
 	require.True(t, isExemptMessageType(&blstypes.MsgSubmitVerificationVector{}))
 	require.True(t, isExemptMessageType(&blstypes.MsgSubmitGroupKeyValidationSignature{}))
 	require.True(t, isExemptMessageType(&blstypes.MsgSubmitPartialSignature{}))
+	require.True(t, isExemptMessageType(&blstypes.MsgRespondDealerComplaints{}))
+	require.True(t, isExemptMessageType(&inferencetypes.MsgSubmitHardwareDiff{}))
+	require.True(t, isExemptMessageType(&inferencetypes.MsgClaimRewards{}))
+	require.True(t, isExemptMessageType(&inferencetypes.MsgSettleDevshardEscrow{}))
 
 	// Not exempt
 	require.False(t, isExemptMessageType(&blstypes.MsgRequestThresholdSignature{})) // open to anyone, no rate limit
-	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))
-	require.False(t, isExemptMessageType(&inferencetypes.MsgClaimRewards{}))
+	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))    // intentional sybil-defense fee via chargePoCV2StoreCommitGas
+	require.False(t, isExemptMessageType(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
 	require.False(t, isExemptMessageType(&inferencetypes.MsgSubmitNewParticipant{}))
 	require.False(t, isExemptMessageType(&banktypes.MsgSend{}))
 	require.False(t, isExemptMessageType(&stakingtypes.MsgDelegate{}))
@@ -225,7 +237,7 @@ func TestIsNetworkDuty_MsgExec_FailsClosed(t *testing.T) {
 func TestIsNetworkDuty_NonExecNonExempt(t *testing.T) {
 	// Non-MsgExec, non-exempt message
 	require.False(t, isNetworkDuty(&banktypes.MsgSend{}, nil))
-	require.False(t, isNetworkDuty(&inferencetypes.MsgClaimRewards{}, nil))
+	require.False(t, isNetworkDuty(&inferencetypes.MsgPoCV2StoreCommit{}, nil))
 }
 
 func TestIsNetworkDuty_ExemptDirectMessage(t *testing.T) {

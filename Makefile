@@ -15,6 +15,9 @@ print-devshard-protocol-version:
 	@echo $(DEVSHARD_PROTOCOL_VERSION)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
+PLATFORM ?= linux/amd64
+GOOS ?= linux
+GOARCH ?= amd64
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
@@ -215,11 +218,15 @@ local-build: api-local-build node-local-build api-test node-test
 	@rm -f api-test-output.log node-test-output.log
 
 build-for-upgrade:
-	@rm public-html/v2/checksums.txt || true
-	@rm public-html/v2/urls.txt || true
-	@make -C inference-chain build-for-upgrade
-	@make -C decentralized-api build-for-upgrade
+	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 
 build-for-upgrade-tests:
-	@make -C inference-chain build-for-upgrade TESTS=1
-	@make -C decentralized-api build-for-upgrade TESTS=1
+	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64

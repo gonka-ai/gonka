@@ -246,7 +246,12 @@ func (s *Server) checkPermissions(ctx context.Context) Check {
 	warmKeyAddr := s.recorder.GetSignerAddress()
 
 	authzQueryClient := authztypes.NewQueryClient(s.recorder.GetClientContext())
-	grantsResp, err := authzQueryClient.GranteeGrants(ctx, &authztypes.QueryGranteeGrantsRequest{
+	// Query only the cold->warm pair. GranteeGrants scans the entire authz store
+	// (grants are keyed granter-first) and trips the node's query-gas-limit on a
+	// populated chain; Grants(granter,grantee) prefix-scans just this pair. Cf. the
+	// keeper's HasWarmKeyGrant.
+	grantsResp, err := authzQueryClient.Grants(ctx, &authztypes.QueryGrantsRequest{
+		Granter: coldKeyAddr,
 		Grantee: warmKeyAddr,
 	})
 
@@ -258,16 +263,14 @@ func (s *Server) checkPermissions(ctx context.Context) Check {
 		}
 	}
 
-	grantedFromColdKey := make(map[string]*authztypes.GrantAuthorization)
+	grantedFromColdKey := make(map[string]*authztypes.Grant)
 	for _, grant := range grantsResp.Grants {
-		if grant.Granter == coldKeyAddr {
-			var authorization authztypes.Authorization
-			if err := s.cdc.UnpackAny(grant.Authorization, &authorization); err != nil {
-				continue
-			}
-			if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
-				grantedFromColdKey[genericAuth.Msg] = grant
-			}
+		var authorization authztypes.Authorization
+		if err := s.cdc.UnpackAny(grant.Authorization, &authorization); err != nil {
+			continue
+		}
+		if genericAuth, ok := authorization.(*authztypes.GenericAuthorization); ok {
+			grantedFromColdKey[genericAuth.Msg] = grant
 		}
 	}
 

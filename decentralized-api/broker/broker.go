@@ -287,6 +287,14 @@ func (s *NodeState) ShouldContinueInference() bool {
 	return len(s.PreservedModels) > 0
 }
 
+// ServesInferenceDuringValidation reports whether a node can take inference while
+// running PoC validation: capable nodes run PoC v2 inside vLLM, so it stays up.
+func (s *NodeState) ServesInferenceDuringValidation() bool {
+	return s.PoCValidationInference &&
+		s.IntendedStatus == types.HardwareNodeStatus_POC &&
+		s.PocIntendedStatus == PocStatusValidating
+}
+
 func ShouldBeOperational(adminState AdminState, latestEpoch uint64, currentPhase types.EpochPhase) bool {
 	if adminState.Enabled {
 		if latestEpoch > adminState.Epoch {
@@ -510,12 +518,17 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 type NodeNotAvailableReason = string
 
 func (b *Broker) nodeAvailable(node *NodeWithState, neededModel string, currentEpoch uint64, currentPhase types.EpochPhase) (bool, NodeNotAvailableReason) {
-	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE {
+	servesInferenceDuringValidation := node.State.ServesInferenceDuringValidation()
+	if servesInferenceDuringValidation {
+		logging.Info("nodeAvailable. Node can serve INFERENCE during PoC validation", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus, "PoCValidationInference", node.State.PoCValidationInference)
+	}
+
+	if node.State.IntendedStatus != types.HardwareNodeStatus_INFERENCE && !servesInferenceDuringValidation {
 		return false, fmt.Sprintf("Node is not intended for INFERENCE at the moment: %s", node.State.IntendedStatus)
 	}
 	logging.Info("nodeAvailable. Node is intended for INFERENCE", types.Nodes, "nodeId", node.Node.Id, "intendedStatus", node.State.IntendedStatus)
 
-	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE {
+	if node.State.CurrentStatus != types.HardwareNodeStatus_INFERENCE && !servesInferenceDuringValidation {
 		return false, fmt.Sprintf("Node is not in INFERENCE state: %s", node.State.CurrentStatus)
 	}
 	logging.Info("nodeAvailable. Node is in INFERENCE state", types.Nodes, "nodeId", node.Node.Id)

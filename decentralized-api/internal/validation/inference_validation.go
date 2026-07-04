@@ -107,9 +107,9 @@ func (s *InferenceValidator) shouldValidateInference(
 	shouldValidate, message := calculations.ShouldValidate(
 		seed,
 		inferenceDetails,
-		uint32(inferenceDetails.TotalPower),
-		uint32(validatorPower),
-		uint32(inferenceDetails.ExecutorPower),
+		inferenceDetails.TotalPower,
+		validatorPower,
+		inferenceDetails.ExecutorPower,
 		validationParams,
 		false)
 

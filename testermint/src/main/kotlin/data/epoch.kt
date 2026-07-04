@@ -1,6 +1,7 @@
 package com.productscience.data
 
 import com.google.gson.annotations.SerializedName
+import com.productscience.INFERENCE_STAGE_SLACK_BLOCKS
 
 data class EpochResponse(
     @SerializedName("block_height")
@@ -19,9 +20,10 @@ data class EpochResponse(
     @SerializedName("active_confirmation_poc_event")
     val activeConfirmationPocEvent: ConfirmationPoCEvent? = null
 ) {
-    val safeForInference: Boolean
-        get() = if (phase == EpochPhase.Inference) {
-            nextEpochStages.pocStart - blockHeight > 3
+    val safeForInference: Boolean =
+        if (phase == EpochPhase.Inference) {
+            val blocksUntilEnd = nextEpochStages.pocStart - blockHeight
+            blocksUntilEnd > INFERENCE_STAGE_SLACK_BLOCKS
         } else {
             false
         }

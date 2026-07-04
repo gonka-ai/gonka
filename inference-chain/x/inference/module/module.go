@@ -224,6 +224,12 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
+	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
+	err = am.keeper.ProcessMaintenanceTransitions(ctx)
+	if err != nil {
+		am.LogError("Failed to process maintenance transitions", types.Maintenance, "error", err)
+	}
+
 	return nil
 }
 
@@ -245,13 +251,17 @@ func (am AppModule) expireInferences(
 		return err
 	}
 
+	// Pre-build maintenance address set once to avoid repeated O(log N) lookups
+	// per expired inference in handleExpiredInferenceWithContext.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+
 	for _, i := range timeouts {
 		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
 		if !found {
 			continue
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
-			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
+			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx, maintenanceAddrs)
 		}
 	}
 	return nil
@@ -276,7 +286,7 @@ func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference
 	return inference
 }
 
-func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext) {
+func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext, maintenanceAddrs map[string]struct{}) {
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
@@ -328,6 +338,29 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight))
 
 		// Still issue refund and mark as expired, but don't penalize executor
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
+	}
+
+	// Executor has the required node — check maintenance exemption before penalizing.
+	// During active maintenance, expiry penalties are waived (the participant is
+	// expected to be offline and should not accumulate MissedRequests).
+	if _, inMaint := maintenanceAddrs[inference.AssignedTo]; inMaint {
+		am.LogInfo("Inference expired during active maintenance, waiving penalty",
+			types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"executor", inference.AssignedTo,
+			"model", inference.Model,
+			"epochIndex", epochToCheck.Index)
+
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"maintenance_penalty_waived",
+			sdk.NewAttribute("inference_id", inference.InferenceId),
+			sdk.NewAttribute("executor", inference.AssignedTo),
+			sdk.NewAttribute("reason", "expiry_during_active_maintenance"),
+		))
+
 		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
@@ -416,17 +449,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
-	}
-
-	// Track full chain upgrades from UpgradeKeeper
-	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
-	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
-		am.LogInfo("FullUpgradeActive - tracking height", types.Upgrades,
-			"upgradeHeight", upgradePlan.Height, "blockHeight", blockHeight, "name", upgradePlan.Name)
-		err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
-		if err != nil {
-			am.LogError("Failed to set last upgrade height for full upgrade", types.Upgrades, "error", err)
-		}
 	}
 
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
@@ -623,6 +645,25 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochIndex := uint64(0)
+	if found {
+		previousEpochIndex = previousEpoch.Index
+	}
+
+	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
+	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
+	}
+
 	// Signal to the collateral module that the epoch has advanced.
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
@@ -647,24 +688,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		if err := am.keeper.GetStreamVestingKeeper().AdvanceEpoch(ctx, effectiveEpoch.Index); err != nil {
 			am.LogError("onSetNewValidatorsStage: Unable to advance streamvesting epoch", types.Tokenomics, "error", err.Error())
 		}
-	}
-
-	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
-	previousEpochIndex := uint64(0)
-	if found {
-		previousEpochIndex = previousEpoch.Index
-	}
-
-	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"epoch_error",
-			sdk.NewAttribute("stage", "settle_accounts"),
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
-			sdk.NewAttribute("error_category", "settlement"),
-		))
 	}
 
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
@@ -727,11 +750,20 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	acc.Apply(activeParticipants)
+	penalties := acc.RewardPenalties()
+	rewardTransfers := BuildDelegationRewardTransfers(
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	allRewardTransfers := rewardTransfers.Records()
 
-	afterPenalty := make(map[string]int64, len(activeParticipants))
+	beforeCollateral := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
-		afterPenalty[p.Index] = p.Weight
+		beforeCollateral[p.Index] = p.Weight
 	}
 
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
@@ -769,7 +801,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
 		participationState.eligibleModels, activeParticipants,
 		participationState.participationByModel,
-		consensusWeights, afterPenalty, acc)
+		consensusWeights, beforeCollateral, acc)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -805,6 +837,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: upcomingEpoch.Index,
+		Transfers:  allRewardTransfers,
+		Penalties:  penalties,
+	}); err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
+		return
+	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
@@ -1400,6 +1440,7 @@ func GetTxCmd() *cobra.Command {
 
 	cmd.AddCommand(GrantMLOpsPermissionsCmd())
 	cmd.AddCommand(SettleDevshardEscrowCmd())
+	cmd.AddCommand(SetClaimRecipientsCmd())
 
 	return cmd
 }

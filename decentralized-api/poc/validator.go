@@ -49,23 +49,27 @@ type OffChainValidator struct {
 	chainNodeUrl     string
 
 	config ValidationConfig
+	// guard is the optional DAPI-only early-share guard. A nil guard is a no-op.
+	guard *EarlyShareGuard
 }
 
 // ValidationConfig contains configuration for off-chain validation.
 type ValidationConfig struct {
-	WorkerCount    int
-	RequestTimeout time.Duration
-	MaxRetries     int
-	RetryBackoff   time.Duration
+	WorkerCount        int
+	RequestTimeout     time.Duration
+	MaxRetries         int
+	RetryBackoff       time.Duration
+	PhaseCheckInterval time.Duration
 }
 
 // DefaultValidationConfig returns the default configuration.
 func DefaultValidationConfig() ValidationConfig {
 	return ValidationConfig{
-		WorkerCount:    10,
-		RequestTimeout: 20 * time.Second,
-		MaxRetries:     15,
-		RetryBackoff:   3 * time.Second,
+		WorkerCount:        10,
+		RequestTimeout:     20 * time.Second,
+		MaxRetries:         15,
+		RetryBackoff:       3 * time.Second,
+		PhaseCheckInterval: 3 * time.Second,
 	}
 }
 
@@ -144,6 +148,7 @@ func NewOffChainValidator(
 	validatorAddress string,
 	chainNodeUrl string,
 	config ValidationConfig,
+	guard *EarlyShareGuard,
 ) *OffChainValidator {
 	return &OffChainValidator{
 		recorder:         recorder,
@@ -154,7 +159,27 @@ func NewOffChainValidator(
 		validatorAddress: validatorAddress,
 		chainNodeUrl:     chainNodeUrl,
 		config:           config,
+		guard:            guard,
 	}
+}
+
+// MaybeCaptureEarlyShare is invoked once per block by the dispatcher. It fires
+// the early-share capture only at the exact first-fraction height of the active
+// PoC/CPoC generation window, mirroring the other exact-match stage transitions
+// in handlePhaseTransitions. If the node is catching up across that height the
+// capture is skipped and the guard simply fails open for that stage.
+func (v *OffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochState) {
+	if !v.guard.Enabled() {
+		return
+	}
+	stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
+	if !ok {
+		return
+	}
+	if epochState.CurrentBlock.Height != target {
+		return
+	}
+	go v.guard.MaybeCapture(context.Background(), v.recorder.NewInferenceQueryClient(), stage, target, target)
 }
 
 func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string) {
@@ -238,6 +263,9 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	var snapshotTotalNetworkWeight int64
 	snapshotFound := false
 	modelSampling := make(map[string]*modelSamplingData)
+	// modelVotingPowers holds established per-model voting power (model_id ->
+	// participant -> voting power) for the early-share guard's weighted median.
+	modelVotingPowers := make(map[string]map[string]int64)
 	snapshotResp, err := queryClient.PoCValidationSnapshot(context.Background(),
 		&types.QueryPoCValidationSnapshotRequest{
 			PocStageStartHeight: pocStageStartBlockHeight,
@@ -254,6 +282,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		snapshotTotalNetworkWeight = snapshotResp.Snapshot.TotalNetworkWeight
 		for _, mvw := range snapshotResp.Snapshot.ModelVotingPowers {
 			weights := types.VotingPowerSliceToMap(mvw.VotingPowers)
+			modelVotingPowers[mvw.ModelId] = weights
 			entries, total := calculations.PrepareSortedEntries(weights)
 			modelSampling[mvw.ModelId] = &modelSamplingData{entries: entries, totalWeight: total}
 		}
@@ -349,6 +378,28 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		return
 	}
 
+	// Early-share guard: precompute per-participant decisions over the whole
+	// stage (weighted median needs the full distribution), advancing miss-streak
+	// state only for the participants this validator is assigned to. A nil
+	// runtime means the guard is disabled or skipped (fail open).
+	var gr *guardRuntime
+	if v.guard.Enabled() {
+		assigned := make(map[string]bool, len(workItems))
+		for _, item := range workItems {
+			assigned[earlyShareKey(item.address, item.modelId)] = true
+		}
+		// A confirmation PoC (CPoC) run is identified by an active confirmation
+		// event during the inference phase whose trigger height matches this
+		// stage. Only a passing CPoC clears the miss streak.
+		isConfirmation := epochState.ActiveConfirmationPoCEvent != nil &&
+			epochState.CurrentPhase == types.InferencePhase &&
+			pocStageStartBlockHeight == epochState.ActiveConfirmationPoCEvent.TriggerHeight
+		decisions := v.guard.Evaluate(context.Background(), pocStageStartBlockHeight, isConfirmation, commitsResp.Commits, modelVotingPowers, assigned)
+		if len(decisions) > 0 {
+			gr = &guardRuntime{guard: v.guard, decisions: decisions, stage: pocStageStartBlockHeight}
+		}
+	}
+
 	// Randomize order to avoid thundering herd
 	rand.Shuffle(len(workItems), func(i, j int) {
 		workItems[i], workItems[j] = workItems[j], workItems[i]
@@ -368,9 +419,11 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 	failCount := 0
 	pendingCount := len(workItems)
 
-	// Context for coordinating shutdown
+	// Context for coordinating shutdown. The phase watcher cancels as soon
+	// as the chain stops accepting validation results for this PoC stage.
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	v.cancelWhenValidationPhaseEnds(ctx, cancel, pocStageStartBlockHeight)
 
 	// Start workers
 	numWorkers := v.config.WorkerCount
@@ -393,6 +446,7 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				pocStartBlockHash,
 				pocParams,
 				sampleSize,
+				gr,
 				&statsMu,
 				&successCount,
 				&failCount,
@@ -417,6 +471,54 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 		"failed", failCount)
 }
 
+func (v *OffChainValidator) cancelWhenValidationPhaseEnds(ctx context.Context, cancel context.CancelFunc, pocStageStartBlockHeight int64) {
+	phaseCheckInterval := v.config.PhaseCheckInterval
+	if phaseCheckInterval <= 0 {
+		phaseCheckInterval = 3 * time.Second
+	}
+
+	go func() {
+		if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+			return
+		}
+
+		ticker := time.NewTicker(phaseCheckInterval)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if v.cancelIfValidationPhaseEnded(cancel, pocStageStartBlockHeight) {
+					return
+				}
+			}
+		}
+	}()
+}
+
+func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFunc, pocStageStartBlockHeight int64) bool {
+	state := v.phaseTracker.GetCurrentEpochState()
+	if !shouldStopValidationForStage(state, pocStageStartBlockHeight) {
+		return false
+	}
+
+	logging.Info("OffChainValidator: validation phase ended, stopping workers", types.PoC,
+		"currentPhase", state.CurrentPhase,
+		"blockHeight", state.CurrentBlock.Height,
+		"pocStageStartBlockHeight", pocStageStartBlockHeight)
+	cancel()
+	return true
+}
+
+func shouldStopValidationForStage(state *chainphase.EpochState, pocStageStartBlockHeight int64) bool {
+	if state == nil {
+		return false
+	}
+	return !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight
+}
+
 // worker processes participants from the work channel.
 // Failed items are re-queued for retry instead of blocking on retries.
 func (v *OffChainValidator) worker(
@@ -431,6 +533,7 @@ func (v *OffChainValidator) worker(
 	pocStartBlockHash string,
 	pocParams *types.PocParams,
 	sampleSize int,
+	gr *guardRuntime,
 	statsMu *sync.Mutex,
 	successCount *int,
 	failCount *int,
@@ -447,13 +550,24 @@ func (v *OffChainValidator) worker(
 				return
 			}
 
-			// Not ready yet? Put back at end of queue
+			// Not ready yet? Put back at end of queue and sleep briefly to avoid busy-wait spin.
 			if time.Now().Before(work.retryAfter) {
-				workChan <- work
+				select {
+				case workChan <- work:
+				case <-ctx.Done():
+					return
+				}
+
+				select {
+				case <-time.After(100 * time.Millisecond):
+				case <-ctx.Done():
+					return
+				}
 				continue
 			}
 
 			result := v.validateParticipant(
+				ctx,
 				workerID,
 				work,
 				proofClient,
@@ -464,6 +578,7 @@ func (v *OffChainValidator) worker(
 				pocStartBlockHash,
 				pocParams,
 				sampleSize,
+				gr,
 			)
 
 			var reportParticipant string
@@ -500,10 +615,8 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
-					logging.Warn("OffChainValidator: max retries exceeded, reporting as invalid", types.PoC,
+					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
-					// Report participant as invalid to chain. We probably should separate only to report failed network requests.
-					// reportAddr = work.address
 				}
 			}
 
@@ -527,6 +640,7 @@ func (v *OffChainValidator) worker(
 // samplingBlockHash: fresh hash for random sampling (anti-cheat)
 // pocStartBlockHash: original PoC start block hash (must match generation for MLNode)
 func (v *OffChainValidator) validateParticipant(
+	ctx context.Context,
 	workerID int,
 	work participantWork,
 	proofClient proofFetcher,
@@ -537,8 +651,8 @@ func (v *OffChainValidator) validateParticipant(
 	pocStartBlockHash string,
 	pocParams *types.PocParams,
 	sampleSize int,
+	gr *guardRuntime,
 ) validateResult {
-	ctx := context.Background()
 	modelNodes := filterValidationNodesForModel(nodes, work.modelId)
 	if len(modelNodes) == 0 {
 		logging.Warn("OffChainValidator: no validation executors for model", types.PoC,
@@ -586,6 +700,25 @@ func (v *OffChainValidator) validateParticipant(
 			"count", work.count,
 			"porosity", porosity)
 		return validateFailPermanent
+	}
+
+	// Early-share guard: compare the early checkpoint against the final
+	// commitment. The prefix-proof check fails immediately on a cryptographic
+	// mismatch; the low-early-share decision is miss-streak gated and was
+	// precomputed in ValidateAll. Enforcing only changes the vote in enforce mode.
+	if gr != nil && gr.guard != nil {
+		if dec, ok := gr.decisions[earlyShareKey(work.address, work.modelId)]; ok {
+			voteNo, reason := gr.guard.decide(ctx, proofClient, gr.stage, work, dec)
+			if voteNo {
+				if gr.guard.cfg.Enforcing() {
+					logging.Warn("OffChainValidator: early-share guard vote no (enforce)", types.PoC,
+						"participant", work.address, "modelId", work.modelId, "reason", reason)
+					return validateFailPermanent
+				}
+				logging.Info("OffChainValidator: early-share guard would vote no (observe)", types.PoC,
+					"participant", work.address, "modelId", work.modelId, "reason", reason)
+			}
+		}
 	}
 
 	// Convert verified artifacts to ML node format
