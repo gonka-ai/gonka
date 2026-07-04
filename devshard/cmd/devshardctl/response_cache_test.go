@@ -92,8 +92,98 @@ func TestGatewayChatCacheCaptureRejectsRuntimeAndCapabilityErrors(t *testing.T) 
 	}
 }
 
+func okBody(marker byte, size int) []byte {
+	filler := make([]byte, size)
+	for i := range filler {
+		filler[i] = 'a' + (marker+byte(i))%26
+	}
+	return []byte(`{"choices":[{"message":{"content":"` + string(filler) + `"}}]}`)
+}
+
+func cacheEntryForTest(marker byte, bodySize int) cachedChatResponse {
+	return cachedChatResponse{
+		EscrowID:   "escrow-1",
+		StatusCode: http.StatusOK,
+		Body:       okBody(marker, bodySize),
+	}
+}
+
+func TestChatResponseCacheSweepsExpiredEntriesOnSet(t *testing.T) {
+	cache := newChatResponseCache(time.Minute, 0)
+	start := time.Now()
+
+	cache.Set("old-1", cacheEntryForTest(1, 10), start)
+	cache.Set("old-2", cacheEntryForTest(2, 10), start)
+
+	count, _ := cache.Stats()
+	require.Equal(t, 2, count)
+
+	// A Set past both the TTL and the sweep interval must remove the
+	// expired entries even though their keys are never looked up again.
+	cache.Set("new", cacheEntryForTest(3, 10), start.Add(2*time.Minute))
+
+	count, _ = cache.Stats()
+	require.Equal(t, 1, count)
+	_, ok := cache.entries["old-1"]
+	require.False(t, ok)
+	_, ok = cache.entries["old-2"]
+	require.False(t, ok)
+	_, ok = cache.entries["new"]
+	require.True(t, ok)
+}
+
+func TestChatResponseCacheEvictsWhenOverByteCap(t *testing.T) {
+	// Cap fits roughly two 4KB entries plus overhead, not three.
+	cache := newChatResponseCache(time.Minute, 10_000)
+	now := time.Now()
+
+	cache.Set("a", cacheEntryForTest(1, 4096), now)
+	cache.Set("b", cacheEntryForTest(2, 4096), now)
+	cache.Set("c", cacheEntryForTest(3, 4096), now)
+
+	_, totalBytes := cache.Stats()
+	require.LessOrEqual(t, totalBytes, int64(10_000))
+
+	// The just-inserted entry must survive eviction.
+	_, ok := cache.entries["c"]
+	require.True(t, ok)
+}
+
+func TestChatResponseCacheOverwriteDoesNotLeakBytes(t *testing.T) {
+	cache := newChatResponseCache(time.Minute, 1<<20)
+	now := time.Now()
+
+	for i := 0; i < 100; i++ {
+		cache.Set("same-key", cacheEntryForTest(byte(i), 4096), now)
+	}
+
+	count, totalBytes := cache.Stats()
+	require.Equal(t, 1, count)
+	require.Less(t, totalBytes, int64(2*4096+2*chatCacheEntryOverhead))
+
+	entry, ok := cache.Get("same-key", now)
+	require.True(t, ok)
+	require.Equal(t, string(okBody(99, 4096)), string(entry.Body))
+}
+
+func TestChatResponseCacheGetDeletesExpiredAndAdjustsBytes(t *testing.T) {
+	cache := newChatResponseCache(time.Minute, 0)
+	now := time.Now()
+
+	cache.Set("k", cacheEntryForTest(1, 128), now)
+	_, totalBytes := cache.Stats()
+	require.Greater(t, totalBytes, int64(0))
+
+	_, ok := cache.Get("k", now.Add(2*time.Minute))
+	require.False(t, ok)
+
+	count, totalBytes := cache.Stats()
+	require.Equal(t, 0, count)
+	require.Equal(t, int64(0), totalBytes)
+}
+
 func TestChatResponseCacheDropsPreviouslyCachedNonCacheableErrors(t *testing.T) {
-	cache := newChatResponseCache(time.Minute)
+	cache := newChatResponseCache(time.Minute, 0)
 	cache.entries["bad"] = cachedChatResponse{
 		EscrowID:   "escrow-1",
 		StatusCode: http.StatusBadGateway,
