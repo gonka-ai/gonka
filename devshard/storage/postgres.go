@@ -271,6 +271,24 @@ func (s *Postgres) lookupEpoch(escrowID string) (uint64, error) {
 	return epochID, nil
 }
 
+// HasEscrow reports whether escrowID is present in the in-memory routing index
+// (rebuilt at boot from devshard_session_index). It lets the hybrid router
+// resolve which backend owns an escrow.
+func (s *Postgres) HasEscrow(escrowID string) bool {
+	_, err := s.lookupEpoch(escrowID)
+	return err == nil
+}
+
+// HasAnySessions reports whether any escrow is still held in Postgres. The
+// in-memory index is kept in sync with devshard_session_index by CreateSession
+// and by prune, so this is an accurate emptiness check without a round trip.
+// The hybrid router uses it to clear the .pg-bound marker once PG is drained.
+func (s *Postgres) HasAnySessions() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.escrowIdx) > 0
+}
+
 // opCtx returns a context bounding a single storage operation. It caps both the
 // pooled-connection acquire wait and total query time Go-side; statement_timeout
 // and lock_timeout provide the matching server-side bounds. Callers must defer
