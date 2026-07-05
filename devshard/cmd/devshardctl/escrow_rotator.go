@@ -400,9 +400,9 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	log.Printf("devshard_settle_start escrow=%s", id)
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
-	if ok && rt.activeRequests.Load() > 0 {
+	if ok && rt.hasPendingWork() {
 		g.mu.Unlock()
-		log.Printf("devshard_settle_blocked escrow=%s reason=active_requests count=%d", id, rt.activeRequests.Load())
+		log.Printf("devshard_settle_blocked escrow=%s reason=pending_work active_requests=%d pending_finalizers=%d", id, rt.activeRequests.Load(), rt.pendingFinalizers.Load())
 		return nil, errDevshardBusy
 	}
 	if ok {

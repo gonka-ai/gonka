@@ -84,6 +84,9 @@ type devshardRuntime struct {
 	activeRequests atomic.Int64
 	reservedTokens atomic.Int64
 
+	// pendingFinalizers counts background race finalizers (refund + loser-signature persistence) still in flight
+	pendingFinalizers atomic.Int64
+
 	// settlementPending marks an escrow that has been deactivated and must
 	// be settled once its in-flight requests drain. settlementReason is
 	// written before the flag and read after it in the lock-free drain hook;
@@ -97,6 +100,11 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+}
+
+// hasPendingWork reports whether foreground requests or background finalizers are in flight; settle and store-close must wait until it is false.
+func (rt *devshardRuntime) hasPendingWork() bool {
+	return rt.activeRequests.Load() > 0 || rt.pendingFinalizers.Load() > 0
 }
 
 type runtimeStatus struct {
@@ -550,6 +558,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	}
 	g.attachMetrics(rt)
 	g.attachEscrowChecker(rt)
+	g.attachFinalizerBarrier(rt)
 	if g.capacity != nil {
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
 	}
@@ -1304,7 +1313,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if innerPath == "/v1/finalize" && r.Method == http.MethodPost {
-		if rt.activeRequests.Load() > 0 {
+		if rt.hasPendingWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, devshardID), http.StatusConflict)
 			return
 		}
@@ -1551,23 +1560,38 @@ func (g *Gateway) reserveRuntimeLocked(rt *devshardRuntime, inputTokens int64) {
 func (g *Gateway) releaseRuntime(rt *devshardRuntime, inputTokens int64) {
 	remaining := rt.activeRequests.Add(-1)
 	rt.reservedTokens.Add(-inputTokens)
-	// active=false (set during enqueue) blocks new reservations, so the count
-	// only drains downward — remaining==0 is the exact "last request finished"
-	// edge. scheduleAutoSettlement dedups, so a double-fire is harmless.
-	if remaining != 0 {
+	// Stay non-quiet while a background finalizer is still refunding/persisting; its own releaseFinalizer re-checks the drain (whichever hits zero last fires; dedup makes a double-fire harmless).
+	if remaining != 0 || rt.pendingFinalizers.Load() != 0 {
 		return
 	}
+	g.runtimeDrained(rt)
+}
 
+// runtimeDrained fires the deferred settle/retire once a runtime is quiet; scheduleAutoSettlement/retireRuntime dedup, so a double-fire from the two drain paths is harmless.
+func (g *Gateway) runtimeDrained(rt *devshardRuntime) {
 	if rt.settlementPending.Load() {
 		log.Printf("settlement_drain_complete escrow=%s reason=%s", rt.id, rt.settlementReason)
 		g.scheduleAutoSettlement(rt.id, rt.settlementReason)
 		return
 	}
-
 	if rt.retirePending.Load() {
 		log.Printf("runtime_retire_drain_complete escrow=%s reason=%s", rt.id, rt.retireReason)
 		g.retireRuntime(rt.id, rt.retireReason)
 	}
+}
+
+// startFinalizer registers a background race finalizer against the drain barrier; it must run synchronously before the finalizer goroutine spawns (and before the winning handler returns).
+func (g *Gateway) startFinalizer(rt *devshardRuntime) {
+	rt.pendingFinalizers.Add(1)
+}
+
+// releaseFinalizer clears a finalizer from the barrier and fires the deferred settle/retire if the runtime is now quiet.
+func (g *Gateway) releaseFinalizer(rt *devshardRuntime) {
+	remaining := rt.pendingFinalizers.Add(-1)
+	if remaining != 0 || rt.activeRequests.Load() != 0 {
+		return
+	}
+	g.runtimeDrained(rt)
 }
 
 func (rt *devshardRuntime) validateRequestedModel(requestModel string) error {
@@ -3220,7 +3244,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.activeRequests.Load() > 0 {
+		if rt.hasPendingWork() {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
@@ -3321,10 +3345,10 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 		log.Printf("runtime_retire_skipped escrow=%s reason=%q cause=not_registered", id, reason)
 		return nil
 	}
-	if inFlight := rt.activeRequests.Load(); inFlight > 0 {
+	if rt.hasPendingWork() {
 		rt.retireReason = reason
 		rt.retirePending.Store(true)
-		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d", id, reason, inFlight)
+		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d pending_finalizers=%d", id, reason, rt.activeRequests.Load(), rt.pendingFinalizers.Load())
 		return nil
 	}
 	delete(g.runtimes, id)
@@ -3347,6 +3371,15 @@ func (g *Gateway) attachMetrics(rt *devshardRuntime) {
 	}
 	rt.proxy.redundancy.metrics = g.metrics
 	rt.proxy.redundancy.devshardID = rt.id
+}
+
+// attachFinalizerBarrier wires the runtime's background race finalizers into the drain barrier so settle/store-close wait for them, not just for foreground requests.
+func (g *Gateway) attachFinalizerBarrier(rt *devshardRuntime) {
+	if g == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
+		return
+	}
+	rt.proxy.redundancy.onBackgroundStart = func() { g.startFinalizer(rt) }
+	rt.proxy.redundancy.onBackgroundDone = func() { g.releaseFinalizer(rt) }
 }
 
 func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
@@ -3421,9 +3454,9 @@ func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
 	g.mu.Unlock()
-	if ok && rt.activeRequests.Load() > 0 {
-		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d",
-			id, reason, rt.activeRequests.Load())
+	if ok && rt.hasPendingWork() {
+		log.Printf("settlement_queued_waiting_for_drain escrow=%s reason=%s active_requests=%d pending_finalizers=%d",
+			id, reason, rt.activeRequests.Load(), rt.pendingFinalizers.Load())
 		return
 	}
 	g.scheduleAutoSettlement(id, reason)
