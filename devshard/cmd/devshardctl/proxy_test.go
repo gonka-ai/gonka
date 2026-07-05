@@ -128,6 +128,37 @@ func TestCancelFlag_NilSafeAndOneShot(t *testing.T) {
 	}
 }
 
+func TestWatchClientCancel_TriggersOnDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+	defer stop()
+
+	cancel()
+
+	select {
+	case <-flag.Done():
+	case <-time.After(time.Second):
+		t.Fatal("flag should trigger when the request context is canceled mid-request")
+	}
+}
+
+func TestWatchClientCancel_StopPreventsTriggerOnNormalCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+
+	stop()
+	stop() // must be idempotent
+	cancel()
+
+	time.Sleep(50 * time.Millisecond)
+	require.False(t, flag.Gone(), "normal handler return must not be treated as a client disconnect")
+}
+
 func TestDeferredWriter_SwallowsAfterClientGone(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flag := newCancelFlag()
