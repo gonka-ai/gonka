@@ -72,6 +72,7 @@ func buildLiveSession(
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -80,15 +81,13 @@ func buildLiveSession(
 
 	clients := make([]HostClient, numHosts)
 	for i := range hosts {
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-		require.NoError(t, err)
+		sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 		h, err := host.NewHost(sm, hosts[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 		require.NoError(t, err)
 		clients[i] = &InProcessClient{Host: h}
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-	require.NoError(t, err)
+	userSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	session, err := NewSession(userSM, user, "escrow-1", group, clients, verifier, WithStorage(store))
 	require.NoError(t, err)
 
@@ -134,7 +133,7 @@ func TestFlushSnapshot_RetiredEscrowRebuildsWithoutReplay(t *testing.T) {
 	// replay) any post-snapshot diff.
 	verifier := signing.NewSecp256k1Verifier()
 	spy := &replaySpyStore{Storage: store}
-	rec, recSM, err := RecoverSession(spy, user, verifier, "escrow-1", types.LegacySessionVersion, group, buildRecoveryClients(t, hosts, group, user))
+	rec, recSM, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), rec.Nonce())
 	require.Zero(t, spy.replayedRecords(snapNonce), "retired escrow must rebuild with zero diff replay")
@@ -164,12 +163,10 @@ func TestFlushSnapshot_NoStoreOrEmptyIsNoop(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
 	config := testutil.DefaultConfig(1)
-	hostSM, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-	require.NoError(t, err)
+	hostSM := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	h, err := host.NewHost(hostSM, hostSigner, stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(10))
 	require.NoError(t, err)
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, user.Address(), verifier)
-	require.NoError(t, err)
+	sm := newTestStateMachine(t, "escrow-1", config, group, 100000, user.Address(), verifier)
 	noStore, err := NewSession(sm, user, "escrow-1", group, []HostClient{&InProcessClient{Host: h}}, verifier)
 	require.NoError(t, err)
 	require.NoError(t, noStore.FlushSnapshot())
