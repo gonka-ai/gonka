@@ -78,7 +78,7 @@ func NewServer(
 	g.POST("models", s.registerModel)
 	g.POST("tx/send", s.sendTransaction)
 
-	g.POST("bls/request", s.postRequestThresholdSignature)
+	g.POST("bls/request", blsRequestDeprecated)
 
 	// Export DB state (human-readable JSON) for admin purposes
 	g.GET("export/db", s.exportDb)
