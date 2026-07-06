@@ -2696,6 +2696,21 @@ func TestGatewayMetricsCollectorIncludesHostConnectionSnapshots(t *testing.T) {
 	requireMetricGaugeValue(t, families, "devshard_host_transport_connections", map[string]string{"address": "10.1.2.3", "state": "hold_after_close"}, 4)
 }
 
+func TestGatewayMetricsCollectorReportsChatCacheEntries(t *testing.T) {
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	now := time.Now()
+	g.chatCache.Set(chatCacheKey("Qwen/Test", []byte("body-1")), cachedChatResponse{EscrowID: "12", Body: []byte("resp-1")}, now)
+	g.chatCache.Set(chatCacheKey("Qwen/Test", []byte("body-2")), cachedChatResponse{EscrowID: "12", Body: []byte("resp-2")}, now)
+
+	collector := newGatewayMetricsCollectorWithHostConnections(g, fakeHostConnectionSnapshotter(nil))
+	registry := prometheus.NewRegistry()
+	registry.MustRegister(collector)
+
+	families, err := registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_chat_cache_entries", nil, 2)
+}
+
 type fakeHostConnectionSnapshotter []transport.HostConnectionSnapshot
 
 func (f fakeHostConnectionSnapshotter) Snapshots() []transport.HostConnectionSnapshot {

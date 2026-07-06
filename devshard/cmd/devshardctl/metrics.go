@@ -285,6 +285,7 @@ type gatewayMetricsCollector struct {
 	escrowBlockedParticipantsDesc *prometheus.Desc
 	hostOpenDesc                  *prometheus.Desc
 	hostStateDesc                 *prometheus.Desc
+	chatCacheEntriesDesc          *prometheus.Desc
 }
 
 func newGatewayMetricsCollector(gateway *Gateway) *gatewayMetricsCollector {
@@ -401,6 +402,12 @@ func newGatewayMetricsCollectorWithHostConnections(gateway *Gateway, hostConnect
 			[]string{"address", "state"},
 			nil,
 		),
+		chatCacheEntriesDesc: prometheus.NewDesc(
+			"devshard_gateway_chat_cache_entries",
+			"Current number of cached chat responses held in the gateway dedup cache.",
+			nil,
+			nil,
+		),
 	}
 }
 
@@ -422,6 +429,7 @@ func (c *gatewayMetricsCollector) Describe(ch chan<- *prometheus.Desc) {
 	ch <- c.escrowBlockedParticipantsDesc
 	ch <- c.hostOpenDesc
 	ch <- c.hostStateDesc
+	ch <- c.chatCacheEntriesDesc
 }
 
 func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
@@ -455,6 +463,13 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 			c.participantTrackedDesc,
 			prometheus.GaugeValue,
 			float64(c.gateway.participantLimiter.TrackedCount()),
+		)
+	}
+	if c.gateway.chatCache != nil {
+		ch <- prometheus.MustNewConstMetric(
+			c.chatCacheEntriesDesc,
+			prometheus.GaugeValue,
+			float64(c.gateway.chatCache.Len()),
 		)
 	}
 

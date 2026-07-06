@@ -69,6 +69,16 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 	return entry, true
 }
 
+// Len returns the number of cached entries. Intended for tests and metrics.
+func (c *chatResponseCache) Len() int {
+	if c == nil {
+		return 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries)
+}
+
 func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.Time) {
 	if c == nil || key == "" || len(entry.Body) == 0 || strings.TrimSpace(entry.EscrowID) == "" {
 		return
