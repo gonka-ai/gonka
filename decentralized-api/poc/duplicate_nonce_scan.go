@@ -5,8 +5,6 @@ import (
 	crand "crypto/rand"
 	"errors"
 	"math/big"
-	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -552,11 +550,10 @@ func sameScanOrURL(a, b duplicateScanChunk) bool {
 	return a.key == b.key || a.job.ParticipantURL == b.job.ParticipantURL
 }
 
-// isRetryableDuplicateScanError classifies proof fetch failures. Typed proof
-// errors and non-429 4xx responses are permanent participant faults; transport
-// failures, rate limits, server errors, and unknown errors are retried so a
-// transient hiccup never marks a scan failed. Retries are bounded by the
-// scan-pending check and stale-stage pruning.
+// isRetryableDuplicateScanError classifies proof fetch failures. Only typed
+// proof validation errors are permanent participant faults; HTTP and transport
+// failures are retried so transient hiccups never mark a scan failed. Retries
+// are bounded by the scan-pending check and stale-stage pruning.
 func isRetryableDuplicateScanError(err error) bool {
 	if err == nil {
 		return false
@@ -566,31 +563,7 @@ func isRetryableDuplicateScanError(err error) bool {
 		errors.Is(err, ErrInvalidVectorData) {
 		return false
 	}
-	if status := proofRequestStatus(err); status != 0 {
-		return status == 429 || status >= 500
-	}
 	return true
-}
-
-// proofRequestStatus extracts the HTTP status from ProofClient's
-// "proof request failed with status N" error message, or 0 if absent.
-func proofRequestStatus(err error) int {
-	const marker = "proof request failed with status "
-	message := strings.ToLower(err.Error())
-	start := strings.Index(message, marker)
-	if start < 0 {
-		return 0
-	}
-	rest := message[start+len(marker):]
-	end := 0
-	for end < len(rest) && rest[end] >= '0' && rest[end] <= '9' {
-		end++
-	}
-	if end == 0 {
-		return 0
-	}
-	status, _ := strconv.Atoi(rest[:end])
-	return status
 }
 
 // sampleDuplicateScanIndices uses private local randomness so participants cannot
