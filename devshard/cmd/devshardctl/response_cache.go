@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"io"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -13,10 +14,21 @@ import (
 
 const chatResponseCacheTTL = time.Hour
 
+// defaultChatResponseCacheMaxEntries bounds how many cached chat responses the
+// gateway keeps in memory at once. The cache is a single process-wide dedup
+// layer keyed by the full request body, so under a normal chat workload
+// (mostly unique bodies) it would otherwise grow by one full response body per
+// distinct request and never shrink: an expired entry is only reclaimed when
+// the *same* key is looked up again, which for unique bodies never happens.
+// Capping the entry count keeps the footprint bounded regardless of traffic or
+// uptime, matching the bounded-map idiom used by rateLimiter and gossip dedup.
+const defaultChatResponseCacheMaxEntries = 2048
+
 type chatResponseCache struct {
-	mu      sync.Mutex
-	ttl     time.Duration
-	entries map[string]cachedChatResponse
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxEntries int
+	entries    map[string]cachedChatResponse
 }
 
 type cachedChatResponse struct {
@@ -34,8 +46,9 @@ func newChatResponseCache(ttl time.Duration) *chatResponseCache {
 		ttl = chatResponseCacheTTL
 	}
 	return &chatResponseCache{
-		ttl:     ttl,
-		entries: make(map[string]cachedChatResponse),
+		ttl:        ttl,
+		maxEntries: defaultChatResponseCacheMaxEntries,
+		entries:    make(map[string]cachedChatResponse),
 	}
 }
 
@@ -83,7 +96,41 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if _, exists := c.entries[key]; !exists && c.maxEntries > 0 && len(c.entries) >= c.maxEntries {
+		c.evictLocked(now)
+	}
 	c.entries[key] = entry
+}
+
+// evictLocked bounds the cache. It first reclaims every expired entry (the
+// common case for a unique-body workload) and, only if the cache is still at
+// capacity with live entries, drops the oldest half in a single pass. Batching
+// amortizes the O(n) sweep across ~maxEntries/2 inserts instead of running it
+// on every Set once the cache is hot. Callers must hold c.mu. On return the
+// cache holds fewer than maxEntries entries, leaving room for the insert.
+func (c *chatResponseCache) evictLocked(now time.Time) {
+	for key, entry := range c.entries {
+		if !entry.ExpiresAt.After(now) {
+			delete(c.entries, key)
+		}
+	}
+	if len(c.entries) < c.maxEntries {
+		return
+	}
+	// ExpiresAt is insertion time plus a constant TTL, so ordering by ExpiresAt
+	// is insertion order. Keep the newest maxEntries/2 entries, drop the rest.
+	type keyExpiry struct {
+		key     string
+		expires time.Time
+	}
+	live := make([]keyExpiry, 0, len(c.entries))
+	for key, entry := range c.entries {
+		live = append(live, keyExpiry{key: key, expires: entry.ExpiresAt})
+	}
+	sort.Slice(live, func(i, j int) bool { return live[i].expires.Before(live[j].expires) })
+	for i := 0; i < len(live)-c.maxEntries/2; i++ {
+		delete(c.entries, live[i].key)
+	}
 }
 
 func serveCachedChatResponse(w http.ResponseWriter, r *http.Request, entry cachedChatResponse) {
