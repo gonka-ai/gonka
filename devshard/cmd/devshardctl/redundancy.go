@@ -3304,12 +3304,14 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 			}
 		}
+		// Only relabels accounting/metrics; escrow and the returned error stay untouched.
+		terminal := e.resolveTerminalDecision(attempts, winnerNonce, failed)
 		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
 			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
-			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
-			e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
-			e.completeAccountingRequest(ctx, 0, decision, "failed")
-			e.logRequestSettled(ctx, 0, decision, "failed")
+			logRequestStage(ctx, terminal.stage, "escrow", e.devshardID, "error", hostErr)
+			e.recordGatewayRequestOutcome(params.Model, terminal.outcome, terminal.reason)
+			e.completeAccountingRequest(ctx, terminal.nonce, decision, terminal.outcome)
+			e.logRequestSettled(ctx, terminal.nonce, decision, terminal.outcome)
 			e.checkEscrowMissing(ctx, attempts)
 			return hostErr
 		}
@@ -3321,10 +3323,10 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			errMsg = (&nonStreamingReducedMaxTokensTimeoutError{}).Error()
 		}
 		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
-		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
-		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
-		e.completeAccountingRequest(ctx, 0, decision, "failed")
-		e.logRequestSettled(ctx, 0, decision, "failed")
+		logRequestStage(ctx, terminal.stage, "escrow", e.devshardID, "error", errMsg)
+		e.recordGatewayRequestOutcome(params.Model, terminal.outcome, terminal.reason)
+		e.completeAccountingRequest(ctx, terminal.nonce, decision, terminal.outcome)
+		e.logRequestSettled(ctx, terminal.nonce, decision, terminal.outcome)
 		e.checkEscrowMissing(ctx, attempts)
 		if opts.nonStreamingReducedTokenTimeout {
 			return &nonStreamingReducedMaxTokensTimeoutError{}
@@ -3461,6 +3463,46 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 		}
 	}
 	return 0
+}
+
+// winnerDeliveredPendingSettlement reports whether the crowned winner streamed clean content to the client but its nonce never finished — the executor delivered a response yet produced no applied finish, so it cannot settle. Not a failure from the client's view.
+func (e *Redundancy) winnerDeliveredPendingSettlement(attempts []*inflight, winnerNonce uint64) bool {
+	if winnerNonce == 0 {
+		return false
+	}
+	winner := inflightByNonce(attempts, winnerNonce)
+	if winner == nil || winner.probe {
+		return false
+	}
+	if e.session.IsNonceFinished(winner.nonce) || errors.Is(winner.processErr, types.ErrStateHashMismatch) {
+		return false
+	}
+	return winner.err == nil && winner.contentChunks.Load() > 0 && !isFailedStreamAttempt(winner)
+}
+
+type terminalDecision struct {
+	nonce   uint64
+	outcome string
+	stage   string
+	reason  string
+}
+
+// resolveTerminalDecision picks the accounting outcome for a request that failed to reach a finished nonce: delivered_pending_settlement when the winner delivered content, otherwise failed.
+func (e *Redundancy) resolveTerminalDecision(attempts []*inflight, winnerNonce uint64, failed []*inflight) terminalDecision {
+	if e.winnerDeliveredPendingSettlement(attempts, winnerNonce) {
+		return terminalDecision{
+			nonce:   winnerNonce,
+			outcome: "delivered_pending_settlement",
+			stage:   "request_delivered_pending_settlement",
+			reason:  "none",
+		}
+	}
+	return terminalDecision{
+		nonce:   0,
+		outcome: "failed",
+		stage:   "request_failed",
+		reason:  gatewayRequestFailureReason(failed),
+	}
 }
 
 func fallbackSuspiciousWinner(attempts []*inflight) *inflight {

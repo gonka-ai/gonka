@@ -37,7 +37,6 @@ var (
 	ErrSessionNotFinalizing  = errors.New("session is not finalizing")
 	ErrInvalidSeedSig        = errors.New("seed signature does not recover to slot owner")
 	ErrDuplicateValidation   = errors.New("duplicate validation: address already validated this inference")
-	ErrInvalidStateSig       = errors.New("invalid state signature from host")
 	ErrSessionSettlement     = errors.New("session is in settlement: seeds are final")
 	ErrInvalidGroup          = errors.New("invalid group")
 	ErrEscrowIDMismatch      = errors.New("escrow_id does not match session")
