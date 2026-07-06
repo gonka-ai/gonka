@@ -130,12 +130,14 @@ var errTxNotFound = errors.New("tx not found on chain")
 // found=false when the tx is absent or failed (no escrow), error when unreachable.
 func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (uint64, bool, error) {
 	var lastErr error
+	hasNotFoundError := false
 	for _, baseURL := range c.txQueryBaseURLs() {
 		var payload txResponseEnvelope
 		err := c.getJSONFromBaseURL(ctx, baseURL, "/cosmos/tx/v1beta1/txs/"+url.PathEscape(txHash), &payload)
 		if err != nil {
 			if isNotFoundError(err) {
-				return 0, false, errTxNotFound // not on chain (yet) — caller decides by age
+				hasNotFoundError = true // this endpoint lacks it; try the fallback before deciding
+				continue
 			}
 			lastErr = fmt.Errorf("%s: %w", baseURL, err)
 			continue
@@ -147,6 +149,10 @@ func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (u
 			return escrowID, true, nil
 		}
 		lastErr = fmt.Errorf("tx %s committed via %s but escrow_id event was not found", txHash, baseURL)
+	}
+	// Only conclude "not on chain" when every reachable endpoint agreed on 404.
+	if lastErr == nil && hasNotFoundError {
+		return 0, false, errTxNotFound
 	}
 	return 0, false, lastErr
 }

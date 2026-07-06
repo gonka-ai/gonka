@@ -174,6 +174,92 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	require.Equal(t, signer.Address(), result.Creator)
 }
 
+// escrowIDQueryServer returns a query endpoint that replies with a committed
+// create tx carrying an escrow_id event for txHash, and 404 for anything else.
+func escrowIDQueryServer(t *testing.T, txHash string, escrowID uint64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cosmos/tx/v1beta1/txs/"+txHash {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestJSON(t, w, map[string]any{
+			"tx_response": map[string]any{
+				"code":   0,
+				"txhash": txHash,
+				"events": []map[string]any{{
+					"type":       "devshard_escrow_created",
+					"attributes": []map[string]string{{"key": "escrow_id", "value": fmt.Sprintf("%d", escrowID)}},
+				}},
+			},
+		})
+	}))
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDTriesFallbackOn404 pins the recovery path:
+// when the primary node has not indexed the create tx (404), the escrow_id must
+// still be resolved from the fallback query URL rather than reported missing.
+func TestRESTChainTxClient_GetTxEscrowIDTriesFallbackOn404(t *testing.T) {
+	const txHash = "ABC123"
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r) // primary hasn't indexed the tx yet
+	}))
+	defer primary.Close()
+	fallback := escrowIDQueryServer(t, txHash, 77)
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	escrowID, found, err := client.GetTxEscrowID(t.Context(), txHash)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, uint64(77), escrowID)
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDNotFoundWhenAllEndpoints404 confirms the
+// only-after-all-endpoints semantics: errTxNotFound is returned solely when
+// every reachable endpoint agrees the tx is absent.
+func TestRESTChainTxClient_GetTxEscrowIDNotFoundWhenAllEndpoints404(t *testing.T) {
+	notFound := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	}
+	primary := notFound()
+	defer primary.Close()
+	fallback := notFound()
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	_, found, err := client.GetTxEscrowID(t.Context(), "ABC123")
+	require.False(t, found)
+	require.ErrorIs(t, err, errTxNotFound)
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDInconclusiveOnFallbackError guards against
+// orphaning: a 404 on the primary plus a real error on the fallback is
+// inconclusive, so a non-errTxNotFound error is returned and the caller keeps
+// the commitment for a later retry instead of clearing it.
+func TestRESTChainTxClient_GetTxEscrowIDInconclusiveOnFallbackError(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"transaction indexing is disabled"}`, http.StatusInternalServerError)
+	}))
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	_, found, err := client.GetTxEscrowID(t.Context(), "ABC123")
+	require.False(t, found)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errTxNotFound)
+}
+
 func TestRESTChainTxClient_SettleDevshardEscrow(t *testing.T) {
 	signer, err := signing.GenerateKey()
 	require.NoError(t, err)
