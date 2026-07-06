@@ -71,12 +71,17 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
+	// Deprecated: Do not use.
 	StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error)
+	// Deprecated: Do not use.
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
+	// Deprecated: Do not use.
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
+	// Deprecated: Do not use.
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
+	// Deprecated: Do not use.
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
 	SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error)
@@ -134,6 +139,7 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error) {
 	out := new(MsgStartInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_StartInference_FullMethodName, in, out, opts...)
@@ -143,6 +149,7 @@ func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, o
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error) {
 	out := new(MsgFinishInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_FinishInference_FullMethodName, in, out, opts...)
@@ -161,6 +168,7 @@ func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewPa
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error) {
 	out := new(MsgValidationResponse)
 	err := c.cc.Invoke(ctx, Msg_Validation_FullMethodName, in, out, opts...)
@@ -179,6 +187,7 @@ func (c *msgClient) SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSub
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error) {
 	out := new(MsgInvalidateInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_InvalidateInference_FullMethodName, in, out, opts...)
@@ -188,6 +197,7 @@ func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateIn
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error) {
 	out := new(MsgRevalidateInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_RevalidateInference_FullMethodName, in, out, opts...)
@@ -519,12 +529,17 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
+	// Deprecated: Do not use.
 	StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error)
+	// Deprecated: Do not use.
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
+	// Deprecated: Do not use.
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
+	// Deprecated: Do not use.
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
+	// Deprecated: Do not use.
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
 	SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error)

@@ -25,13 +25,23 @@ service Msg {
   // UpdateParams defines a (governance) operation for updating the module
   // parameters. The authority defaults to the x/gov module account.
   rpc UpdateParams                     (MsgUpdateParams) returns (MsgUpdateParamsResponse);
-  rpc StartInference                   (MsgStartInference) returns (MsgStartInferenceResponse);
-  rpc FinishInference                  (MsgFinishInference) returns (MsgFinishInferenceResponse);
+  rpc StartInference                   (MsgStartInference) returns (MsgStartInferenceResponse) {
+    option deprecated = true;
+  }
+  rpc FinishInference                  (MsgFinishInference) returns (MsgFinishInferenceResponse) {
+    option deprecated = true;
+  }
   rpc SubmitNewParticipant             (MsgSubmitNewParticipant) returns (MsgSubmitNewParticipantResponse);
-  rpc Validation                       (MsgValidation) returns (MsgValidationResponse);
+  rpc Validation                       (MsgValidation) returns (MsgValidationResponse) {
+    option deprecated = true;
+  }
   rpc SubmitNewUnfundedParticipant     (MsgSubmitNewUnfundedParticipant) returns (MsgSubmitNewUnfundedParticipantResponse);
-  rpc InvalidateInference              (MsgInvalidateInference) returns (MsgInvalidateInferenceResponse);
-  rpc RevalidateInference              (MsgRevalidateInference) returns (MsgRevalidateInferenceResponse);
+  rpc InvalidateInference              (MsgInvalidateInference) returns (MsgInvalidateInferenceResponse) {
+    option deprecated = true;
+  }
+  rpc RevalidateInference              (MsgRevalidateInference) returns (MsgRevalidateInferenceResponse) {
+    option deprecated = true;
+  }
   rpc ClaimRewards                     (MsgClaimRewards) returns (MsgClaimRewardsResponse);
   rpc SetClaimRecipients               (MsgSetClaimRecipients) returns (MsgSetClaimRecipientsResponse);
   rpc SubmitPocBatch                   (MsgSubmitPocBatch) returns (MsgSubmitPocBatchResponse);
@@ -90,6 +100,7 @@ message MsgUpdateParamsResponse {}
 
 message MsgStartInference {
   option (cosmos.msg.v1.signer) = "creator";
+  option deprecated = true;
   string creator = 1;
   string inference_id = 2;
   string prompt_hash = 3;
@@ -107,12 +118,14 @@ message MsgStartInference {
 }
 
 message MsgStartInferenceResponse {
+  option deprecated = true;
   string inference_index = 1;
   string error_message = 2;
 }
 
 message MsgFinishInference {
   option (cosmos.msg.v1.signer) = "creator";
+  option deprecated = true;
   string creator = 1;
   string inference_id = 2;
   string response_hash = 3;
@@ -132,6 +145,7 @@ message MsgFinishInference {
 }
 
 message MsgFinishInferenceResponse {
+  option deprecated = true;
   string inference_index = 1;
   string error_message = 2;
 }
@@ -151,6 +165,7 @@ message MsgSubmitNewParticipantResponse {
 
 message MsgValidation {
   option (cosmos.msg.v1.signer) = "creator";
+  option deprecated = true;
   string creator = 1;
   string id = 2;
   string inference_id = 3;
@@ -161,7 +176,9 @@ message MsgValidation {
   Decimal value_decimal = 8;
 }
 
-message MsgValidationResponse {}
+message MsgValidationResponse {
+  option deprecated = true;
+}
 
 message MsgSubmitNewUnfundedParticipant {
   option (cosmos.msg.v1.signer) = "creator";
@@ -177,21 +194,27 @@ message MsgSubmitNewUnfundedParticipantResponse {}
 
 message MsgInvalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
+  option deprecated = true;
   string creator = 1;
   string inference_id = 2;
   string invalidator = 3;
 }
 
-message MsgInvalidateInferenceResponse {}
+message MsgInvalidateInferenceResponse {
+  option deprecated = true;
+}
 
 message MsgRevalidateInference {
   option (cosmos.msg.v1.signer) = "creator";
+  option deprecated = true;
   string creator = 1;
   string inference_id = 2;
   string invalidator = 3;
 }
 
-message MsgRevalidateInferenceResponse {}
+message MsgRevalidateInferenceResponse {
+  option deprecated = true;
+}
 
 message MsgClaimRewards {
   option (cosmos.msg.v1.signer) = "creator";

@@ -103,9 +103,9 @@ func NewServer(
 	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
-	g.POST("chat/completions", s.postChat)
-	g.POST("completions", s.postCompletions)
-	g.GET("chat/completions", s.getChatById)
+	g.POST("chat/completions", classicInferenceDeprecated)
+	g.POST("completions", classicInferenceDeprecated)
+	g.GET("chat/completions", classicInferenceDeprecated)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
 	g.GET("participants/:address", s.getAccountByAddress)
@@ -203,6 +203,15 @@ func legacyDevshardDeprecated(c echo.Context) error {
 	return c.JSON(http.StatusGone, map[string]string{
 		"error":   "deprecated",
 		"message": "/v1/devshard is deprecated; use /devshard/{version}",
+	})
+}
+
+func classicInferenceDeprecated(c echo.Context) error {
+	c.Response().Header().Set("Deprecation", "true")
+	c.Response().Header().Set("Link", `</devshard/{version}>; rel="successor-version"`)
+	return c.JSON(http.StatusGone, map[string]string{
+		"error":   "deprecated",
+		"message": "classic inference is deprecated; use devshard",
 	})
 }
 

@@ -3,114 +3,14 @@ package keeper
 import (
 	"context"
 
-	"cosmossdk.io/collections"
-	errorsmod "cosmossdk.io/errors"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 func (k msgServer) InvalidateInference(ctx context.Context, msg *types.MsgInvalidateInference) (*types.MsgInvalidateInferenceResponse, error) {
-	// Invalidate uses the Inference and the group policy id to get permissions,
-	// so it and revalidate don't go through the usual permissions path
 	if err := k.CheckPermission(ctx, msg, NoPermission); err != nil {
 		return nil, err
 	}
-	inference, executor, err := k.validateDecisionMessage(ctx, msg)
-	if err != nil {
-		return nil, err
-	}
-	// Idempotent, so no error
-	if inference.Status == types.InferenceStatus_INVALIDATED {
-		k.LogDebug("Inference already invalidated", types.Validation, "inferenceId", msg.InferenceId)
-		return nil, nil
-	}
-	previousStatus := inference.Status
-	inference.Status = types.InferenceStatus_INVALIDATED
-	executor.CurrentEpochStats.InvalidatedInferences++
-	executor.ConsecutiveInvalidInferences++
-	currentEpochIndex, found := k.GetEffectiveEpochIndex(ctx)
-	if !found {
-		k.LogError("Failed to get effective epoch index", types.Validation)
-		return nil, types.ErrEffectiveEpochNotFound
-	}
 
-	shouldRefund, reason := k.inferenceIsBeforeClaimsSet(ctx, *inference, currentEpochIndex)
-	k.LogInfo("Inference refund decision", types.Validation, "inferenceId", inference.InferenceId, "executor", executor.Address, "shouldRefund", shouldRefund, "reason", reason)
-	if shouldRefund {
-		err := k.refundInvalidatedInference(executor, inference, ctx)
-		if err != nil {
-			return nil, err
-		}
-	}
-
-	k.LogInfo("Inference invalidated", types.Inferences, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost)
-
-	err = k.SetParticipant(ctx, *executor)
-	if err != nil {
-		return nil, err
-	}
-
-	err = k.SetInference(ctx, *inference)
-	if err != nil {
-		return nil, err
-	}
-	if inference.Status != previousStatus {
-		emitInferenceStatusUpdatedEvent(sdk.UnwrapSDKContext(ctx), inference.InferenceId, inference.Status)
-	}
-
-	return &types.MsgInvalidateInferenceResponse{}, nil
-}
-
-func (k msgServer) refundInvalidatedInference(executor *types.Participant, inference *types.Inference, ctx context.Context) error {
-	// Attempt refund BEFORE modifying executor balance.
-	// If refund fails (e.g. underfunded escrow), don't corrupt state.
-	err := k.IssueRefund(ctx, inference.ActualCost, inference.RequestedBy, "invalidated_inference:"+inference.InferenceId)
-	if err != nil {
-		k.LogError("Refund failed", types.Validation, "error", err)
-		return err
-	}
-
-	// Only deduct from executor after successful refund
-	executor.CoinBalance -= inference.ActualCost
-	k.SafeLogSubAccountTransaction(ctx, types.ModuleName, executor.Address, types.OwedSubAccount, inference.ActualCost, "invalidated_inference:"+inference.InferenceId)
-	k.LogInfo("Invalid Inference subtracted from Executor CoinBalance ", types.Balances, "inferenceId", inference.InferenceId, "executor", executor.Address, "actualCost", inference.ActualCost, "coinBalance", executor.CoinBalance)
-
-	return nil
-}
-
-type ValidationDecision interface {
-	GetInferenceId() string
-	GetCreator() string
-	GetInvalidator() string
-}
-
-func (k msgServer) validateDecisionMessage(ctx context.Context, msg ValidationDecision) (*types.Inference, *types.Participant, error) {
-	inference, found := k.GetInference(ctx, msg.GetInferenceId())
-	if !found {
-		k.LogError("Inference not found", types.Validation, "inferenceId", msg.GetInferenceId())
-		return nil, nil, errorsmod.Wrapf(types.ErrInferenceNotFound, "inference with id %s not found", msg.GetInferenceId())
-	}
-
-	if msg.GetCreator() != inference.ProposalDetails.PolicyAddress {
-		k.LogError("Invalid authority", types.Validation, "expected", inference.ProposalDetails.PolicyAddress, "got", msg.GetCreator())
-		return nil, nil, errorsmod.Wrapf(types.ErrInvalidSigner, "invalid authority; expected %s, got %s", inference.ProposalDetails.PolicyAddress, msg.GetCreator())
-	}
-
-	addr, err := sdk.AccAddressFromBech32(msg.GetInvalidator())
-	if err != nil {
-		k.LogError("Invalidator address is invalid", types.Validation, "invalidator", msg.GetInvalidator())
-	} else {
-		err = k.ActiveInvalidations.Remove(ctx, collections.Join(addr, inference.InferenceId))
-		if err != nil {
-			k.LogError("Failed to remove active invalidation", types.Validation, "error", err)
-		}
-
-	}
-
-	executor, found := k.GetParticipant(ctx, inference.ExecutedBy)
-	if !found {
-		k.LogError("Executor not found", types.Validation, "address", inference.ExecutedBy)
-		return nil, nil, errorsmod.Wrapf(types.ErrParticipantNotFound, "participant with address %s not found", inference.ExecutedBy)
-	}
-	return &inference, &executor, nil
+	k.LogInfo("MsgInvalidateInference deprecated", types.Validation, "inferenceId", msg.InferenceId, "creator", msg.Creator)
+	return nil, classicInferenceDeprecatedError()
 }
