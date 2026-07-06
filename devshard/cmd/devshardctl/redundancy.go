@@ -537,6 +537,8 @@ type Redundancy struct {
 	metrics               *DevshardMetrics
 	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
 	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
+	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
+	onRaceCleanupDone     func() // fires when a race cleanup goroutine finishes
 	balanceExhaustedOnce  sync.Once
 	picker                *sessionPicker
 	participantLimiter    *ParticipantRequestLimiter
@@ -2244,7 +2246,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						"max_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
 						"decision", decision.Reason,
 					)
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+					e.goTrackedRaceCleanup(func() {
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+					})
 					return nil
 				}
 			}
@@ -2369,9 +2373,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					e.markPhaseTransitionAbort(inf)
 					e.recordWinnerTerminalFailureOnce(inf, params, w)
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
-						forceTreatAsFailure:  true,
-						recordFailureSamples: true,
+					e.goTrackedRaceCleanup(func() {
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
+							forceTreatAsFailure:  true,
+							recordFailureSamples: true,
+						})
 					})
 					logRequestStage(settleCtx, "winner_failed_after_content", "escrow", e.devshardID, "winner_nonce", w, "error", err)
 					return err
@@ -2435,7 +2441,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				recordFailureSamples:            true,
 				nonStreamingReducedTokenTimeout: true,
 			}
-			go func() {
+			e.goTrackedRaceCleanup(func() {
 				if err := e.finishRaceOutcome(settleCtx, attempts, params, decision, 0, opts); err != nil {
 					var timeoutErr *nonStreamingReducedMaxTokensTimeoutError
 					if errors.As(err, &timeoutErr) {
@@ -2443,7 +2449,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					logRequestStage(settleCtx, "background_finish_failed", "escrow", e.devshardID, "error", err)
 				}
-			}()
+			})
 			return &nonStreamingReducedMaxTokensTimeoutError{}
 		case <-stallC:
 			now := time.Now()
@@ -2512,7 +2518,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			pending := pendingInflights(attempts)
 			logRequestStage(settleCtx, "request_stream_canceled", "escrow", e.devshardID, "winner_nonce", winner, "pending", len(pending), "decision", decision.Reason, "error", streamCtx.Err())
-			go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
+			e.goTrackedRaceCleanup(func() {
+				e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
+			})
 			return streamCtx.Err()
 		}
 
@@ -2681,6 +2689,19 @@ type raceFinishOptions struct {
 	forceTreatAsFailure             bool
 	recordFailureSamples            bool
 	nonStreamingReducedTokenTimeout bool
+}
+
+// goTrackedRaceCleanup runs a background race cleanup detached while keeping the drain barrier aware of it; onRaceCleanupStart fires synchronously so the winning handler can never see the runtime as quiet mid-cleanup.
+func (e *Redundancy) goTrackedRaceCleanup(fn func()) {
+	if e.onRaceCleanupStart != nil {
+		e.onRaceCleanupStart()
+	}
+	go func() {
+		if e.onRaceCleanupDone != nil {
+			defer e.onRaceCleanupDone()
+		}
+		fn()
+	}()
 }
 
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
@@ -3548,7 +3569,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			StartedAt:   params.StartedAt,
 		}
 		if anySucceeded {
-			go func() {
+			e.goTrackedRaceCleanup(func() {
 				bgCtx, _ := ensureRequestLogContext(context.Background())
 				bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 				for _, inf := range failed {
@@ -3590,7 +3611,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 					}
 				}
 				e.logRequestSettled(bgCtx, winnerNonce, decision, "success")
-			}()
+			})
 		}
 	}
 

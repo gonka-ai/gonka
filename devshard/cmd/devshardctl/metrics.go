@@ -468,7 +468,7 @@ func (c *gatewayMetricsCollector) Collect(ch chan<- prometheus.Metric) {
 		}
 		labels := []string{rt.id, rt.model}
 		ch <- prometheus.MustNewConstMetric(c.runtimeActiveDesc, prometheus.GaugeValue, active, labels...)
-		ch <- prometheus.MustNewConstMetric(c.runtimeRequestsDesc, prometheus.GaugeValue, float64(rt.activeRequests.Load()), labels...)
+		ch <- prometheus.MustNewConstMetric(c.runtimeRequestsDesc, prometheus.GaugeValue, float64(rt.activeUserRequests.Load()), labels...)
 		ch <- prometheus.MustNewConstMetric(c.runtimeReservedDesc, prometheus.GaugeValue, float64(rt.reservedTokens.Load()), labels...)
 		blocked := 0
 		if c.gateway.participantLimiter != nil {

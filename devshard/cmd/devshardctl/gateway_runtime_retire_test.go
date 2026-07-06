@@ -43,7 +43,7 @@ func TestRetireRuntimeRemovesRuntimeFromRegistry(t *testing.T) {
 // the runtime registered) until the request count drains to zero.
 func TestRetireRuntimeDefersWhileRequestsInFlight(t *testing.T) {
 	g, rt := newRetireTestGateway("12")
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 
 	require.False(t, g.retireRuntime("12", "busy"))
 	_, stillRegistered := g.runtimes["12"]
@@ -51,7 +51,7 @@ func TestRetireRuntimeDefersWhileRequestsInFlight(t *testing.T) {
 	require.True(t, rt.retirePending.Load(), "deferred retire must record its intent")
 	require.Equal(t, "busy", rt.retireReason)
 
-	rt.activeRequests.Store(0)
+	rt.activeUserRequests.Store(0)
 	require.True(t, g.retireRuntime("12", "drained"))
 	_, stillRegistered = g.runtimes["12"]
 	require.False(t, stillRegistered)
@@ -61,7 +61,7 @@ func TestRetireRuntimeDefersWhileRequestsInFlight(t *testing.T) {
 // the last request drains through releaseRuntime.
 func TestReleaseRuntimeRetiresAfterDrain(t *testing.T) {
 	g, rt := newRetireTestGateway("12")
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 
 	require.False(t, g.retireRuntime("12", "balance exhausted"))
 	_, stillRegistered := g.runtimes["12"]
@@ -78,7 +78,7 @@ func TestReleaseRuntimeRetiresAfterDrain(t *testing.T) {
 // isolation: only retirePending set (no settlement), drain → retire.
 func TestReleaseRuntimeRetiresWithOnlyRetirePending(t *testing.T) {
 	g, rt := newRetireTestGateway("12")
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	rt.retireReason = "balance exhausted"
 	rt.retirePending.Store(true)
 

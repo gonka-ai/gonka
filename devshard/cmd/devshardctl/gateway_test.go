@@ -336,19 +336,19 @@ func TestParseDevshardPath(t *testing.T) {
 }
 
 func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
-	// Load score is activeRequests / W(e). Both runtimes share W(e)=1
+	// Load score is activeUserRequests / W(e). Both runtimes share W(e)=1
 	// (no capacity model wired). The picker should prefer the runtime
 	// with fewer in-flight requests.
 	a := &devshardRuntime{id: "6", model: "m"}
 	b := &devshardRuntime{id: "12", model: "m"}
-	a.activeRequests.Store(5)
-	b.activeRequests.Store(1)
+	a.activeUserRequests.Store(5)
+	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
-	require.EqualValues(t, 2, chosen.activeRequests.Load())
+	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
 	require.EqualValues(t, 5, chosen.reservedTokens.Load())
 }
 
@@ -807,7 +807,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -817,7 +817,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.False(t, rt.active.Load())
-	require.EqualValues(t, 1, rt.activeRequests.Load())
+	require.EqualValues(t, 1, rt.activeUserRequests.Load())
 
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
@@ -1118,7 +1118,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -1130,7 +1130,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.False(t, forwarded)
 	require.True(t, rt.active.Load())
 
-	rt.activeRequests.Store(0)
+	rt.activeUserRequests.Store(0)
 	rec = httptest.NewRecorder()
 	g.handleDevshard(rec, req)
 
@@ -1202,8 +1202,8 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		}),
 	}
-	slow.activeRequests.Store(10)
-	fast.activeRequests.Store(0)
+	slow.activeUserRequests.Store(10)
+	fast.activeUserRequests.Store(0)
 
 	g := NewGateway([]*devshardRuntime{slow, fast}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
@@ -1452,7 +1452,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t *testing.T) {
@@ -1477,7 +1477,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t 
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.NotContains(t, rec.Body.String(), "admin API key")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
@@ -1502,7 +1502,7 @@ func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
