@@ -403,16 +403,19 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 	}
 
 	// Calculate total weight and count participants that actually hold power.
-	// Zero-weight participants are excluded from the cap threshold math in
-	// CalculateOptimalCap, so the cap percentage must be chosen for the
-	// de-facto (positive-weight) network size. Otherwise a zero-weight entry
-	// forces the stricter 30% cap onto e.g. 3 real hosts, which is
-	// mathematically infeasible and would disable capping entirely.
+	// Non-positive weights are invisible to all capping math for consistency:
+	// zero/negative entries are excluded from the cap threshold scan in
+	// CalculateOptimalCap, so they must not influence the cap percentage
+	// selection or the total passed to the cap<=0 degeneracy guard either.
+	// Otherwise a zero-weight entry forces the stricter 30% cap onto e.g.
+	// 3 real hosts (mathematically infeasible, disabling capping), and a
+	// hypothetical negative weight could drag the total to <=0 and defeat
+	// the guard while positive power still exists.
 	totalWeight := int64(0)
 	positiveCount := 0
 	for _, p := range participants {
-		totalWeight += p.Weight
 		if p.Weight > 0 {
+			totalWeight += p.Weight
 			positiveCount++
 		}
 	}
