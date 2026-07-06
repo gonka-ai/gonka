@@ -134,8 +134,8 @@ func TestProcessResponse_WarmKey_Rejected(t *testing.T) {
 	err = session.ProcessResponse(1, &host.HostResponse{
 		Nonce: 1, StateHash: root, StateSig: stateSig,
 	}, 1)
-	require.Error(t, err, "rejected warm key should cause error")
-	require.ErrorIs(t, err, types.ErrInvalidStateSig)
+	require.NoError(t, err, "rejected warm key is skipped, not fatal to the response")
+	require.Empty(t, session.signatures[1], "rejected warm key must not count toward quorum")
 }
 
 func TestProcessResponse_WarmKey_NoResolver(t *testing.T) {
@@ -176,8 +176,8 @@ func TestProcessResponse_WarmKey_NoResolver(t *testing.T) {
 	err = session.ProcessResponse(1, &host.HostResponse{
 		Nonce: 1, StateHash: root, StateSig: stateSig,
 	}, 1)
-	require.Error(t, err, "without resolver, warm key mismatch should fail")
-	require.ErrorIs(t, err, types.ErrInvalidStateSig)
+	require.NoError(t, err, "without resolver, warm key mismatch is skipped, not fatal")
+	require.Empty(t, session.signatures[1], "unresolved warm key must not count toward quorum")
 }
 
 func TestProcessResponse_ColdKey_StillWorks(t *testing.T) {
@@ -186,6 +186,53 @@ func TestProcessResponse_ColdKey_StillWorks(t *testing.T) {
 	_, err := session.SendInference(context.Background(), defaultParams)
 	require.NoError(t, err, "cold key should work without warm key resolver")
 	require.NotEmpty(t, session.Signatures())
+}
+
+// A1: an unverifiable state sig must not drop the executor's receipt/finish — the nonce still finishes and its txs are queued.
+func TestProcessResponse_InvalidStateSig_StillProcessesReceiptAndFinish(t *testing.T) {
+	coldKeys := makeKeys(t, 3)
+	warmKeys := makeKeys(t, 3)
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(coldKeys)
+	config := testutil.DefaultConfig(3)
+	verifier := signing.NewSecp256k1Verifier()
+
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userKey.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userKey.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	root, err := userSM.ApplyLocal(1, []*types.DevshardTx{testutil.StartTx(1)})
+	require.NoError(t, err)
+
+	sigData, err := proto.Marshal(&types.StateSignatureContent{StateRoot: root, EscrowId: "escrow-1", Nonce: 1})
+	require.NoError(t, err)
+	badSig, err := warmKeys[1].Sign(sigData) // recovers to a warm key with no resolver -> rejected
+	require.NoError(t, err)
+
+	clients := make([]HostClient, 3)
+	for i := range clients {
+		clients[i] = &ErrorClient{}
+	}
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	require.NoError(t, err)
+	session.nonce = 1
+	session.diffs = append(session.diffs, types.Diff{Nonce: 1, PostStateRoot: root})
+	session.nonceStates[1] = &nonceOutcome{}
+
+	finishTx := &types.DevshardTx{Tx: &types.DevshardTx_FinishInference{
+		FinishInference: &types.MsgFinishInference{InferenceId: 1},
+	}}
+	err = session.ProcessResponse(1, &host.HostResponse{
+		Nonce:     1,
+		StateHash: root,
+		StateSig:  badSig,
+		Receipt:   []byte("receipt"),
+		Mempool:   []*types.DevshardTx{finishTx},
+	}, 1)
+
+	require.NoError(t, err, "invalid state sig must not drop the response")
+	require.Empty(t, session.signatures[1], "invalid sig must not count toward quorum")
+	require.True(t, session.IsNonceFinished(1), "finish must still be observed after a skipped sig")
+	require.NotEmpty(t, session.PendingTxs(), "receipt and finish must still be queued")
 }
 
 func TestProcessResponse_WarmKey_Finalize(t *testing.T) {

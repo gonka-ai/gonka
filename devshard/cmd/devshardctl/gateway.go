@@ -62,6 +62,8 @@ type Gateway struct {
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
 	replenishmentInFlight map[string]struct{}
+	settlementRetryMu     sync.Mutex
+	settlementRetry       map[string]uint64 // devshard id -> last epoch to retry on-chain settlement (inclusive)
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
 }

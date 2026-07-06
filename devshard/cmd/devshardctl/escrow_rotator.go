@@ -109,6 +109,7 @@ func (g *Gateway) rotateEscrowsOnce() {
 	}
 	if !pocActive {
 		g.finishBridgeEscrows(snapshot, settings)
+		g.retrySettlements(context.Background(), snapshot.EpochIndex, settings)
 	}
 }
 
@@ -151,6 +152,7 @@ func (g *Gateway) prepareBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gat
 			if err != nil {
 				log.Printf("escrow_rotation_regular_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
+				g.registerSettlementRetry(devshard.ID, epoch+1)
 			} else if settledOnChain {
 				settled++
 			}
@@ -219,6 +221,7 @@ func (g *Gateway) finishBridgeEscrows(snapshot ChainPhaseSnapshot, settings Gate
 			if err != nil {
 				log.Printf("escrow_rotation_temp_retire_failed epoch=%d model=%q escrow=%s error=%v", epoch, model.ModelID, devshard.ID, err)
 				settleFailed++
+				g.registerSettlementRetry(devshard.ID, epoch+1)
 			} else if settledOnChain {
 				settled++
 			}
@@ -411,19 +414,16 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
-	if rt.proxy.sm.Phase() != types.PhaseSettlement {
-		g.finalizeMu.Lock()
-		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
-		if err := rt.session.Finalize(ctx); err != nil {
-			g.finalizeMu.Unlock()
-			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
-			return nil, err
-		}
-		g.finalizeMu.Unlock()
-		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
-	} else {
-		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
+	g.finalizeMu.Lock()
+	log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
+	// Always finalize: the PhaseSettlement branch re-collects a short quorum, so a retry after a validator returns completes instead of re-broadcasting the same short proof.
+	finalizeErr := rt.session.Finalize(ctx)
+	g.finalizeMu.Unlock()
+	if finalizeErr != nil {
+		log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, finalizeErr.Error())
+		return nil, finalizeErr
 	}
+	log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=settlement_json error=%q", id, err.Error())
@@ -445,5 +445,59 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	g.clearSettlementRetry(id)
 	return result, nil
+}
+
+// registerSettlementRetry queues a devshard whose settlement failed for retry through deadlineEpoch (inclusive), keeping the earliest deadline if already queued.
+func (g *Gateway) registerSettlementRetry(id string, deadlineEpoch uint64) {
+	g.settlementRetryMu.Lock()
+	defer g.settlementRetryMu.Unlock()
+	if g.settlementRetry == nil {
+		g.settlementRetry = make(map[string]uint64)
+	}
+	if _, exists := g.settlementRetry[id]; !exists {
+		g.settlementRetry[id] = deadlineEpoch
+	}
+}
+
+func (g *Gateway) clearSettlementRetry(id string) {
+	g.settlementRetryMu.Lock()
+	defer g.settlementRetryMu.Unlock()
+	delete(g.settlementRetry, id)
+}
+
+func (g *Gateway) pendingSettlementRetries() map[string]uint64 {
+	g.settlementRetryMu.Lock()
+	defer g.settlementRetryMu.Unlock()
+	if len(g.settlementRetry) == 0 {
+		return nil
+	}
+	out := make(map[string]uint64, len(g.settlementRetry))
+	for id, deadline := range g.settlementRetry {
+		out[id] = deadline
+	}
+	return out
+}
+
+// retrySettlements re-attempts failed settlements until success or the deadline epoch; past that the on-chain reaper takes over. Success clears the entry inside settleDevshardOnChain.
+func (g *Gateway) retrySettlements(ctx context.Context, currentEpoch uint64, settings GatewaySettings) {
+	if !settings.EscrowRotation.SettlementEnabled {
+		return
+	}
+	for id, deadlineEpoch := range g.pendingSettlementRetries() {
+		if currentEpoch > deadlineEpoch {
+			g.clearSettlementRetry(id)
+			log.Printf("settlement_retry_expired escrow=%s epoch=%d deadline=%d", id, currentEpoch, deadlineEpoch)
+			continue
+		}
+		attemptCtx, cancel := context.WithTimeout(ctx, autoSettlementAttemptTimeout)
+		_, err := gatewaySettleDevshardOnChain(g, attemptCtx, id, adminSettleEscrowRequest{})
+		cancel()
+		if err != nil {
+			log.Printf("settlement_retry_failed escrow=%s epoch=%d deadline=%d error=%v", id, currentEpoch, deadlineEpoch, err)
+			continue
+		}
+		log.Printf("settlement_retry_succeeded escrow=%s epoch=%d", id, currentEpoch)
+	}
 }

@@ -469,7 +469,7 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		}
 	}
 
-	// Verify and store state signature.
+	// Invalid/unexpected-key state sig is a liveness problem, not a dispute (hash already matched): skip it (not in quorum), don't drop the receipt/finish below.
 	if resp.StateSig != nil {
 		expectedAddr := s.group[hostIdx].ValidatorAddress
 		sigContent := &types.StateSignatureContent{
@@ -481,27 +481,26 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		if err != nil {
 			return fmt.Errorf("marshal state sig content: %w", err)
 		}
-		addr, err := s.verifier.RecoverAddress(sigData, resp.StateSig)
-		if err != nil {
-			return fmt.Errorf("%w: host %d: %v", types.ErrInvalidStateSig, hostIdx, err)
-		}
-		if addr != expectedAddr {
-			if !s.sm.CheckWarmKey(addr, expectedAddr) {
-				return fmt.Errorf("%w: host %d: expected %s, got %s",
-					types.ErrInvalidStateSig, hostIdx, expectedAddr, addr)
+		addr, recoverErr := s.verifier.RecoverAddress(sigData, resp.StateSig)
+		switch {
+		case recoverErr != nil:
+			logging.Warn("skipping unverifiable state signature (not counted toward quorum)",
+				"escrow_id", s.escrowID, "host", hostIdx, "nonce", resp.Nonce, "error", recoverErr)
+		case addr != expectedAddr && !s.sm.CheckWarmKey(addr, expectedAddr):
+			logging.Warn("skipping state signature from unexpected key (not counted toward quorum)",
+				"escrow_id", s.escrowID, "host", hostIdx, "nonce", resp.Nonce, "expected", expectedAddr, "got", addr)
+		default:
+			// Store for all slots owned by this validator address.
+			if _, ok := s.signatures[resp.Nonce]; !ok {
+				s.signatures[resp.Nonce] = make(map[uint32][]byte)
 			}
-		}
-
-		// Store for all slots owned by this validator address.
-		if _, ok := s.signatures[resp.Nonce]; !ok {
-			s.signatures[resp.Nonce] = make(map[uint32][]byte)
-		}
-		for _, slot := range s.addrToSlots[expectedAddr] {
-			s.signatures[resp.Nonce][slot] = resp.StateSig
-			if s.store != nil {
-				if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
-					logging.Warn("failed to persist signature",
-						"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
+			for _, slot := range s.addrToSlots[expectedAddr] {
+				s.signatures[resp.Nonce][slot] = resp.StateSig
+				if s.store != nil {
+					if sigErr := s.store.AddSignature(s.escrowID, resp.Nonce, slot, resp.StateSig); sigErr != nil {
+						logging.Warn("failed to persist signature",
+							"escrow_id", s.escrowID, "nonce", resp.Nonce, "slot", slot, "error", sigErr)
+					}
 				}
 			}
 		}
