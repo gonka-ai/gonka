@@ -25,7 +25,6 @@ const (
 	Msg_RespondDealerComplaints_FullMethodName           = "/inference.bls.Msg/RespondDealerComplaints"
 	Msg_SubmitGroupKeyValidationSignature_FullMethodName = "/inference.bls.Msg/SubmitGroupKeyValidationSignature"
 	Msg_SubmitPartialSignature_FullMethodName            = "/inference.bls.Msg/SubmitPartialSignature"
-	Msg_RequestThresholdSignature_FullMethodName         = "/inference.bls.Msg/RequestThresholdSignature"
 )
 
 // MsgClient is the client API for Msg service.
@@ -45,8 +44,6 @@ type MsgClient interface {
 	SubmitGroupKeyValidationSignature(ctx context.Context, in *MsgSubmitGroupKeyValidationSignature, opts ...grpc.CallOption) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
 	SubmitPartialSignature(ctx context.Context, in *MsgSubmitPartialSignature, opts ...grpc.CallOption) (*MsgSubmitPartialSignatureResponse, error)
-	// RequestThresholdSignature allows external users to request a threshold signature
-	RequestThresholdSignature(ctx context.Context, in *MsgRequestThresholdSignature, opts ...grpc.CallOption) (*MsgRequestThresholdSignatureResponse, error)
 }
 
 type msgClient struct {
@@ -111,15 +108,6 @@ func (c *msgClient) SubmitPartialSignature(ctx context.Context, in *MsgSubmitPar
 	return out, nil
 }
 
-func (c *msgClient) RequestThresholdSignature(ctx context.Context, in *MsgRequestThresholdSignature, opts ...grpc.CallOption) (*MsgRequestThresholdSignatureResponse, error) {
-	out := new(MsgRequestThresholdSignatureResponse)
-	err := c.cc.Invoke(ctx, Msg_RequestThresholdSignature_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 // MsgServer is the server API for Msg service.
 // All implementations must embed UnimplementedMsgServer
 // for forward compatibility
@@ -137,8 +125,6 @@ type MsgServer interface {
 	SubmitGroupKeyValidationSignature(context.Context, *MsgSubmitGroupKeyValidationSignature) (*MsgSubmitGroupKeyValidationSignatureResponse, error)
 	// SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
 	SubmitPartialSignature(context.Context, *MsgSubmitPartialSignature) (*MsgSubmitPartialSignatureResponse, error)
-	// RequestThresholdSignature allows external users to request a threshold signature
-	RequestThresholdSignature(context.Context, *MsgRequestThresholdSignature) (*MsgRequestThresholdSignatureResponse, error)
 	mustEmbedUnimplementedMsgServer()
 }
 
@@ -163,9 +149,6 @@ func (UnimplementedMsgServer) SubmitGroupKeyValidationSignature(context.Context,
 }
 func (UnimplementedMsgServer) SubmitPartialSignature(context.Context, *MsgSubmitPartialSignature) (*MsgSubmitPartialSignatureResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPartialSignature not implemented")
-}
-func (UnimplementedMsgServer) RequestThresholdSignature(context.Context, *MsgRequestThresholdSignature) (*MsgRequestThresholdSignatureResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RequestThresholdSignature not implemented")
 }
 func (UnimplementedMsgServer) mustEmbedUnimplementedMsgServer() {}
 
@@ -288,24 +271,6 @@ func _Msg_SubmitPartialSignature_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_RequestThresholdSignature_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgRequestThresholdSignature)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).RequestThresholdSignature(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_RequestThresholdSignature_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).RequestThresholdSignature(ctx, req.(*MsgRequestThresholdSignature))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 // Msg_ServiceDesc is the grpc.ServiceDesc for Msg service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -336,10 +301,6 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SubmitPartialSignature",
 			Handler:    _Msg_SubmitPartialSignature_Handler,
-		},
-		{
-			MethodName: "RequestThresholdSignature",
-			Handler:    _Msg_RequestThresholdSignature_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

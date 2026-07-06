@@ -84,7 +84,6 @@ const (
 	gasSubmitVerificationVector          = uint64(140_000_000)
 	gasSubmitGroupKeyValidationSignature = uint64(160_000_000) // max 116M, p99 33M
 	gasRespondDealerComplaints           = uint64(150_000_000)
-	gasRequestThresholdSignature         = uint64(2_000_000)
 	gasSubmitPartialSignature            = uint64(5_000_000)
 
 	// Cosmos-SDK / cosmwasm.
@@ -155,8 +154,6 @@ func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 		return gasSubmitGroupKeyValidationSignature, true
 	case *blstypes.MsgRespondDealerComplaints:
 		return gasRespondDealerComplaints, true
-	case *blstypes.MsgRequestThresholdSignature:
-		return gasRequestThresholdSignature, true
 	case *blstypes.MsgSubmitPartialSignature:
 		return gasSubmitPartialSignature, true
 	case *collateraltypes.MsgDepositCollateral:

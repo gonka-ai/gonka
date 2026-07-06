@@ -53,7 +53,6 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 		{"MsgSubmitVerificationVector", &blstypes.MsgSubmitVerificationVector{}, gasSubmitVerificationVector},
 		{"MsgSubmitGroupKeyValidationSignature", &blstypes.MsgSubmitGroupKeyValidationSignature{}, gasSubmitGroupKeyValidationSignature},
 		{"MsgRespondDealerComplaints", &blstypes.MsgRespondDealerComplaints{}, gasRespondDealerComplaints},
-		{"MsgRequestThresholdSignature", &blstypes.MsgRequestThresholdSignature{}, gasRequestThresholdSignature},
 		{"MsgSubmitPartialSignature", &blstypes.MsgSubmitPartialSignature{}, gasSubmitPartialSignature},
 
 		// Collateral.

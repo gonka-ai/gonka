@@ -43,7 +43,6 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&blstypes.MsgSubmitDealerPart{},
 	&blstypes.MsgSubmitVerificationVector{},
 	&blstypes.MsgRespondDealerComplaints{},
-	&blstypes.MsgRequestThresholdSignature{},
 	&blstypes.MsgSubmitPartialSignature{},
 	&blstypes.MsgSubmitGroupKeyValidationSignature{},
 }

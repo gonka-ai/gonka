@@ -32,9 +32,6 @@ service Msg {
   
   // SubmitPartialSignature allows a participant to submit their partial signature for threshold signing
   rpc SubmitPartialSignature(MsgSubmitPartialSignature) returns (MsgSubmitPartialSignatureResponse);
-  
-  // RequestThresholdSignature allows external users to request a threshold signature
-  rpc RequestThresholdSignature(MsgRequestThresholdSignature) returns (MsgRequestThresholdSignatureResponse);
 }
 
 // MsgUpdateParams is the Msg/UpdateParams request type.
@@ -203,31 +200,3 @@ message MsgSubmitPartialSignature {
 // MsgSubmitPartialSignatureResponse defines the response structure for executing a
 // MsgSubmitPartialSignature message.
 message MsgSubmitPartialSignatureResponse {}
-
-// MsgRequestThresholdSignature allows external users to request a threshold signature via transaction
-message MsgRequestThresholdSignature {
-  option (cosmos.msg.v1.signer) = "creator";
-  option (amino.name)           = "inference/x/bls/MsgRequestThresholdSignature";
-
-  // creator is the address of the user requesting the threshold signature
-  string creator = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
-
-  // current_epoch_id identifies the epoch to use for signing
-  uint64 current_epoch_id = 2;
-
-  // chain_id is the chain ID for EIP-155 compatibility (32 bytes)
-  bytes chain_id = 3;
-
-  // request_id is the user-provided unique identifier for this request (32 bytes)
-  bytes request_id = 4;
-
-  // data is the arbitrary data to be signed (array of 32-byte chunks)
-  repeated bytes data = 5;
-}
-
-// MsgRequestThresholdSignatureResponse defines the response structure for executing a
-// MsgRequestThresholdSignature message.
-message MsgRequestThresholdSignatureResponse {
-  // derived_request_id is the actual request ID used for KVStore lookups, derived as keccak256(creator || request_id)
-  bytes derived_request_id = 1;
-}
