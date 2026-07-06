@@ -19,8 +19,7 @@ The active client contract is path-based:
 
 Clients must choose a versioned route.
 
-The legacy path stays available for backward compatibility while the versioned
-path becomes the normal way to run newer devshard releases.
+The legacy `/v1/devshard/*` path is deprecated and returns `410 Gone`.
 
 ## Target flow
 
@@ -77,8 +76,8 @@ binary version off-chain. Every later diff must continue with that same
 version. A host running the wrong binary refuses to sign, so a version-mixing
 session cannot gather the threshold needed to settle.
 
-The bound version is recorded in shard state. Use `v1` for the legacy path and
-`<version>` for `/devshard/<version>/*`.
+The bound version is recorded in shard state. Use the `<version>` segment from
+`/devshard/<version>/*`.
 
 ## Deprecation
 

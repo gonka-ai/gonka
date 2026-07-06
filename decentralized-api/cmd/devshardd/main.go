@@ -160,7 +160,7 @@ func main() {
 	br := internaldevshard.NewChainBridge(recorder)
 
 	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
-	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
+	validator := newDevshardValidator(mlClient, httpClient, runtimeVersion, br, recorder, engine, chainParams)
 
 	storeDir := filepath.Join(*dataDir, "devshardd")
 	legacyDB := filepath.Join(*dataDir, "devshardd.db")

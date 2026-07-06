@@ -1,10 +1,6 @@
 package devshard
 
-import (
-	"testing"
-
-	"devshard/types"
-)
+import "testing"
 
 func TestResolveVersionedRoutePrefix(t *testing.T) {
 	if got := ResolveVersionedRoutePrefix("v1", ""); got != VersionedRoutePrefix("v1") {
@@ -13,18 +9,6 @@ func TestResolveVersionedRoutePrefix(t *testing.T) {
 	override := VersionedRoutePrefix("dev")
 	if got := ResolveVersionedRoutePrefix("v1", override); got != override {
 		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, override)
-	}
-}
-
-func TestProtocolSessionVersion(t *testing.T) {
-	if got := ProtocolSessionVersion(types.ProtocolV1); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(v1) = %q, want %q", got, "v1")
-	}
-	if got := ProtocolSessionVersion("v1"); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(route-style v1) = %q, want %q", got, "v1")
-	}
-	if got := ProtocolSessionVersion(""); got != "v1" {
-		t.Fatalf("ProtocolSessionVersion(\"\") = %q, want %q", got, "v1")
 	}
 }
 
@@ -71,6 +55,68 @@ func TestVersionForRoutePrefix(t *testing.T) {
 			}
 			if got != tt.want {
 				t.Fatalf("VersionForRoutePrefix(%q) = %q, want %q", tt.routePrefix, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestResolveRoutePrefix(t *testing.T) {
+	tests := []struct {
+		name        string
+		routePrefix string
+		wantPrefix  string
+		wantVersion string
+		wantErr     bool
+	}{
+		{
+			name:        "versioned",
+			routePrefix: "/devshard/v2",
+			wantPrefix:  "/devshard/v2",
+			wantVersion: "v2",
+		},
+		{
+			name:        "trims whitespace and trailing slash",
+			routePrefix: " /devshard/dev/ ",
+			wantPrefix:  "/devshard/dev",
+			wantVersion: "dev",
+		},
+		{
+			name:        "empty route rejected",
+			routePrefix: "",
+			wantErr:     true,
+		},
+		{
+			name:        "legacy route rejected",
+			routePrefix: "/v1/devshard",
+			wantErr:     true,
+		},
+		{
+			name:        "missing version rejected",
+			routePrefix: "/devshard",
+			wantErr:     true,
+		},
+		{
+			name:        "nested version rejected",
+			routePrefix: "/devshard/v2/extra",
+			wantErr:     true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotPrefix, gotVersion, err := ResolveRoutePrefix(tt.routePrefix)
+			if tt.wantErr {
+				if err == nil {
+					t.Fatalf("ResolveRoutePrefix(%q) error = nil, want non-nil", tt.routePrefix)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("ResolveRoutePrefix(%q) error = %v", tt.routePrefix, err)
+			}
+			if gotPrefix != tt.wantPrefix || gotVersion != tt.wantVersion {
+				t.Fatalf("ResolveRoutePrefix(%q) = (%q, %q), want (%q, %q)",
+					tt.routePrefix, gotPrefix, gotVersion, tt.wantPrefix, tt.wantVersion)
 			}
 		})
 	}

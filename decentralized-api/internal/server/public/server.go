@@ -12,6 +12,7 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"net/http"
+	"strings"
 	"time"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -41,6 +42,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	devshardDeprecated  bool
 }
 
 // ServerOption configures optional Server dependencies.
@@ -167,6 +169,7 @@ func NewServer(
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
+	s.registerDeprecatedDevshardRoutes()
 	return s
 }
 
@@ -174,20 +177,33 @@ func NewServer(
 // The legacy /v1/devshard mount is deprecated; versioned devshard traffic uses
 // /devshard/{version} through versiond/devshardd.
 func (s *Server) DevshardGroup() *echo.Group {
-	g := s.e.Group(deprecatedDevshardV1Prefix)
-	g.Use(legacyDevshardDeprecated)
-	return g
+	s.registerDeprecatedDevshardRoutes()
+	return s.e.Group(deprecatedDevshardV1Prefix)
 }
 
-func legacyDevshardDeprecated(next echo.HandlerFunc) echo.HandlerFunc {
-	return func(c echo.Context) error {
-		c.Response().Header().Set("Deprecation", "true")
-		c.Response().Header().Set("Link", `</devshard/{version}>; rel="successor-version"`)
-		return c.JSON(http.StatusGone, map[string]string{
-			"error":   "deprecated",
-			"message": "/v1/devshard is deprecated; use /devshard/{version}",
-		})
+func (s *Server) registerDeprecatedDevshardRoutes() {
+	if s.devshardDeprecated {
+		return
 	}
+	s.devshardDeprecated = true
+	s.e.Pre(func(next echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			path := c.Request().URL.Path
+			if path == deprecatedDevshardV1Prefix || strings.HasPrefix(path, deprecatedDevshardV1Prefix+"/") {
+				return legacyDevshardDeprecated(c)
+			}
+			return next(c)
+		}
+	})
+}
+
+func legacyDevshardDeprecated(c echo.Context) error {
+	c.Response().Header().Set("Deprecation", "true")
+	c.Response().Header().Set("Link", `</devshard/{version}>; rel="successor-version"`)
+	return c.JSON(http.StatusGone, map[string]string{
+		"error":   "deprecated",
+		"message": "/v1/devshard is deprecated; use /devshard/{version}",
+	})
 }
 
 func (s *Server) Start(addr string) {

@@ -3,8 +3,6 @@ package devshard
 import (
 	"fmt"
 	"strings"
-
-	"devshard/types"
 )
 
 func VersionedRoutePrefix(version string) string {
@@ -21,32 +19,25 @@ func ResolveVersionedRoutePrefix(version, routePrefix string) string {
 // VersionForRoutePrefix maps a versioned HTTP route prefix to the runtime tag
 // used when creating a user-side session.
 
-func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
-	if protocol == "" {
-		protocol = types.ProtocolV1
+func ResolveRoutePrefix(routePrefix string) (string, string, error) {
+	normalized := strings.TrimRight(strings.TrimSpace(routePrefix), "/")
+	if !strings.HasPrefix(normalized, "/") {
+		return "", "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
 	}
-	version := string(protocol)
-	if strings.HasPrefix(version, "v") {
-		return version
+	parts := strings.Split(strings.TrimPrefix(normalized, "/"), "/")
+	if len(parts) == 2 && parts[0] == "devshard" && parts[1] != "" {
+		return normalized, parts[1], nil
 	}
-	return "v" + version
-}
 
-func ProtocolSessionVersion(protocol types.ProtocolVersion) string {
-	if protocol == "" {
-		protocol = types.ProtocolV1
-	}
-	return ProtocolRouteVersion(protocol)
+	return "", "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
 }
 
 func VersionForRoutePrefix(routePrefix string) (string, error) {
-	trimmed := strings.Trim(routePrefix, "/")
-	parts := strings.Split(trimmed, "/")
-	if len(parts) == 2 && parts[0] == "devshard" && parts[1] != "" {
-		return parts[1], nil
+	_, version, err := ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		return "", err
 	}
-
-	return "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
+	return version, nil
 }
 
 func SessionPayloadPath(routePrefix, escrowID string) string {

@@ -14,8 +14,8 @@ The first versioned release used a dual-route transition:
   `proxy -> versiond -> devshardd`
 - `devshardd` is a temporary standalone host binary built out of the
   `decentralized-api/` module
-- `devshardctl` requires an explicit route prefix, normally
-  `/devshard/<version>`
+- `devshardctl` defaults to `/devshard/<build-version>` and accepts
+  `DEVSHARD_ROUTE_PREFIX` only as an override for tests or local debugging
 
 The main goal was to prove that the standalone host process can run behind
 versiond. Current binaries require clients to use `/devshard/<version>/*`.

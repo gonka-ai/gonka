@@ -20,6 +20,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/storage"
 	"devshard/transport"
@@ -307,9 +308,17 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 func resolveGatewayRoutePrefix() (string, error) {
 	routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
 	if routePrefix == "" {
-		return "", fmt.Errorf("DEVSHARD_ROUTE_PREFIX is required; use /devshard/{version}")
+		version := strings.TrimSpace(Version)
+		if version == "" {
+			version = "dev"
+		}
+		routePrefix = devshardpkg.VersionedRoutePrefix(version)
 	}
-	return routePrefix, nil
+	normalized, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		return "", err
+	}
+	return normalized, nil
 }
 
 func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {

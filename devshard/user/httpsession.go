@@ -58,14 +58,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if pv == "" {
 		pv = types.ProtocolV1
 	}
-	routePrefix := cfg.RoutePrefix
-	sessionVersion := devshardpkg.ProtocolSessionVersion(pv)
-	if cfg.ProtocolVersion == "" && cfg.RoutePrefix != "" {
-		var versionErr error
-		sessionVersion, versionErr = devshardpkg.VersionForRoutePrefix(cfg.RoutePrefix)
-		if versionErr != nil {
-			return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
-		}
+	routePrefix, sessionVersion, versionErr := devshardpkg.ResolveRoutePrefix(cfg.RoutePrefix)
+	if versionErr != nil {
+		return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
 	}
 
 	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
