@@ -452,31 +452,57 @@ data class LocalInferencePair(
         api.executor.exec(listOf("sh", "-c", "curl -sf '$url'"), null).joinToString("").trim()
     }
 
+    private fun shQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
+
+    private fun versiondInstallDir(versionName: String, binaryName: String = "devshardd"): String? =
+        try {
+            val base = "/opt/versiond/bin/$versionName"
+            val script = """
+                base=${shQuote(base)}
+                binary=${shQuote(binaryName)}
+                if [ -x "${'$'}base/${'$'}binary" ]; then
+                  echo "${'$'}base"
+                  exit 0
+                fi
+                for dir in "${'$'}base"/*; do
+                  [ -d "${'$'}dir" ] || continue
+                  [ -x "${'$'}dir/${'$'}binary" ] || continue
+                  echo "${'$'}dir"
+                  exit 0
+                done
+                exit 1
+            """.trimIndent()
+            execInVersiond(listOf("sh", "-c", script), null)
+                .firstOrNull()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
+        } catch (_: Exception) {
+            null
+        }
+
     fun versiondBinaryPath(versionName: String, binaryName: String = "devshardd"): String =
-        "/opt/versiond/bin/$versionName/$binaryName"
+        "${versiondInstallDir(versionName, binaryName) ?: "/opt/versiond/bin/$versionName/<sha>"}" +
+                "/$binaryName"
 
     fun versiondInstallMetadataPath(versionName: String): String =
-        "/opt/versiond/bin/$versionName/install.json"
+        "${versiondInstallDir(versionName) ?: "/opt/versiond/bin/$versionName/<sha>"}/install.json"
 
     fun versiondBinaryExists(versionName: String, binaryName: String = "devshardd"): Boolean =
-        try {
-            execInVersiond(
-                listOf("sh", "-c", "test -x '${versiondBinaryPath(versionName, binaryName)}' && echo OK"),
-                null,
-            ).any { it.contains("OK") }
-        } catch (_: Exception) {
-            false
-        }
+        versiondInstallDir(versionName, binaryName) != null
 
     fun readVersiondInstallMetadata(versionName: String): VersiondInstallMetadata? =
         try {
             val installPath = versiondInstallMetadataPath(versionName)
-            val json = execInVersiond(
-                listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
-                null,
-            ).joinToString("").trim()
-            json.takeIf { it.isNotBlank() }?.let {
-                cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+            if (installPath.contains("<sha>")) {
+                null
+            } else {
+                val json = execInVersiond(
+                    listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
+                    null,
+                ).joinToString("").trim()
+                json.takeIf { it.isNotBlank() }?.let {
+                    cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+                }
             }
         } catch (_: Exception) {
             null

@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -675,6 +676,32 @@ func TestInstalledVersionMatches_DetectsBinaryHashMismatch(t *testing.T) {
 	}
 }
 
+func TestWaitForReadyFallsBackToHealthzWhenDefaultReadyMissing(t *testing.T) {
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer shutdown()
+
+	if !waitForReady(context.Background(), port, "/ready", time.Second) {
+		t.Fatal("expected /ready 404 to fall back to /healthz")
+	}
+}
+
+func TestWaitForReadyDoesNotFallbackForCustomReadyPath(t *testing.T) {
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer shutdown()
+
+	if waitForReady(context.Background(), port, "/custom-ready", 200*time.Millisecond) {
+		t.Fatal("custom ready path should not use legacy fallback")
+	}
+}
+
 func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -747,6 +774,24 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 	if downloading {
 		t.Fatal("version should not be marked as downloading when install state matches")
 	}
+}
+
+func startLocalHTTPServer(t *testing.T, handler http.Handler) (int, func()) {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	srv := &http.Server{Handler: handler}
+	go func() {
+		_ = srv.Serve(ln)
+	}()
+	shutdown := func() {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+		defer cancel()
+		_ = srv.Shutdown(ctx)
+	}
+	return ln.Addr().(*net.TCPAddr).Port, shutdown
 }
 
 func writeInstallMetadataFile(t *testing.T, versionDir string, metadata download.InstallMetadata) {

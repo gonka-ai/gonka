@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/exec"
@@ -77,7 +78,7 @@ func normalizeConfig(cfg config.Config) config.Config {
 		cfg.ReadyPath = "/ready"
 	}
 	if cfg.ReadyTimeout <= 0 {
-		cfg.ReadyTimeout = 10 * time.Second
+		cfg.ReadyTimeout = 60 * time.Second
 	}
 	if cfg.DrainPath == "" {
 		cfg.DrainPath = "/drain"
@@ -86,13 +87,13 @@ func normalizeConfig(cfg config.Config) config.Config {
 		cfg.DrainStatusPath = "/drain/status"
 	}
 	if cfg.DrainTimeout <= 0 {
-		cfg.DrainTimeout = time.Minute
+		cfg.DrainTimeout = 15 * time.Minute
 	}
 	if cfg.DrainPollInterval <= 0 {
 		cfg.DrainPollInterval = time.Second
 	}
 	if cfg.DrainKillGrace <= 0 {
-		cfg.DrainKillGrace = 5 * time.Second
+		cfg.DrainKillGrace = 30 * time.Second
 	}
 	return cfg
 }
@@ -486,7 +487,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	newChild := m.newChild(ctx, v, sha, m.installBinPath(v.Name, sha), false)
 	m.mu.Unlock()
 	go m.runChild(newChild.context, newChild.child)
-	if err := waitForChildReady(ctx, newChild.child, m.cfg.ReadyTimeout); err != nil {
+	if err := waitForChildReady(ctx, newChild.child); err != nil {
 		newChild.cancel()
 		waitForChild(newChild.child, m.cfg.DrainKillGrace)
 		m.mu.Lock()
@@ -502,6 +503,12 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		newChild.cancel()
 		waitForChild(newChild.child, m.cfg.DrainKillGrace)
 		return fmt.Errorf("current child changed during swap")
+	}
+	if newChild.child.status != statusRunning || childDone(newChild.child) {
+		m.mu.Unlock()
+		newChild.cancel()
+		waitForChild(newChild.child, m.cfg.DrainKillGrace)
+		return fmt.Errorf("new child stopped before swap")
 	}
 	old.status = statusDraining
 	old.restart = false
@@ -627,7 +634,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	for _, c := range children {
 		slog.Info("shutting down", "version", c.version.Name)
-		waitForChild(c, m.cfg.DrainKillGrace)
+		if err := waitForChildContext(ctx, c, m.cfg.DrainKillGrace); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -641,6 +650,21 @@ func waitForChild(c *child, timeout time.Duration) {
 	case <-c.done:
 	case <-time.After(timeout):
 		slog.Warn("child goroutine did not exit in time", "version", c.version.Name)
+	}
+}
+
+func waitForChildContext(ctx context.Context, c *child, timeout time.Duration) error {
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-c.done:
+		return nil
+	case <-ctx.Done():
+		slog.Warn("child shutdown interrupted by context", "version", c.version.Name, "error", ctx.Err())
+		return ctx.Err()
+	case <-timer.C:
+		slog.Warn("child goroutine did not exit in time", "version", c.version.Name)
+		return nil
 	}
 }
 
@@ -802,9 +826,7 @@ func (m *Manager) rollingOverlapAllowed() bool {
 	return strings.TrimSpace(os.Getenv("PGHOST")) != ""
 }
 
-func waitForChildReady(ctx context.Context, c *child, timeout time.Duration) error {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
+func waitForChildReady(ctx context.Context, c *child) error {
 	select {
 	case <-ctx.Done():
 		return ctx.Err()
@@ -812,15 +834,23 @@ func waitForChildReady(ctx context.Context, c *child, timeout time.Duration) err
 		return nil
 	case <-c.done:
 		return fmt.Errorf("child exited before readiness")
-	case <-timer.C:
-		return fmt.Errorf("child did not become ready within %s", timeout)
+	}
+}
+
+func childDone(c *child) bool {
+	select {
+	case <-c.done:
+		return true
+	default:
+		return false
 	}
 }
 
 func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
 	deadline := time.After(timeout)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
-	url := fmt.Sprintf("http://localhost:%d%s", port, normalizeHTTPPath(path))
+	readyPath := normalizeHTTPPath(path)
+	url := fmt.Sprintf("http://localhost:%d%s", port, readyPath)
 	for {
 		select {
 		case <-ctx.Done():
@@ -834,15 +864,64 @@ func waitForReady(ctx context.Context, port int, path string, timeout time.Durat
 			return false
 		}
 		resp, err := client.Do(req)
-		if err == nil && resp.StatusCode == http.StatusOK {
+		if err == nil {
+			status := resp.StatusCode
 			resp.Body.Close()
+			if status == http.StatusOK {
+				return true
+			}
+			if legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
+				slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
+				return true
+			}
+		} else if legacyReadyFallbackAllowed(readyPath, 0) && tcpReady(ctx, port) {
+			slog.Warn("ready path request failed; using legacy TCP readiness fallback", "port", port, "ready_path", readyPath, "error", err)
 			return true
-		}
-		if resp != nil {
-			resp.Body.Close()
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+func legacyReadyFallbackAllowed(path string, status int) bool {
+	if path != "/ready" {
+		return false
+	}
+	switch status {
+	case 0, http.StatusNotFound, http.StatusMethodNotAllowed, http.StatusNotImplemented:
+		return true
+	default:
+		return false
+	}
+}
+
+func legacyReady(ctx context.Context, client *http.Client, port int) bool {
+	url := fmt.Sprintf("http://localhost:%d/healthz", port)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return tcpReady(ctx, port)
+	}
+	resp, err := client.Do(req)
+	if err == nil {
+		status := resp.StatusCode
+		resp.Body.Close()
+		if status >= 200 && status < 300 {
+			return true
+		}
+		if status != http.StatusNotFound && status != http.StatusMethodNotAllowed && status != http.StatusNotImplemented {
+			return false
+		}
+	}
+	return tcpReady(ctx, port)
+}
+
+func tcpReady(ctx context.Context, port int) bool {
+	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("localhost:%d", port))
+	if err != nil {
+		return false
+	}
+	_ = conn.Close()
+	return true
 }
 
 func normalizeHTTPPath(path string) string {
