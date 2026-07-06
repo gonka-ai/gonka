@@ -2,16 +2,6 @@ package devshard
 
 import "testing"
 
-func TestResolveVersionedRoutePrefix(t *testing.T) {
-	if got := ResolveVersionedRoutePrefix("v1", ""); got != VersionedRoutePrefix("v1") {
-		t.Fatalf("ResolveVersionedRoutePrefix(\"v1\", \"\") = %q, want %q", got, VersionedRoutePrefix("v1"))
-	}
-	override := VersionedRoutePrefix("dev")
-	if got := ResolveVersionedRoutePrefix("v1", override); got != override {
-		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, override)
-	}
-}
-
 func TestVersionForRoutePrefix(t *testing.T) {
 	tests := []struct {
 		name        string

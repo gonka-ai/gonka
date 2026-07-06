@@ -12,7 +12,6 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"net/http"
-	"strings"
 	"time"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -42,7 +41,6 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
-	devshardDeprecated  bool
 }
 
 // ServerOption configures optional Server dependencies.
@@ -169,32 +167,9 @@ func NewServer(
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
-	s.registerDeprecatedDevshardRoutes()
+	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
+	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
 	return s
-}
-
-// DevshardGroup returns an echo group for mounting devshard routes.
-// The legacy /v1/devshard mount is deprecated; versioned devshard traffic uses
-// /devshard/{version} through versiond/devshardd.
-func (s *Server) DevshardGroup() *echo.Group {
-	s.registerDeprecatedDevshardRoutes()
-	return s.e.Group(deprecatedDevshardV1Prefix)
-}
-
-func (s *Server) registerDeprecatedDevshardRoutes() {
-	if s.devshardDeprecated {
-		return
-	}
-	s.devshardDeprecated = true
-	s.e.Pre(func(next echo.HandlerFunc) echo.HandlerFunc {
-		return func(c echo.Context) error {
-			path := c.Request().URL.Path
-			if path == deprecatedDevshardV1Prefix || strings.HasPrefix(path, deprecatedDevshardV1Prefix+"/") {
-				return legacyDevshardDeprecated(c)
-			}
-			return next(c)
-		}
-	})
 }
 
 func legacyDevshardDeprecated(c echo.Context) error {

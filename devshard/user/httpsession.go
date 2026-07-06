@@ -101,23 +101,17 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
-		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil {
-			cc := transport.DefaultClientConfig()
-			cc.ProtocolVersion = pv
-			if cfg.StreamCallback != nil {
-				cc.StreamCallback = cfg.StreamCallback
-			}
-			if routePrefix != "" {
-				cc.RoutePrefix = routePrefix
-			}
-			if cfg.RequestAdmission != nil {
-				cc.ParticipantKey = slot.ValidatorAddress
-				cc.Admission = cfg.RequestAdmission
-			}
-			clientCfgs = append(clientCfgs, cc)
+		cc := transport.DefaultClientConfig()
+		cc.ProtocolVersion = pv
+		cc.RoutePrefix = routePrefix
+		if cfg.StreamCallback != nil {
+			cc.StreamCallback = cfg.StreamCallback
 		}
-		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
+		if cfg.RequestAdmission != nil {
+			cc.ParticipantKey = slot.ValidatorAddress
+			cc.Admission = cfg.RequestAdmission
+		}
+		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, cc)
 		clientCache[slot.ValidatorAddress] = c
 		clients[i] = c
 	}

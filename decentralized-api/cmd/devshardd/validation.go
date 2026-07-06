@@ -15,8 +15,7 @@ import (
 )
 
 // devshardValidator implements devshard.ValidationEngine for the standalone
-// devshardd binary. Same shape as dapi's in-process ValidationAdapter; the
-// only structural differences are:
+// devshardd binary. It differs from the old embedded dapi validator in two ways:
 //   - node acquisition uses NodeManager gRPC (no broker)
 //   - the payload-store epoch comes from the mainnet-pinned escrow epoch
 type devshardValidator struct {

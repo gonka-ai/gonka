@@ -44,8 +44,8 @@ func newDevshardEngine(
 
 // Execute runs an inference on an ML node acquired via NodeManager gRPC.
 //
-// Flow mirrors the in-process dapi EngineAdapter: ModifyRequestBody ->
-// POST to /v1/chat/completions -> processor -> canonicalize + store payloads.
+// Flow: ModifyRequestBody -> POST to /v1/chat/completions -> processor ->
+// canonicalize + store payloads.
 // The only change is node acquisition (gRPC instead of broker) and the retry
 // policy, which rotates excluded node IDs on transport errors.
 func (e *devshardEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {

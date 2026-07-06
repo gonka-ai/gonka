@@ -9,16 +9,8 @@ func VersionedRoutePrefix(version string) string {
 	return "/devshard/" + version
 }
 
-func ResolveVersionedRoutePrefix(version, routePrefix string) string {
-	if routePrefix != "" {
-		return routePrefix
-	}
-	return VersionedRoutePrefix(version)
-}
-
 // VersionForRoutePrefix maps a versioned HTTP route prefix to the runtime tag
 // used when creating a user-side session.
-
 func ResolveRoutePrefix(routePrefix string) (string, string, error) {
 	normalized := strings.TrimRight(strings.TrimSpace(routePrefix), "/")
 	if !strings.HasPrefix(normalized, "/") {
