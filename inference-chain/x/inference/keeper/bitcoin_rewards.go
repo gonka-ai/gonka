@@ -407,10 +407,19 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 	// zero/negative entries are excluded from the cap threshold scan in
 	// CalculateOptimalCap, so they must not influence the cap percentage
 	// selection or the total passed to the cap<=0 degeneracy guard either.
-	// Otherwise a zero-weight entry forces the stricter 30% cap onto e.g.
-	// 3 real hosts (mathematically infeasible, disabling capping), and a
-	// hypothetical negative weight could drag the total to <=0 and defeat
-	// the guard while positive power still exists.
+	//
+	// Weight == 0 is a real, reachable state: a participant whose entire PoC
+	// weight sits on a model group that failed eligibility (VMin etc.) stays
+	// in activeParticipants with consensus weight 0 (gonka-testnet-4 epoch 15
+	// incident). If counted, such an entry forces the stricter 30% cap onto
+	// e.g. 3 real hosts, which is mathematically infeasible and would disable
+	// capping entirely.
+	//
+	// Weight < 0 is NOT produced by any current caller (both the epoch
+	// pipeline and settlement clamp weights to >= 0 upstream); excluding
+	// negatives here is defense in depth only, so a hypothetical negative
+	// weight cannot drag the total to <=0 and defeat the cap<=0 guard while
+	// positive power still exists.
 	totalWeight := int64(0)
 	positiveCount := 0
 	for _, p := range participants {
