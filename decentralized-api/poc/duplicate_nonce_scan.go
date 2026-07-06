@@ -18,7 +18,6 @@ import (
 )
 
 const (
-	MaxClaimedNoncesPerCommit = 1_000_000
 	duplicateScanSampleSize   = 5_000
 	duplicateScanChunkSize    = 500
 	duplicateScanURLCooldown  = 5 * time.Second

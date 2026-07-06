@@ -323,15 +323,6 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				continue
 			}
 		}
-		if commit.Count > MaxClaimedNoncesPerCommit {
-			logging.Warn("OffChainValidator: claimed nonce count exceeds limit", types.PoC,
-				"participant", commit.ParticipantAddress,
-				"modelId", commit.ModelId,
-				"count", commit.Count,
-				"limit", MaxClaimedNoncesPerCommit)
-			v.reportInvalidParticipant(pocStageStartBlockHeight, commit.ParticipantAddress, commit.ModelId)
-			continue
-		}
 
 		// If sampling is enabled, check if we're assigned to validate this participant-model pair.
 		// Only the model-local share of slots is sampled; the remainder behaves as abstention.
