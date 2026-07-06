@@ -37,6 +37,7 @@ const (
 	duplicateScanPending duplicateScanStatus = iota
 	duplicateScanOK
 	duplicateScanFailed
+	duplicateScanAbstained
 )
 
 type duplicateScanState struct {
@@ -182,6 +183,10 @@ func (c *PoCValidationCoordinator) HandleValidationResult(pocHeight int64, parti
 		c.mu.Unlock()
 		return c.submitAndMark(key, -1)
 	}
+	if scan := c.scans[key]; scan != nil && scan.status == duplicateScanAbstained {
+		c.mu.Unlock()
+		return nil
+	}
 	c.pending[key] = pendingValidation{weight: weight}
 	c.mu.Unlock()
 
@@ -200,6 +205,7 @@ func (c *PoCValidationCoordinator) ReleaseDue() int {
 
 	c.mu.Lock()
 	actions := make(map[pocValidationKey]int64)
+	abstained := make([]pocValidationKey, 0)
 	for key, pending := range c.pending {
 		if _, ok := c.submitted[key]; ok {
 			delete(c.pending, key)
@@ -208,13 +214,33 @@ func (c *PoCValidationCoordinator) ReleaseDue() int {
 		if !c.isCurrentStageKey(key) {
 			continue
 		}
-		weight := int64(-1)
-		if scan := c.scans[key]; scan != nil && scan.status == duplicateScanOK {
-			weight = pending.weight
+		scan := c.scans[key]
+		switch {
+		case scan != nil && scan.status == duplicateScanOK:
+			actions[key] = pending.weight
+		case scan != nil && scan.status == duplicateScanFailed:
+			actions[key] = -1
+		default:
+			if scan != nil {
+				scan.status = duplicateScanAbstained
+			} else {
+				c.scans[key] = &duplicateScanState{status: duplicateScanAbstained}
+			}
+			delete(c.pending, key)
+			abstained = append(abstained, key)
 		}
-		actions[key] = weight
 	}
 	c.mu.Unlock()
+
+	if len(abstained) > 0 && c.scanner != nil {
+		c.scanner.pruneQueue()
+	}
+	for _, key := range abstained {
+		logging.Warn("PoCValidationCoordinator: abstaining from validation; duplicate scan incomplete", types.PoC,
+			"pocHeight", key.pocHeight,
+			"participant", key.participant,
+			"modelId", key.modelID)
+	}
 
 	released := 0
 	for key, weight := range actions {

@@ -76,16 +76,50 @@ func TestSampleDuplicateScanIndices_UsesRandomOrderForFullSample(t *testing.T) {
 	require.False(t, sorted, "duplicate scan chunks must not be based on sorted indexes")
 }
 
-func TestPoCValidationCoordinator_ReleaseDueRequiresScanOK(t *testing.T) {
+func TestPoCValidationCoordinator_ReleaseDueAbstainsWhenScanPending(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
-	recorder.On("SubmitPocValidationsV2", mock.MatchedBy(func(msg *types.MsgSubmitPocValidationsV2) bool {
-		return validationWeight(msg) == -1
-	})).Return(nil).Once()
 
 	coordinator := NewPoCValidationCoordinator(recorder, nil)
+	key := pocValidationKey{pocHeight: 100, participant: "participant-a", modelID: "model-a"}
+	coordinator.scans[key] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 1}
+
 	require.NoError(t, coordinator.HandleValidationResult(100, "participant-a", "model-a", 10))
 
-	recorder.AssertExpectations(t)
+	recorder.AssertNumberOfCalls(t, "SubmitPocValidationsV2", 0)
+	require.NotContains(t, coordinator.pending, key)
+	require.Equal(t, duplicateScanAbstained, coordinator.scans[key].status)
+}
+
+func TestPoCValidationCoordinator_AbstainedScanCannotReleaseValidLater(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	coordinator := NewPoCValidationCoordinator(recorder, nil)
+	key := pocValidationKey{pocHeight: 100, participant: "participant-a", modelID: "model-a"}
+	coordinator.scans[key] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 1}
+
+	require.NoError(t, coordinator.HandleValidationResult(100, "participant-a", "model-a", 10))
+	coordinator.recordScanArtifacts(key, []VerifiedArtifact{{LeafIndex: 0, Nonce: 1}})
+	require.NoError(t, coordinator.HandleValidationResult(100, "participant-a", "model-a", 10))
+
+	recorder.AssertNumberOfCalls(t, "SubmitPocValidationsV2", 0)
+	require.NotContains(t, coordinator.pending, key)
+	require.Equal(t, duplicateScanAbstained, coordinator.scans[key].status)
+}
+
+func TestPoCValidationCoordinator_AbstentionPrunesQueuedChunks(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	coordinator := NewPoCValidationCoordinator(recorder, nil)
+	key := pocValidationKey{pocHeight: 100, participant: "participant-a", modelID: "model-a"}
+	coordinator.scans[key] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 1}
+	scanner := newManualScanner(coordinator)
+	coordinator.scanner = scanner
+	scanner.enqueue([]duplicateScanChunk{
+		{key: key, job: DuplicateScanJob{ParticipantURL: "http://a"}, indices: []uint32{0}},
+	})
+
+	require.NoError(t, coordinator.HandleValidationResult(100, "participant-a", "model-a", 10))
+
+	recorder.AssertNumberOfCalls(t, "SubmitPocValidationsV2", 0)
+	require.Empty(t, scanner.queue)
 }
 
 func TestPoCValidationCoordinator_ReleasesValidWhenScanOK(t *testing.T) {
