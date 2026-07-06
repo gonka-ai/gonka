@@ -260,12 +260,12 @@ func TestGetPocArtifactsState_UsesModelScopedStore(t *testing.T) {
 
 	modelStore, err := store.GetOrCreateStore(100, "org/model-a")
 	assert.NoError(t, err)
-	assert.NoError(t, modelStore.Add(1, []byte("artifact-a")))
+	assert.NoError(t, modelStore.AddWithNode(1, []byte("artifact-a"), ""))
 	assert.NoError(t, modelStore.Flush())
 
 	otherStore, err := store.GetOrCreateStore(100, "model-b")
 	assert.NoError(t, err)
-	assert.NoError(t, otherStore.Add(2, []byte("artifact-b")))
+	assert.NoError(t, otherStore.AddWithNode(2, []byte("artifact-b"), ""))
 	assert.NoError(t, otherStore.Flush())
 
 	server := &Server{artifactStore: store}
@@ -291,13 +291,13 @@ func TestPostPocProofs_UsesModelScopedStore(t *testing.T) {
 
 	modelAStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
-	assert.NoError(t, modelAStore.Add(1, []byte{1, 2, 3, 4}))
+	assert.NoError(t, modelAStore.AddWithNode(1, []byte{1, 2, 3, 4}, ""))
 	assert.NoError(t, modelAStore.Flush())
 	modelACount, modelARoot := modelAStore.GetFlushedRoot()
 
 	modelBStore, err := store.GetOrCreateStore(100, "model-b")
 	assert.NoError(t, err)
-	assert.NoError(t, modelBStore.Add(2, []byte{5, 6, 7, 8}))
+	assert.NoError(t, modelBStore.AddWithNode(2, []byte{5, 6, 7, 8}, ""))
 	assert.NoError(t, modelBStore.Flush())
 	_, modelBRoot := modelBStore.GetFlushedRoot()
 	assert.False(t, bytes.Equal(modelARoot, modelBRoot))

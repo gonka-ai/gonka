@@ -15,13 +15,14 @@ print-devshard-protocol-version:
 	@echo $(DEVSHARD_PROTOCOL_VERSION)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
+GHCR_CACHE_NAMESPACE ?= gonka-ai
 PLATFORM ?= linux/amd64
 GOOS ?= linux
 GOARCH ?= amd64
 ifeq ($(USE_REGISTRY_CACHE),1)
-_MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/mock-server:buildcache,mode=min
+_MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
-_DEVSHARDD_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/devshardd:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/devshardd:buildcache,mode=min
+_DEVSHARDD_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/devshardd:buildcache --cache-to type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/devshardd:buildcache,mode=min
 _DEVSHARDD_BUILD_CMD := docker buildx build --load $(_DEVSHARDD_CACHE_ARGS)
 else
 _MOCK_CACHE_ARGS :=
