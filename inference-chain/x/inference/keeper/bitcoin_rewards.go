@@ -402,19 +402,31 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 		return participants, false
 	}
 
-	// Calculate total weight
+	// Calculate total weight and count participants that actually hold power.
+	// Zero-weight participants are excluded from the cap threshold math in
+	// CalculateOptimalCap, so the cap percentage must be chosen for the
+	// de-facto (positive-weight) network size. Otherwise a zero-weight entry
+	// forces the stricter 30% cap onto e.g. 3 real hosts, which is
+	// mathematically infeasible and would disable capping entirely.
 	totalWeight := int64(0)
+	positiveCount := 0
 	for _, p := range participants {
 		totalWeight += p.Weight
+		if p.Weight > 0 {
+			positiveCount++
+		}
+	}
+
+	if positiveCount <= 1 {
+		return participants, false
 	}
 
 	// Use standard 30% cap
 	maxPercentageDecimal := types.DecimalFromFloat(0.30)
 
 	// Apply dynamic limits for small networks
-	participantCount := len(participants)
-	if participantCount < 4 {
-		adjustedLimit := getSmallNetworkLimit(participantCount)
+	if positiveCount < 4 {
+		adjustedLimit := getSmallNetworkLimit(positiveCount)
 		if adjustedLimit.ToDecimal().GreaterThan(maxPercentageDecimal.ToDecimal()) {
 			maxPercentageDecimal = adjustedLimit
 		}
