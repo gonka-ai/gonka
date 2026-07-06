@@ -31,4 +31,10 @@ message ActiveParticipant {
   RandomSeed seed = 6;
   repeated ModelMLNodes ml_nodes = 7;
   repeated ModelVotingPower voting_powers = 8;
+  // cap_weight is the trust weight used for governance voting, BLS threshold
+  // signing and cPoC validation voting power. It is capped at the confirmed
+  // weight the participant held in the previous epoch (0 for participants that
+  // were absent last epoch), while weight (field 3) remains the real weight used
+  // for rewards, cPoC confirmation and the next-epoch cap baseline.
+  int64 cap_weight = 9;
 }
