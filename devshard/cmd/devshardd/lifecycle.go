@@ -5,6 +5,8 @@ import (
 	"strings"
 	"sync/atomic"
 
+	"devshard/observability"
+
 	"github.com/labstack/echo/v4"
 )
 
@@ -21,6 +23,7 @@ type drainStatus struct {
 }
 
 func newLifecycleState() *lifecycleState {
+	observability.SetLifecycleInflight(0)
 	return &lifecycleState{}
 }
 
@@ -41,6 +44,11 @@ func (s *lifecycleState) Status() drainStatus {
 	}
 }
 
+func (s *lifecycleState) addInflight(delta int64) {
+	inflight := s.inflight.Add(delta)
+	observability.SetLifecycleInflight(inflight)
+}
+
 func (s *lifecycleState) middleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if isLifecycleBypassPath(c.Request().URL.Path) {
@@ -49,8 +57,8 @@ func (s *lifecycleState) middleware(next echo.HandlerFunc) echo.HandlerFunc {
 		if s.draining.Load() {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
 		}
-		s.inflight.Add(1)
-		defer s.inflight.Add(-1)
+		s.addInflight(1)
+		defer s.addInflight(-1)
 		return next(c)
 	}
 }

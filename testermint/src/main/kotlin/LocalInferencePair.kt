@@ -454,22 +454,40 @@ data class LocalInferencePair(
 
     private fun shQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
-    private fun versiondInstallDir(versionName: String, binaryName: String = "devshardd"): String? =
+    private fun versiondInstallDir(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String? =
         try {
             val base = "/opt/versiond/bin/$versionName"
             val script = """
                 base=${shQuote(base)}
                 binary=${shQuote(binaryName)}
+                expected=${shQuote(archiveSha256 ?: "")}
+                if [ -n "${'$'}expected" ] && [ -x "${'$'}base/${'$'}expected/${'$'}binary" ]; then
+                  echo "${'$'}base/${'$'}expected"
+                  exit 0
+                fi
                 if [ -x "${'$'}base/${'$'}binary" ]; then
                   echo "${'$'}base"
                   exit 0
                 fi
+                best=""
+                best_mtime=-1
                 for dir in "${'$'}base"/*; do
                   [ -d "${'$'}dir" ] || continue
                   [ -x "${'$'}dir/${'$'}binary" ] || continue
-                  echo "${'$'}dir"
-                  exit 0
+                  mtime=${'$'}(stat -c %Y "${'$'}dir/install.json" 2>/dev/null || echo 0)
+                  if [ "${'$'}mtime" -gt "${'$'}best_mtime" ]; then
+                    best="${'$'}dir"
+                    best_mtime="${'$'}mtime"
+                  fi
                 done
+                if [ -n "${'$'}best" ]; then
+                  echo "${'$'}best"
+                  exit 0
+                fi
                 exit 1
             """.trimIndent()
             execInVersiond(listOf("sh", "-c", script), null)
@@ -480,19 +498,27 @@ data class LocalInferencePair(
             null
         }
 
-    fun versiondBinaryPath(versionName: String, binaryName: String = "devshardd"): String =
-        "${versiondInstallDir(versionName, binaryName) ?: "/opt/versiond/bin/$versionName/<sha>"}" +
+    fun versiondBinaryPath(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String =
+        "${versiondInstallDir(versionName, binaryName, archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}" +
                 "/$binaryName"
 
-    fun versiondInstallMetadataPath(versionName: String): String =
-        "${versiondInstallDir(versionName) ?: "/opt/versiond/bin/$versionName/<sha>"}/install.json"
+    fun versiondInstallMetadataPath(versionName: String, archiveSha256: String? = null): String =
+        "${versiondInstallDir(versionName, archiveSha256 = archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}/install.json"
 
-    fun versiondBinaryExists(versionName: String, binaryName: String = "devshardd"): Boolean =
-        versiondInstallDir(versionName, binaryName) != null
+    fun versiondBinaryExists(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): Boolean =
+        versiondInstallDir(versionName, binaryName, archiveSha256) != null
 
-    fun readVersiondInstallMetadata(versionName: String): VersiondInstallMetadata? =
+    fun readVersiondInstallMetadata(versionName: String, archiveSha256: String? = null): VersiondInstallMetadata? =
         try {
-            val installPath = versiondInstallMetadataPath(versionName)
+            val installPath = versiondInstallMetadataPath(versionName, archiveSha256)
             if (installPath.contains("<sha>")) {
                 null
             } else {

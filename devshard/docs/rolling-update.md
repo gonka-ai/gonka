@@ -192,8 +192,10 @@ separate process). **SQLite is not supported** for rolling update.
   Do not enable blue/green drain without Postgres.
 
 **Requirement:** point every child at the same external Postgres before enabling
-this plan. Single-instance / local dev without overlap may keep using SQLite;
-see `devshard/docs/storage-design.md` (storage-mode selection) and
+overlap. versiond must fail closed to stop/start when `PGHOST` is unset or when
+the devshard data dir still has SQLite-owned sessions in `_meta.db`.
+Single-instance / local dev without overlap may keep using SQLite; see
+`devshard/docs/storage-design.md` (storage-mode selection) and
 `devshard/docs/release-0.2.13-v2-r2.md` (HA ⇒ Postgres).
 
 ### 1.3 devshardd changes
@@ -206,8 +208,10 @@ see `devshard/docs/storage-design.md` (storage-mode selection) and
      `waitForPort`).
 
 2. **Drain/idle endpoint** `GET /drain/status` (or reuse metrics):
-   - returns active in-flight count (sum of `devshard_inflight` stages plus open
-     long-lived streams). versiond polls this to decide the old child is idle.
+   - returns active in-flight HTTP count from the lifecycle middleware. versiond
+     polls this to decide the old child is idle.
+   - exports the same count as Prometheus gauge
+     `devshardd_lifecycle_inflight_requests`.
    - Optionally `POST /drain` to flip the child into "reject new, finish
      existing" mode as a belt-and-braces measure (route is already swapped, so
      new traffic shouldn't arrive, but this guards retries/direct hits).
@@ -297,7 +301,7 @@ New flow (replaces lines 392–419):
 
 ```text
 1. downloadBinary(new sha)                      // old child untouched in memory
-2. newChild = startChild(version, NEW port)   // same PGHOST / shared Postgres
+2. newChild = startChild(version, NEW port)   // same PGHOST / shared Postgres, no SQLite-owned sessions
 3. if !waitForReady(newChild, VERSIOND_READY_TIMEOUT):
         stop newChild; keep old serving; abort swap (retry next poll)
 4. lock: move old child from processes -> draining[name]
@@ -310,7 +314,7 @@ New flow (replaces lines 392–419):
             if inflight(oldChild) == 0: break
             if now > deadline: log warn; break
         oldChild.cancel()                       // SIGTERM, long WaitDelay
-        waitForChild(oldChild, VERSIOND_DRAIN_KILL_GRACE)
+        waitForChild(oldChild, max(VERSIOND_DRAIN_KILL_GRACE, DEVSHARD_SHUTDOWN_GRACE))
         release oldChild port
 ```
 
@@ -364,17 +368,23 @@ Add to `versioned/internal/config/config.go`:
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | devshardd readiness path the supervisor probes |
 | `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
+| `VERSIOND_DRAIN_PATH` | `/drain` | path versiond POSTs to put the old child into drain mode |
+| `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | max time to wait for old child to go idle before `SIGTERM` |
-| `VERSIOND_DRAIN_POLL_INTERVAL` | `2s` | how often to poll old child in-flight count |
+| `VERSIOND_DRAIN_POLL_INTERVAL` | `1s` | how often to poll old child in-flight count |
 | `VERSIOND_DRAIN_KILL_GRACE` | `30s` | wait after `SIGTERM` before `SIGKILL` |
 
 And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
 `app.go`.
 
-> Note: `cmd.WaitDelay = 5s` in `runChild` will `SIGKILL` the child 5s after
-> context cancel regardless of the devshardd grace. For drained children, set
-> `WaitDelay` to `VERSIOND_DRAIN_KILL_GRACE` (or `0`/disabled) so the child's own
-> graceful shutdown can complete.
+> Note: `cmd.WaitDelay` must not be shorter than the child's own graceful
+> shutdown window. For devshardd, versiond uses the max of
+> `VERSIOND_DRAIN_KILL_GRACE` and `DEVSHARD_SHUTDOWN_GRACE`.
+
+versiond also garbage-collects old complete per-sha install directories under
+`bin/<version>/<sha>/`, keeping desired/live/draining installs and a small
+recent complete-install cushion. In-progress download directories without
+`install.json` are never removed by GC.
 
 ### 1.6 Single-instance limits (be honest)
 
@@ -499,8 +509,9 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **e2e (`versioned/e2e`):** drive a long request against the old child, trigger
   an oracle sha change for the same name, assert the long request completes with
   the old binary while a concurrently-started request is served by the new one.
-- **devshardd:** test `/ready` flips only after init; `/drain/status` reflects
-  `devshard_inflight`; `SIGTERM` honors `DEVSHARD_SHUTDOWN_GRACE`.
+- **devshardd:** test `/ready` flips only after init and chain subscriptions;
+  `/drain/status` and `devshardd_lifecycle_inflight_requests` reflect lifecycle
+  in-flight HTTP requests; `SIGTERM` honors `DEVSHARD_SHUTDOWN_GRACE`.
 
 ### 1.10 Rollout order
 

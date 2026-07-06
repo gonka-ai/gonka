@@ -44,6 +44,11 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	require.EqualValues(t, 1, status.Inflight)
 
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "devshardd_lifecycle_inflight_requests 1")
+
 	<-workDone
 	require.EqualValues(t, 0, lifecycle.Status().Inflight)
 }

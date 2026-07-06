@@ -106,7 +106,7 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
 	manager.Register(e.Group(""))
-	lifecycle.SetReady(true)
+	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
 
 	return &devshardApp{
 		server:        e,

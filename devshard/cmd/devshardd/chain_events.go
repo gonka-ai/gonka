@@ -80,6 +80,10 @@ func (b *chainEventBridge) OnNewBlock(h events.NewBlockHandler) {
 	b.listener.OnNewBlock(h)
 }
 
+func (b *chainEventBridge) OnReady(h func(bool)) {
+	b.listener.OnReady(h)
+}
+
 func (b *chainEventBridge) Start(ctx context.Context) error {
 	if err := b.listener.Start(ctx); err != nil && err != context.Canceled {
 		return err

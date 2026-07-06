@@ -32,6 +32,7 @@ var (
 	validationQueueDepth   *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
+	lifecycleInflight      prometheus.Gauge
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -125,6 +126,10 @@ func initRegistry() {
 		Name: "devshard_build_info",
 		Help: "Devshard build and runtime information.",
 	}, []string{"binary", "version", "commit"})
+	lifecycleInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshardd_lifecycle_inflight_requests",
+		Help: "In-flight HTTP requests counted by devshardd lifecycle drain state.",
+	})
 
 	registry.MustRegister(
 		inflight,
@@ -144,6 +149,7 @@ func initRegistry() {
 		validationQueueDepth,
 		mempoolSize,
 		buildInfo,
+		lifecycleInflight,
 	)
 }
 
@@ -168,6 +174,11 @@ func IncInflight(stage Stage) func() {
 	ensureMetrics()
 	inflight.WithLabelValues(string(stage)).Inc()
 	return func() { inflight.WithLabelValues(string(stage)).Dec() }
+}
+
+func SetLifecycleInflight(n int64) {
+	ensureMetrics()
+	lifecycleInflight.Set(float64(n))
 }
 
 func IncTerminal(terminal Terminal, reason Reason) {

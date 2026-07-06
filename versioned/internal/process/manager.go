@@ -2,6 +2,7 @@ package process
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,6 +24,8 @@ import (
 	"versioned/internal/download"
 	"versioned/internal/health"
 	"versioned/internal/oracle"
+
+	_ "modernc.org/sqlite"
 )
 
 const (
@@ -29,6 +33,10 @@ const (
 	statusRunning  = "running"
 	statusDraining = "draining"
 	statusStopped  = "stopped"
+
+	devshardMetaDBFile           = "_meta.db"
+	defaultDevshardShutdownGrace = 10 * time.Minute
+	installedVersionRetain       = 3
 )
 
 type child struct {
@@ -219,6 +227,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	var toDownload []versionAction
 	var toSwap []versionAction
 	var toStart []versionAction
+	desiredHashes := make(map[string]string)
 
 	for _, snap := range snapshots {
 		if snap.isDownloading {
@@ -230,6 +239,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 			slog.Error("cannot resolve sha256, skipping", "version", snap.version.Name, "error", err)
 			continue
 		}
+		desiredHashes[snap.version.Name] = desiredHash
 
 		if snap.isRunning {
 			matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(filepath.Dir(snap.child.binPath), snap.child.binPath, desiredHash)
@@ -325,9 +335,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		c.cancel()
 	}
 	for _, c := range toStop {
-		waitForChild(c, m.cfg.DrainKillGrace)
+		waitForChild(c, m.childStopTimeout())
 	}
 
+	m.gcInstalledVersions(desiredHashes)
 	return nil
 }
 
@@ -378,7 +389,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		// Override source changed: stop old, copy new, start.
 		slog.Info("override binary changed, restarting", "version", v.Name)
 		existing.cancel()
-		waitForChild(existing, 5*time.Second)
+		waitForChild(existing, m.childStopTimeout())
 	}
 
 	// Disk I/O outside the lock.
@@ -469,10 +480,10 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		return ctx.Err()
 	}
 
-	if !m.rollingOverlapAllowed() {
+	if !m.rollingOverlapAllowed(v.Name) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		old.cancel()
-		waitForChild(old, m.cfg.DrainKillGrace)
+		waitForChild(old, m.childStopTimeout())
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		if current, ok := m.processes[v.Name]; ok && current == old {
@@ -489,7 +500,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	go m.runChild(newChild.context, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
 		newChild.cancel()
-		waitForChild(newChild.child, m.cfg.DrainKillGrace)
+		waitForChild(newChild.child, m.childStopTimeout())
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
@@ -501,13 +512,13 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	if current, ok := m.processes[v.Name]; !ok || current != old {
 		m.mu.Unlock()
 		newChild.cancel()
-		waitForChild(newChild.child, m.cfg.DrainKillGrace)
+		waitForChild(newChild.child, m.childStopTimeout())
 		return fmt.Errorf("current child changed during swap")
 	}
 	if newChild.child.status != statusRunning || childDone(newChild.child) {
 		m.mu.Unlock()
 		newChild.cancel()
-		waitForChild(newChild.child, m.cfg.DrainKillGrace)
+		waitForChild(newChild.child, m.childStopTimeout())
 		return fmt.Errorf("new child stopped before swap")
 	}
 	old.status = statusDraining
@@ -558,6 +569,118 @@ func cleanupInstalledVersionState(versionDir, binPath string) {
 	_ = os.Remove(binPath)
 	_ = os.Remove(filepath.Join(versionDir, download.InstallMetadataFilename))
 	_ = os.Remove(versionDir)
+}
+
+type installedVersionDir struct {
+	path    string
+	sha     string
+	modTime time.Time
+}
+
+func (m *Manager) gcInstalledVersions(desiredHashes map[string]string) {
+	keep := make(map[string]map[string]struct{})
+	addKeep := func(versionName, sha string) {
+		if versionName == "" || sha == "" || strings.HasPrefix(sha, "override:") {
+			return
+		}
+		if keep[versionName] == nil {
+			keep[versionName] = make(map[string]struct{})
+		}
+		keep[versionName][sha] = struct{}{}
+	}
+	for versionName, sha := range desiredHashes {
+		addKeep(versionName, sha)
+	}
+
+	m.mu.Lock()
+	for _, c := range m.processes {
+		addKeep(c.version.Name, c.archiveSHA256)
+	}
+	for _, children := range m.draining {
+		for _, c := range children {
+			addKeep(c.version.Name, c.archiveSHA256)
+		}
+	}
+	m.mu.Unlock()
+
+	gcInstalledVersionDirs(m.cfg.BinDir, m.cfg.BinaryName, keep, installedVersionRetain)
+}
+
+func gcInstalledVersionDirs(binDir, binaryName string, keep map[string]map[string]struct{}, retain int) {
+	if retain < 0 {
+		retain = 0
+	}
+	versionDirs, err := os.ReadDir(binDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			slog.Warn("installed version gc: read bin dir failed", "dir", binDir, "error", err)
+		}
+		return
+	}
+	for _, versionEntry := range versionDirs {
+		if !versionEntry.IsDir() {
+			continue
+		}
+		versionName := versionEntry.Name()
+		versionDir := filepath.Join(binDir, versionName)
+		shaDirs, err := os.ReadDir(versionDir)
+		if err != nil {
+			slog.Warn("installed version gc: read version dir failed", "version", versionName, "dir", versionDir, "error", err)
+			continue
+		}
+		var stale []installedVersionDir
+		for _, shaEntry := range shaDirs {
+			if !shaEntry.IsDir() {
+				continue
+			}
+			sha := shaEntry.Name()
+			dir := filepath.Join(versionDir, sha)
+			metadata, err := download.ReadInstallMetadata(dir)
+			if err != nil {
+				continue
+			}
+			if keepInstalledVersion(keep, versionName, sha, metadata.ArchiveSHA256) {
+				continue
+			}
+			stale = append(stale, installedVersionDir{
+				path:    dir,
+				sha:     sha,
+				modTime: installedVersionModTime(dir),
+			})
+		}
+		sort.Slice(stale, func(i, j int) bool {
+			if stale[i].modTime.Equal(stale[j].modTime) {
+				return stale[i].sha > stale[j].sha
+			}
+			return stale[i].modTime.After(stale[j].modTime)
+		})
+		for i := retain; i < len(stale); i++ {
+			slog.Info("installed version gc: removing stale install", "version", versionName, "sha256", stale[i].sha, "dir", stale[i].path)
+			cleanupInstalledVersionState(stale[i].path, filepath.Join(stale[i].path, binaryName))
+		}
+	}
+}
+
+func keepInstalledVersion(keep map[string]map[string]struct{}, versionName, dirSHA, archiveSHA string) bool {
+	versionKeep := keep[versionName]
+	if versionKeep == nil {
+		return false
+	}
+	if _, ok := versionKeep[dirSHA]; ok {
+		return true
+	}
+	_, ok := versionKeep[archiveSHA]
+	return ok
+}
+
+func installedVersionModTime(dir string) time.Time {
+	if info, err := os.Stat(filepath.Join(dir, download.InstallMetadataFilename)); err == nil {
+		return info.ModTime()
+	}
+	if info, err := os.Stat(dir); err == nil {
+		return info.ModTime()
+	}
+	return time.Time{}
 }
 
 func logInstalledVersionMismatch(scope, versionName, desiredArchiveHash string, metadata download.InstallMetadata, diskBinaryHash string, stateErr error) {
@@ -634,7 +757,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 
 	for _, c := range children {
 		slog.Info("shutting down", "version", c.version.Name)
-		if err := waitForChildContext(ctx, c, m.cfg.DrainKillGrace); err != nil {
+		if err := waitForChildContext(ctx, c, m.childStopTimeout()); err != nil {
 			return err
 		}
 	}
@@ -718,7 +841,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		cmd.Cancel = func() error {
 			return cmd.Process.Signal(syscall.SIGTERM)
 		}
-		cmd.WaitDelay = m.cfg.DrainKillGrace
+		cmd.WaitDelay = m.childStopTimeout()
 
 		lastStart = time.Now()
 		slog.Info("starting child", "version", c.version.Name, "port", c.port, "sha256", c.archiveSHA256)
@@ -818,12 +941,70 @@ func childEnv(binaryLogVersion string) []string {
 	)
 }
 
-func (m *Manager) rollingOverlapAllowed() bool {
+func (m *Manager) childStopTimeout() time.Duration {
+	timeout := m.cfg.DrainKillGrace
+	name := strings.ToLower(m.cfg.BinaryName)
+	if name != "devshard" && name != "devshardd" {
+		return timeout
+	}
+	shutdownGrace := parseDevshardShutdownGrace(os.Getenv("DEVSHARD_SHUTDOWN_GRACE"))
+	if shutdownGrace > timeout {
+		return shutdownGrace
+	}
+	return timeout
+}
+
+func parseDevshardShutdownGrace(raw string) time.Duration {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return defaultDevshardShutdownGrace
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d <= 0 {
+		return defaultDevshardShutdownGrace
+	}
+	return d
+}
+
+func (m *Manager) rollingOverlapAllowed(versionName string) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
 	}
-	return strings.TrimSpace(os.Getenv("PGHOST")) != ""
+	if strings.TrimSpace(os.Getenv("PGHOST")) == "" {
+		return false
+	}
+	hasSQLite, err := hasDevshardSQLiteSessions(filepath.Join(m.cfg.DataDir, versionName))
+	if err != nil {
+		slog.Warn("rolling overlap disabled: cannot probe devshard sqlite sessions", "version", versionName, "error", err)
+		return false
+	}
+	if hasSQLite {
+		slog.Warn("rolling overlap disabled: devshard sqlite sessions are still present", "version", versionName)
+		return false
+	}
+	return true
+}
+
+func hasDevshardSQLiteSessions(dataDir string) (bool, error) {
+	path := filepath.Join(dataDir, devshardMetaDBFile)
+	if _, err := os.Stat(path); err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	if err != nil {
+		return false, fmt.Errorf("open meta db: %w", err)
+	}
+	defer db.Close()
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM escrow_epoch`).Scan(&count); err != nil {
+		return false, fmt.Errorf("count escrow_epoch: %w", err)
+	}
+	return count > 0, nil
 }
 
 func waitForChildReady(ctx context.Context, c *child) error {
@@ -874,9 +1055,6 @@ func waitForReady(ctx context.Context, port int, path string, timeout time.Durat
 				slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
 				return true
 			}
-		} else if legacyReadyFallbackAllowed(readyPath, 0) && tcpReady(ctx, port) {
-			slog.Warn("ready path request failed; using legacy TCP readiness fallback", "port", port, "ready_path", readyPath, "error", err)
-			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
@@ -984,7 +1162,7 @@ func (m *Manager) drainAndStop(c *child) {
 		}
 	}
 	c.cancel()
-	waitForChild(c, m.cfg.DrainKillGrace)
+	waitForChild(c, m.childStopTimeout())
 }
 
 func (m *Manager) fetchInflight(c *child) (int64, error) {

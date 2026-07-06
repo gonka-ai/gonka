@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	abci "github.com/cometbft/cometbft/abci/types"
@@ -67,6 +68,8 @@ type Listener struct {
 	rpcURL         string
 	subs           []subscription
 	reconnectDelay time.Duration
+	readyMu        sync.RWMutex
+	ready          func(bool)
 }
 
 // NewListener creates a Listener that connects to the given CometBFT RPC URL.
@@ -92,6 +95,23 @@ func (l *Listener) OnDevshardEscrowSettled(h DevshardEscrowSettledHandler) {
 // Multiple OnNewBlock registrations share one CometBFT subscription.
 func (l *Listener) OnNewBlock(h NewBlockHandler) {
 	Subscribe(l, "tm.event='NewBlock'", parseNewBlockEvent, h)
+}
+
+// OnReady registers a callback invoked with true after all subscriptions are
+// active, and false when the listener disconnects or stops.
+func (l *Listener) OnReady(h func(bool)) {
+	l.readyMu.Lock()
+	l.ready = h
+	l.readyMu.Unlock()
+}
+
+func (l *Listener) setReady(ready bool) {
+	l.readyMu.RLock()
+	h := l.ready
+	l.readyMu.RUnlock()
+	if h != nil {
+		h(ready)
+	}
 }
 
 // Start connects to the chain and listens for events until ctx is cancelled.
@@ -147,6 +167,8 @@ func (l *Listener) run(ctx context.Context) error {
 			}
 		}()
 	}
+	l.setReady(true)
+	defer l.setReady(false)
 
 	select {
 	case <-ctx.Done():

@@ -3,6 +3,7 @@ package process
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net"
@@ -426,21 +427,78 @@ func TestInstallBinPathUsesVersionAndSHA(t *testing.T) {
 
 func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
 	t.Setenv("PGHOST", "")
-	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
-	if devshardMgr.rollingOverlapAllowed() {
+	dataDir := t.TempDir()
+	devshardMgr := NewManager(config.Config{DataDir: dataDir, BinaryName: "devshard", BasePort: 5000})
+	if devshardMgr.rollingOverlapAllowed("v1") {
 		t.Fatal("devshard overlap should require PGHOST")
 	}
 
 	t.Setenv("PGHOST", "postgres")
-	if !devshardMgr.rollingOverlapAllowed() {
-		t.Fatal("devshard overlap should be allowed when PGHOST is set")
+	if !devshardMgr.rollingOverlapAllowed("v1") {
+		t.Fatal("devshard overlap should be allowed when PGHOST is set and sqlite has no sessions")
+	}
+
+	writeDevshardMetaDB(t, filepath.Join(dataDir, "v1"), 1)
+	if devshardMgr.rollingOverlapAllowed("v1") {
+		t.Fatal("devshard overlap should be disabled while sqlite sessions are present")
 	}
 
 	t.Setenv("PGHOST", "")
 	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
-	if !testappMgr.rollingOverlapAllowed() {
+	if !testappMgr.rollingOverlapAllowed("v1") {
 		t.Fatal("non-devshard test binary should allow overlap without PGHOST")
 	}
+}
+
+func TestChildStopTimeoutHonorsDevshardShutdownGrace(t *testing.T) {
+	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "")
+	devshardMgr := NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
+	if got := devshardMgr.childStopTimeout(); got != defaultDevshardShutdownGrace {
+		t.Fatalf("childStopTimeout = %s, want default devshard grace", got)
+	}
+
+	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "2m")
+	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
+	if got := devshardMgr.childStopTimeout(); got != 2*time.Minute {
+		t.Fatalf("childStopTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
+	}
+
+	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "5s")
+	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
+	if got := devshardMgr.childStopTimeout(); got != 30*time.Second {
+		t.Fatalf("childStopTimeout = %s, want VERSIOND_DRAIN_KILL_GRACE", got)
+	}
+
+	testappMgr := NewManager(config.Config{BinaryName: "testapp", DrainKillGrace: 30 * time.Second})
+	if got := testappMgr.childStopTimeout(); got != 30*time.Second {
+		t.Fatalf("testapp childStopTimeout = %s, want drain kill grace", got)
+	}
+}
+
+func TestGCInstalledVersionDirsRemovesOldCompleteInstallsOnly(t *testing.T) {
+	binDir := t.TempDir()
+	binaryName := "devshardd"
+	baseTime := time.Now().Add(-time.Hour)
+
+	writeInstalledVersion(t, binDir, "v1", "protected", binaryName, baseTime)
+	writeInstalledVersion(t, binDir, "v1", "stale-newest", binaryName, baseTime.Add(4*time.Minute))
+	writeInstalledVersion(t, binDir, "v1", "stale-middle", binaryName, baseTime.Add(3*time.Minute))
+	writeInstalledVersion(t, binDir, "v1", "stale-old", binaryName, baseTime.Add(2*time.Minute))
+	incompleteDir := filepath.Join(binDir, "v1", "incomplete")
+	if err := os.MkdirAll(incompleteDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	keep := map[string]map[string]struct{}{
+		"v1": {"protected": {}},
+	}
+	gcInstalledVersionDirs(binDir, binaryName, keep, 2)
+
+	assertPathExists(t, filepath.Join(binDir, "v1", "protected"))
+	assertPathExists(t, filepath.Join(binDir, "v1", "stale-newest"))
+	assertPathExists(t, filepath.Join(binDir, "v1", "stale-middle"))
+	assertPathExists(t, incompleteDir)
+	assertPathMissing(t, filepath.Join(binDir, "v1", "stale-old"))
 }
 
 func TestReconcile_OverrideStartsChild(t *testing.T) {
@@ -792,6 +850,59 @@ func startLocalHTTPServer(t *testing.T, handler http.Handler) (int, func()) {
 		_ = srv.Shutdown(ctx)
 	}
 	return ln.Addr().(*net.TCPAddr).Port, shutdown
+}
+
+func writeDevshardMetaDB(t *testing.T, dataDir string, rows int) {
+	t.Helper()
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	db, err := sql.Open("sqlite", filepath.Join(dataDir, devshardMetaDBFile))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec(`CREATE TABLE escrow_epoch (escrow_id TEXT PRIMARY KEY, epoch_id INTEGER NOT NULL)`); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < rows; i++ {
+		if _, err := db.Exec(`INSERT INTO escrow_epoch (escrow_id, epoch_id) VALUES (?, ?)`, "escrow-"+string(rune('a'+i)), i+1); err != nil {
+			t.Fatal(err)
+		}
+	}
+}
+
+func writeInstalledVersion(t *testing.T, binDir, versionName, sha, binaryName string, modTime time.Time) {
+	t.Helper()
+	versionDir := filepath.Join(binDir, versionName, sha)
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(versionDir, binaryName)
+	if err := os.WriteFile(binPath, []byte("binary-"+sha), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeInstallMetadataFile(t, versionDir, download.InstallMetadata{
+		ArchiveSHA256: sha,
+		BinarySHA256:  "binary-" + sha,
+	})
+	if err := os.Chtimes(filepath.Join(versionDir, download.InstallMetadataFilename), modTime, modTime); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func assertPathExists(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("expected path to exist %s: %v", path, err)
+	}
+}
+
+func assertPathMissing(t *testing.T, path string) {
+	t.Helper()
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("expected path to be missing %s, stat err %v", path, err)
+	}
 }
 
 func writeInstallMetadataFile(t *testing.T, versionDir string, metadata download.InstallMetadata) {
