@@ -17,7 +17,7 @@ func newRetireTestGateway(id string) (*Gateway, *devshardRuntime) {
 	g := &Gateway{
 		runtimes:         map[string]*devshardRuntime{id: rt},
 		runtimeOrder:     []*devshardRuntime{rt},
-		rotationFailures: make(map[string]struct{}),
+		rotationBreakers: make(map[string]*rotationBreaker),
 	}
 	return g, rt
 }

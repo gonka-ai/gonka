@@ -314,6 +314,19 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open gateway store: %w", err)
 	}
+	// Serialize access and wait on contention instead of failing with "database is
+	// locked". Mirrors storage/sqlite.go.
+	db.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA busy_timeout=5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("apply gateway store pragma %q: %w", pragma, err)
+		}
+	}
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS gateway_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
@@ -479,6 +492,19 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	)`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init gateway suspicious hosts table: %w", err)
+	}
+	// Write-ahead intent for an escrow create (written before the on-chain tx).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS escrow_rotation_commitments (
+		tx_hash TEXT PRIMARY KEY,
+		model TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT '',
+		epoch INTEGER NOT NULL DEFAULT 0,
+		private_key_env TEXT NOT NULL DEFAULT '',
+		block_height INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init escrow rotation commitments table: %w", err)
 	}
 	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
@@ -991,6 +1017,76 @@ func (s *GatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus,
 		return nil, err
 	}
 	return statuses, nil
+}
+
+// GatewayEscrowCommitment is the write-ahead intent for one escrow create, keyed by tx hash.
+type GatewayEscrowCommitment struct {
+	TxHash        string
+	Model         string
+	Role          string
+	Epoch         uint64
+	PrivateKeyEnv string
+	BlockHeight   uint64
+	CreatedAt     string
+}
+
+// SaveCommitment records a create intent, keyed by tx hash.
+func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("gateway store unavailable")
+	}
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO escrow_rotation_commitments (
+			tx_hash, model, role, epoch, private_key_env, block_height, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		strings.TrimSpace(c.TxHash),
+		strings.TrimSpace(c.Model),
+		strings.TrimSpace(c.Role),
+		c.Epoch,
+		strings.TrimSpace(c.PrivateKeyEnv),
+		c.BlockHeight,
+		now,
+	)
+	if err != nil {
+		return fmt.Errorf("save escrow commitment tx=%s: %w", c.TxHash, err)
+	}
+	return nil
+}
+
+// LoadCommitments returns all pending commitments (oldest first).
+func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT tx_hash, model, role, epoch, private_key_env, block_height, created_at
+		FROM escrow_rotation_commitments
+		ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("load escrow commitments: %w", err)
+	}
+	defer rows.Close()
+	var commitments []GatewayEscrowCommitment
+	for rows.Next() {
+		var c GatewayEscrowCommitment
+		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.BlockHeight, &c.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan escrow commitment: %w", err)
+		}
+		commitments = append(commitments, c)
+	}
+	return commitments, rows.Err()
+}
+
+// DeleteCommitment clears a commitment once its escrow is persisted (or proven absent).
+func (s *GatewayStore) DeleteCommitment(txHash string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("gateway store unavailable")
+	}
+	if _, err := s.db.Exec(`DELETE FROM escrow_rotation_commitments WHERE tx_hash = ?`, strings.TrimSpace(txHash)); err != nil {
+		return fmt.Errorf("delete escrow commitment tx=%s: %w", txHash, err)
+	}
+	return nil
 }
 
 func (s *GatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, error) {
