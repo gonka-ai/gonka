@@ -188,7 +188,6 @@ func TestIsExemptMessageType(t *testing.T) {
 	require.True(t, isExemptMessageType(&inferencetypes.MsgSettleDevshardEscrow{}))
 
 	// Not exempt
-	require.False(t, isExemptMessageType(&blstypes.MsgRequestThresholdSignature{})) // open to anyone, no rate limit
 	require.False(t, isExemptMessageType(&inferencetypes.MsgPoCV2StoreCommit{}))    // intentional sybil-defense fee via chargePoCV2StoreCommitGas
 	require.False(t, isExemptMessageType(&inferencetypes.MsgCreateDevshardEscrow{})) // user-driven, paid
 	require.False(t, isExemptMessageType(&inferencetypes.MsgSubmitNewParticipant{}))

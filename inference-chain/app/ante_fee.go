@@ -164,10 +164,6 @@ func isExemptMessageType(msg sdk.Msg) bool {
 		*blstypes.MsgRespondDealerComplaints:
 		return true
 
-	// NOTE: MsgRequestThresholdSignature is intentionally NOT exempt.
-	// It has no per-participant rate limit — anyone can request signatures
-	// with arbitrary RequestIds.
-
 	default:
 		return false
 	}
