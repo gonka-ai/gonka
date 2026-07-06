@@ -3,11 +3,14 @@ import com.productscience.assertions.assertThat
 import com.productscience.data.getParticipant
 import com.github.kittinunf.fuel.core.FuelError
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
 import java.util.concurrent.TimeUnit
 
+// Relies on classic inference assignment/rewards, which were removed (PR #1386); was failing on base before that too.
+@Tag("exclude")
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class NodeDisableInferenceTests : TestermintTest() {
 

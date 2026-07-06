@@ -30,6 +30,7 @@ class MultiModelTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `simple multi model`() {
         val (cluster, genesis) = initCluster(3, mergeSpec = secondModelSpec)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)

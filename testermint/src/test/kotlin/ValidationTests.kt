@@ -14,6 +14,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.test.assertNotNull
 
+// Classic inference flow was removed (PR #1386); these tests exercise the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 20, unit = TimeUnit.MINUTES)
 @TestMethodOrder(MethodOrderer.OrderAnnotation::class)
 class ValidationTests : TestermintTest() {

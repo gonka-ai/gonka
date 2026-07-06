@@ -1,8 +1,11 @@
 import com.productscience.*
 import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
+// Classic inference flow was removed (PR #1386); this test's weight assertions depend on the deprecated flow.
+@Tag("exclude")
 class MultiModelPoCTests : TestermintTest() {
 
     // Two models with very different raw weights and inverse coefficients.
