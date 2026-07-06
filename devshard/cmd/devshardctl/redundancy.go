@@ -870,6 +870,14 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
+	// classifyPartial keeps the tail after the last '\n' from prior Writes;
+	// used to reassemble fragmented SSE events for the classifier.
+	classifyPartial []byte
+	classifyCapLog  sync.Once
+	// participantClassifyBytes is the shared per-participant byte counter this
+	// attempt contributes to; resolved at creation. Nil disables the cap.
+	participantClassifyBytes *atomic.Int64
+
 	// contentSource labels the field that produced the first content event
 	// ("delta.content", "delta.reasoning_content", "delta.tool_calls", or the
 	// streaming-only convertible shape "message.content"). Set exactly once
@@ -1239,6 +1247,219 @@ type raceWriter struct {
 	inf   *inflight
 }
 
+const (
+	defaultMaxClassifyPartial            = 1 << 20   // 1 MiB per attempt
+	defaultMaxClassifyPartialParticipant = 10 << 20  // 10 MiB per participant
+	defaultMaxClassifyPartialGlobal      = 100 << 20 // 100 MiB process-wide
+)
+
+// Reassembly-buffer caps, tunable at startup via configureClassifyCapsFromEnv.
+// These are machine-scale memory knobs, not governance policy.
+var (
+	maxClassifyPartial                  = defaultMaxClassifyPartial
+	maxClassifyPartialParticipant int64 = defaultMaxClassifyPartialParticipant
+	maxClassifyPartialGlobal      int64 = defaultMaxClassifyPartialGlobal
+)
+
+// configureClassifyCapsFromEnv overrides the reassembly caps from the
+// environment; unset variables keep the conservative defaults.
+func configureClassifyCapsFromEnv() {
+	maxClassifyPartial = int(readInt64Env("GATEWAY_CLASSIFY_MAX_ATTEMPT_BYTES", int64(defaultMaxClassifyPartial)))
+	maxClassifyPartialParticipant = readInt64Env("GATEWAY_CLASSIFY_MAX_PARTICIPANT_BYTES", defaultMaxClassifyPartialParticipant)
+	maxClassifyPartialGlobal = readInt64Env("GATEWAY_CLASSIFY_MAX_GLOBAL_BYTES", defaultMaxClassifyPartialGlobal)
+}
+
+// classifyPartialBytes is the live total of every inflight's classifyPartial.
+var classifyPartialBytes atomic.Int64
+
+// participantClassify bounds live reassembly bytes per participant so one
+// hostile participant can't exhaust the shared global pool and starve others.
+var participantClassify = &participantClassifyTracker{counters: map[string]*atomic.Int64{}}
+
+type participantClassifyTracker struct {
+	mu       sync.Mutex
+	counters map[string]*atomic.Int64
+}
+
+// counterFor returns the participant's byte counter, creating it on first use.
+// Entries are never removed; the participant set is the bounded validator set.
+func (t *participantClassifyTracker) counterFor(participantKey string) *atomic.Int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	counter := t.counters[participantKey]
+	if counter == nil {
+		counter = &atomic.Int64{}
+		t.counters[participantKey] = counter
+	}
+	return counter
+}
+
+// takeParseable returns the prefix of (classifyPartial + p) ending at the last
+// '\n'; the trailing fragment is stashed for the next call.
+func (rw *raceWriter) takeParseable(p []byte) []byte {
+	lastNL := bytes.LastIndexByte(p, '\n')
+	if lastNL == -1 {
+		if rw.growClassify(p) {
+			return nil
+		}
+		// Cap hit: classify the raw chunk best-effort (incomplete fragments won't parse).
+		rw.dropClassify()
+		return p
+	}
+
+	var parseable []byte
+	if len(rw.inf.classifyPartial) == 0 {
+		parseable = p[:lastNL+1]
+	} else {
+		buf := make([]byte, 0, len(rw.inf.classifyPartial)+lastNL+1)
+		buf = append(buf, rw.inf.classifyPartial...)
+		buf = append(buf, p[:lastNL+1]...)
+		parseable = buf
+	}
+	if !rw.replaceClassify(p[lastNL+1:]) {
+		rw.dropClassify()
+	}
+	return parseable
+}
+
+// classifyParseable records the first content/non-retriable-error signal for
+// this attempt, returning whether the buffer carried either.
+func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
+	if len(parseable) == 0 {
+		return false, false
+	}
+	if src, ok := sseChunkContentSource(parseable); ok {
+		hasContent = true
+		if rw.inf.contentSource == "" {
+			rw.inf.contentSource = src
+		}
+	} else if details, ok := sseChunkErrorDetails(parseable); ok {
+		src := "error"
+		if details.Type != "" {
+			src = "error." + details.Type
+		}
+		hasError = !isRetriableCapabilityErrorMessage(details.Message)
+		if rw.inf.errorSource == "" {
+			rw.inf.errorSource = src
+			rw.inf.errorCode = details.Code
+			rw.inf.errorType = details.Type
+			rw.inf.errorMessage = details.Message
+			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
+		}
+	}
+	return hasContent, hasError
+}
+
+// flushClassify classifies a newline-less final SSE event left in classifyPartial
+// once the stream ends, so a truncated tail isn't misread as empty_stream.
+func (rw *raceWriter) flushClassify() {
+	if rw.inf.probe || len(rw.inf.classifyPartial) == 0 {
+		return
+	}
+	hasContent, hasError := rw.classifyParseable(rw.inf.classifyPartial)
+	rw.dropClassify()
+	if hasContent || hasError {
+		rw.inf.contentChunks.Add(1)
+	}
+}
+
+// flushClassifyAndCheckEmpty flushes a buffered newline-less final event before deciding empty, so a truncated final content/error event isn't misread as empty_stream. Call on the send goroutine after SendOnly returns.
+func (rw *raceWriter) flushClassifyAndCheckEmpty() bool {
+	rw.flushClassify()
+	return isEmptyStreamAttempt(rw.inf)
+}
+
+// logClassifyDrop reports the first reassembly-buffer drop for this attempt.
+// Capped at once per attempt so a persistently newline-less or oversized
+// transport can't spam the log.
+func (rw *raceWriter) logClassifyDrop(reason string) {
+	rw.inf.classifyCapLog.Do(func() {
+		ctx := context.Background()
+		if rw.group != nil {
+			ctx = rw.group.logCtx
+		}
+		logInferenceStage(ctx, rw.inf.escrowID, rw.nonce, "classify_buffer_dropped",
+			"host", rw.inf.hostID,
+			"reason", reason,
+			"buffered", len(rw.inf.classifyPartial),
+			"global_bytes", classifyPartialBytes.Load(),
+		)
+	})
+}
+
+// growClassify appends tail to classifyPartial if all caps still fit.
+func (rw *raceWriter) growClassify(tail []byte) bool {
+	if len(rw.inf.classifyPartial)+len(tail) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
+		return false
+	}
+	if reason := rw.inf.reserveClassifyBytes(int64(len(tail))); reason != "" {
+		rw.logClassifyDrop(reason)
+		return false
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial, tail...)
+	return true
+}
+
+// replaceClassify swaps classifyPartial for buf, adjusting byte accounting.
+func (rw *raceWriter) replaceClassify(buf []byte) bool {
+	if len(buf) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
+		return false
+	}
+	delta := int64(len(buf) - len(rw.inf.classifyPartial))
+	if delta > 0 {
+		if reason := rw.inf.reserveClassifyBytes(delta); reason != "" {
+			rw.logClassifyDrop(reason)
+			return false
+		}
+	} else if delta < 0 {
+		rw.inf.adjustClassifyBytes(delta)
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], buf...)
+	return true
+}
+
+// dropClassify releases the per-attempt buffer and its accounted bytes.
+func (rw *raceWriter) dropClassify() {
+	rw.inf.releaseClassifyPartial()
+}
+
+// reserveClassifyBytes charges n bytes against the participant then global cap,
+// rolling back on the first cap hit. Returns the drop reason, "" on success.
+func (inf *inflight) reserveClassifyBytes(n int64) string {
+	participant := inf.participantClassifyBytes
+	if participant != nil && participant.Add(n) > maxClassifyPartialParticipant {
+		participant.Add(-n)
+		return "participant_cap"
+	}
+	if classifyPartialBytes.Add(n) > maxClassifyPartialGlobal {
+		classifyPartialBytes.Add(-n)
+		if participant != nil {
+			participant.Add(-n)
+		}
+		return "global_cap"
+	}
+	return ""
+}
+
+// adjustClassifyBytes adds delta to the global and per-participant counters.
+func (inf *inflight) adjustClassifyBytes(delta int64) {
+	classifyPartialBytes.Add(delta)
+	if inf.participantClassifyBytes != nil {
+		inf.participantClassifyBytes.Add(delta)
+	}
+}
+
+// releaseClassifyPartial frees the reassembly buffer's backing array and
+// decrements the counters. Nils the slice so cap doesn't outlive the gauge.
+func (inf *inflight) releaseClassifyPartial() {
+	if n := len(inf.classifyPartial); n > 0 {
+		inf.adjustClassifyBytes(-int64(n))
+	}
+	inf.classifyPartial = nil
+}
+
 func (rw *raceWriter) ctxErr() error {
 	if rw.group == nil || rw.group.writeCtx == nil {
 		return nil
@@ -1267,25 +1488,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
-		if src, ok := sseChunkContentSource(p); ok {
-			chunkHasContent = true
-			if rw.inf.contentSource == "" {
-				rw.inf.contentSource = src
-			}
-		} else if details, ok := sseChunkErrorDetails(p); ok {
-			src := "error"
-			if details.Type != "" {
-				src = "error." + details.Type
-			}
-			chunkHasError = !isRetriableCapabilityErrorMessage(details.Message)
-			if rw.inf.errorSource == "" {
-				rw.inf.errorSource = src
-				rw.inf.errorCode = details.Code
-				rw.inf.errorType = details.Type
-				rw.inf.errorMessage = details.Message
-				rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
-			}
-		}
+		chunkHasContent, chunkHasError = rw.classifyParseable(rw.takeParseable(p))
 	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
@@ -1568,19 +1771,20 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 		participantKey := e.session.HostParticipantKey(res.prepared.HostIdx())
 		noWinner, noWinnerOK := e.noWinnerStatusForParticipant(participantKey)
 		inf := &inflight{
-			prepared:               res.prepared,
-			hostIdx:                res.prepared.HostIdx(),
-			hostID:                 e.session.HostLabel(res.prepared.HostIdx()),
-			nonce:                  res.prepared.Nonce(),
-			escrowID:               e.devshardID,
-			probe:                  res.isProbe,
-			suspicious:             noWinnerOK,
-			noWinnerReason:         noWinner.reason,
-			noWinnerQuarantineMode: noWinner.quarantineMode,
-			noWinnerFailureStrikes: noWinner.failureStrikes,
-			done:                   make(chan struct{}),
-			receiptCh:              make(chan struct{}),
-			firstTokenCh:           make(chan struct{}),
+			prepared:                 res.prepared,
+			hostIdx:                  res.prepared.HostIdx(),
+			hostID:                   e.session.HostLabel(res.prepared.HostIdx()),
+			nonce:                    res.prepared.Nonce(),
+			escrowID:                 e.devshardID,
+			probe:                    res.isProbe,
+			suspicious:               noWinnerOK,
+			noWinnerReason:           noWinner.reason,
+			noWinnerQuarantineMode:   noWinner.quarantineMode,
+			noWinnerFailureStrikes:   noWinner.failureStrikes,
+			done:                     make(chan struct{}),
+			receiptCh:                make(chan struct{}),
+			firstTokenCh:             make(chan struct{}),
+			participantClassifyBytes: participantClassify.counterFor(participantKey),
 		}
 		e.recordAccountingAttempt(ctx, inf)
 		return inf, nil
@@ -1642,6 +1846,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	go func() {
 		defer close(inf.done)
 		defer cancel()
+		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
+		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
@@ -1673,7 +1879,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		// stream_bytes_read > 0 but output_chunks == 0 because only devshard
 		// receipt/meta events were parsed and no inference data was forwarded to
 		// the race writer.
-		if isEmptyStreamAttempt(inf) {
+		if rw.flushClassifyAndCheckEmpty() {
 			responseBodySample, responseSampleTruncated := bodySampleForLog(inf.pendingBuf, emptyStreamBodySampleLimit)
 			inf.emptyResponseBodySample = responseBodySample
 			inf.emptyResponseBodySampleTruncated = responseSampleTruncated
