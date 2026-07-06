@@ -1,10 +1,44 @@
 package types
 
 import (
+	"math/big"
 	"slices"
 
 	mathsdk "cosmossdk.io/math"
 )
+
+// EffectiveConfirmedWeight scales a participant's consensus weight by the
+// confirmed fraction observed via confirmation PoC (cPoC):
+//
+//	effective = weight * confirmationWeight / rawConfirmationTotal
+//
+// confirmationWeight and rawConfirmationTotal must both be computed with the
+// same per-model confirmation weight coefficients (see
+// ConfirmationWeightOfModelNodesWithCoefficients) so the ratio is a pure,
+// coefficient-normalized fraction in [0, 1]. The result is clamped to [0, weight].
+//
+// A non-positive rawConfirmationTotal yields 0 (nothing confirmable). This is the
+// single source of truth for the "effective weight" used by both settlement
+// rewards and the previous-epoch weight cap.
+func EffectiveConfirmedWeight(weight, confirmationWeight, rawConfirmationTotal int64) int64 {
+	if weight <= 0 {
+		return 0
+	}
+	if rawConfirmationTotal <= 0 {
+		return 0
+	}
+	if confirmationWeight < 0 {
+		confirmationWeight = 0
+	}
+	ew := big.NewInt(confirmationWeight)
+	ew.Mul(ew, big.NewInt(weight))
+	ew.Div(ew, big.NewInt(rawConfirmationTotal))
+	result := ew.Int64()
+	if result > weight {
+		result = weight
+	}
+	return result
+}
 
 func ConfirmationWeightCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	return confirmationCoefficients(scales)

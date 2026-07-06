@@ -579,6 +579,10 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Apply early network protection if conditions are met
 		finalComputeResult := am.applyEarlyNetworkProtection(ctx, computeResult)
 
+		// Cap governance/validator power at each participant's previous-epoch
+		// confirmed weight (CapWeight); drop participants absent last epoch.
+		finalComputeResult = am.capComputeResultsToPreviousConfirmedWeight(ctx, currentEpochGroup, finalComputeResult)
+
 		// Safety mechanism: never hand the staking module a validator set with
 		// no positive power. SetComputeValidators deletes validators absent from
 		// the compute results, so an empty (or all-zero) set would wipe every
@@ -819,6 +823,16 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 
 	// Apply universal power capping to epoch powers
 	activeParticipants = am.applyEpochPowerCapping(ctx, activeParticipants)
+
+	// Compute each participant's CapWeight from the (now fully-adjusted) real
+	// Weight: the trust weight used for governance voting, BLS signing and cPoC
+	// validation voting power. It is capped at the confirmed weight they held in
+	// the previous epoch (0 for participants absent last epoch), forcing a
+	// participant to prove a weight increase over a full epoch before it counts
+	// toward consensus. Weight itself stays the real weight used for rewards and
+	// cPoC confirmation. Must run before computeAndSetVotingPowers so voting
+	// powers are derived from the capped weight.
+	activeParticipants = am.applyPreviousConfirmedWeightCap(ctx, activeParticipants)
 
 	// Write per-model voting powers to ActiveParticipant for visibility.
 	// Pass the governance-controlled per-model concentration cap, which
@@ -1613,10 +1627,12 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 	// Convert ActiveParticipants to ParticipantWithWeightAndKey format expected by BLS module
 	finalizedParticipants := make([]blstypes.ParticipantWithWeightAndKey, 0, len(activeParticipants))
 
-	// Calculate total weight
+	// BLS threshold signing is a trust weight, so it uses CapWeight (capped at the
+	// participant's previous-epoch confirmed weight) rather than the real Weight.
+	trustWeights := resolveTrustWeights(activeParticipants)
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
-		totalWeight += p.Weight
+		totalWeight += trustWeights[p.Index]
 	}
 
 	if totalWeight == 0 {
@@ -1682,11 +1698,11 @@ func (am AppModule) InitiateBLSKeyGeneration(ctx context.Context, epochID uint64
 			if p, ok := adjustedPercentages[ap.Index]; ok {
 				percentage = p
 			} else {
-				// Participant not present in adjusted map, compute from raw weight
-				percentage = math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+				// Participant not present in adjusted map, compute from cap weight
+				percentage = math.LegacyNewDec(trustWeights[ap.Index]).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
 			}
 		} else {
-			percentage = math.LegacyNewDec(ap.Weight).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
+			percentage = math.LegacyNewDec(trustWeights[ap.Index]).Quo(math.LegacyNewDec(totalWeight)).Mul(math.LegacyNewDec(100))
 		}
 
 		blsParticipant := blstypes.ParticipantWithWeightAndKey{

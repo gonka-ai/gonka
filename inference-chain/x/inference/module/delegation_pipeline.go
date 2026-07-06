@@ -738,10 +738,12 @@ func (am AppModule) computeAndSetVotingPowers(
 	participationByModel map[string]map[string]ParticipationMode,
 	caps VotingPowerCapParams,
 ) {
-	finalWeights := make(map[string]int64, len(activeParticipants))
-	for _, p := range activeParticipants {
-		finalWeights[p.Index] = p.Weight
-	}
+	// Voting power is a trust weight, so it is derived from CapWeight (capped at
+	// the participant's previous-epoch confirmed weight) rather than the real
+	// Weight. resolveTrustWeights returns CapWeight once the cap has been applied
+	// (as it always is before this in production) and falls back to Weight only
+	// for contexts that build participants without running the cap.
+	finalWeights := resolveTrustWeights(activeParticipants)
 
 	participantVP := make(map[string][]*types.ModelVotingPower)
 

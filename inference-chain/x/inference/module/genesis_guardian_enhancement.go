@@ -232,10 +232,13 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 		return nil
 	}
 
-	// Total network power
+	// Total network power. This runs as part of BLS slot reservation, so it uses
+	// the trust weight (CapWeight, the previous-epoch confirmed weight cap) to
+	// stay consistent with the rest of the BLS weighting.
+	trustWeights := resolveTrustWeights(activeParticipants)
 	totalWeight := int64(0)
 	for _, p := range activeParticipants {
-		totalWeight += p.Weight
+		totalWeight += trustWeights[p.Index]
 	}
 	if totalWeight <= 0 {
 		return nil
@@ -249,7 +252,7 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 			continue
 		}
 		op := sdk.ValAddress(acc).String()
-		tmpResults = append(tmpResults, stakingkeeper.ComputeResult{Power: p.Weight, OperatorAddress: op})
+		tmpResults = append(tmpResults, stakingkeeper.ComputeResult{Power: trustWeights[p.Index], OperatorAddress: op})
 	}
 
 	// Centralized gating: feature enabled, maturity, guardians configured and present, len>=2
@@ -275,7 +278,7 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 		op := sdk.ValAddress(acc).String()
 		if guardianOpSet[op] {
 			guardianIndices = append(guardianIndices, i)
-			totalGuardianPower += p.Weight
+			totalGuardianPower += trustWeights[p.Index]
 		}
 	}
 	if len(guardianIndices) == 0 {
@@ -332,7 +335,7 @@ func ApplyBLSGuardianSlotReservation(ctx context.Context, k keeper.Keeper, activ
 			if guardianOpSet[op] {
 				continue
 			}
-			share := decimal.NewFromInt(ap.Weight).Div(decimal.NewFromInt(nonGuardianWeight))
+			share := decimal.NewFromInt(trustWeights[ap.Index]).Div(decimal.NewFromInt(nonGuardianWeight))
 			percent := share.Mul(remainderFraction).Mul(decimal.NewFromInt(100))
 			legacyPercent, err := decimalToLegacyDec(percent)
 			if err != nil {

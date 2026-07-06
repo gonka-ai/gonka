@@ -821,17 +821,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 				participantMLNodes[participant.Address],
 				confirmationWeightCoefficients,
 			)
-			effectiveWeight = 0
-			if rawTotal > 0 {
-				confirmed := vw.ConfirmationWeight
-				if confirmed < 0 {
-					confirmed = 0
-				}
-				ewBig := big.NewInt(confirmed)
-				ewBig.Mul(ewBig, big.NewInt(vw.Weight))
-				ewBig.Div(ewBig, big.NewInt(rawTotal))
-				effectiveWeight = ewBig.Int64()
-			}
+			effectiveWeight = types.EffectiveConfirmedWeight(vw.Weight, vw.ConfirmationWeight, rawTotal)
 		}
 		if effectiveWeight > int64(fullWeight) {
 			effectiveWeight = int64(fullWeight)
