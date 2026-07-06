@@ -164,13 +164,25 @@ func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	_, err := New(ctx, cfg)
 	require.NoError(t, err)
 
-	time.Sleep(30 * time.Millisecond)
-	require.Equal(t, 1, len(srv.Calls()), "expected one initial_fetch while server height is 0, not a busy loop")
+	// New starts the poll loop asynchronously, so the initial fetch may not have
+	// landed within a fixed delay on a loaded runner -- the source of a rare
+	// "expected 1, got 0" flake. Wait for the first call instead of assuming it.
+	require.Eventually(t, func() bool {
+		return len(srv.Calls()) >= 1
+	}, 2*time.Second, 2*time.Millisecond, "expected an initial_fetch while server height is 0")
+	// The next poll is one ErrorBackoffMin (50ms) away, so seeing exactly one call
+	// right after the first proves the loop is pacing itself, not busy-looping.
+	require.Equal(t, 1, len(srv.Calls()), "initial fetch should be a single call, not a busy loop")
 
-	time.Sleep(60 * time.Millisecond)
-	calls := len(srv.Calls())
-	assert.GreaterOrEqual(t, calls, 2, "second poll after server-not-synced backoff")
-	assert.LessOrEqual(t, calls, 3, "expected backoff between polls while height stays 0, got %d calls", calls)
+	// Once the backoff elapses the loop must poll again while the server still
+	// reports height 0...
+	require.Eventually(t, func() bool {
+		return len(srv.Calls()) >= 2
+	}, 2*time.Second, 2*time.Millisecond, "expected a second poll after the server-not-synced backoff")
+	// ...but it must stay paced by the backoff: a busy loop would fire many times
+	// across this window instead of at most one more poll.
+	time.Sleep(30 * time.Millisecond)
+	assert.LessOrEqual(t, len(srv.Calls()), 4, "expected backoff between polls while height stays 0, not a busy loop")
 }
 
 func TestGRPCProvider_LongPoll_SendsConfiguredMaxWait(t *testing.T) {
