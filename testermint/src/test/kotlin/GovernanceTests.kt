@@ -67,6 +67,10 @@ class GovernanceTests : TestermintTest() {
         val (cluster, genesis) = initCluster(config = noCappingConfig, reboot = true)
         // genesis node is now powerful enough to pass on its own
         genesis.setPocWeight(100)
+        // CapWeight caps a participant's vote/consensus weight at the previous
+        // epoch's confirmed weight, so the increase to 100 only counts after it has
+        // been proven for a full epoch. Wait two epochs for 100 to settle.
+        genesis.waitForNextEpoch()
         genesis.waitForNextEpoch()
         genesis.markNeedsReboot()
         val params = genesis.getParams()
@@ -111,8 +115,11 @@ class GovernanceTests : TestermintTest() {
         genesis.setPocWeight(11)
         join2.setPocWeight(12)
         join1.setPocWeight(0)
-        genesis.waitForStage(EpochStage.START_OF_POC)
-        genesis.waitForStage(EpochStage.START_OF_POC)
+        // Both increases (11, 12) need a full epoch to be proven before CapWeight
+        // lets them count toward the governance tally, so wait two full epochs for
+        // 11/12 to settle rather than a single PoC cycle.
+        genesis.waitForNextEpoch()
+        genesis.waitForNextEpoch()
         genesis.node.waitForNextBlock(2)
         // At the end of this, genesis has 11 votes, join2 has 12 and join1 should have 0
         // Thus, a vote proposed by genesis and voted NO by join2 should fail
