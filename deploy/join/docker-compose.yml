@@ -45,7 +45,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.13-post5
+    image: ghcr.io/product-science/api:0.2.13-post6
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -107,7 +107,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.14
+    image: ghcr.io/product-science/bridge:0.2.5-post5@sha256:8d2f217115c65b27fcb6fe1497471c30891534f18685bd3007d168aa7f1a9371
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
