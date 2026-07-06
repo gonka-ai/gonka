@@ -30,10 +30,12 @@ import (
 const sessionEpochRetain = 3
 
 type devshardApp struct {
-	server      *echo.Echo
-	chainEvents *chainEventBridge
-	port        int
-	close       func()
+	server        *echo.Echo
+	chainEvents   *chainEventBridge
+	port          int
+	lifecycle     *lifecycleState
+	shutdownGrace time.Duration
+	close         func()
 }
 
 type chainRuntime struct {
@@ -101,14 +103,18 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		return nil, err
 	}
 
-	e := buildServer()
+	lifecycle := newLifecycleState()
+	e := buildServer(lifecycle)
 	manager.Register(e.Group(""))
+	lifecycle.SetReady(true)
 
 	return &devshardApp{
-		server:      e,
-		chainEvents: chainRuntime.chainEvents,
-		port:        cfg.Port,
-		close:       closers.Close,
+		server:        e,
+		chainEvents:   chainRuntime.chainEvents,
+		port:          cfg.Port,
+		lifecycle:     lifecycle,
+		shutdownGrace: cfg.ShutdownGrace,
+		close:         closers.Close,
 	}, nil
 }
 
@@ -347,9 +353,10 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		}
 	}
 
+	a.lifecycle.StartDrain()
 	cancel()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()
 	_ = a.server.Shutdown(shutdownCtx)
 	if !chainEventsStopped {

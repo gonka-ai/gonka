@@ -36,6 +36,7 @@ testapp:
 	mkdir -p build
 	go build -o build/testapp ./e2e/testapp
 	go build -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" -o build/testapp2 ./e2e/testapp
+	go build -ldflags "-X main.Version=testapp -X main.BinaryVersion=testapp-rollout" -o build/testapp-rollout ./e2e/testapp
 
 e2e: build testapp
 	docker compose -f e2e/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests

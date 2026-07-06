@@ -285,6 +285,55 @@ func TestStatus(t *testing.T) {
 	}
 }
 
+func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
+	cfg := config.Config{
+		BinDir:     "/tmp/bin",
+		DataDir:    "/tmp/data",
+		BinaryName: "testapp",
+		BasePort:   5000,
+	}
+	m := NewManager(cfg)
+
+	m.mu.Lock()
+	m.processes["v1"] = &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: "new-sha",
+		binaryVersion: "new-bin",
+		port:          9002,
+		done:          make(chan struct{}),
+		status:        statusRunning,
+	}
+	m.draining["v1"] = []*child{{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: "old-sha",
+		binaryVersion: "old-bin",
+		port:          9001,
+		done:          make(chan struct{}),
+		status:        statusDraining,
+	}}
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	routes := m.RouteTable().Load().(map[string]string)
+	if routes["v1"] != "localhost:9002" {
+		t.Fatalf("route = %q, want new child", routes["v1"])
+	}
+
+	statuses := m.Status()
+	if len(statuses) != 2 {
+		t.Fatalf("expected running + draining status, got %d", len(statuses))
+	}
+	var sawDraining bool
+	for _, status := range statuses {
+		if status.Status == statusDraining && status.Port == 9001 && status.SHA256 == "old-sha" {
+			sawDraining = true
+		}
+	}
+	if !sawDraining {
+		t.Fatalf("draining child not reported in status: %+v", statuses)
+	}
+}
+
 func TestHashFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "testfile")
@@ -312,14 +361,15 @@ func TestHashFile_Missing(t *testing.T) {
 	}
 }
 
-func TestAssignPort_Stable(t *testing.T) {
+func TestAssignPort_AllocatesOverlapPortsAndReleases(t *testing.T) {
 	cfg := config.Config{BasePort: 5000}
 	m := NewManager(cfg)
 
 	m.mu.Lock()
-	p1 := m.assignPort("v1")
-	p2 := m.assignPort("v2")
-	p1again := m.assignPort("v1")
+	p1 := m.assignPort()
+	p2 := m.assignPort()
+	m.releasePort(p1)
+	p3 := m.assignPort()
 	m.mu.Unlock()
 
 	if p1 != 5000 {
@@ -328,8 +378,8 @@ func TestAssignPort_Stable(t *testing.T) {
 	if p2 != 5001 {
 		t.Errorf("second port = %d, want 5001", p2)
 	}
-	if p1again != p1 {
-		t.Errorf("repeated assignPort gave %d, want %d", p1again, p1)
+	if p3 != 5002 {
+		t.Errorf("released port should not be immediately reused; got %d, want 5002", p3)
 	}
 }
 
@@ -361,6 +411,34 @@ func TestAtomicCopy(t *testing.T) {
 	}
 	if info.Mode()&0755 != 0755 {
 		t.Errorf("mode = %o, want 0755", info.Mode())
+	}
+}
+
+func TestInstallBinPathUsesVersionAndSHA(t *testing.T) {
+	m := NewManager(config.Config{BinDir: "/opt/versiond/bin", BinaryName: "devshardd", BasePort: 5000})
+	got := m.installBinPath("v2", "abc123")
+	want := filepath.Join("/opt/versiond/bin", "v2", "abc123", "devshardd")
+	if got != want {
+		t.Fatalf("installBinPath = %q, want %q", got, want)
+	}
+}
+
+func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
+	if devshardMgr.rollingOverlapAllowed() {
+		t.Fatal("devshard overlap should require PGHOST")
+	}
+
+	t.Setenv("PGHOST", "postgres")
+	if !devshardMgr.rollingOverlapAllowed() {
+		t.Fatal("devshard overlap should be allowed when PGHOST is set")
+	}
+
+	t.Setenv("PGHOST", "")
+	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
+	if !testappMgr.rollingOverlapAllowed() {
+		t.Fatal("non-devshard test binary should allow overlap without PGHOST")
 	}
 }
 
@@ -500,7 +578,7 @@ func TestRunChild_RemovesFromProcessesOnStartFailure(t *testing.T) {
 	v := oracle.Version{Name: "v1"}
 
 	m.mu.Lock()
-	m.startChild(ctx, v)
+	m.startChild(ctx, v, "missing", filepath.Join(dir, "missing"), true)
 	c := m.processes["v1"]
 	m.mu.Unlock()
 
@@ -601,9 +679,9 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
 	dataDir := filepath.Join(dir, "data")
-	versionDir := filepath.Join(binDir, "v1")
-	binPath := filepath.Join(versionDir, "devshard")
 	archiveHash := sha256Hex([]byte("archive-v1"))
+	versionDir := filepath.Join(binDir, "v1", archiveHash)
+	binPath := filepath.Join(versionDir, "devshard")
 	binaryContent := []byte("#!/bin/sh\nsleep 30\n")
 
 	if err := os.MkdirAll(versionDir, 0755); err != nil {
@@ -638,11 +716,13 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 
 	m.mu.Lock()
 	m.processes["v1"] = &child{
-		version: oracle.Version{Name: "v1", Binary: srv.URL, SHA256: archiveHash},
-		port:    5000,
-		cancel:  func() { cancelled = true },
-		done:    done,
-		status:  statusRunning,
+		version:       oracle.Version{Name: "v1", Binary: srv.URL, SHA256: archiveHash},
+		archiveSHA256: archiveHash,
+		binPath:       binPath,
+		port:          5000,
+		cancel:        func() { cancelled = true },
+		done:          done,
+		status:        statusRunning,
 	}
 	m.mu.Unlock()
 

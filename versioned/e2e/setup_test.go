@@ -41,6 +41,13 @@ func buildTestapp2Zip(t *testing.T) ([]byte, string) {
 	return buildTestappZipFrom(t, envOrDefault("TESTAPP2_PATH", "/app/build/testapp2"))
 }
 
+// buildTestappRolloutZip uses the same protocol slot as testapp but a different
+// binary version and archive hash for same-name rolling update tests.
+func buildTestappRolloutZip(t *testing.T) ([]byte, string) {
+	t.Helper()
+	return buildTestappZipFrom(t, envOrDefault("TESTAPP_ROLLOUT_PATH", "/app/build/testapp-rollout"))
+}
+
 func buildTestappZipFrom(t *testing.T, testappPath string) ([]byte, string) {
 	t.Helper()
 
@@ -163,19 +170,63 @@ func waitForVersionGone(t *testing.T, version string, timeout time.Duration) {
 	t.Fatalf("version %s still available after %v", version, timeout)
 }
 
+func waitForVersionPrefix(t *testing.T, version, wantPrefix string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("%s/%s/", versiondURL, version)
+	for time.Now().Before(deadline) {
+		var resp map[string]string
+		if getJSONIfOK(url, &resp) == nil && resp["prefix"] == wantPrefix {
+			return
+		}
+		time.Sleep(time.Second)
+	}
+	t.Fatalf("version %s did not report prefix %q after %v", version, wantPrefix, timeout)
+}
+
+func waitForNoDraining(t *testing.T, version string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("%s/healthz", versiondURL)
+	for time.Now().Before(deadline) {
+		var statuses []map[string]interface{}
+		if getJSONIfOK(url, &statuses) == nil {
+			draining := false
+			for _, s := range statuses {
+				if s["name"] == version && s["status"] == "draining" {
+					draining = true
+					break
+				}
+			}
+			if !draining {
+				return
+			}
+		}
+		time.Sleep(200 * time.Millisecond)
+	}
+	t.Fatalf("version %s still has draining child after %v", version, timeout)
+}
+
 // getJSON does a GET and decodes the JSON response into out.
 func getJSON(t *testing.T, url string, out interface{}) {
 	t.Helper()
+	if err := getJSONIfOK(url, out); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func getJSONIfOK(url string, out interface{}) error {
 	resp, err := http.Get(url)
 	if err != nil {
-		t.Fatalf("GET %s: %v", url, err)
+		return fmt.Errorf("GET %s: %w", url, err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
-		t.Fatalf("GET %s: status %d, body: %s", url, resp.StatusCode, string(body))
+		return fmt.Errorf("GET %s: status %d, body: %s", url, resp.StatusCode, string(body))
 	}
 	if err := json.NewDecoder(resp.Body).Decode(out); err != nil {
-		t.Fatalf("decode response from %s: %v", url, err)
+		return fmt.Errorf("decode response from %s: %w", url, err)
 	}
+	return nil
 }

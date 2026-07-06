@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"sync/atomic"
 	"time"
 
 	pb "versioned/e2e/testapp/gen"
@@ -45,13 +46,85 @@ func main() {
 		prefix = BinaryVersion
 	}
 	nmAddr := os.Getenv("NODE_MANAGER_ADDR")
+	var ready atomic.Bool
+	var draining atomic.Bool
+	var inflight atomic.Int64
+	ready.Store(true)
 	log.Printf("[%s] starting testapp on port %d, data-dir=%s, node-manager=%s", prefix, *port, *dataDir, nmAddr)
 
-	http.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+	track := func(fn http.HandlerFunc) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if draining.Load() {
+				http.Error(w, "draining", http.StatusServiceUnavailable)
+				return
+			}
+			inflight.Add(1)
+			defer inflight.Add(-1)
+			fn(w, r)
+		}
+	}
+
+	writeVersion := func(w http.ResponseWriter) {
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]string{
 			"version": "testapp",
 			"prefix":  prefix,
+		})
+	}
+
+	http.HandleFunc("/", track(func(w http.ResponseWriter, r *http.Request) {
+		writeVersion(w)
+	}))
+
+	http.HandleFunc("/slow", track(func(w http.ResponseWriter, r *http.Request) {
+		delay := 8 * time.Second
+		if raw := r.URL.Query().Get("duration"); raw != "" {
+			if parsed, err := time.ParseDuration(raw); err == nil && parsed > 0 {
+				delay = parsed
+			}
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(delay):
+		}
+		writeVersion(w)
+	}))
+
+	http.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
+		status := map[string]interface{}{
+			"ready":    ready.Load(),
+			"draining": draining.Load(),
+			"inflight": inflight.Load(),
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !ready.Load() || draining.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+		}
+		json.NewEncoder(w).Encode(status)
+	})
+
+	http.HandleFunc("/drain", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		draining.Store(true)
+		ready.Store(false)
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ready":    ready.Load(),
+			"draining": draining.Load(),
+			"inflight": inflight.Load(),
+		})
+	})
+
+	http.HandleFunc("/drain/status", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		json.NewEncoder(w).Encode(map[string]interface{}{
+			"ready":    ready.Load(),
+			"draining": draining.Load(),
+			"inflight": inflight.Load(),
 		})
 	})
 
@@ -59,7 +132,7 @@ func main() {
 		w.WriteHeader(http.StatusOK)
 	})
 
-	http.HandleFunc("/stream", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/stream", track(func(w http.ResponseWriter, r *http.Request) {
 		flusher, ok := w.(http.Flusher)
 		if !ok {
 			http.Error(w, "streaming not supported", http.StatusInternalServerError)
@@ -73,9 +146,9 @@ func main() {
 			flusher.Flush()
 			time.Sleep(100 * time.Millisecond)
 		}
-	})
+	}))
 
-	http.HandleFunc("/nodemanager-test", func(w http.ResponseWriter, r *http.Request) {
+	http.HandleFunc("/nodemanager-test", track(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 
 		if nmAddr == "" {
@@ -91,8 +164,8 @@ func main() {
 		conn, err := grpc.NewClient(nmAddr, grpc.WithTransportCredentials(insecure.NewCredentials()))
 		if err != nil {
 			json.NewEncoder(w).Encode(map[string]string{
-				"error":             fmt.Sprintf("grpc dial failed: %v", err),
-				"nodemanager_addr":  nmAddr,
+				"error":            fmt.Sprintf("grpc dial failed: %v", err),
+				"nodemanager_addr": nmAddr,
 			})
 			return
 		}
@@ -128,7 +201,7 @@ func main() {
 			result["release_error"] = releaseErr.Error()
 		}
 		json.NewEncoder(w).Encode(result)
-	})
+	}))
 
 	addr := fmt.Sprintf(":%d", *port)
 	log.Printf("[%s] listening on %s", prefix, addr)

@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	registryOnce sync.Once
-	registry     *prometheus.Registry
+	registryOnce          sync.Once
+	runtimeCollectorsOnce sync.Once
+	registry              *prometheus.Registry
 
 	inflight               *prometheus.GaugeVec
 	requestTerminalTotal   *prometheus.CounterVec
@@ -155,10 +156,12 @@ func initRegistry() {
 // source for /metrics.
 func RegisterRuntimeCollectors() {
 	ensureMetrics()
-	registry.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
+	runtimeCollectorsOnce.Do(func() {
+		registry.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	})
 }
 
 func IncInflight(stage Stage) func() {
