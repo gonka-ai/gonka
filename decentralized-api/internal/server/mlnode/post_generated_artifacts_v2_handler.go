@@ -150,11 +150,21 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 	// Convert fraud_detected + n_total to validated_weight
 	validatedWeight := body.ToValidatedWeight()
 
-	logging.Info("ValidatedArtifactsV2-callback. Submitting validation", types.PoC,
+	logging.Info("ValidatedArtifactsV2-callback. Handling validation", types.PoC,
 		"participant", address,
 		"modelId", modelID,
 		"validatedWeight", validatedWeight,
 		"fraudDetected", body.FraudDetected)
+
+	if s.validation != nil {
+		if err := s.validation.HandleValidationResult(body.BlockHeight, address, modelID, validatedWeight); err != nil {
+			logging.Error("ValidatedArtifactsV2-callback. Failed to handle validation result", types.PoC,
+				"participant", address,
+				"error", err)
+			return err
+		}
+		return ctx.NoContent(http.StatusOK)
+	}
 
 	// Use batch submission (even for single validation - no single-validation RPC exists)
 	msg := &types.MsgSubmitPocValidationsV2{

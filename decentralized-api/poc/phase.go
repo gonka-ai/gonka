@@ -64,6 +64,45 @@ func GetCurrentPocStageHeight(epochState *chainphase.EpochState) int64 {
 	return epochState.LatestEpoch.PocStartBlockHeight
 }
 
+func GetValidationWindowStart(epochState *chainphase.EpochState) int64 {
+	if epochState.IsNilOrNotSynced() {
+		return 0
+	}
+	if epochState.CurrentPhase == types.InferencePhase &&
+		epochState.ActiveConfirmationPoCEvent != nil {
+		return epochState.ActiveConfirmationPoCEvent.GetValidationStart(&epochState.LatestEpoch.EpochParams)
+	}
+	return epochState.LatestEpoch.StartOfPoCValidation()
+}
+
+func GetValidationWindowEnd(epochState *chainphase.EpochState) int64 {
+	if epochState.IsNilOrNotSynced() {
+		return 0
+	}
+	if epochState.CurrentPhase == types.InferencePhase &&
+		epochState.ActiveConfirmationPoCEvent != nil {
+		return epochState.ActiveConfirmationPoCEvent.GetValidationEnd(&epochState.LatestEpoch.EpochParams)
+	}
+	return epochState.LatestEpoch.EndOfPoCValidation()
+}
+
+func PoCValidationDecisionHeight(epochState *chainphase.EpochState) int64 {
+	start := GetValidationWindowStart(epochState)
+	end := GetValidationWindowEnd(epochState)
+	if start <= 0 || end <= start {
+		return 0
+	}
+	return start + 2*(end-start)/3
+}
+
+func PoCValidationDecisionReached(epochState *chainphase.EpochState) bool {
+	if epochState.IsNilOrNotSynced() {
+		return false
+	}
+	decisionHeight := PoCValidationDecisionHeight(epochState)
+	return decisionHeight > 0 && epochState.CurrentBlock.Height >= decisionHeight
+}
+
 // ShouldAcceptStoreCommit returns true if the chain will accept MsgPoCV2StoreCommit
 // at the current block height. Mirrors keeper validation.
 func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHeight int64) bool {

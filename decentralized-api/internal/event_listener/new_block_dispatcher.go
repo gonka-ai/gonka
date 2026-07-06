@@ -40,6 +40,7 @@ type SetHeightFunc func(blockHeight int64) error
 
 type pocValidator interface {
 	ValidateAll(pocStageStartBlockHeight int64, pocStartBlockHash string)
+	ReleaseDuePoCValidations()
 	// MaybeCaptureEarlyShare is invoked once per synced block to let the
 	// early-share guard capture the early on-chain commitment near the
 	// first-fraction boundary of the active PoC/CPoC generation window.
@@ -392,6 +393,7 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 	// Same exact-match form as the surrounding stage transitions; a missed height
 	// fails open for the stage.
 	d.offChainValidator.MaybeCaptureEarlyShare(epochState)
+	d.offChainValidator.ReleaseDuePoCValidations()
 
 	// Check for PoC validation stage transitions
 	if epochContext.IsEndOfPoCStage(blockHeight) {

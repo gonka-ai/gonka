@@ -50,7 +50,8 @@ type OffChainValidator struct {
 
 	config ValidationConfig
 	// guard is the optional DAPI-only early-share guard. A nil guard is a no-op.
-	guard *EarlyShareGuard
+	guard                 *EarlyShareGuard
+	validationCoordinator *PoCValidationCoordinator
 }
 
 // ValidationConfig contains configuration for off-chain validation.
@@ -158,6 +159,20 @@ func NewOffChainValidator(
 		chainNodeUrl:     chainNodeUrl,
 		config:           config,
 		guard:            guard,
+		validationCoordinator: NewPoCValidationCoordinator(
+			recorder,
+			phaseTracker,
+		),
+	}
+}
+
+func (v *OffChainValidator) GetValidationCoordinator() *PoCValidationCoordinator {
+	return v.validationCoordinator
+}
+
+func (v *OffChainValidator) ReleaseDuePoCValidations() {
+	if v.validationCoordinator != nil {
+		v.validationCoordinator.ReleaseDue()
 	}
 }
 
@@ -308,6 +323,15 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 				continue
 			}
 		}
+		if commit.Count > MaxClaimedNoncesPerCommit {
+			logging.Warn("OffChainValidator: claimed nonce count exceeds limit", types.PoC,
+				"participant", commit.ParticipantAddress,
+				"modelId", commit.ModelId,
+				"count", commit.Count,
+				"limit", MaxClaimedNoncesPerCommit)
+			v.reportInvalidParticipant(pocStageStartBlockHeight, commit.ParticipantAddress, commit.ModelId)
+			continue
+		}
 
 		// If sampling is enabled, check if we're assigned to validate this participant-model pair.
 		// Only the model-local share of slots is sampled; the remainder behaves as abstention.
@@ -405,6 +429,18 @@ func (v *OffChainValidator) ValidateAll(pocStageStartBlockHeight int64, pocStart
 
 	// Create proof client
 	proofClient := NewProofClient(v.recorder, ProofClientConfig{Timeout: v.config.RequestTimeout})
+	if v.validationCoordinator != nil {
+		for _, item := range workItems {
+			v.validationCoordinator.StartDuplicateScan(proofClient, DuplicateScanJob{
+				PocHeight:      pocStageStartBlockHeight,
+				Participant:    item.address,
+				ModelID:        item.modelId,
+				ParticipantURL: item.url,
+				RootHash:       item.rootHash,
+				Count:          item.count,
+			})
+		}
+	}
 
 	// Create work channel - buffered to allow re-queueing failed items
 	// Size: initial items + potential retries
@@ -971,6 +1007,17 @@ func filterValidationNodesForModel(nodes []broker.NodeResponse, modelID string) 
 // reportInvalidParticipant submits a validation result with ValidatedWeight=-1 (invalid) to chain.
 // This is called when validation fails permanently (e.g., retry exhaustion).
 func (v *OffChainValidator) reportInvalidParticipant(pocHeight int64, participantAddress, modelID string) {
+	if v.validationCoordinator != nil {
+		if err := v.validationCoordinator.HandleValidationResult(pocHeight, participantAddress, modelID, -1); err != nil {
+			logging.Error("OffChainValidator: failed to report invalid participant", types.PoC,
+				"participant", participantAddress, "error", err)
+		} else {
+			logging.Info("OffChainValidator: reported participant as invalid", types.PoC,
+				"participant", participantAddress)
+		}
+		return
+	}
+
 	msg := &types.MsgSubmitPocValidationsV2{
 		PocStageStartBlockHeight: pocHeight,
 		Validations: []*types.PoCValidationEntryV2{

@@ -5,6 +5,7 @@ import (
 	"decentralized-api/broker"
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"net/http"
 
@@ -17,6 +18,7 @@ type Server struct {
 	broker        *broker.Broker
 	artifactStore *artifacts.ManagedArtifactStore
 	configManager *apiconfig.ConfigManager
+	validation    *poc.PoCValidationCoordinator
 }
 
 // ServerOption configures optional Server dependencies.
@@ -33,6 +35,12 @@ func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 func WithConfigManager(cm *apiconfig.ConfigManager) ServerOption {
 	return func(s *Server) {
 		s.configManager = cm
+	}
+}
+
+func WithPoCValidationCoordinator(validation *poc.PoCValidationCoordinator) ServerOption {
+	return func(s *Server) {
+		s.validation = validation
 	}
 }
 

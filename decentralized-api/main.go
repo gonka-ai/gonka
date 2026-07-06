@@ -339,7 +339,13 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().MLServerPort)
 	logging.Info("start ml server on addr", types.Server, "addr", addr)
-	mlServer := mlserver.NewServer(recorder, nodeBroker, mlserver.WithArtifactStore(artifactStore), mlserver.WithConfigManager(configManager))
+	mlServer := mlserver.NewServer(
+		recorder,
+		nodeBroker,
+		mlserver.WithArtifactStore(artifactStore),
+		mlserver.WithConfigManager(configManager),
+		mlserver.WithPoCValidationCoordinator(offChainValidator.GetValidationCoordinator()),
+	)
 	mlServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
