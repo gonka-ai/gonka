@@ -53,9 +53,10 @@ e2e-run:
 	docker compose -f e2e/docker-compose.yml stop versiond
 	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e REGISTER_STARTUP_VERSION=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-register-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestRegisterStartupVersion$$'
 	docker compose -f e2e/docker-compose.yml start versiond
-	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e EXPECT_INITIAL_V1=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-on-start-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestStartupFromExistingOracleState$$'
+	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e EXPECT_INITIAL_TESTAPP=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-on-start-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestStartupFromExistingOracleState$$'
 	docker compose -f e2e/docker-compose.yml down -v
 
+# e2e-report requires uv on PATH (install: pip install uv).
 e2e-report:
 	uvx junitparser merge --glob 'build/test-results/*-junit.xml' build/test-results/e2e-junit.xml
 	@status=0; \

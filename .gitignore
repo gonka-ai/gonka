@@ -23,8 +23,8 @@ inference-chain/dist/
 /edge-api/build/edge-api
 /devshard/devshardctl
 /devshard/devshardd
-/devshard/cmd/devshardd/devshardd
 /devshard/cmd/devshardctl/devshardctl
+/devshard/cmd/devshardd/devshardd
 chain-venv/
 .inference/
 prod-genesis/

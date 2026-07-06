@@ -151,6 +151,46 @@ jobs:
           path: decentralized-api/junit-report.xml
           reporter: java-junit
 
+  versioned-e2e:
+    runs-on: ubuntu-latest
+    name: Versioned E2E
+    permissions:
+      contents: read
+      checks: write
+    defaults:
+      run:
+        working-directory: ./versioned
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3.0.0
+        with:
+          go-version: '1.24.2'
+
+      - name: Install uv (e2e-report JUnit merge)
+        run: pip install uv
+
+      - name: Run E2E tests
+        run: make e2e
+
+      - name: Publish E2E JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: versioned-e2e-junit-report
+          path: versioned/build/test-results/e2e-junit.xml
+
+      - name: Report E2E results in GitHub
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Versioned E2E
+          path: versioned/build/test-results/e2e-junit.xml
+          reporter: java-junit
+
   build-and-test-versioned:
     runs-on: ubuntu-latest
     name: Build and Test Versioned
