@@ -21,7 +21,7 @@ const (
 	duplicateScanSampleSize   = 5_000
 	duplicateScanChunkSize    = 500
 	duplicateScanURLCooldown  = 5 * time.Second
-	duplicateScanWorkers      = 2
+	duplicateScanWorkers      = 20
 	duplicateScanPollInterval = 100 * time.Millisecond
 )
 
@@ -436,7 +436,6 @@ func (s *duplicateNonceScanner) nextChunk() (duplicateScanChunk, bool) {
 		}
 		s.queue = append(s.queue[:i], s.queue[i+1:]...)
 		s.inFlightURL[chunk.job.ParticipantURL] = true
-		s.nextURL[chunk.job.ParticipantURL] = now.Add(duplicateScanURLCooldown)
 		return chunk, true
 	}
 	return duplicateScanChunk{}, false
@@ -464,6 +463,7 @@ func (s *duplicateNonceScanner) runChunk(chunk duplicateScanChunk) {
 	defer func() {
 		s.mu.Lock()
 		delete(s.inFlightURL, chunk.job.ParticipantURL)
+		s.nextURL[chunk.job.ParticipantURL] = s.now().Add(duplicateScanURLCooldown)
 		s.mu.Unlock()
 	}()
 
@@ -486,16 +486,44 @@ func (s *duplicateNonceScanner) runChunk(chunk duplicateScanChunk) {
 			return
 		}
 		// Requeue at the back only while the scan is still undecided; the URL
-		// cooldown set in nextChunk keeps retries at most once per 5s per URL.
+		// cooldown set when requests finish keeps retries at most once per 5s per URL.
 		if s.coordinator == nil || s.coordinator.isScanPending(chunk.key) {
-			s.mu.Lock()
-			s.queue = append(s.queue, chunk)
-			s.mu.Unlock()
+			s.requeueParticipantAtBack(chunk)
 		}
 		return
 	}
 
 	s.coordinator.recordScanArtifacts(chunk.key, verified)
+}
+
+func (s *duplicateNonceScanner) requeueParticipantAtBack(failed duplicateScanChunk) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	retained := s.queue[:0]
+	moved := make([]duplicateScanChunk, 0)
+	for _, chunk := range s.queue {
+		if s.coordinator != nil && !s.coordinator.isScanPending(chunk.key) {
+			continue
+		}
+		if sameScanOrURL(chunk, failed) {
+			moved = append(moved, chunk)
+			continue
+		}
+		retained = append(retained, chunk)
+	}
+	s.queue = retained
+	s.queue = append(s.queue, moved...)
+	if s.coordinator == nil || s.coordinator.isScanPending(failed.key) {
+		s.queue = append(s.queue, failed)
+	}
+}
+
+func sameScanOrURL(a, b duplicateScanChunk) bool {
+	return a.key == b.key || a.job.ParticipantURL == b.job.ParticipantURL
 }
 
 // isRetryableDuplicateScanError classifies proof fetch failures. Typed proof

@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +25,14 @@ func (f *errorFetcher) FetchAndVerifyProofs(_ context.Context, _ string, _ Proof
 	return nil, f.err
 }
 
+type fixedFetcher struct {
+	artifacts []VerifiedArtifact
+}
+
+func (f *fixedFetcher) FetchAndVerifyProofs(_ context.Context, _ string, _ ProofRequest) ([]VerifiedArtifact, error) {
+	return f.artifacts, nil
+}
+
 // newManualScanner returns a scanner without background workers so tests can
 // drive nextChunk/runChunk deterministically.
 func newManualScanner(coordinator *PoCValidationCoordinator) *duplicateNonceScanner {
@@ -32,6 +42,10 @@ func newManualScanner(coordinator *PoCValidationCoordinator) *duplicateNonceScan
 		nextURL:     make(map[string]time.Time),
 		now:         time.Now,
 	}
+}
+
+func TestDuplicateScanWorkerCount(t *testing.T) {
+	require.Equal(t, 20, duplicateScanWorkers)
 }
 
 func TestSampleDuplicateScanIndices_BoundsAndNoDuplicates(t *testing.T) {
@@ -158,6 +172,36 @@ func TestDuplicateNonceScanner_TransientErrorRequeuesOnlyWhilePending(t *testing
 	require.Empty(t, scanner.queue, "decided scans must not be requeued")
 }
 
+func TestDuplicateNonceScanner_TransientErrorMovesParticipantChunksToBack(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	coordinator := NewPoCValidationCoordinator(recorder, nil)
+	keyA := pocValidationKey{pocHeight: 100, participant: "participant-a", modelID: "model-a"}
+	keyB := pocValidationKey{pocHeight: 100, participant: "participant-b", modelID: "model-a"}
+	coordinator.scans[keyA] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 3}
+	coordinator.scans[keyB] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 1}
+
+	scanner := newManualScanner(coordinator)
+	failedA := duplicateScanChunk{
+		fetcher: &errorFetcher{err: errors.New("HTTP request failed: connection refused")},
+		job:     DuplicateScanJob{PocHeight: 100, Participant: "participant-a", ModelID: "model-a", ParticipantURL: "http://a"},
+		key:     keyA,
+		indices: []uint32{0},
+	}
+	scanner.enqueue([]duplicateScanChunk{
+		{key: keyA, job: DuplicateScanJob{ParticipantURL: "http://a"}, indices: []uint32{1}},
+		{key: keyB, job: DuplicateScanJob{ParticipantURL: "http://b"}, indices: []uint32{0}},
+		{key: keyA, job: DuplicateScanJob{ParticipantURL: "http://a"}, indices: []uint32{2}},
+	})
+
+	scanner.runChunk(failedA)
+
+	require.Len(t, scanner.queue, 4)
+	require.Equal(t, keyB, scanner.queue[0].key, "other participants must stay ahead of the retrying participant")
+	require.Equal(t, []uint32{1}, scanner.queue[1].indices)
+	require.Equal(t, []uint32{2}, scanner.queue[2].indices)
+	require.Equal(t, []uint32{0}, scanner.queue[3].indices, "failed chunk must be appended after the participant's queued chunks")
+}
+
 func TestDuplicateNonceScanner_DropsChunksForDecidedScans(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
 	coordinator := NewPoCValidationCoordinator(recorder, nil)
@@ -187,27 +231,31 @@ func TestDuplicateNonceScanner_URLCooldown(t *testing.T) {
 	recorder := &cosmosclient.MockCosmosMessageClient{}
 	coordinator := NewPoCValidationCoordinator(recorder, nil)
 	key := pocValidationKey{pocHeight: 100, participant: "participant-a", modelID: "model-a"}
-	coordinator.scans[key] = &duplicateScanState{status: duplicateScanPending}
+	coordinator.scans[key] = &duplicateScanState{status: duplicateScanPending, seen: make(map[int32]uint32), remaining: 2}
 
 	now := time.Now()
 	scanner := newManualScanner(coordinator)
 	scanner.now = func() time.Time { return now }
 	scanner.enqueue([]duplicateScanChunk{
-		{key: key, job: DuplicateScanJob{ParticipantURL: "http://a"}, indices: []uint32{0}},
+		{
+			fetcher: &fixedFetcher{artifacts: []VerifiedArtifact{{LeafIndex: 0, Nonce: 10}}},
+			key:     key,
+			job:     DuplicateScanJob{ParticipantURL: "http://a"},
+			indices: []uint32{0},
+		},
 		{key: key, job: DuplicateScanJob{ParticipantURL: "http://a"}, indices: []uint32{1}},
 	})
 
-	_, ok := scanner.nextChunk()
+	first, ok := scanner.nextChunk()
 	require.True(t, ok)
+	require.True(t, scanner.nextURL["http://a"].IsZero(), "dispatch must not start the cooldown")
 
 	// Same URL is in flight: nothing to dispatch.
 	_, ok = scanner.nextChunk()
 	require.False(t, ok)
 
-	// Request finished but the 5s cooldown has not elapsed yet.
-	scanner.mu.Lock()
-	delete(scanner.inFlightURL, "http://a")
-	scanner.mu.Unlock()
+	// Request completion starts the 5s cooldown.
+	scanner.runChunk(first)
 	_, ok = scanner.nextChunk()
 	require.False(t, ok)
 
@@ -237,6 +285,67 @@ func TestIsRetryableDuplicateScanError(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			require.Equal(t, tc.retryable, isRetryableDuplicateScanError(tc.err))
 		})
+	}
+}
+
+// flakyFetcher alternates between retryable failures and successes so the
+// stress test exercises both the requeue path and the record path.
+type flakyFetcher struct {
+	calls atomic.Int64
+}
+
+func (f *flakyFetcher) FetchAndVerifyProofs(_ context.Context, _ string, req ProofRequest) ([]VerifiedArtifact, error) {
+	n := f.calls.Add(1)
+	if n%2 == 0 {
+		return nil, errors.New("HTTP request failed: connection refused")
+	}
+	artifacts := make([]VerifiedArtifact, len(req.LeafIndices))
+	for i, leaf := range req.LeafIndices {
+		artifacts[i] = VerifiedArtifact{LeafIndex: leaf, Nonce: int32(leaf)}
+	}
+	return artifacts, nil
+}
+
+// TestPoCValidationCoordinator_ConcurrentStress drives the real worker pool,
+// coordinator submissions, and queue pruning concurrently. It exists to catch
+// deadlocks between the scanner mutex and the coordinator mutex (the scanner
+// takes s.mu then c.mu via isScanPending; coordinator paths must release c.mu
+// before touching the scanner queue) and data races under -race.
+func TestPoCValidationCoordinator_ConcurrentStress(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	recorder.On("SubmitPocValidationsV2", mock.Anything).Return(nil).Maybe()
+
+	coordinator := NewPoCValidationCoordinator(recorder, nil)
+	fetcher := &flakyFetcher{}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var wg sync.WaitGroup
+		for p := 0; p < 8; p++ {
+			participant := fmt.Sprintf("participant-%d", p)
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				coordinator.StartDuplicateScan(fetcher, DuplicateScanJob{
+					PocHeight:      100,
+					Participant:    participant,
+					ModelID:        "model-a",
+					ParticipantURL: "http://" + participant,
+					Count:          uint32(duplicateScanChunkSize * 3),
+				})
+				// Exercise submitAndMark -> pruneQueue while workers are scanning.
+				_ = coordinator.HandleValidationResult(100, participant, "model-a", 10)
+				coordinator.ReleaseDue()
+			}()
+		}
+		wg.Wait()
+	}()
+
+	select {
+	case <-done:
+	case <-time.After(30 * time.Second):
+		t.Fatal("deadlock: concurrent scanner/coordinator operations did not finish")
 	}
 }
 
