@@ -1,11 +1,8 @@
 import com.productscience.*
 import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
-import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 
-// Classic inference flow was removed (PR #1386); this test's weight assertions depend on the deprecated flow.
-@Tag("exclude")
 class MultiModelPoCTests : TestermintTest() {
 
     // Two models with very different raw weights and inverse coefficients.
@@ -143,26 +140,8 @@ class MultiModelPoCTests : TestermintTest() {
             }
         }
 
-        logSection("Setting up inference responses per model")
-        allPairs.forEach { pair ->
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse("response-model-a"),
-                model = defaultModel,
-            )
-            pair.mock?.setInferenceResponse(
-                defaultInferenceResponseObject.withResponse("response-model-b"),
-                model = secondModel,
-            )
-        }
-
-        logSection("Making inference request for model A")
-        genesis.waitForNextInferenceWindow()
-        val responseA = genesis.makeInferenceRequest(inferenceRequest)
-        assertThat(responseA.choices.first().message.content).isEqualTo("response-model-a")
-
-        logSection("Making inference request for model B")
-        val requestB = cosmosJson.toJson(inferenceRequestObject.copy(model = secondModel))
-        val responseB = genesis.makeInferenceRequest(requestB)
-        assertThat(responseB.choices.first().message.content).isEqualTo("response-model-b")
+        // NOTE: This test previously finished with a classic inference request per model as a routing
+        // smoke check. Classic inference was removed (PR #1386); the PoC weight/commit/slot assertions
+        // above are the substance of this test and do not depend on it.
     }
 }
