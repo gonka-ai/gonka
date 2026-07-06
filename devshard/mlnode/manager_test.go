@@ -10,17 +10,25 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestNewManager_DefaultTTL(t *testing.T) {
+func TestNewManager_Defaults(t *testing.T) {
 	m := NewManager(0)
-	assert.Equal(t, DefaultCacheTTL, m.ttl)
+	assert.Equal(t, DefaultCacheTTL, m.freshTTL)
+	assert.Equal(t, DefaultStaleTTL, m.staleTTL)
 	assert.Equal(t, DefaultCacheTTL/2, m.pruneInterval)
 
 	m = NewManager(-time.Second)
-	assert.Equal(t, DefaultCacheTTL, m.ttl)
+	assert.Equal(t, DefaultCacheTTL, m.freshTTL)
+	assert.Equal(t, DefaultStaleTTL, m.staleTTL)
 
 	m = NewManager(time.Minute)
-	assert.Equal(t, time.Minute, m.ttl)
+	assert.Equal(t, time.Minute, m.freshTTL)
 	assert.Equal(t, 30*time.Second, m.pruneInterval)
+	assert.Equal(t, DefaultStaleTTL, m.staleTTL)
+
+	// staleTTL is clamped up so it is never below the fresh window.
+	m = NewManager(2 * time.Hour)
+	assert.Equal(t, 2*time.Hour, m.freshTTL)
+	assert.Equal(t, 2*time.Hour, m.staleTTL)
 }
 
 func TestManager_Observe_InsertsAndRefreshes(t *testing.T) {
@@ -126,7 +134,7 @@ func TestManager_PickNode_Exclusion(t *testing.T) {
 	assert.Equal(t, "node-2", nodeID)
 	assert.Equal(t, "http://n2", endpoint)
 
-	// All excluded → no candidate.
+	// All excluded -> no candidate.
 	excluded["node-2"] = struct{}{}
 	_, _, ok = m.PickNode("model-a", excluded)
 	assert.False(t, ok)
@@ -175,92 +183,116 @@ func TestManager_PerModelIsolation(t *testing.T) {
 	assert.False(t, ok)
 }
 
-func TestManager_PickNode_SkipsExpiredWithoutPrune(t *testing.T) {
+func TestManager_PickNode_ServesStaleNode(t *testing.T) {
+	// PickNode is only reached during a dapi outage, so age must not gate
+	// selection: a long-idle last-known node is still served.
 	now := time.Unix(1_700_000_000, 0)
 	m := NewManager(time.Minute)
+	m.staleTTL = 2 * time.Minute
 	m.now = func() time.Time { return now }
 
 	m.Observe("model-a", "node-1", "http://n1")
-	m.Observe("model-a", "node-2", "http://n2")
 
-	// Advance past TTL for both entries. PickNode skips them but does not prune.
-	now = now.Add(time.Minute + time.Second)
-	_, _, ok := m.PickNode("model-a", nil)
-	assert.False(t, ok)
-
-	// Entries remain until pruneAll.
-	_, exists := m.byModel.Load("model-a")
-	assert.True(t, exists)
-	mc := loadModel(t, m, "model-a")
-	mc.mu.RLock()
-	assert.Len(t, mc.nodes, 2)
-	mc.mu.RUnlock()
+	now = now.Add(time.Hour) // far past both windows, and no prune ran
+	endpoint, nodeID, ok := m.PickNode("model-a", nil)
+	require.True(t, ok)
+	assert.Equal(t, "node-1", nodeID)
+	assert.Equal(t, "http://n1", endpoint)
 }
 
-func TestManager_PruneAll_RemovesExpired(t *testing.T) {
+func TestManager_PickNode_PrefersFreshOverStale(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	m := NewManager(time.Minute)
+	m := NewManager(time.Minute) // freshTTL
+	m.staleTTL = 2 * time.Minute
 	m.now = func() time.Time { return now }
 
-	m.Observe("model-a", "node-1", "http://n1")
-	m.Observe("model-a", "node-2", "http://n2")
-	now = now.Add(30 * time.Second)
-	m.Observe("model-a", "node-2", "http://n2") // refresh node-2
+	m.Observe("model-a", "node-stale", "http://stale")
+	now = now.Add(3 * time.Minute) // node-stale is now past staleTTL
+	m.Observe("model-a", "node-fresh", "http://fresh")
 
-	now = now.Add(31 * time.Second) // node-1 expired, node-2 still within TTL
-	m.pruneAll()
-
-	mc := loadModel(t, m, "model-a")
-	mc.mu.RLock()
-	require.Len(t, mc.nodes, 1)
-	_, has1 := mc.nodes["node-1"]
-	_, has2 := mc.nodes["node-2"]
-	mc.mu.RUnlock()
-	assert.False(t, has1)
-	assert.True(t, has2)
-
-	// All expired → model removed.
-	now = now.Add(time.Minute + time.Second)
-	m.pruneAll()
-	_, exists := m.byModel.Load("model-a")
-	assert.False(t, exists)
-}
-
-func TestManager_TTL_KeepsFreshEntries(t *testing.T) {
-	now := time.Unix(1_700_000_000, 0)
-	m := NewManager(time.Minute)
-	m.now = func() time.Time { return now }
-
-	m.Observe("model-a", "node-1", "http://n1")
-	now = now.Add(30 * time.Second)
-	m.Observe("model-a", "node-2", "http://n2")
-
-	// node-1 lastSeen at t0; now is t0+60s → exactly at TTL boundary (kept: <= ttl).
-	now = now.Add(30 * time.Second)
-	got := make(map[string]struct{})
-	for range 2 {
+	// The stale node is never served while a fresher one exists, even as
+	// round-robin cycles.
+	for range 3 {
 		_, id, ok := m.PickNode("model-a", nil)
 		require.True(t, ok)
-		got[id] = struct{}{}
+		assert.Equal(t, "node-fresh", id)
 	}
-	assert.Equal(t, map[string]struct{}{"node-1": {}, "node-2": {}}, got)
-
-	// One more second ages node-1 out of PickNode eligibility.
-	now = now.Add(time.Second)
-	_, id, ok := m.PickNode("model-a", nil)
-	require.True(t, ok)
-	assert.Equal(t, "node-2", id)
-
-	_, id, ok = m.PickNode("model-a", nil)
-	require.True(t, ok)
-	assert.Equal(t, "node-2", id)
 }
 
-func TestManager_Start_PrunesPeriodically(t *testing.T) {
+func TestManager_PickNode_ServesStaleWhenFreshExcluded(t *testing.T) {
 	now := time.Unix(1_700_000_000, 0)
-	m := NewManager(50 * time.Millisecond)
-	m.pruneInterval = 20 * time.Millisecond
+	m := NewManager(time.Minute)
+	m.staleTTL = 2 * time.Minute
 	m.now = func() time.Time { return now }
+
+	m.Observe("model-a", "node-stale", "http://stale")
+	now = now.Add(3 * time.Minute)
+	m.Observe("model-a", "node-fresh", "http://fresh")
+
+	// With the only fresh node excluded, the second pass serves the stale one.
+	excluded := map[string]struct{}{"node-fresh": {}}
+	_, id, ok := m.PickNode("model-a", excluded)
+	require.True(t, ok)
+	assert.Equal(t, "node-stale", id)
+}
+
+func TestManager_PruneAll_DropsStaleWhenFlowPresent(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	m := NewManager(time.Minute) // freshTTL
+	m.staleTTL = 5 * time.Minute
+	m.now = func() time.Time { return now }
+
+	m.Observe("model-a", "node-old", "http://old")
+
+	// node-old ages past staleTTL; node-fresh proves the model is still churning.
+	now = now.Add(6 * time.Minute)
+	m.Observe("model-a", "node-fresh", "http://fresh")
+
+	m.pruneAll()
+
+	mc := loadModel(t, m, "model-a")
+	mc.mu.RLock()
+	_, hasOld := mc.nodes["node-old"]
+	_, hasFresh := mc.nodes["node-fresh"]
+	mc.mu.RUnlock()
+	assert.False(t, hasOld, "stale node dropped once a fresh observe proves live flow")
+	assert.True(t, hasFresh)
+}
+
+func TestManager_PruneAll_RetainsWhenNoFlow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	m := NewManager(time.Minute) // freshTTL
+	m.staleTTL = 5 * time.Minute
+	m.now = func() time.Time { return now }
+
+	m.Observe("model-a", "node-1", "http://n1")
+	m.Observe("model-a", "node-2", "http://n2")
+
+	// dapi down: no more observes. Advance far past both windows.
+	now = now.Add(time.Hour)
+	m.pruneAll()
+
+	mc := loadModel(t, m, "model-a")
+	mc.mu.RLock()
+	require.Len(t, mc.nodes, 2, "no live flow -> nothing pruned; last-known set retained")
+	mc.mu.RUnlock()
+
+	// The retained nodes are still selectable for fallback.
+	_, _, ok := m.PickNode("model-a", nil)
+	assert.True(t, ok)
+}
+
+func TestManager_Start_RetainsWithoutFlow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var nowMu sync.Mutex
+	m := NewManager(50 * time.Millisecond)
+	m.staleTTL = 100 * time.Millisecond
+	m.pruneInterval = 20 * time.Millisecond
+	m.now = func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	}
 
 	m.Observe("model-a", "node-1", "http://n1")
 
@@ -268,10 +300,53 @@ func TestManager_Start_PrunesPeriodically(t *testing.T) {
 	defer cancel()
 	m.Start(ctx)
 
-	now = now.Add(100 * time.Millisecond)
-	require.Eventually(t, func() bool {
+	nowMu.Lock()
+	now = now.Add(time.Second) // far past fresh and stale windows
+	nowMu.Unlock()
+
+	// Prune ticks keep running, but with no fresh observe the model is never
+	// pruned away.
+	require.Never(t, func() bool {
 		_, exists := m.byModel.Load("model-a")
 		return !exists
+	}, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+func TestManager_Start_PrunesStaleWithFlow(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	var nowMu sync.Mutex
+	m := NewManager(50 * time.Millisecond)
+	m.staleTTL = 100 * time.Millisecond
+	m.pruneInterval = 20 * time.Millisecond
+	m.now = func() time.Time {
+		nowMu.Lock()
+		defer nowMu.Unlock()
+		return now
+	}
+
+	m.Observe("model-a", "node-old", "http://old")
+
+	nowMu.Lock()
+	now = now.Add(200 * time.Millisecond) // node-old is now stale
+	nowMu.Unlock()
+	m.Observe("model-a", "node-fresh", "http://fresh") // live flow
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	m.Start(ctx)
+
+	// A live flow lets the ticker drop the stale node while keeping the fresh one.
+	require.Eventually(t, func() bool {
+		v, ok := m.byModel.Load("model-a")
+		if !ok {
+			return false
+		}
+		mc := v.(*modelCache)
+		mc.mu.RLock()
+		defer mc.mu.RUnlock()
+		_, hasOld := mc.nodes["node-old"]
+		_, hasFresh := mc.nodes["node-fresh"]
+		return !hasOld && hasFresh
 	}, time.Second, 10*time.Millisecond)
 }
 
