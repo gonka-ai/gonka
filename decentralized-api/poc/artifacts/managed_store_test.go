@@ -68,7 +68,7 @@ func TestManagedArtifactStore_GetStore_ExistingDir(t *testing.T) {
 	if err != nil {
 		t.Fatalf("GetOrCreateStore failed: %v", err)
 	}
-	if err := store.Add(1, []byte("test")); err != nil {
+	if err := store.AddWithNode(1, []byte("test"), ""); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 	if err := m1.Flush(); err != nil {
@@ -99,7 +99,7 @@ func TestManagedArtifactStore_GetStoresForStage(t *testing.T) {
 		if err != nil {
 			t.Fatalf("GetOrCreateStore(%q) failed: %v", modelID, err)
 		}
-		if err := store.Add(1, []byte(modelID)); err != nil {
+		if err := store.AddWithNode(1, []byte(modelID), ""); err != nil {
 			t.Fatalf("Add failed for %q: %v", modelID, err)
 		}
 	}
@@ -239,7 +239,7 @@ func TestManagedArtifactStore_Flush(t *testing.T) {
 		t.Fatalf("GetOrCreateStore failed: %v", err)
 	}
 
-	if err := store.Add(1, []byte("test")); err != nil {
+	if err := store.AddWithNode(1, []byte("test"), ""); err != nil {
 		t.Fatalf("Add failed: %v", err)
 	}
 
@@ -335,7 +335,7 @@ func TestManagedArtifactStore_ParallelModelStores(t *testing.T) {
 				return
 			}
 
-			nodeCounts := store.GetNodeDistribution()
+			nodeCounts := store.GetNodeCounts()
 			expectedNodeID := fmt.Sprintf("node-%02d", modelIdx)
 			if nodeCounts[expectedNodeID] != writesPerModel {
 				readErrs <- fmt.Errorf("GetNodeDistribution(%s): expected %d for %s, got %d", modelID, writesPerModel, expectedNodeID, nodeCounts[expectedNodeID])
@@ -343,7 +343,7 @@ func TestManagedArtifactStore_ParallelModelStores(t *testing.T) {
 			}
 
 			for _, offset := range []uint32{0, writesPerModel / 2, writesPerModel - 1} {
-				nonce, vector, err := store.GetArtifact(offset)
+				nonce, vector, _, err := store.GetArtifactAndProof(offset, writesPerModel)
 				if err != nil {
 					readErrs <- fmt.Errorf("GetArtifact(%s, %d): %w", modelID, offset, err)
 					return
