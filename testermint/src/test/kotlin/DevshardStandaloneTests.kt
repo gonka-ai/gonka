@@ -363,7 +363,7 @@ class DevshardStandaloneTests : TestermintTest() {
                 assertThat(result.parsed.version).isEqualTo(standaloneTestVersionName)
                 assertThat(result.parsed.hostStats).isNotEmpty()
                 assertThat(result.parsed.signatures).isNotEmpty()
-                assertThat(result.parsed.hostStats.sumOf { it.completedValidations }).isGreaterThan(0)
+                assertThat(result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }).isGreaterThan(0)
 
                 val settleResp = genesis.settleDevshardEscrow(result.rawJson, from = session.keyName)
                 assertThat(settleResp.code)

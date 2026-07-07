@@ -47,8 +47,24 @@ type HostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
+}
+
+func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
+	entry := HostStatsJSON{
+		SlotID:  slot,
+		Missed:  hs.Missed,
+		Invalid: hs.Invalid,
+		Cost:    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry.RequiredValidations = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry.CompletedValidations = hs.CompletedValidations
+	}
+	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -667,11 +683,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
-		stats = append(stats, HostStatsJSON{
-			SlotID: slot, Missed: hs.Missed, Invalid: hs.Invalid,
-			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
-		})
+		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))
