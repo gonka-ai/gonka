@@ -240,12 +240,12 @@ func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 // never land — only then is it safe to clear.
 func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	old := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339Nano)
-	_, err := store.db.Exec(`
-		INSERT INTO escrow_rotation_commitments (tx_hash, model, role, epoch, private_key_env, block_height, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"TXOLD", "Qwen/Test", rotationRoleTemp, 0, "", 0, old)
-	require.NoError(t, err)
+	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+		TxHash:    "TXOLD",
+		Model:     "Qwen/Test",
+		Role:      rotationRoleTemp,
+		CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
+	}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
 
 	g.reconcileCommitments(context.Background(), settings)

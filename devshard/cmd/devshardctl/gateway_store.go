@@ -1027,7 +1027,7 @@ type GatewayEscrowCommitment struct {
 	Epoch         uint64
 	PrivateKeyEnv string
 	BlockHeight   uint64
-	CreatedAt     string
+	CreatedAt     time.Time
 }
 
 // SaveCommitment records a create intent, keyed by tx hash.
@@ -1035,7 +1035,12 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("gateway store unavailable")
 	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	createdAt := c.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	} else {
+		createdAt = createdAt.UTC()
+	}
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO escrow_rotation_commitments (
 			tx_hash, model, role, epoch, private_key_env, block_height, created_at
@@ -1046,12 +1051,26 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 		c.Epoch,
 		strings.TrimSpace(c.PrivateKeyEnv),
 		c.BlockHeight,
-		now,
+		createdAt,
 	)
 	if err != nil {
 		return fmt.Errorf("save escrow commitment tx=%s: %w", c.TxHash, err)
 	}
 	return nil
+}
+
+func scanGatewayDBTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.UTC()
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", raw); err == nil {
+		return t.UTC()
+	}
+	return time.Time{}
 }
 
 // LoadCommitments returns all pending commitments (oldest first).
@@ -1070,9 +1089,11 @@ func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
 	var commitments []GatewayEscrowCommitment
 	for rows.Next() {
 		var c GatewayEscrowCommitment
-		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.BlockHeight, &c.CreatedAt); err != nil {
+		var createdAt string
+		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.BlockHeight, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan escrow commitment: %w", err)
 		}
+		c.CreatedAt = scanGatewayDBTime(createdAt)
 		commitments = append(commitments, c)
 	}
 	return commitments, rows.Err()

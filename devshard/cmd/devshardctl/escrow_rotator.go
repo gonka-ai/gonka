@@ -566,14 +566,13 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 }
 
 // commitmentTxMayStillLand reports whether a not-found tx could yet be committed
-// (within the unordered-tx window) — if so, the commitment must be kept. An
-// unparseable timestamp is treated as still-pending so we never clear too early.
+// (within the unordered-tx window) — if so, the commitment must be kept. A zero
+// timestamp is treated as still-pending so we never clear too early.
 func commitmentTxMayStillLand(c GatewayEscrowCommitment) bool {
-	createdAt, err := time.Parse(time.RFC3339Nano, strings.TrimSpace(c.CreatedAt))
-	if err != nil {
+	if c.CreatedAt.IsZero() {
 		return true
 	}
-	return time.Since(createdAt) <= commitmentReconcileGrace
+	return time.Since(c.CreatedAt) <= commitmentReconcileGrace
 }
 
 func defaultQueryTxEscrowID(ctx context.Context, settings GatewaySettings, txHash string) (uint64, bool, error) {
