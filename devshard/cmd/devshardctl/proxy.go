@@ -592,24 +592,22 @@ func (p *Proxy) handleDebugPairwise(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
-
-	counts := make(map[string]int)
-	for _, rec := range st.Inferences {
-		name := inferenceStatusName[rec.Status]
+	total, statusCounts := p.sm.InferenceStatusCounts()
+	counts := make(map[string]int, len(statusCounts))
+	for status, n := range statusCounts {
+		name := inferenceStatusName[status]
 		if name == "" {
-			name = fmt.Sprintf("unknown(%d)", rec.Status)
+			name = fmt.Sprintf("unknown(%d)", status)
 		}
-		counts[name]++
+		counts[name] = n
 	}
 
 	writeJSON(w, map[string]any{
-		"nonce":            st.LatestNonce,
-		"balance":          st.Balance,
-		"total_inferences": len(st.Inferences),
+		"nonce":            p.sm.LatestNonce(),
+		"balance":          p.sm.Balance(),
+		"total_inferences": total,
 		"status_counts":    counts,
 	})
-
 }
 
 func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
@@ -631,13 +629,12 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		phaseStr = fmt.Sprintf("unknown(%d)", phase)
 	}
 
-	st := p.sm.SnapshotState()
-	cfg := st.Config
+	cfg := p.sm.Config()
 	status := statusResponse{
 		EscrowID: p.escrowID,
 		Nonce:    p.session.Nonce(),
 		Phase:    phaseStr,
-		Balance:  st.Balance,
+		Balance:  p.sm.Balance(),
 		Config: statusSessionConfig{
 			RefusalTimeout:    cfg.RefusalTimeout,
 			ExecutionTimeout:  cfg.ExecutionTimeout,
@@ -842,8 +839,12 @@ func (p *Proxy) handleCollectSignatures(w http.ResponseWriter, r *http.Request) 
 	writeJSON(w, resp)
 }
 
+// handleState returns the escrow summary: session scalars, config, group, and
+// the small per-slot maps. It deliberately omits the (potentially large)
+// inference map -- that lives at /v1/debug/inferences -- so this endpoint stays
+// bounded regardless of how many inferences an escrow has accumulated.
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
+	st := p.sm.SnapshotStateNoInferences()
 
 	var phaseStr string
 	switch st.Phase {
@@ -880,33 +881,6 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	inferences := make(map[string]any, len(st.Inferences))
-	for id, rec := range st.Inferences {
-		name := inferenceStatusName[rec.Status]
-		if name == "" {
-			name = fmt.Sprintf("unknown(%d)", rec.Status)
-		}
-		inf := map[string]any{
-			"status":        name,
-			"executor_slot": rec.ExecutorSlot,
-			"model":         rec.Model,
-			"prompt_hash":   hex.EncodeToString(rec.PromptHash),
-			"response_hash": hex.EncodeToString(rec.ResponseHash),
-			"input_length":  rec.InputLength,
-			"max_tokens":    rec.MaxTokens,
-			"input_tokens":  rec.InputTokens,
-			"output_tokens": rec.OutputTokens,
-			"reserved_cost": rec.ReservedCost,
-			"actual_cost":   rec.ActualCost,
-			"started_at":    rec.StartedAt,
-			"confirmed_at":  rec.ConfirmedAt,
-			"votes_valid":   rec.VotesValid,
-			"votes_invalid": rec.VotesInvalid,
-			"validated_by":  rec.ValidatedBy.SetBits(),
-		}
-		inferences[fmt.Sprintf("%d", id)] = inf
-	}
-
 	hostStats := make(map[string]any, len(st.HostStats))
 	for slot, hs := range st.HostStats {
 		hostStats[fmt.Sprintf("%d", slot)] = map[string]any{
@@ -931,13 +905,49 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 	resp := map[string]any{
 		"session":        session,
 		"group":          group,
-		"inferences":     inferences,
 		"host_stats":     hostStats,
 		"revealed_seeds": revealedSeeds,
 		"warm_keys":      warmKeys,
 	}
 
 	writeJSON(w, resp)
+}
+
+// handleDebugInferences returns the full inference map for the escrow. It is a
+// debug-only endpoint (potentially large: up to the per-escrow inference cap)
+// split out of /v1/state so that summary reads stay cheap.
+func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
+	inferenceMap := p.sm.SnapshotInferences()
+	inferences := make(map[string]any, len(inferenceMap))
+	for id, rec := range inferenceMap {
+		name := inferenceStatusName[rec.Status]
+		if name == "" {
+			name = fmt.Sprintf("unknown(%d)", rec.Status)
+		}
+		inferences[fmt.Sprintf("%d", id)] = map[string]any{
+			"status":        name,
+			"executor_slot": rec.ExecutorSlot,
+			"model":         rec.Model,
+			"prompt_hash":   hex.EncodeToString(rec.PromptHash),
+			"response_hash": hex.EncodeToString(rec.ResponseHash),
+			"input_length":  rec.InputLength,
+			"max_tokens":    rec.MaxTokens,
+			"input_tokens":  rec.InputTokens,
+			"output_tokens": rec.OutputTokens,
+			"reserved_cost": rec.ReservedCost,
+			"actual_cost":   rec.ActualCost,
+			"started_at":    rec.StartedAt,
+			"confirmed_at":  rec.ConfirmedAt,
+			"votes_valid":   rec.VotesValid,
+			"votes_invalid": rec.VotesInvalid,
+			"validated_by":  rec.ValidatedBy.SetBits(),
+		}
+	}
+
+	writeJSON(w, map[string]any{
+		"total_inferences": len(inferences),
+		"inferences":       inferences,
+	})
 }
 
 func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
@@ -958,8 +968,7 @@ func (p *Proxy) handleInference(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	st := p.sm.SnapshotState()
-	inference, found := st.Inferences[parsedID]
+	inference, found := p.sm.GetInference(parsedID)
 	if !found {
 		http.Error(w, fmt.Sprintf("inference not found for inference ID: %s", inferenceID), http.StatusNotFound)
 		return
