@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,23 @@ func TestGatewayStoreUsesWALAndBusyTimeout(t *testing.T) {
 	var busyTimeout int
 	require.NoError(t, store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout))
 	assert.Equal(t, 5000, busyTimeout)
+}
+
+func TestWithDBRetry_RespectsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var attempts atomic.Int32
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := withDBRetry(ctx, func() error {
+		attempts.Add(1)
+		return errors.New("database is locked")
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, int(attempts.Load()), escrowWriteRetries)
 }
 
 func recoveryTestSettings() GatewaySettings {
