@@ -7,6 +7,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -84,6 +85,91 @@ func TestNewStorage_postgresBootFailsWhenUnreachable(t *testing.T) {
 
 	_, err = os.Stat(MetaDBPath(storeDir))
 	require.True(t, os.IsNotExist(err))
+}
+
+func TestNewStorage_pgUnavailableServesSQLiteOwnedOnlyAndRejectsNew(t *testing.T) {
+	storeDir := t.TempDir()
+
+	t.Setenv("PGHOST", "")
+	sqliteStore, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	require.NoError(t, sqliteStore.CreateSession(paramsForEpoch("sqlite-owned", 9)))
+	require.NoError(t, sqliteStore.AppendDiff("sqlite-owned", makeDiffRecord(1)))
+	require.NoError(t, sqliteStore.Close())
+
+	t.Setenv("PGHOST", "127.0.0.1")
+	t.Setenv("PGPORT", "1")
+	t.Setenv("PGDATABASE", "missing")
+	t.Setenv("PGUSER", "missing")
+	t.Setenv("PGPASSWORD", "missing")
+
+	logs := captureStorageLogs(t)
+	store, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	requireStorageLogEntry(t, readStorageLogEntries(t, logs),
+		"devshard storage: postgres unavailable; serving sqlite-owned escrows only and rejecting new escrows while reconnect runs")
+
+	hybrid := store.(*HybridStorage)
+	require.True(t, hybrid.degradedOwnerOnly)
+	require.Nil(t, hybrid.pg)
+	sqlite := hybrid.sqlite.(*SQLite)
+	require.True(t, sqlite.HasEscrow("sqlite-owned"))
+
+	meta, err := store.GetSessionMeta("sqlite-owned")
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), meta.LatestNonce)
+	require.NoError(t, store.AppendDiff("sqlite-owned", makeDiffRecord(2)))
+
+	err = store.CreateSession(paramsForEpoch("new-escrow", 10))
+	require.ErrorIs(t, err, ErrStoragePostgresUnavailable)
+	require.False(t, sqlite.HasEscrow("new-escrow"), "new escrow must not fall back to SQLite")
+}
+
+func TestNewStorage_pgUnavailableReconnectsAndPromotes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
+	}
+	storeDir := t.TempDir()
+	t.Setenv("PG_RECONNECT_INTERVAL", "20ms")
+
+	t.Setenv("PGHOST", "")
+	sqliteStore, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	require.NoError(t, sqliteStore.CreateSession(paramsForEpoch("sqlite-owned", 9)))
+	require.NoError(t, sqliteStore.Close())
+
+	t.Setenv("PGHOST", "127.0.0.1")
+	t.Setenv("PGPORT", "1")
+	t.Setenv("PGDATABASE", "missing")
+	t.Setenv("PGUSER", "missing")
+	t.Setenv("PGPASSWORD", "missing")
+
+	store, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	hybrid := store.(*HybridStorage)
+	require.True(t, hybrid.degradedOwnerOnly)
+	require.Nil(t, hybrid.pg)
+
+	cleanup := setupPostgresContainer(t)
+	t.Cleanup(cleanup)
+
+	require.Eventually(t, func() bool {
+		hybrid.mu.RLock()
+		pg := hybrid.pg
+		degraded := hybrid.degradedOwnerOnly
+		hybrid.mu.RUnlock()
+		return pg != nil && !degraded
+	}, 30*time.Second, 50*time.Millisecond)
+
+	sqlite := hybrid.sqlite.(*SQLite)
+	pg := hybrid.pg.(*Postgres)
+	require.True(t, sqlite.HasEscrow("sqlite-owned"))
+	require.False(t, pg.HasEscrow("sqlite-owned"))
+	require.NoError(t, store.CreateSession(paramsForEpoch("pg-after-reconnect", 10)))
+	require.True(t, pg.HasEscrow("pg-after-reconnect"))
+	require.False(t, sqlite.HasEscrow("pg-after-reconnect"), "new escrow must not fall back to SQLite after promotion")
 }
 
 func TestNewStorage_attachesSQLiteAndPostgresWhenMetaHasRowsAndPGHOSTSet(t *testing.T) {
@@ -416,6 +502,35 @@ func TestNewStorage_postgresWhenEmptyMetaAndPGHOST(t *testing.T) {
 	pgBound, err := ReadPGBound(storeDir)
 	require.NoError(t, err)
 	require.False(t, pgBound, "empty postgres has no sessions to orphan, so .pg-bound must not be set")
+}
+
+func TestNewStorage_pgBoundWithoutPGHOSTServesSQLiteOwnedOnlyAndRejectsNew(t *testing.T) {
+	t.Setenv("PGHOST", "")
+	storeDir := t.TempDir()
+	sqliteStore, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	require.NoError(t, sqliteStore.CreateSession(paramsForEpoch("sqlite-owned", 9)))
+	require.NoError(t, sqliteStore.Close())
+	require.NoError(t, WritePGBound(storeDir))
+
+	logs := captureStorageLogs(t)
+	store, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	requireStorageLogEntry(t, readStorageLogEntries(t, logs),
+		"devshard storage: .pg-bound present but PGHOST unset; serving sqlite-owned escrows only and rejecting new escrows")
+
+	hybrid := store.(*HybridStorage)
+	require.True(t, hybrid.degradedOwnerOnly)
+	require.Nil(t, hybrid.pg)
+	sqlite := hybrid.sqlite.(*SQLite)
+	require.True(t, sqlite.HasEscrow("sqlite-owned"))
+
+	_, err = store.GetSessionMeta("sqlite-owned")
+	require.NoError(t, err)
+	err = store.CreateSession(paramsForEpoch("new-escrow", 10))
+	require.ErrorIs(t, err, ErrStoragePGBoundWithoutPostgres)
+	require.False(t, sqlite.HasEscrow("new-escrow"), "new escrow must not fall back to SQLite")
 }
 
 func TestNewStorage_failsWhenPGBoundWithoutPGHOST(t *testing.T) {

@@ -1,10 +1,12 @@
 package storage
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"sync"
+	"time"
 
 	"devshard/types"
 )
@@ -25,6 +27,15 @@ type HybridStorage struct {
 	pg       Storage
 	preferPG bool
 	storeDir string // enables .pg-bound maintenance; empty disables it
+
+	// degradedOwnerOnly means only already-owned escrows may use the single
+	// SQLite backend. New/unknown escrows fail with newSessionErr instead of
+	// falling back to SQLite while Postgres is unavailable or unconfigured.
+	degradedOwnerOnly bool
+	newSessionErr     error
+
+	reconnectStop chan struct{}
+	reconnectDone chan struct{}
 
 	mu    sync.RWMutex
 	owner map[string]Storage
@@ -76,13 +87,28 @@ func newHybridRouter(sqlite, pg Storage, preferPG bool, storeDir string) *Hybrid
 	}
 }
 
-func (h *HybridStorage) backends() []Storage {
-	bs := make([]Storage, 0, 2)
-	if h.sqlite != nil {
-		bs = append(bs, h.sqlite)
+func newDegradedSQLiteRouter(sqlite Storage, storeDir string, newSessionErr error) *HybridStorage {
+	return &HybridStorage{
+		sqlite:            sqlite,
+		storeDir:          storeDir,
+		degradedOwnerOnly: true,
+		newSessionErr:     newSessionErr,
+		owner:             make(map[string]Storage),
 	}
-	if h.pg != nil {
-		bs = append(bs, h.pg)
+}
+
+func (h *HybridStorage) backends() []Storage {
+	h.mu.RLock()
+	sqlite := h.sqlite
+	pg := h.pg
+	h.mu.RUnlock()
+
+	bs := make([]Storage, 0, 2)
+	if sqlite != nil {
+		bs = append(bs, sqlite)
+	}
+	if pg != nil {
+		bs = append(bs, pg)
 	}
 	return bs
 }
@@ -91,21 +117,35 @@ func (h *HybridStorage) backends() []Storage {
 // backend knows it yet. When only one backend is configured it is returned
 // without probing.
 func (h *HybridStorage) backendFor(escrowID string) Storage {
-	if h.pg == nil {
-		return h.sqlite
-	}
-	if h.sqlite == nil {
-		return h.pg
-	}
-
 	h.mu.RLock()
+	sqlite := h.sqlite
+	pg := h.pg
+	degradedOwnerOnly := h.degradedOwnerOnly
 	b := h.owner[escrowID]
 	h.mu.RUnlock()
+
+	if pg == nil {
+		if degradedOwnerOnly {
+			if owns(sqlite, escrowID) {
+				return sqlite
+			}
+			return nil
+		}
+		return sqlite
+	}
+	if sqlite == nil {
+		return pg
+	}
+
 	if b != nil {
 		return b
 	}
 
-	b = h.resolveOwner(escrowID)
+	if owns(sqlite, escrowID) {
+		b = sqlite
+	} else if owns(pg, escrowID) {
+		b = pg
+	}
 	if b != nil {
 		h.mu.Lock()
 		h.owner[escrowID] = b
@@ -118,13 +158,29 @@ func (h *HybridStorage) backendFor(escrowID string) Storage {
 // neither backend knows it. SQLite is checked first because its lookup is fully
 // in-memory.
 func (h *HybridStorage) resolveOwner(escrowID string) Storage {
-	if owns(h.sqlite, escrowID) {
-		return h.sqlite
+	h.mu.RLock()
+	sqlite := h.sqlite
+	pg := h.pg
+	h.mu.RUnlock()
+	if owns(sqlite, escrowID) {
+		return sqlite
 	}
-	if owns(h.pg, escrowID) {
-		return h.pg
+	if owns(pg, escrowID) {
+		return pg
 	}
 	return nil
+}
+
+func (h *HybridStorage) postgresBackend() Storage {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.pg
+}
+
+func (h *HybridStorage) newSessionError() error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.newSessionErr
 }
 
 func owns(b Storage, escrowID string) bool {
@@ -163,6 +219,8 @@ func (h *HybridStorage) clearOwnerCache() {
 // is configured (preferPG), otherwise SQLite. Falls back to whichever backend
 // is present when only one is configured.
 func (h *HybridStorage) newSessionBackend() Storage {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
 	if h.preferPG && h.pg != nil {
 		return h.pg
 	}
@@ -175,10 +233,17 @@ func (h *HybridStorage) newSessionBackend() Storage {
 func (h *HybridStorage) CreateSession(params CreateSessionParams) error {
 	b := h.backendFor(params.EscrowID)
 	if b == nil {
+		if err := h.newSessionError(); err != nil {
+			return fmt.Errorf("%w: escrow %s", err, params.EscrowID)
+		}
 		b = h.newSessionBackend()
 	}
+	if b == nil {
+		return fmt.Errorf("%w: %s", ErrSessionNotFound, params.EscrowID)
+	}
 
-	if h.pg != nil && b == h.pg && h.storeDir != "" {
+	pg := h.postgresBackend()
+	if pg != nil && b == pg && h.storeDir != "" {
 		// Postgres-bound session: keep .pg-bound present for as long as PG holds
 		// any session. Write the marker ahead of the insert and hold markerMu
 		// across the insert so a concurrent prune-driven clear cannot observe an
@@ -227,10 +292,11 @@ func (h *HybridStorage) ensurePGBoundLocked() error {
 // perform one, the marker is kept; boot-time reconciliation or a prune-driven
 // clear removes a genuinely stale marker later.
 func (h *HybridStorage) clearPGBoundAfterFailedCreateLocked(escrowID string, createErr error) {
-	if !h.pgBoundSet || pgHasSessions(h.pg) {
+	pg := h.postgresBackend()
+	if !h.pgBoundSet || pgHasSessions(pg) {
 		return
 	}
-	lp, ok := h.pg.(livePresence)
+	lp, ok := pg.(livePresence)
 	if !ok {
 		return
 	}
@@ -254,16 +320,86 @@ func (h *HybridStorage) clearPGBoundAfterFailedCreateLocked(escrowID string, cre
 		"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr)
 }
 
+type storageOpener func(context.Context) (Storage, error)
+
+func (h *HybridStorage) startPostgresReconnect(ctx context.Context, opener storageOpener, interval time.Duration) {
+	if interval <= 0 {
+		interval = time.Second
+	}
+	h.mu.Lock()
+	if h.reconnectStop != nil || h.pg != nil || !h.degradedOwnerOnly {
+		h.mu.Unlock()
+		return
+	}
+	stop := make(chan struct{})
+	done := make(chan struct{})
+	h.reconnectStop = stop
+	h.reconnectDone = done
+	h.mu.Unlock()
+
+	go func() {
+		defer close(done)
+		t := time.NewTicker(interval)
+		defer t.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-stop:
+				return
+			case <-t.C:
+			}
+
+			pg, err := opener(ctx)
+			if err != nil {
+				slog.Warn("devshard storage: postgres reconnect failed; staying in degraded sqlite-owned-only mode",
+					"dir", h.storeDir, "error", err)
+				continue
+			}
+			if err := h.promotePostgres(pg); err != nil {
+				_ = pg.Close()
+				slog.Warn("devshard storage: postgres reconnect succeeded but promotion failed; staying degraded",
+					"dir", h.storeDir, "error", err)
+				continue
+			}
+			return
+		}
+	}()
+}
+
+func (h *HybridStorage) promotePostgres(pg Storage) error {
+	if pg == nil {
+		return fmt.Errorf("postgres backend is nil")
+	}
+	if err := h.reconcilePGBoundFor(pg); err != nil {
+		return err
+	}
+	h.mu.Lock()
+	if h.pg != nil {
+		h.mu.Unlock()
+		return nil
+	}
+	h.pg = pg
+	h.preferPG = true
+	h.degradedOwnerOnly = false
+	h.newSessionErr = nil
+	h.owner = make(map[string]Storage)
+	h.mu.Unlock()
+	slog.Info("devshard storage: postgres reconnected; leaving degraded sqlite-owned-only mode", "dir", h.storeDir)
+	return nil
+}
+
 // clearPGBoundIfDrained removes .pg-bound once Postgres holds no sessions, so a
 // later SQLite-only boot is allowed without manual cleanup. It is a no-op until
 // PG is genuinely empty and while the marker is already absent.
 func (h *HybridStorage) clearPGBoundIfDrained() {
-	if h.pg == nil || h.storeDir == "" {
+	pg := h.postgresBackend()
+	if pg == nil || h.storeDir == "" {
 		return
 	}
 	h.markerMu.Lock()
 	defer h.markerMu.Unlock()
-	if !h.pgBoundSet || pgHasSessions(h.pg) {
+	if !h.pgBoundSet || pgHasSessions(pg) {
 		return
 	}
 	if err := os.Remove(PGBoundPath(h.storeDir)); err != nil && !os.IsNotExist(err) {
@@ -278,7 +414,14 @@ func (h *HybridStorage) clearPGBoundIfDrained() {
 // startup: present when PG holds sessions, absent when it does not. This clears
 // a stale marker left behind after a previous run's escrows fully drained.
 func (h *HybridStorage) reconcilePGBoundAtBoot() error {
-	if h.pg == nil || h.storeDir == "" {
+	h.mu.RLock()
+	pg := h.pg
+	h.mu.RUnlock()
+	return h.reconcilePGBoundFor(pg)
+}
+
+func (h *HybridStorage) reconcilePGBoundFor(pg Storage) error {
+	if pg == nil || h.storeDir == "" {
 		return nil
 	}
 	h.markerMu.Lock()
@@ -288,7 +431,7 @@ func (h *HybridStorage) reconcilePGBoundAtBoot() error {
 		return err
 	}
 	h.pgBoundSet = present
-	if pgHasSessions(h.pg) {
+	if pgHasSessions(pg) {
 		return h.ensurePGBoundLocked()
 	}
 	if present {
@@ -482,6 +625,22 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 }
 
 func (h *HybridStorage) Close() error {
+	h.mu.Lock()
+	stop := h.reconnectStop
+	done := h.reconnectDone
+	if stop != nil {
+		select {
+		case <-stop:
+		default:
+			close(stop)
+		}
+		h.reconnectStop = nil
+	}
+	h.mu.Unlock()
+	if done != nil {
+		<-done
+	}
+
 	var firstErr error
 	for _, b := range h.backends() {
 		if err := b.Close(); err != nil && firstErr == nil {

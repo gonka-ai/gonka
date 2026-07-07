@@ -1,8 +1,10 @@
 package storage
 
 import (
+	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -135,6 +137,25 @@ func (f *failingPGStorageNoLive) CreateSession(params CreateSessionParams) error
 
 func (f *failingPGStorageNoLive) HasAnySessions() bool { return false }
 
+type owningRecordingStorage struct {
+	recordingStorage
+	owned map[string]struct{}
+}
+
+func (o *owningRecordingStorage) HasEscrow(escrowID string) bool {
+	_, ok := o.owned[escrowID]
+	return ok
+}
+
+func (o *owningRecordingStorage) CreateSession(params CreateSessionParams) error {
+	o.lastMethod = "CreateSession"
+	if o.owned == nil {
+		o.owned = make(map[string]struct{})
+	}
+	o.owned[params.EscrowID] = struct{}{}
+	return nil
+}
+
 func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 	rec := &recordingStorage{}
 	h := NewHybridStorage(rec)
@@ -199,6 +220,34 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 
 	require.NoError(t, h.Close())
 	require.Equal(t, "Close", rec.lastMethod)
+}
+
+func TestHybridStorage_ReconnectPromotesDegradedRouter(t *testing.T) {
+	sqlite := &owningRecordingStorage{owned: map[string]struct{}{"sqlite-owned": {}}}
+	h := newDegradedSQLiteRouter(sqlite, t.TempDir(), ErrStoragePostgresUnavailable)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pg := &recordingStorage{}
+	attempts := 0
+	h.startPostgresReconnect(ctx, func(context.Context) (Storage, error) {
+		attempts++
+		if attempts == 1 {
+			return nil, errors.New("pg down")
+		}
+		return pg, nil
+	}, 5*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		h.mu.RLock()
+		degraded := h.degradedOwnerOnly
+		attached := h.pg == pg
+		h.mu.RUnlock()
+		return attached && !degraded
+	}, time.Second, 10*time.Millisecond)
+
+	require.NoError(t, h.CreateSession(CreateSessionParams{EscrowID: "new-pg"}))
+	require.Equal(t, "CreateSession", pg.lastMethod, "new sessions must use PG after promotion")
 }
 
 func TestHybridStorage_ClearsPGBoundAfterFailedPGCreateWhenProvablyEmpty(t *testing.T) {

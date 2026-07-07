@@ -124,9 +124,12 @@ escrows and new Postgres escrows at the same time.
 | Condition | New escrows | Existing escrows |
 | --- | --- | --- |
 | `PGHOST` unset, no `.pg-bound` | SQLite | SQLite |
-| `PGHOST` unset, `.pg-bound` present | Boot fails (would orphan PG sessions) | — |
-| `PGHOST` set, no local SQLite sessions | Postgres (boot fails if PG unreachable) | Postgres |
-| `PGHOST` set, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
+| `PGHOST` unset, `.pg-bound` present, no SQLite sessions | Boot fails (would orphan PG sessions) | — |
+| `PGHOST` unset, `.pg-bound` present, SQLite sessions exist | Rejected (WARN: degraded mode) | SQLite-owned only |
+| `PGHOST` set, Postgres reachable, no local SQLite sessions | Postgres | Postgres |
+| `PGHOST` set, Postgres reachable, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
+| `PGHOST` set, Postgres unavailable, local SQLite sessions exist | Rejected while reconnecting (WARN: degraded mode) | SQLite-owned only until PG reconnects |
+| `PGHOST` set, Postgres unavailable, no local SQLite sessions | Boot fails | — |
 
 The `.pg-bound` marker tracks whether Postgres currently holds sessions for the
 store, not whether it ever did. Its invariant is: **`<storeDir>/.pg-bound`
@@ -157,10 +160,14 @@ when Postgres was briefly down.
 
 Consequence: A Postgres outage while `PGHOST` is set fails new-escrow creation
 (and Postgres-owned operations); the router never silently creates a
-Postgres-destined escrow in SQLite. Legacy SQLite escrows no longer pin the
-whole process to SQLite — they drain in place as they settle and prune while
-new escrows go straight to Postgres, without waiting for `escrow_epoch` to empty
-or for a restart.
+Postgres-destined escrow in SQLite. If SQLite-owned escrows exist locally and
+Postgres is temporarily unavailable, boot enters a WARN-logged degraded mode
+that serves only those known SQLite escrows and rejects new/unknown escrows
+while a background reconnect loop runs. Once Postgres reconnects, the router
+logs an INFO, leaves degraded mode, and sends new escrows to Postgres. Legacy
+SQLite escrows no longer pin the whole process to SQLite — they drain in place
+as they settle and prune while new escrows go straight to Postgres, without
+waiting for `escrow_epoch` to empty or for a restart.
 
 ### Managed Pruning Starts After Recovery
 
