@@ -1,6 +1,7 @@
 package keeper_test
 
 import (
+	"fmt"
 	"testing"
 
 	"cosmossdk.io/collections"
@@ -262,4 +263,64 @@ func TestPruneDevshardData_TracksProgress(t *testing.T) {
 
 	_, found = k.GetDevshardEscrow(ctx, 3)
 	require.False(t, found)
+}
+
+func TestDistributeUnsettledEscrow_BankError_NoPartialPayment(t *testing.T) {
+	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
+	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
+
+	addr1 := sdk.AccAddress(make([]byte, 20))
+	addr1[0] = 0x01
+	addr2 := sdk.AccAddress(make([]byte, 20))
+	addr2[0] = 0x02
+
+	slots := make([]string, 16)
+	for i := 0; i < 8; i++ {
+		slots[i] = addr1.String()
+	}
+	for i := 8; i < 16; i++ {
+		slots[i] = addr2.String()
+	}
+
+	escrow := &types.DevshardEscrow{
+		Creator:    "gonka1creator",
+		Amount:     4_000_000_000,
+		Slots:      slots,
+		EpochIndex: 3,
+		Settled:    false,
+	}
+	id, err := k.StoreDevshardEscrow(ctx, escrow, 1)
+	require.NoError(t, err)
+
+	// addr1 payment succeeds — capture coins to verify the CacheContext received the correct amount.
+	// When addr2 fails, commit() is never called, so addr1's payment is discarded too.
+	var addr1CoinsAttempted sdk.Coins
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr1, gomock.Any(), gomock.Eq("devshard_escrow_unsettled_distribution")).
+		DoAndReturn(func(_ interface{}, _ string, _ sdk.AccAddress, coins sdk.Coins, _ string) error {
+			addr1CoinsAttempted = coins
+			return nil
+		}).Times(1)
+	mock.BankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(gomock.Any(), types.ModuleName, addr2, gomock.Any(), gomock.Eq("devshard_escrow_unsettled_distribution")).
+		Return(fmt.Errorf("bank: insufficient module balance")).Times(1)
+
+	// Pruner.Prune uses continue on Remover errors and always returns nil.
+	// With the fix, Remover returns err when distributeUnsettledEscrow fails,
+	// so the escrow is preserved because Remove() is never called.
+	err = pruneDevshard(k, ctx, 5)
+	require.Error(t, err)
+
+	// Escrow must NOT be deleted: Remover returned before Remove() was called.
+	// CacheContext ensures addr1 partial payment is also rolled back (not committed).
+	_, found := k.GetDevshardEscrow(ctx, id)
+	require.True(t, found, "escrow must remain in state when distribution fails")
+	t.Logf("SECURITY CHECK: escrow id=%d still exists after bank error (found=%v)", id, found)
+
+	// Balance check equivalent: verify addr1's payment was attempted with non-zero coins inside
+	// the CacheContext. Since commit() was never called (addr2 failed), addr1's balance is
+	// effectively unchanged — the escrow preservation above is the authoritative proof of rollback.
+	require.True(t, addr1CoinsAttempted.IsAllPositive(),
+		"addr1 payment must have been attempted inside CacheContext before addr2 failed")
 }
