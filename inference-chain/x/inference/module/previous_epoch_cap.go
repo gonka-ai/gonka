@@ -8,6 +8,7 @@ import (
 
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/productscience/inference/x/inference/utils"
 )
 
 // applyPreviousConfirmedWeightCap computes each participant's CapWeight: the
@@ -64,12 +65,36 @@ func (am AppModule) applyPreviousConfirmedWeightCap(
 		return activeParticipants
 	}
 
-	capByAddress := am.buildPreviousConfirmedWeightCaps(ctx, prevEpochIndex, &prevRoot)
+	var livePrevMembers map[string]bool
+	currentGroup, err := am.keeper.GetCurrentEpochGroup(ctx)
+	if err == nil && currentGroup != nil {
+		if members, err := currentGroup.GetGroupMembers(ctx); err == nil {
+			livePrevMembers = make(map[string]bool, len(members))
+			for _, m := range members {
+				if m != nil && m.Member != nil {
+					livePrevMembers[m.Member.Address] = true
+				}
+			}
+		}
+	}
+
+	guardianAccounts := map[string]bool{}
+	for _, opAddr := range am.keeper.GetGenesisGuardianAddresses(ctx) {
+		accAddr, err := utils.OperatorAddressToAccAddress(opAddr)
+		if err == nil {
+			guardianAccounts[accAddr] = true
+		}
+	}
+
+	capByAddress := am.buildPreviousConfirmedWeightCaps(ctx, prevEpochIndex, &prevRoot, livePrevMembers)
 
 	newParticipantsZeroed := 0
 	existingParticipantsClamped := 0
 	for _, p := range activeParticipants {
 		if p == nil {
+			continue
+		}
+		if guardianAccounts[p.Index] {
 			continue
 		}
 		capValue, existed := capByAddress[p.Index]
@@ -180,10 +205,19 @@ func (am AppModule) capComputeResultsToPreviousConfirmedWeight(
 		return results
 	}
 
+	guardianOperators := map[string]bool{}
+	for _, opAddr := range am.keeper.GetGenesisGuardianAddresses(ctx) {
+		guardianOperators[opAddr] = true
+	}
+
 	capped := make([]stakingkeeper.ComputeResult, 0, len(results))
 	droppedNew := 0
 	clamped := 0
 	for _, r := range results {
+		if guardianOperators[r.OperatorAddress] {
+			capped = append(capped, r)
+			continue
+		}
 		valAddr, err := sdk.ValAddressFromBech32(r.OperatorAddress)
 		if err != nil {
 			capped = append(capped, r)
@@ -227,6 +261,7 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 	ctx context.Context,
 	prevEpochIndex uint64,
 	prevRoot *types.EpochGroupData,
+	livePrevMembers map[string]bool,
 ) map[string]int64 {
 	caps := make(map[string]int64, len(prevRoot.ValidationWeights))
 	scales := prevRoot.ConfirmationWeightScales
@@ -234,7 +269,7 @@ func (am AppModule) buildPreviousConfirmedWeightCaps(
 	nodesByAddress := am.keeper.AggregateMLNodesFromModelSubgroups(ctx, prevEpochIndex, prevRoot.ValidationWeights)
 
 	for _, vw := range prevRoot.ValidationWeights {
-		if vw == nil {
+		if vw == nil || (livePrevMembers != nil && !livePrevMembers[vw.MemberAddress]) {
 			continue
 		}
 		weight := vw.Weight
