@@ -12,7 +12,7 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	// Used when the escrow row omits validation_rate (older chain / dapi).
-	DefaultValidationRate uint32 = 5000
+	DefaultValidationRate uint32 = 1000
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.

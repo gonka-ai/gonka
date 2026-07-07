@@ -188,7 +188,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		VoteThreshold:    uint32(numHosts) / 2,
-		ValidationRate:   5000, // 50%
+		ValidationRate:   types.DefaultValidationRate,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 

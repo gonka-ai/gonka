@@ -71,7 +71,7 @@ func runFault(t *testing.T, failPct int) {
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		VoteThreshold:    uint32(faultNumHosts) / 2,
-		ValidationRate:   5000,
+		ValidationRate:   types.DefaultValidationRate,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 

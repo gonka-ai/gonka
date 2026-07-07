@@ -246,7 +246,7 @@ func defaultConfig(n int) types.SessionConfig {
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		VoteThreshold:    uint32(n) / 2,
-		ValidationRate:   5000,
+		ValidationRate:   types.DefaultValidationRate,
 	}
 }
 
