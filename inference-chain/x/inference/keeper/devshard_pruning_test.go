@@ -316,6 +316,7 @@ func TestDistributeUnsettledEscrow_BankError_NoPartialPayment(t *testing.T) {
 	// CacheContext ensures addr1 partial payment is also rolled back (not committed).
 	_, found := k.GetDevshardEscrow(ctx, id)
 	require.True(t, found, "escrow must remain in state when distribution fails")
+	t.Logf("SECURITY CHECK: escrow id=%d still exists after bank error (found=%v)", id, found)
 
 	// Balance check equivalent: verify addr1's payment was attempted with non-zero coins inside
 	// the CacheContext. Since commit() was never called (addr2 failed), addr1's balance is
