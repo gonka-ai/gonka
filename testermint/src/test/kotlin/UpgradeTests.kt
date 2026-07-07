@@ -277,7 +277,14 @@ class UpgradeTests : TestermintTest() {
     }
 
 
+    // Classic inference flow removed (PR #1386). The MLNode versioned-endpoint
+    // switching mechanism under test is still live (devshard calls ML nodes via
+    // versioned segments too), but this test drives traffic through the removed
+    // classic /v1/chat/completions path. TODO(devshard): rewrite the traffic
+    // path through a devshard escrow so partial-upgrade endpoint switching has
+    // end-to-end coverage again.
     @Test
+    @Tag("exclude")
     @Timeout(value = 30, unit = TimeUnit.MINUTES)
     fun testVersionedEndpointSwitching() {
         val (cluster, genesis) = initUpgradeCluster()
