@@ -135,6 +135,24 @@ ground from request-controlled material. Its own domain tag versions it:
 - Covered by the `seed_derivation` block in `conformance_vectors.json` (accept
   digests + reject cases); the Go validator reproduces both.
 
+## Open items (not yet pinned — must be closed before enforcement)
+
+Found while building the Go validator; both are latent false-reject sources:
+
+1. **Token order is inconsistent between the two existing Python validators.**
+   `validation_sampling.py` (contract-aligned) sorts by token-ID **string**;
+   the older `validation_logic.py::verify_sampling_sequence` sorts by **numeric**
+   id (`int(x[0])`). For a multi-digit vocabulary these differ (`"10" < "9"`
+   lexicographically but `10 > 9` numerically), so they map the RNG draw to
+   different tokens and disagree on the same artifact. §3 pins lexicographic
+   string order; the numeric-sort path must be corrected to match.
+2. **Sequence-level RNG semantics are unspecified.** The single-position
+   primitive (`verify_sampling_from_logprobs`) uses a fresh RNG from `seed_str`;
+   `verify_sampling_sequence` uses one RNG stream advanced across the whole
+   sequence. The contract defines per-draw counter advance (§5) but not whether
+   a sequence is one stream or one seed per position. This must be pinned (and a
+   sequence-level conformance vector added) before sequence replay is trusted.
+
 ## Conformance
 
 `scripts/gen_conformance_vectors.py` emits `conformance_vectors.json` from the
