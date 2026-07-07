@@ -35,11 +35,6 @@ var ErrStoragePGBoundWithoutPostgres = errors.New(
 func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 	pgHost := os.Getenv("PGHOST")
 
-	hasSQLite, err := HasSQLiteSessions(storeDir)
-	if err != nil {
-		return nil, fmt.Errorf("probe sqlite sessions: %w", err)
-	}
-
 	if pgHost == "" {
 		pgBound, err := ReadPGBound(storeDir)
 		if err != nil {
@@ -64,17 +59,29 @@ func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 	}
 
 	var sqlite Storage
-	if hasSQLite {
+	sqliteDrain := false
+	hasSQLiteArtifacts, err := HasSQLiteArtifacts(storeDir)
+	if err != nil {
+		pg.Close()
+		return nil, fmt.Errorf("probe sqlite artifacts: %w", err)
+	}
+	if hasSQLiteArtifacts {
 		s, err := NewSQLite(storeDir)
 		if err != nil {
 			pg.Close()
 			return nil, err
 		}
-		sqlite = s
-		slog.Warn(
-			"devshard storage: serving legacy sqlite escrows alongside postgres; they drain in place as they settle and prune while new escrows go to postgres",
-			"dir", storeDir,
-		)
+		if s.HasAnySessions() {
+			sqlite = s
+			sqliteDrain = true
+			slog.Warn(
+				"devshard storage: serving legacy sqlite escrows alongside postgres; they drain in place as they settle and prune while new escrows go to postgres",
+				"dir", storeDir,
+			)
+		} else if err := s.Close(); err != nil {
+			pg.Close()
+			return nil, fmt.Errorf("close empty sqlite store: %w", err)
+		}
 	}
 
 	router := newHybridRouter(sqlite, pg, true, storeDir)
@@ -84,7 +91,7 @@ func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 		_ = router.Close()
 		return nil, fmt.Errorf("reconcile pg-bound: %w", err)
 	}
-	slog.Info("devshard storage: using postgres for new escrows", "dir", storeDir, "sqlite_drain", hasSQLite)
+	slog.Info("devshard storage: using postgres for new escrows", "dir", storeDir, "sqlite_drain", sqliteDrain)
 	return router, nil
 }
 

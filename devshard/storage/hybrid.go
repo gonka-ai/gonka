@@ -48,6 +48,14 @@ type sessionPresence interface {
 	HasAnySessions() bool
 }
 
+// livePresence is implemented by backends that can prove emptiness against the
+// database itself rather than the in-memory index. Required before clearing
+// .pg-bound after a failed create: a timed-out insert may have committed
+// server-side without the in-memory index ever learning about it.
+type livePresence interface {
+	HasAnySessionsLive() (bool, error)
+}
+
 // NewHybridStorage wraps a single backend. Every call is forwarded to it. Used
 // when only one backend is available (SQLite-only or Postgres-only).
 func NewHybridStorage(backend Storage) *HybridStorage {
@@ -181,6 +189,7 @@ func (h *HybridStorage) CreateSession(params CreateSessionParams) error {
 			return err
 		}
 		if err := b.CreateSession(params); err != nil {
+			h.clearPGBoundAfterFailedCreateLocked(params.EscrowID, err)
 			return err
 		}
 		h.rememberOwner(params.EscrowID, b)
@@ -205,6 +214,44 @@ func (h *HybridStorage) ensurePGBoundLocked() error {
 	}
 	h.pgBoundSet = true
 	return nil
+}
+
+// clearPGBoundAfterFailedCreateLocked removes the write-ahead marker when the
+// PG session insert failed and Postgres provably has no sessions. It preserves
+// the original CreateSession error; cleanup failures are logged only.
+//
+// The in-memory index saying "empty" is not enough here: a create that failed
+// with a timeout may have committed server-side (ack lost) without updating
+// the index. The marker is therefore cleared only when a live DB query proves
+// emptiness. If the live check fails (e.g. PG outage) or the backend cannot
+// perform one, the marker is kept; boot-time reconciliation or a prune-driven
+// clear removes a genuinely stale marker later.
+func (h *HybridStorage) clearPGBoundAfterFailedCreateLocked(escrowID string, createErr error) {
+	if !h.pgBoundSet || pgHasSessions(h.pg) {
+		return
+	}
+	lp, ok := h.pg.(livePresence)
+	if !ok {
+		return
+	}
+	has, err := lp.HasAnySessionsLive()
+	if err != nil {
+		slog.Warn("devshard storage: keeping .pg-bound after failed postgres create; live emptiness check failed",
+			"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr, "live_check_error", err)
+		return
+	}
+	if has {
+		// The failed create (or a concurrent writer) actually landed rows.
+		return
+	}
+	if err := os.Remove(PGBoundPath(h.storeDir)); err != nil && !os.IsNotExist(err) {
+		slog.Warn("devshard storage: failed to clear .pg-bound after postgres create failed",
+			"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr, "cleanup_error", err)
+		return
+	}
+	h.pgBoundSet = false
+	slog.Warn("devshard storage: cleared .pg-bound after postgres create failed with no postgres sessions",
+		"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr)
 }
 
 // clearPGBoundIfDrained removes .pg-bound once Postgres holds no sessions, so a

@@ -264,6 +264,15 @@ func (s *SQLite) HasEscrow(escrowID string) bool {
 	return ok
 }
 
+// HasAnySessions reports whether SQLite still holds any session after startup
+// reconciliation. HybridStorage uses it to decide whether SQLite must stay
+// attached while Postgres handles new escrows.
+func (s *SQLite) HasAnySessions() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.escrowIdx) > 0
+}
+
 func (s *SQLite) poolFor(escrowID string) (*epochPool, uint64, error) {
 	s.mu.RLock()
 	epochID, ok := s.escrowIdx[escrowID]
@@ -1029,7 +1038,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		return fmt.Errorf("drain inference validation obs select: %w", err)
 	}
 	type row struct {
-		slotID               uint32
+		slotID              uint32
 		required, completed uint32
 	}
 	var live []row

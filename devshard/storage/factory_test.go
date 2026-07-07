@@ -2,8 +2,10 @@ package storage
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"sort"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -92,7 +94,10 @@ func TestNewStorage_attachesSQLiteAndPostgresWhenMetaHasRowsAndPGHOSTSet(t *test
 	defer cleanup()
 
 	storeDir := t.TempDir()
-	require.NoError(t, insertMetaEscrowRow(storeDir, "drain-me", 3))
+	sqliteSeed, err := NewSQLite(storeDir)
+	require.NoError(t, err)
+	require.NoError(t, sqliteSeed.CreateSession(paramsForEpoch("drain-me", 3)))
+	require.NoError(t, sqliteSeed.Close())
 
 	logs := captureStorageLogs(t)
 	store, err := NewStorage(context.Background(), storeDir)
@@ -190,6 +195,188 @@ func TestNewStorage_sqliteEscrowSurvivesPostgresEnablement(t *testing.T) {
 	pgBound, err := ReadPGBound(storeDir)
 	require.NoError(t, err)
 	require.True(t, pgBound)
+}
+
+func TestNewStorage_pgHostSetReconcilesSQLiteEpochFilesWhenMetaRowsMissing(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
+	}
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+	pgHost := os.Getenv("PGHOST")
+
+	storeDir := t.TempDir()
+	ctx := context.Background()
+
+	t.Setenv("PGHOST", "")
+	sqliteStore, err := NewStorage(ctx, storeDir)
+	require.NoError(t, err)
+	require.NoError(t, sqliteStore.CreateSession(paramsForEpoch("recovered-sqlite", 5)))
+	require.NoError(t, sqliteStore.AppendDiff("recovered-sqlite", makeDiffRecord(1)))
+	require.NoError(t, sqliteStore.Close())
+
+	metaDB, err := openMetaDB(MetaDBPath(storeDir))
+	require.NoError(t, err)
+	_, err = metaDB.Exec(`DELETE FROM escrow_epoch`)
+	require.NoError(t, err)
+	require.NoError(t, metaDB.Close())
+
+	hasRows, err := HasSQLiteSessions(storeDir)
+	require.NoError(t, err)
+	require.False(t, hasRows, "the old factory probe would miss the recoverable SQLite session")
+
+	t.Setenv("PGHOST", pgHost)
+	store, err := NewStorage(ctx, storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	h := store.(*HybridStorage)
+	sqlite, ok := h.sqlite.(*SQLite)
+	require.True(t, ok, "SQLite must attach after reconciliation repairs _meta.db")
+	pg, ok := h.pg.(*Postgres)
+	require.True(t, ok)
+
+	meta, err := store.GetSessionMeta("recovered-sqlite")
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), meta.EpochID)
+	require.Equal(t, uint64(1), meta.LatestNonce)
+	require.True(t, sqlite.HasEscrow("recovered-sqlite"))
+	require.False(t, pg.HasEscrow("recovered-sqlite"))
+
+	require.NoError(t, store.CreateSession(paramsForEpoch("new-pg", 6)))
+	require.True(t, pg.HasEscrow("new-pg"))
+	require.False(t, sqlite.HasEscrow("new-pg"))
+}
+
+func TestNewStorage_sqliteToPostgresManySessionsMixedStatusConcurrent(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
+	}
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+	pgHost := os.Getenv("PGHOST")
+
+	const legacyCount = 60
+	const newCount = 40
+
+	storeDir := t.TempDir()
+	ctx := context.Background()
+
+	t.Setenv("PGHOST", "")
+	sqliteStore, err := NewStorage(ctx, storeDir)
+	require.NoError(t, err)
+	for i := 0; i < legacyCount; i++ {
+		escrowID := fmt.Sprintf("legacy-%03d", i)
+		require.NoError(t, sqliteStore.CreateSession(paramsForEpoch(escrowID, 20+uint64(i%4))))
+		if i%3 == 0 {
+			require.NoError(t, sqliteStore.MarkSettled(escrowID))
+			continue
+		}
+		require.NoError(t, sqliteStore.AppendDiff(escrowID, makeDiffRecord(1)))
+		require.NoError(t, sqliteStore.AppendDiff(escrowID, makeDiffRecord(2)))
+	}
+	require.NoError(t, sqliteStore.Close())
+
+	t.Setenv("PGHOST", pgHost)
+	store, err := NewStorage(ctx, storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	h := store.(*HybridStorage)
+	sqlite, ok := h.sqlite.(*SQLite)
+	require.True(t, ok, "legacy SQLite sessions must attach for drain")
+	pg, ok := h.pg.(*Postgres)
+	require.True(t, ok)
+
+	var wg sync.WaitGroup
+	errs := make(chan error, legacyCount+newCount)
+	for i := 0; i < legacyCount; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			escrowID := fmt.Sprintf("legacy-%03d", i)
+			meta, err := store.GetSessionMeta(escrowID)
+			if err != nil {
+				errs <- err
+				return
+			}
+			if i%3 == 0 {
+				if meta.Status != "settled" {
+					errs <- fmt.Errorf("%s status = %s, want settled", escrowID, meta.Status)
+				}
+				return
+			}
+			if meta.Status != "active" {
+				errs <- fmt.Errorf("%s status = %s, want active", escrowID, meta.Status)
+				return
+			}
+			errs <- store.AppendDiff(escrowID, makeDiffRecord(3))
+		}()
+	}
+	for i := 0; i < newCount; i++ {
+		i := i
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			escrowID := fmt.Sprintf("pg-%03d", i)
+			if err := store.CreateSession(paramsForEpoch(escrowID, 30+uint64(i%4))); err != nil {
+				errs <- err
+				return
+			}
+			if err := store.AppendDiff(escrowID, makeDiffRecord(1)); err != nil {
+				errs <- err
+				return
+			}
+			if i%4 == 0 {
+				errs <- store.MarkSettled(escrowID)
+			}
+		}()
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		require.NoError(t, err)
+	}
+
+	for i := 0; i < legacyCount; i++ {
+		escrowID := fmt.Sprintf("legacy-%03d", i)
+		require.True(t, sqlite.HasEscrow(escrowID), "%s must remain SQLite-owned", escrowID)
+		require.False(t, pg.HasEscrow(escrowID), "%s must not be recreated in PG", escrowID)
+	}
+	for i := 0; i < newCount; i++ {
+		escrowID := fmt.Sprintf("pg-%03d", i)
+		require.True(t, pg.HasEscrow(escrowID), "%s must be PG-owned", escrowID)
+		require.False(t, sqlite.HasEscrow(escrowID), "%s must not be created in SQLite", escrowID)
+	}
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	gotActive := make([]string, 0, len(active))
+	for _, session := range active {
+		gotActive = append(gotActive, session.EscrowID)
+	}
+	sort.Strings(gotActive)
+
+	var wantActive []string
+	for i := 0; i < legacyCount; i++ {
+		if i%3 != 0 {
+			wantActive = append(wantActive, fmt.Sprintf("legacy-%03d", i))
+		}
+	}
+	for i := 0; i < newCount; i++ {
+		if i%4 != 0 {
+			wantActive = append(wantActive, fmt.Sprintf("pg-%03d", i))
+		}
+	}
+	sort.Strings(wantActive)
+	require.Equal(t, wantActive, gotActive)
+
+	for _, escrowID := range []string{"legacy-000", "pg-000"} {
+		meta, err := store.GetSessionMeta(escrowID)
+		require.NoError(t, err)
+		require.Equal(t, "settled", meta.Status)
+	}
 }
 
 func TestNewStorage_sqliteWhenMetaHasRowsPGHOSTUnset(t *testing.T) {

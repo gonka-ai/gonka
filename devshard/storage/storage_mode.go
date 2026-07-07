@@ -46,6 +46,35 @@ func HasSQLiteSessions(storeDir string) (bool, error) {
 	return count > 0, nil
 }
 
+// HasSQLiteArtifacts reports whether storeDir contains files that could belong
+// to a SQLite-backed store. Unlike NewSQLite, it never creates _meta.db.
+func HasSQLiteArtifacts(storeDir string) (bool, error) {
+	if _, err := os.Stat(MetaDBPath(storeDir)); err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+	} else {
+		return true, nil
+	}
+
+	entries, err := os.ReadDir(storeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		if epochFileRegex.MatchString(ent.Name()) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ReadPGBound reports whether the Postgres-mode marker file exists.
 func ReadPGBound(storeDir string) (bool, error) {
 	_, err := os.Stat(PGBoundPath(storeDir))

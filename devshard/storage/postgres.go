@@ -48,6 +48,11 @@ const (
 	// statement_timeout it also covers the time spent acquiring a pooled
 	// connection (pool exhaustion), which the server-side timeout cannot.
 	postgresOpTimeout = 8 * time.Second
+	// postgresLivePresenceTimeout bounds the HasAnySessionsLive query. It is
+	// deliberately short: the check runs under HybridStorage.markerMu right
+	// after a failed (often timed-out) create, so it must not extend the lock
+	// hold time by another full op timeout during an outage.
+	postgresLivePresenceTimeout = 2 * time.Second
 )
 
 const (
@@ -287,6 +292,20 @@ func (s *Postgres) HasAnySessions() bool {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.escrowIdx) > 0
+}
+
+// HasAnySessionsLive checks devshard_session_index in the database itself.
+// The hybrid router uses it before clearing .pg-bound after a failed create:
+// a timed-out CreateSession may have committed server-side without updating
+// the in-memory index, so emptiness must be proven against the DB, not RAM.
+func (s *Postgres) HasAnySessionsLive() (bool, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), postgresLivePresenceTimeout)
+	defer cancel()
+	var exists bool
+	if err := s.pool.QueryRow(ctx, `SELECT EXISTS (SELECT 1 FROM devshard_session_index)`).Scan(&exists); err != nil {
+		return false, err
+	}
+	return exists, nil
 }
 
 // opCtx returns a context bounding a single storage operation. It caps both the

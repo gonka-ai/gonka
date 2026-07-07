@@ -19,12 +19,14 @@ and the operational consequence.
 ```
 HostManager
   -> ManagedStorage
-       -> HybridStorage (thin wrapper)
-            -> exactly one backend chosen at boot:
-                 SQLite  OR  Postgres
+       -> HybridStorage (per-escrow router)
+            -> SQLite only
+            -> Postgres only
+            -> SQLite + Postgres during legacy drain
 ```
 
-`NewStorage` in `devshard/storage/factory.go` picks the backend once per process.
+`NewStorage` in `devshard/storage/factory.go` opens the backend set for the
+process. `HybridStorage` then routes each escrow to the backend that owns it.
 See [Storage mode selection](#storage-mode-selection) and
 [storage-modes-plan.md](./storage-modes-plan.md).
 
@@ -138,9 +140,10 @@ sessions have all settled and pruned can boot SQLite-only again without manually
 deleting the marker; the marker only blocks the switch while Postgres sessions
 still exist.
 
-The router only attaches SQLite when the store already has SQLite escrows, so a
-store that has always been Postgres never opens `_meta.db`. When it attaches
-SQLite to drain legacy escrows it logs a WARN.
+The router only attaches SQLite when the store has SQLite artifacts and
+`NewSQLite` reconciliation finds SQLite-owned escrows, so a store that has
+always been Postgres never opens `_meta.db`. When it attaches SQLite to drain
+legacy escrows it logs a WARN.
 
 Ownership resolution: the router derives an escrow's backend from each
 backend's own persistent index (SQLite `_meta.db` `escrow_epoch`, Postgres

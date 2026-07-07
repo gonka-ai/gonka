@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"errors"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -97,6 +98,43 @@ func (r *recordingStorage) Close() error {
 	return nil
 }
 
+type failingPGStorage struct {
+	recordingStorage
+	err            error
+	hasSessions    bool
+	liveHasRows    bool
+	liveErr        error
+	liveCheckCalls int
+}
+
+func (f *failingPGStorage) CreateSession(params CreateSessionParams) error {
+	f.lastMethod = "CreateSession"
+	return f.err
+}
+
+func (f *failingPGStorage) HasAnySessions() bool {
+	return f.hasSessions
+}
+
+func (f *failingPGStorage) HasAnySessionsLive() (bool, error) {
+	f.liveCheckCalls++
+	return f.liveHasRows, f.liveErr
+}
+
+// failingPGStorageNoLive fails creates but cannot prove emptiness against the
+// database. The router must keep .pg-bound conservatively.
+type failingPGStorageNoLive struct {
+	recordingStorage
+	err error
+}
+
+func (f *failingPGStorageNoLive) CreateSession(params CreateSessionParams) error {
+	f.lastMethod = "CreateSession"
+	return f.err
+}
+
+func (f *failingPGStorageNoLive) HasAnySessions() bool { return false }
+
 func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 	rec := &recordingStorage{}
 	h := NewHybridStorage(rec)
@@ -161,4 +199,89 @@ func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 
 	require.NoError(t, h.Close())
 	require.Equal(t, "Close", rec.lastMethod)
+}
+
+func TestHybridStorage_ClearsPGBoundAfterFailedPGCreateWhenProvablyEmpty(t *testing.T) {
+	createErr := errors.New("pg insert failed")
+	pg := &failingPGStorage{err: createErr}
+	storeDir := t.TempDir()
+	h := newHybridRouter(nil, pg, true, storeDir)
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "pg-fail"})
+	require.ErrorIs(t, err, createErr)
+	require.Equal(t, "CreateSession", pg.lastMethod)
+	require.Equal(t, 1, pg.liveCheckCalls, "cleanup must verify emptiness against the DB")
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.False(t, pgBound, "stale .pg-bound must be cleared when PG is provably empty")
+	require.False(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_KeepsPGBoundAfterFailedPGCreateWhenPGHasSessions(t *testing.T) {
+	createErr := errors.New("pg insert failed")
+	pg := &failingPGStorage{err: createErr, hasSessions: true}
+	storeDir := t.TempDir()
+	h := newHybridRouter(nil, pg, true, storeDir)
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "pg-fail"})
+	require.ErrorIs(t, err, createErr)
+	require.Equal(t, 0, pg.liveCheckCalls, "in-memory sessions already retain the marker")
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.True(t, pgBound, ".pg-bound must remain while PG reports sessions")
+	require.True(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_KeepsPGBoundWhenLiveCheckFailsDuringOutage(t *testing.T) {
+	// A create that times out during a PG outage is ambiguous: the insert may
+	// have committed server-side. With the live emptiness check also failing,
+	// the marker must be kept.
+	createErr := errors.New("pg insert timed out")
+	pg := &failingPGStorage{err: createErr, liveErr: errors.New("pg unreachable")}
+	storeDir := t.TempDir()
+	h := newHybridRouter(nil, pg, true, storeDir)
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "pg-fail"})
+	require.ErrorIs(t, err, createErr)
+	require.Equal(t, 1, pg.liveCheckCalls)
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.True(t, pgBound, ".pg-bound must survive an outage where emptiness cannot be proven")
+	require.True(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_KeepsPGBoundWhenFailedCreateActuallyCommitted(t *testing.T) {
+	// Ack-lost commit: the client saw an error but the DB has the row. The
+	// live check sees it and the marker must be kept.
+	createErr := errors.New("pg commit ack lost")
+	pg := &failingPGStorage{err: createErr, liveHasRows: true}
+	storeDir := t.TempDir()
+	h := newHybridRouter(nil, pg, true, storeDir)
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "pg-fail"})
+	require.ErrorIs(t, err, createErr)
+	require.Equal(t, 1, pg.liveCheckCalls)
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.True(t, pgBound, ".pg-bound must remain when the DB actually holds rows")
+	require.True(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_KeepsPGBoundWhenBackendLacksLiveCheck(t *testing.T) {
+	createErr := errors.New("pg insert failed")
+	pg := &failingPGStorageNoLive{err: createErr}
+	storeDir := t.TempDir()
+	h := newHybridRouter(nil, pg, true, storeDir)
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "pg-fail"})
+	require.ErrorIs(t, err, createErr)
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.True(t, pgBound, "without a live check the marker must be kept conservatively")
+	require.True(t, h.pgBoundSet)
 }
