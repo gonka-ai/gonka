@@ -3,15 +3,54 @@ package v0_2_14
 import (
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // TestUpgradeName pins the future on-chain proposal name. The governance
 // proposal and UpgradeName must stay identical or the handler will not run.
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.14", UpgradeName)
+}
+
+func TestBurnFeeCollectorBalance(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	burnCoins := sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 12_345))
+	balance := sdk.NewCoins(
+		sdk.NewInt64Coin(inferencetypes.BaseCoin, 12_345),
+		sdk.NewInt64Coin("uusdc", 99),
+	)
+	feeCollectorAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+	const memo = "v0.2.14: burn erroneously minted inflation"
+
+	mocks.BankViewKeeper.EXPECT().
+		GetAllBalances(gomock.Any(), feeCollectorAddress).
+		Return(balance)
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToModule(gomock.Any(), authtypes.FeeCollectorName, inferencetypes.ModuleName, burnCoins, memo).
+		Return(nil)
+	mocks.BankKeeper.EXPECT().
+		BurnCoins(gomock.Any(), inferencetypes.ModuleName, burnCoins, memo).
+		Return(nil)
+
+	require.NoError(t, burnFeeCollectorBalance(ctx, k))
+}
+
+func TestBurnFeeCollectorBalance_NoBaseDenomBalanceIsNoOp(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	feeCollectorAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
+	mocks.BankViewKeeper.EXPECT().
+		GetAllBalances(gomock.Any(), feeCollectorAddress).
+		Return(sdk.NewCoins(sdk.NewInt64Coin("uusdc", 99)))
+
+	require.NoError(t, burnFeeCollectorBalance(ctx, k))
 }
 
 func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceNonces(t *testing.T) {
