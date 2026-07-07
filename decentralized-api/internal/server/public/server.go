@@ -41,6 +41,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	pocSnapshotLimiter  *snapshotCountLimiter
 }
 
 // ServerOption configures optional Server dependencies.
@@ -86,6 +87,7 @@ func NewServer(
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
 		httpClient:          NewNoRedirectClient(httpClientTimeout),
+		pocSnapshotLimiter:  newSnapshotCountLimiter(),
 	}
 
 	for _, opt := range opts {

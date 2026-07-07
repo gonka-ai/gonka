@@ -9,6 +9,7 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -405,11 +406,28 @@ func (s *Server) preparePocProofRequest(
 	}
 
 	reqCount := uint32(req.Count)
+
+	// Quota on distinct snapshot counts per validator (after signature
+	// verification, so only authenticated requests consume quota). Honest
+	// validation touches at most the early and final snapshots; cycling
+	// through more counts is a rebuild-DoS probe, not a legitimate pattern.
+	if s.pocSnapshotLimiter != nil &&
+		!s.pocSnapshotLimiter.Allow(req.ValidatorAddress, int64(req.PocStageStartBlockHeight), req.ModelId, reqCount) {
+		logging.Warn("PoC proofs snapshot-count quota exceeded", types.Validation,
+			"validatorAddress", req.ValidatorAddress,
+			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+			"modelId", req.ModelId,
+			"requestedCount", reqCount)
+		return nil, 0, nil, echo.NewHTTPError(http.StatusTooManyRequests, "too many distinct snapshot counts requested")
+	}
 	storeRoot, err := stageStore.GetRootAt(reqCount)
 	if err != nil {
-		logging.Warn("Snapshot count exceeds store", types.Validation,
+		logging.Warn("Snapshot count not servable", types.Validation,
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
 			"requestedCount", reqCount, "error", err)
+		if errors.Is(err, artifacts.ErrUnknownSnapshotCount) {
+			return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "count is not a known snapshot of this store")
+		}
 		return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "count exceeds stored artifacts")
 	}
 	if !bytes.Equal(rootHash, storeRoot) {
