@@ -27,17 +27,24 @@ type vectors struct {
 	Cases []vectorCase `json:"cases"`
 }
 
-func loadVectors(t *testing.T) vectors {
+// decodeVectors reads the shared fixture and unmarshals it into target, so both
+// rng_test and pipeline_test can decode the shape they need.
+func decodeVectors(t *testing.T, target interface{}) {
 	t.Helper()
 	path := filepath.Join("..", "testdata", "conformance_vectors.json")
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("read %s: %v", path, err)
 	}
-	var v vectors
-	if err := json.Unmarshal(raw, &v); err != nil {
+	if err := json.Unmarshal(raw, target); err != nil {
 		t.Fatalf("unmarshal: %v", err)
 	}
+}
+
+func loadVectors(t *testing.T) vectors {
+	t.Helper()
+	var v vectors
+	decodeVectors(t, &v)
 	return v
 }
 
