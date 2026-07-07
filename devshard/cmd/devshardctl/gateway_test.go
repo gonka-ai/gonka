@@ -93,6 +93,21 @@ func seedGatewayTestCapacity(g *Gateway, weights map[string]float64) {
 	g.capacity.SetHostWeightViews(seeded, seeded, nil, nil)
 }
 
+// withSettleDevshardOnChainSideEffects wraps a settlement stub so successful
+// calls apply the same post-broadcast bookkeeping as settleDevshardOnChain.
+func withSettleDevshardOnChainSideEffects(
+	stub func(g *Gateway, ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error),
+) func(*Gateway, context.Context, string, adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+	return func(g *Gateway, ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		result, err := stub(g, ctx, id, req)
+		if err != nil {
+			return nil, err
+		}
+		g.clearSettlementPending(id)
+		return result, nil
+	}
+}
+
 func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettings ...func(*GatewaySettings)) (*Gateway, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 
@@ -138,11 +153,11 @@ func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettin
 		created.Add(1)
 		return &CreateDevshardEscrowResult{EscrowID: 99, TxHash: "OK"}, nil
 	}
-	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+	gatewaySettleDevshardOnChain = withSettleDevshardOnChainSideEffects(func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
 		require.Equal(t, rt.id, id)
 		settled.Add(1)
 		return &SettleDevshardEscrowResult{EscrowID: mustParseUintForTest(t, id), TxHash: "SETTLED", Settler: "settler"}, nil
-	}
+	})
 	t.Cleanup(func() {
 		gatewayCreateDepletionEscrow = oldCreate
 		gatewaySettleDevshardOnChain = oldSettle
