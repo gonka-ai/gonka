@@ -102,19 +102,13 @@ func TestConformanceVectorsWellFormed(t *testing.T) {
 	}
 }
 
-// TestConformanceReplay is the cross-language parity gate. It will replay every
-// vector through the Go decimal pipeline + RNG and assert bit-identical weights
-// and token. Skipped until item ② implements that pipeline.
+// TestConformanceReplay: the cross-language parity gate is IMPLEMENTED and
+// PASSING in the ./detsample sub-package, which hosts the Go decimal pipeline +
+// Sha256CounterRNG and is dependency-free so it runs offline. See
+// detsample.TestPipelineWeightsMatch (bit-identical integer weights vs the vLLM
+// reference) and detsample.TestPipelineTokenMatch (identical sampled token) over
+// the same conformance_vectors.json. This placeholder stays skipped; the parent
+// `validation` package invokes detsample once the validator is wired to it.
 func TestConformanceReplay(t *testing.T) {
-	t.Skip("item ②: Go decimal pipeline + Sha256CounterRNG not implemented yet")
-
-	// Target shape once ② lands:
-	//   v := loadConformanceVectors(t)
-	//   for _, c := range v.Cases {
-	//       weights := LogprobsToWeights(c.Logprobs, c.Temperature, c.TopP, c.TopK, c.MinP)
-	//       require weights == c.ExpectedWeights
-	//       rng := NewSha256CounterRNG(c.SeedStr)
-	//       token := DecimalSampleFromLogprobs(c.Logprobs, rng, ...)
-	//       require token == c.ExpectedToken
-	//   }
+	t.Skip("parity gate lives in ./detsample (TestPipelineWeightsMatch / TestPipelineTokenMatch)")
 }
