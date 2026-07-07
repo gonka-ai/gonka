@@ -525,9 +525,16 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 	if cap == -1 {
 		return participants, totalPower, false
 	}
-	// A zero cap with positive total power means the threshold math degenerated
-	// (e.g. zero-weight participants were previously counted in the slot budget).
-	if cap <= 0 && totalPower > 0 {
+	// A non-positive cap is never a valid outcome: applying it would zero
+	// every participant (the gonka-testnet-4 epoch 15 failure mode), so skip
+	// capping instead. This branch is unreachable when called through
+	// ApplyPowerCappingForWeights -- its percentage is matched to the
+	// positive-participant count (50%/2, 40%/3, 30%/4+), which makes the
+	// formula always yield cap >= 1 for integer weights. It remains as a
+	// last-resort brake for direct callers of this exported function, where
+	// an arbitrary maxPercentage with percentage*count < 1 degenerates the
+	// formula to zero.
+	if cap <= 0 {
 		return participants, totalPower, false
 	}
 
