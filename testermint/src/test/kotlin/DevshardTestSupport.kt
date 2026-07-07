@@ -51,7 +51,6 @@ val devshardShortSealGraceSpec = spec<AppState> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
-                this[DevshardEscrowParams::validationRate] = 0L
             }
         }
     }
