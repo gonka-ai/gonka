@@ -49,6 +49,8 @@ where `previousConfirmationWeight` and `previousRawConfirmationTotal` are aggreg
 
 This logic is centralized in a shared helper, `types.EffectiveConfirmedWeight`, used by both the reward path and the cap so the two can never drift apart.
 
+Only live members of the previous epoch provide a cap baseline. A participant removed from the root group during the previous epoch (for example by invalidation or deactivation) is treated as absent and must prove compute again before regaining trust weight.
+
 ### New / returning participants
 
 A participant that was **not present** in the previous epoch has no confirmed weight to cap against, so its `CapWeight` is set to `0`:
@@ -56,6 +58,10 @@ A participant that was **not present** in the previous epoch has no confirmed we
 - It earns rewards normally on its real `Weight`.
 - It has **zero** governance power (dropped from the validator set), **zero** BLS share, and **zero** cPoC validation voting power for this first epoch.
 - Next epoch, its real `Weight` from this epoch becomes its cap baseline, so it can then take on trust weight up to what it just proved.
+
+### Genesis guardians
+
+Genesis guardians are exempt from the previous-epoch cap. A configured guardian keeps `CapWeight = Weight` even if it was absent or confirmed nothing in the previous epoch, and governance validator capping does not clamp its enhanced early-network power. This keeps the guardian safety mechanism independent from the trust-weight delay.
 
 ### Pipeline placement
 
@@ -72,6 +78,8 @@ A participant that was **not present** in the previous epoch has no confirmed we
 
 Governance validator power is applied a couple of blocks later at `SetComputeValidators`; it reads the persisted `CapWeight` and caps/drops validators accordingly, while the x/group member weights stay real so rewards, pricing, and weighted selection are unaffected.
 
+PoC validation snapshots use trust weight for both the per-model voting powers and the total network weight denominator. This keeps slot sampling and the non-slot 2/3 threshold in the same units, while root x/group weights remain real for rewards and pricing.
+
 ## Consumers affected
 
 | Consumer | Weight used | Behavior |
@@ -81,6 +89,7 @@ Governance validator power is applied a couple of blocks later at `SetComputeVal
 | Next-epoch cap baseline | `Weight` (real) | Unchanged |
 | Unit-of-compute pricing | `Weight` (real) | Unchanged |
 | Weighted random selection | `Weight` (real) | Unchanged |
+| PoC/cPoC validation snapshot total | `CapWeight` | Same units as per-model voting power |
 | Governance / CometBFT power | `CapWeight` | **Capped**, new participants dropped |
 | BLS threshold signing | `CapWeight` | **Capped**, new participants get 0 slots |
 | cPoC validation voting power | `CapWeight` | **Capped**, new participants get 0 voting power |
@@ -91,6 +100,8 @@ Governance validator power is applied a couple of blocks later at `SetComputeVal
 - **Missing previous epoch group data**: Capping is skipped (defaults to `Weight`) rather than zeroing everyone.
 - **Upgrade transition**: An epoch formed *before* this change has no `CapWeight` populated (all zero). Both the governance cap and the shared trust-weight resolver detect the "cap not applied" state (no participant has a positive `CapWeight`) and fall back to real `Weight`, so the transition epoch never collapses to an all-zero validator set.
 - **All-new epoch (degenerate)**: Same fallback applies, avoiding a chain halt.
+- **Removed previous members**: Participants removed from the previous epoch's live root group do not provide a cap baseline and re-enter with `CapWeight = 0`, unless they are configured genesis guardians.
+- **Genesis guardians**: Configured guardians are never capped or dropped by this mechanism.
 
 Because `Weight` stays real and always-populated, the reward and settlement paths need **no** migration or fallback.
 
@@ -103,8 +114,8 @@ New field:
 Core logic — `inference-chain/x/inference/module/previous_epoch_cap.go`:
 
 - `applyPreviousConfirmedWeightCap` — computes `CapWeight` per participant.
-- `buildPreviousConfirmedWeightCaps` — builds the per-address cPoC-aware cap map from previous epoch data.
-- `capComputeResultsToPreviousConfirmedWeight` — caps/drops validators at `SetComputeValidators` time.
+- `buildPreviousConfirmedWeightCaps` — builds the per-address cPoC-aware cap map from previous live epoch data.
+- `capComputeResultsToPreviousConfirmedWeight` — caps/drops validators at `SetComputeValidators` time while leaving guardians unchanged.
 - `resolveTrustWeights` — shared resolver returning `CapWeight` when applied, else `Weight`.
 
 Shared helper — `inference-chain/x/inference/types/weight.go`:
@@ -116,6 +127,7 @@ Wiring:
 - `inference-chain/x/inference/module/module.go` — pipeline order, governance cap at `SetComputeValidators`, BLS via `CapWeight`.
 - `inference-chain/x/inference/module/delegation_pipeline.go` — voting powers via `CapWeight`.
 - `inference-chain/x/inference/module/genesis_guardian_enhancement.go` — BLS guardian slot reservation via `CapWeight`.
+- `inference-chain/x/inference/module/model_assignment.go` — preserved-node allocation thresholds use trust-weight totals to match validation voting units.
 - `inference-chain/x/inference/keeper/bitcoin_rewards.go` — refactored to use the shared `EffectiveConfirmedWeight` helper (behavior-identical).
 
 ## Testing
@@ -123,6 +135,7 @@ Wiring:
 - `types.EffectiveConfirmedWeight` — unit tests covering full/partial/zero confirmation, truncation, clamping, and negative inputs.
 - `applyPreviousConfirmedWeightCap` — clamps over-weight participants, zeroes new participants, preserves real `Weight`, and skips on bootstrap / missing previous group.
 - `resolveTrustWeights` — uses `CapWeight` when applied; falls back to `Weight` when unset.
-- `capComputeResultsToPreviousConfirmedWeight` — clamps and drops validators; falls back when `CapWeight` is unset (upgrade transition).
+- `capComputeResultsToPreviousConfirmedWeight` — clamps and drops validators, exempts guardians, and falls back when `CapWeight` is unset (upgrade transition).
+- Validation snapshot and preserved-node tests cover trust-weight totals.
 
 All `x/inference` and `x/bls` test suites pass.

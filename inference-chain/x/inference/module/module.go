@@ -1059,6 +1059,10 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 	}
 
 	rootGroupData := currentGroup.GroupData
+	trustWeights := map[string]int64{}
+	if activeParticipants, found := am.keeper.GetActiveParticipants(ctx, epochIndex); found {
+		trustWeights = resolveTrustWeights(activeParticipants.Participants)
+	}
 	consensusWeights := make(map[string]int64, len(rootGroupData.ValidationWeights))
 	totalWeight := int64(0)
 	participants := make([]*types.ActiveParticipant, 0, len(rootGroupData.ValidationWeights))
@@ -1066,11 +1070,15 @@ func (am AppModule) getEffectiveValidationBaseState(ctx context.Context) effecti
 		if vw == nil || !liveMemberSet[vw.MemberAddress] {
 			continue
 		}
-		consensusWeights[vw.MemberAddress] = vw.Weight
-		totalWeight += vw.Weight
+		weight := vw.Weight
+		if trustWeight, ok := trustWeights[vw.MemberAddress]; ok {
+			weight = trustWeight
+		}
+		consensusWeights[vw.MemberAddress] = weight
+		totalWeight += weight
 		participants = append(participants, &types.ActiveParticipant{
 			Index:  vw.MemberAddress,
-			Weight: vw.Weight,
+			Weight: weight,
 		})
 	}
 
