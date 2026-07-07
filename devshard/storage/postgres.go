@@ -294,6 +294,17 @@ func (s *Postgres) HasAnySessions() bool {
 	return len(s.escrowIdx) > 0
 }
 
+// EscrowIDs returns a snapshot of escrows in the in-memory routing index.
+func (s *Postgres) EscrowIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.escrowIdx))
+	for id := range s.escrowIdx {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // HasAnySessionsLive checks devshard_session_index in the database itself.
 // The hybrid router uses it before clearing .pg-bound after a failed create:
 // a timed-out CreateSession may have committed server-side without updating

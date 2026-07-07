@@ -12,7 +12,8 @@ import (
 )
 
 type recordingStorage struct {
-	lastMethod string
+	lastMethod     string
+	activeSessions []ActiveSession
 }
 
 func (r *recordingStorage) CreateSession(params CreateSessionParams) error {
@@ -25,7 +26,7 @@ func (r *recordingStorage) MarkSettled(escrowID string) error {
 }
 func (r *recordingStorage) ListActiveSessions() ([]ActiveSession, error) {
 	r.lastMethod = "ListActiveSessions"
-	return nil, nil
+	return r.activeSessions, nil
 }
 func (r *recordingStorage) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	r.lastMethod = "AppendDiff"
@@ -147,6 +148,14 @@ func (o *owningRecordingStorage) HasEscrow(escrowID string) bool {
 	return ok
 }
 
+func (o *owningRecordingStorage) EscrowIDs() []string {
+	ids := make([]string, 0, len(o.owned))
+	for id := range o.owned {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (o *owningRecordingStorage) CreateSession(params CreateSessionParams) error {
 	o.lastMethod = "CreateSession"
 	if o.owned == nil {
@@ -158,7 +167,7 @@ func (o *owningRecordingStorage) CreateSession(params CreateSessionParams) error
 
 func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
 	rec := &recordingStorage{}
-	h := NewHybridStorage(rec)
+	h := newHybridRouter(rec, nil, false, "")
 
 	require.NoError(t, h.CreateSession(CreateSessionParams{EscrowID: "e"}))
 	require.Equal(t, "CreateSession", rec.lastMethod)
@@ -250,6 +259,48 @@ func TestHybridStorage_ReconnectPromotesDegradedRouter(t *testing.T) {
 	require.Equal(t, "CreateSession", pg.lastMethod, "new sessions must use PG after promotion")
 }
 
+func TestHybridStorage_PromoteClosesIncomingBackendWhenAlreadyPromoted(t *testing.T) {
+	existing := &recordingStorage{}
+	incoming := &recordingStorage{}
+	h := newHybridRouter(nil, existing, true, "")
+
+	require.NoError(t, h.promotePostgres(incoming))
+	require.Same(t, existing, h.pg)
+	require.Equal(t, "Close", incoming.lastMethod)
+}
+
+func TestHybridStorage_PromotionHookFiresAfterReconnectAndImmediatelyAfterPromotion(t *testing.T) {
+	h := newDegradedSQLiteRouter(nil, t.TempDir(), ErrStoragePostgresUnavailable)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	first := make(chan struct{}, 1)
+	h.OnPostgresPromoted(func() { first <- struct{}{} })
+	h.startPostgresReconnect(ctx, func(context.Context) (Storage, error) {
+		return &recordingStorage{}, nil
+	}, 5*time.Millisecond)
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-first:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+
+	second := make(chan struct{}, 1)
+	h.OnPostgresPromoted(func() { second <- struct{}{} })
+	require.Eventually(t, func() bool {
+		select {
+		case <-second:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestHybridStorage_ClearsPGBoundAfterFailedPGCreateWhenProvablyEmpty(t *testing.T) {
 	createErr := errors.New("pg insert failed")
 	pg := &failingPGStorage{err: createErr}
@@ -333,4 +384,71 @@ func TestHybridStorage_KeepsPGBoundWhenBackendLacksLiveCheck(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, pgBound, "without a live check the marker must be kept conservatively")
 	require.True(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_PruneKeepsPGBoundWhenLiveCheckFindsRows(t *testing.T) {
+	pg := &failingPGStorage{liveHasRows: true}
+	storeDir := t.TempDir()
+	require.NoError(t, WritePGBound(storeDir))
+	h := newHybridRouter(nil, pg, true, storeDir)
+	h.pgBoundSet = true
+
+	require.NoError(t, h.PruneEpoch(10))
+	require.Equal(t, 1, pg.liveCheckCalls, "prune cleanup must verify emptiness against the DB")
+
+	pgBound, err := ReadPGBound(storeDir)
+	require.NoError(t, err)
+	require.True(t, pgBound, ".pg-bound must remain when live PG rows exist")
+	require.True(t, h.pgBoundSet)
+}
+
+func TestHybridStorage_QuarantinesDuplicateBackendOwnership(t *testing.T) {
+	sqlite := &owningRecordingStorage{owned: map[string]struct{}{
+		"dupe":        {},
+		"sqlite-only": {},
+	}}
+	pg := &owningRecordingStorage{owned: map[string]struct{}{
+		"dupe":    {},
+		"pg-only": {},
+	}}
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	require.ElementsMatch(t, []string{"dupe"}, h.conflictedEscrowIDs())
+	logs := captureStorageLogs(t)
+	h.logConflictedEscrows("test")
+	entry := requireStorageLogEntry(t, readStorageLogEntries(t, logs),
+		"devshard storage: escrow exists in both sqlite and postgres; quarantining conflicted escrows")
+	require.Equal(t, "test", entry["phase"])
+
+	err := h.CreateSession(CreateSessionParams{EscrowID: "dupe"})
+	require.ErrorIs(t, err, ErrEscrowBackendConflict)
+	_, err = h.GetSessionMeta("dupe")
+	require.ErrorIs(t, err, ErrEscrowBackendConflict)
+
+	require.NoError(t, h.MarkSettled("sqlite-only"))
+	require.Equal(t, "MarkSettled", sqlite.lastMethod)
+	require.Empty(t, pg.lastMethod)
+
+	require.NoError(t, h.MarkSettled("pg-only"))
+	require.Equal(t, "MarkSettled", pg.lastMethod)
+}
+
+func TestHybridStorage_ListActiveSessionsDedupesEscrowIDs(t *testing.T) {
+	sqlite := &recordingStorage{activeSessions: []ActiveSession{
+		{EscrowID: "dupe", EpochID: 9},
+		{EscrowID: "sqlite-only", EpochID: 9},
+	}}
+	pg := &recordingStorage{activeSessions: []ActiveSession{
+		{EscrowID: "dupe", EpochID: 10},
+		{EscrowID: "pg-only", EpochID: 10},
+	}}
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	sessions, err := h.ListActiveSessions()
+	require.NoError(t, err)
+	require.Equal(t, []ActiveSession{
+		{EscrowID: "dupe", EpochID: 9},
+		{EscrowID: "sqlite-only", EpochID: 9},
+		{EscrowID: "pg-only", EpochID: 10},
+	}, sessions)
 }

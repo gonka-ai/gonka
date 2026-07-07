@@ -71,7 +71,7 @@ func TestNewStorage_pgBoundLifecycleTracksPGSessions(t *testing.T) {
 	require.False(t, pgBound, "draining the last postgres session must clear .pg-bound")
 }
 
-func TestNewStorage_postgresBootFailsWhenUnreachable(t *testing.T) {
+func TestNewStorage_postgresBootDegradesWhenUnreachable(t *testing.T) {
 	t.Setenv("PGHOST", "127.0.0.1")
 	t.Setenv("PGPORT", "1")
 	t.Setenv("PGDATABASE", "missing")
@@ -79,9 +79,16 @@ func TestNewStorage_postgresBootFailsWhenUnreachable(t *testing.T) {
 	t.Setenv("PGPASSWORD", "missing")
 
 	storeDir := t.TempDir()
-	_, err := NewStorage(context.Background(), storeDir)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "postgres storage")
+	store, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+
+	hybrid := store.(*HybridStorage)
+	require.True(t, hybrid.degradedOwnerOnly)
+	require.Nil(t, hybrid.sqlite)
+	require.Nil(t, hybrid.pg)
+	err = store.CreateSession(paramsForEpoch("new-escrow", 10))
+	require.ErrorIs(t, err, ErrStoragePostgresUnavailable)
 
 	_, err = os.Stat(MetaDBPath(storeDir))
 	require.True(t, os.IsNotExist(err))
@@ -108,7 +115,7 @@ func TestNewStorage_pgUnavailableServesSQLiteOwnedOnlyAndRejectsNew(t *testing.T
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	requireStorageLogEntry(t, readStorageLogEntries(t, logs),
-		"devshard storage: postgres unavailable; serving sqlite-owned escrows only and rejecting new escrows while reconnect runs")
+		"devshard storage: postgres unavailable; entering degraded mode while reconnect runs")
 
 	hybrid := store.(*HybridStorage)
 	require.True(t, hybrid.degradedOwnerOnly)
@@ -170,6 +177,47 @@ func TestNewStorage_pgUnavailableReconnectsAndPromotes(t *testing.T) {
 	require.NoError(t, store.CreateSession(paramsForEpoch("pg-after-reconnect", 10)))
 	require.True(t, pg.HasEscrow("pg-after-reconnect"))
 	require.False(t, sqlite.HasEscrow("pg-after-reconnect"), "new escrow must not fall back to SQLite after promotion")
+}
+
+func TestNewStorage_pgUnavailableEmptyStoreReconnectsAndPromotes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
+	}
+	storeDir := t.TempDir()
+	t.Setenv("PG_RECONNECT_INTERVAL", "20ms")
+
+	t.Setenv("PGHOST", "127.0.0.1")
+	t.Setenv("PGPORT", "1")
+	t.Setenv("PGDATABASE", "missing")
+	t.Setenv("PGUSER", "missing")
+	t.Setenv("PGPASSWORD", "missing")
+
+	store, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = store.Close() })
+	hybrid := store.(*HybridStorage)
+	require.True(t, hybrid.degradedOwnerOnly)
+	require.Nil(t, hybrid.sqlite)
+	require.Nil(t, hybrid.pg)
+
+	err = store.CreateSession(paramsForEpoch("new-before-pg", 10))
+	require.ErrorIs(t, err, ErrStoragePostgresUnavailable)
+	_, err = os.Stat(MetaDBPath(storeDir))
+	require.True(t, os.IsNotExist(err), "empty degraded boot must not create sqlite meta")
+
+	cleanup := setupPostgresContainer(t)
+	t.Cleanup(cleanup)
+
+	require.Eventually(t, func() bool {
+		hybrid.mu.RLock()
+		pg := hybrid.pg
+		degraded := hybrid.degradedOwnerOnly
+		hybrid.mu.RUnlock()
+		return pg != nil && !degraded
+	}, 30*time.Second, 50*time.Millisecond)
+
+	require.NoError(t, store.CreateSession(paramsForEpoch("pg-after-empty-reconnect", 10)))
+	require.True(t, hybrid.pg.(*Postgres).HasEscrow("pg-after-empty-reconnect"))
 }
 
 func TestNewStorage_attachesSQLiteAndPostgresWhenMetaHasRowsAndPGHOSTSet(t *testing.T) {
@@ -590,9 +638,13 @@ func TestNewStorage_postgresModeNoForkWhenPGDownAfterSessionInPG(t *testing.T) {
 	t.Setenv("PGUSER", "missing")
 	t.Setenv("PGPASSWORD", "missing")
 
-	_, err = NewStorage(context.Background(), storeDir)
-	require.Error(t, err, "postgres mode must fail boot when PG is down")
+	degraded, err := NewStorage(context.Background(), storeDir)
+	require.NoError(t, err, "postgres mode should degrade instead of failing boot when PG is down")
+	t.Cleanup(func() { _ = degraded.Close() })
+
+	err = degraded.CreateSession(paramsForEpoch("new-while-pg-down", 10))
+	require.ErrorIs(t, err, ErrStoragePostgresUnavailable)
 
 	_, err = os.Stat(MetaDBPath(storeDir))
-	require.True(t, os.IsNotExist(err), "must not open sqlite when postgres mode boot fails")
+	require.True(t, os.IsNotExist(err), "must not open sqlite when postgres mode degrades without sqlite artifacts")
 }

@@ -129,7 +129,7 @@ escrows and new Postgres escrows at the same time.
 | `PGHOST` set, Postgres reachable, no local SQLite sessions | Postgres | Postgres |
 | `PGHOST` set, Postgres reachable, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
 | `PGHOST` set, Postgres unavailable, local SQLite sessions exist | Rejected while reconnecting (WARN: degraded mode) | SQLite-owned only until PG reconnects |
-| `PGHOST` set, Postgres unavailable, no local SQLite sessions | Boot fails | — |
+| `PGHOST` set, Postgres unavailable, no local SQLite sessions | Rejected while reconnecting (WARN: degraded mode) | None until PG reconnects |
 
 The `.pg-bound` marker tracks whether Postgres currently holds sessions for the
 store, not whether it ever did. Its invariant is: **`<storeDir>/.pg-bound`
@@ -138,10 +138,12 @@ each new Postgres `CreateSession` and cleared once a prune drains Postgres to
 zero sessions (a boot-time reconcile also aligns it with reality and removes a
 stale marker left by a fully-drained previous run). The write is held under the
 same lock as the insert so a concurrent prune-driven clear cannot leave a live
-Postgres session unmarked across a crash. Consequently a store whose Postgres
-sessions have all settled and pruned can boot SQLite-only again without manually
-deleting the marker; the marker only blocks the switch while Postgres sessions
-still exist.
+Postgres session unmarked across a crash. Prune-time clearing also proves
+emptiness against `devshard_session_index` before removing the marker, because a
+timed-out create can commit server-side without updating the in-memory index.
+Consequently a store whose Postgres sessions have all settled and pruned can
+boot SQLite-only again without manually deleting the marker; the marker only
+blocks the switch while Postgres sessions still exist.
 
 The router only attaches SQLite when the store has SQLite artifacts and
 `NewSQLite` reconciliation finds SQLite-owned escrows, so a store that has
@@ -150,24 +152,28 @@ legacy escrows it logs a WARN.
 
 Ownership resolution: the router derives an escrow's backend from each
 backend's own persistent index (SQLite `_meta.db` `escrow_epoch`, Postgres
-`devshard_session_index`) — cached in memory and rebuilt lazily — rather than a
+`devshard_session_index`) - cached in memory and rebuilt lazily - rather than a
 separate route table. Because `CreateSession` picks exactly one backend and
 never falls back, a given escrow lives in only one backend, so append logs
-cannot fork across backends. This is what let us re-introduce dual-backend
-routing safely: the earlier design failed because it kept an ephemeral route
-table that was lost on reboot and let the same escrow land in both backends
-when Postgres was briefly down.
+cannot fork across backends. If both backends claim the same escrow, the router
+quarantines that escrow with `ErrEscrowBackendConflict` and logs the conflicting
+IDs at boot or promotion. Other escrows keep serving. This protects nodes that
+carry state from an older dual-routing bug or from a manual `.pg-bound` override.
+The earlier design failed because it kept an ephemeral route table that was lost
+on reboot and let the same escrow land in both backends when Postgres was
+briefly down.
 
 Consequence: A Postgres outage while `PGHOST` is set fails new-escrow creation
 (and Postgres-owned operations); the router never silently creates a
-Postgres-destined escrow in SQLite. If SQLite-owned escrows exist locally and
-Postgres is temporarily unavailable, boot enters a WARN-logged degraded mode
-that serves only those known SQLite escrows and rejects new/unknown escrows
-while a background reconnect loop runs. Once Postgres reconnects, the router
-logs an INFO, leaves degraded mode, and sends new escrows to Postgres. Legacy
-SQLite escrows no longer pin the whole process to SQLite — they drain in place
-as they settle and prune while new escrows go straight to Postgres, without
-waiting for `escrow_epoch` to empty or for a restart.
+Postgres-destined escrow in SQLite. Boot still succeeds in WARN-logged degraded
+mode, with or without local SQLite sessions. It serves known SQLite escrows,
+rejects new/unknown escrows, and runs a background reconnect loop. Once Postgres
+reconnects, the router logs an INFO, leaves degraded mode, sends new escrows to
+Postgres, and `devshardd` runs another `RecoverSessions()` pass so PG-owned
+active sessions are eagerly restored. Legacy SQLite escrows no longer pin the
+whole process to SQLite - they drain in place as they settle and prune while new
+escrows go straight to Postgres, without waiting for `escrow_epoch` to empty or
+for a restart.
 
 ### Managed Pruning Starts After Recovery
 

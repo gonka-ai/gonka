@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"sort"
 	"sync"
 	"time"
 
@@ -37,8 +38,10 @@ type HybridStorage struct {
 	reconnectStop chan struct{}
 	reconnectDone chan struct{}
 
-	mu    sync.RWMutex
-	owner map[string]Storage
+	onPromoted []func()
+	promoted   bool
+
+	mu sync.RWMutex
 
 	// markerMu serializes .pg-bound maintenance with the Postgres session-count
 	// changes that drive it, so a prune-driven clear cannot interleave with a
@@ -67,10 +70,16 @@ type livePresence interface {
 	HasAnySessionsLive() (bool, error)
 }
 
-// NewHybridStorage wraps a single backend. Every call is forwarded to it. Used
-// when only one backend is available (SQLite-only or Postgres-only).
-func NewHybridStorage(backend Storage) *HybridStorage {
-	return &HybridStorage{sqlite: backend, owner: make(map[string]Storage)}
+// escrowIDLister is implemented by backends that can expose their in-memory
+// escrow index for duplicate-backend diagnostics.
+type escrowIDLister interface {
+	EscrowIDs() []string
+}
+
+// PostgresPromotionWatcher lets callers react after a degraded router promotes
+// Postgres in-process.
+type PostgresPromotionWatcher interface {
+	OnPostgresPromoted(func())
 }
 
 // newHybridRouter wires the per-session router. Either backend may be nil, but
@@ -83,7 +92,6 @@ func newHybridRouter(sqlite, pg Storage, preferPG bool, storeDir string) *Hybrid
 		pg:       pg,
 		preferPG: preferPG,
 		storeDir: storeDir,
-		owner:    make(map[string]Storage),
 	}
 }
 
@@ -93,7 +101,6 @@ func newDegradedSQLiteRouter(sqlite Storage, storeDir string, newSessionErr erro
 		storeDir:          storeDir,
 		degradedOwnerOnly: true,
 		newSessionErr:     newSessionErr,
-		owner:             make(map[string]Storage),
 	}
 }
 
@@ -114,61 +121,39 @@ func (h *HybridStorage) backends() []Storage {
 }
 
 // backendFor returns the backend that owns escrowID, or nil when neither
-// backend knows it yet. When only one backend is configured it is returned
-// without probing.
-func (h *HybridStorage) backendFor(escrowID string) Storage {
+// backend knows it yet. If both backends claim it, the escrow is quarantined.
+func (h *HybridStorage) backendFor(escrowID string) (Storage, error) {
 	h.mu.RLock()
 	sqlite := h.sqlite
 	pg := h.pg
 	degradedOwnerOnly := h.degradedOwnerOnly
-	b := h.owner[escrowID]
 	h.mu.RUnlock()
 
 	if pg == nil {
 		if degradedOwnerOnly {
 			if owns(sqlite, escrowID) {
-				return sqlite
+				return sqlite, nil
 			}
-			return nil
+			return nil, nil
 		}
-		return sqlite
+		return sqlite, nil
 	}
 	if sqlite == nil {
-		return pg
+		return pg, nil
 	}
 
-	if b != nil {
-		return b
+	sqliteOwns := owns(sqlite, escrowID)
+	pgOwns := owns(pg, escrowID)
+	switch {
+	case sqliteOwns && pgOwns:
+		return nil, fmt.Errorf("%w: %s", ErrEscrowBackendConflict, escrowID)
+	case sqliteOwns:
+		return sqlite, nil
+	case pgOwns:
+		return pg, nil
+	default:
+		return nil, nil
 	}
-
-	if owns(sqlite, escrowID) {
-		b = sqlite
-	} else if owns(pg, escrowID) {
-		b = pg
-	}
-	if b != nil {
-		h.mu.Lock()
-		h.owner[escrowID] = b
-		h.mu.Unlock()
-	}
-	return b
-}
-
-// resolveOwner returns the backend that physically holds escrowID, or nil when
-// neither backend knows it. SQLite is checked first because its lookup is fully
-// in-memory.
-func (h *HybridStorage) resolveOwner(escrowID string) Storage {
-	h.mu.RLock()
-	sqlite := h.sqlite
-	pg := h.pg
-	h.mu.RUnlock()
-	if owns(sqlite, escrowID) {
-		return sqlite
-	}
-	if owns(pg, escrowID) {
-		return pg
-	}
-	return nil
 }
 
 func (h *HybridStorage) postgresBackend() Storage {
@@ -196,23 +181,14 @@ func owns(b Storage, escrowID string) bool {
 
 // routed returns the owning backend for an existing escrow, or ErrSessionNotFound.
 func (h *HybridStorage) routed(escrowID string) (Storage, error) {
-	b := h.backendFor(escrowID)
+	b, err := h.backendFor(escrowID)
+	if err != nil {
+		return nil, err
+	}
 	if b == nil {
 		return nil, fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
 	}
 	return b, nil
-}
-
-func (h *HybridStorage) rememberOwner(escrowID string, b Storage) {
-	h.mu.Lock()
-	h.owner[escrowID] = b
-	h.mu.Unlock()
-}
-
-func (h *HybridStorage) clearOwnerCache() {
-	h.mu.Lock()
-	h.owner = make(map[string]Storage)
-	h.mu.Unlock()
 }
 
 // newSessionBackend picks the backend for a brand-new escrow: Postgres when it
@@ -231,15 +207,15 @@ func (h *HybridStorage) newSessionBackend() Storage {
 }
 
 func (h *HybridStorage) CreateSession(params CreateSessionParams) error {
-	b := h.backendFor(params.EscrowID)
+	b, err := h.backendFor(params.EscrowID)
+	if err != nil {
+		return err
+	}
 	if b == nil {
 		if err := h.newSessionError(); err != nil {
 			return fmt.Errorf("%w: escrow %s", err, params.EscrowID)
 		}
 		b = h.newSessionBackend()
-	}
-	if b == nil {
-		return fmt.Errorf("%w: %s", ErrSessionNotFound, params.EscrowID)
 	}
 
 	pg := h.postgresBackend()
@@ -254,17 +230,15 @@ func (h *HybridStorage) CreateSession(params CreateSessionParams) error {
 			return err
 		}
 		if err := b.CreateSession(params); err != nil {
-			h.clearPGBoundAfterFailedCreateLocked(params.EscrowID, err)
+			h.maybeClearPGBoundLocked("postgres_create_failed", "escrow_id", params.EscrowID, "create_error", err)
 			return err
 		}
-		h.rememberOwner(params.EscrowID, b)
 		return nil
 	}
 
 	if err := b.CreateSession(params); err != nil {
 		return err
 	}
-	h.rememberOwner(params.EscrowID, b)
 	return nil
 }
 
@@ -281,43 +255,37 @@ func (h *HybridStorage) ensurePGBoundLocked() error {
 	return nil
 }
 
-// clearPGBoundAfterFailedCreateLocked removes the write-ahead marker when the
-// PG session insert failed and Postgres provably has no sessions. It preserves
-// the original CreateSession error; cleanup failures are logged only.
-//
-// The in-memory index saying "empty" is not enough here: a create that failed
-// with a timeout may have committed server-side (ack lost) without updating
-// the index. The marker is therefore cleared only when a live DB query proves
-// emptiness. If the live check fails (e.g. PG outage) or the backend cannot
-// perform one, the marker is kept; boot-time reconciliation or a prune-driven
-// clear removes a genuinely stale marker later.
-func (h *HybridStorage) clearPGBoundAfterFailedCreateLocked(escrowID string, createErr error) {
+// maybeClearPGBoundLocked removes the write-ahead marker only when Postgres
+// provably has no sessions. Caller must hold markerMu.
+func (h *HybridStorage) maybeClearPGBoundLocked(reason string, attrs ...any) {
 	pg := h.postgresBackend()
-	if !h.pgBoundSet || pgHasSessions(pg) {
+	if pg == nil || h.storeDir == "" || !h.pgBoundSet || pgHasSessions(pg) {
 		return
 	}
+	args := []any{"dir", h.storeDir, "reason", reason}
+	args = append(args, attrs...)
+
 	lp, ok := pg.(livePresence)
 	if !ok {
+		slog.Warn("devshard storage: keeping .pg-bound; backend cannot live-check postgres emptiness", args...)
 		return
 	}
 	has, err := lp.HasAnySessionsLive()
 	if err != nil {
-		slog.Warn("devshard storage: keeping .pg-bound after failed postgres create; live emptiness check failed",
-			"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr, "live_check_error", err)
+		args = append(args, "live_check_error", err)
+		slog.Warn("devshard storage: keeping .pg-bound; live postgres emptiness check failed", args...)
 		return
 	}
 	if has {
-		// The failed create (or a concurrent writer) actually landed rows.
 		return
 	}
 	if err := os.Remove(PGBoundPath(h.storeDir)); err != nil && !os.IsNotExist(err) {
-		slog.Warn("devshard storage: failed to clear .pg-bound after postgres create failed",
-			"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr, "cleanup_error", err)
+		args = append(args, "cleanup_error", err)
+		slog.Warn("devshard storage: failed to clear .pg-bound after postgres drained", args...)
 		return
 	}
 	h.pgBoundSet = false
-	slog.Warn("devshard storage: cleared .pg-bound after postgres create failed with no postgres sessions",
-		"dir", h.storeDir, "escrow_id", escrowID, "create_error", createErr)
+	slog.Info("devshard storage: cleared .pg-bound; postgres has no remaining sessions", args...)
 }
 
 type storageOpener func(context.Context) (Storage, error)
@@ -377,37 +345,44 @@ func (h *HybridStorage) promotePostgres(pg Storage) error {
 	h.mu.Lock()
 	if h.pg != nil {
 		h.mu.Unlock()
+		_ = pg.Close()
 		return nil
 	}
 	h.pg = pg
 	h.preferPG = true
 	h.degradedOwnerOnly = false
 	h.newSessionErr = nil
-	h.owner = make(map[string]Storage)
+	h.promoted = true
+	hooks := append([]func(){}, h.onPromoted...)
 	h.mu.Unlock()
 	slog.Info("devshard storage: postgres reconnected; leaving degraded sqlite-owned-only mode", "dir", h.storeDir)
+	h.logConflictedEscrows("postgres promotion")
+	for _, hook := range hooks {
+		go hook()
+	}
 	return nil
 }
 
-// clearPGBoundIfDrained removes .pg-bound once Postgres holds no sessions, so a
-// later SQLite-only boot is allowed without manual cleanup. It is a no-op until
-// PG is genuinely empty and while the marker is already absent.
-func (h *HybridStorage) clearPGBoundIfDrained() {
-	pg := h.postgresBackend()
-	if pg == nil || h.storeDir == "" {
+// OnPostgresPromoted registers fn to run after a degraded router promotes
+// Postgres. If promotion already happened, fn runs asynchronously immediately.
+func (h *HybridStorage) OnPostgresPromoted(fn func()) {
+	if fn == nil {
 		return
 	}
+	h.mu.Lock()
+	if h.promoted {
+		h.mu.Unlock()
+		go fn()
+		return
+	}
+	h.onPromoted = append(h.onPromoted, fn)
+	h.mu.Unlock()
+}
+
+func (h *HybridStorage) maybeClearPGBound(reason string, attrs ...any) {
 	h.markerMu.Lock()
 	defer h.markerMu.Unlock()
-	if !h.pgBoundSet || pgHasSessions(pg) {
-		return
-	}
-	if err := os.Remove(PGBoundPath(h.storeDir)); err != nil && !os.IsNotExist(err) {
-		slog.Warn("devshard storage: failed to clear .pg-bound after postgres drained", "dir", h.storeDir, "error", err)
-		return
-	}
-	h.pgBoundSet = false
-	slog.Info("devshard storage: cleared .pg-bound; postgres has no remaining sessions", "dir", h.storeDir)
+	h.maybeClearPGBoundLocked(reason, attrs...)
 }
 
 // reconcilePGBoundAtBoot aligns the .pg-bound marker with Postgres reality at
@@ -431,6 +406,8 @@ func (h *HybridStorage) reconcilePGBoundFor(pg Storage) error {
 		return err
 	}
 	h.pgBoundSet = present
+	// At boot and promotion time the Postgres in-memory index was just rebuilt
+	// from devshard_session_index, so it is authoritative for marker reconcile.
 	if pgHasSessions(pg) {
 		return h.ensurePGBoundLocked()
 	}
@@ -454,6 +431,62 @@ func pgHasSessions(b Storage) bool {
 	return c.HasAnySessions()
 }
 
+func (h *HybridStorage) logConflictedEscrows(phase string) {
+	escrowIDs := h.conflictedEscrowIDs()
+	if len(escrowIDs) == 0 {
+		return
+	}
+	slog.Error(
+		"devshard storage: escrow exists in both sqlite and postgres; quarantining conflicted escrows",
+		"dir", h.storeDir,
+		"phase", phase,
+		"escrow_ids", escrowIDs,
+		"remediation", "inspect both backends and remove the stale fork before continuing the escrow",
+	)
+}
+
+func (h *HybridStorage) conflictedEscrowIDs() []string {
+	h.mu.RLock()
+	sqlite := h.sqlite
+	pg := h.pg
+	h.mu.RUnlock()
+	return intersectEscrowIDs(sqlite, pg)
+}
+
+func intersectEscrowIDs(a, b Storage) []string {
+	if a == nil || b == nil {
+		return nil
+	}
+	aIDs, ok := escrowIDs(a)
+	if !ok || len(aIDs) == 0 {
+		return nil
+	}
+	bIDs, ok := escrowIDs(b)
+	if !ok || len(bIDs) == 0 {
+		return nil
+	}
+	bSet := make(map[string]struct{}, len(bIDs))
+	for _, id := range bIDs {
+		bSet[id] = struct{}{}
+	}
+	var conflicts []string
+	for _, id := range aIDs {
+		if _, ok := bSet[id]; ok {
+			conflicts = append(conflicts, id)
+		}
+	}
+	sort.Strings(conflicts)
+	return conflicts
+}
+
+func escrowIDs(b Storage) ([]string, bool) {
+	l, ok := b.(escrowIDLister)
+	if !ok {
+		return nil, false
+	}
+	return l.EscrowIDs(), true
+}
+
 func (h *HybridStorage) MarkSettled(escrowID string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -463,15 +496,23 @@ func (h *HybridStorage) MarkSettled(escrowID string) error {
 }
 
 // ListActiveSessions unions active sessions across both backends so recovery
-// replays SQLite and Postgres escrows together.
+// replays SQLite and Postgres escrows together. If both backends list the same
+// escrow, keep one entry; follow-up reads will quarantine the conflict.
 func (h *HybridStorage) ListActiveSessions() ([]ActiveSession, error) {
 	var out []ActiveSession
+	seen := make(map[string]struct{})
 	for _, b := range h.backends() {
 		sessions, err := b.ListActiveSessions()
 		if err != nil {
 			return nil, err
 		}
-		out = append(out, sessions...)
+		for _, sess := range sessions {
+			if _, ok := seen[sess.EscrowID]; ok {
+				continue
+			}
+			seen[sess.EscrowID] = struct{}{}
+			out = append(out, sess)
+		}
 	}
 	return out, nil
 }
@@ -596,16 +637,14 @@ func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValid
 	return b.GetValidationObservability(escrowID)
 }
 
-// PruneEpoch drops the epoch partition in every backend. Ownership cache is
-// cleared afterwards because pruned escrows no longer belong to any backend.
+// PruneEpoch drops the epoch partition in every backend.
 func (h *HybridStorage) PruneEpoch(epochID uint64) error {
 	for _, b := range h.backends() {
 		if err := b.PruneEpoch(epochID); err != nil {
 			return err
 		}
 	}
-	h.clearOwnerCache()
-	h.clearPGBoundIfDrained()
+	h.maybeClearPGBound("prune_epoch", "epoch_id", epochID)
 	return nil
 }
 
@@ -619,8 +658,7 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 			return err
 		}
 	}
-	h.clearOwnerCache()
-	h.clearPGBoundIfDrained()
+	h.maybeClearPGBound("range_prune", "cutoff", cutoff)
 	return nil
 }
 

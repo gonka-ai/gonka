@@ -200,6 +200,13 @@ func main() {
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
 	}
+	if watcher, ok := inner.(devshardstorage.PostgresPromotionWatcher); ok {
+		watcher.OnPostgresPromoted(func() {
+			if err := manager.RecoverSessions(); err != nil {
+				slog.Warn("recover sessions after postgres promotion failed", "error", err)
+			}
+		})
+	}
 	store.Start()
 	manager.SetReady()
 

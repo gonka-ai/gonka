@@ -32,8 +32,8 @@ var ErrStoragePostgresUnavailable = errors.New("devshard postgres storage is con
 //     SQLite escrows are served, but new/unknown escrows are rejected because
 //     they may belong to unavailable Postgres.
 //   - When PGHOST is set, Postgres is the backend for all new escrows. If
-//     Postgres is temporarily unavailable but legacy SQLite escrows exist, boot
-//     enters the same degraded mode instead of taking the whole process down.
+//     Postgres is temporarily unavailable, boot enters degraded mode instead of
+//     taking the whole process down.
 //   - When PGHOST is set and Postgres connects, legacy SQLite escrows are
 //     attached alongside Postgres so they keep being served and drain in place
 //     while new escrows go to Postgres.
@@ -80,17 +80,15 @@ func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 
 	pg, err := openPostgresWithTimeout(ctx)
 	if err != nil {
-		if sqliteDrain {
-			slog.Warn(
-				"devshard storage: postgres unavailable; serving sqlite-owned escrows only and rejecting new escrows while reconnect runs",
-				"dir", storeDir,
-				"error", err,
-			)
-			router := newDegradedSQLiteRouter(sqlite, storeDir, fmt.Errorf("%w: %w", ErrStoragePostgresUnavailable, err))
-			router.startPostgresReconnect(ctx, openPostgresWithTimeout, pgReconnectInterval())
-			return router, nil
-		}
-		return nil, fmt.Errorf("postgres storage: %w", err)
+		slog.Warn(
+			"devshard storage: postgres unavailable; entering degraded mode while reconnect runs",
+			"dir", storeDir,
+			"sqlite_drain", sqliteDrain,
+			"error", err,
+		)
+		router := newDegradedSQLiteRouter(sqlite, storeDir, fmt.Errorf("%w: %w", ErrStoragePostgresUnavailable, err))
+		router.startPostgresReconnect(ctx, openPostgresWithTimeout, pgReconnectInterval())
+		return router, nil
 	}
 
 	if sqliteDrain {
@@ -107,6 +105,7 @@ func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
 		_ = router.Close()
 		return nil, fmt.Errorf("reconcile pg-bound: %w", err)
 	}
+	router.logConflictedEscrows("boot")
 	slog.Info("devshard storage: using postgres for new escrows", "dir", storeDir, "sqlite_drain", sqliteDrain)
 	return router, nil
 }

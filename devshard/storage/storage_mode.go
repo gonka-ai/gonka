@@ -94,12 +94,38 @@ func WritePGBound(storeDir string) error {
 	}
 	target := PGBoundPath(storeDir)
 	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, []byte("1\n"), 0o644); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open pg-bound tmp: %w", err)
+	}
+	if _, err := f.Write([]byte("1\n")); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("write pg-bound tmp: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sync pg-bound tmp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close pg-bound tmp: %w", err)
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename pg-bound: %w", err)
+	}
+	dir, err := os.Open(storeDir)
+	if err != nil {
+		return fmt.Errorf("open store dir for sync: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync store dir: %w", err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close store dir: %w", err)
 	}
 	return nil
 }
