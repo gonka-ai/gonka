@@ -790,8 +790,8 @@ github.com/golangci/revgrep v0.5.3 h1:3tL7c1XBMtWHHqVpS5ChmiAAoe4PF/d5+ULzV9sLAz
 github.com/golangci/revgrep v0.5.3/go.mod h1:U4R/s9dlXZsg8uJmaR1GrloUr14D7qDl8gi2iPXJH8k=
 github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed h1:IURFTjxeTfNFP0hTEi1YKjB/ub8zkpaOqFFMApi2EAs=
 github.com/golangci/unconvert v0.0.0-20240309020433-c5143eacb3ed/go.mod h1:XLXN8bNw4CGRPaqgl3bv/lhz7bsGPh4/xSaMTbo2vkQ=
-github.com/gonka-ai/cosmos-sdk v0.53.3-ps19 h1:2EB13gzwvQLWW5s3CfFQ5PjF0pzPc7l8CG/CZi+7i/Y=
-github.com/gonka-ai/cosmos-sdk v0.53.3-ps19/go.mod h1:90S054hIbadFB1MlXVZVC5w0QbKfd1P4b79zT+vvJxw=
+github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability h1:jzgFsresYGzIbtF/Ov69GxFQ7NHG42R0bP6nMNdzoQU=
+github.com/gonka-ai/cosmos-sdk v0.53.3-ps19-observability/go.mod h1:90S054hIbadFB1MlXVZVC5w0QbKfd1P4b79zT+vvJxw=
 github.com/gonka-ai/cosmos-sdk/store v1.1.2-ps1 h1:8kmYjdJ9ht+o+0GnJywdf2JounFAWOZZ5xZSrJ6ntFk=
 github.com/gonka-ai/cosmos-sdk/store v1.1.2-ps1/go.mod h1:7a15p+QsM5UXf7VMhO3ylmqj85k9UBN/h1kwMcLiffA=
 github.com/google/btree v0.0.0-20180813153112-4030bb1f1f0c/go.mod h1:lNA+9X1NB3Zf8V7Ke586lFgjr2dZNuvo3lPJSGZ5JPQ=
