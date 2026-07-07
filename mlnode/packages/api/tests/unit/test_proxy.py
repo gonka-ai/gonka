@@ -443,3 +443,60 @@ async def test_resource_cleanup_verification():
     # Verify backend counts reset
     for port in [5001, 5002]:
         assert proxy_module.vllm_counts[port] == 0 
+
+# ---------------------------------------------------------------------------
+# Health-probe damping (_apply_health_damping)
+# ---------------------------------------------------------------------------
+
+@pytest.fixture
+def clean_health_state():
+    """Reset the module-level health dicts around each damping test."""
+    saved_healthy = dict(proxy_module.vllm_healthy)
+    saved_streak = dict(proxy_module.vllm_health_fail_streak)
+    proxy_module.vllm_healthy.clear()
+    proxy_module.vllm_health_fail_streak.clear()
+    yield
+    proxy_module.vllm_healthy.clear()
+    proxy_module.vllm_healthy.update(saved_healthy)
+    proxy_module.vllm_health_fail_streak.clear()
+    proxy_module.vllm_health_fail_streak.update(saved_streak)
+
+
+def _drive(port, probes, start_healthy):
+    """Feed a probe sequence through the damping and record verdicts, updating
+    vllm_healthy the same way _health_check_vllm does."""
+    proxy_module.vllm_healthy[port] = start_healthy
+    out = []
+    for probe in probes:
+        ok = proxy_module._apply_health_damping(port, probe)
+        proxy_module.vllm_healthy[port] = ok
+        out.append(ok)
+    return out
+
+
+def test_damping_startup_stays_down_until_first_success(clean_health_state):
+    assert _drive(5001, [False, False, True], start_healthy=False) == [False, False, True]
+
+
+def test_damping_two_blips_still_healthy(clean_health_state):
+    """Missed /health deadlines on a busy-but-alive engine (up to
+    HEALTH_FAIL_STREAK-1 in a row) must not stop the compatibility server."""
+    assert _drive(5001, [True, False, False, True], start_healthy=True) == [True, True, True, True]
+
+
+def test_damping_three_consecutive_failures_is_down(clean_health_state):
+    assert _drive(5001, [True, False, False, False], start_healthy=True) == [True, True, True, False]
+
+
+def test_damping_recovers_instantly_on_success(clean_health_state):
+    assert _drive(5001, [False, False, False, True], start_healthy=True) == [True, True, False, True]
+
+
+def test_damping_ports_are_independent(clean_health_state):
+    proxy_module.vllm_healthy.update({5001: True, 5002: True})
+    # 5001 fails 3x -> down; 5002 keeps succeeding -> up
+    for _ in range(3):
+        proxy_module.vllm_healthy[5001] = proxy_module._apply_health_damping(5001, False)
+        proxy_module.vllm_healthy[5002] = proxy_module._apply_health_damping(5002, True)
+    assert proxy_module.vllm_healthy[5001] is False
+    assert proxy_module.vllm_healthy[5002] is True

@@ -25,6 +25,9 @@ vllm_backend_ports: List[int] = []
 # lets consumers like the metrics exporter detect a model switch lazily.
 vllm_setup_generation: int = 0
 vllm_healthy: Dict[int, bool] = {}
+# /health prober damping -- contract in _apply_health_damping.
+HEALTH_FAIL_STREAK: int = 3
+vllm_health_fail_streak: Dict[int, int] = {}
 vllm_counts: Dict[int, int] = {}
 poc_status_by_port: Dict[int, str] = {}  # PoC status: "IDLE", "GENERATING", "STOPPED", or ""
 pow_generate_rr_index: int = 0
@@ -192,6 +195,19 @@ async def call_backend(port: int, method: str, path: str, json_body: dict = None
         raise ValueError(f"Unsupported method: {method}")
 
 
+def _apply_health_damping(port: int, probe_ok: bool) -> bool:
+    """Damped health verdict: unhealthy only after HEALTH_FAIL_STREAK
+    consecutive probe failures, instant recovery on success; a backend that
+    has never succeeded (startup) stays down regardless of streak."""
+    if probe_ok:
+        vllm_health_fail_streak[port] = 0
+        return True
+    vllm_health_fail_streak[port] = vllm_health_fail_streak.get(port, 0) + 1
+    if vllm_healthy.get(port) and vllm_health_fail_streak[port] < HEALTH_FAIL_STREAK:
+        return True
+    return False
+
+
 async def _health_check_vllm(interval: float = 2.0):
     """Health check for vLLM backends and manage compatibility server."""
     logger.info("Health check loop started, checking every %s seconds", interval)
@@ -208,11 +224,13 @@ async def _health_check_vllm(interval: float = 2.0):
                 if vllm_client is None:
                     logger.warning(f"Health check skipped for port {p}: vllm_client is None")
                     continue
-                r = await vllm_client.get(f"http://{VLLM_HOST}:{p}/health", timeout=2)
+                r = await vllm_client.get(f"http://{VLLM_HOST}:{p}/health", timeout=10)
                 ok = r.status_code == 200
                 logger.debug("Health check for port %d: status=%d, ok=%s", p, r.status_code, ok)
             except Exception as e:
                 logger.debug("Health check for port %d failed: %s", p, e)
+
+            ok = _apply_health_damping(p, ok)
 
             prev = vllm_healthy.get(p)
             if prev != ok:

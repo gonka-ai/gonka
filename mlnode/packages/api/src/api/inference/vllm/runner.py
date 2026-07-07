@@ -1,4 +1,5 @@
 import os
+import re
 import subprocess
 import time
 import requests
@@ -22,6 +23,87 @@ WAIT_FOR_SERVER_TIMEOUT = 1200
 WAIT_FOR_SERVER_CHECK_INTERVAL = 3
 
 logger = create_logger(__name__)
+
+HANG_CONSECUTIVE = 3
+
+# (metric suffix, cross-series reduce). Sum/max across ALL series: /metrics
+# can briefly expose several registries mid-restart.
+_HEARTBEAT_SERIES = (
+    ("iteration_tokens_total_count", sum),
+    ("num_requests_running", max),
+    ("num_requests_waiting", max),
+)
+
+
+def _int_env(name: str, default: int) -> int:
+    """os.environ[name] as int; unset/empty -> default, garbage -> default + warning."""
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("%s=%r is not an integer -- using %d", name, raw, default)
+        return default
+
+
+def _scrape_heartbeat(host: str, port: int):
+    """(iters, running, waiting) floats from /metrics; None per unreadable value.
+    Raises requests.ConnectionError when the instance is unreachable (dead)."""
+    try:
+        txt = requests.get(f"http://{host}:{port}/metrics", timeout=3).text
+    except requests.exceptions.ConnectTimeout:
+        # Saturation, not death: the caller's grace window decides.
+        return None, None, None
+    except requests.ConnectionError:
+        raise
+    except Exception:
+        return None, None, None
+    values = []
+    for name, reduce_fn in _HEARTBEAT_SERIES:
+        try:
+            series = re.findall(rf"(?m)^vllm:{name}\S*\s+([0-9eE.+-]+)", txt)
+            values.append(reduce_fn(float(x) for x in series) if series else None)
+        except Exception:
+            values.append(None)
+    return tuple(values)
+
+
+def _heartbeat_verdict(port: int, st: dict, iters, running, waiting, now: float, grace: int) -> bool:
+    """Advance one port's heartbeat state (mutates st); True = instance alive.
+    Branch order is semantic -- reorder only with the unit tests in hand."""
+    read_ok = iters is not None or running is not None or waiting is not None
+    has_work = (running is not None and running > 0) or (waiting is not None and waiting > 0)
+    # Fresh baseline on either: legitimate idle (readable scrape, no work) or a
+    # stepping engine -- ANY counter change counts, including the reset after an
+    # engine restart (a ">" test would false-HUNG on the stale high baseline).
+    # A blind scrape (all None) is neither: refreshing on it would silently
+    # disable hang detection.
+    if (read_ok and not has_work) or (
+        iters is not None and (st["iter"] is None or iters != st["iter"])
+    ):
+        st["ts"] = now
+        st["iter"] = iters
+        st["hung"] = 0
+        return True
+    if iters is None:
+        # Counter unreadable: alive only within grace.
+        return now - st["ts"] <= grace
+    if now - st["ts"] > grace:
+        # Frozen with work past grace: require consecutive verdicts so one
+        # confused scrape cannot start the restart escalation.
+        st["hung"] += 1
+        if st["hung"] >= HANG_CONSECUTIVE:
+            logger.error(
+                "vLLM instance on port %s: scheduler heartbeat frozen >%ss "
+                "over %d consecutive checks with running=%s waiting=%s -- "
+                "reporting unhealthy for restart",
+                port, grace, st["hung"], running, waiting,
+            )
+            return False
+        return True
+    st["hung"] = 0
+    return True
 
 
 class IVLLMRunner(ITrackableTask):
@@ -63,6 +145,7 @@ class VLLMRunner(IVLLMRunner):
         self.dtype = dtype
         self.additional_args = additional_args or []
         self.processes: List[subprocess.Popen] = []
+        self._hb = {}  # per-port heartbeat state; outlives engine restarts
 
     def get_config_summary(self) -> dict:
         """Public config snapshot for observability (metrics exporter).
@@ -241,15 +324,28 @@ class VLLMRunner(IVLLMRunner):
     def is_available(self) -> bool:
         if not self.is_running():
             return False
-        try:
-            # Check if any backend is available
-            for port in range(self.VLLM_PORT + 1, self.VLLM_PORT + len(self.processes) + 1):
-                resp = requests.get(f"http://{self.VLLM_HOST}:{port}/health", timeout=2)
-                if resp.status_code == 200:
-                    return True
-            return False
-        except (requests.ConnectionError, requests.Timeout):
-            return False
+        # Scheduler-heartbeat liveness. vLLM /health returns 200 even when the
+        # scheduler is deadlocked (check_health only reads the `errored` flag)
+        # and misses its deadline while merely busy. The iteration counter
+        # advances on every engine step and freezes only on a real stall; the
+        # grace window also absorbs the counter's observed pre-stall flatline.
+        grace = _int_env("MLNODE_HANG_GRACE_SEC", 120)
+        now = time.time()
+        healthy = True
+        # Check every instance: a hang must not hide behind a healthy sibling.
+        for port in range(self.VLLM_PORT + 1, self.VLLM_PORT + len(self.processes) + 1):
+            try:
+                iters, running, waiting = _scrape_heartbeat(self.VLLM_HOST, port)
+            except requests.ConnectionError:
+                # Refused/unreachable -> this instance is dead.
+                return False
+            st = self._hb.setdefault(port, {"ts": now, "iter": iters, "hung": 0})
+            if grace <= 0:
+                # Detection disabled: only process death / refusal mark unhealthy.
+                continue
+            ok = _heartbeat_verdict(port, st, iters, running, waiting, now, grace)
+            healthy = healthy and ok
+        return healthy
 
     def get_error_if_exist(self) -> Optional[str]:
         for p in self.processes:
