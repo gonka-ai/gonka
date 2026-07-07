@@ -12,8 +12,12 @@ import (
 	"context"
 	"fmt"
 
+	math "cosmossdk.io/math"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
+	mintkeeper "github.com/cosmos/cosmos-sdk/x/mint/keeper"
 
 	genesistransferkeeper "github.com/productscience/inference/x/genesistransfer/keeper"
 	genesistransfertypes "github.com/productscience/inference/x/genesistransfer/types"
@@ -26,6 +30,7 @@ func CreateUpgradeHandler(
 	configurator module.Configurator,
 	k keeper.Keeper,
 	gtKeeper genesistransferkeeper.Keeper,
+	mintKeeper mintkeeper.Keeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -50,6 +55,12 @@ func CreateUpgradeHandler(
 		if err := seedDelegationRewardSnapshotForEffectiveEpoch(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := zeroMintInflation(ctx, k, mintKeeper); err != nil {
+			return nil, err
+		}
+		if err := burnFeeCollectorBalance(ctx, k); err != nil {
+			return nil, err
+		}
 
 		// Initialize maintenance params with defaults for existing chains.
 		// All participants start with zero credit — credit is earned going forward.
@@ -70,6 +81,78 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func zeroMintInflation(ctx context.Context, k keeper.Keeper, mintKeeper mintkeeper.Keeper) error {
+	params, err := mintKeeper.Params.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get mint params: %w", err)
+	}
+
+	oldInflationMax := params.InflationMax
+	oldInflationMin := params.InflationMin
+	oldInflationRateChange := params.InflationRateChange
+	params.InflationMax = math.LegacyZeroDec()
+	params.InflationMin = math.LegacyZeroDec()
+	params.InflationRateChange = math.LegacyZeroDec()
+	if err := mintKeeper.Params.Set(ctx, params); err != nil {
+		return fmt.Errorf("set mint params: %w", err)
+	}
+
+	minter, err := mintKeeper.Minter.Get(ctx)
+	if err != nil {
+		return fmt.Errorf("get mint minter: %w", err)
+	}
+
+	oldInflation := minter.Inflation
+	oldAnnualProvisions := minter.AnnualProvisions
+	minter.Inflation = math.LegacyZeroDec()
+	minter.AnnualProvisions = math.LegacyZeroDec()
+	if err := mintKeeper.Minter.Set(ctx, minter); err != nil {
+		return fmt.Errorf("set mint minter: %w", err)
+	}
+
+	k.LogInfo("zeroed mint inflation", types.Upgrades,
+		"old_inflation_max", oldInflationMax.String(),
+		"old_inflation_min", oldInflationMin.String(),
+		"old_inflation_rate_change", oldInflationRateChange.String(),
+		"old_inflation", oldInflation.String(),
+		"old_annual_provisions", oldAnnualProvisions.String(),
+		"new_inflation_max", params.InflationMax.String(),
+		"new_inflation_min", params.InflationMin.String(),
+		"new_inflation_rate_change", params.InflationRateChange.String(),
+		"new_inflation", minter.Inflation.String(),
+		"new_annual_provisions", minter.AnnualProvisions.String(),
+	)
+	return nil
+}
+
+func burnFeeCollectorBalance(ctx context.Context, k keeper.Keeper) error {
+	feeCollectorAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+	balance := k.BankView.GetAllBalances(ctx, feeCollectorAddress)
+	burnAmount := balance.AmountOf(types.BaseCoin)
+	if burnAmount.IsZero() {
+		k.LogInfo("burn fee collector balance skipped: no base denom balance", types.Upgrades,
+			"denom", types.BaseCoin,
+			"fee_collector_balance", balance.String(),
+		)
+		return nil
+	}
+
+	burnCoins := sdk.NewCoins(sdk.NewCoin(types.BaseCoin, burnAmount))
+	const memo = "v0.2.14: burn erroneously minted inflation"
+	if err := k.BankKeeper.SendCoinsFromModuleToModule(ctx, authtypes.FeeCollectorName, types.ModuleName, burnCoins, memo); err != nil {
+		return fmt.Errorf("transfer fee collector balance to inference module for burn: %w", err)
+	}
+	if err := k.BankKeeper.BurnCoins(ctx, types.ModuleName, burnCoins, memo); err != nil {
+		return fmt.Errorf("burn fee collector balance: %w", err)
+	}
+
+	k.LogInfo("burned fee collector balance", types.Upgrades,
+		"amount", burnCoins.String(),
+		"fee_collector_balance", balance.String(),
+	)
+	return nil
 }
 
 func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper.Keeper) error {
