@@ -82,13 +82,22 @@ class DevshardStandaloneTests : TestermintTest() {
         env = overrideVersiondEnv,
     )
 
+    // devshardEscrowAlwaysValidateSpec pins devshard_escrow_params.validation_rate
+    // to 10000 bps so escrows snapshot 100% sampling at create. Without it the
+    // tests depend on the chain default and go flaky when that default changes.
     private val parallelLongEpochConfig = devshardVersiondConfig(
-        genesisSpec = createSpec(epochLength = 25, epochShift = 10).merge(devshardNoRestrictionsSpec),
+        genesisSpec = createSpec(epochLength = 25, epochShift = 10)
+            .merge(devshardNoRestrictionsSpec)
+            .merge(devshardEscrowAlwaysValidateSpec),
         env = overrideVersiondEnv,
     )
 
     private val overrideAlwaysValidateConfig = devshardVersiondConfig(
-        genesisSpec = mergedDevshardGenesisSpec(devshardNoRestrictionsSpec, devshardAlwaysValidateSpec),
+        genesisSpec = mergedDevshardGenesisSpec(
+            devshardNoRestrictionsSpec,
+            devshardAlwaysValidateSpec,
+            devshardEscrowAlwaysValidateSpec,
+        ),
         env = overrideVersiondEnv,
     )
 
