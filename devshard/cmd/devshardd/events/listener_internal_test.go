@@ -1,6 +1,10 @@
 package events
 
-import "testing"
+import (
+	"testing"
+
+	"github.com/stretchr/testify/require"
+)
 
 func TestListenerReadyHandler(t *testing.T) {
 	l := NewListener("http://localhost:26657")
@@ -12,7 +16,5 @@ func TestListenerReadyHandler(t *testing.T) {
 	l.setReady(true)
 	l.setReady(false)
 
-	if len(states) != 2 || !states[0] || states[1] {
-		t.Fatalf("ready states = %v, want [true false]", states)
-	}
+	require.Equal(t, []bool{true, false}, states)
 }

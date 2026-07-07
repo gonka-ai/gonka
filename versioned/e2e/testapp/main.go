@@ -92,7 +92,7 @@ func main() {
 	}))
 
 	http.HandleFunc("/ready", func(w http.ResponseWriter, r *http.Request) {
-		status := map[string]interface{}{
+		status := map[string]any{
 			"ready":    ready.Load(),
 			"draining": draining.Load(),
 			"inflight": inflight.Load(),
@@ -112,7 +112,7 @@ func main() {
 		draining.Store(true)
 		ready.Store(false)
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"ready":    ready.Load(),
 			"draining": draining.Load(),
 			"inflight": inflight.Load(),
@@ -121,7 +121,7 @@ func main() {
 
 	http.HandleFunc("/drain/status", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		json.NewEncoder(w).Encode(map[string]interface{}{
+		json.NewEncoder(w).Encode(map[string]any{
 			"ready":    ready.Load(),
 			"draining": draining.Load(),
 			"inflight": inflight.Load(),

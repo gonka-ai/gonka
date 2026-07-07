@@ -499,7 +499,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Lock()
 	newChild := m.newChild(ctx, v, sha, m.installBinPath(v.Name, sha), false)
 	m.mu.Unlock()
-	go m.runChild(newChild.context, newChild.child)
+	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
 		newChild.cancel()
 		waitForChild(newChild.child, m.childStopTimeout())
@@ -709,9 +709,9 @@ func logInstalledVersionMismatch(scope, versionName, desiredArchiveHash string, 
 }
 
 type childStart struct {
-	child   *child
-	context context.Context
-	cancel  context.CancelFunc
+	child  *child
+	ctx    context.Context
+	cancel context.CancelFunc
 }
 
 func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) childStart {
@@ -727,7 +727,7 @@ func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath s
 		status:        statusStarting,
 		restart:       restart,
 	}
-	return childStart{child: c, context: childCtx, cancel: childCancel}
+	return childStart{child: c, ctx: childCtx, cancel: childCancel}
 }
 
 // startChild must be called with m.mu held.
@@ -735,7 +735,7 @@ func (m *Manager) startChild(ctx context.Context, v oracle.Version, sha, binPath
 	start := m.newChild(ctx, v, sha, binPath, restart)
 	c := start.child
 	m.processes[v.Name] = c
-	go m.runChild(start.context, c)
+	go m.runChild(start.ctx, c)
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
