@@ -2,6 +2,7 @@ package oracle
 
 import (
 	"context"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -25,7 +26,7 @@ type Version struct {
 // Priority: sha256 field, then ?checksum=sha256:... in URL query.
 func (v Version) ResolvedSHA256() (string, error) {
 	if v.SHA256 != "" {
-		return v.SHA256, nil
+		return validateSHA256(v.Name, v.SHA256)
 	}
 	u, err := url.Parse(v.Binary)
 	if err != nil {
@@ -37,7 +38,7 @@ func (v Version) ResolvedSHA256() (string, error) {
 		if hash == "" {
 			return "", fmt.Errorf("empty sha256 checksum in URL for version %s", v.Name)
 		}
-		return hash, nil
+		return validateSHA256(v.Name, hash)
 	}
 	return "", fmt.Errorf("no checksum for version %s: sha256 field empty and no ?checksum=sha256: in URL", v.Name)
 }
@@ -90,9 +91,22 @@ func validateVersions(versions []Version) error {
 		if _, dup := seen[v.Name]; dup {
 			return fmt.Errorf("duplicate oracle version name %q", v.Name)
 		}
+		if _, err := v.ResolvedSHA256(); err != nil {
+			return fmt.Errorf("invalid oracle version %q sha256: %w", v.Name, err)
+		}
 		seen[v.Name] = struct{}{}
 	}
 	return nil
+}
+
+func validateSHA256(versionName, hash string) (string, error) {
+	if len(hash) != 64 {
+		return "", fmt.Errorf("sha256 for version %s must be 64 hex characters, got %d", versionName, len(hash))
+	}
+	if _, err := hex.DecodeString(hash); err != nil {
+		return "", fmt.Errorf("sha256 for version %s is not valid hex: %w", versionName, err)
+	}
+	return hash, nil
 }
 
 func validVersionName(name string) bool {

@@ -84,7 +84,7 @@ func TestHashMismatch(t *testing.T) {
 	// Use testapp binary (protocol "testapp") with a mismatched slot so even a
 	// correct hash would fail protocol checks; wrong hash fails earlier.
 	uploadBinary(t, "bad.zip", zipData)
-	putVersion(t, "badslot", fmt.Sprintf("%s/binaries/bad.zip", oracleURL), "wrong_hash", 9003)
+	putVersion(t, "badslot", fmt.Sprintf("%s/binaries/bad.zip", oracleURL), strings.Repeat("0", 64), 9003)
 
 	time.Sleep(10 * time.Second)
 

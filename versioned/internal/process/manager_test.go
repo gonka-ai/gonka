@@ -1,6 +1,8 @@
 package process
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -834,6 +836,157 @@ func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 	}
 }
 
+func TestDrainAndStop_WaitsForIdleBeforeCancel(t *testing.T) {
+	var statusRequests int32
+	var cancelled atomic.Bool
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		count := atomic.AddInt32(&statusRequests, 1)
+		if count == 1 {
+			if cancelled.Load() {
+				t.Error("child cancelled before idle drain status")
+			}
+			json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]int64{"inflight": 0})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainTimeout:      time.Second,
+		DrainPollInterval: 5 * time.Millisecond,
+		DrainKillGrace:    50 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		port:    port,
+		done:    done,
+		cancel: func() {
+			cancelled.Store(true)
+			close(done)
+		},
+	}
+
+	m.drainAndStop(c)
+	if !cancelled.Load() {
+		t.Fatal("idle child should be cancelled after drain")
+	}
+	if got := atomic.LoadInt32(&statusRequests); got < 2 {
+		t.Fatalf("drain status requests = %d, want at least 2", got)
+	}
+}
+
+func TestDrainAndStop_TimesOutWithInflightWork(t *testing.T) {
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainTimeout:      20 * time.Millisecond,
+		DrainPollInterval: 5 * time.Millisecond,
+		DrainKillGrace:    50 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	cancelled := false
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		port:    port,
+		done:    done,
+		cancel: func() {
+			cancelled = true
+			close(done)
+		},
+	}
+
+	start := time.Now()
+	m.drainAndStop(c)
+	if !cancelled {
+		t.Fatal("child should be cancelled after drain timeout")
+	}
+	if elapsed := time.Since(start); elapsed > time.Second {
+		t.Fatalf("drain timeout path took %s", elapsed)
+	}
+}
+
+func TestDownloadAndSwap_NewChildNotReadyKeepsOldServing(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	dataDir := filepath.Join(dir, "data")
+	newBinary := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "testapp-new" ;;
+--print-protocol-version) echo "v1" ;;
+*) exec sleep 60 ;;
+esac
+`)
+	zipData, archiveHash := zipBinary(t, "testapp", newBinary)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:         binDir,
+		DataDir:        dataDir,
+		BinaryName:     "testapp",
+		BasePort:       6200,
+		ReadyTimeout:   20 * time.Millisecond,
+		DrainKillGrace: 100 * time.Millisecond,
+	})
+	old := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("old-archive")),
+		port:          9001,
+		done:          make(chan struct{}),
+		status:        statusRunning,
+		restart:       true,
+		cancel: func() {
+			t.Fatal("old child should not be cancelled when replacement is not ready")
+		},
+	}
+
+	m.mu.Lock()
+	m.processes["v1"] = old
+	m.downloading["v1"] = struct{}{}
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	err := m.downloadAndSwap(context.Background(), oracle.Version{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}, archiveHash, old)
+	if err == nil {
+		t.Fatal("expected swap error when new child is not ready")
+	}
+
+	m.mu.Lock()
+	current := m.processes["v1"]
+	_, downloading := m.downloading["v1"]
+	draining := len(m.draining["v1"])
+	m.mu.Unlock()
+	if current != old {
+		t.Fatalf("current child changed after aborted swap")
+	}
+	if old.status != statusRunning || !old.restart {
+		t.Fatalf("old child status/restart = %s/%v, want running/true", old.status, old.restart)
+	}
+	if downloading {
+		t.Fatal("downloading marker should be cleared after aborted swap")
+	}
+	if draining != 0 {
+		t.Fatalf("draining children = %d, want 0", draining)
+	}
+	routes := m.RouteTable().Load().(map[string]string)
+	if routes["v1"] != "localhost:9001" {
+		t.Fatalf("route = %q, want old child route", routes["v1"])
+	}
+}
+
 func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")
@@ -993,4 +1146,24 @@ func writeInstallMetadataFile(t *testing.T, versionDir string, metadata download
 func sha256Hex(data []byte) string {
 	sum := sha256.Sum256(data)
 	return hex.EncodeToString(sum[:])
+}
+
+func zipBinary(t *testing.T, binaryName string, data []byte) ([]byte, string) {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	w, err := zw.Create(binaryName)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := w.Write(data); err != nil {
+		t.Fatal(err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	zipData := buf.Bytes()
+	return zipData, sha256Hex(zipData)
 }

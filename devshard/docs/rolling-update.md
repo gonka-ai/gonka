@@ -386,6 +386,35 @@ versiond also garbage-collects old complete per-sha install directories under
 recent complete-install cushion. In-progress download directories without
 `install.json` are never removed by GC.
 
+#### Legacy compatibility and oracle validation
+
+The first versiond upgrade can manage binaries built before these endpoints and
+preflight flags existed. Compatibility is intentionally narrow:
+
+- `--print-binary-version` and `--print-protocol-version` preflight checks fall
+  back only when the child exits with a recognized "unsupported flag" usage
+  error. Timeouts, signals, OOM-like failures, and other execution errors fail
+  closed so the next poll can retry.
+- readiness fallback applies only to the default `VERSIOND_READY_PATH=/ready`.
+  If `/ready` is missing with 404/405/501, versiond tries `/healthz`, then a TCP
+  connect probe. Custom readiness paths do not use this fallback.
+- drain status fallback treats 404/405/501 from `/drain/status` as a legacy
+  child. versiond waits `VERSIOND_DRAIN_KILL_GRACE`, then sends `SIGTERM`
+  instead of waiting the full `VERSIOND_DRAIN_TIMEOUT`.
+
+This keeps old released devshardd binaries deployable under a new versiond while
+still failing closed for ambiguous failures. One consequence of the legacy drain
+fallback is that a very long in-flight request on an old binary can be cut after
+the short grace during the first legacy-to-new swap; stamped binaries with
+`/drain/status` get the full idle wait.
+
+Oracle data is validated before reconciliation. Version names must be simple
+path components, unique, and non-empty; sha256 values must be 64 hex characters.
+An invalid oracle response fails the fetch for that poll and leaves the current
+children running unchanged. This is stricter than skipping bad entries because
+the oracle reflects governance-approved chain params and should be internally
+consistent.
+
 ### 1.6 Single-instance limits (be honest)
 
 Even with blue/green + drain inside **one** versiond:
@@ -447,8 +476,8 @@ upgrade, scale-down, or decommission.
         │  → in-flight connections to versiond-N keep running
         ▼
 2. Poll versiond-N until idle:
-        GET versiond-N:8080/healthz  (no draining children, or all idle)
-        and/or aggregate devshardd GET /drain/status on that host
+        GET versiond-N:8080/healthz  (child status visibility)
+        and aggregate devshardd GET /drain/status on that host
         loop until inflight == 0  OR  ROUTER_DRAIN_TIMEOUT
         ▼
 3. Graceful stop versiond-N:
