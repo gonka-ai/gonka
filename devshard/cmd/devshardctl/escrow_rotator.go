@@ -479,6 +479,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	g.clearSettlementPending(id)
 	// A settled escrow is terminal: drop the resident runtime so its memory
 	// (state machine, inference map, SQLite handles) is released now rather
 	// than lingering until the next restart. Transient runtimes are closed by

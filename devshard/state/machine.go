@@ -539,15 +539,6 @@ func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	return s
 }
 
-// SnapshotInferences returns a deep copy of just the inference map. Use it for
-// endpoints that render the full inference list without paying to copy the
-// rest of the escrow state.
-func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return copyInferences(sm.state.Inferences)
-}
-
 // InferenceStatusCounts returns the total number of inferences and a per-status
 // breakdown, computed under the read lock without deep-copying any records.
 func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {

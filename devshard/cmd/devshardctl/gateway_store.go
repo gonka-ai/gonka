@@ -1089,12 +1089,16 @@ func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
 
 func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
 	createdAt := now
-	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
+	if err := tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup created_at for devshard %s: %w", devshard.ID, err)
+	}
 	// Preserve the existing settlement_pending marker so an unrelated upsert
 	// never silently clears a queued settlement; a brand-new row falls back
 	// to the value carried on devshard.
 	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
-	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
+	if err := tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup settlement_pending for devshard %s: %w", devshard.ID, err)
+	}
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
