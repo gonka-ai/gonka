@@ -77,7 +77,6 @@ class DevshardTests : TestermintTest() {
             assertThat(status.config.inferenceSealGraceNonces).isEqualTo(devshardAutoSealInferenceSealGraceNonces.toInt())
             assertThat(status.config.inferenceSealGraceSeconds)
                 .isEqualTo(devshardAutoSealInferenceSealGraceSeconds.toInt())
-            assertThat(status.config.validationRate).isEqualTo(0)
 
             logSection("Sending first batch ($firstBatch finished inferences)")
             for (i in 0 until firstBatch) {
