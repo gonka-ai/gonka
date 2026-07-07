@@ -48,6 +48,45 @@ func TestFetch_ServerError(t *testing.T) {
 	}
 }
 
+func TestFetch_RejectsInvalidVersionNames(t *testing.T) {
+	payload := VersionConfig{
+		Versions: []Version{
+			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: "abc123"},
+			{Name: "", Binary: "http://example.com/empty.zip", SHA256: "def456"},
+			{Name: " v2 ", Binary: "http://example.com/spaces.zip", SHA256: "bad"},
+			{Name: "../escape", Binary: "http://example.com/escape.zip", SHA256: "bad"},
+			{Name: "nested/v2", Binary: "http://example.com/nested.zip", SHA256: "bad"},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if _, err := c.Fetch(context.Background()); err == nil {
+		t.Fatal("expected invalid oracle version name to fail fetch")
+	}
+}
+
+func TestFetch_RejectsDuplicateVersionNames(t *testing.T) {
+	payload := VersionConfig{
+		Versions: []Version{
+			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: "abc123"},
+			{Name: "v1", Binary: "http://example.com/v1-r2.zip", SHA256: "def456"},
+		},
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(payload)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL)
+	if _, err := c.Fetch(context.Background()); err == nil {
+		t.Fatal("expected duplicate oracle version name to fail fetch")
+	}
+}
+
 func TestResolvedSHA256_FromField(t *testing.T) {
 	v := Version{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: "abc123"}
 	got, err := v.ResolvedSHA256()

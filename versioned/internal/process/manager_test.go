@@ -62,7 +62,11 @@ func TestPreflightChild_MissingBinary(t *testing.T) {
 func TestPreflightChild_LegacyFallback(t *testing.T) {
 	dir := t.TempDir()
 	binPath := filepath.Join(dir, "legacy-bin")
-	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+	script := `#!/bin/sh
+echo "unknown flag: $1" >&2
+exit 2
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
 		t.Fatal(err)
 	}
 
@@ -81,7 +85,7 @@ func TestPreflightChild_ProtocolFlagUnsupported(t *testing.T) {
 	script := `#!/bin/sh
 case "$1" in
 --print-binary-version) echo "0.2.13-v2-r2" ;;
-*) exit 1 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
 	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
@@ -103,7 +107,7 @@ func TestPreflightChild_BinaryFlagUnsupported(t *testing.T) {
 	script := `#!/bin/sh
 case "$1" in
 --print-protocol-version) echo "v2" ;;
-*) exit 1 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
 	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
@@ -159,6 +163,29 @@ esac
 	}
 	if preflight.binaryLogVersion != "0.2.13-v2-r2" {
 		t.Fatalf("binaryLogVersion = %q, want %q", preflight.binaryLogVersion, "0.2.13-v2-r2")
+	}
+}
+
+func TestPreflightChild_ProtocolProbeTimeoutFailsClosed(t *testing.T) {
+	oldTimeout := embeddedVersionProbeTimeout
+	embeddedVersionProbeTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { embeddedVersionProbeTimeout = oldTimeout })
+
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "slow-protocol-stamp")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) sleep 1; echo "v2" ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := preflightChild(binPath, "v2"); err == nil {
+		t.Fatal("expected timeout probing protocol version to fail closed")
 	}
 }
 
@@ -656,6 +683,19 @@ func TestRunChild_RemovesFromProcessesOnStartFailure(t *testing.T) {
 	}
 }
 
+func TestWaitForRestartBackoffRechecksRestartAfterSleep(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{restart: true}
+
+	m.mu.Lock()
+	c.restart = false
+	m.mu.Unlock()
+
+	if m.waitForRestartBackoff(context.Background(), c, time.Millisecond) {
+		t.Fatal("restart disabled during backoff should stop restart loop")
+	}
+}
+
 func TestReconcile_StopsRemovedVersions(t *testing.T) {
 	dir := t.TempDir()
 	cfg := config.Config{
@@ -757,6 +797,40 @@ func TestWaitForReadyDoesNotFallbackForCustomReadyPath(t *testing.T) {
 
 	if waitForReady(context.Background(), port, "/custom-ready", 200*time.Millisecond) {
 		t.Fatal("custom ready path should not use legacy fallback")
+	}
+}
+
+func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainTimeout:      time.Hour,
+		DrainPollInterval: time.Hour,
+		DrainKillGrace:    20 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	cancelled := false
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		port:    port,
+		done:    done,
+		cancel: func() {
+			cancelled = true
+			close(done)
+		},
+	}
+
+	start := time.Now()
+	m.drainAndStop(c)
+	if !cancelled {
+		t.Fatal("legacy child should be cancelled after short drain grace")
+	}
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("legacy drain took %s, want short grace instead of full timeout", elapsed)
 	}
 }
 

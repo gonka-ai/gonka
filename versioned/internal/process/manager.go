@@ -39,6 +39,8 @@ const (
 	installedVersionRetain       = 3
 )
 
+var errLegacyDrainStatus = errors.New("drain status endpoint unavailable")
+
 type child struct {
 	version       oracle.Version
 	archiveSHA256 string
@@ -868,10 +870,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			if !restart {
 				return
 			}
-			select {
-			case <-ctx.Done():
+			if !m.waitForRestartBackoff(ctx, c, backoff) {
 				return
-			case <-time.After(backoff):
 			}
 			backoff *= 2
 			if backoff > 60*time.Second {
@@ -914,10 +914,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 
 		slog.Info("restarting child after backoff", "version", c.version.Name, "backoff", backoff)
 
-		select {
-		case <-ctx.Done():
+		if !m.waitForRestartBackoff(ctx, c, backoff) {
 			return
-		case <-time.After(backoff):
 		}
 
 		backoff *= 2
@@ -925,6 +923,22 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			backoff = 60 * time.Second
 		}
 	}
+}
+
+func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff time.Duration) bool {
+	timer := time.NewTimer(backoff)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+	}
+
+	m.mu.Lock()
+	restart := c.restart
+	m.mu.Unlock()
+	return restart
 }
 
 // childEnv sets per-child env vars for devshardd (and testapp in e2e).
@@ -1140,6 +1154,21 @@ func (m *Manager) drainAndStop(c *child) {
 		default:
 		}
 		inflight, err := m.fetchInflight(c)
+		if errors.Is(err, errLegacyDrainStatus) {
+			slog.Warn(
+				"drain status endpoint unavailable; using short legacy drain grace",
+				"version", c.version.Name,
+				"port", c.port,
+				"grace", m.cfg.DrainKillGrace,
+				"error", err,
+			)
+			select {
+			case <-c.done:
+				return
+			case <-time.After(m.cfg.DrainKillGrace):
+			}
+			break
+		}
 		if err == nil && inflight == 0 {
 			slog.Info("draining child is idle", "version", c.version.Name, "port", c.port)
 			break
@@ -1178,6 +1207,11 @@ func (m *Manager) fetchInflight(c *child) (int64, error) {
 		return 0, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound ||
+		resp.StatusCode == http.StatusMethodNotAllowed ||
+		resp.StatusCode == http.StatusNotImplemented {
+		return 0, fmt.Errorf("%w: drain status returned %d", errLegacyDrainStatus, resp.StatusCode)
+	}
 	if resp.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("drain status returned %d", resp.StatusCode)
 	}

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -74,5 +75,35 @@ func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
 		return VersionConfig{}, fmt.Errorf("decode response: %w", err)
 	}
+	if err := validateVersions(cfg.Versions); err != nil {
+		return VersionConfig{}, err
+	}
 	return cfg, nil
+}
+
+func validateVersions(versions []Version) error {
+	seen := make(map[string]struct{}, len(versions))
+	for i, v := range versions {
+		if !validVersionName(v.Name) {
+			return fmt.Errorf("invalid oracle version name at index %d: %q", i, v.Name)
+		}
+		if _, dup := seen[v.Name]; dup {
+			return fmt.Errorf("duplicate oracle version name %q", v.Name)
+		}
+		seen[v.Name] = struct{}{}
+	}
+	return nil
+}
+
+func validVersionName(name string) bool {
+	if name == "" || name == "." || name == ".." {
+		return false
+	}
+	if strings.TrimSpace(name) != name {
+		return false
+	}
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	return filepath.Base(name) == name
 }
