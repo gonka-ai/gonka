@@ -1711,19 +1711,30 @@ func TestHandleState_IncludesSealedInferences(t *testing.T) {
 
 	proxy := &Proxy{sm: sm, escrowID: escrowID}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/state", nil)
+	// The full dump lives at /v1/debug/inferences (moved out of /v1/state so
+	// summary reads stay bounded); sealed records must still appear there.
+	req := httptest.NewRequest(http.MethodGet, "/v1/debug/inferences", nil)
 	rec := httptest.NewRecorder()
-	proxy.handleState(rec, req)
+	proxy.handleDebugInferences(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
-	var stateResp map[string]any
-	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stateResp))
-	inferences, ok := stateResp["inferences"].(map[string]any)
-	require.True(t, ok, "/v1/state must expose inferences map")
+	var dumpResp map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &dumpResp))
+	inferences, ok := dumpResp["inferences"].(map[string]any)
+	require.True(t, ok, "/v1/debug/inferences must expose inferences map")
 	inf, ok := inferences["1"].(map[string]any)
-	require.True(t, ok, "sealed inference 1 must appear in /v1/state")
+	require.True(t, ok, "sealed inference 1 must appear in /v1/debug/inferences")
 	require.Equal(t, "finished", inf["status"])
 	require.Equal(t, "llama", inf["model"])
+
+	// /v1/state stays bounded: no inference map in the summary.
+	stateReq := httptest.NewRequest(http.MethodGet, "/v1/state", nil)
+	stateRec := httptest.NewRecorder()
+	proxy.handleState(stateRec, stateReq)
+	require.Equal(t, http.StatusOK, stateRec.Code)
+	var stateResp map[string]any
+	require.NoError(t, json.Unmarshal(stateRec.Body.Bytes(), &stateResp))
+	require.NotContains(t, stateResp, "inferences", "/v1/state must not carry the inference dump")
 }
 
 func TestProxyStatusIncludesChainPhaseSnapshot(t *testing.T) {

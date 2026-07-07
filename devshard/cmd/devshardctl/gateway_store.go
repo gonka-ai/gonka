@@ -285,11 +285,12 @@ func normalizeGatewayModelAccess(access []GatewayModelAccessSettings) []GatewayM
 
 type GatewayDevshardState struct {
 	RuntimeConfig
-	Active        bool   `json:"active"`
-	RotationRole  string `json:"rotation_role,omitempty"`
-	RotationEpoch uint64 `json:"rotation_epoch,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	Active            bool   `json:"active"`
+	SettlementPending bool   `json:"settlement_pending,omitempty"`
+	RotationRole      string `json:"rotation_role,omitempty"`
+	RotationEpoch     uint64 `json:"rotation_epoch,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
 }
 
 type GatewaySuspiciousHost struct {
@@ -375,6 +376,7 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			active INTEGER NOT NULL DEFAULT 1,
 			rotation_role TEXT NOT NULL DEFAULT '',
 			rotation_epoch INTEGER NOT NULL DEFAULT 0,
+			settlement_pending INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -436,6 +438,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err := ensureGatewayDevshardsColumn(db, "rotation_epoch", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard epoch: %w", err)
+	}
+	if err := ensureGatewayDevshardsColumn(db, "settlement_pending", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard settlement_pending: %w", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
@@ -626,7 +632,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-		       rotation_role, rotation_epoch
+		       rotation_role, rotation_epoch, settlement_pending
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -636,6 +642,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	for rows.Next() {
 		var devshard GatewayDevshardState
 		var active int
+		var settlementPending int
 		if err := rows.Scan(
 			&devshard.ID,
 			&devshard.PrivateKeyHex,
@@ -648,10 +655,12 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 			&devshard.ProtocolVersion,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
+			&settlementPending,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
 		}
 		devshard.Active = active != 0
+		devshard.SettlementPending = settlementPending != 0
 		state.Devshards = append(state.Devshards, devshard)
 	}
 	if err := rows.Err(); err != nil {
@@ -1080,12 +1089,21 @@ func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
 
 func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
 	createdAt := now
-	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
+	if err := tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup created_at for devshard %s: %w", devshard.ID, err)
+	}
+	// Preserve the existing settlement_pending marker so an unrelated upsert
+	// never silently clears a queued settlement; a brand-new row falls back
+	// to the value carried on devshard.
+	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
+	if err := tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending); err != nil && err != sql.ErrNoRows {
+		return fmt.Errorf("lookup settlement_pending for devshard %s: %w", devshard.ID, err)
+	}
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-			rotation_role, rotation_epoch
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rotation_role, rotation_epoch, settlement_pending
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -1097,10 +1115,49 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 		strings.TrimSpace(devshard.ProtocolVersion),
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
+		settlementPending,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
 	}
 	return nil
+}
+
+// GetDevshard returns the registry record for a single devshard. The second
+// return value is false when no row exists for the id. It is used by lazy
+// hydration to look up the config of a non-resident devshard without loading
+// the entire registry.
+func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+	id = strings.TrimSpace(id)
+	var devshard GatewayDevshardState
+	var active int
+	var settlementPending int
+	err := s.db.QueryRow(`
+		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
+		       rotation_role, rotation_epoch, settlement_pending
+		FROM gateway_devshards
+		WHERE id = ?`, id).Scan(
+		&devshard.ID,
+		&devshard.PrivateKeyHex,
+		&devshard.PrivateKeyEnv,
+		&devshard.Model,
+		&devshard.StoragePath,
+		&active,
+		&devshard.CreatedAt,
+		&devshard.UpdatedAt,
+		&devshard.ProtocolVersion,
+		&devshard.RotationRole,
+		&devshard.RotationEpoch,
+		&settlementPending,
+	)
+	if err == sql.ErrNoRows {
+		return GatewayDevshardState{}, false, nil
+	}
+	if err != nil {
+		return GatewayDevshardState{}, false, fmt.Errorf("get devshard %s: %w", id, err)
+	}
+	devshard.Active = active != 0
+	devshard.SettlementPending = settlementPending != 0
+	return devshard, true, nil
 }
 
 func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
@@ -1114,6 +1171,28 @@ func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 	)
 	if err != nil {
 		return fmt.Errorf("update devshard %s active=%t: %w", id, active, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("devshard %s not found", id)
+	}
+	return nil
+}
+
+func (s *GatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
+	res, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET settlement_pending = ?, updated_at = ?
+		WHERE id = ?`,
+		gatewayBoolToInt(pending),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("update devshard %s settlement_pending=%t: %w", id, pending, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
