@@ -2355,3 +2355,87 @@ func TestGetDynamicP0(t *testing.T) {
 		require.Equal(t, int32(-3), p0.Exponent)
 	})
 }
+
+// Regression: one zero-weight participant in a multi-model settlement must not
+// collapse the entire network to zero capped power (gonka-testnet-4 epoch 15).
+func TestApplyPowerCappingForWeights_SkipsZeroWeightParticipants(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "guardian", Weight: 0},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	total := int64(0)
+	for _, p := range capped {
+		total += p.Weight
+	}
+	require.Positive(t, total, "zero-weight bystander must not zero the network")
+	require.Equal(t, int64(0), capped[0].Weight, "zero-weight participant stays zero")
+	if wasCapped {
+		require.LessOrEqual(t, capped[1].Weight, int64(10238))
+	} else {
+		require.Equal(t, int64(81702), total)
+	}
+}
+
+// Capping must still be effective when zero-weight bystanders are present:
+// the small-network cap percentage is chosen from the positive-weight count,
+// so 3 real hosts get the 40% limit instead of an infeasible 30% one.
+func TestApplyPowerCappingForWeights_ZeroWeightBystanderKeepsCappingEffective(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "guardian", Weight: 0},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.True(t, wasCapped, "capping must still apply with a zero-weight bystander")
+	require.Equal(t, int64(0), capped[0].Weight)
+	require.Equal(t, int64(10238), capped[1].Weight)
+	// cap = 0.40 * 10238 / (1 - 0.40*2) = 20476; both large hosts hit it,
+	// each ending at exactly 40% of the new total (10238 + 2*20476 = 51190).
+	require.Equal(t, int64(20476), capped[2].Weight)
+	require.Equal(t, int64(20476), capped[3].Weight)
+}
+
+// A hypothetical negative-weight participant must behave exactly like a
+// zero-weight one: invisible to the capping math, unable to drag the total
+// power to <=0 and defeat the cap<=0 degeneracy guard, and left unmodified.
+func TestApplyPowerCappingForWeights_NegativeWeightIsInvisible(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "broken", Weight: -1_000_000},
+		{Index: "host-a", Weight: 10238},
+		{Index: "host-b", Weight: 34658},
+		{Index: "host-c", Weight: 36806},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.True(t, wasCapped, "capping must still apply with a negative-weight entry")
+	require.Equal(t, int64(-1_000_000), capped[0].Weight, "negative entry passes through unmodified")
+	// Identical outcome to the zero-weight bystander case: 3 positive hosts
+	// get the 40% small-network limit, large hosts capped to 20476.
+	require.Equal(t, int64(10238), capped[1].Weight)
+	require.Equal(t, int64(20476), capped[2].Weight)
+	require.Equal(t, int64(20476), capped[3].Weight)
+}
+
+// A single positive-weight participant among zero-weight bystanders must not
+// be capped (nothing to balance against) and must not be zeroed.
+func TestApplyPowerCappingForWeights_SinglePositiveAmongZeros(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{Index: "zero-a", Weight: 0},
+		{Index: "zero-b", Weight: 0},
+		{Index: "host", Weight: 12345},
+	}
+
+	capped, wasCapped := ApplyPowerCappingForWeights(participants)
+
+	require.False(t, wasCapped)
+	require.Equal(t, int64(12345), capped[2].Weight)
+}

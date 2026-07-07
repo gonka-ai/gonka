@@ -218,28 +218,19 @@ func (s *Server) postPocProofs(ctx echo.Context) error {
 		}
 	}
 
-	// Generate proofs
+	// Generate proofs using snapshot-consistent method to ensure artifact and proof
+	// are from the same tree state (prevents serving current-tree artifact with snapshot proof)
 	proofs := make([]PocProofItem, 0, len(req.LeafIndices))
 	for _, leafIndex := range req.LeafIndices {
 		leafIdx := uint32(leafIndex)
-		nonce, vector, err := stageStore.GetArtifact(leafIdx)
+		nonce, vector, proof, err := stageStore.GetArtifactAndProof(leafIdx, reqCount)
 		if err != nil {
 			if err == artifacts.ErrLeafIndexOutOfRange {
 				return echo.NewHTTPError(http.StatusBadRequest, "leaf_index out of range")
 			}
-			logging.Error("Failed to get artifact", types.Validation,
-				"leafIndex", leafIdx, "error", err)
-			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get artifact")
-		}
-
-		proof, err := stageStore.GetProof(leafIdx, reqCount)
-		if err != nil {
-			if err == artifacts.ErrLeafIndexOutOfRange {
-				return echo.NewHTTPError(http.StatusBadRequest, "leaf_index out of range for proof")
-			}
-			logging.Error("Failed to get proof", types.Validation,
+			logging.Error("Failed to get artifact and proof", types.Validation,
 				"leafIndex", leafIdx, "count", reqCount, "error", err)
-			return echo.NewHTTPError(http.StatusBadRequest, "failed to generate proof")
+			return echo.NewHTTPError(http.StatusInternalServerError, "failed to get artifact and proof")
 		}
 
 		// Encode proof hashes as base64

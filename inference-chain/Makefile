@@ -29,9 +29,10 @@ WASMVM_STATIC_LINUX_X64_URL := https://github.com/CosmWasm/wasmvm/releases/downl
 WASMVM_STATIC_LINUX_ARM64_URL := https://github.com/CosmWasm/wasmvm/releases/download/$(WASMVM_VERSION)/libwasmvm_muslc.aarch64.a
 
 USE_REGISTRY_CACHE ?= 0
+GHCR_CACHE_NAMESPACE ?= gonka-ai
 ifeq ($(USE_REGISTRY_CACHE),1)
-DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache --cache-to type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache,mode=min
-DOCKER_CACHE_ARGS_UPGRADE := --cache-from type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache-upgrade --cache-to type=registry,ref=ghcr.io/gonka-ai/inferenced:buildcache-upgrade,mode=min
+DOCKER_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/inferenced:buildcache --cache-to type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/inferenced:buildcache,mode=min
+DOCKER_CACHE_ARGS_UPGRADE := --cache-from type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/inferenced:buildcache-upgrade --cache-to type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/inferenced:buildcache-upgrade,mode=min
 DOCKER_BUILD_PREFIX := docker buildx build --load $(DOCKER_CACHE_ARGS)
 DOCKER_BUILD_UPGRADE_PREFIX := docker buildx build $(DOCKER_CACHE_ARGS_UPGRADE)
 else
