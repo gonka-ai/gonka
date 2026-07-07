@@ -31,9 +31,9 @@ var (
 	ErrInvalidVectorData       = errors.New("invalid vector data detected")
 )
 
+// ProofClient fetches and verifies SMST proofs from participant APIs.
 const DefaultKDim = 12
 
-// ProofClient fetches and verifies MMR proofs from participant APIs.
 type ProofClient struct {
 	httpClient *http.Client
 	recorder   cosmosclient.CosmosMessageClient
@@ -205,13 +205,11 @@ func (c *ProofClient) FetchAndVerifyProofs(
 			proofHashes[i] = hash
 		}
 
-		// Build leaf data (same format as stored: nonce(LE32) || vector)
 		leafData := buildLeafData(item.NonceValue, vectorBytes)
 
-		// Verify MMR proof
-		if !artifacts.VerifyProof(req.RootHash, req.Count, item.LeafIndex, leafData, proofHashes) {
-			logging.Warn("MMR proof verification failed", types.PoC,
-				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex)
+		if !artifacts.VerifySMSTProofWithDenseIndex(req.RootHash, req.Count, item.LeafIndex, item.NonceValue, leafData, proofHashes) {
+			logging.Warn("SMST proof verification failed", types.PoC,
+				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "nonce", item.NonceValue)
 			return nil, fmt.Errorf("%w: leaf %d", ErrProofVerificationFailed, item.LeafIndex)
 		}
 
@@ -326,7 +324,7 @@ func writeLengthPrefixedString(buf *bytes.Buffer, s string) {
 	buf.WriteString(s)
 }
 
-// buildLeafData builds the leaf data format used in MMR.
+// buildLeafData builds the leaf data format used in SMST proofs.
 // Format: nonce(LE32) || vector
 func buildLeafData(nonce int32, vector []byte) []byte {
 	buf := make([]byte, 4+len(vector))

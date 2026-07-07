@@ -402,19 +402,43 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 		return participants, false
 	}
 
-	// Calculate total weight
+	// Calculate total weight and count participants that actually hold power.
+	// Non-positive weights are invisible to all capping math for consistency:
+	// zero/negative entries are excluded from the cap threshold scan in
+	// CalculateOptimalCap, so they must not influence the cap percentage
+	// selection or the total passed to the cap<=0 degeneracy guard either.
+	//
+	// Weight == 0 is a real, reachable state: a participant whose entire PoC
+	// weight sits on a model group that failed eligibility (VMin etc.) stays
+	// in activeParticipants with consensus weight 0 (gonka-testnet-4 epoch 15
+	// incident). If counted, such an entry forces the stricter 30% cap onto
+	// e.g. 3 real hosts, which is mathematically infeasible and would disable
+	// capping entirely.
+	//
+	// Weight < 0 is NOT produced by any current caller (both the epoch
+	// pipeline and settlement clamp weights to >= 0 upstream); excluding
+	// negatives here is defense in depth only, so a hypothetical negative
+	// weight cannot drag the total to <=0 and defeat the cap<=0 guard while
+	// positive power still exists.
 	totalWeight := int64(0)
+	positiveCount := 0
 	for _, p := range participants {
-		totalWeight += p.Weight
+		if p.Weight > 0 {
+			totalWeight += p.Weight
+			positiveCount++
+		}
+	}
+
+	if positiveCount <= 1 {
+		return participants, false
 	}
 
 	// Use standard 30% cap
 	maxPercentageDecimal := types.DecimalFromFloat(0.30)
 
 	// Apply dynamic limits for small networks
-	participantCount := len(participants)
-	if participantCount < 4 {
-		adjustedLimit := getSmallNetworkLimit(participantCount)
+	if positiveCount < 4 {
+		adjustedLimit := getSmallNetworkLimit(positiveCount)
 		if adjustedLimit.ToDecimal().GreaterThan(maxPercentageDecimal.ToDecimal()) {
 			maxPercentageDecimal = adjustedLimit
 		}
@@ -439,13 +463,21 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 		Index       int
 	}
 
-	participantPowers := make([]ParticipantPowerInfo, participantCount)
+	participantPowers := make([]ParticipantPowerInfo, 0, participantCount)
 	for i, participant := range participants {
-		participantPowers[i] = ParticipantPowerInfo{
+		if participant.Weight <= 0 {
+			continue
+		}
+		participantPowers = append(participantPowers, ParticipantPowerInfo{
 			Participant: participant,
 			Power:       participant.Weight,
 			Index:       i,
-		}
+		})
+	}
+
+	positiveCount := len(participantPowers)
+	if positiveCount <= 1 {
+		return participants, totalPower, false
 	}
 
 	// Sort by power (smallest to largest) - simple bubble sort for small arrays
@@ -460,9 +492,9 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 	// Iterate through sorted powers to find threshold
 	cap := int64(-1)
 	sumPrev := int64(0)
-	for k := 0; k < participantCount; k++ {
+	for k := 0; k < positiveCount; k++ {
 		currentPower := participantPowers[k].Power
-		weightedTotal := sumPrev + currentPower*int64(participantCount-k)
+		weightedTotal := sumPrev + currentPower*int64(positiveCount-k)
 
 		weightedTotalDecimal := decimal.NewFromInt(weightedTotal)
 		threshold := maxPercentageDecimal.Mul(weightedTotalDecimal)
@@ -472,7 +504,7 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 			sumPrevDecimal := decimal.NewFromInt(sumPrev)
 			numerator := maxPercentageDecimal.Mul(sumPrevDecimal)
 
-			remainingParticipants := decimal.NewFromInt(int64(participantCount - k))
+			remainingParticipants := decimal.NewFromInt(int64(positiveCount - k))
 			maxPercentageTimesRemaining := maxPercentageDecimal.Mul(remainingParticipants)
 			denominator := one.Sub(maxPercentageTimesRemaining)
 
@@ -491,6 +523,18 @@ func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int
 
 	// If no threshold found, no capping needed
 	if cap == -1 {
+		return participants, totalPower, false
+	}
+	// A non-positive cap is never a valid outcome: applying it would zero
+	// every participant (the gonka-testnet-4 epoch 15 failure mode), so skip
+	// capping instead. This branch is unreachable when called through
+	// ApplyPowerCappingForWeights -- its percentage is matched to the
+	// positive-participant count (50%/2, 40%/3, 30%/4+), which makes the
+	// formula always yield cap >= 1 for integer weights. It remains as a
+	// last-resort brake for direct callers of this exported function, where
+	// an arbitrary maxPercentage with percentage*count < 1 degenerates the
+	// formula to zero.
+	if cap <= 0 {
 		return participants, totalPower, false
 	}
 

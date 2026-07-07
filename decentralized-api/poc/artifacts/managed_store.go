@@ -22,7 +22,7 @@ import (
 type ManagedArtifactStore struct {
 	mu          sync.RWMutex
 	baseDir     string
-	stores      map[storeKey]*ArtifactStore
+	stores      map[storeKey]ArtifactStore
 	retainCount int
 	cancel      context.CancelFunc
 	flushCancel context.CancelFunc
@@ -68,7 +68,7 @@ type storeKey struct {
 
 type StageModelStore struct {
 	ModelID string
-	Store   *ArtifactStore
+	Store   ArtifactStore
 }
 
 func (m *ManagedArtifactStore) withReadLock(fn func()) {
@@ -83,9 +83,9 @@ func (m *ManagedArtifactStore) withWriteLock(fn func()) {
 	fn()
 }
 
-func (m *ManagedArtifactStore) getCachedStore(key storeKey) (*ArtifactStore, bool) {
+func (m *ManagedArtifactStore) getCachedStore(key storeKey) (ArtifactStore, bool) {
 	var (
-		store *ArtifactStore
+		store ArtifactStore
 		ok    bool
 	)
 	m.withReadLock(func() {
@@ -94,9 +94,9 @@ func (m *ManagedArtifactStore) getCachedStore(key storeKey) (*ArtifactStore, boo
 	return store, ok
 }
 
-func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store *ArtifactStore) (*ArtifactStore, bool) {
+func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store ArtifactStore) (ArtifactStore, bool) {
 	var (
-		existing *ArtifactStore
+		existing ArtifactStore
 		loaded   bool
 	)
 	m.withWriteLock(func() {
@@ -109,10 +109,10 @@ func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store *ArtifactSto
 	return existing, loaded
 }
 
-func (m *ManagedArtifactStore) snapshotStores() []*ArtifactStore {
-	var stores []*ArtifactStore
+func (m *ManagedArtifactStore) snapshotStores() []ArtifactStore {
+	var stores []ArtifactStore
 	m.withReadLock(func() {
-		stores = make([]*ArtifactStore, 0, len(m.stores))
+		stores = make([]ArtifactStore, 0, len(m.stores))
 		for _, store := range m.stores {
 			stores = append(stores, store)
 		}
@@ -137,8 +137,8 @@ func (m *ManagedArtifactStore) snapshotStageModelIDs(pocStageStartHeight int64) 
 	return modelIDs
 }
 
-func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []*ArtifactStore {
-	var stores []*ArtifactStore
+func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []ArtifactStore {
+	var stores []ArtifactStore
 	m.withWriteLock(func() {
 		for key, store := range m.stores {
 			if key.stage != pocStageStartHeight {
@@ -153,24 +153,24 @@ func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []*A
 
 func (m *ManagedArtifactStore) drainStores() []struct {
 	key   storeKey
-	store *ArtifactStore
+	store ArtifactStore
 } {
 	var stores []struct {
 		key   storeKey
-		store *ArtifactStore
+		store ArtifactStore
 	}
 	m.withWriteLock(func() {
 		stores = make([]struct {
 			key   storeKey
-			store *ArtifactStore
+			store ArtifactStore
 		}, 0, len(m.stores))
 		for key, store := range m.stores {
 			stores = append(stores, struct {
 				key   storeKey
-				store *ArtifactStore
+				store ArtifactStore
 			}{key: key, store: store})
 		}
-		m.stores = make(map[storeKey]*ArtifactStore)
+		m.stores = make(map[storeKey]ArtifactStore)
 	})
 	return stores
 }
@@ -181,7 +181,7 @@ func NewManagedArtifactStore(baseDir string, retainCount int) *ManagedArtifactSt
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &ManagedArtifactStore{
 		baseDir:     baseDir,
-		stores:      make(map[storeKey]*ArtifactStore),
+		stores:      make(map[storeKey]ArtifactStore),
 		retainCount: retainCount,
 		cancel:      cancel,
 	}
@@ -220,7 +220,7 @@ func decodeModelID(encoded string) (string, error) {
 }
 
 // GetOrCreateStore returns the store for the given PoC stage/model, creating it if needed.
-func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, modelID string) (ArtifactStore, error) {
 	key, err := m.storeKey(pocStageStartHeight, modelID)
 	if err != nil {
 		return nil, err
@@ -231,7 +231,7 @@ func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, model
 	}
 
 	storeDir := m.modelDir(pocStageStartHeight, modelID)
-	store, err := Open(storeDir)
+	store, err := OpenSMST(storeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}
@@ -247,7 +247,7 @@ func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, model
 
 // GetStore returns the store for the given PoC stage/model, or an error if it doesn't exist.
 // Does not create new stores (for proof requests).
-func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID string) (ArtifactStore, error) {
 	key, err := m.storeKey(pocStageStartHeight, modelID)
 	if err != nil {
 		return nil, err
@@ -264,7 +264,7 @@ func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID strin
 		return nil, fmt.Errorf("store for stage %d model %q not found", pocStageStartHeight, modelID)
 	}
 
-	store, err = Open(storeDir)
+	store, err = OpenSMST(storeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}

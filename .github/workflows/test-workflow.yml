@@ -164,6 +164,7 @@ jobs:
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
           USE_REGISTRY_CACHE: "1"
+          GHCR_CACHE_NAMESPACE: ${{ github.repository }}
         run: |
           make build-docker
           # devshardd self-checks build_version == the version versiond forces (dev via build/devshard-version).
