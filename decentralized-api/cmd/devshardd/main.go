@@ -25,6 +25,7 @@ import (
 	"log"
 	"log/slog"
 	"net/http"
+	_ "net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -187,15 +188,17 @@ func main() {
 	}
 	store := devshardstorage.NewManagedStorage(inner, 3, chainParams)
 	defer store.Close()
-	if paramsSetup.RegisterEpochPrune != nil {
-		cancelEpochPrune := paramsSetup.RegisterEpochPrune(store)
-		defer cancelEpochPrune()
-	}
 
 	manager := internaldevshard.NewHostManager(store, signer, engine, validator, runtimeVersion, br, payloadStore, recorder)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(internaldevshard.RuntimeConfigMaxNonce(chainParams))
 	manager.SetRuntimeParamsProvider(internaldevshard.RuntimeConfigRuntimeParams(chainParams))
+	if paramsSetup.RegisterEpochPrune != nil {
+		cancelEpochPrune := paramsSetup.RegisterEpochPrune(store, func(cutoff uint64) {
+			manager.EvictBefore(cutoff)
+		})
+		defer cancelEpochPrune()
+	}
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
@@ -227,11 +230,18 @@ func main() {
 	manager.Register(e.Group(""))
 
 	addr := fmt.Sprintf(":%d", *port)
+	pprofAddr := fmt.Sprintf("127.0.0.1:%d", *port+10000)
 	errCh := make(chan error, 1)
 	go func() {
 		slog.Info("listening", "addr", addr)
 		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 			errCh <- err
+		}
+	}()
+	go func() {
+		slog.Info("pprof listening", "addr", pprofAddr)
+		if err := http.ListenAndServe(pprofAddr, nil); err != nil && err != http.ErrServerClosed {
+			slog.Warn("pprof listener failed", "addr", pprofAddr, "error", err)
 		}
 	}()
 

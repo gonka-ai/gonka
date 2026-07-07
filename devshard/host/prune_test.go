@@ -95,12 +95,12 @@ func newPruneRigGrace(t *testing.T, observerIdx, numHosts int, sealGraceNonces, 
 	// ConfirmedAt progress. ConfirmedAt values in the helpers below advance in
 	// steps larger than 5 so a single newer confirmed inference clears the gate.
 	config := types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             0,
-		InferenceSealGraceNonces:            sealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            0,
+		InferenceSealGraceNonces:  sealGraceNonces,
 		InferenceSealGraceSeconds: clearGraceSeconds,
 		// ValidationRate=0 + no WithValidator means no async validation
 		// will sneak in and emit unrelated mempool entries.
@@ -116,8 +116,7 @@ func newPruneRigGrace(t *testing.T, observerIdx, numHosts int, sealGraceNonces, 
 		Group:          group,
 		InitialBalance: 1_000_000,
 	}))
-	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store,
-	)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 1_000_000, user.Address(), verifier, store)
 	require.NoError(t, err)
 
 	sink := &recordingPruneSink{}
@@ -450,12 +449,12 @@ func TestHost_PruneSink_NilSafe_NoEmission(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              2,
-		ValidationRate:             0,
-		InferenceSealGraceNonces:            pruneTestInferenceSealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             2,
+		ValidationRate:            0,
+		InferenceSealGraceNonces:  pruneTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: pruneTestInferenceSealGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
@@ -500,6 +499,8 @@ func TestHost_ValidateAsync_SkippedDoesNotEnqueueValidation(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithValidator(skipper), WithEpochID(42))
 	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
 
 	// Start inference 1 (executor = slot 1).
 	rig := &pruneTestRig{

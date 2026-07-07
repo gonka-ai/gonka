@@ -44,7 +44,7 @@ func newObsRig(t *testing.T, store storage.Storage, opts ...HostOption) *obsTest
 		VoteThreshold:    uint32(len(hosts)) / 2,
 		ValidationRate:   0,
 		// Small, explicit seal gates for deterministic auto-seal in tests.
-		InferenceSealGraceNonces:            pruneTestInferenceSealGraceNonces,
+		InferenceSealGraceNonces:  pruneTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: pruneTestInferenceSealGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
@@ -483,6 +483,8 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithStorage(store), WithValidator(valEngine), WithVerifier(verifier))
 	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
 
 	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
@@ -541,6 +543,8 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithStorage(store), WithValidator(valEngine), WithVerifier(verifier))
 	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
 
 	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})

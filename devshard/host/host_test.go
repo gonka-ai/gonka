@@ -1,9 +1,11 @@
 package host
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
+	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -21,6 +23,12 @@ import (
 	"devshard/stub"
 	"devshard/types"
 )
+
+func countValidationWorkerGoroutines() int {
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	return bytes.Count(buf.Bytes(), []byte("devshard/host.(*Host).startValidationWorkers.func1"))
+}
 
 // recordingPeer implements gossip.PeerClient and records GossipTxs calls.
 // Used by tests that exercise the host's recovery-gossip trigger.
@@ -1144,6 +1152,56 @@ func (e *blockingValidationEngine) Validate(ctx context.Context, _ devshard.Vali
 	}
 }
 
+func TestHost_NewHostDoesNotStartValidationWorkers(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lifecycle", config, group, 1_000_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-lifecycle", user.Address(), config, group, 1_000_000))
+	require.NoError(t, err)
+
+	before := countValidationWorkerGoroutines()
+	_, err = NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lifecycle", group, nil,
+		WithValidator(stub.NewValidationEngine()))
+	require.NoError(t, err)
+	require.Equal(t, before, countValidationWorkerGoroutines(), "NewHost must not start validation workers before Start")
+}
+
+func TestHost_StartCloseStopsValidationWorkers(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lifecycle-close", config, group, 1_000_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-lifecycle-close", user.Address(), config, group, 1_000_000))
+	require.NoError(t, err)
+
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lifecycle-close", group, nil,
+		WithValidator(stub.NewValidationEngine()))
+	require.NoError(t, err)
+
+	before := countValidationWorkerGoroutines()
+	h.Start()
+	require.Eventually(t, func() bool {
+		return countValidationWorkerGoroutines() >= before+defaultValidationWorkers
+	}, time.Second, 10*time.Millisecond)
+
+	h.Close()
+	h.Close()
+	require.Eventually(t, func() bool {
+		return countValidationWorkerGoroutines() == before
+	}, time.Second, 10*time.Millisecond)
+}
+
 func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	// 2 hosts. Host 0 is the validator, host 1 is executor for inference 1.
 	// With 2 hosts and 100% ValidationRate, probability = 1/(2-1) = 1.0 (guaranteed).
@@ -1167,6 +1225,8 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithValidator(valEngine), WithEpochID(42))
 	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
 
 	// Nonce 1: StartInference (executor = slot 1, not host 0).
 	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -1267,6 +1327,8 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-queue", group, nil,
 		WithGrace(100), WithValidator(validator))
 	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
 
 	var diffs []types.Diff
 	nonce := uint64(1)
