@@ -303,6 +303,25 @@ func TestValidateGatewaySettingsRequiresRotationModels(t *testing.T) {
 	require.Contains(t, err.Error(), "duplicate model_id")
 }
 
+func TestGatewaySettingsWithTuningDefaultsTrimsPrivateKeyEnv(t *testing.T) {
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       " Qwen/Test ",
+				PrivateKeyEnv: "  KIMI_KEY  ",
+			}},
+		},
+	}.WithTuningDefaults()
+
+	require.Equal(t, "Qwen/Test", settings.EscrowRotation.Models[0].ModelID)
+	require.Equal(t, "KIMI_KEY", settings.EscrowRotation.Models[0].PrivateKeyEnv)
+}
+
 func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)

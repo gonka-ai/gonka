@@ -332,12 +332,11 @@ func (g *Gateway) createEscrowOnChain(ctx context.Context, settings GatewaySetti
 }
 
 func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64) (*CreateDevshardEscrowResult, error) {
-	keyEnv := strings.TrimSpace(model.PrivateKeyEnv)
 	commitment := GatewayEscrowCommitment{
 		Model:         model.ModelID,
 		Role:          role,
 		Epoch:         epoch,
-		PrivateKeyEnv: keyEnv,
+		PrivateKeyEnv: model.PrivateKeyEnv,
 		BlockHeight:   g.currentBlockHeight(),
 	}
 	// Intent-first: persist the commitment (with the precomputed tx hash) before broadcast.
@@ -350,7 +349,7 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 	if err != nil {
 		return nil, err
 	}
-	if err := g.persistRotationEscrow(ctx, result.EscrowID, model.ModelID, role, epoch, keyEnv); err != nil {
+	if err := g.persistRotationEscrow(ctx, result.EscrowID, model.ModelID, role, epoch, model.PrivateKeyEnv); err != nil {
 		// Escrow is on chain; commitment survives → reconcile recovers it by tx hash.
 		log.Printf("escrow_rotation_persist_failed escrow=%d tx=%s model=%q error=%v recover_via_commitment=true", result.EscrowID, result.TxHash, model.ModelID, err)
 		return nil, err
@@ -364,7 +363,6 @@ func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationMo
 	models := make([]EscrowRotationModelSettings, 0, len(settings.EscrowRotation.Models))
 	for _, model := range settings.EscrowRotation.Models {
 		model.ModelID = strings.TrimSpace(model.ModelID)
-		model.PrivateKeyEnv = strings.TrimSpace(model.PrivateKeyEnv)
 		models = append(models, model)
 	}
 	return models
@@ -489,7 +487,7 @@ func (g *Gateway) persistRotationEscrow(ctx context.Context, escrowID uint64, mo
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
 			ID:            strconv.FormatUint(escrowID, 10),
-			PrivateKeyEnv: strings.TrimSpace(keyEnv),
+			PrivateKeyEnv: keyEnv,
 			Model:         modelID,
 		},
 		Active:        true,

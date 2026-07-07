@@ -95,7 +95,7 @@ type EscrowRotationModelSettings struct {
 	TempCount     int    `json:"temp_count"`
 	TargetCount   int    `json:"target_count"`
 	Amount        uint64 `json:"amount"`
-	PrivateKeyEnv string `json:"private_key_env"`
+	PrivateKeyEnv string `json:"private_key_env"` // trimmed by WithTuningDefaults on settings load
 }
 
 const (
@@ -1049,7 +1049,7 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 		strings.TrimSpace(c.Model),
 		strings.TrimSpace(c.Role),
 		c.Epoch,
-		strings.TrimSpace(c.PrivateKeyEnv),
+		c.PrivateKeyEnv,
 		c.BlockHeight,
 		createdAt,
 	)
