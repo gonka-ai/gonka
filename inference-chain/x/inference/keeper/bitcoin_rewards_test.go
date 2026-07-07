@@ -2342,3 +2342,81 @@ func TestGetBitcoinSettleAmounts_SupplyCapOverflowEvent(t *testing.T) {
 		t.Log("overflow guard correctly triggered: remaining participant rewards zeroed, remainder to governance")
 	}
 }
+
+func TestCheckedAddUint64(t *testing.T) {
+	tests := []struct {
+		name         string
+		a            uint64
+		b            uint64
+		wantSum      uint64
+		wantOverflow bool
+	}{
+		{"zero", 0, 0, 0, false},
+		{"small values", 10, 20, 30, false},
+		{"max without overflow", math.MaxUint64 - 1, 1, math.MaxUint64, false},
+		{"overflow by one", math.MaxUint64, 1, 0, true},
+		{"both max", math.MaxUint64, math.MaxUint64, math.MaxUint64 - 1, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			sum, overflow := checkedAddUint64(tt.a, tt.b)
+			require.Equal(t, tt.wantSum, sum, "unexpected sum")
+			require.Equal(t, tt.wantOverflow, overflow, "unexpected overflow flag")
+		})
+	}
+}
+
+// TestGetBitcoinSettleAmounts_SupplyCapOverflowGuard verifies that the
+// proportional-reduction loop uses checkedAddUint64 and never wraps the
+// accumulator. With valid inputs the guard is not triggered (the reduced
+// rewards are bounded by remainingSupply), but the test ensures the path
+// remains safe and SupplyCapOverflowed stays false.
+func TestGetBitcoinSettleAmounts_SupplyCapReductionNoWrap(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		InitialEpochReward: 285000000000000,
+		DecayRate:          types.DecimalFromFloat(-0.000475),
+		GenesisEpoch:       1,
+	}
+
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 100,
+		ValidationWeights: []*types.ValidationWeight{
+			createTestValidationWeight("participant1", 500, 100),
+			createTestValidationWeight("participant2", 500, 150),
+		},
+	}
+
+	participants := []types.Participant{
+		{
+			Address:           "participant1",
+			Status:            types.ParticipantStatus_ACTIVE,
+			CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0},
+		},
+		{
+			Address:           "participant2",
+			Status:            types.ParticipantStatus_ACTIVE,
+			CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0},
+		},
+	}
+
+	settleParams := &SettleParameters{
+		TotalSubsidyPaid:   600000000000000000 - 100000,
+		TotalSubsidySupply: 600000000000000000,
+	}
+
+	logger := createTestLogger(t)
+	results, bitcoinResult, err := GetBitcoinSettleAmounts(participants, epochGroupData, bitcoinParams, nil, settleParams, modelNodesAndScales(epochGroupData), logger)
+	require.NoError(t, err)
+
+	var totalRewarded uint64
+	for _, r := range results {
+		if r.Settle != nil {
+			totalRewarded += r.Settle.RewardCoins
+		}
+	}
+	remainingSupply := uint64(bitcoinResult.Amount)
+	require.LessOrEqual(t, totalRewarded, remainingSupply, "total rewards must not exceed remaining supply")
+	require.False(t, bitcoinResult.SupplyCapOverflowed, "overflow guard must not trigger with valid inputs")
+	t.Logf("OK: SupplyCapOverflowed=%v, remainingSupply=%d, totalRewarded=%d", bitcoinResult.SupplyCapOverflowed, remainingSupply, totalRewarded)
+}

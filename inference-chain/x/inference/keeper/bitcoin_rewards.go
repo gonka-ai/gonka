@@ -111,11 +111,12 @@ func GetBitcoinSettleAmounts(
 					}
 					// This gives accurate response by not relying on a ratio before we need to
 					reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
-					if reducedReward > 0 && totalDistributed > math.MaxUint64-reducedReward {
+					newTotal, overflow := checkedAddUint64(totalDistributed, reducedReward)
+					if overflow {
 						amount.Settle.RewardCoins = 0
 						overflowed = true
 						bitcoinResult.SupplyCapOverflowed = true
-						logger.Warn("Bitcoin supply-cap distribution overflow guard triggered",
+						logger.Error("Bitcoin supply-cap distribution overflow guard triggered",
 							"epoch", epochGroupData.GetEpochIndex(),
 							"participant", amount.Settle.Participant,
 							"reducedReward", reducedReward,
@@ -124,7 +125,7 @@ func GetBitcoinSettleAmounts(
 						continue
 					}
 					amount.Settle.RewardCoins = reducedReward
-					totalDistributed += reducedReward
+					totalDistributed = newTotal
 				}
 			}
 
@@ -152,6 +153,15 @@ func saturatingAddUint64Max(a int64, b uint64) int64 {
 		return math.MaxInt64
 	}
 	return a + int64(b) // safe because b < headroom <= MaxInt64
+}
+
+// checkedAddUint64 returns a+b and an overflow flag.
+// It mirrors the checkedAddInt64 pattern introduced in #1379 so that callers
+// can decide whether to error out or saturate. Used by the Bitcoin reward
+// overflow guards to keep the accumulator from wrapping.
+func checkedAddUint64(a, b uint64) (uint64, bool) {
+	sum, carry := bits.Add64(a, b, 0)
+	return sum, carry != 0
 }
 
 // CalculateFixedEpochReward implements the exponential decay reward calculation
@@ -773,15 +783,15 @@ func CalculateParticipantBitcoinRewards(
 				// Gap 2 guard: rewardCoins = MaxUint64 path above can overflow totalDistributed.
 				// Saturate totalDistributed to MaxUint64 rather than wrapping; the remainder
 				// calculation below clamps any excess to governance.
-				_, overflow := bits.Add64(totalDistributed, rewardCoins, 0)
-				if overflow != 0 {
-					logger.Warn("Bitcoin reward distribution overflow: totalDistributed saturated to MaxUint64",
+				newTotal, overflow := checkedAddUint64(totalDistributed, rewardCoins)
+				if overflow {
+					logger.Error("Bitcoin reward distribution overflow: totalDistributed saturated to MaxUint64",
 						"participant", participant.Address,
 						"rewardCoins", rewardCoins,
 					)
 					totalDistributed = math.MaxUint64
 				} else {
-					totalDistributed += rewardCoins
+					totalDistributed = newTotal
 				}
 			}
 		}
