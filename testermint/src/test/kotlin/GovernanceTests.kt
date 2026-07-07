@@ -148,10 +148,16 @@ class GovernanceTests : TestermintTest() {
         logSection("Funding governance module account")
         val governanceAddress = genesis.node.getModuleAccount("gov").account.value.address
         val genesisAddress = genesis.node.getColdAddress()
-        val fundAmount = 1_000_000L
-        genesis.submitTransaction(
+        // MsgTransferWithVesting enforces a 10-gonka minimum per transfer
+        // (streamvesting/types/msg_transfer_with_vesting.go), so the gov account
+        // must hold at least 10 gonka for the proposal below to execute.
+        val fundAmount = 10_000_000_000L
+        // Genesis cold wallet starts lean; wait for CLAIM_REWARDS income if needed.
+        genesis.ensureGenesisSpendableForDevshard(fundAmount)
+        val fundResp = genesis.submitTransaction(
             listOf("bank", "send", genesisAddress, governanceAddress, "$fundAmount${genesis.config.denom}")
         )
+        assertThat(fundResp.code).isEqualTo(0)
         logSection("Submit Proposal to send funds")
         val governanceBalance = genesis.node.getBalance(governanceAddress, "ngonka")
         assertThat(governanceBalance.balance.amount).isGreaterThanOrEqualTo(fundAmount)
