@@ -115,10 +115,32 @@ only the Stage-2 distance check defends there. Validators MUST branch on
 
 ---
 
+## 8. Chain-bound seed derivation (independently versioned)
+
+The RNG seed *string* is not composed by §1–§7; it is derived by
+`derive_chain_bound_seed(user_seed, inference_id_from_chain)` (from
+gonka-ai/vllm#56), binding Stage-1 replay to chain provenance so it cannot be
+ground from request-controlled material. Its own domain tag versions it:
+`gonka-deterministic-sampling-v1`.
+
+- Framing: `SHA256(tag || "\nuser_seed_len=" || len || "\n" || str(user_seed)
+  || "\ninference_id_len=" || len || "\n" || inference_id)`, all UTF-8, byte
+  lengths (not code points). Returns the lowercase hex digest, which is then the
+  seed string fed to `Sha256CounterRNG`. **No raw concatenation** (ambiguous
+  across `(4,"2x")` vs `(42,"x")`).
+- Fail closed — the accept/reject boundary is language-invariant:
+  `inference_id_from_chain` must be **printable ASCII (0x21..0x7E)**, non-empty,
+  ≤256 chars (stricter than a `strip()` check, whose whitespace set differs per
+  runtime); `user_seed` must be an exact int in the **signed 64-bit range**.
+- Covered by the `seed_derivation` block in `conformance_vectors.json` (accept
+  digests + reject cases); the Go validator reproduces both.
+
 ## Conformance
 
 `scripts/gen_conformance_vectors.py` emits `conformance_vectors.json` from the
 reference Python implementation. `tests/v1/validation/test_conformance_vectors.py`
 asserts the Python pipeline still reproduces the committed vectors (drift guard).
 The Go validator MUST pass the same vectors before it can be trusted for
-cross-language replay.
+cross-language replay: sampling parity lives in the `detsample` package
+(`TestPipelineWeightsMatch` / `TestPipelineTokenMatch`) and seed parity in
+`TestChainBoundSeedAccept` / `TestChainBoundSeedReject`.

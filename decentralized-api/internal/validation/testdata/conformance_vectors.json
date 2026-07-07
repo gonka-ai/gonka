@@ -238,5 +238,57 @@
       "expected_weight_sum": 65536,
       "expected_token": "3"
     }
-  ]
+  ],
+  "seed_derivation": {
+    "domain_tag": "gonka-deterministic-sampling-v1",
+    "accept": [
+      {
+        "user_seed": 7,
+        "inference_id": "chain-abc",
+        "expected_seed": "910b688db5b2061e66385acf0ee665682d5e01bab5d1d8d2cdde9a2612a6e6c2"
+      },
+      {
+        "user_seed": 7,
+        "inference_id": "chain-xyz",
+        "expected_seed": "10668913c3b68c1da4d32a882523ee44cd37af73d4d4361dd0dd8d71f1fbee4b"
+      },
+      {
+        "user_seed": 42,
+        "inference_id": "devshard-escrow1-100",
+        "expected_seed": "c12c2cbf4165c5b1a4240bc69c4c527ada1b8c65c51b35de017d15be22c7b3d9"
+      },
+      {
+        "user_seed": -1,
+        "inference_id": "chain-abc",
+        "expected_seed": "3d06091b4635031cf457f333dd2d3c64de7eaf56dfa4ae4e6bcc37d81c90c515"
+      },
+      {
+        "user_seed": 9223372036854775807,
+        "inference_id": "x",
+        "expected_seed": "934d232ad3fca38d5cde7e9c8dd8132155ab91e8674977973ea64e431abd72c6"
+      }
+    ],
+    "reject_inference_id": [
+      {
+        "inference_id": "",
+        "reason": "empty"
+      },
+      {
+        "inference_id": " chain-abc ",
+        "reason": "whitespace (space is 0x20, below 0x21)"
+      },
+      {
+        "inference_id": "chain\tabc",
+        "reason": "control char (tab)"
+      },
+      {
+        "inference_id": "chain-é",
+        "reason": "non-ASCII"
+      },
+      {
+        "inference_id": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+        "reason": "too long (>256)"
+      }
+    ]
+  }
 }
