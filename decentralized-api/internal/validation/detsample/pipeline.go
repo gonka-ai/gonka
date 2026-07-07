@@ -15,6 +15,9 @@ import (
 
 const weightScale = 65536
 
+// zeroDecimal is a shared apd zero for sign comparisons.
+var zeroDecimal = apd.New(0, 0)
+
 // newCtx returns the pinned decimal context (contract §2): prec=10, HALF_EVEN.
 func newCtx() *apd.Context {
 	c := apd.BaseContext.WithPrecision(10)

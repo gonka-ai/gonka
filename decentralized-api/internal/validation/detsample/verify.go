@@ -75,6 +75,15 @@ func VerifyPosition(p Position) Result {
 		// the sequence check provides no signal here; defer to the distance check.
 		return inconclusive("greedy position (temperature 0): sequence check not applicable")
 	}
+	// A non-greedy position must have temperature > 0 (contract §4). Guard
+	// explicitly rather than relying on a downstream divide-by-zero: a
+	// non-positive or unparseable temperature is an inconsistent artifact, not
+	// executor fraud.
+	if T, err := parseDec(p.Temperature); err != nil || T.Cmp(zeroDecimal) <= 0 {
+		return inconclusive(
+			"non-positive or unparseable temperature %q with greedy flag unset",
+			p.Temperature)
+	}
 
 	rng := NewFromSeedString(p.SeedStr)
 	replayed, err := DecimalSampleFromLogprobs(

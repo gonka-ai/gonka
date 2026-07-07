@@ -51,27 +51,40 @@ func IterU64(seed string, count int) []uint64 {
 	return out
 }
 
+// rejectionLimit returns the largest multiple-of-n boundary below 2^64: a draw
+// >= limit must be rejected for an unbiased result (contract §6). A return of 0
+// is the sentinel "n divides 2^64, accept every draw" (e.g. the 2^16 weight
+// scale, where the reject path is never taken).
+func rejectionLimit(n uint64) uint64 {
+	// 2^64 mod n, computed in uint64 (2^64 == MaxUint64 + 1).
+	twoTo64ModN := (^uint64(0)%n + 1) % n
+	if twoTo64ModN == 0 {
+		return 0
+	}
+	return -twoTo64ModN // wraps to 2^64 - twoTo64ModN
+}
+
+// reduceUnbiased draws from next() until a value falls below the rejection limit,
+// then reduces it mod n (contract §6). Split out from Uint64Below so the
+// reject-and-retry branch is unit-testable with an injected draw source (the
+// SHA256 RNG almost never produces a rejectable value naturally).
+func reduceUnbiased(n uint64, next func() uint64) uint64 {
+	limit := rejectionLimit(n)
+	for {
+		x := next()
+		if limit == 0 || x < limit {
+			return x % n
+		}
+	}
+}
+
 // Uint64Below returns an unbiased draw in [0, n) via rejection sampling
 // (contract §6). n must be > 0.
 func Uint64Below(r *Sha256CounterRNG, n uint64) (uint64, error) {
 	if n == 0 {
 		return 0, fmt.Errorf("detsample: n must be > 0")
 	}
-	// Python: limit = 2^64 - (2^64 % n). When n divides 2^64 (e.g. the 2^16
-	// weight scale), 2^64 % n == 0 and limit == 2^64, so every draw is accepted.
-	// 2^64 % n, computed in uint64: 2^64 == MaxUint64 + 1.
-	twoTo64ModN := (^uint64(0)%n + 1) % n
-	if twoTo64ModN == 0 {
-		// n | 2^64: accept any draw.
-		return r.NextU64() % n, nil
-	}
-	limit := -twoTo64ModN // wraps to 2^64 - twoTo64ModN
-	for {
-		x := r.NextU64()
-		if x < limit {
-			return x % n, nil
-		}
-	}
+	return reduceUnbiased(n, r.NextU64), nil
 }
 
 // SampleCategoricalWeights draws an index in [0, len(weights)) with probability

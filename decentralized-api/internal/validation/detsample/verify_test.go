@@ -118,3 +118,17 @@ func TestVerifyPositionGreedy(t *testing.T) {
 		t.Errorf("greedy: verdict = %s, want inconclusive", r.Verdict)
 	}
 }
+
+// TestVerifyPositionNonPositiveTemperature: a non-greedy position with
+// temperature <= 0 (or unparseable) is Inconclusive, not a crash or Fraud.
+func TestVerifyPositionNonPositiveTemperature(t *testing.T) {
+	cases := loadFullVectors(t)
+	for _, temp := range []string{"0", "0.0", "-0.5", "not-a-number"} {
+		p := positionFromVector(cases[0])
+		p.Greedy = false
+		p.Temperature = temp
+		if r := VerifyPosition(p); r.Verdict != VerdictInconclusive {
+			t.Errorf("temperature %q: verdict = %s, want inconclusive", temp, r.Verdict)
+		}
+	}
+}
