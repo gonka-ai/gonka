@@ -2,8 +2,11 @@ package poc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"sync"
 
@@ -152,8 +155,33 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 		logging.Error("EarlyShareGuard: failed to mark capture run", types.PoC, "stage", stageHeight, "error", err)
 		return
 	}
+	// The digest is a deterministic hash of the whole captured snapshot.
+	// Because the capture query is height-pinned, every validator capturing
+	// this stage must log the same digest; differing digests across
+	// validators indicate capture divergence (version skew, pruned state)
+	// and are the primary observe-mode health signal for the guard.
 	logging.Info("EarlyShareGuard: captured early checkpoints", types.PoC,
-		"stage", stageHeight, "target", target, "capturedAt", capturedAt, "commits", len(checkpoints))
+		"stage", stageHeight, "target", target, "capturedAt", capturedAt,
+		"commits", len(checkpoints), "digest", checkpointsDigest(checkpoints))
+}
+
+// checkpointsDigest computes an order-independent digest of a captured
+// checkpoint set: entries are sorted by (participant, model) and hashed.
+func checkpointsDigest(checkpoints []earlyshare.Checkpoint) string {
+	sorted := make([]earlyshare.Checkpoint, len(checkpoints))
+	copy(sorted, checkpoints)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ParticipantAddress != sorted[j].ParticipantAddress {
+			return sorted[i].ParticipantAddress < sorted[j].ParticipantAddress
+		}
+		return sorted[i].ModelID < sorted[j].ModelID
+	})
+
+	h := sha256.New()
+	for _, cp := range sorted {
+		fmt.Fprintf(h, "%s|%s|%d|%x\n", cp.ParticipantAddress, cp.ModelID, cp.EarlyCount, cp.EarlyRootHash)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // earlyDecision is the precomputed guard outcome for one (participant, model).

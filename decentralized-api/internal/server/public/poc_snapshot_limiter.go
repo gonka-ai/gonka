@@ -53,7 +53,10 @@ func newSnapshotCountLimiter() *snapshotCountLimiter {
 
 // Allow reports whether the validator may request proofs against the given
 // snapshot count of the (stage, model) store, recording the count if allowed.
-func (l *snapshotCountLimiter) Allow(validatorAddress string, stageHeight int64, modelID string, count uint32) bool {
+// distinct is the number of distinct counts the validator has used after this
+// request (including the rejected one when allowed is false), so callers can
+// surface validators approaching the quota before it trips.
+func (l *snapshotCountLimiter) Allow(validatorAddress string, stageHeight int64, modelID string, count uint32) (allowed bool, distinct int) {
 	key := fmt.Sprintf("%s|%d|%s", validatorAddress, stageHeight, modelID)
 
 	l.mu.Lock()
@@ -70,13 +73,13 @@ func (l *snapshotCountLimiter) Allow(validatorAddress string, stageHeight int64,
 	entry.lastSeen = now
 
 	if _, seen := entry.counts[count]; seen {
-		return true
+		return true, len(entry.counts)
 	}
 	if len(entry.counts) >= l.max {
-		return false
+		return false, len(entry.counts) + 1
 	}
 	entry.counts[count] = struct{}{}
-	return true
+	return true, len(entry.counts)
 }
 
 func (l *snapshotCountLimiter) pruneLocked(now time.Time) {
