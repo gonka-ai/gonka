@@ -74,6 +74,34 @@ func TestEarlyShareCaptureTarget(t *testing.T) {
 		}
 	})
 
+	t.Run("fraction arithmetic is integer-deterministic", func(t *testing.T) {
+		// Different float spellings of "one third" (the code default, the
+		// documented config literal, a hand-typed shorter one) must quantize
+		// to the same ppm and produce the identical target height for any
+		// duration. This is what pins all validators to the same capture
+		// block.
+		spellings := []float64{1.0 / 3.0, 0.3333333333, 0.333333}
+		for _, dur := range []int64{30, 100, 720, 7201, 99999} {
+			want := int64(-1)
+			for _, f := range spellings {
+				_, target, ok := EarlyShareCaptureTarget(mkState(types.PoCGeneratePhase, 1000, dur), f)
+				if !ok {
+					t.Fatalf("fraction %v duration %d: expected ok", f, dur)
+				}
+				if want == -1 {
+					want = target
+				} else if target != want {
+					t.Fatalf("fraction %v duration %d: target %d differs from %d", f, dur, target, want)
+				}
+			}
+			// offset = round(dur * 333333 / 1e6), pure integer arithmetic.
+			expected := 1000 + (dur*333333+500000)/1000000
+			if want != expected {
+				t.Fatalf("duration %d: target %d, want %d", dur, want, expected)
+			}
+		}
+	})
+
 	t.Run("confirmation poc generation", func(t *testing.T) {
 		st := mkState(types.InferencePhase, 1000, 30)
 		st.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
