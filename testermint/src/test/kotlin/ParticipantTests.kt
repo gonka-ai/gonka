@@ -73,7 +73,14 @@ class ParticipantTests : TestermintTest() {
         assertThat(newPair.node.logOutput.minimumHeight).isLessThan(currentHeight)
     }
 
+    // Classic inference flow removed (PR #1386). TrafficBasis is derived from
+    // EpochGroupData.NumberOfRequests, incremented only while queueing classic
+    // inferences for validation (inference_validation_endblock.go). Devshard
+    // validates inside shard sessions and never feeds this metric, so there is
+    // no non-classic way to move it. The classic validation-average mechanism is
+    // a dead-code candidate alongside dynamic pricing (see PR #1386 notes).
     @Test
+    @Tag("exclude")
     fun `traffic basis decreases minimum average validation`() {
         val (_, genesis) = initCluster()
         logSection("Making sure traffic basis is low")
