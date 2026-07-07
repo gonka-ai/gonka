@@ -444,14 +444,70 @@ func TestDecide(t *testing.T) {
 		}
 	})
 
-	t.Run("transient early-proof error does not fail participant", func(t *testing.T) {
+	t.Run("transient early-proof error persists after retry -> vote no", func(t *testing.T) {
 		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
 		f := mkFetcher(art, art, context.DeadlineExceeded)
 		dec := prefixDec
 		dec.shareVoteNo = false
 		voteNo, reason := guard.decide(ctx, f, stage, work, dec)
-		if voteNo {
-			t.Fatalf("transient early-proof error must not vote no, got: %s", reason)
+		if !voteNo {
+			t.Fatalf("persistent transient early-proof error must vote no, got no vote: %s", reason)
+		}
+		// 1 call for final root + 2 calls for early root (initial + 1 retry) = 3.
+		if f.calls != 3 {
+			t.Fatalf("expected 3 fetcher calls (final + early + 1 retry), got %d", f.calls)
 		}
 	})
+
+	t.Run("transient early-proof error succeeds on retry -> no vote", func(t *testing.T) {
+		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
+		f := mkFlakyEarlyFetcher(finalRoot, earlyRoot, art, art, context.DeadlineExceeded)
+		dec := prefixDec
+		dec.shareVoteNo = false
+		voteNo, reason := guard.decide(ctx, f, stage, work, dec)
+		if voteNo {
+			t.Fatalf("retry-succeeded early proof must not vote no, got: %s", reason)
+		}
+		if f.calls != 3 {
+			t.Fatalf("expected 3 fetcher calls (final + early_fail + early_retry_ok), got %d", f.calls)
+		}
+	})
+}
+
+// mkFlakyEarlyFetcher returns a fetcher whose early-root call fails once with the
+// given transient error, then succeeds on the second call. Final-root calls
+// always succeed.
+func mkFlakyEarlyFetcher(finalRoot, earlyRoot []byte, finalArt, earlyArt VerifiedArtifact, transientErr error) *flakyProofFetcher {
+	return &flakyProofFetcher{
+		finalRoot:      finalRoot,
+		earlyRoot:      earlyRoot,
+		finalArt:       finalArt,
+		earlyArt:       earlyArt,
+		transientErr:   transientErr,
+	}
+}
+
+type flakyProofFetcher struct {
+	finalRoot      []byte
+	earlyRoot      []byte
+	finalArt       VerifiedArtifact
+	earlyArt       VerifiedArtifact
+	transientErr   error
+	calls          int
+	earlyCallCount int
+}
+
+func (f *flakyProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string, req ProofRequest) ([]VerifiedArtifact, error) {
+	f.calls++
+	if string(req.RootHash) == string(f.finalRoot) {
+		return []VerifiedArtifact{f.finalArt}, nil
+	}
+	if string(req.RootHash) == string(f.earlyRoot) {
+		f.earlyCallCount++
+		if f.earlyCallCount == 1 {
+			return nil, f.transientErr
+		}
+		return []VerifiedArtifact{f.earlyArt}, nil
+	}
+	return nil, nil
 }

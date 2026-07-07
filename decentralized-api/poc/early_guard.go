@@ -375,22 +375,23 @@ func (g *EarlyShareGuard) checkPrefix(ctx context.Context, pf proofFetcher, stag
 		return true, ""
 	}
 
-	earlyProofs, err := pf.FetchAndVerifyProofs(ctx, work.url, ProofRequest{
+	// One retry on transient failures so a genuine hiccup doesn't fail the participant.
+	earlyReq := ProofRequest{
 		PocStageStartBlockHeight: stage,
 		ModelId:                  work.modelId,
 		RootHash:                 dec.earlyRoot,
 		Count:                    dec.earlyCount,
 		LeafIndices:              []uint32{sharedLeaf},
 		ParticipantAddress:       work.address,
-	})
-	if err != nil {
-		if isPermanentProofError(err) {
-			// Early root cannot prove the shared leaf -> hard failure.
-			return false, fmt.Sprintf("early_proof_invalid leaf=%d: %v", sharedLeaf, err)
-		}
-		logging.Debug("EarlyShareGuard: early shared-leaf proof unavailable (transient)", types.PoC,
+	}
+	earlyProofs, err := pf.FetchAndVerifyProofs(ctx, work.url, earlyReq)
+	if err != nil && !isPermanentProofError(err) {
+		logging.Debug("EarlyShareGuard: early shared-leaf proof transient failure, retrying", types.PoC,
 			"participant", work.address, "leaf", sharedLeaf, "error", err)
-		return true, ""
+		earlyProofs, err = pf.FetchAndVerifyProofs(ctx, work.url, earlyReq)
+	}
+	if err != nil {
+		return false, fmt.Sprintf("early_proof_unavailable leaf=%d: %v", sharedLeaf, err)
 	}
 	if len(earlyProofs) != 1 {
 		return false, fmt.Sprintf("early_proof_missing leaf=%d", sharedLeaf)
