@@ -1,0 +1,242 @@
+{
+  "contract_version": "1.0.0",
+  "decimal": {
+    "prec": 10,
+    "rounding": "ROUND_HALF_EVEN"
+  },
+  "weight_scale": 65536,
+  "rng_reference": {
+    "seed": "reference_seed_v1",
+    "first_u64": [
+      4286832458236889005,
+      12281003819428572724,
+      12352776571910749143,
+      12178488218135958089,
+      6205195570139478562
+    ]
+  },
+  "float_to_string": [
+    {
+      "description": "plain -0.05 as float64",
+      "repr": "-0.05"
+    },
+    {
+      "description": "-0.05 as float32 widened to float64",
+      "repr": "-0.05000000074505806"
+    },
+    {
+      "description": "0.1 as float32 widened to float64",
+      "repr": "0.10000000149011612"
+    }
+  ],
+  "cases": [
+    {
+      "name": "single_token",
+      "logprobs": {
+        "791": "-0.05"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "791": 65536
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "three_token_plain",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 2397,
+        "5": 7201,
+        "791": 55938
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "two_token_near_tie",
+      "logprobs": {
+        "5": "-0.6931471805599453",
+        "7": "-0.6931471805599453"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 32768,
+        "7": 32768
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "7"
+    },
+    {
+      "name": "top_k_truncation",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": 2,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "791": 47259,
+        "9": 18277
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "top_p_nucleus",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": "0.9",
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 5567,
+        "791": 43245,
+        "9": 16724
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "min_p_filter",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1",
+        "9": "-1.0"
+      },
+      "temperature": "1.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": "0.05",
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "5": 5567,
+        "791": 43245,
+        "9": 16724
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "temperature_small",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "0.1",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 0,
+        "5": 0,
+        "791": 65536
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "temperature_large",
+      "logprobs": {
+        "791": "-0.05",
+        "1": "-3.2",
+        "5": "-2.1"
+      },
+      "temperature": "2.0",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 8664,
+        "5": 15017,
+        "791": 41855
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "float32_widened_logprob",
+      "logprobs": {
+        "791": "-0.05000000074505806",
+        "1": "-3.0"
+      },
+      "temperature": "0.7",
+      "top_p": null,
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "1": 955,
+        "791": 64581
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "791"
+    },
+    {
+      "name": "ten_tokens",
+      "logprobs": {
+        "3": "-0.1",
+        "10": "-0.2",
+        "42": "-0.30000000000000004",
+        "100": "-0.4",
+        "256": "-0.5",
+        "512": "-0.6000000000000001",
+        "777": "-0.7000000000000001",
+        "1024": "-0.8",
+        "2048": "-0.9",
+        "4096": "-1.0"
+      },
+      "temperature": "0.8",
+      "top_p": "0.95",
+      "top_k": null,
+      "min_p": null,
+      "seed_str": "42|[1,2,3]",
+      "expected_weights": {
+        "10": 9525,
+        "100": 7418,
+        "1024": 4499,
+        "2048": 3970,
+        "256": 6546,
+        "3": 10793,
+        "4096": 3504,
+        "42": 8406,
+        "512": 5777,
+        "777": 5098
+      },
+      "expected_weight_sum": 65536,
+      "expected_token": "3"
+    }
+  ]
+}
