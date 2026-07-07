@@ -2420,3 +2420,31 @@ func TestGetBitcoinSettleAmounts_SupplyCapReductionNoWrap(t *testing.T) {
 	require.False(t, bitcoinResult.SupplyCapOverflowed, "overflow guard must not trigger with valid inputs")
 	t.Logf("OK: SupplyCapOverflowed=%v, remainingSupply=%d, totalRewarded=%d", bitcoinResult.SupplyCapOverflowed, remainingSupply, totalRewarded)
 }
+
+// TestApplyProportionalSupplyCapReduction_OverflowGuard verifies that the
+// proportional-reduction overflow guard fires when corrupted upstream state gives a
+// participant a RewardCoins value larger than the original epoch amount. The guard must
+// log an Error, saturate totalDistributed at MaxUint64, and zero all remaining rewards.
+func TestApplyProportionalSupplyCapReduction_OverflowGuard(t *testing.T) {
+	settleResults := []*SettleResult{
+		{Settle: &types.SettleAmount{Participant: "participant1", RewardCoins: math.MaxUint64}},
+		{Settle: &types.SettleAmount{Participant: "participant2", RewardCoins: math.MaxUint64}},
+	}
+
+	logger := createTestLogger(t)
+	totalDistributed, overflowed := applyProportionalSupplyCapReduction(
+		settleResults,
+		math.MaxInt64,
+		math.MaxInt64,
+		100,
+		logger,
+	)
+
+	require.True(t, overflowed, "overflow guard must trigger when totalDistributed wraps")
+	require.Equal(t, uint64(math.MaxUint64), totalDistributed, "totalDistributed must saturate at MaxUint64")
+	require.Equal(t, uint64(math.MaxUint64), settleResults[0].Settle.RewardCoins,
+		"first participant reward must be reduced but not zeroed")
+	require.Equal(t, uint64(0), settleResults[1].Settle.RewardCoins,
+		"remaining participant rewards must be zeroed after overflow")
+	t.Logf("SECURITY CHECK: overflow guard triggered, totalDistributed=%d, overflowed=%v", totalDistributed, overflowed)
+}

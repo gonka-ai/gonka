@@ -29,6 +29,53 @@ type BitcoinResult struct {
 	GovernanceAmount int64
 }
 
+// applyProportionalSupplyCapReduction scales each participant's RewardCoins down from
+// originalAmount to newAmount proportionally. It returns the accumulated distributed amount
+// and whether the overflow guard fired. The guard is defense-in-depth: with valid inputs the
+// reduced rewards sum to newAmount, so overflow cannot occur, but corrupted upstream state
+// (e.g. a participant reward larger than originalAmount) can trigger it.
+func applyProportionalSupplyCapReduction(
+	settleResults []*SettleResult,
+	originalAmount int64,
+	newAmount int64,
+	epoch uint64,
+	logger log.Logger,
+) (uint64, bool) {
+	var totalDistributed uint64
+	originalDecimalAmount := decimal.NewFromInt(originalAmount)
+	remainingSupply := decimal.NewFromInt(newAmount)
+	overflowed := false
+
+	for _, amount := range settleResults {
+		if amount.Settle == nil || amount.Error != nil {
+			continue
+		}
+		if overflowed {
+			amount.Settle.RewardCoins = 0
+			continue
+		}
+
+		// This gives accurate response by not relying on a ratio before we need to
+		reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
+		newTotal, overflow := checkedAddUint64(totalDistributed, reducedReward)
+		if overflow {
+			amount.Settle.RewardCoins = 0
+			overflowed = true
+			logger.Error("Bitcoin supply-cap distribution overflow guard triggered",
+				"epoch", epoch,
+				"participant", amount.Settle.Participant,
+				"reducedReward", reducedReward,
+				"totalDistributed", totalDistributed,
+			)
+			continue
+		}
+		amount.Settle.RewardCoins = reducedReward
+		totalDistributed = newTotal
+	}
+
+	return totalDistributed, overflowed
+}
+
 // GetBitcoinSettleAmounts is the main entry point for Bitcoin-style reward calculation.
 // It replaces GetSettleAmounts() while preserving WorkCoins and only changing RewardCoins calculation.
 func GetBitcoinSettleAmounts(
@@ -91,10 +138,6 @@ func GetBitcoinSettleAmounts(
 
 		// Proportionally reduce all participant rewards with proper remainder handling
 		if originalAmount > 0 {
-			var totalDistributed uint64 = 0
-			originalDecimalAmount := decimal.NewFromInt(originalAmount)
-			remainingSupply := decimal.NewFromInt(bitcoinResult.Amount)
-
 			// Apply proportional reduction to each participant.
 			// Defense-in-depth overflow guard (PR #544 class): reducedReward is mathematically bounded
 			// by bitcoinResult.Amount (derived from int64 supply cap arithmetic), so overflow cannot
@@ -102,31 +145,15 @@ func GetBitcoinSettleAmounts(
 			// path in CalculateParticipantBitcoinRewards propagating here as a reducedReward.
 			// On overflow: all remaining participants' rewards are zeroed (not just skipped), so
 			// they do not retain un-reduced amounts — the entire remainder flows to governance.
-			overflowed := false
-			for _, amount := range settleResults {
-				if amount.Settle != nil && amount.Error == nil {
-					if overflowed {
-						amount.Settle.RewardCoins = 0
-						continue
-					}
-					// This gives accurate response by not relying on a ratio before we need to
-					reducedReward := uint64(decimal.NewFromUint64(amount.Settle.RewardCoins).Mul(remainingSupply).Div(originalDecimalAmount).IntPart())
-					newTotal, overflow := checkedAddUint64(totalDistributed, reducedReward)
-					if overflow {
-						amount.Settle.RewardCoins = 0
-						overflowed = true
-						bitcoinResult.SupplyCapOverflowed = true
-						logger.Error("Bitcoin supply-cap distribution overflow guard triggered",
-							"epoch", epochGroupData.GetEpochIndex(),
-							"participant", amount.Settle.Participant,
-							"reducedReward", reducedReward,
-							"totalDistributed", totalDistributed,
-						)
-						continue
-					}
-					amount.Settle.RewardCoins = reducedReward
-					totalDistributed = newTotal
-				}
+			totalDistributed, overflowed := applyProportionalSupplyCapReduction(
+				settleResults,
+				originalAmount,
+				bitcoinResult.Amount,
+				epochGroupData.GetEpochIndex(),
+				logger,
+			)
+			if overflowed {
+				bitcoinResult.SupplyCapOverflowed = true
 			}
 
 			// Any remainder due to integer division truncation, downtime punishments, or the
