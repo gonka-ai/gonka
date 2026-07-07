@@ -17,6 +17,9 @@ func TestConfigNormalized(t *testing.T) {
 		if got.ThresholdRatio != DefaultThresholdRatio {
 			t.Fatalf("threshold ratio = %v, want %v", got.ThresholdRatio, DefaultThresholdRatio)
 		}
+		if got.InclusionSampleSize != DefaultInclusionSampleSize {
+			t.Fatalf("inclusion sample size = %v, want %v", got.InclusionSampleSize, DefaultInclusionSampleSize)
+		}
 	})
 
 	t.Run("invalid mode falls back to disabled", func(t *testing.T) {
@@ -46,6 +49,15 @@ func TestConfigNormalized(t *testing.T) {
 		enf := Config{Mode: ModeEnforce}
 		if !enf.Enabled() || !enf.Enforcing() {
 			t.Fatal("enforce must be enabled and enforcing")
+		}
+	})
+
+	t.Run("inclusion sample size default only", func(t *testing.T) {
+		if got := (Config{InclusionSampleSize: -1}).Normalized(); got.InclusionSampleSize != DefaultInclusionSampleSize {
+			t.Fatalf("sample size = %v, want default", got.InclusionSampleSize)
+		}
+		if got := (Config{InclusionSampleSize: 999}).Normalized(); got.InclusionSampleSize != 999 {
+			t.Fatalf("sample size = %v, want explicit value", got.InclusionSampleSize)
 		}
 	})
 }

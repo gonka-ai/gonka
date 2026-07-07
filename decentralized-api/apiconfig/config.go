@@ -255,21 +255,21 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 type DevshardVersionsCache struct {
 	// Versions are approved devshard binaries (`name`, download URL, sha256)
 	// used by versiond/routing policy.
-	Versions                          []DevshardVersion `json:"versions"`
+	Versions []DevshardVersion `json:"versions"`
 	// DevshardRequestsEnabled is the live governance kill-switch for host-side
 	// completion/timeout request handling.
-	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
+	DevshardRequestsEnabled bool `json:"devshard_requests_enabled"`
 	// MaxNonce is the chain upper bound for session nonces.
-	MaxNonce                          uint32            `json:"max_nonce"`
+	MaxNonce uint32 `json:"max_nonce"`
 	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).
-	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	RefusalTimeout int64 `json:"refusal_timeout"`
 	// ExecutionTimeout is the live execution timeout used by runtime-config consumers (seconds).
-	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	ExecutionTimeout int64 `json:"execution_timeout"`
 	// ValidationRate is the validation sampling rate in basis points (0..10000).
-	ValidationRate                    uint32            `json:"validation_rate"`
+	ValidationRate uint32 `json:"validation_rate"`
 	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
 	// converted to slot threshold at bind time.
-	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
+	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.
@@ -298,23 +298,27 @@ type EarlyShareGuardConfig struct {
 	// ThresholdRatio multiplies the weighted-median early share to derive the
 	// per-stage pass threshold (default 0.5).
 	ThresholdRatio float64 `koanf:"threshold_ratio" json:"threshold_ratio"`
-	// RequirePrefixProof enables the early-vs-final shared-leaf prefix check.
+	// RequireInclusionProof enables the early-vs-final nonce inclusion check.
 	// Defaults to true (set during config load via key existence); set
-	// require_prefix_proof=false explicitly to disable.
-	RequirePrefixProof bool `koanf:"require_prefix_proof" json:"require_prefix_proof"`
+	// require_inclusion_proof=false explicitly to disable.
+	RequireInclusionProof bool `koanf:"require_inclusion_proof" json:"require_inclusion_proof"`
+	// InclusionSampleSize is the number of early leaves checked for final-tree
+	// inclusion. It is clamped by the earlyshare package.
+	InclusionSampleSize int `koanf:"inclusion_sample_size" json:"inclusion_sample_size"`
 }
 
 // DefaultEarlyShareGuardConfig returns the guard defaults. It is used to
 // pre-seed the config before koanf unmarshalling so that any field absent from
 // yaml/env keeps its default, while explicitly-set values (including
-// require_prefix_proof=false) override. Defaults live once in the earlyshare
+// require_inclusion_proof=false) override. Defaults live once in the earlyshare
 // package to keep a single source of truth.
 func DefaultEarlyShareGuardConfig() EarlyShareGuardConfig {
 	d := earlyshare.DefaultConfig()
 	return EarlyShareGuardConfig{
-		Mode:               string(d.Mode),
-		FirstFraction:      d.FirstFraction,
-		ThresholdRatio:     d.ThresholdRatio,
-		RequirePrefixProof: d.RequirePrefixProof,
+		Mode:                  string(d.Mode),
+		FirstFraction:         d.FirstFraction,
+		ThresholdRatio:        d.ThresholdRatio,
+		RequireInclusionProof: d.RequireInclusionProof,
+		InclusionSampleSize:   d.InclusionSampleSize,
 	}
 }

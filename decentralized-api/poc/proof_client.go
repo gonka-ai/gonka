@@ -28,6 +28,7 @@ var (
 	ErrProofVerificationFailed = errors.New("proof verification failed")
 	ErrDuplicateNonces         = errors.New("duplicate nonces detected")
 	ErrIncompleteCoverage      = errors.New("response does not cover all requested leaf indices")
+	ErrNonceAbsent             = errors.New("response does not cover all requested nonces")
 	ErrInvalidVectorData       = errors.New("invalid vector data detected")
 )
 
@@ -46,6 +47,16 @@ type ProofRequest struct {
 	RootHash                 []byte
 	Count                    uint32
 	LeafIndices              []uint32
+	ParticipantAddress       string // participant whose API we're calling
+}
+
+// ProofByNonceRequest contains parameters for requesting proofs by nonce.
+type ProofByNonceRequest struct {
+	PocStageStartBlockHeight int64
+	ModelId                  string
+	RootHash                 []byte
+	Count                    uint32
+	Nonces                   []int32
 	ParticipantAddress       string // participant whose API we're calling
 }
 
@@ -177,50 +188,108 @@ func (c *ProofClient) FetchAndVerifyProofs(
 		return nil, err
 	}
 
-	// Verify each proof
 	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
 	for _, item := range proofResp.Proofs {
-		// Decode vector bytes
-		vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
 		if err != nil {
-			logging.Warn("Failed to decode vector bytes", types.PoC,
-				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "error", err)
-			return nil, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
+			return nil, err
 		}
-
-		// Validate FP16 vector: must be exactly DefaultKDim values, no NaN/Infinity
-		if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
-			logging.Warn("Invalid FP16 vector data", types.PoC,
-				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "error", err)
-			return nil, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
-		}
-
-		// Decode proof hashes
-		proofHashes := make([][]byte, len(item.Proof))
-		for i, hashB64 := range item.Proof {
-			hash, err := base64.StdEncoding.DecodeString(hashB64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid proof hash encoding for leaf %d: %w", item.LeafIndex, err)
-			}
-			proofHashes[i] = hash
-		}
-
-		leafData := buildLeafData(item.NonceValue, vectorBytes)
-
-		if !artifacts.VerifySMSTProofWithDenseIndex(req.RootHash, req.Count, item.LeafIndex, item.NonceValue, leafData, proofHashes) {
-			logging.Warn("SMST proof verification failed", types.PoC,
-				"participant", req.ParticipantAddress, "leafIndex", item.LeafIndex, "nonce", item.NonceValue)
-			return nil, fmt.Errorf("%w: leaf %d", ErrProofVerificationFailed, item.LeafIndex)
-		}
-
-		verified = append(verified, VerifiedArtifact{
-			LeafIndex: item.LeafIndex,
-			Nonce:     item.NonceValue,
-			VectorB64: item.VectorBytes,
-		})
+		verified = append(verified, artifact)
 	}
 
 	logging.Debug("Verified proofs from participant", types.PoC,
+		"participant", req.ParticipantAddress, "count", len(verified))
+
+	return verified, nil
+}
+
+// FetchAndVerifyProofsByNonce fetches proofs for concrete nonces from the
+// participant's API and verifies their SMST index binding.
+func (c *ProofClient) FetchAndVerifyProofsByNonce(
+	ctx context.Context,
+	participantUrl string,
+	req ProofByNonceRequest,
+) ([]VerifiedArtifact, error) {
+	timestamp := time.Now().UnixNano()
+	validatorAddress := c.recorder.GetAccountAddress()
+	signerAddress := c.recorder.GetSignerAddress()
+
+	signPayload := buildProofByNonceSignPayload(
+		req.PocStageStartBlockHeight,
+		req.ModelId,
+		req.RootHash,
+		req.Count,
+		req.Nonces,
+		timestamp,
+		validatorAddress,
+		signerAddress,
+	)
+	signature, err := c.recorder.SignBytes(signPayload)
+	if err != nil {
+		return nil, fmt.Errorf("failed to sign request: %w", err)
+	}
+
+	noncesInt := make([]int64, len(req.Nonces))
+	for i, nonce := range req.Nonces {
+		noncesInt[i] = int64(nonce)
+	}
+	requestBody := map[string]interface{}{
+		"poc_stage_start_block_height": req.PocStageStartBlockHeight,
+		"model_id":                     req.ModelId,
+		"root_hash":                    base64.StdEncoding.EncodeToString(req.RootHash),
+		"count":                        req.Count,
+		"nonces":                       noncesInt,
+		"validator_address":            validatorAddress,
+		"validator_signer_address":     signerAddress,
+		"timestamp":                    timestamp,
+		"signature":                    base64.StdEncoding.EncodeToString(signature),
+	}
+
+	bodyBytes, err := json.Marshal(requestBody)
+	if err != nil {
+		return nil, fmt.Errorf("failed to marshal request: %w", err)
+	}
+
+	proofUrl, err := url.JoinPath(participantUrl, "v1/poc/proofs/by-nonce")
+	if err != nil {
+		return nil, fmt.Errorf("failed to build proof URL: %w", err)
+	}
+
+	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, proofUrl, bytes.NewReader(bodyBytes))
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+
+	resp, err := c.httpClient.Do(httpReq)
+	if err != nil {
+		return nil, fmt.Errorf("HTTP request failed: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("proof by nonce request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var proofResp ProofResponse
+	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
+	}
+	if err := validateNonceCoverage(req.Nonces, proofResp.Proofs); err != nil {
+		return nil, err
+	}
+
+	verified := make([]VerifiedArtifact, 0, len(proofResp.Proofs))
+	for _, item := range proofResp.Proofs {
+		artifact, err := verifyProofItem(req.RootHash, req.Count, req.ParticipantAddress, item)
+		if err != nil {
+			return nil, err
+		}
+		verified = append(verified, artifact)
+	}
+
+	logging.Debug("Verified by-nonce proofs from participant", types.PoC,
 		"participant", req.ParticipantAddress, "count", len(verified))
 
 	return verified, nil
@@ -271,6 +340,75 @@ func validateLeafCoverage(requested []uint32, proofs []ProofItem) error {
 	return nil
 }
 
+func validateNonceCoverage(requested []int32, proofs []ProofItem) error {
+	if len(requested) == 0 {
+		if len(proofs) == 0 {
+			return nil
+		}
+		return fmt.Errorf("%w: unexpected proof for nonce %d", ErrIncompleteCoverage, proofs[0].NonceValue)
+	}
+
+	missing := make(map[int32]struct{}, len(requested))
+	for _, nonce := range requested {
+		missing[nonce] = struct{}{}
+	}
+
+	seen := make(map[int32]struct{}, len(proofs))
+	for _, p := range proofs {
+		if _, duplicate := seen[p.NonceValue]; duplicate {
+			return fmt.Errorf("%w: duplicate nonce %d", ErrIncompleteCoverage, p.NonceValue)
+		}
+		seen[p.NonceValue] = struct{}{}
+
+		if _, ok := missing[p.NonceValue]; !ok {
+			return fmt.Errorf("%w: unexpected nonce %d", ErrIncompleteCoverage, p.NonceValue)
+		}
+		delete(missing, p.NonceValue)
+	}
+
+	for nonce := range missing {
+		return fmt.Errorf("%w: missing nonce %d", ErrNonceAbsent, nonce)
+	}
+	return nil
+}
+
+func verifyProofItem(rootHash []byte, count uint32, participantAddress string, item ProofItem) (VerifiedArtifact, error) {
+	vectorBytes, err := base64.StdEncoding.DecodeString(item.VectorBytes)
+	if err != nil {
+		logging.Warn("Failed to decode vector bytes", types.PoC,
+			"participant", participantAddress, "leafIndex", item.LeafIndex, "error", err)
+		return VerifiedArtifact{}, fmt.Errorf("invalid vector_bytes encoding for leaf %d: %w", item.LeafIndex, err)
+	}
+
+	if err := ValidateFP16Vector(vectorBytes, DefaultKDim); err != nil {
+		logging.Warn("Invalid FP16 vector data", types.PoC,
+			"participant", participantAddress, "leafIndex", item.LeafIndex, "error", err)
+		return VerifiedArtifact{}, fmt.Errorf("%w: leaf %d: %v", ErrInvalidVectorData, item.LeafIndex, err)
+	}
+
+	proofHashes := make([][]byte, len(item.Proof))
+	for i, hashB64 := range item.Proof {
+		hash, err := base64.StdEncoding.DecodeString(hashB64)
+		if err != nil {
+			return VerifiedArtifact{}, fmt.Errorf("invalid proof hash encoding for leaf %d: %w", item.LeafIndex, err)
+		}
+		proofHashes[i] = hash
+	}
+
+	leafData := buildLeafData(item.NonceValue, vectorBytes)
+	if !artifacts.VerifySMSTProofWithDenseIndex(rootHash, count, item.LeafIndex, item.NonceValue, leafData, proofHashes) {
+		logging.Warn("SMST proof verification failed", types.PoC,
+			"participant", participantAddress, "leafIndex", item.LeafIndex, "nonce", item.NonceValue)
+		return VerifiedArtifact{}, fmt.Errorf("%w: leaf %d", ErrProofVerificationFailed, item.LeafIndex)
+	}
+
+	return VerifiedArtifact{
+		LeafIndex: item.LeafIndex,
+		Nonce:     item.NonceValue,
+		VectorB64: item.VectorBytes,
+	}, nil
+}
+
 // buildProofSignPayload builds the binary payload for signature.
 // Format: hex(SHA256(
 //
@@ -314,6 +452,37 @@ func buildProofSignPayload(
 
 	hash := sha256.Sum256(buf.Bytes())
 	// Return hex-encoded string as bytes (what the server expects to verify)
+	return []byte(hex.EncodeToString(hash[:]))
+}
+
+// buildProofByNonceSignPayload mirrors the server's by-nonce request payload.
+// The leading domain tag prevents leaf-index signatures from replaying here.
+func buildProofByNonceSignPayload(
+	pocStageStartBlockHeight int64,
+	modelID string,
+	rootHash []byte,
+	count uint32,
+	nonces []int32,
+	timestamp int64,
+	validatorAddress string,
+	signerAddress string,
+) []byte {
+	buf := new(bytes.Buffer)
+
+	writeLengthPrefixedString(buf, "poc-proofs-by-nonce-v1")
+	binary.Write(buf, binary.LittleEndian, pocStageStartBlockHeight)
+	writeLengthPrefixedString(buf, modelID)
+	buf.Write(rootHash)
+	binary.Write(buf, binary.LittleEndian, count)
+	binary.Write(buf, binary.LittleEndian, uint32(len(nonces)))
+	for _, nonce := range nonces {
+		binary.Write(buf, binary.LittleEndian, nonce)
+	}
+	binary.Write(buf, binary.LittleEndian, timestamp)
+	writeLengthPrefixedString(buf, validatorAddress)
+	writeLengthPrefixedString(buf, signerAddress)
+
+	hash := sha256.Sum256(buf.Bytes())
 	return []byte(hex.EncodeToString(hash[:]))
 }
 

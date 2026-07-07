@@ -21,6 +21,10 @@ func (s *stubProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string, _ P
 	return s.artifacts, nil
 }
 
+func (s *stubProofFetcher) FetchAndVerifyProofsByNonce(_ context.Context, _ string, _ ProofByNonceRequest) ([]VerifiedArtifact, error) {
+	return s.artifacts, nil
+}
+
 // stubNodeBroker implements nodeBrokerFacade for tests.
 type stubNodeBroker struct {
 	client mlnodeclient.MLNodeClient

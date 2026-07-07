@@ -32,7 +32,8 @@ func TestConfigLoad(t *testing.T) {
 func TestEarlyShareGuardDefaults(t *testing.T) {
 	t.Run("defaults applied when absent from yaml/env", func(t *testing.T) {
 		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
-		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF")
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF")
+		os.Unsetenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE")
 		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
 		require.NoError(t, m.Load())
 
@@ -41,22 +42,26 @@ func TestEarlyShareGuardDefaults(t *testing.T) {
 		require.Equal(t, def.Mode, got.Mode)
 		require.Equal(t, def.FirstFraction, got.FirstFraction)
 		require.Equal(t, def.ThresholdRatio, got.ThresholdRatio)
-		require.True(t, got.RequirePrefixProof, "require_prefix_proof should default to true")
+		require.True(t, got.RequireInclusionProof, "require_inclusion_proof should default to true")
+		require.Equal(t, def.InclusionSampleSize, got.InclusionSampleSize)
 	})
 
 	t.Run("explicit false overrides the true default", func(t *testing.T) {
 		os.Setenv("DAPI_EARLY_SHARE_GUARD__MODE", "enforce")
-		os.Setenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF", "false")
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF", "false")
+		os.Setenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE", "7")
 		defer func() {
 			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__MODE")
-			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_PREFIX_PROOF")
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__REQUIRE_INCLUSION_PROOF")
+			os.Unsetenv("DAPI_EARLY_SHARE_GUARD__INCLUSION_SAMPLE_SIZE")
 		}()
 		m := &apiconfig.ConfigManager{KoanProvider: rawbytes.Provider([]byte(testYaml))}
 		require.NoError(t, m.Load())
 
 		got := m.GetEarlyShareGuardConfig()
 		require.Equal(t, "enforce", got.Mode)
-		require.False(t, got.RequirePrefixProof, "explicit false must win over default true")
+		require.False(t, got.RequireInclusionProof, "explicit false must win over default true")
+		require.Equal(t, 7, got.InclusionSampleSize)
 		// Untouched fields keep their defaults.
 		require.Equal(t, apiconfig.DefaultEarlyShareGuardConfig().FirstFraction, got.FirstFraction)
 	})

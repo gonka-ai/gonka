@@ -52,10 +52,11 @@ import (
 func buildEarlyShareGuard(configManager *apiconfig.ConfigManager) *poc.EarlyShareGuard {
 	esgCfg := configManager.GetEarlyShareGuardConfig()
 	cfg := earlyshare.Config{
-		Mode:               earlyshare.Mode(esgCfg.Mode),
-		FirstFraction:      esgCfg.FirstFraction,
-		ThresholdRatio:     esgCfg.ThresholdRatio,
-		RequirePrefixProof: esgCfg.RequirePrefixProof,
+		Mode:                  earlyshare.Mode(esgCfg.Mode),
+		FirstFraction:         esgCfg.FirstFraction,
+		ThresholdRatio:        esgCfg.ThresholdRatio,
+		RequireInclusionProof: esgCfg.RequireInclusionProof,
+		InclusionSampleSize:   esgCfg.InclusionSampleSize,
 	}.Normalized()
 	if !cfg.Enabled() {
 		return nil
@@ -173,6 +174,20 @@ func main() {
 	// proposals/poc/early-share-guard-dapi.md.
 	earlyGuard := buildEarlyShareGuard(configManager)
 
+	// Shared managed artifact store for off-chain PoC (used by the validator,
+	// commit worker, and the mlnode/public servers). Manages per-height
+	// directories with automatic pruning (retains last 10). Created before the
+	// validator so the event listener never observes a partially wired validator.
+	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
+	defer artifactStore.Close()
+
+	// Prune early-share guard checkpoints on the same stage cadence as artifacts.
+	if earlyGuard.Enabled() {
+		artifactStore.AddPruneHook(func(stage int64) {
+			earlyGuard.DeleteStage(context.Background(), stage)
+		})
+	}
+
 	offChainValidator := poc.NewOffChainValidator(
 		recorder,
 		nodeBroker,
@@ -183,6 +198,7 @@ func main() {
 		configManager.GetChainNodeConfig().Url,
 		poc.DefaultValidationConfig(),
 		earlyGuard,
+		artifactStore,
 	)
 	logging.Info("PoC off-chain validator initialized", types.PoC, "earlyShareGuardEnabled", earlyGuard.Enabled())
 
@@ -263,18 +279,6 @@ func main() {
 		3,             // retain current + 2 previous epochs
 		3*time.Minute, // cache TTL
 	)
-
-	// Shared managed artifact store for off-chain PoC (used by both mlnode and public servers)
-	// Manages per-height directories with automatic pruning (retains last 10)
-	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
-	defer artifactStore.Close()
-
-	// Prune early-share guard checkpoints on the same stage cadence as artifacts.
-	if earlyGuard.Enabled() {
-		artifactStore.AddPruneHook(func(stage int64) {
-			earlyGuard.DeleteStage(context.Background(), stage)
-		})
-	}
 
 	// Create commit worker for time-based artifact commits and weight distribution
 	// Worker owns flush lifecycle, commits periodically (not per-request), and handles distribution

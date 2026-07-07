@@ -197,6 +197,32 @@ func (s *SMST) HasNonce(nonce int32) bool {
 	return s.hasNonce[nonce]
 }
 
+func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
+	if s.root == nil || !s.HasNonce(nonce) {
+		return 0, ErrNonceNotFound
+	}
+
+	path := s.noncePath(nonce)
+	node := s.root
+	var denseIndex uint32
+	for _, goRight := range path {
+		if node == nil {
+			return 0, ErrNonceNotFound
+		}
+		if goRight {
+			denseIndex += s.nodeCount(node.left)
+			node = node.right
+		} else {
+			node = node.left
+		}
+	}
+	if node == nil {
+		return 0, ErrNonceNotFound
+	}
+
+	return denseIndex, nil
+}
+
 func (s *SMST) noncePath(nonce int32) []bool {
 	path := make([]bool, s.depth)
 	n := uint32(nonce)

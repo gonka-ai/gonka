@@ -2,8 +2,6 @@ package poc
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/binary"
 	"errors"
 	"fmt"
 
@@ -137,21 +135,31 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 
 // earlyDecision is the precomputed guard outcome for one (participant, model).
 type earlyDecision struct {
-	shareVoteNo   bool
-	requirePrefix bool
-	earlyCount    uint32
-	earlyRoot     []byte
-	finalCount    uint32
-	earlyShare    float64
-	threshold     float64
+	shareVoteNo      bool
+	requireInclusion bool
+	earlyCount       uint32
+	earlyRoot        []byte
+	finalCount       uint32
+	earlyShare       float64
+	threshold        float64
 }
 
 // guardRuntime carries the per-ValidateAll guard state into the workers.
 type guardRuntime struct {
-	guard     *EarlyShareGuard
-	decisions map[string]earlyDecision
-	stage     int64
+	guard             *EarlyShareGuard
+	decisions         map[string]earlyDecision
+	stage             int64
+	validatorPubKey   string
+	samplingBlockHash string
 }
+
+type earlyGuardOutcome int
+
+const (
+	earlyGuardPass earlyGuardOutcome = iota
+	earlyGuardVoteNo
+	earlyGuardRetry
+)
 
 func earlyShareKey(participant, modelID string) string {
 	return participant + "|" + modelID
@@ -225,13 +233,13 @@ func (g *EarlyShareGuard) Evaluate(
 		}
 
 		type participantData struct {
-			finalCount    uint32
-			earlyCount    uint32
-			earlyRoot     []byte
-			share         float64
-			requirePrefix bool
-			shareFail     bool
-			excluded      bool
+			finalCount       uint32
+			earlyCount       uint32
+			earlyRoot        []byte
+			share            float64
+			requireInclusion bool
+			shareFail        bool
+			excluded         bool
 		}
 		pdata := make(map[string]participantData, len(commits))
 		points := make([]earlyshare.SharePoint, 0, len(commits))
@@ -257,7 +265,7 @@ func (g *EarlyShareGuard) Evaluate(
 				d.excluded = true
 			case cp.EarlyCount > fc:
 				// Invalid: early exceeds final. Not a data point. Share fails;
-				// prefix proof unavailable.
+				// inclusion proof unavailable.
 				d.earlyCount = cp.EarlyCount
 				d.earlyRoot = cp.EarlyRootHash
 				d.shareFail = true
@@ -265,7 +273,7 @@ func (g *EarlyShareGuard) Evaluate(
 				d.earlyCount = cp.EarlyCount
 				d.earlyRoot = cp.EarlyRootHash
 				d.share = float64(cp.EarlyCount) / float64(fc)
-				d.requirePrefix = g.cfg.RequirePrefixProof && cp.EarlyCount > 0
+				d.requireInclusion = g.cfg.RequireInclusionProof && cp.EarlyCount > 0
 				points = append(points, earlyshare.SharePoint{Share: d.share, Weight: vp[addr]})
 			}
 			pdata[addr] = d
@@ -319,13 +327,13 @@ func (g *EarlyShareGuard) Evaluate(
 			}
 
 			decisions[key] = earlyDecision{
-				shareVoteNo:   outcome.VoteNo,
-				requirePrefix: d.requirePrefix,
-				earlyCount:    d.earlyCount,
-				earlyRoot:     d.earlyRoot,
-				finalCount:    d.finalCount,
-				earlyShare:    d.share,
-				threshold:     threshold,
+				shareVoteNo:      outcome.VoteNo,
+				requireInclusion: d.requireInclusion,
+				earlyCount:       d.earlyCount,
+				earlyRoot:        d.earlyRoot,
+				finalCount:       d.finalCount,
+				earlyShare:       d.share,
+				threshold:        threshold,
 			}
 		}
 	}
@@ -333,46 +341,54 @@ func (g *EarlyShareGuard) Evaluate(
 	return decisions
 }
 
-// decide combines the prefix-proof check (immediate, no grace) with the
-// precomputed low-early-share decision (miss-streak gated). It returns whether
-// the participant should be voted no and a human-readable reason.
-func (g *EarlyShareGuard) decide(ctx context.Context, pf proofFetcher, stage int64, work participantWork, dec earlyDecision) (bool, string) {
-	if dec.requirePrefix {
-		if ok, reason := g.checkPrefix(ctx, pf, stage, work, dec); !ok {
-			return true, "prefix_mismatch:" + reason
+// decide combines the inclusion check (immediate, no grace) with the precomputed
+// low-early-share decision (miss-streak gated).
+func (g *EarlyShareGuard) decide(
+	ctx context.Context,
+	pf proofFetcher,
+	stage int64,
+	work participantWork,
+	dec earlyDecision,
+	validatorPubKey string,
+	samplingBlockHash string,
+) (earlyGuardOutcome, string) {
+	if dec.requireInclusion {
+		outcome, reason := g.checkInclusion(ctx, pf, stage, work, dec, validatorPubKey, samplingBlockHash)
+		if outcome != earlyGuardPass {
+			return outcome, reason
 		}
 	}
 	if dec.shareVoteNo {
-		return true, fmt.Sprintf("low_early_share early_share=%.4f threshold=%.4f", dec.earlyShare, dec.threshold)
+		return earlyGuardVoteNo, fmt.Sprintf("low_early_share early_share=%.4f threshold=%.4f", dec.earlyShare, dec.threshold)
 	}
-	return false, ""
+	return earlyGuardPass, ""
 }
 
-// checkPrefix verifies that a single shared leaf proves identically against both
-// the early and final commitments. A cryptographic mismatch (or the early root
-// being unable to prove the shared leaf) is a hard failure. Transient/network
-// errors are treated as "cannot determine" and do not fail the participant.
-func (g *EarlyShareGuard) checkPrefix(ctx context.Context, pf proofFetcher, stage int64, work participantWork, dec earlyDecision) (bool, string) {
+// checkInclusion verifies that sampled early artifacts are present unchanged in
+// the final commitment. Cryptographic mismatches are hard failures; transient
+// network errors ask the validator to retry in enforce mode.
+func (g *EarlyShareGuard) checkInclusion(
+	ctx context.Context,
+	pf proofFetcher,
+	stage int64,
+	work participantWork,
+	dec earlyDecision,
+	validatorPubKey string,
+	samplingBlockHash string,
+) (earlyGuardOutcome, string) {
 	if dec.earlyCount == 0 || len(dec.earlyRoot) == 0 {
-		return true, "" // nothing to compare; handled elsewhere
+		return earlyGuardPass, "" // nothing to compare; handled elsewhere
 	}
-	sharedLeaf := deterministicSharedLeaf(work.address, work.modelId, stage, dec.earlyCount)
-
-	finalProofs, err := pf.FetchAndVerifyProofs(ctx, work.url, ProofRequest{
-		PocStageStartBlockHeight: stage,
-		ModelId:                  work.modelId,
-		RootHash:                 work.rootHash,
-		Count:                    work.count,
-		LeafIndices:              []uint32{sharedLeaf},
-		ParticipantAddress:       work.address,
-	})
-	if err != nil || len(finalProofs) != 1 {
-		// Final side could not be fetched/verified for the shared leaf. The main
-		// validation path already vets the final commitment, so do not fail the
-		// participant on a transient hiccup here.
-		logging.Debug("EarlyShareGuard: final shared-leaf proof unavailable", types.PoC,
-			"participant", work.address, "leaf", sharedLeaf, "error", err)
-		return true, ""
+	leafIndices := sampleLeafIndices(
+		validatorPubKey,
+		samplingBlockHash,
+		stage,
+		work.modelId+"|early-inclusion",
+		dec.earlyCount,
+		g.cfg.InclusionSampleSize,
+	)
+	if len(leafIndices) == 0 {
+		return earlyGuardPass, ""
 	}
 
 	earlyProofs, err := pf.FetchAndVerifyProofs(ctx, work.url, ProofRequest{
@@ -380,51 +396,57 @@ func (g *EarlyShareGuard) checkPrefix(ctx context.Context, pf proofFetcher, stag
 		ModelId:                  work.modelId,
 		RootHash:                 dec.earlyRoot,
 		Count:                    dec.earlyCount,
-		LeafIndices:              []uint32{sharedLeaf},
+		LeafIndices:              leafIndices,
 		ParticipantAddress:       work.address,
 	})
 	if err != nil {
 		if isPermanentProofError(err) {
-			// Early root cannot prove the shared leaf -> hard failure.
-			return false, fmt.Sprintf("early_proof_invalid leaf=%d: %v", sharedLeaf, err)
+			return earlyGuardVoteNo, fmt.Sprintf("inclusion_early_proof_invalid: %v", err)
 		}
-		logging.Debug("EarlyShareGuard: early shared-leaf proof unavailable (transient)", types.PoC,
-			"participant", work.address, "leaf", sharedLeaf, "error", err)
-		return true, ""
+		logging.Debug("EarlyShareGuard: early inclusion proof unavailable (transient)", types.PoC,
+			"participant", work.address, "error", err)
+		return earlyGuardRetry, fmt.Sprintf("inclusion_early_proof_unavailable: %v", err)
 	}
-	if len(earlyProofs) != 1 {
-		return false, fmt.Sprintf("early_proof_missing leaf=%d", sharedLeaf)
+	// Coverage, duplicate response items, and proof validity are enforced by the
+	// proof fetchers. The guard only checks the cross-root invariant: same nonce,
+	// same vector in the final tree.
+	earlyByNonce := make(map[int32]VerifiedArtifact, len(earlyProofs))
+	nonces := make([]int32, 0, len(earlyProofs))
+	for _, artifact := range earlyProofs {
+		earlyByNonce[artifact.Nonce] = artifact
+		nonces = append(nonces, artifact.Nonce)
 	}
 
-	fa := finalProofs[0]
-	ea := earlyProofs[0]
-	if fa.LeafIndex != ea.LeafIndex {
-		return false, fmt.Sprintf("leaf_index mismatch final=%d early=%d", fa.LeafIndex, ea.LeafIndex)
+	finalProofs, err := pf.FetchAndVerifyProofsByNonce(ctx, work.url, ProofByNonceRequest{
+		PocStageStartBlockHeight: stage,
+		ModelId:                  work.modelId,
+		RootHash:                 work.rootHash,
+		Count:                    work.count,
+		Nonces:                   nonces,
+		ParticipantAddress:       work.address,
+	})
+	if err != nil {
+		if isPermanentProofError(err) {
+			return earlyGuardVoteNo, fmt.Sprintf("inclusion_final_proof_invalid: %v", err)
+		}
+		logging.Debug("EarlyShareGuard: final by-nonce inclusion proof unavailable (transient)", types.PoC,
+			"participant", work.address, "error", err)
+		return earlyGuardRetry, fmt.Sprintf("inclusion_final_proof_unavailable: %v", err)
 	}
-	if fa.Nonce != ea.Nonce {
-		return false, fmt.Sprintf("nonce mismatch final=%d early=%d", fa.Nonce, ea.Nonce)
+
+	for _, finalArtifact := range finalProofs {
+		earlyArtifact := earlyByNonce[finalArtifact.Nonce]
+		if finalArtifact.VectorB64 != earlyArtifact.VectorB64 {
+			return earlyGuardVoteNo, fmt.Sprintf("inclusion_vector_mismatch nonce=%d", finalArtifact.Nonce)
+		}
 	}
-	if fa.VectorB64 != ea.VectorB64 {
-		return false, "vector mismatch"
-	}
-	return true, ""
+
+	return earlyGuardPass, ""
 }
 
 func isPermanentProofError(err error) bool {
 	return errors.Is(err, ErrProofVerificationFailed) ||
 		errors.Is(err, ErrIncompleteCoverage) ||
+		errors.Is(err, ErrNonceAbsent) ||
 		errors.Is(err, ErrInvalidVectorData)
-}
-
-// deterministicSharedLeaf picks a stable shared leaf index in [0, earlyCount)
-// derived from (participant, model, stage). Determinism keeps the choice stable
-// across retries.
-func deterministicSharedLeaf(participant, modelID string, stage int64, earlyCount uint32) uint32 {
-	if earlyCount == 0 {
-		return 0
-	}
-	seed := fmt.Sprintf("early-share:%s:%s:%d", participant, modelID, stage)
-	sum := sha256.Sum256([]byte(seed))
-	v := binary.BigEndian.Uint64(sum[:8])
-	return uint32(v % uint64(earlyCount))
 }

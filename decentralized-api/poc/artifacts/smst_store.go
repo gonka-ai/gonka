@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"path/filepath"
+	"slices"
 	"sync"
 )
 
@@ -22,6 +23,7 @@ const (
 var (
 	ErrDuplicateNonce      = errors.New("duplicate nonce")
 	ErrLeafIndexOutOfRange = errors.New("leaf index out of range")
+	ErrNonceNotFound       = errors.New("nonce not found")
 	ErrStoreClosed         = errors.New("store is closed")
 	ErrCapacityExceeded    = errors.New("store capacity exceeded")
 )
@@ -61,9 +63,6 @@ type SMSTArtifactStore struct {
 
 	distributionHistory map[uint32]map[string]uint32 // count -> distribution snapshot
 	distFile            *os.File                     // distributions.jsonl (append-only)
-
-	prebuiltSnapshot *SMST
-	prebuiltCount    uint32
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -204,11 +203,9 @@ func (s *SMSTArtifactStore) recoverDistributionHistory() error {
 		}
 	}
 
-	if latestDist != nil {
-		for k, v := range latestDist {
-			s.flushedNodeCounts[k] = v
-			s.nodeCounts[k] = v
-		}
+	for k, v := range latestDist {
+		s.flushedNodeCounts[k] = v
+		s.nodeCounts[k] = v
 	}
 
 	return nil
@@ -349,25 +346,38 @@ func (s *SMSTArtifactStore) getRoot() []byte {
 
 func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.closed {
+		s.mu.RUnlock()
 		return nil, ErrStoreClosed
 	}
 
 	if snapshotCount == 0 {
+		s.mu.RUnlock()
 		return nil, nil
 	}
 
 	if snapshotCount > s.smst.Count() {
-		return nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, s.smst.Count())
+		currentCount := s.smst.Count()
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
 	}
 
-	if root, ok := s.flushedRoots[snapshotCount]; ok {
+	if snapshotCount == s.smst.Count() {
+		root, _ := s.smst.GetRoot()
+		s.mu.RUnlock()
 		return root, nil
 	}
+	if root, ok := s.flushedRoots[snapshotCount]; ok {
+		s.mu.RUnlock()
+		return root, nil
+	}
+	s.mu.RUnlock()
 
-	tree := s.rebuildTreeAt(snapshotCount)
+	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
 	root, _ := tree.GetRoot()
 	return root, nil
 }
@@ -496,50 +506,141 @@ func (s *SMSTArtifactStore) getArtifactByNonce(targetNonce int32) (int32, []byte
 // This ensures the nonce/vector and proof are consistent with the same snapshot tree state,
 // preventing the bug where GetArtifact uses current tree but GetProof uses snapshot tree.
 func (s *SMSTArtifactStore) GetArtifactAndProof(denseIndex uint32, snapshotCount uint32) (nonce int32, vector []byte, proof [][]byte, err error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-
-	if s.closed {
-		return 0, nil, nil, ErrStoreClosed
+	entries, err := s.GetArtifactsAndProofs([]uint32{denseIndex}, snapshotCount)
+	if err != nil {
+		return 0, nil, nil, err
 	}
-
-	if denseIndex >= snapshotCount {
+	if len(entries) != 1 {
 		return 0, nil, nil, ErrLeafIndexOutOfRange
 	}
-
-	if snapshotCount > s.smst.Count() {
-		return 0, nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, s.smst.Count())
-	}
-
-	tree := s.getSnapshotTree(snapshotCount)
-
-	nonce, _, err = tree.GetLeafByDenseIndex(denseIndex)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-
-	// Look up artifact data by nonce (from disk or buffer)
-	nonce, vector, err = s.getArtifactByNonce(nonce)
-	if err != nil {
-		return 0, nil, nil, err
-	}
-
-	proofWithCounts := s.buildProofWithCounts(tree, nonce)
-	proof = encodeProofForTransport(proofWithCounts)
-
-	return nonce, vector, proof, nil
+	entry := entries[0]
+	return entry.Nonce, entry.Vector, entry.Proof, nil
 }
 
-// getSnapshotTree returns the appropriate tree for the given snapshot count.
-// Must be called with s.mu held.
-func (s *SMSTArtifactStore) getSnapshotTree(snapshotCount uint32) *SMST {
-	if snapshotCount == s.smst.Count() {
-		return s.smst
+func (s *SMSTArtifactStore) GetArtifactsAndProofs(denseIndices []uint32, snapshotCount uint32) ([]ProofEntry, error) {
+	if len(denseIndices) == 0 {
+		return nil, nil
 	}
-	if s.prebuiltSnapshot != nil && s.prebuiltCount == snapshotCount {
-		return s.prebuiltSnapshot
+	if snapshotCount == 0 {
+		return nil, ErrLeafIndexOutOfRange
 	}
-	return s.rebuildTreeAt(snapshotCount)
+	for _, denseIndex := range denseIndices {
+		if denseIndex >= snapshotCount {
+			return nil, ErrLeafIndexOutOfRange
+		}
+	}
+
+	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	entries := make([]ProofEntry, 0, len(denseIndices))
+	for _, denseIndex := range denseIndices {
+		nonce, _, err := tree.GetLeafByDenseIndex(denseIndex)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := s.proofEntry(tree, nonce, denseIndex)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+// GetArtifactAndProofByNonce retrieves artifact data and proof for a nonce at a
+// specific snapshot, returning the nonce's dense index in that snapshot.
+func (s *SMSTArtifactStore) GetArtifactAndProofByNonce(targetNonce int32, snapshotCount uint32) (denseIndex uint32, vector []byte, proof [][]byte, err error) {
+	entries, err := s.GetArtifactsAndProofsByNonce([]int32{targetNonce}, snapshotCount)
+	if err != nil {
+		return 0, nil, nil, err
+	}
+	if len(entries) == 0 {
+		return 0, nil, nil, ErrNonceNotFound
+	}
+	entry := entries[0]
+	return entry.DenseIndex, entry.Vector, entry.Proof, nil
+}
+
+func (s *SMSTArtifactStore) GetArtifactsAndProofsByNonce(nonces []int32, snapshotCount uint32) ([]ProofEntry, error) {
+	if len(nonces) == 0 || snapshotCount == 0 {
+		return nil, nil
+	}
+
+	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+
+	entries := make([]ProofEntry, 0, len(nonces))
+	for _, nonce := range nonces {
+		if !tree.HasNonce(nonce) {
+			continue
+		}
+		denseIndex, err := tree.denseIndexForNonce(nonce)
+		if err != nil {
+			return nil, err
+		}
+		entry, err := s.proofEntry(tree, nonce, denseIndex)
+		if err != nil {
+			return nil, err
+		}
+		entries = append(entries, entry)
+	}
+
+	return entries, nil
+}
+
+// acquireSnapshotTree returns the tree for snapshotCount with the store
+// read-locked; the caller must call unlock() when done. The live tree is
+// served directly under the lock (inserts need the write lock, so it cannot
+// change). Historical counts come from the process-wide snapshot cache.
+func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, func(), error) {
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return nil, nil, ErrStoreClosed
+	}
+	currentCount := s.smst.Count()
+	if snapshotCount > currentCount {
+		s.mu.RUnlock()
+		return nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
+	}
+	if snapshotCount == currentCount {
+		return s.smst, s.mu.RUnlock, nil
+	}
+	s.mu.RUnlock()
+
+	tree, err := globalSnapshotCache.getOrBuild(s, snapshotCount, false)
+	if err != nil {
+		return nil, nil, err
+	}
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return nil, nil, ErrStoreClosed
+	}
+	return tree, s.mu.RUnlock, nil
+}
+
+// proofEntry builds a ProofEntry for a nonce known to be in tree.
+// Requires the store read lock to be held.
+func (s *SMSTArtifactStore) proofEntry(tree *SMST, nonce int32, denseIndex uint32) (ProofEntry, error) {
+	_, vector, err := s.getArtifactByNonce(nonce)
+	if err != nil {
+		return ProofEntry{}, err
+	}
+	return ProofEntry{
+		DenseIndex: denseIndex,
+		Nonce:      nonce,
+		Vector:     vector,
+		Proof:      encodeProofForTransport(s.buildProofWithCounts(tree, nonce)),
+	}, nil
 }
 
 func (s *SMSTArtifactStore) buildProofWithCounts(tree *SMST, nonce int32) []smstProofElement {
@@ -583,7 +684,34 @@ func encodeProofForTransport(proof []smstProofElement) [][]byte {
 	return result
 }
 
-func (s *SMSTArtifactStore) rebuildTreeAt(count uint32) *SMST {
+func (s *SMSTArtifactStore) snapshotRebuildInputs(count uint32) ([]uint64, []bufferedArtifact, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.closed {
+		return nil, nil, ErrStoreClosed
+	}
+	if count > s.smst.Count() {
+		return nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", count, s.smst.Count())
+	}
+
+	flushedToRead := count
+	if flushedToRead > s.flushedLeafCount {
+		flushedToRead = s.flushedLeafCount
+	}
+	offsets := slices.Clone(s.offsets[:flushedToRead])
+
+	var buffered []bufferedArtifact
+	if count > s.flushedLeafCount {
+		remaining := count - s.flushedLeafCount
+		bufferedCount := min(int(remaining), len(s.buffer))
+		buffered = slices.Clone(s.buffer[:bufferedCount])
+	}
+
+	return offsets, buffered, nil
+}
+
+func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []bufferedArtifact, count uint32) *SMST {
 	// Seed with the default depth, not the live tree's depth: replaying the
 	// first `count` artifacts triggers exactly the depth expansions the tree
 	// had when the root for `count` was committed. Using the live depth would
@@ -592,15 +720,9 @@ func (s *SMSTArtifactStore) rebuildTreeAt(count uint32) *SMST {
 	tree := NewSMST(smstDefaultDepth)
 
 	// Read flushed artifacts from disk
-	flushedToRead := count
-	if flushedToRead > s.flushedLeafCount {
-		flushedToRead = s.flushedLeafCount
-	}
-
 	var skipped uint32
-	for i := uint32(0); i < flushedToRead; i++ {
-		offset := s.offsets[i]
-		nonce, vector, _, err := readArtifactAt(s.dataFile, int64(offset))
+	for _, offset := range offsets {
+		nonce, vector, _, err := readArtifactAt(dataFile, int64(offset))
 		if err != nil {
 			skipped++
 			continue
@@ -608,41 +730,47 @@ func (s *SMSTArtifactStore) rebuildTreeAt(count uint32) *SMST {
 		leafData := encodeLeaf(nonce, vector)
 		leafHash := smstHashLeaf(leafData)
 		if _, err := tree.Insert(nonce, leafHash); err != nil {
-			log.Printf("[WARN] SMST rebuildTreeAt: insert failed for nonce %d: %v (possible data corruption)", nonce, err)
+			log.Printf("[WARN] SMST snapshot rebuild: insert failed for nonce %d: %v (possible data corruption)", nonce, err)
 		}
 	}
 	if skipped > 0 {
-		log.Printf("[WARN] SMST rebuildTreeAt: skipped %d/%d artifacts due to read errors", skipped, flushedToRead)
+		log.Printf("[WARN] SMST snapshot rebuild: skipped %d/%d artifacts due to read errors", skipped, len(offsets))
 	}
 
 	// Read remaining from buffer if needed
-	if count > s.flushedLeafCount {
-		remaining := count - s.flushedLeafCount
-		for i := uint32(0); i < remaining && i < uint32(len(s.buffer)); i++ {
-			art := s.buffer[i]
-			leafData := encodeLeaf(art.nonce, art.vector)
-			leafHash := smstHashLeaf(leafData)
-			tree.Insert(art.nonce, leafHash)
-		}
+	for _, art := range buffered {
+		leafData := encodeLeaf(art.nonce, art.vector)
+		leafHash := smstHashLeaf(leafData)
+		tree.Insert(art.nonce, leafHash)
 	}
 
+	if tree.Count() != count {
+		log.Printf("[WARN] SMST snapshot rebuild: rebuilt count %d differs from requested %d", tree.Count(), count)
+	}
 	return tree
 }
 
-// PrebuildSnapshot builds the SMST at the specified count for fast proof queries.
-// Should be called after weight distribution is determined.
+// PrebuildSnapshot builds and pins the snapshot tree at the given count for
+// fast proof queries. Should be called after weight distribution is determined.
+// A count equal to the live tree is served directly and needs no snapshot.
 func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if count > s.smst.Count() {
-		return fmt.Errorf("count %d exceeds current count %d", count, s.smst.Count())
+	s.mu.RLock()
+	currentCount := s.smst.Count()
+	s.mu.RUnlock()
+	if count == currentCount {
+		return nil
 	}
 
-	s.prebuiltSnapshot = s.rebuildTreeAt(count)
-	s.prebuiltCount = count
+	_, err := globalSnapshotCache.getOrBuild(s, count, true)
+	return err
+}
 
-	return nil
+// WarmSnapshot builds and pins the snapshot tree for count so later proof
+// requests hit the cache. Blocking; callers run it in the background.
+func (s *SMSTArtifactStore) WarmSnapshot(count uint32) {
+	if _, err := globalSnapshotCache.getOrBuild(s, count, true); err != nil {
+		log.Printf("[WARN] SMST WarmSnapshot(%d) failed: %v", count, err)
+	}
 }
 
 func (s *SMSTArtifactStore) Close() error {
@@ -654,6 +782,7 @@ func (s *SMSTArtifactStore) Close() error {
 	}
 
 	s.closed = true
+	globalSnapshotCache.purgeStore(s)
 
 	if err := s.flushLocked(); err != nil {
 		return fmt.Errorf("flush on close: %w", err)

@@ -9,33 +9,36 @@ const (
 	// ModeObserve captures checkpoints and logs pass/fail decisions but never
 	// changes the vote.
 	ModeObserve Mode = "observe"
-	// ModeEnforce votes no after the miss-streak rule triggers or the prefix
-	// proof comparison fails.
+	// ModeEnforce votes no after the miss-streak rule triggers or the early
+	// inclusion proof check fails.
 	ModeEnforce Mode = "enforce"
 )
 
 // Config holds the runtime configuration for the early-share guard.
 type Config struct {
-	Mode               Mode
-	FirstFraction      float64
-	ThresholdRatio     float64
-	RequirePrefixProof bool
+	Mode                  Mode
+	FirstFraction         float64
+	ThresholdRatio        float64
+	RequireInclusionProof bool
+	InclusionSampleSize   int
 }
 
 // Defaults for the guard. The guard ships disabled until validated on a live
 // network in observe mode.
 const (
-	DefaultFirstFraction  = 1.0 / 3.0
-	DefaultThresholdRatio = 0.5
+	DefaultFirstFraction       = 1.0 / 3.0
+	DefaultThresholdRatio      = 0.5
+	DefaultInclusionSampleSize = 5
 )
 
 // DefaultConfig returns the disabled-by-default configuration.
 func DefaultConfig() Config {
 	return Config{
-		Mode:               ModeDisabled,
-		FirstFraction:      DefaultFirstFraction,
-		ThresholdRatio:     DefaultThresholdRatio,
-		RequirePrefixProof: true,
+		Mode:                  ModeDisabled,
+		FirstFraction:         DefaultFirstFraction,
+		ThresholdRatio:        DefaultThresholdRatio,
+		RequireInclusionProof: true,
+		InclusionSampleSize:   DefaultInclusionSampleSize,
 	}
 }
 
@@ -53,6 +56,9 @@ func (c Config) Normalized() Config {
 	}
 	if out.ThresholdRatio <= 0 {
 		out.ThresholdRatio = DefaultThresholdRatio
+	}
+	if out.InclusionSampleSize <= 0 {
+		out.InclusionSampleSize = DefaultInclusionSampleSize
 	}
 	return out
 }

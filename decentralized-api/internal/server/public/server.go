@@ -160,6 +160,7 @@ func NewServer(
 		},
 	))
 	g.POST("poc/proofs", s.postPocProofs, pocProofsRateLimiter)
+	g.POST("poc/proofs/by-nonce", s.postPocProofsByNonce, pocProofsRateLimiter)
 
 	// PoC artifact state endpoint (for testermint/validators to get real count and root_hash)
 	g.GET("poc/artifacts/state", s.getPocArtifactsState)
