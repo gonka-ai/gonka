@@ -25,7 +25,26 @@ var (
 	gatewayCreateRotationEscrow       = (*Gateway).createRotationEscrow
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
 	gatewaySettleDevshardOnChain      = (*Gateway).settleDevshardOnChain
+
+	// rotationFinalizeTimeout bounds how long the process-wide finalizeMu is held
+	// across the network Finalize protocol during settlement. finalizeMu serialises
+	// every finalize (user /v1/finalize included), so without a cap a hung Finalize
+	// blocks all of them - and the admin settle path passes only the request
+	// context, which has no server-side deadline. A var so tests can shrink it.
+	rotationFinalizeTimeout = 2 * time.Minute
 )
+
+// finalizeUnderLock runs the session Finalize while holding the process-wide
+// finalizeMu (which serialises all finalize operations), but bounds the call -
+// and therefore the lock hold - with rotationFinalizeTimeout, so a hung finalize
+// protocol cannot block every other /v1/finalize indefinitely.
+func (g *Gateway) finalizeUnderLock(ctx context.Context, finalize func(context.Context) error) error {
+	g.finalizeMu.Lock()
+	defer g.finalizeMu.Unlock()
+	fctx, cancel := context.WithTimeout(ctx, rotationFinalizeTimeout)
+	defer cancel()
+	return finalize(fctx)
+}
 
 func (g *Gateway) startEscrowRotatorIfEnabled() {
 	g.mu.Lock()
@@ -412,14 +431,11 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
 	if rt.proxy.sm.Phase() != types.PhaseSettlement {
-		g.finalizeMu.Lock()
 		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
-		if err := rt.session.Finalize(ctx); err != nil {
-			g.finalizeMu.Unlock()
+		if err := g.finalizeUnderLock(ctx, rt.session.Finalize); err != nil {
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
 			return nil, err
 		}
-		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
 		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
