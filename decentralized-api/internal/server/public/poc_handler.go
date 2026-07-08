@@ -9,7 +9,6 @@ import (
 	"encoding/binary"
 	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -442,9 +441,6 @@ func (s *Server) preparePocProofRequest(
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
 			"modelId", req.ModelId,
 			"requestedCount", reqCount, "error", err)
-		if errors.Is(err, artifacts.ErrUnknownSnapshotCount) {
-			return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "count is not a known snapshot of this store")
-		}
 		return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "count exceeds stored artifacts")
 	}
 	if !bytes.Equal(rootHash, storeRoot) {

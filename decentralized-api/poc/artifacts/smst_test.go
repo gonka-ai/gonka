@@ -701,39 +701,6 @@ func TestSMSTStoreGetRootAt(t *testing.T) {
 	}
 }
 
-func TestSMSTStoreGetRootAtUnknownCount(t *testing.T) {
-	dir := t.TempDir()
-	store, err := OpenSMST(dir)
-	if err != nil {
-		t.Fatalf("OpenSMST failed: %v", err)
-	}
-	defer store.Close()
-
-	// Two flush boundaries: 3 and 5.
-	for i := int32(1); i <= 3; i++ {
-		store.Add(i, []byte{byte(i)})
-	}
-	store.Flush()
-	for i := int32(4); i <= 5; i++ {
-		store.Add(i, []byte{byte(i)})
-	}
-	store.Flush()
-
-	for _, count := range []uint32{3, 5} {
-		if _, err := store.GetRootAt(count); err != nil {
-			t.Fatalf("GetRootAt(%d) should serve a flush boundary: %v", count, err)
-		}
-	}
-
-	// Counts between boundaries were never externally committed: reject
-	// without building a snapshot tree.
-	for _, count := range []uint32{1, 2, 4} {
-		if _, err := store.GetRootAt(count); !errors.Is(err, ErrUnknownSnapshotCount) {
-			t.Fatalf("GetRootAt(%d) = %v, want ErrUnknownSnapshotCount", count, err)
-		}
-	}
-}
-
 func TestSMSTStoreRootsSurviveReopen(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
@@ -761,8 +728,8 @@ func TestSMSTStoreRootsSurviveReopen(t *testing.T) {
 	}
 	defer store2.Close()
 
-	// All historical flush boundaries must still be recognized after a
-	// restart, without rebuilding snapshot trees.
+	// Historical flush-boundary counts must remain servable after a restart
+	// (rebuilt on demand from the data file).
 	for count, want := range boundaryRoots {
 		got, err := store2.GetRootAt(count)
 		if err != nil {

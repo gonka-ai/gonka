@@ -26,12 +26,6 @@ var (
 	ErrNonceNotFound       = errors.New("nonce not found")
 	ErrStoreClosed         = errors.New("store is closed")
 	ErrCapacityExceeded    = errors.New("store capacity exceeded")
-	// ErrUnknownSnapshotCount marks a snapshot count that was never a flush
-	// boundary of this store. Every externally committed (root, count) pair is
-	// produced from flushed state, so an unknown count cannot correspond to any
-	// commitment a validator could have legitimately captured. Rejecting it
-	// outright avoids building a snapshot tree just to discover a mismatch.
-	ErrUnknownSnapshotCount = errors.New("unknown snapshot count")
 )
 
 type bufferedArtifact struct {
@@ -44,14 +38,6 @@ type bufferedArtifact struct {
 type distributionEntry struct {
 	Count uint32            `json:"count"`
 	Dist  map[string]uint32 `json:"dist"`
-}
-
-// rootEntry is a single line in roots.jsonl: the root hash at a flush
-// boundary. Persisting these lets the store recognize every legitimate
-// snapshot count after a restart without rebuilding trees.
-type rootEntry struct {
-	Count uint32 `json:"count"`
-	Root  []byte `json:"root"`
 }
 
 // SMSTArtifactStore provides artifact storage with SMST commitments.
@@ -77,7 +63,6 @@ type SMSTArtifactStore struct {
 
 	distributionHistory map[uint32]map[string]uint32 // count -> distribution snapshot
 	distFile            *os.File                     // distributions.jsonl (append-only)
-	rootsFile           *os.File                     // roots.jsonl (append-only)
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -90,7 +75,6 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 
 	dataPath := filepath.Join(dir, "artifacts.data")
 	distPath := filepath.Join(dir, "distributions.jsonl")
-	rootsPath := filepath.Join(dir, "roots.jsonl")
 
 	dataFile, err := os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -103,18 +87,10 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		return nil, fmt.Errorf("open distributions file: %w", err)
 	}
 
-	rootsFile, err := os.OpenFile(rootsPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
-	if err != nil {
-		dataFile.Close()
-		distFile.Close()
-		return nil, fmt.Errorf("open roots file: %w", err)
-	}
-
 	s := &SMSTArtifactStore{
 		dir:                 dir,
 		dataFile:            dataFile,
 		distFile:            distFile,
-		rootsFile:           rootsFile,
 		buffer:              make([]bufferedArtifact, 0, 1024),
 		offsets:             make([]uint64, 0, 1024),
 		nonceToOffset:       make(map[int32]uint64),
@@ -128,7 +104,6 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 	if err := s.recover(); err != nil {
 		s.dataFile.Close()
 		s.distFile.Close()
-		s.rootsFile.Close()
 		return nil, fmt.Errorf("recover: %w", err)
 	}
 
@@ -183,72 +158,11 @@ func (s *SMSTArtifactStore) recover() error {
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
 
-	if err := s.recoverFlushedRoots(); err != nil {
-		log.Printf("warning: failed to recover flushed roots: %v", err)
-	}
-
 	if err := s.recoverDistributionHistory(); err != nil {
 		log.Printf("warning: failed to recover distribution history: %v", err)
 	}
 
 	return nil
-}
-
-// recoverFlushedRoots reloads historical flush-boundary roots from roots.jsonl.
-// Entries beyond the recovered leaf count (e.g. after a truncated data file)
-// are dropped. The root recomputed from the data file for the current count
-// takes precedence over any stale persisted entry.
-func (s *SMSTArtifactStore) recoverFlushedRoots() error {
-	if s.rootsFile == nil {
-		return nil
-	}
-	if _, err := s.rootsFile.Seek(0, io.SeekStart); err != nil {
-		return fmt.Errorf("seek roots file: %w", err)
-	}
-
-	reader := bufio.NewReader(s.rootsFile)
-	lineNum := 0
-	for {
-		line, err := reader.ReadBytes('\n')
-		if err != nil && err != io.EOF {
-			return fmt.Errorf("read roots file: %w", err)
-		}
-		line = bytes.TrimRight(line, "\r\n")
-		if len(line) > 0 {
-			lineNum++
-			var entry rootEntry
-			if jsonErr := json.Unmarshal(line, &entry); jsonErr != nil {
-				log.Printf("warning: skipping corrupted root entry at line %d: %v", lineNum, jsonErr)
-			} else if entry.Count > 0 && entry.Count < s.flushedLeafCount && len(entry.Root) == 32 {
-				s.flushedRoots[entry.Count] = entry.Root
-			}
-		}
-		if err == io.EOF {
-			break
-		}
-	}
-	return nil
-}
-
-// appendRootEntry persists the current flush-boundary root. Requires the
-// store write lock to be held.
-func (s *SMSTArtifactStore) appendRootEntry(count uint32, root []byte) {
-	if s.rootsFile == nil {
-		return
-	}
-	data, err := json.Marshal(rootEntry{Count: count, Root: root})
-	if err != nil {
-		log.Printf("warning: marshal root entry: %v", err)
-		return
-	}
-	data = append(data, '\n')
-	if _, err := s.rootsFile.Write(data); err != nil {
-		log.Printf("warning: write root entry: %v", err)
-		return
-	}
-	if err := s.rootsFile.Sync(); err != nil {
-		log.Printf("warning: sync roots file: %v", err)
-	}
 }
 
 func (s *SMSTArtifactStore) recoverDistributionHistory() error {
@@ -376,7 +290,6 @@ func (s *SMSTArtifactStore) flushLocked() error {
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
-	s.appendRootEntry(s.flushedLeafCount, rootHash)
 
 	if err := s.appendDistributionSnapshot(); err != nil {
 		log.Printf("warning: distribution snapshot failed (will use simulation): %v", err)
@@ -460,12 +373,13 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 	}
 	s.mu.RUnlock()
 
-	// Not the live count and not a recorded flush boundary: no external
-	// commitment can reference this count, so reject instead of building a
-	// snapshot tree just to compare roots (that rebuild was a DoS vector:
-	// a registered validator could force arbitrary snapshot rebuilds by
-	// probing counts).
-	return nil, fmt.Errorf("%w: %d", ErrUnknownSnapshotCount, snapshotCount)
+	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	root, _ := tree.GetRoot()
+	return root, nil
 }
 
 func (s *SMSTArtifactStore) GetFlushedRoot() (count uint32, root []byte) {
@@ -881,12 +795,6 @@ func (s *SMSTArtifactStore) Close() error {
 	if s.distFile != nil {
 		if err := s.distFile.Close(); err != nil {
 			return fmt.Errorf("close distributions file: %w", err)
-		}
-	}
-
-	if s.rootsFile != nil {
-		if err := s.rootsFile.Close(); err != nil {
-			return fmt.Errorf("close roots file: %w", err)
 		}
 	}
 
