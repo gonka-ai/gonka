@@ -23,6 +23,10 @@ const (
 	gatewaySyncOpDelete          = "delete"
 )
 
+// gatewaySyncJournalDrainChunkSize bounds how many raw journal rows are loaded
+// and coalesced per drain round. A var so tests can shrink it.
+var gatewaySyncJournalDrainChunkSize = 1000
+
 type gatewaySyncEntry struct {
 	tableName string
 	rowKey    string
@@ -94,20 +98,6 @@ func (s *SQLiteGatewayStore) writeWithSyncJournal(entries []gatewaySyncEntry, fn
 	return tx.Commit()
 }
 
-func (s *SQLiteGatewayStore) maxSyncJournalSeq() (int64, error) {
-	if s == nil || s.db == nil {
-		return 0, nil
-	}
-	var maxSeq sql.NullInt64
-	if err := s.db.QueryRow(`SELECT MAX(seq) FROM gateway_pg_sync_journal`).Scan(&maxSeq); err != nil {
-		return 0, fmt.Errorf("max sync journal seq: %w", err)
-	}
-	if !maxSeq.Valid {
-		return 0, nil
-	}
-	return maxSeq.Int64, nil
-}
-
 func (s *SQLiteGatewayStore) countSyncJournalEntries() (int, error) {
 	if s == nil || s.db == nil {
 		return 0, nil
@@ -117,6 +107,35 @@ func (s *SQLiteGatewayStore) countSyncJournalEntries() (int, error) {
 		return 0, fmt.Errorf("count sync journal entries: %w", err)
 	}
 	return count, nil
+}
+
+func (s *SQLiteGatewayStore) loadSyncJournalChunk(afterSeq int64, limit int) ([]gatewaySyncJournalRow, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	if limit <= 0 {
+		limit = gatewaySyncJournalDrainChunkSize
+	}
+	rows, err := s.db.Query(`
+		SELECT seq, table_name, row_key, op
+		FROM gateway_pg_sync_journal
+		WHERE seq > ?
+		ORDER BY seq ASC
+		LIMIT ?`, afterSeq, limit)
+	if err != nil {
+		return nil, fmt.Errorf("load sync journal chunk after %d: %w", afterSeq, err)
+	}
+	defer rows.Close()
+
+	var result []gatewaySyncJournalRow
+	for rows.Next() {
+		var row gatewaySyncJournalRow
+		if err := rows.Scan(&row.seq, &row.tableName, &row.rowKey, &row.op); err != nil {
+			return nil, fmt.Errorf("scan sync journal row: %w", err)
+		}
+		result = append(result, row)
+	}
+	return result, rows.Err()
 }
 
 func (s *SQLiteGatewayStore) loadSyncJournalUpTo(maxSeq int64) ([]gatewaySyncJournalRow, error) {
@@ -160,45 +179,24 @@ func drainGatewaySyncJournal(ctx context.Context, sqlite *SQLiteGatewayStore, pg
 		return true, nil
 	}
 
-	maxSeq, err := sqlite.maxSyncJournalSeq()
-	if err != nil {
-		return false, err
-	}
-	if maxSeq == 0 {
-		return true, nil
-	}
-
-	rows, err := sqlite.loadSyncJournalUpTo(maxSeq)
-	if err != nil {
-		return false, err
-	}
-	coalesced := coalesceSyncJournalRows(rows)
-
-	tx, err := pg.pool.Begin(ctx)
-	if err != nil {
-		return false, fmt.Errorf("begin sync journal drain: %w", err)
-	}
-	defer tx.Rollback(ctx)
-
-	for key, op := range coalesced {
-		switch op {
-		case gatewaySyncOpDelete:
-			if err := deleteGatewayRowFromPG(ctx, tx, key.tableName, key.rowKey); err != nil {
-				return false, err
-			}
-		case gatewaySyncOpUpsert:
-			if err := applyGatewaySyncUpsertToPG(ctx, tx, sqlite, key.tableName, key.rowKey); err != nil {
-				return false, err
-			}
-		default:
-			return false, fmt.Errorf("unknown sync journal op %q for %s/%s", op, key.tableName, key.rowKey)
+	var lastSeq int64
+	for {
+		chunk, err := sqlite.loadSyncJournalChunk(lastSeq, gatewaySyncJournalDrainChunkSize)
+		if err != nil {
+			return false, err
 		}
-	}
-	if err := tx.Commit(ctx); err != nil {
-		return false, fmt.Errorf("commit sync journal drain: %w", err)
-	}
-	if err := sqlite.deleteSyncJournalUpTo(maxSeq); err != nil {
-		return false, err
+		if len(chunk) == 0 {
+			break
+		}
+		chunkMaxSeq := chunk[len(chunk)-1].seq
+		coalesced := coalesceSyncJournalRows(chunk)
+		if err := applyCoalescedSyncJournalToPG(ctx, pg, sqlite, coalesced); err != nil {
+			return false, err
+		}
+		if err := sqlite.deleteSyncJournalUpTo(chunkMaxSeq); err != nil {
+			return false, err
+		}
+		lastSeq = chunkMaxSeq
 	}
 
 	remaining, err := sqlite.countSyncJournalEntries()
@@ -208,7 +206,40 @@ func drainGatewaySyncJournal(ctx context.Context, sqlite *SQLiteGatewayStore, pg
 	return remaining == 0, nil
 }
 
+func applyCoalescedSyncJournalToPG(ctx context.Context, pg *PostgresGatewayStore, sqlite *SQLiteGatewayStore, coalesced map[gatewaySyncKey]string) error {
+	if len(coalesced) == 0 {
+		return nil
+	}
+	tx, err := pg.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("begin sync journal drain: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	for key, op := range coalesced {
+		switch op {
+		case gatewaySyncOpDelete:
+			if err := deleteGatewayRowFromPG(ctx, tx, key.tableName, key.rowKey); err != nil {
+				return err
+			}
+		case gatewaySyncOpUpsert:
+			if err := applyGatewaySyncUpsertToPG(ctx, tx, sqlite, key.tableName, key.rowKey); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("unknown sync journal op %q for %s/%s", op, key.tableName, key.rowKey)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("commit sync journal drain: %w", err)
+	}
+	return nil
+}
+
 func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGatewayStore, tableName, rowKey string) error {
+	// When the SQLite row is gone, skip the upsert: per-chunk coalescing may replay
+	// a stale upsert from an earlier chunk while the matching delete lives in a
+	// later chunk. The delete removes the row from Postgres once that chunk runs.
 	switch tableName {
 	case gatewayTableSettings:
 		settings, updatedAt, ok, err := sqlite.loadGatewaySettingsRow()
@@ -216,7 +247,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert settings: row missing in sqlite")
+			return nil
 		}
 		return applyGatewaySettingsUpsertToPG(ctx, tx, settings, updatedAt)
 	case gatewayTableDevshards:
@@ -225,7 +256,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert devshard %s: row missing in sqlite", rowKey)
+			return nil
 		}
 		return applyGatewayDevshardToPG(ctx, tx, devshard, time.Now().UTC().Format(time.RFC3339Nano))
 	case gatewayTableThrottle:
@@ -234,7 +265,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert throttle %s: row missing in sqlite", rowKey)
+			return nil
 		}
 		return applyGatewayThrottleToPG(ctx, tx, row)
 	case gatewayTableRotationStatus:
@@ -247,7 +278,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert rotation status %s: row missing in sqlite", rowKey)
+			return nil
 		}
 		return applyGatewayRotationStatusToPG(ctx, tx, status)
 	case gatewayTableSuspiciousHosts:
@@ -256,7 +287,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert suspicious host %s: row missing in sqlite", rowKey)
+			return nil
 		}
 		return applyGatewaySuspiciousHostToPG(ctx, tx, host)
 	case gatewayTableCommitments:
@@ -265,7 +296,7 @@ func applyGatewaySyncUpsertToPG(ctx context.Context, tx pgx.Tx, sqlite *SQLiteGa
 			return err
 		}
 		if !ok {
-			return fmt.Errorf("sync journal upsert commitment %s: row missing in sqlite", rowKey)
+			return nil
 		}
 		return applyGatewayCommitmentToPG(ctx, tx, commitment)
 	default:
