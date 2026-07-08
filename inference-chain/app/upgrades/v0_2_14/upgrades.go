@@ -51,11 +51,9 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
-		// Maintenance windows ship first in v0.2.14, but their param seeding
-		// lives in the v0.2.12 handler, which mainnet executed long before the
-		// feature landed. Seed MaintenanceParams here with the feature
-		// explicitly disabled; governance can enable it later by flipping
-		// maintenance_enabled via MsgUpdateParams.
+		// Maintenance windows ship first in v0.2.14. Seed MaintenanceParams
+		// here with the feature explicitly disabled; governance can enable it
+		// later by flipping maintenance_enabled via MsgUpdateParams.
 		if err := seedMaintenanceParamsDisabled(ctx, k); err != nil {
 			return nil, err
 		}
@@ -105,13 +103,14 @@ func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper
 // with the feature disabled (DefaultMaintenanceParams has
 // maintenance_enabled=false).
 //
-// Why here and not v0.2.12: initMaintenanceParams was added to the v0.2.12
-// upgrade handler, but mainnet executed that upgrade before the maintenance
-// feature landed, so it never ran there and params.MaintenanceParams decodes
-// as nil. Reads are safe (GetMaintenanceParams falls back to disabled
-// defaults), but seeding explicit state makes the disabled status queryable
-// on-chain and gives a later governance MsgUpdateParams proposal a concrete
-// baseline to flip maintenance_enabled=true against.
+// The maintenance-windows PR (#998) originally put this seeding in the
+// v0.2.12 upgrade handler, but mainnet executed that upgrade before the
+// feature landed, so it could never run there (that dead seeding has been
+// removed). On upgraded chains params.MaintenanceParams decodes as nil.
+// Reads are safe (GetMaintenanceParams falls back to disabled defaults),
+// but seeding explicit state makes the disabled status queryable on-chain
+// and gives a later governance MsgUpdateParams proposal a concrete baseline
+// to flip maintenance_enabled=true against.
 //
 // Existing non-nil params are left untouched so chains that already carry
 // deliberate maintenance settings (fresh-genesis networks, testnets) keep
