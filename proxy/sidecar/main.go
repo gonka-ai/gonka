@@ -1295,6 +1295,18 @@ func syncWhitelist() error {
 	logMsg("Found %d unique public IPs to whitelist (Total scanned: %d).",
 		len(allowed), totalParticipants)
 
+	// A transient DNS/resolution outage at the once-per-epoch sync moment can
+	// leave us with zero resolved IPs even though participants exist. Treat that
+	// as a sync failure (like the 404 path above) rather than overwriting the
+	// nginx whitelist with an empty set: return an error so the caller preserves
+	// the existing whitelist and does NOT advance BlockHeightSynced, so the next
+	// tick retries within the same epoch instead of de-whitelisting every
+	// validator (dropping their rate-limit exemption and accruing fail2ban bans)
+	// until the epoch flips.
+	if totalParticipants > 0 && len(allowed) == 0 {
+		return fmt.Errorf("resolved 0 of %d participants to public IPs - preserving existing whitelist state (transient resolution failure)", totalParticipants)
+	}
+
 	// Update In-Memory BanManager (so it doesn't ban these IPs)
 	if GlobalBanManager != nil {
 		GlobalBanManager.UpdateWhitelist(allowed)
