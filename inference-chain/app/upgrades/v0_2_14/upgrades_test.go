@@ -226,10 +226,10 @@ func TestSeedDelegationRewardSnapshotForEffectiveEpoch_DoesNotOverrideExisting(t
 	require.Len(t, snapshot.Penalties, 1)
 }
 
-// TestSeedMaintenanceParamsDisabled_NilParams simulates mainnet state: the
-// chain upgraded past v0.2.12 before maintenance landed, so MaintenanceParams
-// is nil. The seeder must install defaults with the feature disabled.
-func TestSeedMaintenanceParamsDisabled_NilParams(t *testing.T) {
+// TestInitMaintenanceParams_NilParams simulates mainnet state: the chain
+// upgraded past v0.2.12 before maintenance landed, so MaintenanceParams is
+// nil. The init must install defaults with the feature disabled.
+func TestInitMaintenanceParams_NilParams(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
@@ -237,7 +237,7 @@ func TestSeedMaintenanceParamsDisabled_NilParams(t *testing.T) {
 	params.MaintenanceParams = nil
 	require.NoError(t, k.SetParams(ctx, params))
 
-	require.NoError(t, seedMaintenanceParamsDisabled(ctx, k))
+	require.NoError(t, initMaintenanceParams(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -247,10 +247,10 @@ func TestSeedMaintenanceParamsDisabled_NilParams(t *testing.T) {
 	require.NoError(t, got.MaintenanceParams.Validate())
 }
 
-// TestSeedMaintenanceParamsDisabled_PreservesExisting ensures chains that
+// TestInitMaintenanceParams_PreservesExisting ensures chains that
 // already carry deliberate maintenance settings (e.g. testnets with the
 // feature enabled) are not stomped by the upgrade.
-func TestSeedMaintenanceParamsDisabled_PreservesExisting(t *testing.T) {
+func TestInitMaintenanceParams_PreservesExisting(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
@@ -261,7 +261,7 @@ func TestSeedMaintenanceParamsDisabled_PreservesExisting(t *testing.T) {
 	params.MaintenanceParams = existing
 	require.NoError(t, k.SetParams(ctx, params))
 
-	require.NoError(t, seedMaintenanceParamsDisabled(ctx, k))
+	require.NoError(t, initMaintenanceParams(ctx, k))
 
 	got, err := k.GetParams(ctx)
 	require.NoError(t, err)

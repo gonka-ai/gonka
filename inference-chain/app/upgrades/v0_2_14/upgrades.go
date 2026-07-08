@@ -51,10 +51,9 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
-		// Maintenance windows ship first in v0.2.14. Seed MaintenanceParams
-		// here with the feature explicitly disabled; governance can enable it
-		// later by flipping maintenance_enabled via MsgUpdateParams.
-		if err := seedMaintenanceParamsDisabled(ctx, k); err != nil {
+		// Initialize maintenance params with defaults for existing chains.
+		// All participants start with zero credit — credit is earned going forward.
+		if err := initMaintenanceParams(ctx, k); err != nil {
 			return nil, err
 		}
 
@@ -99,29 +98,27 @@ func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper
 	return nil
 }
 
-// seedMaintenanceParamsDisabled seeds MaintenanceParams into on-chain state
-// with the feature disabled (DefaultMaintenanceParams has
-// maintenance_enabled=false).
+// initMaintenanceParams initializes the MaintenanceParams sub-struct with defaults.
+// The feature starts disabled; governance can enable it once the network is ready.
+// No per-participant state initialization is needed because:
+//   - MaintenanceState is lazily created via GetOrCreateMaintenanceState
+//   - Credit starts at zero (the default for a missing entry)
+//   - Maintenance collections (reservations, transitions, indexes) start empty
 //
-// The maintenance-windows PR (#998) originally put this seeding in the
-// v0.2.12 upgrade handler, but mainnet executed that upgrade before the
-// feature landed, so it could never run there (that dead seeding has been
-// removed). On upgraded chains params.MaintenanceParams decodes as nil.
-// Reads are safe (GetMaintenanceParams falls back to disabled defaults),
-// but seeding explicit state makes the disabled status queryable on-chain
-// and gives a later governance MsgUpdateParams proposal a concrete baseline
-// to flip maintenance_enabled=true against.
-//
-// Existing non-nil params are left untouched so chains that already carry
-// deliberate maintenance settings (fresh-genesis networks, testnets) keep
-// them across the upgrade.
-func seedMaintenanceParamsDisabled(ctx context.Context, k keeper.Keeper) error {
+// This is the seeding step from the maintenance-windows PR (#998), relocated
+// from the v0.2.12 handler: mainnet executed that upgrade before the feature
+// landed, so it could never run there. Two deliberate deviations from the
+// original: errors are returned instead of logged-and-swallowed (matching the
+// other v0.2.14 migrations, so a failed SetParams halts the upgrade), and
+// existing non-nil params short-circuit without a redundant SetParams
+// round-trip.
+func initMaintenanceParams(ctx context.Context, k keeper.Keeper) error {
 	params, err := k.GetParams(ctx)
 	if err != nil {
 		return err
 	}
 	if params.MaintenanceParams != nil {
-		k.LogInfo("seed maintenance params skipped: already present", types.Upgrades,
+		k.LogInfo("maintenance params already present, skipping init", types.Upgrades,
 			"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled)
 		return nil
 	}
@@ -130,7 +127,8 @@ func seedMaintenanceParamsDisabled(ctx context.Context, k keeper.Keeper) error {
 	if err := k.SetParams(ctx, params); err != nil {
 		return err
 	}
-	k.LogInfo("seeded maintenance params with feature disabled", types.Upgrades,
+
+	k.LogInfo("initialized maintenance params", types.Upgrades,
 		"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled,
 		"min_schedule_lead_blocks", params.MaintenanceParams.MaintenanceMinScheduleLeadBlocks,
 		"max_window_blocks", params.MaintenanceParams.MaintenanceMaxWindowBlocks,
