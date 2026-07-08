@@ -405,16 +405,49 @@ func (s *Server) preparePocProofRequest(
 	}
 
 	reqCount := uint32(req.Count)
+
+	// Quota on distinct snapshot counts per validator (after signature
+	// verification, so only authenticated requests consume quota). Honest
+	// validation touches at most the early and final snapshots; cycling
+	// through more counts is a rebuild-DoS probe, not a legitimate pattern.
+	if s.pocSnapshotLimiter != nil {
+		allowed, distinct := s.pocSnapshotLimiter.Allow(req.ValidatorAddress, int64(req.PocStageStartBlockHeight), req.ModelId, reqCount)
+		if !allowed {
+			logging.Warn("PoC proofs snapshot-count quota exceeded", types.Validation,
+				"validatorAddress", req.ValidatorAddress,
+				"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+				"modelId", req.ModelId,
+				"requestedCount", reqCount,
+				"distinctCounts", distinct)
+			return nil, 0, nil, echo.NewHTTPError(http.StatusTooManyRequests, "too many distinct snapshot counts requested")
+		}
+		// Two distinct counts (early + final) is the expected honest ceiling.
+		// A third is tolerated but anomalous: surface it so operators can
+		// spot validators whose early capture diverged (or probing) before
+		// the quota ever trips.
+		if distinct > 2 {
+			logging.Warn("PoC proofs validator exceeded expected two snapshot counts", types.Validation,
+				"validatorAddress", req.ValidatorAddress,
+				"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+				"modelId", req.ModelId,
+				"requestedCount", reqCount,
+				"distinctCounts", distinct)
+		}
+	}
 	storeRoot, err := stageStore.GetRootAt(reqCount)
 	if err != nil {
-		logging.Warn("Snapshot count exceeds store", types.Validation,
+		logging.Warn("Snapshot count not servable", types.Validation,
+			"validatorAddress", req.ValidatorAddress,
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+			"modelId", req.ModelId,
 			"requestedCount", reqCount, "error", err)
 		return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "count exceeds stored artifacts")
 	}
 	if !bytes.Equal(rootHash, storeRoot) {
 		logging.Warn("Root hash mismatch", types.Validation,
+			"validatorAddress", req.ValidatorAddress,
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
+			"modelId", req.ModelId,
 			"requestedCount", reqCount)
 		return nil, 0, nil, echo.NewHTTPError(http.StatusBadRequest, "root_hash does not match store state at count")
 	}

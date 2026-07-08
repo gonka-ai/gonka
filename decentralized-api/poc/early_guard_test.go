@@ -7,8 +7,10 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/poc/earlyshare"
 
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestEarlyShareCaptureTarget(t *testing.T) {
@@ -69,6 +71,34 @@ func TestEarlyShareCaptureTarget(t *testing.T) {
 		}
 		if _, _, ok := EarlyShareCaptureTarget(mkState(types.PoCGeneratePhase, 1000, 30), 0); ok {
 			t.Fatal("zero fraction must skip")
+		}
+	})
+
+	t.Run("fraction arithmetic is integer-deterministic", func(t *testing.T) {
+		// Different float spellings of "one third" (the code default, the
+		// documented config literal, a hand-typed shorter one) must quantize
+		// to the same ppm and produce the identical target height for any
+		// duration. This is what pins all validators to the same capture
+		// block.
+		spellings := []float64{1.0 / 3.0, 0.3333333333, 0.333333}
+		for _, dur := range []int64{30, 100, 720, 7201, 99999} {
+			want := int64(-1)
+			for _, f := range spellings {
+				_, target, ok := EarlyShareCaptureTarget(mkState(types.PoCGeneratePhase, 1000, dur), f)
+				if !ok {
+					t.Fatalf("fraction %v duration %d: expected ok", f, dur)
+				}
+				if want == -1 {
+					want = target
+				} else if target != want {
+					t.Fatalf("fraction %v duration %d: target %d differs from %d", f, dur, target, want)
+				}
+			}
+			// offset = round(dur * 333333 / 1e6), pure integer arithmetic.
+			expected := 1000 + (dur*333333+500000)/1000000
+			if want != expected {
+				t.Fatalf("duration %d: target %d, want %d", dur, want, expected)
+			}
 		}
 	})
 
@@ -265,13 +295,15 @@ func TestNewEarlyShareGuardDisabled(t *testing.T) {
 
 // fakeESQueryClient implements earlyShareQueryClient for MaybeCapture tests.
 type fakeESQueryClient struct {
-	resp  *types.QueryAllPoCV2StoreCommitsForStageResponse
-	err   error
-	calls int
+	resp    *types.QueryAllPoCV2StoreCommitsForStageResponse
+	err     error
+	calls   int
+	lastCtx context.Context
 }
 
-func (f *fakeESQueryClient) AllPoCV2StoreCommitsForStage(_ context.Context, _ *types.QueryAllPoCV2StoreCommitsForStageRequest, _ ...grpc.CallOption) (*types.QueryAllPoCV2StoreCommitsForStageResponse, error) {
+func (f *fakeESQueryClient) AllPoCV2StoreCommitsForStage(ctx context.Context, _ *types.QueryAllPoCV2StoreCommitsForStageRequest, _ ...grpc.CallOption) (*types.QueryAllPoCV2StoreCommitsForStageResponse, error) {
 	f.calls++
+	f.lastCtx = ctx
 	return f.resp, f.err
 }
 
@@ -327,6 +359,52 @@ func TestMaybeCapture(t *testing.T) {
 		guard.MaybeCapture(ctx, qc, stage, 1010, 1010)
 		if qc.calls != 0 {
 			t.Fatalf("disabled guard must not query, got %d calls", qc.calls)
+		}
+	})
+
+	t.Run("query is pinned to the target height", func(t *testing.T) {
+		store := newFakeStore()
+		guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
+		qc := &fakeESQueryClient{resp: &types.QueryAllPoCV2StoreCommitsForStageResponse{}}
+
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1042)
+		if qc.calls != 1 {
+			t.Fatalf("expected 1 query call, got %d", qc.calls)
+		}
+		md, ok := metadata.FromOutgoingContext(qc.lastCtx)
+		if !ok {
+			t.Fatal("capture query context missing outgoing metadata")
+		}
+		heights := md.Get(grpctypes.GRPCBlockHeightHeader)
+		if len(heights) != 1 || heights[0] != "1010" {
+			t.Fatalf("expected height header pinned to 1010, got %v", heights)
+		}
+	})
+
+	t.Run("failed capture can be retried on a later block", func(t *testing.T) {
+		store := newFakeStore()
+		guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
+		qc := &fakeESQueryClient{err: context.DeadlineExceeded}
+
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1010)
+		if store.captured[stage] {
+			t.Fatal("stage must not be marked captured on query error")
+		}
+
+		// Retry a few blocks later succeeds and still pins the original target.
+		qc.err = nil
+		qc.resp = &types.QueryAllPoCV2StoreCommitsForStageResponse{
+			Commits: []*types.PoCV2StoreCommitWithAddress{
+				{ParticipantAddress: "a", ModelId: "m1", Count: 10, RootHash: []byte{1}},
+			},
+		}
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1013)
+		if !store.captured[stage] {
+			t.Fatal("stage should be marked captured after retry")
+		}
+		md, _ := metadata.FromOutgoingContext(qc.lastCtx)
+		if got := md.Get(grpctypes.GRPCBlockHeightHeader); len(got) != 1 || got[0] != "1010" {
+			t.Fatalf("retry must pin the original target height, got %v", got)
 		}
 	})
 }

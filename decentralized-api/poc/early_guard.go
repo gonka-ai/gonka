@@ -2,14 +2,21 @@ package poc
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
+	"sort"
+	"strconv"
+	"sync"
 
 	"decentralized-api/logging"
 	"decentralized-api/poc/earlyshare"
 
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 // earlyShareQueryClient is the subset of the inference query client the guard
@@ -37,6 +44,10 @@ type earlyShareStore interface {
 type EarlyShareGuard struct {
 	cfg   earlyshare.Config
 	store earlyShareStore
+
+	// captureMu collapses concurrent capture attempts for the retry window
+	// (the dispatcher may fire MaybeCapture on every block past the target).
+	captureMu sync.Mutex
 }
 
 // NewEarlyShareGuard builds a guard. Returns nil when the config is disabled or
@@ -76,12 +87,23 @@ func (g *EarlyShareGuard) DeleteStage(ctx context.Context, stageHeight int64) {
 }
 
 // MaybeCapture captures the early checkpoint for a stage if not already done.
-// It is idempotent: the exact-match trigger fires at most once per stage, and a
-// completed capture (e.g. after a restart) is never repeated.
+// It is idempotent: a completed capture (e.g. after a restart) is never
+// repeated, and concurrent attempts collapse to one.
+//
+// The query is pinned to the target block height (x-cosmos-block-height), so
+// the captured snapshot is the consensus state at exactly that height. Every
+// validator capturing the same stage therefore records identical checkpoints,
+// regardless of when in the window its capture actually runs — the capture can
+// be retried on later blocks and still lands on the same snapshot, as long as
+// the queried node retains state for the target height.
 func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryClient, stageHeight, target, capturedAt int64) {
 	if !g.Enabled() || g.store == nil {
 		return
 	}
+	if !g.captureMu.TryLock() {
+		return // another capture attempt for this process is already running
+	}
+	defer g.captureMu.Unlock()
 
 	done, err := g.store.HasCompletedCapture(ctx, stageHeight)
 	if err != nil {
@@ -92,7 +114,13 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 		return
 	}
 
-	resp, err := qc.AllPoCV2StoreCommitsForStage(ctx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
+	// Pin the query to the target height so all validators see the same state.
+	queryCtx := metadata.AppendToOutgoingContext(ctx,
+		grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(target, 10))
+	queryCtx, cancel := context.WithTimeout(queryCtx, 30*1e9) // 30s
+	defer cancel()
+
+	resp, err := qc.AllPoCV2StoreCommitsForStage(queryCtx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
 		PocStageStartBlockHeight: stageHeight,
 	})
 	if err != nil {
@@ -129,8 +157,33 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 		logging.Error("EarlyShareGuard: failed to mark capture run", types.PoC, "stage", stageHeight, "error", err)
 		return
 	}
+	// The digest is a deterministic hash of the whole captured snapshot.
+	// Because the capture query is height-pinned, every validator capturing
+	// this stage must log the same digest; differing digests across
+	// validators indicate capture divergence (version skew, pruned state)
+	// and are the primary observe-mode health signal for the guard.
 	logging.Info("EarlyShareGuard: captured early checkpoints", types.PoC,
-		"stage", stageHeight, "target", target, "capturedAt", capturedAt, "commits", len(checkpoints))
+		"stage", stageHeight, "target", target, "capturedAt", capturedAt,
+		"commits", len(checkpoints), "digest", checkpointsDigest(checkpoints))
+}
+
+// checkpointsDigest computes an order-independent digest of a captured
+// checkpoint set: entries are sorted by (participant, model) and hashed.
+func checkpointsDigest(checkpoints []earlyshare.Checkpoint) string {
+	sorted := make([]earlyshare.Checkpoint, len(checkpoints))
+	copy(sorted, checkpoints)
+	sort.Slice(sorted, func(i, j int) bool {
+		if sorted[i].ParticipantAddress != sorted[j].ParticipantAddress {
+			return sorted[i].ParticipantAddress < sorted[j].ParticipantAddress
+		}
+		return sorted[i].ModelID < sorted[j].ModelID
+	})
+
+	h := sha256.New()
+	for _, cp := range sorted {
+		fmt.Fprintf(h, "%s|%s|%d|%x\n", cp.ParticipantAddress, cp.ModelID, cp.EarlyCount, cp.EarlyRootHash)
+	}
+	return hex.EncodeToString(h.Sum(nil)[:8])
 }
 
 // earlyDecision is the precomputed guard outcome for one (participant, model).

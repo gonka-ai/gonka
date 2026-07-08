@@ -701,6 +701,46 @@ func TestSMSTStoreGetRootAt(t *testing.T) {
 	}
 }
 
+func TestSMSTStoreRootsSurviveReopen(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST failed: %v", err)
+	}
+
+	boundaryRoots := make(map[uint32][]byte)
+	for i := int32(1); i <= 4; i++ {
+		store.Add(i, []byte{byte(i)})
+		store.Flush()
+		root, err := store.GetRootAt(uint32(i))
+		if err != nil {
+			t.Fatalf("GetRootAt(%d): %v", i, err)
+		}
+		boundaryRoots[uint32(i)] = root
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	store2, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store2.Close()
+
+	// Historical flush-boundary counts must remain servable after a restart
+	// (rebuilt on demand from the data file).
+	for count, want := range boundaryRoots {
+		got, err := store2.GetRootAt(count)
+		if err != nil {
+			t.Fatalf("GetRootAt(%d) after reopen: %v", count, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("GetRootAt(%d) root mismatch after reopen", count)
+		}
+	}
+}
+
 func TestSMSTStoreGetFlushedRoot(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)

@@ -185,19 +185,22 @@ func NewOffChainValidator(
 	}
 }
 
-// MaybeCaptureEarlyShare is invoked once per block by the dispatcher. It fires
-// the early-share capture only at the exact first-fraction height of the active
-// PoC/CPoC generation window, mirroring the other exact-match stage transitions
-// in handlePhaseTransitions. If the node is catching up across that height the
-// capture is skipped and the guard simply fails open for that stage.
+// MaybeCaptureEarlyShare is invoked once per block by the dispatcher. From the
+// first-fraction height until the end of the generation window it attempts the
+// early-share capture. The capture query is pinned to the exact first-fraction
+// height (see EarlyShareGuard.MaybeCapture), so a capture that runs a few
+// blocks late — after a restart, a slow query, or a transient chain error —
+// still records the identical consensus snapshot every other validator gets.
+// MaybeCapture is idempotent, so per-block re-invocation acts as a retry loop
+// that stops at the first completed capture.
 func (v *OffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochState) {
 	if v.artifactStore != nil {
 		v.maybeWarmEarlySnapshot(epochState)
 	}
 	if v.guard.Enabled() {
 		stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
-		if ok && epochState.CurrentBlock.Height == target {
-			go v.guard.MaybeCapture(context.Background(), v.recorder.NewInferenceQueryClient(), stage, target, target)
+		if ok && epochState.CurrentBlock.Height >= target {
+			go v.guard.MaybeCapture(context.Background(), v.recorder.NewInferenceQueryClient(), stage, target, epochState.CurrentBlock.Height)
 		}
 	}
 }
