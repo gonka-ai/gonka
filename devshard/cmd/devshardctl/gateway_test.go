@@ -906,6 +906,26 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
+func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = "v2"
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
+	got, err := resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/v2", got)
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
+	_, err = resolveGatewayRoutePrefix()
+	require.ErrorContains(t, err, "unsupported devshard route prefix")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
+	got, err = resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/test", got)
+}
+
 func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
