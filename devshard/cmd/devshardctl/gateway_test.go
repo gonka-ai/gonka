@@ -66,26 +66,6 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	return sm
 }
 
-func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
-	oldVersion := Version
-	t.Cleanup(func() { Version = oldVersion })
-	Version = "v2"
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	got, err := resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/v2", got)
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
-	_, err = resolveGatewayRoutePrefix()
-	require.ErrorContains(t, err, "unsupported devshard route prefix")
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
-	got, err = resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/test", got)
-}
-
 func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64) *devshardRuntime {
 	t.Helper()
 
@@ -911,6 +891,19 @@ func TestAdminAddDevshardWiresSharedPhaseGate(t *testing.T) {
 	require.Equal(t, confirmationPoCValidation, addedStatus.ConfirmationPoCPhase)
 	require.True(t, addedStatus.RequestsBlocked)
 	require.Equal(t, "confirmation_poc", addedStatus.BlockReason)
+}
+
+func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	previousVersion := Version
+	Version = "dev"
+	t.Cleanup(func() { Version = previousVersion })
+
+	require.Equal(t, "/devshard/dev", gatewayHostRoutePrefix(""))
+	require.Equal(t, "/devshard/v2", gatewayHostRoutePrefix("/devshard/v2"))
+	require.Equal(t, "/v1/devshard", gatewayHostRoutePrefix("/v1/devshard"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/dev"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/v2"))
+	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
 func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
@@ -2769,6 +2762,8 @@ func TestGatewayMetricsEndpointExposedAndUpdated(t *testing.T) {
 	require.Contains(t, body, `status="429"`)
 	require.Contains(t, body, `devshard_gateway_limit_rejections_total`)
 	require.Contains(t, body, `reason="max_input_tokens_in_flight"`)
+	require.Contains(t, body, `devshard_gateway_requests_total{model="Qwen/Test",outcome="gateway_limited",reason="max_input_tokens_in_flight"} 1`)
+	require.Contains(t, body, `devshard_gateway_critical_user_failures_total{model="Qwen/Test",reason="max_input_tokens_in_flight"} 1`)
 	require.Contains(t, body, `devshard_gateway_inflight_requests`)
 	require.Contains(t, body, `devshard_runtime_active`)
 	require.Contains(t, body, `devshard_id="12"`)

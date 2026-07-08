@@ -451,7 +451,7 @@ func (l *ParticipantRequestLimiter) AllowRequestForModel(participantKey, modelID
 		return nil
 	}
 	if l.metrics != nil {
-		l.metrics.RecordParticipantLimitRejection("transport_request")
+		l.metrics.RecordParticipantLimitRejection(participantKey, normalizeModelID(modelID), "transport_request")
 	}
 	log.Printf("participant_limit_rejected participant_key=%s", participantKey)
 	return &ParticipantRateLimitError{ParticipantKey: participantKey}
@@ -533,7 +533,7 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 		return
 	}
 	if l.metrics != nil && statusCode >= http.StatusBadRequest {
-		l.metrics.RecordParticipantTransportError(participantPathKind(path), statusCode)
+		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), participantPathKind(path), statusCode)
 	}
 	quarantineFor := l.participantHTTPQuarantine(path, statusCode, body)
 	if quarantineFor == 0 {
@@ -544,6 +544,7 @@ func (l *ParticipantRequestLimiter) ObserveResultWithBodyForModel(participantKey
 	l.mu.Lock()
 	defer l.mu.Unlock()
 	l.applyQuarantineLocked(participantKey, modelID, now.Add(quarantineFor), now, participantQuarantineProbe)
+	l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), participantHTTPQuarantineReason(path, statusCode, body))
 
 	log.Printf("participant_limit_activated participant_key=%s status=%d path_kind=%s",
 		participantKey, statusCode, participantPathKind(path))
@@ -565,7 +566,7 @@ func (l *ParticipantRequestLimiter) ObserveTransportFailureForModel(participantK
 	}
 	kind := participantPathKind(path)
 	if l.metrics != nil {
-		l.metrics.RecordParticipantTransportError(kind, 0)
+		l.metrics.RecordParticipantTransportError(participantKey, normalizeModelID(modelID), kind, 0)
 	}
 	if kind != "inference" {
 		log.Printf("participant_transport_failure_ignored participant_key=%s path_kind=%s error=%q",
@@ -590,6 +591,7 @@ func (l *ParticipantRequestLimiter) ObserveTransportFailureForModel(participantK
 		state.failureStrikes++
 		if state.failureStrikes >= l.failureStrikeThreshold {
 			l.applyQuarantineLocked(participantKey, modelID, now.Add(l.transportFailureQuarantine), now, participantQuarantineProbe)
+			l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), "eof_transport_quarantine")
 			log.Printf("participant_limit_eof_transport_quarantine participant_key=%s model_id=%q reason=eof_transport strikes=%d threshold=%d quarantine_mode=%s error=%q",
 				participantKey, normalizeModelID(modelID), state.failureStrikes, l.failureStrikeThreshold, participantQuarantineProbe.String(), truncateError(err))
 			l.persistThrottledStateLocked(participantKey, state, participantStatusEOFTransport)
@@ -602,6 +604,7 @@ func (l *ParticipantRequestLimiter) ObserveTransportFailureForModel(participantK
 	}
 
 	l.applyQuarantineLocked(participantKey, modelID, now.Add(l.transportFailureQuarantine), now, participantQuarantineProbe)
+	l.recordQuarantineTransition(participantKey, modelID, participantQuarantineProbe.String(), "transport_failure_quarantine")
 	log.Printf("participant_limit_transport_failure participant_key=%s path_kind=%s error=%q",
 		participantKey, kind, truncateError(err))
 	l.persistThrottledStateLocked(participantKey, l.participants[participantKey], participantStatusTransport)
@@ -656,6 +659,7 @@ func (l *ParticipantRequestLimiter) ObserveEmptyStreamForModel(participantKey, m
 	state.failureStrikes++
 	if state.failureStrikes >= l.failureStrikeThreshold {
 		l.applyQuarantineLocked(participantKey, modelID, now.Add(l.emptyStreamQuarantine), now, participantQuarantineShadow)
+		l.recordQuarantineTransition(participantKey, modelID, participantQuarantineShadow.String(), "empty_stream_quarantine")
 		log.Printf("participant_limit_empty_stream_quarantine participant_key=%s model_id=%q reason=empty_stream strikes=%d threshold=%d quarantine_mode=%s",
 			participantKey, normalizeModelID(modelID), state.failureStrikes, l.failureStrikeThreshold, participantQuarantineShadow.String())
 		l.persistThrottledStateLocked(participantKey, state, participantStatusEmptyStream)
@@ -684,6 +688,7 @@ func (l *ParticipantRequestLimiter) ObserveStalledWinnerForModel(participantKey,
 
 	state := l.ensureStateLocked(participantKey, now)
 	l.applyQuarantineLocked(participantKey, modelID, now.Add(l.stalledWinnerQuarantine), now, participantQuarantineShadow)
+	l.recordQuarantineTransition(participantKey, modelID, participantQuarantineShadow.String(), "stalled_winner_quarantine")
 	log.Printf("participant_limit_stalled_winner_quarantine participant_key=%s", participantKey)
 	l.persistThrottledStateLocked(participantKey, state, participantStatusStalledWinner)
 }
@@ -1222,8 +1227,31 @@ func (l *ParticipantRequestLimiter) clearExpiredQuarantineIfAnyLocked(key string
 		state.tokens = l.burst
 		state.lastRefill = now
 		state.failureStrikes = participantStrikesAfterQuarantine
+		l.recordQuarantineTransition(key, "", "probation", "quarantine_expired")
 		l.persistThrottledStateLocked(key, state, participantStatusTransport)
 		log.Printf("participant_quarantine_ended participant_key=%s", key)
+	}
+}
+
+func (l *ParticipantRequestLimiter) recordQuarantineTransition(participantKey, modelID, mode, reason string) {
+	if l == nil || l.metrics == nil {
+		return
+	}
+	l.metrics.RecordGatewayQuarantineTransition(participantKey, normalizeModelID(modelID), mode, reason)
+}
+
+func participantHTTPQuarantineReason(path string, statusCode int, body string) string {
+	switch {
+	case isParticipantThrottleStatus(statusCode):
+		return "http_throttle_quarantine"
+	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
+		return "http_timestamp_drift"
+	case statusCode == http.StatusNotFound && participantPathKind(path) == "inference":
+		return "http_not_found"
+	case statusCode == http.StatusForbidden && participantPathKind(path) == "inference":
+		return "http_forbidden"
+	default:
+		return "transport_failure_quarantine"
 	}
 }
 
