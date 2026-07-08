@@ -235,6 +235,19 @@ func (wc *PoCWeightCalculator) getParticipantValidations(key types.PoCParticipan
 	wc.Logger.LogInfo("Calculate: Found ALL submitted validations for participant", types.PoC,
 		"participant", key.ParticipantAddress, "modelId", key.ModelID, "len(vals)", len(vals), "validators", validators)
 
+	// Defense in depth: a participant must never count as a validator of its own
+	// PoC. Self-validations are rejected at submission (SubmitPocValidationsV2); drop
+	// any that still reach the tally (e.g. from legacy or migrated data) so self-
+	// attestation can never contribute to the quorum.
+	nonSelf := make([]types.PoCValidationV2, 0, len(vals))
+	for _, v := range vals {
+		if v.ValidatorParticipantAddress == key.ParticipantAddress {
+			continue
+		}
+		nonSelf = append(nonSelf, v)
+	}
+	vals = nonSelf
+
 	// Filter to validations from participants with voting power for this model.
 	// When no voting-power snapshot exists for the model yet, keep the original
 	// validations list for logging and guardian handling. pocValidated() still

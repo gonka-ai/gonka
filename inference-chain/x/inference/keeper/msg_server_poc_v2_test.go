@@ -131,6 +131,50 @@ func TestSubmitPocValidationsV2_DuplicateSkipped(t *testing.T) {
 	require.True(t, exists)
 }
 
+// Test SubmitPocValidationsV2 rejects self-validation (skip, do not store)
+func TestSubmitPocValidationsV2_SelfValidationSkipped(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	// Block height must be in validation exchange window (see DuplicateSkipped).
+	sdkCtx := sdk.UnwrapSDKContext(ctx).WithBlockHeight(160)
+
+	params, err := k.GetParams(sdkCtx)
+	require.NoError(t, err)
+	params.PocParams = &types.PocParams{PocV2Enabled: true}
+	params.EpochParams = &types.EpochParams{
+		PocStageDuration:      50,
+		PocExchangeDuration:   20,
+		PocValidationDelay:    5,
+		PocValidationDuration: 100,
+	}
+	require.NoError(t, k.SetParams(sdkCtx, params))
+
+	k.SetEffectiveEpochIndex(sdkCtx, 0)
+	k.SetEpoch(sdkCtx, &types.Epoch{Index: 1, PocStartBlockHeight: 100})
+
+	msgServer := keeper.NewMsgServerImpl(k)
+
+	// Validator attempts to validate its OWN PoC (ParticipantAddress == Creator).
+	msg := &types.MsgSubmitPocValidationsV2{
+		Creator:                  testutil.Validator,
+		PocStageStartBlockHeight: 100,
+		Validations: []*types.PoCValidationEntryV2{
+			{
+				ParticipantAddress: testutil.Validator,
+				ModelId:            testPoCModelID,
+				ValidatedWeight:    100,
+			},
+		},
+	}
+	// Batch succeeds (self-vote is skipped, not a batch-level error).
+	_, err = msgServer.SubmitPocValidationsV2(sdkCtx, msg)
+	require.NoError(t, err)
+
+	// The self-validation must NOT have been stored.
+	exists, err := k.HasPocValidationV2(sdkCtx, 100, testutil.Validator, testPoCModelID, testutil.Validator)
+	require.NoError(t, err)
+	require.False(t, exists)
+}
+
 // Test SubmitPocValidationsV2 partial success (valid + invalid in same batch)
 func TestSubmitPocValidationsV2_PartialSuccess(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)

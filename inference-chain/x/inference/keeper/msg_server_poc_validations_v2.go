@@ -119,6 +119,17 @@ func (k msgServer) SubmitPocValidationsV2(goCtx context.Context, msg *types.MsgS
 			continue
 		}
 
+		// Self-validation is not permitted: a participant must never attest to its
+		// own PoC. Skip it (consistent with this handler's skip-don't-fail policy) so
+		// a self-vote can never be stored or counted toward the validation quorum.
+		if validation.ParticipantAddress == msg.Creator {
+			k.LogWarn("[SubmitPocValidationsV2] Self-validation not permitted, skipping", types.PoC,
+				"validator", msg.Creator,
+				"participant", validation.ParticipantAddress,
+				"model_id", modelID)
+			continue
+		}
+
 		// Check for duplicate submission (prevents vote flipping)
 		exists, err := k.HasPocValidationV2(ctx, startBlockHeight, validation.ParticipantAddress, modelID, msg.Creator)
 		if err != nil {
