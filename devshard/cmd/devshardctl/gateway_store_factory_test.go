@@ -80,6 +80,19 @@ func TestNewGatewayStorePGHOSTSetPGDown(t *testing.T) {
 	require.EqualValues(t, 1111, sqliteState.Settings.DefaultRequestMaxTokens)
 }
 
+func TestNewGatewayStorePGHOSTSetPGDownNoSQLiteFallback(t *testing.T) {
+	t.Setenv("PGHOST", "127.0.0.1")
+	t.Setenv("PGPORT", "1")
+	t.Setenv("PG_CONNECT_TIMEOUT", "100ms")
+	t.Setenv("PG_TO_SQLITE_FALLBACK", "false")
+
+	ctx := context.Background()
+	store, err := NewGatewayStore(ctx, t.TempDir())
+	require.Error(t, err)
+	require.Nil(t, store)
+	require.Contains(t, err.Error(), "PG_TO_SQLITE_FALLBACK=false")
+}
+
 func TestNewGatewayStoreAutoMigration(t *testing.T) {
 	cleanup := setupPostgresContainer(t)
 	t.Cleanup(cleanup)

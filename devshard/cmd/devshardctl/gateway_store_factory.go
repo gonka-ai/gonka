@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 	"path/filepath"
@@ -36,6 +37,10 @@ func NewGatewayStore(ctx context.Context, baseStorageDir string) (GatewayStore, 
 
 	pg, pgErr := NewPostgresGatewayStore(ctx)
 	if pgErr != nil {
+		if !gatewayPGToSQLiteFallback() {
+			_ = sqlite.Close()
+			return nil, fmt.Errorf("gateway store: postgres required when PG_TO_SQLITE_FALLBACK=false (host=%s): %w", pgHost, pgErr)
+		}
 		log.Printf("gateway store: postgres connection failed, will retry lazily on write (host=%s): %v", pgHost, pgErr)
 		return NewHybridGatewayStore(nil, sqlite, retryInterval, connectTimeout), nil
 	}
@@ -49,10 +54,18 @@ func NewGatewayStore(ctx context.Context, baseStorageDir string) (GatewayStore, 
 	hybrid := NewHybridGatewayStore(nil, sqlite, retryInterval, connectTimeout)
 	if err := hybrid.ReconcileSyncJournal(ctx, pg); err != nil {
 		_ = pg.Close()
+		if !gatewayPGToSQLiteFallback() {
+			_ = sqlite.Close()
+			return nil, fmt.Errorf("gateway store: sync journal drain failed: %w", err)
+		}
 		log.Printf("gateway store: sync journal drain failed at startup, staying on sqlite fallback: %v", err)
 		return hybrid, nil
 	}
 
-	log.Printf("gateway store: using postgres with sqlite fallback (host=%s)", pgHost)
+	if gatewayPGToSQLiteFallback() {
+		log.Printf("gateway store: using postgres with sqlite fallback (host=%s)", pgHost)
+	} else {
+		log.Printf("gateway store: using postgres only (host=%s, PG_TO_SQLITE_FALLBACK=false)", pgHost)
+	}
 	return hybrid, nil
 }

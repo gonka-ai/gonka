@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -40,19 +39,6 @@ type gatewaySyncJournalRow struct {
 	tableName string
 	rowKey    string
 	op        string
-}
-
-func gatewaySyncJournalEnabled() bool {
-	raw := strings.TrimSpace(os.Getenv("GATEWAY_PG_SYNC_JOURNAL"))
-	if raw == "" {
-		return true
-	}
-	switch strings.ToLower(raw) {
-	case "0", "false", "no", "off":
-		return false
-	default:
-		return true
-	}
 }
 
 func gatewayRotationStatusRowKey(modelID, stage string, epoch uint64) string {

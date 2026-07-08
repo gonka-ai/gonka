@@ -81,8 +81,8 @@ func TestHybridSyncJournalAtomicWrite(t *testing.T) {
 	require.Equal(t, 0, count)
 }
 
-func TestHybridSyncJournalKillSwitch(t *testing.T) {
-	t.Setenv("GATEWAY_PG_SYNC_JOURNAL", "false")
+func TestHybridPGToSQLiteFallbackDisabled(t *testing.T) {
+	t.Setenv("PG_TO_SQLITE_FALLBACK", "false")
 
 	sqlite := newTestSQLiteGatewayStoreOnly(t)
 	settings := GatewaySettings{
@@ -103,11 +103,19 @@ func TestHybridSyncJournalKillSwitch(t *testing.T) {
 
 	updated := settings
 	updated.DefaultRequestMaxTokens = 3333
-	require.NoError(t, hybrid.UpdateSettings(updated))
+	err := hybrid.UpdateSettings(updated)
+	require.Error(t, err)
 
 	count, err := sqlite.countSyncJournalEntries()
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
+
+	_, has, err := sqlite.LoadState()
+	require.NoError(t, err)
+	require.True(t, has)
+	sqliteState, _, err := sqlite.LoadState()
+	require.NoError(t, err)
+	require.EqualValues(t, 1000, sqliteState.Settings.DefaultRequestMaxTokens)
 }
 
 func TestSyncJournalRestartPersistence(t *testing.T) {
