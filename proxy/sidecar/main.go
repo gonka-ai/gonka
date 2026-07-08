@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -1219,15 +1220,11 @@ func syncWhitelist() error {
 	participants := pResp.ActiveParticipants.Participants
 	totalParticipants = int64(len(participants))
 
-	// Count participants that actually advertise a URL. The transient-failure
-	// guard below keys off this, not the raw total, so a set where nobody has a
-	// URL yet (a benign empty state) is not mistaken for a resolution outage.
-	var resolvableParticipants int64
-	for _, p := range participants {
-		if strings.TrimSpace(p.InferenceUrl) != "" {
-			resolvableParticipants++
-		}
-	}
+	// Count DNS resolution failures (incremented by the workers below). This lets
+	// the guard tell a transient outage (lookups erroring) apart from a set that
+	// legitimately yields no public IPs (no URLs, or URLs that resolve to private
+	// IPs by design) - only the former should preserve state and retry.
+	var resolutionFailures int64
 
 	// Worker Pool for DNS Resolution
 	concurrency := 20
@@ -1271,6 +1268,7 @@ func syncWhitelist() error {
 					defer cancel()
 					resolvedIPs, err := resolver.LookupIPAddr(ctx, host)
 					if err != nil {
+						atomic.AddInt64(&resolutionFailures, 1)
 						logMsg("Warning - could not resolve %s: %v", host, err)
 						return // skippedResolution
 					}
@@ -1313,8 +1311,8 @@ func syncWhitelist() error {
 	// tick retries within the same epoch instead of de-whitelisting every
 	// validator (dropping their rate-limit exemption and accruing fail2ban bans)
 	// until the epoch flips.
-	if resolvableParticipants > 0 && len(allowed) == 0 {
-		return fmt.Errorf("resolved 0 of %d participants with a URL to public IPs - preserving existing whitelist state (transient resolution failure)", resolvableParticipants)
+	if failures := atomic.LoadInt64(&resolutionFailures); failures > 0 && len(allowed) == 0 {
+		return fmt.Errorf("DNS resolution failed for %d participant(s) and no public IPs resolved - preserving existing whitelist state (transient resolution failure)", failures)
 	}
 
 	// Update In-Memory BanManager (so it doesn't ban these IPs)
