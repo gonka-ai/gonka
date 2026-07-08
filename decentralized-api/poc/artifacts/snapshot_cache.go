@@ -8,7 +8,11 @@ import (
 )
 
 const (
-	snapshotCacheMaxEntries    = 4
+	// snapshotCacheMaxEntries must fit the pinned working set plus rotation
+	// room. With 2 models the worst case pins 4 trees (early + historical
+	// final per model); 6 leaves 2 rotating slots even then. Note that
+	// exceeding the cap with pinned-only entries evicts the LRU pinned tree.
+	snapshotCacheMaxEntries    = 6
 	snapshotCacheIdleTTL       = 20 * time.Minute
 	snapshotCacheMaxConcurrent = 2
 )
