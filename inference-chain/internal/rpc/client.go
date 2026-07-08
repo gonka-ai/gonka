@@ -4,17 +4,30 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
 	"net/http"
 	"strconv"
+	"time"
 )
 
 const (
 	defaultTrustedBlocksPeriod = 1000
 )
 
+// rpcHTTPClient bounds every RPC fetch so a slow or stalled node cannot hang the
+// caller indefinitely; net/http's default client sets no timeout at all. We bound
+// the connect and the wait-for-response-headers rather than the whole request, so
+// a legitimately large body (e.g. a genesis download) is not capped.
+var rpcHTTPClient = &http.Client{
+	Transport: &http.Transport{
+		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
+		ResponseHeaderTimeout: 30 * time.Second,
+	},
+}
+
 func getStatus(rpcNode string) (*StatusResponse, error) {
 	url := fmt.Sprintf("%s/status", rpcNode)
-	resp, err := http.Get(url)
+	resp, err := rpcHTTPClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
@@ -73,7 +86,7 @@ func GetBlockHash(rpcNode string, height uint64) (string, error) {
 	}
 
 	url := fmt.Sprintf("%s/block?height=%d", rpcNode, height)
-	resp, err := http.Get(url)
+	resp, err := rpcHTTPClient.Get(url)
 	if err != nil {
 		return "", err
 	}
@@ -101,7 +114,7 @@ func GetNodeId(nodeRpcUrl string) (string, error) {
 func DownloadGenesis(nodeAddress string) (json.RawMessage, error) {
 	url := fmt.Sprintf("%s/genesis", nodeAddress)
 
-	resp, err := http.Get(url)
+	resp, err := rpcHTTPClient.Get(url)
 	if err != nil {
 		return nil, err
 	}
