@@ -37,11 +37,11 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	payload := &state.SettlementPayload{
 		EscrowID:                    "42",
 		StateRootAndProtocolVersion: "dev",
-		Nonce:      5,
-		Fees:       321,
-		RestHash:   restHash,
-		HostStats:  hostStats,
-		Signatures: map[uint32][]byte{0: []byte("sig0"), 1: []byte("sig1")},
+		Nonce:                       5,
+		Fees:                        321,
+		RestHash:                    restHash,
+		HostStats:                   hostStats,
+		Signatures:                  map[uint32][]byte{0: []byte("sig0"), 1: []byte("sig1")},
 	}
 
 	// Step 1: marshal (devshardctl side)
@@ -147,9 +147,13 @@ func TestMarshalSettlement_OmitsZeroValidationFields(t *testing.T) {
 	require.NoError(t, err)
 
 	payload := &state.SettlementPayload{
-		EscrowID: "42", Version: "dev", Nonce: 3, Fees: 10,
-		RestHash: restHash, HostStats: hostStats,
-		Signatures: map[uint32][]byte{0: []byte("sig0")},
+		EscrowID:                    "42",
+		StateRootAndProtocolVersion: "dev",
+		Nonce:                       3,
+		Fees:                        10,
+		RestHash:                    restHash,
+		HostStats:                   hostStats,
+		Signatures:                  map[uint32][]byte{0: []byte("sig0")},
 	}
 
 	data, err := marshalSettlement(payload)

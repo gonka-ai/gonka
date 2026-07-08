@@ -33,11 +33,23 @@ func (s *closeCountingStore) GetSignatures(string, uint64) (map[uint32][]byte, e
 func (s *closeCountingStore) GetSessionMeta(string) (*storage.SessionMeta, error) {
 	return nil, storage.ErrSessionNotFound
 }
-func (s *closeCountingStore) MarkFinalized(string, uint64) error { return nil }
-func (s *closeCountingStore) LastFinalized(string) (uint64, error) { return 0, nil }
+func (s *closeCountingStore) MarkFinalized(string, uint64) error        { return nil }
+func (s *closeCountingStore) LastFinalized(string) (uint64, error)      { return 0, nil }
 func (s *closeCountingStore) SaveSnapshot(string, uint64, []byte) error { return nil }
 func (s *closeCountingStore) LoadSnapshot(string) (uint64, []byte, error) {
 	return 0, nil, storage.ErrSnapshotNotFound
+}
+func (s *closeCountingStore) InsertSealedInference(string, storage.InferenceRow) error { return nil }
+func (s *closeCountingStore) GetSealedInference(string, uint64) (storage.InferenceRow, bool, error) {
+	return storage.InferenceRow{}, false, nil
+}
+func (s *closeCountingStore) DeleteSealedInferences(string) error { return nil }
+func (s *closeCountingStore) RecordValidationsAppliedOnce(string, []storage.ValidationObsEntry) error {
+	return nil
+}
+func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error { return nil }
+func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
+	return nil, nil
 }
 func (s *closeCountingStore) PruneEpoch(uint64) error { return nil }
 func (s *closeCountingStore) Close() error {
