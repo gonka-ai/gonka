@@ -135,6 +135,9 @@ func main() {
 	}
 	defer mlClient.Close()
 
+	mlNodeMgr := newMLNodeManager(ctx)
+	slog.Info("mlnode cache", "ttl", mlNodeMgrTTL())
+
 	payloadDir := filepath.Join(*dataDir, "payloads")
 	if err := os.MkdirAll(payloadDir, 0o755); err != nil {
 		log.Fatalf("create payload dir: %v", err)
@@ -159,7 +162,7 @@ func main() {
 
 	br := internaldevshard.NewChainBridge(recorder)
 
-	engine := newDevshardEngine(mlClient, payloadStore, httpClient, chainParams)
+	engine := newDevshardEngine(mlClient, mlNodeMgr, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, br, recorder, engine, chainParams)
 
 	storeDir := filepath.Join(*dataDir, "devshardd")
@@ -393,6 +396,23 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// newMLNodeManager builds the passive ML-node cache used when dapi is
+// unreachable. TTL is MLNODE_CACHE_TTL (default 10m). Start runs periodic prune.
+func newMLNodeManager(ctx context.Context) *mlnodeclient.Manager {
+	mgr := mlnodeclient.NewManager(mlNodeMgrTTL())
+	mgr.Start(ctx)
+	return mgr
+}
+
+func mlNodeMgrTTL() time.Duration {
+	if v := os.Getenv("MLNODE_CACHE_TTL"); v != "" {
+		if d, err := time.ParseDuration(v); err == nil && d > 0 {
+			return d
+		}
+	}
+	return mlnodeclient.DefaultCacheTTL
 }
 
 func expandHome(path string) (string, error) {

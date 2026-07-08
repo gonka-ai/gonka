@@ -301,7 +301,7 @@ func TestMigrateLegacy_IntoPostgresStorage(t *testing.T) {
 	store, err := NewStorage(context.Background(), t.TempDir())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
-	pg, ok := store.(*HybridStorage).backend.(*Postgres)
+	pg, ok := store.(*HybridStorage).pg.(*Postgres)
 	require.True(t, ok)
 
 	n, err := MigrateLegacySQLite(legacyPath, store, func(escrowID string) (uint64, error) {

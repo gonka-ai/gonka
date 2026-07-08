@@ -204,10 +204,9 @@ func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 }
 
 // SetRuntimeParamsProvider supplies the live long-poll-backed view of session
-// governance params, read at HostManager.create to freeze bind-time fields.
-// freeze ValidationRate / grace / VoteThreshold onto the bound SessionConfig.
-// Until then the provider is captured but not consulted, so wiring this in
-// dapi/devshardd is a no-op for behavior.
+// governance params, read at HostManager.create to freeze lane-B bind-time
+// fields (timeouts, vote_threshold_factor). ValidationRate is lane A and comes
+// from the escrow row via bridge.SessionConfigAtBind.
 func (m *HostManager) SetRuntimeParamsProvider(p RuntimeParamsProvider) {
 	m.params = p
 }
@@ -294,20 +293,12 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	creatorAddr := escrow.CreatorAddress
 
-	config := types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
-		TokenPrice:                escrow.TokenPrice,
-		CreateDevshardFee:         escrow.CreateDevshardFee,
-		FeePerNonce:               escrow.FeePerNonce,
-		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
-		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
-		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
-	})
+	config := bridge.SessionConfigAtBind(len(group), escrow)
 	if m.params != nil {
 		live := m.params.SessionParams()
 		config = types.ApplyChainSessionBindParams(config, len(group), types.LiveSessionBindParams{
 			RefusalTimeout:      live.RefusalTimeout,
 			ExecutionTimeout:    live.ExecutionTimeout,
-			ValidationRate:      live.ValidationRate,
 			VoteThresholdFactor: live.VoteThresholdFactor,
 		})
 	} else {
