@@ -51,6 +51,15 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Maintenance windows ship first in v0.2.14, but their param seeding
+		// lives in the v0.2.12 handler, which mainnet executed long before the
+		// feature landed. Seed MaintenanceParams here with the feature
+		// explicitly disabled; governance can enable it later by flipping
+		// maintenance_enabled via MsgUpdateParams.
+		if err := seedMaintenanceParamsDisabled(ctx, k); err != nil {
+			return nil, err
+		}
+
 		// Update genesistransfer params to enable the whitelist and restrict to founders
 		if err := updateGenesisTransferParams(ctx, gtKeeper); err != nil {
 			return nil, fmt.Errorf("update genesistransfer params: %w", err)
@@ -89,6 +98,48 @@ func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper
 	}
 
 	k.LogInfo("seeded delegation reward snapshot for effective epoch", types.Upgrades, "epoch", effectiveEpochIndex)
+	return nil
+}
+
+// seedMaintenanceParamsDisabled seeds MaintenanceParams into on-chain state
+// with the feature disabled (DefaultMaintenanceParams has
+// maintenance_enabled=false).
+//
+// Why here and not v0.2.12: initMaintenanceParams was added to the v0.2.12
+// upgrade handler, but mainnet executed that upgrade before the maintenance
+// feature landed, so it never ran there and params.MaintenanceParams decodes
+// as nil. Reads are safe (GetMaintenanceParams falls back to disabled
+// defaults), but seeding explicit state makes the disabled status queryable
+// on-chain and gives a later governance MsgUpdateParams proposal a concrete
+// baseline to flip maintenance_enabled=true against.
+//
+// Existing non-nil params are left untouched so chains that already carry
+// deliberate maintenance settings (fresh-genesis networks, testnets) keep
+// them across the upgrade.
+func seedMaintenanceParamsDisabled(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.MaintenanceParams != nil {
+		k.LogInfo("seed maintenance params skipped: already present", types.Upgrades,
+			"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled)
+		return nil
+	}
+
+	params.MaintenanceParams = types.DefaultMaintenanceParams()
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("seeded maintenance params with feature disabled", types.Upgrades,
+		"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled,
+		"min_schedule_lead_blocks", params.MaintenanceParams.MaintenanceMinScheduleLeadBlocks,
+		"max_window_blocks", params.MaintenanceParams.MaintenanceMaxWindowBlocks,
+		"max_concurrent_validators", params.MaintenanceParams.MaintenanceMaxConcurrentValidators,
+		"max_concurrent_power_bps", params.MaintenanceParams.MaintenanceMaxConcurrentPowerBps,
+		"credit_cap_blocks", params.MaintenanceParams.MaintenanceCreditCapBlocks,
+		"credit_earn_per_epoch_blocks", params.MaintenanceParams.MaintenanceCreditEarnPerSuccessfulEpochBlocks,
+	)
 	return nil
 }
 
