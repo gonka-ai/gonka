@@ -391,8 +391,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	t0 := time.Now()
 	ch := make(chan buildResult, len(allCfgs))
+	// Cap concurrent builders (see maxConcurrentRuntimeBuilds); results are still
+	// collected per-index below, so ordering and error handling are unchanged.
+	buildSem := make(chan struct{}, resolveMaxConcurrentRuntimeBuilds())
 	for i, cfg := range allCfgs {
 		go func(idx int, cfg RuntimeConfig) {
+			buildSem <- struct{}{}
+			defer func() { <-buildSem }()
 			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)

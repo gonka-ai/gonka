@@ -305,8 +305,50 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	return rt, nil
 }
 
+// defaultMaxConcurrentRuntimeBuilds caps parallel runtime builds at startup: a
+// small keep-alive pool against the shared node LCD, big enough to hide startup
+// latency, small enough to avoid a 429 storm. Overridable per deployment.
+const defaultMaxConcurrentRuntimeBuilds = 16
+
+// resolveMaxConcurrentRuntimeBuilds is the startup build fan-out limit,
+// overridable via DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS (must be >= 1).
+func resolveMaxConcurrentRuntimeBuilds() int {
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS"))
+	if raw == "" {
+		return defaultMaxConcurrentRuntimeBuilds
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < 1 {
+		log.Printf("invalid DEVSHARD_MAX_CONCURRENT_RUNTIME_BUILDS=%q (must be >= 1), using default %d", raw, defaultMaxConcurrentRuntimeBuilds)
+		return defaultMaxConcurrentRuntimeBuilds
+	}
+	return n
+}
+
+// buildRuntimeBridgeClient returns the HTTP client for chain-LCD queries, sized
+// so the bounded build fan-out reuses keep-alive connections instead of churning
+// them (the default MaxIdleConnsPerHost is only 2).
+func buildRuntimeBridgeClient(limit int) *http.Client {
+	transport := http.DefaultTransport.(*http.Transport).Clone()
+	transport.MaxIdleConns = limit
+	transport.MaxIdleConnsPerHost = limit
+	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+}
+
+var (
+	runtimeBridgeClientOnce sync.Once
+	runtimeBridgeClient     *http.Client
+)
+
+func sharedRuntimeBridgeClient() *http.Client {
+	runtimeBridgeClientOnce.Do(func() {
+		runtimeBridgeClient = buildRuntimeBridgeClient(resolveMaxConcurrentRuntimeBuilds())
+	})
+	return runtimeBridgeClient
+}
+
 func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {
-	return bridge.NewRESTBridge(chainREST)
+	return bridge.NewRESTBridge(chainREST, bridge.WithHTTPClient(sharedRuntimeBridgeClient()))
 }
 
 func resolveGatewayRoutePrefix() (string, error) {
