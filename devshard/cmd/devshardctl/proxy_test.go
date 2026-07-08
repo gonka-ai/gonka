@@ -1176,6 +1176,10 @@ func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	require.Eventually(t, func() bool {
+		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+		return blocked
+	}, time.Second, 10*time.Millisecond)
 
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.
