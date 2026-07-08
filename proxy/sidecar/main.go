@@ -18,6 +18,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -1219,6 +1220,12 @@ func syncWhitelist() error {
 	participants := pResp.ActiveParticipants.Participants
 	totalParticipants = int64(len(participants))
 
+	// Count DNS resolution failures (incremented by the workers below). This lets
+	// the guard tell a transient outage (lookups erroring) apart from a set that
+	// legitimately yields no public IPs (no URLs, or URLs that resolve to private
+	// IPs by design) - only the former should preserve state and retry.
+	var resolutionFailures int64
+
 	// Worker Pool for DNS Resolution
 	concurrency := 20
 	sem := make(chan struct{}, concurrency)
@@ -1261,6 +1268,7 @@ func syncWhitelist() error {
 					defer cancel()
 					resolvedIPs, err := resolver.LookupIPAddr(ctx, host)
 					if err != nil {
+						atomic.AddInt64(&resolutionFailures, 1)
 						logMsg("Warning - could not resolve %s: %v", host, err)
 						return // skippedResolution
 					}
@@ -1294,6 +1302,18 @@ func syncWhitelist() error {
 
 	logMsg("Found %d unique public IPs to whitelist (Total scanned: %d).",
 		len(allowed), totalParticipants)
+
+	// A transient DNS/resolution outage at the once-per-epoch sync moment can
+	// leave us with zero resolved IPs even though participants exist. Treat that
+	// as a sync failure (like the 404 path above) rather than overwriting the
+	// nginx whitelist with an empty set: return an error so the caller preserves
+	// the existing whitelist and does NOT advance BlockHeightSynced, so the next
+	// tick retries within the same epoch instead of de-whitelisting every
+	// validator (dropping their rate-limit exemption and accruing fail2ban bans)
+	// until the epoch flips.
+	if failures := atomic.LoadInt64(&resolutionFailures); failures > 0 && len(allowed) == 0 {
+		return fmt.Errorf("DNS resolution failed for %d participant(s) and no public IPs resolved - preserving existing whitelist state (transient resolution failure)", failures)
+	}
 
 	// Update In-Memory BanManager (so it doesn't ban these IPs)
 	if GlobalBanManager != nil {

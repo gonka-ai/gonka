@@ -21,6 +21,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -427,7 +428,7 @@ func TestHandleTransferRequest_CapacityLimit(t *testing.T) {
 
 	mockCosmos := &cosmosclient.MockCosmosMessageClient{}
 	mockCosmos.On("NewInferenceQueryClient").Return(types.NewQueryClient(conn))
-	mockCosmos.On("Status", context.Background()).Return(status, nil)
+	mockCosmos.On("Status", mock.Anything).Return(status, nil)
 
 	s := &Server{
 		e:                e,
