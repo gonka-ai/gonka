@@ -378,6 +378,7 @@ class DevshardStandaloneTests : TestermintTest() {
                     .isEqualTo(session.escrowId.toString())
                 assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
                 assertThat(result.parsed.hostStats).isNotEmpty()
+                assertThat(result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }).isGreaterThan(0)
                 assertThat(result.parsed.signatures).isNotEmpty()
                 val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
                 assertThat(obs.validationObservability.totals.completedValidations)
