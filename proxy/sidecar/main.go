@@ -1219,6 +1219,16 @@ func syncWhitelist() error {
 	participants := pResp.ActiveParticipants.Participants
 	totalParticipants = int64(len(participants))
 
+	// Count participants that actually advertise a URL. The transient-failure
+	// guard below keys off this, not the raw total, so a set where nobody has a
+	// URL yet (a benign empty state) is not mistaken for a resolution outage.
+	var resolvableParticipants int64
+	for _, p := range participants {
+		if strings.TrimSpace(p.InferenceUrl) != "" {
+			resolvableParticipants++
+		}
+	}
+
 	// Worker Pool for DNS Resolution
 	concurrency := 20
 	sem := make(chan struct{}, concurrency)
@@ -1303,8 +1313,8 @@ func syncWhitelist() error {
 	// tick retries within the same epoch instead of de-whitelisting every
 	// validator (dropping their rate-limit exemption and accruing fail2ban bans)
 	// until the epoch flips.
-	if totalParticipants > 0 && len(allowed) == 0 {
-		return fmt.Errorf("resolved 0 of %d participants to public IPs - preserving existing whitelist state (transient resolution failure)", totalParticipants)
+	if resolvableParticipants > 0 && len(allowed) == 0 {
+		return fmt.Errorf("resolved 0 of %d participants with a URL to public IPs - preserving existing whitelist state (transient resolution failure)", resolvableParticipants)
 	}
 
 	// Update In-Memory BanManager (so it doesn't ban these IPs)
