@@ -1,6 +1,6 @@
 services:
   e2e-test:
-    image: ${DEVSHARD_E2E_GO_IMAGE:-golang:1.24.2-alpine3.20}
+    image: ${DEVSHARD_E2E_GO_IMAGE:-golang:1.25.9-alpine3.23}
     working_dir: /app
     volumes:
       - .:/app
