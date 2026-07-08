@@ -26,7 +26,7 @@ func TestBootstrapEscrowRotationSettlementDefaultsDisabled(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -78,7 +78,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -130,7 +130,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 }
 
 func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -169,7 +169,7 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 }
 
 func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -202,7 +202,7 @@ func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testin
 }
 
 func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -233,7 +233,7 @@ func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *t
 	require.Equal(t, "http://configured-api:9000", reloaded.Settings.PublicAPI)
 }
 
-func reloadGatewayStateForTest(t *testing.T, store *GatewayStore) (GatewayState, bool) {
+func reloadGatewayStateForTest(t *testing.T, store GatewayStore) (GatewayState, bool) {
 	t.Helper()
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)

@@ -15,7 +15,7 @@ import (
 // The root-cause layer: the gateway store must open in WAL with a busy timeout
 // so concurrent writes wait instead of failing with "database is locked".
 func TestGatewayStoreUsesWALAndBusyTimeout(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
@@ -84,9 +84,9 @@ func stubQueryTxEscrowID(t *testing.T, fn func(string) (uint64, bool, error)) {
 	t.Cleanup(func() { gatewayQueryTxEscrowID = saved })
 }
 
-func newRecoveryGateway(t *testing.T) (*Gateway, *GatewayStore, GatewaySettings) {
+func newRecoveryGateway(t *testing.T) (*Gateway, GatewayStore, GatewaySettings) {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 	settings := recoveryTestSettings()
@@ -96,7 +96,7 @@ func newRecoveryGateway(t *testing.T) (*Gateway, *GatewayStore, GatewaySettings)
 	return g, store, settings
 }
 
-func devshardIDs(t *testing.T, store *GatewayStore) map[string]GatewayDevshardState {
+func devshardIDs(t *testing.T, store GatewayStore) map[string]GatewayDevshardState {
 	t.Helper()
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
@@ -128,13 +128,14 @@ func TestCreateRotationEscrowAbortsWhenCommitmentWriteFails(t *testing.T) {
 	model := normalizedEscrowRotationModels(settings)[0]
 
 	// Make every write fail, as a locked/read-only DB would.
-	_, err := store.db.Exec("PRAGMA query_only=ON")
+	sqliteStore := requireSQLiteGatewayStore(t, store)
+	_, err := sqliteStore.db.Exec("PRAGMA query_only=ON")
 	require.NoError(t, err)
 
 	_, err = g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
 	require.Error(t, err)
 
-	_, _ = store.db.Exec("PRAGMA query_only=OFF")
+	_, _ = sqliteStore.db.Exec("PRAGMA query_only=OFF")
 	assert.NotContains(t, devshardIDs(t, store), "778", "no escrow created when intent write fails")
 	commitments, _ := store.LoadCommitments()
 	assert.Empty(t, commitments)
@@ -223,7 +224,8 @@ func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
 	old := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339Nano)
-	_, err := store.db.Exec(`
+	sqliteStore := requireSQLiteGatewayStore(t, store)
+	_, err := sqliteStore.db.Exec(`
 		INSERT INTO escrow_rotation_commitments (tx_hash, model, role, epoch, private_key_env, block_height, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
 		"TXOLD", "Qwen/Test", rotationRoleTemp, 0, "", 0, old)

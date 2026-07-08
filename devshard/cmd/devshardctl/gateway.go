@@ -47,7 +47,7 @@ type Gateway struct {
 	metrics               *DevshardMetrics
 	capacity              *CapacityState
 	settings              GatewaySettings
-	store                 *GatewayStore
+	store                 GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
 	chatCache             *chatResponseCache
@@ -521,7 +521,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, perfArgs ...*PerfTracker) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store GatewayStore, perfArgs ...*PerfTracker) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
