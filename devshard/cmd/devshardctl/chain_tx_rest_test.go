@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -194,6 +195,30 @@ func escrowIDQueryServer(t *testing.T, txHash string, escrowID uint64) *httptest
 			},
 		})
 	}))
+}
+
+func TestIsNotFoundError_Status404(t *testing.T) {
+	err := fmt.Errorf("http://primary: %w", &chainHTTPError{
+		method: http.MethodGet,
+		path:   "/cosmos/tx/v1beta1/txs/ABC",
+		status: http.StatusNotFound,
+		body:   "tx not found",
+	})
+	require.True(t, isNotFoundError(err))
+}
+
+func TestIsNotFoundError_500WithNotFoundBody(t *testing.T) {
+	err := fmt.Errorf("http://fallback: %w", &chainHTTPError{
+		method: http.MethodGet,
+		path:   "/cosmos/tx/v1beta1/txs/ABC",
+		status: http.StatusInternalServerError,
+		body:   `{"message":"tx not found"}`,
+	})
+	require.False(t, isNotFoundError(err))
+
+	var httpErr *chainHTTPError
+	require.True(t, errors.As(err, &httpErr))
+	require.Equal(t, http.StatusInternalServerError, httpErr.StatusCode())
 }
 
 // TestRESTChainTxClient_GetTxEscrowIDTriesFallbackOn404 pins the recovery path:
