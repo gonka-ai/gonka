@@ -372,7 +372,7 @@ func TestGatewayLimiterUnlimitedBaselinePreservedUnderScale(t *testing.T) {
 
 func TestDevshardRuntimeLoadIsActivePerWeight(t *testing.T) {
 	rt := &devshardRuntime{}
-	rt.activeRequests.Store(2)
+	rt.activeUserRequests.Store(2)
 	rt.reservedTokens.Store(3) // reserved tokens no longer factor in.
 
 	require.InDelta(t, 0.5, rt.load(4.0), 1e-9)

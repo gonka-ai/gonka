@@ -23,7 +23,15 @@ import (
 
 var sseDoneMarker = []byte("data: [DONE]")
 
-const defaultMetaDrainTimeout = 10 * time.Second
+// defaultMetaDrainTimeout is a last-resort backstop, not an active policy:
+// it must exceed every natural completion window (SecondaryWaitAfterWinner,
+// nonStreamingNoContentTimeout, nonStreamingMaxAttemptWait) so that hosts
+// which are still legitimately generating after a client disconnect get to
+// finish and settle their nonce normally. Cutting a host early records it
+// as a timeout / empty stream through no fault of its own. The only thing
+// this cap should ever terminate is a host that streams forever without
+// tripping any of the normal race timeouts.
+const defaultMetaDrainTimeout = 40 * time.Minute
 
 // metaDrainTimeout applies only after client disconnect (flag.Done() in
 // withMetaDrain), not during normal connected flows. If devshard_meta /
@@ -82,14 +90,36 @@ func (cf *cancelFlag) Done() <-chan struct{} {
 
 // watchClientCancel triggers flag when r's context is canceled (client
 // disconnected). Spawns one short-lived goroutine bounded by request lifetime.
-func watchClientCancel(r *http.Request, flag *cancelFlag) {
+//
+// net/http also cancels the request context when the handler returns after a
+// normal response, which is indistinguishable from a disconnect here. Callers
+// must invoke the returned stop func once RunInference has returned (i.e. the
+// response was fully delivered) so that normal completion does not trip the
+// flag and metaDrain-cancel speculative attempts that are still running under
+// the SecondaryWaitAfterWinner grace window.
+func watchClientCancel(r *http.Request, flag *cancelFlag) (stop func()) {
 	if flag == nil || r == nil {
-		return
+		return func() {}
 	}
+	stopped := make(chan struct{})
 	go func() {
-		<-r.Context().Done()
-		flag.Trigger()
+		select {
+		case <-r.Context().Done():
+			// stop() happens-before the handler returns, which happens-before
+			// net/http cancels the request context, so this non-blocking
+			// re-check deterministically ignores the post-completion cancel
+			// even when the goroutine first wakes up here.
+			select {
+			case <-stopped:
+				return
+			default:
+			}
+			flag.Trigger()
+		case <-stopped:
+		}
 	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stopped) }) }
 }
 
 // withMetaDrain caps upstream host reads after client disconnect so a
@@ -342,7 +372,7 @@ func (d *deferredWriter) logFlushFailedOnce(err error, where string) {
 func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	started := time.Now()
 	flag := newCancelFlag()
-	watchClientCancel(r, flag)
+	stopClientWatch := watchClientCancel(r, flag)
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
 	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
@@ -351,6 +381,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// upstream may run after the client is gone.
 	var doneWriteErr error
 	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	// The response is fully delivered; detach the disconnect watcher so the
+	// handler returning does not masquerade as a client disconnect and cut
+	// down speculative losers still draining in the background finalizer.
+	stopClientWatch()
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -508,9 +542,14 @@ func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	var buf bytes.Buffer
 	flag := newCancelFlag()
-	watchClientCancel(r, flag)
+	stopClientWatch := watchClientCancel(r, flag)
 
 	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	// Winner settled and the response body is buffered; detach the disconnect
+	// watcher so the handler returning does not masquerade as a client
+	// disconnect and cut down speculative losers still draining in the
+	// background finalizer.
+	stopClientWatch()
 	if flag.Gone() {
 		return
 	}
@@ -1015,6 +1054,21 @@ func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
+	entry := map[string]any{
+		"missed":  hs.Missed,
+		"invalid": hs.Invalid,
+		"cost":    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry["required_validations"] = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry["completed_validations"] = hs.CompletedValidations
+	}
+	return entry
+}
+
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 	st := p.sm.SnapshotState()
 
@@ -1082,13 +1136,7 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 
 	hostStats := make(map[string]any, len(st.HostStats))
 	for slot, hs := range st.HostStats {
-		hostStats[fmt.Sprintf("%d", slot)] = map[string]any{
-			"missed":                hs.Missed,
-			"invalid":               hs.Invalid,
-			"cost":                  hs.Cost,
-			"required_validations":  hs.RequiredValidations,
-			"completed_validations": hs.CompletedValidations,
-		}
+		hostStats[fmt.Sprintf("%d", slot)] = hostStatsDebugEntry(hs)
 	}
 
 	revealedSeeds := map[string]int64{}

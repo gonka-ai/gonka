@@ -48,8 +48,24 @@ type HostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
+}
+
+func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
+	entry := HostStatsJSON{
+		SlotID:  slot,
+		Missed:  hs.Missed,
+		Invalid: hs.Invalid,
+		Cost:    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry.RequiredValidations = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry.CompletedValidations = hs.CompletedValidations
+	}
+	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -104,6 +120,7 @@ var gatewayRuntimeBuilder = buildRuntime
 func main() {
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	configureClassifyCapsFromEnv()
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -391,8 +408,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	t0 := time.Now()
 	ch := make(chan buildResult, len(allCfgs))
+	// Cap concurrent builders (see maxConcurrentRuntimeBuilds); results are still
+	// collected per-index below, so ordering and error handling are unchanged.
+	buildSem := make(chan struct{}, resolveMaxConcurrentRuntimeBuilds())
 	for i, cfg := range allCfgs {
 		go func(idx int, cfg RuntimeConfig) {
+			buildSem <- struct{}{}
+			defer func() { <-buildSem }()
 			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)
@@ -667,11 +689,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
-		stats = append(stats, HostStatsJSON{
-			SlotID: slot, Missed: hs.Missed, Invalid: hs.Invalid,
-			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
-		})
+		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))

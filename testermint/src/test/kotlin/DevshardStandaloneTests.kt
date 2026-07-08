@@ -1,5 +1,9 @@
 import com.github.kittinunf.fuel.Fuel
 import com.productscience.*
+import com.productscience.devshardStateRootProtocolVersion
+import com.productscience.devshardTestVersion
+import com.productscience.devshardVersionedRoutePrefix
+import com.productscience.versiondOverrideEnv
 import com.productscience.data.*
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -82,13 +86,22 @@ class DevshardStandaloneTests : TestermintTest() {
         env = overrideVersiondEnv,
     )
 
+    // devshardEscrowAlwaysValidateSpec pins devshard_escrow_params.validation_rate
+    // to 10000 bps so escrows snapshot 100% sampling at create. Without it the
+    // tests depend on the chain default and go flaky when that default changes.
     private val parallelLongEpochConfig = devshardVersiondConfig(
-        genesisSpec = createSpec(epochLength = 25, epochShift = 10).merge(devshardNoRestrictionsSpec),
+        genesisSpec = createSpec(epochLength = 25, epochShift = 10)
+            .merge(devshardNoRestrictionsSpec)
+            .merge(devshardEscrowAlwaysValidateSpec),
         env = overrideVersiondEnv,
     )
 
     private val overrideAlwaysValidateConfig = devshardVersiondConfig(
-        genesisSpec = mergedDevshardGenesisSpec(devshardNoRestrictionsSpec, devshardAlwaysValidateSpec),
+        genesisSpec = mergedDevshardGenesisSpec(
+            devshardNoRestrictionsSpec,
+            devshardAlwaysValidateSpec,
+            devshardEscrowAlwaysValidateSpec,
+        ),
         env = overrideVersiondEnv,
     )
 
@@ -365,6 +378,7 @@ class DevshardStandaloneTests : TestermintTest() {
                     .isEqualTo(session.escrowId.toString())
                 assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
                 assertThat(result.parsed.hostStats).isNotEmpty()
+                assertThat(result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }).isGreaterThan(0)
                 assertThat(result.parsed.signatures).isNotEmpty()
                 val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
                 assertThat(obs.validationObservability.totals.completedValidations)

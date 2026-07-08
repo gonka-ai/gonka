@@ -147,7 +147,7 @@ Returns current session state.
     "create_devshard_fee": 10000,
     "fee_per_nonce": 1000,
     "vote_threshold": 8,
-    "validation_rate": 5000,
+    "validation_rate": 1000,
     "inference_seal_grace_nonces": 160,
     "inference_seal_grace_seconds": 3600
   }

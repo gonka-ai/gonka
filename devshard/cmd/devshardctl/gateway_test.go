@@ -66,26 +66,6 @@ func gatewayTestStateMachineInPhase(t *testing.T, phase types.SessionPhase) *sta
 	return sm
 }
 
-func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
-	oldVersion := Version
-	t.Cleanup(func() { Version = oldVersion })
-	Version = "v2"
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
-	got, err := resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/v2", got)
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
-	_, err = resolveGatewayRoutePrefix()
-	require.ErrorContains(t, err, "unsupported devshard route prefix")
-
-	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
-	got, err = resolveGatewayRoutePrefix()
-	require.NoError(t, err)
-	require.Equal(t, "/devshard/test", got)
-}
-
 func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64) *devshardRuntime {
 	t.Helper()
 
@@ -258,6 +238,93 @@ func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
 	require.True(t, rt.active.Load())
 }
 
+func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// One request in flight → settlement must NOT fire yet, but escrow is
+	// deactivated and marked pending (in-memory + persisted).
+	g.reserveRuntime(rt, 1)
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.False(t, rt.active.Load())
+	require.True(t, rt.settlementPending.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+	require.EqualValues(t, 0, settled.Load())
+
+	// Draining the last request triggers exactly one settlement, which
+	// clears the marker.
+	g.releaseRuntime(rt, 1)
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+
+	state, _, err = g.store.LoadState()
+	require.NoError(t, err)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
+func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// No active requests → settle right away.
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.active.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSettlesDrainedEscrow(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Simulate a marker left behind by a pre-restart drain.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSkipsActiveOrUnflagged(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Active escrow, no pending marker → nothing to do.
+	g.reconcilePendingSettlements()
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSkipsWhenSettlementDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+	})
+
+	// Inactive escrow flagged pending, but settlement is disabled → reconcile
+	// must not settle, and the marker is preserved for a later re-enable.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
 func TestParseDevshardPath(t *testing.T) {
 	id, inner, ok := parseDevshardPath("/devshard/12/v1/debug/perf")
 	require.True(t, ok)
@@ -269,19 +336,19 @@ func TestParseDevshardPath(t *testing.T) {
 }
 
 func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
-	// Load score is activeRequests / W(e). Both runtimes share W(e)=1
+	// Load score is activeUserRequests / W(e). Both runtimes share W(e)=1
 	// (no capacity model wired). The picker should prefer the runtime
 	// with fewer in-flight requests.
 	a := &devshardRuntime{id: "6", model: "m"}
 	b := &devshardRuntime{id: "12", model: "m"}
-	a.activeRequests.Store(5)
-	b.activeRequests.Store(1)
+	a.activeUserRequests.Store(5)
+	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
-	require.EqualValues(t, 2, chosen.activeRequests.Load())
+	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
 	require.EqualValues(t, 5, chosen.reservedTokens.Load())
 }
 
@@ -740,7 +807,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -750,7 +817,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.False(t, rt.active.Load())
-	require.EqualValues(t, 1, rt.activeRequests.Load())
+	require.EqualValues(t, 1, rt.activeUserRequests.Load())
 
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
@@ -913,6 +980,39 @@ func TestAdminAddDevshardWiresSharedPhaseGate(t *testing.T) {
 	require.Equal(t, "confirmation_poc", addedStatus.BlockReason)
 }
 
+func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	previousVersion := Version
+	Version = "dev"
+	t.Cleanup(func() { Version = previousVersion })
+
+	require.Equal(t, "/devshard/dev", gatewayHostRoutePrefix(""))
+	require.Equal(t, "/devshard/v2", gatewayHostRoutePrefix("/devshard/v2"))
+	require.Equal(t, "/v1/devshard", gatewayHostRoutePrefix("/v1/devshard"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/dev"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/v2"))
+	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
+}
+
+func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = "v2"
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
+	got, err := resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/v2", got)
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
+	_, err = resolveGatewayRoutePrefix()
+	require.ErrorContains(t, err, "unsupported devshard route prefix")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
+	got, err = resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/test", got)
+}
+
 func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -1051,7 +1151,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -1063,7 +1163,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.False(t, forwarded)
 	require.True(t, rt.active.Load())
 
-	rt.activeRequests.Store(0)
+	rt.activeUserRequests.Store(0)
 	rec = httptest.NewRecorder()
 	g.handleDevshard(rec, req)
 
@@ -1135,8 +1235,8 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		}),
 	}
-	slow.activeRequests.Store(10)
-	fast.activeRequests.Store(0)
+	slow.activeUserRequests.Store(10)
+	fast.activeUserRequests.Store(0)
 
 	g := NewGateway([]*devshardRuntime{slow, fast}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
@@ -1385,7 +1485,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t *testing.T) {
@@ -1410,7 +1510,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t 
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.NotContains(t, rec.Body.String(), "admin API key")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
@@ -1435,7 +1535,7 @@ func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
@@ -2769,6 +2869,8 @@ func TestGatewayMetricsEndpointExposedAndUpdated(t *testing.T) {
 	require.Contains(t, body, `status="429"`)
 	require.Contains(t, body, `devshard_gateway_limit_rejections_total`)
 	require.Contains(t, body, `reason="max_input_tokens_in_flight"`)
+	require.Contains(t, body, `devshard_gateway_requests_total{model="Qwen/Test",outcome="gateway_limited",reason="max_input_tokens_in_flight"} 1`)
+	require.Contains(t, body, `devshard_gateway_critical_user_failures_total{model="Qwen/Test",reason="max_input_tokens_in_flight"} 1`)
 	require.Contains(t, body, `devshard_gateway_inflight_requests`)
 	require.Contains(t, body, `devshard_runtime_active`)
 	require.Contains(t, body, `devshard_id="12"`)

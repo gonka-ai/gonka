@@ -128,6 +128,37 @@ func TestCancelFlag_NilSafeAndOneShot(t *testing.T) {
 	}
 }
 
+func TestWatchClientCancel_TriggersOnDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+	defer stop()
+
+	cancel()
+
+	select {
+	case <-flag.Done():
+	case <-time.After(time.Second):
+		t.Fatal("flag should trigger when the request context is canceled mid-request")
+	}
+}
+
+func TestWatchClientCancel_StopPreventsTriggerOnNormalCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+
+	stop()
+	stop() // must be idempotent
+	cancel()
+
+	time.Sleep(50 * time.Millisecond)
+	require.False(t, flag.Gone(), "normal handler return must not be treated as a client disconnect")
+}
+
 func TestDeferredWriter_SwallowsAfterClientGone(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flag := newCancelFlag()
@@ -1914,6 +1945,15 @@ func TestRunInference_ExportsPrometheusMetrics(t *testing.T) {
 	require.Contains(t, body, `reason="attempt_failed"`)
 	require.Contains(t, body, `devshard_id="escrow-proxy"`)
 	require.Contains(t, body, "devshard_host_total_time_seconds")
+	require.Contains(t, body, `devshard_gateway_requests_total{model="llama",outcome="success",reason="none"} 1`)
+	require.Contains(t, body, "devshard_gateway_slot_decisions_total")
+	require.Contains(t, body, `decision="real_send"`)
+	require.Contains(t, body, "devshard_gateway_attempts_started_total")
+	require.Contains(t, body, `role="primary"`)
+	require.Contains(t, body, `role="extra"`)
+	require.Contains(t, body, "devshard_gateway_attempts_terminal_total")
+	require.Contains(t, body, "devshard_gateway_attempt_failures_total")
+	require.Contains(t, body, "devshard_gateway_user_requests_with_hidden_failure_total")
 }
 
 func TestPerfTrackerIsUnresponsiveUsesThreshold(t *testing.T) {

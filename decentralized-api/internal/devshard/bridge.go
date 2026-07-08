@@ -55,6 +55,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
 		AutoSealEveryNNonces:      resp.Escrow.AutoSealEveryNNonces,
+		ValidationRate:            resp.Escrow.ValidationRate,
 		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }
@@ -152,6 +153,6 @@ func (b *ChainBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uin
 
 // Compile-time check.
 var (
-	_ bridge.MainnetBridge         = (*ChainBridge)(nil)
+	_ bridge.MainnetBridge           = (*ChainBridge)(nil)
 	_ bridge.SessionBindParamsBridge = (*ChainBridge)(nil)
 )

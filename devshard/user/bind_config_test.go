@@ -45,10 +45,11 @@ func TestSessionConfigAtBind_AppliesChainParams(t *testing.T) {
 		InferenceSealGraceNonces:  55,
 		InferenceSealGraceSeconds: 77,
 		AutoSealEveryNNonces:      16,
+		ValidationRate:            6000,
 	}
 	b := &bindParamsBridge{
 		live: types.LiveSessionBindParams{
-			ValidationRate: 0,
+			ValidationRate: 0, // older chain/dapi omit the field; must not wipe escrow rate
 		},
 	}
 
@@ -57,7 +58,19 @@ func TestSessionConfigAtBind_AppliesChainParams(t *testing.T) {
 	assert.Equal(t, uint32(55), cfg.InferenceSealGraceNonces, "grace nonces come from escrow")
 	assert.Equal(t, uint32(77), cfg.InferenceSealGraceSeconds, "grace seconds come from escrow")
 	assert.Equal(t, uint32(16), cfg.AutoSealEveryNNonces, "auto-seal interval comes from escrow")
-	assert.Equal(t, uint32(0), cfg.ValidationRate)
+	assert.Equal(t, uint32(6000), cfg.ValidationRate, "validation_rate comes from escrow (lane A)")
+}
+
+func TestSessionConfigAtBind_ZeroValidationRateUsesDefault(t *testing.T) {
+	const groupSize = 16
+	escrow := &bridge.EscrowInfo{TokenPrice: 1}
+	b := &bindParamsBridge{
+		live: types.LiveSessionBindParams{ValidationRate: 0},
+	}
+
+	cfg, err := sessionConfigAtBind(groupSize, escrow, b)
+	require.NoError(t, err)
+	assert.Equal(t, types.DefaultValidationRate, cfg.ValidationRate)
 }
 
 func TestSessionConfigAtBind_FallsBackWithoutParamsBridge(t *testing.T) {
@@ -69,4 +82,5 @@ func TestSessionConfigAtBind_FallsBackWithoutParamsBridge(t *testing.T) {
 	assert.Equal(t, types.DefaultInferenceSealGraceNonces(groupSize), cfg.InferenceSealGraceNonces)
 	assert.Equal(t, uint32(types.DefaultInferenceSealGraceSeconds), cfg.InferenceSealGraceSeconds)
 	assert.Equal(t, types.DefaultAutoSealEveryNNonces, cfg.AutoSealEveryNNonces)
+	assert.Equal(t, types.DefaultValidationRate, cfg.ValidationRate)
 }

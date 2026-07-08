@@ -7,6 +7,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | HTTP / behavior | Common cause | Anchor |
 |-----------------|--------------|--------|
 | 400 `"<param>" is currently rejected by the Gonka network` | non-allowlist parameter | [#reject-unknown-param](#reject-unknown-param) |
+| 400 `...name must be a non-empty string` on a whitespace-only name | names are trimmed before the non-empty check | [#reject-whitespace-names](#reject-whitespace-names) |
 | 400 `messages[N].tool_calls[M].id is duplicated` | Kimi-K2.6 model-side bug | [#reject-duplicate-tool-call-id](#reject-duplicate-tool-call-id) |
 | 400 on `tags` | undocumented field | [#reject-tags](#reject-tags) |
 | 400 on `guided_json` / `guided_regex` / etc. | vLLM-native structured decoding | [#reject-guided-decoding](#reject-guided-decoding) |
@@ -20,6 +21,9 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | `extra_body` keys appear at top level | OpenAI Python SDK passthrough | [#unwrap-extra_body](#unwrap-extra_body) |
 | `enable_thinking` lifts into `chat_template_kwargs` | Qwen3 canonical placement | [#translate-enable_thinking](#translate-enable_thinking) |
 | `reasoning` object decomposed to top-level `reasoning_effort` | OpenRouter unified-reasoning convention | [#translate-reasoning](#translate-reasoning) |
+| 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
+| 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
+| 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
 
 ## Silent strips
 
@@ -197,6 +201,48 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **Fix (client-side)**: send `user` instead if you need OpenAI-compatible attribution; the gateway uniformly validates that field with a 512 B cap.
 
 **Captured-requests**: n/a — no captures observed.
+
+---
+
+### #strip-thinking-minimax
+
+**What**: top-level `thinking: {...}` (Anthropic-style wrapper) silent-stripped on the MiniMax-M2.7 route before `ThinkingValidator` runs.
+
+**Why**: MiniMax-M2.7 has no `chat_template_kwargs` switch for thinking — interleaved reasoning is structural to the chat template and always-on. The model emits `<think>...</think>` blocks inline in `content` by design ([[MiniMax-2]](references.md#minimax)). Mirroring `thinking` into template kwargs (as on Kimi-K2.6) or normalizing it (as on Qwen-style routes) is a no-op on this route. Silent-strip is the closest behavior to the model's actual contract.
+
+**When to restore**: when MiniMax adds a documented per-request thinking toggle.
+
+**Fix (client-side)**: stop sending `thinking`; for clients that need to suppress the visible thinking display, parse + filter `<think>...</think>` blocks client-side from the response content.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #strip-enable_thinking-minimax
+
+**What**: top-level `enable_thinking: bool` silent-stripped on the MiniMax-M2.7 route before `EnableThinkingValidator` runs (which would otherwise translate it into `chat_template_kwargs.enable_thinking`).
+
+**Why**: vLLM Issue [vLLM-25](references.md#vllm) ([#36778](https://github.com/vllm-project/vllm/issues/36778)) confirms `chat_template_kwargs.enable_thinking=false` does NOT disable thinking on M2.5+. Forwarding the translated kwarg would silently mislead clients into believing they'd disabled reasoning when in fact the model still emits `<think>` blocks. Strip avoids the misleading appearance of effect.
+
+**When to restore**: when the upstream Issue is fixed and the kwarg is honored on the M2 line.
+
+**Fix (client-side)**: stop sending `enable_thinking` on this route — see [strip-thinking-minimax](#strip-thinking-minimax) for the broader story.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #strip-tool_call_id-minimax
+
+**What**: `tool_call_id` on `role:"tool"` messages silent-stripped on the MiniMax-M2.7 route during message normalization.
+
+**Why**: MiniMax-M2.7 tool messages correlate by `name` + positional order within a tool-result block, not by `tool_call_id` ([[MiniMax-4]](references.md#minimax)). Clients porting OpenAI code may dual-emit the field. Forwarding it is harmless (vLLM ignores) but rejecting it would force every OpenAI-compat client to fork their tool-message serializer per route. Silent-strip preserves compat without implying semantics we don't honor.
+
+**When to restore**: never — the field has no consumer on this route.
+
+**Fix (client-side)**: omit `tool_call_id` for cleanest payloads. If you must dual-emit (e.g. shared serializer across routes), it's a free pass-through to silent-strip.
+
+**Captured-requests**: n/a — anticipated dual-emission from porting clients.
 
 ---
 
@@ -411,9 +457,93 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Captured-requests**: n/a — no captures observed.
 
+---
+
+### #accept-structured_outputs-minimax
+
+**What**: `structured_outputs` is accepted on the `MiniMaxAI/MiniMax-M2.7` route (not rejected). Only Kimi-K2.6 rejects the field.
+
+**Why**: The vLLM structured-output manager actively enforces the constraint on this route — verified end-to-end with paired discriminating/control requests: the `json`, `regex`, `choice`, `grammar`, and `json_object` kinds each steered output away from the natural answer the control produced. The engine holds the constraint, so there is no need to gate the field at the gateway.
+
+**Caveat — `structural_tag` must be the OBJECT form**: a JSON-encoded *string* `structural_tag` crashes vLLM with an HTTP 500 on the request handler, so the gateway rejects the string form with a 400 on every route. Send the object shape (`{"type":"structural_tag","structures":[...],"triggers":[...]}`).
+
+**Caveat — `response_format` conflict**: `structured_outputs` still cannot be combined with `response_format` (see [#reject-structured_outputs-with-response_format](#reject-structured_outputs-with-response_format)).
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #reject-whitespace-names
+
+**What**: HTTP 400 on a name field that is present but contains only whitespace — e.g. `tools[].function.name`, `tool_choice.function.name`, `response_format.json_schema.name`, or a MiniMax tool-result entry `name`. The error reads `...name must be a non-empty string`.
+
+**Why**: Every name validator trims with `strings.TrimSpace` *before* its non-empty check. Without the trim a whitespace-only name passes the gateway, reaches the engine as an effectively empty / nonexistent tool or schema name, and the request produces no usable output — it hangs until the deadline (0 bytes) and ties up a request slot/escrow. This is the same hang class as `max_tokens: 0` and `n: 0`. The engine is not crashed; the request just never completes.
+
+**Maintainer note**: when adding any new name/identifier field to a validator, check it with `strings.TrimSpace(value) == ""` (or `messagevalidators.RequiredNonEmptyString`), never a bare `== ""` — a bare empty-string check is a whitespace-bypass that re-opens this hang.
+
+**Fix (client-side)**: send a real (non-blank) name.
+
+---
+
+### #accept-tool-message-minimax-shape
+
+**What**: On the MiniMaxAI/MiniMax-M2.7 route, `role:"tool"` messages MUST carry `content` as an array of `{name, type:"text", text}` objects (the MiniMax-native shape per [[MiniMax-4]](references.md#minimax)) — not the OpenAI string + `tool_call_id` shape. Bare-string content is rejected with HTTP 400.
+
+**Why**: MiniMax's tool-calling contract correlates tool results by per-entry `name` + positional order inside a tool-result block; there is no `tool_call_id`. The MinimaxToolMessage content validator (registered in the per-model role policy override) enforces the entry shape and caps (≤16 entries, name ≤64 B, text ≤64 KiB, closed allow-list of keys to defend against [[SGLang-2]](references.md#sglang) union-with-null crash class). `tool_call_id`, if dual-emitted by a client porting from OpenAI, is silently stripped — see [strip-tool_call_id-minimax](#strip-tool_call_id-minimax).
+
+**When to restore**: when MiniMax adds OpenAI-compat tool-message handling to their parser.
+
+**Fix (client-side)**: emit the M2.7 shape:
+```json
+{"role": "tool",
+ "content": [
+    {"name": "<function_name>", "type": "text", "text": "<json-stringified result>"}
+ ]}
+```
+Multiple parallel tool results in one block: one array entry per call.
+
+**Captured-requests**: n/a — pre-deployment design decision.
+
+---
+
+### #reject-out-of-range-sampling
+
+**What**: HTTP 400 on `top_p ≤ 0`, `repetition_penalty ≤ 0`, or a `top_k` that is neither `-1` nor `≥ 1`.
+
+**Why**: These sampling knobs have ranges the backend enforces: `top_p` must be in `(0, 1]` and `repetition_penalty` must be `> 0` per the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm); `top_k` accepts `-1` (disabled) or any integer `≥ 1`. The low end is an *exclusive* bound, so clamping to it would itself be invalid (e.g. `top_p = 0` is not a legal value) — the gateway returns a clear, field-named 400 at the boundary instead of forwarding a value the engine rejects with an opaque error. Values above the *upper* bound are clamped instead (`top_p > 1 → 1`, `repetition_penalty > 2 → 2`), and `temperature` / `min_p` are clamped into `[0, 2]` / `[0, 1]`.
+
+**Fix (client-side)**: send `top_p` in `(0, 1]`, `repetition_penalty > 0`, and `top_k` as `-1` or a positive integer.
+
+**Captured-requests**: n/a — no captures observed.
+
+---
+
+### #reject-nonpositive-max-tokens
+
+**What**: HTTP 400 on `max_tokens: 0` (or `max_completion_tokens: 0`) for non-Kimi routes.
+
+**Why**: A zero output budget is not a meaningful request — vLLM emits no content, and the gateway's redundancy layer then waits for a winner that can never arrive, so the request hangs to the deadline instead of failing fast. The gateway requires `max_tokens ≥ 1` [[OpenAI-1]](references.md#openai). Kimi-K2.6 instead floors small budgets to 16 as part of its think-burn mitigation (see [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn)), so `0` becomes `16` on that route rather than a 400.
+
+**Fix (client-side)**: send `max_tokens ≥ 1`, or omit it to take the route default.
+
+**Captured-requests**: n/a — no captures observed.
+
+---
+
+### #reject-malformed-param-types
+
+**What**: HTTP 400 when a parameter carries the wrong JSON type: non-boolean `stream` / `skip_special_tokens` / `detokenize` / `parallel_tool_calls`; non-integer `seed` / `min_tokens`; non-string elements in `stop` / `bad_words`; non-integer elements in `stop_token_ids`.
+
+**Why**: vLLM rejects these with type errors at the engine boundary, producing opaque upstream 400s. The gateway type-checks them up front against the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm) so the client gets an immediate, field-named error instead of a backend round-trip.
+
+**Fix (client-side)**: send each field with its declared type — booleans for the flags, non-negative integers for `seed` / `min_tokens` and `stop_token_ids` elements, strings for `stop` / `bad_words` elements.
+
+**Captured-requests**: n/a — no captures observed.
+
 ## Per-model gotchas
 
 Brief pointers to deeper notes in per-model docs:
 
 - **Kimi-K2.6**: [Known model-side bugs we work around](kimi-k2.6.md#known-model-side-bugs-we-work-around)
 - **Qwen3-235B-A22B-Instruct-2507**: [Known model-side bugs we work around](qwen3-235b-a22b-instruct-2507.md#known-model-side-bugs-we-work-around)
+- **MiniMaxAI/MiniMax-M2.7**: [Known model-side bugs we work around](minimax-m2.7.md#known-model-side-bugs-we-work-around)

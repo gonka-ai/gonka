@@ -10,6 +10,9 @@ const (
 	// DefaultAutoSealEveryNNonces is how often auto-seal runs during Active phase.
 	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.
 	DefaultAutoSealEveryNNonces uint32 = 150
+	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
+	// Used when the escrow row omits validation_rate (older chain / dapi).
+	DefaultValidationRate uint32 = 1000
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -51,7 +54,7 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 		CreateDevshardFee: 10_000,
 		FeePerNonce:       1_000,
 		VoteThreshold:     uint32(groupSize) / 2,
-		ValidationRate:    5000,
+		ValidationRate:    DefaultValidationRate,
 	}, groupSize)
 }
 
@@ -65,14 +68,17 @@ type EscrowSessionFields struct {
 	InferenceSealGraceNonces  uint32
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
+	ValidationRate            uint32
 }
 
 // LiveSessionBindParams carries governance fields read from the long-poll
 // snapshot once at session bind. Zero means "not provided" for that field.
+// ValidationRate is not applied here — it is lane A and comes only from the
+// escrow row via SessionConfigFromEscrow.
 type LiveSessionBindParams struct {
 	RefusalTimeout      int64
 	ExecutionTimeout    int64
-	ValidationRate      uint32
+	ValidationRate      uint32 // retained for wire/cache observability; ignored at bind
 	VoteThresholdFactor uint32 // percent, e.g. 50 == 50%
 }
 
@@ -88,10 +94,9 @@ func ComputeVoteThreshold(groupSize int, factor uint32) uint32 {
 
 // ApplyLiveSessionParams overlays live governance fields onto cfg and applies
 // NormalizeSessionConfig. Call after SessionConfigFromEscrow at bind time.
+// ValidationRate is not overlaid — it is lane A and must already be set from
+// the escrow row (zero there means DefaultValidationRate).
 func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
-	if live.ValidationRate > 0 {
-		cfg.ValidationRate = live.ValidationRate
-	}
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
 	if live.RefusalTimeout > 0 {
 		cfg.RefusalTimeout = live.RefusalTimeout
@@ -103,10 +108,11 @@ func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBi
 }
 
 // ApplyChainSessionBindParams overlays lane-B fields from a chain Params query
-// at session bind. Unlike ApplyLiveSessionParams, validation_rate=0 from chain
-// is honored (disables validation sampling).
+// at session bind. ValidationRate is not overlaid — it is lane A and must
+// already be set from the escrow row (zero there means DefaultValidationRate).
+// Older chain/dapi builds that omit validation_rate therefore keep the default
+// instead of disabling validation sampling.
 func ApplyChainSessionBindParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
-	cfg.ValidationRate = live.ValidationRate
 	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
 	if live.RefusalTimeout > 0 {
 		cfg.RefusalTimeout = live.RefusalTimeout
@@ -143,6 +149,9 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	}
 	if fields.AutoSealEveryNNonces > 0 {
 		cfg.AutoSealEveryNNonces = fields.AutoSealEveryNNonces
+	}
+	if fields.ValidationRate > 0 {
+		cfg.ValidationRate = fields.ValidationRate
 	}
 	return NormalizeSessionConfig(cfg, groupSize)
 }

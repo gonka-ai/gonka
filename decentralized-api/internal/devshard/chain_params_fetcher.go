@@ -34,7 +34,7 @@ func NewChainParamsFetcher(qcp InferenceQueryClientProvider) *ChainParamsFetcher
 //   - Params.ValidationParams.LogprobsMode (empty → defaultLogprobsMode in chainProvider.refresh)
 //   - Params.DevshardEscrowParams.DevshardRequestsEnabled, MaxNonce
 //   - Params.DevshardEscrowParams v0.2.13 fields (zero on v0.2.12 chain ⇒
-//     compiled defaults via ApplyLiveSessionParams "if > 0 override" semantics)
+//     compiled defaults; ValidationRate is lane A and ignored at bind)
 //   - EpochInfo.LatestEpoch.Index → CurrentEpochID
 //   - EpochInfo.LatestEpoch.PocStartBlockHeight → ParamsBlockHeight
 //     (used as a non-zero monotone-per-epoch proxy so the OnEpochChange gate

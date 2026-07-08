@@ -249,6 +249,36 @@ func (s *SQLite) openOrLoadPool(epochID uint64) (*epochPool, error) {
 	return p, nil
 }
 
+// HasEscrow reports whether escrowID is present in the in-memory routing index
+// (rebuilt at boot from _meta.db). It lets the hybrid router resolve which
+// backend owns an escrow without a disk round trip.
+func (s *SQLite) HasEscrow(escrowID string) bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	_, ok := s.escrowIdx[escrowID]
+	return ok
+}
+
+// HasAnySessions reports whether SQLite still holds any session after startup
+// reconciliation. HybridStorage uses it to decide whether SQLite must stay
+// attached while Postgres handles new escrows.
+func (s *SQLite) HasAnySessions() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.escrowIdx) > 0
+}
+
+// EscrowIDs returns a snapshot of escrows in the in-memory routing index.
+func (s *SQLite) EscrowIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.escrowIdx))
+	for id := range s.escrowIdx {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 // poolFor returns the pool for the epoch this escrow belongs to, opening it
 // lazily on first access. The escrow_id -> epoch_id lookup is in-memory
 // (rebuilt at boot from _meta.db); the pool itself is opened on demand so a
@@ -1019,7 +1049,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		return fmt.Errorf("drain inference validation obs select: %w", err)
 	}
 	type row struct {
-		slotID               uint32
+		slotID              uint32
 		required, completed uint32
 	}
 	var live []row

@@ -61,8 +61,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -120,6 +120,11 @@ type Host struct {
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
+
+	validationLifecycleMu sync.RWMutex
+	validationStartOnce   sync.Once
+	validationCloseOnce   sync.Once
+	validationClosed      bool
 
 	// Payload prune tracking. These fields are host-local off-state and must
 	// NOT participate in the state root or snapshot. The deterministic seal now
@@ -193,31 +198,59 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
-		prunedFired:           make(map[uint64]struct{}),
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		ownSeed:            ownSeed,
+		prunedFired:        make(map[uint64]struct{}),
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
-	if h.validator != nil {
-		h.validationQueue = make(chan validateJob, defaultValidationQueueSize)
-		h.startValidationWorkers(defaultValidationWorkers)
-	}
 	return h, nil
+}
+
+// Start launches background workers owned by this host. Callers should invoke
+// Start only after the host is registered somewhere that will also Close it.
+func (h *Host) Start() {
+	if h.validator == nil {
+		return
+	}
+	h.validationStartOnce.Do(func() {
+		h.validationLifecycleMu.Lock()
+		defer h.validationLifecycleMu.Unlock()
+		if h.validationClosed {
+			return
+		}
+		q := make(chan validateJob, defaultValidationQueueSize)
+		h.validationQueue = q
+		h.startValidationWorkers(q, defaultValidationWorkers)
+	})
+}
+
+// Close releases host-owned background workers. It is safe to call multiple
+// times and safe to call on hosts that were never started.
+func (h *Host) Close() {
+	h.validationCloseOnce.Do(func() {
+		h.validationLifecycleMu.Lock()
+		defer h.validationLifecycleMu.Unlock()
+		h.validationClosed = true
+		if h.validationQueue != nil {
+			close(h.validationQueue)
+			h.validationQueue = nil
+		}
+	})
 }
 
 // HostMempool returns the host's mempool. Use this to construct a
@@ -299,6 +332,7 @@ func (h *Host) MempoolTxs() []*types.DevshardTx {
 }
 
 func (h *Host) EscrowID() string              { return h.escrowID }
+func (h *Host) EpochID() uint64               { return h.epochID }
 func (h *Host) Group() []types.SlotAssignment { return h.group }
 func (h *Host) SlotIDs() map[uint32]bool      { return h.slotIDs }
 
@@ -911,7 +945,11 @@ const (
 // collectValidationJobs finds finished inferences that this host should validate.
 // Caller must hold h.mu.
 func (h *Host) collectValidationJobs() []validateJob {
-	if h.validator == nil || h.validationQueue == nil {
+	h.validationLifecycleMu.RLock()
+	q := h.validationQueue
+	closed := h.validationClosed
+	h.validationLifecycleMu.RUnlock()
+	if h.validator == nil || q == nil || closed {
 		return nil
 	}
 	if !h.completionRequestsEnabled() {
@@ -919,7 +957,7 @@ func (h *Host) collectValidationJobs() []validateJob {
 	}
 
 	st := h.sm.SnapshotState()
-	available := cap(h.validationQueue) - len(h.validationQueue)
+	available := cap(q) - len(q)
 	if available <= 0 {
 		return nil
 	}
@@ -958,10 +996,32 @@ func (h *Host) collectValidationJobs() []validateJob {
 			mySlotCount := uint32(len(h.slotIDs))
 			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
 			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
+			rate := st.Config.ValidationRate
+			selected := state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, rate)
+			logging.Debug("validation_rate_sample",
+				"subsystem", "validation",
+				"escrow_id", h.escrowID,
+				"inference_id", infID,
+				"validation_rate", rate,
+				"validator_slot_count", mySlotCount,
+				"executor_slot_count", executorSlotCount,
+				"total_slots", totalSlots,
+				"selected", selected,
+			)
+			if !selected {
 				continue
 			}
 			flow = validationFlowShouldValidate
+		} else {
+			logging.Debug("validation_rate_sample",
+				"subsystem", "validation",
+				"escrow_id", h.escrowID,
+				"inference_id", infID,
+				"validation_rate", st.Config.ValidationRate,
+				"status", uint8(rec.Status),
+				"selected", true,
+				"flow", string(validationFlowChallenged),
+			)
 		}
 
 		validatorSlot := h.sortedSlots[0]
@@ -989,10 +1049,10 @@ func (h *Host) collectValidationJobs() []validateJob {
 	return jobs
 }
 
-func (h *Host) startValidationWorkers(count int) {
+func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
 	for i := 0; i < count; i++ {
 		go func() {
-			for job := range h.validationQueue {
+			for job := range q {
 				h.validateAsync(context.Background(), job)
 			}
 		}()
@@ -1000,23 +1060,54 @@ func (h *Host) startValidationWorkers(count int) {
 }
 
 func (h *Host) enqueueValidation(job validateJob) {
-	if h.validationQueue == nil {
+	h.validationLifecycleMu.RLock()
+	q := h.validationQueue
+	closed := h.validationClosed
+	if q == nil || closed {
+		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"flow", string(job.flow),
+			"queued", false,
+			"reason", "no_queue",
+		)
 		return
 	}
 
 	select {
-	case h.validationQueue <- job:
+	case q <- job:
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
+		h.validationLifecycleMu.RUnlock()
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"validator_slot", job.validatorSlot,
+			"executor_address", job.executorAddress,
+			"flow", string(job.flow),
+			"queued", true,
+		)
 	default:
+		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
 		observability.IncValidationQueueDrop()
+		logging.Debug("validation_enqueued",
+			"subsystem", "validation",
+			"escrow_id", h.escrowID,
+			"inference_id", job.inferenceID,
+			"flow", string(job.flow),
+			"queued", false,
+			"reason", "queue_full",
+		)
 		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
 	}
 }
@@ -1047,18 +1138,32 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
+	st := h.sm.SnapshotState()
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
-		"validation_flow", string(job.flow))
+		"validation_flow", string(job.flow),
+		"validation_rate", st.Config.ValidationRate)
+	logging.Debug("validation_triggered",
+		"subsystem", "validation",
+		"escrow_id", h.escrowID,
+		"inference_id", job.inferenceID,
+		"validator_slot", job.validatorSlot,
+		"executor_address", job.executorAddress,
+		"flow", string(job.flow),
+		"validation_rate", st.Config.ValidationRate,
+	)
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		h.validationLifecycleMu.RLock()
+		q := h.validationQueue
+		if q != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(q))
 		}
+		h.validationLifecycleMu.RUnlock()
 	}()
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{

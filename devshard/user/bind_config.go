@@ -8,14 +8,7 @@ import (
 )
 
 func sessionConfigAtBind(groupSize int, escrow *bridge.EscrowInfo, b bridge.MainnetBridge) (types.SessionConfig, error) {
-	config := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
-		TokenPrice:                escrow.TokenPrice,
-		CreateDevshardFee:         escrow.CreateDevshardFee,
-		FeePerNonce:               escrow.FeePerNonce,
-		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
-		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
-		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
-	})
+	config := bridge.SessionConfigAtBind(groupSize, escrow)
 	sb, ok := b.(bridge.SessionBindParamsBridge)
 	if !ok {
 		return types.NormalizeSessionConfig(config, groupSize), nil

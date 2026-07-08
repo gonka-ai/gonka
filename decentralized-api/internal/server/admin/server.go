@@ -8,6 +8,8 @@ import (
 	pserver "decentralized-api/internal/server/public"
 	"decentralized-api/internal/validation"
 	"decentralized-api/payloadstorage"
+	"net/http"
+	_ "net/http/pprof"
 
 	"cosmossdk.io/x/feegrant"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -59,6 +61,7 @@ func NewServer(
 	}
 
 	e.Use(middleware.LoggingMiddleware)
+	e.Any("/debug/pprof/*", echo.WrapHandler(http.DefaultServeMux))
 	g := e.Group("/admin/v1/")
 
 	g.POST("nodes", s.createNewNode)
