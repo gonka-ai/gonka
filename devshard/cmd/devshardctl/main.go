@@ -133,6 +133,7 @@ var gatewayRuntimeBuilder = buildRuntime
 func main() {
 	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
 	initGatewaySlog()
+	ctx := context.Background()
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
 	// Wire the dial-time SSRF guard before any outbound dial. Host URLs come
@@ -142,7 +143,7 @@ func main() {
 	httpguard.SetAllowPrivate(readBoolEnv("DEVSHARD_ALLOW_PRIVATE_ADDRESSES", false))
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
-	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
+	gatewayStore := mustOpenGatewayStore(ctx, runtimeOpts.baseStorageDir)
 	defer func() {
 		if err := gatewayStore.Close(); err != nil {
 			log.Printf("close gateway state: %v", err)
@@ -297,7 +298,7 @@ func resolveBaseStorageDir(flagStorageDir, storagePath string) string {
 	return baseStorageDir
 }
 
-func mustLoadParticipantThrottleState(store *GatewayStore) {
+func mustLoadParticipantThrottleState(store GatewayStore) {
 	sharedParticipantRequestLimiter.SetStore(store)
 	throttles, err := store.LoadParticipantThrottles()
 	if err != nil {
@@ -312,15 +313,15 @@ func mustLoadParticipantThrottleState(store *GatewayStore) {
 	}
 }
 
-func mustOpenGatewayStore(baseStorageDir string) *GatewayStore {
-	gatewayStore, err := NewGatewayStore(filepath.Join(baseStorageDir, "gateway.db"))
+func mustOpenGatewayStore(ctx context.Context, baseStorageDir string) GatewayStore {
+	gatewayStore, err := NewGatewayStore(ctx, baseStorageDir)
 	if err != nil {
 		log.Fatalf("open gateway state: %v", err)
 	}
 	return gatewayStore
 }
 
-func mustLoadPersistedGatewayState(gatewayStore *GatewayStore) (GatewayState, bool) {
+func mustLoadPersistedGatewayState(gatewayStore GatewayStore) (GatewayState, bool) {
 	gatewayState, hasState, err := gatewayStore.LoadState()
 	if err != nil {
 		log.Fatalf("load gateway state: %v", err)
@@ -328,7 +329,7 @@ func mustLoadPersistedGatewayState(gatewayStore *GatewayStore) (GatewayState, bo
 	return gatewayState, hasState
 }
 
-func mustReloadGatewayState(gatewayStore *GatewayStore) GatewayState {
+func mustReloadGatewayState(gatewayStore GatewayStore) GatewayState {
 	gatewayState, hasState, err := gatewayStore.LoadState()
 	if err != nil {
 		log.Fatalf("reload gateway state: %v", err)
@@ -339,7 +340,7 @@ func mustReloadGatewayState(gatewayStore *GatewayStore) GatewayState {
 	return gatewayState
 }
 
-func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gatewayState *GatewayState, flags cliFlags) {
+func mustRepairPersistedGatewayEndpointSettings(gatewayStore GatewayStore, gatewayState *GatewayState, flags cliFlags) {
 	if gatewayStore == nil || gatewayState == nil {
 		return
 	}
@@ -364,7 +365,7 @@ func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gate
 	log.Printf("repaired persisted gateway endpoint settings chain_grpc=%q public_api=%q", settings.ChainGRPC, settings.PublicAPI)
 }
 
-func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions) {
+func mustBootstrapGatewayState(gatewayStore GatewayStore, opts bootstrapOptions) {
 	runtimeCfgs, err := resolveRuntimeConfigs(opts.escrowID, opts.privateKeyHex, opts.defaultModel, opts.storagePath)
 	if err != nil {
 		log.Fatal(err)
@@ -421,7 +422,7 @@ func effectivePublicAPI(flags cliFlags, persisted string) string {
 	return defaultPublicAPIURL
 }
 
-func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
+func mustBuildGateway(gatewayStore GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
 	gatewayState.Settings = gatewayState.Settings.WithTuningDefaults()
 	gatewayState.Settings.ChainGRPC = effectiveChainGRPC(flags, gatewayState.Settings.ChainGRPC)
 	gatewayState.Settings.PublicAPI = effectivePublicAPI(flags, gatewayState.Settings.PublicAPI)
@@ -484,7 +485,7 @@ func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkip
 	}
 }
 
-func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, []startupSkippedEscrow, error) {
+func buildGatewayRuntimes(gatewayStore GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, []startupSkippedEscrow, error) {
 	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
 	// finalized, or settled) stay in the registry but are not built into
 	// memory-resident runtimes: keeping hundreds of dormant escrows resident

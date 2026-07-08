@@ -154,7 +154,7 @@ func TestAnEscrowLeavesTheRegistryAndForgetsItsSeriesInOnePlaceEach(t *testing.T
 // store row so the admin routes accept it.
 func newEscrowMetricsGateway(t *testing.T, escrowID string, isActiveInStore bool) (*Gateway, *devshardRuntime) {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{DefaultModel: metricsLifetimeModel}, []GatewayDevshardState{

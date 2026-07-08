@@ -22,7 +22,7 @@ func (provider *signalingMaxNonce) MaxNonce() uint32 {
 
 // The first balance check runs as the gateway starts, so the chain max nonce must reach the gateway before it.
 func TestNewManagedGatewayChecksBalancesWithTheChainMaxNonceFromTheStart(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	settings := GatewaySettings{DefaultModel: "m", EscrowRotation: EscrowRotationSettings{Enabled: true}}

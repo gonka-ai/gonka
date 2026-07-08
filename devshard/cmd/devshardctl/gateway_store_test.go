@@ -8,12 +8,13 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -97,7 +98,7 @@ func TestAdminAuthMiddlewareRequiresAdminKey(t *testing.T) {
 }
 
 func TestGatewayStoreUpdateSettings(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -198,7 +199,7 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 }
 
 func TestGatewayStorePersistsForceUpstreamStreaming(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -243,7 +244,7 @@ func TestGatewaySettingsWithTuningDefaultsFillsNilForceUpstreamStreaming(t *test
 }
 
 func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -267,7 +268,7 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 		Message: "Qwen temporarily unavailable",
 	}})
 	require.NoError(t, err)
-	_, err = store.db.Exec(`UPDATE gateway_settings SET model_access_json = ? WHERE id = 1`, string(legacyAccess))
+	_, err = requireSQLiteGatewayStore(t, store).db.Exec(`UPDATE gateway_settings SET model_access_json = ? WHERE id = 1`, string(legacyAccess))
 	require.NoError(t, err)
 
 	state, ok, err := store.LoadState()
@@ -282,7 +283,7 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 }
 
 func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -379,7 +380,7 @@ func TestGatewaySettingsWithTuningDefaultsTrimsPrivateKeyEnv(t *testing.T) {
 }
 
 func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -449,7 +450,7 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 }
 
 func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -506,7 +507,7 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 }
 
 func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -575,7 +576,7 @@ func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
 }
 
 func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -636,7 +637,7 @@ func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
 }
 
 func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -699,7 +700,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 }
 
 func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementDisabled(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -767,7 +768,7 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 }
 
 func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisabled(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -835,7 +836,7 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 }
 
 func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -908,7 +909,7 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 }
 
 func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
@@ -1001,9 +1002,9 @@ func TestGatewayStoreDeactivateDevshardIfActiveLeavesAnInactiveEscrowUntouched(t
 	require.False(t, devshardIDs(t, store)["12"].SettlementPending, "an already inactive escrow was marked for settlement")
 }
 
-func newGatewayStoreWithActiveEscrow(t *testing.T, escrowID string) *GatewayStore {
+func newGatewayStoreWithActiveEscrow(t *testing.T, escrowID string) *SQLiteGatewayStore {
 	t.Helper()
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	require.NoError(t, store.Initialize(GatewaySettings{
@@ -1016,7 +1017,7 @@ func newGatewayStoreWithActiveEscrow(t *testing.T, escrowID string) *GatewayStor
 }
 
 func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
@@ -1066,13 +1067,16 @@ func gatewayDevshardsByID(devshards []GatewayDevshardState) map[string]GatewayDe
 	return byID
 }
 
+func TestSQLiteGatewayStoreImplementsInterface(t *testing.T) {
+	var _ GatewayStore = (*SQLiteGatewayStore)(nil)
+}
+
 func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
-
 	require.NoError(t, store.Initialize(GatewaySettings{
 		DefaultModel:                 "Qwen/Test",
 		LogprobsOptimizationOverride: boolPtr(false),
@@ -1103,4 +1107,57 @@ func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
 			require.Equal(t, testCase.write, reloaded.Settings.LogprobsOptimizationOverride)
 		})
 	}
+}
+
+func TestGatewaySettingsColumnsRoundTrip(t *testing.T) {
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 2048,
+		RequestMaxTokensCap:     4096,
+		MaxConcurrentRequests:   8,
+		MaxInputTokensInFlight:  1200,
+		TxGasLimit:              500000,
+		ModelLimits: []GatewayModelLimitSettings{{
+			ModelID:    "Qwen/Test",
+			AccessMode: string(gatewayAccessModeOpen),
+		}},
+		EscrowRotation: EscrowRotationSettings{
+			Enabled:           true,
+			SettlementEnabled: true,
+			PrePoCBlocks:      400,
+			Models: []EscrowRotationModelSettings{{
+				ModelID:     "Qwen/Test",
+				TargetCount: 3,
+				Amount:      1000,
+			}},
+		},
+		Disabled: GatewayDisabledSettings{
+			Enabled: true,
+			Message: "maintenance",
+			NewURL:  "https://gateway.example/new",
+		},
+	}.WithTuningDefaults()
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	args := settingsInsertArgs(settings, now)
+	_, err = store.db.Exec(fmt.Sprintf(`
+		INSERT INTO gateway_settings (%s)
+		VALUES (%s)`,
+		gatewaySettingsInsertColumnNames(),
+		sqlitePlaceholderList(len(args)),
+	), args...)
+	require.NoError(t, err)
+
+	row := store.db.QueryRow(`SELECT ` + gatewaySettingsSelectColumns() + ` FROM gateway_settings WHERE id = 1`)
+	loaded, err := scanGatewaySettings(row)
+	require.NoError(t, err)
+	require.Equal(t, settings, loaded)
 }

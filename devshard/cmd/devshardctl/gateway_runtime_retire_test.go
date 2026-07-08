@@ -359,7 +359,7 @@ func TestSettleTerminalErrKeepsCauseWhenChainUnreachable(t *testing.T) {
 // The auto-settle terminal branch must persist the deactivation, otherwise the
 // stored row stays Active for an escrow the chain considers finished.
 func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 

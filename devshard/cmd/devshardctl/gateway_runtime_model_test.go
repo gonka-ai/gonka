@@ -18,7 +18,7 @@ func TestResolveRuntimeModel(t *testing.T) {
 }
 
 func TestPersistRuntimeModelUpdatesStore(t *testing.T) {
-	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
