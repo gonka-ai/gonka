@@ -324,6 +324,11 @@ func (s *Server) enforceTransferAgentAccess(taAddress string) error {
 	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
+// statusQueryTimeout bounds the chain Status() lookups on the request path so a
+// stalled node cannot hang request goroutines indefinitely (the cometbft client
+// has no default timeout of its own).
+const statusQueryTimeout = 10 * time.Second
+
 func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (err error) {
 	traceCtx, op := observability.Inference.StartTransfer(
 		ctx.Request().Context(), request.OpenAiRequest.Model, request.RequesterAddress)
@@ -358,7 +363,9 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (
 		return err
 	}
 
-	status, err := s.recorder.Status(context.Background())
+	statusCtx, cancel := context.WithTimeout(ctx.Request().Context(), statusQueryTimeout)
+	status, err := s.recorder.Status(statusCtx)
+	cancel()
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
 		return err
@@ -775,7 +782,9 @@ func (s *Server) validateFullRequest(ctx echo.Context, request *ChatRequest) err
 }
 
 func (s *Server) validateTimestampNonce(request *ChatRequest) error {
-	status, err := s.recorder.Status(context.Background())
+	statusCtx, cancel := context.WithTimeout(context.Background(), statusQueryTimeout)
+	status, err := s.recorder.Status(statusCtx)
+	cancel()
 	if err != nil {
 		logging.Error("Failed to get status", types.Inferences, "error", err)
 		return err
