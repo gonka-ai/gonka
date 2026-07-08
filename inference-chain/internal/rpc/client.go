@@ -1,6 +1,7 @@
 package rpc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,10 +15,10 @@ const (
 	defaultTrustedBlocksPeriod = 1000
 )
 
-// rpcHTTPClient bounds every RPC fetch so a slow or stalled node cannot hang the
-// caller indefinitely; net/http's default client sets no timeout at all. We bound
-// the connect and the wait-for-response-headers rather than the whole request, so
-// a legitimately large body (e.g. a genesis download) is not capped.
+// rpcHTTPClient bounds the transport-level phases (connect + wait-for-response
+// headers) of every RPC fetch; net/http's default client sets no timeout at all.
+// The per-request context deadlines below additionally bound the body read, so a
+// node that sends headers and then stalls mid-body cannot hang the caller either.
 var rpcHTTPClient = &http.Client{
 	Transport: &http.Transport{
 		DialContext:           (&net.Dialer{Timeout: 10 * time.Second}).DialContext,
@@ -25,12 +26,40 @@ var rpcHTTPClient = &http.Client{
 	},
 }
 
+// Per-request total deadlines (cover the whole request including the body read).
+// status/block responses are tiny, so a short cap is safe; genesis can be large,
+// so it gets a generous cap that still bounds a stalled transfer. Vars so tests
+// can shrink them.
+var (
+	statusRequestTimeout  = 30 * time.Second
+	genesisRequestTimeout = 5 * time.Minute
+)
+
+// httpGetWithTimeout issues a GET whose context deadline bounds the entire
+// request, including reading the body. The caller must close resp.Body and then
+// call cancel (defer cancel() after the body is fully read/decoded).
+func httpGetWithTimeout(url string, timeout time.Duration) (*http.Response, context.CancelFunc, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	resp, err := rpcHTTPClient.Do(req)
+	if err != nil {
+		cancel()
+		return nil, nil, err
+	}
+	return resp, cancel, nil
+}
+
 func getStatus(rpcNode string) (*StatusResponse, error) {
 	url := fmt.Sprintf("%s/status", rpcNode)
-	resp, err := rpcHTTPClient.Get(url)
+	resp, cancel, err := httpGetWithTimeout(url, statusRequestTimeout)
 	if err != nil {
 		return nil, err
 	}
+	defer cancel()
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
@@ -86,10 +115,11 @@ func GetBlockHash(rpcNode string, height uint64) (string, error) {
 	}
 
 	url := fmt.Sprintf("%s/block?height=%d", rpcNode, height)
-	resp, err := rpcHTTPClient.Get(url)
+	resp, cancel, err := httpGetWithTimeout(url, statusRequestTimeout)
 	if err != nil {
 		return "", err
 	}
+	defer cancel()
 	defer resp.Body.Close()
 
 	var block BlockResponse
@@ -114,10 +144,11 @@ func GetNodeId(nodeRpcUrl string) (string, error) {
 func DownloadGenesis(nodeAddress string) (json.RawMessage, error) {
 	url := fmt.Sprintf("%s/genesis", nodeAddress)
 
-	resp, err := rpcHTTPClient.Get(url)
+	resp, cancel, err := httpGetWithTimeout(url, genesisRequestTimeout)
 	if err != nil {
 		return nil, err
 	}
+	defer cancel()
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {

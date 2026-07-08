@@ -140,6 +140,29 @@ func TestRPCClientBoundsStalledNode(t *testing.T) {
 	require.Less(t, time.Since(start), 2*time.Second, "must be bounded by the timeout, not hang")
 }
 
+// TestGetStatusBoundsBodyStall covers the case the response-header timeout misses:
+// a node that returns 200 headers and then stalls mid-body. The per-request
+// context deadline must still bound the read instead of hanging forever.
+func TestGetStatusBoundsBodyStall(t *testing.T) {
+	old := statusRequestTimeout
+	statusRequestTimeout = 150 * time.Millisecond
+	defer func() { statusRequestTimeout = old }()
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush() // deliver headers, then never write the body
+		}
+		<-r.Context().Done()
+	}))
+	defer srv.Close()
+
+	start := time.Now()
+	_, err := getStatus(srv.URL)
+	require.Error(t, err, "a node that sends headers then stalls the body must be bounded")
+	require.Less(t, time.Since(start), 2*time.Second, "must be cut off by the request deadline")
+}
+
 func TestRPCHTTPClientIsBounded(t *testing.T) {
 	tr, ok := rpcHTTPClient.Transport.(*http.Transport)
 	require.True(t, ok, "rpcHTTPClient must use a configured *http.Transport")
