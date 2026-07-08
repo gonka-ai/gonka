@@ -17,7 +17,7 @@ const (
 	// before probing Postgres again after giving up. Kept short (relative to the
 	// payload store) because gateway management state is low write volume, so a
 	// snappier recovery + journal drain outweighs the occasional reconnect probe.
-	defaultGatewayPGRetryInterval = 30 * time.Second
+	defaultGatewayPGRetryInterval = 15 * time.Second
 	// defaultGatewayPGWriteRetryBudget bounds the in-request retry loop that lets
 	// a brief Postgres blip (reset/failover) recover without dropping to SQLite.
 	defaultGatewayPGWriteRetryBudget = 2 * time.Second
@@ -38,9 +38,9 @@ type HybridGatewayStore struct {
 	lastRetry          time.Time
 	retryInterval      time.Duration
 	connectTimeout     time.Duration
-	writeRetryBudget   time.Duration
-	syncJournalEnabled bool
-	connectPG          func(context.Context) (*PostgresGatewayStore, error)
+	writeRetryBudget      time.Duration
+	sqliteFallbackEnabled bool
+	connectPG             func(context.Context) (*PostgresGatewayStore, error)
 }
 
 func NewHybridGatewayStore(pg *PostgresGatewayStore, sqlite *SQLiteGatewayStore, retryInterval, connectTimeout time.Duration) *HybridGatewayStore {
@@ -51,14 +51,34 @@ func NewHybridGatewayStore(pg *PostgresGatewayStore, sqlite *SQLiteGatewayStore,
 		connectTimeout = gatewayPGConnectTimeout
 	}
 	return &HybridGatewayStore{
-		pg:                 pg,
-		sqlite:             sqlite,
-		retryInterval:      retryInterval,
-		connectTimeout:     connectTimeout,
-		writeRetryBudget:   gatewayPGWriteRetryBudget(),
-		syncJournalEnabled: gatewaySyncJournalEnabled(),
-		connectPG:          NewPostgresGatewayStore,
+		pg:                    pg,
+		sqlite:                sqlite,
+		retryInterval:         retryInterval,
+		connectTimeout:        connectTimeout,
+		writeRetryBudget:      gatewayPGWriteRetryBudget(),
+		sqliteFallbackEnabled: gatewayPGToSQLiteFallback(),
+		connectPG:             NewPostgresGatewayStore,
 	}
+}
+
+// gatewayPGToSQLiteFallback reads PG_TO_SQLITE_FALLBACK (default true). When
+// false, Postgres failures return errors instead of falling back to SQLite; the
+// sync journal is only used while fallback is enabled.
+func gatewayPGToSQLiteFallback() bool {
+	raw := strings.TrimSpace(os.Getenv("PG_TO_SQLITE_FALLBACK"))
+	if raw == "" {
+		return true
+	}
+	switch strings.ToLower(raw) {
+	case "0", "false", "no", "off":
+		return false
+	default:
+		return true
+	}
+}
+
+func (h *HybridGatewayStore) sqliteFallbackAllowed() bool {
+	return h.sqliteFallbackEnabled && h.sqlite != nil
 }
 
 // gatewayPGWriteRetryBudget reads PG_WRITE_RETRY_BUDGET (a Go duration). A value
@@ -130,7 +150,7 @@ func (h *HybridGatewayStore) reconcileAndPublishPgLocked(ctx context.Context, pg
 	if pg == nil {
 		return fmt.Errorf("postgres store unavailable")
 	}
-	if !h.syncJournalEnabled || h.sqlite == nil {
+	if !h.sqliteFallbackEnabled || h.sqlite == nil {
 		h.pg = pg
 		log.Printf("gateway store: postgres connection established")
 		return nil
@@ -159,7 +179,7 @@ func (h *HybridGatewayStore) write(
 		if err := h.attemptPGWrite(ctx, pg, pgFn); err == nil {
 			return nil
 		} else {
-			log.Printf("gateway hybrid: postgres write failed after retries, falling back to sqlite: %v", err)
+			log.Printf("gateway hybrid: postgres write failed after retries: %v", err)
 			// Drop the cached connection so subsequent writes during the outage
 			// get journaled, and the next reconnect replays the journal before
 			// republishing Postgres as primary. Without this, pgxpool would
@@ -167,12 +187,17 @@ func (h *HybridGatewayStore) write(
 			// entries linger, which a later restart-time drain would replay on top
 			// of newer PG rows.
 			h.dropPg(pg)
+			if !h.sqliteFallbackEnabled {
+				return err
+			}
 		}
+	} else if !h.sqliteFallbackEnabled {
+		return errGatewayStoreUnavailable
 	}
 	if h.sqlite == nil {
 		return errGatewayStoreUnavailable
 	}
-	if h.syncJournalEnabled && len(journal) > 0 && sqliteTxFn != nil {
+	if h.sqliteFallbackEnabled && len(journal) > 0 && sqliteTxFn != nil {
 		return h.sqlite.writeWithSyncJournal(journal, sqliteTxFn)
 	}
 	return sqliteFn(h.sqlite)
@@ -240,8 +265,11 @@ func (h *HybridGatewayStore) loadState(ctx context.Context) (GatewayState, bool,
 		}
 		if err != nil {
 			log.Printf("gateway hybrid: postgres load state failed, checking sqlite: %v", err)
+			if !h.sqliteFallbackEnabled {
+				return GatewayState{}, false, err
+			}
 		}
-		if h.sqlite != nil {
+		if h.sqliteFallbackAllowed() {
 			sqliteState, sqliteHas, sqliteErr := h.sqlite.LoadState()
 			if sqliteErr == nil && sqliteHas {
 				return sqliteState, true, nil
@@ -257,7 +285,7 @@ func (h *HybridGatewayStore) loadState(ctx context.Context) (GatewayState, bool,
 		return state, has, nil
 	}
 
-	if h.sqlite != nil {
+	if h.sqliteFallbackAllowed() {
 		state, has, err := h.sqlite.LoadState()
 		if err == nil && has {
 			return state, true, nil
@@ -333,8 +361,11 @@ func (h *HybridGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationS
 		}
 		if err != nil {
 			log.Printf("gateway hybrid: postgres load rotation statuses failed, checking sqlite: %v", err)
+			if !h.sqliteFallbackEnabled {
+				return nil, err
+			}
 		}
-		if h.sqlite != nil {
+		if h.sqliteFallbackAllowed() {
 			sqliteStatuses, sqliteErr := h.sqlite.LoadRotationStatuses(limit)
 			if sqliteErr == nil && len(sqliteStatuses) > 0 {
 				return sqliteStatuses, nil
@@ -350,7 +381,7 @@ func (h *HybridGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationS
 		return statuses, nil
 	}
 
-	if h.sqlite != nil {
+	if h.sqliteFallbackAllowed() {
 		statuses, err := h.sqlite.LoadRotationStatuses(limit)
 		if err == nil && len(statuses) > 0 {
 			return statuses, nil
@@ -385,8 +416,11 @@ func (h *HybridGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error
 		}
 		if err != nil {
 			log.Printf("gateway hybrid: postgres load commitments failed, checking sqlite: %v", err)
+			if !h.sqliteFallbackEnabled {
+				return nil, err
+			}
 		}
-		if h.sqlite != nil {
+		if h.sqliteFallbackAllowed() {
 			sqliteCommitments, sqliteErr := h.sqlite.LoadCommitments()
 			if sqliteErr == nil && len(sqliteCommitments) > 0 {
 				return sqliteCommitments, nil
@@ -402,7 +436,7 @@ func (h *HybridGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error
 		return commitments, nil
 	}
 
-	if h.sqlite != nil {
+	if h.sqliteFallbackAllowed() {
 		commitments, err := h.sqlite.LoadCommitments()
 		if err == nil && len(commitments) > 0 {
 			return commitments, nil
@@ -437,8 +471,11 @@ func (h *HybridGatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, err
 		}
 		if err != nil {
 			log.Printf("gateway hybrid: postgres load suspicious hosts failed, checking sqlite: %v", err)
+			if !h.sqliteFallbackEnabled {
+				return nil, err
+			}
 		}
-		if h.sqlite != nil {
+		if h.sqliteFallbackAllowed() {
 			sqliteHosts, sqliteErr := h.sqlite.LoadSuspiciousHosts()
 			if sqliteErr == nil && len(sqliteHosts) > 0 {
 				return sqliteHosts, nil
@@ -454,7 +491,7 @@ func (h *HybridGatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, err
 		return hosts, nil
 	}
 
-	if h.sqlite != nil {
+	if h.sqliteFallbackAllowed() {
 		hosts, err := h.sqlite.LoadSuspiciousHosts()
 		if err == nil && len(hosts) > 0 {
 			return hosts, nil
@@ -647,8 +684,11 @@ func (h *HybridGatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRo
 		}
 		if err != nil {
 			log.Printf("gateway hybrid: postgres load participant throttles failed, checking sqlite: %v", err)
+			if !h.sqliteFallbackEnabled {
+				return nil, err
+			}
 		}
-		if h.sqlite != nil {
+		if h.sqliteFallbackAllowed() {
 			sqliteRows, sqliteErr := h.sqlite.LoadParticipantThrottles()
 			if sqliteErr == nil && len(sqliteRows) > 0 {
 				return sqliteRows, nil
@@ -664,7 +704,7 @@ func (h *HybridGatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRo
 		return rows, nil
 	}
 
-	if h.sqlite != nil {
+	if h.sqliteFallbackAllowed() {
 		rows, err := h.sqlite.LoadParticipantThrottles()
 		if err == nil && len(rows) > 0 {
 			return rows, nil

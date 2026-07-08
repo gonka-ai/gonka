@@ -53,9 +53,9 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
 | - | `PGUSER` | when `PGHOST` set | - | Postgres user |
 | - | `PGPASSWORD` | when `PGHOST` set | - | Postgres password |
-| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | `240s` | Minimum interval between lazy Postgres reconnect attempts on writes |
+| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | `15s` | Minimum interval between lazy Postgres reconnect attempts on writes (gateway default; dapi payload storage defaults to `240s` if unset) |
 | - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Timeout for each Postgres connect attempt |
-| - | `GATEWAY_PG_SYNC_JOURNAL` | when `PGHOST` set | `true` | When enabled, SQLite fallback writes are journaled and replayed into Postgres on reconnect before PG resumes as primary |
+| - | `PG_TO_SQLITE_FALLBACK` | when `PGHOST` set | `true` | When enabled, Postgres failures fall back to SQLite and outage writes are journaled for replay on reconnect. When `false`, Postgres is required — failures return errors |
 
 ### Gateway persistence backend
 
@@ -81,10 +81,12 @@ support).
 **Rollback:** unset `PGHOST` to run SQLite-only again. Writes that landed in
 Postgres after migration are not automatically copied back to SQLite.
 
-**Postgres outage:** writes during an outage are stored in SQLite only and recorded in
-`gateway_pg_sync_journal`. When Postgres reconnects, those outage deltas are
-replayed into Postgres before it resumes as primary (disable with
-`GATEWAY_PG_SYNC_JOURNAL=false` to revert to payload-style no-backfill behavior).
+**Postgres outage:** when `PG_TO_SQLITE_FALLBACK=true` (default), writes during an
+outage are stored in SQLite and recorded in `gateway_pg_sync_journal`. When
+Postgres reconnects, those outage deltas are replayed into Postgres before it
+resumes as primary. Set `PG_TO_SQLITE_FALLBACK=false` for Postgres-only mode —
+writes and reads error when Postgres is unavailable (no SQLite fallback, no
+journal).
 
 Gateway tables (`gateway_*`, `escrow_rotation_*`, `participant_throttle_state`)
 can share the same Postgres database as devshard session or payload tables; table
