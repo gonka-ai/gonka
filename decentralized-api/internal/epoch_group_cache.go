@@ -120,8 +120,10 @@ func (c *EpochGroupDataCache) GetEpochGroupData(ctx context.Context, epochIndex 
 	c.mu.RUnlock()
 
 	// Miss: coalesce and run the RPC outside c.mu (see GetCurrentEpochGroupData).
+	// DoChan so this caller can abandon its wait via its own ctx without killing
+	// the shared query.
 	key := strconv.FormatUint(epochIndex, 10)
-	result, err, _ := c.epochGroupSF.Do(key, func() (interface{}, error) {
+	ch := c.epochGroupSF.DoChan(key, func() (interface{}, error) {
 		c.mu.RLock()
 		if cached, ok := c.epochCache[epochIndex]; ok {
 			data := cached.data
@@ -168,10 +170,16 @@ func (c *EpochGroupDataCache) GetEpochGroupData(ctx context.Context, epochIndex 
 
 		return data, nil
 	})
-	if err != nil {
-		return nil, err
+
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.(*types.EpochGroupData), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return result.(*types.EpochGroupData), nil
 }
 
 // IsActiveParticipant checks if address is active at given epoch. O(1) lookup.

@@ -100,7 +100,9 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 
 	// Miss: coalesce concurrent fetches for this key into one pair of RPCs, run
 	// OUTSIDE c.mu so a slow granter cannot throttle verification for everyone.
-	result, err, _ := c.sf.Do(cacheKey, func() (interface{}, error) {
+	// DoChan (not Do) so this caller can still abandon its wait via its own ctx
+	// without killing the shared query for everyone else.
+	ch := c.sf.DoChan(cacheKey, func() (interface{}, error) {
 		// Re-check: another goroutine may have populated the cache while we were
 		// becoming the singleflight leader.
 		c.mu.RLock()
@@ -163,8 +165,14 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 
 		return signers, nil
 	})
-	if err != nil {
-		return nil, err
+
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return nil, res.Err
+		}
+		return res.Val.([]SignerInfo), nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
 	}
-	return result.([]SignerInfo), nil
 }
