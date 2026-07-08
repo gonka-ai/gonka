@@ -5,6 +5,7 @@ import (
 	"errors"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -26,6 +27,23 @@ func TestGatewayStoreUsesWALAndBusyTimeout(t *testing.T) {
 	var busyTimeout int
 	require.NoError(t, store.db.QueryRow("PRAGMA busy_timeout").Scan(&busyTimeout))
 	assert.Equal(t, 5000, busyTimeout)
+}
+
+func TestWithDBRetry_RespectsCancellation(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+
+	var attempts atomic.Int32
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		cancel()
+	}()
+
+	err := withDBRetry(ctx, func() error {
+		attempts.Add(1)
+		return errors.New("database is locked")
+	})
+	require.ErrorIs(t, err, context.Canceled)
+	require.Less(t, int(attempts.Load()), escrowWriteRetries)
 }
 
 func recoveryTestSettings() GatewaySettings {
@@ -222,12 +240,12 @@ func TestReconcileCommitmentsKeepsFreshTxNotFound(t *testing.T) {
 // never land — only then is it safe to clear.
 func TestReconcileCommitmentsClearsExpiredTxNotFound(t *testing.T) {
 	g, store, settings := newRecoveryGateway(t)
-	old := time.Now().UTC().Add(-1 * time.Hour).Format(time.RFC3339Nano)
-	_, err := store.db.Exec(`
-		INSERT INTO escrow_rotation_commitments (tx_hash, model, role, epoch, private_key_env, block_height, created_at)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		"TXOLD", "Qwen/Test", rotationRoleTemp, 0, "", 0, old)
-	require.NoError(t, err)
+	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+		TxHash:    "TXOLD",
+		Model:     "Qwen/Test",
+		Role:      rotationRoleTemp,
+		CreatedAt: time.Now().UTC().Add(-1 * time.Hour),
+	}))
 	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 0, false, errTxNotFound })
 
 	g.reconcileCommitments(context.Background(), settings)

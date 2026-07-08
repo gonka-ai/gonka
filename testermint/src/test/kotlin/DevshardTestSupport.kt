@@ -378,7 +378,7 @@ fun LocalInferencePair.assertDevshardSettlement(
     assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
     assertThat(result.parsed.fees).isEqualTo(expectedFees)
 
-    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
+    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }
     if (requireCompletedValidations) {
         assertThat(totalCompletedValidations).isGreaterThan(0)
     }

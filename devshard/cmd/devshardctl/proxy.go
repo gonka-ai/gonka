@@ -1054,6 +1054,21 @@ func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
+	entry := map[string]any{
+		"missed":  hs.Missed,
+		"invalid": hs.Invalid,
+		"cost":    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry["required_validations"] = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry["completed_validations"] = hs.CompletedValidations
+	}
+	return entry
+}
+
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 	st := p.sm.SnapshotState()
 
@@ -1121,13 +1136,7 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 
 	hostStats := make(map[string]any, len(st.HostStats))
 	for slot, hs := range st.HostStats {
-		hostStats[fmt.Sprintf("%d", slot)] = map[string]any{
-			"missed":                hs.Missed,
-			"invalid":               hs.Invalid,
-			"cost":                  hs.Cost,
-			"required_validations":  hs.RequiredValidations,
-			"completed_validations": hs.CompletedValidations,
-		}
+		hostStats[fmt.Sprintf("%d", slot)] = hostStatsDebugEntry(hs)
 	}
 
 	revealedSeeds := map[string]int64{}

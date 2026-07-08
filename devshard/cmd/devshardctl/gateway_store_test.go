@@ -303,6 +303,25 @@ func TestValidateGatewaySettingsRequiresRotationModels(t *testing.T) {
 	require.Contains(t, err.Error(), "duplicate model_id")
 }
 
+func TestGatewaySettingsWithTuningDefaultsTrimsPrivateKeyEnv(t *testing.T) {
+	settings := GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		EscrowRotation: EscrowRotationSettings{
+			Models: []EscrowRotationModelSettings{{
+				ModelID:       " Qwen/Test ",
+				PrivateKeyEnv: "  KIMI_KEY  ",
+			}},
+		},
+	}.WithTuningDefaults()
+
+	require.Equal(t, "Qwen/Test", settings.EscrowRotation.Models[0].ModelID)
+	require.Equal(t, "KIMI_KEY", settings.EscrowRotation.Models[0].PrivateKeyEnv)
+}
+
 func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -358,8 +377,8 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	})
 
 	g := &Gateway{store: store}
-	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
-	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -438,8 +457,8 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 	})
 
 	g := &Gateway{store: store}
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -508,7 +527,7 @@ func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
 	)
 
 	g := &Gateway{store: store, capacity: capacity, rotationBreakers: make(map[string]*rotationBreaker)}
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 0, createAttempts, "must not create escrow for a model absent from the network")
 	require.Equal(t, []string{"12"}, settled, "stranded temp escrow must still be settled")
@@ -570,7 +589,7 @@ func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
 	)
 
 	g := &Gateway{store: store, capacity: capacity, rotationBreakers: make(map[string]*rotationBreaker)}
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 2, createAttempts, "must create escrows for a model the network serves")
 }
@@ -625,7 +644,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 	})
 
 	g := &Gateway{store: store}
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 2, createAttempts)
 	require.Equal(t, []string{"12"}, settled)
@@ -690,7 +709,7 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
 	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}}
-	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -758,7 +777,7 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
 	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}}
-	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -836,7 +855,7 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 	})
 
 	g := &Gateway{store: store}
-	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, []string{"13"}, settled)
 	state, ok, err := store.LoadState()
@@ -910,7 +929,7 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 		epochSwitchBlockHeight: 600,
 	})
 
-	g.rotateEscrowsOnce()
+	g.rotateEscrowsOnce(context.Background())
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 1, settleAttempts)

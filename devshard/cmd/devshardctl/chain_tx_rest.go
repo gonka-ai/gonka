@@ -369,6 +369,28 @@ func (c *RESTChainTxClient) getJSON(ctx context.Context, path string, out any) e
 	return c.getJSONFromBaseURL(ctx, c.baseURL, path, out)
 }
 
+// chainHTTPError is returned by getJSONFromBaseURL on non-200 responses.
+type chainHTTPError struct {
+	method string
+	path   string
+	status int
+	body   string
+}
+
+func (e *chainHTTPError) Error() string {
+	if e == nil {
+		return "chain HTTP error"
+	}
+	return fmt.Sprintf("%s %s status %d: %s", e.method, e.path, e.status, e.body)
+}
+
+func (e *chainHTTPError) StatusCode() int {
+	if e == nil {
+		return 0
+	}
+	return e.status
+}
+
 func (c *RESTChainTxClient) getJSONFromBaseURL(ctx context.Context, baseURL, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
@@ -381,19 +403,21 @@ func (c *RESTChainTxClient) getJSONFromBaseURL(ctx context.Context, baseURL, pat
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("GET %s status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+		return &chainHTTPError{
+			method: http.MethodGet,
+			path:   path,
+			status: resp.StatusCode,
+			body:   strings.TrimSpace(string(body)),
+		}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
 }
 
-// isNotFoundError reports whether a chain GET failed with 404 / not-found rather
-// than a transient error.
+// isNotFoundError reports whether a chain GET failed with HTTP 404 rather than
+// a transient error.
 func isNotFoundError(err error) bool {
-	if err == nil {
-		return false
-	}
-	s := strings.ToLower(err.Error())
-	return strings.Contains(s, "status 404") || strings.Contains(s, "not found")
+	var httpErr *chainHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode() == http.StatusNotFound
 }
 
 func (c *RESTChainTxClient) postJSON(ctx context.Context, path string, in any, out any) error {
