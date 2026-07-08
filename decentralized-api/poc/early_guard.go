@@ -117,6 +117,8 @@ func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryCl
 	// Pin the query to the target height so all validators see the same state.
 	queryCtx := metadata.AppendToOutgoingContext(ctx,
 		grpctypes.GRPCBlockHeightHeader, strconv.FormatInt(target, 10))
+	queryCtx, cancel := context.WithTimeout(queryCtx, 30*1e9) // 30s
+	defer cancel()
 
 	resp, err := qc.AllPoCV2StoreCommitsForStage(queryCtx, &types.QueryAllPoCV2StoreCommitsForStageRequest{
 		PocStageStartBlockHeight: stageHeight,
