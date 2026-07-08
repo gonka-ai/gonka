@@ -55,7 +55,7 @@ type Gateway struct {
 	metrics               *DevshardMetrics
 	capacity              *CapacityState
 	settings              GatewaySettings
-	store                 *GatewayStore
+	store                 GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
 	accounting            *accounting.Recorder
@@ -734,7 +734,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -4340,7 +4340,7 @@ func resolveRuntimeModel(configured, chainModelID, defaultModel, escrowID string
 
 // persistRuntimeModel updates gateway.db when buildRuntime reconciled the model
 // from chain. Best-effort: failures are logged and do not abort startup.
-func persistRuntimeModel(store *GatewayStore, state *GatewayState, escrowID, model string) {
+func persistRuntimeModel(store GatewayStore, state *GatewayState, escrowID, model string) {
 	if store == nil || strings.TrimSpace(escrowID) == "" {
 		return
 	}

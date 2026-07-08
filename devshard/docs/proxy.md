@@ -48,8 +48,48 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
+| - | `PGHOST` | no | - | When set, gateway settings use Postgres as primary storage with SQLite fallback (`{baseStorageDir}/gateway.db`) |
+| - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
+| - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
+| - | `PGUSER` | when `PGHOST` set | - | Postgres user |
+| - | `PGPASSWORD` | when `PGHOST` set | - | Postgres password |
+| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | `240s` | Minimum interval between lazy Postgres reconnect attempts on writes |
+| - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Timeout for each Postgres connect attempt |
+| - | `GATEWAY_PG_SYNC_JOURNAL` | when `PGHOST` set | `true` | When enabled, SQLite fallback writes are journaled and replayed into Postgres on reconnect before PG resumes as primary |
 
-## Quick start
+### Gateway persistence backend
+
+Gateway settings, devshard topology, rotation status, escrow commitments, suspicious
+hosts, and participant throttle state are persisted under `{baseStorageDir}/gateway.db`
+(SQLite). This file is always opened.
+
+When `PGHOST` is set:
+
+- On startup, if Postgres is reachable, existing SQLite data is imported into
+  Postgres once (idempotent; skipped when Postgres already has settings or a
+  migration marker exists).
+- The gateway then uses **hybrid storage**: Postgres is primary; SQLite is a
+  fallback when Postgres is unavailable.
+- Writes try Postgres first (with lazy reconnect, rate-limited by
+  `PG_RETRY_INTERVAL` and bounded by `PG_CONNECT_TIMEOUT`). On failure they
+  fall back to SQLite.
+- Reads try Postgres first; on error or empty state they also check SQLite.
+
+When `PGHOST` is unset, only SQLite is used (same behavior as before hybrid
+support).
+
+**Rollback:** unset `PGHOST` to run SQLite-only again. Writes that landed in
+Postgres after migration are not automatically copied back to SQLite.
+
+**Postgres outage:** writes during an outage are stored in SQLite only and recorded in
+`gateway_pg_sync_journal`. When Postgres reconnects, those outage deltas are
+replayed into Postgres before it resumes as primary (disable with
+`GATEWAY_PG_SYNC_JOURNAL=false` to revert to payload-style no-backfill behavior).
+
+Gateway tables (`gateway_*`, `escrow_rotation_*`, `participant_throttle_state`)
+can share the same Postgres database as devshard session or payload tables; table
+names do not collide.
+
 
 ```bash
 devshardctl \
