@@ -7,6 +7,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// gatewayStoreTestBackends lists the backends that backend-agnostic store
+// contract tests run against. The "postgres" backend is skipped in -short mode
+// (it needs Docker) via setupPostgresContainer.
+var gatewayStoreTestBackends = []string{"sqlite", "postgres"}
+
 func newTestGatewayStore(t *testing.T, backend string) GatewayStore {
 	t.Helper()
 	switch backend {
