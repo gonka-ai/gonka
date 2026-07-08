@@ -62,6 +62,7 @@ type Gateway struct {
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
 	replenishmentInFlight map[string]struct{}
+	escrowTxSem           chan struct{}
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
 }
@@ -489,6 +490,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		},
 		rotationFailures:   make(map[string]struct{}),
 		settlementInFlight: make(map[string]struct{}),
+		escrowTxSem:        make(chan struct{}, maxConcurrentEscrowTx),
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
 	g.metrics.AttachGateway(g)
@@ -592,6 +594,13 @@ const (
 	autoSettlementRetryInterval         = 10 * time.Second
 	autoSettlementAttemptTimeout        = 5 * time.Minute
 	autoSettlementMaxAttempts           = 30
+
+	// maxConcurrentEscrowTx bounds how many escrow-rotation chain transactions
+	// (depletion replacements + auto-settlements) broadcast at once. Per-id dedup
+	// alone let a mass-depletion event fan out one chain tx per escrow at the same
+	// instant, hammering the RPC node into 503s and a self-amplifying crash loop;
+	// this caps the concurrent broadcasts across both schedulers.
+	maxConcurrentEscrowTx = 4
 )
 
 // checkBalances scans all active runtimes and deactivates any whose
@@ -3419,6 +3428,24 @@ func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, 
 	return true, nil
 }
 
+// acquireEscrowTxSlot blocks until a concurrency slot for escrow-rotation chain
+// transactions is free. It is nil-safe so a Gateway built without NewGateway
+// (e.g. in tests) simply runs unbounded rather than panicking.
+func (g *Gateway) acquireEscrowTxSlot() {
+	if g == nil || g.escrowTxSem == nil {
+		return
+	}
+	g.escrowTxSem <- struct{}{}
+}
+
+// releaseEscrowTxSlot returns a slot acquired by acquireEscrowTxSlot.
+func (g *Gateway) releaseEscrowTxSlot() {
+	if g == nil || g.escrowTxSem == nil {
+		return
+	}
+	<-g.escrowTxSem
+}
+
 func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) {
 	if g == nil {
 		return
@@ -3443,6 +3470,9 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 			delete(g.replenishmentInFlight, id)
 			g.replenishmentMu.Unlock()
 		}()
+
+		g.acquireEscrowTxSlot()
+		defer g.releaseEscrowTxSlot()
 
 		ctx, cancel := context.WithTimeout(context.Background(), autoSettlementAttemptTimeout)
 		defer cancel()
@@ -3524,9 +3554,11 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 		}()
 
 		for attempt := 1; attempt <= autoSettlementMaxAttempts; attempt++ {
+			g.acquireEscrowTxSlot()
 			ctx, cancel := context.WithTimeout(context.Background(), autoSettlementAttemptTimeout)
 			result, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{})
 			cancel()
+			g.releaseEscrowTxSlot()
 			if err == nil {
 				log.Printf("auto_settle_submitted escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
