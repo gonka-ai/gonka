@@ -51,6 +51,12 @@ func CreateUpgradeHandler(
 			return nil, err
 		}
 
+		// Initialize maintenance params with defaults for existing chains.
+		// All participants start with zero credit — credit is earned going forward.
+		if err := initMaintenanceParams(ctx, k); err != nil {
+			return nil, err
+		}
+
 		// Update genesistransfer params to enable the whitelist and restrict to founders
 		if err := updateGenesisTransferParams(ctx, gtKeeper); err != nil {
 			return nil, fmt.Errorf("update genesistransfer params: %w", err)
@@ -89,6 +95,48 @@ func seedDelegationRewardSnapshotForEffectiveEpoch(ctx context.Context, k keeper
 	}
 
 	k.LogInfo("seeded delegation reward snapshot for effective epoch", types.Upgrades, "epoch", effectiveEpochIndex)
+	return nil
+}
+
+// initMaintenanceParams initializes the MaintenanceParams sub-struct with defaults.
+// The feature starts disabled; governance can enable it once the network is ready.
+// No per-participant state initialization is needed because:
+//   - MaintenanceState is lazily created via GetOrCreateMaintenanceState
+//   - Credit starts at zero (the default for a missing entry)
+//   - Maintenance collections (reservations, transitions, indexes) start empty
+//
+// This is the seeding step from the maintenance-windows PR (#998), relocated
+// from the v0.2.12 handler: mainnet executed that upgrade before the feature
+// landed, so it could never run there. Two deliberate deviations from the
+// original: errors are returned instead of logged-and-swallowed (matching the
+// other v0.2.14 migrations, so a failed SetParams halts the upgrade), and
+// existing non-nil params short-circuit without a redundant SetParams
+// round-trip.
+func initMaintenanceParams(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.MaintenanceParams != nil {
+		k.LogInfo("maintenance params already present, skipping init", types.Upgrades,
+			"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled)
+		return nil
+	}
+
+	params.MaintenanceParams = types.DefaultMaintenanceParams()
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+
+	k.LogInfo("initialized maintenance params", types.Upgrades,
+		"maintenance_enabled", params.MaintenanceParams.MaintenanceEnabled,
+		"min_schedule_lead_blocks", params.MaintenanceParams.MaintenanceMinScheduleLeadBlocks,
+		"max_window_blocks", params.MaintenanceParams.MaintenanceMaxWindowBlocks,
+		"max_concurrent_validators", params.MaintenanceParams.MaintenanceMaxConcurrentValidators,
+		"max_concurrent_power_bps", params.MaintenanceParams.MaintenanceMaxConcurrentPowerBps,
+		"credit_cap_blocks", params.MaintenanceParams.MaintenanceCreditCapBlocks,
+		"credit_earn_per_epoch_blocks", params.MaintenanceParams.MaintenanceCreditEarnPerSuccessfulEpochBlocks,
+	)
 	return nil
 }
 

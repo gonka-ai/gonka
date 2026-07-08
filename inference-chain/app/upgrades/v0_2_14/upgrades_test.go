@@ -226,6 +226,50 @@ func TestSeedDelegationRewardSnapshotForEffectiveEpoch_DoesNotOverrideExisting(t
 	require.Len(t, snapshot.Penalties, 1)
 }
 
+// TestInitMaintenanceParams_NilParams simulates mainnet state: the chain
+// upgraded past v0.2.12 before maintenance landed, so MaintenanceParams is
+// nil. The init must install defaults with the feature disabled.
+func TestInitMaintenanceParams_NilParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.MaintenanceParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, initMaintenanceParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.MaintenanceParams)
+	require.False(t, got.MaintenanceParams.MaintenanceEnabled, "maintenance must ship disabled")
+	require.Equal(t, inferencetypes.DefaultMaintenanceParams(), got.MaintenanceParams)
+	require.NoError(t, got.MaintenanceParams.Validate())
+}
+
+// TestInitMaintenanceParams_PreservesExisting ensures chains that
+// already carry deliberate maintenance settings (e.g. testnets with the
+// feature enabled) are not stomped by the upgrade.
+func TestInitMaintenanceParams_PreservesExisting(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	existing := inferencetypes.DefaultMaintenanceParams()
+	existing.MaintenanceEnabled = true
+	existing.MaintenanceMaxWindowBlocks = 999
+	params.MaintenanceParams = existing
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, initMaintenanceParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.MaintenanceParams)
+	require.True(t, got.MaintenanceParams.MaintenanceEnabled)
+	require.Equal(t, uint64(999), got.MaintenanceParams.MaintenanceMaxWindowBlocks)
+}
+
 func TestUpdateGenesisTransferParams(t *testing.T) {
 	gtKeeper, ctx := keepertest.GenesistransferKeeper(t)
 
