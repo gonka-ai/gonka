@@ -152,7 +152,7 @@ type testMocks struct {
 }
 
 func setupTestKeeper(t *testing.T, ctrl *gomock.Controller) (keeper.Keeper, sdk.Context, testMocks) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	bankKeeper := keepertest.NewMockBookkeepingBankKeeper(ctrl)
 	bankViewKeeper := keepertest.NewMockBankKeeper(ctrl)

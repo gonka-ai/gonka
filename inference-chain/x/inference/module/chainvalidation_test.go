@@ -26,8 +26,7 @@ var validatorOperatorAddress1 = "gonkavaloper1gcrlrhvw8kd7zr6pl92rxnc6j20chatkcx
 var validatorOperatorAddress2 = "gonkavaloper1xk89s4ymj9y20aym3xa0mz4jhdx40hewckhw0u"
 
 func TestComputeNewWeightsWithStakingValidators(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
-	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	testutil.EnsureBech32Config()
 
 	validatorAccAddress1, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress1)
 	require.NoError(t, err, "Failed to convert operator address to account address")
@@ -318,8 +317,7 @@ func TestPostGracePeriod_PartialCollateral(t *testing.T) {
 }
 
 func TestComputeNewWeights(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
-	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	testutil.EnsureBech32Config()
 
 	validatorOperatorAddress := validatorOperatorAddress1
 	validatorAccAddress, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress)
@@ -650,8 +648,7 @@ func setWeightDistribution(ctx sdk.Context, k keeper.Keeper, participant string,
 }
 
 func TestComputeNewWeights_AllowlistExcludesParticipant(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
-	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	testutil.EnsureBech32Config()
 
 	validatorAccAddress2, err := utils.OperatorAddressToAccAddress(validatorOperatorAddress2)
 	require.NoError(t, err)

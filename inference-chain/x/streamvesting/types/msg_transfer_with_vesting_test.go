@@ -7,11 +7,12 @@ import (
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/stretchr/testify/require"
 
+	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/streamvesting/types"
 )
 
 func init() {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	testutil.EnsureBech32Config()
 }
 
 func validAddr(seed byte) string {

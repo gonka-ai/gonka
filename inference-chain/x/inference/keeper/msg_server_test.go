@@ -23,7 +23,7 @@ func setupMsgServerWithKeeper(k keeper.Keeper) types.MsgServer {
 
 func setupKeeperWithMocks(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	return k, keeper.NewMsgServerImpl(k), ctx, &mock
 }
 

@@ -404,7 +404,7 @@ func TestPoCWeightCalculator_Calculate_RejectsWhenVotingPowerIsInsufficient(t *t
 }
 
 func TestUpdateConfirmationWeightsV2_UsesPerModelWeightScaleFactor(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	testutil.EnsureBech32Config()
 
 	k, ctx := newMinimalInferenceKeeper(t)
 
@@ -1004,7 +1004,7 @@ func newMinimalInferenceKeeper(t *testing.T) (keeper.Keeper, sdk.Context) {
 func newMinimalInferenceKeeperWithStub(t *testing.T) (keeper.Keeper, sdk.Context, *stubGroupKeeper) {
 	t.Helper()
 
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	testutil.EnsureBech32Config()
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)

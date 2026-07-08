@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app"
+	"github.com/productscience/inference/testutil"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -192,11 +193,7 @@ func TestTallyBugReproduction(t *testing.T) {
 func createTestApp(t *testing.T) *app.App {
 	t.Helper()
 
-	// Configure SDK for gonka addresses
-	config := sdk.GetConfig()
-	config.SetBech32PrefixForAccount("gonka", "gonkapub")
-	config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
-	config.SetBech32PrefixForConsensusNode("gonkavalcons", "gonkavalconspub")
+	testutil.EnsureBech32Config()
 
 	db := dbm.NewMemDB()
 	logger := log.NewNopLogger()

@@ -4,7 +4,6 @@ import (
 	"strings"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	banktypes "github.com/cosmos/cosmos-sdk/x/bank/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -101,7 +100,7 @@ func TestValidateIbcTokenForTrade(t *testing.T) {
 	// We need to use the QueryServer interface, but Keeper implements it.
 	// We can call ValidateIbcTokenForTrade directly on k.
 
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	denom := "ibc/27394FB092D2ECCD56123C74F36E4C1F926001CEADA9CA97EA622B25F41E5EB2"
 	chainId := "cosmoshub-4"

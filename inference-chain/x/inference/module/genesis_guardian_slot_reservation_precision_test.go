@@ -5,6 +5,7 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	inference "github.com/productscience/inference/x/inference/module"
 	"github.com/productscience/inference/x/inference/types"
@@ -68,12 +69,7 @@ func TestDecimalPrecisionPanic_Isolated(t *testing.T) {
 func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
-	// Setup SDK config for bech32
-	config := sdk.GetConfig()
-	if config.GetBech32AccountAddrPrefix() != "gonka" {
-		config.SetBech32PrefixForAccount("gonka", "gonkapub")
-		config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
-	}
+	testutil.EnsureBech32Config()
 
 	// Generate valid addresses
 	guardian1AccAddr := sdk.AccAddress([]byte("guardian1___________"))
@@ -134,11 +130,7 @@ func TestApplyBLSGuardianSlotReservation_RepeatingDecimalPrecision(t *testing.T)
 func TestApplyBLSGuardianSlotReservation_PrimeWeights(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
-	config := sdk.GetConfig()
-	if config.GetBech32AccountAddrPrefix() != "gonka" {
-		config.SetBech32PrefixForAccount("gonka", "gonkapub")
-		config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
-	}
+	testutil.EnsureBech32Config()
 
 	guardian1AccAddr := sdk.AccAddress([]byte("guardian1___________"))
 	guardian1OpAddr := sdk.ValAddress(guardian1AccAddr).String()

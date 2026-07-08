@@ -2,7 +2,6 @@ package keeper
 
 import (
 	"context"
-	"sync"
 	"testing"
 	"time"
 
@@ -29,6 +28,7 @@ import (
 	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"github.com/stretchr/testify/require"
 
+	"github.com/productscience/inference/testutil"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	"github.com/productscience/inference/x/inference/keeper"
@@ -36,15 +36,8 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
-var bech32ConfigOnce sync.Once
-
-func ensureBech32Config() {
-	bech32ConfigOnce.Do(func() {
-		cfg := sdk.GetConfig()
-		cfg.SetBech32PrefixForAccount("gonka", "gonkapub")
-		cfg.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
-		cfg.SetBech32PrefixForConsensusNode("gonkavalcons", "gonkavalconspub")
-	})
+func EnsureBech32Config() {
+	testutil.EnsureBech32Config()
 }
 
 func InferenceKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
@@ -198,7 +191,7 @@ func InferenceKeeperWithMock(
 	authzKeeper types.AuthzKeeper,
 	upgradeKeeper types.UpgradeKeeper,
 ) (keeper.Keeper, sdk.Context) {
-	ensureBech32Config()
+	EnsureBech32Config()
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 	transientStoreKey := storetypes.NewTransientStoreKey(types.TransientStoreKey)
 	blsStoreKey := storetypes.NewKVStoreKey(blstypes.StoreKey)

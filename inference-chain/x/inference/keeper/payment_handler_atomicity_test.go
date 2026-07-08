@@ -14,7 +14,7 @@ import (
 
 func vestedPaymentSetup(t *testing.T) (keeper.Keeper, sdk.Context, *keepertest.InferenceMocks) {
 	t.Helper()
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 	return k, ctx, &mocks
 }

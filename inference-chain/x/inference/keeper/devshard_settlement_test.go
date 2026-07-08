@@ -16,6 +16,7 @@ import (
 	dcrdecdsa "github.com/decred/dcrd/dcrec/secp256k1/v4/ecdsa"
 	"github.com/stretchr/testify/require"
 
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -122,15 +123,15 @@ func buildSettlementTestDataWithNonce(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: settlementVersion,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -199,15 +200,15 @@ func buildSettlementTestDataWithVersion(
 	}
 
 	return &types.MsgSettleDevshardEscrow{
-		Settler:    escrow.Creator,
-		EscrowId:   escrow.Id,
+		Settler:                     escrow.Creator,
+		EscrowId:                    escrow.Id,
 		StateRootAndProtocolVersion: version,
-		StateRoot:  stateRoot[:],
-		Nonce:      nonce,
-		Fees:       fees,
-		RestHash:   restHash[:],
-		HostStats:  hostStats,
-		Signatures: sigs,
+		StateRoot:                   stateRoot[:],
+		Nonce:                       nonce,
+		Fees:                        fees,
+		RestHash:                    restHash[:],
+		HostStats:                   hostStats,
+		Signatures:                  sigs,
 	}
 }
 
@@ -238,7 +239,7 @@ func makeHostStats(n int, costPerSlot uint64) []*types.DevshardSettlementHostSta
 }
 
 func TestVerifyDevshardSettlement_HappyPath(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -276,7 +277,7 @@ func TestVerifyDevshardSettlement_VersionTooLong(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_InsufficientQuorum(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -292,7 +293,7 @@ func TestVerifyDevshardSettlement_InsufficientQuorum(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_CostExceedsAmount(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -307,7 +308,7 @@ func TestVerifyDevshardSettlement_CostExceedsAmount(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_FeesExceedAmount(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -323,7 +324,7 @@ func TestVerifyDevshardSettlement_FeesExceedAmount(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_NonceExceedsLimit(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -338,7 +339,7 @@ func TestVerifyDevshardSettlement_NonceExceedsLimit(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_MissedExceedsAssignedPerSlot(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -354,7 +355,7 @@ func TestVerifyDevshardSettlement_MissedExceedsAssignedPerSlot(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -371,7 +372,7 @@ func TestVerifyDevshardSettlement_InvalidExceedsCompletedPerSlot(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -386,7 +387,7 @@ func TestVerifyDevshardSettlement_RemainderSlotMissedAllowed(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_NonRemainderSlotMissedRejected(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -402,7 +403,7 @@ func TestVerifyDevshardSettlement_NonRemainderSlotMissedRejected(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_InvalidSignature(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 
@@ -423,7 +424,7 @@ func TestVerifyDevshardSettlement_InvalidSignature(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	// Generate keys for signing (these are the "warm keys")
 	warmKeys, _ := generateDevshardKeys(t, keeper.DevshardGroupSize)
@@ -460,7 +461,7 @@ func TestVerifyDevshardSettlement_WarmKeyAccepted(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_WarmKeyRejected(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	warmKeys, _ := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	_, coldSlots := generateDevshardKeys(t, keeper.DevshardGroupSize)
@@ -481,7 +482,7 @@ func TestVerifyDevshardSettlement_WarmKeyRejected(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_DuplicateSignerMultiSlot(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	// One validator owns all 16 slots
 	key, err := dcrdsecp.GeneratePrivateKey()
@@ -536,7 +537,7 @@ func TestComputeDevshardHostStatsHash_Deterministic(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_DuplicateHostStatsSlotId(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -555,7 +556,7 @@ func TestVerifyDevshardSettlement_DuplicateHostStatsSlotId(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_DuplicateSlotId(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -581,7 +582,7 @@ func TestVerifyDevshardSettlement_DuplicateSlotId(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_UnsortedHostStats(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -606,7 +607,7 @@ func TestVerifyDevshardSettlement_UnsortedHostStats(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_ZeroCost(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -636,7 +637,7 @@ func TestComputeDevshardHostStatsHash_GoldenValue(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_WrongPhaseRejected(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -699,7 +700,7 @@ func TestVerifyDevshardSettlement_NilParams(t *testing.T) {
 }
 
 func TestVerifyDevshardSettlement_ApprovedVersionsRejectUnknown(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -727,7 +728,7 @@ func TestVerifyDevshardSettlement_ApprovedVersionsRejectUnknown(t *testing.T) {
 // rest_hash from any v2-specific inputs (those fields are reserved on the
 // wire; see tx.proto's MsgSettleDevshardEscrow `reserved 10, 11, 12, 13`).
 func TestVerifyDevshardSettlement_V2_HappyPath(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
@@ -753,7 +754,7 @@ func TestVerifyDevshardSettlement_V2_HappyPath(t *testing.T) {
 // v1 message as "v2" (without re-signing) must fail the state_root check,
 // because the version_hash byte block participates in the preimage.
 func TestVerifyDevshardSettlement_VersionTagBoundByStateRoot(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	escrow := types.DevshardEscrow{
