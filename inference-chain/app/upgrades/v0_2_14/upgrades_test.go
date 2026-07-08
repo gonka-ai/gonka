@@ -53,6 +53,26 @@ func TestBurnFeeCollectorBalance_NoBaseDenomBalanceIsNoOp(t *testing.T) {
 	require.NoError(t, burnFeeCollectorBalance(ctx, k))
 }
 
+func TestSetDevshardAllowedCreatorAddressesAddsDahl(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.AllowedCreatorAddresses = []string{"gonka1existing"}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardAllowedCreatorAddresses(ctx, k))
+	require.NoError(t, setDevshardAllowedCreatorAddresses(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"gonka1existing",
+		"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
+	}, got.DevshardEscrowParams.AllowedCreatorAddresses)
+}
+
 func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceNonces(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 

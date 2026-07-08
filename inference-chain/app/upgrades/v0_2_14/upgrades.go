@@ -25,6 +25,11 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+var devshardAllowedCreatorAddressesToAdd = []string{
+	// Dahl / @paranjko
+	"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
@@ -44,6 +49,9 @@ func CreateUpgradeHandler(
 		// v0.2.13 introduced new DevshardEscrowParams fields but mainnet executed
 		// that upgrade before these backfills landed. Repair on-disk state here.
 		if err := backfillDevshardEscrowParamDefaults(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
 			return nil, err
 		}
 		if err := backfillDevshardEscrowFees(ctx, k); err != nil {
@@ -152,6 +160,43 @@ func burnFeeCollectorBalance(ctx context.Context, k keeper.Keeper) error {
 		"amount", burnCoins.String(),
 		"fee_collector_balance", balance.String(),
 	)
+	return nil
+}
+
+func setDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper) error {
+	return addDevshardAllowedCreatorAddresses(ctx, k, devshardAllowedCreatorAddressesToAdd)
+}
+
+func addDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper, addresses []string) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+
+	seen := make(map[string]struct{}, len(params.DevshardEscrowParams.AllowedCreatorAddresses)+len(addresses))
+	for _, address := range params.DevshardEscrowParams.AllowedCreatorAddresses {
+		seen[address] = struct{}{}
+	}
+
+	added := 0
+	for _, address := range addresses {
+		if _, ok := seen[address]; ok {
+			continue
+		}
+		params.DevshardEscrowParams.AllowedCreatorAddresses = append(params.DevshardEscrowParams.AllowedCreatorAddresses, address)
+		seen[address] = struct{}{}
+		added++
+	}
+
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set devshard allowed creator addresses", types.Upgrades,
+		"total", len(params.DevshardEscrowParams.AllowedCreatorAddresses),
+		"added", added)
 	return nil
 }
 
