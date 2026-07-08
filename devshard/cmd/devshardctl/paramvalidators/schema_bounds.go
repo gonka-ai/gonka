@@ -35,6 +35,39 @@ var validSchemaTypes = map[string]struct{}{
 	"null":    {},
 }
 
+// forbiddenSchemaKeys and branchSchemaKeys are walked once per node. Defining them at package
+// scope keeps the slice headers off the per-call allocation path (the literal-in-range form
+// allocates a fresh backing array on every walkSchema invocation).
+var forbiddenSchemaKeys = []string{"$ref", "$defs", "definitions"}
+var branchSchemaKeys = []string{"anyOf", "oneOf", "allOf"}
+
+// schemaDataKeys lists JSON-Schema keywords whose values are *literal data*, not child
+// schemas. They must NOT be recursed into; an attacker could otherwise put a deeply nested
+// object inside `default`/`examples`/`const` and have it counted against the schema budget
+// needlessly, or worse, hide structure the walker treats as schema-shaped.
+//
+// DereferenceLocalSchemaRefs and the post-deref $ref/$defs ban both skip these keys for the
+// same reason. A payload like {"enum":[{"$ref":"#/$defs/A"}]} can therefore still contain
+// the literal key "$ref" after normalization. That is expected: enum/const values are data,
+// not schema positions, and downstream treats them as opaque literals rather than references.
+var schemaDataKeys = map[string]struct{}{
+	"enum":              {},
+	"const":             {},
+	"default":           {},
+	"examples":          {},
+	"required":          {},
+	"dependentRequired": {},
+}
+
+// schemaChildMapKeys lists keywords whose values are *maps* of name->schema (not a schema
+// themselves). We recurse into each map value as a separate child schema; the wrapper map
+// itself is not counted as a schema node.
+var schemaChildMapKeys = map[string]struct{}{
+	"properties":        {},
+	"patternProperties": {},
+	"dependentSchemas":  {},
+}
+
 // SchemaBounds enforces the structural bounds that keep a JSON-Schema payload from
 // exploding vLLM's grammar compiler. It is the JSON-Schema-aware walker reused by both
 // `response_format.json_schema.schema` and `tools[].function.parameters` (they hit the same
@@ -104,18 +137,21 @@ func (b SchemaBounds) walk(schema any, depth int, nodes *int) error {
 	if err := b.validateSchemaPatternField(obj); err != nil {
 		return err
 	}
+	if err := b.validateSchemaPatternPropertiesKeys(obj); err != nil {
+		return err
+	}
 	for _, branchKey := range branchSchemaKeys {
 		if arr, ok := obj[branchKey].([]any); ok && len(arr) > b.MaxBranch {
 			return fmt.Errorf("%w: %s limit %d", ErrSchemaBranch, branchKey, b.MaxBranch)
 		}
 	}
 	for key, value := range obj {
-		if _, isData := responseFormatDataKeys[key]; isData {
+		if _, isData := schemaDataKeys[key]; isData {
 			continue
 		}
 		switch typed := value.(type) {
 		case map[string]any:
-			if _, isChildMap := responseFormatChildMapKeys[key]; isChildMap {
+			if _, isChildMap := schemaChildMapKeys[key]; isChildMap {
 				for _, child := range typed {
 					if err := b.walk(child, depth+1, nodes); err != nil {
 						return err
@@ -261,6 +297,30 @@ func (b SchemaBounds) validateSchemaPatternField(obj map[string]any) error {
 	if !ok {
 		return fmt.Errorf("%w: must be a string", ErrSchemaPattern)
 	}
+	return b.validateSchemaPatternString(s)
+}
+
+func (b SchemaBounds) validateSchemaPatternPropertiesKeys(obj map[string]any) error {
+	if b.MaxPatternLen <= 0 {
+		return nil
+	}
+	raw, present := obj["patternProperties"]
+	if !present {
+		return nil
+	}
+	patterns, ok := raw.(map[string]any)
+	if !ok {
+		return nil
+	}
+	for pattern := range patterns {
+		if err := b.validateSchemaPatternString(pattern); err != nil {
+			return fmt.Errorf("patternProperties key %q: %w", pattern, err)
+		}
+	}
+	return nil
+}
+
+func (b SchemaBounds) validateSchemaPatternString(s string) error {
 	if len(s) > b.MaxPatternLen {
 		return fmt.Errorf("%w: length %d exceeds limit %d", ErrSchemaPattern, len(s), b.MaxPatternLen)
 	}

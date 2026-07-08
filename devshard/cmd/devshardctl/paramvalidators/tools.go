@@ -94,6 +94,11 @@ func (v ToolsValidator) Validate(vctx ValidatorContext) error {
 		if !ok {
 			continue
 		}
+		params, err := DereferenceLocalSchemaRefs(params, v.MaxNodes)
+		if err != nil {
+			return fmt.Errorf("tools[%d].function.parameters: %w", i, err)
+		}
+		fn["parameters"] = params
 		if err := bounds.Walk(params); err != nil {
 			return fmt.Errorf("tools[%d].function.parameters: %w", i, err)
 		}

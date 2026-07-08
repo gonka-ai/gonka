@@ -50,6 +50,9 @@ func TestResponseFormatValidatorAccepts(t *testing.T) {
 		{name: "schema type as array of primitives", body: jsonSchemaResponseFormatBody(`{"type":["string","null"]}`)},
 		// A reasonable regex pattern under the length cap compiles and is accepted.
 		{name: "schema with valid pattern", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"^[a-zA-Z0-9_-]+$"}`)},
+		{name: "schema with local $defs ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/x"}},"$defs":{"x":{"type":"string"}}}`)},
+		{name: "schema with local definitions ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/definitions/x"}},"definitions":{"x":{"type":"string"}}}`)},
+		{name: "unused definition containers are stripped", body: jsonSchemaResponseFormatBody(`{"type":"object","$defs":{"x":{"type":"string"}},"definitions":{"y":{"type":"number"}}}`)},
 		// Co-boundary: hit MaxDepth=16 and MaxNodes=128 simultaneously. 15 chain levels
 		// + 113 leaf properties = 128 nodes, leaves sit at depth 16.
 		{name: "depth and nodes both at limit", body: jsonSchemaResponseFormatBody(coBoundarySchema(15, 113))},
@@ -62,6 +65,30 @@ func TestResponseFormatValidatorAccepts(t *testing.T) {
 			require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
 		})
 	}
+}
+
+func TestResponseFormatValidatorRewritesLocalRefs(t *testing.T) {
+	v := defaultResponseFormatValidator()
+	doc := parseDocument(t, jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/x"}},"$defs":{"x":{"type":"string"}}}`))
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	schema := responseFormatSchema(t, doc)
+	require.NotContains(t, schema, "$defs")
+	x := schema["properties"].(map[string]any)["x"].(map[string]any)
+	require.NotContains(t, x, "$ref")
+	require.Equal(t, "string", x["type"])
+}
+
+func TestResponseFormatValidatorStripsUnusedDefinitions(t *testing.T) {
+	v := defaultResponseFormatValidator()
+	doc := parseDocument(t, jsonSchemaResponseFormatBody(`{"type":"object","$defs":{"unused":{"type":"NOT_A_VALID_TYPE"}},"definitions":{"other":{"type":"ALSO_BAD"}}}`))
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	schema := responseFormatSchema(t, doc)
+	require.NotContains(t, schema, "$defs")
+	require.NotContains(t, schema, "definitions")
 }
 
 func TestResponseFormatValidatorRejects(t *testing.T) {
@@ -91,9 +118,7 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "schema node count exceeds 128", body: jsonSchemaResponseFormatBody(manyPropertiesSchema(200)), wantErr: ErrSchemaNodes},
 		// Node boundary: manyPropertiesSchema(128) = 1 root + 128 children = 129 nodes, one over.
 		{name: "node count one over limit", body: jsonSchemaResponseFormatBody(manyPropertiesSchema(128)), wantErr: ErrSchemaNodes},
-		{name: "ref not allowed", body: jsonSchemaResponseFormatBody(`{"$ref":"#/foo"}`), wantErr: ErrSchemaRef},
-		{name: "defs not allowed", body: jsonSchemaResponseFormatBody(`{"$defs":{"x":{}}}`), wantErr: ErrSchemaRef},
-		{name: "definitions not allowed", body: jsonSchemaResponseFormatBody(`{"definitions":{"x":{}}}`), wantErr: ErrSchemaRef},
+		{name: "unresolved local ref", body: jsonSchemaResponseFormatBody(`{"$ref":"#/foo"}`), wantErr: ErrSchemaRef},
 		{name: "anyOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"anyOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "oneOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"oneOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
 		{name: "allOf exceeds branch limit", body: jsonSchemaResponseFormatBody(`{"allOf":[` + strings.Repeat(`{"type":"string"},`, 16) + `{"type":"string"}]}`), wantErr: ErrSchemaBranch},
@@ -113,18 +138,22 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 		{name: "ref hidden under contains", body: jsonSchemaResponseFormatBody(`{"contains":{"$ref":"#/x"}}`), wantErr: ErrSchemaRef},
 		{name: "ref hidden under not", body: jsonSchemaResponseFormatBody(`{"not":{"$ref":"#/x"}}`), wantErr: ErrSchemaRef},
 		{name: "ref hidden under dependentSchemas", body: jsonSchemaResponseFormatBody(`{"dependentSchemas":{"x":{"$ref":"#/y"}}}`), wantErr: ErrSchemaRef},
-		{name: "defs hidden under then", body: jsonSchemaResponseFormatBody(`{"then":{"$defs":{"x":{}}}}`), wantErr: ErrSchemaRef},
 		// CVE-2025-48944: bad `type` value crashes xgrammar's C++ grammar compiler.
 		{name: "bad schema type string", body: jsonSchemaResponseFormatBody(`{"type":"something"}`), wantErr: ErrSchemaType},
 		{name: "bad schema type array entry", body: jsonSchemaResponseFormatBody(`{"type":["string","weird"]}`), wantErr: ErrSchemaType},
 		{name: "bad schema type bool", body: jsonSchemaResponseFormatBody(`{"type":true}`), wantErr: ErrSchemaType},
 		{name: "bad schema type nested", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"type":"not_a_type"}}}`), wantErr: ErrSchemaType},
+		{name: "bad schema type through ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/X"}},"$defs":{"X":{"type":"not_a_type"}}}`), wantErr: ErrSchemaType},
 		// CVE-2025-48944: unclosed regex crashes the regex compiler before vLLM rejects.
 		{name: "bad pattern unclosed group", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"("}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern unclosed char class", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"["}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern not string", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":42}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern too long", body: jsonSchemaResponseFormatBody(`{"type":"string","pattern":"` + strings.Repeat("a", 513) + `"}`), wantErr: ErrSchemaPattern},
 		{name: "bad pattern nested", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"type":"string","pattern":"["}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad pattern through ref", body: jsonSchemaResponseFormatBody(`{"type":"object","properties":{"x":{"$ref":"#/$defs/X"}},"$defs":{"X":{"type":"string","pattern":"["}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad patternProperties key", body: jsonSchemaResponseFormatBody(`{"type":"object","patternProperties":{"[":{"type":"string"}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad patternProperties key too long", body: jsonSchemaResponseFormatBody(`{"type":"object","patternProperties":{"` + strings.Repeat("a", 513) + `":{"type":"string"}}}`), wantErr: ErrSchemaPattern},
+		{name: "bad propertyNames pattern", body: jsonSchemaResponseFormatBody(`{"type":"object","propertyNames":{"pattern":"["}}`), wantErr: ErrSchemaPattern},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -138,6 +167,13 @@ func TestResponseFormatValidatorRejects(t *testing.T) {
 
 func jsonSchemaResponseFormatBody(schemaJSON string) string {
 	return `{"response_format":{"type":"json_schema","json_schema":{"name":"r","schema":` + schemaJSON + `}}}`
+}
+
+func responseFormatSchema(tb testing.TB, doc map[string]any) map[string]any {
+	tb.Helper()
+	rf := doc["response_format"].(map[string]any)
+	wrapper := rf["json_schema"].(map[string]any)
+	return wrapper["schema"].(map[string]any)
 }
 
 func nestedPropertiesSchema(depth int) string {

@@ -37,6 +37,8 @@ func TestToolsValidatorAccepts(t *testing.T) {
 		{name: "parameters at depth limit", body: `{"tools":[` + toolWithParams(nestedPropertiesSchema(16)) + `]}`},
 		{name: "parameters at depth 12", body: `{"tools":[` + toolWithParams(nestedPropertiesSchema(12)) + `]}`},
 		{name: "many properties at 200", body: `{"tools":[` + toolWithParams(manyPropertiesSchema(200)) + `]}`},
+		{name: "local $defs ref in parameters", body: `{"tools":[` + toolWithParams(`{"type":"object","properties":{"path":{"$ref":"#/$defs/Path"}},"required":["path"],"$defs":{"Path":{"type":"string","description":"Filesystem path"}}}`) + `]}`},
+		{name: "local definitions ref in parameters", body: `{"tools":[` + toolWithParams(`{"type":"object","properties":{"path":{"$ref":"#/definitions/Path"}},"required":["path"],"definitions":{"Path":{"type":"string"}}}`) + `]}`},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -44,6 +46,21 @@ func TestToolsValidatorAccepts(t *testing.T) {
 			require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
 		})
 	}
+}
+
+func TestToolsValidatorDereferencesLocalRefs(t *testing.T) {
+	v := defaultToolsValidator()
+	doc := parseDocument(t, `{"tools":[`+toolWithParams(`{"type":"object","properties":{"path":{"$ref":"#/$defs/Path"}},"required":["path"],"$defs":{"Path":{"type":"string","description":"Filesystem path"}}}`)+`]}`)
+
+	require.NoError(t, v.Validate(ValidatorContext{Document: doc}))
+
+	tools := doc["tools"].([]any)
+	fn := tools[0].(map[string]any)["function"].(map[string]any)
+	params := fn["parameters"].(map[string]any)
+	require.NotContains(t, params, "$defs")
+	path := params["properties"].(map[string]any)["path"].(map[string]any)
+	require.Equal(t, "string", path["type"])
+	require.Equal(t, "Filesystem path", path["description"])
 }
 
 func TestToolsValidatorRejects(t *testing.T) {
