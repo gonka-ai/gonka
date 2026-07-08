@@ -13,6 +13,12 @@ import (
 
 const authzCacheTTL = 2 * time.Minute
 
+// authzQueryTimeout bounds the coalesced signer lookup. The queries run under a
+// fresh context, not any single caller's, so one coalesced caller cancelling
+// (client disconnect or its own deadline firing) does not fail every other
+// caller that shares the singleflight result.
+const authzQueryTimeout = 15 * time.Second
+
 // SignerInfo holds address and pubkey for an authorized signer.
 type SignerInfo struct {
 	Address string
@@ -110,8 +116,13 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 
 		queryClient := c.recorder.NewInferenceQueryClient()
 
+		// Run under a fresh, decoupled context so a coalesced caller's
+		// cancellation cannot fail everyone sharing this singleflight result.
+		qctx, cancel := context.WithTimeout(context.Background(), authzQueryTimeout)
+		defer cancel()
+
 		// Get grantees (warm keys) for this message type
-		grantees, err := queryClient.GranteesByMessageType(ctx, &types.QueryGranteesByMessageTypeRequest{
+		grantees, err := queryClient.GranteesByMessageType(qctx, &types.QueryGranteesByMessageTypeRequest{
 			GranterAddress: granterAddress,
 			MessageTypeUrl: msgTypeUrl,
 		})
@@ -120,7 +131,7 @@ func (c *AuthzCache) getSigners(ctx context.Context, granterAddress, msgTypeUrl 
 		}
 
 		// Get granter's own public key
-		participant, err := queryClient.AccountByAddress(ctx, &types.QueryAccountByAddressRequest{
+		participant, err := queryClient.AccountByAddress(qctx, &types.QueryAccountByAddressRequest{
 			Address: granterAddress,
 		})
 		if err != nil {

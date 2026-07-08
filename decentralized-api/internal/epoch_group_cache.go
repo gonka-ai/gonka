@@ -132,8 +132,12 @@ func (c *EpochGroupDataCache) GetEpochGroupData(ctx context.Context, epochIndex 
 
 		logging.Debug("Fetching epoch group data", types.Config, "epochIndex", epochIndex)
 
+		// Run under a fresh, decoupled context (bounded) so a coalesced caller's
+		// cancellation cannot fail everyone sharing this singleflight result.
+		qctx, cancel := context.WithTimeout(context.Background(), epochGroupQueryTimeout)
+		defer cancel()
 		queryClient := c.recorder.NewInferenceQueryClient()
-		resp, err := queryClient.EpochGroupData(ctx, &types.QueryGetEpochGroupDataRequest{
+		resp, err := queryClient.EpochGroupData(qctx, &types.QueryGetEpochGroupDataRequest{
 			EpochIndex: epochIndex,
 		})
 		if err != nil {
