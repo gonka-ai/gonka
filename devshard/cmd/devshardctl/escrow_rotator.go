@@ -17,11 +17,14 @@ const (
 	rotationRoleTemp    = "temp"
 
 	defaultEscrowRotationInterval = 15 * time.Second
+
+	// rotationCreateFailureCooldown bounds how long one failed create suppresses retries; a permanent per-epoch latch let a single transient 503 stall rotation for a whole epoch.
+	rotationCreateFailureCooldown = 60 * time.Second
 )
 
 var (
 	errDevshardBusy                   = errors.New("devshard has active requests")
-	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create already failed for this epoch")
+	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create suppressed during failure cooldown")
 	gatewayCreateRotationEscrow       = (*Gateway).createRotationEscrow
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
 	gatewaySettleDevshardOnChain      = (*Gateway).settleDevshardOnChain
@@ -366,16 +369,34 @@ func (g *Gateway) recordRotationCreateFailure(modelID, role string, epoch uint64
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	if g.rotationFailures == nil {
-		g.rotationFailures = make(map[string]struct{})
+		g.rotationFailures = make(map[string]time.Time)
 	}
-	g.rotationFailures[g.rotationFailureKey(modelID, role, epoch)] = struct{}{}
+	g.rotationFailures[g.rotationFailureKey(modelID, role, epoch)] = time.Now()
 }
 
 func (g *Gateway) rotationCreateFailed(modelID, role string, epoch uint64) bool {
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	_, ok := g.rotationFailures[g.rotationFailureKey(modelID, role, epoch)]
-	return ok
+	key := g.rotationFailureKey(modelID, role, epoch)
+	failedAt, ok := g.rotationFailures[key]
+	if !ok {
+		return false
+	}
+	// Expire on read so a transient failure self-heals within the epoch instead of latching until the epoch boundary.
+	if time.Since(failedAt) >= rotationCreateFailureCooldown {
+		delete(g.rotationFailures, key)
+		return false
+	}
+	return true
+}
+
+// resetRotationCreateFailures clears the failure cache so the next tick retries immediately; returns the number of entries cleared.
+func (g *Gateway) resetRotationCreateFailures() int {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	n := len(g.rotationFailures)
+	g.rotationFailures = make(map[string]time.Time)
+	return n
 }
 
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {

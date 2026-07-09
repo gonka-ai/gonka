@@ -8,6 +8,7 @@ import (
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -359,7 +360,7 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, rotationFailures: make(map[string]time.Time)}
 	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
@@ -439,7 +440,7 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, rotationFailures: make(map[string]time.Time)}
 	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
 	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
@@ -496,7 +497,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, rotationFailures: make(map[string]time.Time)}
 	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 2, createAttempts)
@@ -561,7 +562,7 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
-	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]time.Time)}
 	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
@@ -629,7 +630,7 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
-	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationFailures: make(map[string]time.Time)}
 	g.finishBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
@@ -707,7 +708,7 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store, rotationFailures: make(map[string]struct{})}
+	g := &Gateway{store: store, rotationFailures: make(map[string]time.Time)}
 	g.prepareBridgeEscrows(ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, []string{"13"}, settled)
@@ -773,7 +774,7 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 		store:            store,
 		settings:         settings,
 		phaseGate:        &ChainPhaseGate{},
-		rotationFailures: make(map[string]struct{}),
+		rotationFailures: make(map[string]time.Time),
 	}
 	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{
 		BlockHeight:            350,
