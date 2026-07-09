@@ -4,7 +4,11 @@ import com.productscience.data.*
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.*
 import org.tinylog.kotlin.Logger
+import java.time.Duration
+import java.util.concurrent.CompletableFuture
+import java.util.concurrent.CopyOnWriteArrayList
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Full-circle E2E tests for versiond:
@@ -13,6 +17,7 @@ import java.util.concurrent.TimeUnit
  *   3. Governance proposal adds a devshard binary version
  *   4. versiond downloads the binary and proxies traffic
  *   5. Second proposal adds another version, both route correctly
+ *   6. Same-version binary update drains old requests while new traffic is routed
  *
  * Approved version names must match each binary's --print-protocol-version
  * (see versioned/e2e/testapp: "testapp" and "testapp2").
@@ -30,11 +35,14 @@ class VersiondTests : TestermintTest() {
         "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp.zip"
     private val testapp2BinaryDockerUrl =
         "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp2.zip"
+    private val testappRolloutBinaryDockerUrl =
+        "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp-rollout.zip"
 
     private lateinit var cluster: LocalCluster
     private lateinit var genesis: LocalInferencePair
     private lateinit var testappSha256: String
     private lateinit var testapp2Sha256: String
+    private lateinit var testappRolloutSha256: String
 
     @BeforeAll
     fun setup() {
@@ -53,8 +61,10 @@ class VersiondTests : TestermintTest() {
         logSection("Waiting for testapp-server readiness")
         testappSha256 = waitForTestappArtifactSha256(TESTAPP_VERSION)
         testapp2Sha256 = waitForTestappArtifactSha256(TESTAPP2_VERSION)
+        testappRolloutSha256 = waitForTestappArtifactSha256(TESTAPP_ROLLOUT_ARTIFACT)
         Logger.info("testapp zip sha256: $testappSha256")
         Logger.info("testapp2 zip sha256: $testapp2Sha256")
+        Logger.info("testapp-rollout zip sha256: $testappRolloutSha256")
     }
 
     @AfterAll
@@ -190,6 +200,94 @@ class VersiondTests : TestermintTest() {
         logHighlight("Both $v1 and $v2 route correctly through versiond")
     }
 
+    @Test
+    @Order(5)
+    fun `same version binary update drains old requests and keeps serving`() {
+        val versionName = TESTAPP_VERSION
+        val oldPrefix = TESTAPP_VERSION
+        val newPrefix = TESTAPP_ROLLOUT_PREFIX
+        val slowDuration = Duration.ofSeconds(75)
+
+        logSection("Verifying $versionName starts on the original binary")
+        waitForVersionedProxyPrefix(versionName, oldPrefix)
+
+        logSection("Starting a long request before updating $versionName")
+        val slowRequest = CompletableFuture.supplyAsync<Map<String, Any>> {
+            getVersiondProxySlow(versionName, slowDuration)
+        }
+        waitUntil("slow request accepted by old $versionName child", timeoutSeconds = 10) {
+            runCatching { statusNumber(getDrainStatus(versionName), "inflight") > 0 }
+                .getOrDefault(false)
+        }
+
+        val stopProbe = AtomicBoolean(false)
+        val observedPrefixes = CopyOnWriteArrayList<String>()
+        val probeFailures = CopyOnWriteArrayList<String>()
+        val continuityProbe = CompletableFuture.runAsync {
+            while (!stopProbe.get()) {
+                try {
+                    getVersiondProxy(versionName)["prefix"]?.toString()?.let(observedPrefixes::add)
+                } catch (e: Exception) {
+                    probeFailures.add(e.message ?: e.toString())
+                }
+                Thread.sleep(250)
+            }
+        }
+
+        try {
+            logSection("Submitting governance proposal to update $versionName to rollout sha")
+            val params = genesis.getParams()
+            val currentVersions = params.devshardEscrowParams?.approvedVersions ?: emptyList()
+            assertThat(currentVersions.any { it.name == versionName && it.sha256 == testappSha256 })
+                .withFailMessage("Expected $versionName to start on sha $testappSha256")
+                .isTrue()
+
+            val rolloutVersion = DevshardApprovedVersion(
+                name = versionName,
+                binary = testappRolloutBinaryDockerUrl,
+                sha256 = testappRolloutSha256,
+            )
+            val updatedParams = params.withApprovedVersions(
+                currentVersions.filterNot { it.name == versionName } + rolloutVersion
+            )
+            genesis.runProposal(cluster, UpdateParams(params = updatedParams))
+
+            logSection("Waiting for dapi to expose rollout sha for $versionName")
+            waitUntil("dapi serves rollout sha for $versionName", timeoutSeconds = 60) {
+                getDapiVersions().any { it["name"] == versionName && it["sha256"] == testappRolloutSha256 }
+            }
+
+            logSection("Waiting for versiond to route new requests to rollout binary")
+            waitForVersionedProxyPrefix(versionName, newPrefix)
+
+            logSection("Verifying old child is draining while the long request is still running")
+            waitForDrainingChild(versionName, testappSha256)
+
+            logSection("Verifying the long request completes on the old binary")
+            val slowResponse = slowRequest.get(slowDuration.seconds + 45, TimeUnit.SECONDS)
+            assertThat(slowResponse["prefix"])
+                .withFailMessage("Long request should complete on old binary: $slowResponse")
+                .isEqualTo(oldPrefix)
+
+            logSection("Verifying new requests stay on the rollout binary")
+            val newResponse = getVersiondProxy(versionName)
+            assertThat(newResponse["prefix"]).isEqualTo(newPrefix)
+
+            logSection("Waiting for old draining child to exit")
+            waitForNoDraining(versionName)
+        } finally {
+            stopProbe.set(true)
+            continuityProbe.get(5, TimeUnit.SECONDS)
+        }
+
+        assertThat(probeFailures)
+            .withFailMessage("Versioned route returned errors during rolling update: $probeFailures")
+            .isEmpty()
+        assertThat(observedPrefixes)
+            .withFailMessage("Continuity probe should see old and new prefixes")
+            .contains(oldPrefix, newPrefix)
+    }
+
     // ---------------------------------------------------------------------------
     // Helpers
     // ---------------------------------------------------------------------------
@@ -280,6 +378,91 @@ class VersiondTests : TestermintTest() {
         return getVersiondProxy(versionName)
     }
 
+    private fun waitForVersionedProxyPrefix(
+        versionName: String,
+        prefix: String,
+        timeoutSeconds: Int = 90,
+    ): Map<String, Any> {
+        var matched: Map<String, Any>? = null
+        waitUntil("proxy routes $versionName with prefix $prefix", timeoutSeconds = timeoutSeconds) {
+            runCatching {
+                val response = getVersiondProxy(versionName)
+                if (response["prefix"] == prefix) {
+                    matched = response
+                    true
+                } else {
+                    false
+                }
+            }.getOrDefault(false)
+        }
+        return matched ?: getVersiondProxy(versionName)
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun getVersiondProxySlow(versionName: String, duration: Duration): Map<String, Any> {
+        val durationParam = "${duration.seconds}s"
+        val (_, response, result) =
+            Fuel.get("${genesis.api.getPublicUrl()}/devshard/$versionName/slow?duration=$durationParam")
+                .timeout(5_000)
+                .timeoutRead((duration.toMillis() + 30_000).toInt())
+                .responseString()
+        assertThat(response.statusCode)
+            .withFailMessage("GET /devshard/$versionName/slow returned ${response.statusCode}: ${result}")
+            .isEqualTo(200)
+        return cosmosJson.fromJson(result.get(), Map::class.java) as Map<String, Any>
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun getDrainStatus(versionName: String): Map<String, Any> {
+        val (_, response, result) = Fuel.get("${genesis.api.getPublicUrl()}/devshard/$versionName/drain/status")
+            .timeoutRead(10_000)
+            .responseString()
+        assertThat(response.statusCode)
+            .withFailMessage("GET /devshard/$versionName/drain/status returned ${response.statusCode}: ${result}")
+            .isEqualTo(200)
+        return cosmosJson.fromJson(result.get(), Map::class.java) as Map<String, Any>
+    }
+
+    @Suppress("UNCHECKED_CAST")
+    private fun getVersiondHealth(): List<Map<String, Any>> {
+        val (_, response, result) = Fuel.get("${genesis.api.getPublicUrl()}/devshard/healthz")
+            .timeoutRead(10_000)
+            .responseString()
+        assertThat(response.statusCode)
+            .withFailMessage("GET /devshard/healthz returned ${response.statusCode}: ${result}")
+            .isEqualTo(200)
+        return cosmosJson.fromJson(result.get(), List::class.java) as List<Map<String, Any>>
+    }
+
+    private fun waitForDrainingChild(versionName: String, sha256: String, timeoutSeconds: Int = 20) {
+        waitUntil("old $versionName child is draining", timeoutSeconds = timeoutSeconds) {
+            runCatching {
+                getVersiondHealth().any {
+                    it["name"] == versionName &&
+                        it["sha256"] == sha256 &&
+                        it["status"] == "draining"
+                }
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun waitForNoDraining(versionName: String, timeoutSeconds: Int = 60) {
+        waitUntil("no draining child for $versionName", timeoutSeconds = timeoutSeconds) {
+            runCatching {
+                getVersiondHealth().none {
+                    it["name"] == versionName && it["status"] == "draining"
+                }
+            }.getOrDefault(false)
+        }
+    }
+
+    private fun statusNumber(status: Map<String, Any>, key: String): Long =
+        when (val value = status[key]) {
+            is Number -> value.toLong()
+            is String -> value.toLong()
+            else -> 0
+        }
+
     private fun waitUntil(description: String, timeoutSeconds: Int, condition: () -> Boolean) {
         val deadline = System.currentTimeMillis() + timeoutSeconds * 1000L
         while (System.currentTimeMillis() < deadline) {
@@ -295,6 +478,12 @@ class VersiondTests : TestermintTest() {
 
         /** Governance slot / --print-protocol-version for testapp2.zip */
         const val TESTAPP2_VERSION = "testapp2"
+
+        /** Artifact basename for same-slot rollout binary. Protocol remains TESTAPP_VERSION. */
+        const val TESTAPP_ROLLOUT_ARTIFACT = "testapp-rollout"
+
+        /** DEVSHARD_BINARY_LOG_VERSION / HTTP prefix printed by testapp-rollout.zip. */
+        const val TESTAPP_ROLLOUT_PREFIX = "testapp-rollout"
 
         const val TESTAPP_SERVER_HOST_PORT = 7090
         const val DAPI_ML_HOST_PORT = 9001
