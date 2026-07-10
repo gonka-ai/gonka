@@ -2197,13 +2197,18 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetRespectsClientValue(t *testi
 	require.Contains(t, string(body), `"thinking_token_budget":500`)
 }
 
-func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsAboveMaxTokens(t *testing.T) {
+// When the client requests a ttb above max_tokens, ttb is clamped DOWN to
+// (max_tokens - kimiContentHeadroomMin) so that visible content always has
+// room to emit after </think>. Before content-headroom enforcement the value
+// was just clamped to max_tokens itself, which caused empty-content streams
+// when the model burned the entire budget on thinking.
+func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsBelowMaxTokensByContentHeadroom(t *testing.T) {
 	body, _, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":4096,"thinking_token_budget":10000}`),
 		kimiK26ModelID,
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"thinking_token_budget":4096`)
+	require.Contains(t, string(body), `"thinking_token_budget":4032`)
 }
 
 func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsAboveAbsoluteMax(t *testing.T) {
@@ -2219,13 +2224,17 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetClampsAboveAbsoluteMax(t *te
 	require.Contains(t, string(body), `"thinking_token_budget":96000`)
 }
 
-func TestNormalizeChatRequestKimiThinkingTokenBudgetSmallMaxTokensSplitsInHalf(t *testing.T) {
+// At max_tokens below kimiSmallMaxTokensForceNoThinking the defaulter's
+// half-split (max_tokens/2) is overridden to 0 because any thinking phase
+// starves visible content emission at that budget. Bypassing thinking is
+// the only way to guarantee non-empty content
+func TestNormalizeChatRequestKimiThinkingTokenBudgetForcedToZeroAtSmallMaxTokens(t *testing.T) {
 	body, _, err := normalizeChatRequestForModel(
 		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":200}`),
 		kimiK26ModelID,
 	)
 	require.NoError(t, err)
-	require.Contains(t, string(body), `"thinking_token_budget":100`)
+	require.Contains(t, string(body), `"thinking_token_budget":0`)
 }
 
 func TestNormalizeChatRequestKimiThinkingTokenBudgetHalfSplitMidRange(t *testing.T) {
@@ -2244,6 +2253,73 @@ func TestNormalizeChatRequestKimiThinkingTokenBudgetEnforcedEvenWhenDisabled(t *
 	)
 	require.NoError(t, err)
 	require.Contains(t, string(body), `"thinking_token_budget":2048`)
+}
+
+// Boundary check: max_tokens=256 is the inclusive lower bound where
+// thinking_token_budget is NOT force-zeroed. Just above the cutoff, the
+// half-split defaulter wins (max_tokens/2 = 128) and survives the content-
+// headroom clamp (256-64=192 >= 128).
+func TestNormalizeChatRequestKimiThinkingTokenBudgetForceZeroBoundaryAt256(t *testing.T) {
+	body, _, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":256}`),
+		kimiK26ModelID,
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"thinking_token_budget":128`)
+}
+
+// Force-zero is intentionally strong: it overrides client-provided ttb when
+// max_tokens is below the threshold. Without this, probe traffic with explicit
+// thinking_token_budget=50 at max_tokens=100 keeps burning content budget.
+func TestNormalizeChatRequestKimiThinkingTokenBudgetForceZeroOverridesClientValue(t *testing.T) {
+	body, _, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"x"}],"max_tokens":100,"min_tokens":100,"thinking_token_budget":50}`),
+		kimiK26ModelID,
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"thinking_token_budget":0`)
+}
+
+// Content-headroom clamp narrows client-set ttb down toward
+// (max_tokens - kimiContentHeadroomMin) when above max_tokens, but leaves
+// already-conservative values untouched. Threshold case: max_tokens=512 sits
+// well above the force-zero cutoff, so the clamp behavior is testable in
+// isolation.
+func TestNormalizeChatRequestKimiThinkingTokenBudgetContentHeadroomClamp(t *testing.T) {
+	cases := []struct {
+		name      string
+		maxTokens uint64
+		ttbIn     uint64
+		ttbWant   uint64
+	}{
+		{name: "ttb_below_headroom_kept", maxTokens: 512, ttbIn: 100, ttbWant: 100},
+		{name: "ttb_at_headroom_kept", maxTokens: 512, ttbIn: 448, ttbWant: 448},
+		{name: "ttb_above_headroom_clamped", maxTokens: 512, ttbIn: 500, ttbWant: 448},
+		{name: "ttb_far_above_clamped_to_headroom", maxTokens: 512, ttbIn: 99999, ttbWant: 448},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			body := fmt.Sprintf(`{"messages":[{"role":"user","content":"x"}],"max_tokens":%d,"thinking_token_budget":%d}`, c.maxTokens, c.ttbIn)
+			out, _, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)
+			require.NoError(t, err)
+			require.Contains(t, string(out), fmt.Sprintf(`"thinking_token_budget":%d`, c.ttbWant))
+		})
+	}
+}
+
+// The probe burn-pattern reproducer: max_tokens=100, min_tokens=100,
+// thinking_token_budget=50 was 82% of the empty_stream_attempt captures on
+// 2026-05-22. After the fix the ttb is forced to 0 (below the 256 threshold),
+// giving the model the full 100 tokens for visible content. This single test
+// locks the regression closed.
+func TestNormalizeChatRequestKimiThinkingTokenBudgetClosesProbeBurnPattern(t *testing.T) {
+	body, _, err := normalizeChatRequestForModel(
+		[]byte(`{"messages":[{"role":"user","content":"Reply with exactly: ok"}],"max_tokens":100,"min_tokens":100,"thinking_token_budget":50,"temperature":0,"logprobs":true,"top_logprobs":5,"stream":true}`),
+		kimiK26ModelID,
+	)
+	require.NoError(t, err)
+	require.Contains(t, string(body), `"thinking_token_budget":0`)
+	require.Contains(t, string(body), `"max_tokens":100`)
 }
 
 func TestNormalizeChatRequestKimiThinkingTokenBudgetNotInjectedForOtherModels(t *testing.T) {
@@ -2526,9 +2602,9 @@ func TestNormalizeChatRequestReasoningInvalidEffortRejected(t *testing.T) {
 
 func TestNormalizeChatRequestTranslatesEnableThinkingToChatTemplateKwargs(t *testing.T) {
 	cases := []struct {
-		name  string
-		body  string
-		want  bool
+		name string
+		body string
+		want bool
 	}{
 		{name: "true", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":true}`, want: true},
 		{name: "false", body: `{"messages":[{"role":"user","content":"hi"}],"enable_thinking":false}`, want: false},
