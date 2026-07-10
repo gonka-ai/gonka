@@ -1107,7 +1107,10 @@ func TestSMSTStoreConcurrentReadsWhileWriting(t *testing.T) {
 				case <-readerDone:
 					return
 				default:
-					count := store.Count()
+					// Prove at the latest committed (flushed) count — the only
+					// count the protocol ever proves. A transient live count is
+					// not a committed root, so it is not a servable snapshot.
+					count, _ := store.GetFlushedRoot()
 					if count == 0 {
 						continue
 					}

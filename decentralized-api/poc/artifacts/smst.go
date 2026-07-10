@@ -31,6 +31,11 @@ type SMST struct {
 	emptyHash [][]byte
 	leafCount uint32
 	hasNonce  map[int32]bool // tracks which nonces exist (for duplicate detection)
+
+	// navExistence makes HasNonce walk the tree instead of the hasNonce map.
+	// Snapshot views share nodes with the live tree but carry no map, so nonce
+	// existence must be read from the retained structure at that count.
+	navExistence bool
 }
 
 // NewSMST creates a new sparse merkle sum tree.
@@ -214,7 +219,34 @@ func (s *SMST) Depth() int {
 
 // HasNonce checks if a nonce exists in the tree.
 func (s *SMST) HasNonce(nonce int32) bool {
+	if s.navExistence {
+		return s.hasNonceInTree(nonce)
+	}
 	return s.hasNonce[nonce]
+}
+
+func (s *SMST) hasNonceInTree(nonce int32) bool {
+	if s.root == nil {
+		return false
+	}
+	// A nonce needing more depth than this tree has could never have been
+	// inserted without expanding it, so it is absent. Below the depth the path
+	// bits are injective, making the walk exact — matching the hasNonce map.
+	if s.requiredDepth(nonce) > s.depth {
+		return false
+	}
+	node := s.root
+	for _, goRight := range s.noncePath(nonce) {
+		if node == nil {
+			return false
+		}
+		if goRight {
+			node = node.right
+		} else {
+			node = node.left
+		}
+	}
+	return node != nil
 }
 
 func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
