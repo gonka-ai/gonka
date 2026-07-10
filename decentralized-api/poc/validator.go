@@ -681,6 +681,8 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
+					reportParticipant = work.address
+					reportModelID = work.modelId
 					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
 				}
