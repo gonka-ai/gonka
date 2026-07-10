@@ -27,6 +27,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 ## Anthropic
 
 - **[Anthropic-1]** [Extended thinking docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) — wire enum for `thinking.type` (`enabled`/`disabled`); basis for rejecting `adaptive`/`auto` as non-wire values.
+- **[Anthropic-2]** [Handling stop reasons](https://docs.anthropic.com/en/docs/build-with-claude/handling-stop-reasons) — documents `stop_reason="max_tokens"` with empty/truncated content as an expected outcome when extended thinking consumes the budget; advises continuation rather than retry.
 
 ## vLLM
 

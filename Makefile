@@ -1,4 +1,9 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version print-devshard-protocol-version versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release print-devshard-version print-devshard-protocol-version versiond-build-docker testapp-server-build-docker
+
+# For binary release: default linux/amd64 before local Docker defaults.
+DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
+DEVSHARDD_RELEASE_DOCKER_GOOS := $(if $(DOCKER_GOOS),$(DOCKER_GOOS),linux)
+DEVSHARDD_RELEASE_DOCKER_GOARCH := $(if $(DOCKER_GOARCH),$(DOCKER_GOARCH),$(if $(filter linux/arm64,$(DEVSHARDD_RELEASE_DOCKER_PLATFORM)),arm64,amd64))
 
 include scripts/blst-portable.mk
 
@@ -19,6 +24,7 @@ GHCR_CACHE_NAMESPACE ?= gonka-ai
 PLATFORM ?= linux/amd64
 GOOS ?= linux
 GOARCH ?= amd64
+DEVSHARDD_RELEASE_DIR ?= build/devshardd-release
 ifeq ($(USE_REGISTRY_CACHE),1)
 _MOCK_CACHE_ARGS := --cache-from type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/mock-server:buildcache --cache-to type=registry,ref=ghcr.io/$(GHCR_CACHE_NAMESPACE)/mock-server:buildcache,mode=min
 _MOCK_BUILD_CMD := docker buildx build --load $(_MOCK_CACHE_ARGS)
@@ -157,6 +163,29 @@ devshardd-build:
 	@echo "$(DEVSHARD_VERSION)" > build/devshard-version
 	@echo "$(DEVSHARD_PROTOCOL_VERSION)" > build/devshard-protocol-version
 	@echo "Built build/devshardd ($$(file build/devshardd | grep -o 'statically linked\|dynamically linked'))"
+
+devshardd-release:
+	@$(MAKE) devshardd-build \
+		DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
+		DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
+		DOCKER_PLATFORM=$(DEVSHARDD_RELEASE_DOCKER_PLATFORM) \
+		DOCKER_GOOS=$(DEVSHARDD_RELEASE_DOCKER_GOOS) \
+		DOCKER_GOARCH=$(DEVSHARDD_RELEASE_DOCKER_GOARCH)
+	@set -e; \
+		release_dir="$(DEVSHARDD_RELEASE_DIR)"; \
+		if [ -z "$$release_dir" ] || [ "$$release_dir" = "/" ]; then \
+			echo "Refusing to clean unsafe DEVSHARDD_RELEASE_DIR='$$release_dir'"; \
+			exit 1; \
+		fi; \
+		rm -rf "$$release_dir"; \
+		mkdir -p "$$release_dir/stage"; \
+		cp build/devshardd "$$release_dir/stage/devshardd"; \
+		chmod 0755 "$$release_dir/stage/devshardd"; \
+		(cd "$$release_dir/stage" && zip -X -q ../devshardd.zip devshardd); \
+		rm -rf "$$release_dir/stage"; \
+		shasum -a 256 "$$release_dir/devshardd.zip" | awk '{print $$1}' > "$$release_dir/devshardd.zip.sha256"; \
+		echo "Built $$release_dir/devshardd.zip"; \
+		echo "SHA256: $$(cat "$$release_dir/devshardd.zip.sha256")"
 
 node-local-build:
 	@echo "Building inference-chain locally..."

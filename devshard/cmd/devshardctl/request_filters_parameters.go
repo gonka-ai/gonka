@@ -87,29 +87,6 @@ func (h ModelScopedParameterHandler) Apply(ctx *RequestFilterContext, parameter 
 	return h.UnmatchedHandler.Apply(ctx, parameter)
 }
 
-// MinUintParameterHandler clamps a uint parameter UP to Min when the value is present
-// and below the floor. Pass-through when the field is absent or already >= Min.
-// Used by the Kimi-K2.6 max_tokens floor; lives here (rather than in paramvalidators)
-// because it has only one call-site and was added after the bulk-handler migration.
-type MinUintParameterHandler struct {
-	Min uint64
-}
-
-func (h MinUintParameterHandler) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
-	raw, ok := ctx.Document.Get(parameter.Name)
-	if !ok {
-		return nil
-	}
-	value, ok := devshard.JSONNumericUint64(raw)
-	if !ok {
-		return nil
-	}
-	if value < h.Min {
-		ctx.Document.Set(parameter.Name, h.Min)
-	}
-	return nil
-}
-
 // DocumentValidator: validators in paramvalidators expose this contract. May mutate
 // vctx.Document for per-model rewrites alongside shape checks.
 type DocumentValidator interface {
@@ -505,16 +482,15 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					Models:           []string{kimiK26ModelID},
 					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}).
-				withRule(RequestFilterStagePostLimits, ModelScopedParameterHandler{
-					Models: []string{kimiK26ModelID},
-					Handler: DocumentValidatorHandler{
-						Validator: paramvalidators.ThinkingTokenBudgetDefaultsValidator{
-							DefaultDivisor: kimiThinkingTokenBudgetDefaultDivisor,
-						},
+				withRule(RequestFilterStagePostLimits, DocumentValidatorHandler{
+					Validator: paramvalidators.KimiThinkingTokenBudgetValidator{
+						Model:                   kimiK26ModelID,
+						DefaultDivisor:          kimiThinkingTokenBudgetDefaultDivisor,
+						AbsoluteMax:             kimiThinkingTokenBudgetMax,
+						ContentHeadroom:         kimiContentHeadroomMin,
+						ForceZeroBelowMaxTokens: kimiSmallMaxTokensForceNoThinking,
 					},
-				}).
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.CapUintParameter{Max: kimiThinkingTokenBudgetMax}}).
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ClampUintToFieldParameter{MaxField: "max_tokens"}}),
+				}),
 			newParameter("tools").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolsValidator{
@@ -633,22 +609,22 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 					Models:           []string{miniMaxM27ModelID},
 					UnmatchedHandler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}},
 				}),
-		},
-		[]VLLMParameter{
-			// PreValidation so the floor lands before applyOutputTokenLimits (caps down) and the
-			// thinking_token_budget defaulter (derives ttb from max_tokens). Kimi clamps a
-			// too-small budget up to its floor (think-burn mitigation); other models reject a
-			// non-positive budget outright since they have no such floor.
+			// PreValidation so the floor lands before applyOutputTokenLimits caps down.
+			// One validator covers both max_tokens and max_completion_tokens.
 			newParameter("max_tokens").
+				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
+					Validator: paramvalidators.KimiMaxTokensFloorValidator{
+						Model: kimiK26ModelID,
+						Min:   kimiMaxTokensMin,
+					},
+				}).
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models:           []string{kimiK26ModelID},
-					Handler:          MinUintParameterHandler{Min: kimiMaxTokensMin},
 					UnmatchedHandler: rejectNonPositiveNumber,
 				}),
 			newParameter("max_completion_tokens").
 				withRule(RequestFilterStagePreValidation, ModelScopedParameterHandler{
 					Models:           []string{kimiK26ModelID},
-					Handler:          MinUintParameterHandler{Min: kimiMaxTokensMin},
 					UnmatchedHandler: rejectNonPositiveNumber,
 				}),
 			// Sampling knobs with per-field ranges: min_p clamps into [0, 1]; top_p clamps
@@ -670,11 +646,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			"stream",
 		}),
 		// The remaining boolean flags are pass-through fields, so validate their type here.
-		newParameters([]string{
-			"skip_special_tokens",
-			"detokenize",
-			"parallel_tool_calls",
-		},
+		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),
 		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "cache_key", "extra_headers", "thinking_config", "think"},

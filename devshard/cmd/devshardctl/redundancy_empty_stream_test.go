@@ -589,6 +589,135 @@ func TestIsEmptyStreamAttempt(t *testing.T) {
 	})
 }
 
+func TestSseChunkUsageCompletionTokens(t *testing.T) {
+	cases := []struct {
+		name    string
+		body    string
+		wantTok int64
+		wantOK  bool
+	}{
+		{
+			name:    "usage_with_completion_tokens",
+			body:    `data: {"choices":[],"usage":{"prompt_tokens":12,"completion_tokens":100,"total_tokens":112}}` + "\n\n",
+			wantTok: 100,
+			wantOK:  true,
+		},
+		{
+			name:    "usage_zero_completion_tokens",
+			body:    `data: {"usage":{"prompt_tokens":12,"completion_tokens":0,"total_tokens":12}}` + "\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "usage_absent",
+			body:    `data: {"choices":[{"delta":{"content":"hi"}}]}` + "\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "done_marker_only",
+			body:    "data: [DONE]\n\n",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "empty_input",
+			body:    "",
+			wantTok: 0,
+			wantOK:  false,
+		},
+		{
+			name:    "malformed_json_skipped",
+			body:    "data: {not json}\n\ndata: {\"usage\":{\"completion_tokens\":42}}\n\n",
+			wantTok: 42,
+			wantOK:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tok, ok := sseChunkUsageCompletionTokens([]byte(tc.body))
+			require.Equal(t, tc.wantOK, ok)
+			require.Equal(t, tc.wantTok, tok)
+		})
+	}
+}
+
+// usage chunk without content must still bump usageComplTokens.
+func TestRaceWriter_CapturesUsageCompletionTokens(t *testing.T) {
+	ctx := context.Background()
+	var sink bytes.Buffer
+	rg := newRaceGroup(ctx, ctx, "escrow-x", &sink)
+
+	inf := &inflight{
+		hostID:       "host-A",
+		escrowID:     "escrow-x",
+		nonce:        1,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+		receiptTime:  time.Now(),
+	}
+	rw := &raceWriter{group: rg, nonce: 1, inf: inf}
+
+	usageChunk := []byte(`data: {"choices":[{"delta":{},"finish_reason":"length"}],"usage":{"prompt_tokens":12,"completion_tokens":100,"total_tokens":112}}` + "\n\n")
+	_, err := rw.Write(usageChunk)
+	require.NoError(t, err)
+
+	require.Equal(t, int64(100), inf.usageComplTokens.Load())
+	require.Equal(t, int64(0), inf.contentChunks.Load())
+
+	// And the classifier should now route this attempt to model-burn.
+	require.True(t, isEmptyStreamAttempt(inf))
+	require.True(t, isModelBurnEmpty(inf, kimiK26ModelID))
+}
+
+func TestIsModelBurnEmpty(t *testing.T) {
+	t.Run("not_empty_attempt", func(t *testing.T) {
+		inf := &inflight{receiptTime: time.Now()}
+		inf.outputChunks.Store(3)
+		inf.contentChunks.Store(1)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID), "non-empty attempt is never burn-empty")
+	})
+	t.Run("empty_with_zero_completion_tokens_is_host_fault", func(t *testing.T) {
+		inf := &inflight{receiptTime: time.Now()}
+		inf.outputChunks.Store(2)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("empty_with_positive_completion_tokens_is_model_burn", func(t *testing.T) {
+		inf := &inflight{receiptTime: time.Now()}
+		inf.outputChunks.Store(5)
+		inf.usageComplTokens.Store(100)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.True(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("probe_is_never_burn", func(t *testing.T) {
+		inf := &inflight{probe: true, receiptTime: time.Now()}
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("no_receipt_is_never_burn", func(t *testing.T) {
+		inf := &inflight{}
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("error_stream_not_burn", func(t *testing.T) {
+		inf := &inflight{receiptTime: time.Now(), errorSource: "error.BadRequestError"}
+		inf.outputChunks.Store(2)
+		inf.usageComplTokens.Store(100)
+		require.False(t, isModelBurnEmpty(inf, kimiK26ModelID))
+	})
+	t.Run("non_reasoning_model_is_never_burn", func(t *testing.T) {
+		// The completion_tokens signal is host-reported; only the reasoning route
+		// honors it, so a burn-shaped empty on any other model stays a host fault.
+		inf := &inflight{receiptTime: time.Now()}
+		inf.outputChunks.Store(5)
+		inf.usageComplTokens.Store(100)
+		require.True(t, isEmptyStreamAttempt(inf))
+		require.False(t, isModelBurnEmpty(inf, "Qwen/Qwen3-235B-A22B-Instruct-2507"))
+	})
+}
+
 // TestRaceWriter_BuffersRoleUntilContent verifies that a single attempt
 // streaming role-chunk -> content-chunk -> [DONE] produces correctly ordered
 // output to the race group writer with no winner declared until content

@@ -2137,6 +2137,29 @@ func TestParticipantRequestLimiterSuccessfulInferenceDecrementsFailureStrikes(t 
 	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 }
 
+// Model-burn empties must neither increment nor reset the real empty streak.
+func TestParticipantRequestLimiterObserveModelBurnEmptyIsTelemetryOnly(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	limiter.ObserveEmptyStream("host-A")                    // real empty: streak -> 1
+	limiter.ObserveModelBurnEmpty("host-A", kimiK26ModelID) // telemetry-only: must not touch the streak
+
+	// The burn must neither increment nor reset the empty-stream strike count:
+	// it stays at the single real empty observed above.
+	require.Equal(t, 1, limiter.participants["host-A"].failureStrikes,
+		"model-burn empty must be inert for the empty-stream streak")
+}
+
+// Catches a regression where anyone adds streak logic to ObserveModelBurnEmpty.
+func TestParticipantRequestLimiterObserveModelBurnEmptyNeverQuarantines(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	for i := 0; i < 100; i++ {
+		limiter.ObserveModelBurnEmpty("host-A", kimiK26ModelID)
+	}
+	require.False(t, limiter.IsBlocked("host-A"))
+}
+
 func TestParticipantRequestLimiterStalledWinnerQuarantinesImmediately(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	now := time.Now()

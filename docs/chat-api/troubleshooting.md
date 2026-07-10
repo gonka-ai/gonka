@@ -24,6 +24,8 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 | 400 on out-of-range `top_p` / `repetition_penalty` / `top_k` | value outside backend-accepted range | [#reject-out-of-range-sampling](#reject-out-of-range-sampling) |
 | 400 on `max_tokens: 0` (non-Kimi route) | zero output budget | [#reject-nonpositive-max-tokens](#reject-nonpositive-max-tokens) |
 | 400 on wrong-typed param (bool / int / array element) | type mismatch caught at the gateway | [#reject-malformed-param-types](#reject-malformed-param-types) |
+| `thinking_token_budget` forced to `0` on Kimi-K2.6 with small `max_tokens` | content-headroom guard | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
+| Empty `content` / `finish_reason=length` on Kimi-K2.6 | thinking ate the budget | [#kimi-empty-content-think-burn](#kimi-empty-content-think-burn) |
 
 ## Silent strips
 
@@ -36,8 +38,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: when multi-tenant cache isolation lands via hash → `cache_salt` injection; restore together with `prompt_cache_key` — both share the same upstream gap and should bridge as one feature.
 
 **Fix (client-side)**: drop the field if not needed; the gateway provides no cache-key semantics today.
-
-**Captured-requests**: May 2026 batch — 159 captures from `kimi-cli` (e.g. `cache_key: "kimi-cli_f1c55293"`).
 
 <details>
 <summary>Sample request body fragment</summary>
@@ -62,8 +62,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: drop the field if not needed; no cache routing is performed on the gateway path.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-service_tier
@@ -75,8 +73,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — vLLM has no tier concept.
 
 **Fix (client-side)**: drop the field; it has no effect on this path.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -90,8 +86,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: drop the field; no retention guarantee is provided by the gateway.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-provider
@@ -103,8 +97,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — gateway is single-backend; OpenRouter routing has no equivalent.
 
 **Fix (client-side)**: drop the field; backend selection is fixed by the `model` field.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -118,8 +110,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: drop the field; implement any equivalent tool behaviour in the client or as a separate sidecar.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-extra_headers
@@ -131,8 +121,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — header injection belongs on the HTTP layer, not in the request body.
 
 **Fix (client-side)**: pass `extra_headers` to the SDK's request options (where it writes HTTP headers), not into the body dict; if constructing raw HTTP, set headers directly on the request.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -146,8 +134,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: drop the field; use `thinking: {"type": "enabled"}` (Kimi) or `enable_thinking: true` (Qwen) instead.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-think
@@ -160,8 +146,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: use `enable_thinking: true` (Qwen) or `thinking: {"type": "enabled"}` (Kimi) instead of the Ollama-specific flag.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-display-thinking-sibling
@@ -173,8 +157,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — `display` is a UI concern; it is never a wire concept for vLLM.
 
 **Fix (client-side)**: the SDK should resolve `display` client-side before sending the HTTP request; if you observe it on the wire, your client is leaking UI state into the body.
-
-**Captured-requests**: May 2026 batch — observed in 5 captures with `{"thinking": {"display": "summarized", "type": "adaptive"}}`.
 
 <details>
 <summary>Sample request body fragment</summary>
@@ -200,8 +182,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: send `user` instead if you need OpenAI-compatible attribution; the gateway uniformly validates that field with a 512 B cap.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #strip-thinking-minimax
@@ -213,8 +193,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: when MiniMax adds a documented per-request thinking toggle.
 
 **Fix (client-side)**: stop sending `thinking`; for clients that need to suppress the visible thinking display, parse + filter `<think>...</think>` blocks client-side from the response content.
-
-**Captured-requests**: n/a — pre-deployment design decision.
 
 ---
 
@@ -228,8 +206,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: stop sending `enable_thinking` on this route — see [strip-thinking-minimax](#strip-thinking-minimax) for the broader story.
 
-**Captured-requests**: n/a — pre-deployment design decision.
-
 ---
 
 ### #strip-tool_call_id-minimax
@@ -241,8 +217,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: never — the field has no consumer on this route.
 
 **Fix (client-side)**: omit `tool_call_id` for cleanest payloads. If you must dual-emit (e.g. shared serializer across routes), it's a free pass-through to silent-strip.
-
-**Captured-requests**: n/a — anticipated dual-emission from porting clients.
 
 ---
 
@@ -258,8 +232,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: if you're sending `reasoning_effort` and need the behavior, you're on a route that doesn't support it. Either drop the field or wait for a reasoning-capable route to be added.
 
-**Captured-requests**: n/a — no captures observed.
-
 ## Translations / coercions
 
 ### #translate-enable_thinking
@@ -271,8 +243,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — this is permanent normalization. Lift remains valid as long as Qwen3 chat templates accept the kwarg.
 
 **Fix (client-side)**: send `chat_template_kwargs.enable_thinking` directly to skip the translation step.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -286,8 +256,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: send `reasoning_effort` directly; this skips both this translation and the subsequent `#strip-reasoning_effort` enum validation path.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #coerce-tool-choice-required
@@ -299,8 +267,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: when network policy re-enables `"required"` — remove the coerce in `ToolsValidator.Validate`.
 
 **Fix (client-side)**: if you need true `"required"` semantics, file a network request. The gateway currently provides best-effort `"auto"` instead.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -314,8 +280,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: either set `temperature > 0` (typical) or accept `n: 1` — deterministic sampling produces one output anyway.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #unwrap-extra_body
@@ -327,8 +291,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: n/a — unwrap is the canonical SDK-compat behavior; no restore path needed.
 
 **Fix (client-side)**: pre-flatten in your client (correct OpenAI SDK usage); or trust the unwrap.
-
-**Captured-requests**: n/a — no captures observed.
 
 ## Hard rejects (HTTP 400)
 
@@ -342,21 +304,17 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: drop the unknown field from your request body; if you need it, file an issue at https://github.com/gonka-ai/gonka/issues.
 
-**Captured-requests**: n/a (this is the catch-all gate; specific captures are listed per individual rejected field below).
-
 ---
 
 ### #reject-duplicate-tool-call-id
 
 **What**: HTTP 400, `messages[N].tool_calls[M].id is duplicated`.
 
-**Why**: The OpenAI Chat Completions spec requires each `tool_calls[].id` within an assistant message to be unique [[OpenAI-1]](references.md#openai). The same constraint is enforced by the Anthropic Messages API — Bedrock-served Claude returns `ValidationException: messages.N.content contain duplicate Ids: tooluse_...` (see [LiteLLM issue #15178](https://github.com/BerriAI/litellm/issues/15178)). The confirmed upstream source is a bug in vLLM's Kimi-K2.6 tool-call parser: `history_tool_call_cnt` is recomputed inside the per-choice loop with `n>1`, producing colliding `functions.<name>:<idx>` ids [[vLLM-14]](references.md#vllm). Captured-requests evidence (e.g. req-1779369319274519506-325651) shows agents returning multiple distinct tool results for the same duplicated id — silent gateway-side dedup or rename would therefore risk information loss by discarding one of the real outputs.
+**Why**: The OpenAI Chat Completions spec requires each `tool_calls[].id` within an assistant message to be unique [[OpenAI-1]](references.md#openai). The same constraint is enforced by the Anthropic Messages API — Bedrock-served Claude returns `ValidationException: messages.N.content contain duplicate Ids: tooluse_...` (see [LiteLLM issue #15178](https://github.com/BerriAI/litellm/issues/15178)). The confirmed upstream source is a bug in vLLM's Kimi-K2.6 tool-call parser: `history_tool_call_cnt` is recomputed inside the per-choice loop with `n>1`, producing colliding `functions.<name>:<idx>` ids [[vLLM-14]](references.md#vllm). Captured-request evidence shows agents returning multiple distinct tool results for the same duplicated id — silent gateway-side dedup or rename would therefore risk information loss by discarding one of the real outputs.
 
 **When to restore**: when the upstream vLLM Kimi-K2 parser fixes the counter-collision bug AND the OpenAI spec relaxes its uniqueness requirement — neither is likely in the near term.
 
 **Fix (client-side)**: rewrite `tool_call.id` values to the canonical `functions.<name>:<global_idx>` form per Moonshot's official guidance [[Moonshot-3]](references.md#moonshot), OR rewrite to fresh UUIDs per the [OpenAI community workaround](https://community.openai.com/t/chatgpt-occasionally-reuses-tool-ids-in-the-same-session/577207). Do NOT deduplicate by ID lookup — both calls may have produced real distinct results.
-
-**Captured-requests**: May 2026 batch — 14 captures (e.g. req-1779369319274519506-325651).
 
 <details>
 <summary>Sample request body fragment (duplicate ids)</summary>
@@ -385,8 +343,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: use `metadata` for OpenAI-style tagging, or the `user` field for end-user tracking — both are accepted by the gateway.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #reject-guided-decoding
@@ -398,8 +354,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: if dedicated validators with bounds equivalent to the `response_format` / `structured_outputs` validators are written.
 
 **Fix (client-side)**: use `response_format` with `type: "json_schema"` for the same structured-output intent — see the OpenAI Chat Completions reference [[OpenAI-1]](references.md#openai) for the schema.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -413,8 +367,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: use `response_format`, `structured_outputs`, or system-prompt instructions for output control instead.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #reject-vllm-internals
@@ -426,8 +378,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **When to restore**: if a specific use case justifies one of these fields AND a validator with appropriate bounds is written.
 
 **Fix (client-side)**: drop these fields; the gateway will not honor them.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -441,8 +391,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: send only one of the two. `response_format` is the OpenAI-standard route for JSON / json_schema outputs; `structured_outputs` is the vLLM-extension route for regex / grammar / choice / structural_tag. If you need both styles, pick the one the rest of your client toolchain understands.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #reject-structured_outputs-kimi
@@ -455,10 +403,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Fix (client-side)**: use `response_format` with `type: "json_schema"` for Kimi-K2.6 (xgrammar-based, supported on this route); use `structured_outputs` only for non-Kimi routes.
 
-**Captured-requests**: n/a — no captures observed.
-
----
-
 ### #accept-structured_outputs-minimax
 
 **What**: `structured_outputs` is accepted on the `MiniMaxAI/MiniMax-M2.7` route (not rejected). Only Kimi-K2.6 rejects the field.
@@ -468,8 +412,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **Caveat — `structural_tag` must be the OBJECT form**: a JSON-encoded *string* `structural_tag` crashes vLLM with an HTTP 500 on the request handler, so the gateway rejects the string form with a 400 on every route. Send the object shape (`{"type":"structural_tag","structures":[...],"triggers":[...]}`).
 
 **Caveat — `response_format` conflict**: `structured_outputs` still cannot be combined with `response_format` (see [#reject-structured_outputs-with-response_format](#reject-structured_outputs-with-response_format)).
-
-**Captured-requests**: n/a — pre-deployment design decision.
 
 ---
 
@@ -502,8 +444,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 ```
 Multiple parallel tool results in one block: one array entry per call.
 
-**Captured-requests**: n/a — pre-deployment design decision.
-
 ---
 
 ### #reject-out-of-range-sampling
@@ -513,8 +453,6 @@ Multiple parallel tool results in one block: one array entry per call.
 **Why**: These sampling knobs have ranges the backend enforces: `top_p` must be in `(0, 1]` and `repetition_penalty` must be `> 0` per the OpenAI/vLLM wire schema [[OpenAI-1]](references.md#openai), [[vLLM-1]](references.md#vllm); `top_k` accepts `-1` (disabled) or any integer `≥ 1`. The low end is an *exclusive* bound, so clamping to it would itself be invalid (e.g. `top_p = 0` is not a legal value) — the gateway returns a clear, field-named 400 at the boundary instead of forwarding a value the engine rejects with an opaque error. Values above the *upper* bound are clamped instead (`top_p > 1 → 1`, `repetition_penalty > 2 → 2`), and `temperature` / `min_p` are clamped into `[0, 2]` / `[0, 1]`.
 
 **Fix (client-side)**: send `top_p` in `(0, 1]`, `repetition_penalty > 0`, and `top_k` as `-1` or a positive integer.
-
-**Captured-requests**: n/a — no captures observed.
 
 ---
 
@@ -526,8 +464,6 @@ Multiple parallel tool results in one block: one array entry per call.
 
 **Fix (client-side)**: send `max_tokens ≥ 1`, or omit it to take the route default.
 
-**Captured-requests**: n/a — no captures observed.
-
 ---
 
 ### #reject-malformed-param-types
@@ -538,7 +474,28 @@ Multiple parallel tool results in one block: one array entry per call.
 
 **Fix (client-side)**: send each field with its declared type — booleans for the flags, non-negative integers for `seed` / `min_tokens` and `stop_token_ids` elements, strings for `stop` / `bad_words` elements.
 
-**Captured-requests**: n/a — no captures observed.
+## Per-model behavior
+
+### #kimi-empty-content-think-burn
+
+**What**: on Kimi-K2.6, small `max_tokens` requests can return `finish_reason=length` with `content=null`. The gateway also reshapes inbound requests:
+- `max_tokens` and `max_completion_tokens` are floored to **16** ([PR #1227](https://github.com/gonka-ai/gonka/pull/1227)).
+- `thinking_token_budget` is resolved by a single validator with this precedence:
+  1. `max_tokens < 256` → force `thinking_token_budget = 0` (bypass thinking entirely), overriding the client value.
+  2. Otherwise, if `thinking_token_budget` is absent, default to `max_tokens / 2`.
+  3. Cap at `96_000` (Moonshot HLE/AIME budget).
+  4. Clamp to `max_tokens − 64` so visible content always has headroom after `</think>`.
+
+**Why**: Kimi-K2.6 emits its reasoning inside `<think>...</think>`. vLLM's `kimi_k2` reasoning parser strips `</think>` as a special token; when the entire `max_tokens` budget is consumed by reasoning, no visible content reaches `delta.content` and the client sees an empty stream. This is the same documented outcome as OpenAI's reasoning models: *"the incomplete status might occur before any visible output tokens are produced, meaning you could incur costs for input and reasoning tokens without receiving a visible response"* — [[OpenAI-4]](references.md#openai). Anthropic documents the equivalent behavior for extended thinking with `stop_reason=max_tokens` ([[Anthropic-2]](references.md#anthropic)).
+
+**Response-side**: when the empty stream arrives with `usage.completion_tokens > 0`, the gateway classifies the attempt as **model burn** rather than host fault — telemetry-only, no `failureStrikes` increment, no quarantine. Scoped to the Kimi-K2.6 route: `completion_tokens` is host-reported, so it is honored only where reasoning-burn is expected. This mirrors OpenAI/OpenRouter behavior where empty `finish_reason=length` is a valid passthrough response, not a provider failure.
+
+**Fix (client-side)**:
+- For chat / agent traffic: set `max_tokens ≥ 256` so the gateway leaves a default thinking budget. For long reasoning, set `max_tokens ≥ 4096` and consider `thinking_token_budget` explicitly.
+- For probe / validation traffic: keep `max_tokens` small but expect `thinking_token_budget = 0` to be enforced.
+- To opt out of thinking on a non-small `max_tokens`: send `thinking_token_budget: 0` **explicitly**. The validator preserves client-set zero. Note that `thinking:{type:"disabled"}` does NOT zero ttb — Kimi empirically ignores the disable hint on hard prompts ([PR #1202](https://github.com/gonka-ai/gonka/pull/1202)), so the validator keeps the `max_tokens / 2` safety net to prevent burn-through when the model thinks anyway.
+
+---
 
 ## Per-model gotchas
 
