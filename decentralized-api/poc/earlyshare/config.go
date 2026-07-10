@@ -23,18 +23,18 @@ type Config struct {
 	InclusionSampleSize   int
 }
 
-// Defaults for the guard. The guard ships disabled until validated on a live
-// network in observe mode.
+// Defaults for the guard. The guard ships in enforce mode; operators can opt
+// out by explicitly setting mode to "observe" or "disabled" in the DAPI config.
 const (
 	DefaultFirstFraction       = 1.0 / 3.0
 	DefaultThresholdRatio      = 0.5
 	DefaultInclusionSampleSize = 5
 )
 
-// DefaultConfig returns the disabled-by-default configuration.
+// DefaultConfig returns the enforce-by-default configuration.
 func DefaultConfig() Config {
 	return Config{
-		Mode:                  ModeDisabled,
+		Mode:                  ModeEnforce,
 		FirstFraction:         DefaultFirstFraction,
 		ThresholdRatio:        DefaultThresholdRatio,
 		RequireInclusionProof: true,
