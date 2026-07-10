@@ -21,7 +21,7 @@ type chatRequest struct {
 	// read by DecodeRequest before the PostLimits stage force-enables logprobs
 	// upstream for validation (see the logprobs/top_logprobs ForceLiteral rules
 	// in request_filters_parameters.go, which force logprobs=true and clamp
-	// top_logprobs to TopLogprobsForcedValue on the wire). These hold what the
+	// top_logprobs to completionapi.ForcedTopLogprobs on the wire). These hold what the
 	// client asked for, not the forced values, and drive conditional response
 	// stripping so clients who explicitly asked for logprobs get them back. Cf.
 	// logprobClientIntent.

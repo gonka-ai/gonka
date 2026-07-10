@@ -426,3 +426,24 @@ func TestModifyRequestBodyWithLogprobsMode_TestermintInferenceRequestPromptHash(
 	require.NoError(t, err)
 	require.Equal(t, "a5d657a116456a31026dea733abf558bf97d6ea1051e32d2a95ee9e67e2464f6", utils.GenerateSHA256Hash(canonical))
 }
+
+// #6: top_logprobs is hard-pinned to ForcedTopLogprobs on every request — absent,
+// below, or above — so executor and validator responses share one logprob width.
+func TestModifyRequestBody_PinsTopLogprobs(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		body string
+	}{
+		{"absent", `{"messages":[{"role":"user","content":"hi"}]}`},
+		{"below", `{"messages":[{"role":"user","content":"hi"}],"top_logprobs":2}`},
+		{"above", `{"messages":[{"role":"user","content":"hi"}],"top_logprobs":20}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r, err := ModifyRequestBody([]byte(tc.body), 7)
+			require.NoError(t, err)
+			var raw map[string]any
+			require.NoError(t, json.Unmarshal(r.NewBody, &raw))
+			require.EqualValues(t, ForcedTopLogprobs, raw["top_logprobs"])
+		})
+	}
+}

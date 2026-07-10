@@ -213,7 +213,12 @@ func customDistance(
 	for i := range originalLogprobs {
 		o := originalLogprobs[i]
 		v := validationLogprobs[i]
-		posDistance, err := positionDistance(o.TopLogprobs, v.TopLogprobs)
+		// Ignore executor top_logprobs beyond the validated width so a padded width can neither dilute the divisor nor perturb the fallback (H1 #3853145).
+		originalTopLogprobs := o.TopLogprobs
+		if len(originalTopLogprobs) > len(v.TopLogprobs) {
+			originalTopLogprobs = originalTopLogprobs[:len(v.TopLogprobs)]
+		}
+		posDistance, err := positionDistance(originalTopLogprobs, v.TopLogprobs)
 		if err != nil {
 			logging.Error("Error calculating position distance", types.Validation, "error", err)
 			return math.Inf(1), err
@@ -221,9 +226,6 @@ func customDistance(
 		distance += posDistance
 	}
 	totalLogprobs := max(100, len(originalLogprobs))
-	if len(originalLogprobs[0].TopLogprobs) > 0 {
-		totalLogprobs *= len(originalLogprobs[0].TopLogprobs)
-	}
 
 	return distance / float64(totalLogprobs), nil
 }
@@ -278,7 +280,7 @@ func positionDistance(
 		}
 	}
 
-	return distance, nil
+	return distance / float64(len(validationLogprobs)), nil
 }
 
 var zero = inference.Decimal{Value: 0, Exponent: 0}

@@ -11,6 +11,9 @@ import (
 	"common/logging"
 )
 
+// ForcedTopLogprobs is the top_logprobs the validator forces; must equal the devshard gateway's TopLogprobsForcedValue so executor and validator widths are comparable (H1 #3853145).
+const ForcedTopLogprobs = 5
+
 type ModifiedRequest struct {
 	NewBody                  []byte
 	OriginalLogprobsValue    *bool
@@ -40,9 +43,8 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}
 
 	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
-	if originalTopLogprobsValue == nil || *originalTopLogprobsValue < 5 {
-		requestMap["top_logprobs"] = 5
-	}
+	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
+	requestMap["top_logprobs"] = ForcedTopLogprobs
 
 	maxTokens := getMaxTokens(requestMap)
 

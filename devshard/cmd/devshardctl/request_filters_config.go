@@ -44,8 +44,6 @@ const (
 	PenaltyMax               = 2.0
 	KimiK2PenaltyForcedValue = 0.0
 
-	TopLogprobsForcedValue = 5
-
 	ChatTemplateKwargsMaxDepth = 16
 	ChatTemplateKwargsMaxSize  = 16 * 1024
 	ChatTemplateKwargsMaxNodes = 128
