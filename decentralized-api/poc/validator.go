@@ -19,7 +19,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
-	"decentralized-api/poc/earlyshare"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -206,7 +205,10 @@ func (v *OffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochSt
 }
 
 func (v *OffChainValidator) maybeWarmEarlySnapshot(epochState chainphase.EpochState) {
-	stage, target, ok := EarlyShareCaptureTarget(&epochState, earlyshare.DefaultFirstFraction)
+	// Use the guard's configured fraction so the warm-up targets the same
+	// checkpoint height validators capture at. FirstFraction is nil-safe and
+	// falls back to the default when the guard is absent.
+	stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
 	if !ok || epochState.CurrentBlock.Height != target {
 		return
 	}
