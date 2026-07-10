@@ -1674,7 +1674,7 @@ func TestProxyHandleChatCompletionsRejectsWhenRegularPoCActive(t *testing.T) {
 	require.EqualValues(t, 0, env.proxy.session.Nonce())
 }
 
-func TestHandleState_IncludesSealedInferences(t *testing.T) {
+func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -1711,17 +1711,17 @@ func TestHandleState_IncludesSealedInferences(t *testing.T) {
 
 	proxy := &Proxy{sm: sm, escrowID: escrowID}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/debug/inferences", nil)
 	rec := httptest.NewRecorder()
-	proxy.handleState(rec, req)
+	proxy.handleDebugInferences(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var stateResp map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stateResp))
 	inferences, ok := stateResp["inferences"].(map[string]any)
-	require.True(t, ok, "/v1/state must expose inferences map")
+	require.True(t, ok, "/v1/debug/inferences must expose inferences map")
 	inf, ok := inferences["1"].(map[string]any)
-	require.True(t, ok, "sealed inference 1 must appear in /v1/state")
+	require.True(t, ok, "sealed inference 1 must appear in /v1/debug/inferences")
 	require.Equal(t, "finished", inf["status"])
 	require.Equal(t, "llama", inf["model"])
 }

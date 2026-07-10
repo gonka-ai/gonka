@@ -13,10 +13,29 @@ import (
 
 const chatResponseCacheTTL = time.Hour
 
+// chatCacheSweepInterval bounds how often Set pays for a full expiry sweep.
+// Expiry used to be enforced only lazily inside Get for the exact key being
+// looked up; since keys are hashes of full request bodies, unique requests
+// were never looked up again and their entries lived until process restart.
+const chatCacheSweepInterval = time.Minute
+
+// defaultChatCacheMaxBytes caps the total body bytes held by the cache
+// (overridable via DEVSHARD_CHAT_CACHE_MAX_BYTES). The cap is a safety net
+// against traffic bursts within the TTL window; the sweep handles steady
+// state.
+const defaultChatCacheMaxBytes = int64(256 << 20)
+
+// chatCacheEntryOverhead approximates the per-entry cost beyond the body:
+// map bucket, key string (64-hex sha256), and struct fields.
+const chatCacheEntryOverhead = 256
+
 type chatResponseCache struct {
-	mu      sync.Mutex
-	ttl     time.Duration
-	entries map[string]cachedChatResponse
+	mu         sync.Mutex
+	ttl        time.Duration
+	maxBytes   int64
+	entries    map[string]cachedChatResponse
+	totalBytes int64
+	lastSweep  time.Time
 }
 
 type cachedChatResponse struct {
@@ -29,13 +48,50 @@ type cachedChatResponse struct {
 	ExpiresAt       time.Time
 }
 
-func newChatResponseCache(ttl time.Duration) *chatResponseCache {
+func newChatResponseCache(ttl time.Duration, maxBytes int64) *chatResponseCache {
 	if ttl <= 0 {
 		ttl = chatResponseCacheTTL
 	}
+	if maxBytes <= 0 {
+		maxBytes = defaultChatCacheMaxBytes
+	}
 	return &chatResponseCache{
-		ttl:     ttl,
-		entries: make(map[string]cachedChatResponse),
+		ttl:      ttl,
+		maxBytes: maxBytes,
+		entries:  make(map[string]cachedChatResponse),
+	}
+}
+
+func chatCacheEntrySize(entry cachedChatResponse) int64 {
+	return int64(len(entry.Body)+len(entry.ContentType)+len(entry.EscrowID)+len(entry.SourceRequestID)) + chatCacheEntryOverhead
+}
+
+// deleteLocked removes key from the map and adjusts the byte total.
+// Caller must hold c.mu.
+func (c *chatResponseCache) deleteLocked(key string) {
+	entry, ok := c.entries[key]
+	if !ok {
+		return
+	}
+	delete(c.entries, key)
+	c.totalBytes -= chatCacheEntrySize(entry)
+	if c.totalBytes < 0 {
+		// Entries written directly in tests bypass accounting.
+		c.totalBytes = 0
+	}
+}
+
+// sweepExpiredLocked scans the whole map and drops entries whose TTL has
+// passed, at most once per chatCacheSweepInterval. Caller must hold c.mu.
+func (c *chatResponseCache) sweepExpiredLocked(now time.Time) {
+	if now.Sub(c.lastSweep) < chatCacheSweepInterval {
+		return
+	}
+	c.lastSweep = now
+	for key, entry := range c.entries {
+		if !entry.ExpiresAt.After(now) {
+			c.deleteLocked(key)
+		}
 	}
 }
 
@@ -58,11 +114,11 @@ func (c *chatResponseCache) Get(key string, now time.Time) (cachedChatResponse, 
 		return cachedChatResponse{}, false
 	}
 	if !entry.ExpiresAt.After(now) {
-		delete(c.entries, key)
+		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
 	if responseBodyHasNonCacheableError(entry.Body) {
-		delete(c.entries, key)
+		c.deleteLocked(key)
 		return cachedChatResponse{}, false
 	}
 	entry.Body = append([]byte(nil), entry.Body...)
@@ -83,7 +139,38 @@ func (c *chatResponseCache) Set(key string, entry cachedChatResponse, now time.T
 
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	c.sweepExpiredLocked(now)
+
+	c.deleteLocked(key) // drop any previous version's byte count
 	c.entries[key] = entry
+	c.totalBytes += chatCacheEntrySize(entry)
+
+	// Size cap: evict arbitrary entries (map iteration order) until under
+	// the limit. This is a dedup cache -- evicting a "wrong" entry only
+	// costs one cache miss, so eviction order isn't worth tracking.
+	if chatCacheEntrySize(entry) > c.maxBytes {
+		// Entry is too large to fit under the cap; don't cache it.
+		c.deleteLocked(key)
+		return
+	}
+	for other := range c.entries {
+		if c.totalBytes <= c.maxBytes {
+			break
+		}
+		if other != key {
+			c.deleteLocked(other)
+		}
+	}
+}
+
+// Stats reports the current entry count and approximate retained bytes.
+func (c *chatResponseCache) Stats() (entryCount int, totalBytes int64) {
+	if c == nil {
+		return 0, 0
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return len(c.entries), c.totalBytes
 }
 
 func serveCachedChatResponse(w http.ResponseWriter, r *http.Request, entry cachedChatResponse) {
