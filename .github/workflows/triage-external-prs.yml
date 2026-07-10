@@ -1,0 +1,138 @@
+name: Triage External PRs
+
+# Adds pull requests opened by NON-collaborators (people who are not invited to
+# the repository as collaborators/maintainers and are not org members/owners)
+# to the "triage" project and sets their status to "new".
+#
+# Requires a token with access to GitHub Projects (v2). The default GITHUB_TOKEN
+# cannot manage org/user projects, so provide a PAT in the PROJECTS_TOKEN secret
+# (classic PAT with `project` + `repo` scopes, or a fine-grained token with
+# read/write access to Projects and Pull requests).
+
+on:
+  pull_request_target:
+    types: [opened, reopened]
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: triage-external-pr-${{ github.event.pull_request.number }}
+  cancel-in-progress: false
+
+jobs:
+  add-external-pr-to-triage:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Add external PR to triage project
+        uses: actions/github-script@v7
+        env:
+          # Login of the org or user that OWNS the project (not necessarily the repo owner).
+          PROJECT_OWNER: ${{ github.repository_owner }}
+          # The project's number, visible in the project URL: .../projects/<NUMBER>
+          PROJECT_NUMBER: "7"
+          # Single-select field and option to set on the added item (matched case-insensitively).
+          STATUS_FIELD_NAME: "Status"
+          STATUS_VALUE: "new"
+        with:
+          github-token: ${{ secrets.PROJECTS_TOKEN }}
+          script: |
+            const author = context.payload.pull_request.user.login;
+            const association = context.payload.pull_request.author_association;
+
+            // Internal people: repo owner, org member, or invited collaborator.
+            const INTERNAL = new Set(['OWNER', 'MEMBER', 'COLLABORATOR']);
+            if (INTERNAL.has(association)) {
+              core.info(`${author} is ${association}; skipping triage.`);
+              return;
+            }
+            core.info(`${author} is external (${association}); adding PR to triage project.`);
+
+            const projectOwner = process.env.PROJECT_OWNER;
+            const projectNumber = parseInt(process.env.PROJECT_NUMBER, 10);
+            const statusFieldName = process.env.STATUS_FIELD_NAME;
+            const statusValue = process.env.STATUS_VALUE;
+            const contentId = context.payload.pull_request.node_id;
+
+            // Look up the project (try organization first, then user) and its fields.
+            const projectQuery = `
+              query($owner: String!, $number: Int!) {
+                organization(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField { id name options { id name } }
+                      }
+                    }
+                  }
+                }
+                user(login: $owner) {
+                  projectV2(number: $number) {
+                    id
+                    fields(first: 50) {
+                      nodes {
+                        ... on ProjectV2SingleSelectField { id name options { id name } }
+                      }
+                    }
+                  }
+                }
+              }`;
+
+            const result = await github.graphql(projectQuery, {
+              owner: projectOwner,
+              number: projectNumber,
+            });
+
+            const project = result.organization?.projectV2 || result.user?.projectV2;
+            if (!project) {
+              core.setFailed(`Project #${projectNumber} not found for owner "${projectOwner}".`);
+              return;
+            }
+
+            // Add the PR to the project (idempotent: returns existing item if already added).
+            const addRes = await github.graphql(`
+              mutation($projectId: ID!, $contentId: ID!) {
+                addProjectV2ItemById(input: { projectId: $projectId, contentId: $contentId }) {
+                  item { id }
+                }
+              }`, { projectId: project.id, contentId });
+
+            const itemId = addRes.addProjectV2ItemById.item.id;
+            core.info(`PR added to project as item ${itemId}.`);
+
+            // Resolve the status field and its "new" option (both case-insensitive) and set it.
+            const field = (project.fields?.nodes || []).find(
+              f => f && f.name && f.name.toLowerCase() === statusFieldName.toLowerCase()
+            );
+            if (!field || !field.options) {
+              core.warning(`Single-select field "${statusFieldName}" not found on project; item added without status.`);
+              return;
+            }
+            const option = field.options.find(
+              o => o.name.toLowerCase() === statusValue.toLowerCase()
+            );
+            if (!option) {
+              core.warning(`Option "${statusValue}" not found on field "${statusFieldName}"; item added without status.`);
+              return;
+            }
+
+            await github.graphql(`
+              mutation($projectId: ID!, $itemId: ID!, $fieldId: ID!, $optionId: String!) {
+                updateProjectV2ItemFieldValue(input: {
+                  projectId: $projectId,
+                  itemId: $itemId,
+                  fieldId: $fieldId,
+                  value: { singleSelectOptionId: $optionId }
+                }) {
+                  projectV2Item { id }
+                }
+              }`, {
+                projectId: project.id,
+                itemId,
+                fieldId: field.id,
+                optionId: option.id,
+              });
+
+            core.info(`Set ${statusFieldName}="${statusValue}" on item ${itemId}.`);
