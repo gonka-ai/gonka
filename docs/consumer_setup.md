@@ -59,7 +59,7 @@ Set the environment variables you got from your broker:
 ```bash
 export GONKA_BROKER_URL=<broker-base-url>     # e.g. https://api.example-broker.com/v1
 export GONKA_BROKER_API_KEY=<your-api-key>
-export GONKA_MODEL=Qwen/Qwen3-235B-A22B-Instruct-2507-FP8   # or any model your broker supports
+export GONKA_MODEL=MiniMaxAI/MiniMax-M2.7   # or any model your broker supports
 ```
 
 The broker endpoint is OpenAI-compatible, so you can use the official OpenAI SDK
@@ -87,7 +87,7 @@ print(response.choices[0].message.content)
 ```
 
 Model IDs are case-sensitive — copy them exactly, e.g.
-`Qwen/Qwen3-235B-A22B-Instruct-2507-FP8`.
+`MiniMaxAI/MiniMax-M2.7`.
 
 For the full set of language examples (TypeScript, Go), tool calling, and no-code app
 integrations (Open WebUI, Cursor, n8n, etc.), see the
