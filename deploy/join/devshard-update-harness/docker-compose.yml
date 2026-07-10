@@ -1,0 +1,16 @@
+# Standalone production-shaped gateway stack for blue/green update testing.
+#
+# Starts:
+#   - devshard-gateway (from ../docker-compose.devshard-gateway.yml)
+#   - proxy            (lightweight nginx front)
+#
+# Run from deploy/join:
+#   source config.devshard.env   # or export vars from your local env file
+#   docker compose -f devshard-update-harness/docker-compose.yml up -d
+#
+# Prerequisite: external network `join_default` must exist:
+#   docker network create join_default
+
+include:
+  - path: ../docker-compose.devshard-gateway.yml
+  - path: docker-compose.proxy.yml
