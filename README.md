@@ -119,5 +119,4 @@ We maintain deployment examples and tooling in the [https://github.com/gonka-ai/
 [https://gonka.ai/docs/model-licenses/](https://gonka.ai/docs/model-licenses/)
 ## Support
 
-- Reach us at hello@productscience.ai.
-- [Discord](https://discord.com/invite/RADwCT2U6R) – Join for real-time discussions, updates, and support.
+Join the [Gonka community on Discord](https://discord.com/invite/RADwCT2U6R) if you need assistance.
