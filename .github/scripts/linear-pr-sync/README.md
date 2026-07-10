@@ -19,7 +19,7 @@ logic below — hence this Action.
 | PR **review submitted = approved** by a reviewer | That reviewer's review sub-issue → **Done**. If the PR has no milestone, the parent is parked in the **unsorted** project so approved-but-unassigned work is visible. |
 | PR **merged** | Parent → **Merged. Ready for testing**. Each review sub-issue → **Done** *only if that reviewer actually approved on GitHub*, otherwise → **Not done**. A **"`<title>` — Testing"** sub-issue is created in the **Q&A** team (state **Todo**), assigned to the QA owner, reviewers subscribed. If there was no milestone, the parent is first moved into the **unsorted** project (full pipeline still runs). |
 | PR **closed** by a reviewer (Dima / Gabriel) without merge | Parent → **Done**, that reviewer's sub-issue → **Done**, the other sub-issue → **Cancelled**. |
-| PR **closed** by anyone else without merge | Parent → **Cancelled**, review sub-issues → **Not done**. No Q&A testing sub-issue is created. |
+| PR **closed** by anyone else without merge | Parent + review sub-issues → **Cancelled**. No Q&A testing sub-issue is created. |
 
 **Reviewer assignment rule:** normally a sub-issue is created for (and a GitHub review is
 requested from) each reviewer. If the PR author *is* one of the reviewers, only the *other*

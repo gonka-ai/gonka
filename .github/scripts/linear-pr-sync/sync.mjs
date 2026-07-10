@@ -10,7 +10,7 @@
 //                         is created (state "Todo", assigned to the QA owner)
 //   closed (unmerged)  -> if closed by a reviewer: their sub-issue -> Done, parent -> Done,
 //                         other sub-issue -> Cancelled
-//                         otherwise: parent -> Cancelled, review sub-issues -> Not done
+//                         otherwise: parent + review sub-issues -> Cancelled
 //                         (no Q&A testing sub-issue is created)
 //
 // All identity/state resolution is done by NAME at runtime, so the only hard config
@@ -300,15 +300,14 @@ async function onClosed(pr) {
     return;
   }
 
-  // Closed by someone who is not a reviewer (no merge): cancel the parent, and mark
-  // the review sub-issues as "Not done". No Q&A testing sub-issue is created (that only
-  // happens on merge).
+  // Closed by someone who is not a reviewer (no merge): cancel the parent and the
+  // review sub-issues. No Q&A testing sub-issue is created (that only happens on merge).
   await client.updateIssue(parent.id, { stateId: states.cancelled.id });
   for (const child of children) {
-    await client.updateIssue(child.id, { stateId: states.notDone.id });
+    await client.updateIssue(child.id, { stateId: states.cancelled.id });
   }
   console.log(
-    `PR closed by ${pr.closerLogin || "unknown"} -> ${parent.identifier} Cancelled, review sub-issues Not done.`,
+    `PR closed by ${pr.closerLogin || "unknown"} -> ${parent.identifier} and review sub-issues Cancelled.`,
   );
 }
 
