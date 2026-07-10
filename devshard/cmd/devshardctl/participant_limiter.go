@@ -637,7 +637,7 @@ func (l *ParticipantRequestLimiter) ObserveModelBurnEmpty(participantKey, modelI
 	if participantKey == "" {
 		return
 	}
-	log.Printf("participant_limit_model_burn_empty participant_key=%s model_id=%s", participantKey, modelID)
+	log.Printf("participant_limit_model_burn_empty participant_key=%s model_id=%q", participantKey, normalizeModelID(modelID))
 }
 
 // ObserveEmptyStream increments the unified failure-strike counter for a
