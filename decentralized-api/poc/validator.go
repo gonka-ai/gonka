@@ -583,7 +583,12 @@ func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFu
 }
 
 func shouldStopValidationForStage(state *chainphase.EpochState, pocStageStartBlockHeight int64) bool {
-	if state == nil {
+	// A nil or not-synced tracker reading is transient (startup, RPC lag,
+	// catch-up), not evidence that the validation window ended. Cancelling on
+	// it would permanently abandon all in-flight validation for the stage, so
+	// treat it as "wait for the next tick" and only stop on a synced reading
+	// that positively says the phase ended or the stage changed.
+	if state.IsNilOrNotSynced() {
 		return false
 	}
 	return !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight
