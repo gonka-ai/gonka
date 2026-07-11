@@ -287,7 +287,14 @@ if ! grep -Eq '${old_pat}' '${cfg_path}'; then
 fi
 cp '${cfg_path}' '${backup}'
 sed -E 's#http://${from}:${port}#http://${to}:${port}#g; s#(server[[:space:]]+)${from}:${port}#\1${to}:${port}#g' '${cfg_path}' > '${tmp}'
-mv '${tmp}' '${cfg_path}'
+# Prefer mv (atomic replace). Bind-mounted nginx.conf rejects inode replacement
+# ("Resource busy" / "File exists") — fall back to in-place content overwrite.
+if mv '${tmp}' '${cfg_path}' 2>/dev/null; then
+  :
+else
+  cat '${tmp}' > '${cfg_path}'
+  rm -f '${tmp}'
+fi
 grep -Eq '${new_pat}' '${cfg_path}' || { echo 'ERROR: switch did not apply; restore ${backup}' >&2; exit 4; }
 nginx -t
 nginx -s reload
