@@ -213,7 +213,14 @@ wait_drain() {
 }
 
 smoke_chat() {
-  curl -fsS -X POST "$1/v1/chat/completions" -H 'Content-Type: application/json' \
+  # Prefer admin key when models are admin-only; fall back to first API key; else unauthenticated.
+  local auth_hdr=()
+  if [[ -n "${DEVSHARD_ADMIN_API_KEY:-}" ]]; then
+    auth_hdr=(-H "Authorization: Bearer ${DEVSHARD_ADMIN_API_KEY}")
+  elif [[ -n "${DEVSHARD_API_KEYS:-}" ]]; then
+    auth_hdr=(-H "Authorization: Bearer ${DEVSHARD_API_KEYS%%,*}")
+  fi
+  curl -fsS -X POST "$1/v1/chat/completions" "${auth_hdr[@]}" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$2" '{model:$m, stream:false, max_tokens:1, messages:[{role:"user", content:"Reply with ok"}]}')" >/dev/null
 }
 
