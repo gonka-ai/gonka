@@ -41,7 +41,12 @@ func (e *DevshardEscrowCreatedEventHandler) Handle(event *chainevents.JSONRPCRes
 	if err != nil {
 		return fmt.Errorf("parse escrow_id: %w", err)
 	}
-	epochIndex, _ := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".epoch_index"), 10, 64)
+	epochIndex, err := strconv.ParseUint(firstAttr(ev, escrowCreatedEvent+".epoch_index"), 10, 64)
+	if err != nil {
+		logging.Warn("host_events: malformed epoch_index on escrow_created; defaulting to 0", types.EventProcessing,
+			"escrow_id", escrowID, "raw", firstAttr(ev, escrowCreatedEvent+".epoch_index"), "error", err)
+		epochIndex = 0
+	}
 	payload := &apiconfig.EscrowPayload{
 		EscrowID:   escrowID,
 		EpochIndex: epochIndex,
@@ -50,7 +55,7 @@ func (e *DevshardEscrowCreatedEventHandler) Handle(event *chainevents.JSONRPCRes
 		Amount:     firstAttr(ev, escrowCreatedEvent+".amount"),
 	}
 
-	hold, ok := el.localHoldsEscrowSlot(fmt.Sprint(escrowID))
+	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
 	if ok && !hold {
 		logging.Debug("host_events: skip escrow_created; local node not in slots", types.EventProcessing,
 			"escrow_id", escrowID)
@@ -93,7 +98,7 @@ func (e *DevshardEscrowSettledEventHandler) Handle(event *chainevents.JSONRPCRes
 		Remainder:   firstAttr(ev, escrowSettledEvent+".remainder"),
 	}
 
-	hold, ok := el.localHoldsEscrowSlot(fmt.Sprint(escrowID))
+	hold, ok := el.localHoldsEscrowSlot(strconv.FormatUint(escrowID, 10))
 	if ok && !hold {
 		logging.Debug("host_events: skip escrow_settled; local node not in slots", types.EventProcessing,
 			"escrow_id", escrowID)

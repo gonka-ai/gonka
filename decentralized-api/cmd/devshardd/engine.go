@@ -249,7 +249,7 @@ func (e *devshardEngine) doWithFallbackNodes(
 		if !ok {
 			if limit && len(capacityExcluded) > 0 {
 				// Every known node is at its local bound — wait and retry.
-				clearMap(capacityExcluded)
+				clear(capacityExcluded)
 				select {
 				case <-ctx.Done():
 					lastReason = observability.ReasonTimeout
@@ -330,12 +330,6 @@ func mergeExcluded(a, b map[string]struct{}) map[string]struct{} {
 		out[k] = struct{}{}
 	}
 	return out
-}
-
-func clearMap(m map[string]struct{}) {
-	for k := range m {
-		delete(m, k)
-	}
 }
 
 // shouldFallback reports whether an Acquire error means dapi is unreachable

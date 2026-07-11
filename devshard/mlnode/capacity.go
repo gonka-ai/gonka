@@ -88,12 +88,12 @@ type Cache struct {
 	mu    sync.Mutex
 	nodes map[string]*nodeCap // key: nodeID
 
-	// localInFlight is keyed by nodeID\x00model (physical vLLM occupancy).
-	inFlight map[string]int
+	// inFlight is keyed by (nodeID, model) — physical vLLM occupancy.
+	inFlight map[nodeModelKey]int
 	// unknownInFlight tracks in-flight slots for capacity-unknown fallback nodes
 	// (not in c.nodes). Kept separate so applyPoll's prune never wipes live
 	// counts for a node dapi has not (yet) reported.
-	unknownInFlight map[string]int
+	unknownInFlight map[nodeModelKey]int
 
 	activeLoad ActiveLoadFunc
 	now        func() time.Time
@@ -135,8 +135,8 @@ func NewCache(client CapacityClient, opts CacheOptions) *Cache {
 	return &Cache{
 		client:                   client,
 		nodes:                    make(map[string]*nodeCap),
-		inFlight:                 make(map[string]int),
-		unknownInFlight:          make(map[string]int),
+		inFlight:                 make(map[nodeModelKey]int),
+		unknownInFlight:          make(map[nodeModelKey]int),
 		activeLoad:               active,
 		now:                      opts.Now,
 		log:                      opts.Log,
@@ -372,8 +372,7 @@ func (c *Cache) TryAcquire(nodeID, model string) bool {
 	if c.availableSlotsLocked(nodeID, div) <= 0 {
 		return false
 	}
-	key := inFlightKey(nodeID, model)
-	c.inFlight[key]++
+	c.inFlight[nodeModelKey{nodeID: nodeID, model: model}]++
 	return true
 }
 
@@ -422,7 +421,7 @@ func (c *Cache) Release(nodeID, model string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := inFlightKey(nodeID, model)
+	key := nodeModelKey{nodeID: nodeID, model: model}
 	if c.inFlight[key] <= 1 {
 		delete(c.inFlight, key)
 		return
@@ -458,10 +457,10 @@ func (c *Cache) TryAcquireUnknown(nodeID, model string) bool {
 	eff := c.unknownEffectiveMax() // reads load map; must not hold c.mu
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if unknownInFlightSum(c.unknownInFlight, nodeID) >= eff {
+	if inFlightSum(c.unknownInFlight, nodeID) >= eff {
 		return false
 	}
-	c.unknownInFlight[inFlightKey(nodeID, model)]++
+	c.unknownInFlight[nodeModelKey{nodeID: nodeID, model: model}]++
 	return true
 }
 
@@ -472,7 +471,7 @@ func (c *Cache) ReleaseUnknown(nodeID, model string) {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	key := inFlightKey(nodeID, model)
+	key := nodeModelKey{nodeID: nodeID, model: model}
 	if c.unknownInFlight[key] <= 1 {
 		delete(c.unknownInFlight, key)
 		return
@@ -480,11 +479,16 @@ func (c *Cache) ReleaseUnknown(nodeID, model string) {
 	c.unknownInFlight[key]--
 }
 
-func unknownInFlightSum(m map[string]int, nodeID string) int {
-	prefix := nodeID + "\x00"
+// nodeModelKey identifies one (node, model) in-flight counter.
+type nodeModelKey struct {
+	nodeID string
+	model  string
+}
+
+func inFlightSum(m map[nodeModelKey]int, nodeID string) int {
 	sum := 0
 	for k, v := range m {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+		if k.nodeID == nodeID {
 			sum += v
 		}
 	}
@@ -492,40 +496,15 @@ func unknownInFlightSum(m map[string]int, nodeID string) int {
 }
 
 func (c *Cache) inFlightSumLocked(nodeID string) int {
-	prefix := nodeID + "\x00"
-	sum := 0
-	for k, v := range c.inFlight {
-		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
-			sum += v
-		}
-	}
-	return sum
+	return inFlightSum(c.inFlight, nodeID)
 }
 
 func (c *Cache) pruneInFlightLocked() {
 	for k := range c.inFlight {
-		nodeID, _, ok := splitInFlightKey(k)
-		if !ok {
-			delete(c.inFlight, k)
-			continue
-		}
-		if _, exists := c.nodes[nodeID]; !exists {
+		if _, exists := c.nodes[k.nodeID]; !exists {
 			delete(c.inFlight, k)
 		}
 	}
-}
-
-func inFlightKey(nodeID, model string) string {
-	return nodeID + "\x00" + model
-}
-
-func splitInFlightKey(key string) (nodeID, model string, ok bool) {
-	for i := 0; i < len(key); i++ {
-		if key[i] == 0 {
-			return key[:i], key[i+1:], true
-		}
-	}
-	return "", "", false
 }
 
 // ApplyPollForTest applies a successful poll snapshot (tests only).

@@ -30,70 +30,79 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 	cursor := req.GetCursor()
 
 	for {
-		var wake <-chan struct{}
-		var release func()
-		if maxWait > 0 {
-			// Subscribe (with the client's kind filter) before Since to avoid
-			// lost wake-ups. Only subscribed kinds wake this waiter, so an
-			// unsubscribed kind (e.g. maintenance) cannot reset the deadline.
-			wake, release = s.hostEvents.Subscribe(subscribe)
+		resp, err, again := s.getHostEventsOnce(ctx, cursor, clientGen, subscribe, maxWait)
+		if !again {
+			return resp, err
 		}
+		// Notified by a subscribed kind: loop and re-check Since.
+	}
+}
 
-		got := s.hostEvents.Since(cursor, clientGen, subscribe)
-		if got.Reset {
-			if release != nil {
-				release()
-			}
-			logging.Info("host_events: GetHostEvents needs_reset", types.Config,
-				"cursor", cursor,
-				"clientGeneration", clientGen,
-				"serverGeneration", got.Generation,
-				"nextCursor", got.NextCursor,
-			)
-			return s.hostEventsResponse(got, nil, false, true), nil
-		}
-		if len(got.Events) > 0 {
-			if release != nil {
-				release()
-			}
-			logging.Debug("host_events: GetHostEvents returning events", types.Config,
-				"cursor", cursor,
-				"count", len(got.Events),
-				"nextCursor", got.NextCursor,
-				"generation", got.Generation,
-			)
-			return s.hostEventsResponse(got, hostEventsToProto(got.Events), false, false), nil
-		}
+// getHostEventsOnce runs one subscribe → Since → wait cycle. release is deferred
+// so every exit path (return or loop-continue via again=true) deregisters the waiter.
+func (s *Server) getHostEventsOnce(
+	ctx context.Context,
+	cursor, clientGen uint64,
+	subscribe []apiconfig.HostEventKind,
+	maxWait time.Duration,
+) (resp *gen.GetHostEventsResponse, err error, again bool) {
+	var wake <-chan struct{}
+	var release func()
+	if maxWait > 0 {
+		// Subscribe (with the client's kind filter) before Since to avoid
+		// lost wake-ups. Only subscribed kinds wake this waiter, so an
+		// unsubscribed kind (e.g. maintenance) cannot reset the deadline.
+		wake, release = s.hostEvents.Subscribe(subscribe)
+	}
+	if release != nil {
+		defer release()
+	}
 
-		if maxWait <= 0 {
-			return s.hostEventsResponse(got, nil, true, false), nil
-		}
+	got := s.hostEvents.Since(cursor, clientGen, subscribe)
+	if got.Reset {
+		logging.Info("host_events: GetHostEvents needs_reset", types.Config,
+			"cursor", cursor,
+			"clientGeneration", clientGen,
+			"serverGeneration", got.Generation,
+			"nextCursor", got.NextCursor,
+		)
+		return s.hostEventsResponse(got, nil, false, true), nil, false
+	}
+	if len(got.Events) > 0 {
+		logging.Debug("host_events: GetHostEvents returning events", types.Config,
+			"cursor", cursor,
+			"count", len(got.Events),
+			"nextCursor", got.NextCursor,
+			"generation", got.Generation,
+		)
+		return s.hostEventsResponse(got, hostEventsToProto(got.Events), false, false), nil, false
+	}
 
-		logging.Debug("host_events: GetHostEvents long-poll waiting", types.Config,
+	if maxWait <= 0 {
+		return s.hostEventsResponse(got, nil, true, false), nil, false
+	}
+
+	logging.Debug("host_events: GetHostEvents long-poll waiting", types.Config,
+		"cursor", cursor,
+		"nextCursor", got.NextCursor,
+		"generation", got.Generation,
+		"maxWait", maxWait,
+	)
+	outcome, waitErr := longpoll.Wait(ctx, wake, maxWait)
+	if waitErr != nil {
+		return nil, status.FromContextError(waitErr).Err(), false
+	}
+	if outcome == longpoll.TimedOut {
+		got = s.hostEvents.Since(cursor, clientGen, subscribe)
+		logging.Debug("host_events: GetHostEvents long-poll timed out", types.Config,
 			"cursor", cursor,
 			"nextCursor", got.NextCursor,
 			"generation", got.Generation,
 			"maxWait", maxWait,
 		)
-		outcome, err := longpoll.Wait(ctx, wake, maxWait)
-		if release != nil {
-			release()
-		}
-		if err != nil {
-			return nil, status.FromContextError(err).Err()
-		}
-		if outcome == longpoll.TimedOut {
-			got = s.hostEvents.Since(cursor, clientGen, subscribe)
-			logging.Debug("host_events: GetHostEvents long-poll timed out", types.Config,
-				"cursor", cursor,
-				"nextCursor", got.NextCursor,
-				"generation", got.Generation,
-				"maxWait", maxWait,
-			)
-			return s.hostEventsResponse(got, nil, true, got.Reset), nil
-		}
-		// Notified by a subscribed kind: loop and re-check Since.
+		return s.hostEventsResponse(got, nil, true, got.Reset), nil, false
 	}
+	return nil, nil, true
 }
 
 func (s *Server) hostEventsResponse(got apiconfig.HostEventSince, events []*gen.HostEvent, unchanged, needsReset bool) *gen.GetHostEventsResponse {
