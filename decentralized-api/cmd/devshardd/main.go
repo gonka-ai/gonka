@@ -49,6 +49,7 @@ import (
 
 	devshardpkg "devshard"
 	devshardbridge "devshard/bridge"
+	"devshard/hostevents"
 	mlnodeclient "devshard/mlnode"
 	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
@@ -212,6 +213,14 @@ func main() {
 	}
 	store.Start()
 	manager.SetReady()
+
+	hostEventsMaxWait, hostEventsSlack := hostEventsSettingsFromEnv()
+	go hostevents.Run(ctx, hostevents.Config{
+		Client:              mlClient.NodeManagerClient(),
+		ServerMaxWait:       hostEventsMaxWait,
+		ClientDeadlineSlack: hostEventsSlack,
+		Log:                 slog.Default(),
+	}, manager)
 
 	e := echo.New()
 	e.HideBanner = true

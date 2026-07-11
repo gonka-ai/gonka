@@ -243,6 +243,7 @@ func main() {
 			logging.Warn("Failed to initialize dealer openings persistence", types.BLS, "error", err)
 		}
 	}
+	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -253,6 +254,8 @@ func main() {
 		cancel,
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
+		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithEscrowQuerier(internaldevshard.NewChainBridge(recorder)),
 	)
 	go listener.Start(ctx)
 
@@ -317,7 +320,7 @@ func main() {
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker))
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nodemanager.WithHostEventRing(hostEventRing)))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

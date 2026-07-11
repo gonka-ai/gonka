@@ -4,11 +4,11 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"time"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+	"decentralized-api/internal/longpoll"
 	"decentralized-api/logging"
 	"devshard/nodemanager/gen"
 
@@ -31,16 +31,30 @@ type Server struct {
 	broker        brokerAcquirer
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
+	hostEvents    *apiconfig.HostEventRing
+}
+
+// ServerOption configures optional Server dependencies.
+type ServerOption func(*Server)
+
+// WithHostEventRing enables GetHostEvents. Without it the RPC returns FailedPrecondition.
+func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
+	return func(s *Server) { s.hostEvents = ring }
 }
 
 // NewServer creates a NodeManager gRPC server. configManager and phaseTracker are
 // required for GetRuntimeConfig; either may be nil to disable that RPC.
-func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTracker *chainphase.ChainPhaseTracker) *Server {
-	return &Server{
+// Pass WithHostEventRing to enable GetHostEvents (nil / omitted → FailedPrecondition).
+func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTracker *chainphase.ChainPhaseTracker, opts ...ServerOption) *Server {
+	s := &Server{
 		broker:        b,
 		configManager: configManager,
 		phaseTracker:  phaseTracker,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
@@ -140,17 +154,11 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 			"epochID", epochID,
 			"maxWait", maxWait,
 		)
-		timer := time.NewTimer(maxWait)
-		select {
-		case <-wake:
-			timer.Stop()
-			logging.Debug("runtime_config: GetRuntimeConfig long-poll notified, retrying", types.Config,
-				"clientParamsBlockHeight", clientHeight,
-				"serverParamsBlockHeight", s.configManager.RuntimeParamsBlockHeight(),
-				"epochID", epochID,
-				"devshardRequestsEnabled", s.configManager.RuntimeConfigSnapshot(epochID).DevshardRequestsEnabled,
-			)
-		case <-timer.C:
+		outcome, err := longpoll.Wait(ctx, wake, maxWait)
+		if err != nil {
+			return nil, status.FromContextError(err).Err()
+		}
+		if outcome == longpoll.TimedOut {
 			logging.Debug("runtime_config: GetRuntimeConfig long-poll timed out", types.Config,
 				"clientParamsBlockHeight", clientHeight,
 				"serverParamsBlockHeight", snap.ParamsBlockHeight,
@@ -158,10 +166,13 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 				"maxWait", maxWait,
 			)
 			return &gen.GetRuntimeConfigResponse{Unchanged: true}, nil
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, status.FromContextError(ctx.Err()).Err()
 		}
+		logging.Debug("runtime_config: GetRuntimeConfig long-poll notified, retrying", types.Config,
+			"clientParamsBlockHeight", clientHeight,
+			"serverParamsBlockHeight", s.configManager.RuntimeParamsBlockHeight(),
+			"epochID", epochID,
+			"devshardRequestsEnabled", s.configManager.RuntimeConfigSnapshot(epochID).DevshardRequestsEnabled,
+		)
 	}
 }
 

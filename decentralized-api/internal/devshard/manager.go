@@ -45,6 +45,7 @@ type HostManager struct {
 	mu                 sync.RWMutex
 	sessions           map[string]*transport.Server
 	resolutionFailures map[string]resolutionFailure
+	openSet            map[string]struct{} // escrow IDs this host currently serves
 	sf                 singleflight.Group
 
 	readyMu      sync.RWMutex
@@ -150,6 +151,7 @@ func NewHostManager(
 	m := &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
+		openSet:            make(map[string]struct{}),
 		initializing:       true,
 		store:              store,
 		signer:             signer,
@@ -187,6 +189,7 @@ func (m *HostManager) Close() error {
 		sessions = append(sessions, srv)
 	}
 	m.sessions = make(map[string]*transport.Server)
+	m.openSet = make(map[string]struct{})
 	m.mu.Unlock()
 	for _, srv := range sessions {
 		srv.Host().Close()
@@ -358,12 +361,79 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 	defer m.mu.Unlock()
 	if existing, ok := m.sessions[escrowID]; ok {
 		srv.Host().Close()
+		m.openSet[escrowID] = struct{}{}
 		return existing
 	}
 	delete(m.resolutionFailures, escrowID)
 	m.sessions[escrowID] = srv
+	m.openSet[escrowID] = struct{}{}
 	srv.Host().Start()
 	return srv
+}
+
+// WarmEscrow proactively creates/recovers a session for escrowID (singleflight with
+// lazy getOrCreate). Soft-fails when this host is not in the escrow slot set.
+func (m *HostManager) WarmEscrow(escrowID string) error {
+	if escrowID == "" {
+		return nil
+	}
+	_, err := m.getOrCreate(escrowID)
+	if err != nil {
+		if errors.Is(err, types.ErrHostNotInGroup) {
+			logging.Debug("host_events: WarmEscrow skipped; host not in group", inferenceTypes.System,
+				"escrow_id", escrowID)
+			return nil
+		}
+		return err
+	}
+	return nil
+}
+
+// OnEscrowSettled marks the session settled in storage and evicts it from memory.
+// Idempotent when the session is already gone.
+func (m *HostManager) OnEscrowSettled(escrowID string) error {
+	if escrowID == "" {
+		return nil
+	}
+	if err := m.store.MarkSettled(escrowID); err != nil {
+		logging.Debug("host_events: MarkSettled", inferenceTypes.System,
+			"escrow_id", escrowID, "error", err)
+	}
+
+	m.mu.Lock()
+	srv := m.sessions[escrowID]
+	delete(m.sessions, escrowID)
+	delete(m.resolutionFailures, escrowID)
+	delete(m.openSet, escrowID)
+	m.mu.Unlock()
+
+	if srv != nil {
+		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
+		m.statsMu.Lock()
+		m.statsShardsCache = nil
+		delete(m.statsDetailsCache, escrowID)
+		m.statsMu.Unlock()
+	}
+	return nil
+}
+
+// OpenEscrowCount returns how many escrows this host currently tracks as open.
+func (m *HostManager) OpenEscrowCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.openSet)
+}
+
+// RehydrateOpenEscrows rebuilds openSet from live in-memory sessions (after
+// GetHostEvents needs_reset / dapi restart).
+func (m *HostManager) RehydrateOpenEscrows() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.openSet = make(map[string]struct{}, len(m.sessions))
+	for id := range m.sessions {
+		m.openSet[id] = struct{}{}
+	}
 }
 
 func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
@@ -379,6 +449,13 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 		evicted[escrowID] = srv
 		delete(m.sessions, escrowID)
 		delete(m.resolutionFailures, escrowID)
+		delete(m.openSet, escrowID)
+	}
+	// Leak guard: drop openSet entries that no longer have a live session.
+	for id := range m.openSet {
+		if _, ok := m.sessions[id]; !ok {
+			delete(m.openSet, id)
+		}
 	}
 	m.mu.Unlock()
 
@@ -529,6 +606,7 @@ func (m *HostManager) RecoverSessions() error {
 		"version_skipped_count", versionSkippedCount.Load(),
 		"duration", time.Since(startedAt))
 
+	m.RehydrateOpenEscrows()
 	return nil
 }
 

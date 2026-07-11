@@ -22,6 +22,7 @@ const (
 	NodeManager_AcquireMLNode_FullMethodName    = "/nodemanager.NodeManager/AcquireMLNode"
 	NodeManager_ReleaseMLNode_FullMethodName    = "/nodemanager.NodeManager/ReleaseMLNode"
 	NodeManager_GetRuntimeConfig_FullMethodName = "/nodemanager.NodeManager/GetRuntimeConfig"
+	NodeManager_GetHostEvents_FullMethodName    = "/nodemanager.NodeManager/GetHostEvents"
 )
 
 // NodeManagerClient is the client API for NodeManager service.
@@ -31,6 +32,7 @@ type NodeManagerClient interface {
 	AcquireMLNode(ctx context.Context, in *AcquireMLNodeRequest, opts ...grpc.CallOption) (*AcquireMLNodeResponse, error)
 	ReleaseMLNode(ctx context.Context, in *ReleaseMLNodeRequest, opts ...grpc.CallOption) (*ReleaseMLNodeResponse, error)
 	GetRuntimeConfig(ctx context.Context, in *GetRuntimeConfigRequest, opts ...grpc.CallOption) (*GetRuntimeConfigResponse, error)
+	GetHostEvents(ctx context.Context, in *GetHostEventsRequest, opts ...grpc.CallOption) (*GetHostEventsResponse, error)
 }
 
 type nodeManagerClient struct {
@@ -68,6 +70,15 @@ func (c *nodeManagerClient) GetRuntimeConfig(ctx context.Context, in *GetRuntime
 	return out, nil
 }
 
+func (c *nodeManagerClient) GetHostEvents(ctx context.Context, in *GetHostEventsRequest, opts ...grpc.CallOption) (*GetHostEventsResponse, error) {
+	out := new(GetHostEventsResponse)
+	err := c.cc.Invoke(ctx, NodeManager_GetHostEvents_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeManagerServer is the server API for NodeManager service.
 // All implementations must embed UnimplementedNodeManagerServer
 // for forward compatibility
@@ -75,6 +86,7 @@ type NodeManagerServer interface {
 	AcquireMLNode(context.Context, *AcquireMLNodeRequest) (*AcquireMLNodeResponse, error)
 	ReleaseMLNode(context.Context, *ReleaseMLNodeRequest) (*ReleaseMLNodeResponse, error)
 	GetRuntimeConfig(context.Context, *GetRuntimeConfigRequest) (*GetRuntimeConfigResponse, error)
+	GetHostEvents(context.Context, *GetHostEventsRequest) (*GetHostEventsResponse, error)
 	mustEmbedUnimplementedNodeManagerServer()
 }
 
@@ -90,6 +102,9 @@ func (UnimplementedNodeManagerServer) ReleaseMLNode(context.Context, *ReleaseMLN
 }
 func (UnimplementedNodeManagerServer) GetRuntimeConfig(context.Context, *GetRuntimeConfigRequest) (*GetRuntimeConfigResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetRuntimeConfig not implemented")
+}
+func (UnimplementedNodeManagerServer) GetHostEvents(context.Context, *GetHostEventsRequest) (*GetHostEventsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method GetHostEvents not implemented")
 }
 func (UnimplementedNodeManagerServer) mustEmbedUnimplementedNodeManagerServer() {}
 
@@ -158,6 +173,24 @@ func _NodeManager_GetRuntimeConfig_Handler(srv interface{}, ctx context.Context,
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeManager_GetHostEvents_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(GetHostEventsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeManagerServer).GetHostEvents(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeManager_GetHostEvents_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeManagerServer).GetHostEvents(ctx, req.(*GetHostEventsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeManager_ServiceDesc is the grpc.ServiceDesc for NodeManager service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -176,6 +209,10 @@ var NodeManager_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetRuntimeConfig",
 			Handler:    _NodeManager_GetRuntimeConfig_Handler,
+		},
+		{
+			MethodName: "GetHostEvents",
+			Handler:    _NodeManager_GetHostEvents_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
