@@ -125,7 +125,7 @@ message GetHostEventsResponse {
   bool unchanged = 1;              // idle timeout / nothing in subscribed set since cursor
   repeated HostEvent events = 2;   // only kinds in `subscribe`, in seq order
   uint64 next_cursor = 3;
-  uint64 generation = 4;           // dapi boot nonce (G2)
+  uint64 generation = 4;           // dapi boot nonce
   bool reset = 5;                  // client must re-hydrate
   int32 open_escrow_count = 6;     // if escrow topics subscribed (optional convenience)
 }
@@ -257,60 +257,6 @@ Follow-up: bounded ring replay since `cursor`; list-open-escrows warm for curren
 
 ---
 
-## Design gaps & resolutions
-
-Found while grounding the design against the current code. Each has a decision folded into the step plan.
-
-### G1 — Ingest source only sees **tx** events, not block-level events
-
-`BlockObserver.processBlock` flattens `res.TxsResults[].Events` only ([`block_observer.go`](../../decentralized-api/internal/event_listener/block_observer.go)); begin/end-block (`FinalizeBlockEvents`) are never turned into synthetic tx events. Mapping to our events:
-
-| Event | Emitted where | Reached by tx path? |
-|-------|---------------|---------------------|
-| `devshard_escrow_created` / `devshard_escrow_settled` | msg servers (tx) | **Yes** |
-| `maintenance_scheduled` / `maintenance_canceled` (via `MsgCancelMaintenance`) | msg servers (tx) | **Yes** |
-| `maintenance_canceled` with `reason=maintenance_disabled` | `maintenance_lifecycle.go` (block, not tx) | **No** |
-
-**Resolution:** escrow + msg-driven maintenance ride the existing tx path (new `EventHandler`s). The lifecycle-emitted `maintenance_canceled` is caught by parsing the **NewBlock** WS event's `Result.Events` (same mechanism as `handleBLSEvents`), not the tx queue. Activation/complete transitions are out of scope unless a consumer needs them.
-
-### G2 — In-memory ring is lost on dapi restart → cursor invalidation
-
-There is no persisted event log. After a dapi restart the ring is empty and BlockObserver replays from `lastProcessedHeight`, re-appending events with **new** seqs. A client holding a pre-restart cursor must not silently miss or misread.
-
-**Resolution:** stamp the ring with a `generation` (dapi boot nonce). `GetHostEventsResponse` echoes `generation`; if the client’s `cursor` belongs to an older generation, server sets `reset=true` and returns from the current head. On `reset`, the client re-hydrates escrow via `openSet` rebuild (live sessions + optional chain list) and maintenance via `QueryMaintenanceScheduled`. Params/epoch are unaffected (`GetRuntimeConfig` has its own height cursor).
-
-### G3 — Feed is at-least-once → counters must be idempotent
-
-Replay (G2) and reconnects re-deliver events. `created++/settled--` would drift. **Resolution:** open-escrow **set** keyed by escrow_id (see §5), plus epoch-change reconcile for the no-settle-event leak.
-
-### G4 — Escrow-created event lacks slot set → membership + fanout amplification
-
-`devshard_escrow_created` carries `escrow_id, creator, amount, epoch_index, model_id` — **not** the slots. Deciding “does this host serve it?” needs `QueryGetDevshardEscrow` (returns `Slots`). If every participant’s devshardd blindly warms every escrow, that is `hosts × escrows` chain queries.
-
-**Resolution:** dapi resolves membership **once per participant** in the create handler: call `GetEscrow`, check the local participant address against `Slots`, and only append an `ESCROW_CREATED` host-event (and embed lane-A fields) when this node holds a slot. devshardd then warms without a second query. (Each participant runs its own dapi, so this is one query per node per escrow, not global fanout.) Fallback if membership resolution fails: still emit; devshardd self-filters in `WarmEscrow`.
-
-### G5 — Warm vs first-inference race
-
-`WarmEscrow` and a concurrent first inference both resolve the same escrow. **Resolution:** route `WarmEscrow` through the existing `HostManager.getOrCreate` (already `singleflight`-guarded by `escrowID` — [`manager.go`](../../decentralized-api/internal/devshard/manager.go)), so at most one create runs and the other reuses it. No new lock.
-
-### G6 — Discrete events only on this ring (v1)
-
-Escrow/maintenance are **edge-triggered** (each discrete). Params/epoch stay on `GetRuntimeConfig` (level-triggered by `params_block_height`) and are **not** written into `HostEventRing` in v1 — so no coalescing rules are needed on this ring. If EPOCH/PARAMS are added later (reserved enum 1–2), coalesce those kinds then.
-
-### G7 — Two routing paths, two height gates
-
-Tx-sourced handlers run through `handleMessage`, which calls `waitForEventHeight` using `tx.height` (present on synthetic tx events). NewBlock-sourced maintenance (G1) runs in a NewBlock handler with no such gate. **Resolution:** keep them separate — tx handlers reuse `waitForEventHeight`; the NewBlock maintenance parse fires only when `isNodeSynced()` (same guard BLS uses).
-
-### G8 — Channel is node-local (good)
-
-`GetHostEvents` lives on the NodeManager gRPC (`NODE_MANAGER_ADDR`, default `:9400`) — the same internal port as `AcquireMLNode`, **not** routed through the public nginx proxy. Escrow ids stay node-local. **Resolution:** no extra auth for phase A; document that this RPC must not be exposed publicly.
-
-### G9 — `Unimplemented` / old dapi
-
-New devshardd against old dapi: `GetHostEvents` returns `codes.Unimplemented`. **Resolution:** mirror the runtimeconfig grpc runner ([`grpc_runner.go`](../../devshard/runtimeconfig/grpc_runner.go)) — soft-fail once at info, stop the escrow loop, rely on lazy create. Zero behavior change.
-
----
-
 ## Implementation phases
 
 - **Phase A** — steps 1–6: proto, ring+subscriptions, ingest handlers, dapi-embedded warm/settle, standalone consumer, open-set.
@@ -328,7 +274,7 @@ Each step is PR-sized: files, work, tests, acceptance. Steps 1–3 are server pl
 **Files:** `devshard/nodemanager/nodemanager.proto`, regenerate via `go generate ./devshard/nodemanager` ([`generate.go`](../../devshard/nodemanager/generate.go) runs `protoc`).
 
 **Work:**
-- Add `rpc GetHostEvents` + `HostEventKind` (escrow + maintenance; reserve 1–2 unused for possible future EPOCH/PARAMS) + request/response/payloads (§1). Add `generation` and `reset` (G2).
+- Add `rpc GetHostEvents` + `HostEventKind` (escrow + maintenance; reserve 1–2 unused for possible future EPOCH/PARAMS) + request/response/payloads (§1). Add `generation` and `reset`.
 - Leave `GetRuntimeConfig` and all existing tags untouched — no adapter, no shared notifier.
 
 **Tests:** wire-format stability test alongside `runtime_config_backcompat_test.go` (new RPC/messages must not shift existing field numbers).
@@ -368,9 +314,9 @@ Each step is PR-sized: files, work, tests, acceptance. Steps 1–3 are server pl
 **Files:** `decentralized-api/internal/event_listener/event_listener.go` (+ `escrow_events.go`, `maintenance_events.go`); register in the `eventHandlers` slice in `NewEventListener`; pass the ring into `EventListener`.
 
 **Work:**
-- `DevshardEscrowCreatedEventHandler` / `...SettledEventHandler`: `CanHandle` on `devshard_escrow_created.escrow_id` / `devshard_escrow_settled.escrow_id`; `Handle` parses attrs and (G4) resolves slot membership via `bridge.GetEscrow`, then `ring.Append(ESCROW_CREATED/SETTLED, payload)` only if this node holds a slot (fallback: append anyway).
+- `DevshardEscrowCreatedEventHandler` / `...SettledEventHandler`: `CanHandle` on `devshard_escrow_created.escrow_id` / `devshard_escrow_settled.escrow_id`; `Handle` parses attrs and resolves slot membership via `bridge.GetEscrow`, then `ring.Append(ESCROW_CREATED/SETTLED, payload)` only if this node holds a slot (fallback: append anyway).
 - `MaintenanceScheduledEventHandler` / `...CanceledEventHandler` (tx path): `CanHandle` on `maintenance_scheduled.reservation_id` / `maintenance_canceled.reservation_id`; append.
-- Lifecycle `maintenance_canceled` (G1): add a NewBlock parse in `handleBLSEvents`-sibling (guard `isNodeSynced()`), append to ring.
+- Lifecycle `maintenance_canceled` (block-emitted, not tx): add a NewBlock parse in `handleBLSEvents`-sibling (guard `isNodeSynced()`), append to ring.
 - `relevanceFilter = hasHandler` already includes new handlers automatically (they’re in the slice).
 
 **Tests:** feed synthetic block results (like existing block observer tests) with each event → assert ring append; assert unhandled events still dropped; membership filter path.
@@ -382,11 +328,11 @@ Each step is PR-sized: files, work, tests, acceptance. Steps 1–3 are server pl
 **Files:** `decentralized-api/internal/devshard/manager.go` (+ maybe `open_escrows.go`).
 
 **Work:**
-- `HostManager.WarmEscrow(escrowID)` → call existing `getOrCreate` (G5 singleflight); on success add to `openSet`.
+- `HostManager.WarmEscrow(escrowID)` → call existing `getOrCreate` (singleflight-guarded by `escrowID`, so warm and a concurrent first inference share one create); on success add to `openSet`.
 - `HostManager.OnEscrowSettled(escrowID)` → evict/mark settled (reuse eviction used elsewhere), `delete(openSet, id)`.
 - `openSet` guarded by existing `m.mu`; `OpenEscrowCount() int`.
 - Wire the escrow ingest handlers (step 4) to call these for the **embedded** path directly (no gRPC hop) when dapi hosts devshard in-process.
-- Epoch-change reconcile hook (G3 leak guard) via the existing `OnEpochChange`/prune wiring.
+- Epoch-change reconcile hook (leak guard for escrows that end without a settle event) via the existing `OnEpochChange`/prune wiring.
 
 **Tests:** extend `manager_test.go` — warm creates once under concurrent first-inference; settle removes; open count idempotent under duplicate created/settled; reconcile drops stale.
 
@@ -399,7 +345,7 @@ Each step is PR-sized: files, work, tests, acceptance. Steps 1–3 are server pl
 **Work:**
 - Long-poll `GetHostEvents(subscribe=[ESCROW_CREATED, ESCROW_SETTLED, MAINTENANCE_SCHEDULED, MAINTENANCE_CANCELED], max_wait≈60s)`, advancing `cursor`; handle `reset` (re-hydrate).
 - Route: created→`HostManager.WarmEscrow`; settled→`HostManager.OnEscrowSettled`; maintenance→local view (step 8).
-- `Unimplemented` soft-fail (G9): log once, stop loop; lazy create still works.
+- `Unimplemented` soft-fail (old dapi): log once, stop loop; lazy create still works.
 - Leave the existing `GetRuntimeConfig` / `runtimeconfig` adaptive loop **untouched**.
 
 **Tests:** fake NodeManager server driving events → assert warm/settle calls; reset re-hydrates; Unimplemented stops cleanly.
@@ -430,7 +376,7 @@ Each step is PR-sized: files, work, tests, acceptance. Steps 1–3 are server pl
 
 **Files:** ring reset/catch-up, epoch reconcile, `devshard/server/routes.go` (503 mapping).
 
-**Work:** bounded ring replay since cursor; `openSet` epoch reconcile (G3); map lazy-create chain-unavailable to **503** instead of **500**.
+**Work:** bounded ring replay since cursor; `openSet` epoch reconcile; map lazy-create chain-unavailable to **503** instead of **500**.
 
 **Tests:** reset path; leak guard; 503 on chain-down lazy create.
 
