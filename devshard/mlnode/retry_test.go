@@ -38,7 +38,7 @@ type releaseCall struct {
 	ctxDone bool // was ctx already cancelled when Release was called?
 }
 
-func (s *stubLock) Acquire(_ context.Context, _ string, _ []string) (*gen.AcquireMLNodeResponse, error) {
+func (s *stubLock) Acquire(_ context.Context, _ string, _ []string, _ string) (*gen.AcquireMLNodeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.acquireIdx >= len(s.acquires) {
@@ -94,7 +94,7 @@ func TestDoWithNode_Success(t *testing.T) {
 		acquires: []acquireResult{{nodeID: "node-1", endpoint: "http://node1", lockID: "lock-1"}},
 	}
 
-	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 3,
+	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 3,
 		func(_ context.Context, endpoint string) (*http.Response, error) {
 			assert.Equal(t, "http://node1", endpoint)
 			return &http.Response{StatusCode: http.StatusOK, Body: okBody()}, nil
@@ -117,7 +117,7 @@ func TestDoWithNode_TransportError_Retries_ExcludesNode(t *testing.T) {
 	}
 
 	attempts := 0
-	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 3,
+	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 3,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			attempts++
 			if attempts == 1 {
@@ -146,7 +146,7 @@ func TestDoWithNode_5xx_ClosesBodyBeforeRetry(t *testing.T) {
 	firstBody := &trackingBody{Reader: strings.NewReader("error body")}
 	attempts := 0
 
-	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 2,
+	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 2,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			attempts++
 			if attempts == 1 {
@@ -167,7 +167,7 @@ func TestDoWithNode_4xx_NoRetry(t *testing.T) {
 	}
 
 	attempts := 0
-	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 3,
+	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 3,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			attempts++
 			return &http.Response{StatusCode: http.StatusBadRequest, Body: okBody()}, nil
@@ -187,7 +187,7 @@ func TestDoWithNode_Timeout_StopsRetry(t *testing.T) {
 	}
 
 	attempts := 0
-	_, err := mlnode.DoWithNode(ctx, lock, "model-a", 3,
+	_, err := mlnode.DoWithNode(ctx, lock, "model-a", "", 3,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			attempts++
 			cancel()
@@ -210,7 +210,7 @@ func TestDoWithNode_Timeout_ReleaseUsesDetachedContext(t *testing.T) {
 		acquires: []acquireResult{{nodeID: "node-1", endpoint: "http://node1", lockID: "lock-1"}},
 	}
 
-	_, err := mlnode.DoWithNode(ctx, lock, "model-a", 1,
+	_, err := mlnode.DoWithNode(ctx, lock, "model-a", "", 1,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			cancel() // cancel before returning, simulating a timeout
 			return nil, context.Canceled
@@ -234,7 +234,7 @@ func TestDoWithNode_ExhaustedAttempts_ReturnsLastError(t *testing.T) {
 	}
 
 	attempt := 0
-	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 2,
+	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 2,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			attempt++
 			return nil, fmt.Errorf("specific failure on attempt %d", attempt)
@@ -252,7 +252,7 @@ func TestDoWithNode_AcquireError_ReturnsImmediately(t *testing.T) {
 	}
 
 	called := false
-	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 3,
+	_, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 3,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			called = true
 			return &http.Response{StatusCode: http.StatusOK, Body: okBody()}, nil
@@ -271,7 +271,7 @@ func TestDoWithNode_ReleaseError_NonFatal(t *testing.T) {
 		releaseErr: fmt.Errorf("release failed"),
 	}
 
-	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", 1,
+	resp, err := mlnode.DoWithNode(context.Background(), lock, "model-a", "", 1,
 		func(_ context.Context, _ string) (*http.Response, error) {
 			return &http.Response{StatusCode: http.StatusOK, Body: okBody()}, nil
 		},

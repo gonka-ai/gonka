@@ -23,6 +23,7 @@ const (
 	NodeManager_ReleaseMLNode_FullMethodName    = "/nodemanager.NodeManager/ReleaseMLNode"
 	NodeManager_GetRuntimeConfig_FullMethodName = "/nodemanager.NodeManager/GetRuntimeConfig"
 	NodeManager_GetHostEvents_FullMethodName    = "/nodemanager.NodeManager/GetHostEvents"
+	NodeManager_ListNodeCapacity_FullMethodName = "/nodemanager.NodeManager/ListNodeCapacity"
 )
 
 // NodeManagerClient is the client API for NodeManager service.
@@ -33,6 +34,7 @@ type NodeManagerClient interface {
 	ReleaseMLNode(ctx context.Context, in *ReleaseMLNodeRequest, opts ...grpc.CallOption) (*ReleaseMLNodeResponse, error)
 	GetRuntimeConfig(ctx context.Context, in *GetRuntimeConfigRequest, opts ...grpc.CallOption) (*GetRuntimeConfigResponse, error)
 	GetHostEvents(ctx context.Context, in *GetHostEventsRequest, opts ...grpc.CallOption) (*GetHostEventsResponse, error)
+	ListNodeCapacity(ctx context.Context, in *ListNodeCapacityRequest, opts ...grpc.CallOption) (*ListNodeCapacityResponse, error)
 }
 
 type nodeManagerClient struct {
@@ -79,6 +81,15 @@ func (c *nodeManagerClient) GetHostEvents(ctx context.Context, in *GetHostEvents
 	return out, nil
 }
 
+func (c *nodeManagerClient) ListNodeCapacity(ctx context.Context, in *ListNodeCapacityRequest, opts ...grpc.CallOption) (*ListNodeCapacityResponse, error) {
+	out := new(ListNodeCapacityResponse)
+	err := c.cc.Invoke(ctx, NodeManager_ListNodeCapacity_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // NodeManagerServer is the server API for NodeManager service.
 // All implementations must embed UnimplementedNodeManagerServer
 // for forward compatibility
@@ -87,6 +98,7 @@ type NodeManagerServer interface {
 	ReleaseMLNode(context.Context, *ReleaseMLNodeRequest) (*ReleaseMLNodeResponse, error)
 	GetRuntimeConfig(context.Context, *GetRuntimeConfigRequest) (*GetRuntimeConfigResponse, error)
 	GetHostEvents(context.Context, *GetHostEventsRequest) (*GetHostEventsResponse, error)
+	ListNodeCapacity(context.Context, *ListNodeCapacityRequest) (*ListNodeCapacityResponse, error)
 	mustEmbedUnimplementedNodeManagerServer()
 }
 
@@ -105,6 +117,9 @@ func (UnimplementedNodeManagerServer) GetRuntimeConfig(context.Context, *GetRunt
 }
 func (UnimplementedNodeManagerServer) GetHostEvents(context.Context, *GetHostEventsRequest) (*GetHostEventsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method GetHostEvents not implemented")
+}
+func (UnimplementedNodeManagerServer) ListNodeCapacity(context.Context, *ListNodeCapacityRequest) (*ListNodeCapacityResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListNodeCapacity not implemented")
 }
 func (UnimplementedNodeManagerServer) mustEmbedUnimplementedNodeManagerServer() {}
 
@@ -191,6 +206,24 @@ func _NodeManager_GetHostEvents_Handler(srv interface{}, ctx context.Context, de
 	return interceptor(ctx, in, info, handler)
 }
 
+func _NodeManager_ListNodeCapacity_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ListNodeCapacityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(NodeManagerServer).ListNodeCapacity(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: NodeManager_ListNodeCapacity_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(NodeManagerServer).ListNodeCapacity(ctx, req.(*ListNodeCapacityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // NodeManager_ServiceDesc is the grpc.ServiceDesc for NodeManager service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -213,6 +246,10 @@ var NodeManager_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "GetHostEvents",
 			Handler:    _NodeManager_GetHostEvents_Handler,
+		},
+		{
+			MethodName: "ListNodeCapacity",
+			Handler:    _NodeManager_ListNodeCapacity_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

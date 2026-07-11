@@ -244,6 +244,7 @@ func main() {
 		}
 	}
 	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
+	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -320,7 +321,10 @@ func main() {
 	// Negative ports explicitly disable the NodeManager gRPC server.
 	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker, nodemanager.WithHostEventRing(hostEventRing)))
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
+			nodemanager.WithHostEventRing(hostEventRing),
+			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
+		))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

@@ -31,6 +31,7 @@ var (
 	validationQueueDepth   *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
+	fallbackDivisor        *prometheus.GaugeVec
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -124,6 +125,10 @@ func initRegistry() {
 		Name: "devshard_build_info",
 		Help: "Devshard build and runtime information.",
 	}, []string{"binary", "version", "commit"})
+	fallbackDivisor = prometheus.NewGaugeVec(prometheus.GaugeOpts{
+		Name: "devshardd_fallback_divisor",
+		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
+	}, []string{"source"})
 
 	registry.MustRegister(
 		inflight,
@@ -143,6 +148,7 @@ func initRegistry() {
 		validationQueueDepth,
 		mempoolSize,
 		buildInfo,
+		fallbackDivisor,
 	)
 }
 
@@ -266,3 +272,15 @@ func SetBuildInfo(binary, version, commit string) {
 	ensureMetrics()
 	buildInfo.WithLabelValues(binary, version, commit).Set(1)
 }
+
+// SetFallbackDivisor records the current fallback capacity divisor.
+// source is "load_map" (tier 1) or "floor4" (tier 2 / no usable map).
+func SetFallbackDivisor(source string, divisor int) {
+	ensureMetrics()
+	if source == "" {
+		source = "floor4"
+	}
+	fallbackDivisor.Reset()
+	fallbackDivisor.WithLabelValues(source).Set(float64(divisor))
+}
+

@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"time"
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
@@ -23,6 +24,7 @@ type brokerAcquirer interface {
 	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
 	TriggerStatusQuery(bypassDebounce bool)
+	GetNodes() ([]broker.NodeResponse, error)
 }
 
 // Server implements gen.NodeManagerServer.
@@ -32,6 +34,7 @@ type Server struct {
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
 	hostEvents    *apiconfig.HostEventRing
+	escrowLoad    *broker.EscrowLoadTracker
 }
 
 // ServerOption configures optional Server dependencies.
@@ -40,6 +43,12 @@ type ServerOption func(*Server)
 // WithHostEventRing enables GetHostEvents. Without it the RPC returns FailedPrecondition.
 func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
 	return func(s *Server) { s.hostEvents = ring }
+}
+
+// WithEscrowLoadTracker attaches the per-escrow acquire rate tracker used to
+// populate GetHostEventsResponse.escrow_load.
+func WithEscrowLoadTracker(t *broker.EscrowLoadTracker) ServerOption {
+	return func(s *Server) { s.escrowLoad = t }
 }
 
 // NewServer creates a NodeManager gRPC server. configManager and phaseTracker are
@@ -60,6 +69,9 @@ func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTr
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
 	if err == nil {
+		if s.escrowLoad != nil {
+			s.escrowLoad.Record(req.GetEscrowId())
+		}
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
@@ -88,6 +100,43 @@ func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest)
 		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
 	return nil, status.Error(codes.Internal, err.Error())
+}
+
+func (s *Server) ListNodeCapacity(_ context.Context, _ *gen.ListNodeCapacityRequest) (*gen.ListNodeCapacityResponse, error) {
+	if s.broker == nil {
+		return nil, status.Error(codes.FailedPrecondition, "node capacity: broker not configured")
+	}
+	nodes, err := s.broker.GetNodes()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "node capacity: get nodes: %v", err)
+	}
+	out := &gen.ListNodeCapacityResponse{
+		ServedAtUnix: time.Now().Unix(),
+	}
+	for _, nr := range nodes {
+		statusStr := nr.State.CurrentStatus.String()
+		maxConcurrent := int32(nr.Node.MaxConcurrent)
+		lockCount := int32(nr.State.LockCount)
+		if len(nr.Node.Models) == 0 {
+			out.Nodes = append(out.Nodes, &gen.NodeCapacityEntry{
+				NodeId:        nr.Node.Id,
+				MaxConcurrent: maxConcurrent,
+				LockCount:     lockCount,
+				Status:        statusStr,
+			})
+			continue
+		}
+		for model := range nr.Node.Models {
+			out.Nodes = append(out.Nodes, &gen.NodeCapacityEntry{
+				NodeId:        nr.Node.Id,
+				Model:         model,
+				MaxConcurrent: maxConcurrent,
+				LockCount:     lockCount,
+				Status:        statusStr,
+			})
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfigRequest) (*gen.GetRuntimeConfigResponse, error) {

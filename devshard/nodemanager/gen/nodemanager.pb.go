@@ -134,6 +134,9 @@ type AcquireMLNodeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
 	ExcludedNodes []string               `protobuf:"bytes,2,rep,name=excluded_nodes,json=excludedNodes,proto3" json:"excluded_nodes,omitempty"`
+	// Escrow that triggered this acquire (optional). Used by dapi to attribute
+	// per-escrow mlnode load for the capacity-fallback divisor.
+	EscrowId      string `protobuf:"bytes,3,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -180,6 +183,13 @@ func (x *AcquireMLNodeRequest) GetExcludedNodes() []string {
 		return x.ExcludedNodes
 	}
 	return nil
+}
+
+func (x *AcquireMLNodeRequest) GetEscrowId() string {
+	if x != nil {
+		return x.EscrowId
+	}
+	return ""
 }
 
 type AcquireMLNodeResponse struct {
@@ -974,8 +984,12 @@ type GetHostEventsResponse struct {
 	NeedsReset bool `protobuf:"varint,5,opt,name=needs_reset,json=needsReset,proto3" json:"needs_reset,omitempty"`
 	// Convenience when escrow topics are subscribed; 0 if unknown / not applicable.
 	OpenEscrowCount int32 `protobuf:"varint,6,opt,name=open_escrow_count,json=openEscrowCount,proto3" json:"open_escrow_count,omitempty"`
-	unknownFields   protoimpl.UnknownFields
-	sizeCache       protoimpl.SizeCache
+	// Snapshot of active-escrow load (30-min avg mlnode req/min). Idle escrows
+	// (no acquires in the last 30m) are omitted. Full replace each response;
+	// independent of the event cursor. Empty until dapi attributes escrow_id.
+	EscrowLoad    []*EscrowLoad `protobuf:"bytes,7,rep,name=escrow_load,json=escrowLoad,proto3" json:"escrow_load,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
 }
 
 func (x *GetHostEventsResponse) Reset() {
@@ -1050,14 +1064,238 @@ func (x *GetHostEventsResponse) GetOpenEscrowCount() int32 {
 	return 0
 }
 
+func (x *GetHostEventsResponse) GetEscrowLoad() []*EscrowLoad {
+	if x != nil {
+		return x.EscrowLoad
+	}
+	return nil
+}
+
+type EscrowLoad struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId       uint64                 `protobuf:"varint,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	RequestsPerMin float64                `protobuf:"fixed64,2,opt,name=requests_per_min,json=requestsPerMin,proto3" json:"requests_per_min,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *EscrowLoad) Reset() {
+	*x = EscrowLoad{}
+	mi := &file_nodemanager_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EscrowLoad) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EscrowLoad) ProtoMessage() {}
+
+func (x *EscrowLoad) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EscrowLoad.ProtoReflect.Descriptor instead.
+func (*EscrowLoad) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *EscrowLoad) GetEscrowId() uint64 {
+	if x != nil {
+		return x.EscrowId
+	}
+	return 0
+}
+
+func (x *EscrowLoad) GetRequestsPerMin() float64 {
+	if x != nil {
+		return x.RequestsPerMin
+	}
+	return 0
+}
+
+type ListNodeCapacityRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeCapacityRequest) Reset() {
+	*x = ListNodeCapacityRequest{}
+	mi := &file_nodemanager_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeCapacityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeCapacityRequest) ProtoMessage() {}
+
+func (x *ListNodeCapacityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeCapacityRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeCapacityRequest) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{14}
+}
+
+type NodeCapacityEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	MaxConcurrent int32                  `protobuf:"varint,3,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
+	LockCount     int32                  `protobuf:"varint,4,opt,name=lock_count,json=lockCount,proto3" json:"lock_count,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // INFERENCE, POC, etc.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeCapacityEntry) Reset() {
+	*x = NodeCapacityEntry{}
+	mi := &file_nodemanager_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeCapacityEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeCapacityEntry) ProtoMessage() {}
+
+func (x *NodeCapacityEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeCapacityEntry.ProtoReflect.Descriptor instead.
+func (*NodeCapacityEntry) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *NodeCapacityEntry) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *NodeCapacityEntry) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *NodeCapacityEntry) GetMaxConcurrent() int32 {
+	if x != nil {
+		return x.MaxConcurrent
+	}
+	return 0
+}
+
+func (x *NodeCapacityEntry) GetLockCount() int32 {
+	if x != nil {
+		return x.LockCount
+	}
+	return 0
+}
+
+func (x *NodeCapacityEntry) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+type ListNodeCapacityResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Nodes         []*NodeCapacityEntry   `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	ServedAtUnix  int64                  `protobuf:"varint,2,opt,name=served_at_unix,json=servedAtUnix,proto3" json:"served_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeCapacityResponse) Reset() {
+	*x = ListNodeCapacityResponse{}
+	mi := &file_nodemanager_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeCapacityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeCapacityResponse) ProtoMessage() {}
+
+func (x *ListNodeCapacityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeCapacityResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeCapacityResponse) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListNodeCapacityResponse) GetNodes() []*NodeCapacityEntry {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *ListNodeCapacityResponse) GetServedAtUnix() int64 {
+	if x != nil {
+		return x.ServedAtUnix
+	}
+	return 0
+}
+
 var File_nodemanager_proto protoreflect.FileDescriptor
 
 const file_nodemanager_proto_rawDesc = "" +
 	"\n" +
-	"\x11nodemanager.proto\x12\vnodemanager\"S\n" +
+	"\x11nodemanager.proto\x12\vnodemanager\"p\n" +
 	"\x14AcquireMLNodeRequest\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12%\n" +
-	"\x0eexcluded_nodes\x18\x02 \x03(\tR\rexcludedNodes\"e\n" +
+	"\x0eexcluded_nodes\x18\x02 \x03(\tR\rexcludedNodes\x12\x1b\n" +
+	"\tescrow_id\x18\x03 \x01(\tR\bescrowId\"e\n" +
 	"\x15AcquireMLNodeResponse\x12\x17\n" +
 	"\alock_id\x18\x01 \x01(\tR\x06lockId\x12\x1a\n" +
 	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x12\x17\n" +
@@ -1118,7 +1356,7 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\vparticipant\x18\x02 \x01(\tR\vparticipant\x12!\n" +
 	"\fstart_height\x18\x03 \x01(\x03R\vstartHeight\x12'\n" +
 	"\x0fduration_blocks\x18\x04 \x01(\x04R\x0edurationBlocks\x12\x16\n" +
-	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xf3\x01\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xad\x02\n" +
 	"\x15GetHostEventsResponse\x12\x1c\n" +
 	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x12.\n" +
 	"\x06events\x18\x02 \x03(\v2\x16.nodemanager.HostEventR\x06events\x12\x1f\n" +
@@ -1129,7 +1367,24 @@ const file_nodemanager_proto_rawDesc = "" +
 	"generation\x12\x1f\n" +
 	"\vneeds_reset\x18\x05 \x01(\bR\n" +
 	"needsReset\x12*\n" +
-	"\x11open_escrow_count\x18\x06 \x01(\x05R\x0fopenEscrowCount*V\n" +
+	"\x11open_escrow_count\x18\x06 \x01(\x05R\x0fopenEscrowCount\x128\n" +
+	"\vescrow_load\x18\a \x03(\v2\x17.nodemanager.EscrowLoadR\n" +
+	"escrowLoad\"S\n" +
+	"\n" +
+	"EscrowLoad\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\x04R\bescrowId\x12(\n" +
+	"\x10requests_per_min\x18\x02 \x01(\x01R\x0erequestsPerMin\"\x19\n" +
+	"\x17ListNodeCapacityRequest\"\xa0\x01\n" +
+	"\x11NodeCapacityEntry\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
+	"\x05model\x18\x02 \x01(\tR\x05model\x12%\n" +
+	"\x0emax_concurrent\x18\x03 \x01(\x05R\rmaxConcurrent\x12\x1d\n" +
+	"\n" +
+	"lock_count\x18\x04 \x01(\x05R\tlockCount\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\"v\n" +
+	"\x18ListNodeCapacityResponse\x124\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x1e.nodemanager.NodeCapacityEntryR\x05nodes\x12$\n" +
+	"\x0eserved_at_unix\x18\x02 \x01(\x03R\fservedAtUnix*V\n" +
 	"\x0eReleaseOutcome\x12\v\n" +
 	"\aSUCCESS\x10\x00\x12\x13\n" +
 	"\x0fTRANSPORT_ERROR\x10\x01\x12\x15\n" +
@@ -1140,12 +1395,13 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x1eHOST_EVENT_KIND_ESCROW_CREATED\x10\x03\x12\"\n" +
 	"\x1eHOST_EVENT_KIND_ESCROW_SETTLED\x10\x04\x12)\n" +
 	"%HOST_EVENT_KIND_MAINTENANCE_SCHEDULED\x10\x05\x12(\n" +
-	"$HOST_EVENT_KIND_MAINTENANCE_CANCELED\x10\x062\xf6\x02\n" +
+	"$HOST_EVENT_KIND_MAINTENANCE_CANCELED\x10\x062\xd7\x03\n" +
 	"\vNodeManager\x12V\n" +
 	"\rAcquireMLNode\x12!.nodemanager.AcquireMLNodeRequest\x1a\".nodemanager.AcquireMLNodeResponse\x12V\n" +
 	"\rReleaseMLNode\x12!.nodemanager.ReleaseMLNodeRequest\x1a\".nodemanager.ReleaseMLNodeResponse\x12_\n" +
 	"\x10GetRuntimeConfig\x12$.nodemanager.GetRuntimeConfigRequest\x1a%.nodemanager.GetRuntimeConfigResponse\x12V\n" +
-	"\rGetHostEvents\x12!.nodemanager.GetHostEventsRequest\x1a\".nodemanager.GetHostEventsResponseB\x1aZ\x18devshard/nodemanager/genb\x06proto3"
+	"\rGetHostEvents\x12!.nodemanager.GetHostEventsRequest\x1a\".nodemanager.GetHostEventsResponse\x12_\n" +
+	"\x10ListNodeCapacity\x12$.nodemanager.ListNodeCapacityRequest\x1a%.nodemanager.ListNodeCapacityResponseB\x1aZ\x18devshard/nodemanager/genb\x06proto3"
 
 var (
 	file_nodemanager_proto_rawDescOnce sync.Once
@@ -1160,7 +1416,7 @@ func file_nodemanager_proto_rawDescGZIP() []byte {
 }
 
 var file_nodemanager_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 13)
+var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_nodemanager_proto_goTypes = []any{
 	(ReleaseOutcome)(0),              // 0: nodemanager.ReleaseOutcome
 	(HostEventKind)(0),               // 1: nodemanager.HostEventKind
@@ -1177,6 +1433,10 @@ var file_nodemanager_proto_goTypes = []any{
 	(*EscrowPayload)(nil),            // 12: nodemanager.EscrowPayload
 	(*MaintenancePayload)(nil),       // 13: nodemanager.MaintenancePayload
 	(*GetHostEventsResponse)(nil),    // 14: nodemanager.GetHostEventsResponse
+	(*EscrowLoad)(nil),               // 15: nodemanager.EscrowLoad
+	(*ListNodeCapacityRequest)(nil),  // 16: nodemanager.ListNodeCapacityRequest
+	(*NodeCapacityEntry)(nil),        // 17: nodemanager.NodeCapacityEntry
+	(*ListNodeCapacityResponse)(nil), // 18: nodemanager.ListNodeCapacityResponse
 }
 var file_nodemanager_proto_depIdxs = []int32{
 	0,  // 0: nodemanager.ReleaseMLNodeRequest.outcome:type_name -> nodemanager.ReleaseOutcome
@@ -1187,19 +1447,23 @@ var file_nodemanager_proto_depIdxs = []int32{
 	12, // 5: nodemanager.HostEvent.escrow:type_name -> nodemanager.EscrowPayload
 	13, // 6: nodemanager.HostEvent.maintenance:type_name -> nodemanager.MaintenancePayload
 	11, // 7: nodemanager.GetHostEventsResponse.events:type_name -> nodemanager.HostEvent
-	2,  // 8: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
-	4,  // 9: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
-	6,  // 10: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
-	10, // 11: nodemanager.NodeManager.GetHostEvents:input_type -> nodemanager.GetHostEventsRequest
-	3,  // 12: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
-	5,  // 13: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
-	7,  // 14: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
-	14, // 15: nodemanager.NodeManager.GetHostEvents:output_type -> nodemanager.GetHostEventsResponse
-	12, // [12:16] is the sub-list for method output_type
-	8,  // [8:12] is the sub-list for method input_type
-	8,  // [8:8] is the sub-list for extension type_name
-	8,  // [8:8] is the sub-list for extension extendee
-	0,  // [0:8] is the sub-list for field type_name
+	15, // 8: nodemanager.GetHostEventsResponse.escrow_load:type_name -> nodemanager.EscrowLoad
+	17, // 9: nodemanager.ListNodeCapacityResponse.nodes:type_name -> nodemanager.NodeCapacityEntry
+	2,  // 10: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
+	4,  // 11: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
+	6,  // 12: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
+	10, // 13: nodemanager.NodeManager.GetHostEvents:input_type -> nodemanager.GetHostEventsRequest
+	16, // 14: nodemanager.NodeManager.ListNodeCapacity:input_type -> nodemanager.ListNodeCapacityRequest
+	3,  // 15: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
+	5,  // 16: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
+	7,  // 17: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
+	14, // 18: nodemanager.NodeManager.GetHostEvents:output_type -> nodemanager.GetHostEventsResponse
+	18, // 19: nodemanager.NodeManager.ListNodeCapacity:output_type -> nodemanager.ListNodeCapacityResponse
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_nodemanager_proto_init() }
@@ -1213,7 +1477,7 @@ func file_nodemanager_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nodemanager_proto_rawDesc), len(file_nodemanager_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   13,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

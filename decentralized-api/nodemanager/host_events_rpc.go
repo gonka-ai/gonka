@@ -48,12 +48,7 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 				"serverGeneration", got.Generation,
 				"nextCursor", got.NextCursor,
 			)
-			return &gen.GetHostEventsResponse{
-				Unchanged:  false,
-				NextCursor: got.NextCursor,
-				Generation: got.Generation,
-				NeedsReset: true,
-			}, nil
+			return s.hostEventsResponse(got, nil, false, true), nil
 		}
 		if len(got.Events) > 0 {
 			logging.Debug("host_events: GetHostEvents returning events", types.Config,
@@ -62,20 +57,11 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 				"nextCursor", got.NextCursor,
 				"generation", got.Generation,
 			)
-			return &gen.GetHostEventsResponse{
-				Unchanged:  false,
-				Events:     hostEventsToProto(got.Events),
-				NextCursor: got.NextCursor,
-				Generation: got.Generation,
-			}, nil
+			return s.hostEventsResponse(got, hostEventsToProto(got.Events), false, false), nil
 		}
 
 		if maxWait <= 0 {
-			return &gen.GetHostEventsResponse{
-				Unchanged:  true,
-				NextCursor: got.NextCursor,
-				Generation: got.Generation,
-			}, nil
+			return s.hostEventsResponse(got, nil, true, false), nil
 		}
 
 		logging.Debug("host_events: GetHostEvents long-poll waiting", types.Config,
@@ -96,15 +82,39 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 				"generation", got.Generation,
 				"maxWait", maxWait,
 			)
-			return &gen.GetHostEventsResponse{
-				Unchanged:  true,
-				NextCursor: got.NextCursor,
-				Generation: got.Generation,
-				NeedsReset: got.Reset,
-			}, nil
+			return s.hostEventsResponse(got, nil, true, got.Reset), nil
 		}
 		// Notified: loop and re-check Since (unsubscribed kinds do not return yet).
 	}
+}
+
+func (s *Server) hostEventsResponse(got apiconfig.HostEventSince, events []*gen.HostEvent, unchanged, needsReset bool) *gen.GetHostEventsResponse {
+	return &gen.GetHostEventsResponse{
+		Unchanged:   unchanged,
+		Events:      events,
+		NextCursor:  got.NextCursor,
+		Generation:  got.Generation,
+		NeedsReset:  needsReset,
+		EscrowLoad:  s.escrowLoadSnapshot(),
+	}
+}
+
+func (s *Server) escrowLoadSnapshot() []*gen.EscrowLoad {
+	if s.escrowLoad == nil {
+		return nil
+	}
+	snap := s.escrowLoad.Snapshot()
+	if len(snap) == 0 {
+		return nil
+	}
+	out := make([]*gen.EscrowLoad, len(snap))
+	for i, e := range snap {
+		out[i] = &gen.EscrowLoad{
+			EscrowId:       e.EscrowID,
+			RequestsPerMin: e.RequestsPerMin,
+		}
+	}
+	return out
 }
 
 func clampHostEventsMaxWait(maxWaitSeconds uint32) time.Duration {

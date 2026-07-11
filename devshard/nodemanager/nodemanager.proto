@@ -9,11 +9,15 @@ service NodeManager {
   rpc ReleaseMLNode(ReleaseMLNodeRequest) returns (ReleaseMLNodeResponse);
   rpc GetRuntimeConfig(GetRuntimeConfigRequest) returns (GetRuntimeConfigResponse);
   rpc GetHostEvents(GetHostEventsRequest) returns (GetHostEventsResponse);
+  rpc ListNodeCapacity(ListNodeCapacityRequest) returns (ListNodeCapacityResponse);
 }
 
 message AcquireMLNodeRequest {
   string model                   = 1;
   repeated string excluded_nodes = 2;
+  // Escrow that triggered this acquire (optional). Used by dapi to attribute
+  // per-escrow mlnode load for the capacity-fallback divisor.
+  string escrow_id               = 3;
 }
 
 message AcquireMLNodeResponse {
@@ -137,4 +141,28 @@ message GetHostEventsResponse {
   bool needs_reset = 5;
   // Convenience when escrow topics are subscribed; 0 if unknown / not applicable.
   int32 open_escrow_count = 6;
+  // Snapshot of active-escrow load (30-min avg mlnode req/min). Idle escrows
+  // (no acquires in the last 30m) are omitted. Full replace each response;
+  // independent of the event cursor. Empty until dapi attributes escrow_id.
+  repeated EscrowLoad escrow_load = 7;
+}
+
+message EscrowLoad {
+  uint64 escrow_id = 1;
+  double requests_per_min = 2;
+}
+
+message ListNodeCapacityRequest {}
+
+message NodeCapacityEntry {
+  string node_id = 1;
+  string model = 2;
+  int32 max_concurrent = 3;
+  int32 lock_count = 4;
+  string status = 5; // INFERENCE, POC, etc.
+}
+
+message ListNodeCapacityResponse {
+  repeated NodeCapacityEntry nodes = 1;
+  int64 served_at_unix = 2;
 }

@@ -59,7 +59,9 @@ func (v *devshardValidator) Validate(ctx context.Context, req devshardpkg.Valida
 		v.recorder,
 		req.EpochID,
 		v.sessionPayloadPath(req),
-		v.executeMLRequest,
+		func(ctx context.Context, model string, body []byte) (*http.Response, error) {
+			return v.executeMLRequest(ctx, model, req.EscrowID, body)
+		},
 		"devshardd",
 		v.chainParams,
 		v.thresholds,
@@ -70,8 +72,8 @@ func (v *devshardValidator) sessionPayloadPath(req devshardpkg.ValidateRequest) 
 	return devshardpkg.VersionedSessionPayloadPath(v.runtimeVersion, req.EscrowID)
 }
 
-func (v *devshardValidator) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
-	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, func(endpoint string) (*http.Response, error) {
+func (v *devshardValidator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {

@@ -14,6 +14,7 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	// Existing RPCs / messages must keep their field numbers when GetHostEvents is added.
 	assertFieldNum(t, (&gen.AcquireMLNodeRequest{}).ProtoReflect().Descriptor(), "model", 1)
 	assertFieldNum(t, (&gen.AcquireMLNodeRequest{}).ProtoReflect().Descriptor(), "excluded_nodes", 2)
+	assertFieldNum(t, (&gen.AcquireMLNodeRequest{}).ProtoReflect().Descriptor(), "escrow_id", 3)
 
 	assertFieldNum(t, (&gen.GetRuntimeConfigRequest{}).ProtoReflect().Descriptor(), "client_params_block_height", 1)
 	assertFieldNum(t, (&gen.GetRuntimeConfigRequest{}).ProtoReflect().Descriptor(), "max_wait_seconds", 2)
@@ -42,6 +43,19 @@ func TestNodeManager_GetHostEvents_WireFormat_FieldNumbersStable(t *testing.T) {
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "generation", 4)
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "needs_reset", 5)
 	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "open_escrow_count", 6)
+	assertFieldNum(t, (&gen.GetHostEventsResponse{}).ProtoReflect().Descriptor(), "escrow_load", 7)
+
+	assertFieldNum(t, (&gen.EscrowLoad{}).ProtoReflect().Descriptor(), "escrow_id", 1)
+	assertFieldNum(t, (&gen.EscrowLoad{}).ProtoReflect().Descriptor(), "requests_per_min", 2)
+
+	assertFieldNum(t, (&gen.NodeCapacityEntry{}).ProtoReflect().Descriptor(), "node_id", 1)
+	assertFieldNum(t, (&gen.NodeCapacityEntry{}).ProtoReflect().Descriptor(), "model", 2)
+	assertFieldNum(t, (&gen.NodeCapacityEntry{}).ProtoReflect().Descriptor(), "max_concurrent", 3)
+	assertFieldNum(t, (&gen.NodeCapacityEntry{}).ProtoReflect().Descriptor(), "lock_count", 4)
+	assertFieldNum(t, (&gen.NodeCapacityEntry{}).ProtoReflect().Descriptor(), "status", 5)
+
+	assertFieldNum(t, (&gen.ListNodeCapacityResponse{}).ProtoReflect().Descriptor(), "nodes", 1)
+	assertFieldNum(t, (&gen.ListNodeCapacityResponse{}).ProtoReflect().Descriptor(), "served_at_unix", 2)
 
 	require.Equal(t, int32(0), int32(gen.HostEventKind_HOST_EVENT_KIND_UNSPECIFIED))
 	require.Equal(t, int32(3), int32(gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED))
