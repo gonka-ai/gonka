@@ -121,9 +121,33 @@ func TestHostEventRing_WraparoundDropsOldestWithReset(t *testing.T) {
 	require.Equal(t, uint64(5), got.NextCursor)
 }
 
-func TestHostEventRing_AppendWakesNotifyChan(t *testing.T) {
+func TestHostEventRing_ManyWrapsRetainWindowInOrder(t *testing.T) {
+	const capacity = 4
+	r := apiconfig.NewHostEventRing(capacity, 1)
+	// Append far more than capacity to rotate the ring many times.
+	const total = 50
+	for i := 0; i < total; i++ {
+		r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	}
+
+	// Only the last `capacity` seqs are retained, still oldest→newest.
+	got := r.Since(uint64(total-capacity), 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.False(t, got.Reset)
+	require.Len(t, got.Events, capacity)
+	require.Equal(t, uint64(total), got.NextCursor)
+	for i, ev := range got.Events {
+		require.Equal(t, uint64(total-capacity+1+i), ev.Seq, "events must be contiguous and in order")
+	}
+
+	// Anything older than the retained window is a gap → reset.
+	old := r.Since(uint64(total-capacity-1), 1, []apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	require.True(t, old.Reset)
+}
+
+func TestHostEventRing_SubscribeWakesOnMatchingKind(t *testing.T) {
 	r := apiconfig.NewHostEventRing(8, 1)
-	ch := r.NotifyChan()
+	ch, release := r.Subscribe([]apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	defer release()
 
 	var wg sync.WaitGroup
 	wg.Add(1)
@@ -132,19 +156,61 @@ func TestHostEventRing_AppendWakesNotifyChan(t *testing.T) {
 		select {
 		case <-ch:
 		case <-time.After(2 * time.Second):
-			t.Error("NotifyChan did not close after Append")
+			t.Error("Subscribe channel did not close after matching Append")
 		}
 	}()
 
 	time.Sleep(10 * time.Millisecond)
-	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindMaintenanceCanceled})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
 	wg.Wait()
 
-	ch2 := r.NotifyChan()
+	// A fresh subscription starts open.
+	ch2, release2 := r.Subscribe([]apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	defer release2()
 	select {
 	case <-ch2:
-		t.Fatal("fresh NotifyChan should be open")
+		t.Fatal("fresh Subscribe channel should be open")
 	default:
+	}
+}
+
+func TestHostEventRing_SubscribeIgnoresUnsubscribedKind(t *testing.T) {
+	r := apiconfig.NewHostEventRing(8, 1)
+	ch, release := r.Subscribe([]apiconfig.HostEventKind{
+		apiconfig.HostEventKindEscrowCreated,
+		apiconfig.HostEventKindEscrowSettled,
+	})
+	defer release()
+
+	// Unsubscribed kinds must NOT wake an escrow-only waiter, no matter how many.
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindMaintenanceScheduled})
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindMaintenanceCanceled})
+	select {
+	case <-ch:
+		t.Fatal("maintenance Append must not wake an escrow-only waiter")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	// A subscribed kind still wakes it.
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowSettled})
+	select {
+	case <-ch:
+	case <-time.After(time.Second):
+		t.Fatal("subscribed Append must wake the waiter")
+	}
+}
+
+func TestHostEventRing_ReleaseStopsWaking(t *testing.T) {
+	r := apiconfig.NewHostEventRing(8, 1)
+	ch, release := r.Subscribe([]apiconfig.HostEventKind{apiconfig.HostEventKindEscrowCreated})
+	release()
+
+	// After release the waiter is deregistered; Append must not touch its channel.
+	r.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated})
+	select {
+	case <-ch:
+		t.Fatal("released waiter must not be woken")
+	case <-time.After(50 * time.Millisecond):
 	}
 }
 

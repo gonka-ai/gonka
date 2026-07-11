@@ -192,3 +192,36 @@ func TestHostManager_EvictBefore_DropsOpenSet(t *testing.T) {
 	require.Equal(t, 1, mgr.EvictBefore(6))
 	require.Equal(t, 1, mgr.OpenEscrowCount())
 }
+
+func TestHostManager_EvictBefore_ScrubsOrphanOpenSet(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-live",
+		EpochID:        7,
+		Version:        runtimeTestVersion,
+		CreatorAddr:    user.Address(),
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000000,
+	}))
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+	t.Cleanup(func() { _ = mgr.Close() })
+	require.Equal(t, 1, mgr.OpenEscrowCount())
+
+	// Simulate a leak: openSet entry with no live session.
+	mgr.openSet["ghost-escrow"] = struct{}{}
+	require.Equal(t, 2, mgr.OpenEscrowCount())
+
+	// cutoff that does not evict the live session still runs the orphan scrub.
+	require.Equal(t, 0, mgr.EvictBefore(1))
+	require.Equal(t, 1, mgr.OpenEscrowCount())
+}

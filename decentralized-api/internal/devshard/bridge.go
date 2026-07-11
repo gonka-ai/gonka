@@ -32,7 +32,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 
 	resp, err := qc.DevshardEscrow(ctx, &types.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("query devshard escrow: %w", err)
+		return nil, fmt.Errorf("query devshard escrow: %w", bridge.ClassifyQueryError(err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, bridge.ErrEscrowNotFound

@@ -56,8 +56,17 @@ type HostEventSince struct {
 	Generation uint64
 }
 
+// hostEventWaiter is one registered long-poll waiter and the kinds it cares
+// about. Its channel is closed (once) by Append when a matching kind arrives.
+type hostEventWaiter struct {
+	kinds map[HostEventKind]struct{}
+	ch    chan struct{}
+}
+
 // HostEventRing is a bounded in-memory log of discrete host events with a
-// fan-out wake channel (same close-and-replace pattern as RuntimeConfigNotifier).
+// subscribe-filtered wake registry: a waiter is woken only by Appends whose
+// kind is in its subscribe set, so unsubscribed kinds (e.g. maintenance) never
+// wake an escrow-only waiter and reset its long-poll deadline.
 //
 // Seq is monotonic for the lifetime of one generation (dapi boot). After a
 // restart the ring is empty with a new generation; clients must re-hydrate.
@@ -65,10 +74,16 @@ type HostEventRing struct {
 	mu         sync.Mutex
 	generation uint64
 	capacity   int
-	events     []HostEvent
+	// buf is a fixed-length (capacity) ring buffer. start is the index of the
+	// oldest live event; size is the number of live events (0..capacity). On
+	// wrap the oldest slot is overwritten in place, so evicted events (and their
+	// payload pointers) are released immediately with no reallocation or churn.
+	buf        []HostEvent
+	start      int
+	size       int
 	nextSeq    uint64 // next seq to assign; head = nextSeq-1 when nextSeq > 0
 	lastByKind map[HostEventKind]uint64
-	ch         chan struct{}
+	waiters    map[*hostEventWaiter]struct{}
 }
 
 // DefaultHostEventRingCapacity is used when NewHostEventRing is given capacity <= 0.
@@ -83,10 +98,10 @@ func NewHostEventRing(capacity int, generation uint64) *HostEventRing {
 	return &HostEventRing{
 		generation: generation,
 		capacity:   capacity,
-		events:     make([]HostEvent, 0, capacity),
+		buf:        make([]HostEvent, capacity),
 		nextSeq:    1,
 		lastByKind: make(map[HostEventKind]uint64),
-		ch:         make(chan struct{}),
+		waiters:    make(map[*hostEventWaiter]struct{}),
 	}
 }
 
@@ -111,16 +126,36 @@ func (r *HostEventRing) headLocked() uint64 {
 	return r.nextSeq - 1
 }
 
-// NotifyChan returns a channel closed on the next Append. After waking,
-// callers must call NotifyChan again to wait for the next event.
-func (r *HostEventRing) NotifyChan() <-chan struct{} {
+// Subscribe registers a long-poll waiter woken only when an event whose kind is
+// in subscribe is appended (true wake filter — unsubscribed kinds do not wake an
+// escrow-only waiter). It returns the wake channel (closed on the first matching
+// Append) and a release func the caller MUST invoke when it stops waiting.
+//
+// Subscribe before Since to avoid lost wake-ups: an Append between Subscribe and
+// Since closes the channel, so the following Wait returns immediately and the
+// re-run Since observes the event.
+func (r *HostEventRing) Subscribe(subscribe []HostEventKind) (<-chan struct{}, func()) {
+	w := &hostEventWaiter{
+		kinds: make(map[HostEventKind]struct{}, len(subscribe)),
+		ch:    make(chan struct{}),
+	}
+	for _, k := range subscribe {
+		w.kinds[k] = struct{}{}
+	}
 	r.mu.Lock()
-	defer r.mu.Unlock()
-	return r.ch
+	r.waiters[w] = struct{}{}
+	r.mu.Unlock()
+	return w.ch, func() {
+		r.mu.Lock()
+		delete(r.waiters, w)
+		r.mu.Unlock()
+	}
 }
 
 // Append stores a copy of ev with an assigned seq (and ObservedAtUnix if zero),
-// drops the oldest entry when at capacity, and wakes all waiters.
+// drops the oldest entry when at capacity, and wakes every registered waiter
+// whose subscribe set includes ev.Kind (each such waiter is woken once and
+// removed; it re-subscribes for the next event).
 func (r *HostEventRing) Append(ev HostEvent) HostEvent {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -132,13 +167,21 @@ func (r *HostEventRing) Append(ev HostEvent) HostEvent {
 	r.nextSeq++
 	r.lastByKind[ev.Kind] = ev.Seq
 
-	if len(r.events) >= r.capacity {
-		r.events = r.events[1:]
+	if r.size < r.capacity {
+		r.buf[(r.start+r.size)%r.capacity] = ev
+		r.size++
+	} else {
+		// Full: overwrite the oldest slot in place and advance start.
+		r.buf[r.start] = ev
+		r.start = (r.start + 1) % r.capacity
 	}
-	r.events = append(r.events, ev)
 
-	close(r.ch)
-	r.ch = make(chan struct{})
+	for w := range r.waiters {
+		if _, ok := w.kinds[ev.Kind]; ok {
+			close(w.ch)
+			delete(r.waiters, w)
+		}
+	}
 	return ev
 }
 
@@ -149,8 +192,8 @@ func (r *HostEventRing) Append(ev HostEvent) HostEvent {
 // head, or cursor sits below the retained window (gap). On reset, Events is empty
 // and the client must re-hydrate out of band.
 //
-// cursor 0 means "from the beginning of the retained window" (seq > 0). Live-from-now
-// is a GetHostEvents RPC policy: bump cursor to Head() before calling Since.
+// cursor 0 means "from the beginning of the retained window" (seq > 0).
+// GetHostEvents passes the client cursor through so cursor 0 performs bounded catch-up.
 func (r *HostEventRing) Since(cursor, clientGeneration uint64, subscribe []HostEventKind) HostEventSince {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -172,8 +215,8 @@ func (r *HostEventRing) Since(cursor, clientGeneration uint64, subscribe []HostE
 		return out
 	}
 
-	if len(r.events) > 0 {
-		oldest := r.events[0].Seq
+	if r.size > 0 {
+		oldest := r.buf[r.start].Seq
 		if cursor > 0 && oldest > cursor+1 {
 			out.Reset = true
 			return out
@@ -192,7 +235,8 @@ func (r *HostEventRing) Since(cursor, clientGeneration uint64, subscribe []HostE
 		want[k] = struct{}{}
 	}
 
-	for _, ev := range r.events {
+	for i := 0; i < r.size; i++ {
+		ev := r.buf[(r.start+i)%r.capacity]
 		if ev.Seq <= cursor {
 			continue
 		}

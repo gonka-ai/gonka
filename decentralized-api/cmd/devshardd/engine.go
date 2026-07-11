@@ -267,6 +267,7 @@ func (e *devshardEngine) doWithFallbackNodes(
 		}
 
 		acquired := false
+		acquiredUnknown := false
 		if limit {
 			if _, known := e.capacity.Get(nodeID); known {
 				if !e.capacity.TryAcquire(nodeID, model) {
@@ -274,6 +275,13 @@ func (e *devshardEngine) doWithFallbackNodes(
 					continue
 				}
 				acquired = true
+			} else if !e.capacity.TryAcquireUnknown(nodeID, model) {
+				// PickNode returned a node dapi never reported. Bound it with a
+				// synthetic budget instead of an unbounded bypass; retry another.
+				capacityExcluded[nodeID] = struct{}{}
+				continue
+			} else {
+				acquiredUnknown = true
 			}
 		}
 
@@ -281,6 +289,9 @@ func (e *devshardEngine) doWithFallbackNodes(
 		resp, httpErr := fn(endpoint)
 		if acquired {
 			e.capacity.Release(nodeID, model)
+		}
+		if acquiredUnknown {
+			e.capacity.ReleaseUnknown(nodeID, model)
 		}
 		lastReason = observability.ClassifyMLNodeHTTP(resp, httpErr, ctx.Err())
 		observability.IncMLNodeAttempt(path, lastReason, nodeID)

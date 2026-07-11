@@ -24,6 +24,12 @@ const (
 	DefaultEscrowLoadStaleTTL = 10 * time.Minute
 	// MinFallbackDivisor is the floor applied to numberOfEscrows.
 	MinFallbackDivisor = 4
+	// DefaultUnknownMaxConcurrent is the synthetic max_concurrent assumed for a
+	// fallback node that PickNode returned but ListNodeCapacity has never
+	// reported. Its effective bound is DefaultUnknownMaxConcurrent / Divisor()
+	// (floored at 1), so an unknown node stays usable but bounded instead of
+	// bypassing the semaphore entirely.
+	DefaultUnknownMaxConcurrent = 50
 
 	SourceDAPI  = "dapi"
 	SourceStale = "stale"
@@ -53,14 +59,15 @@ type ActiveLoadFunc func() (byEscrow map[uint64]float64, deliveredAt time.Time)
 
 // CacheOptions configures NewCache.
 type CacheOptions struct {
-	ActiveLoad              ActiveLoadFunc
-	PollInterval            time.Duration
+	ActiveLoad               ActiveLoadFunc
+	PollInterval             time.Duration
 	UnsupportedRetryInterval time.Duration
-	FreshTTL                time.Duration
-	StaleTTL                time.Duration
-	EscrowLoadStaleTTL      time.Duration
-	Now                     func() time.Time
-	Log                     *slog.Logger
+	EscrowLoadStaleTTL       time.Duration
+	// UnknownMaxConcurrent is the synthetic max_concurrent for capacity-unknown
+	// fallback nodes (DefaultUnknownMaxConcurrent when non-positive).
+	UnknownMaxConcurrent int
+	Now                  func() time.Time
+	Log                  *slog.Logger
 }
 
 type nodeCap struct {
@@ -83,6 +90,10 @@ type Cache struct {
 
 	// localInFlight is keyed by nodeID\x00model (physical vLLM occupancy).
 	inFlight map[string]int
+	// unknownInFlight tracks in-flight slots for capacity-unknown fallback nodes
+	// (not in c.nodes). Kept separate so applyPoll's prune never wipes live
+	// counts for a node dapi has not (yet) reported.
+	unknownInFlight map[string]int
 
 	activeLoad ActiveLoadFunc
 	now        func() time.Time
@@ -90,9 +101,8 @@ type Cache struct {
 
 	pollInterval             time.Duration
 	unsupportedRetryInterval time.Duration
-	freshTTL                 time.Duration
-	staleTTL                 time.Duration
 	escrowLoadStaleTTL       time.Duration
+	unknownMaxConcurrent     int
 
 	observed    bool // at least one successful ListNodeCapacity
 	unsupported bool // Unimplemented seen; rare retry only
@@ -106,18 +116,11 @@ func NewCache(client CapacityClient, opts CacheOptions) *Cache {
 	if opts.UnsupportedRetryInterval <= 0 {
 		opts.UnsupportedRetryInterval = DefaultUnsupportedRetryInterval
 	}
-	if opts.FreshTTL <= 0 {
-		opts.FreshTTL = DefaultCacheTTL
-	}
-	staleTTL := opts.StaleTTL
-	if staleTTL <= 0 {
-		staleTTL = DefaultStaleTTL
-	}
-	if staleTTL < opts.FreshTTL {
-		staleTTL = opts.FreshTTL
-	}
 	if opts.EscrowLoadStaleTTL <= 0 {
 		opts.EscrowLoadStaleTTL = DefaultEscrowLoadStaleTTL
+	}
+	if opts.UnknownMaxConcurrent <= 0 {
+		opts.UnknownMaxConcurrent = DefaultUnknownMaxConcurrent
 	}
 	if opts.Now == nil {
 		opts.Now = time.Now
@@ -133,14 +136,14 @@ func NewCache(client CapacityClient, opts CacheOptions) *Cache {
 		client:                   client,
 		nodes:                    make(map[string]*nodeCap),
 		inFlight:                 make(map[string]int),
+		unknownInFlight:          make(map[string]int),
 		activeLoad:               active,
 		now:                      opts.Now,
 		log:                      opts.Log,
 		pollInterval:             opts.PollInterval,
 		unsupportedRetryInterval: opts.UnsupportedRetryInterval,
-		freshTTL:                 opts.FreshTTL,
-		staleTTL:                 staleTTL,
 		escrowLoadStaleTTL:       opts.EscrowLoadStaleTTL,
+		unknownMaxConcurrent:     opts.UnknownMaxConcurrent,
 	}
 }
 
@@ -323,25 +326,17 @@ func (c *Cache) EffectiveMax(nodeID string) int {
 	return eff
 }
 
-// AvailableSlots returns max(0, effectiveMax - lockCount - localInFlight) for nodeID.
-// localInFlight is the sum across models for that node.
+// AvailableSlots returns max(0, effectiveMax - chargedLockCount - localInFlight)
+// for nodeID. localInFlight is the sum across models for that node. See
+// chargedLockCountLocked for why lockCount is dropped during an outage.
 func (c *Cache) AvailableSlots(nodeID string) int {
 	if c == nil || nodeID == "" {
 		return 0
 	}
-	eff := c.EffectiveMax(nodeID)
+	div := c.Divisor()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	n, ok := c.nodes[nodeID]
-	if !ok {
-		return 0
-	}
-	inflight := c.inFlightSumLocked(nodeID)
-	slots := eff - n.lockCount - inflight
-	if slots < 0 {
-		return 0
-	}
-	return slots
+	return c.availableSlotsLocked(nodeID, div)
 }
 
 // AvailableSlotsForModel returns the maximum AvailableSlots among nodes that
@@ -350,18 +345,15 @@ func (c *Cache) AvailableSlotsForModel(model string) int {
 	if c == nil || model == "" {
 		return 0
 	}
+	div := c.Divisor()
 	c.mu.Lock()
-	nodeIDs := make([]string, 0)
-	for id, n := range c.nodes {
-		if _, ok := n.models[model]; ok {
-			nodeIDs = append(nodeIDs, id)
-		}
-	}
-	c.mu.Unlock()
-
+	defer c.mu.Unlock()
 	best := 0
-	for _, id := range nodeIDs {
-		if s := c.AvailableSlots(id); s > best {
+	for id, n := range c.nodes {
+		if _, ok := n.models[model]; !ok {
+			continue
+		}
+		if s := c.availableSlotsLocked(id, div); s > best {
 			best = s
 		}
 	}
@@ -374,19 +366,53 @@ func (c *Cache) TryAcquire(nodeID, model string) bool {
 	if c == nil || nodeID == "" {
 		return false
 	}
-	eff := c.EffectiveMax(nodeID)
+	div := c.Divisor()
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	n, ok := c.nodes[nodeID]
-	if !ok {
-		return false
-	}
-	if eff-n.lockCount-c.inFlightSumLocked(nodeID) <= 0 {
+	if c.availableSlotsLocked(nodeID, div) <= 0 {
 		return false
 	}
 	key := inFlightKey(nodeID, model)
 	c.inFlight[key]++
 	return true
+}
+
+// availableSlotsLocked computes free fallback slots for nodeID under the given
+// divisor. Caller holds c.mu. div should be Cache.Divisor() computed before
+// locking (Divisor reads the injected load map and emits a metric).
+func (c *Cache) availableSlotsLocked(nodeID string, div int) int {
+	n, ok := c.nodes[nodeID]
+	if !ok {
+		return 0
+	}
+	if div < 1 {
+		div = 1
+	}
+	eff := n.maxConcurrent / div
+	if eff < 1 {
+		eff = 1
+	}
+	slots := eff - chargedLockCountLocked(n) - c.inFlightSumLocked(nodeID)
+	if slots < 0 {
+		return 0
+	}
+	return slots
+}
+
+// chargedLockCountLocked is the broker lockCount charged against the fallback
+// budget. While polls succeed (SourceDAPI) the last-seen locks approximate real
+// vLLM occupancy, so fallback subtracts them to avoid piling onto a busy node.
+// Once a poll has failed (SourceStale) DAPI is unreachable — no new brokered
+// acquires happen and existing ones drain within the HTTP timeout — while
+// lockCount stays frozen at the last (possibly busy) poll. Continuing to
+// subtract that phantom load would starve fallback for the whole outage
+// (e.g. max=40, lockCount=30, divisor=4 → effectiveMax=10 → 0 slots), so stale
+// rows charge 0 and bound only by effectiveMax - localInFlight.
+func chargedLockCountLocked(n *nodeCap) int {
+	if n.source == SourceStale {
+		return 0
+	}
+	return n.lockCount
 }
 
 // Release frees one local in-flight slot for (nodeID, model).
@@ -402,6 +428,67 @@ func (c *Cache) Release(nodeID, model string) {
 		return
 	}
 	c.inFlight[key]--
+}
+
+// unknownEffectiveMax is the synthetic per-node bound for a capacity-unknown
+// fallback node: unknownMaxConcurrent / Divisor(), floored at 1. Divisor floors
+// at MinFallbackDivisor (4), so with an idle/fresh load map this is
+// unknownMaxConcurrent / 4, shrinking further as active escrows grow.
+func (c *Cache) unknownEffectiveMax() int {
+	div := c.Divisor()
+	if div < 1 {
+		div = 1
+	}
+	eff := c.unknownMaxConcurrent / div
+	if eff < 1 {
+		eff = 1
+	}
+	return eff
+}
+
+// TryAcquireUnknown reserves one in-flight slot for a capacity-unknown fallback
+// node — one PickNode returned but ListNodeCapacity has never reported, so it
+// has no observed max_concurrent. Instead of bypassing the semaphore, it is
+// bounded by unknownEffectiveMax(). Returns false when that budget is exhausted.
+// Pair every true return with exactly one ReleaseUnknown.
+func (c *Cache) TryAcquireUnknown(nodeID, model string) bool {
+	if c == nil || nodeID == "" {
+		return false
+	}
+	eff := c.unknownEffectiveMax() // reads load map; must not hold c.mu
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if unknownInFlightSum(c.unknownInFlight, nodeID) >= eff {
+		return false
+	}
+	c.unknownInFlight[inFlightKey(nodeID, model)]++
+	return true
+}
+
+// ReleaseUnknown frees one in-flight slot taken by TryAcquireUnknown.
+func (c *Cache) ReleaseUnknown(nodeID, model string) {
+	if c == nil || nodeID == "" {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	key := inFlightKey(nodeID, model)
+	if c.unknownInFlight[key] <= 1 {
+		delete(c.unknownInFlight, key)
+		return
+	}
+	c.unknownInFlight[key]--
+}
+
+func unknownInFlightSum(m map[string]int, nodeID string) int {
+	prefix := nodeID + "\x00"
+	sum := 0
+	for k, v := range m {
+		if len(k) >= len(prefix) && k[:len(prefix)] == prefix {
+			sum += v
+		}
+	}
+	return sum
 }
 
 func (c *Cache) inFlightSumLocked(nodeID string) int {

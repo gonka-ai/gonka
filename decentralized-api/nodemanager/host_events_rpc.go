@@ -26,22 +26,24 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 	subscribe := hostEventKindsFromProto(req.GetSubscribe())
 	maxWait := clampHostEventsMaxWait(req.GetMaxWaitSeconds())
 	clientGen := req.GetGeneration()
-
-	// cursor 0 = live from now: do not replay retained events; wait for seq > head.
+	// cursor 0 = replay from the start of the retained window (bounded catch-up).
 	cursor := req.GetCursor()
-	if cursor == 0 {
-		cursor = s.hostEvents.Head()
-	}
 
 	for {
 		var wake <-chan struct{}
+		var release func()
 		if maxWait > 0 {
-			// Subscribe before Since to avoid lost wake-ups.
-			wake = s.hostEvents.NotifyChan()
+			// Subscribe (with the client's kind filter) before Since to avoid
+			// lost wake-ups. Only subscribed kinds wake this waiter, so an
+			// unsubscribed kind (e.g. maintenance) cannot reset the deadline.
+			wake, release = s.hostEvents.Subscribe(subscribe)
 		}
 
 		got := s.hostEvents.Since(cursor, clientGen, subscribe)
 		if got.Reset {
+			if release != nil {
+				release()
+			}
 			logging.Info("host_events: GetHostEvents needs_reset", types.Config,
 				"cursor", cursor,
 				"clientGeneration", clientGen,
@@ -51,6 +53,9 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 			return s.hostEventsResponse(got, nil, false, true), nil
 		}
 		if len(got.Events) > 0 {
+			if release != nil {
+				release()
+			}
 			logging.Debug("host_events: GetHostEvents returning events", types.Config,
 				"cursor", cursor,
 				"count", len(got.Events),
@@ -71,6 +76,9 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 			"maxWait", maxWait,
 		)
 		outcome, err := longpoll.Wait(ctx, wake, maxWait)
+		if release != nil {
+			release()
+		}
 		if err != nil {
 			return nil, status.FromContextError(err).Err()
 		}
@@ -84,7 +92,7 @@ func (s *Server) GetHostEvents(ctx context.Context, req *gen.GetHostEventsReques
 			)
 			return s.hostEventsResponse(got, nil, true, got.Reset), nil
 		}
-		// Notified: loop and re-check Since (unsubscribed kinds do not return yet).
+		// Notified by a subscribed kind: loop and re-check Since.
 	}
 }
 

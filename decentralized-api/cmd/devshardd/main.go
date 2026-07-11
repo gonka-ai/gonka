@@ -143,7 +143,6 @@ func main() {
 	escrowLoadMap := hostevents.NewLoadMap()
 	capacityCache := mlnodeclient.NewCache(mlClient.NodeManagerClient(), mlnodeclient.CacheOptions{
 		ActiveLoad: escrowLoadMap.Snapshot,
-		FreshTTL:   mlNodeMgrTTL(),
 		Log:        slog.Default(),
 	})
 	capacityCache.Start(ctx)

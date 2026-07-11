@@ -201,3 +201,76 @@ func TestNodeCapacityCache_InFlightAndAvailableSlots(t *testing.T) {
 	assert.Equal(t, 0, cache.AvailableSlots("n1"))
 	require.False(t, cache.TryAcquire("n1", "m1"))
 }
+
+func TestNodeCapacityCache_UnknownNodeBounded(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cache := mlnode.NewCache(nil, mlnode.CacheOptions{
+		Now: func() time.Time { return now },
+		ActiveLoad: func() (map[uint64]float64, time.Time) {
+			return map[uint64]float64{}, now // fresh empty → floor divisor 4
+		},
+		UnknownMaxConcurrent: 8, // 8/4 → 2 synthetic slots
+	})
+	// A node dapi never reported: no capacity row, but must still be bounded.
+	require.True(t, cache.TryAcquireUnknown("ghost", "m1"))
+	require.True(t, cache.TryAcquireUnknown("ghost", "m1"))
+	require.False(t, cache.TryAcquireUnknown("ghost", "m1"), "unknown node capped at unknownMaxConcurrent/divisor")
+
+	// Different node has its own independent budget.
+	require.True(t, cache.TryAcquireUnknown("ghost2", "m1"))
+
+	// Releasing frees a slot back.
+	cache.ReleaseUnknown("ghost", "m1")
+	require.True(t, cache.TryAcquireUnknown("ghost", "m1"))
+	require.False(t, cache.TryAcquireUnknown("ghost", "m1"))
+}
+
+func TestNodeCapacityCache_UnknownInFlightSurvivesPoll(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cache := mlnode.NewCache(nil, mlnode.CacheOptions{
+		Now: func() time.Time { return now },
+		ActiveLoad: func() (map[uint64]float64, time.Time) {
+			return map[uint64]float64{}, now
+		},
+		UnknownMaxConcurrent: 4, // 4/4 → 1 slot
+	})
+	require.True(t, cache.TryAcquireUnknown("ghost", "m1"))
+	require.False(t, cache.TryAcquireUnknown("ghost", "m1"))
+
+	// A poll that still does not include "ghost" must not wipe its live count.
+	cache.ApplyPollForTest([]*gen.NodeCapacityEntry{
+		{NodeId: "n1", Model: "m1", MaxConcurrent: 40, LockCount: 0},
+	})
+	require.False(t, cache.TryAcquireUnknown("ghost", "m1"), "poll prune must not clear live unknown in-flight")
+
+	cache.ReleaseUnknown("ghost", "m1")
+	require.True(t, cache.TryAcquireUnknown("ghost", "m1"))
+}
+
+func TestNodeCapacityCache_StaleDropsLockCount(t *testing.T) {
+	now := time.Unix(1_700_000_000, 0)
+	cache := mlnode.NewCache(nil, mlnode.CacheOptions{
+		Now: func() time.Time { return now },
+		ActiveLoad: func() (map[uint64]float64, time.Time) {
+			return map[uint64]float64{}, now // fresh empty → floor divisor 4
+		},
+	})
+	// Busy last poll: max=40, lockCount=30, divisor=4 → effectiveMax=10.
+	cache.ApplyPollForTest([]*gen.NodeCapacityEntry{
+		{NodeId: "n1", Model: "m1", MaxConcurrent: 40, LockCount: 30},
+	})
+
+	// While polls succeed, last-seen locks are charged: 10 - 30 → clamped to 0.
+	assert.Equal(t, 10, cache.EffectiveMax("n1"))
+	assert.Equal(t, 0, cache.AvailableSlots("n1"))
+	require.False(t, cache.TryAcquire("n1", "m1"))
+
+	// DAPI outage: poll fails → row goes stale → frozen lockCount is dropped,
+	// so fallback gets its full effectiveMax slice instead of starving.
+	cache.MarkStaleForTest()
+	assert.Equal(t, 10, cache.AvailableSlots("n1"))
+	assert.Equal(t, 10, cache.AvailableSlotsForModel("m1"))
+
+	require.True(t, cache.TryAcquire("n1", "m1"))
+	assert.Equal(t, 9, cache.AvailableSlots("n1")) // localInFlight still counts
+}

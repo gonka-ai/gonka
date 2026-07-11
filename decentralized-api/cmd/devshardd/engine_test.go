@@ -404,3 +404,74 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 	assert.GreaterOrEqual(t, maxInFlight.Load(), int32(2))
 }
 
+func TestFallback_UnknownNodeBounded(t *testing.T) {
+	var inFlight, maxInFlight atomic.Int32
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		cur := inFlight.Add(1)
+		for {
+			prev := maxInFlight.Load()
+			if cur <= prev || maxInFlight.CompareAndSwap(prev, cur) {
+				break
+			}
+		}
+		defer inFlight.Add(-1)
+		time.Sleep(40 * time.Millisecond)
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(mlSrv.Close)
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.Unavailable, "dapi down")
+		},
+	})
+
+	now := time.Unix(1_700_000_000, 0)
+	capacity := mlnodeclient.NewCache(nil, mlnodeclient.CacheOptions{
+		Now: func() time.Time { return now },
+		ActiveLoad: func() (map[uint64]float64, time.Time) {
+			return map[uint64]float64{}, now // fresh → floor divisor 4
+		},
+		UnknownMaxConcurrent: 4, // 4/4 → 1 synthetic slot
+	})
+	// Capacity has been observed (for some other node) so limit==true, but the
+	// node PickNode serves was never reported → capacity-unknown.
+	capacity.ApplyPollForTest([]*nmgen.NodeCapacityEntry{
+		{NodeId: "other", Model: "model-a", MaxConcurrent: 40, LockCount: 0},
+	})
+	require.True(t, capacity.HasObservedCapacity())
+	_, known := capacity.Get("node-ghost")
+	require.False(t, known)
+
+	mgr := mlnodeclient.NewManager(time.Hour)
+	mgr.Observe("model-a", "node-ghost", mlSrv.URL)
+	eng := newTestEngine(ml, mgr, capacity)
+
+	const workers = 8
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for range workers {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+				func(endpoint string) (*http.Response, error) {
+					return http.Get(endpoint)
+				})
+			if err != nil {
+				errCh <- err
+				return
+			}
+			_, _ = io.Copy(io.Discard, resp.Body)
+			_ = resp.Body.Close()
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
+}
+

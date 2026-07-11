@@ -26,6 +26,28 @@ func escrowSubscribe() []gen.HostEventKind {
 	}
 }
 
+func TestNodeManager_GetHostEvents_CursorZeroReplaysRetained(t *testing.T) {
+	ring := testHostEventRing(t)
+	ring.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowCreated, Escrow: &apiconfig.EscrowPayload{EscrowID: 11}})
+	ring.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindEscrowSettled, Escrow: &apiconfig.EscrowPayload{EscrowID: 11}})
+
+	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Cursor:         0,
+		MaxWaitSeconds: 0,
+		Subscribe:      escrowSubscribe(),
+		Generation:     1,
+	})
+	require.NoError(t, err)
+	require.False(t, resp.Unchanged)
+	require.False(t, resp.NeedsReset)
+	require.Equal(t, uint64(2), resp.NextCursor)
+	require.Len(t, resp.Events, 2)
+	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED, resp.Events[0].Kind)
+	require.Equal(t, uint64(11), resp.Events[0].Escrow.EscrowId)
+	require.Equal(t, gen.HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED, resp.Events[1].Kind)
+}
+
 func TestNodeManager_GetHostEvents_NilRingFailedPrecondition(t *testing.T) {
 	srv := NewServer(&mockBroker{}, nil, nil)
 	_, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
@@ -122,6 +144,42 @@ func TestNodeManager_GetHostEvents_LongPollDoesNotWakeOnUnsubscribedKind(t *test
 	case <-time.After(2 * time.Second):
 		t.Fatal("expected timeout without subscribed wake")
 	}
+}
+
+func TestNodeManager_GetHostEvents_RepeatedUnsubscribedAppendsStillTimeOut(t *testing.T) {
+	ring := testHostEventRing(t)
+	srv := NewServer(&mockBroker{}, nil, nil, WithHostEventRing(ring))
+
+	stop := make(chan struct{})
+	defer close(stop)
+	// Hammer maintenance (unsubscribed) appends throughout the wait window. With
+	// a true wake filter these must not reset the escrow client's deadline.
+	go func() {
+		ticker := time.NewTicker(10 * time.Millisecond)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				ring.Append(apiconfig.HostEvent{Kind: apiconfig.HostEventKindMaintenanceScheduled})
+			}
+		}
+	}()
+
+	start := time.Now()
+	resp, err := srv.GetHostEvents(context.Background(), &gen.GetHostEventsRequest{
+		Cursor:         0,
+		MaxWaitSeconds: 1,
+		Subscribe:      escrowSubscribe(),
+		Generation:     1,
+	})
+	elapsed := time.Since(start)
+	require.NoError(t, err)
+	require.True(t, resp.Unchanged, "escrow-only client must time out despite maintenance churn")
+	require.Empty(t, resp.Events)
+	require.GreaterOrEqual(t, elapsed, 900*time.Millisecond)
+	require.Less(t, elapsed, 3*time.Second, "deadline must not be reset by unsubscribed appends")
 }
 
 func TestNodeManager_GetHostEvents_LongPollTimesOutUnchanged(t *testing.T) {

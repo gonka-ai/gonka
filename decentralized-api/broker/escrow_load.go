@@ -1,6 +1,7 @@
 package broker
 
 import (
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -15,15 +16,29 @@ type EscrowLoad struct {
 	RequestsPerMin float64
 }
 
-// EscrowLoadTracker records AcquireMLNode hits per escrow and exposes a
-// rolling requests-per-minute snapshot. Idle escrows (no acquires in the
-// window) are omitted from Snapshot.
+// escrowStat is the O(1) per-escrow state: an exponentially-weighted acquire
+// count (decayed count "C" as of lastNano) plus the last acquire time. No raw
+// timestamps are retained, so memory/CPU scale with the number of escrows, not
+// with request volume.
+type escrowStat struct {
+	count    float64 // EWMA acquire count as of lastNano
+	lastNano int64   // unix-nano of the most recent Record
+}
+
+// EscrowLoadTracker records AcquireMLNode hits per escrow and exposes a rolling
+// requests-per-minute snapshot. Instead of storing a timestamp per acquire, it
+// keeps a time-decayed exponentially-weighted count per escrow (decay time
+// constant = window). At a steady rate r req/min the weighted count converges
+// to r * windowMinutes, so requests_per_min = count / windowMinutes ≈ r.
+//
+// An escrow is considered idle (and omitted/evicted from Snapshot) once its
+// last acquire is older than the window — matching the previous "no events in
+// window" semantics that drives the capacity divisor's active-escrow count.
 type EscrowLoadTracker struct {
 	mu     sync.Mutex
 	window time.Duration
 	now    func() time.Time
-	// escrowID -> acquire timestamps (unix nano), kept pruned to the window.
-	events map[uint64][]int64
+	stats  map[uint64]escrowStat
 }
 
 // NewEscrowLoadTracker returns a tracker with the given window (DefaultEscrowLoadWindow when <= 0).
@@ -34,7 +49,7 @@ func NewEscrowLoadTracker(window time.Duration) *EscrowLoadTracker {
 	return &EscrowLoadTracker{
 		window: window,
 		now:    time.Now,
-		events: make(map[uint64][]int64),
+		stats:  make(map[uint64]escrowStat),
 	}
 }
 
@@ -58,22 +73,26 @@ func (t *EscrowLoadTracker) Record(escrowID string) {
 		return
 	}
 	now := t.now().UnixNano()
-	cutoff := now - t.window.Nanoseconds()
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	ts := append(t.events[id], now)
-	t.events[id] = pruneTimestamps(ts, cutoff)
+	s := t.stats[id]
+	if s.lastNano != 0 {
+		s.count *= t.decayFactor(now - s.lastNano)
+	}
+	s.count += 1
+	s.lastNano = now
+	t.stats[id] = s
 }
 
-// Snapshot returns active escrows with requests_per_min = count / windowMinutes.
-// Escrows with zero events in the window are omitted.
+// Snapshot returns active escrows with requests_per_min = decayedCount / windowMinutes.
+// Escrows whose last acquire is older than the window are evicted and omitted.
 func (t *EscrowLoadTracker) Snapshot() []EscrowLoad {
 	if t == nil {
 		return nil
 	}
 	now := t.now().UnixNano()
-	cutoff := now - t.window.Nanoseconds()
+	windowNanos := t.window.Nanoseconds()
 	mins := t.window.Minutes()
 	if mins <= 0 {
 		mins = DefaultEscrowLoadWindow.Minutes()
@@ -82,32 +101,27 @@ func (t *EscrowLoadTracker) Snapshot() []EscrowLoad {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 
-	out := make([]EscrowLoad, 0, len(t.events))
-	for id, ts := range t.events {
-		kept := pruneTimestamps(ts, cutoff)
-		if len(kept) == 0 {
-			delete(t.events, id)
+	out := make([]EscrowLoad, 0, len(t.stats))
+	for id, s := range t.stats {
+		elapsed := now - s.lastNano
+		if elapsed > windowNanos {
+			delete(t.stats, id)
 			continue
 		}
-		t.events[id] = kept
+		decayed := s.count * t.decayFactor(elapsed)
 		out = append(out, EscrowLoad{
 			EscrowID:       id,
-			RequestsPerMin: float64(len(kept)) / mins,
+			RequestsPerMin: decayed / mins,
 		})
 	}
 	return out
 }
 
-func pruneTimestamps(ts []int64, cutoff int64) []int64 {
-	i := 0
-	for i < len(ts) && ts[i] < cutoff {
-		i++
+// decayFactor is exp(-elapsed / window): the exponential decay applied to the
+// weighted count over elapsedNano nanoseconds (decay time constant = window).
+func (t *EscrowLoadTracker) decayFactor(elapsedNano int64) float64 {
+	if elapsedNano <= 0 {
+		return 1
 	}
-	if i == 0 {
-		return ts
-	}
-	if i >= len(ts) {
-		return nil
-	}
-	return append([]int64(nil), ts[i:]...)
+	return math.Exp(-float64(elapsedNano) / float64(t.window.Nanoseconds()))
 }

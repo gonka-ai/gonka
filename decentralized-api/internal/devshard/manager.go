@@ -999,6 +999,9 @@ func statsHTTPError(err error) error {
 	if errors.Is(err, devshardserver.ErrInitializing) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
 		return echo.NewHTTPError(http.StatusNotFound, "shard not found")
 	}
