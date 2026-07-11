@@ -227,7 +227,7 @@ flowchart TD
 
 Lazy path remains the safety net for missed events, late-joining hosts, and old dapi without `GetHostEvents`.
 
-Optional hardening: map chain-unavailable on lazy create to **503** instead of **500**.
+Map chain-unavailable on lazy create to **503** instead of **500** (retryable; clients should back off).
 
 ### 5. Open-escrow count → capacity fallback
 
@@ -261,7 +261,7 @@ Follow-up: bounded ring replay since `cursor`; list-open-escrows warm for curren
 
 - **Phase A** — steps 1–6: proto, ring+subscriptions, ingest handlers, dapi-embedded warm/settle, standalone consumer, open-set.
 - **Phase B** — steps 7–8: capacity denominator, maintenance consumption/exposure.
-- **Phase C** — step 9: reset/catch-up + leak-guard hardening, optional 503.
+- **Phase C** — step 9: reset/catch-up + leak-guard hardening, lazy-create **503**.
 
 ---
 
