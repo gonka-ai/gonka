@@ -23,8 +23,9 @@ set -Eeuo pipefail
 
 ORDERED_STEPS=(
   init preflight disable-main-rotation create-temp-gateway create-temp-escrows
-  check-temp switch-to-temp check-alias-temp drain-main bump-main-image
-  update-main check-main-direct switch-to-main check-alias-main drain-temp
+  check-temp switch-to-temp check-alias-temp drain-main deactivate-main-source
+  bump-main-image update-main create-main-seed-escrows check-main-direct
+  switch-to-main check-alias-main drain-temp
   stop-temp import-temp activate-temp restore-main-rotation status
 )
 
@@ -97,9 +98,15 @@ config_validate() {
       (.models // [] | to_entries[] |
         ( req(.value.model; "models[\(.key)].model"),
           num(.value.escrow_count; "models[\(.key)].escrow_count"),
+          num((.value.main_seed_count // 0); "models[\(.key)].main_seed_count"),
           num(.value.escrow_amount; "models[\(.key)].escrow_amount") )),
       req(.escrow.protocol_version; "escrow.protocol_version"),
       req(.escrow.private_key_env; "escrow.private_key_env"),
+      (if (((.escrow.source_protocol_version // .escrow.protocol_version) | tostring | sub("^v"; "")) !=
+           ((.escrow.protocol_version | tostring | sub("^v"; ""))) and
+           any(.models[]; (.main_seed_count // 0) < 1))
+       then "protocol change requires models[].main_seed_count >= 1 for every model"
+       else empty end),
       req(.main.admin_url; "main.admin_url"),
       req(.main.container; "main.container"),
       req(.main.storage_host_dir; "main.storage_host_dir"),
@@ -131,7 +138,9 @@ resolve_config() {
   IMAGE_TO_TAG="${IMAGE_TO_TAG:-$(cfg .image.to_tag)}"
   IMAGE_FROM_REF="${IMAGE_REPO}:${IMAGE_FROM_TAG}"
   IMAGE_TO_REF="${IMAGE_REPO}:${IMAGE_TO_TAG}"
+  IMAGE_SKIP_PULL="${IMAGE_SKIP_PULL:-$(jq -r '.image.skip_pull // false' <<<"${CONFIG_JSON}")}"
   ESCROW_PROTOCOL_VERSION="${ESCROW_PROTOCOL_VERSION:-$(cfg .escrow.protocol_version)}"
+  SOURCE_PROTOCOL_VERSION="${SOURCE_PROTOCOL_VERSION:-$(jq -r '.escrow.source_protocol_version // .escrow.protocol_version' <<<"${CONFIG_JSON}")}"
   ESCROW_PRIVATE_KEY_ENV="${ESCROW_PRIVATE_KEY_ENV:-$(cfg .escrow.private_key_env)}"
   MAIN_ADMIN_URL="${MAIN_ADMIN_URL:-$(cfg .main.admin_url)}"
   MAIN_CONTAINER="${MAIN_CONTAINER:-$(cfg .main.container)}"
@@ -169,7 +178,7 @@ load_config() {
   resolve_config
 }
 
-models_tsv()    { jq -r '.models[] | [.model, (.escrow_count|tostring), (.escrow_amount|tostring)] | @tsv' <<<"${CONFIG_JSON}"; }
+models_tsv()    { jq -r '.models[] | [.model, (.escrow_count|tostring), (.escrow_amount|tostring), ((.main_seed_count // 0)|tostring)] | @tsv' <<<"${CONFIG_JSON}"; }
 covered_models() { jq -r '.models[].model, ((.allow_unavailable_models // [])[])' <<<"${CONFIG_JSON}"; }
 
 # --- helpers: admin API, command runner, gateway ops -------------------------
@@ -367,6 +376,12 @@ step_preflight() {
     covered_models | grep -Fxq "${served}" || uncovered="${uncovered} ${served}"
   done < <(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" | jq -r '[.devshards[]? | select(.active==true) | .model] | unique | .[]')
   [[ -n "${uncovered}" ]] && { gate_fail "main serves uncovered models:${uncovered} (add to models[] or allow_unavailable_models)"; return 1; }
+  if [[ "${SOURCE_PROTOCOL_VERSION#v}" != "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
+    local missing_seeds
+    missing_seeds="$(jq -r '[.models[] | select((.main_seed_count // 0) < 1) | .model] | join(" ")' <<<"${CONFIG_JSON}")"
+    [[ -z "${missing_seeds}" ]] ||
+      { gate_fail "protocol change requires models[].main_seed_count >= 1 for:${missing_seeds}"; return 1; }
+  fi
   gate_ok "every model main serves is covered by temp escrows or allow-listed"
 }
 
@@ -381,7 +396,11 @@ step_disable_main_rotation() {
 step_create_temp_gateway() {
   need_key
   run mkdir -p "${TEMP_STORAGE_HOST_DIR}"
-  run docker pull "${IMAGE_TO_REF}"
+  if [[ "${IMAGE_SKIP_PULL}" == "true" ]]; then
+    run docker image inspect "${IMAGE_TO_REF}"
+  else
+    run docker pull "${IMAGE_TO_REF}"
+  fi
   temp_start
   [[ "${DRY_RUN}" == "1" ]] && { note "would wait for temp readiness and sync main settings (rotation off) to temp"; return 0; }
   wait_ready "temp gateway" "${TEMP_ADMIN_URL}"
@@ -393,13 +412,13 @@ step_create_temp_escrows() {
   need_key
   local model count amount i body
   if [[ "${DRY_RUN}" == "1" ]]; then
-    while IFS=$'\t' read -r model count amount; do note "would mint ${count} x ${model} @ ${amount}"; done < <(models_tsv)
+    while IFS=$'\t' read -r model count amount seed_count; do note "would mint ${count} x ${model} @ ${amount}"; done < <(models_tsv)
     return 0
   fi
   confirm "mint fresh temp escrows on-chain (spends real funds; irreversible)"
   mkdir -p "${TEMP_STORAGE_HOST_DIR}"
   ESCROWS_MINTED=1
-  while IFS=$'\t' read -r model count amount; do
+  while IFS=$'\t' read -r model count amount seed_count; do
     for (( i=1; i<=count; i++ )); do
       note "mint ${i}/${count} ${model} @ ${amount}"
       body="$(jq -nc --argjson amount "${amount}" --arg model "${model}" --arg pk "${ESCROW_PRIVATE_KEY_ENV}" --arg pv "${ESCROW_PROTOCOL_VERSION}" \
@@ -417,7 +436,7 @@ step_check_temp() {
   wait_ready "temp gateway" "${TEMP_ADMIN_URL}"
   assert_settings_aligned
   local model count amount active
-  while IFS=$'\t' read -r model count amount; do
+  while IFS=$'\t' read -r model count amount seed_count; do
     active="$(admin_get "${TEMP_ADMIN_URL}" "/v1/admin/devshards" | jq --arg m "${model}" '[.devshards[]? | select(.model==$m and .active==true)] | length')"
     (( active < count )) && { gate_fail "temp has ${active} active escrows for ${model}, need ${count} (model would be unavailable during update)"; return 1; }
     gate_ok "temp: ${active}/${count} active escrows for ${model}"
@@ -436,20 +455,84 @@ step_drain_main() {
   wait_drain "main gateway" "${MAIN_ADMIN_URL}"
 }
 
+step_deactivate_main_source() {
+  need_key
+  if [[ "${SOURCE_PROTOCOL_VERSION#v}" == "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
+    note "source and target protocol are the same; leaving main escrows active"
+    return 0
+  fi
+  [[ "${DRY_RUN}" == "1" ]] && {
+    note "would deactivate active protocol-${SOURCE_PROTOCOL_VERSION#v} escrows on drained MAIN (no settlement)"
+    return 0
+  }
+  confirm "deactivate source-protocol escrows on drained MAIN (local only; no settlement)"
+  local id count=0 source="${SOURCE_PROTOCOL_VERSION#v}"
+  while IFS= read -r id; do
+    [[ -n "${id}" ]] || continue
+    note "deactivate source escrow ${id}"
+    admin_post "${MAIN_ADMIN_URL}" "/v1/admin/devshards/${id}/deactivate" '{}' >/dev/null
+    count=$(( count + 1 ))
+  done < <(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
+    jq -r --arg p "${source}" '.devshards[]? | select(.active==true and (.protocol_version|tostring)==$p) | .id')
+  local remaining
+  remaining="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
+    jq --arg p "${source}" '[.devshards[]? | select(.active==true and (.protocol_version|tostring)==$p)] | length')"
+  (( remaining == 0 )) ||
+    { gate_fail "${remaining} source-protocol escrow(s) remain active on main"; return 1; }
+  gate_ok "deactivated ${count} source-protocol escrow(s) on main without settlement"
+}
+
 step_bump_main_image() { compose_bump; }
 
 step_update_main() {
   confirm "recreate MAIN from ${COMPOSE_FILE} on the bumped image"
   note "MAIN image comes from ${COMPOSE_FILE} (service ${COMPOSE_SERVICE}), not an env ref"
-  local src=""; [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] && src="source '${MAIN_ENV_FILE_ABS}' && "
-  run_shell "cd '${DEPLOY_DIR}' && ${src}docker compose -f '${COMPOSE_FILE}' pull ${COMPOSE_SERVICE} && docker compose -f '${COMPOSE_FILE}' up -d --no-deps --force-recreate ${COMPOSE_SERVICE} && docker compose -f '${COMPOSE_FILE}' ps ${COMPOSE_SERVICE}"
+  local src="" pull=""
+  [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] && src="source '${MAIN_ENV_FILE_ABS}' && "
+  [[ "${IMAGE_SKIP_PULL}" != "true" ]] && pull="docker compose -f '${COMPOSE_FILE}' pull ${COMPOSE_SERVICE} && "
+  run_shell "cd '${DEPLOY_DIR}' && ${src}${pull}docker compose -f '${COMPOSE_FILE}' up -d --no-deps --force-recreate ${COMPOSE_SERVICE} && docker compose -f '${COMPOSE_FILE}' ps ${COMPOSE_SERVICE}"
   gate_ok "MAIN recreated on new image"
+}
+
+step_create_main_seed_escrows() {
+  need_key
+  local model temp_count amount seed_count i body total=0
+  while IFS=$'\t' read -r model temp_count amount seed_count; do
+    total=$(( total + seed_count ))
+  done < <(models_tsv)
+  (( total > 0 )) || { note "no main seed escrows configured"; return 0; }
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    while IFS=$'\t' read -r model temp_count amount seed_count; do
+      note "would mint ${seed_count} main seed x ${model} @ ${amount}"
+    done < <(models_tsv)
+    return 0
+  fi
+  confirm "mint target-protocol seed escrows on updated MAIN (spends real funds; irreversible)"
+  while IFS=$'\t' read -r model temp_count amount seed_count; do
+    for (( i=1; i<=seed_count; i++ )); do
+      note "mint main seed ${i}/${seed_count} ${model} @ ${amount}"
+      body="$(jq -nc --argjson amount "${amount}" --arg model "${model}" --arg pk "${ESCROW_PRIVATE_KEY_ENV}" --arg pv "${ESCROW_PROTOCOL_VERSION}" \
+        '{amount:$amount, model_id:$model, private_key_env:$pk, protocol_version:$pv}')"
+      admin_post "${MAIN_ADMIN_URL}" "/v1/admin/escrows" "${body}" >/dev/null
+    done
+  done < <(models_tsv)
+  gate_ok "main seed escrows minted"
 }
 
 step_check_main_direct() {
   need_key
-  [[ "${DRY_RUN}" == "1" ]] && { note "would verify main readiness and a direct chat smoke test before switching back"; return 0; }
+  [[ "${DRY_RUN}" == "1" ]] && { note "would verify main readiness, target-protocol seed coverage, and a direct chat smoke before switching back"; return 0; }
   wait_ready "main gateway" "${MAIN_ADMIN_URL}"
+  local model temp_count amount seed_count active
+  while IFS=$'\t' read -r model temp_count amount seed_count; do
+    (( seed_count > 0 )) || continue
+    active="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
+      jq --arg m "${model}" --arg p "${ESCROW_PROTOCOL_VERSION#v}" \
+        '[.devshards[]? | select(.active==true and .model==$m and (.protocol_version|tostring)==$p)] | length')"
+    (( active >= seed_count )) ||
+      { gate_fail "main has ${active}/${seed_count} active target-protocol seed escrows for ${model}"; return 1; }
+    gate_ok "main: ${active}/${seed_count} target-protocol seed escrows active for ${model}"
+  done < <(models_tsv)
   smoke_chat "${MAIN_ADMIN_URL}" "${SMOKE_MODEL}"
   gate_ok "main direct chat smoke test passed (${SMOKE_MODEL})"
 }
@@ -563,13 +646,15 @@ Devshard gateway update (v2, single-file)
 Config: ${CONFIG_PATH}
 Mode:   $([[ "${DRY_RUN}" == "1" ]] && echo "dry-run (use --run to execute)" || echo LIVE)
 Image:  ${IMAGE_FROM_REF} -> ${IMAGE_TO_REF}
+Pull:   $([[ "${IMAGE_SKIP_PULL}" == "true" ]] && echo "skip (require exact local target image)" || echo "registry")
+Protocol: ${SOURCE_PROTOCOL_VERSION} -> ${ESCROW_PROTOCOL_VERSION}
 Main:   ${MAIN_CONTAINER} @ ${MAIN_ADMIN_URL}
 Temp:   ${TEMP_UPSTREAM_ALIAS} @ ${TEMP_ADMIN_URL} (network ${TEMP_NETWORK})
 Nginx:  ${NGINX_PROXY_CONTAINER}:${NGINX_CONFIG_PATH}  ${NGINX_OLD_UPSTREAM} <-> ${NGINX_NEW_UPSTREAM}:${NGINX_UPSTREAM_PORT}
 Public: ${NGINX_PUBLIC_BASE_URL:-<unset; public checks skipped>}
 Smoke:  ${SMOKE_MODEL}
 Models (fresh temp escrows minted per model):
-$(models_tsv | while IFS=$'\t' read -r m c a; do printf '  %s x %s @ %s\n' "${c}" "${m}" "${a}"; done)
+$(models_tsv | while IFS=$'\t' read -r m c a s; do printf '  %s: temp=%s, main-seed=%s, amount=%s each\n' "${m}" "${c}" "${s}" "${a}"; done)
 Steps:
 $(printf '  %s\n' "${ORDERED_STEPS[@]}")
 EOF

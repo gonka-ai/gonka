@@ -73,6 +73,10 @@ docker exec proxy sh -lc "cp /etc/nginx/nginx.conf /tmp/nginx.conf.bak && \
 curl -fsS "$MAIN/v1/status" -H "Authorization: Bearer $KEY" | jq '[.devshards[].active_requests]|max'
 ```
 
+**Protocol change only:** deactivate each active source-protocol escrow after
+main drains and before recreating it. Use
+`POST /v1/admin/devshards/<ID>/deactivate`. Do not settle or delete it.
+
 **7. Bump the image tag in compose:**
 
 ```bash
@@ -85,7 +89,11 @@ sed -i "s#$REPO:<OLD>#$REPO:<NEW>#g" docker-compose.devshard-gateway.yml
 docker compose -f docker-compose.devshard-gateway.yml up -d --no-deps --force-recreate devshard-gateway
 ```
 
-**9. Verify main** — status responds and a chat smoke test passes (same as step 4, against `$MAIN`).
+**Protocol change only:** create at least one target-protocol seed escrow per
+served model on main before returning traffic.
+
+**9. Verify main** — status responds, target-protocol seed escrows are active,
+and a chat smoke test passes (same as step 4, against `$MAIN`).
 
 **10. Switch nginx back to main** — same as step 5 with `devshard-gateway-temp` → `devshard-gateway`.
 
@@ -110,6 +118,39 @@ curl -fsS -X POST "$MAIN/v1/admin/devshards"        -H "Authorization: Bearer $K
 
 The script runs steps 1–12 from a JSON config (models and everything else are config-driven — nothing hardcoded).
 
+### Before a protocol-changing update
+
+`update.config.json` sets the protocol of newly created escrows, but it does not
+edit the gateway env file. Before starting a protocol change:
+
+1. Back up `config.devshard.env`.
+2. Change `DEVSHARD_ROUTE_PREFIX` to the target route, for example
+   `/devshard/v2` to `/devshard/v3`.
+3. Verify the running main container still has the source route. Docker reads
+   its env only when the container is created, so the existing main remains on
+   v2 while temp and the later recreated main read v3.
+4. Set `escrow.source_protocol_version` to the running protocol and
+   `escrow.protocol_version` to the target (`"2"` and `"3"` for v2 to v3).
+5. Set `models[].main_seed_count` to at least `1` for every served model.
+
+The public client path remains `/devshard-gateway/v1/...`.
+
+Schedule a protocol-changing run shortly after `set_new_validators`, once the
+chain is back in `Inference`. Ensure enough blocks remain before the next PoC
+for escrow creation, smoke checks, both nginx switches, and draining. On chains
+with a two-epoch pruning threshold, use fresh source and temp escrows; do not
+resume an interrupted run after its escrows cross that threshold.
+
+After nginx moves traffic to temp and main drains, the script deactivates the
+source-protocol escrows on main. Deactivation is local only: it does **not**
+settle, delete, or transfer funds. This prevents the target binary from trying
+to open incompatible source-protocol session state.
+
+After main restarts on the target image, the script creates the configured
+target-protocol seed escrows and proves direct inference before switching nginx
+back. Temp is then drained and stopped before its escrows are imported and
+activated on main, preserving one writer per escrow.
+
 ```bash
 cp scripts/update.config.sample.json update.config.json     # edit: image tags, models[], nginx, compose
 ./scripts/update.sh --config update.config.json run          # dry run — prints the full plan
@@ -120,7 +161,7 @@ cp scripts/update.config.sample.json update.config.json     # edit: image tags, 
 - Run a single step: `./scripts/update.sh --config update.config.json <step>`.
 - Recover stranded temp escrows after an aborted run: `./scripts/update.sh --config update.config.json recover` (or `recover --settle`).
 
-The config (see [scripts/update.config.sample.json](scripts/update.config.sample.json)) holds the image (`repository`, `from_tag`, `to_tag`), the `models[]` array (`model`, `escrow_count`, `escrow_amount`), `allow_unavailable_models`, and the nginx / compose / timeout blocks. Env vars override individual fields.
+The config (see [scripts/update.config.sample.json](scripts/update.config.sample.json)) holds the image (`repository`, `from_tag`, `to_tag`, `skip_pull`), the `models[]` array (`model`, temp `escrow_count`, `main_seed_count`, `escrow_amount`), source/target escrow protocol versions, `allow_unavailable_models`, and the nginx / compose / timeout blocks. Set `image.skip_pull=true` only when the exact target image is already loaded locally; the script verifies it with `docker image inspect` and skips both registry pulls. For same-protocol image updates, source and target protocol are equal and `main_seed_count` may remain `0`. Env vars override individual fields.
 
 ## Restore the nginx backup
 

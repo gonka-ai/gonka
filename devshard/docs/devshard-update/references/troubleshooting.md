@@ -32,6 +32,14 @@ Symptoms, causes, and fixes during a zero-downtime gateway update. Endpoints in 
 
 `update-main` recreates MAIN from the compose file using the image tag pinned there. The `bump-main-image` step rewrites that tag from `image.from_tag` to `image.to_tag` before `update-main` runs. If MAIN came back on the old version, the tag wasn't bumped — confirm `bump-main-image` ran (running steps by hand, edit the compose image tag before `update-main`).
 
+## MAIN restart loops with `session version mismatch`
+
+The target binary is trying to recover active source-protocol session state
+from the persistent gateway database. Keep traffic on temp, recreate main on
+the source image/route, deactivate its active source escrows without settling,
+then recreate main on the target image/route. Create target-protocol seed
+escrows and pass the direct smoke test before switching traffic back.
+
 ## New image is bad
 
 - Do **not** `switch-to-main` (Path B) or return the instance to the pool (Path A).

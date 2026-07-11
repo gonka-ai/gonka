@@ -51,7 +51,14 @@ curl -fsS http://127.0.0.1:18080/v1/admin/settings -H "Authorization: Bearer $KE
 
 ## protocol_version
 
-Only `"1"` (aka `""` / `"v1"`) parses; anything else is rejected. It is a stored field but effectively pinned to v1 — a gateway image "vX → vY" update is **not** a protocol change. Pass `"1"` (or leave default) when creating/importing/activating.
+The gateway accepts `"1"` / `"v1"`, `"2"` / `"v2"`, and `"3"` / `"v3"`;
+stored values are normalized to `"1"`, `"2"`, and `"3"`.
+
+This per-escrow value is separate from the gateway image's build-time protocol
+and `DEVSHARD_ROUTE_PREFIX`. During a protocol change, deactivate source
+escrows before recreating main on the target image. Otherwise the target binary
+can fail startup while recovering incompatible source session state (for
+example, `stored v2, requested v3`).
 
 ## Notes for migration
 

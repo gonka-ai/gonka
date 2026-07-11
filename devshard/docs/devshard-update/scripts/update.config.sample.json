@@ -2,14 +2,16 @@
   "image": {
     "repository": "ghcr.io/gonka-ai/devshard-gateway",
     "from_tag": "mainnet-v0.2.13-latest",
-    "to_tag": "mainnet-v0.2.14-latest"
+    "to_tag": "mainnet-v0.2.14-latest",
+    "skip_pull": false
   },
   "models": [
-    { "model": "moonshotai/Kimi-K2.6", "escrow_count": 4, "escrow_amount": 5000000000 },
-    { "model": "MiniMaxAI/MiniMax-M2.7", "escrow_count": 2, "escrow_amount": 5000000000 }
+    { "model": "moonshotai/Kimi-K2.6", "escrow_count": 4, "main_seed_count": 0, "escrow_amount": 5000000000 },
+    { "model": "MiniMaxAI/MiniMax-M2.7", "escrow_count": 2, "main_seed_count": 0, "escrow_amount": 5000000000 }
   ],
   "allow_unavailable_models": [],
   "escrow": {
+    "source_protocol_version": "1",
     "protocol_version": "1",
     "private_key_env": "DEVSHARD_PRIVATE_KEY"
   },
