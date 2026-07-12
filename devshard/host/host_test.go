@@ -604,6 +604,76 @@ func TestHost_PayloadMismatch_Params(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
 }
 
+func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	// Large prompt signed/reported with underreported input_length.
+	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":50}`)
+	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
+	require.NoError(t, err)
+	start := &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  promptHash,
+		Model:       "llama",
+		InputLength: 0,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &InferencePayload{
+			Prompt:      largePrompt,
+			Model:       "llama",
+			InputLength: 0,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	})
+	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+	require.Contains(t, err.Error(), "input_length")
+}
+
+func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	// Body asks for 1000 tokens while signed reserve only covers 1.
+	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1000}`)
+	promptHash, err := devshard.CanonicalPromptHash(prompt)
+	require.NoError(t, err)
+	start := &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  promptHash,
+		Model:       "llama",
+		InputLength: uint64(len(prompt)),
+		MaxTokens:   1,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &InferencePayload{
+			Prompt:      prompt,
+			Model:       "llama",
+			InputLength: uint64(len(prompt)),
+			MaxTokens:   1,
+			StartedAt:   1000,
+		},
+	})
+	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+	require.Contains(t, err.Error(), "max_tokens")
+}
+
 func TestHost_StoresOwnSignature(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

@@ -303,6 +303,19 @@ func TestMaxTokens(t *testing.T) {
 	}
 }
 
+func TestEffectiveMaxTokens(t *testing.T) {
+	n, err := EffectiveMaxTokens([]byte(jsonBodyWithMaxTokens))
+	require.NoError(t, err)
+	require.EqualValues(t, 100, n)
+
+	n, err = EffectiveMaxTokens([]byte(jsonBodyNoTokenLimits))
+	require.NoError(t, err)
+	require.EqualValues(t, calculations.DefaultMaxTokens, n)
+
+	_, err = EffectiveMaxTokens([]byte("not-json"))
+	require.Error(t, err)
+}
+
 func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
 	require.NoError(t, err)
