@@ -177,6 +177,7 @@ func (eg *EpochGroup) updateEpochGroupWithNewMember(ctx context.Context, member 
 	})
 
 	mlNodes := eg.getMLNodeInfo(member, eg.GroupData.ModelId)
+	eg.populateNodeThroughputs(ctx, mlNodes, eg.GroupData.ModelId)
 	votingPower := eg.getVotingPowerForModel(member, eg.GroupData.ModelId)
 
 	eg.GroupData.ValidationWeights = append(eg.GroupData.ValidationWeights, &types.ValidationWeight{

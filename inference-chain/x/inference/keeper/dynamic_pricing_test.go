@@ -244,6 +244,61 @@ func TestModelCapacityCaching(t *testing.T) {
 	assert.Error(t, err)
 }
 
+// TestCacheAllModelCapacities_PrefersTotalThroughput verifies capacity selection:
+// TotalThroughput when > 0, else TotalWeight proxy, else default 1000.
+func TestCacheAllModelCapacities_PrefersTotalThroughput(t *testing.T) {
+	k, ctx := setupTestKeeperWithDynamicPricing(t)
+	goCtx := sdk.UnwrapSDKContext(ctx)
+
+	const epochIndex uint64 = 1
+	require.NoError(t, k.SetEffectiveEpochIndex(goCtx, epochIndex))
+
+	k.SetEpochGroupData(goCtx, types.EpochGroupData{
+		EpochIndex:     epochIndex,
+		ModelId:        "",
+		SubGroupModels: []string{"model-throughput", "model-weight", "model-default"},
+	})
+
+	// Prefer TotalThroughput over TotalWeight when both are set.
+	k.SetEpochGroupData(goCtx, types.EpochGroupData{
+		EpochIndex:      epochIndex,
+		ModelId:         "model-throughput",
+		TotalThroughput: 5000,
+		TotalWeight:     9999, // must be ignored when TotalThroughput > 0
+	})
+
+	// Fall back to TotalWeight when TotalThroughput is 0.
+	k.SetEpochGroupData(goCtx, types.EpochGroupData{
+		EpochIndex:      epochIndex,
+		ModelId:         "model-weight",
+		TotalThroughput: 0,
+		TotalWeight:     2500,
+	})
+
+	// Default 1000 when both TotalThroughput and TotalWeight are 0.
+	k.SetEpochGroupData(goCtx, types.EpochGroupData{
+		EpochIndex:      epochIndex,
+		ModelId:         "model-default",
+		TotalThroughput: 0,
+		TotalWeight:     0,
+	})
+
+	err := k.CacheAllModelCapacities(goCtx)
+	require.NoError(t, err)
+
+	capacity, err := k.GetCachedModelCapacity(goCtx, "model-throughput")
+	require.NoError(t, err)
+	require.Equal(t, int64(5000), capacity)
+
+	capacity, err = k.GetCachedModelCapacity(goCtx, "model-weight")
+	require.NoError(t, err)
+	require.Equal(t, int64(2500), capacity)
+
+	capacity, err = k.GetCachedModelCapacity(goCtx, "model-default")
+	require.NoError(t, err)
+	require.Equal(t, int64(1000), capacity)
+}
+
 // TestModelCurrentPriceStorage tests KV storage for current prices
 func TestModelCurrentPriceStorage(t *testing.T) {
 	k, ctx := setupTestKeeperWithDynamicPricing(t)
