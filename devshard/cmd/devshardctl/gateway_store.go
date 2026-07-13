@@ -1235,6 +1235,44 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 	return nil
 }
 
+// GetDevshard returns the registry record for a single devshard. The second
+// return value is false when no row exists for the id. It is used by lazy
+// hydration to look up the config of a non-resident devshard without loading
+// the entire registry.
+func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+	id = strings.TrimSpace(id)
+	var devshard GatewayDevshardState
+	var active int
+	var settlementPending int
+	err := s.db.QueryRow(`
+		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
+		       rotation_role, rotation_epoch, settlement_pending
+		FROM gateway_devshards
+		WHERE id = ?`, id).Scan(
+		&devshard.ID,
+		&devshard.PrivateKeyHex,
+		&devshard.PrivateKeyEnv,
+		&devshard.Model,
+		&devshard.StoragePath,
+		&active,
+		&devshard.CreatedAt,
+		&devshard.UpdatedAt,
+		&devshard.ProtocolVersion,
+		&devshard.RotationRole,
+		&devshard.RotationEpoch,
+		&settlementPending,
+	)
+	if err == sql.ErrNoRows {
+		return GatewayDevshardState{}, false, nil
+	}
+	if err != nil {
+		return GatewayDevshardState{}, false, fmt.Errorf("get devshard %s: %w", id, err)
+	}
+	devshard.Active = active != 0
+	devshard.SettlementPending = settlementPending != 0
+	return devshard, true, nil
+}
+
 func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards

@@ -2,13 +2,18 @@ package poc
 
 import (
 	"context"
+	"errors"
+	"sync"
 	"testing"
+	"time"
 
 	"decentralized-api/broker"
+	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -23,6 +28,18 @@ func (s *stubProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string, _ P
 
 func (s *stubProofFetcher) FetchAndVerifyProofsByNonce(_ context.Context, _ string, _ ProofByNonceRequest) ([]VerifiedArtifact, error) {
 	return s.artifacts, nil
+}
+
+type failingProofFetcher struct {
+	err error
+}
+
+func (f *failingProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string, _ ProofRequest) ([]VerifiedArtifact, error) {
+	return nil, f.err
+}
+
+func (f *failingProofFetcher) FetchAndVerifyProofsByNonce(_ context.Context, _ string, _ ProofByNonceRequest) ([]VerifiedArtifact, error) {
+	return nil, f.err
 }
 
 // stubNodeBroker implements nodeBrokerFacade for tests.
@@ -119,4 +136,76 @@ func TestValidateParticipant_StrongerRngPropagated(t *testing.T) {
 		req := runValidateParticipant(t, false)
 		assert.False(t, req.PocStrongerRng, "PocStrongerRng must be forwarded to GenerateV2 when disabled")
 	})
+}
+
+func TestWorkerReportsInvalidAfterRetryExhaustion(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	recorder.On("SubmitPocValidationsV2", mock.MatchedBy(func(msg *types.MsgSubmitPocValidationsV2) bool {
+		if msg.PocStageStartBlockHeight != 1000 || len(msg.Validations) != 1 {
+			return false
+		}
+		validation := msg.Validations[0]
+		return validation.ParticipantAddress == "cosmos1unresponsive" &&
+			validation.ModelId == "test-model" &&
+			validation.ValidatedWeight == -1
+	})).Return(nil).Once()
+
+	v := &OffChainValidator{
+		recorder: recorder,
+		config: ValidationConfig{
+			MaxRetries:   1,
+			RetryBackoff: time.Millisecond,
+		},
+	}
+
+	workChan := make(chan participantWork, 1)
+	workChan <- participantWork{
+		address: "cosmos1unresponsive",
+		modelId: "test-model",
+		count:   100,
+		url:     "http://participant",
+	}
+
+	testNode := broker.NodeResponse{
+		Node: broker.Node{
+			Host:    "127.0.0.1",
+			PoCPort: 8080,
+			NodeNum: 1,
+			Models: map[string]broker.ModelArgs{
+				"test-model": {},
+			},
+		},
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	successCount := 0
+	failCount := 0
+	pendingCount := 1
+	var statsMu sync.Mutex
+
+	v.worker(
+		ctx,
+		cancel,
+		0,
+		workChan,
+		&failingProofFetcher{err: errors.New("participant unavailable")},
+		[]broker.NodeResponse{testNode},
+		1000,
+		"sampling-hash",
+		"start-hash",
+		&types.PocParams{},
+		1,
+		nil,
+		&statsMu,
+		&successCount,
+		&failCount,
+		&pendingCount,
+	)
+
+	require.Equal(t, 0, successCount)
+	require.Equal(t, 1, failCount)
+	require.Equal(t, 0, pendingCount)
+	recorder.AssertExpectations(t)
 }

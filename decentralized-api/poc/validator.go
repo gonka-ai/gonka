@@ -19,7 +19,6 @@ import (
 	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
-	"decentralized-api/poc/earlyshare"
 
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
@@ -206,7 +205,10 @@ func (v *OffChainValidator) MaybeCaptureEarlyShare(epochState chainphase.EpochSt
 }
 
 func (v *OffChainValidator) maybeWarmEarlySnapshot(epochState chainphase.EpochState) {
-	stage, target, ok := EarlyShareCaptureTarget(&epochState, earlyshare.DefaultFirstFraction)
+	// Use the guard's configured fraction so the warm-up targets the same
+	// checkpoint height validators capture at. FirstFraction is nil-safe and
+	// falls back to the default when the guard is absent.
+	stage, target, ok := EarlyShareCaptureTarget(&epochState, v.guard.FirstFraction())
 	if !ok || epochState.CurrentBlock.Height != target {
 		return
 	}
@@ -583,7 +585,12 @@ func (v *OffChainValidator) cancelIfValidationPhaseEnded(cancel context.CancelFu
 }
 
 func shouldStopValidationForStage(state *chainphase.EpochState, pocStageStartBlockHeight int64) bool {
-	if state == nil {
+	// A nil or not-synced tracker reading is transient (startup, RPC lag,
+	// catch-up), not evidence that the validation window ended. Cancelling on
+	// it would permanently abandon all in-flight validation for the stage, so
+	// treat it as "wait for the next tick" and only stop on a synced reading
+	// that positively says the phase ended or the stage changed.
+	if state.IsNilOrNotSynced() {
 		return false
 	}
 	return !ShouldAcceptValidatedArtifacts(state) || GetCurrentPocStageHeight(state) != pocStageStartBlockHeight
@@ -681,6 +688,8 @@ func (v *OffChainValidator) worker(
 				} else {
 					*failCount++
 					*pendingCount--
+					reportParticipant = work.address
+					reportModelID = work.modelId
 					logging.Warn("OffChainValidator: max retries exceeded for transient validation failure", types.PoC,
 						"participant", work.address, "attempts", work.attempt+1)
 				}

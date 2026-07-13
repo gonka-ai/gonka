@@ -380,16 +380,25 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 }
 
 func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
-	// Load ALL devshards (active and inactive) so that inactive ones
-	// remain accessible for finalization, debug, and settlement retrieval.
-	// Inactive runtimes are loaded with active=false and excluded from
-	// the inference routing pool.
+	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
+	// finalized, or settled) stay in the registry but are not built into
+	// memory-resident runtimes: keeping hundreds of dormant escrows resident
+	// wastes RAM, and probing each one against the chain at startup causes a
+	// boot-time request storm. Inactive devshards are rehydrated on demand:
+	// read-only from local storage for debug/state endpoints, or fully (with
+	// chain access) for manual settlement. See hydrateReadOnlyRuntime and the
+	// lazy settle path.
 	type cfgEntry struct {
 		cfg    RuntimeConfig
 		active bool
 	}
 	allEntries := make([]cfgEntry, 0, len(gatewayState.Devshards))
+	skippedInactive := 0
 	for _, devshard := range gatewayState.Devshards {
+		if !devshard.Active {
+			skippedInactive++
+			continue
+		}
 		allEntries = append(allEntries, cfgEntry{cfg: devshard.RuntimeConfig, active: devshard.Active})
 	}
 	allCfgs := make([]RuntimeConfig, len(allEntries))
@@ -492,8 +501,8 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			out = append(out, rt)
 		}
 	}
-	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d total_elapsed_ms=%d",
-		len(out), activeCount, inactiveCount, len(skipped), time.Since(t0).Milliseconds())
+	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
+		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
 	return out, nil
 }
 
@@ -584,6 +593,7 @@ func isAuthExemptPath(path string) bool {
 func isAdminPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/admin/") ||
 		strings.HasPrefix(path, "/v1/debug/") ||
+		strings.HasPrefix(path, "/debug/pprof/") ||
 		path == "/v1/finalize" ||
 		path == "/v1/state" {
 		return true

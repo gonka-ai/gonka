@@ -5,6 +5,19 @@ import (
 	"testing"
 )
 
+func TestDefaultConfigEnforces(t *testing.T) {
+	// The guard must be active in enforce mode on nodes that upgrade the
+	// binary without touching their config. Opting out requires an explicit
+	// mode override.
+	got := DefaultConfig()
+	if got.Mode != ModeEnforce {
+		t.Fatalf("mode = %q, want enforce", got.Mode)
+	}
+	if !got.Normalized().Enforcing() {
+		t.Fatal("default config must survive normalization as enforcing")
+	}
+}
+
 func TestConfigNormalized(t *testing.T) {
 	t.Run("zero value disables and applies defaults", func(t *testing.T) {
 		got := Config{}.Normalized()

@@ -285,8 +285,9 @@ type TransferAgentAccessCache struct {
 	IsEnabled        bool                // true if whitelist is non-empty
 }
 
-// EarlyShareGuardConfig configures the DAPI-only early PoC share guard. It is
-// disabled by default; see proposals/poc/early-share-guard-dapi.md. The guard
+// EarlyShareGuardConfig configures the DAPI-only early PoC share guard. It
+// runs in enforce mode by default (set mode to "observe" or "disabled" to opt
+// out); see proposals/poc/early-share-guard-dapi.md. The guard
 // captures early on-chain PoC v2 commitments near the first fraction of the
 // generation window and compares them to final commitments during validation.
 type EarlyShareGuardConfig struct {

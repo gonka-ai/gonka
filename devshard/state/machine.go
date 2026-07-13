@@ -495,11 +495,70 @@ func (sm *StateMachine) Balance() uint64 {
 	return sm.state.Balance
 }
 
+// Config returns a copy of the session config (a small value type). Use this
+// instead of SnapshotState().Config to avoid deep-copying the inference map.
+func (sm *StateMachine) Config() types.SessionConfig {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return sm.state.Config
+}
+
 // SnapshotState returns a deep copy of the current escrow state.
 func (sm *StateMachine) SnapshotState() types.EscrowState {
 	sm.mu.RLock()
 	defer sm.mu.RUnlock()
 	return *cloneEscrowState(sm.state)
+}
+
+// SnapshotStateNoInferences returns a deep copy of the escrow state with the
+// (potentially large) inference map omitted. All other fields, including the
+// small per-slot maps, are copied. Use it for summary/state endpoints that do
+// not render individual inference records, avoiding the cost of copying up to
+// tens of thousands of them.
+func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	src := sm.state
+	// Shallow struct copy; SealedAcc ([]byte) is shared deliberately: it is
+	// only ever replaced wholesale (append to a nil slice), never mutated in
+	// place, so readers of the snapshot see a stable value.
+	s := *src
+	s.Inferences = nil
+
+	s.Group = make([]types.SlotAssignment, len(src.Group))
+	copy(s.Group, src.Group)
+
+	s.HostStats = make(map[uint32]*types.HostStats, len(src.HostStats))
+	for k, v := range src.HostStats {
+		cp := *v
+		s.HostStats[k] = &cp
+	}
+
+	s.WarmKeys = make(map[uint32]string, len(src.WarmKeys))
+	maps.Copy(s.WarmKeys, src.WarmKeys)
+
+	return s
+}
+
+// SnapshotInferences returns a deep copy of just the inference map. Use it for
+// endpoints that render the full inference list without paying to copy the
+// rest of the escrow state.
+func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return copyInferences(sm.state.Inferences)
+}
+
+// InferenceStatusCounts returns the total number of inferences and a per-status
+// breakdown, computed under the read lock without deep-copying any records.
+func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	counts := make(map[types.InferenceStatus]int)
+	for _, rec := range sm.state.Inferences {
+		counts[rec.Status]++
+	}
+	return len(sm.state.Inferences), counts
 }
 
 // ExportState returns a deep-copied pointer form used by recovery snapshots.

@@ -68,7 +68,16 @@ type MissOutcome struct {
 //   - fail (either phase): consecutive_misses += 1; allow one grace miss
 //     (consecutive_misses == 1, no vote), then vote no once
 //     consecutive_misses >= 2.
+//
+// Re-applying the same stage is idempotent: a restart mid-validation re-runs
+// Evaluate for the stage, and counting the same miss twice would silently burn
+// the grace miss. When the persisted state was already updated for this stage,
+// the previous outcome is reproduced without mutating the streak.
 func ApplyMissStreak(prev GuardState, passed bool, isConfirmation bool, stageHeight int64) MissOutcome {
+	if prev.UpdatedStageHeight == stageHeight {
+		return MissOutcome{VoteNo: !passed && prev.ConsecutiveMisses >= 2, NewState: prev}
+	}
+
 	next := prev
 	next.UpdatedStageHeight = stageHeight
 
