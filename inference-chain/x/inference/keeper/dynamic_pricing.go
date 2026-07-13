@@ -213,7 +213,8 @@ func (k *Keeper) CalculateModelDynamicPrice(ctx context.Context, modelId string,
 		}
 
 		newPriceDec := decimal.NewFromUint64(currentPrice).Mul(adjustmentFactor)
-		newPrice = uint64(newPriceDec.IntPart())
+		// Sub-integer increases must round up, otherwise small prices can never rise.
+		newPrice = uint64(newPriceDec.Ceil().IntPart())
 
 		k.LogInfo("Price increased - above stability zone", types.Pricing,
 			"modelId", modelId, "utilization", utilization.String(), "excess", utilizationExcess.String(),
