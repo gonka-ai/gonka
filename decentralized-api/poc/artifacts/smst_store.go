@@ -68,11 +68,11 @@ type SMSTArtifactStore struct {
 	flushedDataOffset uint64
 	flushedRoots      map[uint32][]byte
 
-	// retained holds copy-on-write snapshots captured at each committed (flush)
-	// count, so a proof at that count is served from shared nodes in O(depth)
-	// instead of an O(N) rebuild. Bounded by the store's per-stage lifetime;
-	// a miss (non-committed count, or a cold start before re-capture) falls back
-	// to the rebuild path, so this only affects speed, never correctness.
+	// retained holds snapshots at committed counts so historical proofs are
+	// O(depth) instead of an O(N) rebuild. With COW: O(1) shared roots from
+	// flush. Without COW: deep clones from PrebuildSnapshot/WarmSnapshot while
+	// tip still equals that count (under write lock). A miss falls back to the
+	// rebuild path (speed only, never correctness).
 	retained map[uint32]smstSnapshot
 
 	nodeCounts        map[string]uint32
@@ -83,8 +83,15 @@ type SMSTArtifactStore struct {
 	rootsFile           *os.File                     // flushed_roots.jsonl (append-only)
 
 	// cowEnabled selects insertCOW vs in-place Insert. Default true (SMST_COW
-	// unset). Retained historical snapshots require COW.
+	// unset).
 	cowEnabled bool
+
+	// snapshotInMemoryClone: when COW is off and PrebuildSnapshot is called at
+	// the live tip, true deep-clones under the write lock into retained; false
+	// rebuilds from artifacts into the process cache without holding the write
+	// lock (upgrade-v0.2.14 style). Default true (SMST_SNAPSHOT_IN_MEMORY_CLONE
+	// unset).
+	snapshotInMemoryClone bool
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -131,8 +138,9 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		nodeCounts:          make(map[string]uint32),
 		flushedNodeCounts:   make(map[string]uint32),
 		distributionHistory: make(map[uint32]map[string]uint32),
-		// Defaults when env unset: COW on + deferred hashing on.
-		cowEnabled: smstCOWEnabledFromEnv(),
+		// Defaults when env unset: COW on, deferred hashing on, tip clone on.
+		cowEnabled:            smstCOWEnabledFromEnv(),
+		snapshotInMemoryClone: smstSnapshotInMemoryCloneFromEnv(),
 	}
 	s.smst.deferredHash = smstDeferredHashFromEnv()
 
@@ -398,20 +406,8 @@ func (s *SMSTArtifactStore) Flush() error {
 		s.mu.Unlock()
 		return ErrStoreClosed
 	}
-	hadBuffer := len(s.buffer) > 0
 	err := s.flushLocked()
-	warmCount := uint32(0)
-	if err == nil && hadBuffer && !s.cowEnabled && s.flushedLeafCount > 0 {
-		// Without COW retained snapshots, pin this flush count into the process
-		// snapshot cache (same mechanism as upgrade-v0.2.14 WarmSnapshot /
-		// PrebuildSnapshot for early 1/3 commits). Must run after unlocking —
-		// rebuild takes the store read lock.
-		warmCount = s.flushedLeafCount
-	}
 	s.mu.Unlock()
-	if warmCount > 0 {
-		go s.WarmSnapshot(warmCount)
-	}
 	return err
 }
 
@@ -1073,35 +1069,68 @@ func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []buffe
 	return tree
 }
 
-// PrebuildSnapshot builds and pins the snapshot tree at the given count for
-// fast proof queries. Should be called after weight distribution is determined.
-// With COW enabled, a count equal to the live tip needs no cache entry (served
-// live; flush already retained it). With COW disabled, even the current tip
-// count is rebuilt and pinned so the early commit remains cached after the tip
-// advances — matching upgrade-v0.2.14 snapshot-cache behavior.
+// PrebuildSnapshot pins a historical tree at count for fast proof queries.
+//
+// Live tip (count == leaf count):
+//   - COW on: O(1) retain under write lock (no-op if flush already retained).
+//   - COW off + SMST_SNAPSHOT_IN_MEMORY_CLONE=1 (default): deep clone under
+//     write lock into retained.
+//   - COW off + SMST_SNAPSHOT_IN_MEMORY_CLONE=0: unlock, then rebuild from
+//     artifacts into the process snapshot cache (upgrade-v0.2.14 Warm/Prebuild;
+//     write lock not held during rebuild).
+//
+// Tip already advanced with no retained capture: committed counts rebuild into
+// the cache (cold path); uncommitted counts are rejected.
 func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
-	s.mu.RLock()
-	currentCount := s.smst.Count()
-	cow := s.cowEnabled
-	s.mu.RUnlock()
 	if count == 0 {
 		return nil
 	}
-	if count == currentCount && cow {
+
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrStoreClosed
+	}
+	if _, ok := s.retained[count]; ok {
+		s.mu.Unlock()
 		return nil
 	}
+	if count == s.smst.Count() {
+		if s.cowEnabled {
+			s.smst.ensureHashed()
+			s.retained[count] = s.smst.snapshot()
+			s.mu.Unlock()
+			return nil
+		}
+		if s.snapshotInMemoryClone {
+			s.smst.ensureHashed()
+			s.retained[count] = s.smst.cloneSnapshot()
+			s.mu.Unlock()
+			return nil
+		}
+		// v0.2.14-style: do not hold the write lock across artifact rebuild.
+		s.mu.Unlock()
+		_, err := globalSnapshotCache.getOrBuild(s, count, true)
+		return err
+	}
+	_, committed := s.flushedRoots[count]
+	s.mu.Unlock()
 
+	if !committed {
+		return fmt.Errorf("snapshot count %d is not a committed count", count)
+	}
 	_, err := globalSnapshotCache.getOrBuild(s, count, true)
 	return err
 }
 
-// WarmSnapshot builds and pins the snapshot tree for count so later proof
-// requests hit the cache. Blocking; callers run it in the background.
+// WarmSnapshot pins the snapshot tree for count so later proof requests hit
+// retained (tip deep-copy / COW) or the process cache. Blocking; callers may
+// run it in the background.
 func (s *SMSTArtifactStore) WarmSnapshot(count uint32) {
 	if count == 0 {
 		return
 	}
-	if _, err := globalSnapshotCache.getOrBuild(s, count, true); err != nil {
+	if err := s.PrebuildSnapshot(count); err != nil {
 		log.Printf("[WARN] SMST WarmSnapshot(%d) failed: %v", count, err)
 	}
 }

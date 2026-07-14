@@ -333,18 +333,21 @@ func TestSMSTCOWEnvDisabled(t *testing.T) {
 	}
 }
 
-// TestSMSTCOWDisabledEarlySnapshotCache checks that with SMST_COW=0 the early
-// flush count is pinned into the process snapshot cache (upgrade-v0.2.14 path)
-// so proofs at that count stay available after the tip advances — without
-// retained COW snapshots.
-func TestSMSTCOWDisabledEarlySnapshotCache(t *testing.T) {
+// TestSMSTCOWDisabledEarlyDeepClone checks that with SMST_COW=0 and
+// SMST_SNAPSHOT_IN_MEMORY_CLONE=1 (default), PrebuildSnapshot deep-clones the live tip
+// under the write lock into retained so proofs stay valid after the tip advances.
+func TestSMSTCOWDisabledEarlyDeepClone(t *testing.T) {
 	t.Setenv(envSMSTCOW, "0")
+	t.Setenv(envSMSTSnapshotInMemoryClone, "1")
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
 	if err != nil {
 		t.Fatalf("OpenSMST: %v", err)
 	}
 	defer store.Close()
+	if !store.snapshotInMemoryClone {
+		t.Fatal("expected snapshotInMemoryClone=true")
+	}
 
 	const early = 300
 	for i := 0; i < early; i++ {
@@ -362,23 +365,92 @@ func TestSMSTCOWDisabledEarlySnapshotCache(t *testing.T) {
 	}
 	earlyRoot = bytes.Clone(earlyRoot)
 
-	// Commit-worker style: PrebuildSnapshot while tip still equals early count.
+	// Commit-worker style: deep clone while tip still equals early count.
 	if err := store.PrebuildSnapshot(earlyCount); err != nil {
 		t.Fatalf("PrebuildSnapshot(%d): %v", earlyCount, err)
 	}
+	if _, ok := store.retained[earlyCount]; !ok {
+		t.Fatalf("expected deep-cloned retained snapshot at %d", earlyCount)
+	}
+	globalSnapshotCache.mu.Lock()
+	_, cacheHit := globalSnapshotCache.entries[snapshotCacheKey{store: store, count: earlyCount}]
+	globalSnapshotCache.mu.Unlock()
+	if cacheHit {
+		t.Fatalf("tip Prebuild must not rebuild into snapshot cache when deep-cloning")
+	}
 
+	// Advance tip past the early commit (in-place Insert mutates live nodes).
+	for i := early; i < early*2; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush final: %v", err)
+	}
+
+	root2, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("post-advance GetRootAt(%d): %v", earlyCount, err)
+	}
+	if !bytes.Equal(earlyRoot, root2) {
+		t.Fatalf("early root changed after tip advanced")
+	}
+	entries, err := store.GetArtifactsAndProofs([]uint32{earlyCount / 2}, earlyCount)
+	if err != nil {
+		t.Fatalf("early proof after tip advanced: %v", err)
+	}
+	e := entries[0]
+	if !VerifySMSTProofSlice(root2, earlyCount, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
+		t.Fatalf("early proof did not verify after tip advanced")
+	}
+}
+
+// TestSMSTCOWDisabledEarlyArtifactRebuild checks SMST_SNAPSHOT_IN_MEMORY_CLONE=0:
+// tip Prebuild rebuilds from artifacts into the process cache without retaining
+// a deep clone (upgrade-v0.2.14 path).
+func TestSMSTCOWDisabledEarlyArtifactRebuild(t *testing.T) {
+	t.Setenv(envSMSTCOW, "0")
+	t.Setenv(envSMSTSnapshotInMemoryClone, "0")
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+	if store.snapshotInMemoryClone {
+		t.Fatal("expected snapshotInMemoryClone=false")
+	}
+
+	const early = 300
+	for i := 0; i < early; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush early: %v", err)
+	}
+	earlyCount := store.Count()
+	earlyRoot, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("GetRootAt(%d): %v", earlyCount, err)
+	}
+	earlyRoot = bytes.Clone(earlyRoot)
+
+	if err := store.PrebuildSnapshot(earlyCount); err != nil {
+		t.Fatalf("PrebuildSnapshot(%d): %v", earlyCount, err)
+	}
+	if len(store.retained) != 0 {
+		t.Fatalf("retained must stay empty with snapshot clone off, got %d", len(store.retained))
+	}
 	globalSnapshotCache.mu.Lock()
 	entry, ok := globalSnapshotCache.entries[snapshotCacheKey{store: store, count: earlyCount}]
 	globalSnapshotCache.mu.Unlock()
 	if !ok || entry == nil || !entry.pinned {
-		t.Fatalf("early count %d must be pinned in snapshot cache when COW disabled (ok=%v pinned=%v)",
-			earlyCount, ok, ok && entry.pinned)
-	}
-	if len(store.retained) != 0 {
-		t.Fatalf("retained must stay empty with COW off, got %d", len(store.retained))
+		t.Fatalf("expected pinned snapshot-cache rebuild at %d", earlyCount)
 	}
 
-	// Advance tip past the early commit.
 	for i := early; i < early*2; i++ {
 		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
 			t.Fatalf("add %d: %v", i, err)
@@ -406,10 +478,11 @@ func TestSMSTCOWDisabledEarlySnapshotCache(t *testing.T) {
 }
 
 // TestSMSTDefaultsDeferredAndCOW ensures unset env keeps production defaults:
-// deferred hashing on and COW on.
+// deferred hashing on, COW on, tip snapshot clone on.
 func TestSMSTDefaultsDeferredAndCOW(t *testing.T) {
 	t.Setenv(envSMSTCOW, "")
 	t.Setenv(envSMSTDeferredHash, "")
+	t.Setenv(envSMSTSnapshotInMemoryClone, "")
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
 	if err != nil {
@@ -421,5 +494,8 @@ func TestSMSTDefaultsDeferredAndCOW(t *testing.T) {
 	}
 	if !store.smst.deferredHash {
 		t.Fatal("deferredHash default want true")
+	}
+	if !store.snapshotInMemoryClone {
+		t.Fatal("snapshotInMemoryClone default want true")
 	}
 }

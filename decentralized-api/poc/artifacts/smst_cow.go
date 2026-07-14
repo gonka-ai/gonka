@@ -6,13 +6,17 @@ import (
 	"strings"
 )
 
-// SMST_COW and SMST_DEFERRED_HASH default to on when unset (production path).
+// SMST_COW / SMST_DEFERRED_HASH / SMST_SNAPSHOT_IN_MEMORY_CLONE default on when unset.
 // Profiling overrides:
 //
-//	SMST_COW=0            — in-place Insert; early flushes use snapshot-cache pin
-//	SMST_DEFERRED_HASH=0  — hash on every insert (upgrade-v0.2.14 baseline)
+//	SMST_COW=0             — in-place Insert (no path-copy)
+//	SMST_DEFERRED_HASH=0   — hash on every insert (upgrade-v0.2.14 baseline)
+//	SMST_SNAPSHOT_IN_MEMORY_CLONE=0  — tip Prebuild rebuilds from artifacts without holding
+//	                         the write lock (upgrade-v0.2.14 Warm/Prebuild path);
+//	                         default 1 = deep in-memory clone under write lock
 const envSMSTCOW = "SMST_COW"
 const envSMSTDeferredHash = "SMST_DEFERRED_HASH"
+const envSMSTSnapshotInMemoryClone = "SMST_SNAPSHOT_IN_MEMORY_CLONE"
 
 func smstEnvBool(key string, def bool) bool {
 	v := strings.TrimSpace(os.Getenv(key))
@@ -40,6 +44,13 @@ func smstCOWEnabledFromEnv() bool {
 // smstDeferredHashFromEnv reports deferred Merkle hashing; default true.
 func smstDeferredHashFromEnv() bool {
 	return smstEnvBool(envSMSTDeferredHash, true)
+}
+
+// smstSnapshotInMemoryCloneFromEnv reports tip-snapshot strategy when COW is off:
+// true = deep clone under write lock; false = artifact rebuild without write lock.
+// Default true. Ignored when COW retains O(1) at flush.
+func smstSnapshotInMemoryCloneFromEnv() bool {
+	return smstEnvBool(envSMSTSnapshotInMemoryClone, true)
 }
 
 // smstSnapshot is an immutable capture of the tree at a specific leaf count.
@@ -108,6 +119,26 @@ func (s *SMST) insertAtCOW(node *smstNode, path []bool, level int, leafHash []by
 // capture after GetRoot, so the retained nodes are already hashed.
 func (s *SMST) snapshot() smstSnapshot {
 	return smstSnapshot{root: s.root, depth: s.depth, count: s.leafCount}
+}
+
+// cloneSnapshot deep-copies the live tree into an independent snapshot. Used when
+// COW is disabled so later in-place inserts cannot mutate historical nodes.
+// Callers must hold the store write lock and have already ensureHashed.
+func (s *SMST) cloneSnapshot() smstSnapshot {
+	return smstSnapshot{root: cloneSMSTNode(s.root), depth: s.depth, count: s.leafCount}
+}
+
+func cloneSMSTNode(n *smstNode) *smstNode {
+	if n == nil {
+		return nil
+	}
+	out := &smstNode{count: n.count}
+	if n.hash != nil {
+		out.hash = append([]byte(nil), n.hash...)
+	}
+	out.left = cloneSMSTNode(n.left)
+	out.right = cloneSMSTNode(n.right)
+	return out
 }
 
 // snapshotView returns a read-only SMST bound to a captured snapshot so proof

@@ -61,19 +61,21 @@ const profEarlyFlush = 10 // 1/3 of 30
 
 // TestSMSTStoreFlush30Profile is the realistic PoC ingest profile:
 // N leaves across 30 equal flushes; at flush #10 (1/3) the early commit is
-// snapshotted (COW retained, or PrebuildSnapshot into the process cache).
-// Then an early-count proof is timed after all flushes.
+// snapshotted via PrebuildSnapshot. Then an early-count proof is timed.
 //
 // Modes (each in its own process):
 //
-//	# upgrade-v0.2.14-like: eager hash, no COW
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=0 SMST_COW=0 go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
+//	# deep clone under write lock (default tip snap when COW off)
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=0 SMST_SNAPSHOT_IN_MEMORY_CLONE=1 \
+//	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 //
-//	# deferred hash, no COW
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=0 go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
+//	# upgrade-v0.2.14-style artifact rebuild (no write lock during rebuild)
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=0 SMST_SNAPSHOT_IN_MEMORY_CLONE=0 \
+//	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 //
-//	# deferred hash + COW (production default)
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=1 go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
+//	# deferred + COW (production): O(1) retain at flush; Prebuild is a no-op
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=1 \
+//	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 func TestSMSTStoreFlush30Profile(t *testing.T) {
 	v := os.Getenv("SMST_PROF_N")
 	if v == "" {
@@ -96,9 +98,9 @@ func TestSMSTStoreFlush30Profile(t *testing.T) {
 	defer store.Close()
 
 	var (
-		earlyCount   uint32
-		snapElapsed  time.Duration
-		nonce        int32
+		earlyCount  uint32
+		snapElapsed time.Duration
+		nonce       int32
 	)
 
 	tIngest := time.Now()
@@ -115,7 +117,6 @@ func TestSMSTStoreFlush30Profile(t *testing.T) {
 		if f == profEarlyFlush {
 			earlyCount = store.Count()
 			tSnap := time.Now()
-			// Sync pin for non-COW (and no-op tip skip when COW+retained already set).
 			if err := store.PrebuildSnapshot(earlyCount); err != nil {
 				t.Fatalf("PrebuildSnapshot(%d): %v", earlyCount, err)
 			}
@@ -143,7 +144,7 @@ func TestSMSTStoreFlush30Profile(t *testing.T) {
 	globalSnapshotCache.mu.Unlock()
 	_, retainedHit := store.retained[earlyCount]
 
-	mode := fmt.Sprintf("deferred=%v cow=%v", store.smst.deferredHash, store.cowEnabled)
+	mode := fmt.Sprintf("deferred=%v cow=%v snap_in_mem=%v", store.smst.deferredHash, store.cowEnabled, store.snapshotInMemoryClone)
 	t.Logf("RESULT mode=%s N=%d flushes=%d early_flush=%d early_count=%d ingest=%s snap=%s early_proof=%s ns/leaf=%.0f retained_hit=%v cache_hit=%v retained_n=%d",
 		mode, n, profFlushCount, profEarlyFlush, earlyCount,
 		ingestElapsed.Round(time.Millisecond),
