@@ -602,8 +602,24 @@ fi
 # /devshard/ location -- forwards to versiond which dispatches to the matching
 # child binary. Treated as exempt (inference forwarding): streaming, long
 # timeouts, exempt rate/conn limits, CORS.
+#
+# Phase 1: versioned observability paths are rewritten internally to versionless
+# canonical URLs (no client-visible redirect). Dashboards that hardcode
+# /devshard/{version}/sessions/.../diffs keep working; the version segment is
+# dropped before versiond so it cannot participate in protocol bind. Protocol
+# POSTs and payloads stay on /devshard/{version}/... via the catch-all below.
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
-    export DEVSHARD_VERSIOND_LOCATION="location /devshard/ {
+    export DEVSHARD_VERSIOND_LOCATION="# Versioned obs → versionless (internal rewrite); protocol stays versioned
+        location ~ ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ {
+            rewrite ^ /devshard/sessions/\$\$1/\$\$2 last;
+        }
+        location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
+            rewrite ^ /devshard/stats/shards\$\$1 last;
+        }
+        location ~ ^/devshard/[^/]+/(metrics|healthz)\$ {
+            rewrite ^ /devshard/\$\$1 last;
+        }
+        location /devshard/ {
             set \$limit_zone_name \"EXEMPT\";
             limit_req zone=exempt_zone burst=${EXEMPT_BURST} nodelay;
             ${LIMIT_CONN_RULE_EXEMPT}
@@ -1201,7 +1217,9 @@ if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
 fi
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     echo "   /devshard/*    -> Versiond (devshard binaries)"
-    echo "   /v1/devshard/* -> /devshard/v1/* (legacy redirect)"
+    echo "   /devshard/{v}/sessions/*/diffs|mempool|signatures -> rewrite /devshard/sessions/..."
+    echo "   /devshard/{v}/stats/* /metrics /healthz -> rewrite versionless (internal)"
+    echo "   /v1/devshard/* -> /devshard/v1/* (legacy rewrite)"
 fi
 echo "   /health        -> Health check"
 

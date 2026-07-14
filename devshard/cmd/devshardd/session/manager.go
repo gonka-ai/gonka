@@ -128,8 +128,64 @@ func (m *HostManager) Close() error {
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
+// Prefer BindOwnerChat for HTTP chat; this remains for tests and explicit bind.
 func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) {
 	return m.getOrCreate(escrowID)
+}
+
+// SessionServerExisting returns a live or recovered session server.
+// It never CreateSession / binds a protocol version. Missing sessions return
+// storage.ErrSessionNotFound.
+func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server, error) {
+	if srv, ok := m.existingServer(escrowID); ok {
+		return srv, nil
+	}
+	srv, err := m.recoverAndStoreSession(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return srv, nil
+}
+
+// BindOwnerChat verifies the request as the escrow owner, then returns an
+// existing session or binds a new one with this process's boundVersion.
+// Auth context (sender + body) is injected for HandleInference.
+func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	escrowID := c.Param("id")
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := m.SessionServerExisting(escrowID)
+	if err == nil {
+		if !srv.IsOwner(addr) {
+			return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+		}
+		transport.InjectAuthContext(c, addr, body)
+		return srv, nil
+	}
+	if !errors.Is(err, storage.ErrSessionNotFound) {
+		return nil, err
+	}
+
+	escrow, err := m.bridge.GetEscrow(escrowID)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+
+	srv, err = m.getOrCreate(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	if !srv.IsOwner(addr) {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	transport.InjectAuthContext(c, addr, body)
+	return srv, nil
 }
 
 // HandleSettlementFinalized marks the session inactive and drops the live
@@ -169,7 +225,16 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 			return nil, err
 		}
 
-		srv, err := m.create(escrowID)
+		// Prefer recovering an already-bound session over CreateSession.
+		srv, err := m.recoverStoredSession(escrowID)
+		if err == nil {
+			return m.storeSessionIfAbsent(escrowID, srv), nil
+		}
+		if !errors.Is(err, storage.ErrSessionNotFound) {
+			return nil, err
+		}
+
+		srv, err = m.create(escrowID)
 		if err != nil {
 			return nil, err
 		}
@@ -440,7 +505,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
-	devshardserver.RegisterLazySessionRoutes(g, m, m)
+	devshardserver.RegisterLazySessionRoutes(g, m, m, m)
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.

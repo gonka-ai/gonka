@@ -102,7 +102,9 @@ http {
 
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
-    # devshard binary.
+    # devshard binary. Observability paths under /devshard/<version>/… are
+    # rewritten internally to versionless /devshard/sessions|stats|metrics|healthz
+    # (see entrypoint); no client-visible redirect.
     ${VERSIOND_UPSTREAM}
 
     # Enable gzip compression

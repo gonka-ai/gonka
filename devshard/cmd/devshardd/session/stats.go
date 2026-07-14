@@ -178,11 +178,7 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 	if err != nil {
 		return nil, err
 	}
-	// Prefer recovering an already-persisted session over create-via-bridge.
-	if err := m.TryLoadFromStorage(escrowID); err != nil {
-		return nil, err
-	}
-	srv, err := m.SessionServer(escrowID)
+	srv, err := m.SessionServerExisting(escrowID)
 	if err != nil {
 		return nil, err
 	}

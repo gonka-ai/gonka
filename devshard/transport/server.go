@@ -174,6 +174,54 @@ func (s *Server) isOwner(addr string) bool {
 	return s.userAddr != "" && addr == s.userAddr
 }
 
+// IsOwner reports whether addr is the escrow creator for this session.
+func (s *Server) IsOwner(addr string) bool {
+	return s.isOwner(addr)
+}
+
+// InjectAuthContext stores a verified sender and request body for handlers
+// that run after auth (HandleInference, gossip, etc.).
+func InjectAuthContext(c echo.Context, sender string, body []byte) {
+	c.Set(contextKeySender, sender)
+	c.Set("body", body)
+}
+
+// VerifyPOSTAuth reads signature headers and body, verifies the signature, and
+// returns the recovered sender address and body. It does not check group
+// membership or ownership — callers enforce that.
+func VerifyPOSTAuth(c echo.Context, verifier signing.Verifier, escrowID string, maxBodySize int64) (string, []byte, error) {
+	sigHex := c.Request().Header.Get(HeaderSignature)
+	tsStr := c.Request().Header.Get(HeaderTimestamp)
+	if sigHex == "" || tsStr == "" {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "missing auth headers")
+	}
+
+	sig, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature hex")
+	}
+
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid timestamp")
+	}
+
+	if maxBodySize > 0 {
+		c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, maxBodySize)
+	}
+
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusBadRequest, "read body")
+	}
+
+	addr, err := VerifyRequest(verifier, escrowID, body, sig, ts, time.Now().Unix())
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+	return addr, body, nil
+}
+
 // isGroupMember returns true if addr is a group member or a warm key for
 // a group member (excludes the user). Gossip is host-to-host; the user has
 // no business gossiping.
@@ -184,55 +232,25 @@ func (s *Server) isGroupMember(addr string) bool {
 	return s.isWarmKeySender(addr)
 }
 
-// authMiddleware reads the body, verifies the signature, checks group membership,
+// AuthMiddleware reads the body, verifies the signature, checks group membership,
 // and stores the sender address in the echo context.
-// GET requests skip auth intentionally for now.
+// GET requests skip auth intentionally (public observability).
 func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if c.Request().Method == http.MethodGet {
-			// GET endpoints skip auth for now -- see Register comment.
 			return next(c)
 		}
 
-		sigHex := c.Request().Header.Get(HeaderSignature)
-		tsStr := c.Request().Header.Get(HeaderTimestamp)
-		if sigHex == "" || tsStr == "" {
-			return echo.NewHTTPError(http.StatusUnauthorized, "missing auth headers")
-		}
-
-		sig, err := hex.DecodeString(sigHex)
+		addr, body, err := VerifyPOSTAuth(c, s.verifier, s.host.EscrowID(), s.maxBodySize)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature hex")
-		}
-
-		ts, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid timestamp")
-		}
-
-		// Cap body size before reading.
-		if s.maxBodySize > 0 {
-			c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, s.maxBodySize)
-		}
-
-		body, err := io.ReadAll(c.Request().Body)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "read body")
-		}
-
-		now := time.Now().Unix()
-		addr, err := VerifyRequest(s.verifier, s.host.EscrowID(), body, sig, ts, now)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+			return err
 		}
 
 		if !s.isAllowedSender(addr) {
 			return echo.NewHTTPError(http.StatusForbidden, "sender not in group")
 		}
 
-		// Store sender and re-inject body for handler.
-		c.Set(contextKeySender, addr)
-		c.Set("body", body)
+		InjectAuthContext(c, addr, body)
 		return next(c)
 	}
 }

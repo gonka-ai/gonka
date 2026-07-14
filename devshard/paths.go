@@ -68,3 +68,42 @@ func SessionPayloadPath(routePrefix, escrowID string) string {
 func VersionedSessionPayloadPath(version, escrowID string) string {
 	return SessionPayloadPath(VersionedRoutePrefix(version), escrowID)
 }
+
+// VersionlessRoutePrefix is the canonical mount for public observability
+// (no protocol version segment). Protocol traffic stays under VersionedRoutePrefix.
+const VersionlessRoutePrefix = "/devshard"
+
+// VersionlessSessionDiffsPath is GET /devshard/sessions/{id}/diffs.
+func VersionlessSessionDiffsPath(escrowID string) string {
+	return fmt.Sprintf("%s/sessions/%s/diffs", VersionlessRoutePrefix, escrowID)
+}
+
+// VersionlessSessionMempoolPath is GET /devshard/sessions/{id}/mempool.
+func VersionlessSessionMempoolPath(escrowID string) string {
+	return fmt.Sprintf("%s/sessions/%s/mempool", VersionlessRoutePrefix, escrowID)
+}
+
+// VersionlessSessionSignaturesPath is GET /devshard/sessions/{id}/signatures.
+func VersionlessSessionSignaturesPath(escrowID string) string {
+	return fmt.Sprintf("%s/sessions/%s/signatures", VersionlessRoutePrefix, escrowID)
+}
+
+// VersionlessStatsShardsPath is GET /devshard/stats/shards.
+func VersionlessStatsShardsPath() string {
+	return VersionlessRoutePrefix + "/stats/shards"
+}
+
+// VersionlessStatsShardDetailPath is GET /devshard/stats/shards/{id}.
+func VersionlessStatsShardDetailPath(escrowID string) string {
+	return fmt.Sprintf("%s/stats/shards/%s", VersionlessRoutePrefix, escrowID)
+}
+
+// VersionlessMetricsPath is GET /devshard/metrics.
+func VersionlessMetricsPath() string {
+	return VersionlessRoutePrefix + "/metrics"
+}
+
+// VersionlessHealthzPath is GET /devshard/healthz.
+func VersionlessHealthzPath() string {
+	return VersionlessRoutePrefix + "/healthz"
+}

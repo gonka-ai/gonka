@@ -115,6 +115,53 @@ Key runtime environment variables:
 | `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
 
+Versiond-side (on the versiond container, not the join proxy):
+
+| Env | Default | Description |
+|-----|---------|-------------|
+| `PGHOST` / `DATABASE_URL` | unset | When set, versiond looks up `sessions.version` for versionless session obs. |
+| `VERSIOND_DISABLE_SESSION_LOOKUP` | false | Force fan-out even if Postgres is configured. |
+
+### Devshard observability routing
+
+Public observability paths that still include a version segment are **rewritten
+internally** to versionless canonical URIs (no client-visible redirect). Clients
+keep calling the old URLs; nginx drops the version segment before versiond so
+scrapers need not follow redirects and cannot bind protocol version via the path.
+
+**Prefer these URLs in new monitors / runbooks:**
+
+```text
+GET /devshard/sessions/{escrow_id}/diffs
+GET /devshard/sessions/{escrow_id}/mempool
+GET /devshard/sessions/{escrow_id}/signatures
+GET /devshard/stats/shards
+GET /devshard/stats/shards/{escrow_id}
+GET /devshard/metrics
+```
+
+| Client URL (legacy, still works) | Internal route to versiond |
+|----------------------------------|----------------------------|
+| `GET /devshard/{version}/sessions/{id}/diffs` | `/devshard/sessions/{id}/diffs` |
+| `GET /devshard/{version}/sessions/{id}/mempool` | `/devshard/sessions/{id}/mempool` |
+| `GET /devshard/{version}/sessions/{id}/signatures` | `/devshard/sessions/{id}/signatures` |
+| `GET /devshard/{version}/stats/shards…` | `/devshard/stats/shards…` |
+| `GET /devshard/{version}/metrics` | `/devshard/metrics` |
+| `GET /devshard/{version}/healthz` | `/devshard/healthz` |
+
+Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads` are **not** rewritten.
+
+versiond serves the versionless obs paths:
+
+- **Session-scoped** (`/sessions/{id}/diffs|mempool|signatures`, `/stats/shards/{id}`): when Postgres is configured (`PGHOST` / `DATABASE_URL`), route by `sessions.version`; unbound → 404. If lookup is disabled or PG errors, fan-out across children.
+- **Process-level** (`/metrics`, `/healthz`, `/stats/shards` list): pin to lexicographic-max running version (list is not merged across versions).
+
+Disable lookup: `VERSIOND_DISABLE_SESSION_LOOKUP=true`.
+
+Grafana dashboards in `deploy/join/observability/` scrape Prometheus metrics from
+devshardd `/metrics` via service discovery — they do not call HTTP diffs URLs.
+For ad-hoc HTTP debugging of a shard, use the versionless paths above.
+
 ### edge-api vs dapi routing
 
 `/v1/` is split across two backends. The proxy registers **exact/regex locations for read-only query paths** before the generic `/v1/` catch-all:

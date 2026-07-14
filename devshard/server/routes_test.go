@@ -47,6 +47,20 @@ func TestSessionHTTPErrorInitializing(t *testing.T) {
 	require.Equal(t, transport.DevshardErrorInitializing, rec.Header().Get(transport.HeaderDevshardError))
 }
 
+func TestSessionHTTPErrorNotFound(t *testing.T) {
+	c := testEchoContext(t)
+	httpErr, ok := sessionHTTPError(c, storage.ErrSessionNotFound).(*echo.HTTPError)
+	require.True(t, ok)
+	require.Equal(t, http.StatusNotFound, httpErr.Code)
+}
+
+func TestSessionHTTPErrorPassthroughHTTPError(t *testing.T) {
+	c := testEchoContext(t)
+	orig := echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	got := sessionHTTPError(c, orig)
+	require.Equal(t, orig, got)
+}
+
 func TestSessionHTTPErrorDefault(t *testing.T) {
 	c := testEchoContext(t)
 	httpErr, ok := sessionHTTPError(c, fmt.Errorf("boom")).(*echo.HTTPError)
