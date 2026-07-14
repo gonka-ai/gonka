@@ -20,6 +20,7 @@ import (
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/hostevents"
 	"devshard/runtimeparams"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
@@ -204,7 +205,15 @@ func buildHostManager(
 	chainBridge := chainRuntime.chainEvents.Bridge()
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, payloadStore, chainParams, phase)
+
+	escrowLoadMap := hostevents.NewLoadMap()
+	capacityCache := mlnodeclient.NewCache(mlClient.NodeManagerClient(), mlnodeclient.CacheOptions{
+		ActiveLoad: escrowLoadMap.Snapshot,
+		Log:        slog.Default(),
+	})
+	capacityCache.Start(ctx)
+
+	eng := inference.NewEngine(mlClient, mlNodeMgr, capacityCache, payloadStore, chainParams, phase)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 
@@ -250,6 +259,15 @@ func buildHostManager(
 		slog.Warn("recover sessions failed", "error", err)
 	}
 	store.Start()
+
+	hostEventsMaxWait, hostEventsSlack := hostEventsSettingsFromEnv()
+	go hostevents.Run(ctx, hostevents.Config{
+		Client:              mlClient.NodeManagerClient(),
+		ServerMaxWait:       hostEventsMaxWait,
+		ClientDeadlineSlack: hostEventsSlack,
+		Log:                 slog.Default(),
+		LoadMap:             escrowLoadMap,
+	}, manager)
 
 	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
 	retryLoop.WithInterval(cfg.ValidationRetryInterval)

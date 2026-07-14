@@ -95,8 +95,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a",
-		func(endpoint string) (*http.Response, error) {
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -140,8 +139,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	mgr.Observe("model-a", "node-1", mlSrv.URL)
 	eng := newTestEngine(ml, mgr)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a",
-		func(endpoint string) (*http.Response, error) {
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -179,8 +177,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a",
-		func(endpoint string) (*http.Response, error) {
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.Error(t, err)
@@ -216,8 +213,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	mgr.Observe("model-a", "node-good", good.URL)
 	eng := newTestEngine(ml, mgr)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a",
-		func(endpoint string) (*http.Response, error) {
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.NoError(t, err)
@@ -239,8 +235,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a",
-		func(endpoint string) (*http.Response, error) {
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
 	require.Error(t, err)

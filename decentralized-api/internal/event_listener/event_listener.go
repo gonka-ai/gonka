@@ -52,6 +52,9 @@ type EventListener struct {
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
 	statsStorage          statsstorage.StatsStorage
+	hostEvents            *apiconfig.HostEventRing
+	escrowQuery           escrowQuerier
+	participantAddress    string
 
 	eventHandlers []EventHandler
 
@@ -64,6 +67,27 @@ type EventListenerOption func(*EventListener)
 func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
 	return func(el *EventListener) {
 		el.statsStorage = storage
+	}
+}
+
+// WithHostEventRing enables escrow/maintenance ingest into the GetHostEvents ring.
+func WithHostEventRing(ring *apiconfig.HostEventRing) EventListenerOption {
+	return func(el *EventListener) {
+		el.hostEvents = ring
+	}
+}
+
+// WithEscrowQuerier supplies GetEscrowSlots for slot-membership filtering on escrow events.
+func WithEscrowQuerier(q escrowQuerier) EventListenerOption {
+	return func(el *EventListener) {
+		el.escrowQuery = q
+	}
+}
+
+// WithParticipantAddress overrides broker/recorder address lookup (tests and optional inject).
+func WithParticipantAddress(addr string) EventListenerOption {
+	return func(el *EventListener) {
+		el.participantAddress = addr
 	}
 }
 
@@ -95,6 +119,10 @@ func NewEventListener(
 		&InferenceStatusUpdatedEventHandler{},
 		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
+		&DevshardEscrowCreatedEventHandler{},
+		&DevshardEscrowSettledEventHandler{},
+		&MaintenanceScheduledEventHandler{},
+		&MaintenanceCanceledEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
@@ -314,6 +342,8 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		if el.isNodeSynced() {
 			// Check for BLS events in NewBlock events (emitted from EndBlocker)
 			el.handleBLSEvents(event, workerName)
+			// BeginBlock maintenance_canceled (e.g. maintenance_disabled) is not in TxsResults.
+			el.handleMaintenanceLifecycleEvents(event, workerName)
 		}
 
 		// Parse the event into NewBlockInfo

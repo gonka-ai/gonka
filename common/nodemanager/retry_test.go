@@ -38,7 +38,7 @@ type releaseCall struct {
 	ctxDone bool // was ctx already cancelled when Release was called?
 }
 
-func (s *stubLock) Acquire(_ context.Context, _ string, _ []string) (*gen.AcquireMLNodeResponse, error) {
+func (s *stubLock) Acquire(_ context.Context, _ string, _ []string, _ string) (*gen.AcquireMLNodeResponse, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.acquireIdx >= len(s.acquires) {

@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
+	"strconv"
+	"strings"
+	"time"
 
 	mlnodeclient "common/nodemanager"
 	"common/chain"
@@ -71,4 +75,20 @@ func normalizeLogger(logger *slog.Logger) *slog.Logger {
 		return logger
 	}
 	return slog.Default()
+}
+
+func hostEventsSettingsFromEnv() (serverMaxWait, deadlineSlack time.Duration) {
+	serverMaxWait = 60 * time.Second
+	deadlineSlack = 5 * time.Second
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_HOST_EVENTS_MAX_WAIT_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			serverMaxWait = time.Duration(n) * time.Second
+		}
+	}
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_HOST_EVENTS_CLIENT_DEADLINE_SLACK_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			deadlineSlack = time.Duration(n) * time.Second
+		}
+	}
+	return serverMaxWait, deadlineSlack
 }

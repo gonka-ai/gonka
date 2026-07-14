@@ -12,7 +12,7 @@ import (
 
 // NodeLock acquires and releases ML node locks via node-manager.
 type NodeLock interface {
-	Acquire(ctx context.Context, model string, excludedNodeIDs []string) (*gen.AcquireMLNodeResponse, error)
+	Acquire(ctx context.Context, model string, excludedNodeIDs []string, escrowID string) (*gen.AcquireMLNodeResponse, error)
 	Release(ctx context.Context, lockID string, outcome gen.ReleaseOutcome) error
 }
 
@@ -47,7 +47,7 @@ func DoWithNode(
 	var lastErr error
 
 	for attempt := range maxAttempts {
-		lease, err := lock.Acquire(ctx, model, excludedNodeIDs)
+		lease, err := lock.Acquire(ctx, model, excludedNodeIDs, "")
 		if err != nil {
 			return nil, fmt.Errorf("nodemanager: acquire node (attempt %d): %w", attempt+1, err)
 		}

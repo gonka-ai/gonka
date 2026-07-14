@@ -24,3 +24,8 @@ func runtimeConfigMaxWaitCap() time.Duration {
 func clampMaxWait(maxWaitSeconds int32) time.Duration {
 	return runtimeconfig.ClampMaxWait(maxWaitSeconds, runtimeConfigMaxWaitCap())
 }
+
+// hostEventsMaxWaitCap shares the runtime-config env override when set.
+func hostEventsMaxWaitCap() time.Duration {
+	return runtimeConfigMaxWaitCap()
+}

@@ -59,7 +59,7 @@ func TestClient_Acquire_Success(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	resp, err := c.Acquire(context.Background(), "model-a", []string{"bad-node"})
+	resp, err := c.Acquire(context.Background(), "model-a", []string{"bad-node"}, "")
 
 	require.NoError(t, err)
 	assert.Equal(t, "http://node1:8080", resp.Endpoint)
@@ -75,7 +75,7 @@ func TestClient_Acquire_NoNodesAvailable(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	_, err := c.Acquire(context.Background(), "model-a", nil)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrNoNodesAvailable))
@@ -93,7 +93,7 @@ func TestClient_Acquire_Unavailable(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	_, err := c.Acquire(context.Background(), "model-a", nil)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
 	assert.True(t, errors.Is(err, ErrUnavailable))
@@ -110,7 +110,7 @@ func TestClient_Acquire_OtherStatusPreserved(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	_, err := c.Acquire(context.Background(), "model-a", nil)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
 	assert.False(t, IsNoNodesAvailable(err))

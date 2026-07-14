@@ -61,7 +61,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, ClassifyQueryError(err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, ErrEscrowNotFound

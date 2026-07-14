@@ -101,6 +101,9 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 		require.NoError(t, err)
 		require.True(t, exists, "missing table %s", table)
 	}
+	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_escrow_cache")
+	require.NoError(t, err)
+	require.True(t, exists, "missing table devshard_escrow_cache")
 
 	var indexCount int
 	err = pool.QueryRow(ctx, `

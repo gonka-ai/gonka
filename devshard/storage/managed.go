@@ -234,6 +234,41 @@ func (m *ManagedStorage) GetValidationObservability(escrowID string) ([]SlotVali
 	return m.inner.GetValidationObservability(escrowID)
 }
 
+func (m *ManagedStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	m.mu.RLock()
+	prunedUpTo := m.prunedUpTo
+	m.mu.RUnlock()
+	if info.EpochID < prunedUpTo {
+		slog.Warn("devshard managed storage: escrow cache put skipped; epoch pruned",
+			"escrow_id", info.EscrowID,
+			"epoch_id", info.EpochID,
+			"pruned_up_to", prunedUpTo)
+		return nil
+	}
+	if err := m.inner.PutEscrowCache(info); err != nil {
+		slog.Warn("devshard managed storage: escrow cache put failed",
+			"escrow_id", info.EscrowID,
+			"epoch_id", info.EpochID,
+			"error", err)
+		return nil
+	}
+	m.observe(info.EpochID)
+	return nil
+}
+
+func (m *ManagedStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	return m.inner.GetEscrowCache(escrowID)
+}
+
+func (m *ManagedStorage) DeleteEscrowCache(escrowID string) error {
+	if err := m.inner.DeleteEscrowCache(escrowID); err != nil {
+		slog.Warn("devshard managed storage: escrow cache delete failed",
+			"escrow_id", escrowID,
+			"error", err)
+	}
+	return nil
+}
+
 // PruneEpoch is exposed so callers can trigger an explicit drop. PruneOnce uses
 // this path when the inner store does not implement rangePruner.
 func (m *ManagedStorage) PruneEpoch(epochID uint64) error {

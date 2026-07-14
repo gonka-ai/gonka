@@ -100,7 +100,7 @@ func (b *ChainBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
 	resp, err := b.client.InferenceQueryClient().DevshardEscrow(context.Background(),
 		&inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	if err != nil {
-		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, err)
+		return nil, fmt.Errorf("DevshardEscrow %s: %w", escrowID, bridge.ClassifyQueryError(err))
 	}
 	if resp == nil || !resp.Found || resp.Escrow == nil {
 		return nil, bridge.ErrEscrowNotFound

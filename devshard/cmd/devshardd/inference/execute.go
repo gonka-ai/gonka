@@ -12,7 +12,7 @@ import (
 	"devshard/observability"
 )
 
-type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
+type mlRequestExecutor func(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error)
 
 type processedExecutionResponse struct {
 	responseHash []byte
@@ -37,7 +37,7 @@ func executeInference(
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
 
-	resp, err := execute(ctx, req.Model, modified.NewBody)
+	resp, err := execute(ctx, req.Model, req.EscrowID, modified.NewBody)
 	if err != nil {
 		return nil, err
 	}
