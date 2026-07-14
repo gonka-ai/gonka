@@ -48,7 +48,7 @@ type BountyReward struct {
 var bountyRewards = []BountyReward{
 	// RM: devshards v3 release management, review of 0.2.14 upgrade, HackerOne reviews.
 	// Public name: @akup
-	{Address: "gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56", Amount: USDT(2000)},
+	{Address: "gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56", Amount: USDT(5000)},
 
 	// RM: release management, HackerOne reviews.
 	// Public name: @x0152
