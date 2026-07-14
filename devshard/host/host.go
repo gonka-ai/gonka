@@ -13,6 +13,9 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	mlnodeclient "common/nodemanager"
+	commonvalidation "common/validation"
+
 	"devshard"
 	"devshard/gossip"
 	"devshard/logging"
@@ -21,6 +24,7 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/types"
+	"devshard/validationpool"
 )
 
 // finishGossipGraceRotations is the number of full slot rotations to wait
@@ -61,8 +65,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -84,29 +88,27 @@ type AcceptanceChecker interface {
 	Check(st types.EscrowState, applied []*types.DevshardTx) error
 }
 
-const (
-	defaultValidationWorkers   = 20
-	defaultValidationQueueSize = 20_000
-)
-
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
+	directValidator    devshard.ValidationEngine // optional; used when Job.LeaseHeld (no re-acquire)
 	validationRecorder devshard.ValidationCompletionRecorder
+	leaseFinisher      devshard.LeaseFinisher
+	scheduler          ValidationScheduler
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -117,17 +119,23 @@ type Host struct {
 
 	sortedSlots        []uint32            // deterministic slot order for this host
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
-	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
-	validationQueue    chan validateJob
-	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	ownSeed            int64             // deterministic seed derived from signer + escrowID
+	validating         map[uint64]struct{} // inference IDs in scheduler pipeline (pending/deferred/in-flight)
+	completedResponses map[uint64][]byte   // inference ID -> cached ML response body
+	ownSeed            int64               // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
 	validationStartOnce   sync.Once
 	validationCloseOnce   sync.Once
 	validationClosed      bool
+	validationEnabled     bool // Start enables Offers; Close disables + ForgetHost
 
 	maxNonce devshard.MaxNonceProvider // nil = do not enforce
+}
+
+// ValidationScheduler is the process-wide shared validation pool.
+type ValidationScheduler interface {
+	Offer(job validationpool.Job) bool
+	ForgetHost(escrowID string)
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -193,21 +201,21 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		ownSeed:            ownSeed,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -215,10 +223,11 @@ func NewHost(
 	return h, nil
 }
 
-// Start launches background workers owned by this host. Callers should invoke
-// Start only after the host is registered somewhere that will also Close it.
+// Start enables validation Offers into the shared scheduler. Callers should
+// invoke Start only after the host is registered somewhere that will also Close it.
+// No per-escrow worker goroutines are started.
 func (h *Host) Start() {
-	if h.validator == nil {
+	if h.validator == nil || h.scheduler == nil {
 		return
 	}
 	h.validationStartOnce.Do(func() {
@@ -227,24 +236,131 @@ func (h *Host) Start() {
 		if h.validationClosed {
 			return
 		}
-		q := make(chan validateJob, defaultValidationQueueSize)
-		h.validationQueue = q
-		h.startValidationWorkers(q, defaultValidationWorkers)
+		h.validationEnabled = true
 	})
 }
 
-// Close releases host-owned background workers. It is safe to call multiple
-// times and safe to call on hosts that were never started.
+// Close disables validation Offers and drops this host's jobs from the shared
+// scheduler (ForgetHost). It is safe to call multiple times and safe to call
+// on hosts that were never started.
 func (h *Host) Close() {
 	h.validationCloseOnce.Do(func() {
 		h.validationLifecycleMu.Lock()
-		defer h.validationLifecycleMu.Unlock()
 		h.validationClosed = true
-		if h.validationQueue != nil {
-			close(h.validationQueue)
-			h.validationQueue = nil
+		h.validationEnabled = false
+		sched := h.scheduler
+		escrowID := h.escrowID
+		h.validationLifecycleMu.Unlock()
+		if sched != nil {
+			sched.ForgetHost(escrowID)
 		}
 	})
+}
+
+// ClearValidating removes inferenceID from the in-scheduler single-flight set.
+// Called when Offer is rejected, on terminal validate leave, and from the
+// scheduler AbandonFunc (ForgetHost / Shutdown).
+func (h *Host) ClearValidating(inferenceID uint64) {
+	h.mu.Lock()
+	delete(h.validating, inferenceID)
+	h.mu.Unlock()
+}
+
+// SlotWeight is the WFQ weight for this host: max(1, len(slotIDs)).
+func (h *Host) SlotWeight() uint32 {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	n := uint32(len(h.slotIDs))
+	if n < 1 {
+		return 1
+	}
+	return n
+}
+
+// RunScheduledValidation is the scheduler RunFunc entry point for this host.
+func (h *Host) RunScheduledValidation(ctx context.Context, job validationpool.Job) error {
+	vj, ok := job.Work.(validateJob)
+	if !ok {
+		return fmt.Errorf("validationpool: unexpected Work type %T", job.Work)
+	}
+	vj.leaseHeld = job.LeaseHeld
+	vj.leaseClaimedAt = job.LeaseClaimedAt
+	return h.validateAsync(ctx, vj)
+}
+
+// RescanValidationOffers discovers unfinished validations and Offers them into
+// the shared scheduler. Used by OfferRescan for quiet escrows (no inbound traffic).
+func (h *Host) RescanValidationOffers() {
+	h.offerValidationJobs()
+}
+
+// OfferLeaseHeldValidation offers a RetryLoop-owned lease into the shared
+// scheduler. finishable is false when the inference is not StatusFinished
+// (caller should SetResult(skipped)). offered is true only when Offer accepted.
+func (h *Host) OfferLeaseHeldValidation(inferenceID, epochID uint64, claimedAt time.Time) (offered, finishable bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+
+	st := h.sm.SnapshotState()
+	rec, ok := st.Inferences[inferenceID]
+	if !ok || rec.Status != types.StatusFinished {
+		return false, false
+	}
+	if !h.validationOffersEnabled() {
+		return false, true
+	}
+	if _, ok := h.validating[inferenceID]; ok {
+		return false, true
+	}
+	if h.hasMempoolValidationOrVote(inferenceID) {
+		return false, true
+	}
+
+	weight := uint32(len(h.slotIDs))
+	if weight < 1 {
+		weight = 1
+	}
+	executorAddr := h.slotToAddr[rec.ExecutorSlot]
+	vj := validateJob{
+		inferenceID:     inferenceID,
+		validatorSlot:   h.sortedSlots[0],
+		flow:            validationFlowShouldValidate,
+		model:           rec.Model,
+		promptHash:      rec.PromptHash,
+		responseHash:    rec.ResponseHash,
+		inputTokens:     rec.InputTokens,
+		outputTokens:    rec.OutputTokens,
+		escrowID:        h.escrowID,
+		executorAddress: executorAddr,
+		epochID:         epochID,
+		leaseHeld:       true,
+		leaseClaimedAt:  claimedAt,
+	}
+	job := validationpool.Job{
+		EscrowID:       h.escrowID,
+		InferenceID:    inferenceID,
+		Weight:         weight,
+		LeaseHeld:      true,
+		LeaseClaimedAt: claimedAt,
+		Work:           vj,
+	}
+	h.validating[inferenceID] = struct{}{}
+	if !h.scheduler.Offer(job) {
+		delete(h.validating, inferenceID)
+		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
+		observability.IncValidationQueueDrop()
+		return false, true
+	}
+	observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
+	return true, true
+}
+
+// IsValidating reports whether inferenceID is in the scheduler pipeline.
+func (h *Host) IsValidating(inferenceID uint64) bool {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	_, ok := h.validating[inferenceID]
+	return ok
 }
 
 // HostMempool returns the host's mempool. Use this to construct a
@@ -281,8 +397,24 @@ func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
 }
 
+// WithDirectValidator sets the engine used for LeaseHeld jobs (lease already
+// owned; must not re-acquire via LeaseValidator).
+func WithDirectValidator(v devshard.ValidationEngine) HostOption {
+	return func(h *Host) { h.directValidator = v }
+}
+
+// WithValidationScheduler sets the process-wide shared validation scheduler.
+func WithValidationScheduler(s ValidationScheduler) HostOption {
+	return func(h *Host) { h.scheduler = s }
+}
+
+// WithLeaseFinisher sets the finisher for LeaseHeld submit barrier + SetResult.
+func WithLeaseFinisher(f devshard.LeaseFinisher) HostOption {
+	return func(h *Host) { h.leaseFinisher = f }
+}
+
 // WithValidationCompletionRecorder sets the recorder called after MsgValidation
-// is successfully queued by the async validation path.
+// is successfully queued by the async validation path (non-LeaseHeld jobs).
 func WithValidationCompletionRecorder(r devshard.ValidationCompletionRecorder) HostOption {
 	return func(h *Host) { h.validationRecorder = r }
 }
@@ -395,10 +527,6 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
 		}
-		if err := h.applyAndPersist(diff); err != nil {
-			h.mu.Unlock()
-			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
-		}
 		lastAppliedTxs = diff.Txs
 		diffsApplied = true
 	}
@@ -422,10 +550,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 			"nonce", nonce)
 	}
 
-	// (d) Collect validation candidates under mutex.
-	validationJobs := h.collectValidationJobs()
-
-	// (e) Collect locally-proposed Finish txs that the user has not yet
+	// (d) Collect locally-proposed Finish txs that the user has not yet
 	// absorbed into a diff. Computed under mutex; broadcast outside it.
 	var staleFinishes []*types.DevshardTx
 	if diffsApplied {
@@ -434,16 +559,15 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	h.mu.Unlock()
 
+	// (e) Offer validation candidates. Manages its own h.mu; state walk uses
+	// sm RLock so we do not hold the host mutex across ForEachInference.
+	h.offerValidationJobs()
+
 	// (f) Execution job for caller to run via RunExecution.
 	// Execution is always deferred so the caller can send the receipt
 	// before inference starts (SSE flow).
 
-	// (g) Validate other hosts' inferences outside mutex.
-	for _, vj := range validationJobs {
-		h.enqueueValidation(vj)
-	}
-
-	// (h) Recovery gossip: re-broadcast locally produced Finish that the
+	// (g) Recovery gossip: re-broadcast locally produced Finish that the
 	// user sequencer skipped. gossip.BroadcastTxs dedups by tx hash so
 	// repeated triggers across diffs are harmless.
 	if len(staleFinishes) > 0 && h.gsp != nil {
@@ -877,6 +1001,8 @@ type validateJob struct {
 	escrowID        string
 	executorAddress string
 	epochID         uint64
+	leaseHeld       bool
+	leaseClaimedAt  time.Time
 }
 
 type validationFlow string
@@ -886,153 +1012,153 @@ const (
 	validationFlowChallenged     validationFlow = "challenged"
 )
 
-// collectValidationJobs finds finished inferences that this host should validate.
-// Caller must hold h.mu.
-func (h *Host) collectValidationJobs() []validateJob {
+func (h *Host) validationOffersEnabled() bool {
 	h.validationLifecycleMu.RLock()
-	q := h.validationQueue
-	closed := h.validationClosed
-	h.validationLifecycleMu.RUnlock()
-	if h.validator == nil || q == nil || closed {
-		return nil
+	defer h.validationLifecycleMu.RUnlock()
+	return h.validationEnabled && !h.validationClosed && h.scheduler != nil && h.validator != nil
+}
+
+// offerValidationJobs finds finished inferences this host should validate and
+// Offers them into the shared scheduler. Caller must not hold h.mu: the state
+// walk uses sm RLock; validating / mempool index / Offer take h.mu briefly.
+func (h *Host) offerValidationJobs() {
+	if !h.validationOffersEnabled() {
+		return
 	}
 	if !h.completionRequestsEnabled() {
-		return nil
+		return
 	}
 
-	st := h.sm.SnapshotState()
-	available := cap(q) - len(q)
-	if available <= 0 {
-		return nil
+	// Identity maps are immutable after NewHost — safe without h.mu.
+	slotIDs := h.slotIDs
+	mySlotCount := uint32(len(slotIDs))
+	weight := mySlotCount
+	if weight < 1 {
+		weight = 1
 	}
-	var jobs []validateJob
+	validatorSlot := h.sortedSlots[0]
+	ownSeed := h.ownSeed
+	escrowID := h.escrowID
+	epochID := h.epochID
+	slotToAddr := h.slotToAddr
+	validationRate := h.sm.Config().ValidationRate
+	totalSlots := h.sm.TotalSlots()
 
-	for infID, rec := range st.Inferences {
+	candidates := make([]validateJob, 0)
+	h.sm.ForEachInference(func(infID uint64, rec *types.InferenceRecord) {
 		if rec.Status != types.StatusFinished && rec.Status != types.StatusChallenged {
-			continue
+			return
 		}
-		if h.slotIDs[rec.ExecutorSlot] {
-			continue
+		if slotIDs[rec.ExecutorSlot] {
+			return
 		}
 
-		alreadyValidated := false
-		for slot := range h.slotIDs {
+		for slot := range slotIDs {
 			if rec.ValidatedBy.IsSet(slot) {
-				alreadyValidated = true
-				break
+				return
 			}
 		}
-		if alreadyValidated {
-			continue
-		}
-		if _, ok := h.validating[infID]; ok {
-			continue
-		}
-		if h.hasMempoolValidationOrVote(infID) {
-			continue
-		}
 
-		executorAddr := h.slotToAddr[rec.ExecutorSlot]
+		executorAddr := slotToAddr[rec.ExecutorSlot]
 
 		// Phase 1 samples by ValidationRate; Phase 2 is mandatory so VoteThreshold is reachable.
 		flow := validationFlowChallenged
 		if rec.Status == types.StatusFinished {
-			mySlotCount := uint32(len(h.slotIDs))
 			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
-			totalSlots := h.sm.TotalSlots()
-			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
-				continue
+			if !state.ShouldValidate(ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, validationRate) {
+				return
 			}
 			flow = validationFlowShouldValidate
 		}
 
-		validatorSlot := h.sortedSlots[0]
-
-		h.validating[infID] = struct{}{}
-		jobs = append(jobs, validateJob{
+		candidates = append(candidates, validateJob{
 			inferenceID:     infID,
 			validatorSlot:   validatorSlot,
 			flow:            flow,
 			model:           rec.Model,
-			promptHash:      rec.PromptHash,
-			responseHash:    rec.ResponseHash,
+			promptHash:      append([]byte(nil), rec.PromptHash...),
+			responseHash:    append([]byte(nil), rec.ResponseHash...),
 			inputTokens:     rec.InputTokens,
 			outputTokens:    rec.OutputTokens,
-			escrowID:        h.escrowID,
+			escrowID:        escrowID,
 			executorAddress: executorAddr,
-			epochID:         h.epochID,
+			epochID:         epochID,
 		})
-		available--
-		if available == 0 {
-			break
-		}
-	}
-
-	return jobs
-}
-
-func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
-	for i := 0; i < count; i++ {
-		go func() {
-			for job := range q {
-				h.validateAsync(context.Background(), job)
-			}
-		}()
-	}
-}
-
-func (h *Host) enqueueValidation(job validateJob) {
-	h.validationLifecycleMu.RLock()
-	q := h.validationQueue
-	closed := h.validationClosed
-	if q == nil || closed {
-		h.validationLifecycleMu.RUnlock()
-		h.mu.Lock()
-		delete(h.validating, job.inferenceID)
-		h.mu.Unlock()
+	})
+	if len(candidates) == 0 {
 		return
 	}
 
-	select {
-	case q <- job:
-		h.validationLifecycleMu.RUnlock()
-		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
-	default:
-		h.validationLifecycleMu.RUnlock()
-		h.mu.Lock()
-		delete(h.validating, job.inferenceID)
-		h.mu.Unlock()
-		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
-		observability.IncValidationQueueDrop()
-		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.validationOffersEnabled() || !h.completionRequestsEnabled() {
+		return
 	}
+	mempoolHit := h.mempoolValidationOrVoteIDsLocked()
+	for _, vj := range candidates {
+		infID := vj.inferenceID
+		if _, ok := h.validating[infID]; ok {
+			continue
+		}
+		if _, ok := mempoolHit[infID]; ok {
+			continue
+		}
+
+		job := validationpool.Job{
+			EscrowID:    h.escrowID,
+			InferenceID: infID,
+			Weight:      weight,
+			Work:        vj,
+		}
+
+		// Mark before Offer so discovery cannot double-offer while pending.
+		h.validating[infID] = struct{}{}
+		if !h.scheduler.Offer(job) {
+			delete(h.validating, infID)
+			observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
+			observability.IncValidationQueueDrop()
+			observability.Log(context.Background(), observability.LevelWarn, "validation pending HWM full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", infID)
+			continue
+		}
+		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
+	}
+}
+
+// mempoolValidationOrVoteIDsLocked returns inference IDs that already have a
+// MsgValidation or MsgValidationVote from this host in the mempool.
+// Caller must hold h.mu.
+func (h *Host) mempoolValidationOrVoteIDsLocked() map[uint64]struct{} {
+	txs := h.mempool.Txs()
+	if len(txs) == 0 {
+		return nil
+	}
+	out := make(map[uint64]struct{})
+	for _, tx := range txs {
+		if v := tx.GetValidation(); v != nil && h.slotIDs[v.ValidatorSlot] {
+			out[v.InferenceId] = struct{}{}
+		}
+		if v := tx.GetValidationVote(); v != nil && h.slotIDs[v.VoterSlot] {
+			out[v.InferenceId] = struct{}{}
+		}
+	}
+	return out
 }
 
 // hasMempoolValidationOrVote returns true if a MsgValidation or
 // MsgValidationVote for infID from this host is already in the mempool.
 // Caller must hold h.mu.
 func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
-	for _, tx := range h.mempool.Txs() {
-		if v := tx.GetValidation(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.ValidatorSlot] {
-				return true
-			}
-		}
-		if v := tx.GetValidationVote(); v != nil && v.InferenceId == infID {
-			if h.slotIDs[v.VoterSlot] {
-				return true
-			}
-		}
-	}
-	return false
+	_, ok := h.mempoolValidationOrVoteIDsLocked()[infID]
+	return ok
 }
 
 // validateAsync emits MsgValidation when status is Finished, MsgValidationVote
 // when Challenged. Re-reads status after Validate returns to catch races where
 // another host challenged the inference while this validator was running.
-// Called outside the mutex.
-func (h *Host) validateAsync(ctx context.Context, job validateJob) {
+//
+// Returns ErrNoNodesAvailable so the scheduler can defer (validating stays set).
+// All other outcomes are terminal for this Offer and clear validating.
+func (h *Host) validateAsync(ctx context.Context, job validateJob) error {
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
@@ -1040,16 +1166,12 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
 		"validation_flow", string(job.flow))
-	defer func() {
-		h.mu.Lock()
-		delete(h.validating, job.inferenceID)
-		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
-		}
-	}()
 
-	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
+	eng := h.validator
+	if job.leaseHeld && h.directValidator != nil {
+		eng = h.directValidator
+	}
+	result, err := eng.Validate(ctx, devshard.ValidateRequest{
 		InferenceID:     job.inferenceID,
 		Model:           job.model,
 		PromptHash:      job.promptHash,
@@ -1061,17 +1183,38 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		EpochID:         job.epochID,
 	})
 	if err != nil {
-		// Payload already pruned on the executor: the validation window is
-		// effectively over for us. Drop silently -- no MsgValidation, no
-		// challenge, no error in the executor receipt path.
-		if errors.Is(err, devshard.ErrValidationSkipped) {
-			logging.Info("validation skipped: payload pruned",
+		if mlnodeclient.IsNoNodesAvailable(err) {
+			// Keep validating; scheduler defers and retries.
+			return err
+		}
+		if errors.Is(err, commonvalidation.ErrHashMismatch) {
+			// Match LeaseValidator / former RetryLoop: publish invalidation.
+			logging.Warn("validation hash mismatch — submitting invalidation",
+				"subsystem", "host",
+				"inference_id", job.inferenceID,
+				"executor_address", job.executorAddress,
+				"error", err,
+			)
+			result = &devshard.ValidateResult{Valid: false, Reason: "hash_mismatch"}
+			err = nil
+		}
+	}
+	if err != nil {
+		// Quiet skips: payload pruned, another instance holds the lease, or
+		// ForgetHost/Shutdown cancelled the per-job context.
+		if errors.Is(err, devshard.ErrValidationSkipped) ||
+			errors.Is(err, devshard.ErrValidationAlreadyLeased) ||
+			errors.Is(err, context.Canceled) ||
+			errors.Is(err, context.DeadlineExceeded) {
+			logging.Info("validation skipped",
 				"subsystem", "host",
 				"inference_id", job.inferenceID,
 				"executor_address", job.executorAddress,
 				"epoch_id", job.epochID,
+				"error", err,
 			)
-			return
+			h.ClearValidating(job.inferenceID)
+			return nil
 		}
 		reason, where := observability.ErrorReason(err, observability.ReasonValidateErr, observability.WhereHostValidate)
 		observability.FailValidationFinished(ctx, h.escrowID, reason, where, "validate failed", err,
@@ -1079,7 +1222,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
 			"validation_flow", string(job.flow))
-		return
+		h.ClearValidating(job.inferenceID)
+		return nil
 	}
 
 	rec, ok := h.sm.GetInference(job.inferenceID)
@@ -1091,9 +1235,20 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			"executor_address", job.executorAddress,
 			"validator_slot", job.validatorSlot,
 			"validation_flow", string(job.flow))
-		return
+		h.ClearValidating(job.inferenceID)
+		return nil
 	}
 	observability.IncValidation(observability.StageValidationFinished, observability.MetricStatusOK)
+
+	if err := h.submitAllowed(ctx, job); err != nil {
+		logging.Info("validation submit abandoned",
+			"subsystem", "host",
+			"inference_id", job.inferenceID,
+			"error", err,
+		)
+		h.ClearValidating(job.inferenceID)
+		return nil
+	}
 
 	var tx *types.DevshardTx
 	var validationTx string
@@ -1120,7 +1275,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				"validation_result", validationResultLabel(result.Valid),
 				"validation_reason", result.Reason,
 				"result_valid", result.Valid)
-			return
+			h.ClearValidating(job.inferenceID)
+			return nil
 		}
 		msg.ProposerSig = proposerSig
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_Validation{Validation: msg}}
@@ -1144,7 +1300,8 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 				"validation_result", validationResultLabel(result.Valid),
 				"validation_reason", result.Reason,
 				"vote_valid", result.Valid)
-			return
+			h.ClearValidating(job.inferenceID)
+			return nil
 		}
 		msg.ProposerSig = proposerSig
 		tx = &types.DevshardTx{Tx: &types.DevshardTx_ValidationVote{ValidationVote: msg}}
@@ -1159,18 +1316,19 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			"validation_result", validationResultLabel(result.Valid),
 			"validation_reason", result.Reason,
 			"result_valid", result.Valid)
-		return
+		h.ClearValidating(job.inferenceID)
+		return nil
 	}
 
-	if h.validationRecorder != nil {
-		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
-			logging.Info("validation submit abandoned after lease check",
-				"subsystem", "host",
-				"inference_id", job.inferenceID,
-				"error", err,
-			)
-			return
-		}
+	// Re-check barrier after sign so cancel/Close cannot race into mempool.Add.
+	if err := h.submitAllowed(ctx, job); err != nil {
+		logging.Info("validation submit abandoned after sign",
+			"subsystem", "host",
+			"inference_id", job.inferenceID,
+			"error", err,
+		)
+		h.ClearValidating(job.inferenceID)
+		return nil
 	}
 
 	h.mu.Lock()
@@ -1194,7 +1352,17 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	fields = append(fields, result.Details...)
 	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, nil, fields...)
 
-	if h.validationRecorder != nil {
+	if job.leaseHeld {
+		if h.leaseFinisher != nil {
+			if err := h.leaseFinisher.MarkSubmitted(ctx, h.escrowID, job.inferenceID); err != nil {
+				if errors.Is(err, devshard.ErrValidationLeaseAbandoned) {
+					logging.Info("mark validation submitted skipped: lease abandoned", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+				} else {
+					logging.Error("mark validation submitted failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+				}
+			}
+		}
+	} else if h.validationRecorder != nil {
 		if err := h.validationRecorder.MarkValidationSubmitted(ctx, h.escrowID, job.inferenceID); err != nil {
 			if errors.Is(err, devshard.ErrValidationLeaseAbandoned) {
 				logging.Info("mark validation submitted skipped: lease abandoned", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
@@ -1203,6 +1371,45 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 			}
 		}
 	}
+	h.ClearValidating(job.inferenceID)
+	return nil
+}
+
+// submitAllowed is the publish fence: abandon if ctx cancelled, host closed,
+// or a LeaseHeld job lost ownership / exceeded TTL.
+func (h *Host) submitAllowed(ctx context.Context, job validateJob) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	h.validationLifecycleMu.RLock()
+	closed := h.validationClosed
+	h.validationLifecycleMu.RUnlock()
+	if closed {
+		return errors.New("validation host closed")
+	}
+	if job.leaseHeld {
+		if h.leaseFinisher == nil {
+			return fmt.Errorf("%w: LeaseHeld without LeaseFinisher", devshard.ErrValidationLeaseAbandoned)
+		}
+		if job.leaseClaimedAt.IsZero() {
+			return fmt.Errorf("%w: missing LeaseClaimedAt", devshard.ErrValidationLeaseAbandoned)
+		}
+		if time.Since(job.leaseClaimedAt) > h.leaseFinisher.LeaseTTL() {
+			return fmt.Errorf("%w: elapsed since claim exceeds lease TTL", devshard.ErrValidationLeaseAbandoned)
+		}
+		owned, err := h.leaseFinisher.OwnsPendingLease(ctx, h.escrowID, job.inferenceID)
+		if err != nil {
+			return err
+		}
+		if !owned {
+			return fmt.Errorf("%w: pending lease not owned", devshard.ErrValidationLeaseAbandoned)
+		}
+		return nil
+	}
+	if h.validationRecorder != nil {
+		return h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID)
+	}
+	return nil
 }
 
 func validationResultLabel(valid bool) string {

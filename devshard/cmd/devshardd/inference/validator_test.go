@@ -162,9 +162,9 @@ func (s stubThresholdResolver) Resolve(_ context.Context, _ uint64, _ string) (f
 
 type unknownValidationResult struct{}
 
-func (unknownValidationResult) IsSuccessful() bool                     { return true }
-func (unknownValidationResult) GetInferenceId() string               { return "unknown" }
-func (unknownValidationResult) GetValidationResponseBytes() []byte   { return nil }
+func (unknownValidationResult) IsSuccessful() bool                 { return true }
+func (unknownValidationResult) GetInferenceId() string             { return "unknown" }
+func (unknownValidationResult) GetValidationResponseBytes() []byte { return nil }
 
 func TestEvaluateValidationResult_UsesModelThreshold(t *testing.T) {
 	resolver := stubThresholdResolver{threshold: 0.90}

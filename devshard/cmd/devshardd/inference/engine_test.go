@@ -256,3 +256,54 @@ func TestShouldFallback(t *testing.T) {
 	assert.False(t, shouldFallback(status.Error(codes.ResourceExhausted, "x")))
 	assert.False(t, shouldFallback(status.Error(codes.Internal, "x")))
 }
+
+func TestEngine_ValidateAcquireSingleAttempt(t *testing.T) {
+	var acquires atomic.Int32
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			acquires.Add(1)
+			return nil, status.Error(codes.ResourceExhausted, "no free nodes")
+		},
+	})
+	eng := newTestEngine(ml, nil)
+
+	started := time.Now()
+	resp, err := eng.doWithLockedNodeOnce(context.Background(), observability.PathValidate, "model-a",
+		func(string) (*http.Response, error) {
+			t.Fatal("HTTP must not run when acquire is busy")
+			return nil, nil
+		})
+	elapsed := time.Since(started)
+
+	require.Error(t, err)
+	assert.Nil(t, resp)
+	assert.True(t, mlnodeclient.IsNoNodesAvailable(err), "err=%v", err)
+	assert.Equal(t, int32(1), acquires.Load(), "single-attempt must Acquire once")
+	assert.Less(t, elapsed, 1500*time.Millisecond, "must not sleep-retry (~2s)")
+}
+
+func TestDoWithLockedNode_BusyStillSleepRetries(t *testing.T) {
+	var acquires atomic.Int32
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			acquires.Add(1)
+			return nil, status.Error(codes.ResourceExhausted, "no free nodes")
+		},
+	})
+	eng := newTestEngine(ml, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2500*time.Millisecond)
+	defer cancel()
+
+	started := time.Now()
+	_, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a",
+		func(string) (*http.Response, error) {
+			t.Fatal("HTTP must not run when acquire is busy")
+			return nil, nil
+		})
+	elapsed := time.Since(started)
+
+	require.Error(t, err)
+	assert.GreaterOrEqual(t, acquires.Load(), int32(2), "inference path should retry after sleep")
+	assert.GreaterOrEqual(t, elapsed, 2*time.Second, "inference path sleeps between acquires")
+}

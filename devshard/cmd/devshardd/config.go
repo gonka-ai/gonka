@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"devshard/cmd/devshardd/session"
+	"devshard/validationpool"
 
 	"github.com/cosmos/cosmos-sdk/codec"
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
@@ -33,6 +34,8 @@ type runtimeConfig struct {
 	NodeManagerAddr         string
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
+	ValidationOfferRescan   time.Duration
+	ValidationPool          validationpool.Config // DEVSHARD_VALIDATION_* scheduler knobs
 	Node                    ChainNodeConfig
 }
 
@@ -128,6 +131,11 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_LEASE_TTL: %w", err)
 	}
 
+	offerRescan, err := parseDurationEnv("DEVSHARD_VALIDATION_OFFER_RESCAN", session.DefaultOfferRescanInterval)
+	if err != nil {
+		return runtimeConfig{}, fmt.Errorf("DEVSHARD_VALIDATION_OFFER_RESCAN: %w", err)
+	}
+
 	return runtimeConfig{
 		Port:                    *port,
 		DataDir:                 *dataDir,
@@ -137,6 +145,8 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
+		ValidationOfferRescan:   offerRescan,
+		ValidationPool:          validationpool.ConfigFromEnv(),
 		Node:                    loadNodeConfigFromEnv(),
 	}, nil
 }

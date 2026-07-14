@@ -150,7 +150,9 @@ func evaluateValidationResult(
 }
 
 func (v *Validator) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
-	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, func(endpoint string) (*http.Response, error) {
+	// Single-attempt acquire: busy (ErrNoNodesAvailable) returns immediately so
+	// the shared validation scheduler can defer without a ~20s sleep-retry loop.
+	resp, err := v.engine.doWithLockedNodeOnce(ctx, observability.PathValidate, model, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
