@@ -506,6 +506,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("init escrow rotation commitments table: %w", err)
 	}
+	if err := ensureColumn(db, "escrow_rotation_commitments", "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate escrow rotation commitments protocol version: %w", err)
+	}
 	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate participant throttle: %w", err)
@@ -1021,13 +1025,14 @@ func (s *GatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus,
 
 // GatewayEscrowCommitment is the write-ahead intent for one escrow create, keyed by tx hash.
 type GatewayEscrowCommitment struct {
-	TxHash        string
-	Model         string
-	Role          string
-	Epoch         uint64
-	PrivateKeyEnv string
-	BlockHeight   uint64
-	CreatedAt     time.Time
+	TxHash          string
+	Model           string
+	Role            string
+	Epoch           uint64
+	PrivateKeyEnv   string
+	ProtocolVersion string
+	BlockHeight     uint64
+	CreatedAt       time.Time
 }
 
 // SaveCommitment records a create intent, keyed by tx hash.
@@ -1043,13 +1048,14 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO escrow_rotation_commitments (
-			tx_hash, model, role, epoch, private_key_env, block_height, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(c.TxHash),
 		strings.TrimSpace(c.Model),
 		strings.TrimSpace(c.Role),
 		c.Epoch,
 		c.PrivateKeyEnv,
+		strings.TrimSpace(c.ProtocolVersion),
 		c.BlockHeight,
 		createdAt,
 	)
@@ -1079,7 +1085,7 @@ func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
 		return nil, nil
 	}
 	rows, err := s.db.Query(`
-		SELECT tx_hash, model, role, epoch, private_key_env, block_height, created_at
+		SELECT tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
 		FROM escrow_rotation_commitments
 		ORDER BY created_at ASC`)
 	if err != nil {
@@ -1090,7 +1096,7 @@ func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
 	for rows.Next() {
 		var c GatewayEscrowCommitment
 		var createdAt string
-		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.BlockHeight, &createdAt); err != nil {
+		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.ProtocolVersion, &c.BlockHeight, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan escrow commitment: %w", err)
 		}
 		c.CreatedAt = scanGatewayDBTime(createdAt)
