@@ -3,8 +3,10 @@ package artifacts
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"fmt"
 	"os"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 )
@@ -123,8 +125,8 @@ func TestDeferredGetRootStableAndIdempotent(t *testing.T) {
 
 // TestDeferredLiveTipProofSlowThenFast exercises both live-tip proof paths in
 // acquireSnapshotTree: a proof requested before any GetRoot must fill hashes
-// under the write lock (slow path), and a later proof at the same count must be
-// served from the already-hashed tree (fast path). Both must verify.
+// under the write lock, then retry onto the RLock fast path; a later proof at
+// the same count is served entirely under RLock. Both must verify.
 func TestDeferredLiveTipProofSlowThenFast(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
@@ -163,6 +165,58 @@ func TestDeferredLiveTipProofSlowThenFast(t *testing.T) {
 	f := fast[0]
 	if !VerifySMSTProofSlice(root, count, f.Nonce, encodeLeaf(f.Nonce, f.Vector), f.Proof) {
 		t.Fatalf("fast-path proof did not verify")
+	}
+}
+
+// TestDeferredLiveTipConcurrentProofsBeforeHashFill hammers the live tip with
+// concurrent proofs before any GetRoot. Hash fill must run once under Lock;
+// proof I/O must not hold the write lock, so readers finish without serializing
+// the whole batch on Lock. Under -race this also covers the ensureHashed→retry
+// handoff.
+func TestDeferredLiveTipConcurrentProofsBeforeHashFill(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	const n = 4000
+	for i := 0; i < n; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	count := store.Count()
+
+	const readers = 16
+	var wg sync.WaitGroup
+	errCh := make(chan error, readers)
+	for g := 0; g < readers; g++ {
+		wg.Add(1)
+		go func(gid int) {
+			defer wg.Done()
+			idx := uint32(gid) % count
+			entries, err := store.GetArtifactsAndProofs([]uint32{idx}, count)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			root, err := store.GetRootAt(count)
+			if err != nil {
+				errCh <- err
+				return
+			}
+			e := entries[0]
+			if !VerifySMSTProofSlice(root, count, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
+				errCh <- fmt.Errorf("proof verify failed for goroutine %d", gid)
+			}
+		}(g)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatalf("concurrent tip proof: %v", err)
 	}
 }
 

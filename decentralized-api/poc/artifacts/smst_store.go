@@ -508,37 +508,57 @@ func (s *SMSTArtifactStore) appendDistributionSnapshot() error {
 }
 
 func (s *SMSTArtifactStore) getRoot() []byte {
-	// Write lock: GetRoot may fill deferred hashes on the live tree.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
+	s.mu.RLock()
 	if s.smst.Count() == 0 {
+		s.mu.RUnlock()
 		return nil
 	}
+	if s.liveRootHashed() {
+		root, _ := s.smst.GetRoot()
+		s.mu.RUnlock()
+		return root
+	}
+	s.mu.RUnlock()
 
+	// Deferred hashes need a write; GetRoot → ensureHashed.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	root, _ := s.smst.GetRoot()
 	return root
 }
 
 func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
-	// Write lock: the live-count branch may fill deferred hashes.
+	s.mu.RLock()
+	if s.closed {
+		s.mu.RUnlock()
+		return nil, ErrStoreClosed
+	}
+	if snapshotCount == 0 {
+		s.mu.RUnlock()
+		return nil, nil
+	}
+	if snapshotCount > s.smst.Count() {
+		currentCount := s.smst.Count()
+		s.mu.RUnlock()
+		return nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
+	}
+	if snapshotCount == s.smst.Count() && s.liveRootHashed() {
+		root, _ := s.smst.GetRoot()
+		s.mu.RUnlock()
+		return root, nil
+	}
+	if root, ok := s.flushedRoots[snapshotCount]; ok {
+		s.mu.RUnlock()
+		return root, nil
+	}
+	s.mu.RUnlock()
+
+	// Live tip still needs ensureHashed, or a cold historical miss.
 	s.mu.Lock()
 	if s.closed {
 		s.mu.Unlock()
 		return nil, ErrStoreClosed
 	}
-
-	if snapshotCount == 0 {
-		s.mu.Unlock()
-		return nil, nil
-	}
-
-	if snapshotCount > s.smst.Count() {
-		currentCount := s.smst.Count()
-		s.mu.Unlock()
-		return nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
-	}
-
 	if snapshotCount == s.smst.Count() {
 		root, _ := s.smst.GetRoot()
 		s.mu.Unlock()
@@ -560,18 +580,27 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 }
 
 func (s *SMSTArtifactStore) GetFlushedRoot() (count uint32, root []byte) {
-	// Write lock: the fallback GetRoot may fill deferred hashes on the live tree.
+	s.mu.RLock()
+	if s.flushedLeafCount == 0 {
+		s.mu.RUnlock()
+		return 0, nil
+	}
+	if root, ok := s.flushedRoots[s.flushedLeafCount]; ok {
+		c := s.flushedLeafCount
+		s.mu.RUnlock()
+		return c, root
+	}
+	s.mu.RUnlock()
+
+	// Fallback: map miss (should be rare). May need ensureHashed on the live tree.
 	s.mu.Lock()
 	defer s.mu.Unlock()
-
 	if s.flushedLeafCount == 0 {
 		return 0, nil
 	}
-
 	if root, ok := s.flushedRoots[s.flushedLeafCount]; ok {
 		return s.flushedLeafCount, root
 	}
-
 	r, _ := s.smst.GetRoot()
 	return s.flushedLeafCount, r
 }
@@ -777,9 +806,10 @@ func (s *SMSTArtifactStore) GetArtifactsAndProofsByNonce(nonces []int32, snapsho
 // acquireSnapshotTree returns the tree for snapshotCount with the store
 // locked for the caller; the caller must call unlock() when done.
 // Live tip (hashes already filled) and retained historical snapshots are
-// served under RLock so concurrent proofs stay parallel. Live tip that still
-// needs ensureHashed is served under Lock. Cold-start rebuilds use the
-// process-wide snapshot cache, then RLock for artifact reads.
+// served under RLock so concurrent proofs stay parallel. Filling deferred
+// hashes on the live tip takes Lock only for ensureHashed, then retries so
+// proof I/O runs under RLock. Cold-start rebuilds use the process-wide
+// snapshot cache, then RLock for artifact reads.
 func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, func(), error) {
 	// Fast path: if the requested count is the live tip and its hashes are
 	// already filled, serve under a read lock so concurrent proof reads stay
@@ -790,7 +820,7 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 		s.mu.RUnlock()
 		return nil, nil, ErrStoreClosed
 	}
-	if snapshotCount == s.smst.Count() && (s.smst.root == nil || s.smst.root.hash != nil) {
+	if snapshotCount == s.smst.Count() && s.liveRootHashed() {
 		return s.smst, s.mu.RUnlock, nil
 	}
 	s.mu.RUnlock()
@@ -808,8 +838,11 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 		return nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
 	}
 	if snapshotCount == currentCount {
+		// Fill hashes under Lock only — do not hold the write lock across proof
+		// I/O. Retry so concurrent tip readers share the RLock fast path.
 		s.smst.ensureHashed()
-		return s.smst, s.mu.Unlock, nil
+		s.mu.Unlock()
+		return s.acquireSnapshotTree(snapshotCount)
 	}
 	// Historical count: serve from the retained copy-on-write snapshot in
 	// O(depth) if one was captured at this committed count. Snapshots are
@@ -850,6 +883,12 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 		return nil, nil, ErrStoreClosed
 	}
 	return tree, s.mu.RUnlock, nil
+}
+
+// liveRootHashed reports whether the live tree's deferred hashes are already
+// filled. A nil root (empty tree) is treated as ready. Callers must hold mu.
+func (s *SMSTArtifactStore) liveRootHashed() bool {
+	return s.smst.root == nil || s.smst.root.hash != nil
 }
 
 // captureRetainedLocked records a copy-on-write snapshot of the tree at the
