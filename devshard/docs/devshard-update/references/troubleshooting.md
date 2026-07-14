@@ -40,6 +40,11 @@ the source image/route, deactivate its active source escrows without settling,
 then recreate main on the target image/route. Create target-protocol seed
 escrows and pass the direct smoke test before switching traffic back.
 
+Older gateways may omit `protocol_version` on `GET /v1/admin/devshards` (null /
+missing). For a protocol change, `deactivate-main-source` treats missing protocol
+as the configured `escrow.source_protocol_version` so active pre-protocol escrows
+are still deactivated (never settled).
+
 ## New image is bad
 
 - Do **not** `switch-to-main` (Path B) or return the instance to the pool (Path A).

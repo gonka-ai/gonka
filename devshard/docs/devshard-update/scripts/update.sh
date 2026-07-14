@@ -91,7 +91,11 @@ config_validate() {
   errors="$(jq -r '
     def req(v; name): if (v == null or v == "") then "missing/empty: \(name)" else empty end;
     def num(v; name): if (v|type) != "number" then "not a number: \(name)" else empty end;
-    [ req(.image.repository; "image.repository"),
+    [ # from_tag/to_tag may be full image refs (contain '/'), e.g. repo:tag across registries.
+      # Otherwise repository is required and joined as repository:tag.
+      (if ((.image.from_tag|tostring|contains("/")) and (.image.to_tag|tostring|contains("/")))
+       then empty
+       else req(.image.repository; "image.repository") end),
       req(.image.from_tag; "image.from_tag"),
       req(.image.to_tag; "image.to_tag"),
       (if ((.models // []) | length) < 1 then "models must be a non-empty array of {model, escrow_count, escrow_amount}" else empty end),
@@ -132,16 +136,33 @@ config_validate() {
   fi
 }
 
+# Compose stores a full image ref. from_tag/to_tag may be that full ref (contain '/'),
+# or a bare tag joined with image.repository (same-repo bumps).
+image_ref() {
+  local repo="$1" tag_or_ref="$2"
+  if [[ "${tag_or_ref}" == */* ]]; then
+    printf '%s\n' "${tag_or_ref}"
+  else
+    printf '%s:%s\n' "${repo}" "${tag_or_ref}"
+  fi
+}
+
 resolve_config() {
   IMAGE_REPO="${IMAGE_REPO:-$(cfg .image.repository)}"
   IMAGE_FROM_TAG="${IMAGE_FROM_TAG:-$(cfg .image.from_tag)}"
   IMAGE_TO_TAG="${IMAGE_TO_TAG:-$(cfg .image.to_tag)}"
-  IMAGE_FROM_REF="${IMAGE_REPO}:${IMAGE_FROM_TAG}"
-  IMAGE_TO_REF="${IMAGE_REPO}:${IMAGE_TO_TAG}"
+  IMAGE_FROM_REF="${IMAGE_FROM_REF:-$(image_ref "${IMAGE_REPO}" "${IMAGE_FROM_TAG}")}"
+  IMAGE_TO_REF="${IMAGE_TO_REF:-$(image_ref "${IMAGE_REPO}" "${IMAGE_TO_TAG}")}"
   IMAGE_SKIP_PULL="${IMAGE_SKIP_PULL:-$(jq -r '.image.skip_pull // false' <<<"${CONFIG_JSON}")}"
   ESCROW_PROTOCOL_VERSION="${ESCROW_PROTOCOL_VERSION:-$(cfg .escrow.protocol_version)}"
   SOURCE_PROTOCOL_VERSION="${SOURCE_PROTOCOL_VERSION:-$(jq -r '.escrow.source_protocol_version // .escrow.protocol_version' <<<"${CONFIG_JSON}")}"
   ESCROW_PRIVATE_KEY_ENV="${ESCROW_PRIVATE_KEY_ENV:-$(cfg .escrow.private_key_env)}"
+  # Target HTTP route for temp + recreated MAIN. Defaults to /devshard/v<protocol>
+  # on a protocol change; empty for same-protocol image bumps (env file untouched).
+  TARGET_ROUTE_PREFIX="${TARGET_ROUTE_PREFIX:-$(cfg .escrow.route_prefix)}"
+  if [[ -z "${TARGET_ROUTE_PREFIX}" && "${SOURCE_PROTOCOL_VERSION#v}" != "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
+    TARGET_ROUTE_PREFIX="/devshard/v${ESCROW_PROTOCOL_VERSION#v}"
+  fi
   MAIN_ADMIN_URL="${MAIN_ADMIN_URL:-$(cfg .main.admin_url)}"
   MAIN_CONTAINER="${MAIN_CONTAINER:-$(cfg .main.container)}"
   MAIN_STORAGE_HOST_DIR="${MAIN_STORAGE_HOST_DIR:-$(cfg .main.storage_host_dir)}"
@@ -247,21 +268,43 @@ assert_settings_aligned() {
   gate_ok "temp settings match main (rotation disabled on temp)"
 }
 
-# Start the temp gateway on its OWN empty escrow set. Reuses MAIN's --env-file
-# so no secret material is written to a new path. --restart unless-stopped, so
-# it MUST later be stopped AND removed to avoid a two-writer resurrection.
+# Docker --env-file rejects shell-style "export KEY=value" lines (common in
+# config.devshard.env). Build a sanitized sibling for docker run only.
+docker_env_file_from() {
+  local src="$1" dst="$2"
+  # Keep KEY=VALUE; strip leading export; drop blank/comment lines docker ignores anyway.
+  sed -E \
+    -e '/^[[:space:]]*#/d' \
+    -e '/^[[:space:]]*$/d' \
+    -e 's/^[[:space:]]*export[[:space:]]+//' \
+    "${src}" > "${dst}"
+}
+
+# Start the temp gateway on its OWN empty escrow set. Reuses MAIN's env file
+# (sanitized for docker). --restart unless-stopped, so it MUST later be stopped
+# AND removed to avoid a two-writer resurrection.
 temp_start() {
   run_shell "docker rm -f '${TEMP_CONTAINER}' >/dev/null 2>&1 || true"
   local -a args=(docker run -d --name "${TEMP_CONTAINER}" --restart unless-stopped
                  --network "${TEMP_NETWORK}" --network-alias "${TEMP_UPSTREAM_ALIAS}")
-  [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] && args+=(--env-file "${MAIN_ENV_FILE_ABS}")
+  local docker_env=""
+  if [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]]; then
+    docker_env="${MAIN_ENV_FILE_ABS}.docker"
+    if [[ "${DRY_RUN}" == "1" ]]; then
+      note "would sanitize ${MAIN_ENV_FILE_ABS} -> ${docker_env} for docker --env-file"
+    else
+      docker_env_file_from "${MAIN_ENV_FILE_ABS}" "${docker_env}"
+    fi
+    args+=(--env-file "${docker_env}")
+  fi
   args+=(-e DEVSHARDS_JSON='[]' -e DEVSHARD_STORAGE_DIR="${TEMP_STORAGE_CONTAINER_DIR}" -e DEVSHARD_PORT=8080
          -p "127.0.0.1:${TEMP_ADMIN_PORT}:8080" -v "${STORAGE_HOST_DIR_ABS}:/root/.devshardctl" "${IMAGE_TO_REF}")
   run "${args[@]}"
 }
 
-# Rewrite the compose image tag from_ref -> to_ref. Portable (sed to a temp file
-# then mv; no GNU-only -i). Idempotent; backs up first; fails loudly if absent.
+# Rewrite the compose image ref from_ref -> to_ref (full repo:tag strings).
+# Portable (sed to a temp file then mv; no GNU-only -i). Idempotent; backs up
+# first; fails loudly if absent. Supports cross-repository upgrades.
 compose_bump() {
   local file="${COMPOSE_FILE}" from="${IMAGE_FROM_REF}" to="${IMAGE_TO_REF}"
   [[ -f "${file}" ]] || { gate_fail "compose file not found: ${file}"; return 1; }
@@ -352,13 +395,37 @@ TEMP_STORAGE_CONTAINER_DIR='${TEMP_STORAGE_CONTAINER_DIR}'
 TEMP_DEVSHARDS_FILE='${TEMP_DEVSHARDS_FILE}'
 EOF
 }
+# Canary/single-step invokes update.sh per step (new process). Load prior init
+# state, or create it if missing (e.g. dry-run prepare after init skipped write).
+ensure_runstate() {
+  if [[ -n "${TEMP_STORAGE_HOST_DIR:-}" && -n "${TEMP_CONTAINER:-}" ]]; then
+    return 0
+  fi
+  if [[ -f "${RUN_STATE_FILE}" ]]; then
+    # shellcheck disable=SC1090
+    source "${RUN_STATE_FILE}"
+  fi
+  if [[ -z "${TEMP_STORAGE_HOST_DIR:-}" || -z "${TEMP_CONTAINER:-}" ]]; then
+    runstate_init
+    mkdir -p "${STORAGE_HOST_DIR_ABS}"
+    runstate_write
+    note "run state initialized (${RUN_ID}) at ${RUN_STATE_FILE}"
+  fi
+}
 
 # --- steps -------------------------------------------------------------------
 
 step_init() {
   run mkdir -p "${STORAGE_HOST_DIR_ABS}"
   runstate_init
-  if [[ "${DRY_RUN}" == "1" ]]; then note "would write run state (run id ${RUN_ID}) to ${RUN_STATE_FILE}"; return 0; fi
+  # Always persist so later single-step / canary invocations can source it
+  # (including dry-run prepare, which runs each step in a new process).
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    mkdir -p "${STORAGE_HOST_DIR_ABS}"
+    runstate_write
+    note "would continue with run id ${RUN_ID}; wrote dry-run state ${RUN_STATE_FILE}"
+    return 0
+  fi
   mkdir -p "${STORAGE_HOST_DIR_ABS}"; runstate_write
   note "run id ${RUN_ID}; state ${RUN_STATE_FILE}"
 }
@@ -393,7 +460,58 @@ step_disable_main_rotation() {
   gate_ok "MAIN escrow_rotation disabled"
 }
 
+# On a protocol change, stage DEVSHARD_ROUTE_PREFIX in MAIN's env file so temp
+# (and later recreated MAIN) read the target route. Running MAIN keeps its old
+# env until recreate — Docker only applies --env-file at container create.
+stage_target_route_prefix() {
+  if [[ "${SOURCE_PROTOCOL_VERSION#v}" == "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
+    note "same protocol; leaving DEVSHARD_ROUTE_PREFIX in env file unchanged"
+    return 0
+  fi
+  [[ -n "${TARGET_ROUTE_PREFIX}" ]] ||
+    { gate_fail "protocol change needs escrow.route_prefix or derivable /devshard/v<protocol>"; return 1; }
+  [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] ||
+    { gate_fail "main.env_file missing; cannot stage DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX}"; return 1; }
+
+  note "stage DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX} in ${MAIN_ENV_FILE_ABS}"
+  if [[ "${DRY_RUN}" == "1" ]]; then
+    note "would backup env file and set DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX}"
+    return 0
+  fi
+
+  local backup="${MAIN_ENV_FILE_ABS}.bak-route-$(date -u +%Y%m%dT%H%M%SZ)"
+  cp "${MAIN_ENV_FILE_ABS}" "${backup}"
+  note "env backup: ${backup}"
+
+  if grep -qE '^(export[[:space:]]+)?DEVSHARD_ROUTE_PREFIX=' "${MAIN_ENV_FILE_ABS}"; then
+    # Portable in-place replace (no GNU sed -i).
+    local tmp="${MAIN_ENV_FILE_ABS}.route-tmp"
+    sed -E "s|^(export[[:space:]]+)?DEVSHARD_ROUTE_PREFIX=.*|\\1DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX}|" \
+      "${MAIN_ENV_FILE_ABS}" > "${tmp}"
+    mv "${tmp}" "${MAIN_ENV_FILE_ABS}"
+  else
+    printf '\n# staged by update.sh for protocol %s -> %s\nDEVSHARD_ROUTE_PREFIX=%s\n' \
+      "${SOURCE_PROTOCOL_VERSION}" "${ESCROW_PROTOCOL_VERSION}" "${TARGET_ROUTE_PREFIX}" \
+      >> "${MAIN_ENV_FILE_ABS}"
+  fi
+
+  grep -qE "^(export[[:space:]]+)?DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX}$" "${MAIN_ENV_FILE_ABS}" ||
+    { gate_fail "failed to stage DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX}"; return 1; }
+
+  # Running MAIN must still be on the old env (not recreated yet).
+  local live
+  live="$(docker exec "${MAIN_CONTAINER}" printenv DEVSHARD_ROUTE_PREFIX 2>/dev/null || true)"
+  if [[ "${live}" == "${TARGET_ROUTE_PREFIX}" ]]; then
+    gate_fail "running ${MAIN_CONTAINER} already has DEVSHARD_ROUTE_PREFIX=${live}; expected it to still be on the source route until recreate"
+    return 1
+  fi
+  note "running MAIN DEVSHARD_ROUTE_PREFIX='${live:-<unset>}' (unchanged until recreate); file staged for temp/new MAIN"
+  gate_ok "staged DEVSHARD_ROUTE_PREFIX=${TARGET_ROUTE_PREFIX} in env file"
+}
+
 step_create_temp_gateway() {
+  stage_target_route_prefix
+  ensure_runstate
   need_key
   run mkdir -p "${TEMP_STORAGE_HOST_DIR}"
   if [[ "${IMAGE_SKIP_PULL}" == "true" ]]; then
@@ -409,6 +527,7 @@ step_create_temp_gateway() {
 }
 
 step_create_temp_escrows() {
+  ensure_runstate
   need_key
   local model count amount i body
   if [[ "${DRY_RUN}" == "1" ]]; then
@@ -431,6 +550,7 @@ step_create_temp_escrows() {
 }
 
 step_check_temp() {
+  ensure_runstate
   need_key
   [[ "${DRY_RUN}" == "1" ]] && { note "would verify temp readiness, settings alignment, per-model routable escrows, and a chat smoke test"; return 0; }
   wait_ready "temp gateway" "${TEMP_ADMIN_URL}"
@@ -455,6 +575,21 @@ step_drain_main() {
   wait_drain "main gateway" "${MAIN_ADMIN_URL}"
 }
 
+# Active MAIN escrows whose protocol_version matches $1 (strip leading v), or
+# is missing/null/empty. Older gateways omit the field; treat that as source
+# during a protocol change so deactivate cannot no-op while traffic still has
+# active pre-protocol escrows.
+jq_active_source_escrows() {
+  local source="$1"
+  jq -r --arg p "${source}" '
+    def proto:
+      if (.protocol_version == null) then ""
+      else (.protocol_version | tostring | sub("^v"; ""))
+      end;
+    [.devshards[]? | select(.active == true and (proto == $p or proto == ""))]
+  '
+}
+
 step_deactivate_main_source() {
   need_key
   if [[ "${SOURCE_PROTOCOL_VERSION#v}" == "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
@@ -462,7 +597,7 @@ step_deactivate_main_source() {
     return 0
   fi
   [[ "${DRY_RUN}" == "1" ]] && {
-    note "would deactivate active protocol-${SOURCE_PROTOCOL_VERSION#v} escrows on drained MAIN (no settlement)"
+    note "would deactivate active protocol-${SOURCE_PROTOCOL_VERSION#v} (or missing protocol_version) escrows on drained MAIN (no settlement)"
     return 0
   }
   confirm "deactivate source-protocol escrows on drained MAIN (local only; no settlement)"
@@ -473,10 +608,10 @@ step_deactivate_main_source() {
     admin_post "${MAIN_ADMIN_URL}" "/v1/admin/devshards/${id}/deactivate" '{}' >/dev/null
     count=$(( count + 1 ))
   done < <(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
-    jq -r --arg p "${source}" '.devshards[]? | select(.active==true and (.protocol_version|tostring)==$p) | .id')
+    jq_active_source_escrows "${source}" | jq -r '.[].id')
   local remaining
   remaining="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
-    jq --arg p "${source}" '[.devshards[]? | select(.active==true and (.protocol_version|tostring)==$p)] | length')"
+    jq_active_source_escrows "${source}" | jq 'length')"
   (( remaining == 0 )) ||
     { gate_fail "${remaining} source-protocol escrow(s) remain active on main"; return 1; }
   gate_ok "deactivated ${count} source-protocol escrow(s) on main without settlement"
@@ -690,7 +825,8 @@ main() {
 
   STORAGE_HOST_DIR_ABS="$(abspath "${MAIN_STORAGE_HOST_DIR}")"
   MAIN_ENV_FILE_ABS=""; [[ -n "${MAIN_ENV_FILE}" ]] && MAIN_ENV_FILE_ABS="$(abspath "${MAIN_ENV_FILE}")"
-  RUN_STATE_FILE="${STORAGE_HOST_DIR_ABS}/blue-green-run-state.env"
+  # Keep operator-writable next to the deploy dir (.devshardctl is often root-owned).
+  RUN_STATE_FILE="${DEPLOY_DIR}/blue-green-run-state.env"
   # shellcheck disable=SC1090
   [[ -f "${RUN_STATE_FILE}" ]] && source "${RUN_STATE_FILE}"
 
@@ -707,7 +843,7 @@ main() {
         [[ "${#steps[@]}" -gt 0 ]] || { echo "unknown --from-step: ${FROM_STEP}" >&2; exit 2; }
       fi
       run_flow "${steps[@]}"
-      echo "update complete: ${IMAGE_FROM_TAG} -> ${IMAGE_TO_TAG}"
+      echo "update complete: ${IMAGE_FROM_REF} -> ${IMAGE_TO_REF}"
       ;;
     *)
       local ok=0 s
