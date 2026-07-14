@@ -129,6 +129,52 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
+type countingGetEscrowBridge struct {
+	bridge.MainnetBridge
+	calls int
+}
+
+func (b *countingGetEscrowBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+	b.calls++
+	return b.MainnetBridge.GetEscrow(escrowID)
+}
+
+func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
+	const escrowID = "owner-bind-once"
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+	}
+	inner := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       escrowID,
+			EpochID:        7,
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
+		},
+	}
+	br := &countingGetEscrowBridge{MainnetBridge: inner}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	e := echo.New()
+	mgr.Register(e.Group(""))
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	_ = signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Equal(t, testutil.RuntimeTestVersion, meta.Version)
+	require.Equal(t, 1, br.calls, "first-bind path must GetEscrow once (reuse for BuildGroup + CreateSession)")
+}
+
 func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
 	const escrowID = "non-owner-bind"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
@@ -178,7 +224,7 @@ func TestGetOrCreate_RecoversBeforeCreate(t *testing.T) {
 	}
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
 
-	srv, err := mgr.getOrCreate("1")
+	srv, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(2), srv.Host().SnapshotState().LatestNonce)
 }

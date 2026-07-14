@@ -56,10 +56,11 @@ type HostManager struct {
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
 
-	statsMu           sync.Mutex
-	statsShardsCache  *statsShardsResponse
-	statsShardsCached time.Time
-	statsDetailsCache map[string]statsShardDetailCache
+	statsMu            sync.Mutex
+	statsShardsCache   *statsShardsResponse
+	statsShardsCached  time.Time
+	statsDetailsCache  map[string]statsShardDetailCache
+	statsNegativeCache map[string]statsNegativeCacheEntry
 }
 
 const (
@@ -98,6 +99,7 @@ func NewHostManager(
 		payloadStore:       ps,
 		recorder:           recorder,
 		statsDetailsCache:  make(map[string]statsShardDetailCache),
+		statsNegativeCache: make(map[string]statsNegativeCacheEntry),
 	}
 }
 
@@ -130,7 +132,7 @@ func (m *HostManager) Close() error {
 // SessionServer resolves or creates the per-escrow transport server.
 // Prefer BindOwnerChat for HTTP chat; this remains for tests and explicit bind.
 func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) {
-	return m.getOrCreate(escrowID)
+	return m.getOrCreate(escrowID, nil)
 }
 
 // SessionServerExisting returns a live or recovered session server.
@@ -177,7 +179,8 @@ func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
 	}
 
-	srv, err = m.getOrCreate(escrowID)
+	// Pass the already-fetched escrow so create() does not GetEscrow again.
+	srv, err = m.getOrCreate(escrowID, escrow)
 	if err != nil {
 		return nil, err
 	}
@@ -209,7 +212,10 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	return nil
 }
 
-func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
+// getOrCreate returns a live session, recovering from store or creating.
+// When escrow is non-nil (BindOwnerChat first-bind path), create reuses it and
+// skips a second bridge.GetEscrow.
+func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
@@ -234,7 +240,7 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 			return nil, err
 		}
 
-		srv, err = m.create(escrowID)
+		srv, err = m.create(escrowID, escrow)
 		if err != nil {
 			return nil, err
 		}
@@ -330,15 +336,18 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	return len(evicted)
 }
 
-func (m *HostManager) create(escrowID string) (*transport.Server, error) {
-	group, err := bridge.BuildGroup(escrowID, m.bridge)
-	if err != nil {
-		return nil, fmt.Errorf("build group: %w", err)
+func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
+	if escrow == nil {
+		var err error
+		escrow, err = m.bridge.GetEscrow(escrowID)
+		if err != nil {
+			return nil, fmt.Errorf("get escrow: %w", err)
+		}
 	}
 
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	group, err := bridge.BuildGroupFromEscrow(escrow)
 	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
+		return nil, fmt.Errorf("build group: %w", err)
 	}
 
 	creatorAddr := escrow.CreatorAddress

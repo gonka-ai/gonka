@@ -7,7 +7,6 @@ import (
 	"net/http/httptest"
 	"net/http/httputil"
 	"net/url"
-	"sort"
 	"strings"
 	"sync/atomic"
 )
@@ -38,8 +37,10 @@ func WithSessionVersionLookup(lookup SessionVersionLookup) HandlerOption {
 // Example: /v0.2.11/chat/completions -> localhost:9001/chat/completions
 //
 // Versionless observability paths (sessions/.../diffs|mempool|signatures,
-// stats/..., metrics, healthz) are forwarded without a version prefix so join
+// stats/..., metrics) are forwarded without a version prefix so join
 // proxy can rewrite legacy /{version}/obs URLs onto canonical versionless URLs.
+// /healthz is intentionally NOT versionless here: versiond registers its own
+// /healthz on the mux (supervisor status). Child health is /{version}/healthz.
 func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 	var cfg handlerConfig
 	for _, opt := range opts {
@@ -80,7 +81,7 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 // a protocol version segment. payloads stays versioned (validator protocol).
 func isVersionlessObsPath(path string) bool {
 	switch path {
-	case "metrics", "healthz":
+	case "metrics":
 		return true
 	}
 	if path == "stats" || strings.HasPrefix(path, "stats/") {
@@ -103,19 +104,21 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routeMap map[st
 		return
 	}
 
-	// Process-level obs (/metrics, /healthz, /stats/shards list): pin to primary.
+	// Process-level obs (/metrics, /stats/shards list): pin to primary.
 	// Multi-version aggregation of /stats/shards is deferred; primary is the
-	// lexicographic-max approved version (documented limitation for non-HA / multi-version lists).
+	// newest approved version by numeric/dotted comparison (not lexicographic).
+	// /healthz is owned by versiond's mux (not this handler).
 	escrowID, scoped := escrowIDFromObsPath(rest)
 	if !scoped {
-		reverseProxy(routeMap[versions[len(versions)-1]], rest).ServeHTTP(w, r)
+		reverseProxy(routeMap[primaryVersion(versions)], rest).ServeHTTP(w, r)
 		return
 	}
 
 	if lookup != nil {
 		ver, ok, err := lookup.LookupSessionVersion(r.Context(), escrowID)
 		if err != nil {
-			// Shared index unavailable — degrade to fan-out.
+			// Shared index unavailable — degrade to fan-out (visible via warn + counter).
+			noteLookupFanout(escrowID, err)
 			serveSessionObsFanout(w, r, routeMap, versions, rest)
 			return
 		}
@@ -137,7 +140,9 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routeMap map[st
 
 func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routeMap map[string]string, versions []string, rest string) {
 	var fallback409 *httptest.ResponseRecorder
-	for _, ver := range versions {
+	// Try newest first — more likely to own recently bound escrows.
+	for i := len(versions) - 1; i >= 0; i-- {
+		ver := versions[i]
 		rec := httptest.NewRecorder()
 		reverseProxy(routeMap[ver], rest).ServeHTTP(rec, r.Clone(r.Context()))
 		switch {
@@ -176,15 +181,6 @@ func escrowIDFromObsPath(rest string) (string, bool) {
 		return parts[2], true
 	}
 	return "", false
-}
-
-func sortedVersions(routeMap map[string]string) []string {
-	versions := make([]string, 0, len(routeMap))
-	for v := range routeMap {
-		versions = append(versions, v)
-	}
-	sort.Strings(versions)
-	return versions
 }
 
 func reverseProxy(target, rest string) *httputil.ReverseProxy {

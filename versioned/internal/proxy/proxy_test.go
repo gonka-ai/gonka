@@ -111,8 +111,8 @@ func TestProxy_VersionlessObs_Primary(t *testing.T) {
 	defer backend.Close()
 
 	addr := strings.TrimPrefix(backend.URL, "http://")
-	// Lexicographic max is v2 — process-level obs pins to primary.
-	routes := newRoutes(map[string]string{"v1": "127.0.0.1:1", "v2": addr})
+	// Numeric primary is v10 (not lexicographic "v2").
+	routes := newRoutes(map[string]string{"v2": "127.0.0.1:1", "v10": addr})
 	handler := Handler(routes)
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
@@ -124,6 +124,30 @@ func TestProxy_VersionlessObs_Primary(t *testing.T) {
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || string(body) != "path=/metrics" {
+		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+}
+
+func TestProxy_VersionlessObs_PrimarySemverIsh(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "ok")
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	// Lexicographic max would be v0.2.9; numeric primary must be v0.2.11.
+	routes := newRoutes(map[string]string{"v0.2.9": "127.0.0.1:1", "v0.2.11": addr})
+	handler := Handler(routes)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/stats/shards")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
 		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
 	}
 }
@@ -232,6 +256,7 @@ func TestProxy_VersionlessObs_LookupUnbound404(t *testing.T) {
 }
 
 func TestProxy_VersionlessObs_LookupErrorFallsBackToFanout(t *testing.T) {
+	resetLookupFanoutTelemetryForTest()
 	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "ok:%s", r.URL.Path)
 	}))
@@ -250,6 +275,19 @@ func TestProxy_VersionlessObs_LookupErrorFallsBackToFanout(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK || string(body) != "ok:/sessions/42/diffs" {
 		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
+	}
+	if got := LookupFanoutErrors(); got != 1 {
+		t.Fatalf("LookupFanoutErrors()=%d, want 1", got)
+	}
+
+	// Second miss increments counter; warn is rate-limited (not asserted here).
+	resp2, err := http.Get(srv.URL + "/sessions/42/diffs")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp2.Body.Close()
+	if got := LookupFanoutErrors(); got != 2 {
+		t.Fatalf("LookupFanoutErrors()=%d, want 2", got)
 	}
 }
 

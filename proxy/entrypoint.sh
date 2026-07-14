@@ -510,6 +510,13 @@ CHAIN_API_EXEMPT_ROUTES=${CHAIN_API_EXEMPT_ROUTES:-""}
 CHAIN_RPC_EXEMPT_ROUTES=${CHAIN_RPC_EXEMPT_ROUTES:-""}
 CHAIN_GRPC_EXEMPT_ROUTES=${CHAIN_GRPC_EXEMPT_ROUTES:-""}
 
+# Public DevShard observability (unauthenticated GETs). Tighter than exempt so
+# scrapers cannot amplify stats/diffs polling. Protocol (chat/gossip/payloads)
+# stays on the exempt catch-all under /devshard/.
+DEVSHARD_OBS_RATE_LIMIT_VAL=${DEVSHARD_OBS_RATE_LIMIT_RPS:-10}
+DEVSHARD_OBS_RATE_UNIT=${DEVSHARD_OBS_RATE_UNIT:-s}
+DEVSHARD_OBS_BURST=${DEVSHARD_OBS_BURST:-20}
+
 # Chain API
 CHAIN_API_RATE_LIMIT_VAL=${CHAIN_API_RATE_LIMIT_RPS:-20}
 CHAIN_API_RATE_UNIT=${CHAIN_API_RATE_UNIT:-m}
@@ -542,6 +549,7 @@ echo "Rate Limits:"
 echo "   Global: ${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT} (burst=${GLOBAL_BURST})"
 echo "   App API (Standard): ${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT} (burst=${GONKA_API_BURST})"
 echo "   App API (Exempt): ${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT} (burst=${EXEMPT_BURST}) -> [${GONKA_API_EXEMPT_ROUTES}]"
+echo "   DevShard obs: ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT} (burst=${DEVSHARD_OBS_BURST})"
 echo "   Chain API: ${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT} (burst=${CHAIN_API_BURST})"
 echo "   Chain RPC: ${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT} (burst=${CHAIN_RPC_BURST})"
 echo "   Chain gRPC: ${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT} (burst=${CHAIN_GRPC_BURST})"
@@ -556,6 +564,7 @@ echo "   Chain gRPC: [${CHAIN_GRPC_BLOCKED_ROUTES}]"
 export LIMIT_REQ_ZONE_GLOBAL="limit_req_zone \$\$whitelist_limit_key zone=global_zone:10m rate=${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT};"
 export LIMIT_REQ_ZONE_GONKA_API="limit_req_zone \$\$whitelist_limit_key zone=api_zone:10m rate=${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT};"
 export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$whitelist_limit_key zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
+export LIMIT_REQ_ZONE_DEVSHARD_OBS="limit_req_zone \$\$whitelist_limit_key zone=devshard_obs:10m rate=${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$whitelist_limit_key zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$whitelist_limit_key zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_GRPC="limit_req_zone \$\$whitelist_limit_key zone=grpc_zone:10m rate=${CHAIN_GRPC_RATE_LIMIT_VAL}r/${CHAIN_GRPC_RATE_UNIT};"
@@ -600,14 +609,16 @@ else
 fi
 
 # /devshard/ location -- forwards to versiond which dispatches to the matching
-# child binary. Treated as exempt (inference forwarding): streaming, long
-# timeouts, exempt rate/conn limits, CORS.
+# child binary.
 #
 # Phase 1: versioned observability paths are rewritten internally to versionless
 # canonical URLs (no client-visible redirect). Dashboards that hardcode
 # /devshard/{version}/sessions/.../diffs keep working; the version segment is
-# dropped before versiond so it cannot participate in protocol bind. Protocol
-# POSTs and payloads stay on /devshard/{version}/... via the catch-all below.
+# dropped before versiond so it cannot participate in protocol bind.
+#
+# Public obs (versionless + rewritten legacy) uses a tighter rate-limit zone.
+# Protocol POSTs and payloads stay on /devshard/{version}/... via the exempt
+# catch-all below (chat/SSE need high limits).
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     export DEVSHARD_VERSIOND_LOCATION="# Versioned obs → versionless (internal rewrite); protocol stays versioned
         location ~ ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ {
@@ -616,8 +627,62 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
         location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
             rewrite ^ /devshard/stats/shards\$\$1 last;
         }
-        location ~ ^/devshard/[^/]+/(metrics|healthz)\$ {
-            rewrite ^ /devshard/\$\$1 last;
+        location ~ ^/devshard/[^/]+/metrics\$ {
+            rewrite ^ /devshard/metrics last;
+        }
+        # /devshard/{version}/healthz is NOT rewritten — it must reach that child.
+        # Versionless /devshard/healthz is versiond's own supervisor health (mux).
+        # Versionless public observability — tighter than exempt protocol limits
+        location ~ ^/devshard/sessions/[^/]+/(diffs|mempool|signatures)\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            rewrite ^/devshard/(.*)\$ /\$\$1 break;
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/devshard/stats/ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            rewrite ^/devshard/(.*)\$ /\$\$1 break;
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/devshard/(metrics|healthz)\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            rewrite ^/devshard/(.*)\$ /\$\$1 break;
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
         location /devshard/ {
             set \$limit_zone_name \"EXEMPT\";
@@ -640,6 +705,7 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
         }"
 else
     export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
+    export LIMIT_REQ_ZONE_DEVSHARD_OBS=""
 fi
 
 # --------------------------------------------------------------------------------
@@ -1144,7 +1210,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$JAEGER_PORT,\$JAEGER_BASE_PATH,\$JAEGER_UPSTRE
 ENVSUBST_VARS="${ENVSUBST_VARS},\$GRAFANA_PORT,\$GRAFANA_BASE_PATH,\$GRAFANA_UPSTREAM,\$GRAFANA_LOCATION"
 
 # Group 5: Rate Limiting Zones
-ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT,\$LIMIT_REQ_ZONE_DEVSHARD_OBS"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_CHAIN_RPC,\$LIMIT_REQ_ZONE_CHAIN_API,\$LIMIT_REQ_ZONE_CHAIN_GRPC"
 
 # Group 5b: Concurrency Zones and Rules
@@ -1218,7 +1284,9 @@ fi
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     echo "   /devshard/*    -> Versiond (devshard binaries)"
     echo "   /devshard/{v}/sessions/*/diffs|mempool|signatures -> rewrite /devshard/sessions/..."
-    echo "   /devshard/{v}/stats/* /metrics /healthz -> rewrite versionless (internal)"
+    echo "   /devshard/{v}/stats/* /metrics -> rewrite versionless (internal)"
+    echo "   /devshard/{v}/healthz -> child (not rewritten); /devshard/healthz -> versiond"
+    echo "   /devshard/sessions|stats|metrics|healthz -> obs rate limit ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT}"
     echo "   /v1/devshard/* -> /devshard/v1/* (legacy rewrite)"
 fi
 echo "   /health        -> Health check"
