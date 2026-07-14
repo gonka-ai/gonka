@@ -6,7 +6,8 @@ import (
 	"strings"
 )
 
-// SMST_COW / SMST_DEFERRED_HASH / SMST_SNAPSHOT_IN_MEMORY_CLONE default on when unset.
+// SMST_COW / SMST_DEFERRED_HASH / SMST_SNAPSHOT_IN_MEMORY_CLONE /
+// SMST_PARALLEL_HASH default on when unset.
 // Profiling overrides:
 //
 //	SMST_COW=0             — in-place Insert (no path-copy)
@@ -14,9 +15,11 @@ import (
 //	SMST_SNAPSHOT_IN_MEMORY_CLONE=0  — tip Prebuild rebuilds from artifacts without holding
 //	                         the write lock (upgrade-v0.2.14 Warm/Prebuild path);
 //	                         default 1 = deep in-memory clone under write lock
+//	SMST_PARALLEL_HASH=0   — serial ensureHashed; default 1 = multicore fill
 const envSMSTCOW = "SMST_COW"
 const envSMSTDeferredHash = "SMST_DEFERRED_HASH"
 const envSMSTSnapshotInMemoryClone = "SMST_SNAPSHOT_IN_MEMORY_CLONE"
+const envSMSTParallelHash = "SMST_PARALLEL_HASH"
 
 func smstEnvBool(key string, def bool) bool {
 	v := strings.TrimSpace(os.Getenv(key))
@@ -51,6 +54,11 @@ func smstDeferredHashFromEnv() bool {
 // Default true. Ignored when COW retains O(1) at flush.
 func smstSnapshotInMemoryCloneFromEnv() bool {
 	return smstEnvBool(envSMSTSnapshotInMemoryClone, true)
+}
+
+// smstParallelHashFromEnv reports multicore ensureHashed; default true.
+func smstParallelHashFromEnv() bool {
+	return smstEnvBool(envSMSTParallelHash, true)
 }
 
 // smstSnapshot is an immutable capture of the tree at a specific leaf count.

@@ -478,11 +478,12 @@ func TestSMSTCOWDisabledEarlyArtifactRebuild(t *testing.T) {
 }
 
 // TestSMSTDefaultsDeferredAndCOW ensures unset env keeps production defaults:
-// deferred hashing on, COW on, tip snapshot clone on.
+// deferred hashing on, COW on, tip snapshot clone on, parallel hash on.
 func TestSMSTDefaultsDeferredAndCOW(t *testing.T) {
 	t.Setenv(envSMSTCOW, "")
 	t.Setenv(envSMSTDeferredHash, "")
 	t.Setenv(envSMSTSnapshotInMemoryClone, "")
+	t.Setenv(envSMSTParallelHash, "")
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
 	if err != nil {
@@ -497,5 +498,8 @@ func TestSMSTDefaultsDeferredAndCOW(t *testing.T) {
 	}
 	if !store.snapshotInMemoryClone {
 		t.Fatal("snapshotInMemoryClone default want true")
+	}
+	if !store.smst.parallelHash {
+		t.Fatal("parallelHash default want true")
 	}
 }

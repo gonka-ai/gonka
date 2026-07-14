@@ -143,6 +143,7 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		snapshotInMemoryClone: smstSnapshotInMemoryCloneFromEnv(),
 	}
 	s.smst.deferredHash = smstDeferredHashFromEnv()
+	s.smst.parallelHash = smstParallelHashFromEnv()
 
 
 	if err := s.recover(); err != nil {
@@ -1036,6 +1037,7 @@ func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []buffe
 	// bake in expansions caused by artifacts inserted after that commit,
 	// producing a root that no longer matches the committed one.
 	tree := NewSMST(smstDefaultDepth)
+	tree.parallelHash = smstParallelHashFromEnv()
 
 	// Read flushed artifacts from disk
 	var skipped uint32

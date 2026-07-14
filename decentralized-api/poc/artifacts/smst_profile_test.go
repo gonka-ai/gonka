@@ -15,9 +15,12 @@ import (
 // only the tree stays resident, isolating the tree's own cost. Env-gated: set
 // SMST_PROF_N to the leaf count to run a single scale, e.g.
 //
-//	SMST_PROF_N=1000000 go test ./poc/artifacts/ -run TestSMSTBuildProfile -v -timeout 30m
+//	SMST_PROF_N=1000000 SMST_DEFERRED_HASH=1 SMST_PARALLEL_HASH=1 \
+//	  go test ./poc/artifacts/ -run TestSMSTBuildProfile -v -timeout 30m
 //
 // Run once per scale in its own process so heap is released between runs.
+// Reports insert time vs GetRoot/ensureHashed time separately so deferred
+// multicore fill is visible.
 func TestSMSTBuildProfile(t *testing.T) {
 	v := os.Getenv("SMST_PROF_N")
 	if v == "" {
@@ -33,17 +36,23 @@ func TestSMSTBuildProfile(t *testing.T) {
 	runtime.GC()
 	runtime.ReadMemStats(&m0)
 
-	t0 := time.Now()
 	tree := NewSMST(0)
 	tree.deferredHash = smstDeferredHashFromEnv()
+	tree.parallelHash = smstParallelHashFromEnv()
+
+	tIns := time.Now()
 	for i := 0; i < n; i++ {
 		leaf := smstHashLeaf(testVector(i))
 		if _, err := tree.Insert(int32(i*stride), leaf); err != nil {
 			t.Fatalf("insert %d: %v", i, err)
 		}
 	}
+	insElapsed := time.Since(tIns)
+
+	tRoot := time.Now()
 	root, count := tree.GetRoot()
-	elapsed := time.Since(t0)
+	rootElapsed := time.Since(tRoot)
+	elapsed := insElapsed + rootElapsed
 
 	runtime.GC()
 	runtime.ReadMemStats(&m1)
@@ -51,8 +60,10 @@ func TestSMSTBuildProfile(t *testing.T) {
 
 	heapBytes := int64(m1.HeapAlloc) - int64(m0.HeapAlloc)
 	mb := float64(heapBytes) / (1024 * 1024)
-	t.Logf("deferred=%v N=%-9d depth=%d  ingest=%-12s  %6.0f ns/leaf  heap=%8.1f MB  %5.0f B/leaf  root=%x count=%d",
-		tree.deferredHash, n, tree.Depth(), elapsed.Round(time.Millisecond), float64(elapsed.Nanoseconds())/float64(n),
+	t.Logf("RESULT deferred=%v parallel=%v N=%-9d depth=%d  insert=%-12s  getroot=%-12s  total=%-12s  %6.0f ns/leaf  heap=%8.1f MB  %5.0f B/leaf  root=%x count=%d",
+		tree.deferredHash, tree.parallelHash, n, tree.Depth(),
+		insElapsed.Round(time.Millisecond), rootElapsed.Round(time.Microsecond), elapsed.Round(time.Millisecond),
+		float64(elapsed.Nanoseconds())/float64(n),
 		mb, float64(heapBytes)/float64(n), root[:6], count)
 }
 
@@ -63,18 +74,22 @@ const profEarlyFlush = 10 // 1/3 of 30
 // N leaves across 30 equal flushes; at flush #10 (1/3) the early commit is
 // snapshotted via PrebuildSnapshot. Then an early-count proof is timed.
 //
-// Modes (each in its own process):
+// Deferred × parallel matrix (COW on so snap cost stays out of the way):
 //
-//	# deep clone under write lock (default tip snap when COW off)
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=0 SMST_SNAPSHOT_IN_MEMORY_CLONE=1 \
+//	# deferred + multicore ensureHashed (production-like)
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_PARALLEL_HASH=1 SMST_COW=1 \
 //	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 //
-//	# upgrade-v0.2.14-style artifact rebuild (no write lock during rebuild)
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=0 SMST_SNAPSHOT_IN_MEMORY_CLONE=0 \
+//	# deferred + serial ensureHashed
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_PARALLEL_HASH=0 SMST_COW=1 \
 //	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 //
-//	# deferred + COW (production): O(1) retain at flush; Prebuild is a no-op
-//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=1 SMST_COW=1 \
+//	# eager path hash + parallel flag (parallel unused on per-insert path)
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=0 SMST_PARALLEL_HASH=1 SMST_COW=1 \
+//	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
+//
+//	# eager path hash, serial
+//	SMST_PROF_N=300000 SMST_DEFERRED_HASH=0 SMST_PARALLEL_HASH=0 SMST_COW=1 \
 //	  go test ./poc/artifacts/ -run TestSMSTStoreFlush30Profile -v
 func TestSMSTStoreFlush30Profile(t *testing.T) {
 	v := os.Getenv("SMST_PROF_N")
@@ -144,12 +159,12 @@ func TestSMSTStoreFlush30Profile(t *testing.T) {
 	globalSnapshotCache.mu.Unlock()
 	_, retainedHit := store.retained[earlyCount]
 
-	mode := fmt.Sprintf("deferred=%v cow=%v snap_in_mem=%v", store.smst.deferredHash, store.cowEnabled, store.snapshotInMemoryClone)
-	t.Logf("RESULT mode=%s N=%d flushes=%d early_flush=%d early_count=%d ingest=%s snap=%s early_proof=%s ns/leaf=%.0f retained_hit=%v cache_hit=%v retained_n=%d",
+	mode := fmt.Sprintf("deferred=%v parallel=%v cow=%v", store.smst.deferredHash, store.smst.parallelHash, store.cowEnabled)
+	t.Logf("RESULT mode=%s N=%d flushes=%d early_flush=%d early_count=%d ingest=%s snap=%s early_proof=%s ns/leaf=%.0f retained_hit=%v cache_hit=%v retained_n=%d gomaxprocs=%d",
 		mode, n, profFlushCount, profEarlyFlush, earlyCount,
 		ingestElapsed.Round(time.Millisecond),
 		snapElapsed.Round(time.Microsecond),
 		proofElapsed.Round(time.Microsecond),
 		float64(ingestElapsed.Nanoseconds())/float64(n),
-		retainedHit, cacheHit, len(store.retained))
+		retainedHit, cacheHit, len(store.retained), runtime.GOMAXPROCS(0))
 }

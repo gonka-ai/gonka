@@ -1,6 +1,7 @@
 package artifacts
 
 import (
+	"bytes"
 	"crypto/sha256"
 	"encoding/binary"
 	"fmt"
@@ -120,6 +121,43 @@ func TestDeferredGetRootStableAndIdempotent(t *testing.T) {
 	}
 	if string(first) != string(second) {
 		t.Fatalf("root not stable across GetRoot calls")
+	}
+}
+
+// TestParallelHashMatchesSerial checks multicore ensureHashed produces the same
+// root as serial fill (and as eager inserts).
+func TestParallelHashMatchesSerial(t *testing.T) {
+	const n = 20_000
+	const stride = 100
+
+	build := func(deferred, parallel bool) []byte {
+		tree := NewSMST(0)
+		tree.deferredHash = deferred
+		tree.parallelHash = parallel
+		for i := 0; i < n; i++ {
+			if _, err := tree.Insert(int32(i*stride), smstHashLeaf(testVector(i))); err != nil {
+				t.Fatalf("insert %d: %v", i, err)
+			}
+		}
+		root, count := tree.GetRoot()
+		if count != n {
+			t.Fatalf("count=%d want %d", count, n)
+		}
+		return root
+	}
+
+	serial := build(true, false)
+	parallel := build(true, true)
+	eager := build(false, false)
+	eagerPar := build(false, true) // parallel unused on eager path fill; root must still match
+	if !bytes.Equal(serial, parallel) {
+		t.Fatalf("deferred serial vs parallel root mismatch:\n serial=%x\n paral=%x", serial, parallel)
+	}
+	if !bytes.Equal(serial, eager) {
+		t.Fatalf("deferred vs eager root mismatch:\n def=%x\n eager=%x", serial, eager)
+	}
+	if !bytes.Equal(eager, eagerPar) {
+		t.Fatalf("eager serial vs parallel-flag root mismatch:\n a=%x\n b=%x", eager, eagerPar)
 	}
 }
 
