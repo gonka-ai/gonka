@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +41,15 @@ type distributionEntry struct {
 	Dist  map[string]uint32 `json:"dist"`
 }
 
+// flushedRootEntry is a single line in flushed_roots.jsonl. This is the
+// durable record of committed flush counts (and their roots), independent of
+// distributions.jsonl — so a failed distribution append cannot make an
+// on-chain flush count unprovable after restart.
+type flushedRootEntry struct {
+	Count uint32 `json:"count"`
+	Root  string `json:"root"` // hex-encoded SMST root
+}
+
 // SMSTArtifactStore provides artifact storage with SMST commitments.
 // Nonce determines tree position, making duplicates impossible by design.
 type SMSTArtifactStore struct {
@@ -70,6 +80,7 @@ type SMSTArtifactStore struct {
 
 	distributionHistory map[uint32]map[string]uint32 // count -> distribution snapshot
 	distFile            *os.File                     // distributions.jsonl (append-only)
+	rootsFile           *os.File                     // flushed_roots.jsonl (append-only)
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -82,6 +93,7 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 
 	dataPath := filepath.Join(dir, "artifacts.data")
 	distPath := filepath.Join(dir, "distributions.jsonl")
+	rootsPath := filepath.Join(dir, "flushed_roots.jsonl")
 
 	dataFile, err := os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -94,10 +106,18 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		return nil, fmt.Errorf("open distributions file: %w", err)
 	}
 
+	rootsFile, err := os.OpenFile(rootsPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		dataFile.Close()
+		distFile.Close()
+		return nil, fmt.Errorf("open flushed roots file: %w", err)
+	}
+
 	s := &SMSTArtifactStore{
 		dir:                 dir,
 		dataFile:            dataFile,
 		distFile:            distFile,
+		rootsFile:           rootsFile,
 		buffer:              make([]bufferedArtifact, 0, 1024),
 		offsets:             make([]uint64, 0, 1024),
 		nonceToOffset:       make(map[int32]uint64),
@@ -112,6 +132,7 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 	if err := s.recover(); err != nil {
 		s.dataFile.Close()
 		s.distFile.Close()
+		s.rootsFile.Close()
 		return nil, fmt.Errorf("recover: %w", err)
 	}
 
@@ -125,16 +146,26 @@ func (s *SMSTArtifactStore) recover() error {
 	}
 
 	if info.Size() == 0 {
+		if err := s.recoverFlushedRoots(); err != nil {
+			log.Printf("warning: failed to recover flushed roots: %v", err)
+		}
 		return s.recoverDistributionHistory()
 	}
 
-	// Recover the committed (flush) counts first: the replay below re-captures a
-	// retained copy-on-write snapshot at each, so proofs at committed counts are
-	// served in O(depth) after a restart with no on-demand rebuild.
+	// Recover durable committed counts before replaying so mid-replay can
+	// re-capture retained COW snapshots at each. Prefer flushed_roots.jsonl
+	// (authoritative for flush boundaries); also union distributionHistory for
+	// stores that predate the roots file.
+	if err := s.recoverFlushedRoots(); err != nil {
+		log.Printf("warning: failed to recover flushed roots: %v", err)
+	}
 	if err := s.recoverDistributionHistory(); err != nil {
 		log.Printf("warning: failed to recover distribution history: %v", err)
 	}
-	committed := make(map[uint32]struct{}, len(s.distributionHistory))
+	committed := make(map[uint32]struct{}, len(s.flushedRoots)+len(s.distributionHistory))
+	for c := range s.flushedRoots {
+		committed[c] = struct{}{}
+	}
 	for c := range s.distributionHistory {
 		committed[c] = struct{}{}
 	}
@@ -174,6 +205,10 @@ func (s *SMSTArtifactStore) recover() error {
 
 		if _, ok := committed[s.smst.Count()]; ok {
 			rootHash, _ := s.smst.GetRoot() // hashes the tree before capture
+			if prev, ok := s.flushedRoots[s.smst.Count()]; ok && prev != nil && !bytes.Equal(prev, rootHash) {
+				log.Printf("warning: flushed root mismatch at count %d: persisted=%x recomputed=%x",
+					s.smst.Count(), prev, rootHash)
+			}
 			s.flushedRoots[s.smst.Count()] = rootHash
 			s.captureRetainedLocked()
 		}
@@ -185,6 +220,12 @@ func (s *SMSTArtifactStore) recover() error {
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
 	s.captureRetainedLocked()
+
+	// Backfill flushed_roots.jsonl for stores that only had distributionHistory
+	// (upgrade path), so a later dist-only loss cannot drop those counts.
+	if err := s.backfillFlushedRootsLocked(); err != nil {
+		log.Printf("warning: failed to backfill flushed roots: %v", err)
+	}
 
 	return nil
 }
@@ -232,6 +273,86 @@ func (s *SMSTArtifactStore) recoverDistributionHistory() error {
 		s.nodeCounts[k] = v
 	}
 
+	return nil
+}
+
+func (s *SMSTArtifactStore) recoverFlushedRoots() error {
+	if s.rootsFile == nil {
+		return nil
+	}
+	if _, err := s.rootsFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek flushed roots file: %w", err)
+	}
+
+	reader := bufio.NewReader(s.rootsFile)
+	lineNum := 0
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read flushed roots file: %w", err)
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			lineNum++
+			var entry flushedRootEntry
+			if jsonErr := json.Unmarshal(line, &entry); jsonErr != nil {
+				log.Printf("warning: skipping corrupted flushed root entry at line %d: %v", lineNum, jsonErr)
+			} else if entry.Count > 0 {
+				root, decErr := hex.DecodeString(entry.Root)
+				if decErr != nil || len(root) == 0 {
+					log.Printf("warning: skipping flushed root entry at line %d: bad root hex: %v", lineNum, decErr)
+				} else {
+					s.flushedRoots[entry.Count] = root
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	return nil
+}
+
+// backfillFlushedRootsLocked appends any in-memory flushedRoots counts that are
+// missing from flushed_roots.jsonl (e.g. upgraded stores that only had
+// distributions.jsonl). Call after recover has recomputed roots.
+func (s *SMSTArtifactStore) backfillFlushedRootsLocked() error {
+	if s.rootsFile == nil {
+		return nil
+	}
+	persisted := make(map[uint32]struct{}, len(s.flushedRoots))
+	// Re-read what is already on disk so we do not duplicate lines.
+	if _, err := s.rootsFile.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(s.rootsFile)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			var entry flushedRootEntry
+			if json.Unmarshal(line, &entry) == nil && entry.Count > 0 {
+				persisted[entry.Count] = struct{}{}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	for count, root := range s.flushedRoots {
+		if count == 0 || root == nil {
+			continue
+		}
+		if _, ok := persisted[count]; ok {
+			continue
+		}
+		if err := s.appendFlushedRootLocked(count, root); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -316,10 +437,39 @@ func (s *SMSTArtifactStore) flushLocked() error {
 	s.flushedRoots[s.flushedLeafCount] = rootHash
 	s.captureRetainedLocked()
 
+	// Persist the flush boundary before the (best-effort) distribution snapshot
+	// so a dist-append failure cannot lose the committed count across restart.
+	if err := s.appendFlushedRootLocked(s.flushedLeafCount, rootHash); err != nil {
+		return fmt.Errorf("persist flushed root: %w", err)
+	}
+
 	if err := s.appendDistributionSnapshot(); err != nil {
 		log.Printf("warning: distribution snapshot failed (will use simulation): %v", err)
 	}
 
+	return nil
+}
+
+func (s *SMSTArtifactStore) appendFlushedRootLocked(count uint32, root []byte) error {
+	if s.rootsFile == nil || count == 0 || root == nil {
+		return nil
+	}
+
+	entry := flushedRootEntry{
+		Count: count,
+		Root:  hex.EncodeToString(root),
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal flushed root entry: %w", err)
+	}
+	data = append(data, '\n')
+	if _, err := s.rootsFile.Write(data); err != nil {
+		return fmt.Errorf("write flushed root entry: %w", err)
+	}
+	if err := s.rootsFile.Sync(); err != nil {
+		return fmt.Errorf("sync flushed roots file: %w", err)
+	}
 	return nil
 }
 
@@ -896,6 +1046,12 @@ func (s *SMSTArtifactStore) Close() error {
 	if s.distFile != nil {
 		if err := s.distFile.Close(); err != nil {
 			return fmt.Errorf("close distributions file: %w", err)
+		}
+	}
+
+	if s.rootsFile != nil {
+		if err := s.rootsFile.Close(); err != nil {
+			return fmt.Errorf("close flushed roots file: %w", err)
 		}
 	}
 

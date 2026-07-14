@@ -1,6 +1,9 @@
 package artifacts
 
 import (
+	"bytes"
+	"os"
+	"path/filepath"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -194,5 +197,82 @@ func TestCOWRetainedProofsDoNotHoldWriteLock(t *testing.T) {
 			}
 			atomic.AddInt64(&writesOK, 1)
 		}
+	}
+}
+
+// TestFlushedRootsSurviveLostDistributionHistory checks that a flush count
+// remains provable after restart even when distributions.jsonl lost that entry
+// (the warn-only appendDistributionSnapshot failure mode). flushed_roots.jsonl
+// is the durable commit journal used to re-capture retained snapshots.
+func TestFlushedRootsSurviveLostDistributionHistory(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+
+	const early = 500
+	for i := 0; i < early; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush early: %v", err)
+	}
+	earlyCount := store.Count()
+	earlyRoot, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("GetRootAt(%d): %v", earlyCount, err)
+	}
+	earlyRoot = bytes.Clone(earlyRoot)
+
+	for i := early; i < early*2; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush final: %v", err)
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	// Simulate distribution append failure / loss: wipe distributions.jsonl but
+	// keep flushed_roots.jsonl (and artifacts.data).
+	if err := os.Truncate(filepath.Join(dir, "distributions.jsonl"), 0); err != nil {
+		t.Fatalf("truncate distributions: %v", err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "flushed_roots.jsonl")); err != nil {
+		t.Fatalf("flushed_roots.jsonl missing after flush: %v", err)
+	}
+
+	store2, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store2.Close()
+
+	if _, ok := store2.distributionHistory[earlyCount]; ok {
+		t.Fatalf("expected distributionHistory to lack %d after truncate", earlyCount)
+	}
+	if _, ok := store2.retained[earlyCount]; !ok {
+		t.Fatalf("expected retained snapshot at %d after restart without dist history", earlyCount)
+	}
+	root2, err := store2.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("post-restart GetRootAt(%d): %v", earlyCount, err)
+	}
+	if !bytes.Equal(earlyRoot, root2) {
+		t.Fatalf("early root changed across restart without dist history")
+	}
+	entries, err := store2.GetArtifactsAndProofs([]uint32{earlyCount / 2}, earlyCount)
+	if err != nil {
+		t.Fatalf("post-restart proof@%d: %v", earlyCount, err)
+	}
+	e := entries[0]
+	if !VerifySMSTProofSlice(root2, earlyCount, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
+		t.Fatalf("post-restart early proof did not verify")
 	}
 }
