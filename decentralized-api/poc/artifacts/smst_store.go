@@ -81,6 +81,10 @@ type SMSTArtifactStore struct {
 	distributionHistory map[uint32]map[string]uint32 // count -> distribution snapshot
 	distFile            *os.File                     // distributions.jsonl (append-only)
 	rootsFile           *os.File                     // flushed_roots.jsonl (append-only)
+
+	// cowEnabled selects insertCOW vs in-place Insert. Default true (SMST_COW
+	// unset). Retained historical snapshots require COW.
+	cowEnabled bool
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -127,7 +131,11 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		nodeCounts:          make(map[string]uint32),
 		flushedNodeCounts:   make(map[string]uint32),
 		distributionHistory: make(map[uint32]map[string]uint32),
+		// Defaults when env unset: COW on + deferred hashing on.
+		cowEnabled: smstCOWEnabledFromEnv(),
 	}
+	s.smst.deferredHash = smstDeferredHashFromEnv()
+
 
 	if err := s.recover(); err != nil {
 		s.dataFile.Close()
@@ -193,9 +201,9 @@ func (s *SMSTArtifactStore) recover() error {
 		leafData := encodeLeaf(nonce, vector)
 		leafHash := smstHashLeaf(leafData)
 
-		// Copy-on-write so a snapshot captured at a committed count stays valid
-		// as the replay continues past it.
-		if _, err := s.smst.insertCOW(nonce, leafHash); err != nil {
+		// COW keeps mid-replay retained snapshots valid; in-place Insert is used
+		// when SMST_COW=0 (deferred hashing only).
+		if _, err := s.insertLeaf(nonce, leafHash); err != nil {
 			return fmt.Errorf("insert nonce %d: %w", nonce, err)
 		}
 
@@ -371,7 +379,7 @@ func (s *SMSTArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId strin
 		return ErrCapacityExceeded
 	}
 
-	if _, err := s.smst.insertCOW(nonce, leafHash); err != nil {
+	if _, err := s.insertLeaf(nonce, leafHash); err != nil {
 		return err
 	}
 
@@ -386,13 +394,25 @@ func (s *SMSTArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId strin
 
 func (s *SMSTArtifactStore) Flush() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
+		s.mu.Unlock()
 		return ErrStoreClosed
 	}
-
-	return s.flushLocked()
+	hadBuffer := len(s.buffer) > 0
+	err := s.flushLocked()
+	warmCount := uint32(0)
+	if err == nil && hadBuffer && !s.cowEnabled && s.flushedLeafCount > 0 {
+		// Without COW retained snapshots, pin this flush count into the process
+		// snapshot cache (same mechanism as upgrade-v0.2.14 WarmSnapshot /
+		// PrebuildSnapshot for early 1/3 commits). Must run after unlocking —
+		// rebuild takes the store read lock.
+		warmCount = s.flushedLeafCount
+	}
+	s.mu.Unlock()
+	if warmCount > 0 {
+		go s.WarmSnapshot(warmCount)
+	}
+	return err
 }
 
 func (s *SMSTArtifactStore) flushLocked() error {
@@ -891,11 +911,24 @@ func (s *SMSTArtifactStore) liveRootHashed() bool {
 	return s.smst.root == nil || s.smst.root.hash != nil
 }
 
+// insertLeaf adds a leaf via insertCOW (default) or in-place Insert when
+// SMST_COW is disabled. Both paths use deferred hashing.
+func (s *SMSTArtifactStore) insertLeaf(nonce int32, leafHash []byte) (uint32, error) {
+	if s.cowEnabled {
+		return s.smst.insertCOW(nonce, leafHash)
+	}
+	return s.smst.Insert(nonce, leafHash)
+}
+
 // captureRetainedLocked records a copy-on-write snapshot of the tree at the
 // current committed count so its proofs are served in O(depth) without a
 // rebuild. The write lock must be held; call after GetRoot so the retained nodes
-// are already hashed. Bounded by the store's per-stage lifetime.
+// are already hashed. Bounded by the store's per-stage lifetime. No-op when
+// COW is disabled — in-place inserts would invalidate shared snapshot nodes.
 func (s *SMSTArtifactStore) captureRetainedLocked() {
+	if !s.cowEnabled {
+		return
+	}
 	count := s.smst.Count()
 	if count == 0 {
 		return
@@ -1042,12 +1075,19 @@ func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []buffe
 
 // PrebuildSnapshot builds and pins the snapshot tree at the given count for
 // fast proof queries. Should be called after weight distribution is determined.
-// A count equal to the live tree is served directly and needs no snapshot.
+// With COW enabled, a count equal to the live tip needs no cache entry (served
+// live; flush already retained it). With COW disabled, even the current tip
+// count is rebuilt and pinned so the early commit remains cached after the tip
+// advances — matching upgrade-v0.2.14 snapshot-cache behavior.
 func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
 	s.mu.RLock()
 	currentCount := s.smst.Count()
+	cow := s.cowEnabled
 	s.mu.RUnlock()
-	if count == currentCount {
+	if count == 0 {
+		return nil
+	}
+	if count == currentCount && cow {
 		return nil
 	}
 
@@ -1058,6 +1098,9 @@ func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
 // WarmSnapshot builds and pins the snapshot tree for count so later proof
 // requests hit the cache. Blocking; callers run it in the background.
 func (s *SMSTArtifactStore) WarmSnapshot(count uint32) {
+	if count == 0 {
+		return
+	}
 	if _, err := globalSnapshotCache.getOrBuild(s, count, true); err != nil {
 		log.Printf("[WARN] SMST WarmSnapshot(%d) failed: %v", count, err)
 	}

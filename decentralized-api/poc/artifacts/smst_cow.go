@@ -1,5 +1,47 @@
 package artifacts
 
+import (
+	"os"
+	"strconv"
+	"strings"
+)
+
+// SMST_COW and SMST_DEFERRED_HASH default to on when unset (production path).
+// Profiling overrides:
+//
+//	SMST_COW=0            — in-place Insert; early flushes use snapshot-cache pin
+//	SMST_DEFERRED_HASH=0  — hash on every insert (upgrade-v0.2.14 baseline)
+const envSMSTCOW = "SMST_COW"
+const envSMSTDeferredHash = "SMST_DEFERRED_HASH"
+
+func smstEnvBool(key string, def bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return def
+	}
+	switch strings.ToLower(v) {
+	case "0", "false", "off", "no":
+		return false
+	case "1", "true", "on", "yes":
+		return true
+	}
+	b, err := strconv.ParseBool(v)
+	if err != nil {
+		return def
+	}
+	return b
+}
+
+// smstCOWEnabledFromEnv reports COW inserts; default true.
+func smstCOWEnabledFromEnv() bool {
+	return smstEnvBool(envSMSTCOW, true)
+}
+
+// smstDeferredHashFromEnv reports deferred Merkle hashing; default true.
+func smstDeferredHashFromEnv() bool {
+	return smstEnvBool(envSMSTDeferredHash, true)
+}
+
 // smstSnapshot is an immutable capture of the tree at a specific leaf count.
 // insertCOW never mutates existing nodes, so a captured root stays valid for the
 // life of the tree and serves proofs without any rebuild. It is captured after a
@@ -52,7 +94,11 @@ func (s *SMST) insertAtCOW(node *smstNode, path []bool, level int, leafHash []by
 	}
 
 	newNode.count = s.nodeCount(newNode.left) + s.nodeCount(newNode.right)
-	newNode.hash = nil // deferred; filled by ensureHashed, identical to insertAt
+	if s.deferredHash {
+		newNode.hash = nil // deferred; filled by ensureHashed, identical to insertAt
+	} else {
+		newNode.hash = s.computeHash(newNode, level)
+	}
 
 	return newNode
 }

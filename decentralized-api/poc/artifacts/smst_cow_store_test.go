@@ -276,3 +276,150 @@ func TestFlushedRootsSurviveLostDistributionHistory(t *testing.T) {
 		t.Fatalf("post-restart early proof did not verify")
 	}
 }
+
+// TestSMSTCOWEnvDisabled uses in-place Insert (deferred hashing only): no
+// retained snapshots, roots still match the COW path.
+func TestSMSTCOWEnvDisabled(t *testing.T) {
+	t.Setenv(envSMSTCOW, "0")
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+	if store.cowEnabled {
+		t.Fatalf("expected cowEnabled=false with %s=0", envSMSTCOW)
+	}
+
+	const n = 500
+	for i := 0; i < n; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	if len(store.retained) != 0 {
+		t.Fatalf("retained=%d, want 0 when COW disabled", len(store.retained))
+	}
+	root := store.GetRoot()
+	if root == nil {
+		t.Fatal("nil root")
+	}
+
+	// Same workload with COW on must produce the same tip root.
+	t.Setenv(envSMSTCOW, "1")
+	dir2 := t.TempDir()
+	store2, err := OpenSMST(dir2)
+	if err != nil {
+		t.Fatalf("OpenSMST cow: %v", err)
+	}
+	defer store2.Close()
+	if !store2.cowEnabled {
+		t.Fatal("expected cowEnabled=true")
+	}
+	for i := 0; i < n; i++ {
+		if err := store2.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("cow add %d: %v", i, err)
+		}
+	}
+	if err := store2.Flush(); err != nil {
+		t.Fatalf("cow flush: %v", err)
+	}
+	root2 := store2.GetRoot()
+	if !bytes.Equal(root, root2) {
+		t.Fatalf("root mismatch COW off vs on:\n off=%x\n on= %x", root, root2)
+	}
+}
+
+// TestSMSTCOWDisabledEarlySnapshotCache checks that with SMST_COW=0 the early
+// flush count is pinned into the process snapshot cache (upgrade-v0.2.14 path)
+// so proofs at that count stay available after the tip advances — without
+// retained COW snapshots.
+func TestSMSTCOWDisabledEarlySnapshotCache(t *testing.T) {
+	t.Setenv(envSMSTCOW, "0")
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	const early = 300
+	for i := 0; i < early; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush early: %v", err)
+	}
+	earlyCount := store.Count()
+	earlyRoot, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("GetRootAt(%d): %v", earlyCount, err)
+	}
+	earlyRoot = bytes.Clone(earlyRoot)
+
+	// Commit-worker style: PrebuildSnapshot while tip still equals early count.
+	if err := store.PrebuildSnapshot(earlyCount); err != nil {
+		t.Fatalf("PrebuildSnapshot(%d): %v", earlyCount, err)
+	}
+
+	globalSnapshotCache.mu.Lock()
+	entry, ok := globalSnapshotCache.entries[snapshotCacheKey{store: store, count: earlyCount}]
+	globalSnapshotCache.mu.Unlock()
+	if !ok || entry == nil || !entry.pinned {
+		t.Fatalf("early count %d must be pinned in snapshot cache when COW disabled (ok=%v pinned=%v)",
+			earlyCount, ok, ok && entry.pinned)
+	}
+	if len(store.retained) != 0 {
+		t.Fatalf("retained must stay empty with COW off, got %d", len(store.retained))
+	}
+
+	// Advance tip past the early commit.
+	for i := early; i < early*2; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush final: %v", err)
+	}
+
+	root2, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("post-advance GetRootAt(%d): %v", earlyCount, err)
+	}
+	if !bytes.Equal(earlyRoot, root2) {
+		t.Fatalf("early root changed after tip advanced")
+	}
+	entries, err := store.GetArtifactsAndProofs([]uint32{earlyCount / 2}, earlyCount)
+	if err != nil {
+		t.Fatalf("early proof after tip advanced: %v", err)
+	}
+	e := entries[0]
+	if !VerifySMSTProofSlice(root2, earlyCount, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
+		t.Fatalf("early proof did not verify after tip advanced")
+	}
+}
+
+// TestSMSTDefaultsDeferredAndCOW ensures unset env keeps production defaults:
+// deferred hashing on and COW on.
+func TestSMSTDefaultsDeferredAndCOW(t *testing.T) {
+	t.Setenv(envSMSTCOW, "")
+	t.Setenv(envSMSTDeferredHash, "")
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+	if !store.cowEnabled {
+		t.Fatal("cowEnabled default want true")
+	}
+	if !store.smst.deferredHash {
+		t.Fatal("deferredHash default want true")
+	}
+}

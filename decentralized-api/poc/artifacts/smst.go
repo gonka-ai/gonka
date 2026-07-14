@@ -36,6 +36,10 @@ type SMST struct {
 	// Snapshot views share nodes with the live tree but carry no map, so nonce
 	// existence must be read from the retained structure at that count.
 	navExistence bool
+
+	// deferredHash invalidates node.hash on insert and fills via ensureHashed
+	// (default). When false, hashes are computed on every insert (upgrade-v0.2.14).
+	deferredHash bool
 }
 
 // NewSMST creates a new sparse merkle sum tree.
@@ -49,9 +53,10 @@ func NewSMST(depth int) *SMST {
 	}
 
 	s := &SMST{
-		depth:     depth,
-		emptyHash: make([][]byte, depth+1),
-		hasNonce:  make(map[int32]bool),
+		depth:         depth,
+		emptyHash:     make([][]byte, depth+1),
+		hasNonce:      make(map[int32]bool),
+		deferredHash:  true,
 	}
 
 	s.emptyHash[0] = smstHashEmpty()
@@ -104,7 +109,11 @@ func (s *SMST) insertAt(node *smstNode, path []bool, level int, leafHash []byte)
 	}
 
 	node.count = s.nodeCount(node.left) + s.nodeCount(node.right)
-	node.hash = nil // invalidated; recomputed lazily by ensureHashed
+	if s.deferredHash {
+		node.hash = nil // invalidated; recomputed lazily by ensureHashed
+	} else {
+		node.hash = s.computeHash(node, level)
+	}
 
 	return node
 }
@@ -322,11 +331,23 @@ func (s *SMST) expandDepth(newDepth int) {
 	diff := newDepth - oldDepth
 	for i := 0; i < diff; i++ {
 		if s.root != nil {
-			// Wrapper hash is deferred; ensureHashed fills it from the wrapped
-			// subtree and the empty sibling, identical to eager computation.
-			s.root = &smstNode{
-				left:  s.root,
-				count: s.root.count,
+			if s.deferredHash {
+				// Wrapper hash is deferred; ensureHashed fills it from the wrapped
+				// subtree and the empty sibling, identical to eager computation.
+				s.root = &smstNode{
+					left:  s.root,
+					count: s.root.count,
+				}
+			} else {
+				// This wrapper will be at level (diff - 1 - i) in final tree
+				level := diff - 1 - i
+				siblingHeight := newDepth - level - 1
+				newRoot := &smstNode{
+					left:  s.root,
+					count: s.root.count,
+				}
+				newRoot.hash = smstHashNode(s.root.hash, s.emptyHash[siblingHeight], newRoot.count)
+				s.root = newRoot
 			}
 		}
 	}
