@@ -1,6 +1,11 @@
 package artifacts
 
-import "testing"
+import (
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+)
 
 // TestCOWStoreProofPaths verifies proofs served through the copy-on-write store
 // across the three paths: the live tip, a historical committed count served from
@@ -90,5 +95,104 @@ func TestCOWStoreProofPaths(t *testing.T) {
 	e := entries[0]
 	if !VerifySMSTProofSlice(root, earlyCount, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
 		t.Fatalf("post-restart historical proof did not verify")
+	}
+}
+
+// TestCOWRetainedProofsDoNotHoldWriteLock checks that historical retained proofs
+// release the write lock before artifact I/O: concurrent proof readers at an
+// early committed count must not serialize ingest. Under -race this also guards
+// the unlock→RLock handoff in acquireSnapshotTree.
+func TestCOWRetainedProofsDoNotHoldWriteLock(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	const early = 2000
+	for i := 0; i < early; i++ {
+		if err := store.AddWithNode(int32(i), testVector(i), "n"); err != nil {
+			t.Fatalf("add %d: %v", i, err)
+		}
+	}
+	if err := store.Flush(); err != nil {
+		t.Fatalf("flush: %v", err)
+	}
+	earlyCount := store.Count()
+	earlyRoot, err := store.GetRootAt(earlyCount)
+	if err != nil {
+		t.Fatalf("GetRootAt(%d): %v", earlyCount, err)
+	}
+	if _, ok := store.retained[earlyCount]; !ok {
+		t.Fatalf("expected retained snapshot at %d", earlyCount)
+	}
+
+	var (
+		wg           sync.WaitGroup
+		proofOK      int64
+		proofErr     int64
+		writesOK     int64
+		readerDone   = make(chan struct{})
+		nextNonce    = int32(early)
+	)
+
+	const readers = 8
+	for g := 0; g < readers; g++ {
+		wg.Add(1)
+		go func(gid int) {
+			defer wg.Done()
+			idx := uint32(gid) % earlyCount
+			for {
+				select {
+				case <-readerDone:
+					return
+				default:
+				}
+				entries, err := store.GetArtifactsAndProofs([]uint32{idx}, earlyCount)
+				if err != nil || len(entries) != 1 {
+					atomic.AddInt64(&proofErr, 1)
+					continue
+				}
+				e := entries[0]
+				if !VerifySMSTProofSlice(earlyRoot, earlyCount, e.Nonce, encodeLeaf(e.Nonce, e.Vector), e.Proof) {
+					atomic.AddInt64(&proofErr, 1)
+					continue
+				}
+				atomic.AddInt64(&proofOK, 1)
+			}
+		}(g)
+	}
+
+	// Writer must make progress while retained proofs are in flight. If proofs
+	// still held the write lock across I/O, Adds would stall behind every batch.
+	deadline := time.After(500 * time.Millisecond)
+	for {
+		select {
+		case <-deadline:
+			close(readerDone)
+			wg.Wait()
+			if atomic.LoadInt64(&proofOK) == 0 {
+				t.Fatalf("no successful retained proofs")
+			}
+			if atomic.LoadInt64(&proofErr) != 0 {
+				t.Fatalf("retained proof errors: %d", proofErr)
+			}
+			if atomic.LoadInt64(&writesOK) == 0 {
+				t.Fatalf("ingest made no progress while retained proofs ran (write lock held across I/O?)")
+			}
+			return
+		default:
+			n := atomic.AddInt32(&nextNonce, 1) - 1
+			if err := store.AddWithNode(n, testVector(int(n)), "n"); err != nil {
+				t.Fatalf("concurrent add %d: %v", n, err)
+			}
+			if n%200 == 0 {
+				if err := store.Flush(); err != nil {
+					t.Fatalf("concurrent flush: %v", err)
+				}
+			}
+			atomic.AddInt64(&writesOK, 1)
+		}
 	}
 }

@@ -625,9 +625,11 @@ func (s *SMSTArtifactStore) GetArtifactsAndProofsByNonce(nonces []int32, snapsho
 }
 
 // acquireSnapshotTree returns the tree for snapshotCount with the store
-// read-locked; the caller must call unlock() when done. The live tree is
-// served directly under the lock (inserts need the write lock, so it cannot
-// change). Historical counts come from the process-wide snapshot cache.
+// locked for the caller; the caller must call unlock() when done.
+// Live tip (hashes already filled) and retained historical snapshots are
+// served under RLock so concurrent proofs stay parallel. Live tip that still
+// needs ensureHashed is served under Lock. Cold-start rebuilds use the
+// process-wide snapshot cache, then RLock for artifact reads.
 func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, func(), error) {
 	// Fast path: if the requested count is the live tip and its hashes are
 	// already filled, serve under a read lock so concurrent proof reads stay
@@ -663,9 +665,17 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 	// O(depth) if one was captured at this committed count. Snapshots are
 	// captured after a GetRoot, so their nodes are already hashed; the shared
 	// nodes are immutable (insertCOW never rewrites them), so the view stays
-	// valid after the lock is released.
+	// valid after the write lock is released. Drop Lock before proof I/O so
+	// ingest and concurrent proofs are not serialized behind getArtifactByNonce;
+	// re-take RLock so proofEntry can safely read nonceToOffset / buffer.
 	if view, ok := s.retainedSnapshotViewLocked(snapshotCount); ok {
-		return view, s.mu.Unlock, nil
+		s.mu.Unlock()
+		s.mu.RLock()
+		if s.closed {
+			s.mu.RUnlock()
+			return nil, nil, ErrStoreClosed
+		}
+		return view, s.mu.RUnlock, nil
 	}
 	_, committed := s.flushedRoots[snapshotCount]
 	s.mu.Unlock()
