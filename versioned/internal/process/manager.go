@@ -37,6 +37,7 @@ const (
 	devshardMetaDBFile           = "_meta.db"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
+	managerShutdownOverhead      = 5 * time.Second
 )
 
 var errLegacyDrainStatus = errors.New("drain status endpoint unavailable")
@@ -764,6 +765,10 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 		}
 	}
 	return nil
+}
+
+func (m *Manager) ShutdownTimeout() time.Duration {
+	return m.childStopTimeout() + managerShutdownOverhead
 }
 
 // waitForChild waits for a child's goroutine to exit within the timeout.

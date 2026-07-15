@@ -491,6 +491,9 @@ func TestChildStopTimeoutHonorsDevshardShutdownGrace(t *testing.T) {
 	if got := devshardMgr.childStopTimeout(); got != 2*time.Minute {
 		t.Fatalf("childStopTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
 	}
+	if got := devshardMgr.ShutdownTimeout(); got != 2*time.Minute+managerShutdownOverhead {
+		t.Fatalf("ShutdownTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE plus overhead", got)
+	}
 
 	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "5s")
 	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
