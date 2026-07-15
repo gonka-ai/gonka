@@ -200,21 +200,27 @@ Single-instance / local dev without overlap may keep using SQLite; see
 
 ### 1.3 devshardd changes
 
-1. **Readiness endpoint** `GET /ready` (distinct from `/healthz`):
+New `devshardd` exposes lifecycle controls on a loopback admin listener selected
+by versiond through `DEVSHARD_ADMIN_ADDR`. These endpoints are not registered on
+the public devshard traffic listener.
+
+1. **Readiness endpoint** `GET /ready` on the admin listener (distinct from
+   `/healthz`):
    - returns `200` only after chain runtime is connected, host manager has
      recovered sessions, store is started, and the listener is accepting.
    - returns `503` until then.
    - This is what versiond gates the route swap on (replaces the TCP-only
      `waitForPort`).
 
-2. **Drain/idle endpoint** `GET /drain/status` (or reuse metrics):
+2. **Drain/idle endpoint** `GET /drain/status` on the admin listener:
    - returns active in-flight HTTP count from the lifecycle middleware. versiond
      polls this to decide the old child is idle.
    - exports the same count as Prometheus gauge
      `devshardd_lifecycle_inflight_requests`.
-   - Optionally `POST /drain` to flip the child into "reject new, finish
-     existing" mode as a belt-and-braces measure (route is already swapped, so
-     new traffic shouldn't arrive, but this guards retries/direct hits).
+   - `POST /drain` on the same admin listener flips the child into "reject new,
+     finish existing" mode as a belt-and-braces measure (route is already
+     swapped, so new traffic shouldn't arrive, but this guards retries/direct
+     hits). It must not be exposed through the public versiond proxy.
 
 3. **Honor a long shutdown grace.** Replace the hard 5s in `app.go` with a
    configurable `DEVSHARD_SHUTDOWN_GRACE` (default large enough for max
@@ -375,7 +381,10 @@ Add to `versioned/internal/config/config.go`:
 | `VERSIOND_DRAIN_KILL_GRACE` | `30s` | wait after `SIGTERM` before `SIGKILL` |
 
 And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
-`app.go`.
+`app.go`. For new `devshardd` binaries, versiond also sets
+`DEVSHARD_ADMIN_ADDR=127.0.0.1:<port>` after the binary advertises admin API
+support with `--print-admin-api-version`. Operators normally do not set this
+manually; it is the private lifecycle channel between versiond and its child.
 
 > Note: `cmd.WaitDelay` must not be shorter than the child's own graceful
 > shutdown window. For devshardd, versiond uses the max of
@@ -395,6 +404,11 @@ preflight flags existed. Compatibility is intentionally narrow:
   back only when the child exits with a recognized "unsupported flag" usage
   error. Timeouts, signals, OOM-like failures, and other execution errors fail
   closed so the next poll can retry.
+- `--print-admin-api-version` is an optional capability probe for devshardd
+  binaries. If it is supported, versiond starts the child with
+  `DEVSHARD_ADMIN_ADDR` and sends readiness/drain traffic to that private
+  listener. If it is unsupported, versiond keeps using the legacy public
+  lifecycle paths for that child.
 - readiness fallback applies only to the default `VERSIOND_READY_PATH=/ready`.
   If `/ready` is missing with 404/405/501, versiond tries `/healthz`, then a TCP
   connect probe. Custom readiness paths do not use this fallback.
@@ -508,13 +522,15 @@ Key invariants:
 |---|---|
 | Upstream `down` / removal + `nginx -s reload` | Stop routing new escrows to the host being evacuated |
 | `ROUTER_DRAIN_TIMEOUT` | Max wait for a host to go idle before forced stop |
-| `ROUTER_DRAIN_POLL_INTERVAL` | How often to poll versiond `/healthz` and devshardd `/drain/status` |
+| `ROUTER_DRAIN_POLL_INTERVAL` | How often to poll versiond `/healthz`; direct devshardd `/drain/status` polling requires access to the admin listener |
 | `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` to versiond before `SIGKILL` / container kill |
 | Operator script or sidecar | Orchestrate steps 1–4; re-render `VERSIOND_HOSTS` and reload |
 
-Re-use the devshardd endpoints from §1.3 (`/ready`, `/drain/status`) and
-versiond `/healthz` draining visibility from §1.4e — implement them once; the
-router track consumes the same signals.
+Re-use versiond `/healthz` draining visibility from §1.4e for public host
+evacuation. The devshardd endpoints from §1.3 (`/ready`, `/drain/status`,
+`/drain`) are an internal admin API for versiond-managed children; consume them
+directly only from a trusted sidecar or local supervisor with admin listener
+access.
 
 #### When to use which layer
 
@@ -593,8 +609,9 @@ strategy:
 
 ### 2.3 Readiness + drain
 
-- **readinessProbe** → `GET /ready` on devshardd. Endpoints only include a pod
-  once it is truly ready; new traffic flows to the new pod automatically.
+- **readinessProbe** → `GET /ready` on a private/admin devshardd listener, not
+  through the public inference path. Endpoints only include a pod once it is
+  truly ready; new traffic flows to the new pod automatically.
 - **terminationGracePeriodSeconds**: large (cover max inference, e.g. minutes)
   so in-flight requests can finish after the pod is told to stop.
 - **preStop hook**: fail readiness / `sleep` so the pod is removed from Service
@@ -619,8 +636,9 @@ old pod: preStop (drop from endpoints + sleep) → SIGTERM → finish in-flight
 
 ### 2.5 What carries over from Part 1
 
-- devshardd `/ready` + `/drain` + configurable shutdown grace are the **same**
-  building blocks K8s probes and hooks consume — implement them once for both.
+- devshardd admin `/ready` + `/drain` + configurable shutdown grace are the
+  **same** building blocks K8s probes and hooks consume — implement them once
+  for both.
 - The drain/idle accounting (`devshard_inflight`) feeds the versiond binary-swap
   drain loop (§1.1), the versiond-router host-evacuation loop (§1.8), and K8s
   preStop logic / dashboards.

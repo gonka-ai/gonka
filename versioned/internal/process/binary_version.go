@@ -15,6 +15,7 @@ import (
 const (
 	printBinaryVersionFlag   = "--print-binary-version"
 	printProtocolVersionFlag = "--print-protocol-version"
+	printAdminAPIVersionFlag = "--print-admin-api-version"
 )
 
 var (
@@ -27,7 +28,8 @@ type childPreflight struct {
 	// binaryLogVersion is passed to the child as DEVSHARD_BINARY_LOG_VERSION.
 	// When --print-binary-version is unsupported, this is the governance slot
 	// name (approved_versions.name, e.g. v2).
-	binaryLogVersion string
+	binaryLogVersion  string
+	adminAPISupported bool
 }
 
 // preflightChild verifies a downloaded binary when --print-* flags are
@@ -35,6 +37,10 @@ type childPreflight struct {
 //   - --print-binary-version missing: use slotName for DEVSHARD_BINARY_LOG_VERSION
 //   - --print-protocol-version missing: trust governance slot, skip embed check
 func preflightChild(binPath, slotName string) (childPreflight, error) {
+	return preflightChildWithAdminProbe(binPath, slotName, false)
+}
+
+func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (childPreflight, error) {
 	if _, err := os.Stat(binPath); err != nil {
 		return childPreflight{}, fmt.Errorf("binary not found: %w", err)
 	}
@@ -71,7 +77,21 @@ func preflightChild(binPath, slotName string) (childPreflight, error) {
 		)
 	}
 
-	return childPreflight{binaryLogVersion: binaryLogVersion}, nil
+	adminSupported := false
+	if probeAdmin {
+		if _, adminErr := readAdminAPIVersion(binPath); adminErr != nil {
+			if !errors.Is(adminErr, errVersionFlagUnsupported) {
+				return childPreflight{}, fmt.Errorf("read admin api version: %w", adminErr)
+			}
+		} else {
+			adminSupported = true
+		}
+	}
+
+	return childPreflight{
+		binaryLogVersion:  binaryLogVersion,
+		adminAPISupported: adminSupported,
+	}, nil
 }
 
 // readEmbeddedVersion runs binPath with flag and returns trimmed stdout.
@@ -127,4 +147,8 @@ func readBinaryLogVersion(binPath string) (string, error) {
 
 func readProtocolVersion(binPath string) (string, error) {
 	return readEmbeddedVersion(binPath, printProtocolVersionFlag)
+}
+
+func readAdminAPIVersion(binPath string) (string, error) {
+	return readEmbeddedVersion(binPath, printAdminAPIVersionFlag)
 }

@@ -64,6 +64,7 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 		"binary_log_version", cfg.BinaryLogVersion,
 		"runtime_version", cfg.RuntimeVersion,
 		"port", cfg.Port,
+		"admin_addr", cfg.AdminAddr,
 		"data-dir", cfg.DataDir)
 
 	ctx, cancel := signal.NotifyContext(parent, syscall.SIGTERM, syscall.SIGINT)

@@ -34,6 +34,7 @@ const (
 	statusDraining = "draining"
 	statusStopped  = "stopped"
 
+	childLoopbackHost            = "127.0.0.1"
 	devshardMetaDBFile           = "_meta.db"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
@@ -48,6 +49,7 @@ type child struct {
 	binaryVersion string
 	binPath       string
 	port          int
+	adminPort     int
 	cancel        context.CancelFunc
 	done          chan struct{} // closed when runChild exits
 	ready         chan struct{} // closed after readiness succeeds
@@ -126,7 +128,14 @@ func (m *Manager) assignPort() int {
 // releasePort releases a child port after the child process exits.
 // Must be called with m.mu held.
 func (m *Manager) releasePort(port int) {
-	delete(m.allocatedPorts, port)
+	if port != 0 {
+		delete(m.allocatedPorts, port)
+	}
+}
+
+func (m *Manager) devshardAdminEligible() bool {
+	name := strings.ToLower(m.cfg.BinaryName)
+	return name == "devshard" || name == "devshardd"
 }
 
 func (m *Manager) RouteTable() *atomic.Value {
@@ -808,6 +817,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.removeDrainingLocked(c)
 		m.releasePort(c.port)
+		m.releasePort(c.adminPort)
 		m.mu.Unlock()
 	}()
 
@@ -817,13 +827,17 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		return
 	}
 
-	preflight, err := preflightChild(c.binPath, c.version.Name)
+	preflight, err := preflightChildWithAdminProbe(c.binPath, c.version.Name, m.devshardAdminEligible())
 	if err != nil {
 		slog.Error("child preflight failed", "version", c.version.Name, "bin", c.binPath, "error", err)
 		return
 	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
+	if preflight.adminAPISupported && c.adminPort == 0 {
+		c.adminPort = m.assignPort()
+	}
+	adminAddr := c.adminAddr()
 	m.mu.Unlock()
 
 	backoff := time.Second
@@ -840,7 +854,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
 		)
-		cmd.Env = childEnv(preflight.binaryLogVersion)
+		cmd.Env = childEnv(preflight.binaryLogVersion, adminAddr)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -851,7 +865,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		cmd.WaitDelay = m.childStopTimeout()
 
 		lastStart = time.Now()
-		slog.Info("starting child", "version", c.version.Name, "port", c.port, "sha256", c.archiveSHA256)
+		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 
 		if err := cmd.Start(); err != nil {
 			slog.Error("child start failed", "version", c.version.Name, "error", err)
@@ -861,8 +875,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForReady(ctx, c.port, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
-			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "ready_path", m.cfg.ReadyPath)
+		if !waitForReady(ctx, c.lifecyclePort(), m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
+			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
 			_ = cmd.Process.Kill()
 			_ = cmd.Wait()
 			m.mu.Lock()
@@ -950,14 +964,21 @@ func (m *Manager) waitForRestartBackoff(ctx context.Context, c *child, backoff t
 // binaryLogVersion is normally the link-time build id from --print-binary-version
 // (e.g. 0.2.13-v2-r2). Legacy binaries without that flag use the governance
 // slot name (e.g. v2) instead.
-func childEnv(binaryLogVersion string) []string {
-	if binaryLogVersion == "" {
-		return os.Environ()
+func childEnv(binaryLogVersion, adminAddr string) []string {
+	env := make([]string, 0, len(os.Environ())+2)
+	for _, entry := range os.Environ() {
+		if strings.HasPrefix(entry, "DEVSHARD_ADMIN_ADDR=") {
+			continue
+		}
+		env = append(env, entry)
 	}
-	return append(
-		os.Environ(),
-		fmt.Sprintf("DEVSHARD_BINARY_LOG_VERSION=%s", binaryLogVersion),
-	)
+	if binaryLogVersion != "" {
+		env = append(env, fmt.Sprintf("DEVSHARD_BINARY_LOG_VERSION=%s", binaryLogVersion))
+	}
+	if adminAddr != "" {
+		env = append(env, fmt.Sprintf("DEVSHARD_ADMIN_ADDR=%s", adminAddr))
+	}
+	return env
 }
 
 func (m *Manager) childStopTimeout() time.Duration {
@@ -1046,11 +1067,25 @@ func childDone(c *child) bool {
 	}
 }
 
+func (c *child) lifecyclePort() int {
+	if c.adminPort != 0 {
+		return c.adminPort
+	}
+	return c.port
+}
+
+func (c *child) adminAddr() string {
+	if c.adminPort == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d", childLoopbackHost, c.adminPort)
+}
+
 func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
 	deadline := time.After(timeout)
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	readyPath := normalizeHTTPPath(path)
-	url := fmt.Sprintf("http://localhost:%d%s", port, readyPath)
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, readyPath)
 	for {
 		select {
 		case <-ctx.Done():
@@ -1092,7 +1127,7 @@ func legacyReadyFallbackAllowed(path string, status int) bool {
 }
 
 func legacyReady(ctx context.Context, client *http.Client, port int) bool {
-	url := fmt.Sprintf("http://localhost:%d/healthz", port)
+	url := fmt.Sprintf("http://%s:%d/healthz", childLoopbackHost, port)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return tcpReady(ctx, port)
@@ -1113,7 +1148,7 @@ func legacyReady(ctx context.Context, client *http.Client, port int) bool {
 
 func tcpReady(ctx context.Context, port int) bool {
 	dialer := net.Dialer{Timeout: 500 * time.Millisecond}
-	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("localhost:%d", port))
+	conn, err := dialer.DialContext(ctx, "tcp", fmt.Sprintf("%s:%d", childLoopbackHost, port))
 	if err != nil {
 		return false
 	}
@@ -1132,7 +1167,8 @@ func normalizeHTTPPath(path string) string {
 }
 
 func (m *Manager) requestDrain(c *child) {
-	url := fmt.Sprintf("http://localhost:%d%s", c.port, normalizeHTTPPath(m.cfg.DrainPath))
+	lifecyclePort := c.lifecyclePort()
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, lifecyclePort, normalizeHTTPPath(m.cfg.DrainPath))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, url, nil)
@@ -1141,12 +1177,12 @@ func (m *Manager) requestDrain(c *child) {
 	}
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "error", err)
+		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "lifecycle_port", lifecyclePort, "error", err)
 		return
 	}
 	_ = resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		slog.Warn("drain request returned non-success", "version", c.version.Name, "port", c.port, "status", resp.StatusCode)
+		slog.Warn("drain request returned non-success", "version", c.version.Name, "port", c.port, "lifecycle_port", lifecyclePort, "status", resp.StatusCode)
 	}
 }
 
@@ -1200,7 +1236,7 @@ func (m *Manager) drainAndStop(c *child) {
 }
 
 func (m *Manager) fetchInflight(c *child) (int64, error) {
-	url := fmt.Sprintf("http://localhost:%d%s", c.port, normalizeHTTPPath(m.cfg.DrainStatusPath))
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, c.lifecyclePort(), normalizeHTTPPath(m.cfg.DrainStatusPath))
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)

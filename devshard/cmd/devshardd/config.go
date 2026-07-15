@@ -26,6 +26,7 @@ var sdkConfigOnce sync.Once
 
 type runtimeConfig struct {
 	Port                    int
+	AdminAddr               string
 	DataDir                 string
 	BinaryLogVersion        string
 	RuntimeVersion          string
@@ -136,6 +137,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 
 	return runtimeConfig{
 		Port:                    *port,
+		AdminAddr:               strings.TrimSpace(os.Getenv("DEVSHARD_ADMIN_ADDR")),
 		DataDir:                 *dataDir,
 		BinaryLogVersion:        binaryLogVersion,
 		RuntimeVersion:          protocolVersion,

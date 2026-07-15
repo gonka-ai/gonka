@@ -14,6 +14,7 @@ import (
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
+	admin := buildAdminServer(lifecycle)
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -21,11 +22,15 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	lifecycle.SetReady(true)
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	workDone := make(chan struct{})
@@ -38,7 +43,7 @@ func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 	var status drainStatus
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
@@ -57,12 +62,21 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
+	admin := buildAdminServer(lifecycle)
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
 
 	rec := httptest.NewRecorder()
 	e.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/drain", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/work", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/drain", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	rec = httptest.NewRecorder()
@@ -70,6 +84,6 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 
 	rec = httptest.NewRecorder()
-	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
 }

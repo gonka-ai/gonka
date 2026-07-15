@@ -22,6 +22,16 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	observability.RegisterRuntimeCollectors()
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+
+	return e
+}
+
+func buildAdminServer(lifecycle *lifecycleState) *echo.Echo {
+	e := echo.New()
+	e.HideBanner = true
+	e.HidePort = true
+	e.Use(middleware.Recover())
+
 	e.GET("/ready", func(c echo.Context) error {
 		status := lifecycle.Status()
 		if !status.Ready || status.Draining {

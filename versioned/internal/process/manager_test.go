@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -23,7 +24,7 @@ import (
 )
 
 func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
-	env := childEnv("0.2.13-v2-r2")
+	env := childEnv("0.2.13-v2-r2", "")
 	want := map[string]bool{
 		"DEVSHARD_BINARY_LOG_VERSION=0.2.13-v2-r2": false,
 	}
@@ -40,7 +41,7 @@ func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
 }
 
 func TestChildEnvSlotNameFallback(t *testing.T) {
-	env := childEnv("v2")
+	env := childEnv("v2", "")
 	want := "DEVSHARD_BINARY_LOG_VERSION=v2"
 	found := false
 	for _, entry := range env {
@@ -51,6 +52,35 @@ func TestChildEnvSlotNameFallback(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("childEnv missing %q", want)
+	}
+}
+
+func TestChildEnvIncludesAdminAddr(t *testing.T) {
+	env := childEnv("v2", "127.0.0.1:6001")
+	want := map[string]bool{
+		"DEVSHARD_BINARY_LOG_VERSION=v2":     false,
+		"DEVSHARD_ADMIN_ADDR=127.0.0.1:6001": false,
+	}
+	for _, entry := range env {
+		if _, ok := want[entry]; ok {
+			want[entry] = true
+		}
+	}
+	for key, present := range want {
+		if !present {
+			t.Fatalf("childEnv missing %q", key)
+		}
+	}
+}
+
+func TestChildEnvDoesNotLeakParentAdminAddr(t *testing.T) {
+	t.Setenv("DEVSHARD_ADMIN_ADDR", "127.0.0.1:9999")
+
+	env := childEnv("v2", "")
+	for _, entry := range env {
+		if strings.HasPrefix(entry, "DEVSHARD_ADMIN_ADDR=") {
+			t.Fatalf("childEnv leaked parent %q", entry)
+		}
 	}
 }
 
@@ -165,6 +195,53 @@ esac
 	}
 	if preflight.binaryLogVersion != "0.2.13-v2-r2" {
 		t.Fatalf("binaryLogVersion = %q, want %q", preflight.binaryLogVersion, "0.2.13-v2-r2")
+	}
+}
+
+func TestPreflightChild_AdminAPIUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "stamped-bin")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v2" ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChildWithAdminProbe(binPath, "v2", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preflight.adminAPISupported {
+		t.Fatal("expected unsupported admin API flag to keep public lifecycle fallback")
+	}
+}
+
+func TestPreflightChild_AdminAPISupported(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "stamped-bin")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v2" ;;
+--print-admin-api-version) echo "1" ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChildWithAdminProbe(binPath, "v2", true)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !preflight.adminAPISupported {
+		t.Fatal("expected admin API support to be detected")
 	}
 }
 
@@ -836,6 +913,60 @@ func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("legacy drain took %s, want short grace instead of full timeout", elapsed)
+	}
+}
+
+func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
+	var publicHits atomic.Int32
+	publicPort, publicShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		publicHits.Add(1)
+		http.Error(w, "public endpoint should not receive lifecycle traffic", http.StatusInternalServerError)
+	}))
+	defer publicShutdown()
+
+	var drainHits atomic.Int32
+	var statusHits atomic.Int32
+	adminPort, adminShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drain":
+			drainHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/drain/status":
+			statusHits.Add(1)
+			json.NewEncoder(w).Encode(map[string]int64{"inflight": 0})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer adminShutdown()
+
+	m := NewManager(config.Config{
+		BasePort:        5000,
+		DrainPath:       "/drain",
+		DrainStatusPath: "/drain/status",
+	})
+	c := &child{
+		version:   oracle.Version{Name: "v1"},
+		port:      publicPort,
+		adminPort: adminPort,
+	}
+
+	m.requestDrain(c)
+	inflight, err := m.fetchInflight(c)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inflight != 0 {
+		t.Fatalf("inflight = %d, want 0", inflight)
+	}
+	if drainHits.Load() != 1 {
+		t.Fatalf("admin drain hits = %d, want 1", drainHits.Load())
+	}
+	if statusHits.Load() != 1 {
+		t.Fatalf("admin status hits = %d, want 1", statusHits.Load())
+	}
+	if publicHits.Load() != 0 {
+		t.Fatalf("public lifecycle hits = %d, want 0", publicHits.Load())
 	}
 }
 
