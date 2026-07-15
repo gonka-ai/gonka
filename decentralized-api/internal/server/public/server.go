@@ -70,6 +70,9 @@ func NewServer(
 	opts ...ServerOption) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
+	// Avoid Echo's legacy RealIP behavior, which trusts the left-most XFF value.
+	// This extracts the nearest untrusted hop from XFF (falling back to RemoteAddr).
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 
 	// Set the package-level configManagerRef
 	configManagerRef = configManager
@@ -153,10 +156,10 @@ func NewServer(
 	g.GET("restrictions/exemptions", s.getRestrictionsExemptions)
 	g.GET("restrictions/exemptions/:id/usage/:account", s.getRestrictionsExemptionUsage)
 
-	// PoC proofs endpoint with IP rate limiting (100 req/min per IP)
+	// PoC proofs endpoint with IP rate limiting (300 req/min per IP)
 	pocProofsRateLimiter := echomw.RateLimiter(echomw.NewRateLimiterMemoryStoreWithConfig(
 		echomw.RateLimiterMemoryStoreConfig{
-			Rate:      300.0 / 60.0, // 100 requests per minute
+			Rate:      300.0 / 60.0, // 300 requests per minute
 			Burst:     30,
 			ExpiresIn: 3 * time.Minute,
 		},
