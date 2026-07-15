@@ -85,13 +85,10 @@ func (k Keeper) RequestThresholdSignature(ctx sdk.Context, signingData types.Sig
 		}
 	}
 
-	// Encode data using Ethereum-compatible abi.encodePacked format
-	encodedData := k.encodeSigningData(signingData)
-
-	// Compute message hash using keccak256 (Ethereum-compatible)
-	hash := sha3.NewLegacyKeccak256()
-	hash.Write(encodedData)
-	messageHash := hash.Sum(nil)
+	// Encode data and compute message hash using Ethereum-compatible
+	// abi.encodePacked + keccak256 format. Attempt is included to ensure each
+	// retry signs a unique message hash.
+	encodedData, messageHash := k.buildSigningPayload(signingData, attempt)
 
 	// Calculate deadline block height
 	deadlineBlockHeight := ctx.BlockHeight() + int64(params.SigningDeadlineBlocks)
@@ -290,9 +287,10 @@ func (k Keeper) ListActiveSigningRequests(ctx sdk.Context, currentEpochID uint64
 	return activeRequests, nil
 }
 
-// encodeSigningData encodes signing data using Ethereum-compatible abi.encodePacked format
-func (k Keeper) encodeSigningData(signingData types.SigningData) []byte {
-	// abi.encodePacked(currentEpochID, chainID, requestID, data[0], data[1], ...)
+// encodeSigningData encodes signing data using Ethereum-compatible
+// abi.encodePacked format
+func (k Keeper) encodeSigningData(signingData types.SigningData, attempt uint32) []byte {
+	// abi.encodePacked(currentEpochID, chainID, requestID, attempt, data[0], data[1], ...)
 	var encoded []byte
 
 	// Add currentEpochID (8 bytes, big endian)
@@ -306,12 +304,24 @@ func (k Keeper) encodeSigningData(signingData types.SigningData) []byte {
 	// Add requestID (32 bytes)
 	encoded = append(encoded, signingData.RequestId...)
 
+	// Add attempt (4 bytes, big endian)
+	attemptBytes := make([]byte, 4)
+	binary.BigEndian.PutUint32(attemptBytes, attempt)
+	encoded = append(encoded, attemptBytes...)
+
 	// Add each data element (32 bytes each)
 	for _, dataElement := range signingData.Data {
 		encoded = append(encoded, dataElement...)
 	}
 
 	return encoded
+}
+
+func (k Keeper) buildSigningPayload(signingData types.SigningData, attempt uint32) ([]byte, []byte) {
+	encodedData := k.encodeSigningData(signingData, attempt)
+	hash := sha3.NewLegacyKeccak256()
+	hash.Write(encodedData)
+	return encodedData, hash.Sum(nil)
 }
 
 func equalSigningDataFields(existing, incoming [][]byte) bool {
@@ -357,6 +367,15 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	retryReq.PartialSignatures = nil
 	retryReq.FinalSignature = []byte{}
 	retryReq.DeadlineBlockHeight = cacheCtx.BlockHeight() + signingDeadlineBlocks
+	retryReq.EncodedData, retryReq.MessageHash = k.buildSigningPayload(
+		types.SigningData{
+			CurrentEpochId: retryReq.CurrentEpochId,
+			ChainId:        retryReq.ChainId,
+			RequestId:      retryReq.RequestId,
+			Data:           retryReq.Data,
+		},
+		retryReq.Attempt,
+	)
 
 	// Clear any partial-sig sub-keys from the previous attempt so the new
 	// attempt starts with an empty collection. Without this, prior-attempt

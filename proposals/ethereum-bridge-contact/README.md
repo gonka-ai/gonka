@@ -60,6 +60,7 @@ function withdraw(WithdrawalCommand calldata cmd) external
 struct WithdrawalCommand {
     uint64 epochId;           // Epoch for signature validation
     bytes32 requestId;        // Unique request identifier from source chain
+    uint32 attempt;           // Signing attempt number from Gonka threshold-signing request
     address recipient;        // Ethereum address to receive tokens
     address tokenContract;    // ERC-20 contract address (or address(this) for ETH)
     uint256 amount;          // Token amount to withdraw
@@ -74,9 +75,11 @@ bytes32 messageHash = keccak256(
         epochId,
         GONKA_CHAIN_ID,
         requestId,
+        attempt,
         ETHEREUM_CHAIN_ID,
         WITHDRAW_OPERATION,  // keccak256("WITHDRAW_OPERATION")
         recipient,
+        address(this),
         tokenContract,
         amount
     )
@@ -96,6 +99,7 @@ function mintWithSignature(MintCommand calldata cmd) external
 struct MintCommand {
     uint64 epochId;           // Epoch for signature validation
     bytes32 requestId;        // Unique request identifier from source chain
+    uint32 attempt;           // Signing attempt number from Gonka threshold-signing request
     address recipient;        // Ethereum address to receive WGNK
     uint256 amount;          // WGNK amount to mint (9 decimals)
     bytes signature;         // 128-byte BLS threshold signature (G1 point, uncompressed)
@@ -109,9 +113,11 @@ bytes32 messageHash = keccak256(
         epochId,
         GONKA_CHAIN_ID,
         requestId,
+        attempt,
         ETHEREUM_CHAIN_ID,
         MINT_OPERATION,  // keccak256("MINT_OPERATION")
         recipient,
+        address(this),
         amount
     )
 );

@@ -185,7 +185,7 @@ The BLS system provides a general-purpose threshold signing service for arbitrar
         *   Validates current epoch has completed DKG
         *   **Uses caller's `request_id`**: `signingData.RequestID` (no generation, uses provided value)
         *   **Validates uniqueness**: Ensures `request_id` doesn't already exist in storage
-        *   Encodes using Ethereum-compatible `abi.encodePacked(currentEpochID, chainID, requestID, data[0], data[1], ...)` format
+        *   Encodes using Ethereum-compatible `abi.encodePacked(currentEpochID, chainID, requestID, attempt, data[0], data[1], ...)` format (the `attempt` counter makes each retry's hash unique, so partial signatures from different attempts cannot be combined)
         *   Computes `messageHash = keccak256(encodedData)`
         *   Creates `ThresholdSigningRequest` in `PENDING_SIGNING` state
         *   Sets deadline: `current_block_height + signing_deadline_blocks`

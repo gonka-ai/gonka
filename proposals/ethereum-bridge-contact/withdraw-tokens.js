@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CLI tool to withdraw tokens using the withdraw function
-// Usage: node withdraw-tokens.js <contractAddress> <epochId> <requestId> <recipient> <tokenContract> <amount> <signature>
+// Usage: node withdraw-tokens.js <contractAddress> <epochId> <requestId> <attempt> <recipient> <tokenContract> <amount> <signature>
 
 import hre from "hardhat";
 import { ethers } from "ethers";
@@ -60,7 +60,7 @@ async function getProviderAndSigner() {
     }
 }
 
-async function withdrawTokens(contractAddress, epochId, requestId, recipient, tokenContract, amount, signature) {
+async function withdrawTokens(contractAddress, epochId, requestId, attempt, recipient, tokenContract, amount, signature) {
     console.log("=== Withdraw Tokens ===\n");
     
     const { provider, signer, ethers } = await getProviderAndSigner();
@@ -79,6 +79,11 @@ async function withdrawTokens(contractAddress, epochId, requestId, recipient, to
     const epochIdNum = parseInt(epochId);
     if (isNaN(epochIdNum) || epochIdNum < 1) {
         throw new Error(`Invalid epoch ID: ${epochId}. Must be a positive integer.`);
+    }
+
+    const attemptNum = parseInt(attempt);
+    if (isNaN(attemptNum) || attemptNum < 1) {
+        throw new Error(`Invalid attempt: ${attempt}. Must be a positive integer.`);
     }
     
     if (!recipient || !ethers.isAddress(recipient)) {
@@ -105,6 +110,7 @@ async function withdrawTokens(contractAddress, epochId, requestId, recipient, to
     console.log("Configuration:");
     console.log("- Contract Address:", contractAddress);
     console.log("- Epoch ID:", epochIdNum);
+    console.log("- Attempt:", attemptNum);
     console.log("- Recipient:", recipient);
     console.log("- Token Contract:", tokenContract);
     console.log("- Amount:", amountBigInt.toString(), "wei");
@@ -166,6 +172,7 @@ async function withdrawTokens(contractAddress, epochId, requestId, recipient, to
     const withdrawalCommand = {
         epochId: epochIdNum,
         requestId: hexRequestId,
+        attempt: attemptNum,
         recipient: recipient,
         tokenContract: tokenContract,
         amount: amountBigInt,
@@ -272,12 +279,13 @@ async function withdrawTokens(contractAddress, epochId, requestId, recipient, to
 function parseArgs() {
     const args = process.argv.slice(2);
     
-    if (args.length < 7) {
-        console.error("Usage: node withdraw-tokens.js <contractAddress> <epochId> <requestId> <recipient> <tokenContract> <amount> <signature>");
+    if (args.length < 8) {
+        console.error("Usage: node withdraw-tokens.js <contractAddress> <epochId> <requestId> <attempt> <recipient> <tokenContract> <amount> <signature>");
         console.error("\nArguments:");
         console.error("  contractAddress  - Deployed BridgeContract address");
         console.error("  epochId          - Epoch ID for signature validation");
         console.error("  requestId        - Unique request ID from source chain (base64, 32 bytes)");
+        console.error("  attempt          - Signing attempt from Gonka threshold-signing request");
         console.error("  recipient        - Ethereum address to receive tokens");
         console.error("  tokenContract    - ERC-20 token contract address (or bridge contract address for ETH)");
         console.error("  amount           - Amount of tokens to withdraw (in wei)");
@@ -288,9 +296,9 @@ function parseArgs() {
         console.error("  - Signature must be valid for the withdrawal message");
         console.error("\nExamples:");
         console.error("  # Withdraw ERC-20 tokens");
-        console.error('  node withdraw-tokens.js 0x1234... 129 "TLITdi/P..." 0x8BF9... 0x5678... 200000 "AAAAAAAA..."');
+        console.error('  node withdraw-tokens.js 0x1234... 129 "TLITdi/P..." 1 0x8BF9... 0x5678... 200000 "AAAAAAAA..."');
         console.error("\n  # Withdraw ETH (use bridge contract as tokenContract)");
-        console.error('  node withdraw-tokens.js 0x1234... 129 "TLITdi/P..." 0x8BF9... 0x1234... 1000000000000000000 "AAAAAAAA..."');
+        console.error('  node withdraw-tokens.js 0x1234... 129 "TLITdi/P..." 1 0x8BF9... 0x1234... 1000000000000000000 "AAAAAAAA..."');
         console.error("\nNote:");
         console.error("  - requestId and signature must be in base64 format");
         console.error("  - amount is in wei");
@@ -302,18 +310,19 @@ function parseArgs() {
         contractAddress: args[0],
         epochId: args[1],
         requestId: args[2],
-        recipient: args[3],
-        tokenContract: args[4],
-        amount: args[5],
-        signature: args[6]
+        attempt: args[3],
+        recipient: args[4],
+        tokenContract: args[5],
+        amount: args[6],
+        signature: args[7]
     };
 }
 
 // Main execution
 if (import.meta.url === `file://${process.argv[1]}`) {
-    const { contractAddress, epochId, requestId, recipient, tokenContract, amount, signature } = parseArgs();
+    const { contractAddress, epochId, requestId, attempt, recipient, tokenContract, amount, signature } = parseArgs();
     
-    withdrawTokens(contractAddress, epochId, requestId, recipient, tokenContract, amount, signature)
+    withdrawTokens(contractAddress, epochId, requestId, attempt, recipient, tokenContract, amount, signature)
         .then(() => {
             console.log("\n=== Success ===");
             process.exit(0);

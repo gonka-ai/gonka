@@ -91,6 +91,7 @@ describe("BridgeContract", function () {
             const withdrawalCommand = {
                 epochId: 1,
                 requestId: ethers.utils.formatBytes32String("req1"),
+                attempt: 1,
                 recipient: user1.address,
                 tokenContract: mockToken.address,
                 amount: ethers.utils.parseEther("10"),
@@ -105,6 +106,7 @@ describe("BridgeContract", function () {
             const withdrawalCommand = {
                 epochId: 999, // Non-existent epoch
                 requestId: ethers.utils.formatBytes32String("req1"),
+                attempt: 1,
                 recipient: user1.address,
                 tokenContract: mockToken.address,
                 amount: ethers.utils.parseEther("10"),
@@ -119,6 +121,7 @@ describe("BridgeContract", function () {
             const withdrawalCommand = {
                 epochId: 1,
                 requestId: ethers.utils.formatBytes32String("req1"),
+                attempt: 1,
                 recipient: user1.address,
                 tokenContract: mockToken.address,
                 amount: ethers.utils.parseEther("10"),
@@ -160,6 +163,7 @@ describe("BridgeContract", function () {
             const ethWithdrawalCommand = {
                 epochId: 1,
                 requestId: ethers.utils.formatBytes32String("eth_req1"),
+                attempt: 1,
                 recipient: user1.address,
                 tokenContract: bridge.address,  // address(this) indicates ETH withdrawal
                 amount: ethers.utils.parseEther("1"),

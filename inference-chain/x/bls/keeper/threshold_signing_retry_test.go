@@ -71,6 +71,7 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
 	require.NoError(t, err)
 	initialHash := append([]byte(nil), initialRequest.MessageHash...)
+	initialEncoded := append([]byte(nil), initialRequest.EncodedData...)
 
 	k.SetActiveEpochID(ctx, activeEpochID)
 
@@ -83,8 +84,10 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.EqualValues(t, 2, retry1Request.Attempt)
 	require.Equal(t, initialEpochID, retry1Request.CurrentEpochId)
 	require.NotEqual(t, retry1Request.DeadlineBlockHeight, initialRequest.DeadlineBlockHeight)
-	require.Equal(t, initialHash, retry1Request.MessageHash)
+	require.NotEqual(t, initialHash, retry1Request.MessageHash)
+	require.NotEqual(t, initialEncoded, retry1Request.EncodedData)
 	require.Empty(t, retry1Request.PartialSignatures)
+	retry1Hash := append([]byte(nil), retry1Request.MessageHash...)
 
 	retry2Ctx := retry1Ctx.WithBlockHeight(retry1Request.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(retry2Ctx))
@@ -94,6 +97,7 @@ func TestProcessThresholdSigningDeadlines_AutoRetryKeepsRequestEpochAndStopsAtMa
 	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES, retry2Request.Status)
 	require.EqualValues(t, 3, retry2Request.Attempt)
 	require.Equal(t, initialEpochID, retry2Request.CurrentEpochId)
+	require.NotEqual(t, retry1Hash, retry2Request.MessageHash)
 
 	terminalCtx := retry2Ctx.WithBlockHeight(retry2Request.DeadlineBlockHeight)
 	require.NoError(t, k.ProcessThresholdSigningDeadlines(terminalCtx))
