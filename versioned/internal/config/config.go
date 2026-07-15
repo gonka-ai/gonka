@@ -9,6 +9,8 @@ import (
 	"time"
 )
 
+const DefaultDrainKillGrace = 10 * time.Minute
+
 type Config struct {
 	OracleURL         string
 	PollInterval      time.Duration
@@ -46,7 +48,7 @@ func Load() (Config, error) {
 		DrainStatusPath:   envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
 		DrainTimeout:      parseDuration("VERSIOND_DRAIN_TIMEOUT", 15*time.Minute),
 		DrainPollInterval: parseDuration("VERSIOND_DRAIN_POLL_INTERVAL", time.Second),
-		DrainKillGrace:    parseDuration("VERSIOND_DRAIN_KILL_GRACE", 30*time.Second),
+		DrainKillGrace:    parseDuration("VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace),
 		Overrides:         loadOverrides(),
 		ForceVersions:     loadForceVersions(),
 	}

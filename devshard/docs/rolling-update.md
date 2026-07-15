@@ -352,9 +352,11 @@ func (m *Manager) Status() []health.StatusEntry {
 
 #### f) Graceful supervisor shutdown
 
-`Manager.Shutdown` waits 10s per child. When versiond itself is being stopped,
-draining children should also get the long grace (or at least be `SIGTERM`'d and
-waited on with `VERSIOND_DRAIN_KILL_GRACE`).
+`Manager.Shutdown` must wait long enough for child graceful shutdown. When
+versiond itself is being stopped, children are `SIGTERM`'d and waited on with the
+same per-child stop timeout used elsewhere: exactly `VERSIOND_DRAIN_KILL_GRACE`
+for non-devshard binaries, and the max of `VERSIOND_DRAIN_KILL_GRACE` and
+`DEVSHARD_SHUTDOWN_GRACE` for devshardd.
 
 ```492:509:versioned/internal/process/manager.go
 func (m *Manager) Shutdown(ctx context.Context) error {
@@ -378,7 +380,7 @@ Add to `versioned/internal/config/config.go`:
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | max time to wait for old child to go idle before `SIGTERM` |
 | `VERSIOND_DRAIN_POLL_INTERVAL` | `1s` | how often to poll old child in-flight count |
-| `VERSIOND_DRAIN_KILL_GRACE` | `30s` | wait after `SIGTERM` before `SIGKILL` |
+| `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status drain cushion and child stop backstop |
 
 And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
 `app.go`. For new `devshardd` binaries, versiond also sets
@@ -387,8 +389,12 @@ support with `--print-admin-api-version`. Operators normally do not set this
 manually; it is the private lifecycle channel between versiond and its child.
 
 > Note: `cmd.WaitDelay` must not be shorter than the child's own graceful
-> shutdown window. For devshardd, versiond uses the max of
-> `VERSIOND_DRAIN_KILL_GRACE` and `DEVSHARD_SHUTDOWN_GRACE`.
+> shutdown window. For non-devshard binaries, versiond waits exactly
+> `VERSIOND_DRAIN_KILL_GRACE` after `SIGTERM`. For devshardd, versiond uses
+> the max of `VERSIOND_DRAIN_KILL_GRACE` and `DEVSHARD_SHUTDOWN_GRACE`.
+> For legacy children without `/drain/status`, the same
+> `VERSIOND_DRAIN_KILL_GRACE` is also the pre-`SIGTERM` cushion because
+> versiond cannot observe in-flight work.
 
 versiond also garbage-collects old complete per-sha install directories under
 `bin/<version>/<sha>/`, keeping desired/live/draining installs and a small
@@ -413,14 +419,16 @@ preflight flags existed. Compatibility is intentionally narrow:
   If `/ready` is missing with 404/405/501, versiond tries `/healthz`, then a TCP
   connect probe. Custom readiness paths do not use this fallback.
 - drain status fallback treats 404/405/501 from `/drain/status` as a legacy
-  child. versiond waits `VERSIOND_DRAIN_KILL_GRACE`, then sends `SIGTERM`
-  instead of waiting the full `VERSIOND_DRAIN_TIMEOUT`.
+  child. versiond waits `VERSIOND_DRAIN_KILL_GRACE` before `SIGTERM` because
+  it cannot observe whether old in-flight work is still running, instead of
+  waiting the full `VERSIOND_DRAIN_TIMEOUT`.
 
 This keeps old released devshardd binaries deployable under a new versiond while
 still failing closed for ambiguous failures. One consequence of the legacy drain
-fallback is that a very long in-flight request on an old binary can be cut after
-the short grace during the first legacy-to-new swap; stamped binaries with
-`/drain/status` get the full idle wait.
+fallback is that an in-flight request on an old binary longer than
+`VERSIOND_DRAIN_KILL_GRACE` plus that binary's own shutdown window can be cut
+during the first legacy-to-new swap; stamped binaries with `/drain/status` get
+the full idle wait.
 
 Oracle data is validated before reconciliation. Version names must be simple
 path components, unique, and non-empty; sha256 values must be 64 hex characters.

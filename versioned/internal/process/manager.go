@@ -106,7 +106,7 @@ func normalizeConfig(cfg config.Config) config.Config {
 		cfg.DrainPollInterval = time.Second
 	}
 	if cfg.DrainKillGrace <= 0 {
-		cfg.DrainKillGrace = 30 * time.Second
+		cfg.DrainKillGrace = config.DefaultDrainKillGrace
 	}
 	return cfg
 }
@@ -1197,7 +1197,7 @@ func (m *Manager) drainAndStop(c *child) {
 		inflight, err := m.fetchInflight(c)
 		if errors.Is(err, errLegacyDrainStatus) {
 			slog.Warn(
-				"drain status endpoint unavailable; using short legacy drain grace",
+				"drain status endpoint unavailable; using legacy drain grace",
 				"version", c.version.Name,
 				"port", c.port,
 				"grace", m.cfg.DrainKillGrace,
