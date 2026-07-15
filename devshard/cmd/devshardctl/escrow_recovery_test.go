@@ -155,11 +155,16 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromRoutePrefix(t *testing.T)
 }
 
 // A route prefix whose version segment is not a protocol version (e.g. a named
-// versiond runtime) keeps the empty/v1-default behavior.
-func TestRotationEscrowProtocolVersionUnparseableRouteFallsBack(t *testing.T) {
+// versiond runtime) keeps the empty/v1-default behavior; semver-like versions
+// map by their major component.
+func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
 	assert.Empty(t, rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
+	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
+	assert.Equal(t, "2", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
 	assert.Equal(t, "3", rotationEscrowProtocolVersion())
 }
 
