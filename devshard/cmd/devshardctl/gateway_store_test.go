@@ -392,7 +392,11 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	require.Equal(t, rotationRoleRegular, byID["13"].RotationRole)
 }
 
-func TestNewRotationDevshardStateDoesNotForceProtocolVersion(t *testing.T) {
+// Rotation state must never stamp a hardcoded protocol constant (a guard
+// originally added when the gateway-v2 branches hardcoded ProtocolV2): the
+// protocol is derived from the gateway route prefix, and without a resolvable
+// route version the field stays empty (the pre-existing v1-default behavior).
+func TestNewRotationDevshardStateDerivesProtocolFromRoutePrefix(t *testing.T) {
 	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
 		ModelID:       "Qwen/Test",
 		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
@@ -401,10 +405,17 @@ func TestNewRotationDevshardStateDoesNotForceProtocolVersion(t *testing.T) {
 	require.Equal(t, "99", record.ID)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
-	require.Empty(t, record.ProtocolVersion)
+	require.Empty(t, record.ProtocolVersion, "no route prefix version -> no protocol stamp")
 	require.True(t, record.Active)
 	require.Equal(t, rotationRoleTemp, record.RotationRole)
 	require.EqualValues(t, 10, record.RotationEpoch)
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
+	record = newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 100}, EscrowRotationModelSettings{
+		ModelID:       "Qwen/Test",
+		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+	}, rotationRoleTemp, 10)
+	require.Equal(t, "3", record.ProtocolVersion, "protocol derived from route prefix, not hardcoded")
 }
 
 func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.T) {
