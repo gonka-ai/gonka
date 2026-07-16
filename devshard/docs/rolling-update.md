@@ -281,6 +281,9 @@ func (m *Manager) assignPort(name string) int {
 ```
 → add a swap-aware allocation (e.g. `assignSwapPort(name)`) that returns a new
 port even when `name` already has one, and a `releasePort` on drain completion.
+The implementation uses a bounded child-port pool starting at `BasePort`,
+reuses ports after child exit, and reserves versiond's own listen port so a
+long-lived supervisor does not eventually allocate it to a child.
 
 #### c) Readiness gate instead of TCP-accept
 

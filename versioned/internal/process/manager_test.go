@@ -470,7 +470,7 @@ func TestHashFile_Missing(t *testing.T) {
 	}
 }
 
-func TestAssignPort_AllocatesOverlapPortsAndReleases(t *testing.T) {
+func TestAssignPort_ReusesReleasedPorts(t *testing.T) {
 	cfg := config.Config{BasePort: 5000}
 	m := NewManager(cfg)
 
@@ -487,8 +487,36 @@ func TestAssignPort_AllocatesOverlapPortsAndReleases(t *testing.T) {
 	if p2 != 5001 {
 		t.Errorf("second port = %d, want 5001", p2)
 	}
-	if p3 != 5002 {
-		t.Errorf("released port should not be immediately reused; got %d, want 5002", p3)
+	if p3 != 5000 {
+		t.Errorf("released port should be reused; got %d, want 5000", p3)
+	}
+}
+
+func TestAssignPort_SkipsVersiondListenPort(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 8079})
+
+	m.mu.Lock()
+	p1 := m.assignPort()
+	p2 := m.assignPort()
+	m.mu.Unlock()
+
+	if p1 != 8079 {
+		t.Errorf("first port = %d, want 8079", p1)
+	}
+	if p2 != 8081 {
+		t.Errorf("second port = %d, want 8081", p2)
+	}
+}
+
+func TestAssignPort_NormalizesOutOfRangeBasePort(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 70000})
+
+	m.mu.Lock()
+	port := m.assignPort()
+	m.mu.Unlock()
+
+	if port != 5000 {
+		t.Errorf("port = %d, want 5000", port)
 	}
 }
 

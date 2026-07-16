@@ -14,6 +14,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -35,6 +36,8 @@ const (
 	statusStopped  = "stopped"
 
 	childLoopbackHost            = "127.0.0.1"
+	invalidChildPort             = -1
+	maxChildPort                 = 65535
 	devshardMetaDBFile           = "_meta.db"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
@@ -64,7 +67,7 @@ type Manager struct {
 	draining       map[string][]*child
 	downloading    map[string]struct{}
 	allocatedPorts map[int]struct{}
-	nextPort       int
+	reservedPorts  map[int]struct{}
 	mu             sync.Mutex
 	routes         atomic.Value // map[string]string
 }
@@ -77,14 +80,14 @@ func NewManager(cfg config.Config) *Manager {
 		draining:       make(map[string][]*child),
 		downloading:    make(map[string]struct{}),
 		allocatedPorts: make(map[int]struct{}),
-		nextPort:       cfg.BasePort,
+		reservedPorts:  reservedChildPorts(),
 	}
 	m.routes.Store(map[string]string{})
 	return m
 }
 
 func normalizeConfig(cfg config.Config) config.Config {
-	if cfg.BasePort == 0 {
+	if cfg.BasePort <= 0 || cfg.BasePort > maxChildPort {
 		cfg.BasePort = 5000
 	}
 	if cfg.ReadyPath == "" {
@@ -114,21 +117,49 @@ func normalizeConfig(cfg config.Config) config.Config {
 // assignPort returns a currently-free child port.
 // Must be called with m.mu held.
 func (m *Manager) assignPort() int {
-	for {
-		port := m.nextPort
-		m.nextPort++
+	for port := m.cfg.BasePort; port <= maxChildPort; port++ {
 		if _, used := m.allocatedPorts[port]; used {
+			continue
+		}
+		if _, reserved := m.reservedPorts[port]; reserved {
 			continue
 		}
 		m.allocatedPorts[port] = struct{}{}
 		return port
 	}
+	slog.Error("no child ports available", "base_port", m.cfg.BasePort, "max_port", maxChildPort)
+	return invalidChildPort
+}
+
+func reservedChildPorts() map[int]struct{} {
+	ports := make(map[int]struct{})
+	if port, ok := parseListenPort(config.ListenAddr()); ok {
+		ports[port] = struct{}{}
+	}
+	return ports
+}
+
+func parseListenPort(addr string) (int, bool) {
+	_, portStr, err := net.SplitHostPort(addr)
+	if err != nil {
+		if !strings.HasPrefix(addr, ":") {
+			slog.Warn("cannot parse versiond listen address for child port reservation", "addr", addr, "error", err)
+			return 0, false
+		}
+		portStr = strings.TrimPrefix(addr, ":")
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil || port <= 0 || port > maxChildPort {
+		slog.Warn("cannot parse versiond listen port for child port reservation", "addr", addr, "port", portStr, "error", err)
+		return 0, false
+	}
+	return port, true
 }
 
 // releasePort releases a child port after the child process exits.
 // Must be called with m.mu held.
 func (m *Manager) releasePort(port int) {
-	if port != 0 {
+	if port > 0 {
 		delete(m.allocatedPorts, port)
 	}
 }
