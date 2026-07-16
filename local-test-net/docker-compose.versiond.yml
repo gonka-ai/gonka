@@ -4,9 +4,10 @@
 # Paths are relative to --project-directory (repo root). Typical Testermint stack:
 #   base + genesis + versiond [+ devshard-postgres on genesis] [+ devshard-router-proxy on genesis]
 #
-# Postgres for devshardd:
-#   - Default (no devshard-postgres overlay): PGHOST empty → SQLite in devshardd child.
-#   - With docker-compose.devshard-postgres.yml: shared devshard-postgres (genesis only).
+# Postgres for devshardd (DEVSHARD_STORAGE_MODE, default auto):
+#   - Default (no devshard-postgres overlay): PGHOST empty → sqlite mode.
+#   - With docker-compose.devshard-postgres.yml: shared Postgres +
+#     DEVSHARD_STORAGE_MODE=postgres (genesis only).
 # dapi payload Postgres remains per-node in docker-compose-base.yml.
 
 x-versiond: &versiond

@@ -29,10 +29,9 @@ x-versiond: &versiond
     - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
     - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
     - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
-    # HA: Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
+    # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
-    - DEVSHARD_HA=1
-    - DEVSHARD_REQUIRE_POSTGRES=1
+    - DEVSHARD_STORAGE_MODE=postgres
   depends_on:
     api:
       condition: service_started

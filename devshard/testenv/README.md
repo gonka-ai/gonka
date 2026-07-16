@@ -80,9 +80,9 @@ versiond:
 ```
 
 `gencompose` trims or pads the `hosts` list to match. **Multi versiond without
-Postgres is rejected** at validate time. Compose also sets `DEVSHARD_HA=1` /
-`DEVSHARD_REQUIRE_POSTGRES=1` on versiond services so devshardd boots in
-Postgres-only HA mode: boot fails if Postgres is down, and any local SQLite
+Postgres is rejected** at validate time. Compose also sets
+`DEVSHARD_STORAGE_MODE=postgres` on versiond services so devshardd boots in
+Postgres-only mode: boot fails if Postgres is down, and any local SQLite
 sessions are batch-migrated into Postgres once at startup.
 
 ### Three versiond instances (multi mode)

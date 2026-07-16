@@ -7,6 +7,8 @@ import (
 	"log/slog"
 	"os"
 	"time"
+
+	"common/storage/mode"
 )
 
 const (
@@ -22,29 +24,47 @@ var ErrStoragePGBoundWithoutPostgres = errors.New(
 
 // ErrStoragePostgresUnavailable is returned for new sessions while running in
 // degraded SQLite-only mode because PGHOST is set but Postgres is unreachable.
-// In HA mode this error also aborts process boot (no degraded fallback).
+// In postgres (fail-closed) mode this error also aborts process boot (no degraded fallback).
 var ErrStoragePostgresUnavailable = errors.New("devshard postgres storage is configured but unavailable")
+
+// ErrHAPostgresRequired is returned when storage mode needs Postgres but PGHOST is unset.
+var ErrHAPostgresRequired = errors.New(
+	"devshard storage mode requires Postgres (set PGHOST and PG* env, or set DEVSHARD_STORAGE_MODE=sqlite)",
+)
 
 // NewStorage builds the canonical Storage for a host process.
 //
-// Non-HA mode (default when DEVSHARD_HA / DEVSHARD_REQUIRE_POSTGRES are unset)
-// returns a per-session router (HybridStorage):
-//   - When PGHOST is unset it is SQLite-only (with .pg-bound guards).
-//   - When PGHOST is set, Postgres backs new escrows; unreachable Postgres
-//     enters degraded reconnect mode; legacy SQLite escrows drain in place.
-//
-// HA mode (DEVSHARD_HA=1 or DEVSHARD_REQUIRE_POSTGRES=1):
-//   - PGHOST is required.
-//   - Postgres must be reachable at boot or NewStorage fails.
-//   - Local SQLite sessions are batch-copied into Postgres, then quarantined.
-//   - The process runs Postgres-only with no SQLite fallback.
+// Mode is selected by common/storage/mode (DEVSHARD_STORAGE_MODE, default auto):
+//   - sqlite: local SQLite only (.pg-bound guards still apply).
+//   - hybrid: PGHOST required; Postgres for new escrows with degraded reconnect;
+//     legacy SQLite escrows drain in place.
+//   - postgres: PGHOST required; Postgres must be reachable at boot; local SQLite
+//     sessions are batch-migrated then quarantined; no SQLite fallback.
 //
 // See devshard/docs/storage-design.md#storage-mode-selection.
 func NewStorage(ctx context.Context, storeDir string) (Storage, error) {
-	if HAModeEnabled() {
-		return newHAStorage(ctx, storeDir)
+	storageMode, err := mode.Resolve()
+	if err != nil {
+		return nil, err
 	}
-	return newStorageFlexible(ctx, storeDir)
+
+	switch storageMode {
+	case mode.Postgres:
+		return newHAStorage(ctx, storeDir)
+	case mode.SQLite:
+		if pgHost := os.Getenv("PGHOST"); pgHost != "" {
+			slog.Warn("devshard storage: DEVSHARD_STORAGE_MODE=sqlite ignores PGHOST",
+				"host", pgHost, "dir", storeDir)
+		}
+		return newStorageLocal(storeDir)
+	case mode.Hybrid:
+		if os.Getenv("PGHOST") == "" {
+			return nil, ErrHAPostgresRequired
+		}
+		return newStorageFlexible(ctx, storeDir)
+	default:
+		return nil, fmt.Errorf("devshard storage: unhandled mode %q", storageMode)
+	}
 }
 
 func newHAStorage(ctx context.Context, storeDir string) (Storage, error) {
@@ -61,33 +81,33 @@ func newHAStorage(ctx context.Context, storeDir string) (Storage, error) {
 	sqlite, sqliteDrain, err := openSQLiteDrain(storeDir)
 	if err != nil {
 		_ = pg.Close()
-		return nil, fmt.Errorf("open sqlite for HA migrate: %w", err)
+		return nil, fmt.Errorf("open sqlite for postgres migrate: %w", err)
 	}
 	if sqliteDrain {
 		src, ok := sqlite.(*SQLite)
 		if !ok {
 			_ = pg.Close()
 			_ = sqlite.Close()
-			return nil, fmt.Errorf("HA migrate: unexpected sqlite backend type %T", sqlite)
+			return nil, fmt.Errorf("postgres migrate: unexpected sqlite backend type %T", sqlite)
 		}
 		n, migErr := MigrateSQLiteSessions(src, pg)
 		closeErr := src.Close()
 		if migErr != nil {
 			_ = pg.Close()
 			if closeErr != nil {
-				return nil, fmt.Errorf("HA migrate failed: %w (also close sqlite: %v)", migErr, closeErr)
+				return nil, fmt.Errorf("postgres migrate failed: %w (also close sqlite: %v)", migErr, closeErr)
 			}
-			return nil, fmt.Errorf("HA migrate failed: %w", migErr)
+			return nil, fmt.Errorf("postgres migrate failed: %w", migErr)
 		}
 		if closeErr != nil {
 			_ = pg.Close()
-			return nil, fmt.Errorf("close sqlite after HA migrate: %w", closeErr)
+			return nil, fmt.Errorf("close sqlite after postgres migrate: %w", closeErr)
 		}
 		if err := quarantineSQLiteArtifacts(storeDir); err != nil {
 			_ = pg.Close()
-			return nil, fmt.Errorf("quarantine sqlite after HA migrate: %w", err)
+			return nil, fmt.Errorf("quarantine sqlite after postgres migrate: %w", err)
 		}
-		slog.Info("devshard storage: HA migrated sqlite sessions to postgres",
+		slog.Info("devshard storage: migrated sqlite sessions to postgres",
 			"dir", storeDir, "sessions", n)
 	}
 
@@ -96,40 +116,40 @@ func newHAStorage(ctx context.Context, storeDir string) (Storage, error) {
 		_ = router.Close()
 		return nil, fmt.Errorf("reconcile pg-bound: %w", err)
 	}
-	slog.Info("devshard storage: HA mode postgres-only", "dir", storeDir, "host", pgHost)
+	slog.Info("devshard storage: postgres-only", "dir", storeDir, "host", pgHost, "mode", mode.Postgres)
 	return router, nil
 }
 
-func newStorageFlexible(ctx context.Context, storeDir string) (Storage, error) {
-	pgHost := os.Getenv("PGHOST")
-
-	if pgHost == "" {
-		pgBound, err := ReadPGBound(storeDir)
-		if err != nil {
-			return nil, fmt.Errorf("read pg-bound marker: %w", err)
-		}
-		if pgBound {
-			sqlite, sqliteDrain, err := openSQLiteDrain(storeDir)
-			if err != nil {
-				return nil, fmt.Errorf("open sqlite degraded: %w", err)
-			}
-			if sqliteDrain {
-				slog.Warn(
-					"devshard storage: .pg-bound present but PGHOST unset; serving sqlite-owned escrows only and rejecting new escrows",
-					"dir", storeDir,
-				)
-				return newDegradedSQLiteRouter(sqlite, storeDir, ErrStoragePGBoundWithoutPostgres), nil
-			}
-			return nil, ErrStoragePGBoundWithoutPostgres
-		}
-		sqlite, err := NewSQLite(storeDir)
-		if err != nil {
-			return nil, err
-		}
-		slog.Info("devshard storage: using sqlite", "dir", storeDir)
-		return newHybridRouter(sqlite, nil, false, storeDir), nil
+// newStorageLocal opens SQLite-only storage (DEVSHARD_STORAGE_MODE=sqlite, or
+// auto with PGHOST unset).
+func newStorageLocal(storeDir string) (Storage, error) {
+	pgBound, err := ReadPGBound(storeDir)
+	if err != nil {
+		return nil, fmt.Errorf("read pg-bound marker: %w", err)
 	}
+	if pgBound {
+		sqlite, sqliteDrain, err := openSQLiteDrain(storeDir)
+		if err != nil {
+			return nil, fmt.Errorf("open sqlite degraded: %w", err)
+		}
+		if sqliteDrain {
+			slog.Warn(
+				"devshard storage: .pg-bound present but PGHOST unset; serving sqlite-owned escrows only and rejecting new escrows",
+				"dir", storeDir,
+			)
+			return newDegradedSQLiteRouter(sqlite, storeDir, ErrStoragePGBoundWithoutPostgres), nil
+		}
+		return nil, ErrStoragePGBoundWithoutPostgres
+	}
+	sqlite, err := NewSQLite(storeDir)
+	if err != nil {
+		return nil, err
+	}
+	slog.Info("devshard storage: using sqlite", "dir", storeDir, "mode", mode.SQLite)
+	return newHybridRouter(sqlite, nil, false, storeDir), nil
+}
 
+func newStorageFlexible(ctx context.Context, storeDir string) (Storage, error) {
 	sqlite, sqliteDrain, err := openSQLiteDrain(storeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite drain: %w", err)
@@ -163,7 +183,8 @@ func newStorageFlexible(ctx context.Context, storeDir string) (Storage, error) {
 		return nil, fmt.Errorf("reconcile pg-bound: %w", err)
 	}
 	router.logConflictedEscrows("boot")
-	slog.Info("devshard storage: using postgres for new escrows", "dir", storeDir, "sqlite_drain", sqliteDrain)
+	slog.Info("devshard storage: using postgres for new escrows",
+		"dir", storeDir, "sqlite_drain", sqliteDrain, "mode", mode.Hybrid)
 	return router, nil
 }
 

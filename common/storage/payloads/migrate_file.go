@@ -65,7 +65,7 @@ func MigrateFilePayloadsToPostgres(ctx context.Context, baseDir string, dest Sto
 	if err := quarantinePayloadEpochDirs(epochDirs); err != nil {
 		return copied, err
 	}
-	slog.Info("payload storage: quarantined file payloads after HA migrate",
+	slog.Info("payload storage: quarantined file payloads after postgres migrate",
 		"dir", baseDir, "epochs", len(epochDirs), "files", copied)
 	return copied, nil
 }

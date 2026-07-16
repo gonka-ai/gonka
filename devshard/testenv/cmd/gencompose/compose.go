@@ -135,8 +135,7 @@ services:
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
 {{ if eq $.Versiond.Mode "multi" }}
-      DEVSHARD_REQUIRE_POSTGRES: "1"
-      DEVSHARD_HA: "1"
+      DEVSHARD_STORAGE_MODE: postgres
 {{ end }}
 {{ if $.Postgres.Enabled }}
       PGHOST: {{ $.Postgres.Host }}

@@ -21,6 +21,7 @@ services:
 
   versiond:
     environment:
+      DEVSHARD_STORAGE_MODE: postgres
       PGHOST: devshard-postgres
       PGDATABASE: devshardd
       PGUSER: devshardd
@@ -31,6 +32,7 @@ services:
 
   versiond-2:
     environment:
+      DEVSHARD_STORAGE_MODE: postgres
       PGHOST: devshard-postgres
       PGDATABASE: devshardd
       PGUSER: devshardd
@@ -41,6 +43,7 @@ services:
 
   versiond-3:
     environment:
+      DEVSHARD_STORAGE_MODE: postgres
       PGHOST: devshard-postgres
       PGDATABASE: devshardd
       PGUSER: devshardd
