@@ -64,6 +64,21 @@ class VLLMRunner(IVLLMRunner):
         self.additional_args = additional_args or []
         self.processes: List[subprocess.Popen] = []
 
+    def get_config_summary(self) -> dict:
+        """Public config snapshot for observability (metrics exporter).
+
+        Zero for the numeric fields means "not passed explicitly" — the
+        effective vLLM default is not known to mlnode.
+        """
+        return {
+            "model": self.model,
+            "dtype": self.dtype,
+            "max_num_seqs": self._get_arg_value("--max-num-seqs", default=0),
+            "max_model_len": self._get_arg_value("--max-model-len", default=0),
+            "tensor_parallel_size": self._get_arg_value("--tensor-parallel-size", default=0),
+            "pipeline_parallel_size": self._get_arg_value("--pipeline-parallel-size", default=0),
+        }
+
     def _get_arg_value(self, name: str, default: int = 1) -> int:
         if name in self.additional_args:
             try:
@@ -129,6 +144,8 @@ class VLLMRunner(IVLLMRunner):
 
             env = os.environ.copy()
             env["VLLM_USE_V1"] = "0"
+            # Metrics trust contract: no vendor telemetry from vLLM
+            env["VLLM_NO_USAGE_STATS"] = "1"
 
             start_gpu = i * gpus_per_instance
             if total_gpus > 0:
