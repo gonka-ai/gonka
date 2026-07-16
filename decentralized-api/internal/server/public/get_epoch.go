@@ -1,21 +1,24 @@
 package public
 
 import (
+	"net/http"
+
 	"decentralized-api/logging"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
-	"net/http"
 )
 
 type EpochResponse struct {
-	BlockHeight                int64                          `json:"block_height"`
-	LatestEpoch                LatestEpochDto                 `json:"latest_epoch"`
-	Phase                      types.EpochPhase               `json:"phase"`
-	EpochStages                types.EpochStages              `json:"epoch_stages"`
-	NextEpochStages            types.EpochStages              `json:"next_epoch_stages"`
-	EpochParams                types.EpochParams              `json:"epoch_params"`
-	IsConfirmationPocActive    bool                           `json:"is_confirmation_poc_active"`
-	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent    `json:"active_confirmation_poc_event,omitempty"`
+	BlockHeight                int64                       `json:"block_height"`
+	LatestEpoch                LatestEpochDto              `json:"latest_epoch"`
+	Phase                      types.EpochPhase            `json:"phase"`
+	EpochStages                types.EpochStages           `json:"epoch_stages"`
+	NextEpochStages            types.EpochStages           `json:"next_epoch_stages"`
+	EpochParams                types.EpochParams           `json:"epoch_params"`
+	EffectiveEpochIndex        uint64                      `json:"effective_epoch_index,omitempty"`
+	IsConfirmationPocActive    bool                        `json:"is_confirmation_poc_active"`
+	ActiveConfirmationPocEvent *types.ConfirmationPoCEvent `json:"active_confirmation_poc_event,omitempty"`
 }
 
 // LatestEpochDto, had to indroduced it, because types.Epoch doesn't serialize when
@@ -38,10 +41,23 @@ func (s *Server) getEpochById(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusInternalServerError, err.Error())
 	}
 
-	epochParams := *epochInfo.Params.EpochParams
+	epochParams := types.EpochParams{}
+	if epochInfo.Params.EpochParams != nil {
+		epochParams = *epochInfo.Params.EpochParams
+	}
 
-	epochContext := types.NewEpochContext(epochInfo.LatestEpoch, epochParams)
-	nextEpochContext := epochContext.NextEpochContext()
+	// Chain EpochInfo is the source of truth for phase/stages. Local EpochContext
+	// derivation remains only as a fallback for nodes that have not upgraded yet.
+	phase := types.EpochPhase(epochInfo.Phase)
+	epochStages := epochInfo.EpochStages
+	nextEpochStages := epochInfo.NextEpochStages
+	if phase == "" {
+		epochContext := types.NewEpochContext(epochInfo.LatestEpoch, epochParams)
+		nextEpochContext := epochContext.NextEpochContext()
+		phase = epochContext.GetCurrentPhase(epochInfo.BlockHeight)
+		epochStages = epochContext.GetEpochStages()
+		nextEpochStages = nextEpochContext.GetEpochStages()
+	}
 
 	response := EpochResponse{
 		BlockHeight: epochInfo.BlockHeight,
@@ -49,10 +65,11 @@ func (s *Server) getEpochById(ctx echo.Context) error {
 			Index:               epochInfo.LatestEpoch.Index,
 			PocStartBlockHeight: epochInfo.LatestEpoch.PocStartBlockHeight,
 		},
-		Phase:                      epochContext.GetCurrentPhase(epochInfo.BlockHeight),
-		EpochStages:                epochContext.GetEpochStages(),
-		NextEpochStages:            nextEpochContext.GetEpochStages(),
-		EpochParams:                *epochInfo.Params.EpochParams,
+		Phase:                      phase,
+		EpochStages:                epochStages,
+		NextEpochStages:            nextEpochStages,
+		EpochParams:                epochParams,
+		EffectiveEpochIndex:        epochInfo.EffectiveEpochIndex,
 		IsConfirmationPocActive:    epochInfo.IsConfirmationPocActive,
 		ActiveConfirmationPocEvent: epochInfo.ActiveConfirmationPocEvent,
 	}

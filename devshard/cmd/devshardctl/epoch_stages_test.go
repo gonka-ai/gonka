@@ -1,46 +1,12 @@
 package main
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 )
-
-func TestDeriveEpochStagesMatchesSetNewValidatorsMath(t *testing.T) {
-	params := chainEpochParams{
-		EpochLength:           500,
-		PocStageDuration:      50,
-		PocValidationDelay:    5,
-		PocValidationDuration: 40,
-		SetNewValidatorsDelay: 2,
-	}
-	epoch := chainLatestEpoch{Index: 12, PocStartBlockHeight: 1000}
-
-	current, next := deriveEpochStages(epoch, params)
-	// endPoC=50, valStart=55, valEnd=95, setNew=97
-	require.Equal(t, int64(1097), int64(current.SetNewValidators))
-	require.Equal(t, int64(1500), int64(current.NextPoCStart))
-	require.Equal(t, uint64(13), uint64(next.EpochIndex))
-	require.Equal(t, int64(1597), int64(next.SetNewValidators))
-}
-
-func TestEnrichEpochInfoStagesDerivesPhaseWhenMissing(t *testing.T) {
-	payload := &chainEpochInfoResponse{
-		BlockHeight: 1010,
-		LatestEpoch: chainLatestEpoch{Index: 12, PocStartBlockHeight: 1000},
-		Params: chainEpochInfoParams{EpochParams: chainEpochParams{
-			EpochLength:           500,
-			PocStageDuration:      50,
-			PocValidationDelay:    5,
-			PocValidationDuration: 40,
-			SetNewValidatorsDelay: 2,
-		}},
-	}
-	enrichEpochInfoStages(payload)
-	require.Equal(t, epochPhasePoCGenerate, payload.Phase)
-	require.Equal(t, int64(1097), int64(payload.EpochStages.SetNewValidators))
-	require.Equal(t, int64(1500), int64(payload.EpochStages.NextPoCStart))
-}
 
 func TestNewChainPhaseGateUsesChainRESTPaths(t *testing.T) {
 	gate := NewChainPhaseGate("http://node:1317/", 0)
@@ -49,4 +15,33 @@ func TestNewChainPhaseGateUsesChainRESTPaths(t *testing.T) {
 	require.Equal(t, "http://node:1317/productscience/inference/inference/active_participants/0", gate.participantsEndpoint)
 	gate.SetPreservedSnapshotBaseURL("http://node:1317/")
 	require.Equal(t, "http://node:1317/productscience/inference/inference/preserved_nodes_snapshot", gate.preservedSnapshotURL())
+}
+
+func TestChainPhaseGateFetchEpochInfoUsesChainPrecomputedStages(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/productscience/inference/inference/epoch_info", r.URL.Path)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{
+			"block_height":"150",
+			"phase":"Inference",
+			"effective_epoch_index":"11",
+			"latest_epoch":{"index":"12","poc_start_block_height":"100"},
+			"epoch_stages":{"epoch_index":"12","set_new_validators":"180","next_poc_start":"200"},
+			"next_epoch_stages":{"epoch_index":"13","set_new_validators":"600","next_poc_start":"700"},
+			"is_confirmation_poc_active":false
+		}`))
+	}))
+	defer server.Close()
+
+	gate := NewChainPhaseGate(server.URL, 0)
+	resp, err := gate.fetchEpochInfo()
+	require.NoError(t, err)
+	require.Equal(t, epochPhaseInference, resp.Phase)
+	require.Equal(t, uint64(11), uint64(resp.EffectiveEpochIndex))
+	require.Equal(t, int64(180), int64(resp.EpochStages.SetNewValidators))
+	require.Equal(t, int64(600), int64(resp.NextEpochStages.SetNewValidators))
+
+	snapshot := deriveChainPhaseSnapshot(resp)
+	require.Equal(t, int64(180), snapshot.epochSwitchBlockHeight)
+	require.Equal(t, uint64(12), snapshot.EpochIndex)
 }

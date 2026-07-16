@@ -1,0 +1,33 @@
+syntax = "proto3";
+package inference.inference;
+
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// EpochExchangeWindow is an inclusive block-height window.
+message EpochExchangeWindow {
+  int64 start = 1;
+  int64 end = 2;
+}
+
+// EpochStages holds absolute block heights for epoch boundaries.
+// Computed from EpochContext; clients should not re-derive these.
+message EpochStages {
+  uint64 epoch_index = 1;
+  int64 poc_start = 2;
+  int64 poc_generation_wind_down = 3;
+  int64 poc_generation_end = 4;
+  int64 poc_validation_start = 5;
+  int64 poc_validation_wind_down = 6;
+  int64 poc_validation_end = 7;
+  int64 set_new_validators = 8;
+  int64 claim_money = 9;
+  int64 inference_validation_cutoff = 10;
+  int64 next_poc_start = 11;
+  EpochExchangeWindow poc_exchange_window = 12 [(gogoproto.nullable) = false];
+  EpochExchangeWindow poc_validation_exchange_window = 13 [
+    (gogoproto.nullable) = false,
+    (gogoproto.jsontag) = "poc_validation_exchange_window"
+  ];
+}

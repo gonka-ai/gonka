@@ -84,15 +84,10 @@ type chainEpochInfoResponse struct {
 	Phase                   string                            `json:"phase"`
 	EffectiveEpochIndex     jsonUint64                        `json:"effective_epoch_index"`
 	LatestEpoch             chainLatestEpoch                  `json:"latest_epoch"`
-	Params                  chainEpochInfoParams              `json:"params"`
 	EpochStages             chainEpochStages                  `json:"epoch_stages"`
 	NextEpochStages         chainEpochStages                  `json:"next_epoch_stages"`
 	IsConfirmationPoCActive bool                              `json:"is_confirmation_poc_active"`
 	ActiveConfirmationPoC   *chainConfirmationPoCEventPayload `json:"active_confirmation_poc_event,omitempty"`
-}
-
-type chainEpochInfoParams struct {
-	EpochParams chainEpochParams `json:"epoch_params"`
 }
 
 type chainLatestEpoch struct {
@@ -493,27 +488,7 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
-	enrichEpochInfoStages(&payload)
 	return &payload, nil
-}
-
-// enrichEpochInfoStages fills epoch_stages from chain params when the LCD
-// response does not include them (EpochInfo returns raw params + latest_epoch).
-func enrichEpochInfoStages(payload *chainEpochInfoResponse) {
-	if payload == nil {
-		return
-	}
-	params := payload.Params.EpochParams
-	current, next := deriveEpochStages(payload.LatestEpoch, params)
-	if payload.EpochStages.SetNewValidators == 0 && payload.EpochStages.NextPoCStart == 0 {
-		payload.EpochStages = current
-	}
-	if payload.NextEpochStages.SetNewValidators == 0 {
-		payload.NextEpochStages = next
-	}
-	if strings.TrimSpace(payload.Phase) == "" {
-		payload.Phase = deriveEpochPhaseFromParams(int64(payload.BlockHeight), payload.LatestEpoch, params)
-	}
 }
 
 // participantNode holds the per-node data for one ML node belonging to a participant

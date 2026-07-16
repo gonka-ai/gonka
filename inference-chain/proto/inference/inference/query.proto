@@ -38,6 +38,7 @@ import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
 import "inference/inference/activeparticipants.proto";
+import "inference/inference/epoch_stages.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -1073,6 +1074,9 @@ message QueryEpochInfoResponse {
   uint64                effective_epoch_index         = 6;
   // phase is derived from latest_epoch + epoch params at block_height.
   string                phase                         = 7;
+  // Precomputed stage heights for latest_epoch (same shape as dapi /v1/epochs/latest).
+  EpochStages           epoch_stages                  = 8 [(gogoproto.nullable) = false];
+  EpochStages           next_epoch_stages             = 9 [(gogoproto.nullable) = false];
 }
 
 message QueryCountPoCbatchesAtHeightRequest {
