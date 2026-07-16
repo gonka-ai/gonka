@@ -34,7 +34,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
           cache-dependency-path: |
             devshard/go.sum
             common/go.sum
@@ -70,7 +70,7 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
           cache-dependency-path: devshard/go.sum
 
       - name: Run ci-testenv-integration
