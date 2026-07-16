@@ -236,6 +236,7 @@ func (am AppModule) fallbackSeed(
 		"participant", address,
 		"currentEpochIndex", currentEpochIndex,
 		"upcomingEpochIndex", upcomingEpochIndex)
+	seed.EpochIndex = upcomingEpochIndex
 	return &seed, true
 }
 
