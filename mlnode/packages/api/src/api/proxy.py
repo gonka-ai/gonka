@@ -21,6 +21,9 @@ LIMITS = httpx.Limits(
 )
 
 vllm_backend_ports: List[int] = []
+# Bumped on every setup_vllm_proxy() call (i.e. each vLLM (re)start);
+# lets consumers like the metrics exporter detect a model switch lazily.
+vllm_setup_generation: int = 0
 vllm_healthy: Dict[int, bool] = {}
 vllm_counts: Dict[int, int] = {}
 poc_status_by_port: Dict[int, str] = {}  # PoC status: "IDLE", "GENERATING", "STOPPED", or ""
@@ -245,8 +248,9 @@ async def _health_check_vllm(interval: float = 2.0):
 
 def setup_vllm_proxy(backend_ports: List[int]):
     """Setup vLLM proxy with given backend ports."""
-    global vllm_backend_ports, vllm_counts
+    global vllm_backend_ports, vllm_counts, vllm_setup_generation
     vllm_backend_ports = backend_ports
+    vllm_setup_generation += 1
     vllm_counts = {p: 0 for p in vllm_backend_ports}
     vllm_healthy.update({p: False for p in vllm_backend_ports})
     poc_status_by_port.update({p: "" for p in vllm_backend_ports})
