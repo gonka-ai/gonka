@@ -241,6 +241,49 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 	require.Equal(t, hosts[1].Address(), addr)
 }
 
+func TestHost_StaleDiffDoesNotAuthorizeExecution(t *testing.T) {
+	// A skipped/stale diff must not authorize receipt or ML execution.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 1_000_000, 10)
+	ctx := context.Background()
+
+	balanceBefore := h.SnapshotState().Balance
+
+	// Advance to nonce 1 without creating inference 1.
+	advance := testutil.SignDiff(t, user, "escrow-1", 1, nil)
+	_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{advance}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), h.SnapshotState().LatestNonce)
+	_, exists := h.SnapshotState().Inferences[1]
+	require.False(t, exists)
+
+	// Resend nonce 1 with an unapplied Start and nil UserSig.
+	stale := types.Diff{
+		Nonce: 1,
+		Txs: []*types.DevshardTx{
+			testutil.StartTx(1),
+		},
+		UserSig: nil,
+	}
+	resp, err := handleAndExecute(t, h, ctx, HostRequest{
+		Diffs:   []types.Diff{stale},
+		Nonce:   1,
+		Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp.Receipt, "stale unapplied start must not produce a receipt")
+	require.Nil(t, resp.ExecutionJob)
+	require.Nil(t, findMempoolFinish(resp.Mempool))
+	require.Nil(t, findMempoolConfirm(resp.Mempool))
+
+	after := h.SnapshotState()
+	require.Equal(t, uint64(1), after.LatestNonce)
+	_, exists = after.Inferences[1]
+	require.False(t, exists)
+	require.Equal(t, balanceBefore, after.Balance)
+}
+
 func TestHost_DisabledAvailabilityRejectsCompletionButAllowsFinalize(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
