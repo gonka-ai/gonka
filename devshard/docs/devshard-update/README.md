@@ -1,6 +1,6 @@
 # Devshard Gateway Update
 
-Update a devshard gateway to a new image version behind nginx without dropping in-flight requests. Assumes multi-devshard **gateway-proxy** mode (routing prefix `/devshard-gateway/`) behind the nginx `proxy` container. Single-instance host, two ways — **Manual** (steps by hand) and **Automated** (one script). For a 2+ instance pool, see the Pool section below.
+Update a devshard gateway to a new image version without dropping in-flight requests. Full blue/green updates support nginx or Caddy routing; weighted canary updates are nginx-only. Single-instance host, two ways — **Manual** (nginx steps by hand) and **Automated** (one script). For a 2+ instance pool, see the Pool section below.
 
 An **escrow** and a **devshard** are the same object. The examples assume:
 
@@ -11,6 +11,23 @@ TEMP="http://127.0.0.1:18081"
 REPO="ghcr.io/gonka-ai/devshard-gateway"
 # <OLD> / <NEW> = current / target image tag; <MODEL> = a model id you serve
 ```
+
+## Current mainnet v3 target
+
+Use `ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v3-post1`.
+Verify registry access before starting:
+
+```bash
+docker pull ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v3-post1
+```
+
+For the v1/v2 → v3 migration, prefer the automated workflow below. Configure
+the exact image currently present in compose as `image.from_tag`, the image
+above as `image.to_tag`, the running protocol as
+`escrow.source_protocol_version`, and target protocol / route as `"3"` /
+`/devshard/v3`. Keep `models[].main_seed_count >= 1`. Older gateways may omit
+`protocol_version`; the script treats missing values as source-protocol state
+and deactivates them locally without settlement before starting v3.
 
 ## Manual update (single instance)
 
@@ -45,7 +62,7 @@ curl -fsS "$MAIN/v1/admin/settings" -H "Authorization: Bearer $KEY" \
 ```bash
 curl -fsS -X POST "$TEMP/v1/admin/escrows" -H "Authorization: Bearer $KEY" \
   -H 'Content-Type: application/json' \
-  -d '{"amount":5000000000,"model_id":"<MODEL>","private_key_env":"DEVSHARD_PRIVATE_KEY","protocol_version":"1"}'
+  -d '{"amount":5000000000,"model_id":"<MODEL>","private_key_env":"DEVSHARD_PRIVATE_KEY","protocol_version":"<TARGET_PROTOCOL>"}'
 # repeat per escrow and per model; then record the created ids:
 curl -fsS "$TEMP/v1/admin/devshards" -H "Authorization: Bearer $KEY" | jq '.devshards[].id'
 ```
@@ -107,7 +124,7 @@ docker stop devshard-gateway-temp && docker rm devshard-gateway-temp
 **12. Import + activate the temp escrows into main** (so their funds aren't stranded) — for each temp escrow `<ID>`:
 
 ```bash
-BODY='{"id":"<ID>","model":"<MODEL>","storage_path":"/root/.devshardctl/temp/escrow-<ID>/state.db","protocol_version":"1","private_key_env":"DEVSHARD_PRIVATE_KEY"}'
+BODY='{"id":"<ID>","model":"<MODEL>","storage_path":"/root/.devshardctl/temp/escrow-<ID>/state.db","protocol_version":"<TARGET_PROTOCOL>","private_key_env":"DEVSHARD_PRIVATE_KEY"}'
 curl -fsS -X POST "$MAIN/v1/admin/devshards/import" -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "$(jq '.active=false' <<<"$BODY")"
 curl -fsS -X POST "$MAIN/v1/admin/devshards"        -H "Authorization: Bearer $KEY" -H 'Content-Type: application/json' -d "$BODY"
 ```
@@ -118,20 +135,28 @@ curl -fsS -X POST "$MAIN/v1/admin/devshards"        -H "Authorization: Bearer $K
 
 The script runs steps 1–12 from a JSON config (models and everything else are config-driven — nothing hardcoded).
 
+Set `routing.type` to `nginx` (the backward-compatible default) or `caddy`.
+Backend-specific switch functions stay independent; the update workflow only
+selects whether traffic moves to temp or main. `update-canary.sh` supports nginx
+only.
+
+Gateway-2 requires an additional external gate: remove `10.0.1.5:18080` from
+node4's active split and fallback path before the update. Node4 connects to the
+host port directly and bypasses gateway-2's Caddy configuration.
+
 ### Before a protocol-changing update
 
-`update.config.json` sets the protocol of newly created escrows, but it does not
-edit the gateway env file. Before starting a protocol change:
+The script stages the target route in the gateway env file (after making a
+backup) before it creates temp. Before starting a protocol change:
 
-1. Back up `config.devshard.env`.
-2. Change `DEVSHARD_ROUTE_PREFIX` to the target route, for example
-   `/devshard/v2` to `/devshard/v3`.
-3. Verify the running main container still has the source route. Docker reads
+1. Set `escrow.route_prefix` to the target route, for example
+   `/devshard/v3`.
+2. Verify the running main container still has the source route. Docker reads
    its env only when the container is created, so the existing main remains on
    v2 while temp and the later recreated main read v3.
-4. Set `escrow.source_protocol_version` to the running protocol and
+3. Set `escrow.source_protocol_version` to the running protocol and
    `escrow.protocol_version` to the target (`"2"` and `"3"` for v2 to v3).
-5. Set `models[].main_seed_count` to at least `1` for every served model.
+4. Set `models[].main_seed_count` to at least `1` for every served model.
 
 The public client path remains `/devshard-gateway/v1/...`.
 
@@ -146,10 +171,24 @@ source-protocol escrows on main. Deactivation is local only: it does **not**
 settle, delete, or transfer funds. This prevents the target binary from trying
 to open incompatible source-protocol session state.
 
+The default `deactivation.mode=api` calls the drained source gateway's admin
+endpoint. Some legacy images do not provide that route. For those images only,
+set `deactivation.mode=sqlite` and `deactivation.gateway_db`: the script stops
+MAIN after the drain gate, backs up `gateway.db*`, marks only active
+source-protocol records inactive, and requires `PRAGMA integrity_check` to
+return `ok` before continuing.
+
 After main restarts on the target image, the script creates the configured
-target-protocol seed escrows and proves direct inference before switching nginx
-back. Temp is then drained and stopped before its escrows are imported and
-activated on main, preserving one writer per escrow.
+target-protocol seed escrows and proves direct inference before switching the
+selected router back. Temp is then drained and stopped before its escrows are
+imported and activated on main, preserving one writer per escrow.
+
+Temp escrow rotation is deliberately disabled throughout this handoff. Draining
+means `active_requests == 0`; it does not exhaust escrows. If
+`rotation.restore_after_update` is true, the script snapshots MAIN's complete
+settings before disabling rotation and restores the exact original
+`escrow_rotation` object afterward. This preserves enabled state, settlement
+state, and per-model rotation targets.
 
 ```bash
 cp scripts/update.config.sample.json update.config.json     # edit: image tags, models[], nginx, compose
@@ -161,7 +200,7 @@ cp scripts/update.config.sample.json update.config.json     # edit: image tags, 
 - Run a single step: `./scripts/update.sh --config update.config.json <step>`.
 - Recover stranded temp escrows after an aborted run: `./scripts/update.sh --config update.config.json recover` (or `recover --settle`).
 
-The config (see [scripts/update.config.sample.json](scripts/update.config.sample.json)) holds the image (`repository`, `from_tag`, `to_tag`, `skip_pull`), the `models[]` array (`model`, temp `escrow_count`, `main_seed_count`, `escrow_amount`), source/target escrow protocol versions, `allow_unavailable_models`, and the nginx / compose / timeout blocks. Set `image.skip_pull=true` only when the exact target image is already loaded locally; the script verifies it with `docker image inspect` and skips both registry pulls. For same-protocol image updates, source and target protocol are equal and `main_seed_count` may remain `0`. Env vars override individual fields.
+The config (see [scripts/update.config.sample.json](scripts/update.config.sample.json)) holds the image (`repository`, `from_tag`, `to_tag`, `skip_pull`), the `models[]` array (`model`, temp `escrow_count`, `main_seed_count`, `escrow_amount`), source/target escrow protocol versions, explicit deactivation mode, `allow_unavailable_models`, generic `routing`, the selected `nginx` or `caddy` block, and compose / timeout settings. A gateway-2 starting point is provided at [update.config.gateway2.json](update.config.gateway2.json). Set `image.skip_pull=true` only when the exact target image is already loaded locally; the script verifies it with `docker image inspect` and skips both registry pulls. For same-protocol image updates, source and target protocol are equal and `main_seed_count` may remain `0`. Env vars override individual fields.
 
 ## Restore the nginx backup
 

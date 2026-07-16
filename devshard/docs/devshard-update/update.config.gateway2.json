@@ -1,27 +1,27 @@
 {
   "image": {
-    "repository": "ghcr.io/gonka-ai/devshard-gateway",
-    "from_tag": "mainnet-v0.2.13-latest",
-    "to_tag": "mainnet-v0.2.14-latest",
+    "from_tag": "ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v2-obs-mem",
+    "to_tag": "ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v3-post1",
     "skip_pull": false
   },
   "models": [
-    { "model": "moonshotai/Kimi-K2.6", "escrow_count": 4, "main_seed_count": 0, "escrow_amount": 5000000000 },
-    { "model": "MiniMaxAI/MiniMax-M2.7", "escrow_count": 2, "main_seed_count": 0, "escrow_amount": 5000000000 }
+    { "model": "MiniMaxAI/MiniMax-M2.7", "escrow_count": 4, "main_seed_count": 1, "escrow_amount": 500000000 },
+    { "model": "moonshotai/Kimi-K2.6", "escrow_count": 4, "main_seed_count": 1, "escrow_amount": 500000000 }
   ],
   "allow_unavailable_models": [],
   "escrow": {
-    "source_protocol_version": "1",
-    "protocol_version": "1",
-    "route_prefix": "",
+    "source_protocol_version": "2",
+    "protocol_version": "3",
+    "route_prefix": "/devshard/v3",
     "private_key_env": "DEVSHARD_PRIVATE_KEY"
   },
   "deactivation": {
-    "mode": "api"
+    "mode": "sqlite",
+    "gateway_db": ".devshardctl/gateway.db"
   },
   "main": {
     "admin_url": "http://127.0.0.1:18080",
-    "container": "devshard-gateway",
+    "container": "gateway-v1",
     "storage_host_dir": ".devshardctl",
     "env_file": "./config.devshard.env"
   },
@@ -31,13 +31,13 @@
     "network": "join_default"
   },
   "routing": {
-    "type": "nginx",
-    "public_base_url": "",
-    "public_prefix": "/devshard-gateway"
+    "type": "caddy",
+    "public_base_url": "https://gateway-2.gonka.ai",
+    "public_prefix": ""
   },
-  "nginx": {
-    "proxy_container": "proxy",
-    "config_path": "/etc/nginx/nginx.conf",
+  "caddy": {
+    "proxy_container": "devshard-gateway-caddy",
+    "config_path": "/tmp/Caddyfile",
     "old_upstream": "devshard-gateway",
     "new_upstream": "devshard-gateway-temp",
     "upstream_port": 8080
@@ -53,7 +53,7 @@
     "drain_poll_seconds": 10
   },
   "smoke_test": {
-    "model": ""
+    "model": "MiniMaxAI/MiniMax-M2.7"
   },
   "rotation": {
     "restore_after_update": true

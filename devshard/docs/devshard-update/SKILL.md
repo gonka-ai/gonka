@@ -1,6 +1,6 @@
 ---
 name: devshard-update
-description: Update a Gonka devshard gateway to a new image version without dropping in-flight /v1/chat/completions requests, driven by a JSON config. Single-instance blue/green (temp gateway + nginx switch + drain + config-driven temp escrows + import); a recover command reclaims stranded temp escrows; multi-instance pools use a rolling update.
+description: Update a Gonka devshard gateway to a new image version without dropping in-flight /v1/chat/completions requests, driven by a JSON config. Single-instance blue/green (temp gateway + nginx or Caddy switch + drain + config-driven temp escrows + import); a recover command reclaims stranded temp escrows; multi-instance pools use a rolling update.
 ---
 
 # Devshard Gateway Update
@@ -16,6 +16,18 @@ cp scripts/update.config.sample.json update.config.json     # edit: image tags, 
 ```
 
 Add `--yes` for unattended. Everything is config-driven (models included) — nothing is hardcoded.
+
+## Routing backends
+
+`update.sh` supports full blue/green updates with `routing.type=nginx` (default)
+or `routing.type=caddy`. The workflow chooses the switch direction; independent
+`nginx_switch` and `caddy_switch` implementations own their config syntax.
+`update-canary.sh` remains nginx-only because weighted canary routing is an
+nginx feature in this deployment.
+
+For gateway-2, start with `update.config.gateway2.json`. First remove gateway-2
+from node4's split **and** fallback path: node4 reaches `10.0.1.5:18080`
+directly and therefore bypasses gateway-2's Caddy switch.
 
 ## Canary (operator-paced, no built-in wait)
 
@@ -39,14 +51,17 @@ Modes: `prepare` | `set <0..100>` | `check` | `finish` | `recover`. Mid-canary u
 - MAIN's image comes from the compose file; the `bump-main-image` step rewrites the full compose image ref from `image.from_tag` to `image.to_tag` (same-repo tag bump via `image.repository`, or full `repo:tag` strings in both fields for cross-repo moves).
 - For a protocol change, the script stages `DEVSHARD_ROUTE_PREFIX` in the gateway env file during `create-temp-gateway` / canary `prepare` (backup first; default `/devshard/v<protocol>` or set `escrow.route_prefix`). Running MAIN keeps its old env until recreate; temp and the recreated MAIN read the target route.
 - For a protocol change, configure `escrow.source_protocol_version`, target `escrow.protocol_version`, and `models[].main_seed_count >= 1`. The script deactivates source escrows without settlement before recreating main, then creates target seed escrows before switching traffic back.
+- `deactivation.mode=api` uses the normal admin endpoint. For legacy source images that do not expose `/deactivate`, explicitly use `deactivation.mode=sqlite` plus `deactivation.gateway_db`; after the drain gate the script stops MAIN, backs up `gateway.db*`, updates only active source-protocol records, and requires SQLite integrity `ok`.
+- Temp rotation is intentionally disabled and its model list cleared to freeze escrow ownership during the handoff. Draining only waits for active requests; it does not exhaust escrows.
+- With `rotation.restore_after_update=true`, the script snapshots MAIN's complete original settings before disabling rotation and restores the exact original `escrow_rotation` object afterward, including enabled, settlement, and model targets.
 - Schedule protocol changes shortly after `set_new_validators` in `Inference`, with fresh escrows and enough blocks before the next PoC. Do not resume after the chain's escrow-pruning threshold.
 - Temp escrows must cover every model MAIN serves — `preflight` fails closed if a served model has no temp coverage and isn't in `allow_unavailable_models`.
-- Public verification runs only if `nginx.public_base_url` is set — never trust loopback.
+- Public verification runs only if `routing.public_base_url` (or the legacy backend-specific field) is set — never trust loopback.
 - Do not assume the nginx config path — inspect with `docker exec <proxy> sh -lc 'nginx -T'`.
 
 ## Config
 
-`scripts/update.config.sample.json` — blocks: `image {repository?, from_tag, to_tag, skip_pull}` (`from_tag`/`to_tag` may be bare tags joined with `repository`, or full `repo:tag` refs for cross-registry upgrades), `models[] {model, escrow_count, main_seed_count, escrow_amount}`, `allow_unavailable_models[]`, `escrow {source_protocol_version, protocol_version, private_key_env}`, `main`, `temp`, `nginx`, `compose`, `timeouts`, `rotation`. Use `image.skip_pull=true` only when the exact target image is already loaded locally; both registry pulls are then skipped. Any field is overridable by the matching env var.
+`scripts/update.config.sample.json` — blocks: `image {repository?, from_tag, to_tag, skip_pull}` (`from_tag`/`to_tag` may be bare tags joined with `repository`, or full `repo:tag` refs for cross-registry upgrades), `models[] {model, escrow_count, main_seed_count, escrow_amount}`, `allow_unavailable_models[]`, `escrow {source_protocol_version, protocol_version, private_key_env}`, `deactivation {mode, gateway_db?}`, `main`, `temp`, `routing {type, public_base_url, public_prefix}`, the selected `nginx` or `caddy` block, `compose`, `timeouts`, `rotation`. Use `image.skip_pull=true` only when the exact target image is already loaded locally; both registry pulls are then skipped. Any field is overridable by the matching env var.
 
 ## Steps & actions
 

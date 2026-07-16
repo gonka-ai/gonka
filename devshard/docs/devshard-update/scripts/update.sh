@@ -6,12 +6,12 @@ set -Eeuo pipefail
 # Zero-downtime update for a Gonka devshard gateway (single instance, blue/green).
 # One self-contained file, driven by a JSON config (models config-driven).
 #
-# Flow: stand up a temp gateway on its OWN fresh escrows, switch nginx to temp,
+# Flow: stand up a temp gateway on its OWN fresh escrows, switch routing to temp,
 # drain main, bump the compose image tag + recreate main, switch back, drain +
 # remove temp, then fold the temp escrows into main. Dry-run unless --run.
 #
 # Sections below: CLI -> config load/validate/resolve -> helpers (progress,
-# admin API, docker/nginx) -> steps -> orchestration -> recover -> entrypoint.
+# admin API, Docker/router) -> steps -> orchestration -> recover -> entrypoint.
 #
 # Usage:
 #   ./update.sh --config update.config.json                     # dry-run plan
@@ -106,6 +106,11 @@ config_validate() {
           num(.value.escrow_amount; "models[\(.key)].escrow_amount") )),
       req(.escrow.protocol_version; "escrow.protocol_version"),
       req(.escrow.private_key_env; "escrow.private_key_env"),
+      ((.deactivation.mode // "api") as $mode |
+        if ($mode == "api") then empty
+        elif ($mode == "sqlite") then req(.deactivation.gateway_db; "deactivation.gateway_db")
+        else "deactivation.mode must be api or sqlite"
+        end),
       (if (((.escrow.source_protocol_version // .escrow.protocol_version) | tostring | sub("^v"; "")) !=
            ((.escrow.protocol_version | tostring | sub("^v"; ""))) and
            any(.models[]; (.main_seed_count // 0) < 1))
@@ -117,11 +122,22 @@ config_validate() {
       num(.temp.admin_port; "temp.admin_port"),
       req(.temp.upstream_alias; "temp.upstream_alias"),
       req(.temp.network; "temp.network"),
-      req(.nginx.proxy_container; "nginx.proxy_container"),
-      req(.nginx.config_path; "nginx.config_path"),
-      req(.nginx.old_upstream; "nginx.old_upstream"),
-      req(.nginx.new_upstream; "nginx.new_upstream"),
-      num(.nginx.upstream_port; "nginx.upstream_port"),
+      ((.routing.type // "nginx") as $routing |
+        if $routing == "nginx" then
+          ( req(.nginx.proxy_container; "nginx.proxy_container"),
+            req(.nginx.config_path; "nginx.config_path"),
+            req(.nginx.old_upstream; "nginx.old_upstream"),
+            req(.nginx.new_upstream; "nginx.new_upstream"),
+            num(.nginx.upstream_port; "nginx.upstream_port") )
+        elif $routing == "caddy" then
+          ( req(.caddy.proxy_container; "caddy.proxy_container"),
+            req(.caddy.config_path; "caddy.config_path"),
+            req(.caddy.old_upstream; "caddy.old_upstream"),
+            req(.caddy.new_upstream; "caddy.new_upstream"),
+            num(.caddy.upstream_port; "caddy.upstream_port") )
+        else
+          "routing.type must be nginx or caddy"
+        end),
       req(.compose.file; "compose.file"),
       req(.compose.service; "compose.service"),
       num(.timeouts.ready_timeout_seconds; "timeouts.ready_timeout_seconds"),
@@ -157,6 +173,8 @@ resolve_config() {
   ESCROW_PROTOCOL_VERSION="${ESCROW_PROTOCOL_VERSION:-$(cfg .escrow.protocol_version)}"
   SOURCE_PROTOCOL_VERSION="${SOURCE_PROTOCOL_VERSION:-$(jq -r '.escrow.source_protocol_version // .escrow.protocol_version' <<<"${CONFIG_JSON}")}"
   ESCROW_PRIVATE_KEY_ENV="${ESCROW_PRIVATE_KEY_ENV:-$(cfg .escrow.private_key_env)}"
+  DEACTIVATION_MODE="${DEACTIVATION_MODE:-$(jq -r '.deactivation.mode // "api"' <<<"${CONFIG_JSON}")}"
+  GATEWAY_DB_PATH="${GATEWAY_DB_PATH:-$(cfg .deactivation.gateway_db)}"
   # Target HTTP route for temp + recreated MAIN. Defaults to /devshard/v<protocol>
   # on a protocol change; empty for same-protocol image bumps (env file untouched).
   TARGET_ROUTE_PREFIX="${TARGET_ROUTE_PREFIX:-$(cfg .escrow.route_prefix)}"
@@ -171,6 +189,7 @@ resolve_config() {
   TEMP_ADMIN_URL="${TEMP_ADMIN_URL:-http://127.0.0.1:${TEMP_ADMIN_PORT}}"
   TEMP_UPSTREAM_ALIAS="${TEMP_UPSTREAM_ALIAS:-$(cfg .temp.upstream_alias)}"
   TEMP_NETWORK="${TEMP_NETWORK:-$(cfg .temp.network)}"
+  ROUTING_TYPE="${ROUTING_TYPE:-$(jq -r '.routing.type // "nginx"' <<<"${CONFIG_JSON}")}"
   NGINX_PROXY_CONTAINER="${NGINX_PROXY_CONTAINER:-$(cfg .nginx.proxy_container)}"
   NGINX_CONFIG_PATH="${NGINX_CONFIG_PATH:-$(cfg .nginx.config_path)}"
   NGINX_OLD_UPSTREAM="${NGINX_OLD_UPSTREAM:-$(cfg .nginx.old_upstream)}"
@@ -179,6 +198,14 @@ resolve_config() {
   NGINX_UPSTREAM_PORT="${NGINX_UPSTREAM_PORT:-$(cfgn .nginx.upstream_port)}"
   NGINX_PUBLIC_BASE_URL="${NGINX_PUBLIC_BASE_URL:-$(cfg .nginx.public_base_url)}"
   NGINX_PUBLIC_PREFIX="${NGINX_PUBLIC_PREFIX:-$(cfg .nginx.public_prefix)}"
+  CADDY_PROXY_CONTAINER="${CADDY_PROXY_CONTAINER:-$(cfg .caddy.proxy_container)}"
+  CADDY_CONFIG_PATH="${CADDY_CONFIG_PATH:-$(cfg .caddy.config_path)}"
+  CADDY_OLD_UPSTREAM="${CADDY_OLD_UPSTREAM:-$(cfg .caddy.old_upstream)}"
+  CADDY_NEW_UPSTREAM="${CADDY_NEW_UPSTREAM:-$(cfg .caddy.new_upstream)}"
+  [[ -n "${CADDY_NEW_UPSTREAM}" ]] || CADDY_NEW_UPSTREAM="${TEMP_UPSTREAM_ALIAS}"
+  CADDY_UPSTREAM_PORT="${CADDY_UPSTREAM_PORT:-$(cfgn .caddy.upstream_port)}"
+  PUBLIC_BASE_URL="${PUBLIC_BASE_URL:-${NGINX_PUBLIC_BASE_URL:-$(jq -r '.routing.public_base_url // .nginx.public_base_url // .caddy.public_base_url // ""' <<<"${CONFIG_JSON}")}}"
+  PUBLIC_PREFIX="${PUBLIC_PREFIX:-${NGINX_PUBLIC_PREFIX:-$(jq -r '.routing.public_prefix // .nginx.public_prefix // .caddy.public_prefix // ""' <<<"${CONFIG_JSON}")}}"
   COMPOSE_FILE="${COMPOSE_FILE:-$(cfg .compose.file)}"
   COMPOSE_SERVICE="${COMPOSE_SERVICE:-$(cfg .compose.service)}"
   READY_TIMEOUT_SECONDS="${READY_TIMEOUT_SECONDS:-$(cfgn .timeouts.ready_timeout_seconds)}"
@@ -187,7 +214,7 @@ resolve_config() {
   DRAIN_POLL_SECONDS="${DRAIN_POLL_SECONDS:-$(cfgn .timeouts.drain_poll_seconds)}"
   SMOKE_MODEL="${SMOKE_MODEL:-$(cfg .smoke_test.model)}"
   [[ -n "${SMOKE_MODEL}" ]] || SMOKE_MODEL="$(jq -r '.models[0].model' <<<"${CONFIG_JSON}")"
-  ROTATION_RESTORE="${ROTATION_RESTORE:-$(jq -r '.rotation.restore_after_update // false' <<<"${CONFIG_JSON}")}"
+  ROTATION_RESTORE="${ROTATION_RESTORE:-$(jq -r '.rotation.restore_after_update // true' <<<"${CONFIG_JSON}")}"
 }
 
 load_config() {
@@ -252,6 +279,14 @@ smoke_chat() {
   fi
   curl -fsS -X POST "$1/v1/chat/completions" "${auth_hdr[@]}" -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg m "$2" '{model:$m, stream:false, max_tokens:1, messages:[{role:"user", content:"Reply with ok"}]}')" >/dev/null
+}
+
+smoke_configured_models() {
+  local url="$1" label="$2" model
+  while IFS= read -r model; do
+    smoke_chat "${url}" "${model}"
+    gate_ok "${label} chat smoke passed (${model})"
+  done < <(jq -r '.models[].model' <<<"${CONFIG_JSON}")
 }
 
 settings_sync_to_temp() {
@@ -357,6 +392,61 @@ INNER
   gate_fail "nginx switch ${from} -> ${to} failed"; return 1
 }
 
+# Switch a Caddy reverse_proxy host, validate, and gracefully reload. Kept
+# separate from nginx_switch so each routing backend owns its config syntax.
+caddy_switch() {
+  local from="$1" to="$2" port="${CADDY_UPSTREAM_PORT}"
+  local cfg_path="${CADDY_CONFIG_PATH}" backup="${CADDY_CONFIG_PATH}.blue-green-backup" tmp="${CADDY_CONFIG_PATH}.blue-green-tmp"
+  local old_pat="reverse_proxy[[:space:]]+${from}:${port}"
+  local new_pat="reverse_proxy[[:space:]]+${to}:${port}"
+  note "Caddy upstream switch ${from} -> ${to} in ${cfg_path}"
+  if [[ "${DRY_RUN}" == "1" ]]; then note "would docker exec ${CADDY_PROXY_CONTAINER} sh -lc '<switch ${from}->${to} + caddy validate + reload>'"; return 0; fi
+  local inner
+  inner="$(cat <<INNER
+set -eu
+test -f '${cfg_path}'
+if ! grep -Eq '${old_pat}' '${cfg_path}'; then
+  if grep -Eq '${new_pat}' '${cfg_path}'; then echo 'Caddy already on ${to}:${port}'; exit 0; fi
+  echo 'ERROR: reverse_proxy ${from}:${port} not found in ${cfg_path}' >&2; exit 3
+fi
+cp '${cfg_path}' '${backup}'
+sed -E 's#(reverse_proxy[[:space:]]+)${from}:${port}#\1${to}:${port}#g' '${cfg_path}' > '${tmp}'
+if mv '${tmp}' '${cfg_path}' 2>/dev/null; then
+  :
+else
+  cat '${tmp}' > '${cfg_path}'
+  rm -f '${tmp}'
+fi
+grep -Eq '${new_pat}' '${cfg_path}' || { echo 'ERROR: Caddy switch did not apply; restore ${backup}' >&2; exit 4; }
+caddy validate --config '${cfg_path}' --adapter caddyfile
+caddy reload --config '${cfg_path}' --adapter caddyfile
+echo 'Caddy upstream switched ${from} -> ${to} and reloaded'
+INNER
+)"
+  if docker exec "${CADDY_PROXY_CONTAINER}" sh -lc "${inner}"; then gate_ok "Caddy switched ${from} -> ${to} (graceful reload)"; return 0; fi
+  gate_fail "Caddy switch ${from} -> ${to} failed"; return 1
+}
+
+# The workflow selects direction; backend-specific functions implement syntax.
+routing_switch() {
+  local side="$1"
+  case "${ROUTING_TYPE}" in
+    nginx)
+      case "${side}" in
+        temp) nginx_switch "${NGINX_OLD_UPSTREAM}" "${NGINX_NEW_UPSTREAM}" ;;
+        main) nginx_switch "${NGINX_NEW_UPSTREAM}" "${NGINX_OLD_UPSTREAM}" ;;
+      esac
+      ;;
+    caddy)
+      case "${side}" in
+        temp) caddy_switch "${CADDY_OLD_UPSTREAM}" "${CADDY_NEW_UPSTREAM}" ;;
+        main) caddy_switch "${CADDY_NEW_UPSTREAM}" "${CADDY_OLD_UPSTREAM}" ;;
+      esac
+      ;;
+    *) gate_fail "unsupported routing.type: ${ROUTING_TYPE}"; return 1 ;;
+  esac
+}
+
 # Fold one temp escrow into main: import inactive (carries its state.db), then
 # either activate (route it) or settle (drain-aware on-chain). Shared by the
 # activate-temp step and the recover command.
@@ -385,6 +475,8 @@ runstate_init() {
   TEMP_STORAGE_HOST_DIR="${STORAGE_HOST_DIR_ABS}/temp-${RUN_ID}"
   TEMP_STORAGE_CONTAINER_DIR="/root/.devshardctl/temp-${RUN_ID}"
   TEMP_DEVSHARDS_FILE="${TEMP_STORAGE_HOST_DIR}/temp-devshards.json"
+  MAIN_SETTINGS_SNAPSHOT_FILE="${DEPLOY_DIR}/blue-green-main-settings-${RUN_ID}.json"
+  MAIN_DB_BACKUP_DIR="${DEPLOY_DIR}/gateway-db-pre-${RUN_ID}"
 }
 runstate_write() {
   cat > "${RUN_STATE_FILE}" <<EOF
@@ -393,12 +485,14 @@ TEMP_CONTAINER='${TEMP_CONTAINER}'
 TEMP_STORAGE_HOST_DIR='${TEMP_STORAGE_HOST_DIR}'
 TEMP_STORAGE_CONTAINER_DIR='${TEMP_STORAGE_CONTAINER_DIR}'
 TEMP_DEVSHARDS_FILE='${TEMP_DEVSHARDS_FILE}'
+MAIN_SETTINGS_SNAPSHOT_FILE='${MAIN_SETTINGS_SNAPSHOT_FILE}'
+MAIN_DB_BACKUP_DIR='${MAIN_DB_BACKUP_DIR}'
 EOF
 }
 # Canary/single-step invokes update.sh per step (new process). Load prior init
 # state, or create it if missing (e.g. dry-run prepare after init skipped write).
 ensure_runstate() {
-  if [[ -n "${TEMP_STORAGE_HOST_DIR:-}" && -n "${TEMP_CONTAINER:-}" ]]; then
+  if [[ -n "${TEMP_STORAGE_HOST_DIR:-}" && -n "${TEMP_CONTAINER:-}" && -n "${MAIN_SETTINGS_SNAPSHOT_FILE:-}" && -n "${MAIN_DB_BACKUP_DIR:-}" ]]; then
     return 0
   fi
   if [[ -f "${RUN_STATE_FILE}" ]]; then
@@ -410,6 +504,15 @@ ensure_runstate() {
     mkdir -p "${STORAGE_HOST_DIR_ABS}"
     runstate_write
     note "run state initialized (${RUN_ID}) at ${RUN_STATE_FILE}"
+  elif [[ -z "${MAIN_SETTINGS_SNAPSHOT_FILE:-}" ]]; then
+    MAIN_SETTINGS_SNAPSHOT_FILE="${DEPLOY_DIR}/blue-green-main-settings-${RUN_ID}.json"
+    MAIN_DB_BACKUP_DIR="${DEPLOY_DIR}/gateway-db-pre-${RUN_ID}"
+    runstate_write
+    note "upgraded run state with MAIN settings snapshot path: ${MAIN_SETTINGS_SNAPSHOT_FILE}"
+  elif [[ -z "${MAIN_DB_BACKUP_DIR:-}" ]]; then
+    MAIN_DB_BACKUP_DIR="${DEPLOY_DIR}/gateway-db-pre-${RUN_ID}"
+    runstate_write
+    note "upgraded run state with gateway DB backup path: ${MAIN_DB_BACKUP_DIR}"
   fi
 }
 
@@ -449,13 +552,34 @@ step_preflight() {
     [[ -z "${missing_seeds}" ]] ||
       { gate_fail "protocol change requires models[].main_seed_count >= 1 for:${missing_seeds}"; return 1; }
   fi
+  if [[ "${DEACTIVATION_MODE}" == "sqlite" ]]; then
+    command -v python3 >/dev/null ||
+      { gate_fail "deactivation.mode=sqlite requires python3"; return 1; }
+    [[ -n "${GATEWAY_DB_ABS:-}" && -f "${GATEWAY_DB_ABS}" ]] ||
+      { gate_fail "gateway database not found: ${GATEWAY_DB_ABS:-<unset>}"; return 1; }
+    gate_ok "offline SQLite deactivation prerequisites available"
+  fi
   gate_ok "every model main serves is covered by temp escrows or allow-listed"
 }
 
 step_disable_main_rotation() {
+  ensure_runstate
   need_key
-  [[ "${DRY_RUN}" == "1" ]] && { note "would disable escrow_rotation on MAIN so nothing settles on-chain mid-update"; return 0; }
-  local settings; settings="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" | jq '.escrow_rotation.enabled=false')"
+  [[ "${DRY_RUN}" == "1" ]] && {
+    note "would snapshot MAIN settings to ${MAIN_SETTINGS_SNAPSHOT_FILE} and disable escrow_rotation"
+    return 0
+  }
+  local settings
+  if [[ ! -f "${MAIN_SETTINGS_SNAPSHOT_FILE}" ]]; then
+    admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" |
+      jq -e 'select(.escrow_rotation != null)' > "${MAIN_SETTINGS_SNAPSHOT_FILE}"
+    chmod 600 "${MAIN_SETTINGS_SNAPSHOT_FILE}"
+    note "saved original MAIN settings: ${MAIN_SETTINGS_SNAPSHOT_FILE}"
+  else
+    jq -e '.escrow_rotation != null' "${MAIN_SETTINGS_SNAPSHOT_FILE}" >/dev/null
+    note "using existing original MAIN settings snapshot: ${MAIN_SETTINGS_SNAPSHOT_FILE}"
+  fi
+  settings="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" | jq '.escrow_rotation.enabled=false')"
   admin_post "${MAIN_ADMIN_URL}" "/v1/admin/settings" "${settings}" >/dev/null
   gate_ok "MAIN escrow_rotation disabled"
 }
@@ -561,12 +685,11 @@ step_check_temp() {
     (( active < count )) && { gate_fail "temp has ${active} active escrows for ${model}, need ${count} (model would be unavailable during update)"; return 1; }
     gate_ok "temp: ${active}/${count} active escrows for ${model}"
   done < <(models_tsv)
-  smoke_chat "${TEMP_ADMIN_URL}" "${SMOKE_MODEL}"
-  gate_ok "temp chat smoke test passed (${SMOKE_MODEL})"
+  smoke_configured_models "${TEMP_ADMIN_URL}" "temp"
   admin_get "${TEMP_ADMIN_URL}" "/v1/admin/devshards" > "${TEMP_DEVSHARDS_FILE}"
 }
 
-step_switch_to_temp() { confirm "switch nginx upstream to TEMP (${NGINX_NEW_UPSTREAM})"; nginx_switch "${NGINX_OLD_UPSTREAM}" "${NGINX_NEW_UPSTREAM}"; }
+step_switch_to_temp() { confirm "switch ${ROUTING_TYPE} upstream to TEMP (${TEMP_UPSTREAM_ALIAS})"; routing_switch temp; }
 step_check_alias_temp() { check_alias temp; }
 
 step_drain_main() {
@@ -590,6 +713,70 @@ jq_active_source_escrows() {
   '
 }
 
+deactivate_main_source_sqlite() {
+  local source="$1" expected
+  expected="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/devshards" |
+    jq_active_source_escrows "${source}" | jq 'length')"
+  if (( expected == 0 )); then
+    gate_ok "no active source-protocol escrow records require offline deactivation"
+    return 0
+  fi
+
+  confirm "stop drained MAIN, back up gateway DB, and deactivate ${expected} source-protocol record(s) offline (no settlement)"
+  run docker stop "${MAIN_CONTAINER}"
+  run mkdir -p -m 700 "${MAIN_DB_BACKUP_DIR}"
+  run_shell "cp -a '${GATEWAY_DB_ABS}'* '${MAIN_DB_BACKUP_DIR}/'"
+
+  python3 - "${GATEWAY_DB_ABS}" "${source}" "${expected}" <<'PY'
+import datetime
+import sqlite3
+import sys
+
+path, source, expected_raw = sys.argv[1:]
+expected = int(expected_raw)
+db = sqlite3.connect(path)
+try:
+    db.execute("BEGIN IMMEDIATE")
+    where = """
+        active = 1 AND (
+            REPLACE(COALESCE(protocol_version, ''), 'v', '') = ?
+            OR TRIM(COALESCE(protocol_version, '')) = ''
+        )
+    """
+    before = db.execute(
+        f"SELECT COUNT(*) FROM gateway_devshards WHERE {where}", (source,)
+    ).fetchone()[0]
+    if before != expected:
+        raise RuntimeError(
+            f"source record count changed before offline update: expected {expected}, found {before}"
+        )
+    updated = db.execute(
+        f"""UPDATE gateway_devshards
+            SET active = 0, updated_at = ?
+            WHERE {where}""",
+        (datetime.datetime.now(datetime.timezone.utc).isoformat(), source),
+    ).rowcount
+    if updated != expected:
+        raise RuntimeError(f"updated {updated} records, expected {expected}")
+    remaining = db.execute(
+        f"SELECT COUNT(*) FROM gateway_devshards WHERE {where}", (source,)
+    ).fetchone()[0]
+    if remaining:
+        raise RuntimeError(f"{remaining} source records remain active")
+    db.commit()
+    integrity = db.execute("PRAGMA integrity_check").fetchone()[0]
+    if integrity != "ok":
+        raise RuntimeError(f"SQLite integrity check failed: {integrity}")
+finally:
+    db.close()
+
+print(f"offline_deactivated={expected}")
+print("remaining_active_source=0")
+print("integrity=ok")
+PY
+  gate_ok "offline-deactivated ${expected} source-protocol record(s); backup: ${MAIN_DB_BACKUP_DIR}"
+}
+
 step_deactivate_main_source() {
   need_key
   if [[ "${SOURCE_PROTOCOL_VERSION#v}" == "${ESCROW_PROTOCOL_VERSION#v}" ]]; then
@@ -597,9 +784,13 @@ step_deactivate_main_source() {
     return 0
   fi
   [[ "${DRY_RUN}" == "1" ]] && {
-    note "would deactivate active protocol-${SOURCE_PROTOCOL_VERSION#v} (or missing protocol_version) escrows on drained MAIN (no settlement)"
+    note "would deactivate active protocol-${SOURCE_PROTOCOL_VERSION#v} (or missing protocol_version) escrows on drained MAIN via ${DEACTIVATION_MODE} (no settlement)"
     return 0
   }
+  if [[ "${DEACTIVATION_MODE}" == "sqlite" ]]; then
+    deactivate_main_source_sqlite "${SOURCE_PROTOCOL_VERSION#v}"
+    return
+  fi
   confirm "deactivate source-protocol escrows on drained MAIN (local only; no settlement)"
   local id count=0 source="${SOURCE_PROTOCOL_VERSION#v}"
   while IFS= read -r id; do
@@ -623,9 +814,11 @@ step_update_main() {
   confirm "recreate MAIN from ${COMPOSE_FILE} on the bumped image"
   note "MAIN image comes from ${COMPOSE_FILE} (service ${COMPOSE_SERVICE}), not an env ref"
   local src="" pull=""
-  [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] && src="source '${MAIN_ENV_FILE_ABS}' && "
+  [[ -n "${MAIN_ENV_FILE_ABS}" && -f "${MAIN_ENV_FILE_ABS}" ]] &&
+    src="set -a && source '${MAIN_ENV_FILE_ABS}' && set +a && "
   [[ "${IMAGE_SKIP_PULL}" != "true" ]] && pull="docker compose -f '${COMPOSE_FILE}' pull ${COMPOSE_SERVICE} && "
   run_shell "cd '${DEPLOY_DIR}' && ${src}${pull}docker compose -f '${COMPOSE_FILE}' up -d --no-deps --force-recreate ${COMPOSE_SERVICE} && docker compose -f '${COMPOSE_FILE}' ps ${COMPOSE_SERVICE}"
+  [[ "${DRY_RUN}" == "1" ]] || wait_ready "main gateway" "${MAIN_ADMIN_URL}"
   gate_ok "MAIN recreated on new image"
 }
 
@@ -668,11 +861,10 @@ step_check_main_direct() {
       { gate_fail "main has ${active}/${seed_count} active target-protocol seed escrows for ${model}"; return 1; }
     gate_ok "main: ${active}/${seed_count} target-protocol seed escrows active for ${model}"
   done < <(models_tsv)
-  smoke_chat "${MAIN_ADMIN_URL}" "${SMOKE_MODEL}"
-  gate_ok "main direct chat smoke test passed (${SMOKE_MODEL})"
+  smoke_configured_models "${MAIN_ADMIN_URL}" "main direct"
 }
 
-step_switch_to_main() { confirm "switch nginx upstream back to MAIN (${NGINX_OLD_UPSTREAM})"; nginx_switch "${NGINX_NEW_UPSTREAM}" "${NGINX_OLD_UPSTREAM}"; }
+step_switch_to_main() { confirm "switch ${ROUTING_TYPE} upstream back to MAIN"; routing_switch main; }
 step_check_alias_main() { check_alias main; }
 
 step_drain_temp() {
@@ -715,11 +907,19 @@ step_activate_temp() {
 
 step_restore_main_rotation() {
   need_key
-  [[ "${ROTATION_RESTORE}" != "true" ]] && { note "leaving MAIN escrow_rotation disabled (set rotation.restore_after_update=true to re-enable)"; return 0; }
-  [[ "${DRY_RUN}" == "1" ]] && { note "would re-enable escrow_rotation on MAIN"; return 0; }
-  local settings; settings="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" | jq '.escrow_rotation.enabled=true')"
+  [[ "${ROTATION_RESTORE}" != "true" ]] && { note "leaving MAIN escrow_rotation disabled (set rotation.restore_after_update=true to restore its original settings)"; return 0; }
+  [[ "${DRY_RUN}" == "1" ]] && { note "would restore MAIN's exact original escrow_rotation settings"; return 0; }
+  [[ -n "${MAIN_SETTINGS_SNAPSHOT_FILE:-}" && -f "${MAIN_SETTINGS_SNAPSHOT_FILE}" ]] ||
+    { gate_fail "original MAIN settings snapshot is missing: ${MAIN_SETTINGS_SNAPSHOT_FILE:-<unset>}"; return 1; }
+  local original_rotation settings restored_rotation
+  original_rotation="$(jq -ce '.escrow_rotation' "${MAIN_SETTINGS_SNAPSHOT_FILE}")"
+  settings="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" |
+    jq -c --argjson original "${original_rotation}" '.escrow_rotation=$original')"
   admin_post "${MAIN_ADMIN_URL}" "/v1/admin/settings" "${settings}" >/dev/null
-  gate_ok "MAIN escrow_rotation re-enabled"
+  restored_rotation="$(admin_get "${MAIN_ADMIN_URL}" "/v1/admin/settings" | jq -cS '.escrow_rotation')"
+  [[ "${restored_rotation}" == "$(jq -cS . <<<"${original_rotation}")" ]] ||
+    { gate_fail "MAIN escrow_rotation does not match original snapshot after restore"; return 1; }
+  gate_ok "MAIN escrow_rotation restored exactly (enabled, settlement, models)"
 }
 
 step_status() {
@@ -732,11 +932,11 @@ step_status() {
 # check-alias-temp / check-alias-main: verify the public route (skipped if unset).
 check_alias() {
   local side="$1"; need_key
-  [[ -z "${NGINX_PUBLIC_BASE_URL}" ]] && { note "no nginx.public_base_url set; skipping public ${side} verification"; return 0; }
-  [[ "${DRY_RUN}" == "1" ]] && { note "would verify public ${side} route via ${NGINX_PUBLIC_BASE_URL}"; return 0; }
-  case "${NGINX_PUBLIC_BASE_URL}" in *127.0.0.1*|*localhost*) note "WARNING: public_base_url is loopback; can pass while the real route is broken" ;; esac
-  curl -fsS "${NGINX_PUBLIC_BASE_URL}${NGINX_PUBLIC_PREFIX}/v1/status" -H "Authorization: Bearer ${DEVSHARD_ADMIN_API_KEY}" >/dev/null
-  smoke_chat "${NGINX_PUBLIC_BASE_URL}${NGINX_PUBLIC_PREFIX}" "${SMOKE_MODEL}"
+  [[ -z "${PUBLIC_BASE_URL}" ]] && { note "no routing.public_base_url set; skipping public ${side} verification"; return 0; }
+  [[ "${DRY_RUN}" == "1" ]] && { note "would verify public ${side} route via ${PUBLIC_BASE_URL}"; return 0; }
+  case "${PUBLIC_BASE_URL}" in *127.0.0.1*|*localhost*) note "WARNING: public_base_url is loopback; can pass while the real route is broken" ;; esac
+  curl -fsS "${PUBLIC_BASE_URL}${PUBLIC_PREFIX}/v1/status" -H "Authorization: Bearer ${DEVSHARD_ADMIN_API_KEY}" >/dev/null
+  smoke_configured_models "${PUBLIC_BASE_URL}${PUBLIC_PREFIX}" "public ${side}"
   gate_ok "public ${side} route verified"
 }
 
@@ -785,8 +985,10 @@ Pull:   $([[ "${IMAGE_SKIP_PULL}" == "true" ]] && echo "skip (require exact loca
 Protocol: ${SOURCE_PROTOCOL_VERSION} -> ${ESCROW_PROTOCOL_VERSION}
 Main:   ${MAIN_CONTAINER} @ ${MAIN_ADMIN_URL}
 Temp:   ${TEMP_UPSTREAM_ALIAS} @ ${TEMP_ADMIN_URL} (network ${TEMP_NETWORK})
-Nginx:  ${NGINX_PROXY_CONTAINER}:${NGINX_CONFIG_PATH}  ${NGINX_OLD_UPSTREAM} <-> ${NGINX_NEW_UPSTREAM}:${NGINX_UPSTREAM_PORT}
-Public: ${NGINX_PUBLIC_BASE_URL:-<unset; public checks skipped>}
+Routing: ${ROUTING_TYPE}
+$([[ "${ROUTING_TYPE}" == "nginx" ]] && printf 'Nginx:  %s:%s  %s <-> %s:%s\n' "${NGINX_PROXY_CONTAINER}" "${NGINX_CONFIG_PATH}" "${NGINX_OLD_UPSTREAM}" "${NGINX_NEW_UPSTREAM}" "${NGINX_UPSTREAM_PORT}" || printf 'Caddy:  %s:%s  %s <-> %s:%s\n' "${CADDY_PROXY_CONTAINER}" "${CADDY_CONFIG_PATH}" "${CADDY_OLD_UPSTREAM}" "${CADDY_NEW_UPSTREAM}" "${CADDY_UPSTREAM_PORT}")
+Public: ${PUBLIC_BASE_URL:-<unset; public checks skipped>}${PUBLIC_PREFIX}
+Rotation: $([[ "${ROTATION_RESTORE}" == "true" ]] && echo "restore exact original MAIN settings" || echo "leave disabled")
 Smoke:  ${SMOKE_MODEL}
 Models (fresh temp escrows minted per model):
 $(models_tsv | while IFS=$'\t' read -r m c a s; do printf '  %s: temp=%s, main-seed=%s, amount=%s each\n' "${m}" "${c}" "${s}" "${a}"; done)
@@ -802,7 +1004,7 @@ on_error() {
   {
     echo ""
     echo "FAILED at step: ${CURRENT_STEP:-setup} (exit ${code})"
-    echo "Inspect: ${0##*/} --config '${CONFIG_ARG}' status --run ; restore nginx backup (${NGINX_CONFIG_PATH:-<config>}.blue-green-backup) to revert routing."
+    echo "Inspect: ${0##*/} --config '${CONFIG_ARG}' status --run ; restore the ${ROUTING_TYPE:-routing} .blue-green-backup to revert routing."
     if [[ "${ESCROWS_MINTED}" == "1" ]]; then
       echo ""
       echo "WARNING: temp escrows were minted on-chain but not yet folded into main."
@@ -825,6 +1027,7 @@ main() {
 
   STORAGE_HOST_DIR_ABS="$(abspath "${MAIN_STORAGE_HOST_DIR}")"
   MAIN_ENV_FILE_ABS=""; [[ -n "${MAIN_ENV_FILE}" ]] && MAIN_ENV_FILE_ABS="$(abspath "${MAIN_ENV_FILE}")"
+  GATEWAY_DB_ABS=""; [[ -n "${GATEWAY_DB_PATH}" ]] && GATEWAY_DB_ABS="$(abspath "${GATEWAY_DB_PATH}")"
   # Keep operator-writable next to the deploy dir (.devshardctl is often root-owned).
   RUN_STATE_FILE="${DEPLOY_DIR}/blue-green-run-state.env"
   # shellcheck disable=SC1090

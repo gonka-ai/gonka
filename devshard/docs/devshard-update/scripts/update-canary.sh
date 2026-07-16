@@ -99,6 +99,11 @@ load_canary_config() {
   local path; path="$(abspath "${CONFIG_ARG}")"
   [[ -f "${path}" ]] || { echo "config file not found: ${path}" >&2; exit 2; }
   CONFIG_JSON="$(cat "${path}")"
+  ROUTING_TYPE="$(jq -r '.routing.type // "nginx"' <<<"${CONFIG_JSON}")"
+  [[ "${ROUTING_TYPE}" == "nginx" ]] || {
+    echo "update-canary.sh supports routing.type=nginx only (got ${ROUTING_TYPE}); use update.sh for a full ${ROUTING_TYPE} blue/green update" >&2
+    exit 2
+  }
   MAIN_ADMIN_URL="$(jq -r '.main.admin_url // empty' <<<"${CONFIG_JSON}")"
   TEMP_ADMIN_PORT="$(jq -r '.temp.admin_port // empty' <<<"${CONFIG_JSON}")"
   TEMP_ADMIN_URL="http://127.0.0.1:${TEMP_ADMIN_PORT}"
