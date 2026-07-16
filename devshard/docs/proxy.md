@@ -17,12 +17,13 @@ All settings can be passed as flags or environment variables. Flags take precede
 | ------ | ------ | ------ | ------ | ------ |
 | `--private-key` | `DEVSHARD_PRIVATE_KEY` | yes | - | Hex-encoded secp256k1 private key |
 | `--escrow-id` | `DEVSHARD_ESCROW_ID` | yes | - | On-chain escrow ID |
-| `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL |
+| `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL (epoch/PoC phase, active participants, txs) |
 | `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | Default model (used when request omits `model`) |
 | `--port` | `DEVSHARD_PORT` | no | `8080` | Listen port |
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
+| - | `DEVSHARD_PUBLIC_API` | no | `http://localhost:9000` | Deprecated; unused by the phase gate (settings compatibility only) |
 | - | `DEVSHARD_CHAIN_ID` | no | queried from REST | Chain ID used when signing admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
@@ -279,7 +280,8 @@ Automatic rotation uses two roles:
   PoC/epoch transition.
 
 When `escrow_rotation.enabled` is true, the gateway watches the chain phase
-snapshot from `DEVSHARD_PUBLIC_API` and also replaces escrows that approach the
+snapshot from `DEVSHARD_CHAIN_REST` (`epoch_info` + `active_participants`) and
+also replaces escrows that approach the
 low-balance or high-nonce limits. When it is false, both epoch rotation and
 depletion replacement are disabled.
 

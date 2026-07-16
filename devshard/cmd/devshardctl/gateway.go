@@ -730,7 +730,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	if len(perfArgs) > 0 && perfArgs[0] != nil {
 		g.perf = perfArgs[0]
 	}
-	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
+	g.phaseGate = NewChainPhaseGate(settings.ChainREST, 0)
 	if g.phaseGate != nil {
 		g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
 	}
@@ -2620,7 +2620,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		if g.phaseGate != nil {
 			g.phaseGate.Stop()
 		}
-		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
+		g.phaseGate = NewChainPhaseGate(settings.ChainREST, 0)
 		if g.phaseGate != nil {
 			g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
 		}

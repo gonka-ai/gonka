@@ -82,11 +82,17 @@ type ChainPhaseGate struct {
 type chainEpochInfoResponse struct {
 	BlockHeight             jsonInt64                         `json:"block_height"`
 	Phase                   string                            `json:"phase"`
+	EffectiveEpochIndex     jsonUint64                        `json:"effective_epoch_index"`
 	LatestEpoch             chainLatestEpoch                  `json:"latest_epoch"`
+	Params                  chainEpochInfoParams              `json:"params"`
 	EpochStages             chainEpochStages                  `json:"epoch_stages"`
 	NextEpochStages         chainEpochStages                  `json:"next_epoch_stages"`
 	IsConfirmationPoCActive bool                              `json:"is_confirmation_poc_active"`
 	ActiveConfirmationPoC   *chainConfirmationPoCEventPayload `json:"active_confirmation_poc_event,omitempty"`
+}
+
+type chainEpochInfoParams struct {
+	EpochParams chainEpochParams `json:"epoch_params"`
 }
 
 type chainLatestEpoch struct {
@@ -242,18 +248,23 @@ func (e *RequestAdmissionError) Error() string {
 	return "request admission blocked"
 }
 
-func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
+func NewChainPhaseGate(chainREST string, pollInterval time.Duration) *ChainPhaseGate {
+	chainREST = strings.TrimSpace(chainREST)
+	if chainREST == "" {
 		return nil
 	}
 	if pollInterval <= 0 {
 		pollInterval = defaultChainPhasePollInterval
 	}
+	base := strings.TrimRight(chainREST, "/")
 	client := &http.Client{Timeout: 5 * time.Second}
 	return &ChainPhaseGate{
-		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
-		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
+		// EpochInfo exposes latest_epoch (PoC-advanced) plus effective_epoch_index
+		// (current/effective) and a chain-computed phase from latest.
+		endpoint: base + "/productscience/inference/inference/epoch_info",
+		// epoch_index=0 resolves to effective/current, not latest. During main PoC
+		// those differ; inference routing must use the still-serving cohort.
+		participantsEndpoint:          base + "/productscience/inference/inference/active_participants/0",
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
@@ -273,6 +284,8 @@ func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// Prefer the constructor's chain-REST snapshot URL; only override when the
+	// caller points at a different chain REST base (admin settings update).
 	g.preservedSnapshotEndpoint = strings.TrimRight(baseURL, "/") + "/productscience/inference/inference/preserved_nodes_snapshot"
 }
 
@@ -480,7 +493,27 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
+	enrichEpochInfoStages(&payload)
 	return &payload, nil
+}
+
+// enrichEpochInfoStages fills epoch_stages from chain params when the LCD
+// response does not include them (EpochInfo returns raw params + latest_epoch).
+func enrichEpochInfoStages(payload *chainEpochInfoResponse) {
+	if payload == nil {
+		return
+	}
+	params := payload.Params.EpochParams
+	current, next := deriveEpochStages(payload.LatestEpoch, params)
+	if payload.EpochStages.SetNewValidators == 0 && payload.EpochStages.NextPoCStart == 0 {
+		payload.EpochStages = current
+	}
+	if payload.NextEpochStages.SetNewValidators == 0 {
+		payload.NextEpochStages = next
+	}
+	if strings.TrimSpace(payload.Phase) == "" {
+		payload.Phase = deriveEpochPhaseFromParams(int64(payload.BlockHeight), payload.LatestEpoch, params)
+	}
 }
 
 // participantNode holds the per-node data for one ML node belonging to a participant
