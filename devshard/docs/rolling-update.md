@@ -350,7 +350,20 @@ func (m *Manager) Status() []health.StatusEntry {
 ```
 → also iterate `draining[...]` so draining children appear in `/healthz`.
 
-#### f) Graceful supervisor shutdown
+#### f) Removed versions drain asynchronously
+
+When governance removes a version from the approved set, versiond must remove
+the route immediately so no new requests reach that version. The old child is
+then moved from `processes` to `draining`, marked `restart=false`, and stopped
+through the same `drainAndStop` path used by binary swaps.
+
+This keeps the reconcile poll loop responsive while the old child finishes
+accepted work. New requests get `404` for the removed version, existing
+requests stay on their already-open connection, and legacy children without
+`/drain/status` receive the `VERSIOND_DRAIN_KILL_GRACE` cushion before
+`SIGTERM`.
+
+#### g) Graceful supervisor shutdown
 
 `Manager.Shutdown` must wait long enough for child graceful shutdown. When
 versiond itself is being stopped, children are `SIGTERM`'d and waited on with the

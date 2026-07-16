@@ -317,7 +317,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for name, c := range m.processes {
 		if _, wanted := desiredSet[name]; !wanted {
 			toStop = append(toStop, c)
+			c.status = statusDraining
+			c.restart = false
 			delete(m.processes, name)
+			m.draining[name] = append(m.draining[name], c)
 		}
 	}
 
@@ -326,6 +329,14 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		m.rebuildRoutes()
 	}
 	m.mu.Unlock()
+
+	// Removed versions leave the route table immediately, then drain
+	// asynchronously so reconcile can continue handling other versions.
+	for _, c := range toStop {
+		slog.Info("draining removed version", "version", c.version.Name)
+		m.requestDrain(c)
+		go m.drainAndStop(c)
+	}
 
 	// Downloads outside the lock (can be slow).
 	for _, a := range toDownload {
@@ -339,15 +350,6 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
 		}
-	}
-
-	// Stop removed versions outside the lock.
-	for _, c := range toStop {
-		slog.Info("stopping removed version", "version", c.version.Name)
-		c.cancel()
-	}
-	for _, c := range toStop {
-		waitForChild(c, m.childStopTimeout())
 	}
 
 	m.gcInstalledVersions(desiredHashes)

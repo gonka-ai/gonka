@@ -14,6 +14,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -778,47 +779,172 @@ func TestWaitForRestartBackoffRechecksRestartAfterSleep(t *testing.T) {
 	}
 }
 
-func TestReconcile_StopsRemovedVersions(t *testing.T) {
+func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 	dir := t.TempDir()
+	var drainHits atomic.Int32
+	var statusHits atomic.Int32
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drain":
+			drainHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/drain/status":
+			statusHits.Add(1)
+			json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer shutdown()
+
 	cfg := config.Config{
-		BinDir:     filepath.Join(dir, "bin"),
-		DataDir:    filepath.Join(dir, "data"),
-		BinaryName: "devshard",
-		BasePort:   5000,
-		Overrides:  map[string]string{},
+		BinDir:            filepath.Join(dir, "bin"),
+		DataDir:           filepath.Join(dir, "data"),
+		BinaryName:        "devshard",
+		BasePort:          5000,
+		DrainTimeout:      time.Hour,
+		DrainPollInterval: time.Hour,
+		DrainKillGrace:    50 * time.Millisecond,
+		Overrides:         map[string]string{},
 	}
 	m := NewManager(cfg)
 
 	done := make(chan struct{})
-	close(done)
+	cancelled := make(chan struct{})
+	var cancelOnce sync.Once
 
 	m.mu.Lock()
-	cancelled := false
 	m.processes["old"] = &child{
-		version: oracle.Version{Name: "old"},
-		port:    5000,
-		cancel:  func() { cancelled = true },
+		version:       oracle.Version{Name: "old"},
+		archiveSHA256: "old-sha",
+		port:          port,
+		cancel: func() {
+			cancelOnce.Do(func() {
+				close(cancelled)
+				close(done)
+			})
+		},
 		done:    done,
 		status:  statusRunning,
+		restart: true,
 	}
+	m.rebuildRoutes()
 	m.mu.Unlock()
 
 	ctx := context.Background()
-	// Reconcile with empty desired list should stop "old".
+	start := time.Now()
 	if err := m.Reconcile(ctx, nil); err != nil {
 		t.Fatal(err)
 	}
-
-	if !cancelled {
-		t.Error("removed version should have been cancelled")
+	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
+		t.Fatalf("Reconcile blocked for %s while removed child was still draining", elapsed)
+	}
+	if drainHits.Load() != 1 {
+		t.Fatalf("drain hits = %d, want 1", drainHits.Load())
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("removed child should not be cancelled while drain status reports in-flight work")
+	default:
 	}
 
 	m.mu.Lock()
 	_, stillRunning := m.processes["old"]
+	draining := m.draining["old"]
+	var removed *child
+	if len(draining) == 1 {
+		removed = draining[0]
+	}
+	routes := m.RouteTable().Load().(map[string]string)
 	m.mu.Unlock()
 
 	if stillRunning {
 		t.Error("removed version should no longer be in processes")
+	}
+	if removed == nil {
+		t.Fatal("removed version should be tracked as draining")
+	}
+	if removed.status != statusDraining {
+		t.Fatalf("removed status = %q, want %q", removed.status, statusDraining)
+	}
+	if removed.restart {
+		t.Fatal("removed draining child should not restart")
+	}
+	if _, routed := routes["old"]; routed {
+		t.Fatal("removed version should not remain routed")
+	}
+	deadline := time.Now().Add(500 * time.Millisecond)
+	for statusHits.Load() == 0 && time.Now().Before(deadline) {
+		select {
+		case <-cancelled:
+			t.Fatal("removed child should not be cancelled while drain status reports in-flight work")
+		default:
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if statusHits.Load() == 0 {
+		t.Fatal("expected drain status to be polled")
+	}
+
+	removed.cancel()
+	waitForChild(removed, time.Second)
+}
+
+func TestReconcile_RemovedLegacyVersionUsesDrainGraceBeforeCancel(t *testing.T) {
+	dir := t.TempDir()
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BinDir:            filepath.Join(dir, "bin"),
+		DataDir:           filepath.Join(dir, "data"),
+		BinaryName:        "devshard",
+		BasePort:          5000,
+		DrainTimeout:      time.Hour,
+		DrainPollInterval: time.Hour,
+		DrainKillGrace:    50 * time.Millisecond,
+	})
+
+	done := make(chan struct{})
+	cancelled := make(chan struct{})
+	var cancelOnce sync.Once
+
+	m.mu.Lock()
+	m.processes["legacy"] = &child{
+		version: oracle.Version{Name: "legacy"},
+		port:    port,
+		cancel: func() {
+			cancelOnce.Do(func() {
+				close(cancelled)
+				close(done)
+			})
+		},
+		done:    done,
+		status:  statusRunning,
+		restart: true,
+	}
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	start := time.Now()
+	if err := m.Reconcile(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-cancelled:
+		t.Fatal("legacy child should get drain grace before SIGTERM")
+	default:
+	}
+
+	select {
+	case <-cancelled:
+		if elapsed := time.Since(start); elapsed < 40*time.Millisecond {
+			t.Fatalf("legacy child cancelled after %s, want drain grace first", elapsed)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("legacy child was not cancelled after drain grace")
 	}
 }
 
