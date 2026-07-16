@@ -691,3 +691,40 @@ func (c *TestCommand) Execute(ctx context.Context, worker *NodeWorker) NodeResul
 	}
 	return NodeResult{Succeeded: true}
 }
+
+func TestNodeWorker_SubmitAfterShutdown(t *testing.T) {
+	broker := NewTestBroker2(10)
+	node := createTestNode("test-node-1")
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
+
+	worker.Shutdown()
+
+	// Give run() time to observe the shutdown signal and close the commands
+	// channel; an unguarded Submit would then panic with "send on closed channel".
+	time.Sleep(100 * time.Millisecond)
+
+	cmd := &TestCommand{}
+	success := worker.Submit(context.Background(), cmd)
+	assert.False(t, success, "Submit after Shutdown should be rejected, not panic")
+}
+
+func TestNodeWorker_ConcurrentSubmitAndShutdown(t *testing.T) {
+	// Mirrors the production race: reconcile (a separate goroutine) submits to a
+	// worker while RemoveNode shuts it down. Must never panic.
+	for i := 0; i < 50; i++ {
+		broker := NewTestBroker2(200)
+		node := createTestNode("test-node-1")
+		worker := NewNodeWorkerWithClient("test-node-1", node, mlnodeclient.NewMockClient(), broker)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			for j := 0; j < 100; j++ {
+				worker.Submit(context.Background(), &TestCommand{})
+			}
+		}()
+		worker.Shutdown()
+		<-done
+	}
+}
