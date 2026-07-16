@@ -5,11 +5,13 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"runtime/pprof"
 	"sync"
 	"testing"
 	"time"
@@ -96,6 +98,12 @@ func (b *countingBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][
 
 var _ bridge.MainnetBridge = (*countingBridge)(nil)
 
+func countHostValidationWorkers() int {
+	var buf bytes.Buffer
+	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
+	return bytes.Count(buf.Bytes(), []byte("devshard/host.(*Host).startValidationWorkers.func1"))
+}
+
 type payloadEntry struct {
 	prompt   []byte
 	response []byte
@@ -143,6 +151,31 @@ type currentEpochStore struct {
 }
 
 func (s currentEpochStore) CurrentEpochID() uint64 { return s.epoch }
+
+type metaErrorStore struct {
+	storage.Storage
+	epoch     uint64
+	escrowID  string
+	metaError error
+}
+
+func (s metaErrorStore) CurrentEpochID() uint64 { return s.epoch }
+
+func (s metaErrorStore) GetSessionMeta(escrowID string) (*storage.SessionMeta, error) {
+	if escrowID == s.escrowID {
+		return nil, s.metaError
+	}
+	return s.Storage.GetSessionMeta(escrowID)
+}
+
+type failingCreateStore struct {
+	storage.Storage
+	err error
+}
+
+func (s *failingCreateStore) CreateSession(storage.CreateSessionParams) error {
+	return s.err
+}
 
 type countingListStore struct {
 	storage.Storage
@@ -246,7 +279,7 @@ func defaultConfig(n int) types.SessionConfig {
 		ExecutionTimeout: 1200,
 		TokenPrice:       1,
 		VoteThreshold:    uint32(n) / 2,
-		ValidationRate:   5000,
+		ValidationRate:   types.DefaultValidationRate,
 	}
 }
 
@@ -323,6 +356,11 @@ func populateStore(t *testing.T, store storage.Storage, numDiffs int) ([]types.S
 
 func createStoredSession(t *testing.T, store storage.Storage, escrowID string, epochID uint64, numDiffs int) ([]types.SlotAssignment, *signing.Secp256k1Signer, *signing.Secp256k1Signer) {
 	t.Helper()
+	return createStoredSessionWithVersion(t, store, escrowID, epochID, runtimeTestVersion, numDiffs)
+}
+
+func createStoredSessionWithVersion(t *testing.T, store storage.Storage, escrowID string, epochID uint64, version string, numDiffs int) ([]types.SlotAssignment, *signing.Secp256k1Signer, *signing.Secp256k1Signer) {
+	t.Helper()
 	hosts := make([]*signing.Secp256k1Signer, 3)
 	for i := range hosts {
 		hosts[i] = mustGenerateKey(t)
@@ -339,7 +377,7 @@ func createStoredSession(t *testing.T, store storage.Storage, escrowID string, e
 		Config:         config,
 		Group:          group,
 		InitialBalance: 100000000,
-		Version:        runtimeTestVersion,
+		Version:        version,
 	}))
 
 	sm, err := state.NewStateMachine(escrowID, config, group, 100000000, user.Address(), verifier, store,
@@ -408,6 +446,41 @@ func TestStatsShardsListsCurrentEpochWithoutDetails(t *testing.T) {
 	require.Equal(t, http.StatusOK, rootMounted.Code, "body: %s", rootMounted.Body.String())
 }
 
+func TestStatsShardsSkipsForeignVersionSessions(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, base, "escrow-v1", 7, 0)
+	createStoredSessionWithVersion(t, base, "escrow-v2", 7, "v2", 0)
+
+	store := currentEpochStore{Storage: base, epoch: 7}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	mgr.SetReady()
+
+	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "escrow-v1")
+	require.NotContains(t, rec.Body.String(), "escrow-v2")
+}
+
+func TestStatsShardsSkipsSessionsWithUnreadableMeta(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, base, "escrow-ok", 7, 0)
+	createStoredSession(t, base, "escrow-bad-meta", 7, 0)
+
+	store := metaErrorStore{
+		Storage:   base,
+		epoch:     7,
+		escrowID:  "escrow-bad-meta",
+		metaError: storage.ErrSessionNotFound,
+	}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	mgr.SetReady()
+
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	require.Contains(t, rec.Body.String(), "escrow-ok")
+	require.NotContains(t, rec.Body.String(), "escrow-bad-meta")
+}
+
 func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	base := newManagerTestStore(t)
 	group, _, hostSigner := createStoredSession(t, base, "escrow-detail", 7, 1)
@@ -461,6 +534,20 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	require.Equal(t, rec.Body.String(), cached.Body.String())
 }
 
+func TestStatsShardDetailSkipsForeignVersionSession(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSessionWithVersion(t, base, "escrow-v2", 7, "v2", 0)
+
+	store := currentEpochStore{Storage: base, epoch: 7}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	mgr.SetReady()
+
+	before := countHostValidationWorkers()
+	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-v2")
+	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
+	require.Equal(t, before, countHostValidationWorkers(), "foreign version stats detail must not materialize a host")
+}
+
 func TestRecoverSessions_HappyPath(t *testing.T) {
 	store := newManagerTestStore(t)
 	group, user, hostSigner := populateStore(t, store, 10)
@@ -493,6 +580,66 @@ func TestRecoverSessions_HappyPath(t *testing.T) {
 	require.True(t, ok, "session should exist after recovery")
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
+}
+
+func TestRecoverSessions_SkipsForeignVersionSessions(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSessionWithVersion(t, store, "escrow-v2", 7, "v2", 1)
+
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+
+	mgr.mu.RLock()
+	_, ok := mgr.sessions["escrow-v2"]
+	mgr.mu.RUnlock()
+	require.False(t, ok, "foreign-version session must be skipped, not treated as failed recovery")
+}
+
+func TestHostManager_EvictBeforeClosesOldSessions(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	config := defaultConfig(3)
+	for _, sess := range []struct {
+		escrowID string
+		epochID  uint64
+	}{
+		{escrowID: "escrow-old", epochID: 5},
+		{escrowID: "escrow-current", epochID: 7},
+	} {
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       sess.escrowID,
+			EpochID:        sess.epochID,
+			Version:        runtimeTestVersion,
+			CreatorAddr:    user.Address(),
+			Config:         config,
+			Group:          group,
+			InitialBalance: 100000000,
+		}))
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, &mockBridge{}, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+	t.Cleanup(func() { _ = mgr.Close() })
+	beforeEvict := countHostValidationWorkers()
+	require.GreaterOrEqual(t, beforeEvict, 2*20)
+
+	evicted := mgr.EvictBefore(6)
+	require.Equal(t, 1, evicted)
+	require.Eventually(t, func() bool {
+		return countHostValidationWorkers() <= beforeEvict-20
+	}, time.Second, 10*time.Millisecond)
+
+	mgr.mu.RLock()
+	_, oldOK := mgr.sessions["escrow-old"]
+	_, currentOK := mgr.sessions["escrow-current"]
+	mgr.mu.RUnlock()
+	require.False(t, oldOK)
+	require.True(t, currentOK)
 }
 
 func TestRecoverSessions_LogsRecoveryDurations(t *testing.T) {
@@ -798,6 +945,118 @@ func TestSessionServer_GatedUntilReady(t *testing.T) {
 	require.Equal(t, uint64(1), srv.Host().LatestNonce())
 }
 
+func TestSessionServer_StartsRegisteredHost(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-start",
+			EpochID:        7,
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetReady()
+
+	before := countHostValidationWorkers()
+	srv, err := mgr.SessionServer("escrow-start")
+	require.NoError(t, err)
+	t.Cleanup(srv.Host().Close)
+	require.Eventually(t, func() bool {
+		return countHostValidationWorkers() >= before+20
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestSessionServer_FailedCreateDoesNotStartHost(t *testing.T) {
+	base := newManagerTestStore(t)
+	store := &failingCreateStore{Storage: base, err: storage.ErrEpochPruned}
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-pruned",
+			EpochID:        1,
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetReady()
+
+	before := countHostValidationWorkers()
+	_, err := mgr.SessionServer("escrow-pruned")
+	require.ErrorIs(t, err, storage.ErrEpochPruned)
+	require.Equal(t, before, countHostValidationWorkers())
+}
+
+func TestSessionServer_CachesFailedResolution(t *testing.T) {
+	base := newManagerTestStore(t)
+	store := &failingCreateStore{Storage: base, err: storage.ErrEpochPruned}
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	addresses := make([]string, len(hosts))
+	for i, h := range hosts {
+		addresses[i] = h.Address()
+	}
+	br := &countingBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-cache-failure",
+			EpochID:        1,
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetReady()
+
+	_, err := mgr.SessionServer("escrow-cache-failure")
+	require.ErrorIs(t, err, storage.ErrEpochPruned)
+	_, err = mgr.SessionServer("escrow-cache-failure")
+	require.ErrorIs(t, err, storage.ErrEpochPruned)
+	require.Equal(t, 1, br.getEscrowCalls, "cached failure should avoid rebuilding the same broken escrow")
+}
+
+func TestHostManager_SweepsExpiredResolutionFailures(t *testing.T) {
+	mgr := &HostManager{
+		resolutionFailures: make(map[string]resolutionFailure),
+	}
+	now := time.Unix(1_000, 0)
+	for i := 0; i <= maxResolutionFailures; i++ {
+		mgr.resolutionFailures[fmt.Sprintf("expired-%d", i)] = resolutionFailure{
+			err:       storage.ErrSessionNotFound,
+			expiresAt: now.Add(-time.Second),
+		}
+	}
+
+	mgr.rememberResolutionFailure("fresh", storage.ErrEpochPruned, now)
+
+	require.Len(t, mgr.resolutionFailures, 1)
+	require.Contains(t, mgr.resolutionFailures, "fresh")
+	require.True(t, now.Before(mgr.resolutionFailures["fresh"].expiresAt))
+}
+
 func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
@@ -858,13 +1117,14 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 			TokenPrice:                1,
 			InferenceSealGraceNonces:  123,
 			InferenceSealGraceSeconds: 99,
+			ValidationRate:            6000,
 		},
 	}
 
 	live := SessionParams{
 		RefusalTimeout:      90,
 		ExecutionTimeout:    1800,
-		ValidationRate:      6000,
+		ValidationRate:      9999, // lane B must not override lane A
 		VoteThresholdFactor: 67,
 	}
 	provider := stubRuntimeParams{params: live}
@@ -883,8 +1143,8 @@ func TestHostManager_Create_FreezesLiveParamsFromProvider(t *testing.T) {
 	require.Equal(t, int64(90), meta.Config.RefusalTimeout)
 	require.Equal(t, int64(1800), meta.Config.ExecutionTimeout)
 
-	live.ValidationRate = 9999
-	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "frozen session must not hot-reload")
+	live.ValidationRate = 1111
+	require.Equal(t, uint32(6000), meta.Config.ValidationRate, "validation_rate comes from escrow (lane A), not live provider")
 	require.Equal(t, uint32(123), meta.Config.InferenceSealGraceNonces, "grace comes from escrow snapshot, not live provider")
 }
 
@@ -924,6 +1184,41 @@ func TestHostManager_Create_SnapshotsFeesFromEscrow(t *testing.T) {
 	require.Equal(t, createFee, st.Config.CreateDevshardFee)
 	require.Equal(t, perNonce, st.Config.FeePerNonce)
 	require.Equal(t, createFee, st.Fees)
+}
+
+func TestHostManager_Create_DefaultValidationRateWhenEscrowOmits(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			TokenPrice:     1,
+			// ValidationRate unset (older chain/dapi)
+		},
+	}
+	provider := stubRuntimeParams{params: SessionParams{ValidationRate: 0}}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), runtimeTestVersion, br, nil, nil)
+	mgr.SetRuntimeParamsProvider(provider)
+	_, err := mgr.getOrCreate("escrow-1")
+	require.NoError(t, err)
+
+	meta, err := store.GetSessionMeta("escrow-1")
+	require.NoError(t, err)
+	require.Equal(t, types.DefaultValidationRate, meta.Config.ValidationRate)
 }
 
 func TestCreateSession_RejectsExistingDifferentVersion(t *testing.T) {

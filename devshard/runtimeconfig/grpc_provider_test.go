@@ -142,6 +142,15 @@ func TestGRPCProvider_LongPoll_NextRequestUsesNewHeight(t *testing.T) {
 	assert.Equal(t, int64(100), calls[1].GetClientParamsBlockHeight())
 }
 
+func waitGRPCServerCalls(t *testing.T, srv *testserver.Server, n int, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	for len(srv.Calls()) < n && time.Now().Before(deadline) {
+		time.Sleep(time.Millisecond)
+	}
+	require.GreaterOrEqual(t, len(srv.Calls()), n)
+}
+
 func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	srv := testserver.New()
 	// Repeat full-config-at-height-0: a single handler would be consumed and the fake
@@ -158,16 +167,23 @@ func TestGRPCProvider_ServerNotSyncedPausesBetweenPolls(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	clock := newFakeClock(time.Unix(0, 0))
+	const backoff = 50 * time.Millisecond
 	cfg := testConfig(t, client, func(c *Config) {
-		c.ErrorBackoffMin = 50 * time.Millisecond
+		c.ErrorBackoffMin = backoff
+		c.Clock = clock
 	})
 	_, err := New(ctx, cfg)
 	require.NoError(t, err)
 
-	time.Sleep(30 * time.Millisecond)
+	waitGRPCServerCalls(t, srv, 1, time.Second)
 	require.Equal(t, 1, len(srv.Calls()), "expected one initial_fetch while server height is 0, not a busy loop")
 
-	time.Sleep(60 * time.Millisecond)
+	deadline := time.Now().Add(time.Second)
+	for len(srv.Calls()) < 2 && time.Now().Before(deadline) {
+		clock.Advance(10 * time.Millisecond)
+		time.Sleep(time.Millisecond)
+	}
 	calls := len(srv.Calls())
 	assert.GreaterOrEqual(t, calls, 2, "second poll after server-not-synced backoff")
 	assert.LessOrEqual(t, calls, 3, "expected backoff between polls while height stays 0, got %d calls", calls)

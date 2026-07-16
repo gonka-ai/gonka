@@ -110,7 +110,7 @@ func TestChainProvider_InitialFetchPopulatesSnapshot_v0_2_13Chain(t *testing.T) 
 func TestChainProvider_v0_2_12Chain_ZeroNewFieldsPreserveCompiledDefaults(t *testing.T) {
 	// On a v0.2.12 chain the new DevshardEscrowParams fields decode as zero.
 	// The chain provider must store those zeros so downstream
-	// ApplyLiveSessionParams "if > 0 override" semantics fall back to compiled
+	// Older chain/dapi omit validation_rate (zero); lane A bind uses compiled
 	// defaults instead of nuking SessionConfig.
 	f := &fakeFetcher{
 		responses: []fakeFetchResponse{

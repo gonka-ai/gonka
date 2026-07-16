@@ -3,15 +3,74 @@ package v0_2_14
 import (
 	"testing"
 
+	sdk "github.com/cosmos/cosmos-sdk/types"
+	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
+	"go.uber.org/mock/gomock"
 )
 
 // TestUpgradeName pins the future on-chain proposal name. The governance
 // proposal and UpgradeName must stay identical or the handler will not run.
 func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.14", UpgradeName)
+}
+
+func TestBurnFeeCollectorBalance(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	burnCoins := sdk.NewCoins(sdk.NewInt64Coin(inferencetypes.BaseCoin, 12_345))
+	balance := sdk.NewCoins(
+		sdk.NewInt64Coin(inferencetypes.BaseCoin, 12_345),
+		sdk.NewInt64Coin("uusdc", 99),
+	)
+	feeCollectorAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+	const memo = "v0.2.14: burn erroneously minted inflation"
+
+	mocks.BankViewKeeper.EXPECT().
+		GetAllBalances(gomock.Any(), feeCollectorAddress).
+		Return(balance)
+	mocks.BankKeeper.EXPECT().
+		SendCoinsFromModuleToModule(gomock.Any(), authtypes.FeeCollectorName, inferencetypes.ModuleName, burnCoins, memo).
+		Return(nil)
+	mocks.BankKeeper.EXPECT().
+		BurnCoins(gomock.Any(), inferencetypes.ModuleName, burnCoins, memo).
+		Return(nil)
+
+	require.NoError(t, burnFeeCollectorBalance(ctx, k))
+}
+
+func TestBurnFeeCollectorBalance_NoBaseDenomBalanceIsNoOp(t *testing.T) {
+	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
+
+	feeCollectorAddress := authtypes.NewModuleAddress(authtypes.FeeCollectorName)
+
+	mocks.BankViewKeeper.EXPECT().
+		GetAllBalances(gomock.Any(), feeCollectorAddress).
+		Return(sdk.NewCoins(sdk.NewInt64Coin("uusdc", 99)))
+
+	require.NoError(t, burnFeeCollectorBalance(ctx, k))
+}
+
+func TestSetDevshardAllowedCreatorAddressesAddsDahl(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.AllowedCreatorAddresses = []string{"gonka1existing"}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardAllowedCreatorAddresses(ctx, k))
+	require.NoError(t, setDevshardAllowedCreatorAddresses(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{
+		"gonka1existing",
+		"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
+	}, got.DevshardEscrowParams.AllowedCreatorAddresses)
 }
 
 func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceNonces(t *testing.T) {
@@ -224,6 +283,50 @@ func TestSeedDelegationRewardSnapshotForEffectiveEpoch_DoesNotOverrideExisting(t
 	require.Equal(t, uint64(8), snapshot.EpochIndex)
 	require.Len(t, snapshot.Transfers, 1)
 	require.Len(t, snapshot.Penalties, 1)
+}
+
+// TestInitMaintenanceParams_NilParams simulates mainnet state: the chain
+// upgraded past v0.2.12 before maintenance landed, so MaintenanceParams is
+// nil. The init must install defaults with the feature disabled.
+func TestInitMaintenanceParams_NilParams(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.MaintenanceParams = nil
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, initMaintenanceParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.MaintenanceParams)
+	require.False(t, got.MaintenanceParams.MaintenanceEnabled, "maintenance must ship disabled")
+	require.Equal(t, inferencetypes.DefaultMaintenanceParams(), got.MaintenanceParams)
+	require.NoError(t, got.MaintenanceParams.Validate())
+}
+
+// TestInitMaintenanceParams_PreservesExisting ensures chains that
+// already carry deliberate maintenance settings (e.g. testnets with the
+// feature enabled) are not stomped by the upgrade.
+func TestInitMaintenanceParams_PreservesExisting(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	existing := inferencetypes.DefaultMaintenanceParams()
+	existing.MaintenanceEnabled = true
+	existing.MaintenanceMaxWindowBlocks = 999
+	params.MaintenanceParams = existing
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, initMaintenanceParams(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.NotNil(t, got.MaintenanceParams)
+	require.True(t, got.MaintenanceParams.MaintenanceEnabled)
+	require.Equal(t, uint64(999), got.MaintenanceParams.MaintenanceMaxWindowBlocks)
 }
 
 func TestUpdateGenesisTransferParams(t *testing.T) {

@@ -153,4 +153,43 @@ func TestApplyMissStreak(t *testing.T) {
 			t.Fatalf("CPoC pass should reset; got vote=%v misses=%d", out.VoteNo, out.NewState.ConsecutiveMisses)
 		}
 	})
+
+	t.Run("replaying the same stage does not double-count a miss", func(t *testing.T) {
+		// First run for the stage: grace miss.
+		first := ApplyMissStreak(GuardState{}, false, poc, stage)
+		if first.VoteNo || first.NewState.ConsecutiveMisses != 1 {
+			t.Fatalf("first run: vote=%v misses=%d, want grace miss", first.VoteNo, first.NewState.ConsecutiveMisses)
+		}
+		// Restart mid-validation replays the same stage: state must not change
+		// and the outcome must match the first run.
+		replay := ApplyMissStreak(first.NewState, false, poc, stage)
+		if replay.VoteNo {
+			t.Fatal("replay must not vote no when the first run was grace")
+		}
+		if replay.NewState != first.NewState {
+			t.Fatalf("replay mutated state: %+v -> %+v", first.NewState, replay.NewState)
+		}
+	})
+
+	t.Run("replaying the same stage reproduces a vote-no outcome", func(t *testing.T) {
+		second := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, false, poc, stage)
+		if !second.VoteNo || second.NewState.ConsecutiveMisses != 2 {
+			t.Fatalf("setup: vote=%v misses=%d, want vote no at 2", second.VoteNo, second.NewState.ConsecutiveMisses)
+		}
+		replay := ApplyMissStreak(second.NewState, false, poc, stage)
+		if !replay.VoteNo {
+			t.Fatal("replay must reproduce the vote-no outcome")
+		}
+		if replay.NewState != second.NewState {
+			t.Fatalf("replay mutated state: %+v -> %+v", second.NewState, replay.NewState)
+		}
+	})
+
+	t.Run("replaying a passed stage stays passed", func(t *testing.T) {
+		first := ApplyMissStreak(GuardState{ConsecutiveMisses: 1}, true, cpoc, stage)
+		replay := ApplyMissStreak(first.NewState, true, cpoc, stage)
+		if replay.VoteNo || replay.NewState != first.NewState {
+			t.Fatalf("replay of a pass changed outcome: vote=%v state=%+v", replay.VoteNo, replay.NewState)
+		}
+	})
 }

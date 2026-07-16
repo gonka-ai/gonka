@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,7 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 	require.NoError(t, err)
 
 	var broadcastSeen bool
+	var expectedHash string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cosmos/auth/v1beta1/accounts/" + signer.Address():
@@ -44,18 +46,20 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 			require.NotEmpty(t, txBytes)
 			assertUnorderedTx(t, txBytes)
 			broadcastSeen = true
+			// A real node returns SHA-256(txBytes); the client precomputes the same.
+			expectedHash = txHashFromBytes(txBytes)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "ABC123",
+					"txhash": expectedHash,
 				},
 			})
-		case "/cosmos/tx/v1beta1/txs/ABC123":
+		case "/cosmos/tx/v1beta1/txs/" + expectedHash:
 			require.True(t, broadcastSeen)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "ABC123",
+					"txhash": expectedHash,
 					"events": []map[string]any{{
 						"type": "devshard_escrow_created",
 						"attributes": []map[string]string{{
@@ -81,10 +85,11 @@ func TestRESTChainTxClient_CreateDevshardEscrow(t *testing.T) {
 	})
 	require.NoError(t, err)
 
-	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test")
+	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test", nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(42), result.EscrowID)
-	require.Equal(t, "ABC123", result.TxHash)
+	require.NotEmpty(t, expectedHash)
+	require.Equal(t, expectedHash, result.TxHash)
 	require.Equal(t, signer.Address(), result.Creator)
 }
 
@@ -93,6 +98,7 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	require.NoError(t, err)
 
 	var broadcastSeen bool
+	var expectedHash string
 	broadcastServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
 		case "/cosmos/auth/v1beta1/accounts/" + signer.Address():
@@ -116,13 +122,14 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 			require.NoError(t, err)
 			assertUnorderedTx(t, txBytes)
 			broadcastSeen = true
+			expectedHash = txHashFromBytes(txBytes)
 			writeTestJSON(t, w, map[string]any{
 				"tx_response": map[string]any{
 					"code":   0,
-					"txhash": "FALLBACK123",
+					"txhash": expectedHash,
 				},
 			})
-		case "/cosmos/tx/v1beta1/txs/FALLBACK123":
+		case "/cosmos/tx/v1beta1/txs/" + expectedHash:
 			http.Error(w, `{"code":2,"message":"transaction indexing is disabled"}`, http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
@@ -131,12 +138,12 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	defer broadcastServer.Close()
 
 	queryServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/cosmos/tx/v1beta1/txs/FALLBACK123", r.URL.Path)
+		require.Equal(t, "/cosmos/tx/v1beta1/txs/"+expectedHash, r.URL.Path)
 		require.True(t, broadcastSeen)
 		writeTestJSON(t, w, map[string]any{
 			"tx_response": map[string]any{
 				"code":   0,
-				"txhash": "FALLBACK123",
+				"txhash": expectedHash,
 				"events": []map[string]any{{
 					"type": "devshard_escrow_created",
 					"attributes": []map[string]string{{
@@ -160,11 +167,122 @@ func TestRESTChainTxClient_CreateDevshardEscrowUsesTxQueryFallback(t *testing.T)
 	})
 	require.NoError(t, err)
 
-	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test")
+	result, err := client.CreateDevshardEscrow(t.Context(), signer, 1_000_000, "Qwen/Test", nil)
 	require.NoError(t, err)
 	require.Equal(t, uint64(43), result.EscrowID)
-	require.Equal(t, "FALLBACK123", result.TxHash)
+	require.NotEmpty(t, expectedHash)
+	require.Equal(t, expectedHash, result.TxHash)
 	require.Equal(t, signer.Address(), result.Creator)
+}
+
+// escrowIDQueryServer returns a query endpoint that replies with a committed
+// create tx carrying an escrow_id event for txHash, and 404 for anything else.
+func escrowIDQueryServer(t *testing.T, txHash string, escrowID uint64) *httptest.Server {
+	t.Helper()
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/cosmos/tx/v1beta1/txs/"+txHash {
+			http.NotFound(w, r)
+			return
+		}
+		writeTestJSON(t, w, map[string]any{
+			"tx_response": map[string]any{
+				"code":   0,
+				"txhash": txHash,
+				"events": []map[string]any{{
+					"type":       "devshard_escrow_created",
+					"attributes": []map[string]string{{"key": "escrow_id", "value": fmt.Sprintf("%d", escrowID)}},
+				}},
+			},
+		})
+	}))
+}
+
+func TestIsNotFoundError_Status404(t *testing.T) {
+	err := fmt.Errorf("http://primary: %w", &chainHTTPError{
+		method: http.MethodGet,
+		path:   "/cosmos/tx/v1beta1/txs/ABC",
+		status: http.StatusNotFound,
+		body:   "tx not found",
+	})
+	require.True(t, isNotFoundError(err))
+}
+
+func TestIsNotFoundError_500WithNotFoundBody(t *testing.T) {
+	err := fmt.Errorf("http://fallback: %w", &chainHTTPError{
+		method: http.MethodGet,
+		path:   "/cosmos/tx/v1beta1/txs/ABC",
+		status: http.StatusInternalServerError,
+		body:   `{"message":"tx not found"}`,
+	})
+	require.False(t, isNotFoundError(err))
+
+	var httpErr *chainHTTPError
+	require.True(t, errors.As(err, &httpErr))
+	require.Equal(t, http.StatusInternalServerError, httpErr.StatusCode())
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDTriesFallbackOn404 pins the recovery path:
+// when the primary node has not indexed the create tx (404), the escrow_id must
+// still be resolved from the fallback query URL rather than reported missing.
+func TestRESTChainTxClient_GetTxEscrowIDTriesFallbackOn404(t *testing.T) {
+	const txHash = "ABC123"
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r) // primary hasn't indexed the tx yet
+	}))
+	defer primary.Close()
+	fallback := escrowIDQueryServer(t, txHash, 77)
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	escrowID, found, err := client.GetTxEscrowID(t.Context(), txHash)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, uint64(77), escrowID)
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDNotFoundWhenAllEndpoints404 confirms the
+// only-after-all-endpoints semantics: errTxNotFound is returned solely when
+// every reachable endpoint agrees the tx is absent.
+func TestRESTChainTxClient_GetTxEscrowIDNotFoundWhenAllEndpoints404(t *testing.T) {
+	notFound := func() *httptest.Server {
+		return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { http.NotFound(w, r) }))
+	}
+	primary := notFound()
+	defer primary.Close()
+	fallback := notFound()
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	_, found, err := client.GetTxEscrowID(t.Context(), "ABC123")
+	require.False(t, found)
+	require.ErrorIs(t, err, errTxNotFound)
+}
+
+// TestRESTChainTxClient_GetTxEscrowIDInconclusiveOnFallbackError guards against
+// orphaning: a 404 on the primary plus a real error on the fallback is
+// inconclusive, so a non-errTxNotFound error is returned and the caller keeps
+// the commitment for a later retry instead of clearing it.
+func TestRESTChainTxClient_GetTxEscrowIDInconclusiveOnFallbackError(t *testing.T) {
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.NotFound(w, r)
+	}))
+	defer primary.Close()
+	fallback := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, `{"message":"transaction indexing is disabled"}`, http.StatusInternalServerError)
+	}))
+	defer fallback.Close()
+
+	client, err := NewRESTChainTxClient(RESTChainTxConfig{BaseURL: primary.URL, TxQueryURL: fallback.URL, ChainID: "gonka-test"})
+	require.NoError(t, err)
+
+	_, found, err := client.GetTxEscrowID(t.Context(), "ABC123")
+	require.False(t, found)
+	require.Error(t, err)
+	require.NotErrorIs(t, err, errTxNotFound)
 }
 
 func TestRESTChainTxClient_SettleDevshardEscrow(t *testing.T) {

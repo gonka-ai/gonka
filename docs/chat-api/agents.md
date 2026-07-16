@@ -28,6 +28,14 @@ Cause: model (typically Kimi-K2.6) emitted duplicate symbolic ids in one assista
 
 Cause: Kimi-K2.6 reads from `chat_template_kwargs.thinking` only — the gateway mirrors automatically from top-level `thinking.type`. The top-level field is dropped after mirroring. To override the mirrored value, pre-set `chat_template_kwargs.thinking` directly in your request body.
 
+### "My tool message is rejected on MiniMax-M2.7"
+
+Cause: MiniMax-M2.7 uses a different `role:"tool"` contract from OpenAI — `content` must be an array of `{name, type:"text", text}` entries, with no `tool_call_id`. Bare-string `content` or OpenAI-style `tool_call_id`-correlated messages are rejected with HTTP 400. See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md). Clients dual-emitting `tool_call_id` for portability across routes are fine — the gateway silently strips it.
+
+### "My `<think>` blocks disappeared on MiniMax-M2.7"
+
+They shouldn't. MiniMax-M2.7 emits reasoning inline as `<think>...</think>` in `content`, and the gateway preserves these byte-identical across multi-turn history. If you're seeing them stripped, you're probably running them through a client-side reasoning filter — keep them in conversation history for chain-of-thought continuity ([[MiniMax-5]](references.md#minimax)).
+
 ### "My cache key disappeared"
 
 Cause: `cache_key` / `prompt_cache_key` silently stripped. vLLM uses a different field (`cache_salt`) for cache isolation, and the aliasing PR is unmerged — see [troubleshooting](troubleshooting.md#strip-cache_key) for the full chain of upstream gaps.

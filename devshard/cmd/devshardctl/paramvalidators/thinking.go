@@ -3,6 +3,8 @@ package paramvalidators
 import (
 	"errors"
 	"fmt"
+
+	"devshard/cmd/devshardctl/filtercore"
 )
 
 // ErrThinkingShape covers the wrapper-level rejection. ErrThinkingType covers the inner
@@ -70,12 +72,7 @@ func resolveThinkingType(typeStr string) (bool, bool) {
 }
 
 func (v ThinkingValidator) shouldMirror(routedModel string) bool {
-	for _, m := range v.MirrorToTemplateKwargsForModels {
-		if m == routedModel {
-			return true
-		}
-	}
-	return false
+	return filtercore.MatchesModel(routedModel, v.MirrorToTemplateKwargsForModels)
 }
 
 func mirrorThinkingToTemplateKwargs(document map[string]any, enabled bool) error {

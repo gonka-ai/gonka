@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"slices"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -41,9 +42,10 @@ import (
 
 // HostManager manages per-escrow devshard sessions with lazy creation.
 type HostManager struct {
-	mu       sync.RWMutex
-	sessions map[string]*transport.Server
-	sf       singleflight.Group
+	mu                 sync.RWMutex
+	sessions           map[string]*transport.Server
+	resolutionFailures map[string]resolutionFailure
+	sf                 singleflight.Group
 
 	readyMu      sync.RWMutex
 	initializing bool
@@ -72,7 +74,15 @@ type HostManager struct {
 const (
 	recoverSessionsConcurrency = 8
 	statsCacheTTL              = 60 * time.Second
+	resolutionFailureTTL       = 30 * time.Second
+	permanentFailureTTL        = 10 * time.Minute
+	maxResolutionFailures      = 1024
 )
+
+type resolutionFailure struct {
+	err       error
+	expiresAt time.Time
+}
 
 type statsShardDetailCache struct {
 	response *statsShardDetailResponse
@@ -138,18 +148,19 @@ func NewHostManager(
 	recorder PayloadAuthClient,
 ) *HostManager {
 	m := &HostManager{
-		sessions:          make(map[string]*transport.Server),
-		initializing:      true,
-		store:             store,
-		signer:            signer,
-		verifier:          signing.NewSecp256k1Verifier(),
-		engine:            engine,
-		validator:         validator,
-		boundVersion:      boundVersion,
-		bridge:            br,
-		payloadStore:      payloadStore,
-		recorder:          recorder,
-		statsDetailsCache: make(map[string]statsShardDetailCache),
+		sessions:           make(map[string]*transport.Server),
+		resolutionFailures: make(map[string]resolutionFailure),
+		initializing:       true,
+		store:              store,
+		signer:             signer,
+		verifier:           signing.NewSecp256k1Verifier(),
+		engine:             engine,
+		validator:          validator,
+		boundVersion:       boundVersion,
+		bridge:             br,
+		payloadStore:       payloadStore,
+		recorder:           recorder,
+		statsDetailsCache:  make(map[string]statsShardDetailCache),
 	}
 	// Wire the payload prune sink. When payloadStore is nil (tests, tools)
 	// the sink is nil and hosts will not emit any prune events.
@@ -169,6 +180,16 @@ func (m *HostManager) Close() error {
 				"error", err)
 		}
 		cancel()
+	}
+	m.mu.Lock()
+	sessions := make([]*transport.Server, 0, len(m.sessions))
+	for _, srv := range m.sessions {
+		sessions = append(sessions, srv)
+	}
+	m.sessions = make(map[string]*transport.Server)
+	m.mu.Unlock()
+	for _, srv := range sessions {
+		srv.Host().Close()
 	}
 	return m.store.Close()
 }
@@ -204,10 +225,9 @@ func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 }
 
 // SetRuntimeParamsProvider supplies the live long-poll-backed view of session
-// governance params, read at HostManager.create to freeze bind-time fields.
-// freeze ValidationRate / grace / VoteThreshold onto the bound SessionConfig.
-// Until then the provider is captured but not consulted, so wiring this in
-// dapi/devshardd is a no-op for behavior.
+// governance params, read at HostManager.create to freeze lane-B bind-time
+// fields (timeouts, vote_threshold_factor). ValidationRate is lane A and comes
+// from the escrow row via bridge.SessionConfigAtBind.
 func (m *HostManager) SetRuntimeParamsProvider(p RuntimeParamsProvider) {
 	m.params = p
 }
@@ -236,10 +256,16 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 	if srv, ok := m.session(escrowID); ok {
 		return srv, nil
 	}
+	if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+		return nil, err
+	}
 
 	v, err, _ := m.sf.Do(escrowID, func() (interface{}, error) {
 		if srv, ok := m.session(escrowID); ok {
 			return srv, nil
+		}
+		if err := m.cachedResolutionFailure(escrowID, time.Now()); err != nil {
+			return nil, err
 		}
 
 		srv, err := m.recoverStoredSession(escrowID)
@@ -259,9 +285,65 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 	})
 
 	if err != nil {
+		m.rememberResolutionFailure(escrowID, err, time.Now())
 		return nil, err
 	}
 	return v.(*transport.Server), nil
+}
+
+func (m *HostManager) cachedResolutionFailure(escrowID string, now time.Time) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cached, ok := m.resolutionFailures[escrowID]
+	if !ok {
+		return nil
+	}
+	if !now.Before(cached.expiresAt) {
+		delete(m.resolutionFailures, escrowID)
+		return nil
+	}
+	return cached.err
+}
+
+func (m *HostManager) rememberResolutionFailure(escrowID string, err error, now time.Time) {
+	if err == nil {
+		return
+	}
+	ttl := resolutionFailureTTL
+	if isPermanentResolutionFailure(err) {
+		ttl = permanentFailureTTL
+	}
+	m.mu.Lock()
+	m.resolutionFailures[escrowID] = resolutionFailure{err: err, expiresAt: now.Add(ttl)}
+	if len(m.resolutionFailures) > maxResolutionFailures {
+		m.sweepExpiredResolutionFailuresLocked(now)
+	}
+	m.mu.Unlock()
+}
+
+func (m *HostManager) sweepExpiredResolutionFailuresLocked(now time.Time) {
+	for escrowID, cached := range m.resolutionFailures {
+		if !now.Before(cached.expiresAt) {
+			delete(m.resolutionFailures, escrowID)
+		}
+	}
+}
+
+func isPermanentResolutionFailure(err error) bool {
+	return errors.Is(err, storage.ErrSessionVersionConflict) ||
+		errors.Is(err, storage.ErrSessionEpochConflict) ||
+		errors.Is(err, storage.ErrEpochPruned)
+}
+
+func (m *HostManager) sessionMatchesBoundVersion(escrowID string) (string, bool, error) {
+	meta, err := m.store.GetSessionMeta(escrowID)
+	if err != nil {
+		return "", false, err
+	}
+	if meta.Version == "" || meta.Version == m.boundVersion {
+		return meta.Version, true, nil
+	}
+	return meta.Version, false, nil
 }
 
 func (m *HostManager) session(escrowID string) (*transport.Server, bool) {
@@ -275,10 +357,43 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if existing, ok := m.sessions[escrowID]; ok {
+		srv.Host().Close()
 		return existing
 	}
+	delete(m.resolutionFailures, escrowID)
 	m.sessions[escrowID] = srv
+	srv.Host().Start()
 	return srv
+}
+
+func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
+	if cutoffEpoch == 0 {
+		return 0
+	}
+	m.mu.Lock()
+	evicted := make(map[string]*transport.Server)
+	for escrowID, srv := range m.sessions {
+		if srv.Host().EpochID() >= cutoffEpoch {
+			continue
+		}
+		evicted[escrowID] = srv
+		delete(m.sessions, escrowID)
+		delete(m.resolutionFailures, escrowID)
+	}
+	m.mu.Unlock()
+
+	for escrowID, srv := range evicted {
+		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
+	}
+
+	if len(evicted) > 0 {
+		m.statsMu.Lock()
+		m.statsShardsCache = nil
+		m.statsDetailsCache = make(map[string]statsShardDetailCache)
+		m.statsMu.Unlock()
+	}
+	return len(evicted)
 }
 
 func (m *HostManager) create(escrowID string) (*transport.Server, error) {
@@ -294,20 +409,12 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 
 	creatorAddr := escrow.CreatorAddress
 
-	config := types.SessionConfigFromEscrow(len(group), types.EscrowSessionFields{
-		TokenPrice:                escrow.TokenPrice,
-		CreateDevshardFee:         escrow.CreateDevshardFee,
-		FeePerNonce:               escrow.FeePerNonce,
-		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
-		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
-		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
-	})
+	config := bridge.SessionConfigAtBind(len(group), escrow)
 	if m.params != nil {
 		live := m.params.SessionParams()
 		config = types.ApplyChainSessionBindParams(config, len(group), types.LiveSessionBindParams{
 			RefusalTimeout:      live.RefusalTimeout,
 			ExecutionTimeout:    live.ExecutionTimeout,
-			ValidationRate:      live.ValidationRate,
 			VoteThresholdFactor: live.VoteThresholdFactor,
 		})
 	} else {
@@ -338,6 +445,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		Group:          group,
 		InitialBalance: escrow.Amount,
 	}); err != nil {
+		h.Close()
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
 
@@ -345,6 +453,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		transport.WithBridge(m.bridge),
 	)
 	if err != nil {
+		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
 	}
 
@@ -367,7 +476,6 @@ func (m *HostManager) RecoverSessions() error {
 			"duration", time.Since(startedAt))
 		return nil
 	}
-
 	workers := recoverSessionsConcurrency
 	if len(active) < workers {
 		workers = len(active)
@@ -379,6 +487,7 @@ func (m *HostManager) RecoverSessions() error {
 	var wg sync.WaitGroup
 	var recoveredCount atomic.Int64
 	var failedCount atomic.Int64
+	var versionSkippedCount atomic.Int64
 	for i := 0; i < workers; i++ {
 		wg.Add(1)
 		go func() {
@@ -386,6 +495,14 @@ func (m *HostManager) RecoverSessions() error {
 			for sess := range jobs {
 				sessionStartedAt := time.Now()
 				if _, err := m.recoverAndStoreSession(sess.EscrowID); err != nil {
+					if errors.Is(err, storage.ErrSessionVersionConflict) {
+						versionSkippedCount.Add(1)
+						logging.Info("skipping devshard session with foreign version", inferenceTypes.System,
+							"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
+							"host_version", m.boundVersion,
+							"duration", time.Since(sessionStartedAt), "error", err)
+						continue
+					}
 					failedCount.Add(1)
 					logging.Error("failed to recover devshard session", inferenceTypes.System,
 						"escrow_id", sess.EscrowID, "epoch_id", sess.EpochID,
@@ -409,6 +526,7 @@ func (m *HostManager) RecoverSessions() error {
 		"session_count", len(active), "worker_count", workers,
 		"recovered_count", recoveredCount.Load(),
 		"failed_count", failedCount.Load(),
+		"version_skipped_count", versionSkippedCount.Load(),
 		"duration", time.Since(startedAt))
 
 	return nil
@@ -517,6 +635,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 		transport.WithBridge(m.bridge),
 	)
 	if err != nil {
+		h.Close()
 		return nil, fmt.Errorf("create server: %w", err)
 	}
 
@@ -575,9 +694,46 @@ func (m *HostManager) handleStatsShard(c echo.Context) error {
 	}
 	resp, err := m.statsShardDetail(escrowID, time.Now())
 	if err != nil {
+		recordStatsSessionResolutionFailure(c, escrowID, err)
 		return statsHTTPError(err)
 	}
 	return c.JSON(http.StatusOK, resp)
+}
+
+func recordStatsSessionResolutionFailure(c echo.Context, escrowID string, err error) {
+	status, reason := statsSessionResolutionStatus(err)
+	observability.IncSessionResolution("stats_shard_detail", status, reason)
+	observability.Log(c.Request().Context(), observability.LevelWarn,
+		"devshard stats session resolution failed",
+		observability.StageSessionResolved,
+		observability.WhereRoutesSessionResolve,
+		escrowID,
+		reason,
+		err,
+	)
+}
+
+func statsSessionResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
+	if errors.Is(err, devshardserver.ErrInitializing) {
+		return observability.MetricStatusError, observability.ReasonInitializing
+	}
+	if errors.Is(err, storage.ErrSessionVersionConflict) {
+		return observability.MetricStatusError, observability.ReasonVersionConflict
+	}
+	if errors.Is(err, storage.ErrSessionEpochConflict) {
+		return observability.MetricStatusError, observability.ReasonEpochConflict
+	}
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "build group"):
+		return observability.MetricStatusError, observability.ReasonBuildGroupErr
+	case strings.Contains(msg, "get escrow"):
+		return observability.MetricStatusError, observability.ReasonGetEscrowErr
+	case strings.Contains(msg, "storage"):
+		return observability.MetricStatusError, observability.ReasonStorageErr
+	default:
+		return observability.MetricStatusError, observability.ReasonSessionResolveErr
+	}
 }
 
 func (m *HostManager) statsShards(now time.Time) (*statsShardsResponse, error) {
@@ -693,9 +849,23 @@ func (m *HostManager) currentEpochActiveSessions() (uint64, []storage.ActiveSess
 
 	filtered := make([]storage.ActiveSession, 0, len(active))
 	for _, sess := range active {
-		if sess.EpochID == currentEpochID {
-			filtered = append(filtered, sess)
+		if sess.EpochID != currentEpochID {
+			continue
 		}
+		_, matches, err := m.sessionMatchesBoundVersion(sess.EscrowID)
+		if err != nil {
+			logging.Debug("skipping devshard stats session with unreadable meta",
+				inferenceTypes.System,
+				"escrow_id", sess.EscrowID,
+				"epoch_id", sess.EpochID,
+				"error", err,
+			)
+			continue
+		}
+		if !matches {
+			continue
+		}
+		filtered = append(filtered, sess)
 	}
 	slices.SortFunc(filtered, func(a, b storage.ActiveSession) int {
 		return cmp.Compare(a.EpochID, b.EpochID)

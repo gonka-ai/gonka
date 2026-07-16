@@ -3,6 +3,7 @@ package artifacts
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -700,6 +701,46 @@ func TestSMSTStoreGetRootAt(t *testing.T) {
 	}
 }
 
+func TestSMSTStoreRootsSurviveReopen(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST failed: %v", err)
+	}
+
+	boundaryRoots := make(map[uint32][]byte)
+	for i := int32(1); i <= 4; i++ {
+		store.Add(i, []byte{byte(i)})
+		store.Flush()
+		root, err := store.GetRootAt(uint32(i))
+		if err != nil {
+			t.Fatalf("GetRootAt(%d): %v", i, err)
+		}
+		boundaryRoots[uint32(i)] = root
+	}
+	if err := store.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	store2, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("reopen: %v", err)
+	}
+	defer store2.Close()
+
+	// Historical flush-boundary counts must remain servable after a restart
+	// (rebuilt on demand from the data file).
+	for count, want := range boundaryRoots {
+		got, err := store2.GetRootAt(count)
+		if err != nil {
+			t.Fatalf("GetRootAt(%d) after reopen: %v", count, err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("GetRootAt(%d) root mismatch after reopen", count)
+		}
+	}
+}
+
 func TestSMSTStoreGetFlushedRoot(t *testing.T) {
 	dir := t.TempDir()
 	store, err := OpenSMST(dir)
@@ -1066,7 +1107,10 @@ func TestSMSTStoreConcurrentReadsWhileWriting(t *testing.T) {
 				case <-readerDone:
 					return
 				default:
-					count := store.Count()
+					// Prove at the latest committed (flushed) count — the only
+					// count the protocol ever proves. A transient live count is
+					// not a committed root, so it is not a servable snapshot.
+					count, _ := store.GetFlushedRoot()
 					if count == 0 {
 						continue
 					}
@@ -1964,6 +2008,163 @@ func TestSMSTSnapshotConsistency(t *testing.T) {
 	}
 
 	t.Logf("Snapshot consistency verified: snapshotCount=%d, currentCount=%d", snapshotCount, currentCount)
+}
+
+func TestSMSTGetArtifactAndProofByNonce(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	for _, nonce := range []int32{100, 5, 50, 1000} {
+		if err := store.Add(nonce, []byte{byte(nonce)}); err != nil {
+			t.Fatalf("Add(%d): %v", nonce, err)
+		}
+	}
+	store.Flush()
+
+	count := store.Count()
+	rootHash := store.GetRoot()
+	for expectedIndex := uint32(0); expectedIndex < count; expectedIndex++ {
+		nonce, vector, _, err := store.GetArtifactAndProof(expectedIndex, count)
+		if err != nil {
+			t.Fatalf("GetArtifactAndProof(%d): %v", expectedIndex, err)
+		}
+
+		denseIndex, byNonceVector, proof, err := store.GetArtifactAndProofByNonce(nonce, count)
+		if err != nil {
+			t.Fatalf("GetArtifactAndProofByNonce(%d): %v", nonce, err)
+		}
+		if denseIndex != expectedIndex {
+			t.Fatalf("nonce %d: expected dense index %d, got %d", nonce, expectedIndex, denseIndex)
+		}
+		if !bytes.Equal(byNonceVector, vector) {
+			t.Fatalf("nonce %d: vector mismatch", nonce)
+		}
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, denseIndex, nonce, encodeLeaf(nonce, byNonceVector), proof) {
+			t.Fatalf("nonce %d: proof failed verification at dense index %d", nonce, denseIndex)
+		}
+	}
+}
+
+func TestSMSTGetArtifactAndProofByNonceSnapshotSemantics(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	for _, nonce := range []int32{10, 50, 90} {
+		if err := store.Add(nonce, []byte{byte(nonce)}); err != nil {
+			t.Fatalf("Add(%d): %v", nonce, err)
+		}
+	}
+	store.Flush()
+
+	snapshotCount := store.Count()
+	snapshotRoot := store.GetRoot()
+
+	lateNonce := int32(20)
+	if err := store.Add(lateNonce, []byte{byte(lateNonce)}); err != nil {
+		t.Fatalf("Add late nonce: %v", err)
+	}
+	store.Flush()
+
+	if _, _, _, err := store.GetArtifactAndProofByNonce(lateNonce, snapshotCount); !errors.Is(err, ErrNonceNotFound) {
+		t.Fatalf("expected ErrNonceNotFound for late nonce at snapshot, got %v", err)
+	}
+
+	denseIndex, vector, proof, err := store.GetArtifactAndProofByNonce(50, snapshotCount)
+	if err != nil {
+		t.Fatalf("GetArtifactAndProofByNonce existing nonce: %v", err)
+	}
+	if denseIndex != 1 {
+		t.Fatalf("expected nonce 50 at snapshot dense index 1, got %d", denseIndex)
+	}
+	if !VerifySMSTProofWithDenseIndex(snapshotRoot, snapshotCount, denseIndex, 50, encodeLeaf(50, vector), proof) {
+		t.Fatal("snapshot proof failed verification")
+	}
+}
+
+func TestSMSTGetArtifactAndProofByNonceErrorCases(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	if _, _, _, err := store.GetArtifactAndProofByNonce(1, 0); !errors.Is(err, ErrNonceNotFound) {
+		t.Fatalf("expected ErrNonceNotFound for empty snapshot, got %v", err)
+	}
+	if err := store.Add(1, []byte{1}); err != nil {
+		t.Fatalf("Add: %v", err)
+	}
+	store.Flush()
+
+	count := store.Count()
+	if _, _, _, err := store.GetArtifactAndProofByNonce(2, count); !errors.Is(err, ErrNonceNotFound) {
+		t.Fatalf("expected ErrNonceNotFound for absent nonce, got %v", err)
+	}
+	if _, _, _, err := store.GetArtifactAndProofByNonce(1, count+1); err == nil {
+		t.Fatal("expected error for future snapshot")
+	}
+}
+
+func TestSMSTBatchProofsMatchSingleCalls(t *testing.T) {
+	dir := t.TempDir()
+	store, err := OpenSMST(dir)
+	if err != nil {
+		t.Fatalf("OpenSMST: %v", err)
+	}
+	defer store.Close()
+
+	for _, nonce := range []int32{100, 5, 50, 1000, 7} {
+		if err := store.Add(nonce, []byte{byte(nonce)}); err != nil {
+			t.Fatalf("Add(%d): %v", nonce, err)
+		}
+	}
+	store.Flush()
+
+	count := store.Count()
+	rootHash := store.GetRoot()
+
+	indices := []uint32{0, 2, 4}
+	entries, err := store.GetArtifactsAndProofs(indices, count)
+	if err != nil {
+		t.Fatalf("GetArtifactsAndProofs: %v", err)
+	}
+	if len(entries) != len(indices) {
+		t.Fatalf("entries = %d, want %d", len(entries), len(indices))
+	}
+	for i, entry := range entries {
+		nonce, vector, proof, err := store.GetArtifactAndProof(indices[i], count)
+		if err != nil {
+			t.Fatalf("GetArtifactAndProof: %v", err)
+		}
+		if entry.DenseIndex != indices[i] || entry.Nonce != nonce || !bytes.Equal(entry.Vector, vector) || len(entry.Proof) != len(proof) {
+			t.Fatalf("batch entry %d does not match single call", i)
+		}
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
+			t.Fatalf("batch proof %d failed verification", i)
+		}
+	}
+
+	nonceEntries, err := store.GetArtifactsAndProofsByNonce([]int32{5, 1000, 9999}, count)
+	if err != nil {
+		t.Fatalf("GetArtifactsAndProofsByNonce: %v", err)
+	}
+	if len(nonceEntries) != 2 {
+		t.Fatalf("nonce entries = %d, want 2", len(nonceEntries))
+	}
+	for _, entry := range nonceEntries {
+		if !VerifySMSTProofWithDenseIndex(rootHash, count, entry.DenseIndex, entry.Nonce, encodeLeaf(entry.Nonce, entry.Vector), entry.Proof) {
+			t.Fatalf("by-nonce proof for nonce %d failed verification", entry.Nonce)
+		}
+	}
 }
 
 // TestSMSTVerifierOverflowProtection tests that the verifier is protected against

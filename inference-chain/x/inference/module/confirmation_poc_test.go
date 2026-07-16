@@ -27,6 +27,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 1},  // measured from node-B
 		map[string]int64{addr: 10}, // preservedHere
 		map[string]int64{addr: 11}, // formation-time expected
+		nil,
 	)
 	require.False(t, updated, "honest reading equal to initial must not lower ConfirmationWeight")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -39,6 +40,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 10},
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 11},
+		nil,
 	)
 	require.False(t, updated, "honest reading with rotated preservation must also stay at 11")
 	require.Equal(t, int64(11), initial.ValidationWeights[0].ConfirmationWeight)
@@ -51,6 +53,7 @@ func TestFoldEventReadings_RotatingPreservedHonestThenDishonest(t *testing.T) {
 		map[string]int64{addr: 4},
 		map[string]int64{addr: 1},
 		map[string]int64{addr: 11},
+		nil,
 	)
 	require.True(t, updated, "dishonest event must lower ConfirmationWeight")
 	require.Equal(t, int64(5), initial.ValidationWeights[0].ConfirmationWeight)
@@ -78,6 +81,7 @@ func TestFoldEventReadings_AllPreservedZeroMeasuredIsNotPenalized(t *testing.T) 
 		map[string]int64{addr: 0},   // participant submitted nothing for this event
 		map[string]int64{addr: 100}, // every one of their nodes was preserved this event
 		map[string]int64{addr: 100},
+		nil,
 	)
 
 	require.False(t, updated)
@@ -102,11 +106,40 @@ func TestFoldEventReadings_EmptyEventKeepsRatioAtOne(t *testing.T) {
 		map[string]int64{},
 		map[string]int64{},
 		map[string]int64{},
+		nil,
 	)
 
 	require.False(t, updated)
 	require.Equal(t, int64(50), ege.ValidationWeights[0].ConfirmationWeight)
 	require.NotContains(t, ratios, addr)
+}
+
+// Maintenance-covered participants must keep prior ConfirmationWeight and get
+// no ratio entry, even when measured weight is zero (offline during the window).
+func TestFoldEventReadings_MaintenanceExemptSkipsWeightAndRatio(t *testing.T) {
+	maint := "maintenance-host"
+	other := "online-host"
+	ege := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: maint, Weight: 100, ConfirmationWeight: 100},
+			{MemberAddress: other, Weight: 50, ConfirmationWeight: 50},
+		},
+	}
+
+	updated, ratios := foldEventReadings(
+		ege,
+		map[string]int64{maint: 0, other: 10},
+		map[string]int64{maint: 0, other: 0},
+		map[string]int64{maint: 100, other: 50},
+		map[string]struct{}{maint: {}},
+	)
+
+	require.True(t, updated, "online host with poor reading must still be folded")
+	require.Equal(t, int64(100), ege.ValidationWeights[0].ConfirmationWeight, "maintenance host weight preserved")
+	require.Equal(t, int64(10), ege.ValidationWeights[1].ConfirmationWeight, "online host weight lowered")
+	require.NotContains(t, ratios, maint)
+	require.Contains(t, ratios, other)
 }
 
 func TestConfirmationScalesInSnapshot(t *testing.T) {

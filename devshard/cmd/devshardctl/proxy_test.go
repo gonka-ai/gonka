@@ -128,6 +128,37 @@ func TestCancelFlag_NilSafeAndOneShot(t *testing.T) {
 	}
 }
 
+func TestWatchClientCancel_TriggersOnDisconnect(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+	defer stop()
+
+	cancel()
+
+	select {
+	case <-flag.Done():
+	case <-time.After(time.Second):
+		t.Fatal("flag should trigger when the request context is canceled mid-request")
+	}
+}
+
+func TestWatchClientCancel_StopPreventsTriggerOnNormalCompletion(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	r := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil).WithContext(ctx)
+	flag := newCancelFlag()
+	stop := watchClientCancel(r, flag)
+
+	stop()
+	stop() // must be idempotent
+	cancel()
+
+	time.Sleep(50 * time.Millisecond)
+	require.False(t, flag.Gone(), "normal handler return must not be treated as a client disconnect")
+}
+
 func TestDeferredWriter_SwallowsAfterClientGone(t *testing.T) {
 	rec := httptest.NewRecorder()
 	flag := newCancelFlag()
@@ -1643,7 +1674,7 @@ func TestProxyHandleChatCompletionsRejectsWhenRegularPoCActive(t *testing.T) {
 	require.EqualValues(t, 0, env.proxy.session.Nonce())
 }
 
-func TestHandleState_IncludesSealedInferences(t *testing.T) {
+func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -1680,17 +1711,17 @@ func TestHandleState_IncludesSealedInferences(t *testing.T) {
 
 	proxy := &Proxy{sm: sm, escrowID: escrowID}
 
-	req := httptest.NewRequest(http.MethodGet, "/v1/state", nil)
+	req := httptest.NewRequest(http.MethodGet, "/v1/debug/inferences", nil)
 	rec := httptest.NewRecorder()
-	proxy.handleState(rec, req)
+	proxy.handleDebugInferences(rec, req)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var stateResp map[string]any
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &stateResp))
 	inferences, ok := stateResp["inferences"].(map[string]any)
-	require.True(t, ok, "/v1/state must expose inferences map")
+	require.True(t, ok, "/v1/debug/inferences must expose inferences map")
 	inf, ok := inferences["1"].(map[string]any)
-	require.True(t, ok, "sealed inference 1 must appear in /v1/state")
+	require.True(t, ok, "sealed inference 1 must appear in /v1/debug/inferences")
 	require.Equal(t, "finished", inf["status"])
 	require.Equal(t, "llama", inf["model"])
 }
@@ -1914,6 +1945,15 @@ func TestRunInference_ExportsPrometheusMetrics(t *testing.T) {
 	require.Contains(t, body, `reason="attempt_failed"`)
 	require.Contains(t, body, `devshard_id="escrow-proxy"`)
 	require.Contains(t, body, "devshard_host_total_time_seconds")
+	require.Contains(t, body, `devshard_gateway_requests_total{model="llama",outcome="success",reason="none"} 1`)
+	require.Contains(t, body, "devshard_gateway_slot_decisions_total")
+	require.Contains(t, body, `decision="real_send"`)
+	require.Contains(t, body, "devshard_gateway_attempts_started_total")
+	require.Contains(t, body, `role="primary"`)
+	require.Contains(t, body, `role="extra"`)
+	require.Contains(t, body, "devshard_gateway_attempts_terminal_total")
+	require.Contains(t, body, "devshard_gateway_attempt_failures_total")
+	require.Contains(t, body, "devshard_gateway_user_requests_with_hidden_failure_total")
 }
 
 func TestPerfTrackerIsUnresponsiveUsesThreshold(t *testing.T) {

@@ -1,7 +1,6 @@
 package state
 
 import (
-	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -374,10 +373,6 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if len(candidates) == 0 && len(sealed) == 0 {
 		return
 	}
-	candidatesJSON, err := json.Marshal(candidates)
-	if err != nil {
-		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
-	}
 	args := []any{
 		"subsystem", side,
 		"diagnostic", "auto_seal",
@@ -387,9 +382,9 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
 		"state_clock_confirmed_at", stateClock,
-		"candidates", string(candidatesJSON),
 		"sealed_ids", sealed,
 		"sealed_count", len(sealed),
+		"candidates_count", len(candidates),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
 	if clockWin.Known {

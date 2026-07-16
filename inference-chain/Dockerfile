@@ -3,7 +3,7 @@
 ################################################################################
 # Build stage
 ################################################################################
-FROM golang:1.24.2-alpine3.20 AS builder
+FROM golang:1.24.2-alpine3.21 AS builder
 
 ARG GOOS=linux
 ARG GOARCH=amd64
@@ -75,7 +75,7 @@ COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 # Final stage
 ################################################################################
 ARG TARGETPLATFORM
-FROM --platform=$TARGETPLATFORM alpine:3.18 AS final
+FROM --platform=$TARGETPLATFORM alpine:3.21 AS final
 
 ARG GOOS
 ARG GOARCH

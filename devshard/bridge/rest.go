@@ -61,6 +61,7 @@ type escrowResponse struct {
 		InferenceSealGraceNonces  uint32 `json:"inference_seal_grace_nonces"`
 		InferenceSealGraceSeconds uint32 `json:"inference_seal_grace_seconds"`
 		AutoSealEveryNNonces      uint32 `json:"auto_seal_every_n_nonces"`
+		ValidationRate            uint32 `json:"validation_rate"`
 	} `json:"escrow"`
 	Found bool `json:"found"`
 }
@@ -157,6 +158,7 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		InferenceSealGraceNonces:  resp.Escrow.InferenceSealGraceNonces,
 		InferenceSealGraceSeconds: resp.Escrow.InferenceSealGraceSeconds,
 		AutoSealEveryNNonces:      resp.Escrow.AutoSealEveryNNonces,
+		ValidationRate:            resp.Escrow.ValidationRate,
 		EpochID:                   resp.Escrow.EpochIndex,
 	}, nil
 }

@@ -7,8 +7,10 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/poc/earlyshare"
 
+	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/metadata"
 )
 
 func TestEarlyShareCaptureTarget(t *testing.T) {
@@ -72,6 +74,34 @@ func TestEarlyShareCaptureTarget(t *testing.T) {
 		}
 	})
 
+	t.Run("fraction arithmetic is integer-deterministic", func(t *testing.T) {
+		// Different float spellings of "one third" (the code default, the
+		// documented config literal, a hand-typed shorter one) must quantize
+		// to the same ppm and produce the identical target height for any
+		// duration. This is what pins all validators to the same capture
+		// block.
+		spellings := []float64{1.0 / 3.0, 0.3333333333, 0.333333}
+		for _, dur := range []int64{30, 100, 720, 7201, 99999} {
+			want := int64(-1)
+			for _, f := range spellings {
+				_, target, ok := EarlyShareCaptureTarget(mkState(types.PoCGeneratePhase, 1000, dur), f)
+				if !ok {
+					t.Fatalf("fraction %v duration %d: expected ok", f, dur)
+				}
+				if want == -1 {
+					want = target
+				} else if target != want {
+					t.Fatalf("fraction %v duration %d: target %d differs from %d", f, dur, target, want)
+				}
+			}
+			// offset = round(dur * 333333 / 1e6), pure integer arithmetic.
+			expected := 1000 + (dur*333333+500000)/1000000
+			if want != expected {
+				t.Fatalf("duration %d: target %d, want %d", dur, want, expected)
+			}
+		}
+	})
+
 	t.Run("confirmation poc generation", func(t *testing.T) {
 		st := mkState(types.InferencePhase, 1000, 30)
 		st.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
@@ -90,25 +120,6 @@ func TestEarlyShareCaptureTarget(t *testing.T) {
 			t.Fatalf("target = %d, want 5012", target)
 		}
 	})
-}
-
-func TestDeterministicSharedLeaf(t *testing.T) {
-	a := deterministicSharedLeaf("addr", "model", 100, 50)
-	b := deterministicSharedLeaf("addr", "model", 100, 50)
-	if a != b {
-		t.Fatalf("not deterministic: %d != %d", a, b)
-	}
-	if a >= 50 {
-		t.Fatalf("leaf %d out of range [0,50)", a)
-	}
-	if deterministicSharedLeaf("addr", "model", 100, 0) != 0 {
-		t.Fatal("zero earlyCount must return 0")
-	}
-	// Different inputs should generally differ; at least ensure not all identical.
-	if deterministicSharedLeaf("addr", "model", 100, 50) == deterministicSharedLeaf("other", "model", 100, 50) &&
-		deterministicSharedLeaf("addr", "x", 100, 50) == deterministicSharedLeaf("addr", "y", 100, 50) {
-		t.Log("hash collisions possible but unlikely; informational only")
-	}
 }
 
 // fakeStore is an in-memory earlyShareStore for Evaluate tests.
@@ -177,7 +188,7 @@ func TestEvaluate(t *testing.T) {
 	// Seed c with one grace miss already used so a fresh fail votes no.
 	store.state["c|"+model] = earlyshare.GuardState{ParticipantAddress: "c", ModelID: model, ConsecutiveMisses: 1}
 
-	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequirePrefixProof: true}, store)
+	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequireInclusionProof: true}, store)
 	if guard == nil {
 		t.Fatal("guard should be constructed")
 	}
@@ -208,8 +219,8 @@ func TestEvaluate(t *testing.T) {
 	if decA.shareVoteNo {
 		t.Fatalf("a should pass (share 0.1 >= 0.05); got vote no")
 	}
-	if !decA.requirePrefix {
-		t.Fatal("a has early_count>0 so prefix should be required")
+	if !decA.requireInclusion {
+		t.Fatal("a has early_count>0 so inclusion should be required")
 	}
 
 	decC, okC := decisions[earlyShareKey("c", model)]
@@ -219,8 +230,8 @@ func TestEvaluate(t *testing.T) {
 	if !decC.shareVoteNo {
 		t.Fatal("c should vote no (share 0 < 0.05, after grace already used)")
 	}
-	if decC.requirePrefix {
-		t.Fatal("c has early_count 0 so prefix must not be required")
+	if decC.requireInclusion {
+		t.Fatal("c has early_count 0 so inclusion must not be required")
 	}
 
 	// b was not assigned -> no decision, but its share still informed the median.
@@ -284,13 +295,15 @@ func TestNewEarlyShareGuardDisabled(t *testing.T) {
 
 // fakeESQueryClient implements earlyShareQueryClient for MaybeCapture tests.
 type fakeESQueryClient struct {
-	resp  *types.QueryAllPoCV2StoreCommitsForStageResponse
-	err   error
-	calls int
+	resp    *types.QueryAllPoCV2StoreCommitsForStageResponse
+	err     error
+	calls   int
+	lastCtx context.Context
 }
 
-func (f *fakeESQueryClient) AllPoCV2StoreCommitsForStage(_ context.Context, _ *types.QueryAllPoCV2StoreCommitsForStageRequest, _ ...grpc.CallOption) (*types.QueryAllPoCV2StoreCommitsForStageResponse, error) {
+func (f *fakeESQueryClient) AllPoCV2StoreCommitsForStage(ctx context.Context, _ *types.QueryAllPoCV2StoreCommitsForStageRequest, _ ...grpc.CallOption) (*types.QueryAllPoCV2StoreCommitsForStageResponse, error) {
 	f.calls++
+	f.lastCtx = ctx
 	return f.resp, f.err
 }
 
@@ -348,6 +361,52 @@ func TestMaybeCapture(t *testing.T) {
 			t.Fatalf("disabled guard must not query, got %d calls", qc.calls)
 		}
 	})
+
+	t.Run("query is pinned to the target height", func(t *testing.T) {
+		store := newFakeStore()
+		guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
+		qc := &fakeESQueryClient{resp: &types.QueryAllPoCV2StoreCommitsForStageResponse{}}
+
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1042)
+		if qc.calls != 1 {
+			t.Fatalf("expected 1 query call, got %d", qc.calls)
+		}
+		md, ok := metadata.FromOutgoingContext(qc.lastCtx)
+		if !ok {
+			t.Fatal("capture query context missing outgoing metadata")
+		}
+		heights := md.Get(grpctypes.GRPCBlockHeightHeader)
+		if len(heights) != 1 || heights[0] != "1010" {
+			t.Fatalf("expected height header pinned to 1010, got %v", heights)
+		}
+	})
+
+	t.Run("failed capture can be retried on a later block", func(t *testing.T) {
+		store := newFakeStore()
+		guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeObserve}, store)
+		qc := &fakeESQueryClient{err: context.DeadlineExceeded}
+
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1010)
+		if store.captured[stage] {
+			t.Fatal("stage must not be marked captured on query error")
+		}
+
+		// Retry a few blocks later succeeds and still pins the original target.
+		qc.err = nil
+		qc.resp = &types.QueryAllPoCV2StoreCommitsForStageResponse{
+			Commits: []*types.PoCV2StoreCommitWithAddress{
+				{ParticipantAddress: "a", ModelId: "m1", Count: 10, RootHash: []byte{1}},
+			},
+		}
+		guard.MaybeCapture(ctx, qc, stage, 1010, 1013)
+		if !store.captured[stage] {
+			t.Fatal("stage should be marked captured after retry")
+		}
+		md, _ := metadata.FromOutgoingContext(qc.lastCtx)
+		if got := md.Get(grpctypes.GRPCBlockHeightHeader); len(got) != 1 || got[0] != "1010" {
+			t.Fatalf("retry must pin the original target height, got %v", got)
+		}
+	})
 }
 
 // scriptedProofFetcher returns artifacts/errors keyed by the request root hash so
@@ -357,7 +416,12 @@ type scriptedProofFetcher struct {
 		arts []VerifiedArtifact
 		err  error
 	}
-	calls int
+	byNonce map[string]struct {
+		arts []VerifiedArtifact
+		err  error
+	}
+	calls      int
+	nonceCalls int
 }
 
 func (s *scriptedProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string, req ProofRequest) ([]VerifiedArtifact, error) {
@@ -369,89 +433,113 @@ func (s *scriptedProofFetcher) FetchAndVerifyProofs(_ context.Context, _ string,
 	return r.arts, r.err
 }
 
+func (s *scriptedProofFetcher) FetchAndVerifyProofsByNonce(_ context.Context, _ string, req ProofByNonceRequest) ([]VerifiedArtifact, error) {
+	s.nonceCalls++
+	r, ok := s.byNonce[string(req.RootHash)]
+	if !ok {
+		return nil, nil
+	}
+	return r.arts, r.err
+}
+
 func TestDecide(t *testing.T) {
 	ctx := context.Background()
 	const stage = int64(1000)
-	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequirePrefixProof: true}, newFakeStore())
+	guard := NewEarlyShareGuard(earlyshare.Config{Mode: earlyshare.ModeEnforce, RequireInclusionProof: true, InclusionSampleSize: 1}, newFakeStore())
 
 	finalRoot := []byte{0xaa}
 	earlyRoot := []byte{0xee}
 	work := participantWork{address: "a", modelId: "m1", count: 100, url: "http://p", rootHash: finalRoot}
 
-	mkFetcher := func(finalArt, earlyArt VerifiedArtifact, earlyErr error) *scriptedProofFetcher {
+	mkFetcher := func(earlyArt, finalArt VerifiedArtifact, earlyErr, finalErr error) *scriptedProofFetcher {
 		f := &scriptedProofFetcher{byRoot: map[string]struct {
 			arts []VerifiedArtifact
 			err  error
-		}{}}
-		f.byRoot[string(finalRoot)] = struct {
+		}{}, byNonce: map[string]struct {
 			arts []VerifiedArtifact
 			err  error
-		}{arts: []VerifiedArtifact{finalArt}}
+		}{}}
 		f.byRoot[string(earlyRoot)] = struct {
 			arts []VerifiedArtifact
 			err  error
 		}{arts: []VerifiedArtifact{earlyArt}, err: earlyErr}
+		f.byNonce[string(finalRoot)] = struct {
+			arts []VerifiedArtifact
+			err  error
+		}{arts: []VerifiedArtifact{finalArt}, err: finalErr}
 		return f
 	}
 
-	prefixDec := earlyDecision{requirePrefix: true, earlyCount: 10, earlyRoot: earlyRoot, finalCount: 100, earlyShare: 0.1, threshold: 0.05}
+	inclusionDec := earlyDecision{requireInclusion: true, earlyCount: 10, earlyRoot: earlyRoot, finalCount: 100, earlyShare: 0.1, threshold: 0.05}
 
-	t.Run("matching prefix and passing share -> no vote", func(t *testing.T) {
+	t.Run("matching inclusion and passing share -> pass", func(t *testing.T) {
 		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
-		f := mkFetcher(art, art, nil)
-		voteNo, reason := guard.decide(ctx, f, stage, work, prefixDec)
-		if voteNo {
-			t.Fatalf("expected no vote, got vote no: %s", reason)
+		f := mkFetcher(art, art, nil, nil)
+		outcome, reason := guard.decide(ctx, f, stage, work, inclusionDec, "pub", "hash")
+		if outcome != earlyGuardPass {
+			t.Fatalf("expected pass, got %v: %s", outcome, reason)
 		}
 	})
 
 	t.Run("vector mismatch -> immediate vote no", func(t *testing.T) {
 		f := mkFetcher(
-			VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "final-vec"},
 			VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "early-vec"},
+			VerifiedArtifact{LeafIndex: 9, Nonce: 7, VectorB64: "final-vec"},
+			nil,
 			nil,
 		)
-		voteNo, reason := guard.decide(ctx, f, stage, work, prefixDec)
-		if !voteNo {
+		outcome, reason := guard.decide(ctx, f, stage, work, inclusionDec, "pub", "hash")
+		if outcome != earlyGuardVoteNo {
 			t.Fatal("vector mismatch must vote no")
 		}
-		if len(reason) < len("prefix_mismatch") || reason[:len("prefix_mismatch")] != "prefix_mismatch" {
-			t.Fatalf("expected prefix_mismatch reason, got %q", reason)
+		if reason == "" {
+			t.Fatal("expected mismatch reason")
 		}
 	})
 
 	t.Run("early proof permanent error -> immediate vote no", func(t *testing.T) {
 		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
-		f := mkFetcher(art, art, ErrProofVerificationFailed)
-		voteNo, _ := guard.decide(ctx, f, stage, work, prefixDec)
-		if !voteNo {
+		f := mkFetcher(art, art, ErrProofVerificationFailed, nil)
+		outcome, _ := guard.decide(ctx, f, stage, work, inclusionDec, "pub", "hash")
+		if outcome != earlyGuardVoteNo {
 			t.Fatal("permanent early-proof error must vote no")
 		}
 	})
 
-	t.Run("low share with no prefix requirement -> vote no via miss streak", func(t *testing.T) {
-		f := mkFetcher(VerifiedArtifact{}, VerifiedArtifact{}, nil)
-		dec := earlyDecision{shareVoteNo: true, requirePrefix: false, earlyShare: 0.01, threshold: 0.05}
-		voteNo, reason := guard.decide(ctx, f, stage, work, dec)
-		if !voteNo {
+	t.Run("low share with no inclusion requirement -> vote no via miss streak", func(t *testing.T) {
+		f := mkFetcher(VerifiedArtifact{}, VerifiedArtifact{}, nil, nil)
+		dec := earlyDecision{shareVoteNo: true, requireInclusion: false, earlyShare: 0.01, threshold: 0.05}
+		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
+		if outcome != earlyGuardVoteNo {
 			t.Fatal("shareVoteNo should vote no")
 		}
 		if f.calls != 0 {
-			t.Fatalf("no prefix required, fetcher should not be called; got %d", f.calls)
+			t.Fatalf("no inclusion required, fetcher should not be called; got %d", f.calls)
 		}
 		if reason == "" {
 			t.Fatal("expected a low_early_share reason")
 		}
 	})
 
-	t.Run("transient early-proof error does not fail participant", func(t *testing.T) {
+	t.Run("transient early-proof error requests retry", func(t *testing.T) {
 		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
-		f := mkFetcher(art, art, context.DeadlineExceeded)
-		dec := prefixDec
+		f := mkFetcher(art, art, context.DeadlineExceeded, nil)
+		dec := inclusionDec
 		dec.shareVoteNo = false
-		voteNo, reason := guard.decide(ctx, f, stage, work, dec)
-		if voteNo {
-			t.Fatalf("transient early-proof error must not vote no, got: %s", reason)
+		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
+		if outcome != earlyGuardRetry {
+			t.Fatalf("transient early-proof error must retry, got %v: %s", outcome, reason)
+		}
+	})
+
+	t.Run("transient final by-nonce error requests retry", func(t *testing.T) {
+		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
+		f := mkFetcher(art, art, nil, context.DeadlineExceeded)
+		dec := inclusionDec
+		dec.shareVoteNo = false
+		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
+		if outcome != earlyGuardRetry {
+			t.Fatalf("transient by-nonce error must retry, got %v: %s", outcome, reason)
 		}
 	})
 }

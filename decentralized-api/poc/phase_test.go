@@ -172,6 +172,16 @@ func TestShouldStopValidationForStage(t *testing.T) {
 			expect:      false,
 		},
 		{
+			name: "transient not-synced state waits instead of cancelling",
+			state: func() *chainphase.EpochState {
+				s := createTestEpochState(types.PoCValidatePhase, 200, 100)
+				s.IsSynced = false
+				return s
+			}(),
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
 			name:        "current validation stage continues",
 			state:       createTestEpochState(types.PoCValidatePhase, 200, 100),
 			stageHeight: 100,

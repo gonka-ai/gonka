@@ -5,7 +5,11 @@ const (
 	MaxChatRequestBodySize       = 10 * 1024 * 1024
 	MaxLoggedResponseFormatBytes = 2048 * 1024
 	MaxChatRequestChoices        = 5
+	MinTemperature               = 0.0
 	MaxTemperature               = 2.0
+	MinPMin                      = 0.0
+	MinPMax                      = 1.0
+	TopPMax                      = 1.0
 	MaxRepetitionPenalty         = 2.0
 )
 
@@ -20,7 +24,7 @@ const (
 // wrappers (~9-10 levels) plus a small allowance for client-side structuring.
 const MaxRequestNestingDepth = 32
 
-// Per-parameter bounds wired into the catalog. Values match supported-params.md.
+// Per-parameter bounds wired into the catalog. Values match docs/chat-api/README.md.
 const (
 	MessagesMaxEntries = 2048
 
@@ -65,7 +69,7 @@ const (
 
 	UserMaxLen             = 512
 	SafetyIdentifierMaxLen = 512
-	
+
 	StructuredOutputsMaxDepth            = 16
 	StructuredOutputsMaxSize             = 16 * 1024
 	StructuredOutputsMaxNodes            = 128
@@ -81,12 +85,28 @@ const (
 	kimiThinkingTokenBudgetDefaultDivisor uint64 = 2
 	kimiThinkingTokenBudgetMax            uint64 = 96_000
 
-	// Below this floor Kimi-K2.6 emits only </think> (special token vLLM drops from content).
+	// Below this floor Kimi-K2.6 emits only </think> (vLLM strips it).
 	kimiMaxTokensMin uint64 = 16
+	// Below this max_tokens, force thinking_token_budget=0 — any thinking
+	// phase starves visible content at this budget.
+	kimiSmallMaxTokensForceNoThinking uint64 = 256
+	// Tokens reserved for visible content after </think>. ttb is clamped
+	// to (max_tokens - this).
+	kimiContentHeadroomMin uint64 = 64
+
+	MinimaxToolMessageMaxEntries = 16
+	MinimaxToolMessageNameMaxLen = 64
+	// 64 KiB per-entry defensive cap; no vendor recommendation (MiniMax-4 fixes shape,
+	// not size). Sized to fit common agent tool-results (file reads, build logs).
+	MinimaxToolMessageTextMaxSize = 64 * 1024
 )
 
-// Routed model identifiers. The catalog wires per-model behavior keyed on these strings.
-const kimiK26ModelID = "moonshotai/Kimi-K2.6"
+// Routed model identifiers. The parameter catalog and the message processor
+// both dispatch on these strings.
+const (
+	kimiK26ModelID    = "moonshotai/Kimi-K2.6"
+	miniMaxM27ModelID = "MiniMaxAI/MiniMax-M2.7"
+)
 
 // Sentinel content used by message normalization when an upstream tool result is empty.
 const emptyToolResultContent = "<empty tool result>"

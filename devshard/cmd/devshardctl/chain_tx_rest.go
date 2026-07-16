@@ -3,7 +3,9 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -113,7 +115,49 @@ func NewRESTChainTxClient(cfg RESTChainTxConfig) (*RESTChainTxClient, error) {
 	}, nil
 }
 
-func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string) (*CreateDevshardEscrowResult, error) {
+// txHashFromBytes returns the cosmos tx hash (uppercase-hex SHA-256 of the tx
+// bytes), computable before broadcast and equal to the hash the node returns.
+func txHashFromBytes(txBytes []byte) string {
+	sum := sha256.Sum256(txBytes)
+	return strings.ToUpper(hex.EncodeToString(sum[:]))
+}
+
+// errTxNotFound marks a tx that is not on chain (404) — distinct from one that
+// committed but failed. The tx may still land until its unordered TTL elapses.
+var errTxNotFound = errors.New("tx not found on chain")
+
+// GetTxEscrowID resolves a create tx hash to its escrow_id in one lookup;
+// found=false when the tx is absent or failed (no escrow), error when unreachable.
+func (c *RESTChainTxClient) GetTxEscrowID(ctx context.Context, txHash string) (uint64, bool, error) {
+	var lastErr error
+	hasNotFoundError := false
+	for _, baseURL := range c.txQueryBaseURLs() {
+		var payload txResponseEnvelope
+		err := c.getJSONFromBaseURL(ctx, baseURL, "/cosmos/tx/v1beta1/txs/"+url.PathEscape(txHash), &payload)
+		if err != nil {
+			if isNotFoundError(err) {
+				hasNotFoundError = true // this endpoint lacks it; try the fallback before deciding
+				continue
+			}
+			lastErr = fmt.Errorf("%s: %w", baseURL, err)
+			continue
+		}
+		if payload.TxResponse.Code != 0 {
+			return 0, false, nil // tx committed but failed → no escrow created
+		}
+		if escrowID, ok := payload.TxResponse.createdEscrowID(); ok {
+			return escrowID, true, nil
+		}
+		lastErr = fmt.Errorf("tx %s committed via %s but escrow_id event was not found", txHash, baseURL)
+	}
+	// Only conclude "not on chain" when every reachable endpoint agreed on 404.
+	if lastErr == nil && hasNotFoundError {
+		return 0, false, errTxNotFound
+	}
+	return 0, false, lastErr
+}
+
+func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *signing.Secp256k1Signer, amount uint64, modelID string, onPrepared func(txHash string) error) (*CreateDevshardEscrowResult, error) {
 	if c == nil {
 		return nil, fmt.Errorf("chain tx client is nil")
 	}
@@ -145,9 +189,19 @@ func (c *RESTChainTxClient) CreateDevshardEscrow(ctx context.Context, signer *si
 	if err != nil {
 		return nil, err
 	}
-	txHash, err := c.broadcastTx(ctx, txBytes)
+	// Record the intent (precomputed hash) before the irreversible broadcast; abort if it fails.
+	txHash := txHashFromBytes(txBytes)
+	if onPrepared != nil {
+		if err := onPrepared(txHash); err != nil {
+			return nil, fmt.Errorf("record escrow create intent before broadcast: %w", err)
+		}
+	}
+	broadcastHash, err := c.broadcastTx(ctx, txBytes)
 	if err != nil {
 		return nil, err
+	}
+	if !strings.EqualFold(broadcastHash, txHash) {
+		return nil, fmt.Errorf("tx hash mismatch: precomputed %s, node returned %s", txHash, broadcastHash)
 	}
 	escrowID, err := c.waitForCreatedEscrowID(ctx, txHash)
 	if err != nil {
@@ -315,6 +369,28 @@ func (c *RESTChainTxClient) getJSON(ctx context.Context, path string, out any) e
 	return c.getJSONFromBaseURL(ctx, c.baseURL, path, out)
 }
 
+// chainHTTPError is returned by getJSONFromBaseURL on non-200 responses.
+type chainHTTPError struct {
+	method string
+	path   string
+	status int
+	body   string
+}
+
+func (e *chainHTTPError) Error() string {
+	if e == nil {
+		return "chain HTTP error"
+	}
+	return fmt.Sprintf("%s %s status %d: %s", e.method, e.path, e.status, e.body)
+}
+
+func (e *chainHTTPError) StatusCode() int {
+	if e == nil {
+		return 0
+	}
+	return e.status
+}
+
 func (c *RESTChainTxClient) getJSONFromBaseURL(ctx context.Context, baseURL, path string, out any) error {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+path, nil)
 	if err != nil {
@@ -327,9 +403,21 @@ func (c *RESTChainTxClient) getJSONFromBaseURL(ctx context.Context, baseURL, pat
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("GET %s status %d: %s", path, resp.StatusCode, strings.TrimSpace(string(body)))
+		return &chainHTTPError{
+			method: http.MethodGet,
+			path:   path,
+			status: resp.StatusCode,
+			body:   strings.TrimSpace(string(body)),
+		}
 	}
 	return json.NewDecoder(resp.Body).Decode(out)
+}
+
+// isNotFoundError reports whether a chain GET failed with HTTP 404 rather than
+// a transient error.
+func isNotFoundError(err error) bool {
+	var httpErr *chainHTTPError
+	return errors.As(err, &httpErr) && httpErr.StatusCode() == http.StatusNotFound
 }
 
 func (c *RESTChainTxClient) postJSON(ctx context.Context, path string, in any, out any) error {

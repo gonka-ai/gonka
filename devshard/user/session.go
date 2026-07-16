@@ -672,6 +672,61 @@ func (s *Session) maybeSaveSnapshotLocked() {
 	}()
 }
 
+// FlushSnapshot synchronously persists a state snapshot at the current nonce.
+// It is called when a runtime is retired from memory (deactivate, settle,
+// rotation) so the now-frozen escrow can later be rebuilt -- for a read-only
+// debug/state request or a reactivation -- without replaying the diff tail
+// accumulated since the last periodic (every snapshotInterval) snapshot.
+//
+// Periodic snapshots are only taken on snapshotInterval boundaries, so a
+// retired escrow otherwise carries up to snapshotInterval-1 un-snapshotted
+// diffs that every rebuild would replay. This flush captures the final nonce
+// once, at the lifecycle transition, making all later rebuilds replay-free.
+//
+// It serializes against the async periodic writer via snapshotInFlight so a
+// slow in-flight periodic save cannot land after (and overwrite) this final
+// snapshot with a staler nonce. Safe to call once, at retire; a no-op when
+// no diffs have been applied (nonce == 0) or no store is configured.
+func (s *Session) FlushSnapshot() error {
+	if s.store == nil {
+		return nil
+	}
+	// Acquire the snapshot slot, waiting briefly for any in-flight async
+	// save to finish. Bounded so retire never blocks indefinitely; if the
+	// async writer is still busy after the wait we proceed anyway (SQLite
+	// serializes the writes, and retire runs after drain so this is rare).
+	acquired := false
+	for i := 0; i < 200; i++ {
+		if s.snapshotInFlight.CompareAndSwap(false, true) {
+			acquired = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if acquired {
+		defer s.snapshotInFlight.Store(false)
+	}
+
+	s.mu.Lock()
+	if s.nonce == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	// Deep-copy state and cursor under the session lock, mirroring
+	// maybeSaveSnapshotLocked, then release before the disk write.
+	stateCopy := s.sm.ExportState()
+	cursor := make(map[int]uint64, len(s.hostSyncNonce))
+	for k, v := range s.hostSyncNonce {
+		cursor[k] = v
+	}
+	nonce := s.nonce
+	store := s.store
+	escrowID := s.escrowID
+	s.mu.Unlock()
+
+	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor)
+}
+
 // PrepareInference composes a diff, applies it locally, advances nonce,
 // and returns everything needed for the HTTP send. Thread-safe.
 //
@@ -1692,7 +1747,7 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // sendTime is when the nonce's network call started.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
 	s.mu.Lock()
-	cfg := s.sm.SnapshotState().Config
+	cfg := s.sm.Config()
 	confirmedAt := int64(0)
 	if o, ok := s.nonceStates[nonce]; ok {
 		confirmedAt = o.confirmedAt

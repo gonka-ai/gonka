@@ -1,6 +1,8 @@
 package poc
 
 import (
+	"math"
+
 	"decentralized-api/chainphase"
 
 	"github.com/productscience/inference/x/inference/types"
@@ -94,26 +96,39 @@ func ShouldAcceptStoreCommit(epochState *chainphase.EpochState, pocStageStartHei
 	return epochState.LatestEpoch.IsPoCExchangeWindow(currentHeight)
 }
 
+// fractionPPMScale is the denominator for integer fraction arithmetic
+// (parts per million).
+const fractionPPMScale = 1_000_000
+
 // EarlyShareCaptureTarget computes the stage height and the "first fraction"
 // capture target block height for the active PoC or confirmation-PoC generation
 // window. ok is false when no generation window is active or inputs are invalid,
 // in which case the early-share guard must skip (fail open).
 //
-//   - Regular PoC: stage = PocStartBlockHeight, target = stage + fraction*duration.
+// The offset is computed in integer arithmetic: the configured fraction is
+// quantized to parts-per-million once, then offset = round(duration*ppm/1e6).
+// This makes the target height a pure function of (duration, ppm), identical
+// on every validator. Float spellings that agree to six decimal places (e.g.
+// the code default 1.0/3.0 and the documented config literal 0.3333333333)
+// quantize to the same ppm and therefore the same target height, which the
+// previous float multiply did not guarantee.
+//
+//   - Regular PoC: stage = PocStartBlockHeight, target = stage + offset.
 //   - Confirmation PoC: stage = event.TriggerHeight,
-//     target = event.GenerationStartHeight + fraction*duration.
+//     target = event.GenerationStartHeight + offset.
 func EarlyShareCaptureTarget(epochState *chainphase.EpochState, firstFraction float64) (stageHeight int64, targetHeight int64, ok bool) {
 	if epochState.IsNilOrNotSynced() {
 		return 0, 0, false
 	}
-	if firstFraction <= 0 || firstFraction >= 1 {
+	ppm := int64(math.Round(firstFraction * fractionPPMScale))
+	if ppm <= 0 || ppm >= fractionPPMScale {
 		return 0, 0, false
 	}
 	duration := epochState.LatestEpoch.EpochParams.PocStageDuration
 	if duration <= 0 {
 		return 0, 0, false
 	}
-	offset := int64(float64(duration) * firstFraction)
+	offset := (duration*ppm + fractionPPMScale/2) / fractionPPMScale
 
 	// Confirmation PoC generation window during the inference phase.
 	if epochState.CurrentPhase == types.InferencePhase &&
