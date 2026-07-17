@@ -456,17 +456,20 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		slog.Error("override source unreadable", "version", v.Name, "path", overrideSrc, "error", err)
 		return
 	}
+	overrideID := "override:" + srcHash
 
 	// Check if already running the same binary (lock for snapshot only).
 	m.mu.Lock()
 	existing, isRunning := m.processes[v.Name]
 	m.mu.Unlock()
 
-	if isRunning {
+	if isRunning && existing.binPath == binPath && existing.archiveSHA256 == overrideID {
 		diskHash, hashErr := download.HashFile(binPath)
 		if hashErr == nil && diskHash == srcHash {
 			return // already running the same override binary
 		}
+	}
+	if isRunning {
 		// Override source changed: stop old, copy new, start.
 		slog.Info("override binary changed, restarting", "version", v.Name)
 		existing.cancel()
@@ -505,7 +508,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		m.mu.Unlock()
 		return
 	}
-	m.startChild(ctx, v, "override:"+srcHash, binPath, true)
+	m.startChild(ctx, v, overrideID, binPath, true)
 	m.rebuildRoutes()
 	m.mu.Unlock()
 }

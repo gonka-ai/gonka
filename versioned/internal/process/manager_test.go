@@ -1205,6 +1205,129 @@ func TestReconcileOverride_DoesNotReplaceChildMovedToDraining(t *testing.T) {
 	}
 }
 
+func TestReconcileOverride_DoesNotTrustStaleOverrideFile(t *testing.T) {
+	dir := t.TempDir()
+	overrideSrc := filepath.Join(dir, "override-source")
+	binPath := filepath.Join(dir, "bin", "v1", "testapp")
+	downloadedPath := filepath.Join(dir, "bin", "v1", "download-sha", "testapp")
+	script := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "testapp-v1" ;;
+--print-protocol-version) echo "v1" ;;
+*) exec sleep 30 ;;
+esac
+`)
+	if err := os.WriteFile(overrideSrc, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BinDir:         filepath.Join(dir, "bin"),
+		DataDir:        filepath.Join(dir, "data"),
+		BinaryName:     "testapp",
+		BasePort:       5000,
+		DrainKillGrace: 100 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	var cancelOnce sync.Once
+	existing := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("download archive")),
+		binPath:       downloadedPath,
+		done:          done,
+		status:        statusRunning,
+		restart:       true,
+	}
+	existing.cancel = func() {
+		cancelOnce.Do(func() {
+			close(done)
+		})
+	}
+	m.processes["v1"] = existing
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	m.reconcileOverride(ctx, oracle.Version{Name: "v1"}, overrideSrc, binPath)
+
+	srcHash, err := download.HashFile(overrideSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	current := m.processes["v1"]
+	m.mu.Unlock()
+	if current == existing {
+		t.Fatal("stale flat override file should not match a per-SHA child")
+	}
+	if current == nil {
+		t.Fatal("override child should replace the downloaded child")
+	}
+	if current.binPath != binPath {
+		t.Fatalf("override child path = %q, want %q", current.binPath, binPath)
+	}
+	if current.archiveSHA256 != "override:"+srcHash {
+		t.Fatalf("override child identity = %q, want override source hash", current.archiveSHA256)
+	}
+
+	cancel()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileOverride_SameIdentityDoesNotRestart(t *testing.T) {
+	dir := t.TempDir()
+	overrideSrc := filepath.Join(dir, "override-source")
+	binPath := filepath.Join(dir, "bin", "v1", "testapp")
+	content := []byte("override binary")
+	if err := os.WriteFile(overrideSrc, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, content, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	srcHash, err := download.HashFile(overrideSrc)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   5000,
+	})
+	cancelled := false
+	existing := &child{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: "override:" + srcHash,
+		binPath:       binPath,
+		cancel:        func() { cancelled = true },
+		done:          make(chan struct{}),
+		status:        statusRunning,
+		restart:       true,
+	}
+	m.processes["v1"] = existing
+
+	m.reconcileOverride(context.Background(), oracle.Version{Name: "v1"}, overrideSrc, binPath)
+
+	if cancelled {
+		t.Fatal("matching override identity should not restart the child")
+	}
+	if current := m.processes["v1"]; current != existing {
+		t.Fatal("matching override identity should keep the current child")
+	}
+}
+
 func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 	var drainHits atomic.Int32
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
