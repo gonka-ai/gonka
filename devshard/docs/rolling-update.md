@@ -352,8 +352,8 @@ New flow (replaces lines 392–419):
         loop every VERSIOND_DRAIN_POLL_INTERVAL:
             if inflight(oldChild) == 0: break
             if now > deadline: log warn; break
-        oldChild.cancel()                       // SIGTERM, long WaitDelay
-        waitForChild(oldChild, max(VERSIOND_DRAIN_KILL_GRACE, DEVSHARD_SHUTDOWN_GRACE))
+        oldChild.Stop()                         // supervisor sends SIGTERM
+        waitForChild(oldChild)                  // confirmed exit and process reap
         release oldChild port
 ```
 
@@ -405,21 +405,50 @@ reconcile poll starts the restored version normally after drain completes.
 
 #### g) Graceful supervisor shutdown
 
-`Manager.Shutdown` must wait long enough for child graceful shutdown. When
-versiond itself is being stopped, children are `SIGTERM`'d and waited on with the
-same per-child stop timeout used elsewhere: exactly `VERSIOND_DRAIN_KILL_GRACE`
-for non-devshard binaries, and the max of `VERSIOND_DRAIN_KILL_GRACE` and
-`DEVSHARD_SHUTDOWN_GRACE` for devshardd.
+Each concrete child process is owned by a small process lifecycle state machine:
+
+```text
+Running -> Terminating -> Killing -> Exited
+```
+
+`Stop()` moves a running process to `Terminating`, sends `SIGTERM` to its
+process group, and starts its graceful-stop timer. If the process has not
+exited when that timer expires, the controller moves it to `Killing` and sends
+`SIGKILL`. `Done()` is closed only after `cmd.Wait()` confirms the process has
+exited and has been reaped. The graceful timeout therefore controls
+escalation; it is not a second, competing limit on how long callers wait.
+
+The timeout is exactly `VERSIOND_DRAIN_KILL_GRACE` for non-devshard binaries,
+and the max of `VERSIOND_DRAIN_KILL_GRACE` and `DEVSHARD_SHUTDOWN_GRACE` for
+devshardd.
+
+When versiond itself stops, `Manager.Shutdown` calls `Stop()` for all current
+and draining children before waiting for any one of them. If the manager
+shutdown context expires, it calls `ForceStop()` for the remaining children,
+but still waits for every `Done()` signal so it never returns while owning an
+unreaped child.
 
 ```492:509:versioned/internal/process/manager.go
 func (m *Manager) Shutdown(ctx context.Context) error {
 	...
 	for _, c := range children {
-		waitForChild(c, 10*time.Second)
+		c.Stop()
 	}
-	return nil
+	select {
+	case <-allChildrenDone:
+		return nil
+	case <-ctx.Done():
+		forceStopAll(children)
+		<-allChildrenDone
+		return ctx.Err()
+	}
 }
 ```
+
+This is deliberately a process-level FSM, not the Track B host lifecycle.
+The future Host FSM and router controller can use the same
+`Stop`/`ForceStop`/`Done` contract after router admission and host drain have
+completed, without putting host-routing policy into the child supervisor.
 
 ### 1.5 New configuration (versiond `config.Config`)
 
@@ -441,10 +470,10 @@ And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
 support with `--print-admin-api-version`. Operators normally do not set this
 manually; it is the private lifecycle channel between versiond and its child.
 
-> Note: `cmd.WaitDelay` must not be shorter than the child's own graceful
-> shutdown window. For non-devshard binaries, versiond waits exactly
-> `VERSIOND_DRAIN_KILL_GRACE` after `SIGTERM`. For devshardd, versiond uses
-> the max of `VERSIOND_DRAIN_KILL_GRACE` and `DEVSHARD_SHUTDOWN_GRACE`.
+> Note: the process lifecycle FSM uses `VERSIOND_DRAIN_KILL_GRACE` as the
+> `SIGTERM`-to-`SIGKILL` interval for non-devshard binaries. For devshardd,
+> versiond uses the max of `VERSIOND_DRAIN_KILL_GRACE` and
+> `DEVSHARD_SHUTDOWN_GRACE`.
 > For legacy children without `/drain/status`, the same
 > `VERSIOND_DRAIN_KILL_GRACE` is also the pre-`SIGTERM` cushion because
 > versiond cannot observe in-flight work.
@@ -630,7 +659,9 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **Unit (`versioned/internal/process`):** extend `manager_test.go` with a swap
   scenario asserting: old child still routed/alive until new `/ready`; route
   points to new port after readiness; child drain waits for old proxy leases and
-  lifecycle inflight to reach 0; old killed at `VERSIOND_DRAIN_TIMEOUT`.
+  lifecycle inflight to reach 0; old killed at `VERSIOND_DRAIN_TIMEOUT`. Test
+  the process FSM separately: graceful `SIGTERM`, timeout escalation to
+  `SIGKILL`, and manager shutdown returning only after process reap.
 - **Unit (`versioned/internal/proxy`):** hold a request on the old target across
   a route swap, assert new requests use the new target, and assert the retired
   target becomes drained only after the old request completes.
@@ -649,7 +680,8 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 2. versiond: config flags (no behavior change yet).
 3. versiond: per-name two-child model + swap-aware ports + readiness probe.
 4. versiond: rewrite `downloadAndSwap` to blue/green + drain.
-5. Surface draining state in `/healthz`; long `WaitDelay` for drained children.
+5. Surface draining state in `/healthz`; process lifecycle FSM for graceful
+   stop, forced escalation, and confirmed reap.
 6. Tests (§1.9), then enable by default.
 
 **Track B — versiond host removal/replacement (§1.8, HA only):**

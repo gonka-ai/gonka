@@ -17,7 +17,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 
 	"versioned/internal/config"
@@ -39,7 +38,6 @@ const (
 	storageModePostgres          = "postgres"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
-	managerShutdownOverhead      = 5 * time.Second
 )
 
 var errLegacyDrainStatus = errors.New("drain status endpoint unavailable")
@@ -52,13 +50,32 @@ type child struct {
 	binPath       string
 	port          int
 	adminPort     int
-	cancel        context.CancelFunc
+	stop          context.CancelFunc
+	forceStopCh   chan struct{}
+	forceStopOnce sync.Once
 	done          chan struct{} // closed when runChild exits
 	ready         chan struct{} // closed after readiness succeeds
 	readyOnce     sync.Once
 	proxyTarget   *proxy.Target
 	status        string
 	restart       bool
+}
+
+func (c *child) Stop() {
+	if c.stop != nil {
+		c.stop()
+	}
+}
+
+func (c *child) ForceStop() {
+	c.Stop()
+	if c.forceStopCh != nil {
+		c.forceStopOnce.Do(func() { close(c.forceStopCh) })
+	}
+}
+
+func (c *child) Done() <-chan struct{} {
+	return c.done
 }
 
 type Manager struct {
@@ -463,8 +480,8 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	if isRunning {
 		// Override source changed: stop old, copy new, start.
 		slog.Info("override binary changed, restarting", "version", v.Name)
-		existing.cancel()
-		waitForChild(existing, m.childStopTimeout())
+		existing.Stop()
+		waitForChild(existing)
 	}
 
 	// Disk I/O outside the lock.
@@ -700,8 +717,8 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	newBinPath := m.installBinPath(v.Name, sha)
 	if !m.rollingOverlapAllowed(v.Name, old, newBinPath) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
-		old.cancel()
-		waitForChild(old, m.childStopTimeout())
+		old.Stop()
+		waitForChild(old)
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		if current, ok := m.processes[v.Name]; ok && current == old {
@@ -717,8 +734,8 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
-		newChild.cancel()
-		waitForChild(newChild.child, m.childStopTimeout())
+		newChild.child.Stop()
+		waitForChild(newChild.child)
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
@@ -729,14 +746,14 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	delete(m.downloading, v.Name)
 	if current, ok := m.processes[v.Name]; !ok || current != old {
 		m.mu.Unlock()
-		newChild.cancel()
-		waitForChild(newChild.child, m.childStopTimeout())
+		newChild.child.Stop()
+		waitForChild(newChild.child)
 		return fmt.Errorf("current child changed during swap")
 	}
 	if newChild.child.status != statusRunning || childDone(newChild.child) {
 		m.mu.Unlock()
-		newChild.cancel()
-		waitForChild(newChild.child, m.childStopTimeout())
+		newChild.child.Stop()
+		waitForChild(newChild.child)
 		return fmt.Errorf("new child stopped before swap")
 	}
 	old.status = statusDraining
@@ -925,9 +942,8 @@ func logInstalledVersionMismatch(scope, versionName, desiredArchiveHash string, 
 }
 
 type childStart struct {
-	child  *child
-	ctx    context.Context
-	cancel context.CancelFunc
+	child *child
+	ctx   context.Context
 }
 
 func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) childStart {
@@ -937,13 +953,14 @@ func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath s
 		archiveSHA256: sha,
 		binPath:       binPath,
 		port:          m.assignPort(),
-		cancel:        childCancel,
+		stop:          childCancel,
+		forceStopCh:   make(chan struct{}),
 		done:          make(chan struct{}),
 		ready:         make(chan struct{}),
 		status:        statusStarting,
 		restart:       restart,
 	}
-	return childStart{child: c, ctx: childCtx, cancel: childCancel}
+	return childStart{child: c, ctx: childCtx}
 }
 
 // startChild must be called with m.mu held.
@@ -959,12 +976,12 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	children := make([]*child, 0, len(m.processes)+len(m.draining))
 	for _, c := range m.processes {
 		children = append(children, c)
-		c.cancel()
+		c.Stop()
 	}
 	for _, draining := range m.draining {
 		for _, c := range draining {
 			children = append(children, c)
-			c.cancel()
+			c.Stop()
 		}
 	}
 	m.processes = make(map[string]*child)
@@ -973,44 +990,45 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.rebuildRoutes()
 	m.mu.Unlock()
 
-	for _, c := range children {
-		slog.Info("shutting down", "version", c.version.Name)
-		if err := waitForChildContext(ctx, c, m.childStopTimeout()); err != nil {
-			return err
-		}
+	if len(children) == 0 {
+		return nil
 	}
-	return nil
+
+	allDone := make(chan struct{})
+	go func() {
+		defer close(allDone)
+		for _, c := range children {
+			slog.Info("waiting for child shutdown", "version", c.version.Name)
+			waitForChild(c)
+		}
+	}()
+
+	select {
+	case <-allDone:
+		return nil
+	case <-ctx.Done():
+	}
+	select {
+	case <-allDone:
+		return nil
+	default:
+	}
+
+	// The caller's deadline escalates every remaining child to SIGKILL. It does
+	// not waive process ownership: wait until every command has been reaped.
+	for _, c := range children {
+		c.ForceStop()
+	}
+	<-allDone
+	return ctx.Err()
 }
 
 func (m *Manager) ShutdownTimeout() time.Duration {
-	return m.childStopTimeout() + managerShutdownOverhead
+	return m.childStopTimeout()
 }
 
-// waitForChild waits for a child's goroutine to exit within the timeout.
-// The child should already have been cancelled via c.cancel().
-// exec.CommandContext sends SIGKILL when the context is cancelled,
-// so the process will be killed. We just wait for runChild to finish.
-func waitForChild(c *child, timeout time.Duration) {
-	select {
-	case <-c.done:
-	case <-time.After(timeout):
-		slog.Warn("child goroutine did not exit in time", "version", c.version.Name)
-	}
-}
-
-func waitForChildContext(ctx context.Context, c *child, timeout time.Duration) error {
-	timer := time.NewTimer(timeout)
-	defer timer.Stop()
-	select {
-	case <-c.done:
-		return nil
-	case <-ctx.Done():
-		slog.Warn("child shutdown interrupted by context", "version", c.version.Name, "error", ctx.Err())
-		return ctx.Err()
-	case <-timer.C:
-		slog.Warn("child goroutine did not exit in time", "version", c.version.Name)
-		return nil
-	}
+func waitForChild(c *child) {
+	<-c.Done()
 }
 
 func (m *Manager) runChild(ctx context.Context, c *child) {
@@ -1057,24 +1075,19 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		default:
 		}
 
-		cmd := exec.CommandContext(ctx, c.binPath,
+		cmd := exec.Command(c.binPath,
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
 		)
 		cmd.Env = childEnv(preflight.binaryLogVersion, adminAddr)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		// Cancel sends SIGKILL by default. Override to send SIGTERM for graceful shutdown.
-		cmd.Cancel = func() error {
-			return cmd.Process.Signal(syscall.SIGTERM)
-		}
-		cmd.WaitDelay = m.childStopTimeout()
 
 		lastStart = time.Now()
 		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 
-		if err := cmd.Start(); err != nil {
+		proc, err := startSupervisedProcess(cmd, ctx.Done(), c.forceStopCh, m.childStopTimeout())
+		if err != nil {
 			slog.Error("child start failed", "version", c.version.Name, "error", err)
 			m.mu.Lock()
 			c.status = statusStopped
@@ -1084,8 +1097,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 
 		if !waitForReady(ctx, c.lifecyclePort(), m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
 			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
-			_ = cmd.Process.Kill()
-			_ = cmd.Wait()
+			proc.ForceStop()
+			_ = proc.Wait()
 			m.mu.Lock()
 			c.status = statusStopped
 			restart := c.restart
@@ -1114,7 +1127,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.mu.Unlock()
 
-		err := cmd.Wait()
+		err = proc.Wait()
 
 		select {
 		case <-ctx.Done():
@@ -1462,8 +1475,8 @@ func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
 		case <-time.After(m.cfg.DrainPollInterval):
 		}
 	}
-	c.cancel()
-	waitForChild(c, m.childStopTimeout())
+	c.Stop()
+	waitForChild(c)
 }
 
 func retireProxyTarget(c *child) <-chan struct{} {

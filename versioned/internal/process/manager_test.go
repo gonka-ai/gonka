@@ -633,8 +633,8 @@ func TestChildStopTimeoutHonorsDevshardShutdownGrace(t *testing.T) {
 	if got := devshardMgr.childStopTimeout(); got != 2*time.Minute {
 		t.Fatalf("childStopTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
 	}
-	if got := devshardMgr.ShutdownTimeout(); got != 2*time.Minute+managerShutdownOverhead {
-		t.Fatalf("ShutdownTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE plus overhead", got)
+	if got := devshardMgr.ShutdownTimeout(); got != 2*time.Minute {
+		t.Fatalf("ShutdownTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
 	}
 
 	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "5s")
@@ -882,7 +882,7 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 		version:       oracle.Version{Name: "old"},
 		archiveSHA256: "old-sha",
 		port:          port,
-		cancel: func() {
+		stop: func() {
 			cancelOnce.Do(func() {
 				close(cancelled)
 				close(done)
@@ -954,8 +954,8 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 		t.Fatal("expected drain status to be polled")
 	}
 
-	removed.cancel()
-	waitForChild(removed, time.Second)
+	removed.Stop()
+	waitForChild(removed)
 }
 
 func TestReconcile_ReaddedVersionWaitsForDrainingChild(t *testing.T) {
@@ -1173,7 +1173,7 @@ func TestReconcileOverride_DoesNotReplaceChildMovedToDraining(t *testing.T) {
 		status:  statusRunning,
 		restart: true,
 	}
-	existing.cancel = func() {
+	existing.stop = func() {
 		cancelOnce.Do(func() {
 			m.mu.Lock()
 			delete(m.processes, "v1")
@@ -1244,7 +1244,7 @@ esac
 		status:        statusRunning,
 		restart:       true,
 	}
-	existing.cancel = func() {
+	existing.stop = func() {
 		cancelOnce.Do(func() {
 			close(done)
 		})
@@ -1311,7 +1311,7 @@ func TestReconcileOverride_SameIdentityDoesNotRestart(t *testing.T) {
 		version:       oracle.Version{Name: "v1"},
 		archiveSHA256: "override:" + srcHash,
 		binPath:       binPath,
-		cancel:        func() { cancelled = true },
+		stop:          func() { cancelled = true },
 		done:          make(chan struct{}),
 		status:        statusRunning,
 		restart:       true,
@@ -1354,7 +1354,7 @@ func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 		version: oracle.Version{Name: "v1"},
 		port:    port,
 		done:    done,
-		cancel:  func() { close(done) },
+		stop:    func() { close(done) },
 	}
 	proxyDrained := make(chan struct{})
 	started := make(chan struct{})
@@ -1406,7 +1406,7 @@ func TestReconcile_RemovedLegacyVersionUsesDrainGraceBeforeCancel(t *testing.T) 
 	m.processes["legacy"] = &child{
 		version: oracle.Version{Name: "legacy"},
 		port:    port,
-		cancel: func() {
+		stop: func() {
 			cancelOnce.Do(func() {
 				close(cancelled)
 				close(done)
@@ -1517,7 +1517,7 @@ func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 		version: oracle.Version{Name: "v1"},
 		port:    port,
 		done:    done,
-		cancel: func() {
+		stop: func() {
 			cancelled = true
 			close(done)
 		},
@@ -1614,7 +1614,7 @@ func TestDrainAndStop_WaitsForIdleBeforeCancel(t *testing.T) {
 		version: oracle.Version{Name: "v1"},
 		port:    port,
 		done:    done,
-		cancel: func() {
+		stop: func() {
 			cancelled.Store(true)
 			close(done)
 		},
@@ -1647,7 +1647,7 @@ func TestDrainAndStop_TimesOutWithInflightWork(t *testing.T) {
 		version: oracle.Version{Name: "v1"},
 		port:    port,
 		done:    done,
-		cancel: func() {
+		stop: func() {
 			cancelled = true
 			close(done)
 		},
@@ -1695,7 +1695,7 @@ esac
 		done:          make(chan struct{}),
 		status:        statusRunning,
 		restart:       true,
-		cancel: func() {
+		stop: func() {
 			t.Fatal("old child should not be cancelled when replacement is not ready")
 		},
 	}
@@ -1783,7 +1783,7 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 		archiveSHA256: archiveHash,
 		binPath:       binPath,
 		port:          5000,
-		cancel:        func() { cancelled = true },
+		stop:          func() { cancelled = true },
 		done:          done,
 		status:        statusRunning,
 	}
