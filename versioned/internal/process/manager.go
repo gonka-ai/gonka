@@ -24,6 +24,7 @@ import (
 	"versioned/internal/download"
 	"versioned/internal/health"
 	"versioned/internal/oracle"
+	"versioned/internal/proxy"
 )
 
 const (
@@ -55,6 +56,7 @@ type child struct {
 	done          chan struct{} // closed when runChild exits
 	ready         chan struct{} // closed after readiness succeeds
 	readyOnce     sync.Once
+	proxyTarget   *proxy.Target
 	status        string
 	restart       bool
 }
@@ -67,7 +69,7 @@ type Manager struct {
 	allocatedPorts map[int]struct{}
 	reservedPorts  map[int]struct{}
 	mu             sync.Mutex
-	routes         atomic.Value // map[string]string
+	routes         atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
@@ -80,7 +82,7 @@ func NewManager(cfg config.Config) *Manager {
 		allocatedPorts: make(map[int]struct{}),
 		reservedPorts:  reservedChildPorts(),
 	}
-	m.routes.Store(map[string]string{})
+	m.routes.Store(proxy.RouteTable{})
 	return m
 }
 
@@ -357,14 +359,17 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	if changed {
 		m.rebuildRoutes()
 	}
+	proxyDrained := make(map[*child]<-chan struct{}, len(toStop))
+	for _, c := range toStop {
+		proxyDrained[c] = retireProxyTarget(c)
+	}
 	m.mu.Unlock()
 
 	// Removed versions leave the route table immediately, then drain
 	// asynchronously so reconcile can continue handling other versions.
 	for _, c := range toStop {
 		slog.Info("draining removed version", "version", c.version.Name)
-		m.requestDrain(c)
-		go m.drainAndStop(c)
+		go m.drainAfterProxy(c, proxyDrained[c])
 	}
 
 	// Downloads outside the lock (can be slow).
@@ -572,11 +577,11 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	newChild.child.restart = true
 	m.processes[v.Name] = newChild.child
 	m.rebuildRoutes()
+	proxyDrained := retireProxyTarget(old)
 	m.mu.Unlock()
 
 	slog.Info("swapped child route; old child draining", "version", v.Name, "old_port", old.port, "new_port", newChild.child.port)
-	m.requestDrain(old)
-	go m.drainAndStop(old)
+	go m.drainAfterProxy(old, proxyDrained)
 	return nil
 }
 
@@ -796,7 +801,7 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	m.processes = make(map[string]*child)
 	m.draining = make(map[string][]*child)
 	m.downloading = make(map[string]struct{})
-	m.routes.Store(map[string]string{})
+	m.rebuildRoutes()
 	m.mu.Unlock()
 
 	for _, c := range children {
@@ -933,6 +938,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.mu.Lock()
 		c.status = statusRunning
+		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
@@ -1222,8 +1228,28 @@ func (m *Manager) requestDrain(c *child) {
 	}
 }
 
-func (m *Manager) drainAndStop(c *child) {
+func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
+	// Proxy admission and child lifecycle draining share one safety deadline.
 	deadline := time.Now().Add(m.cfg.DrainTimeout)
+	timer := time.NewTimer(m.cfg.DrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-c.done:
+		return
+	case <-proxyDrained:
+		slog.Info("proxy requests drained", "version", c.version.Name, "port", c.port)
+	case <-timer.C:
+		slog.Warn("proxy drain timeout reached", "version", c.version.Name, "port", c.port)
+	}
+	m.requestDrain(c)
+	m.drainAndStopBefore(c, deadline)
+}
+
+func (m *Manager) drainAndStop(c *child) {
+	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
+}
+
+func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
 	for {
 		select {
 		case <-c.done:
@@ -1269,6 +1295,15 @@ func (m *Manager) drainAndStop(c *child) {
 	}
 	c.cancel()
 	waitForChild(c, m.childStopTimeout())
+}
+
+func retireProxyTarget(c *child) <-chan struct{} {
+	if c.proxyTarget != nil {
+		return c.proxyTarget.Retire()
+	}
+	drained := make(chan struct{})
+	close(drained)
+	return drained
 }
 
 func (m *Manager) fetchInflight(c *child) (int64, error) {
@@ -1332,14 +1367,24 @@ func (m *Manager) removeDrainingLocked(target *child) {
 	}
 }
 
-// rebuildRoutes rebuilds the atomic route map. Only includes running children.
+// rebuildRoutes publishes running children, then retires replaced targets so a
+// stale proxy lookup either owns a counted lease or retries against the new map.
 // Must be called with m.mu held.
 func (m *Manager) rebuildRoutes() {
-	routes := make(map[string]string)
+	previous := m.routes.Load().(proxy.RouteTable)
+	routes := make(proxy.RouteTable)
 	for _, c := range m.processes {
 		if c.status == statusRunning {
-			routes[c.version.Name] = fmt.Sprintf("localhost:%d", c.port)
+			if c.proxyTarget == nil {
+				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+			}
+			routes[c.version.Name] = c.proxyTarget
 		}
 	}
 	m.routes.Store(routes)
+	for version, target := range previous {
+		if routes[version] != target {
+			target.Retire()
+		}
+	}
 }

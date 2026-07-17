@@ -21,6 +21,7 @@ import (
 	"versioned/internal/config"
 	"versioned/internal/download"
 	"versioned/internal/oracle"
+	"versioned/internal/proxy"
 )
 
 func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
@@ -307,7 +308,7 @@ func TestNewManager(t *testing.T) {
 	if m == nil {
 		t.Fatal("NewManager returned nil")
 	}
-	routes := m.RouteTable().Load().(map[string]string)
+	routes := m.RouteTable().Load().(proxy.RouteTable)
 	if len(routes) != 0 {
 		t.Errorf("expected empty routes, got %v", routes)
 	}
@@ -342,12 +343,12 @@ func TestRebuildRoutes(t *testing.T) {
 	m.rebuildRoutes()
 	m.mu.Unlock()
 
-	routes := m.RouteTable().Load().(map[string]string)
-	if routes["v1"] != "localhost:9001" {
-		t.Errorf("v1 route = %q, want %q", routes["v1"], "localhost:9001")
+	routes := m.RouteTable().Load().(proxy.RouteTable)
+	if routes["v1"].Address() != "localhost:9001" {
+		t.Errorf("v1 route = %q, want %q", routes["v1"].Address(), "localhost:9001")
 	}
-	if routes["v2"] != "localhost:9002" {
-		t.Errorf("v2 route = %q, want %q", routes["v2"], "localhost:9002")
+	if routes["v2"].Address() != "localhost:9002" {
+		t.Errorf("v2 route = %q, want %q", routes["v2"].Address(), "localhost:9002")
 	}
 }
 
@@ -382,7 +383,7 @@ func TestRebuildRoutes_ExcludesNonRunning(t *testing.T) {
 	m.rebuildRoutes()
 	m.mu.Unlock()
 
-	routes := m.RouteTable().Load().(map[string]string)
+	routes := m.RouteTable().Load().(proxy.RouteTable)
 	if _, ok := routes["v1"]; !ok {
 		t.Error("running v1 should be in routes")
 	}
@@ -450,9 +451,9 @@ func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
 	m.rebuildRoutes()
 	m.mu.Unlock()
 
-	routes := m.RouteTable().Load().(map[string]string)
-	if routes["v1"] != "localhost:9002" {
-		t.Fatalf("route = %q, want new child", routes["v1"])
+	routes := m.RouteTable().Load().(proxy.RouteTable)
+	if routes["v1"].Address() != "localhost:9002" {
+		t.Fatalf("route = %q, want new child", routes["v1"].Address())
 	}
 
 	statuses := m.Status()
@@ -902,6 +903,10 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 	if elapsed := time.Since(start); elapsed > 500*time.Millisecond {
 		t.Fatalf("Reconcile blocked for %s while removed child was still draining", elapsed)
 	}
+	drainDeadline := time.Now().Add(500 * time.Millisecond)
+	for drainHits.Load() == 0 && time.Now().Before(drainDeadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if drainHits.Load() != 1 {
 		t.Fatalf("drain hits = %d, want 1", drainHits.Load())
 	}
@@ -918,7 +923,7 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 	if len(draining) == 1 {
 		removed = draining[0]
 	}
-	routes := m.RouteTable().Load().(map[string]string)
+	routes := m.RouteTable().Load().(proxy.RouteTable)
 	m.mu.Unlock()
 
 	if stillRunning {
@@ -951,6 +956,59 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 
 	removed.cancel()
 	waitForChild(removed, time.Second)
+}
+
+func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
+	var drainHits atomic.Int32
+	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && r.URL.Path == "/drain":
+			drainHits.Add(1)
+			w.WriteHeader(http.StatusOK)
+		case r.Method == http.MethodGet && r.URL.Path == "/drain/status":
+			json.NewEncoder(w).Encode(map[string]int64{"inflight": 0})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainTimeout:      time.Second,
+		DrainPollInterval: 5 * time.Millisecond,
+		DrainKillGrace:    50 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		port:    port,
+		done:    done,
+		cancel:  func() { close(done) },
+	}
+	proxyDrained := make(chan struct{})
+	started := make(chan struct{})
+	drainedDone := make(chan struct{})
+	go func() {
+		defer close(drainedDone)
+		close(started)
+		m.drainAfterProxy(c, proxyDrained)
+	}()
+
+	<-started
+	if drainHits.Load() != 0 {
+		t.Fatal("child drain started before proxy requests drained")
+	}
+	close(proxyDrained)
+
+	select {
+	case <-drainedDone:
+	case <-time.After(time.Second):
+		t.Fatal("child drain did not finish after proxy requests drained")
+	}
+	if drainHits.Load() != 1 {
+		t.Fatalf("drain hits = %d, want 1", drainHits.Load())
+	}
 }
 
 func TestReconcile_RemovedLegacyVersionUsesDrainGraceBeforeCancel(t *testing.T) {
@@ -1304,9 +1362,9 @@ esac
 	if draining != 0 {
 		t.Fatalf("draining children = %d, want 0", draining)
 	}
-	routes := m.RouteTable().Load().(map[string]string)
-	if routes["v1"] != "localhost:9001" {
-		t.Fatalf("route = %q, want old child route", routes["v1"])
+	routes := m.RouteTable().Load().(proxy.RouteTable)
+	if routes["v1"].Address() != "localhost:9001" {
+		t.Fatalf("route = %q, want old child route", routes["v1"].Address())
 	}
 }
 

@@ -9,6 +9,10 @@ import (
 	"sync/atomic"
 )
 
+type routeTableLoader interface {
+	Load() any
+}
+
 // Handler returns an http.Handler that routes requests by version prefix.
 // First path segment is the version name, stripped before forwarding.
 // Example: /v0.2.11/chat/completions -> localhost:9001/chat/completions
@@ -27,14 +31,14 @@ func Handler(routes *atomic.Value) http.Handler {
 			rest = "/" + parts[1]
 		}
 
-		routeMap := routes.Load().(map[string]string)
-		target, ok := routeMap[version]
+		target, ok := acquireTarget(routes, version)
 		if !ok {
 			http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
 			return
 		}
+		defer target.release()
 
-		targetURL, err := url.Parse("http://" + target)
+		targetURL, err := url.Parse("http://" + target.Address())
 		if err != nil {
 			http.Error(w, "internal error", http.StatusInternalServerError)
 			return
@@ -54,4 +58,16 @@ func Handler(routes *atomic.Value) http.Handler {
 
 		p.ServeHTTP(w, r)
 	})
+}
+
+func acquireTarget(routes routeTableLoader, version string) (*Target, bool) {
+	for {
+		target, ok := routes.Load().(RouteTable)[version]
+		if !ok {
+			return nil, false
+		}
+		if target.acquire() {
+			return target, true
+		}
+	}
 }

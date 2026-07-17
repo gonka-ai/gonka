@@ -161,9 +161,15 @@ wait for NEW child READINESS (HTTP /ready, not just TCP)
         │
         ▼
 atomic route swap: version → NEW port    ← new requests go to NEW child
-        │                                   in-flight requests stay on OLD conn
+        │
         ▼
-mark OLD child "draining" (out of route table, NOT killed)
+retire OLD proxy target                  ← stale route lookups retry on NEW
+        │                                   accepted OLD requests keep a lease
+        ▼
+wait for OLD proxy leases to reach 0  OR  VERSIOND_DRAIN_TIMEOUT
+        │
+        ▼
+POST /drain to OLD child                 ← reject non-proxy late arrivals
         │
         ▼
 poll OLD child in-flight count until 0  OR  VERSIOND_DRAIN_TIMEOUT
@@ -172,11 +178,14 @@ poll OLD child in-flight count until 0  OR  VERSIOND_DRAIN_TIMEOUT
 SIGTERM OLD child  → wait (long grace) → SIGKILL only as last resort
 ```
 
-At the proxy layer this is already graceful: `proxy.Handler` builds a
-`httputil.ReverseProxy` **per request** and dials the target named in the route
-table at that moment. A request that already started keeps its own connection to
-the old child until it completes; only *new* requests observe the swapped route.
-The only thing we must change is: **stop killing the old child immediately**.
+The proxy route value is a generation-specific `Target`, not just an address.
+Before forwarding, each request acquires a lease on that target and releases it
+after the complete response, including an SSE stream. The route swap publishes
+the new target before retiring the old one. A request that loaded the old target
+but did not acquire it before retirement retries against the new route; an
+already acquired request keeps the old target non-idle until it completes. This
+closes the boundary between selecting an old address and entering the old
+child's own lifecycle middleware.
 
 ### 1.2 Storage prerequisite
 
@@ -255,19 +264,27 @@ during a swap. Minimal shape:
 - add `draining []*child` (or `map[string][]*child`) for children that have been
   taken out of the route table but are still finishing work.
 
-`rebuildRoutes` already only emits running children; ensure draining children are
-**excluded** from the route table (they keep their port but receive no new
-traffic).
+`rebuildRoutes` only emits running children. Each route value is the `Target`
+for one concrete child generation, so same-name children with different SHA,
+port, and PID never share admission state. Draining children are excluded from
+the new table, but their retired targets stay alive until acquired proxy
+requests release their leases.
 
 ```653:661:versioned/internal/process/manager.go
 func (m *Manager) rebuildRoutes() {
-	routes := make(map[string]string)
+	previous := m.routes.Load().(proxy.RouteTable)
+	routes := make(proxy.RouteTable)
 	for _, c := range m.processes {
 		if c.status == statusRunning {
-			routes[c.version.Name] = fmt.Sprintf("localhost:%d", c.port)
+			routes[c.version.Name] = c.proxyTarget
 		}
 	}
 	m.routes.Store(routes)
+	for version, target := range previous {
+		if routes[version] != target {
+			target.Retire()
+		}
+	}
 }
 ```
 
@@ -326,9 +343,12 @@ New flow (replaces lines 392–419):
 5. lock: move old child from processes -> draining[name]
          set processes[name] = newChild (status running)
          rebuildRoutes()        // route now points to NEW port
+         retire old proxy target
    unlock
 6. go drainOld(oldChild):
         deadline = now + VERSIOND_DRAIN_TIMEOUT
+        wait until proxy leases on old target == 0, or deadline
+        POST oldChild /drain
         loop every VERSIOND_DRAIN_POLL_INTERVAL:
             if inflight(oldChild) == 0: break
             if now > deadline: log warn; break
@@ -342,8 +362,10 @@ Key invariants this enforces:
 - **New ready before traffic:** route is swapped only after `/ready` is `200`
   (step 4–5).
 - **Route new requests to new:** step 5 atomic route swap.
-- **Old finishes in-flight:** step 6 waits for `inflight == 0` before any
-  signal; the proxy keeps existing requests on the old connection meanwhile.
+- **No boundary gap:** a stale route lookup either owns an old-target lease or
+  retries after retirement and uses the new target.
+- **Old finishes in-flight:** step 6 first waits for proxy leases, then confirms
+  the child's lifecycle `inflight` count is zero before any signal.
 - **Don't kill until idle:** `SIGTERM` is sent only after idle or the safety
   `VERSIOND_DRAIN_TIMEOUT`.
 
@@ -372,9 +394,9 @@ through the same `drainAndStop` path used by binary swaps.
 
 This keeps the reconcile poll loop responsive while the old child finishes
 accepted work. New requests get `404` for the removed version, existing
-requests stay on their already-open connection, and legacy children without
-`/drain/status` receive the `VERSIOND_DRAIN_KILL_GRACE` cushion before
-`SIGTERM`.
+requests retain their old-target proxy lease, and child drain starts only after
+those leases are released. Legacy children without `/drain/status` receive the
+`VERSIOND_DRAIN_KILL_GRACE` cushion before `SIGTERM`.
 
 #### g) Graceful supervisor shutdown
 
@@ -404,7 +426,7 @@ Add to `versioned/internal/config/config.go`:
 | `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
 | `VERSIOND_DRAIN_PATH` | `/drain` | path versiond POSTs to put the old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
-| `VERSIOND_DRAIN_TIMEOUT` | `15m` | max time to wait for old child to go idle before `SIGTERM` |
+| `VERSIOND_DRAIN_TIMEOUT` | `15m` | shared deadline for old proxy leases and child in-flight work before `SIGTERM` |
 | `VERSIOND_DRAIN_POLL_INTERVAL` | `1s` | how often to poll old child in-flight count |
 | `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status drain cushion and child stop backstop |
 
@@ -588,8 +610,11 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 
 - **Unit (`versioned/internal/process`):** extend `manager_test.go` with a swap
   scenario asserting: old child still routed/alive until new `/ready`; route
-  points to new port after readiness; old child not `SIGTERM`'d until inflight
-  reports 0; old killed at `VERSIOND_DRAIN_TIMEOUT`.
+  points to new port after readiness; child drain waits for old proxy leases and
+  lifecycle inflight to reach 0; old killed at `VERSIOND_DRAIN_TIMEOUT`.
+- **Unit (`versioned/internal/proxy`):** hold a request on the old target across
+  a route swap, assert new requests use the new target, and assert the retired
+  target becomes drained only after the old request completes.
 - **e2e (`versioned/e2e`):** drive a long request against the old child, trigger
   an oracle sha change for the same name, assert the long request completes with
   the old binary while a concurrently-started request is served by the new one.
