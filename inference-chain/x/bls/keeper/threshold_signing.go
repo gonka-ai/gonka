@@ -402,6 +402,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	if err != nil {
 		return err
 	}
+	postRetry := false
 
 	// Validate request state
 	if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES {
@@ -428,6 +429,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 			if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES {
 				return fmt.Errorf("retried request is not collecting signatures, current status: %s", request.Status.String())
 			}
+			postRetry = true
 		} else {
 			return k.finalizeFailedThresholdSigningRequest(
 				ctx,
@@ -438,6 +440,20 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		}
 	}
 
+	err = k.processPartialSignatureForRequest(ctx, request, slotIndices, partialSignature, submitter)
+	if err != nil {
+		if postRetry {
+			k.Logger().Info("Ignored post-retry partial signature error",
+				"request_id", fmt.Sprintf("%x", requestID), "submitter", submitter, "error", err)
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (k Keeper) processPartialSignatureForRequest(ctx sdk.Context, request *types.ThresholdSigningRequest, slotIndices []uint32, partialSignature []byte, submitter string) error {
 	// Get current epoch BLS data for validation
 	epochBLSData, err := k.GetEpochBLSData(ctx, request.CurrentEpochId)
 	if err != nil {
