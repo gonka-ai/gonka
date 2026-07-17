@@ -1499,6 +1499,72 @@ func TestWaitForReadyDoesNotFallbackForCustomReadyPath(t *testing.T) {
 	}
 }
 
+func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
+	adminPort, adminShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	defer adminShutdown()
+
+	var publicReady atomic.Bool
+	var publicHits atomic.Int32
+	publicPort, publicShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		publicHits.Add(1)
+		if r.URL.Path == "/healthz" && publicReady.Load() {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "public listener not ready", http.StatusServiceUnavailable)
+	}))
+	defer publicShutdown()
+
+	c := &child{port: publicPort, adminPort: adminPort}
+	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond) {
+		t.Fatal("admin readiness must not hide an unavailable public listener")
+	}
+	if publicHits.Load() == 0 {
+		t.Fatal("public health endpoint was not probed")
+	}
+
+	publicReady.Store(true)
+	if !waitForChildServingReady(context.Background(), c, "/ready", time.Second) {
+		t.Fatal("child should become ready when admin and public endpoints are healthy")
+	}
+}
+
+func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
+	var adminHits atomic.Int32
+	adminPort, adminShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if adminHits.Add(1) == 1 {
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		http.Error(w, "admin no longer ready", http.StatusServiceUnavailable)
+	}))
+	defer adminShutdown()
+
+	var publicHits atomic.Int32
+	publicPort, publicShutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if publicHits.Add(1) == 1 {
+			http.Error(w, "public listener not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer publicShutdown()
+
+	c := &child{port: publicPort, adminPort: adminPort}
+	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond) {
+		t.Fatal("child became ready without admin and public health at the same time")
+	}
+	if adminHits.Load() < 2 {
+		t.Fatal("admin readiness was not rechecked after public health failed")
+	}
+}
+
 func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)

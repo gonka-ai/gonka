@@ -338,7 +338,8 @@ New flow (replaces lines 392–419):
 1. downloadBinary(new sha)                      // old child untouched in memory
 2. require old+new --print-storage-mode == postgres, else stop/start fallback
 3. newChild = startChild(version, NEW port)   // Postgres-only overlap
-4. if !waitForReady(newChild, VERSIOND_READY_TIMEOUT):
+4. if admin /ready != 200 OR public /healthz != 2xx
+      within VERSIOND_READY_TIMEOUT:
         stop newChild; keep old serving; abort swap (retry next poll)
 5. lock: move old child from processes -> draining[name]
          set processes[name] = newChild (status running)
@@ -359,8 +360,9 @@ New flow (replaces lines 392–419):
 
 Key invariants this enforces:
 
-- **New ready before traffic:** route is swapped only after `/ready` is `200`
-  (step 4–5).
+- **New ready before traffic:** route is swapped only while admin `/ready` is
+  `200` and public `/healthz` is `2xx` (step 4–5). Both conditions are
+  rechecked together so logical readiness cannot hide a failed public bind.
 - **Route new requests to new:** step 5 atomic route swap.
 - **No boundary gap:** a stale route lookup either owns an old-target lease or
   retries after retirement and uses the new target.
@@ -456,7 +458,7 @@ Add to `versioned/internal/config/config.go`:
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `VERSIOND_READY_PATH` | `/ready` | devshardd readiness path the supervisor probes |
+| `VERSIOND_READY_PATH` | `/ready` | devshardd admin readiness path; public `/healthz` must also pass before routing |
 | `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
 | `VERSIOND_DRAIN_PATH` | `/drain` | path versiond POSTs to put the old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
@@ -658,10 +660,11 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 
 - **Unit (`versioned/internal/process`):** extend `manager_test.go` with a swap
   scenario asserting: old child still routed/alive until new `/ready`; route
-  points to new port after readiness; child drain waits for old proxy leases and
-  lifecycle inflight to reach 0; old killed at `VERSIOND_DRAIN_TIMEOUT`. Test
-  the process FSM separately: graceful `SIGTERM`, timeout escalation to
-  `SIGKILL`, and manager shutdown returning only after process reap.
+  points to new port only after admin `/ready` and public `/healthz`; child
+  drain waits for old proxy leases and lifecycle inflight to reach 0; old
+  killed at `VERSIOND_DRAIN_TIMEOUT`. Test the process FSM separately:
+  graceful `SIGTERM`, timeout escalation to `SIGKILL`, and manager shutdown
+  returning only after process reap.
 - **Unit (`versioned/internal/proxy`):** hold a request on the old target across
   a route swap, assert new requests use the new target, and assert the retired
   target becomes drained only after the old request completes.

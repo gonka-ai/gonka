@@ -1095,7 +1095,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		}
 
-		if !waitForReady(ctx, c.lifecyclePort(), m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
+		if !waitForChildServingReady(ctx, c, m.cfg.ReadyPath, m.cfg.ReadyTimeout) {
 			slog.Warn("child did not become ready in time", "version", c.version.Name, "port", c.port, "lifecycle_port", c.lifecyclePort(), "ready_path", m.cfg.ReadyPath)
 			proc.ForceStop()
 			_ = proc.Wait()
@@ -1306,36 +1306,79 @@ func (c *child) adminAddr() string {
 }
 
 func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
-	deadline := time.After(timeout)
-	client := &http.Client{Timeout: 500 * time.Millisecond}
-	readyPath := normalizeHTTPPath(path)
-	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, readyPath)
-	for {
-		select {
-		case <-ctx.Done():
-			return false
-		case <-deadline:
-			return false
-		default:
-		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-		if err != nil {
-			return false
-		}
-		resp, err := client.Do(req)
-		if err == nil {
-			status := resp.StatusCode
-			resp.Body.Close()
-			if status == http.StatusOK {
-				return true
-			}
-			if legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
-				slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
-				return true
-			}
-		}
-		time.Sleep(100 * time.Millisecond)
+	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
+		return readyEndpointReady(probeCtx, client, port, path, true)
+	})
+}
+
+// waitForChildServingReady gates the Starting -> Running transition. Modern
+// devshardd children must be logically ready on their admin listener and also
+// serve health checks on the public listener that receives proxied traffic.
+func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
+	if c.adminPort == 0 {
+		return waitForReady(ctx, c.port, path, timeout)
 	}
+	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
+		return readyEndpointReady(probeCtx, client, c.adminPort, path, false) &&
+			publicEndpointReady(probeCtx, client, c.port)
+	})
+}
+
+func waitForReadiness(
+	ctx context.Context,
+	timeout time.Duration,
+	probe func(context.Context, *http.Client) bool,
+) bool {
+	probeCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+	client := &http.Client{Timeout: 500 * time.Millisecond}
+	for {
+		if probe(probeCtx, client) {
+			return true
+		}
+		retry := time.NewTimer(100 * time.Millisecond)
+		select {
+		case <-probeCtx.Done():
+			retry.Stop()
+			return false
+		case <-retry.C:
+		}
+	}
+}
+
+func readyEndpointReady(ctx context.Context, client *http.Client, port int, path string, allowLegacy bool) bool {
+	readyPath := normalizeHTTPPath(path)
+	status, err := getHTTPStatus(ctx, client, port, readyPath)
+	if err != nil {
+		return false
+	}
+	if status == http.StatusOK {
+		return true
+	}
+	if allowLegacy && legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
+		slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
+		return true
+	}
+	return false
+}
+
+func publicEndpointReady(ctx context.Context, client *http.Client, port int) bool {
+	status, err := getHTTPStatus(ctx, client, port, "/healthz")
+	return err == nil && status >= http.StatusOK && status < http.StatusMultipleChoices
+}
+
+func getHTTPStatus(ctx context.Context, client *http.Client, port int, path string) (int, error) {
+	url := fmt.Sprintf("http://%s:%d%s", childLoopbackHost, port, normalizeHTTPPath(path))
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return 0, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return 0, err
+	}
+	defer resp.Body.Close()
+	return resp.StatusCode, nil
 }
 
 func legacyReadyFallbackAllowed(path string, status int) bool {
