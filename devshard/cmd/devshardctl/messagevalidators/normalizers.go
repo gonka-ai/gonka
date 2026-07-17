@@ -2,7 +2,6 @@ package messagevalidators
 
 import (
 	"fmt"
-	"slices"
 )
 
 // Wire-format role values; kept as local literals so the package stays free of
@@ -55,43 +54,6 @@ func (OrphanToolMessageDropper) Apply(messages []any) ([]any, bool, error) {
 	return filtered, dropped, nil
 }
 
-// MinimaxOrphanToolMessageDropper drops role:"tool" messages on routes whose
-// tool messages carry no tool_call_id (e.g. MiniMax-M2.7). Orphan = tool
-// message appearing before any assistant.tool_calls[] block. The block stays
-// open across consecutive tool turns and resets on the next non-tool message.
-type MinimaxOrphanToolMessageDropper struct{}
-
-func (MinimaxOrphanToolMessageDropper) Apply(messages []any) ([]any, bool, error) {
-	inToolBlock := false
-	filtered := make([]any, 0, len(messages))
-	dropped := false
-	for _, raw := range messages {
-		msg, ok := raw.(map[string]any)
-		if !ok {
-			filtered = append(filtered, raw)
-			inToolBlock = false
-			continue
-		}
-		role, _ := msg["role"].(string)
-		switch role {
-		case roleAssistant:
-			inToolBlock = false
-			if calls, ok := msg["tool_calls"].([]any); ok && len(calls) > 0 {
-				inToolBlock = true
-			}
-		case roleTool:
-			if !inToolBlock {
-				dropped = true
-				continue
-			}
-		default:
-			inToolBlock = false
-		}
-		filtered = append(filtered, raw)
-	}
-	return filtered, dropped, nil
-}
-
 // EmptyAssistantTurnDropper drops role:"assistant" messages with no content
 // and no tool_calls / function_call — informationless placeholders left by
 // session-resume serializers.
@@ -118,12 +80,8 @@ func (EmptyAssistantTurnDropper) Apply(messages []any) ([]any, bool, error) {
 // EmptyContentNormalizer fills/normalizes content for special-case roles:
 //   - role:"tool" with missing, null, or empty content → ToolSentinel
 //   - role:"assistant" with empty content AND a tool_calls/function_call payload → null
-//
-// SkipRoles bypasses messages whose role is listed (e.g. MiniMax tool messages
-// carry array content with a non-OpenAI shape and must not be touched here).
 type EmptyContentNormalizer struct {
 	ToolSentinel string
-	SkipRoles    []string
 }
 
 func (n EmptyContentNormalizer) Apply(messages []any) ([]any, bool, error) {
@@ -134,9 +92,6 @@ func (n EmptyContentNormalizer) Apply(messages []any) ([]any, bool, error) {
 			continue
 		}
 		role, _ := msg["role"].(string)
-		if slices.Contains(n.SkipRoles, role) {
-			continue
-		}
 		content, exists := msg["content"]
 		switch {
 		case !exists, content == nil:
@@ -186,46 +141,15 @@ func (LegacyToolNameStripper) Apply(messages []any) ([]any, bool, error) {
 	return messages, changed, nil
 }
 
-// MinimaxToolCallIDStripper silently strips tool_call_id from role:"tool"
-// messages. Clients dual-emitting tool_call_id for cross-route portability
-// keep working — MiniMax itself correlates tool results positionally.
-type MinimaxToolCallIDStripper struct{}
-
-func (MinimaxToolCallIDStripper) Apply(messages []any) ([]any, bool, error) {
-	changed := false
-	for _, raw := range messages {
-		msg, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		role, _ := msg["role"].(string)
-		if role != roleTool {
-			continue
-		}
-		if _, exists := msg["tool_call_id"]; exists {
-			delete(msg, "tool_call_id")
-			changed = true
-		}
-	}
-	return messages, changed, nil
-}
-
 // TextPartsFlattener combines a content array of {type:"text",text} parts into
-// a single newline-joined string. SkipRoles bypasses messages whose role is
-// listed (e.g. MiniMax tool messages keep their {name,type,text}[] shape).
-type TextPartsFlattener struct {
-	SkipRoles []string
-}
+// a single newline-joined string.
+type TextPartsFlattener struct{}
 
 func (n TextPartsFlattener) Apply(messages []any) ([]any, bool, error) {
 	changed := false
 	for index, raw := range messages {
 		msg, ok := raw.(map[string]any)
 		if !ok {
-			continue
-		}
-		role, _ := msg["role"].(string)
-		if slices.Contains(n.SkipRoles, role) {
 			continue
 		}
 		content, exists := msg["content"]

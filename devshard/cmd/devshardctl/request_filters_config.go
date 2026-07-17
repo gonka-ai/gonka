@@ -93,12 +93,6 @@ const (
 	// Tokens reserved for visible content after </think>. ttb is clamped
 	// to (max_tokens - this).
 	kimiContentHeadroomMin uint64 = 64
-
-	MinimaxToolMessageMaxEntries = 16
-	MinimaxToolMessageNameMaxLen = 64
-	// 64 KiB per-entry defensive cap; no vendor recommendation (MiniMax-4 fixes shape,
-	// not size). Sized to fit common agent tool-results (file reads, build logs).
-	MinimaxToolMessageTextMaxSize = 64 * 1024
 )
 
 // Routed model identifiers. The parameter catalog and the message processor
