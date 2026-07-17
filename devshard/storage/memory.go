@@ -60,13 +60,15 @@ type sessionData struct {
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionData
+	mu          sync.RWMutex
+	sessions    map[string]*sessionData
+	escrowCache map[string]EscrowCacheInfo
 }
 
 func NewMemory() *Memory {
 	return &Memory{
-		sessions: make(map[string]*sessionData),
+		sessions:    make(map[string]*sessionData),
+		escrowCache: make(map[string]EscrowCacheInfo),
 	}
 }
 
@@ -421,6 +423,11 @@ func (m *Memory) PruneEpoch(epochID uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	for id, info := range m.escrowCache {
+		if info.EpochID == epochID {
+			delete(m.escrowCache, id)
+		}
+	}
 	return nil
 }
 
@@ -433,6 +440,52 @@ func (m *Memory) pruneBefore(cutoff uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	for id, info := range m.escrowCache {
+		if info.EpochID < cutoff {
+			delete(m.escrowCache, id)
+		}
+	}
+	return nil
+}
+
+func (m *Memory) PutEscrowCache(info EscrowCacheInfo) error {
+	if info.EscrowID == "" {
+		return fmt.Errorf("escrow cache: empty escrow_id")
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	cp := info
+	if info.AppHash != nil {
+		cp.AppHash = append([]byte(nil), info.AppHash...)
+	}
+	if info.Slots != nil {
+		cp.Slots = append([]string(nil), info.Slots...)
+	}
+	m.escrowCache[info.EscrowID] = cp
+	return nil
+}
+
+func (m *Memory) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	info, ok := m.escrowCache[escrowID]
+	if !ok {
+		return nil, ErrEscrowCacheNotFound
+	}
+	cp := info
+	if info.AppHash != nil {
+		cp.AppHash = append([]byte(nil), info.AppHash...)
+	}
+	if info.Slots != nil {
+		cp.Slots = append([]string(nil), info.Slots...)
+	}
+	return &cp, nil
+}
+
+func (m *Memory) DeleteEscrowCache(escrowID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	delete(m.escrowCache, escrowID)
 	return nil
 }
 

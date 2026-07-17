@@ -1059,6 +1059,9 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_session_index WHERE epoch_id = $1`, epochID); err != nil {
 		return fmt.Errorf("prune session index for epoch %d: %w", epochID, err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id = $1`, epochID); err != nil {
+		return fmt.Errorf("prune escrow cache for epoch %d: %w", epochID, err)
+	}
 
 	s.mu.Lock()
 	delete(s.knownEpochs, epochID)
@@ -1112,6 +1115,9 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_session_index WHERE epoch_id < $1`, cutoff); err != nil {
 		return fmt.Errorf("prune session index before epoch %d: %w", cutoff, err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id < $1`, cutoff); err != nil {
+		return fmt.Errorf("prune escrow cache before epoch %d: %w", cutoff, err)
+	}
 
 	s.mu.Lock()
 	for epochID := range s.knownEpochs {
@@ -1125,6 +1131,54 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		}
 	}
 	s.mu.Unlock()
+	return nil
+}
+
+func (s *Postgres) PutEscrowCache(info EscrowCacheInfo) error {
+	raw, err := marshalEscrowCache(info)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	_, err = s.pool.Exec(ctx, `
+		INSERT INTO devshard_escrow_cache (escrow_id, epoch_id, escrow_json, cached_at)
+		VALUES ($1, $2, $3, $4)
+		ON CONFLICT (escrow_id) DO UPDATE SET
+		  epoch_id = EXCLUDED.epoch_id,
+		  escrow_json = EXCLUDED.escrow_json,
+		  cached_at = EXCLUDED.cached_at`,
+		info.EscrowID, info.EpochID, raw, escrowCacheNowUnix(),
+	)
+	if err != nil {
+		return fmt.Errorf("put escrow cache: %w", err)
+	}
+	return nil
+}
+
+func (s *Postgres) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var raw string
+	err := s.pool.QueryRow(ctx,
+		`SELECT escrow_json FROM devshard_escrow_cache WHERE escrow_id = $1`, escrowID,
+	).Scan(&raw)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, ErrEscrowCacheNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get escrow cache: %w", err)
+	}
+	return unmarshalEscrowCache(raw)
+}
+
+func (s *Postgres) DeleteEscrowCache(escrowID string) error {
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	_, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE escrow_id = $1`, escrowID)
+	if err != nil {
+		return fmt.Errorf("delete escrow cache: %w", err)
+	}
 	return nil
 }
 

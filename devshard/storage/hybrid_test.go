@@ -88,6 +88,18 @@ func (r *recordingStorage) GetValidationObservability(escrowID string) ([]SlotVa
 	r.lastMethod = "GetValidationObservability"
 	return nil, nil
 }
+func (r *recordingStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	r.lastMethod = "PutEscrowCache"
+	return nil
+}
+func (r *recordingStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	r.lastMethod = "GetEscrowCache"
+	return nil, ErrEscrowCacheNotFound
+}
+func (r *recordingStorage) DeleteEscrowCache(escrowID string) error {
+	r.lastMethod = "DeleteEscrowCache"
+	return nil
+}
 func (r *recordingStorage) PruneEpoch(epochID uint64) error {
 	r.lastMethod = "PruneEpoch"
 	return nil
@@ -163,6 +175,50 @@ func (o *owningRecordingStorage) CreateSession(params CreateSessionParams) error
 	}
 	o.owned[params.EscrowID] = struct{}{}
 	return nil
+}
+
+type failingPutEscrowCacheStorage struct {
+	Memory
+	err error
+}
+
+func (f *failingPutEscrowCacheStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	if f.err != nil {
+		return f.err
+	}
+	return f.Memory.PutEscrowCache(info)
+}
+
+func TestHybridStorage_PutEscrowCache_WritesBothBackends(t *testing.T) {
+	sqlite := NewMemory()
+	pg := NewMemory()
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	info := EscrowCacheInfo{EscrowID: "e1", EpochID: 3, Amount: 9}
+	require.NoError(t, h.PutEscrowCache(info))
+
+	gotSQLite, err := sqlite.GetEscrowCache("e1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), gotSQLite.Amount)
+
+	gotPG, err := pg.GetEscrowCache("e1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), gotPG.Amount)
+}
+
+func TestHybridStorage_PutEscrowCache_SoftFailsPartialWrite(t *testing.T) {
+	sqlite := &failingPutEscrowCacheStorage{err: errors.New("sqlite down")}
+	pg := NewMemory()
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	require.NoError(t, h.PutEscrowCache(EscrowCacheInfo{EscrowID: "e2", EpochID: 1, Amount: 5}))
+
+	_, err := sqlite.GetEscrowCache("e2")
+	require.ErrorIs(t, err, ErrEscrowCacheNotFound)
+
+	got, err := h.GetEscrowCache("e2")
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), got.Amount)
 }
 
 func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
