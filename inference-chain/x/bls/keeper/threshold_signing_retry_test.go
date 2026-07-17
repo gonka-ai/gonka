@@ -258,6 +258,30 @@ func TestAddPartialSignature_ExpiredRequestAutoRetryAndTerminalExpiry(t *testing
 	require.EqualValues(t, 2, terminalRequest.Attempt)
 }
 
+func TestAddPartialSignature_ExpiredRequestRetryErrorFallsBackToExpired(t *testing.T) {
+	k, ctx := setupBlsKeeperForRetryTests(t)
+	epochID := uint64(453)
+	setSignedEpochForRetryTests(t, k, ctx, epochID)
+	setMaxSigningAttemptsForRetryTests(t, k, ctx, 2)
+
+	signingData := makeSigningDataForRetryTests(epochID, 93)
+	require.NoError(t, k.RequestThresholdSignature(ctx, signingData))
+
+	initialRequest, err := k.GetSigningStatus(ctx, signingData.RequestId)
+	require.NoError(t, err)
+	require.EqualValues(t, 1, initialRequest.Attempt)
+
+	expiryCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight + 1)
+	runtime.KVStoreAdapter(k.storeService.OpenKVStore(expiryCtx)).Set(types.ParamsKey, []byte{0xFF})
+
+	require.NoError(t, k.AddPartialSignature(expiryCtx, signingData.RequestId, []uint32{1}, []byte{1}, ""))
+
+	expiredRequest, err := k.GetSigningStatus(expiryCtx, signingData.RequestId)
+	require.NoError(t, err)
+	require.Equal(t, types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED, expiredRequest.Status)
+	require.EqualValues(t, 1, expiredRequest.Attempt)
+}
+
 func TestMaybeAutoRetryThresholdSigningRequest_PreservesPartialSignatures(t *testing.T) {
 	k, ctx := setupBlsKeeperForRetryTests(t)
 	epochID := uint64(452)

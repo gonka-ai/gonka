@@ -414,6 +414,12 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		if retryErr != nil {
 			k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
 				"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
+			return k.finalizeFailedThresholdSigningRequest(
+				ctx,
+				request,
+				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+				"request expired",
+			)
 		} else if retried {
 			request, err = k.GetSigningStatus(ctx, requestID)
 			if err != nil {
