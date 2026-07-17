@@ -1,4 +1,4 @@
-# Stack citest scenarios (S1–S6)
+# Stack citest scenarios (S1–S8)
 
 Implemented Go integration tests for the devshard testenv v2 stack. Each scenario
 boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
@@ -32,7 +32,7 @@ HTTP/gRPC helpers, log dump on failure.
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack          # S1–S6
+make citest-stack          # S1–S8
 ```
 
 Or run a single scenario:
@@ -45,7 +45,7 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestS3_ParamsLongPoll -v
 |----------------|---------|
 | `TESTENV_CITEST=1` | Opt-in gate (`harness.SkipUnlessEnv`) |
 | `-tags=testenvci` | Build tag on `s*_*.go` tests |
-| `make citest-stack` | Builds mock images + runs all S1–S6 |
+| `make citest-stack` | Builds mock images + runs all S1–S8 |
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
 
@@ -61,6 +61,8 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **S4** | Epoch switch | Epoch advance fast-forwards chain + bumps epoch in long-poll | `TestS4_EpochSwitch` |
 | **S5** | Gateway chat | devshardctl → router → devshardd → mock-openai (stream + non-stream) | `TestS5_GatewayChat` |
 | **S6** | versiond fault & restart | Stop without failover; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
+| **S7** | Legacy version pin | Non-HA path → `VERSIOND_LEGACY_HOST` only; HA path still multi-upstream | `TestS7_LegacyVersionPinnedToSingleHost` |
+| **S8** | SQLite → HA-fail → PG migrate | §3.3 Phases 0–4: sqlite single-host, multi-host 503, postgres migrate, HA OK | `TestS8_SqliteHaFailMigrate` |
 
 Source: `devshard/testenv/citest/s{1..6}_*.go` (S6 spans `s6_versiond_stop_test.go` and `s6_versiond_restart_test.go`).
 
@@ -116,6 +118,55 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 **Pass criteria:** Stable upstream for session A; at least one session B routes elsewhere.
 Validates deploy/join-style sticky routing before chat or long-poll scenarios depend on it.
+
+---
+
+## S7 — Legacy version pinned to single host
+
+**What we test:** versiond-router sends version prefixes listed in
+`VERSIOND_NON_HA_VERSIONS` only to `VERSIOND_LEGACY_HOST` (`versiond_legacy`),
+while other versions sticky-hash across `VERSIOND_HOSTS` (and get
+`Devshard-Ha: true` for multi-host HA).
+
+**How:**
+
+1. Boot S1 stack (`VERSIOND_NON_HA_VERSIONS=v1`; legacy host `versiond-0`).
+2. Probe `/v1/sessions/<id>/healthz` for 16 distinct session ids. Assert every
+   response has `X-Versiond-Backend: versiond_legacy` and the same
+   `X-Upstream-Addr` mapped to `versiond-0`.
+3. Reuse S2-style probes on `VersionName` (e.g. `v2`); require ≥2 distinct
+   upstreams and `X-Versiond-Backend: versiond_ha_pool`.
+4. Stop the non-legacy versiond; repeat legacy probes — still pinned to
+   `versiond-0`.
+
+**Pass criteria:** Non-HA path never fans out; HA path still multi-upstream.
+See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
+
+---
+
+## S8 — SQLite → Devshard-Ha fail → Postgres migrate → HA
+
+**What we test:** full §3.3 walkthrough from
+`devshard/docs/pr-1366-deploy-test-plan.md` (Phases 0–4).
+
+**How:**
+
+1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
+   and `VERSIOND_HOSTS=versiond-0` only; stop `versiond-1`.
+2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` →
+   `versiond_ha_pool` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
+3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
+   (`escrow_epoch`).
+4. **Phase 2:** Expand `VERSIOND_HOSTS` to both hosts; recreate router; start
+   `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
+   still legacy-pinned.
+5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
+   Assert `*.migrated.*`, `.pg-bound`, and Postgres `devshard_session_index`
+   matches the SQLite inventory.
+6. **Phase 4:** Gateway chat OK; sticky fan-out across hosts; NON_HA unchanged.
+
+**Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
+index; HA + postgres serves. Test: `TestS8_SqliteHaFailMigrate`.
 
 ---
 
@@ -233,7 +284,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 ---
 
-## Related tests (not S1–S6)
+## Related tests (not S1–S8)
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|

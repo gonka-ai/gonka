@@ -115,6 +115,20 @@ Key runtime environment variables:
 | `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
 
+When `VERSIOND_SERVICE_NAME=versiond-router`, this proxy still has a **single**
+upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
+**versiond-router** itself:
+
+| Router env | Role |
+| --- | --- |
+| `VERSIOND_HOSTS` | HA pool (space-separated) |
+| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: first of `VERSIOND_HOSTS`) |
+| `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (whitespace and/or comma). Empty = all versions HA. Future versions are HA by default |
+
+Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
+`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See `versiond-router/` and
+`devshard/docs/pr-1366-deploy-test-plan.md`.
+
 ### edge-api vs dapi routing
 
 `/v1/` is split across two backends. The proxy registers **exact/regex locations for read-only query paths** before the generic `/v1/` catch-all:

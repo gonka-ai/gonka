@@ -44,7 +44,8 @@ const (
 //
 // Multi-instance / fail-closed deployments must set
 // DEVSHARD_STORAGE_MODE=postgres explicitly. VERSIOND_FORCE never implies
-// postgres.
+// postgres. See ConfiguredForHA / RequireConfiguredForHA for the check used
+// when versiond-router sets the Devshard-Ha request header.
 func Resolve() (Mode, error) {
 	raw := strings.ToLower(strings.TrimSpace(os.Getenv(EnvStorageMode)))
 	if raw == "" {

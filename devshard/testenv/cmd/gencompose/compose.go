@@ -181,6 +181,10 @@ services:
     environment:
       VERSIOND_HOSTS: "{{ versiondHosts . }}"
       VERSIOND_PORT: "8080"
+      # Pin only explicitly non-HA paths to the SQLite host; VersionName and all
+      # future versions sticky-hash across VERSIOND_HOSTS (Devshard-Ha header).
+      VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
+      VERSIOND_NON_HA_VERSIONS: "v1"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
     networks:
@@ -238,10 +242,11 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix": versionEnvSuffix,
-		"versiondHosts":    versiondHosts,
-		"primaryEscrowID":  primaryEscrowID,
-		"primaryModelID":   primaryModelID,
+		"versionEnvSuffix":    versionEnvSuffix,
+		"versiondHosts":       versiondHosts,
+		"legacyVersiondHost":  legacyVersiondHost,
+		"primaryEscrowID":     primaryEscrowID,
+		"primaryModelID":      primaryModelID,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -283,6 +288,14 @@ func versiondHosts(cfg *config.File) string {
 		names[i] = h.ID
 	}
 	return strings.Join(names, " ")
+}
+
+// legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.
+func legacyVersiondHost(cfg *config.File) string {
+	if len(cfg.Hosts) == 0 {
+		return ""
+	}
+	return cfg.Hosts[0].ID
 }
 
 func primaryEscrowID(cfg *config.File) string {

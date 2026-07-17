@@ -1,4 +1,34 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-render
+
+test-render:
+	@tmpdir=$$(mktemp -d); \
+	VERSIOND_HOSTS='versiond versiond2' \
+	VERSIOND_LEGACY_HOST=versiond \
+	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	./entrypoint.sh >/dev/null; \
+	grep -q 'default versiond_ha_pool' "$$tmpdir/mixed.conf"; \
+	grep -q 'v1 versiond_legacy' "$$tmpdir/mixed.conf"; \
+	grep -q 'v2 versiond_legacy' "$$tmpdir/mixed.conf"; \
+	grep -q 'v3 versiond_legacy' "$$tmpdir/mixed.conf"; \
+	grep -q 'versiond_ha_pool "true"' "$$tmpdir/mixed.conf"; \
+	grep -q 'proxy_set_header Devshard-Ha' "$$tmpdir/mixed.conf"; \
+	VERSIOND_HOSTS='versiond versiond2' \
+	VERSIOND_NON_HA_VERSIONS= \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/allha.conf" \
+	./entrypoint.sh >/dev/null; \
+	grep -q 'default versiond_ha_pool' "$$tmpdir/allha.conf"; \
+	! grep -q 'versiond_legacy;' "$$tmpdir/allha.conf" || ! grep -q 'v1 versiond_legacy' "$$tmpdir/allha.conf"; \
+	VERSIOND_HOSTS='versiond' \
+	VERSIOND_NON_HA_VERSIONS= \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/single.conf" \
+	./entrypoint.sh >/dev/null; \
+	! grep -q 'versiond_ha_pool "true"' "$$tmpdir/single.conf"; \
+	echo "test-render: ok"; \
+	rm -rf "$$tmpdir"
 
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0

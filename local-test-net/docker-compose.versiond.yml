@@ -78,6 +78,9 @@ services:
     environment:
       VERSIOND_HOSTS: ${VERSIOND_HOSTS:-${KEY_NAME}-versiond ${KEY_NAME}-versiond-2 ${KEY_NAME}-versiond-3}
       VERSIOND_PORT: ${VERSIOND_PORT:-8080}
+      VERSIOND_LEGACY_HOST: ${VERSIOND_LEGACY_HOST:-${KEY_NAME}-versiond}
+      # Empty = all versions HA. Set e.g. "v1 v2 v3" for mixed SQLite/Postgres rollouts.
+      VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS:-}
     networks:
       - chain-public
 
