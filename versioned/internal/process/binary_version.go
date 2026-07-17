@@ -16,6 +16,7 @@ const (
 	printBinaryVersionFlag   = "--print-binary-version"
 	printProtocolVersionFlag = "--print-protocol-version"
 	printAdminAPIVersionFlag = "--print-admin-api-version"
+	printStorageModeFlag     = "--print-storage-mode"
 )
 
 var (
@@ -30,6 +31,7 @@ type childPreflight struct {
 	// name (approved_versions.name, e.g. v2).
 	binaryLogVersion  string
 	adminAPISupported bool
+	storageMode       string
 }
 
 // preflightChild verifies a downloaded binary when --print-* flags are
@@ -78,6 +80,7 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 	}
 
 	adminSupported := false
+	storageMode := ""
 	if probeAdmin {
 		if _, adminErr := readAdminAPIVersion(binPath); adminErr != nil {
 			if !errors.Is(adminErr, errVersionFlagUnsupported) {
@@ -86,11 +89,27 @@ func preflightChildWithAdminProbe(binPath, slotName string, probeAdmin bool) (ch
 		} else {
 			adminSupported = true
 		}
+
+		mode, modeErr := readStorageMode(binPath)
+		if modeErr != nil {
+			if !errors.Is(modeErr, errVersionFlagUnsupported) {
+				return childPreflight{}, fmt.Errorf("read storage mode: %w", modeErr)
+			}
+			slog.Warn(
+				"--print-storage-mode unsupported, treating devshard storage mode as legacy",
+				"slot", slotName,
+				"bin", binPath,
+				"error", modeErr,
+			)
+		} else {
+			storageMode = mode
+		}
 	}
 
 	return childPreflight{
 		binaryLogVersion:  binaryLogVersion,
 		adminAPISupported: adminSupported,
+		storageMode:       storageMode,
 	}, nil
 }
 
@@ -151,4 +170,8 @@ func readProtocolVersion(binPath string) (string, error) {
 
 func readAdminAPIVersion(binPath string) (string, error) {
 	return readEmbeddedVersion(binPath, printAdminAPIVersionFlag)
+}
+
+func readStorageMode(binPath string) (string, error) {
+	return readEmbeddedVersion(binPath, printStorageModeFlag)
 }

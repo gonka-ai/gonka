@@ -178,25 +178,34 @@ table at that moment. A request that already started keeps its own connection to
 the old child until it completes; only *new* requests observe the swapped route.
 The only thing we must change is: **stop killing the old child immediately**.
 
-### 1.2 Storage prerequisite (must resolve first)
+### 1.2 Storage prerequisite
 
 Rolling update means old + new `devshardd` run **concurrently**. That only
-works when durable state lives in a **shared external database** (Postgres in a
-separate process). **SQLite is not supported** for rolling update.
+works when durable state lives in **Postgres-only** storage. SQLite and hybrid
+fallback modes are not safe for overlap: two children can touch the same local
+data dir, and a new HA child can migrate/quarantine SQLite files while an old
+hybrid child is still running.
 
-- **Postgres** (`PGHOST` + related `PG*` env): session store (`devshard/storage`),
-  payloads, and validation leases are multi-writer and shared — safe for
-  overlap. Validation leases dedupe duplicate validation across instances.
-- **SQLite** (`devshard/storage` under `cfg.DataDir`): single-writer file.
-  Two `devshardd` processes opening the same data dir will contend / corrupt.
-  Do not enable blue/green drain without Postgres.
+- **Postgres-only** (`DEVSHARD_STORAGE_MODE=postgres`, with `PGHOST` / `PG*`
+  connection env): sessions, payloads, and validation leases are external and
+  shared. This is the only mode that permits blue/green overlap.
+- **SQLite** or **hybrid** (`sqlite`, `hybrid`, or default `auto` with `PGHOST`
+  resolving to `hybrid`): local fallback can write files under the child's data
+  dir. Do not run old and new children concurrently in these modes.
 
-**Requirement:** point every child at the same external Postgres before enabling
-overlap. versiond must fail closed to stop/start when `PGHOST` is unset or when
-the devshard data dir still has SQLite-owned sessions in `_meta.db`.
-Single-instance / local dev without overlap may keep using SQLite; see
-`devshard/docs/storage-design.md` (storage-mode selection) and
-`devshard/docs/release-0.2.13-v2-r2.md` (HA ⇒ Postgres).
+versiond does not reimplement storage-mode resolution. For devshard children it
+probes the binary that will actually run:
+
+- the currently running child records its startup answer to
+  `--print-storage-mode`;
+- the incoming binary is probed with `--print-storage-mode` before overlap;
+- blue/green is allowed only when **both** answers are exactly `postgres`.
+
+Any uncertainty — old binary without the flag, new binary without the flag,
+invalid env, a non-`postgres` mode, or a future unknown mode — fails closed to
+the compatible stop-then-start path. This makes the first migration into
+`DEVSHARD_STORAGE_MODE=postgres` exclusive, and only later updates of
+Postgres-only binaries use blue/green.
 
 ### 1.3 devshardd changes
 
@@ -310,14 +319,15 @@ New flow (replaces lines 392–419):
 
 ```text
 1. downloadBinary(new sha)                      // old child untouched in memory
-2. newChild = startChild(version, NEW port)   // same PGHOST / shared Postgres, no SQLite-owned sessions
-3. if !waitForReady(newChild, VERSIOND_READY_TIMEOUT):
+2. require old+new --print-storage-mode == postgres, else stop/start fallback
+3. newChild = startChild(version, NEW port)   // Postgres-only overlap
+4. if !waitForReady(newChild, VERSIOND_READY_TIMEOUT):
         stop newChild; keep old serving; abort swap (retry next poll)
-4. lock: move old child from processes -> draining[name]
+5. lock: move old child from processes -> draining[name]
          set processes[name] = newChild (status running)
          rebuildRoutes()        // route now points to NEW port
    unlock
-5. go drainOld(oldChild):
+6. go drainOld(oldChild):
         deadline = now + VERSIOND_DRAIN_TIMEOUT
         loop every VERSIOND_DRAIN_POLL_INTERVAL:
             if inflight(oldChild) == 0: break
@@ -330,9 +340,9 @@ New flow (replaces lines 392–419):
 Key invariants this enforces:
 
 - **New ready before traffic:** route is swapped only after `/ready` is `200`
-  (step 3–4).
-- **Route new requests to new:** step 4 atomic route swap.
-- **Old finishes in-flight:** step 5 waits for `inflight == 0` before any
+  (step 4–5).
+- **Route new requests to new:** step 5 atomic route swap.
+- **Old finishes in-flight:** step 6 waits for `inflight == 0` before any
   signal; the proxy keeps existing requests on the old connection meanwhile.
 - **Don't kill until idle:** `SIGTERM` is sent only after idle or the safety
   `VERSIOND_DRAIN_TIMEOUT`.
@@ -431,6 +441,11 @@ preflight flags existed. Compatibility is intentionally narrow:
   `DEVSHARD_ADMIN_ADDR` and sends readiness/drain traffic to that private
   listener. If it is unsupported, versiond keeps using the legacy public
   lifecycle paths for that child.
+- `--print-storage-mode` is a devshardd storage safety probe. A child that does
+  not support it can still start, but versiond treats its mode as unknown and
+  will not blue/green-overlap it with another devshardd process. Rolling overlap
+  opens only when the running child recorded `postgres` and the incoming binary
+  also prints `postgres`.
 - readiness fallback applies only to the default `VERSIOND_READY_PATH=/ready`.
   If `/ready` is missing with 404/405/501, versiond tries `/healthz`, then a TCP
   connect probe. Custom readiness paths do not use this fallback.

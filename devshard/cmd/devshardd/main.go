@@ -27,8 +27,8 @@ var Version = "dev"
 var BinaryVersion = "dev-log"
 
 func main() {
-	if maybePrintVersionAndExit(os.Args[1:]) {
-		return
+	if code, handled := maybePrintVersion(os.Args[1:], os.Stdout, os.Stderr); handled {
+		os.Exit(code)
 	}
 	if err := run(context.Background(), os.Args[1:], Version, BinaryVersion); err != nil {
 		log.Fatalf("devshardd: %v", err)

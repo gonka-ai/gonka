@@ -2,7 +2,6 @@ package process
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -25,8 +24,6 @@ import (
 	"versioned/internal/download"
 	"versioned/internal/health"
 	"versioned/internal/oracle"
-
-	_ "modernc.org/sqlite"
 )
 
 const (
@@ -38,7 +35,7 @@ const (
 	childLoopbackHost            = "127.0.0.1"
 	invalidChildPort             = -1
 	maxChildPort                 = 65535
-	devshardMetaDBFile           = "_meta.db"
+	storageModePostgres          = "postgres"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
 	managerShutdownOverhead      = 5 * time.Second
@@ -50,6 +47,7 @@ type child struct {
 	version       oracle.Version
 	archiveSHA256 string
 	binaryVersion string
+	storageMode   string
 	binPath       string
 	port          int
 	adminPort     int
@@ -525,7 +523,8 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		return ctx.Err()
 	}
 
-	if !m.rollingOverlapAllowed(v.Name) {
+	newBinPath := m.installBinPath(v.Name, sha)
+	if !m.rollingOverlapAllowed(v.Name, old, newBinPath) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		old.cancel()
 		waitForChild(old, m.childStopTimeout())
@@ -534,13 +533,13 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		if current, ok := m.processes[v.Name]; ok && current == old {
 			delete(m.processes, v.Name)
 		}
-		m.startChild(ctx, v, sha, m.installBinPath(v.Name, sha), true)
+		m.startChild(ctx, v, sha, newBinPath, true)
 		m.mu.Unlock()
 		return nil
 	}
 
 	m.mu.Lock()
-	newChild := m.newChild(ctx, v, sha, m.installBinPath(v.Name, sha), false)
+	newChild := m.newChild(ctx, v, sha, newBinPath, false)
 	m.mu.Unlock()
 	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
@@ -867,6 +866,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
+	c.storageMode = preflight.storageMode
 	if preflight.adminAPISupported && c.adminPort == 0 {
 		c.adminPort = m.assignPort()
 	}
@@ -1039,45 +1039,48 @@ func parseDevshardShutdownGrace(raw string) time.Duration {
 	return d
 }
 
-func (m *Manager) rollingOverlapAllowed(versionName string) bool {
+func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPath string) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
 	}
-	if strings.TrimSpace(os.Getenv("PGHOST")) == "" {
+
+	m.mu.Lock()
+	oldMode := ""
+	if old != nil {
+		oldMode = old.storageMode
+	}
+	m.mu.Unlock()
+
+	if oldMode != storageModePostgres {
+		slog.Warn(
+			"rolling overlap disabled: running devshard storage mode is not postgres",
+			"version", versionName,
+			"storage_mode", oldMode,
+		)
 		return false
 	}
-	hasSQLite, err := hasDevshardSQLiteSessions(filepath.Join(m.cfg.DataDir, versionName))
+
+	newMode, err := readStorageMode(newBinPath)
 	if err != nil {
-		slog.Warn("rolling overlap disabled: cannot probe devshard sqlite sessions", "version", versionName, "error", err)
+		slog.Warn(
+			"rolling overlap disabled: cannot probe new devshard storage mode",
+			"version", versionName,
+			"bin", newBinPath,
+			"error", err,
+		)
 		return false
 	}
-	if hasSQLite {
-		slog.Warn("rolling overlap disabled: devshard sqlite sessions are still present", "version", versionName)
+	if newMode != storageModePostgres {
+		slog.Warn(
+			"rolling overlap disabled: new devshard storage mode is not postgres",
+			"version", versionName,
+			"bin", newBinPath,
+			"storage_mode", newMode,
+		)
 		return false
 	}
 	return true
-}
-
-func hasDevshardSQLiteSessions(dataDir string) (bool, error) {
-	path := filepath.Join(dataDir, devshardMetaDBFile)
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
-		return false, err
-	}
-	db, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
-	if err != nil {
-		return false, fmt.Errorf("open meta db: %w", err)
-	}
-	defer db.Close()
-
-	var count int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM escrow_epoch`).Scan(&count); err != nil {
-		return false, fmt.Errorf("count escrow_epoch: %w", err)
-	}
-	return count > 0, nil
 }
 
 func waitForChildReady(ctx context.Context, c *child) error {

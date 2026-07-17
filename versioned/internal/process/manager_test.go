@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net"
@@ -220,6 +219,9 @@ esac
 	if preflight.adminAPISupported {
 		t.Fatal("expected unsupported admin API flag to keep public lifecycle fallback")
 	}
+	if preflight.storageMode != "" {
+		t.Fatalf("storageMode = %q, want legacy empty value", preflight.storageMode)
+	}
 }
 
 func TestPreflightChild_AdminAPISupported(t *testing.T) {
@@ -230,6 +232,7 @@ case "$1" in
 --print-binary-version) echo "0.2.13-v2-r2" ;;
 --print-protocol-version) echo "v2" ;;
 --print-admin-api-version) echo "1" ;;
+--print-storage-mode) echo "postgres" ;;
 *) echo "unknown flag: $1" >&2; exit 2 ;;
 esac
 `
@@ -243,6 +246,30 @@ esac
 	}
 	if !preflight.adminAPISupported {
 		t.Fatal("expected admin API support to be detected")
+	}
+	if preflight.storageMode != "postgres" {
+		t.Fatalf("storageMode = %q, want postgres", preflight.storageMode)
+	}
+}
+
+func TestPreflightChild_StorageModeProbeErrorFailsClosed(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "stamped-bin")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v2" ;;
+--print-admin-api-version) echo "1" ;;
+--print-storage-mode) echo "bad storage env" >&2; exit 1 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := preflightChildWithAdminProbe(binPath, "v2", true); err == nil {
+		t.Fatal("expected storage mode probe error to fail preflight")
 	}
 }
 
@@ -561,27 +588,35 @@ func TestInstallBinPathUsesVersionAndSHA(t *testing.T) {
 }
 
 func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
-	t.Setenv("PGHOST", "")
-	dataDir := t.TempDir()
-	devshardMgr := NewManager(config.Config{DataDir: dataDir, BinaryName: "devshard", BasePort: 5000})
-	if devshardMgr.rollingOverlapAllowed("v1") {
-		t.Fatal("devshard overlap should require PGHOST")
+	dir := t.TempDir()
+	postgresBin := writeStorageModeProbeBinary(t, dir, "postgres-bin", "postgres")
+	hybridBin := writeStorageModeProbeBinary(t, dir, "hybrid-bin", "hybrid")
+	errorBin := writeStorageModeErrorBinary(t, dir, "error-bin")
+	legacyBin := writeStorageModeLegacyBinary(t, dir, "legacy-bin")
+
+	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, postgresBin) {
+		t.Fatal("devshard overlap should be disabled when running child storage mode is unknown")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, postgresBin) {
+		t.Fatal("devshard overlap should be disabled when running child is not postgres-only")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, legacyBin) {
+		t.Fatal("devshard overlap should be disabled when new binary does not expose storage mode")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, hybridBin) {
+		t.Fatal("devshard overlap should be disabled when new binary is not postgres-only")
+	}
+	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, errorBin) {
+		t.Fatal("devshard overlap should be disabled when new binary storage probe fails")
+	}
+	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, postgresBin) {
+		t.Fatal("devshard overlap should be allowed when both children are postgres-only")
 	}
 
-	t.Setenv("PGHOST", "postgres")
-	if !devshardMgr.rollingOverlapAllowed("v1") {
-		t.Fatal("devshard overlap should be allowed when PGHOST is set and sqlite has no sessions")
-	}
-
-	writeDevshardMetaDB(t, filepath.Join(dataDir, "v1"), 1)
-	if devshardMgr.rollingOverlapAllowed("v1") {
-		t.Fatal("devshard overlap should be disabled while sqlite sessions are present")
-	}
-
-	t.Setenv("PGHOST", "")
 	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
-	if !testappMgr.rollingOverlapAllowed("v1") {
-		t.Fatal("non-devshard test binary should allow overlap without PGHOST")
+	if !testappMgr.rollingOverlapAllowed("v1", &child{}, legacyBin) {
+		t.Fatal("non-devshard test binary should allow overlap without storage mode probing")
 	}
 }
 
@@ -1367,24 +1402,47 @@ func startLocalHTTPServer(t *testing.T, handler http.Handler) (int, func()) {
 	return ln.Addr().(*net.TCPAddr).Port, shutdown
 }
 
-func writeDevshardMetaDB(t *testing.T, dataDir string, rows int) {
+func writeStorageModeProbeBinary(t *testing.T, dir, name, storageMode string) string {
 	t.Helper()
-	if err := os.MkdirAll(dataDir, 0o755); err != nil {
+	binPath := filepath.Join(dir, name)
+	script := `#!/bin/sh
+case "$1" in
+--print-storage-mode) echo "` + storageMode + `" ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	db, err := sql.Open("sqlite", filepath.Join(dataDir, devshardMetaDBFile))
-	if err != nil {
+	return binPath
+}
+
+func writeStorageModeLegacyBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	binPath := filepath.Join(dir, name)
+	script := `#!/bin/sh
+echo "unknown flag: $1" >&2
+exit 2
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	defer db.Close()
-	if _, err := db.Exec(`CREATE TABLE escrow_epoch (escrow_id TEXT PRIMARY KEY, epoch_id INTEGER NOT NULL)`); err != nil {
+	return binPath
+}
+
+func writeStorageModeErrorBinary(t *testing.T, dir, name string) string {
+	t.Helper()
+	binPath := filepath.Join(dir, name)
+	script := `#!/bin/sh
+case "$1" in
+--print-storage-mode) echo "invalid storage env" >&2; exit 1 ;;
+*) echo "unknown flag: $1" >&2; exit 2 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	for i := 0; i < rows; i++ {
-		if _, err := db.Exec(`INSERT INTO escrow_epoch (escrow_id, epoch_id) VALUES (?, ?)`, "escrow-"+string(rune('a'+i)), i+1); err != nil {
-			t.Fatal(err)
-		}
-	}
+	return binPath
 }
 
 func writeInstalledVersion(t *testing.T, binDir, versionName, sha, binaryName string, modTime time.Time) {
