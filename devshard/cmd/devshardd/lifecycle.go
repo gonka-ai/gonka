@@ -54,10 +54,12 @@ func (s *lifecycleState) middleware(next echo.HandlerFunc) echo.HandlerFunc {
 		if isLifecycleBypassPath(c.Request().URL.Path) {
 			return next(c)
 		}
+		// Count first so drain cannot report idle after this request is admitted.
+		s.addInflight(1)
 		if s.draining.Load() {
+			s.addInflight(-1)
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "devshardd is draining")
 		}
-		s.addInflight(1)
 		defer s.addInflight(-1)
 		return next(c)
 	}

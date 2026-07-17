@@ -86,4 +86,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	rec = httptest.NewRecorder()
 	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/drain/status", nil))
 	require.Equal(t, http.StatusOK, rec.Code)
+	var status drainStatus
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
+	require.Zero(t, status.Inflight)
 }
