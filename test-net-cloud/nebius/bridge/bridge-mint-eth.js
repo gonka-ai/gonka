@@ -218,21 +218,6 @@ function formatAddress(str, label) {
     throw new Error(`${label} must be 20 or 32 bytes, got ${hex.length / 2}`);
 }
 
-function parseUint(value, label, max) {
-    if (value === undefined || value === null || value === "") {
-        throw new Error(`Missing ${label}`);
-    }
-
-    const parsed = Number(value);
-    if (!Number.isInteger(parsed) || parsed < 0) {
-        throw new Error(`Invalid ${label}: ${value}`);
-    }
-    if (max != null && parsed > max) {
-        throw new Error(`${label} exceeds max ${max}: ${value}`);
-    }
-    return parsed;
-}
-
 function decodeContractError(error) {
     const errorData = error && (error.data || (error.info && error.info.error && error.info.error.data));
     const abi = [
@@ -335,14 +320,6 @@ async function main() {
         }
     }
     const formattedRequestId = formatBytes(requestId, "requestId", 32);
-    const requestAttempt = parseUint(
-        signingRequest && (signingRequest.attempt ?? signingRequest.Attempt),
-        "request attempt",
-        0xffffffff
-    );
-    if (requestAttempt < 1) {
-        throw new Error(`Request attempt must be >= 1, got ${requestAttempt}`);
-    }
     let formattedSignature;
     try {
         formattedSignature = formatBytes(signature, "signature", 128);
@@ -361,8 +338,8 @@ async function main() {
     const wallet = new ethers.Wallet(ethPrivateKey, provider);
 
     const abi = [
-        "function mintWithSignature((uint64 epochId, bytes32 requestId, uint32 attempt, address recipient, uint256 amount, bytes signature) cmd) external",
-        "function withdraw((uint64 epochId, bytes32 requestId, uint32 attempt, address recipient, address tokenContract, uint256 amount, bytes signature) cmd) external",
+        "function mintWithSignature((uint64 epochId, bytes32 requestId, address recipient, uint256 amount, bytes signature) cmd) external",
+        "function withdraw((uint64 epochId, bytes32 requestId, address recipient, address tokenContract, uint256 amount, bytes signature) cmd) external",
         "function getCurrentState() view returns (uint8)",
         "function getLatestEpochInfo() view returns (uint64 epochId, uint64 timestamp, bytes groupKey)",
         "function isValidEpoch(uint64 epochId) view returns (bool)",
@@ -372,14 +349,12 @@ async function main() {
 
     console.log(`      > Bridge:     ${bridgeAddress}`);
     console.log(`      > Epoch:      ${epochId}`);
-    console.log(`      > Attempt:    ${requestAttempt}`);
     console.log(`      > Recipient:  ${recipient}`);
     console.log(`      > Request ID: ${formattedRequestId.substring(0, 20)}...`);
 
     const command = {
         epochId,
         requestId: formattedRequestId,
-        attempt: requestAttempt,
         recipient,
         amount,
         signature: formattedSignature

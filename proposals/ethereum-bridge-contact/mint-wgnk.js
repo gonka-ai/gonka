@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // CLI tool to mint WGNK tokens using mintWithSignature function
-// Usage: node mint-wgnk.js <contractAddress> <epochId> <requestId> <attempt> <recipient> <amount> <signature>
+// Usage: node mint-wgnk.js <contractAddress> <epochId> <requestId> <recipient> <amount> <signature>
 
 import hre from "hardhat";
 import { ethers } from "ethers";
@@ -60,7 +60,7 @@ async function getProviderAndSigner() {
     }
 }
 
-async function mintWGNK(contractAddress, epochId, requestId, attempt, recipient, amount, signature) {
+async function mintWGNK(contractAddress, epochId, requestId, recipient, amount, signature) {
     console.log("=== Mint WGNK Tokens ===\n");
     
     const { provider, signer, ethers } = await getProviderAndSigner();
@@ -78,11 +78,6 @@ async function mintWGNK(contractAddress, epochId, requestId, attempt, recipient,
     const epochIdNum = parseInt(epochId);
     if (isNaN(epochIdNum) || epochIdNum < 1) {
         throw new Error(`Invalid epoch ID: ${epochId}. Must be a positive integer.`);
-    }
-
-    const attemptNum = parseInt(attempt);
-    if (isNaN(attemptNum) || attemptNum < 1) {
-        throw new Error(`Invalid attempt: ${attempt}. Must be a positive integer.`);
     }
     
     if (!recipient || !ethers.isAddress(recipient)) {
@@ -103,7 +98,6 @@ async function mintWGNK(contractAddress, epochId, requestId, attempt, recipient,
     console.log("Configuration:");
     console.log("- Contract Address:", contractAddress);
     console.log("- Epoch ID:", epochIdNum);
-    console.log("- Attempt:", attemptNum);
     console.log("- Recipient:", recipient);
     console.log("- Amount:", amountBigInt.toString(), "wei");
     console.log();
@@ -164,7 +158,6 @@ async function mintWGNK(contractAddress, epochId, requestId, attempt, recipient,
     const mintCommand = {
         epochId: epochIdNum,
         requestId: hexRequestId,
-        attempt: attemptNum,
         recipient: recipient,
         amount: amountBigInt,
         signature: hexSignature
@@ -256,13 +249,12 @@ async function mintWGNK(contractAddress, epochId, requestId, attempt, recipient,
 function parseArgs() {
     const args = process.argv.slice(2);
     
-    if (args.length < 7) {
-        console.error("Usage: node mint-wgnk.js <contractAddress> <epochId> <requestId> <attempt> <recipient> <amount> <signature>");
+    if (args.length < 6) {
+        console.error("Usage: node mint-wgnk.js <contractAddress> <epochId> <requestId> <recipient> <amount> <signature>");
         console.error("\nArguments:");
         console.error("  contractAddress  - Deployed BridgeContract address");
         console.error("  epochId          - Epoch ID for signature validation");
         console.error("  requestId        - Unique request ID from source chain (base64, 32 bytes)");
-        console.error("  attempt          - Signing attempt from Gonka threshold-signing request");
         console.error("  recipient        - Ethereum address to receive WGNK");
         console.error("  amount           - Amount of WGNK to mint (in wei)");
         console.error("  signature        - BLS threshold signature (base64, 128 bytes)");
@@ -272,9 +264,9 @@ function parseArgs() {
         console.error("  - Signature must be valid for the mint message");
         console.error("\nExamples:");
         console.error("  # Mint 1 WGNK (1e18 wei)");
-        console.error('  node mint-wgnk.js 0x1234... 6 "oOqwXaxnAiS..." 1 0x5678... 1000000000000000000 "AAAAAAAAABIXIy..."');
+        console.error('  node mint-wgnk.js 0x1234... 6 "oOqwXaxnAiS..." 0x5678... 1000000000000000000 "AAAAAAAAABIXIy..."');
         console.error("\n  # Mint 100 WGNK");
-        console.error('  node mint-wgnk.js 0x1234... 6 "oOqwXaxnAiS..." 1 0x5678... 100000000000000000000 "AAAAAAAABIX..."');
+        console.error('  node mint-wgnk.js 0x1234... 6 "oOqwXaxnAiS..." 0x5678... 100000000000000000000 "AAAAAAAABIX..."');
         console.error("\nNote:");
         console.error("  - requestId and signature must be in base64 format");
         console.error("  - amount is in wei (1 WGNK = 1e18 wei)");
@@ -286,18 +278,17 @@ function parseArgs() {
         contractAddress: args[0],
         epochId: args[1],
         requestId: args[2],
-        attempt: args[3],
-        recipient: args[4],
-        amount: args[5],
-        signature: args[6]
+        recipient: args[3],
+        amount: args[4],
+        signature: args[5]
     };
 }
 
 // Main execution
 if (import.meta.url === `file://${process.argv[1]}`) {
-    const { contractAddress, epochId, requestId, attempt, recipient, amount, signature } = parseArgs();
+    const { contractAddress, epochId, requestId, recipient, amount, signature } = parseArgs();
     
-    mintWGNK(contractAddress, epochId, requestId, attempt, recipient, amount, signature)
+    mintWGNK(contractAddress, epochId, requestId, recipient, amount, signature)
         .then(() => {
             console.log("\n=== Success ===");
             process.exit(0);

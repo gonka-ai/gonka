@@ -122,11 +122,10 @@ await bridge.submitGroupKey(epochId, groupPublicKey, validationSignature);
 const withdrawalCommand = {
     epochId: 1,
     requestId: ethers.utils.formatBytes32String("unique-request-id"),
-    attempt: 1, // from Gonka threshold-signing request
     recipient: "0x...",
     tokenContract: "0x...",
     amount: ethers.utils.parseEther("10"),
-    signature: "0x..." // 128-byte BLS signature (G1 point, uncompressed)
+    signature: "0x..." // 48-byte BLS signature
 };
 
 await bridge.withdraw(withdrawalCommand);
@@ -168,9 +167,8 @@ bridge.on("AdminControlActivated", (timestamp, reason) => {
 - Check latest epoch ID: `bridge.getLatestEpochInfo()`
 
 **"InvalidSignature" Error**
-- Verify BLS signature format (128 bytes, G1 point, uncompressed EIP-2537 format)
-- Check message encoding:
-  `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, attempt, ETHEREUM_CHAIN_ID, OPERATION, recipient, bridgeContractAddress, tokenOrZero, amount)`
+- Verify BLS signature format (48 bytes, G1 point)
+- Check message encoding: `abi.encodePacked(epochId, requestId, recipient, token, amount)`
 - Ensure group public key is correct for the epoch
 
 **"BridgeNotOperational" Error**

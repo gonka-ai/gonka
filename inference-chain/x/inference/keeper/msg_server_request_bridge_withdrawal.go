@@ -73,8 +73,8 @@ func (k msgServer) RequestBridgeWithdrawal(goCtx context.Context, msg *types.Msg
 		return nil, fmt.Errorf("unsupported destination chain: %s", bridgeWrappedTokenContract.ChainId)
 	}
 
-	// Prepare data for BLS signing - only the parts after epochId/chainId/requestId/attempt.
-	// The BLS system prepends: epochId (8 bytes) + gonkaChainId (32 bytes) + requestId (32 bytes) + attempt (4 bytes)
+	// Prepare data for BLS signing - only the parts after epochId/chainId/requestId
+	// The BLS system will prepend: epochId (8 bytes) + gonkaChainId (32 bytes) + requestId (32 bytes)
 	// We need to provide: ethereumChainId + WITHDRAW_OPERATION + recipient + bridgeContract + tokenContract + amount
 	blsData, err := k.prepareBridgeWithdrawalSignatureData(
 		destinationChainId,                         // Numeric chain ID (e.g., "1", "137")
@@ -154,10 +154,8 @@ func (k msgServer) generateRequestID(ctx sdk.Context) string {
 }
 
 // prepareBridgeWithdrawalSignatureData prepares the data portion for BLS signature according to Ethereum bridge format
-// This function only prepares the data that comes AFTER epochId, gonkaChainId,
-// requestId, and attempt.
-// Final message format: [epochId, gonkaChainId, requestId, attempt, ethereumChainId,
-// WITHDRAW_OPERATION, recipient, bridgeContract, tokenContract, amount]
+// This function only prepares the data that comes AFTER epochId, gonkaChainId, and requestId
+// Final message format: [epochId, gonkaChainId, requestId, ethereumChainId, WITHDRAW_OPERATION, recipient, bridgeContract, tokenContract, amount]
 func (k msgServer) prepareBridgeWithdrawalSignatureData(chainId, recipient, bridgeContract, tokenContract, amount string) ([][]byte, error) {
 	// Use helper functions for consistent encoding
 	ethereumChainIdBytes, err := chainIdToBytes32(chainId)
@@ -181,7 +179,7 @@ func (k msgServer) prepareBridgeWithdrawalSignatureData(chainId, recipient, brid
 		return nil, fmt.Errorf("failed to encode amount: %w", err)
 	}
 
-	// Return the data fields that come after epochId, gonkaChainId, requestId, attempt
+	// Return the data fields that come after epochId, gonkaChainId, requestId
 	// Order: ethereumChainId (32 bytes) + WITHDRAW_OPERATION (32 bytes) + recipient (20 bytes) + bridgeContract (20 bytes) + tokenContract (20 bytes) + amount (32 bytes)
 	data := [][]byte{
 		ethereumChainIdBytes,     // ETHEREUM_CHAIN_ID (32 bytes)

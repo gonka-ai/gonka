@@ -34,7 +34,7 @@ This document describes the Ethereum smart contract that serves as the bridge en
 **Signature Verification Process:**
 
 ```text
-1. Parse withdrawal command: (epoch_id, request_id, attempt, recipient, token, amount)
+1. Parse withdrawal command: (epoch_id, request_id, recipient, token, amount)
 2. Encode data using abi.encodePacked for consistent hashing
 3. Compute message hash: keccak256(encoded_data)
 4. Retrieve group public key for specified epoch_id
@@ -305,11 +305,10 @@ function cleanupOldEpochs(uint64 newEpochId) internal {
 struct WithdrawalCommand {
     uint64 epochId;           // 8 bytes - epoch for signature validation
     bytes32 requestId;        // 32 bytes - unique request identifier from source chain
-    uint32 attempt;           // 4 bytes - signing attempt number from Gonka threshold-signing request
     address recipient;        // 20 bytes - Ethereum address to receive tokens
     address tokenContract;    // 20 bytes - ERC-20 contract address
     uint256 amount;          // 32 bytes - token amount to withdraw
-    bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
+    bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
 }
 ```
 
@@ -317,7 +316,7 @@ struct WithdrawalCommand {
 
 1. **Epoch Validation**: Verify group key exists for specified `epochId` (`epochGroupKeys[epochId].length > 0`)
 2. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, attempt, ETHEREUM_CHAIN_ID, WITHDRAW_OPERATION, recipient, address(this), tokenContract, amount)`
+3. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, WITHDRAW_OPERATION, recipient, tokenContract, amount)`
 4. **Balance Check**: Ensure contract has sufficient token or ETH balance
 5. **Execution**: Transfer tokens or ETH to recipient address
    - **ETH withdrawals**: When `tokenContract == address(this)`, transfer ETH using `call{value:}`
@@ -455,10 +454,9 @@ New minting operation that accepts BLS threshold signatures to mint WGNK tokens 
 struct MintCommand {
     uint64 epochId;           // 8 bytes - epoch for signature validation
     bytes32 requestId;        // 32 bytes - unique request identifier from source chain
-    uint32 attempt;           // 4 bytes - signing attempt number from Gonka threshold-signing request
     address recipient;        // 20 bytes - Ethereum address to receive WGNK
     uint256 amount;          // 32 bytes - WGNK amount to mint
-    bytes signature;         // 128 bytes - BLS threshold signature (G1 point, uncompressed)
+    bytes signature;         // 48 bytes - BLS threshold signature (G1 point)
 }
 
 function mintWithSignature(MintCommand calldata cmd) external;
@@ -469,7 +467,7 @@ function mintWithSignature(MintCommand calldata cmd) external;
 1. **State Check**: Only allowed in `NORMAL_OPERATION` state
 2. **Epoch Validation**: Verify group key exists for specified `epochId`
 3. **Replay Protection**: Check `requestId` hasn't been processed for this `epochId`
-4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, GONKA_CHAIN_ID, requestId, attempt, ETHEREUM_CHAIN_ID, MINT_OPERATION, recipient, address(this), amount)`
+4. **Signature Verification**: Validate BLS signature against epoch's group public key using message: `abi.encodePacked(epochId, requestId, MINT_OPERATION, recipient, amount, )`
 5. **Execution**: Mint WGNK tokens to recipient's balance, increase total supply
 6. **Record Processing**: Mark `requestId` as processed for this `epochId`
 

@@ -158,7 +158,6 @@ function createWithdrawalCommand(epochId, requestId, recipient, tokenContract, a
     return {
         epochId: epochId,
         requestId: requestId,
-        attempt: 1,
         recipient: recipient,
         tokenContract: tokenContract,
         amount: amount,
