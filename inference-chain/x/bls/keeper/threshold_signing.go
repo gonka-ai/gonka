@@ -415,15 +415,21 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 			k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
 				"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
 		} else if retried {
-			return nil
+			request, err = k.GetSigningStatus(ctx, requestID)
+			if err != nil {
+				return fmt.Errorf("failed to reload retried request %x: %w", requestID, err)
+			}
+			if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES {
+				return fmt.Errorf("retried request is not collecting signatures, current status: %s", request.Status.String())
+			}
+		} else {
+			return k.finalizeFailedThresholdSigningRequest(
+				ctx,
+				request,
+				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+				"request expired",
+			)
 		}
-
-		return k.finalizeFailedThresholdSigningRequest(
-			ctx,
-			request,
-			types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
-			"request expired",
-		)
 	}
 
 	// Get current epoch BLS data for validation

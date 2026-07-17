@@ -239,7 +239,9 @@ func TestAddPartialSignature_ExpiredRequestAutoRetryAndTerminalExpiry(t *testing
 	require.NoError(t, err)
 
 	retryCtx := ctx.WithBlockHeight(initialRequest.DeadlineBlockHeight + 1)
-	require.NoError(t, k.AddPartialSignature(retryCtx, signingData.RequestId, []uint32{1}, []byte{1}, ""))
+	err = k.AddPartialSignature(retryCtx, signingData.RequestId, []uint32{1}, []byte{1}, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "slot ownership validation failed")
 
 	retriedRequest, err := k.GetSigningStatus(retryCtx, signingData.RequestId)
 	require.NoError(t, err)
