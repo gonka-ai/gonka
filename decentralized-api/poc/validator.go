@@ -184,31 +184,22 @@ func NewOffChainValidator(
 	}
 }
 
-// SyncArtifactStoreStage keeps only the current PoC/CPoC stage open in RAM for
-// the whole generate→validate window, and refuses/unloads everything else.
-// Called every synced block so a restart mid-window re-pins without waiting
-// for an exact transition height. If epoch state is nil/unsynced, leaves the
-// current pin alone.
+// SyncArtifactStoreStage pins GetCurrentPocStageHeight in RAM while synced.
+// The previous stage is unloaded only when that height changes (next PoC or
+// confirmation PoC). Nil/unsynced leaves the pin alone. Invalid height leaves
+// the pin alone (do not fail-closed deactivate — that can drop a live tree).
 func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochState) {
 	if v.artifactStore == nil {
 		return
 	}
-	keep, decided := ShouldKeepPocArtifactStageActive(&epochState)
-	if !decided {
+	if epochState.IsNilOrNotSynced() {
 		return
 	}
-	if keep {
-		height := GetCurrentPocStageHeight(&epochState)
-		if height <= 0 {
-			// Fail closed: avoid leaving a stale stage pinned if the current
-			// stage height is invalid.
-			v.artifactStore.DeactivateStage()
-			return
-		}
-		v.artifactStore.ActivateStage(height)
+	height := GetCurrentPocStageHeight(&epochState)
+	if height <= 0 {
 		return
 	}
-	v.artifactStore.DeactivateStage()
+	v.artifactStore.ActivateStage(height)
 }
 
 // MaybeCaptureEarlyShare is invoked once per block by the dispatcher. From the

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"crypto/sha256"
 	"decentralized-api/logging"
+	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"encoding/base64"
 	"encoding/binary"
@@ -395,7 +396,10 @@ func (s *Server) preparePocProofRequest(
 		return nil, 0, nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature")
 	}
 
-	stageStore, err := s.artifactStore.GetStore(int64(req.PocStageStartBlockHeight), req.ModelId)
+	reqHeight := int64(req.PocStageStartBlockHeight)
+	s.ensureArtifactStagePinned(reqHeight)
+
+	stageStore, err := s.artifactStore.GetStore(reqHeight, req.ModelId)
 	if err != nil {
 		logging.Warn("Stage store not found", types.Validation,
 			"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
@@ -454,6 +458,8 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 		return echo.NewHTTPError(http.StatusBadRequest, "model_id query parameter required")
 	}
 
+	s.ensureArtifactStagePinned(height)
+
 	store, err := s.artifactStore.GetStore(height, modelID)
 	if err != nil {
 		return echo.NewHTTPError(http.StatusNotFound, "not found for height (may be pruned or not yet created)")
@@ -472,6 +478,18 @@ func (s *Server) getPocArtifactsState(ctx echo.Context) error {
 		Count:                    count,
 		RootHash:                 rootHashB64,
 	})
+}
+
+// ensureArtifactStagePinned activates height when it is the current PoC/CPoC
+// stage. Safe no-op for other heights (those stay rejected by GetStore).
+func (s *Server) ensureArtifactStagePinned(height int64) {
+	if s.artifactStore == nil || s.phaseTracker == nil || height <= 0 {
+		return
+	}
+	epochState := s.phaseTracker.GetCurrentEpochState()
+	if cur := poc.GetCurrentPocStageHeight(epochState); cur > 0 && cur == height {
+		s.artifactStore.ActivateStage(cur)
+	}
 }
 
 // buildPocProofsSignPayload builds the binary payload for signature verification.

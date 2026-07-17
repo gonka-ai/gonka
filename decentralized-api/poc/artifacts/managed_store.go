@@ -25,10 +25,11 @@ var ErrStageNotActive = errors.New("poc artifact stage is not active")
 // ManagedArtifactStore wraps per-(stage, model) ArtifactStores with stage-based pruning.
 // The large retention buffer ensures pruned stores are "cold" with no active use.
 //
-// Only one PoC stage height may be open in RAM at a time. Call ActivateStage at
-// PoC/CPoC generate start (and keep it pinned through validation); call
-// DeactivateStage at validate end. GetStore/GetOrCreateStore refuse any other
-// height so attackers cannot force old trees into memory.
+// Only one PoC stage height may be open in RAM at a time. Sync pins
+// GetCurrentPocStageHeight while the node is synced; the pin switches (and the
+// previous stage is unloaded) when the next PoC or confirmation PoC changes
+// that height. GetStore/GetOrCreateStore refuse any other height so attackers
+// cannot force old trees into memory.
 type ManagedArtifactStore struct {
 	mu          sync.RWMutex
 	baseDir     string
