@@ -230,9 +230,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	// Phase A (lock): snapshot state, identify overrides.
 	m.mu.Lock()
 	type overrideAction struct {
-		version     oracle.Version
-		overrideSrc string
-		binPath     string
+		version        oracle.Version
+		overrideSrc    string
+		binPath        string
+		blockedByDrain bool
 	}
 	var overrides []overrideAction
 
@@ -240,22 +241,30 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	type versionSnapshot struct {
 		version       oracle.Version
 		isRunning     bool
+		isDraining    bool
 		isDownloading bool
 		child         *child
 	}
 	var snapshots []versionSnapshot
 
 	for _, v := range desiredSet {
+		running, isRunning := m.processes[v.Name]
+		isDraining := len(m.draining[v.Name]) > 0
 		if overrideSrc, isOverride := m.cfg.Overrides[v.Name]; isOverride {
 			binPath := filepath.Join(m.cfg.BinDir, v.Name, m.cfg.BinaryName)
-			overrides = append(overrides, overrideAction{v, overrideSrc, binPath})
+			overrides = append(overrides, overrideAction{
+				version:        v,
+				overrideSrc:    overrideSrc,
+				binPath:        binPath,
+				blockedByDrain: !isRunning && isDraining,
+			})
 			continue
 		}
-		running, isRunning := m.processes[v.Name]
 		_, isDownloading := m.downloading[v.Name]
 		snapshots = append(snapshots, versionSnapshot{
 			version:       v,
 			isRunning:     isRunning,
+			isDraining:    isDraining,
 			isDownloading: isDownloading,
 			child:         running,
 		})
@@ -264,6 +273,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 
 	// Phase B (no lock): resolve hashes, do disk I/O for overrides and hash checks.
 	for _, o := range overrides {
+		if o.blockedByDrain {
+			slog.Info("version start deferred while previous child is draining", "version", o.version.Name)
+			continue
+		}
 		m.reconcileOverride(ctx, o.version, o.overrideSrc, o.binPath)
 	}
 
@@ -283,6 +296,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 			continue
 		}
 		desiredHashes[snap.version.Name] = desiredHash
+		if !snap.isRunning && snap.isDraining {
+			slog.Info("version start deferred while previous child is draining", "version", snap.version.Name)
+			continue
+		}
 
 		if snap.isRunning {
 			matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(filepath.Dir(snap.child.binPath), snap.child.binPath, desiredHash)
@@ -325,17 +342,27 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 
 	// Phase C (lock): apply decisions -- start ready children, mark downloads, stop removed.
 	m.mu.Lock()
+	started := 0
 	for _, a := range toStart {
 		if _, already := m.processes[a.version.Name]; already {
 			continue // another reconcile started it
 		}
+		if m.versionStartBlockedLocked(a.version.Name) {
+			continue
+		}
 		m.startChild(ctx, a.version, a.sha256, m.installBinPath(a.version.Name, a.sha256), true)
+		started++
 	}
+	scheduledDownloads := make([]versionAction, 0, len(toDownload))
 	for _, a := range toDownload {
 		if _, already := m.downloading[a.version.Name]; already {
 			continue
 		}
+		if _, running := m.processes[a.version.Name]; running || m.versionStartBlockedLocked(a.version.Name) {
+			continue
+		}
 		m.downloading[a.version.Name] = struct{}{}
+		scheduledDownloads = append(scheduledDownloads, a)
 	}
 	for _, a := range toSwap {
 		if _, already := m.downloading[a.version.Name]; already {
@@ -355,7 +382,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		}
 	}
 
-	changed := len(toDownload) > 0 || len(toSwap) > 0 || len(toStop) > 0 || len(toStart) > 0
+	changed := len(scheduledDownloads) > 0 || len(toSwap) > 0 || len(toStop) > 0 || started > 0
 	if changed {
 		m.rebuildRoutes()
 	}
@@ -373,7 +400,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	}
 
 	// Downloads outside the lock (can be slow).
-	for _, a := range toDownload {
+	for _, a := range scheduledDownloads {
 		if err := m.downloadAndStart(ctx, a.version, a.sha256); err != nil {
 			slog.Error("download failed, skipping", "version", a.version.Name, "error", err)
 		}
@@ -394,6 +421,12 @@ type versionAction struct {
 	version oracle.Version
 	sha256  string // pre-resolved hash, avoids double resolution in downloadBinary
 	child   *child // non-nil for swap actions
+}
+
+// versionStartBlockedLocked reports whether a retired generation with the same
+// version name still owns the version's data directory.
+func (m *Manager) versionStartBlockedLocked(name string) bool {
+	return len(m.draining[name]) > 0
 }
 
 // reconcileOverride handles a version with a local override binary.
@@ -458,9 +491,19 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	// Verify the process is still the one we captured before deleting.
 	// A concurrent reconcile could have replaced it.
 	if isRunning {
-		if current, ok := m.processes[v.Name]; ok && current == existing {
+		if current, ok := m.processes[v.Name]; ok {
+			if current != existing {
+				m.mu.Unlock()
+				return
+			}
 			delete(m.processes, v.Name)
+		} else if m.versionStartBlockedLocked(v.Name) {
+			m.mu.Unlock()
+			return
 		}
+	} else if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+		m.mu.Unlock()
+		return
 	}
 	m.startChild(ctx, v, "override:"+srcHash, binPath, true)
 	m.rebuildRoutes()
@@ -507,7 +550,8 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 
 	m.mu.Lock()
 	delete(m.downloading, v.Name)
-	if dlErr == nil && ctx.Err() == nil {
+	_, running := m.processes[v.Name]
+	if dlErr == nil && ctx.Err() == nil && !running && !m.versionStartBlockedLocked(v.Name) {
 		m.startChild(ctx, v, sha, m.installBinPath(v.Name, sha), true)
 	}
 	m.mu.Unlock()

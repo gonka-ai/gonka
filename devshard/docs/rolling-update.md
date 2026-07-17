@@ -398,6 +398,11 @@ requests retain their old-target proxy lease, and child drain starts only after
 those leases are released. Legacy children without `/drain/status` receive the
 `VERSIOND_DRAIN_KILL_GRACE` cushion before `SIGTERM`.
 
+If governance restores the same version name before its removed child finishes
+draining, versiond defers the new start until that child exits. This prevents
+two generations from opening the same version data directory. The next
+reconcile poll starts the restored version normally after drain completes.
+
 #### g) Graceful supervisor shutdown
 
 `Manager.Shutdown` must wait long enough for child graceful shutdown. When

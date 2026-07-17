@@ -958,6 +958,253 @@ func TestReconcile_DrainsRemovedVersionsAsync(t *testing.T) {
 	waitForChild(removed, time.Second)
 }
 
+func TestReconcile_ReaddedVersionWaitsForDrainingChild(t *testing.T) {
+	dir := t.TempDir()
+	binary := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "testapp-v1" ;;
+--print-protocol-version) echo "v1" ;;
+*) exec sleep 30 ;;
+esac
+`)
+	zipData, archiveHash := zipBinary(t, "testapp", binary)
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:         filepath.Join(dir, "bin"),
+		DataDir:        filepath.Join(dir, "data"),
+		BinaryName:     "testapp",
+		BasePort:       5000,
+		DrainKillGrace: 100 * time.Millisecond,
+	})
+	m.draining["v1"] = []*child{{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("removed-v1")),
+		status:        statusDraining,
+	}}
+	desired := []oracle.Version{{Name: "v1", Binary: srv.URL, SHA256: archiveHash}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := m.Reconcile(ctx, desired); err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("download requests while previous child drains = %d, want 0", got)
+	}
+	m.mu.Lock()
+	_, running := m.processes["v1"]
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if running || downloading {
+		t.Fatalf("re-added version state while draining = running:%v downloading:%v, want false/false", running, downloading)
+	}
+
+	m.mu.Lock()
+	delete(m.draining, "v1")
+	m.mu.Unlock()
+	if err := m.Reconcile(ctx, desired); err != nil {
+		t.Fatal(err)
+	}
+	if got := requests.Load(); got != 1 {
+		t.Fatalf("download requests after drain completed = %d, want 1", got)
+	}
+	m.mu.Lock()
+	_, running = m.processes["v1"]
+	m.mu.Unlock()
+	if !running {
+		t.Fatal("re-added version should start after previous child finishes draining")
+	}
+
+	cancel()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestDownloadAndStart_DoesNotOverlapDrainingChild(t *testing.T) {
+	dir := t.TempDir()
+	zipData, archiveHash := zipBinary(t, "testapp", []byte("test binary"))
+	requestStarted := make(chan struct{})
+	releaseDownload := make(chan struct{})
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		close(requestStarted)
+		<-releaseDownload
+		_, _ = w.Write(zipData)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "testapp",
+		BasePort:   5000,
+	})
+	m.downloading["v1"] = struct{}{}
+	v := oracle.Version{Name: "v1", Binary: srv.URL, SHA256: archiveHash}
+	errCh := make(chan error, 1)
+	go func() {
+		errCh <- m.downloadAndStart(context.Background(), v, archiveHash)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("download did not start")
+	}
+	m.mu.Lock()
+	m.draining["v1"] = []*child{{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: sha256Hex([]byte("removed-v1")),
+		status:        statusDraining,
+	}}
+	m.mu.Unlock()
+	close(releaseDownload)
+	if err := <-errCh; err != nil {
+		t.Fatal(err)
+	}
+
+	m.mu.Lock()
+	_, running := m.processes["v1"]
+	_, downloading := m.downloading["v1"]
+	m.mu.Unlock()
+	if running {
+		t.Fatal("download completion should not start a version while its previous child drains")
+	}
+	if downloading {
+		t.Fatal("download marker should be cleared when start is deferred")
+	}
+}
+
+func TestReconcile_ReaddedOverrideWaitsForDrainingChild(t *testing.T) {
+	dir := t.TempDir()
+	overrideBin := filepath.Join(dir, "override-binary")
+	script := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "testapp-v1" ;;
+--print-protocol-version) echo "v1" ;;
+*) exec sleep 30 ;;
+esac
+`)
+	if err := os.WriteFile(overrideBin, script, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BinDir:         filepath.Join(dir, "bin"),
+		DataDir:        filepath.Join(dir, "data"),
+		BinaryName:     "testapp",
+		BasePort:       5000,
+		DrainKillGrace: 100 * time.Millisecond,
+		Overrides:      map[string]string{"v1": overrideBin},
+	})
+	m.draining["v1"] = []*child{{
+		version:       oracle.Version{Name: "v1"},
+		archiveSHA256: "override:removed",
+		status:        statusDraining,
+	}}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	if err := m.Reconcile(ctx, []oracle.Version{{Name: "v1"}}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	_, running := m.processes["v1"]
+	m.mu.Unlock()
+	if running {
+		t.Fatal("re-added override should wait for the previous child to finish draining")
+	}
+	if _, err := os.Stat(filepath.Join(dir, "bin", "v1", "testapp")); !os.IsNotExist(err) {
+		t.Fatalf("override should not be copied while previous child drains, stat error: %v", err)
+	}
+
+	m.mu.Lock()
+	delete(m.draining, "v1")
+	m.mu.Unlock()
+	if err := m.Reconcile(ctx, []oracle.Version{{Name: "v1"}}); err != nil {
+		t.Fatal(err)
+	}
+	m.mu.Lock()
+	_, running = m.processes["v1"]
+	m.mu.Unlock()
+	if !running {
+		t.Fatal("re-added override should start after previous child finishes draining")
+	}
+
+	cancel()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestReconcileOverride_DoesNotReplaceChildMovedToDraining(t *testing.T) {
+	dir := t.TempDir()
+	overrideSrc := filepath.Join(dir, "override-source")
+	binPath := filepath.Join(dir, "bin", "v1", "testapp")
+	if err := os.WriteFile(overrideSrc, []byte("new override"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Dir(binPath), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(binPath, []byte("old override"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BinDir:         filepath.Join(dir, "bin"),
+		DataDir:        filepath.Join(dir, "data"),
+		BinaryName:     "testapp",
+		BasePort:       5000,
+		DrainKillGrace: 100 * time.Millisecond,
+	})
+	done := make(chan struct{})
+	var cancelOnce sync.Once
+	existing := &child{
+		version: oracle.Version{Name: "v1"},
+		binPath: binPath,
+		done:    done,
+		status:  statusRunning,
+		restart: true,
+	}
+	existing.cancel = func() {
+		cancelOnce.Do(func() {
+			m.mu.Lock()
+			delete(m.processes, "v1")
+			existing.status = statusDraining
+			existing.restart = false
+			m.draining["v1"] = append(m.draining["v1"], existing)
+			m.mu.Unlock()
+			close(done)
+		})
+	}
+	m.processes["v1"] = existing
+
+	m.reconcileOverride(
+		context.Background(),
+		oracle.Version{Name: "v1"},
+		overrideSrc,
+		binPath,
+	)
+
+	m.mu.Lock()
+	_, running := m.processes["v1"]
+	draining := m.draining["v1"]
+	m.mu.Unlock()
+	if running {
+		t.Fatal("override should not restart while its previous child is draining")
+	}
+	if len(draining) != 1 || draining[0] != existing {
+		t.Fatalf("draining children = %v, want the original child", draining)
+	}
+}
+
 func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 	var drainHits atomic.Int32
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
