@@ -1812,6 +1812,186 @@ func TestReconcile_DownloadedVersionDoesNotRedownloadWhenInstallStateMatches(t *
 	}
 }
 
+func TestReconcile_PromotesLegacyCachedVersionWithoutDownload(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	archiveHash := sha256Hex([]byte("legacy archive"))
+	binary := []byte(`#!/bin/sh
+case "$1" in
+--print-binary-version) echo "testapp-v1" ;;
+--print-protocol-version) echo "v1" ;;
+*) exec sleep 30 ;;
+esac
+`)
+	legacyBinPath := writeLegacyInstall(t, binDir, "v1", archiveHash, "testapp", binary)
+
+	var requests atomic.Int32
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		w.WriteHeader(http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{
+		BinDir:         binDir,
+		DataDir:        filepath.Join(dir, "data"),
+		BinaryName:     "testapp",
+		BasePort:       5000,
+		DrainKillGrace: 100 * time.Millisecond,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	if err := m.Reconcile(ctx, []oracle.Version{{
+		Name:   "v1",
+		Binary: srv.URL,
+		SHA256: archiveHash,
+	}}); err != nil {
+		t.Fatal(err)
+	}
+
+	if got := requests.Load(); got != 0 {
+		t.Fatalf("download requests = %d, want 0", got)
+	}
+	canonicalBinPath := m.installBinPath("v1", archiveHash)
+	matches, _, _, err := installedVersionMatches(
+		m.installDir("v1", archiveHash),
+		canonicalBinPath,
+		archiveHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matches {
+		t.Fatal("promoted per-SHA install should match legacy metadata")
+	}
+	assertPathExists(t, legacyBinPath)
+	assertPathExists(t, filepath.Join(filepath.Dir(legacyBinPath), download.InstallMetadataFilename))
+	m.mu.Lock()
+	current := m.processes["v1"]
+	m.mu.Unlock()
+	if current == nil {
+		t.Fatal("promoted legacy version should start")
+	}
+	if current.binPath != canonicalBinPath {
+		t.Fatalf("started binary = %q, want promoted path %q", current.binPath, canonicalBinPath)
+	}
+
+	cancel()
+	if err := m.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestResolveInstalledArtifact_UsesLegacyWhenPromotionFails(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	archiveHash := sha256Hex([]byte("legacy archive"))
+	legacyBinPath := writeLegacyInstall(
+		t,
+		binDir,
+		"v1",
+		archiveHash,
+		"testapp",
+		[]byte("legacy binary"),
+	)
+	m := NewManager(config.Config{BinDir: binDir, BinaryName: "testapp", BasePort: 5000})
+
+	// Keep a non-empty directory at the canonical binary path so atomic rename
+	// fails without making the verified legacy source unreadable.
+	canonicalBinPath := m.installBinPath("v1", archiveHash)
+	if err := os.MkdirAll(filepath.Join(canonicalBinPath, "blocker"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	artifact, ok := m.resolveInstalledArtifact("v1", archiveHash)
+	if !ok {
+		t.Fatal("verified legacy install should remain usable when promotion fails")
+	}
+	if artifact.binPath != legacyBinPath {
+		t.Fatalf("resolved binary = %q, want legacy path %q", artifact.binPath, legacyBinPath)
+	}
+}
+
+func TestResolveInstalledArtifact_ConcurrentPromotionsConverge(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	archiveHash := sha256Hex([]byte("legacy archive"))
+	legacyBinPath := writeLegacyInstall(
+		t,
+		binDir,
+		"v1",
+		archiveHash,
+		"testapp",
+		[]byte("legacy binary"),
+	)
+	cfg := config.Config{BinDir: binDir, BinaryName: "testapp", BasePort: 5000}
+	managers := []*Manager{NewManager(cfg), NewManager(cfg)}
+	type result struct {
+		artifact installedArtifact
+		ok       bool
+	}
+	results := make(chan result, len(managers))
+	start := make(chan struct{})
+	var wg sync.WaitGroup
+	for _, manager := range managers {
+		wg.Add(1)
+		go func(m *Manager) {
+			defer wg.Done()
+			<-start
+			artifact, ok := m.resolveInstalledArtifact("v1", archiveHash)
+			results <- result{artifact: artifact, ok: ok}
+		}(manager)
+	}
+	close(start)
+	wg.Wait()
+	close(results)
+
+	canonicalBinPath := managers[0].installBinPath("v1", archiveHash)
+	for result := range results {
+		if !result.ok {
+			t.Fatal("concurrent promotion did not resolve an install")
+		}
+		if result.artifact.binPath != canonicalBinPath {
+			t.Fatalf("resolved binary = %q, want %q", result.artifact.binPath, canonicalBinPath)
+		}
+	}
+	matches, _, _, err := installedVersionMatches(
+		managers[0].installDir("v1", archiveHash),
+		canonicalBinPath,
+		archiveHash,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !matches {
+		t.Fatal("concurrently promoted install should be complete and verified")
+	}
+	assertPathExists(t, legacyBinPath)
+}
+
+func TestResolveInstalledArtifact_RejectsInvalidLegacyInstall(t *testing.T) {
+	dir := t.TempDir()
+	binDir := filepath.Join(dir, "bin")
+	archiveHash := sha256Hex([]byte("legacy archive"))
+	legacyBinPath := writeLegacyInstall(
+		t,
+		binDir,
+		"v1",
+		archiveHash,
+		"testapp",
+		[]byte("original binary"),
+	)
+	if err := os.WriteFile(legacyBinPath, []byte("tampered binary"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	m := NewManager(config.Config{BinDir: binDir, BinaryName: "testapp", BasePort: 5000})
+
+	if artifact, ok := m.resolveInstalledArtifact("v1", archiveHash); ok {
+		t.Fatalf("invalid legacy install resolved as %+v", artifact)
+	}
+	assertPathMissing(t, m.installBinPath("v1", archiveHash))
+}
+
 func startLocalHTTPServer(t *testing.T, handler http.Handler) (int, func()) {
 	t.Helper()
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
@@ -1890,6 +2070,32 @@ func writeInstalledVersion(t *testing.T, binDir, versionName, sha, binaryName st
 	if err := os.Chtimes(filepath.Join(versionDir, download.InstallMetadataFilename), modTime, modTime); err != nil {
 		t.Fatal(err)
 	}
+}
+
+func writeLegacyInstall(
+	t *testing.T,
+	binDir string,
+	versionName string,
+	archiveHash string,
+	binaryName string,
+	binary []byte,
+) string {
+	t.Helper()
+	versionDir := filepath.Join(binDir, versionName)
+	if err := os.MkdirAll(versionDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	binPath := filepath.Join(versionDir, binaryName)
+	if err := os.WriteFile(binPath, binary, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := download.WriteInstallMetadata(versionDir, download.InstallMetadata{
+		ArchiveSHA256: archiveHash,
+		BinarySHA256:  sha256Hex(binary),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return binPath
 }
 
 func assertPathExists(t *testing.T, path string) {

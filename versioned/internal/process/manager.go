@@ -319,24 +319,14 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		}
 
 		// Not running.
-		versionDir := m.installDir(snap.version.Name, desiredHash)
-		binPath := filepath.Join(versionDir, m.cfg.BinaryName)
-		matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(versionDir, binPath, desiredHash)
-		if stateErr == nil && matches {
-			toStart = append(toStart, versionAction{version: snap.version, sha256: desiredHash})
+		if artifact, ok := m.resolveInstalledArtifact(snap.version.Name, desiredHash); ok {
+			toStart = append(toStart, versionAction{
+				version: snap.version,
+				sha256:  desiredHash,
+				binPath: artifact.binPath,
+			})
 			continue
 		}
-		if stateErr == nil || !errors.Is(stateErr, os.ErrNotExist) {
-			logInstalledVersionMismatch(
-				"cached version",
-				snap.version.Name,
-				desiredHash,
-				metadata,
-				diskBinaryHash,
-				stateErr,
-			)
-		}
-		cleanupInstalledVersionState(versionDir, binPath)
 		toDownload = append(toDownload, versionAction{version: snap.version, sha256: desiredHash})
 	}
 
@@ -350,7 +340,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		if m.versionStartBlockedLocked(a.version.Name) {
 			continue
 		}
-		m.startChild(ctx, a.version, a.sha256, m.installBinPath(a.version.Name, a.sha256), true)
+		m.startChild(ctx, a.version, a.sha256, a.binPath, true)
 		started++
 	}
 	scheduledDownloads := make([]versionAction, 0, len(toDownload))
@@ -420,6 +410,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 type versionAction struct {
 	version oracle.Version
 	sha256  string // pre-resolved hash, avoids double resolution in downloadBinary
+	binPath string // non-empty for cached start actions
 	child   *child // non-nil for swap actions
 }
 
@@ -545,6 +536,137 @@ func (m *Manager) installDir(versionName, sha string) string {
 
 func (m *Manager) installBinPath(versionName, sha string) string {
 	return filepath.Join(m.installDir(versionName, sha), m.cfg.BinaryName)
+}
+
+type installedArtifact struct {
+	dir     string
+	binPath string
+}
+
+func (m *Manager) resolveInstalledArtifact(versionName, desiredHash string) (installedArtifact, bool) {
+	canonical := installedArtifact{
+		dir:     m.installDir(versionName, desiredHash),
+		binPath: m.installBinPath(versionName, desiredHash),
+	}
+	matches, metadata, diskBinaryHash, stateErr := installedVersionMatches(
+		canonical.dir,
+		canonical.binPath,
+		desiredHash,
+	)
+	if stateErr == nil && matches {
+		return canonical, true
+	}
+	if stateErr == nil || !errors.Is(stateErr, os.ErrNotExist) {
+		logInstalledVersionMismatch(
+			"cached version",
+			versionName,
+			desiredHash,
+			metadata,
+			diskBinaryHash,
+			stateErr,
+		)
+	}
+	// Do not clean an unreadable canonical install here. Another versiond
+	// sharing BinDir may still be publishing it; promotion and downloads use
+	// atomic replacement for ordinary files.
+
+	legacy := installedArtifact{
+		dir:     filepath.Join(m.cfg.BinDir, versionName),
+		binPath: filepath.Join(m.cfg.BinDir, versionName, m.cfg.BinaryName),
+	}
+	matches, metadata, diskBinaryHash, stateErr = installedVersionMatches(
+		legacy.dir,
+		legacy.binPath,
+		desiredHash,
+	)
+	if stateErr != nil || !matches {
+		if stateErr == nil || !errors.Is(stateErr, os.ErrNotExist) {
+			logInstalledVersionMismatch(
+				"legacy cached version",
+				versionName,
+				desiredHash,
+				metadata,
+				diskBinaryHash,
+				stateErr,
+			)
+		}
+		return installedArtifact{}, false
+	}
+
+	if err := m.promoteLegacyInstall(legacy, canonical, metadata, desiredHash); err == nil {
+		slog.Info(
+			"promoted legacy cached install",
+			"version", versionName,
+			"sha256", desiredHash,
+			"source", legacy.dir,
+			"destination", canonical.dir,
+		)
+		return canonical, true
+	} else {
+		slog.Warn(
+			"legacy install promotion failed; using verified flat install",
+			"version", versionName,
+			"sha256", desiredHash,
+			"source", legacy.dir,
+			"destination", canonical.dir,
+			"error", err,
+		)
+	}
+
+	// The source may have changed while promotion copied it. Verify it again
+	// before falling back to the legacy path.
+	matches, _, _, stateErr = installedVersionMatches(legacy.dir, legacy.binPath, desiredHash)
+	if stateErr != nil || !matches {
+		return installedArtifact{}, false
+	}
+	return legacy, true
+}
+
+func (m *Manager) promoteLegacyInstall(
+	legacy installedArtifact,
+	canonical installedArtifact,
+	metadata download.InstallMetadata,
+	desiredHash string,
+) error {
+	if err := os.MkdirAll(canonical.dir, 0o755); err != nil {
+		return fmt.Errorf("create per-sha install dir: %w", err)
+	}
+	if err := atomicCopy(legacy.binPath, canonical.binPath); err != nil {
+		return fmt.Errorf("copy legacy binary: %w", err)
+	}
+	promotedBinaryHash, err := download.HashFile(canonical.binPath)
+	if err != nil {
+		return fmt.Errorf("hash promoted binary: %w", err)
+	}
+	if !strings.EqualFold(promotedBinaryHash, metadata.BinarySHA256) {
+		return fmt.Errorf(
+			"verify promoted binary: got %s, want %s",
+			promotedBinaryHash,
+			metadata.BinarySHA256,
+		)
+	}
+	if err := download.WriteInstallMetadata(canonical.dir, metadata); err != nil {
+		return fmt.Errorf("write per-sha install metadata: %w", err)
+	}
+
+	matches, promotedMetadata, diskBinaryHash, err := installedVersionMatches(
+		canonical.dir,
+		canonical.binPath,
+		desiredHash,
+	)
+	if err != nil {
+		return fmt.Errorf("verify promoted install: %w", err)
+	}
+	if !matches {
+		return fmt.Errorf(
+			"verify promoted install: archive=%s binary=%s expected_archive=%s expected_binary=%s",
+			promotedMetadata.ArchiveSHA256,
+			diskBinaryHash,
+			desiredHash,
+			promotedMetadata.BinarySHA256,
+		)
+	}
+	return nil
 }
 
 // downloadAndStart downloads the binary using the pre-resolved hash, then starts the child.

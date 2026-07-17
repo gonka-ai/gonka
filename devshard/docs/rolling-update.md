@@ -454,6 +454,20 @@ versiond also garbage-collects old complete per-sha install directories under
 recent complete-install cushion. In-progress download directories without
 `install.json` are never removed by GC.
 
+On the first upgrade from the legacy flat layout, versiond checks
+`bin/<version>/<binary>` against the adjacent legacy `install.json` before
+using the network. A matching install is copied atomically into the canonical
+`bin/<version>/<sha>/` directory, with the binary written first and
+`install.json` published last as the commit marker. The promoted copy is
+verified again before it starts.
+
+The legacy binary and metadata are retained because another versiond instance
+using the shared bin mount may still run the previous release. Concurrent
+promotions are idempotent because they publish the same verified content with
+atomic renames. If the canonical destination cannot be written, versiond logs
+a warning and starts directly from the re-verified legacy path instead of
+requiring an artifact download.
+
 #### Legacy compatibility and oracle validation
 
 The first versiond upgrade can manage binaries built before these endpoints and
