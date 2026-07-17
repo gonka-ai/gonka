@@ -138,6 +138,55 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 	assert.Empty(t, commitments, "commitment cleared after persist")
 }
 
+// Rotation-created escrows inherit the protocol version implied by the
+// gateway-wide route prefix (DEVSHARD_ROUTE_PREFIX), both on the direct
+// persist path and through commitment recovery.
+func TestCreateRotationEscrowCarriesProtocolVersionFromRoutePrefix(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	stubCreateOnChain(t, "TXPV1", 555)
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
+	model := normalizedEscrowRotationModels(settings)[0]
+
+	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
+	require.NoError(t, err)
+
+	record := devshardIDs(t, store)["555"]
+	assert.Equal(t, "3", record.ProtocolVersion, "persisted escrow inherits protocol from route prefix")
+}
+
+// A route prefix whose version segment is not a protocol version (e.g. a named
+// versiond runtime) keeps the empty/v1-default behavior; semver-like versions
+// map by their major component.
+func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
+	assert.Empty(t, rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
+	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
+	assert.Equal(t, "2", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
+	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+}
+
+func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {
+	g, store, settings := newRecoveryGateway(t)
+	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+		TxHash: "TXPV2", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 11,
+		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY", ProtocolVersion: "3",
+	}))
+
+	commitments, err := store.LoadCommitments()
+	require.NoError(t, err)
+	require.Len(t, commitments, 1)
+	assert.Equal(t, "3", commitments[0].ProtocolVersion, "commitment round-trips protocol version")
+
+	stubQueryTxEscrowID(t, func(string) (uint64, bool, error) { return 556, true, nil })
+	g.reconcileCommitments(context.Background(), settings)
+
+	record := devshardIDs(t, store)["556"]
+	assert.Equal(t, "3", record.ProtocolVersion, "recovered escrow keeps protocol version")
+}
+
 // If the intent commitment cannot be written, no chain tx is broadcast and no
 // escrow is created — the safe failure.
 func TestCreateRotationEscrowAbortsWhenCommitmentWriteFails(t *testing.T) {

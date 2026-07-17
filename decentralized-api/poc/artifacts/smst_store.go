@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/binary"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -40,6 +41,15 @@ type distributionEntry struct {
 	Dist  map[string]uint32 `json:"dist"`
 }
 
+// flushedRootEntry is a single line in flushed_roots.jsonl. This is the
+// durable record of committed flush counts (and their roots), independent of
+// distributions.jsonl — so a failed distribution append cannot make an
+// on-chain flush count unprovable after restart.
+type flushedRootEntry struct {
+	Count uint32 `json:"count"`
+	Root  string `json:"root"` // hex-encoded SMST root
+}
+
 // SMSTArtifactStore provides artifact storage with SMST commitments.
 // Nonce determines tree position, making duplicates impossible by design.
 type SMSTArtifactStore struct {
@@ -58,11 +68,30 @@ type SMSTArtifactStore struct {
 	flushedDataOffset uint64
 	flushedRoots      map[uint32][]byte
 
+	// retained holds snapshots at committed counts so historical proofs are
+	// O(depth) instead of an O(N) rebuild. With COW: O(1) shared roots from
+	// flush. Without COW: deep clones from PrebuildSnapshot/WarmSnapshot while
+	// tip still equals that count (under write lock). A miss falls back to the
+	// rebuild path (speed only, never correctness).
+	retained map[uint32]smstSnapshot
+
 	nodeCounts        map[string]uint32
 	flushedNodeCounts map[string]uint32
 
 	distributionHistory map[uint32]map[string]uint32 // count -> distribution snapshot
 	distFile            *os.File                     // distributions.jsonl (append-only)
+	rootsFile           *os.File                     // flushed_roots.jsonl (append-only)
+
+	// cowEnabled selects insertCOW vs in-place Insert. Default true (SMST_COW
+	// unset).
+	cowEnabled bool
+
+	// snapshotInMemoryClone: when COW is off and PrebuildSnapshot is called at
+	// the live tip, true deep-clones under the write lock into retained; false
+	// rebuilds from artifacts into the process cache without holding the write
+	// lock (upgrade-v0.2.14 style). Default true (SMST_SNAPSHOT_IN_MEMORY_CLONE
+	// unset).
+	snapshotInMemoryClone bool
 }
 
 var _ ArtifactStore = (*SMSTArtifactStore)(nil)
@@ -75,6 +104,7 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 
 	dataPath := filepath.Join(dir, "artifacts.data")
 	distPath := filepath.Join(dir, "distributions.jsonl")
+	rootsPath := filepath.Join(dir, "flushed_roots.jsonl")
 
 	dataFile, err := os.OpenFile(dataPath, os.O_RDWR|os.O_CREATE, 0644)
 	if err != nil {
@@ -87,23 +117,39 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 		return nil, fmt.Errorf("open distributions file: %w", err)
 	}
 
+	rootsFile, err := os.OpenFile(rootsPath, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0644)
+	if err != nil {
+		dataFile.Close()
+		distFile.Close()
+		return nil, fmt.Errorf("open flushed roots file: %w", err)
+	}
+
 	s := &SMSTArtifactStore{
 		dir:                 dir,
 		dataFile:            dataFile,
 		distFile:            distFile,
+		rootsFile:           rootsFile,
 		buffer:              make([]bufferedArtifact, 0, 1024),
 		offsets:             make([]uint64, 0, 1024),
 		nonceToOffset:       make(map[int32]uint64),
 		smst:                NewSMST(smstDefaultDepth),
 		flushedRoots:        make(map[uint32][]byte),
+		retained:            make(map[uint32]smstSnapshot),
 		nodeCounts:          make(map[string]uint32),
 		flushedNodeCounts:   make(map[string]uint32),
 		distributionHistory: make(map[uint32]map[string]uint32),
+		// Defaults when env unset: COW on, deferred hashing on, tip clone on.
+		cowEnabled:            smstCOWEnabledFromEnv(),
+		snapshotInMemoryClone: smstSnapshotInMemoryCloneFromEnv(),
 	}
+	s.smst.deferredHash = smstDeferredHashFromEnv()
+	s.smst.parallelHash = smstParallelHashFromEnv()
+
 
 	if err := s.recover(); err != nil {
 		s.dataFile.Close()
 		s.distFile.Close()
+		s.rootsFile.Close()
 		return nil, fmt.Errorf("recover: %w", err)
 	}
 
@@ -117,7 +163,28 @@ func (s *SMSTArtifactStore) recover() error {
 	}
 
 	if info.Size() == 0 {
+		if err := s.recoverFlushedRoots(); err != nil {
+			log.Printf("warning: failed to recover flushed roots: %v", err)
+		}
 		return s.recoverDistributionHistory()
+	}
+
+	// Recover durable committed counts before replaying so mid-replay can
+	// re-capture retained COW snapshots at each. Prefer flushed_roots.jsonl
+	// (authoritative for flush boundaries); also union distributionHistory for
+	// stores that predate the roots file.
+	if err := s.recoverFlushedRoots(); err != nil {
+		log.Printf("warning: failed to recover flushed roots: %v", err)
+	}
+	if err := s.recoverDistributionHistory(); err != nil {
+		log.Printf("warning: failed to recover distribution history: %v", err)
+	}
+	committed := make(map[uint32]struct{}, len(s.flushedRoots)+len(s.distributionHistory))
+	for c := range s.flushedRoots {
+		committed[c] = struct{}{}
+	}
+	for c := range s.distributionHistory {
+		committed[c] = struct{}{}
 	}
 
 	if _, err := s.dataFile.Seek(0, io.SeekStart); err != nil {
@@ -143,13 +210,25 @@ func (s *SMSTArtifactStore) recover() error {
 		leafData := encodeLeaf(nonce, vector)
 		leafHash := smstHashLeaf(leafData)
 
-		if _, err := s.smst.Insert(nonce, leafHash); err != nil {
+		// COW keeps mid-replay retained snapshots valid; in-place Insert is used
+		// when SMST_COW=0 (deferred hashing only).
+		if _, err := s.insertLeaf(nonce, leafHash); err != nil {
 			return fmt.Errorf("insert nonce %d: %w", nonce, err)
 		}
 
 		s.offsets = append(s.offsets, offset)
 		s.nonceToOffset[nonce] = offset
 		offset += uint64(n)
+
+		if _, ok := committed[s.smst.Count()]; ok {
+			rootHash, _ := s.smst.GetRoot() // hashes the tree before capture
+			if prev, ok := s.flushedRoots[s.smst.Count()]; ok && prev != nil && !bytes.Equal(prev, rootHash) {
+				log.Printf("warning: flushed root mismatch at count %d: persisted=%x recomputed=%x",
+					s.smst.Count(), prev, rootHash)
+			}
+			s.flushedRoots[s.smst.Count()] = rootHash
+			s.captureRetainedLocked()
+		}
 	}
 
 	s.flushedLeafCount = s.smst.Count()
@@ -157,9 +236,12 @@ func (s *SMSTArtifactStore) recover() error {
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
+	s.captureRetainedLocked()
 
-	if err := s.recoverDistributionHistory(); err != nil {
-		log.Printf("warning: failed to recover distribution history: %v", err)
+	// Backfill flushed_roots.jsonl for stores that only had distributionHistory
+	// (upgrade path), so a later dist-only loss cannot drop those counts.
+	if err := s.backfillFlushedRootsLocked(); err != nil {
+		log.Printf("warning: failed to backfill flushed roots: %v", err)
 	}
 
 	return nil
@@ -211,6 +293,86 @@ func (s *SMSTArtifactStore) recoverDistributionHistory() error {
 	return nil
 }
 
+func (s *SMSTArtifactStore) recoverFlushedRoots() error {
+	if s.rootsFile == nil {
+		return nil
+	}
+	if _, err := s.rootsFile.Seek(0, io.SeekStart); err != nil {
+		return fmt.Errorf("seek flushed roots file: %w", err)
+	}
+
+	reader := bufio.NewReader(s.rootsFile)
+	lineNum := 0
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return fmt.Errorf("read flushed roots file: %w", err)
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			lineNum++
+			var entry flushedRootEntry
+			if jsonErr := json.Unmarshal(line, &entry); jsonErr != nil {
+				log.Printf("warning: skipping corrupted flushed root entry at line %d: %v", lineNum, jsonErr)
+			} else if entry.Count > 0 {
+				root, decErr := hex.DecodeString(entry.Root)
+				if decErr != nil || len(root) == 0 {
+					log.Printf("warning: skipping flushed root entry at line %d: bad root hex: %v", lineNum, decErr)
+				} else {
+					s.flushedRoots[entry.Count] = root
+				}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	return nil
+}
+
+// backfillFlushedRootsLocked appends any in-memory flushedRoots counts that are
+// missing from flushed_roots.jsonl (e.g. upgraded stores that only had
+// distributions.jsonl). Call after recover has recomputed roots.
+func (s *SMSTArtifactStore) backfillFlushedRootsLocked() error {
+	if s.rootsFile == nil {
+		return nil
+	}
+	persisted := make(map[uint32]struct{}, len(s.flushedRoots))
+	// Re-read what is already on disk so we do not duplicate lines.
+	if _, err := s.rootsFile.Seek(0, io.SeekStart); err != nil {
+		return err
+	}
+	reader := bufio.NewReader(s.rootsFile)
+	for {
+		line, err := reader.ReadBytes('\n')
+		if err != nil && err != io.EOF {
+			return err
+		}
+		line = bytes.TrimRight(line, "\r\n")
+		if len(line) > 0 {
+			var entry flushedRootEntry
+			if json.Unmarshal(line, &entry) == nil && entry.Count > 0 {
+				persisted[entry.Count] = struct{}{}
+			}
+		}
+		if err == io.EOF {
+			break
+		}
+	}
+	for count, root := range s.flushedRoots {
+		if count == 0 || root == nil {
+			continue
+		}
+		if _, ok := persisted[count]; ok {
+			continue
+		}
+		if err := s.appendFlushedRootLocked(count, root); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func (s *SMSTArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId string) error {
 	leafData := encodeLeaf(nonce, vector)
 	leafHash := smstHashLeaf(leafData)
@@ -226,7 +388,7 @@ func (s *SMSTArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId strin
 		return ErrCapacityExceeded
 	}
 
-	if _, err := s.smst.Insert(nonce, leafHash); err != nil {
+	if _, err := s.insertLeaf(nonce, leafHash); err != nil {
 		return err
 	}
 
@@ -241,13 +403,13 @@ func (s *SMSTArtifactStore) AddWithNode(nonce int32, vector []byte, nodeId strin
 
 func (s *SMSTArtifactStore) Flush() error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	if s.closed {
+		s.mu.Unlock()
 		return ErrStoreClosed
 	}
-
-	return s.flushLocked()
+	err := s.flushLocked()
+	s.mu.Unlock()
+	return err
 }
 
 func (s *SMSTArtifactStore) flushLocked() error {
@@ -290,11 +452,41 @@ func (s *SMSTArtifactStore) flushLocked() error {
 
 	rootHash, _ := s.smst.GetRoot()
 	s.flushedRoots[s.flushedLeafCount] = rootHash
+	s.captureRetainedLocked()
+
+	// Persist the flush boundary before the (best-effort) distribution snapshot
+	// so a dist-append failure cannot lose the committed count across restart.
+	if err := s.appendFlushedRootLocked(s.flushedLeafCount, rootHash); err != nil {
+		return fmt.Errorf("persist flushed root: %w", err)
+	}
 
 	if err := s.appendDistributionSnapshot(); err != nil {
 		log.Printf("warning: distribution snapshot failed (will use simulation): %v", err)
 	}
 
+	return nil
+}
+
+func (s *SMSTArtifactStore) appendFlushedRootLocked(count uint32, root []byte) error {
+	if s.rootsFile == nil || count == 0 || root == nil {
+		return nil
+	}
+
+	entry := flushedRootEntry{
+		Count: count,
+		Root:  hex.EncodeToString(root),
+	}
+	data, err := json.Marshal(entry)
+	if err != nil {
+		return fmt.Errorf("marshal flushed root entry: %w", err)
+	}
+	data = append(data, '\n')
+	if _, err := s.rootsFile.Write(data); err != nil {
+		return fmt.Errorf("write flushed root entry: %w", err)
+	}
+	if err := s.rootsFile.Sync(); err != nil {
+		return fmt.Errorf("sync flushed roots file: %w", err)
+	}
 	return nil
 }
 
@@ -334,12 +526,20 @@ func (s *SMSTArtifactStore) appendDistributionSnapshot() error {
 
 func (s *SMSTArtifactStore) getRoot() []byte {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
-
 	if s.smst.Count() == 0 {
+		s.mu.RUnlock()
 		return nil
 	}
+	if s.liveRootHashed() {
+		root, _ := s.smst.GetRoot()
+		s.mu.RUnlock()
+		return root
+	}
+	s.mu.RUnlock()
 
+	// Deferred hashes need a write; GetRoot → ensureHashed.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	root, _ := s.smst.GetRoot()
 	return root
 }
@@ -350,19 +550,16 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 		s.mu.RUnlock()
 		return nil, ErrStoreClosed
 	}
-
 	if snapshotCount == 0 {
 		s.mu.RUnlock()
 		return nil, nil
 	}
-
 	if snapshotCount > s.smst.Count() {
 		currentCount := s.smst.Count()
 		s.mu.RUnlock()
 		return nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
 	}
-
-	if snapshotCount == s.smst.Count() {
+	if snapshotCount == s.smst.Count() && s.liveRootHashed() {
 		root, _ := s.smst.GetRoot()
 		s.mu.RUnlock()
 		return root, nil
@@ -372,6 +569,23 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 		return root, nil
 	}
 	s.mu.RUnlock()
+
+	// Live tip still needs ensureHashed, or a cold historical miss.
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, ErrStoreClosed
+	}
+	if snapshotCount == s.smst.Count() {
+		root, _ := s.smst.GetRoot()
+		s.mu.Unlock()
+		return root, nil
+	}
+	if root, ok := s.flushedRoots[snapshotCount]; ok {
+		s.mu.Unlock()
+		return root, nil
+	}
+	s.mu.Unlock()
 
 	tree, unlock, err := s.acquireSnapshotTree(snapshotCount)
 	if err != nil {
@@ -384,16 +598,26 @@ func (s *SMSTArtifactStore) GetRootAt(snapshotCount uint32) ([]byte, error) {
 
 func (s *SMSTArtifactStore) GetFlushedRoot() (count uint32, root []byte) {
 	s.mu.RLock()
-	defer s.mu.RUnlock()
+	if s.flushedLeafCount == 0 {
+		s.mu.RUnlock()
+		return 0, nil
+	}
+	if root, ok := s.flushedRoots[s.flushedLeafCount]; ok {
+		c := s.flushedLeafCount
+		s.mu.RUnlock()
+		return c, root
+	}
+	s.mu.RUnlock()
 
+	// Fallback: map miss (should be rare). May need ensureHashed on the live tree.
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.flushedLeafCount == 0 {
 		return 0, nil
 	}
-
 	if root, ok := s.flushedRoots[s.flushedLeafCount]; ok {
 		return s.flushedLeafCount, root
 	}
-
 	r, _ := s.smst.GetRoot()
 	return s.flushedLeafCount, r
 }
@@ -597,24 +821,74 @@ func (s *SMSTArtifactStore) GetArtifactsAndProofsByNonce(nonces []int32, snapsho
 }
 
 // acquireSnapshotTree returns the tree for snapshotCount with the store
-// read-locked; the caller must call unlock() when done. The live tree is
-// served directly under the lock (inserts need the write lock, so it cannot
-// change). Historical counts come from the process-wide snapshot cache.
+// locked for the caller; the caller must call unlock() when done.
+// Live tip (hashes already filled) and retained historical snapshots are
+// served under RLock so concurrent proofs stay parallel. Filling deferred
+// hashes on the live tip takes Lock only for ensureHashed, then retries so
+// proof I/O runs under RLock. Cold-start rebuilds use the process-wide
+// snapshot cache, then RLock for artifact reads.
 func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, func(), error) {
+	// Fast path: if the requested count is the live tip and its hashes are
+	// already filled, serve under a read lock so concurrent proof reads stay
+	// parallel. Writers hold the write lock, so under RLock neither the count
+	// nor the node hashes can change; a filled root implies a fully hashed tree.
 	s.mu.RLock()
 	if s.closed {
 		s.mu.RUnlock()
 		return nil, nil, ErrStoreClosed
 	}
-	currentCount := s.smst.Count()
-	if snapshotCount > currentCount {
-		s.mu.RUnlock()
-		return nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
-	}
-	if snapshotCount == currentCount {
+	if snapshotCount == s.smst.Count() && s.liveRootHashed() {
 		return s.smst, s.mu.RUnlock, nil
 	}
 	s.mu.RUnlock()
+
+	// Slow path: a historical count, or the live tip still needs deferred hashes
+	// filled, which is a mutation and requires the write lock.
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return nil, nil, ErrStoreClosed
+	}
+	currentCount := s.smst.Count()
+	if snapshotCount > currentCount {
+		s.mu.Unlock()
+		return nil, nil, fmt.Errorf("snapshot count %d exceeds current count %d", snapshotCount, currentCount)
+	}
+	if snapshotCount == currentCount {
+		// Fill hashes under Lock only — do not hold the write lock across proof
+		// I/O. Retry so concurrent tip readers share the RLock fast path.
+		s.smst.ensureHashed()
+		s.mu.Unlock()
+		return s.acquireSnapshotTree(snapshotCount)
+	}
+	// Historical count: serve from the retained copy-on-write snapshot in
+	// O(depth) if one was captured at this committed count. Snapshots are
+	// captured after a GetRoot, so their nodes are already hashed; the shared
+	// nodes are immutable (insertCOW never rewrites them), so the view stays
+	// valid after the write lock is released. Drop Lock before proof I/O so
+	// ingest and concurrent proofs are not serialized behind getArtifactByNonce;
+	// re-take RLock so proofEntry can safely read nonceToOffset / buffer.
+	if view, ok := s.retainedSnapshotViewLocked(snapshotCount); ok {
+		s.mu.Unlock()
+		s.mu.RLock()
+		if s.closed {
+			s.mu.RUnlock()
+			return nil, nil, ErrStoreClosed
+		}
+		return view, s.mu.RUnlock, nil
+	}
+	_, committed := s.flushedRoots[snapshotCount]
+	s.mu.Unlock()
+
+	if !committed {
+		// Not a committed count: its root can never match the on-chain
+		// commitment, so it is never legitimately provable. Rejecting here
+		// instead of rebuilding removes the per-request O(N) rebuild, and with it
+		// the rebuild-DoS surface — so no per-validator snapshot-count quota is
+		// needed. Committed counts are all retained (live capture, or recovery
+		// re-capture after a restart); the rebuild below is a cold-start edge.
+		return nil, nil, fmt.Errorf("snapshot count %d is not a committed count", snapshotCount)
+	}
 
 	tree, err := globalSnapshotCache.getOrBuild(s, snapshotCount, false)
 	if err != nil {
@@ -626,6 +900,51 @@ func (s *SMSTArtifactStore) acquireSnapshotTree(snapshotCount uint32) (*SMST, fu
 		return nil, nil, ErrStoreClosed
 	}
 	return tree, s.mu.RUnlock, nil
+}
+
+// liveRootHashed reports whether the live tree's deferred hashes are already
+// filled. A nil root (empty tree) is treated as ready. Callers must hold mu.
+func (s *SMSTArtifactStore) liveRootHashed() bool {
+	return s.smst.root == nil || s.smst.root.hash != nil
+}
+
+// insertLeaf adds a leaf via insertCOW (default) or in-place Insert when
+// SMST_COW is disabled. Both paths use deferred hashing.
+func (s *SMSTArtifactStore) insertLeaf(nonce int32, leafHash []byte) (uint32, error) {
+	if s.cowEnabled {
+		return s.smst.insertCOW(nonce, leafHash)
+	}
+	return s.smst.Insert(nonce, leafHash)
+}
+
+// captureRetainedLocked records a copy-on-write snapshot of the tree at the
+// current committed count so its proofs are served in O(depth) without a
+// rebuild. The write lock must be held; call after GetRoot so the retained nodes
+// are already hashed. Bounded by the store's per-stage lifetime. No-op when
+// COW is disabled — in-place inserts would invalidate shared snapshot nodes.
+func (s *SMSTArtifactStore) captureRetainedLocked() {
+	if !s.cowEnabled {
+		return
+	}
+	count := s.smst.Count()
+	if count == 0 {
+		return
+	}
+	if _, ok := s.retained[count]; ok {
+		return
+	}
+	s.retained[count] = s.smst.snapshot()
+}
+
+// retainedSnapshotViewLocked returns an O(depth) read-only view over the
+// retained snapshot at count, or ok=false when none was captured. The lock must
+// be held (it reads the retained map); the returned view shares immutable nodes.
+func (s *SMSTArtifactStore) retainedSnapshotViewLocked(count uint32) (*SMST, bool) {
+	snap, ok := s.retained[count]
+	if !ok {
+		return nil, false
+	}
+	return s.smst.snapshotView(snap), true
 }
 
 // proofEntry builds a ProofEntry for a nonce known to be in tree.
@@ -718,6 +1037,7 @@ func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []buffe
 	// bake in expansions caused by artifacts inserted after that commit,
 	// producing a root that no longer matches the committed one.
 	tree := NewSMST(smstDefaultDepth)
+	tree.parallelHash = smstParallelHashFromEnv()
 
 	// Read flushed artifacts from disk
 	var skipped uint32
@@ -747,28 +1067,72 @@ func rebuildTreeFromInputs(dataFile *os.File, offsets []uint64, buffered []buffe
 	if tree.Count() != count {
 		log.Printf("[WARN] SMST snapshot rebuild: rebuilt count %d differs from requested %d", tree.Count(), count)
 	}
+	tree.ensureHashed() // fresh, single-owned tree — hash before it is cached/served
 	return tree
 }
 
-// PrebuildSnapshot builds and pins the snapshot tree at the given count for
-// fast proof queries. Should be called after weight distribution is determined.
-// A count equal to the live tree is served directly and needs no snapshot.
+// PrebuildSnapshot pins a historical tree at count for fast proof queries.
+//
+// Live tip (count == leaf count):
+//   - COW on: O(1) retain under write lock (no-op if flush already retained).
+//   - COW off + SMST_SNAPSHOT_IN_MEMORY_CLONE=1 (default): deep clone under
+//     write lock into retained.
+//   - COW off + SMST_SNAPSHOT_IN_MEMORY_CLONE=0: unlock, then rebuild from
+//     artifacts into the process snapshot cache (upgrade-v0.2.14 Warm/Prebuild;
+//     write lock not held during rebuild).
+//
+// Tip already advanced with no retained capture: committed counts rebuild into
+// the cache (cold path); uncommitted counts are rejected.
 func (s *SMSTArtifactStore) PrebuildSnapshot(count uint32) error {
-	s.mu.RLock()
-	currentCount := s.smst.Count()
-	s.mu.RUnlock()
-	if count == currentCount {
+	if count == 0 {
 		return nil
 	}
 
+	s.mu.Lock()
+	if s.closed {
+		s.mu.Unlock()
+		return ErrStoreClosed
+	}
+	if _, ok := s.retained[count]; ok {
+		s.mu.Unlock()
+		return nil
+	}
+	if count == s.smst.Count() {
+		if s.cowEnabled {
+			s.smst.ensureHashed()
+			s.retained[count] = s.smst.snapshot()
+			s.mu.Unlock()
+			return nil
+		}
+		if s.snapshotInMemoryClone {
+			s.smst.ensureHashed()
+			s.retained[count] = s.smst.cloneSnapshot()
+			s.mu.Unlock()
+			return nil
+		}
+		// v0.2.14-style: do not hold the write lock across artifact rebuild.
+		s.mu.Unlock()
+		_, err := globalSnapshotCache.getOrBuild(s, count, true)
+		return err
+	}
+	_, committed := s.flushedRoots[count]
+	s.mu.Unlock()
+
+	if !committed {
+		return fmt.Errorf("snapshot count %d is not a committed count", count)
+	}
 	_, err := globalSnapshotCache.getOrBuild(s, count, true)
 	return err
 }
 
-// WarmSnapshot builds and pins the snapshot tree for count so later proof
-// requests hit the cache. Blocking; callers run it in the background.
+// WarmSnapshot pins the snapshot tree for count so later proof requests hit
+// retained (tip deep-copy / COW) or the process cache. Blocking; callers may
+// run it in the background.
 func (s *SMSTArtifactStore) WarmSnapshot(count uint32) {
-	if _, err := globalSnapshotCache.getOrBuild(s, count, true); err != nil {
+	if count == 0 {
+		return
+	}
+	if err := s.PrebuildSnapshot(count); err != nil {
 		log.Printf("[WARN] SMST WarmSnapshot(%d) failed: %v", count, err)
 	}
 }
@@ -795,6 +1159,12 @@ func (s *SMSTArtifactStore) Close() error {
 	if s.distFile != nil {
 		if err := s.distFile.Close(); err != nil {
 			return fmt.Errorf("close distributions file: %w", err)
+		}
+	}
+
+	if s.rootsFile != nil {
+		if err := s.rootsFile.Close(); err != nil {
+			return fmt.Errorf("close flushed roots file: %w", err)
 		}
 	}
 

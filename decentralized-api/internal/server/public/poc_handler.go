@@ -406,34 +406,11 @@ func (s *Server) preparePocProofRequest(
 
 	reqCount := uint32(req.Count)
 
-	// Quota on distinct snapshot counts per validator (after signature
-	// verification, so only authenticated requests consume quota). Honest
-	// validation touches at most the early and final snapshots; cycling
-	// through more counts is a rebuild-DoS probe, not a legitimate pattern.
-	if s.pocSnapshotLimiter != nil {
-		allowed, distinct := s.pocSnapshotLimiter.Allow(req.ValidatorAddress, int64(req.PocStageStartBlockHeight), req.ModelId, reqCount)
-		if !allowed {
-			logging.Warn("PoC proofs snapshot-count quota exceeded", types.Validation,
-				"validatorAddress", req.ValidatorAddress,
-				"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
-				"modelId", req.ModelId,
-				"requestedCount", reqCount,
-				"distinctCounts", distinct)
-			return nil, 0, nil, echo.NewHTTPError(http.StatusTooManyRequests, "too many distinct snapshot counts requested")
-		}
-		// Two distinct counts (early + final) is the expected honest ceiling.
-		// A third is tolerated but anomalous: surface it so operators can
-		// spot validators whose early capture diverged (or probing) before
-		// the quota ever trips.
-		if distinct > 2 {
-			logging.Warn("PoC proofs validator exceeded expected two snapshot counts", types.Validation,
-				"validatorAddress", req.ValidatorAddress,
-				"pocStageStartBlockHeight", req.PocStageStartBlockHeight,
-				"modelId", req.ModelId,
-				"requestedCount", reqCount,
-				"distinctCounts", distinct)
-		}
-	}
+	// No per-validator snapshot-count quota is needed: committed counts are
+	// served from retained copy-on-write snapshots in O(depth), and any
+	// non-committed count is rejected outright (its root can never match the
+	// on-chain commitment), so a proof request can no longer trigger an O(N)
+	// rebuild — the rebuild-DoS surface the quota guarded against is gone.
 	storeRoot, err := stageStore.GetRootAt(reqCount)
 	if err != nil {
 		logging.Warn("Snapshot count not servable", types.Validation,
