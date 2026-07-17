@@ -224,7 +224,7 @@ func parseCLIFlags() cliFlags {
 	fs := flag.NewFlagSet("devshardctl", flag.ExitOnError)
 	escrowID := fs.String("escrow-id", "", "escrow ID (required, or DEVSHARD_ESCROW_ID env)")
 	chainREST := fs.String("chain-rest", defaultChainRESTURL, "chain REST API URL")
-	publicAPI := fs.String("public-api", defaultPublicAPIURL, "public API URL used for epoch/PoC phase checks")
+	publicAPI := fs.String("public-api", defaultPublicAPIURL, "deprecated: unused by phase gate (kept for settings compatibility)")
 	model := fs.String("model", defaultModelName, "default model name")
 	port := fs.String("port", defaultListenPort, "listen port")
 	privateKey := fs.String("private-key", "", "private key hex (alternative to DEVSHARD_PRIVATE_KEY env)")
