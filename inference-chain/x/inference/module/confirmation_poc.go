@@ -434,7 +434,12 @@ func (am AppModule) evaluateConfirmation(
 	preserved := preservedWeightByParticipant(activeParticipants, &preservedSnapshot, presentScales)
 	totalExpected := weightByParticipant(activeParticipants, presentScales)
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected)
+	// Maintenance-covered participants are expected to be offline: skip both the
+	// ConfirmationWeight haircut and the CPoC ratio write so absence is not
+	// punished via rewards or INACTIVE status.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -468,14 +473,20 @@ func (am AppModule) evaluateConfirmation(
 
 // foldEventReadings applies this event's reading (preserved + measured) to every
 // ValidationWeight via min-take and returns the per-participant slashing ratio.
+// Participants in skipAddrs (e.g. active maintenance) are left untouched: no
+// ConfirmationWeight change and no ratio entry.
 // Pure: no keeper reads, no logging. Caller persists the result.
 func foldEventReadings(
 	epochGroupData *types.EpochGroupData,
 	measured, preserved, totalExpected map[string]int64,
+	skipAddrs map[string]struct{},
 ) (updated bool, ratios map[string]*types.Decimal) {
 	ratios = make(map[string]*types.Decimal, len(epochGroupData.ValidationWeights))
 	for i, vw := range epochGroupData.ValidationWeights {
 		addr := vw.MemberAddress
+		if _, skip := skipAddrs[addr]; skip {
+			continue
+		}
 		reading := preserved[addr] + measured[addr]
 		if totalExpected[addr] == 0 {
 			continue

@@ -1,22 +1,8 @@
 package devshard
 
 import (
-	"decentralized-api/apiconfig"
 	devshardpkg "devshard"
 )
-
-type configManagerMaxNonce struct {
-	cm *apiconfig.ConfigManager
-}
-
-func (s configManagerMaxNonce) MaxNonce() uint32 {
-	return s.cm.GetDevshardVersions().MaxNonce
-}
-
-// ConfigManagerMaxNonce wraps dapi's devshard versions cache.
-func ConfigManagerMaxNonce(cm *apiconfig.ConfigManager) devshardpkg.MaxNonceProvider {
-	return configManagerMaxNonce{cm: cm}
-}
 
 type runtimeConfigMaxNonce struct {
 	source RuntimeConfigSnapshotSource

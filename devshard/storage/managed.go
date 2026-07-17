@@ -84,6 +84,17 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 	return m.maxObservedEpoch.Load()
 }
 
+func (m *ManagedStorage) PruneCutoff() uint64 {
+	if m.epochs != nil {
+		m.observe(m.epochs.CurrentEpochID())
+	}
+	maxE := m.maxObservedEpoch.Load()
+	if maxE+1 <= m.retain {
+		return 0
+	}
+	return maxE + 1 - m.retain
+}
+
 // Start runs a single catch-up prune after recovery. Epoch transitions must
 // trigger additional PruneOnce calls via the host's epoch-change hook.
 func (m *ManagedStorage) Start() {
@@ -110,10 +121,10 @@ func (m *ManagedStorage) PruneOnce(_ context.Context) {
 		m.observe(m.epochs.CurrentEpochID())
 	}
 	maxE := m.maxObservedEpoch.Load()
-	if maxE+1 <= m.retain {
+	cutoff := m.PruneCutoff()
+	if cutoff == 0 {
 		return // not enough epochs yet
 	}
-	cutoff := maxE + 1 - m.retain // every epoch < cutoff is pruneable
 
 	m.mu.Lock()
 	defer m.mu.Unlock()

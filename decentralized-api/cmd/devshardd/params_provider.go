@@ -36,7 +36,7 @@ type epochParamsProvider interface {
 // paramsProviderResult holds the active provider and optional epoch-prune hook.
 type paramsProviderResult struct {
 	Provider           epochParamsProvider
-	RegisterEpochPrune func(store *devshardstorage.ManagedStorage) (cancel func())
+	RegisterEpochPrune func(store *devshardstorage.ManagedStorage, evict func(cutoff uint64)) (cancel func())
 	// Source is "adaptive" or "chain"; surfaced for tests / structured logs.
 	Source string
 	// ActiveSource reports grpc|chain when Source is adaptive; nil for chain-only.
@@ -201,7 +201,7 @@ func newAdaptiveParamsResult(
 		ProbeTimeout:       probeTimeout,
 		StaleCheckInterval: staleCheck,
 		Availability:       availability,
-		Log:                  logger,
+		Log:                logger,
 	})
 	if err != nil {
 		return nil, err
@@ -209,9 +209,12 @@ func newAdaptiveParamsResult(
 
 	return &paramsProviderResult{
 		Provider: rc,
-		RegisterEpochPrune: func(store *devshardstorage.ManagedStorage) (cancel func()) {
+		RegisterEpochPrune: func(store *devshardstorage.ManagedStorage, evict func(cutoff uint64)) (cancel func()) {
 			return rc.OnEpochChange(func(_, _ uint64) {
 				store.PruneOnceAsync(ctx)
+				if evict != nil {
+					evict(store.PruneCutoff())
+				}
 			})
 		},
 		Source: paramsSourceAdaptive,
@@ -250,9 +253,12 @@ func newChainParamsResult(
 
 	return &paramsProviderResult{
 		Provider: rc,
-		RegisterEpochPrune: func(store *devshardstorage.ManagedStorage) (cancel func()) {
+		RegisterEpochPrune: func(store *devshardstorage.ManagedStorage, evict func(cutoff uint64)) (cancel func()) {
 			return rc.OnEpochChange(func(_, _ uint64) {
 				store.PruneOnceAsync(ctx)
+				if evict != nil {
+					evict(store.PruneCutoff())
+				}
 			})
 		},
 		Source: paramsSourceChain,

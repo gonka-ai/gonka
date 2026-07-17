@@ -115,6 +115,82 @@ func TestBuildPocProofsSignPayload(t *testing.T) {
 	assert.Equal(t, expectedHex, string(payload))
 }
 
+func TestBuildPocProofsByNonceSignPayload(t *testing.T) {
+	rootHash := make([]byte, 32)
+	for i := range rootHash {
+		rootHash[i] = byte(i)
+	}
+
+	req := &PocProofsByNonceRequest{
+		PocStageStartBlockHeight: 12345,
+		ModelId:                  "model-a",
+		RootHash:                 base64.StdEncoding.EncodeToString(rootHash),
+		Count:                    50000,
+		Nonces:                   []StringInt32{0, 42, -7},
+		ValidatorAddress:         "gonka1validator",
+		ValidatorSignerAddress:   "gonka1signer",
+		Timestamp:                1700000000000000000,
+	}
+
+	payload := buildPocProofsByNonceSignPayload(req, rootHash)
+	assert.Len(t, payload, 64)
+
+	buf := new(bytes.Buffer)
+	binary.Write(buf, binary.LittleEndian, uint32(len("poc-proofs-by-nonce-v1")))
+	buf.WriteString("poc-proofs-by-nonce-v1")
+	binary.Write(buf, binary.LittleEndian, int64(12345))
+	binary.Write(buf, binary.LittleEndian, uint32(len("model-a")))
+	buf.WriteString("model-a")
+	buf.Write(rootHash)
+	binary.Write(buf, binary.LittleEndian, uint32(50000))
+	binary.Write(buf, binary.LittleEndian, uint32(3)) // num_nonces
+	binary.Write(buf, binary.LittleEndian, int32(0))
+	binary.Write(buf, binary.LittleEndian, int32(42))
+	binary.Write(buf, binary.LittleEndian, int32(-7))
+	binary.Write(buf, binary.LittleEndian, int64(1700000000000000000))
+	binary.Write(buf, binary.LittleEndian, uint32(len("gonka1validator")))
+	buf.WriteString("gonka1validator")
+	binary.Write(buf, binary.LittleEndian, uint32(len("gonka1signer")))
+	buf.WriteString("gonka1signer")
+
+	expectedHash := sha256.Sum256(buf.Bytes())
+	expectedHex := fmt.Sprintf("%x", expectedHash)
+	assert.Equal(t, expectedHex, string(payload))
+}
+
+func TestPocProofsByNonceSignatureRejectsLeafIndexReplay(t *testing.T) {
+	rootHash := make([]byte, 32)
+	privKey := secp256k1.GenPrivKey()
+	pubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PubKey().Bytes())
+
+	leafReq := &PocProofsRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 base64.StdEncoding.EncodeToString(rootHash),
+		Count:                    10,
+		LeafIndices:              []StringUint32{1, 2},
+		ValidatorAddress:         "validator-address",
+		ValidatorSignerAddress:   "validator-address",
+		Timestamp:                StringInt64(time.Now().UnixNano()),
+	}
+	signature, err := privKey.Sign(buildPocProofsSignPayload(leafReq, rootHash))
+	assert.NoError(t, err)
+
+	nonceReq := &PocProofsByNonceRequest{
+		PocStageStartBlockHeight: leafReq.PocStageStartBlockHeight,
+		ModelId:                  leafReq.ModelId,
+		RootHash:                 leafReq.RootHash,
+		Count:                    leafReq.Count,
+		Nonces:                   []StringInt32{1, 2},
+		ValidatorAddress:         leafReq.ValidatorAddress,
+		ValidatorSignerAddress:   leafReq.ValidatorSignerAddress,
+		Timestamp:                leafReq.Timestamp,
+		Signature:                base64.StdEncoding.EncodeToString(signature),
+	}
+
+	assert.Error(t, verifyPocProofsByNonceSignatureWithPubkey(nonceReq, rootHash, pubKeyB64))
+}
+
 func TestStringInt64_UnmarshalJSON(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -260,12 +336,12 @@ func TestGetPocArtifactsState_UsesModelScopedStore(t *testing.T) {
 
 	modelStore, err := store.GetOrCreateStore(100, "org/model-a")
 	assert.NoError(t, err)
-	assert.NoError(t, modelStore.Add(1, []byte("artifact-a")))
+	assert.NoError(t, modelStore.AddWithNode(1, []byte("artifact-a"), ""))
 	assert.NoError(t, modelStore.Flush())
 
 	otherStore, err := store.GetOrCreateStore(100, "model-b")
 	assert.NoError(t, err)
-	assert.NoError(t, otherStore.Add(2, []byte("artifact-b")))
+	assert.NoError(t, otherStore.AddWithNode(2, []byte("artifact-b"), ""))
 	assert.NoError(t, otherStore.Flush())
 
 	server := &Server{artifactStore: store}
@@ -291,13 +367,13 @@ func TestPostPocProofs_UsesModelScopedStore(t *testing.T) {
 
 	modelAStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
-	assert.NoError(t, modelAStore.Add(1, []byte{1, 2, 3, 4}))
+	assert.NoError(t, modelAStore.AddWithNode(1, []byte{1, 2, 3, 4}, ""))
 	assert.NoError(t, modelAStore.Flush())
 	modelACount, modelARoot := modelAStore.GetFlushedRoot()
 
 	modelBStore, err := store.GetOrCreateStore(100, "model-b")
 	assert.NoError(t, err)
-	assert.NoError(t, modelBStore.Add(2, []byte{5, 6, 7, 8}))
+	assert.NoError(t, modelBStore.AddWithNode(2, []byte{5, 6, 7, 8}, ""))
 	assert.NoError(t, modelBStore.Flush())
 	_, modelBRoot := modelBStore.GetFlushedRoot()
 	assert.False(t, bytes.Equal(modelARoot, modelBRoot))
@@ -347,6 +423,74 @@ func TestPostPocProofs_UsesModelScopedStore(t *testing.T) {
 	var resp PocProofsResponse
 	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
 	assert.Len(t, resp.Proofs, 1)
+	assert.Equal(t, uint32(0), resp.Proofs[0].LeafIndex)
+	mockRecorder.AssertExpectations(t)
+}
+
+func TestPostPocProofsByNonce_UsesModelScopedStore(t *testing.T) {
+	store := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
+	defer store.Close()
+
+	modelAStore, err := store.GetOrCreateStore(100, "model-a")
+	assert.NoError(t, err)
+	assert.NoError(t, modelAStore.AddWithNode(10, []byte{1, 2, 3, 4}, ""))
+	assert.NoError(t, modelAStore.AddWithNode(30, []byte{5, 6, 7, 8}, ""))
+	assert.NoError(t, modelAStore.Flush())
+	modelACount, modelARoot := modelAStore.GetFlushedRoot()
+
+	modelBStore, err := store.GetOrCreateStore(100, "model-b")
+	assert.NoError(t, err)
+	assert.NoError(t, modelBStore.AddWithNode(10, []byte{9, 10, 11, 12}, ""))
+	assert.NoError(t, modelBStore.Flush())
+	_, modelBRoot := modelBStore.GetFlushedRoot()
+	assert.False(t, bytes.Equal(modelARoot, modelBRoot))
+
+	privKey := secp256k1.GenPrivKey()
+	pubKeyB64 := base64.StdEncoding.EncodeToString(privKey.PubKey().Bytes())
+	queryClient, cleanup := newProofQueryClient(t, &proofQueryServer{pubkeyB64: pubKeyB64})
+	defer cleanup()
+
+	mockRecorder := &cosmosclient.MockCosmosMessageClient{}
+	mockRecorder.On("NewInferenceQueryClient").Return(queryClient)
+	mockRecorder.On("GetSignerAddress").Return("participant-signer")
+	mockRecorder.On("SignBytes", mock.Anything).Return([]byte("response-signature"), nil)
+
+	server := &Server{
+		artifactStore: store,
+		recorder:      mockRecorder,
+		authzCache:    authzcache.NewAuthzCache(mockRecorder),
+	}
+
+	reqBody := &PocProofsByNonceRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 base64.StdEncoding.EncodeToString(modelARoot),
+		Count:                    StringUint32(modelACount),
+		Nonces:                   []StringInt32{10, 99},
+		ValidatorAddress:         "validator-address",
+		ValidatorSignerAddress:   "validator-address",
+		Timestamp:                StringInt64(time.Now().UnixNano()),
+	}
+	signature, err := privKey.Sign(buildPocProofsByNonceSignPayload(reqBody, modelARoot))
+	assert.NoError(t, err)
+	reqBody.Signature = base64.StdEncoding.EncodeToString(signature)
+
+	body, err := json.Marshal(reqBody)
+	assert.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/poc/proofs/by-nonce", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	e := echo.New()
+
+	err = server.postPocProofsByNonce(e.NewContext(req, rec))
+	assert.NoError(t, err)
+	assert.Equal(t, http.StatusOK, rec.Code)
+
+	var resp PocProofsResponse
+	assert.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	assert.Len(t, resp.Proofs, 1)
+	assert.Equal(t, int32(10), resp.Proofs[0].NonceValue)
 	assert.Equal(t, uint32(0), resp.Proofs[0].LeafIndex)
 	mockRecorder.AssertExpectations(t)
 }

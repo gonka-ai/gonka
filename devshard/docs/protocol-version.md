@@ -10,9 +10,8 @@ At session bind, storage records this as `CreateSessionParams.Version` / `Sessio
 
 | Surface | Field / API | Value |
 |---------|-------------|--------|
-| Embedded dapi | `HostManager` ctor, `main.go` | `"v1"` → `types.LegacyRouteSessionVersion` |
 | devshardd | `NewHostManager(..., runtimeVersion, ...)` | versiond child name (e.g. from `DEVSHARD_BINARY_VERSION`) |
-| User / devshardctl | `VersionForRoutePrefix(routePrefix)` | `LegacyRouteSessionVersion` for `/v1/devshard`; else `/devshard/<name>` segment |
+| User / devshardctl | `VersionForRoutePrefix(routePrefix)` | `/devshard/<name>` segment |
 | Storage | `sessions.version` | Same bind tag as above |
 
 This tag is **not** hashed into the state root and is **not** sent as `state_root_and_protocol_version` on settlement.

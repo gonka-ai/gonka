@@ -180,9 +180,8 @@ func TestMigrateLegacy_RoundTrip(t *testing.T) {
 	require.NoError(t, err)
 }
 
-// TestMigrateLegacy_NormalizesEmptyVersion exercises legacy migration: a SQLite
-// row with an empty version column is stamped with LegacyRouteSessionVersion
-// before CreateSession so the destination store carries an explicit tag.
+// TestMigrateLegacy_NormalizesEmptyVersion exercises migration for older rows
+// whose version column was empty.
 func TestMigrateLegacy_NormalizesEmptyVersion(t *testing.T) {
 	legacyPath := writeLegacyDB(t, []legacyTestSession{
 		{escrowID: "no-ver", version: "", status: "active", balance: 1000, latestNonce: 2, lastFinalized: 1},
@@ -197,8 +196,8 @@ func TestMigrateLegacy_NormalizesEmptyVersion(t *testing.T) {
 
 	meta, err := dest.GetSessionMeta("no-ver")
 	require.NoError(t, err)
-	require.Equal(t, types.LegacyRouteSessionVersion, meta.Version,
-		"legacy empty version must be stamped with LegacyRouteSessionVersion")
+	require.Equal(t, types.SessionVersionV1, meta.Version,
+		"empty migrated version must be stamped with SessionVersionV1")
 	require.Equal(t, uint64(9), meta.EpochID)
 	require.Equal(t, uint64(2), meta.LatestNonce)
 	require.Equal(t, uint64(1), meta.LastFinalized)

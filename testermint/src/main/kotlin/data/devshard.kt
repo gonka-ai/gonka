@@ -93,9 +93,9 @@ data class DevshardHostStatsEntry(
     val invalid: Int,
     val cost: Long,
     @SerializedName("required_validations")
-    val requiredValidations: Int,
+    val requiredValidations: Int? = null,
     @SerializedName("completed_validations")
-    val completedValidations: Int
+    val completedValidations: Int? = null,
 )
 
 data class DevshardSlotSignatureEntry(

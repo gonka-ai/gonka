@@ -1,7 +1,6 @@
 package devshard
 
 import (
-	"decentralized-api/apiconfig"
 	"devshard/runtimeconfig"
 )
 
@@ -18,8 +17,8 @@ type RuntimeConfigSnapshotSource interface {
 // session-config-flow-plan: zero means "not provided" so callers can fall
 // through to the compiled defaults baked into SessionConfig.
 //
-// All fields are populated from apiconfig.DevshardVersionsCache /
-// runtimeconfig.Snapshot (long-poll). Zero means "not provided" at bind time.
+// All fields are populated from runtimeconfig.Snapshot (long-poll). Zero means
+// "not provided" at bind time.
 type SessionParams struct {
 	RefusalTimeout      int64
 	ExecutionTimeout    int64
@@ -35,30 +34,8 @@ type RuntimeParamsProvider interface {
 	SessionParams() SessionParams
 }
 
-// configManagerRuntimeParams wraps dapi-embedded apiconfig.ConfigManager.
-type configManagerRuntimeParams struct {
-	cm *apiconfig.ConfigManager
-}
-
-// ConfigManagerRuntimeParams returns a RuntimeParamsProvider backed by dapi's
-// DevshardVersionsCache (same source as GetRuntimeConfig long-poll).
-func ConfigManagerRuntimeParams(cm *apiconfig.ConfigManager) RuntimeParamsProvider {
-	return configManagerRuntimeParams{cm: cm}
-}
-
-func (p configManagerRuntimeParams) SessionParams() SessionParams {
-	cache := p.cm.GetDevshardVersions()
-	return SessionParams{
-		RefusalTimeout:      cache.RefusalTimeout,
-		ExecutionTimeout:    cache.ExecutionTimeout,
-		ValidationRate:      cache.ValidationRate,
-		VoteThresholdFactor: cache.VoteThresholdFactor,
-		MaxNonce:            cache.MaxNonce,
-	}
-}
-
 // runtimeConfigRuntimeParams wraps the devshardd standalone long-poll snapshot
-// source. Mirrors RuntimeConfigMaxNonce — same underlying cache.
+// source. Mirrors RuntimeConfigMaxNonce: same underlying cache.
 type runtimeConfigRuntimeParams struct {
 	source RuntimeConfigSnapshotSource
 }

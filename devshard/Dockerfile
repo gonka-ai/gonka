@@ -3,10 +3,12 @@
 ################################################################################
 # Build — runs on the native platform, cross-compiles via GOOS/GOARCH
 ################################################################################
-FROM --platform=$BUILDPLATFORM golang:1.24.2-alpine3.20 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.24.2-alpine3.21 AS builder
 
 ARG TARGETOS
 ARG TARGETARCH
+ARG DEVSHARD_VERSION=dev
+ARG DEVSHARD_PROTOCOL_VERSION=v2
 
 WORKDIR /app
 
@@ -20,12 +22,13 @@ COPY . .
 RUN --mount=type=cache,id=go-build-cache-devshard,target=/root/.cache/go-build \
     --mount=type=cache,id=go-mod-cache-devshard,target=/go/pkg/mod \
     CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
-    go build -o /devshardctl ./cmd/devshardctl/
+    go build -ldflags "-X main.Version=${DEVSHARD_VERSION} -X devshard/types.buildStateRootProtocolVersion=${DEVSHARD_PROTOCOL_VERSION}" \
+    -o /devshardctl ./cmd/devshardctl/
 
 ################################################################################
 # Final image
 ################################################################################
-FROM alpine:3.18
+FROM alpine:3.21
 
 RUN apk add --no-cache ca-certificates curl && \
     rm -rf /var/cache/apk/*

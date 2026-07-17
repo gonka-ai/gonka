@@ -88,7 +88,7 @@ val NODE_COMPOSE_FILES = BASE_COMPOSE_FILES + "${LOCAL_TEST_NET_DIR}/docker-comp
 data class GenesisUrls(val keyName: String) {
     val apiUrl = "http://$keyName-api:9000"
     val rpcUrl = "http://$keyName-node:26657"
-    val p2pUrl = "http://$keyName-node:26656"
+    val p2pUrl = "tcp://$keyName-node:26656"
 }
 
 data class DockerGroup(
@@ -110,15 +110,14 @@ data class DockerGroup(
     val genesisOverridesFile: String,
     // publicUrl is what dapi registers on chain as its participant.inference_url.
     // Mirrors production: chain points at the per-pair proxy, which routes
-    // /v1/devshard/* to dapi (legacy in-process HostManager via the exempt
-    // route mechanism) and /devshard/<version>/* to versiond when configured.
+    // /devshard/<version>/* to versiond when configured.
     val publicUrl: String = "http://$pairName-proxy",
     // pocCallbackUrl stays direct -- it's an internal mlnode -> dapi callback
     // on the ML server port, never routed through nginx.
     val pocCallbackUrl: String = "http://$pairName-api:9100",
     val config: ApplicationConfig,
     val useSnapshots: Boolean,
-    val p2pExternalAddress: String = "http://$pairName-node:26656",
+    val p2pExternalAddress: String = "$pairName-node:26656",
 ) {
     val warmKeyName = "$pairName-WARM"
     val coldKeyName = pairName

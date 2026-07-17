@@ -23,6 +23,10 @@ type (
 		provider types.RequiredCollateralProvider
 	}
 
+	maintenanceCheckerRef struct {
+		checker types.MaintenanceChecker
+	}
+
 	// UnbondingIndexes groups the secondary indexes for the UnbondingCollateral map
 	UnbondingIndexes struct {
 		// ByParticipant indexes primary keys by participant address, to allow queries by participant
@@ -41,6 +45,7 @@ type (
 		bankViewKeeper        types.BankKeeper
 		bookkeepingBankKeeper types.BookkeepingBankKeeper
 		collateralProviderRef *collateralProviderRef
+		maintenanceRef        *maintenanceCheckerRef
 		params                collections.Item[types.Params]
 		CollateralMap         collections.Map[sdk.AccAddress, sdk.Coin]
 		Schema                collections.Schema
@@ -88,6 +93,7 @@ func NewKeeper(
 		bankViewKeeper:        bankKeeper,
 		bookkeepingBankKeeper: bookkeepingBankKeeper,
 		collateralProviderRef: &collateralProviderRef{},
+		maintenanceRef:        &maintenanceCheckerRef{},
 		params:                collections.NewItem(sb, types.ParamsKey, "params", codec.CollValue[types.Params](cdc)),
 		CollateralMap:         collections.NewMap(sb, types.CollateralKey, "collateral", sdk.AccAddressKey, codec.CollValue[sdk.Coin](cdc)),
 		CurrentEpoch:          collections.NewItem(sb, types.CurrentEpochKey, "current_epoch", collections.Uint64Value),
@@ -125,6 +131,20 @@ func (k Keeper) GetRequiredCollateralForSlash(ctx context.Context, participantAd
 
 func (k *Keeper) SetRequiredCollateralProvider(collateralProvider types.RequiredCollateralProvider) {
 	k.collateralProviderRef.provider = collateralProvider
+}
+
+// SetMaintenanceChecker sets the maintenance checker for defense-in-depth hook guards.
+func (k *Keeper) SetMaintenanceChecker(checker types.MaintenanceChecker) {
+	k.maintenanceRef.checker = checker
+}
+
+// IsParticipantInActiveMaintenance returns true if the maintenance checker is set
+// and the participant is currently in an active maintenance window.
+func (k Keeper) IsParticipantInActiveMaintenance(ctx context.Context, participant sdk.AccAddress) bool {
+	if k.maintenanceRef.checker == nil {
+		return false
+	}
+	return k.maintenanceRef.checker.IsParticipantInActiveMaintenance(ctx, participant)
 }
 
 // GetAuthority returns the module's authority.

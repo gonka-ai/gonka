@@ -224,6 +224,12 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)
 	}
 
+	// Process maintenance window lifecycle transitions (Scheduled->Active, Active->Completed)
+	err = am.keeper.ProcessMaintenanceTransitions(ctx)
+	if err != nil {
+		am.LogError("Failed to process maintenance transitions", types.Maintenance, "error", err)
+	}
+
 	return nil
 }
 
@@ -245,13 +251,17 @@ func (am AppModule) expireInferences(
 		return err
 	}
 
+	// Pre-build maintenance address set once to avoid repeated O(log N) lookups
+	// per expired inference in handleExpiredInferenceWithContext.
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+
 	for _, i := range timeouts {
 		inference, found := am.keeper.GetInference(ctx, i.InferenceId)
 		if !found {
 			continue
 		}
 		if inference.Status == types.InferenceStatus_STARTED {
-			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx)
+			am.handleExpiredInferenceWithContext(ctx, inference, expiryCtx, maintenanceAddrs)
 		}
 	}
 	return nil
@@ -276,7 +286,7 @@ func (am AppModule) expireInferenceAndIssueRefund(ctx context.Context, inference
 	return inference
 }
 
-func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext) {
+func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, inference types.Inference, expiryCtx *InferenceExpiryContext, maintenanceAddrs map[string]struct{}) {
 	executor, found := am.keeper.GetParticipant(ctx, inference.AssignedTo)
 	if !found {
 		am.LogWarn("Unable to find participant for expired inference", types.Inferences, "inferenceId", inference.InferenceId, "executedBy", inference.ExecutedBy)
@@ -328,6 +338,29 @@ func (am AppModule) handleExpiredInferenceWithContext(ctx context.Context, infer
 			"inPoCRange", expiryCtx.IsBlockInPoCRange(inference.StartBlockHeight) || expiryCtx.IsBlockInPoCRange(expiryCtx.CurrentBlockHeight))
 
 		// Still issue refund and mark as expired, but don't penalize executor
+		am.expireInferenceAndIssueRefund(ctx, inference)
+		return
+	}
+
+	// Executor has the required node — check maintenance exemption before penalizing.
+	// During active maintenance, expiry penalties are waived (the participant is
+	// expected to be offline and should not accumulate MissedRequests).
+	if _, inMaint := maintenanceAddrs[inference.AssignedTo]; inMaint {
+		am.LogInfo("Inference expired during active maintenance, waiving penalty",
+			types.Inferences,
+			"inferenceId", inference.InferenceId,
+			"executor", inference.AssignedTo,
+			"model", inference.Model,
+			"epochIndex", epochToCheck.Index)
+
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"maintenance_penalty_waived",
+			sdk.NewAttribute("inference_id", inference.InferenceId),
+			sdk.NewAttribute("executor", inference.AssignedTo),
+			sdk.NewAttribute("reason", "expiry_during_active_maintenance"),
+		))
+
 		am.expireInferenceAndIssueRefund(ctx, inference)
 		return
 	}
@@ -416,17 +449,6 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 	err = am.keeper.Prune(ctx, int64(currentEpoch.Index))
 	if err != nil {
 		am.LogError("Error during pruning", types.Pruning, "error", err.Error())
-	}
-
-	// Track full chain upgrades from UpgradeKeeper
-	upgradePlan, err := am.keeper.GetUpgradePlan(ctx)
-	if err == nil && upgradePlan.Height > 0 && upgradePlan.Height == blockHeight {
-		am.LogInfo("FullUpgradeActive - tracking height", types.Upgrades,
-			"upgradeHeight", upgradePlan.Height, "blockHeight", blockHeight, "name", upgradePlan.Name)
-		err = am.keeper.SetLastUpgradeHeight(ctx, blockHeight)
-		if err != nil {
-			am.LogError("Failed to set last upgrade height for full upgrade", types.Upgrades, "error", err)
-		}
 	}
 
 	partialUpgrades := am.keeper.GetAllPartialUpgrade(ctx)
@@ -557,9 +579,23 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 		// Apply early network protection if conditions are met
 		finalComputeResult := am.applyEarlyNetworkProtection(ctx, computeResult)
 
-		_, err = am.keeper.Staking.SetComputeValidators(ctx, finalComputeResult, testenv.IsTestNet())
-		if err != nil {
-			am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
+		// Safety mechanism: never hand the staking module a validator set with
+		// no positive power. SetComputeValidators deletes validators absent from
+		// the compute results, so an empty (or all-zero) set would wipe every
+		// validator and halt consensus. Keep the existing validators instead.
+		if !hasPositiveComputePower(finalComputeResult) {
+			am.LogError("EndBlock: refusing to apply validator update with no positive-power validators; keeping current validator set", types.EpochGroup,
+				"blockHeight", blockHeight, "len(computeResult)", len(finalComputeResult))
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"epoch_error",
+				sdk.NewAttribute("stage", "set_compute_validators"),
+				sdk.NewAttribute("error_category", "empty_validator_set"),
+			))
+		} else {
+			_, err = am.keeper.Staking.SetComputeValidators(ctx, finalComputeResult, testenv.IsTestNet())
+			if err != nil {
+				am.LogError("Unable to update epoch group", types.EpochGroup, "error", err.Error())
+			}
 		}
 		currentEpochGroup.MarkUnchanged(ctx)
 	}
@@ -623,6 +659,25 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		return
 	}
 
+	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
+	previousEpochIndex := uint64(0)
+	if found {
+		previousEpochIndex = previousEpoch.Index
+	}
+
+	// Settle before collateral AdvanceEpoch so slashing can reach maturing unbonding entries.
+	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
+	if err != nil {
+		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"epoch_error",
+			sdk.NewAttribute("stage", "settle_accounts"),
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
+			sdk.NewAttribute("error_category", "settlement"),
+		))
+	}
+
 	// Signal to the collateral module that the epoch has advanced.
 	// This will trigger its internal unbonding queue processing.
 	if am.keeper.GetCollateralKeeper() != nil {
@@ -649,24 +704,6 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		}
 	}
 
-	previousEpoch, found := am.keeper.GetPreviousEpoch(ctx)
-	previousEpochIndex := uint64(0)
-	if found {
-		previousEpochIndex = previousEpoch.Index
-	}
-
-	err := am.keeper.SettleAccounts(ctx, effectiveEpoch.Index, previousEpochIndex)
-	if err != nil {
-		am.LogError("onEndOfPoCValidationStage: Unable to settle accounts", types.Settle, "error", err.Error())
-		sdkCtx := sdk.UnwrapSDKContext(ctx)
-		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
-			"epoch_error",
-			sdk.NewAttribute("stage", "settle_accounts"),
-			sdk.NewAttribute("epoch", fmt.Sprintf("%d", effectiveEpoch.Index)),
-			sdk.NewAttribute("error_category", "settlement"),
-		))
-	}
-
 	upcomingEpoch, found := am.keeper.GetUpcomingEpoch(ctx)
 	if !found || upcomingEpoch == nil {
 		am.LogError("onEndOfPoCValidationStage: Unable to get upcoming epoch group", types.EpochGroup)
@@ -674,9 +711,33 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	activeParticipants := am.ComputeNewWeights(ctx, *upcomingEpoch)
-	if activeParticipants == nil {
-		am.LogError("onEndOfPoCValidationStage: computeResult == nil && activeParticipants == nil", types.PoC)
-		return
+	if len(activeParticipants) == 0 {
+		// Safety mechanism: a PoC round where nobody passed validation must not
+		// produce an empty epoch. An empty epoch group can never validate anyone
+		// in later rounds (voting powers derive from it), permanently stalling
+		// the network. Re-seat the current epoch's still-valid validators
+		// instead; see epoch_fallback.go for the carry-over rules.
+		am.LogError("onEndOfPoCValidationStage: no validated participants for upcoming epoch; falling back to current epoch validators", types.PoC,
+			"upcomingEpoch.Index", upcomingEpoch.Index)
+		activeParticipants = am.fallbackActiveParticipantsFromCurrentEpoch(ctx, *upcomingEpoch)
+		if len(activeParticipants) == 0 {
+			am.LogError("onEndOfPoCValidationStage: fallback produced no participants; aborting epoch formation", types.PoC,
+				"upcomingEpoch.Index", upcomingEpoch.Index)
+			sdkCtx := sdk.UnwrapSDKContext(ctx)
+			sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+				"epoch_error",
+				sdk.NewAttribute("stage", "empty_epoch_fallback"),
+				sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+				sdk.NewAttribute("error_category", "epoch_formation"),
+			))
+			return
+		}
+		sdkCtx := sdk.UnwrapSDKContext(ctx)
+		sdkCtx.EventManager().EmitEvent(sdk.NewEvent(
+			"empty_epoch_fallback_applied",
+			sdk.NewAttribute("epoch", fmt.Sprintf("%d", upcomingEpoch.Index)),
+			sdk.NewAttribute("participants", fmt.Sprintf("%d", len(activeParticipants))),
+		))
 	}
 
 	modelAssigner := NewModelAssigner(am.keeper, am.keeper)
@@ -727,11 +788,20 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		upcomingEpoch.Index,
 		penaltyStartEpochByModel,
 	)
-	acc.Apply(activeParticipants)
+	penalties := acc.RewardPenalties()
+	rewardTransfers := BuildDelegationRewardTransfers(
+		participationState.calculator,
+		participationState.eligibleModels,
+		participationState.participationByModel,
+		adjParams,
+		upcomingEpoch.Index,
+		penaltyStartEpochByModel,
+	)
+	allRewardTransfers := rewardTransfers.Records()
 
-	afterPenalty := make(map[string]int64, len(activeParticipants))
+	beforeCollateral := make(map[string]int64, len(activeParticipants))
 	for _, p := range activeParticipants {
-		afterPenalty[p.Index] = p.Weight
+		beforeCollateral[p.Index] = p.Weight
 	}
 
 	// Adjust weights based on collateral after the grace period. This modifies the weights in-place.
@@ -769,7 +839,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
 		participationState.eligibleModels, activeParticipants,
 		participationState.participationByModel,
-		consensusWeights, afterPenalty, acc)
+		consensusWeights, beforeCollateral, acc)
 
 	am.LogInfo("onEndOfPoCValidationStage: computed new weights", types.Stages,
 		"upcomingEpoch.Index", upcomingEpoch.Index,
@@ -805,6 +875,14 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
+		EpochIndex: upcomingEpoch.Index,
+		Transfers:  allRewardTransfers,
+		Penalties:  penalties,
+	}); err != nil {
+		am.LogError("onEndOfPoCValidationStage: failed to store delegation reward transfer snapshot", types.PoC, "error", err)
+		return
+	}
 	am.keeper.SetEpochGroupData(ctx, *upcomingEg.GroupData)
 
 	am.addEpochMembers(ctx, upcomingEg, activeParticipants)
@@ -1333,6 +1411,19 @@ func (am AppModule) applyEpochPowerCapping(ctx context.Context, activeParticipan
 	return result.CappedParticipants
 }
 
+// hasPositiveComputePower reports whether at least one compute result carries
+// positive power. SetComputeValidators filters non-positive entries and deletes
+// validators missing from the results, so applying a set without any positive
+// power would remove every validator.
+func hasPositiveComputePower(computeResults []stakingkeeper.ComputeResult) bool {
+	for _, cr := range computeResults {
+		if cr.Power > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // applyEarlyNetworkProtection applies genesis guardian enhancement to compute results before validator set updates
 // This system only applies when network is immature (below maturity threshold)
 func (am AppModule) applyEarlyNetworkProtection(ctx context.Context, computeResults []stakingkeeper.ComputeResult) []stakingkeeper.ComputeResult {
@@ -1400,6 +1491,7 @@ func GetTxCmd() *cobra.Command {
 
 	cmd.AddCommand(GrantMLOpsPermissionsCmd())
 	cmd.AddCommand(SettleDevshardEscrowCmd())
+	cmd.AddCommand(SetClaimRecipientsCmd())
 
 	return cmd
 }

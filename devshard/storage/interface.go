@@ -25,6 +25,10 @@ var ErrSessionVersionRequired = errors.New("session version required")
 // state-root composition from attaching to live state mid-session.
 var ErrSessionVersionConflict = errors.New("session version conflict")
 
+// ErrEscrowBackendConflict is returned when both SQLite and Postgres claim the
+// same escrow. The router refuses to choose a fork silently.
+var ErrEscrowBackendConflict = errors.New("escrow exists in multiple storage backends")
+
 // ErrSnapshotNotFound is returned when no snapshot exists for a session.
 var ErrSnapshotNotFound = errors.New("snapshot not found")
 
@@ -127,8 +131,8 @@ type ActiveSession struct {
 // state root) for GET /v1/state after RAM prune. Late MsgValidation on
 // sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
-	InferenceID uint64
-	SealedNonce uint64
+	InferenceID        uint64
+	SealedNonce        uint64
 	ObsPresent         bool
 	SealedStatus       uint32
 	SealedExecutorSlot uint32

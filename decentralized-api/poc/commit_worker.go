@@ -157,7 +157,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 
 		key := commitKey{stage: pocHeight, modelID: stageStore.ModelID}
 		last, hasLast := w.lastCommitted[key]
-		
+
 		if !hasLast && w.participantAddress != "" {
 			queryClient := w.recorder.NewInferenceQueryClient()
 			resp, err := queryClient.PoCV2StoreCommit(context.Background(), &types.QueryPoCV2StoreCommitRequest{
@@ -197,7 +197,7 @@ func (w *CommitWorker) maybeSubmitCommit(pocHeight int64) {
 
 	msg := &types.MsgPoCV2StoreCommit{
 		PocStageStartBlockHeight: pocHeight,
-		Entries:                 entries,
+		Entries:                  entries,
 	}
 
 	if err := w.recorder.SubmitPoCV2StoreCommit(msg); err != nil {
@@ -258,6 +258,11 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 			continue
 		}
 
+		if err := stageStore.Store.PrebuildSnapshot(commitResp.Count); err != nil {
+			logging.Warn("CommitWorker: prebuild failed", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count, "error", err)
+		}
+
 		distributionResp, err := queryClient.MLNodeWeightDistribution(context.Background(), &types.QueryMLNodeWeightDistributionRequest{
 			PocStageStartBlockHeight: pocHeight,
 			ParticipantAddress:       w.participantAddress,
@@ -267,7 +272,16 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 			continue
 		}
 
-		distribution := stageStore.Store.GetNodeDistribution()
+		distribution, exact, err := stageStore.Store.GetNodeDistributionAt(commitResp.Count)
+		if err != nil {
+			logging.Error("CommitWorker: failed to get distribution", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count, "error", err)
+			continue
+		}
+		if !exact {
+			logging.Warn("CommitWorker: using simulated distribution (history miss)", types.PoC,
+				"pocHeight", pocHeight, "modelId", stageStore.ModelID, "count", commitResp.Count)
+		}
 		if len(distribution) == 0 {
 			continue
 		}
@@ -292,7 +306,7 @@ func (w *CommitWorker) submitWeightDistribution(pocHeight int64) {
 
 	msg := &types.MsgMLNodeWeightDistribution{
 		PocStageStartBlockHeight: pocHeight,
-		Entries:                 entries,
+		Entries:                  entries,
 	}
 
 	if err := w.recorder.SubmitMLNodeWeightDistribution(msg); err != nil {

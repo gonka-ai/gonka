@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -22,7 +23,7 @@ type HTTPSessionConfig struct {
 	Bridge           bridge.MainnetBridge
 	StoragePath      string                          // SQLite path for session persistence; default ~/.cache/gonka/devshard-<escrowID>
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
-	RoutePrefix      string                          // optional: HTTP path prefix used to reach hosts; default devshard.LegacyRoutePrefix. Versioned binaries use devshard.VersionedRoutePrefix(...).
+	RoutePrefix      string                          // required: HTTP path prefix used to reach hosts, e.g. devshard.VersionedRoutePrefix(...).
 	RequestAdmission transport.RequestAdmissionController
 	ProtocolVersion  types.ProtocolVersion // optional: defaults to ProtocolV1
 }
@@ -38,10 +39,70 @@ func resolveHTTPSessionStoragePath(escrowID, configured string) string {
 	return filepath.Join(home, ".cache", "gonka", fmt.Sprintf("devshard-%s", escrowID))
 }
 
+// LocalSessionConfig holds the parameters needed to rehydrate a user Session
+// entirely from local storage, with no chain access and no host clients.
+type LocalSessionConfig struct {
+	PrivateKeyHex   string
+	EscrowID        string
+	StoragePath     string
+	ProtocolVersion types.ProtocolVersion
+}
+
+// NewLocalSession rehydrates a Session from local SQLite storage without
+// contacting the chain and without wiring any host clients. The returned
+// session can answer read-only queries (state, status, debug, settlement
+// build) but cannot dispatch new inferences. Callers own the returned
+// Session and must Close it when done, which also closes the underlying
+// storage handle.
+//
+// Warm-key verification is intentionally omitted (nil resolver): stored
+// diffs carry their warm-key deltas, which RecoverSession injects before
+// replay, so no chain-backed resolver is needed to rebuild state.
+func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, error) {
+	if strings.TrimSpace(cfg.StoragePath) == "" {
+		return nil, nil, fmt.Errorf("local session requires a storage path")
+	}
+	signer, err := signing.SignerFromHex(cfg.PrivateKeyHex)
+	if err != nil {
+		return nil, nil, fmt.Errorf("create signer: %w", err)
+	}
+	pv := cfg.ProtocolVersion
+	if pv == "" {
+		pv = types.ProtocolV1
+	}
+	verifier := signing.NewSecp256k1Verifier()
+
+	store, err := storage.NewSQLite(cfg.StoragePath)
+	if err != nil {
+		return nil, nil, fmt.Errorf("open storage: %w", err)
+	}
+	meta, err := store.GetSessionMeta(cfg.EscrowID)
+	if err != nil {
+		store.Close()
+		return nil, nil, fmt.Errorf("get session meta: %w", err)
+	}
+	// No host clients: read-only sessions never dispatch inferences. The
+	// slice length must match the group so NewSession's invariant holds.
+	clients := make([]HostClient, len(meta.Group))
+	session, sm, err := RecoverSession(store, signer, verifier, cfg.EscrowID, meta.Version, meta.Group, clients,
+		state.WithProtocolVersion(pv),
+	)
+	if err != nil {
+		store.Close()
+		return nil, nil, fmt.Errorf("recover session: %w", err)
+	}
+	return session, sm, nil
+}
+
 // NewHTTPSession creates a user Session wired with HTTP clients to real dapi hosts.
 // It queries the bridge for escrow and group info, then creates transport clients
 // for each slot.
 func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error) {
+	cfg.RoutePrefix = strings.TrimSpace(cfg.RoutePrefix)
+	if cfg.RoutePrefix == "" {
+		return nil, nil, fmt.Errorf("RoutePrefix is required; use /devshard/{version}")
+	}
+
 	signer, err := signing.SignerFromHex(cfg.PrivateKeyHex)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create signer: %w", err)
@@ -52,14 +113,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if pv == "" {
 		pv = types.ProtocolV1
 	}
-	routePrefix := devshardpkg.ResolveHostRoutePrefix(pv, cfg.RoutePrefix)
-	sessionVersion := devshardpkg.ProtocolSessionVersion(pv)
-	if cfg.ProtocolVersion == "" && cfg.RoutePrefix != "" {
-		var versionErr error
-		sessionVersion, versionErr = devshardpkg.VersionForRoutePrefix(cfg.RoutePrefix)
-		if versionErr != nil {
-			return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
-		}
+	routePrefix, sessionVersion, versionErr := devshardpkg.ResolveRoutePrefix(cfg.RoutePrefix)
+	if versionErr != nil {
+		return nil, nil, fmt.Errorf("resolve route version: %w", versionErr)
 	}
 
 	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
@@ -100,23 +156,17 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("get host info for %s: %w", slot.ValidatorAddress, err)
 		}
-		var clientCfgs []transport.ClientConfig
-		if cfg.StreamCallback != nil || routePrefix != "" || cfg.RequestAdmission != nil {
-			cc := transport.DefaultClientConfig()
-			cc.ProtocolVersion = pv
-			if cfg.StreamCallback != nil {
-				cc.StreamCallback = cfg.StreamCallback
-			}
-			if routePrefix != "" {
-				cc.RoutePrefix = routePrefix
-			}
-			if cfg.RequestAdmission != nil {
-				cc.ParticipantKey = slot.ValidatorAddress
-				cc.Admission = cfg.RequestAdmission
-			}
-			clientCfgs = append(clientCfgs, cc)
+		cc := transport.DefaultClientConfig()
+		cc.ProtocolVersion = pv
+		cc.RoutePrefix = routePrefix
+		if cfg.StreamCallback != nil {
+			cc.StreamCallback = cfg.StreamCallback
 		}
-		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, clientCfgs...)
+		if cfg.RequestAdmission != nil {
+			cc.ParticipantKey = slot.ValidatorAddress
+			cc.Admission = cfg.RequestAdmission
+		}
+		c := transport.NewHTTPClient(info.URL, cfg.EscrowID, signer, cc)
 		clientCache[slot.ValidatorAddress] = c
 		clients[i] = c
 	}

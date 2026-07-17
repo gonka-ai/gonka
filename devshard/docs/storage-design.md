@@ -19,12 +19,14 @@ and the operational consequence.
 ```
 HostManager
   -> ManagedStorage
-       -> HybridStorage (thin wrapper)
-            -> exactly one backend chosen at boot:
-                 SQLite  OR  Postgres
+       -> HybridStorage (per-escrow router)
+            -> SQLite only
+            -> Postgres only
+            -> SQLite + Postgres during legacy drain
 ```
 
-`NewStorage` in `devshard/storage/factory.go` picks the backend once per process.
+`NewStorage` in `devshard/storage/factory.go` opens the backend set for the
+process. `HybridStorage` then routes each escrow to the backend that owns it.
 See [Storage mode selection](#storage-mode-selection) and
 [storage-modes-plan.md](./storage-modes-plan.md).
 
@@ -113,26 +115,65 @@ window; if old files accumulate, startup work grows until pruning catches up.
 
 ### Storage Mode Selection
 
-Decision: At boot, `NewStorage` selects **one** backend for the entire process.
-There is no per-request routing and no mid-run fallback between SQLite and
-Postgres.
+Decision: `NewStorage` returns a per-session router (`HybridStorage`). The
+backend for a **new** escrow is chosen at `CreateSession` time — Postgres when
+`PGHOST` is set, otherwise SQLite. An **existing** escrow is always served by
+whichever backend physically holds it, so a store can serve legacy SQLite
+escrows and new Postgres escrows at the same time.
 
-| Condition | Backend |
-| --- | --- |
-| `escrow_epoch` has rows in `_meta.db` | SQLite (drain transition if `PGHOST` set) |
-| `PGHOST` set and meta empty | Postgres (boot fails if PG unreachable) |
-| `PGHOST` unset, no `.pg-bound` | SQLite (fresh local store) |
-| `.pg-bound` present, `PGHOST` unset | Boot fails (set `PGHOST` or delete `.pg-bound`) |
+| Condition | New escrows | Existing escrows |
+| --- | --- | --- |
+| `PGHOST` unset, no `.pg-bound` | SQLite | SQLite |
+| `PGHOST` unset, `.pg-bound` present, no SQLite sessions | Boot fails (would orphan PG sessions) | — |
+| `PGHOST` unset, `.pg-bound` present, SQLite sessions exist | Rejected (WARN: degraded mode) | SQLite-owned only |
+| `PGHOST` set, Postgres reachable, no local SQLite sessions | Postgres | Postgres |
+| `PGHOST` set, Postgres reachable, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
+| `PGHOST` set, Postgres unavailable, local SQLite sessions exist | Rejected while reconnecting (WARN: degraded mode) | SQLite-owned only until PG reconnects |
+| `PGHOST` set, Postgres unavailable, no local SQLite sessions | Rejected while reconnecting (WARN: degraded mode) | None until PG reconnects |
 
-Postgres-mode boot writes `<storeDir>/.pg-bound`. While SQLite is draining,
-boot logs a WARN when `PGHOST` is set and `escrow_epoch` still has rows.
+The `.pg-bound` marker tracks whether Postgres currently holds sessions for the
+store, not whether it ever did. Its invariant is: **`<storeDir>/.pg-bound`
+exists whenever Postgres holds at least one session.** It is written ahead of
+each new Postgres `CreateSession` and cleared once a prune drains Postgres to
+zero sessions (a boot-time reconcile also aligns it with reality and removes a
+stale marker left by a fully-drained previous run). The write is held under the
+same lock as the insert so a concurrent prune-driven clear cannot leave a live
+Postgres session unmarked across a crash. Prune-time clearing also proves
+emptiness against `devshard_session_index` before removing the marker, because a
+timed-out create can commit server-side without updating the in-memory index.
+Consequently a store whose Postgres sessions have all settled and pruned can
+boot SQLite-only again without manually deleting the marker; the marker only
+blocks the switch while Postgres sessions still exist.
 
-Why: Dual-backend hybrid routing lost the in-memory route table on reboot and
-could fork append logs when Postgres was briefly down.
+The router only attaches SQLite when the store has SQLite artifacts and
+`NewSQLite` reconciliation finds SQLite-owned escrows, so a store that has
+always been Postgres never opens `_meta.db`. When it attaches SQLite to drain
+legacy escrows it logs a WARN.
 
-Consequence: Postgres outage after boot fails operations on that store; it does
-not silently create sessions in SQLite. SQLite → Postgres promotion happens when
-`escrow_epoch` empties after settle/prune and the process restarts.
+Ownership resolution: the router derives an escrow's backend from each
+backend's own persistent index (SQLite `_meta.db` `escrow_epoch`, Postgres
+`devshard_session_index`) - cached in memory and rebuilt lazily - rather than a
+separate route table. Because `CreateSession` picks exactly one backend and
+never falls back, a given escrow lives in only one backend, so append logs
+cannot fork across backends. If both backends claim the same escrow, the router
+quarantines that escrow with `ErrEscrowBackendConflict` and logs the conflicting
+IDs at boot or promotion. Other escrows keep serving. This protects nodes that
+carry state from an older dual-routing bug or from a manual `.pg-bound` override.
+The earlier design failed because it kept an ephemeral route table that was lost
+on reboot and let the same escrow land in both backends when Postgres was
+briefly down.
+
+Consequence: A Postgres outage while `PGHOST` is set fails new-escrow creation
+(and Postgres-owned operations); the router never silently creates a
+Postgres-destined escrow in SQLite. Boot still succeeds in WARN-logged degraded
+mode, with or without local SQLite sessions. It serves known SQLite escrows,
+rejects new/unknown escrows, and runs a background reconnect loop. Once Postgres
+reconnects, the router logs an INFO, leaves degraded mode, sends new escrows to
+Postgres, and `devshardd` runs another `RecoverSessions()` pass so PG-owned
+active sessions are eagerly restored. Legacy SQLite escrows no longer pin the
+whole process to SQLite - they drain in place as they settle and prune while new
+escrows go straight to Postgres, without waiting for `escrow_epoch` to empty or
+for a restart.
 
 ### Managed Pruning Starts After Recovery
 

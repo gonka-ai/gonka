@@ -48,8 +48,24 @@ type HostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
+}
+
+func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
+	entry := HostStatsJSON{
+		SlotID:  slot,
+		Missed:  hs.Missed,
+		Invalid: hs.Invalid,
+		Cost:    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry.RequiredValidations = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry.CompletedValidations = hs.CompletedValidations
+	}
+	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -104,6 +120,7 @@ var gatewayRuntimeBuilder = buildRuntime
 func main() {
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	configureClassifyCapsFromEnv()
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -252,7 +269,7 @@ func mustLoadParticipantThrottleState(store *GatewayStore) {
 		return
 	}
 	for _, t := range throttles {
-		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.EmptyStreamStreak, t.EOFTransportFailureStreak)
+		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.ModelIDs, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.FailureStrikes)
 	}
 	if len(throttles) > 0 {
 		log.Printf("loaded %d persisted participant throttle state(s)", len(throttles))
@@ -363,16 +380,25 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 }
 
 func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
-	// Load ALL devshards (active and inactive) so that inactive ones
-	// remain accessible for finalization, debug, and settlement retrieval.
-	// Inactive runtimes are loaded with active=false and excluded from
-	// the inference routing pool.
+	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
+	// finalized, or settled) stay in the registry but are not built into
+	// memory-resident runtimes: keeping hundreds of dormant escrows resident
+	// wastes RAM, and probing each one against the chain at startup causes a
+	// boot-time request storm. Inactive devshards are rehydrated on demand:
+	// read-only from local storage for debug/state endpoints, or fully (with
+	// chain access) for manual settlement. See hydrateReadOnlyRuntime and the
+	// lazy settle path.
 	type cfgEntry struct {
 		cfg    RuntimeConfig
 		active bool
 	}
 	allEntries := make([]cfgEntry, 0, len(gatewayState.Devshards))
+	skippedInactive := 0
 	for _, devshard := range gatewayState.Devshards {
+		if !devshard.Active {
+			skippedInactive++
+			continue
+		}
 		allEntries = append(allEntries, cfgEntry{cfg: devshard.RuntimeConfig, active: devshard.Active})
 	}
 	allCfgs := make([]RuntimeConfig, len(allEntries))
@@ -391,8 +417,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	t0 := time.Now()
 	ch := make(chan buildResult, len(allCfgs))
+	// Cap concurrent builders (see maxConcurrentRuntimeBuilds); results are still
+	// collected per-index below, so ordering and error handling are unchanged.
+	buildSem := make(chan struct{}, resolveMaxConcurrentRuntimeBuilds())
 	for i, cfg := range allCfgs {
 		go func(idx int, cfg RuntimeConfig) {
+			buildSem <- struct{}{}
+			defer func() { <-buildSem }()
 			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)
@@ -470,8 +501,8 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			out = append(out, rt)
 		}
 	}
-	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d total_elapsed_ms=%d",
-		len(out), activeCount, inactiveCount, len(skipped), time.Since(t0).Milliseconds())
+	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
+		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
 	return out, nil
 }
 
@@ -562,6 +593,7 @@ func isAuthExemptPath(path string) bool {
 func isAdminPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/admin/") ||
 		strings.HasPrefix(path, "/v1/debug/") ||
+		strings.HasPrefix(path, "/debug/pprof/") ||
 		path == "/v1/finalize" ||
 		path == "/v1/state" {
 		return true
@@ -667,11 +699,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
-		stats = append(stats, HostStatsJSON{
-			SlotID: slot, Missed: hs.Missed, Invalid: hs.Invalid,
-			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
-		})
+		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))

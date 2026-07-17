@@ -293,16 +293,24 @@ func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string
 // or state-machine locks held -- this is what enables async background
 // snapshots from the runtime hot path).
 func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) {
+	_ = writeSnapshotErr(store, escrowID, nonce, state, cursor)
+}
+
+// writeSnapshotErr is writeSnapshot with an error return, for synchronous
+// callers (e.g. Session.FlushSnapshot on retire) that want to know whether the
+// snapshot landed. It logs on failure exactly like writeSnapshot.
+func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) error {
 	blob := sessionSnapshot{State: state, HostSyncNonce: cursor}
 	data, err := json.Marshal(blob)
 	if err != nil {
 		log.Printf("recover_session escrow=%s snapshot_marshal_failed=%v", escrowID, err)
-		return
+		return err
 	}
 	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
 		log.Printf("recover_session escrow=%s snapshot_save_failed=%v", escrowID, err)
-		return
+		return err
 	}
 	log.Printf("recover_session escrow=%s snapshot_saved nonce=%d size_bytes=%d host_cursors=%d",
 		escrowID, nonce, len(data), len(cursor))
+	return nil
 }

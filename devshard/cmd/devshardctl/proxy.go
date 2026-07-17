@@ -23,7 +23,15 @@ import (
 
 var sseDoneMarker = []byte("data: [DONE]")
 
-const defaultMetaDrainTimeout = 10 * time.Second
+// defaultMetaDrainTimeout is a last-resort backstop, not an active policy:
+// it must exceed every natural completion window (SecondaryWaitAfterWinner,
+// nonStreamingNoContentTimeout, nonStreamingMaxAttemptWait) so that hosts
+// which are still legitimately generating after a client disconnect get to
+// finish and settle their nonce normally. Cutting a host early records it
+// as a timeout / empty stream through no fault of its own. The only thing
+// this cap should ever terminate is a host that streams forever without
+// tripping any of the normal race timeouts.
+const defaultMetaDrainTimeout = 40 * time.Minute
 
 // metaDrainTimeout applies only after client disconnect (flag.Done() in
 // withMetaDrain), not during normal connected flows. If devshard_meta /
@@ -82,14 +90,36 @@ func (cf *cancelFlag) Done() <-chan struct{} {
 
 // watchClientCancel triggers flag when r's context is canceled (client
 // disconnected). Spawns one short-lived goroutine bounded by request lifetime.
-func watchClientCancel(r *http.Request, flag *cancelFlag) {
+//
+// net/http also cancels the request context when the handler returns after a
+// normal response, which is indistinguishable from a disconnect here. Callers
+// must invoke the returned stop func once RunInference has returned (i.e. the
+// response was fully delivered) so that normal completion does not trip the
+// flag and metaDrain-cancel speculative attempts that are still running under
+// the SecondaryWaitAfterWinner grace window.
+func watchClientCancel(r *http.Request, flag *cancelFlag) (stop func()) {
 	if flag == nil || r == nil {
-		return
+		return func() {}
 	}
+	stopped := make(chan struct{})
 	go func() {
-		<-r.Context().Done()
-		flag.Trigger()
+		select {
+		case <-r.Context().Done():
+			// stop() happens-before the handler returns, which happens-before
+			// net/http cancels the request context, so this non-blocking
+			// re-check deterministically ignores the post-completion cancel
+			// even when the goroutine first wakes up here.
+			select {
+			case <-stopped:
+				return
+			default:
+			}
+			flag.Trigger()
+		case <-stopped:
+		}
 	}()
+	var once sync.Once
+	return func() { once.Do(func() { close(stopped) }) }
 }
 
 // withMetaDrain caps upstream host reads after client disconnect so a
@@ -342,7 +372,7 @@ func (d *deferredWriter) logFlushFailedOnce(err error, where string) {
 func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	started := time.Now()
 	flag := newCancelFlag()
-	watchClientCancel(r, flag)
+	stopClientWatch := watchClientCancel(r, flag)
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
 	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
@@ -351,6 +381,10 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// upstream may run after the client is gone.
 	var doneWriteErr error
 	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	// The response is fully delivered; detach the disconnect watcher so the
+	// handler returning does not masquerade as a client disconnect and cut
+	// down speculative losers still draining in the background finalizer.
+	stopClientWatch()
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -508,9 +542,14 @@ func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw 
 func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
 	var buf bytes.Buffer
 	flag := newCancelFlag()
-	watchClientCancel(r, flag)
+	stopClientWatch := watchClientCancel(r, flag)
 
 	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	// Winner settled and the response body is buffered; detach the disconnect
+	// watcher so the handler returning does not masquerade as a client
+	// disconnect and cut down speculative losers still draining in the
+	// background finalizer.
+	stopClientWatch()
 	if flag.Gone() {
 		return
 	}
@@ -719,20 +758,23 @@ func (p *Proxy) handleDebugPairwise(w http.ResponseWriter, r *http.Request) {
 }
 
 func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
+	// Live counts come from InferenceStatusCounts (computed under the read
+	// lock without deep-copying records); sealed records are evicted from the
+	// live map, so they are reported separately from the seal-nonce index.
+	liveTotal, statusCounts := p.sm.InferenceStatusCounts()
 	sealed := p.sm.ExportSealedNonces()
 
-	liveStatusCounts := make(map[string]int)
-	for _, rec := range st.Inferences {
-		name := inferenceStatusName[rec.Status]
+	liveStatusCounts := make(map[string]int, len(statusCounts))
+	for status, n := range statusCounts {
+		name := inferenceStatusName[status]
 		if name == "" {
-			name = fmt.Sprintf("unknown(%d)", rec.Status)
+			name = fmt.Sprintf("unknown(%d)", status)
 		}
-		liveStatusCounts[name]++
+		liveStatusCounts[name] = n
 	}
 
 	phaseStr := "active"
-	switch st.Phase {
+	switch p.sm.Phase() {
 	case types.PhaseFinalizing:
 		phaseStr = "finalizing"
 	case types.PhaseSettlement:
@@ -740,14 +782,14 @@ func (p *Proxy) handleDebugState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, map[string]any{
-		"nonce":              st.LatestNonce,
+		"nonce":              p.sm.LatestNonce(),
 		"phase":              phaseStr,
-		"balance":            st.Balance,
-		"live_inferences":    len(st.Inferences),
+		"balance":            p.sm.Balance(),
+		"live_inferences":    liveTotal,
 		"sealed_inferences":  len(sealed),
 		"live_status_counts": liveStatusCounts,
 		// Deprecated: same as live_inferences; kept for older scripts.
-		"total_inferences": len(st.Inferences),
+		"total_inferences": liveTotal,
 		"status_counts":    liveStatusCounts,
 	})
 }
@@ -771,13 +813,12 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 		phaseStr = fmt.Sprintf("unknown(%d)", phase)
 	}
 
-	st := p.sm.SnapshotState()
-	cfg := st.Config
+	cfg := p.sm.Config()
 	status := statusResponse{
 		EscrowID: p.escrowID,
 		Nonce:    p.session.Nonce(),
 		Phase:    phaseStr,
-		Balance:  st.Balance,
+		Balance:  p.sm.Balance(),
 		Config: statusSessionConfig{
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,
@@ -1015,8 +1056,27 @@ func (p *Proxy) handleSyncHosts(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+func hostStatsDebugEntry(hs *types.HostStats) map[string]any {
+	entry := map[string]any{
+		"missed":  hs.Missed,
+		"invalid": hs.Invalid,
+		"cost":    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry["required_validations"] = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry["completed_validations"] = hs.CompletedValidations
+	}
+	return entry
+}
+
+// handleState returns the escrow summary: session scalars, config, group, and
+// the small per-slot maps. It deliberately omits the (potentially large)
+// inference map -- that lives at /v1/debug/inferences -- so this endpoint stays
+// bounded regardless of how many inferences an escrow has accumulated.
 func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
-	st := p.sm.SnapshotState()
+	st := p.sm.SnapshotStateNoInferences()
 
 	var phaseStr string
 	switch st.Phase {
@@ -1053,9 +1113,38 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	allInferences := p.sm.ExportAllInferenceRecords()
-	inferences := make(map[string]any, len(allInferences))
-	for id, rec := range allInferences {
+	hostStats := make(map[string]any, len(st.HostStats))
+	for slot, hs := range st.HostStats {
+		hostStats[fmt.Sprintf("%d", slot)] = hostStatsDebugEntry(hs)
+	}
+
+	revealedSeeds := map[string]int64{}
+
+	warmKeys := make(map[string]string, len(st.WarmKeys))
+	for slot, addr := range st.WarmKeys {
+		warmKeys[fmt.Sprintf("%d", slot)] = addr
+	}
+
+	resp := map[string]any{
+		"session":        session,
+		"group":          group,
+		"host_stats":     hostStats,
+		"revealed_seeds": revealedSeeds,
+		"warm_keys":      warmKeys,
+	}
+
+	writeJSON(w, resp)
+}
+
+// handleDebugInferences returns the full inference map for the escrow. It is a
+// debug-only endpoint (potentially large: up to the per-escrow inference cap)
+// split out of /v1/state so that summary reads stay cheap. It uses
+// ExportAllInferenceRecords rather than the live map so records already
+// sealed to storage still appear in the dump.
+func (p *Proxy) handleDebugInferences(w http.ResponseWriter, r *http.Request) {
+	inferenceMap := p.sm.ExportAllInferenceRecords()
+	inferences := make(map[string]any, len(inferenceMap))
+	for id, rec := range inferenceMap {
 		name := inferenceStatusName[rec.Status]
 		if name == "" {
 			name = fmt.Sprintf("unknown(%d)", rec.Status)
@@ -1080,32 +1169,8 @@ func (p *Proxy) handleState(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	hostStats := make(map[string]any, len(st.HostStats))
-	for slot, hs := range st.HostStats {
-		hostStats[fmt.Sprintf("%d", slot)] = map[string]any{
-			"missed":                hs.Missed,
-			"invalid":               hs.Invalid,
-			"cost":                  hs.Cost,
-			"required_validations":  hs.RequiredValidations,
-			"completed_validations": hs.CompletedValidations,
-		}
-	}
-
-	revealedSeeds := map[string]int64{}
-
-	warmKeys := make(map[string]string, len(st.WarmKeys))
-	for slot, addr := range st.WarmKeys {
-		warmKeys[fmt.Sprintf("%d", slot)] = addr
-	}
-
-	resp := map[string]any{
-		"session":        session,
-		"group":          group,
-		"inferences":     inferences,
-		"host_stats":     hostStats,
-		"revealed_seeds": revealedSeeds,
-		"warm_keys":      warmKeys,
-	}
-
-	writeJSON(w, resp)
+	writeJSON(w, map[string]any{
+		"total_inferences": len(inferences),
+		"inferences":       inferences,
+	})
 }

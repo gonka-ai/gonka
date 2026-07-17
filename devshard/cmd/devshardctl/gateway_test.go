@@ -82,6 +82,17 @@ func gatewayTestRuntimeForLimits(t *testing.T, id string, balance, nonce uint64)
 	}
 }
 
+func seedGatewayTestCapacity(g *Gateway, weights map[string]float64) {
+	if g == nil || g.capacity == nil {
+		return
+	}
+	seeded := make(map[string]float64, len(weights))
+	for host := range weights {
+		seeded[host] = 10_000
+	}
+	g.capacity.SetHostWeightViews(seeded, seeded, nil, nil)
+}
+
 func gatewayTestDepletionGateway(t *testing.T, rt *devshardRuntime, modifySettings ...func(*GatewaySettings)) (*Gateway, *atomic.Int32, *atomic.Int32) {
 	t.Helper()
 
@@ -227,6 +238,93 @@ func TestGatewayCheckBalancesKeepsRuntimeBelowLimits(t *testing.T) {
 	require.True(t, rt.active.Load())
 }
 
+func TestEnqueueSettlementWaitsForActiveRequests(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// One request in flight → settlement must NOT fire yet, but escrow is
+	// deactivated and marked pending (in-memory + persisted).
+	g.reserveRuntime(rt, 1)
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.False(t, rt.active.Load())
+	require.True(t, rt.settlementPending.Load())
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+	require.EqualValues(t, 0, settled.Load())
+
+	// Draining the last request triggers exactly one settlement, which
+	// clears the marker.
+	g.releaseRuntime(rt, 1)
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+
+	state, _, err = g.store.LoadState()
+	require.NoError(t, err)
+	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
+func TestEnqueueSettlementSettlesImmediatelyWhenDrained(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold-1, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// No active requests → settle right away.
+	g.deactivateAndSettleDevshardByID("12", "low_balance")
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.active.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSettlesDrainedEscrow(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Simulate a marker left behind by a pre-restart drain.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Eventually(t, func() bool {
+		return settled.Load() == 1 && !rt.settlementPending.Load()
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSkipsActiveOrUnflagged(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt)
+
+	// Active escrow, no pending marker → nothing to do.
+	g.reconcilePendingSettlements()
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+}
+
+func TestReconcilePendingSettlementsSkipsWhenSettlementDisabled(t *testing.T) {
+	rt := gatewayTestRuntimeForLimits(t, "12", balanceMinimumThreshold, nonceDeactivationLimit-1)
+	g, _, settled := gatewayTestDepletionGateway(t, rt, func(settings *GatewaySettings) {
+		settings.EscrowRotation.SettlementEnabled = false
+	})
+
+	// Inactive escrow flagged pending, but settlement is disabled → reconcile
+	// must not settle, and the marker is preserved for a later re-enable.
+	rt.active.Store(false)
+	require.NoError(t, g.store.SetDevshardActive("12", false))
+	require.NoError(t, g.store.SetDevshardSettlementPending("12", true))
+
+	g.reconcilePendingSettlements()
+
+	require.Never(t, func() bool { return settled.Load() > 0 }, 200*time.Millisecond, 20*time.Millisecond)
+	state, ok, err := g.store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
+}
+
 func TestParseDevshardPath(t *testing.T) {
 	id, inner, ok := parseDevshardPath("/devshard/12/v1/debug/perf")
 	require.True(t, ok)
@@ -238,19 +336,19 @@ func TestParseDevshardPath(t *testing.T) {
 }
 
 func TestGatewayChooseRuntimeUsesLowestLoad(t *testing.T) {
-	// Load score is activeRequests / W(e). Both runtimes share W(e)=1
+	// Load score is activeUserRequests / W(e). Both runtimes share W(e)=1
 	// (no capacity model wired). The picker should prefer the runtime
 	// with fewer in-flight requests.
 	a := &devshardRuntime{id: "6", model: "m"}
 	b := &devshardRuntime{id: "12", model: "m"}
-	a.activeRequests.Store(5)
-	b.activeRequests.Store(1)
+	a.activeUserRequests.Store(5)
+	b.activeUserRequests.Store(1)
 
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
 	chosen, err := g.reserveRuntimeForModel("m", 5)
 	require.NoError(t, err)
 	require.Equal(t, "12", chosen.id)
-	require.EqualValues(t, 2, chosen.activeRequests.Load())
+	require.EqualValues(t, 2, chosen.activeUserRequests.Load())
 	require.EqualValues(t, 5, chosen.reservedTokens.Load())
 }
 
@@ -333,7 +431,7 @@ func TestGatewayModelAccessAdminOnlyDeniesPooledAndDirectChat(t *testing.T) {
 	}.WithTuningDefaults()
 	g.capacity.SetEscrowMembership("12", map[string]int{"host-k": 1})
 	g.capacity.SetHostWeightsByModel(map[string]map[string]float64{
-		"Kimi/Test": {"host-k": 50},
+		"Kimi/Test": {"host-k": 10_000},
 	}, false)
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -364,8 +462,8 @@ func TestGatewayModelAccessAdminOnlyDeniesPooledAndDirectChat(t *testing.T) {
 		Capacity gatewayCapacityStatus `json:"capacity"`
 	}
 	require.NoError(t, json.Unmarshal(statusRec.Body.Bytes(), &body))
-	require.InDelta(t, 50.0, body.Capacity.Models["Kimi/Test"].CurrentWeight, 1e-9)
-	require.InDelta(t, 50.0, body.Capacity.Models["Kimi/Test"].FullWeight, 1e-9)
+	require.InDelta(t, 10_000.0, body.Capacity.Models["Kimi/Test"].CurrentWeight, 1e-9)
+	require.InDelta(t, 10_000.0, body.Capacity.Models["Kimi/Test"].FullWeight, 1e-9)
 	require.InDelta(t, 1.0, body.Capacity.Models["Kimi/Test"].ScaleFactor, 1e-9)
 	require.True(t, body.Capacity.Models["Kimi/Test"].AccessEnabled)
 	require.Equal(t, "admin_only", body.Capacity.Models["Kimi/Test"].AccessMode)
@@ -387,6 +485,7 @@ func TestGatewayModelAccessAdminOnlyAllowsAdminAuthenticatedInference(t *testing
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(10, 1000), "Kimi/Test")
+	seedGatewayTestCapacity(g, map[string]float64{"host-k": 1})
 	g.settings = GatewaySettings{
 		DefaultModel: "Kimi/Test",
 		ModelLimits: []GatewayModelLimitSettings{{
@@ -397,7 +496,7 @@ func TestGatewayModelAccessAdminOnlyAllowsAdminAuthenticatedInference(t *testing
 	}.WithTuningDefaults()
 	g.capacity.SetEscrowMembership("12", map[string]int{"host-k": 1})
 	g.capacity.SetHostWeightsByModel(map[string]map[string]float64{
-		"Kimi/Test": {"host-k": 50},
+		"Kimi/Test": {"host-k": 10_000},
 	}, false)
 
 	handler := buildGatewayHandler(g, runtimeOptions{
@@ -443,6 +542,7 @@ func TestGatewayModelAccessAPIKeyAllowsClientAuthenticatedInference(t *testing.T
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(10, 1000), "Kimi/Test")
+	seedGatewayTestCapacity(g, map[string]float64{"host-k": 1})
 	g.settings = GatewaySettings{
 		DefaultModel: "Kimi/Test",
 		ModelLimits: []GatewayModelLimitSettings{{
@@ -510,6 +610,7 @@ func TestGatewayModelAccessDefaultsToAdminOnly(t *testing.T) {
 		participantSlotCounts: map[string]int{"host-q": 1},
 	}
 	g := NewGateway([]*devshardRuntime{rt, other}, NewGatewayLimiter(10, 1000), "Kimi/Test")
+	seedGatewayTestCapacity(g, map[string]float64{"host-k": 1, "host-q": 1})
 	handler := buildGatewayHandler(g, runtimeOptions{adminAPIKey: "admin-key"})
 
 	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
@@ -551,6 +652,7 @@ func TestGatewayModelAccessOpenAllowsUnauthenticatedInference(t *testing.T) {
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(10, 1000), "Kimi/Test")
+	seedGatewayTestCapacity(g, map[string]float64{"host-k": 1})
 	g.settings = GatewaySettings{
 		DefaultModel: "Kimi/Test",
 		ModelLimits: []GatewayModelLimitSettings{{
@@ -705,7 +807,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -715,7 +817,7 @@ func TestAdminDeactivateDevshardAllowsActiveRequestsAndStopsNewChat(t *testing.T
 
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.False(t, rt.active.Load())
-	require.EqualValues(t, 1, rt.activeRequests.Load())
+	require.EqualValues(t, 1, rt.activeUserRequests.Load())
 
 	state, ok, err := store.LoadState()
 	require.NoError(t, err)
@@ -878,6 +980,39 @@ func TestAdminAddDevshardWiresSharedPhaseGate(t *testing.T) {
 	require.Equal(t, "confirmation_poc", addedStatus.BlockReason)
 }
 
+func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	previousVersion := Version
+	Version = "dev"
+	t.Cleanup(func() { Version = previousVersion })
+
+	require.Equal(t, "/devshard/dev", gatewayHostRoutePrefix(""))
+	require.Equal(t, "/devshard/v2", gatewayHostRoutePrefix("/devshard/v2"))
+	require.Equal(t, "/v1/devshard", gatewayHostRoutePrefix("/v1/devshard"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/dev"))
+	require.NoError(t, validateGatewayHostRoutePrefix("/devshard/v2"))
+	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
+}
+
+func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
+	oldVersion := Version
+	t.Cleanup(func() { Version = oldVersion })
+	Version = "v2"
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
+	got, err := resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/v2", got)
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/v1/devshard")
+	_, err = resolveGatewayRoutePrefix()
+	require.ErrorContains(t, err, "unsupported devshard route prefix")
+
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", " /devshard/test ")
+	got, err = resolveGatewayRoutePrefix()
+	require.NoError(t, err)
+	require.Equal(t, "/devshard/test", got)
+}
+
 func TestAdminImportDevshardLoadsInactiveRuntimeAndAccounting(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -1016,7 +1151,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 			w.WriteHeader(http.StatusNoContent)
 		}),
 	}
-	rt.activeRequests.Store(1)
+	rt.activeUserRequests.Store(1)
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.store = store
 
@@ -1028,7 +1163,7 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.False(t, forwarded)
 	require.True(t, rt.active.Load())
 
-	rt.activeRequests.Store(0)
+	rt.activeUserRequests.Store(0)
 	rec = httptest.NewRecorder()
 	g.handleDevshard(rec, req)
 
@@ -1041,6 +1176,45 @@ func TestGatewayHandleDevshardFinalizeRequiresNoActiveRequests(t *testing.T) {
 	require.True(t, ok)
 	require.Len(t, state.Devshards, 1)
 	require.False(t, state.Devshards[0].Active)
+}
+
+func TestAdminSuspiciousHostsEndpointPersistsAndUpdatesRuntime(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, store.Close())
+	})
+	require.NoError(t, store.Initialize(GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   2,
+		MaxInputTokensInFlight:  200,
+	}, nil))
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	g.store = store
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/suspicious-hosts",
+		strings.NewReader(`{"participant_keys":["host-a","host-b"],"note":"bad output"}`))
+	rec := httptest.NewRecorder()
+	g.handleAdminSuspiciousHosts(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, g.isSuspiciousParticipant("host-a"))
+	require.True(t, g.isSuspiciousParticipant("host-b"))
+
+	state, ok, err := store.LoadState()
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Len(t, state.SuspiciousHosts, 2)
+
+	req = httptest.NewRequest(http.MethodDelete, "/v1/admin/suspicious-hosts",
+		strings.NewReader(`{"participant_key":"host-a"}`))
+	rec = httptest.NewRecorder()
+	g.handleAdminSuspiciousHosts(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.False(t, g.isSuspiciousParticipant("host-a"))
+	require.True(t, g.isSuspiciousParticipant("host-b"))
 }
 
 func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
@@ -1061,8 +1235,8 @@ func TestGatewayHandlePooledChatSetsChosenDevshardHeader(t *testing.T) {
 			w.WriteHeader(http.StatusCreated)
 		}),
 	}
-	slow.activeRequests.Store(10)
-	fast.activeRequests.Store(0)
+	slow.activeUserRequests.Store(10)
+	fast.activeUserRequests.Store(0)
 
 	g := NewGateway([]*devshardRuntime{slow, fast}, NewGatewayLimiter(0, 0), "Qwen/Test")
 	g.settings.ModelLimits = []GatewayModelLimitSettings{{ModelID: "Qwen/Test", AccessMode: string(gatewayAccessModeOpen)}}
@@ -1191,7 +1365,7 @@ func TestGatewayPooledChatCachesStreamingResponseWithFreshRequestID(t *testing.T
 	require.EqualValues(t, 1, calls.Load())
 }
 
-func TestGatewayPooledChatCachesErrorResponseWithFreshRequestID(t *testing.T) {
+func TestGatewayPooledChatCachesOpenAIStyleBadRequestWithFreshRequestID(t *testing.T) {
 	var calls atomic.Int32
 	rt := &devshardRuntime{
 		id:    "12",
@@ -1202,8 +1376,8 @@ func TestGatewayPooledChatCachesErrorResponseWithFreshRequestID(t *testing.T) {
 				w.Header().Set("X-Request-Id", rid)
 			}
 			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusBadGateway)
-			_, _ = w.Write([]byte(`{"error":{"message":"upstream failed"}}`))
+			w.WriteHeader(http.StatusBadRequest)
+			_, _ = w.Write([]byte(`{"error":{"message":"bad response_format schema","type":"BadRequestError","code":400}}`))
 		}),
 	}
 	g := NewGateway([]*devshardRuntime{rt}, NewGatewayLimiter(0, 0), "Qwen/Test")
@@ -1214,7 +1388,7 @@ func TestGatewayPooledChatCachesErrorResponseWithFreshRequestID(t *testing.T) {
 	rec := httptest.NewRecorder()
 	g.handlePooledChat(rec, req)
 
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 	firstBody := rec.Body.String()
 	firstRequestID := rec.Header().Get("X-Request-Id")
 	require.NotEmpty(t, firstRequestID)
@@ -1224,7 +1398,7 @@ func TestGatewayPooledChatCachesErrorResponseWithFreshRequestID(t *testing.T) {
 	rec = httptest.NewRecorder()
 	g.handlePooledChat(rec, req)
 
-	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Equal(t, http.StatusBadRequest, rec.Code)
 	require.Equal(t, firstBody, rec.Body.String())
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
 	require.NotEmpty(t, rec.Header().Get("X-Request-Id"))
@@ -1311,7 +1485,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t *testing.T) {
@@ -1336,7 +1510,7 @@ func TestGatewayHandlePooledChatRejectsUnsupportedModelBeforeDefaultAdminOnly(t 
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.NotContains(t, rec.Body.String(), "admin API key")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
@@ -1361,7 +1535,7 @@ func TestGatewayHandleDevshardChatRejectsUnsupportedModel(t *testing.T) {
 	require.Contains(t, rec.Body.String(), `unsupported model \"Nope/Unsupported\"`)
 	require.Contains(t, rec.Body.String(), "Qwen/Test")
 	require.False(t, forwarded)
-	require.EqualValues(t, 0, rt.activeRequests.Load())
+	require.EqualValues(t, 0, rt.activeUserRequests.Load())
 }
 
 func TestGatewayPooledChatRefreshesCapacityScaleBeforeAcquire(t *testing.T) {
@@ -1473,7 +1647,7 @@ func TestGatewayStatusZerosModelCapacityWithoutRoutableDevshards(t *testing.T) {
 	kimi.active.Store(false)
 	g.capacity.SetHostWeightsByModel(map[string]map[string]float64{
 		"Qwen/Test": {"host-q": 100},
-		"Kimi/Test": {"host-k": 50},
+		"Kimi/Test": {"host-k": 10_000},
 	}, false)
 
 	req := httptest.NewRequest(http.MethodGet, "/v1/status", nil)
@@ -1496,7 +1670,7 @@ func TestGatewayStatusZerosModelCapacityWithoutRoutableDevshards(t *testing.T) {
 	require.Equal(t, 1, body.Capacity.Models["Qwen/Test"].RoutableDevshards)
 
 	require.InDelta(t, 0.0, body.Capacity.Models["Kimi/Test"].CurrentWeight, 1e-9)
-	require.InDelta(t, 50.0, body.Capacity.Models["Kimi/Test"].FullWeight, 1e-9)
+	require.InDelta(t, 10_000.0, body.Capacity.Models["Kimi/Test"].FullWeight, 1e-9)
 	require.InDelta(t, 0.0, body.Capacity.Models["Kimi/Test"].ScaleFactor, 1e-9)
 	require.InDelta(t, 100.0, body.Capacity.Models["Kimi/Test"].LostPercent, 1e-9)
 	require.EqualValues(t, 0, body.Limiter.Models["Kimi/Test"].CurrentCapacityCapRequests)
@@ -1518,6 +1692,12 @@ func TestGatewayWiresQuarantineIntoCapacityWithoutPhaseGate(t *testing.T) {
 		participantSlotCounts: map[string]int{"host-c": 1},
 	}
 	g := NewGateway([]*devshardRuntime{rt, other}, NewGatewayLimiter(4, 0), "Qwen/Test")
+	g.capacity.SetHostWeightViews(
+		map[string]float64{"host-a": 1, "host-b": 1, "host-c": 1},
+		map[string]float64{"host-a": 1, "host-b": 1, "host-c": 1},
+		nil,
+		nil,
+	)
 	g.participantLimiter = limiter
 	g.attachCapacityLiveAvailability()
 
@@ -1536,8 +1716,8 @@ func TestGatewayWiresQuarantineIntoCapacityWithoutPhaseGate(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
 	require.Equal(t, 2, body.Capacity.AvailableHostCount)
 	require.Equal(t, 1, body.Capacity.UnavailableHostCount)
-	require.Equal(t, 0, body.Capacity.CurrentWeightMatched)
-	require.Equal(t, 3, body.Capacity.CurrentWeightFallback)
+	require.Equal(t, 3, body.Capacity.CurrentWeightMatched)
+	require.Equal(t, 0, body.Capacity.CurrentWeightFallback)
 	require.InDelta(t, 2.0, body.Capacity.TotalWeight, 1e-9)
 	require.InDelta(t, 3.0, body.Capacity.BaselineWeight, 1e-9)
 	require.InDelta(t, 33.333333, body.Capacity.LostPercent, 1e-6)
@@ -1651,6 +1831,7 @@ func TestGatewayChooseRuntimeSkipsParticipantLimitedDevshard(t *testing.T) {
 		participantSlotCounts: map[string]int{"fresh-host": 1},
 	}
 	g := NewGateway([]*devshardRuntime{limited, available}, NewGatewayLimiter(0, 0), "m")
+	seedGatewayTestCapacity(g, map[string]float64{"shared-host": 1, "fresh-host": 1})
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
@@ -1677,6 +1858,7 @@ func TestGatewayChooseRuntimePrefersHealthyEscrowWithoutBenchingPartial(t *testi
 		participantSlotCounts: map[string]int{"fresh-a": 1, "fresh-b": 1},
 	}
 	g := NewGateway([]*devshardRuntime{mixed, healthy}, NewGatewayLimiter(0, 0), "m")
+	seedGatewayTestCapacity(g, map[string]float64{"dead-host": 1, "live-host": 1, "fresh-a": 1, "fresh-b": 1})
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
@@ -1705,6 +1887,7 @@ func TestGatewayChooseRuntimeFailsWhenAllDevshardsParticipantLimited(t *testing.
 		participantSlotCounts: map[string]int{"shared-host": 1},
 	}
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
+	seedGatewayTestCapacity(g, map[string]float64{"shared-host": 1})
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
@@ -1732,6 +1915,7 @@ func TestGatewayChooseRuntimeReactsToRecoveryWithoutPhasePoll(t *testing.T) {
 		participantSlotCounts: map[string]int{"b-host": 1},
 	}
 	g := NewGateway([]*devshardRuntime{a, b}, NewGatewayLimiter(0, 0), "m")
+	seedGatewayTestCapacity(g, map[string]float64{"a-host": 1, "b-host": 1})
 	g.participantLimiter = limiter
 	g.capacity.SetLiveAvailable(limiter.IsAvailable)
 
@@ -1854,14 +2038,13 @@ func TestParticipantRequestLimiterEOFTransportFailureQuarantinesAfterThreeConsec
 	require.True(t, limiter.allow("eof-host", now.Add(transportFailureQuarantine+time.Second)))
 }
 
-func TestParticipantRequestLimiterSuccessfulInferenceResetsEOFTransportFailureStreak(t *testing.T) {
+func TestParticipantRequestLimiterSuccessfulInferenceDecrementsEOFTransportFailureStrike(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 
 	limiter.ObserveTransportFailure("eof-host", "/sessions/1/chat/completions", fmt.Errorf("read stream: EOF"))
 	limiter.ObserveTransportFailure("eof-host", "/sessions/1/chat/completions", fmt.Errorf("read stream: EOF"))
 	limiter.ObserveSuccessfulInference("eof-host")
 
-	limiter.ObserveTransportFailure("eof-host", "/sessions/1/chat/completions", fmt.Errorf("read stream: EOF"))
 	limiter.ObserveTransportFailure("eof-host", "/sessions/1/chat/completions", fmt.Errorf("read stream: EOF"))
 	require.False(t, limiter.IsBlocked("eof-host"))
 	limiter.ObserveTransportFailure("eof-host", "/sessions/1/chat/completions", fmt.Errorf("read stream: EOF"))
@@ -1896,15 +2079,20 @@ func TestParticipantRequestLimiterEmptyStreamQuarantineAfterThreeConsecutive(t *
 
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 	require.NoError(t, limiter.AllowRequest("empty-host", "/sessions/12/chat/completions"))
 
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 	require.NoError(t, limiter.AllowRequest("empty-host", "/sessions/12/chat/completions"))
 
 	limiter.ObserveEmptyStream("empty-host")
-	require.True(t, limiter.IsBlocked("empty-host"))
+	require.False(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
+	require.NoError(t, limiter.AllowRequest("empty-host", "/sessions/12/chat/completions"))
 	require.True(t, limiter.allow("empty-host", now.Add(emptyStreamQuarantine+time.Second)))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"), "expired quarantine enters shadow probation")
 }
 
 func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
@@ -1925,13 +2113,15 @@ func TestParticipantRequestLimiterUsesUpdatedThrottleSettings(t *testing.T) {
 
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
 	emptyStreamQuarantineAt := time.Now()
-	require.True(t, limiter.IsBlocked("empty-host"))
+	require.False(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
 	require.True(t, limiter.allow("empty-host", emptyStreamQuarantineAt.Add(151*time.Millisecond)))
 }
 
-func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *testing.T) {
+func TestParticipantRequestLimiterSuccessfulInferenceDecrementsFailureStrikes(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 
 	limiter.ObserveEmptyStream("empty-host")
@@ -1944,8 +2134,30 @@ func TestParticipantRequestLimiterSuccessfulInferenceResetsEmptyStreamStreak(t *
 	require.False(t, limiter.IsBlocked("empty-host"))
 	limiter.ObserveEmptyStream("empty-host")
 	require.False(t, limiter.IsBlocked("empty-host"))
-	limiter.ObserveEmptyStream("empty-host")
-	require.True(t, limiter.IsBlocked("empty-host"))
+	require.True(t, limiter.IsShadowQuarantined("empty-host"))
+}
+
+// Model-burn empties must neither increment nor reset the real empty streak.
+func TestParticipantRequestLimiterObserveModelBurnEmptyIsTelemetryOnly(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	limiter.ObserveEmptyStream("host-A")                    // real empty: streak -> 1
+	limiter.ObserveModelBurnEmpty("host-A", kimiK26ModelID) // telemetry-only: must not touch the streak
+
+	// The burn must neither increment nor reset the empty-stream strike count:
+	// it stays at the single real empty observed above.
+	require.Equal(t, 1, limiter.participants["host-A"].failureStrikes,
+		"model-burn empty must be inert for the empty-stream streak")
+}
+
+// Catches a regression where anyone adds streak logic to ObserveModelBurnEmpty.
+func TestParticipantRequestLimiterObserveModelBurnEmptyNeverQuarantines(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	for i := 0; i < 100; i++ {
+		limiter.ObserveModelBurnEmpty("host-A", kimiK26ModelID)
+	}
+	require.False(t, limiter.IsBlocked("host-A"))
 }
 
 func TestParticipantRequestLimiterStalledWinnerQuarantinesImmediately(t *testing.T) {
@@ -1956,8 +2168,33 @@ func TestParticipantRequestLimiterStalledWinnerQuarantinesImmediately(t *testing
 	limiter.ObserveEmptyStream("stall-host")
 	limiter.ObserveStalledWinner("stall-host")
 
-	require.True(t, limiter.IsBlocked("stall-host"))
+	require.False(t, limiter.IsBlocked("stall-host"))
+	require.True(t, limiter.IsShadowQuarantined("stall-host"))
 	require.True(t, limiter.allow("stall-host", now.Add(stalledWinnerQuarantine+time.Second)))
+}
+
+func TestRedundancyNoWinnerParticipantIncludesShadowQuarantineAndProbation(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+		limiter.ObserveEmptyStream("shadow-host")
+	}
+	limiter.ObserveResult("probe-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+	limiter.ObserveResult("probation-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+	require.True(t, limiter.ClearQuarantine("probation-host"))
+
+	redundancy := &Redundancy{
+		participantLimiter: limiter,
+		suspiciousParticipant: func(participantKey string) bool {
+			return participantKey == "manual-host"
+		},
+	}
+
+	require.True(t, redundancy.isNoWinnerParticipant("manual-host"))
+	require.True(t, redundancy.isNoWinnerParticipant("shadow-host"))
+	require.True(t, redundancy.isNoWinnerParticipant("probation-host"))
+	require.False(t, redundancy.isNoWinnerParticipant("probe-host"))
+	require.True(t, limiter.IsBlocked("probe-host"))
+	require.False(t, limiter.IsBlocked("shadow-host"))
 }
 
 func TestParticipantRequestLimiterRecoversAfterThrottle(t *testing.T) {
@@ -1968,6 +2205,38 @@ func TestParticipantRequestLimiterRecoversAfterThrottle(t *testing.T) {
 	require.False(t, limiter.allow("shared-host", now))
 	after := now.Add(httpThrottleQuarantine + 2*time.Second)
 	require.True(t, limiter.allow("shared-host", after))
+}
+
+func TestParticipantRequestLimiterProbeQuarantineIsModelScoped(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	limiter.ObserveResultForModel("shared-host", "Kimi/Test", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+
+	require.True(t, limiter.IsBlockedForModel("shared-host", "Kimi/Test"))
+	require.False(t, limiter.IsBlockedForModel("shared-host", "Qwen/Test"))
+	require.Error(t, limiter.AllowRequestForModel("shared-host", "Kimi/Test", "/sessions/12/chat/completions"))
+	require.NoError(t, limiter.AllowRequestForModel("shared-host", "Qwen/Test", "/sessions/12/chat/completions"))
+
+	snapshot := limiter.Snapshot([]string{"shared-host"})["shared-host"]
+	require.Equal(t, []string{"Kimi/Test"}, snapshot.ModelIDs)
+}
+
+func TestParticipantRequestLimiterShadowQuarantineIsModelScoped(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
+		limiter.ObserveEmptyStreamForModel("shared-host", "Kimi/Test")
+	}
+
+	require.True(t, limiter.IsShadowQuarantinedForModel("shared-host", "Kimi/Test"))
+	require.False(t, limiter.IsShadowQuarantinedForModel("shared-host", "Qwen/Test"))
+
+	redundancy := &Redundancy{
+		model:              "Kimi/Test",
+		participantLimiter: limiter,
+	}
+	require.True(t, redundancy.isNoWinnerParticipant("shared-host"))
+	redundancy.model = "Qwen/Test"
+	require.False(t, redundancy.isNoWinnerParticipant("shared-host"))
 }
 
 func TestParticipantRequestLimiterMarksParticipantExhaustedOn503(t *testing.T) {
@@ -1991,7 +2260,7 @@ func TestParticipantRequestLimiterExpiresOnFullRecovery(t *testing.T) {
 	require.Equal(t, 1, limiter.TrackedCount())
 	require.True(t, limiter.IsRecentlyQuarantined("shared-host"))
 
-	for i := 0; i < participantProbationSuccessesAfterQuarantine-1; i++ {
+	for i := 0; i < participantStrikesAfterQuarantine-1; i++ {
 		limiter.ObserveSuccessfulInference("shared-host")
 		require.True(t, limiter.IsRecentlyQuarantined("shared-host"))
 	}
@@ -2016,7 +2285,7 @@ func TestParticipantRequestLimiterClearQuarantineStartsProbation(t *testing.T) {
 	require.True(t, snapshot.RequestAllowed)
 	require.True(t, snapshot.AvailableForCapacity)
 
-	for i := 0; i < participantProbationSuccessesAfterQuarantine-1; i++ {
+	for i := 0; i < participantStrikesAfterQuarantine-1; i++ {
 		limiter.ObserveSuccessfulInference("shared-host")
 		require.True(t, limiter.IsRecentlyQuarantined("shared-host"))
 	}
@@ -2040,10 +2309,31 @@ func TestParticipantRequestLimiterPersistsThrottleState(t *testing.T) {
 	require.Equal(t, "shared-host", rows[0].Key)
 	require.Equal(t, float64(0), rows[0].Tokens)
 	require.Equal(t, http.StatusServiceUnavailable, rows[0].Status)
-	require.Equal(t, 0, rows[0].EmptyStreamStreak)
+	require.Equal(t, participantFailureStrikeThreshold, rows[0].FailureStrikes)
+	require.Empty(t, rows[0].ModelIDs)
 }
 
-func TestParticipantRequestLimiterPersistsEmptyStreamStreak(t *testing.T) {
+func TestParticipantRequestLimiterPersistsModelScopedThrottleState(t *testing.T) {
+	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { store.Close() })
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.SetStore(store)
+	limiter.ObserveResultForModel("shared-host", "Kimi/Test", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+
+	rows, err := store.LoadParticipantThrottles()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, []string{"Kimi/Test"}, rows[0].ModelIDs)
+
+	reloaded := NewParticipantRequestLimiter(10, 10)
+	reloaded.LoadStateWithQuarantine(rows[0].Key, rows[0].ModelIDs, rows[0].Tokens, rows[0].LastRefillAt, rows[0].Status, rows[0].QuarantineUntil, rows[0].FailureStrikes)
+	require.True(t, reloaded.IsBlockedForModel("shared-host", "Kimi/Test"))
+	require.False(t, reloaded.IsBlockedForModel("shared-host", "Qwen/Test"))
+}
+
+func TestParticipantRequestLimiterPersistsFailureStrikes(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -2057,7 +2347,7 @@ func TestParticipantRequestLimiterPersistsEmptyStreamStreak(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, "shared-host", rows[0].Key)
-	require.Equal(t, 2, rows[0].EmptyStreamStreak)
+	require.Equal(t, 2, rows[0].FailureStrikes)
 }
 
 func TestParticipantRequestLimiterLoadStateRecoversTokens(t *testing.T) {
@@ -2074,7 +2364,7 @@ func TestParticipantRequestLimiterLoadStateDeletesFullyRecovered(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
 
-	require.NoError(t, store.SaveParticipantThrottle("shared-host", 0, time.Now().Add(-time.Hour), 503, time.Time{}, 0, 0))
+	require.NoError(t, store.SaveParticipantThrottle("shared-host", nil, 0, time.Now().Add(-time.Hour), 503, time.Time{}, 0))
 
 	limiter := NewParticipantRequestLimiter(10, 10)
 	limiter.SetStore(store)
@@ -2087,7 +2377,7 @@ func TestParticipantRequestLimiterLoadStateDeletesFullyRecovered(t *testing.T) {
 	require.Len(t, rows, 0)
 }
 
-func TestParticipantRequestLimiterDeletesOnExpiry(t *testing.T) {
+func TestParticipantRequestLimiterPersistsProbationOnExpiry(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { store.Close() })
@@ -2103,6 +2393,14 @@ func TestParticipantRequestLimiterDeletesOnExpiry(t *testing.T) {
 	now := time.Now().Add(httpThrottleQuarantine + 2*time.Second)
 	require.True(t, limiter.allow("shared-host", now))
 
+	rows, err = store.LoadParticipantThrottles()
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, participantStrikesAfterQuarantine, rows[0].FailureStrikes)
+	require.True(t, rows[0].QuarantineUntil.IsZero())
+
+	limiter.ObserveSuccessfulInference("shared-host")
+	limiter.ObserveSuccessfulInference("shared-host")
 	rows, err = store.LoadParticipantThrottles()
 	require.NoError(t, err)
 	require.Len(t, rows, 0)
@@ -2228,7 +2526,7 @@ func TestMigrateGatewayLegacyStorageRejectsConflictingEpochDB(t *testing.T) {
 	require.NoError(t, sqlStore.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "12",
 		EpochID:        270,
-		Version:        types.LegacyRouteSessionVersion,
+		Version:        types.SessionVersionV1,
 		CreatorAddr:    "creator",
 		Config:         types.SessionConfig{},
 		Group:          []types.SlotAssignment{{SlotID: 0, ValidatorAddress: "a"}},
@@ -2314,7 +2612,7 @@ func writeGatewayLegacyStateDB(t *testing.T, path, escrowID string, latestNonce 
 	_, err = db.Exec(
 		`INSERT INTO sessions (escrow_id, version, creator_addr, config_json, group_json, initial_balance, latest_nonce)
 		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		escrowID, types.LegacyRouteSessionVersion, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
+		escrowID, types.SessionVersionV1, "creator", string(configJSON), string(groupJSON), 1000, latestNonce,
 	)
 	require.NoError(t, err)
 	for nonce := uint64(1); nonce <= latestNonce; nonce++ {
@@ -2594,6 +2892,8 @@ func TestGatewayMetricsEndpointExposedAndUpdated(t *testing.T) {
 	require.Contains(t, body, `status="429"`)
 	require.Contains(t, body, `devshard_gateway_limit_rejections_total`)
 	require.Contains(t, body, `reason="max_input_tokens_in_flight"`)
+	require.Contains(t, body, `devshard_gateway_requests_total{model="Qwen/Test",outcome="gateway_limited",reason="max_input_tokens_in_flight"} 1`)
+	require.Contains(t, body, `devshard_gateway_critical_user_failures_total{model="Qwen/Test",reason="max_input_tokens_in_flight"} 1`)
 	require.Contains(t, body, `devshard_gateway_inflight_requests`)
 	require.Contains(t, body, `devshard_runtime_active`)
 	require.Contains(t, body, `devshard_id="12"`)

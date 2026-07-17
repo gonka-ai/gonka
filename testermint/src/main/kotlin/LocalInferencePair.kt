@@ -8,6 +8,7 @@ import com.github.dockerjava.api.model.*
 import com.github.dockerjava.core.DockerClientBuilder
 import com.github.kittinunf.fuel.core.FuelError
 import com.productscience.data.*
+import com.productscience.data.ProposalStatus
 import okhttp3.Address
 import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
@@ -328,6 +329,8 @@ data class LocalInferencePair(
     var mostRecentParams: InferenceParams? = null,
     var mostRecentEpochData: EpochResponse? = null,
 ) : HasConfig {
+    private val terminalProposalStates = setOf(ProposalStatus.PASSED, ProposalStatus.REJECTED)
+
     /**
      * Gets an alternative API URL using DNS alias (api.{name}.test).
      * This URL:
@@ -357,6 +360,15 @@ data class LocalInferencePair(
             ?: error("API container not found for $name")
         DockerClientBuilder.getInstance().build().use { dockerClient ->
             dockerClient.stopContainerCmd(apiContainer.id).exec()
+        }
+    }
+
+    fun restartApiContainer() {
+        val apiContainer = getRawContainers(config).getApi(name)
+            ?: error("API container not found for $name")
+        DockerClientBuilder.getInstance().build().use { dockerClient ->
+            Logger.warn("Restarting API container for {}", name)
+            dockerClient.restartContainerCmd(apiContainer.id).exec()
         }
     }
 
@@ -915,7 +927,21 @@ data class LocalInferencePair(
             logSection("Voting on proposal, no voters: ${noVoters.joinToString(", ")}")
             cluster.allPairs.forEach {
                 val voteResponse = it.voteOnProposal(proposalId, if (noVoters.contains(it.name)) "no" else "yes")
-                require(voteResponse.code == 0) { "Vote failed: ${voteResponse.rawLog}" }
+                if (voteResponse.code != 0) {
+                    val finalizedStatus = this.node.getGovernanceProposals().proposals
+                        .firstOrNull { proposal -> proposal.id == proposalId }
+                        ?.status
+                    val inactiveProposal = voteResponse.rawLog.contains("inactive proposal")
+                    val isTerminalProposalState = finalizedStatus in terminalProposalStates
+                    require(inactiveProposal && isTerminalProposalState) {
+                        "Vote failed: ${voteResponse.rawLog}"
+                    }
+                    Logger.info(
+                        "Skipping late vote for finalized proposal {} with status {}",
+                        proposalId,
+                        finalizedStatus
+                    )
+                }
             }
 
             logSection("Waiting for voting period to end")
@@ -961,17 +987,14 @@ data class LocalInferencePair(
         escrowId: Long,
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
-        routePrefix: String? = null,
+        routePrefix: String,
         debugLogging: Boolean = false,
         model: String = defaultModel,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
             val stderrFile = devshardProxyLogPath(escrowId)
-            // Tests pin the route prefix explicitly so they are not coupled to
-            // devshardctl's release-default routing choice.
-            val effectiveRoutePrefix = routePrefix ?: "/v1/devshard"
-            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
+            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$routePrefix'"
             val logLevelEnv = if (debugLogging) " DEVSHARD_LOG_LEVEL=debug" else ""
             val startCommand = listOf(
                 "sh", "-c",
@@ -1031,12 +1054,12 @@ data class LocalInferencePair(
     }
 
     // Returns every inference the gateway knows about, keyed by inference id.
-    // Uses /v1/state (the per-runtime full state snapshot) which carries status and
-    // votes per inference.
+    // Uses /v1/debug/inferences (the full inference dump, split out of /v1/state)
+    // which carries status and votes per inference.
     fun getDevshardProxyInferences(proxyUrl: String): Map<Long, DevshardInferencePayload> {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
-            "curl -sf $proxyUrl/v1/state -H 'Authorization: Bearer $devshardAdminApiKey'"
+            "curl -sf $proxyUrl/v1/debug/inferences -H 'Authorization: Bearer $devshardAdminApiKey'"
         ), null).joinToString("")
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')

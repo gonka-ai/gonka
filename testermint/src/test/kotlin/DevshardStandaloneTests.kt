@@ -1,5 +1,9 @@
 import com.github.kittinunf.fuel.Fuel
 import com.productscience.*
+import com.productscience.devshardStateRootProtocolVersion
+import com.productscience.devshardTestVersion
+import com.productscience.devshardVersionedRoutePrefix
+import com.productscience.versiondOverrideEnv
 import com.productscience.data.*
 import kotlinx.coroutines.asCoroutineDispatcher
 import kotlinx.coroutines.async
@@ -20,9 +24,7 @@ import java.util.zip.ZipOutputStream
 import kotlin.test.assertNotNull
 
 /**
- * Mirror of DevshardTests but routed through versiond -> devshardd instead of
- * dapi's in-process HostManager. The shape of every assertion is the same;
- * only the test setup differs:
+ * Devshard integration coverage routed through versiond -> devshardd:
  *
  *  - docker-compose.versiond.yml is included for every pair so each pair runs
  *    a versiond container that boots the locally-built devshardd binary as
@@ -33,8 +35,6 @@ import kotlin.test.assertNotNull
  *    devshardctl builds host URLs as proxy/devshard/<version>/sessions/:id/...
  *    nginx strips /devshard/, versiond strips /<version>/, devshardd handles
  *    /sessions/:id/...
- *  - DAPI's in-process HostManager is still mounted on /v1/devshard for the
- *    legacy path; the new test does not exercise it.
  *  - This file also contains a startup-seeded state-driven test for the normal
  *    `approved_versions -> /versions -> versiond download` path without local
  *    overrides for the tested version.
@@ -49,12 +49,6 @@ class DevshardStandaloneTests : TestermintTest() {
         val routePrefix: String
             get() = "/devshard/${approvedVersion.name}"
     }
-
-    // The default join count is 2 -> three pairs total (genesis, join1, join2).
-    // Every pair gets the versiond compose extension so each runs its own
-    // devshardd child managed by its own ${KEY_NAME}-versiond container.
-    private val versiondComposeFilesByPairName = listOf(GENESIS_KEY_NAME, "join1", "join2")
-        .associateWith { listOf("docker-compose.versiond.yml") }
 
     // Switches the test cluster from "default" to "devshardd via versiond":
     //  - VERSIOND_BINARY_NAME selects the binary versiond launches per child
@@ -82,23 +76,32 @@ class DevshardStandaloneTests : TestermintTest() {
     private val devsharddArtifactZip = devsharddArtifactDir.resolve("devshardd.zip")
     private val devsharddArtifactSha = devsharddArtifactDir.resolve("devshardd.zip.sha256")
 
-    private val overrideConfig = versiondConfig(
-        genesisSpec = mergedGenesisSpec(devshardNoRestrictionsSpec),
+    private val overrideConfig = devshardVersiondConfig(
+        genesisSpec = mergedDevshardGenesisSpec(devshardNoRestrictionsSpec),
         env = overrideVersiondEnv,
     )
 
-    private val streamingLongEpochConfig = versiondConfig(
+    private val streamingLongEpochConfig = devshardVersiondConfig(
         genesisSpec = createSpec(epochLength = 20, epochShift = 10).merge(devshardNoRestrictionsSpec),
         env = overrideVersiondEnv,
     )
 
-    private val parallelLongEpochConfig = versiondConfig(
-        genesisSpec = createSpec(epochLength = 25, epochShift = 10).merge(devshardNoRestrictionsSpec),
+    // devshardEscrowAlwaysValidateSpec pins devshard_escrow_params.validation_rate
+    // to 10000 bps so escrows snapshot 100% sampling at create. Without it the
+    // tests depend on the chain default and go flaky when that default changes.
+    private val parallelLongEpochConfig = devshardVersiondConfig(
+        genesisSpec = createSpec(epochLength = 25, epochShift = 10)
+            .merge(devshardNoRestrictionsSpec)
+            .merge(devshardEscrowAlwaysValidateSpec),
         env = overrideVersiondEnv,
     )
 
-    private val overrideAlwaysValidateConfig = versiondConfig(
-        genesisSpec = mergedGenesisSpec(devshardNoRestrictionsSpec, devshardAlwaysValidateSpec),
+    private val overrideAlwaysValidateConfig = devshardVersiondConfig(
+        genesisSpec = mergedDevshardGenesisSpec(
+            devshardNoRestrictionsSpec,
+            devshardAlwaysValidateSpec,
+            devshardEscrowAlwaysValidateSpec,
+        ),
         env = overrideVersiondEnv,
     )
 
@@ -375,6 +378,10 @@ class DevshardStandaloneTests : TestermintTest() {
                     .isEqualTo(session.escrowId.toString())
                 assertThat(result.parsed.stateRootAndProtocolVersion).isEqualTo(devshardStateRootProtocolVersion())
                 assertThat(result.parsed.hostStats).isNotEmpty()
+                // Settlement host_stats validation counters are always zero on this
+                // branch: the reveal-based recomputeCompliance was removed with seed
+                // reveal (see devshard/docs/inference-lifecycle.md). Validation
+                // coverage is asserted via validationObservability below instead.
                 assertThat(result.parsed.signatures).isNotEmpty()
                 val obs = genesis.getDevshardShardStatsDetail(session.escrowId, routePrefix = overrideRoutePrefix)
                 assertThat(obs.validationObservability.totals.completedValidations)
@@ -479,22 +486,8 @@ class DevshardStandaloneTests : TestermintTest() {
         }
     }
 
-    private fun versiondConfig(
-        genesisSpec: Spec<AppState>,
-        env: Map<String, String>,
-    ): ApplicationConfig = inferenceConfig.copy(
-        genesisSpec = genesisSpec,
-        additionalDockerFilesByKeyName = versiondComposeFilesByPairName,
-        additionalEnvVars = env,
-    )
-
-    private fun mergedGenesisSpec(vararg specs: Spec<AppState>): Spec<AppState> {
-        val base = inferenceConfig.genesisSpec ?: spec<AppState> {}
-        return specs.fold(base) { current, extra -> current.merge(extra) }
-    }
-
-    private fun stateDrivenConfig(approvedVersion: DevshardApprovedVersion): ApplicationConfig = versiondConfig(
-        genesisSpec = mergedGenesisSpec(
+    private fun stateDrivenConfig(approvedVersion: DevshardApprovedVersion): ApplicationConfig = devshardVersiondConfig(
+        genesisSpec = mergedDevshardGenesisSpec(
             devshardNoRestrictionsSpec,
             approvedVersionsSpec(listOf(approvedVersion)),
         ),

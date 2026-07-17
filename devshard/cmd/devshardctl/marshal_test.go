@@ -37,11 +37,11 @@ func TestMarshalSettlement_RoundTrip(t *testing.T) {
 	payload := &state.SettlementPayload{
 		EscrowID:                    "42",
 		StateRootAndProtocolVersion: "dev",
-		Nonce:      5,
-		Fees:       321,
-		RestHash:   restHash,
-		HostStats:  hostStats,
-		Signatures: map[uint32][]byte{0: []byte("sig0"), 1: []byte("sig1")},
+		Nonce:                       5,
+		Fees:                        321,
+		RestHash:                    restHash,
+		HostStats:                   hostStats,
+		Signatures:                  map[uint32][]byte{0: []byte("sig0"), 1: []byte("sig1")},
 	}
 
 	// Step 1: marshal (devshardctl side)
@@ -134,4 +134,35 @@ func TestMarshalSettlement_KotlinReserialize(t *testing.T) {
 
 	require.Equal(t, expectedRoot, stateRoot,
 		"state_root mismatch after Kotlin-style re-serialization")
+}
+
+func TestMarshalSettlement_OmitsZeroValidationFields(t *testing.T) {
+	hostStats := map[uint32]*types.HostStats{
+		0: {Cost: 150},
+		1: {Cost: 100, Missed: 1},
+	}
+	restHash, err := state.ComputeRestHash(9850, map[uint64]*types.InferenceRecord{
+		1: {Status: types.StatusFinished, ExecutorSlot: 0, PromptHash: []byte("abcdefghijklmnopqrstuvwxyz012345")},
+	}, nil)
+	require.NoError(t, err)
+
+	payload := &state.SettlementPayload{
+		EscrowID:                    "42",
+		StateRootAndProtocolVersion: "dev",
+		Nonce:                       3,
+		Fees:                        10,
+		RestHash:                    restHash,
+		HostStats:                   hostStats,
+		Signatures:                  map[uint32][]byte{0: []byte("sig0")},
+	}
+
+	data, err := marshalSettlement(payload)
+	require.NoError(t, err)
+	require.NotContains(t, string(data), "required_validations")
+	require.NotContains(t, string(data), "completed_validations")
+
+	var parsed SettlementJSON
+	require.NoError(t, json.Unmarshal(data, &parsed))
+	require.Equal(t, uint32(0), parsed.HostStats[0].RequiredValidations)
+	require.Equal(t, uint32(0), parsed.HostStats[0].CompletedValidations)
 }

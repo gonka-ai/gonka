@@ -17,6 +17,7 @@ import (
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
+	"decentralized-api/poc/earlyshare"
 	"decentralized-api/statsstorage"
 	"net"
 
@@ -33,9 +34,7 @@ import (
 	"decentralized-api/participant"
 	devshardlogging "devshard/logging"
 	devshardobservability "devshard/observability"
-	devshardstorage "devshard/storage"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"log"
 	"log/slog"
@@ -45,9 +44,37 @@ import (
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
-
-	devshardbridge "devshard/bridge"
 )
+
+// buildEarlyShareGuard constructs the DAPI-only early-share guard from config.
+// Returns nil (a valid disabled guard) when disabled or when the local sqlite
+// database is unavailable.
+func buildEarlyShareGuard(configManager *apiconfig.ConfigManager) *poc.EarlyShareGuard {
+	esgCfg := configManager.GetEarlyShareGuardConfig()
+	cfg := earlyshare.Config{
+		Mode:                  earlyshare.Mode(esgCfg.Mode),
+		FirstFraction:         esgCfg.FirstFraction,
+		ThresholdRatio:        esgCfg.ThresholdRatio,
+		RequireInclusionProof: esgCfg.RequireInclusionProof,
+		InclusionSampleSize:   esgCfg.InclusionSampleSize,
+	}.Normalized()
+	if !cfg.Enabled() {
+		return nil
+	}
+
+	sqlDb := configManager.SqlDb()
+	if sqlDb == nil || sqlDb.GetDb() == nil {
+		logging.Warn("Early-share guard enabled but sqlite db unavailable; disabling", types.PoC)
+		return nil
+	}
+
+	store := earlyshare.NewStore(sqlDb.GetDb())
+	if err := store.EnsureSchema(context.Background()); err != nil {
+		logging.Error("Failed to initialize early-share guard schema; disabling", types.PoC, "error", err)
+		return nil
+	}
+	return poc.NewEarlyShareGuard(cfg, store)
+}
 
 func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "status" {
@@ -142,6 +169,25 @@ func main() {
 		"address", participantInfo.GetAddress(),
 		"pubkey", participantInfo.GetPubKey())
 
+	// DAPI-only early-share guard (disabled by default). When enabled it reuses
+	// the embedded sqlite db for local persistence. See
+	// proposals/poc/early-share-guard-dapi.md.
+	earlyGuard := buildEarlyShareGuard(configManager)
+
+	// Shared managed artifact store for off-chain PoC (used by the validator,
+	// commit worker, and the mlnode/public servers). Manages per-height
+	// directories with automatic pruning (retains last 10). Created before the
+	// validator so the event listener never observes a partially wired validator.
+	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
+	defer artifactStore.Close()
+
+	// Prune early-share guard checkpoints on the same stage cadence as artifacts.
+	if earlyGuard.Enabled() {
+		artifactStore.AddPruneHook(func(stage int64) {
+			earlyGuard.DeleteStage(context.Background(), stage)
+		})
+	}
+
 	offChainValidator := poc.NewOffChainValidator(
 		recorder,
 		nodeBroker,
@@ -151,8 +197,10 @@ func main() {
 		participantInfo.GetAddress(),
 		configManager.GetChainNodeConfig().Url,
 		poc.DefaultValidationConfig(),
+		earlyGuard,
+		artifactStore,
 	)
-	logging.Info("PoC off-chain validator initialized", types.PoC)
+	logging.Info("PoC off-chain validator initialized", types.PoC, "earlyShareGuardEnabled", earlyGuard.Enabled())
 
 	// Create a cancellable context for the entire system
 	ctx, cancel := context.WithCancel(context.Background())
@@ -221,7 +269,7 @@ func main() {
 	logging.Info("start public server on addr", types.Server, "addr", addr)
 
 	// Bridge external block queue
-	blockQueue := pserver.NewBlockQueue(recorder)
+	blockQueue := pserver.NewBlockQueue(recorder, configManager.SqlDb().GetDb())
 
 	// Shared payload storage for both public and admin servers
 	// Uses PostgreSQL if PGHOST is set and accessible, otherwise file-based
@@ -232,22 +280,12 @@ func main() {
 		3*time.Minute, // cache TTL
 	)
 
-	// Shared managed artifact store for off-chain PoC (used by both mlnode and public servers)
-	// Manages per-height directories with automatic pruning (retains last 10)
-	artifactStore := artifacts.NewManagedArtifactStore("/root/.dapi/data/poc-artifacts", 10)
-	defer artifactStore.Close()
-
 	// Create commit worker for time-based artifact commits and weight distribution
 	// Worker owns flush lifecycle, commits periodically (not per-request), and handles distribution
 	batchingCfg := configManager.GetTxBatchingConfig()
 	commitInterval := time.Duration(batchingCfg.PocCommitIntervalSeconds) * time.Second
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
-
-	devshardSigner, devshardSignerErr := internaldevshard.NewSignerFromKeyring(*recorder.GetKeyring(), recorder.GetApiAccount().SignerAccount.Name)
-	if devshardSignerErr != nil {
-		logging.Error("devshard signer init failed", types.System, "error", devshardSignerErr)
-	}
 
 	publicServer := pserver.NewServer(
 		nodeBroker,
@@ -260,63 +298,6 @@ func main() {
 		pserver.WithStatsStorage(statsStore),
 	)
 
-	if devshardSigner != nil {
-		devshardBridge := internaldevshard.NewChainBridge(recorder)
-		httpClient := pserver.NewNoRedirectClient(internaldevshard.MLNodeHTTPTimeout)
-		chainParams := &configParamsProvider{cm: configManager}
-		devshardEngine := internaldevshard.NewEngineAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), payloadStore, chainPhaseTracker, httpClient, chainParams)
-		devshardValidator := internaldevshard.NewValidationAdapter(nodeBroker, configManager.GetCurrentNodeVersion(), chainPhaseTracker, httpClient, devshardBridge, recorder, chainParams)
-
-		// Per-epoch SQLite under /root/.dapi/data/devshard/, or shared Postgres
-		// (same PG vars as payloadstorage) when PGHOST is set. ManagedStorage
-		// runs the background pruner with N=3 retention.
-		// TODO: move to DevshardConfig when config consolidation happens.
-		const devshardDir = "/root/.dapi/data/devshard"
-		const devshardLegacyDB = "/root/.dapi/data/devshard.db"
-		devshardInner, storeErr := devshardstorage.NewStorage(ctx, devshardDir)
-		if storeErr != nil {
-			logging.Error("devshard storage init failed", types.System, "error", storeErr)
-		} else {
-			devshardStore := devshardstorage.NewManagedStorage(devshardInner, 3, &chainPhaseEpochProvider{tracker: chainPhaseTracker})
-			defer devshardStore.Close()
-
-			configManager.SetEpochChangeHandler(func(_, _ uint64) {
-				devshardStore.PruneOnceAsync(ctx)
-			})
-
-			hostManager := internaldevshard.NewHostManager(devshardStore, devshardSigner, devshardEngine, devshardValidator, "v1", devshardBridge, payloadStore, recorder)
-			hostManager.SetAvailabilityProvider(internaldevshard.NewConfigManagerAvailability(configManager, chainPhaseTracker))
-			hostManager.SetMaxNonceProvider(internaldevshard.ConfigManagerMaxNonce(configManager))
-			hostManager.SetRuntimeParamsProvider(internaldevshard.ConfigManagerRuntimeParams(configManager))
-			hostManager.Register(publicServer.DevshardGroup())
-			go func() {
-				migrated, mErr := devshardstorage.MigrateLegacySQLite(devshardLegacyDB, devshardInner, func(escrowID string) (uint64, error) {
-					info, err := devshardBridge.GetEscrow(escrowID)
-					if err != nil {
-						if errors.Is(err, devshardbridge.ErrEscrowNotFound) {
-							return 0, devshardstorage.ErrSkipLegacySession
-						}
-						return 0, err
-					}
-					return info.EpochID, nil
-				})
-				if mErr != nil {
-					logging.Error("devshard legacy migration failed", types.System, "error", mErr)
-					hostManager.SetUnavailable(mErr)
-					return
-				}
-				if migrated > 0 {
-					logging.Info("devshard legacy migration complete", types.System, "sessions_migrated", migrated)
-				}
-
-				devshardStore.Start()
-				hostManager.SetReady()
-				if err := hostManager.RecoverSessions(); err != nil {
-					logging.Error("devshard recovery failed", types.System, "error", err)
-				}
-			}()
-		}
-	}
 	publicServer.Start(addr)
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().MLServerPort)
@@ -403,36 +384,4 @@ func getParams(ctx context.Context, transactionRecorder cosmosclient.InferenceCo
 	}
 	logging.Error("Exhausted all retries to get chain params", types.System, "error", err)
 	return nil, err
-}
-
-// configParamsProvider implements internaldevshard.ChainParamsProvider by
-// reading from dapi's ConfigManager, which syncs chain params every block.
-type configParamsProvider struct {
-	cm *apiconfig.ConfigManager
-}
-
-func (p *configParamsProvider) LogprobsMode() string {
-	mode := p.cm.GetValidationParams().LogprobsMode
-	if mode == "" {
-		return types.DefaultLogprobsMode
-	}
-	return mode
-}
-
-// chainPhaseEpochProvider exposes the current chain epoch to ManagedStorage
-// so the pruner advances the retention horizon even when the host has no
-// CreateSession activity to bump max_observed_epoch from.
-type chainPhaseEpochProvider struct {
-	tracker *chainphase.ChainPhaseTracker
-}
-
-func (p *chainPhaseEpochProvider) CurrentEpochID() uint64 {
-	if p.tracker == nil {
-		return 0
-	}
-	st := p.tracker.GetCurrentEpochState()
-	if st == nil {
-		return 0
-	}
-	return st.LatestEpoch.EpochIndex
 }

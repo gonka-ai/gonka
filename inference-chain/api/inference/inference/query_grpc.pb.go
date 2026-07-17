@@ -30,6 +30,7 @@ const (
 	Query_EpochGroupDataAll_FullMethodName                         = "/inference.inference.Query/EpochGroupDataAll"
 	Query_SettleAmount_FullMethodName                              = "/inference.inference.Query/SettleAmount"
 	Query_SettleAmountAll_FullMethodName                           = "/inference.inference.Query/SettleAmountAll"
+	Query_EstimateBitcoinReward_FullMethodName                     = "/inference.inference.Query/EstimateBitcoinReward"
 	Query_EpochGroupValidations_FullMethodName                     = "/inference.inference.Query/EpochGroupValidations"
 	Query_EpochGroupValidationsAll_FullMethodName                  = "/inference.inference.Query/EpochGroupValidationsAll"
 	Query_PocBatchesForStage_FullMethodName                        = "/inference.inference.Query/PocBatchesForStage"
@@ -84,6 +85,7 @@ const (
 	Query_GetAllModelCapacities_FullMethodName                     = "/inference.inference.Query/GetAllModelCapacities"
 	Query_GranteesByMessageType_FullMethodName                     = "/inference.inference.Query/GranteesByMessageType"
 	Query_MLNodeVersion_FullMethodName                             = "/inference.inference.Query/MLNodeVersion"
+	Query_LastUpgradeHeight_FullMethodName                         = "/inference.inference.Query/LastUpgradeHeight"
 	Query_ParticipantAllowList_FullMethodName                      = "/inference.inference.Query/ParticipantAllowList"
 	Query_ExcludedParticipants_FullMethodName                      = "/inference.inference.Query/ExcludedParticipants"
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
@@ -95,6 +97,13 @@ const (
 	Query_PreservedNodesSnapshot_FullMethodName                    = "/inference.inference.Query/PreservedNodesSnapshot"
 	Query_DevshardHostEpochStats_FullMethodName                    = "/inference.inference.Query/DevshardHostEpochStats"
 	Query_PoCDelegation_FullMethodName                             = "/inference.inference.Query/PoCDelegation"
+	Query_MaintenanceCredit_FullMethodName                         = "/inference.inference.Query/MaintenanceCredit"
+	Query_MaintenanceScheduled_FullMethodName                      = "/inference.inference.Query/MaintenanceScheduled"
+	Query_MaintenanceActive_FullMethodName                         = "/inference.inference.Query/MaintenanceActive"
+	Query_MaintenanceStatus_FullMethodName                         = "/inference.inference.Query/MaintenanceStatus"
+	Query_MaintenanceConcurrency_FullMethodName                    = "/inference.inference.Query/MaintenanceConcurrency"
+	Query_MaintenanceSchedulability_FullMethodName                 = "/inference.inference.Query/MaintenanceSchedulability"
+	Query_ListClaimRecipients_FullMethodName                       = "/inference.inference.Query/ListClaimRecipients"
 )
 
 // QueryClient is the client API for Query service.
@@ -119,6 +128,7 @@ type QueryClient interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(ctx context.Context, in *QueryGetSettleAmountRequest, opts ...grpc.CallOption) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error)
+	EstimateBitcoinReward(ctx context.Context, in *QueryEstimateBitcoinRewardRequest, opts ...grpc.CallOption) (*QueryEstimateBitcoinRewardResponse, error)
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(ctx context.Context, in *QueryGetEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(ctx context.Context, in *QueryAllEpochGroupValidationsRequest, opts ...grpc.CallOption) (*QueryAllEpochGroupValidationsResponse, error)
@@ -210,6 +220,8 @@ type QueryClient interface {
 	GranteesByMessageType(ctx context.Context, in *QueryGranteesByMessageTypeRequest, opts ...grpc.CallOption) (*QueryGranteesByMessageTypeResponse, error)
 	// Queries the current MLNode version.
 	MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersionRequest, opts ...grpc.CallOption) (*QueryGetMLNodeVersionResponse, error)
+	// Queries the most recent applied upgrade height.
+	LastUpgradeHeight(ctx context.Context, in *QueryGetLastUpgradeHeightRequest, opts ...grpc.CallOption) (*QueryGetLastUpgradeHeightResponse, error)
 	// Queries the participant allowlist.
 	ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
@@ -228,6 +240,20 @@ type QueryClient interface {
 	PreservedNodesSnapshot(ctx context.Context, in *QueryPreservedNodesSnapshotRequest, opts ...grpc.CallOption) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(ctx context.Context, in *QueryGetDevshardHostEpochStatsRequest, opts ...grpc.CallOption) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(ctx context.Context, in *QueryPoCDelegationRequest, opts ...grpc.CallOption) (*QueryPoCDelegationResponse, error)
+	// Queries the maintenance credit balance for a participant.
+	MaintenanceCredit(ctx context.Context, in *QueryMaintenanceCreditRequest, opts ...grpc.CallOption) (*QueryMaintenanceCreditResponse, error)
+	// Queries scheduled maintenance windows for a participant.
+	MaintenanceScheduled(ctx context.Context, in *QueryMaintenanceScheduledRequest, opts ...grpc.CallOption) (*QueryMaintenanceScheduledResponse, error)
+	// Queries all currently active maintenance windows.
+	MaintenanceActive(ctx context.Context, in *QueryMaintenanceActiveRequest, opts ...grpc.CallOption) (*QueryMaintenanceActiveResponse, error)
+	// Queries the full maintenance status for a participant at the current height.
+	MaintenanceStatus(ctx context.Context, in *QueryMaintenanceStatusRequest, opts ...grpc.CallOption) (*QueryMaintenanceStatusResponse, error)
+	// Queries the concurrent reserved participant count and power at a given height.
+	MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error)
+	// Queries whether a proposed maintenance window is schedulable.
+	MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error)
+	// Lists the scheduled per-epoch claim recipient overrides for a participant.
+	ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error)
 }
 
 type queryClient struct {
@@ -331,6 +357,15 @@ func (c *queryClient) SettleAmount(ctx context.Context, in *QueryGetSettleAmount
 func (c *queryClient) SettleAmountAll(ctx context.Context, in *QueryAllSettleAmountRequest, opts ...grpc.CallOption) (*QueryAllSettleAmountResponse, error) {
 	out := new(QueryAllSettleAmountResponse)
 	err := c.cc.Invoke(ctx, Query_SettleAmountAll_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) EstimateBitcoinReward(ctx context.Context, in *QueryEstimateBitcoinRewardRequest, opts ...grpc.CallOption) (*QueryEstimateBitcoinRewardResponse, error) {
+	out := new(QueryEstimateBitcoinRewardResponse)
+	err := c.cc.Invoke(ctx, Query_EstimateBitcoinReward_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -823,6 +858,15 @@ func (c *queryClient) MLNodeVersion(ctx context.Context, in *QueryGetMLNodeVersi
 	return out, nil
 }
 
+func (c *queryClient) LastUpgradeHeight(ctx context.Context, in *QueryGetLastUpgradeHeightRequest, opts ...grpc.CallOption) (*QueryGetLastUpgradeHeightResponse, error) {
+	out := new(QueryGetLastUpgradeHeightResponse)
+	err := c.cc.Invoke(ctx, Query_LastUpgradeHeight_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error) {
 	out := new(QueryParticipantAllowListResponse)
 	err := c.cc.Invoke(ctx, Query_ParticipantAllowList_FullMethodName, in, out, opts...)
@@ -922,6 +966,69 @@ func (c *queryClient) PoCDelegation(ctx context.Context, in *QueryPoCDelegationR
 	return out, nil
 }
 
+func (c *queryClient) MaintenanceCredit(ctx context.Context, in *QueryMaintenanceCreditRequest, opts ...grpc.CallOption) (*QueryMaintenanceCreditResponse, error) {
+	out := new(QueryMaintenanceCreditResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceCredit_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceScheduled(ctx context.Context, in *QueryMaintenanceScheduledRequest, opts ...grpc.CallOption) (*QueryMaintenanceScheduledResponse, error) {
+	out := new(QueryMaintenanceScheduledResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceScheduled_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceActive(ctx context.Context, in *QueryMaintenanceActiveRequest, opts ...grpc.CallOption) (*QueryMaintenanceActiveResponse, error) {
+	out := new(QueryMaintenanceActiveResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceActive_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceStatus(ctx context.Context, in *QueryMaintenanceStatusRequest, opts ...grpc.CallOption) (*QueryMaintenanceStatusResponse, error) {
+	out := new(QueryMaintenanceStatusResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceStatus_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceConcurrency(ctx context.Context, in *QueryMaintenanceConcurrencyRequest, opts ...grpc.CallOption) (*QueryMaintenanceConcurrencyResponse, error) {
+	out := new(QueryMaintenanceConcurrencyResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceConcurrency_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) MaintenanceSchedulability(ctx context.Context, in *QueryMaintenanceSchedulabilityRequest, opts ...grpc.CallOption) (*QueryMaintenanceSchedulabilityResponse, error) {
+	out := new(QueryMaintenanceSchedulabilityResponse)
+	err := c.cc.Invoke(ctx, Query_MaintenanceSchedulability_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *queryClient) ListClaimRecipients(ctx context.Context, in *QueryListClaimRecipientsRequest, opts ...grpc.CallOption) (*QueryListClaimRecipientsResponse, error) {
+	out := new(QueryListClaimRecipientsResponse)
+	err := c.cc.Invoke(ctx, Query_ListClaimRecipients_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // QueryServer is the server API for Query service.
 // All implementations must embed UnimplementedQueryServer
 // for forward compatibility
@@ -944,6 +1051,7 @@ type QueryServer interface {
 	// Queries a list of SettleAmount items.
 	SettleAmount(context.Context, *QueryGetSettleAmountRequest) (*QueryGetSettleAmountResponse, error)
 	SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error)
+	EstimateBitcoinReward(context.Context, *QueryEstimateBitcoinRewardRequest) (*QueryEstimateBitcoinRewardResponse, error)
 	// Queries a list of EpochGroupValidations items.
 	EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error)
 	EpochGroupValidationsAll(context.Context, *QueryAllEpochGroupValidationsRequest) (*QueryAllEpochGroupValidationsResponse, error)
@@ -1035,6 +1143,8 @@ type QueryServer interface {
 	GranteesByMessageType(context.Context, *QueryGranteesByMessageTypeRequest) (*QueryGranteesByMessageTypeResponse, error)
 	// Queries the current MLNode version.
 	MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error)
+	// Queries the most recent applied upgrade height.
+	LastUpgradeHeight(context.Context, *QueryGetLastUpgradeHeightRequest) (*QueryGetLastUpgradeHeightResponse, error)
 	// Queries the participant allowlist.
 	ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
@@ -1053,6 +1163,20 @@ type QueryServer interface {
 	PreservedNodesSnapshot(context.Context, *QueryPreservedNodesSnapshotRequest) (*QueryPreservedNodesSnapshotResponse, error)
 	DevshardHostEpochStats(context.Context, *QueryGetDevshardHostEpochStatsRequest) (*QueryGetDevshardHostEpochStatsResponse, error)
 	PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error)
+	// Queries the maintenance credit balance for a participant.
+	MaintenanceCredit(context.Context, *QueryMaintenanceCreditRequest) (*QueryMaintenanceCreditResponse, error)
+	// Queries scheduled maintenance windows for a participant.
+	MaintenanceScheduled(context.Context, *QueryMaintenanceScheduledRequest) (*QueryMaintenanceScheduledResponse, error)
+	// Queries all currently active maintenance windows.
+	MaintenanceActive(context.Context, *QueryMaintenanceActiveRequest) (*QueryMaintenanceActiveResponse, error)
+	// Queries the full maintenance status for a participant at the current height.
+	MaintenanceStatus(context.Context, *QueryMaintenanceStatusRequest) (*QueryMaintenanceStatusResponse, error)
+	// Queries the concurrent reserved participant count and power at a given height.
+	MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error)
+	// Queries whether a proposed maintenance window is schedulable.
+	MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error)
+	// Lists the scheduled per-epoch claim recipient overrides for a participant.
+	ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error)
 	mustEmbedUnimplementedQueryServer()
 }
 
@@ -1092,6 +1216,9 @@ func (UnimplementedQueryServer) SettleAmount(context.Context, *QueryGetSettleAmo
 }
 func (UnimplementedQueryServer) SettleAmountAll(context.Context, *QueryAllSettleAmountRequest) (*QueryAllSettleAmountResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SettleAmountAll not implemented")
+}
+func (UnimplementedQueryServer) EstimateBitcoinReward(context.Context, *QueryEstimateBitcoinRewardRequest) (*QueryEstimateBitcoinRewardResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method EstimateBitcoinReward not implemented")
 }
 func (UnimplementedQueryServer) EpochGroupValidations(context.Context, *QueryGetEpochGroupValidationsRequest) (*QueryGetEpochGroupValidationsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method EpochGroupValidations not implemented")
@@ -1255,6 +1382,9 @@ func (UnimplementedQueryServer) GranteesByMessageType(context.Context, *QueryGra
 func (UnimplementedQueryServer) MLNodeVersion(context.Context, *QueryGetMLNodeVersionRequest) (*QueryGetMLNodeVersionResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method MLNodeVersion not implemented")
 }
+func (UnimplementedQueryServer) LastUpgradeHeight(context.Context, *QueryGetLastUpgradeHeightRequest) (*QueryGetLastUpgradeHeightResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LastUpgradeHeight not implemented")
+}
 func (UnimplementedQueryServer) ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ParticipantAllowList not implemented")
 }
@@ -1287,6 +1417,27 @@ func (UnimplementedQueryServer) DevshardHostEpochStats(context.Context, *QueryGe
 }
 func (UnimplementedQueryServer) PoCDelegation(context.Context, *QueryPoCDelegationRequest) (*QueryPoCDelegationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method PoCDelegation not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceCredit(context.Context, *QueryMaintenanceCreditRequest) (*QueryMaintenanceCreditResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceCredit not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceScheduled(context.Context, *QueryMaintenanceScheduledRequest) (*QueryMaintenanceScheduledResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceScheduled not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceActive(context.Context, *QueryMaintenanceActiveRequest) (*QueryMaintenanceActiveResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceActive not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceStatus(context.Context, *QueryMaintenanceStatusRequest) (*QueryMaintenanceStatusResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceStatus not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceConcurrency(context.Context, *QueryMaintenanceConcurrencyRequest) (*QueryMaintenanceConcurrencyResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceConcurrency not implemented")
+}
+func (UnimplementedQueryServer) MaintenanceSchedulability(context.Context, *QueryMaintenanceSchedulabilityRequest) (*QueryMaintenanceSchedulabilityResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method MaintenanceSchedulability not implemented")
+}
+func (UnimplementedQueryServer) ListClaimRecipients(context.Context, *QueryListClaimRecipientsRequest) (*QueryListClaimRecipientsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ListClaimRecipients not implemented")
 }
 func (UnimplementedQueryServer) mustEmbedUnimplementedQueryServer() {}
 
@@ -1495,6 +1646,24 @@ func _Query_SettleAmountAll_Handler(srv interface{}, ctx context.Context, dec fu
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(QueryServer).SettleAmountAll(ctx, req.(*QueryAllSettleAmountRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_EstimateBitcoinReward_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryEstimateBitcoinRewardRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).EstimateBitcoinReward(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_EstimateBitcoinReward_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).EstimateBitcoinReward(ctx, req.(*QueryEstimateBitcoinRewardRequest))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -2471,6 +2640,24 @@ func _Query_MLNodeVersion_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_LastUpgradeHeight_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryGetLastUpgradeHeightRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).LastUpgradeHeight(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_LastUpgradeHeight_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).LastUpgradeHeight(ctx, req.(*QueryGetLastUpgradeHeightRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ParticipantAllowList_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryParticipantAllowListRequest)
 	if err := dec(in); err != nil {
@@ -2669,6 +2856,132 @@ func _Query_PoCDelegation_Handler(srv interface{}, ctx context.Context, dec func
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_MaintenanceCredit_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceCreditRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceCredit(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceCredit_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceCredit(ctx, req.(*QueryMaintenanceCreditRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceScheduled_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceScheduledRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceScheduled(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceScheduled_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceScheduled(ctx, req.(*QueryMaintenanceScheduledRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceActive_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceActiveRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceActive(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceActive_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceActive(ctx, req.(*QueryMaintenanceActiveRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceStatus_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceStatusRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceStatus(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceStatus_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceStatus(ctx, req.(*QueryMaintenanceStatusRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceConcurrency_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceConcurrencyRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceConcurrency(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceConcurrency_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceConcurrency(ctx, req.(*QueryMaintenanceConcurrencyRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_MaintenanceSchedulability_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryMaintenanceSchedulabilityRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).MaintenanceSchedulability(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_MaintenanceSchedulability_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).MaintenanceSchedulability(ctx, req.(*QueryMaintenanceSchedulabilityRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Query_ListClaimRecipients_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryListClaimRecipientsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ListClaimRecipients(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ListClaimRecipients_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ListClaimRecipients(ctx, req.(*QueryListClaimRecipientsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 // Query_ServiceDesc is the grpc.ServiceDesc for Query service.
 // It's only intended for direct use with grpc.RegisterService,
 // and not to be introspected or modified (even as a copy)
@@ -2719,6 +3032,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SettleAmountAll",
 			Handler:    _Query_SettleAmountAll_Handler,
+		},
+		{
+			MethodName: "EstimateBitcoinReward",
+			Handler:    _Query_EstimateBitcoinReward_Handler,
 		},
 		{
 			MethodName: "EpochGroupValidations",
@@ -2937,6 +3254,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Query_MLNodeVersion_Handler,
 		},
 		{
+			MethodName: "LastUpgradeHeight",
+			Handler:    _Query_LastUpgradeHeight_Handler,
+		},
+		{
 			MethodName: "ParticipantAllowList",
 			Handler:    _Query_ParticipantAllowList_Handler,
 		},
@@ -2979,6 +3300,34 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "PoCDelegation",
 			Handler:    _Query_PoCDelegation_Handler,
+		},
+		{
+			MethodName: "MaintenanceCredit",
+			Handler:    _Query_MaintenanceCredit_Handler,
+		},
+		{
+			MethodName: "MaintenanceScheduled",
+			Handler:    _Query_MaintenanceScheduled_Handler,
+		},
+		{
+			MethodName: "MaintenanceActive",
+			Handler:    _Query_MaintenanceActive_Handler,
+		},
+		{
+			MethodName: "MaintenanceStatus",
+			Handler:    _Query_MaintenanceStatus_Handler,
+		},
+		{
+			MethodName: "MaintenanceConcurrency",
+			Handler:    _Query_MaintenanceConcurrency_Handler,
+		},
+		{
+			MethodName: "MaintenanceSchedulability",
+			Handler:    _Query_MaintenanceSchedulability_Handler,
+		},
+		{
+			MethodName: "ListClaimRecipients",
+			Handler:    _Query_ListClaimRecipients_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

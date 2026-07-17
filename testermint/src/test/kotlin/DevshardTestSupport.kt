@@ -51,7 +51,6 @@ val devshardShortSealGraceSpec = spec<AppState> {
                 this[DevshardEscrowParams::defaultInferenceSealGraceNonces] = devshardAutoSealInferenceSealGraceNonces
                 this[DevshardEscrowParams::defaultInferenceSealGraceSeconds] = devshardAutoSealInferenceSealGraceSeconds
                 this[DevshardEscrowParams::defaultAutoSealEveryNNonces] = devshardAutoSealEveryNNonces
-                this[DevshardEscrowParams::validationRate] = 0L
             }
         }
     }
@@ -85,12 +84,16 @@ fun LocalInferencePair.dumpDevshardChallengeTraceLogs(escrowId: Long) {
     val patterns = listOf(
         "execute_ml_",
         "validation_ml_",
+        "validation_rate_bound",
+        "validation_rate_sample",
         "validation_enqueued",
+        "validation_triggered",
         "apply_validation",
         "proxy_inference_",
         "validation started",
         "validation_result",
         "validation_vote",
+        "NewStateMachine",
     )
     val grepExpr = patterns.joinToString("|") { Regex.escape(it) }
     logSection("phase-trace docker logs (escrow=$escrowId, patterns=$grepExpr)")
@@ -375,7 +378,7 @@ fun LocalInferencePair.assertDevshardSettlement(
     assertThat(result.parsed.nonce).isGreaterThanOrEqualTo(activeNonces)
     assertThat(result.parsed.fees).isEqualTo(expectedFees)
 
-    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations }
+    val totalCompletedValidations = result.parsed.hostStats.sumOf { it.completedValidations ?: 0 }
     if (requireCompletedValidations) {
         assertThat(totalCompletedValidations).isGreaterThan(0)
     }
@@ -412,7 +415,7 @@ fun LocalInferencePair.assertDevshardSettlement(
 
 fun LocalInferencePair.getDevshardShardStatsDetail(
     escrowId: Long,
-    routePrefix: String = "/v1/devshard",
+    routePrefix: String,
 ): DevshardShardStatsDetail {
     val normalizedPrefix = routePrefix.trimEnd('/')
     val path = "$normalizedPrefix/stats/shards/$escrowId"
@@ -434,7 +437,7 @@ fun LocalInferencePair.waitForDevshardValidationObservability(
     minCompleted: Int = 1,
     timeoutMs: Long = 120_000L,
     pollIntervalMs: Long = 2_000L,
-    routePrefix: String = "/v1/devshard",
+    routePrefix: String,
 ) {
     val deadline = System.currentTimeMillis() + timeoutMs
     while (System.currentTimeMillis() < deadline) {

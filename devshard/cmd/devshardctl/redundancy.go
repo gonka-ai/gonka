@@ -69,6 +69,41 @@ func sseChunkHasContent(p []byte) bool {
 	return ok
 }
 
+var sseUsageKeyMarker = []byte(`"usage"`)
+
+// sseChunkUsageCompletionTokens reads usage.completion_tokens from an SSE
+// data event. Includes tokens vLLM stripped from `content` (e.g. </think>).
+// Fast-skips chunks that do not contain the `"usage"` key — vLLM emits the
+// usage object only in the final chunk of a stream, so 99%+ of chunks avoid
+// the json.Unmarshal cost entirely.
+func sseChunkUsageCompletionTokens(p []byte) (int64, bool) {
+	if len(p) == 0 || !bytes.Contains(p, sseUsageKeyMarker) {
+		return 0, false
+	}
+	for _, line := range bytes.Split(p, []byte("\n")) {
+		line = bytes.TrimRight(line, "\r")
+		if !bytes.HasPrefix(line, []byte("data:")) {
+			continue
+		}
+		payload := bytes.TrimSpace(line[len("data:"):])
+		if len(payload) == 0 || bytes.Equal(payload, []byte("[DONE]")) {
+			continue
+		}
+		var evt struct {
+			Usage *struct {
+				CompletionTokens int64 `json:"completion_tokens"`
+			} `json:"usage"`
+		}
+		if err := json.Unmarshal(payload, &evt); err != nil {
+			continue
+		}
+		if evt.Usage != nil && evt.Usage.CompletionTokens > 0 {
+			return evt.Usage.CompletionTokens, true
+		}
+	}
+	return 0, false
+}
+
 // sseChunkContentSource is the classifying variant of sseChunkHasContent: when
 // content is present it returns a short label identifying the field that
 // carried it. The second return value is false when no accepted content was
@@ -529,19 +564,22 @@ type Decision struct {
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
 type Redundancy struct {
-	session              *user.Session
-	perf                 *PerfTracker
-	groupSize            int
-	devshardID           string
-	model                string // escrow's registered model; used for ghost probes when no real request is around
-	metrics              *DevshardMetrics
-	onEscrowMissing      func() // called (at most once per request) when a host reports escrow not found
-	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
-	balanceExhaustedOnce sync.Once
-	picker               *sessionPicker
-	participantLimiter   *ParticipantRequestLimiter
-	stateBlockMu         sync.RWMutex
-	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
+	session               *user.Session
+	perf                  *PerfTracker
+	groupSize             int
+	devshardID            string
+	model                 string // escrow's registered model; used for ghost probes when no real request is around
+	metrics               *DevshardMetrics
+	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
+	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
+	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
+	onRaceCleanupDone     func() // fires when a race cleanup goroutine finishes
+	balanceExhaustedOnce  sync.Once
+	picker                *sessionPicker
+	participantLimiter    *ParticipantRequestLimiter
+	suspiciousParticipant func(participantKey string) bool
+	stateBlockMu          sync.RWMutex
+	stateBlockedHosts     map[string]string // escrow-local participant blocks for non-recoverable state divergence
 }
 
 // ErrAllHostsExcluded is returned by prepareInflight when the request
@@ -768,11 +806,34 @@ func (e *Redundancy) pairwiseParticipantAvailable(participantKey string) bool {
 		if e.perf != nil && e.perf.IsUnresponsiveParticipant(participantKey) {
 			return false
 		}
-		if e.participantLimiter != nil && (e.participantLimiter.IsBlocked(participantKey) || e.participantLimiter.IsRecentlyQuarantined(participantKey)) {
+		if e.participantLimiter != nil && (e.participantLimiter.IsBlockedForModel(participantKey, e.model) || e.participantLimiter.IsRecentlyQuarantinedForModel(participantKey, e.model)) {
 			return false
 		}
 	}
 	return true
+}
+
+func (e *Redundancy) isSuspiciousParticipant(participantKey string) bool {
+	return e != nil && e.suspiciousParticipant != nil && e.suspiciousParticipant(strings.TrimSpace(participantKey))
+}
+
+func (e *Redundancy) isNoWinnerParticipant(participantKey string) bool {
+	_, ok := e.noWinnerStatusForParticipant(participantKey)
+	return ok
+}
+
+func (e *Redundancy) noWinnerStatusForParticipant(participantKey string) (participantNoWinnerStatus, bool) {
+	participantKey = strings.TrimSpace(participantKey)
+	if participantKey == "" || e == nil {
+		return participantNoWinnerStatus{}, false
+	}
+	if e.isSuspiciousParticipant(participantKey) {
+		return participantNoWinnerStatus{reason: "manual_suspicious"}, true
+	}
+	if e.participantLimiter == nil {
+		return participantNoWinnerStatus{}, false
+	}
+	return e.participantLimiter.NoWinnerStatusForModel(participantKey, e.model)
 }
 
 // Deprecated fallback: retained while pairwise routing warms up. Remove after
@@ -803,11 +864,17 @@ type inflight struct {
 	prepared                   *user.PreparedInference
 	hostIdx                    int
 	hostID                     string
+	role                       string
+	startReason                string
 	nonce                      uint64
 	escrowID                   string
 	sendTime                   time.Time
 	escalated                  bool
 	probe                      bool
+	suspicious                 bool
+	noWinnerReason             string
+	noWinnerQuarantineMode     string
+	noWinnerFailureStrikes     int
 	excludePairwise            bool
 	startedBeforePoCGeneration bool
 	phaseTransitionAborted     bool
@@ -816,23 +883,25 @@ type inflight struct {
 	receiptTime time.Time
 	receiptCh   chan struct{} // closed when receipt arrives
 
-	tokenOnce       sync.Once
-	firstToken      time.Time
-	firstTokenCh    chan struct{}
-	outputChunks    atomic.Int64
-	contentChunks   atomic.Int64
-	outputBytes     atomic.Int64
-	lastChunkAt     atomic.Int64
-	stallMu         sync.Mutex
-	stallActive     bool
-	stalls          []attemptStall
-	forwardedLog    sync.Once
-	suppressedLog   sync.Once
-	ctxCancelledLog sync.Once
-	hardTimeoutLog  sync.Once
-	sampleOnce      sync.Once
-	processOnce     sync.Once
-	processErr      error
+	tokenOnce                   sync.Once
+	firstToken                  time.Time
+	firstTokenCh                chan struct{}
+	outputChunks                atomic.Int64
+	contentChunks               atomic.Int64
+	outputBytes                 atomic.Int64
+	lastChunkAt                 atomic.Int64
+	usageComplTokens            atomic.Int64
+	stallMu                     sync.Mutex
+	stallActive                 bool
+	stalls                      []attemptStall
+	forwardedLog                sync.Once
+	suppressedLog               sync.Once
+	ctxCancelledLog             sync.Once
+	hardTimeoutLog              sync.Once
+	suspiciousWinnerDeferredLog sync.Once
+	sampleOnce                  sync.Once
+	processOnce                 sync.Once
+	processErr                  error
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -840,6 +909,14 @@ type inflight struct {
 	// writer when this attempt becomes the winner; it is discarded if a
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
+
+	// classifyPartial keeps the tail after the last '\n' from prior Writes;
+	// used to reassemble fragmented SSE events for the classifier.
+	classifyPartial []byte
+	classifyCapLog  sync.Once
+	// participantClassifyBytes is the shared per-participant byte counter this
+	// attempt contributes to; resolved at creation. Nil disables the cap.
+	participantClassifyBytes *atomic.Int64
 
 	// contentSource labels the field that produced the first content event
 	// ("delta.content", "delta.reasoning_content", "delta.tool_calls", or the
@@ -863,6 +940,12 @@ type inflight struct {
 	emptyResponseBodySample          string
 	emptyResponseBodySampleTruncated bool
 
+	// shortContentResponseBody optionally preserves raw streamed bytes so
+	// anomalously low-content attempts can be inspected offline. It is only
+	// populated when DEVSHARD_CAPTURE_SHORT_CONTENT_RESPONSES is enabled.
+	shortContentResponseBody          []byte
+	shortContentResponseBodyTruncated bool
+
 	resp *host.HostResponse
 	err  error
 	done chan struct{}
@@ -872,6 +955,27 @@ type inflight struct {
 	// after the winner has settled, so their transport goroutines return
 	// promptly and HandleTimeout can run against the abandoned nonce.
 	cancel context.CancelFunc
+}
+
+func (inf *inflight) captureShortContentResponseChunk(p []byte) {
+	if inf == nil || len(p) == 0 {
+		return
+	}
+	opts := currentRequestCaptureOptions()
+	if !opts.shortContentAttempts || !opts.shortContentResponses || opts.shortContentMaxResponse <= 0 || inf.shortContentResponseBodyTruncated {
+		return
+	}
+	remaining := int(opts.shortContentMaxResponse) - len(inf.shortContentResponseBody)
+	if remaining <= 0 {
+		inf.shortContentResponseBodyTruncated = true
+		return
+	}
+	if len(p) > remaining {
+		inf.shortContentResponseBody = append(inf.shortContentResponseBody, p[:remaining]...)
+		inf.shortContentResponseBodyTruncated = true
+		return
+	}
+	inf.shortContentResponseBody = append(inf.shortContentResponseBody, p...)
 }
 
 type attemptStall struct {
@@ -1044,6 +1148,34 @@ func (rg *raceGroup) setWinner(nonce uint64) {
 	}
 }
 
+func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
+	if rg == nil || inf == nil {
+		return nil
+	}
+	rg.setWinner(inf.nonce)
+	rg.clientMu.Lock()
+	defer rg.clientMu.Unlock()
+	if rg.isClientDetached() || len(inf.pendingBuf) == 0 || rg.w == nil {
+		inf.pendingBuf = nil
+		return nil
+	}
+	if rg.writeCtx != nil {
+		if err := rg.writeCtx.Err(); err != nil {
+			inf.pendingBuf = nil
+			return err
+		}
+	}
+	if _, err := rg.w.Write(inf.pendingBuf); err != nil {
+		inf.pendingBuf = nil
+		return err
+	}
+	inf.pendingBuf = nil
+	if f, ok := rg.w.(http.Flusher); ok {
+		f.Flush()
+	}
+	return nil
+}
+
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1155,6 +1287,224 @@ type raceWriter struct {
 	inf   *inflight
 }
 
+const (
+	defaultMaxClassifyPartial            = 1 << 20   // 1 MiB per attempt
+	defaultMaxClassifyPartialParticipant = 10 << 20  // 10 MiB per participant
+	defaultMaxClassifyPartialGlobal      = 100 << 20 // 100 MiB process-wide
+)
+
+// Reassembly-buffer caps, tunable at startup via configureClassifyCapsFromEnv.
+// These are machine-scale memory knobs, not governance policy.
+var (
+	maxClassifyPartial                  = defaultMaxClassifyPartial
+	maxClassifyPartialParticipant int64 = defaultMaxClassifyPartialParticipant
+	maxClassifyPartialGlobal      int64 = defaultMaxClassifyPartialGlobal
+)
+
+// configureClassifyCapsFromEnv overrides the reassembly caps from the
+// environment; unset variables keep the conservative defaults.
+func configureClassifyCapsFromEnv() {
+	maxClassifyPartial = int(readInt64Env("GATEWAY_CLASSIFY_MAX_ATTEMPT_BYTES", int64(defaultMaxClassifyPartial)))
+	maxClassifyPartialParticipant = readInt64Env("GATEWAY_CLASSIFY_MAX_PARTICIPANT_BYTES", defaultMaxClassifyPartialParticipant)
+	maxClassifyPartialGlobal = readInt64Env("GATEWAY_CLASSIFY_MAX_GLOBAL_BYTES", defaultMaxClassifyPartialGlobal)
+}
+
+// classifyPartialBytes is the live total of every inflight's classifyPartial.
+var classifyPartialBytes atomic.Int64
+
+// participantClassify bounds live reassembly bytes per participant so one
+// hostile participant can't exhaust the shared global pool and starve others.
+var participantClassify = &participantClassifyTracker{counters: map[string]*atomic.Int64{}}
+
+type participantClassifyTracker struct {
+	mu       sync.Mutex
+	counters map[string]*atomic.Int64
+}
+
+// counterFor returns the participant's byte counter, creating it on first use.
+// Entries are never removed; the participant set is the bounded validator set.
+func (t *participantClassifyTracker) counterFor(participantKey string) *atomic.Int64 {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	counter := t.counters[participantKey]
+	if counter == nil {
+		counter = &atomic.Int64{}
+		t.counters[participantKey] = counter
+	}
+	return counter
+}
+
+// takeParseable returns the prefix of (classifyPartial + p) ending at the last
+// '\n'; the trailing fragment is stashed for the next call.
+func (rw *raceWriter) takeParseable(p []byte) []byte {
+	lastNL := bytes.LastIndexByte(p, '\n')
+	if lastNL == -1 {
+		if rw.growClassify(p) {
+			return nil
+		}
+		// Cap hit: classify the raw chunk best-effort (incomplete fragments won't parse).
+		rw.dropClassify()
+		return p
+	}
+
+	var parseable []byte
+	if len(rw.inf.classifyPartial) == 0 {
+		parseable = p[:lastNL+1]
+	} else {
+		buf := make([]byte, 0, len(rw.inf.classifyPartial)+lastNL+1)
+		buf = append(buf, rw.inf.classifyPartial...)
+		buf = append(buf, p[:lastNL+1]...)
+		parseable = buf
+	}
+	if !rw.replaceClassify(p[lastNL+1:]) {
+		rw.dropClassify()
+	}
+	return parseable
+}
+
+// classifyParseable records the first content/non-retriable-error signal for
+// this attempt, returning whether the buffer carried either.
+func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
+	if len(parseable) == 0 {
+		return false, false
+	}
+	if src, ok := sseChunkContentSource(parseable); ok {
+		hasContent = true
+		if rw.inf.contentSource == "" {
+			rw.inf.contentSource = src
+		}
+	} else if details, ok := sseChunkErrorDetails(parseable); ok {
+		src := "error"
+		if details.Type != "" {
+			src = "error." + details.Type
+		}
+		hasError = !isRetriableCapabilityErrorMessage(details.Message)
+		if rw.inf.errorSource == "" {
+			rw.inf.errorSource = src
+			rw.inf.errorCode = details.Code
+			rw.inf.errorType = details.Type
+			rw.inf.errorMessage = details.Message
+			rw.inf.errorBodySample = append(rw.inf.errorBodySample, parseable...)
+		}
+	}
+	return hasContent, hasError
+}
+
+// flushClassify classifies a newline-less final SSE event left in classifyPartial
+// once the stream ends, so a truncated tail isn't misread as empty_stream.
+func (rw *raceWriter) flushClassify() {
+	if rw.inf.probe || len(rw.inf.classifyPartial) == 0 {
+		return
+	}
+	// Extract usage from the final newline-less event too, mirroring Write, so a
+	// truncated usage chunk still feeds isModelBurnEmpty.
+	if tokens, ok := sseChunkUsageCompletionTokens(rw.inf.classifyPartial); ok {
+		rw.inf.usageComplTokens.Store(tokens)
+	}
+	hasContent, hasError := rw.classifyParseable(rw.inf.classifyPartial)
+	rw.dropClassify()
+	if hasContent || hasError {
+		rw.inf.contentChunks.Add(1)
+	}
+}
+
+// flushClassifyAndCheckEmpty flushes a buffered newline-less final event before deciding empty, so a truncated final content/error event isn't misread as empty_stream. Call on the send goroutine after SendOnly returns.
+func (rw *raceWriter) flushClassifyAndCheckEmpty() bool {
+	rw.flushClassify()
+	return isEmptyStreamAttempt(rw.inf)
+}
+
+// logClassifyDrop reports the first reassembly-buffer drop for this attempt.
+// Capped at once per attempt so a persistently newline-less or oversized
+// transport can't spam the log.
+func (rw *raceWriter) logClassifyDrop(reason string) {
+	rw.inf.classifyCapLog.Do(func() {
+		ctx := context.Background()
+		if rw.group != nil {
+			ctx = rw.group.logCtx
+		}
+		logInferenceStage(ctx, rw.inf.escrowID, rw.nonce, "classify_buffer_dropped",
+			"host", rw.inf.hostID,
+			"reason", reason,
+			"buffered", len(rw.inf.classifyPartial),
+			"global_bytes", classifyPartialBytes.Load(),
+		)
+	})
+}
+
+// growClassify appends tail to classifyPartial if all caps still fit.
+func (rw *raceWriter) growClassify(tail []byte) bool {
+	if len(rw.inf.classifyPartial)+len(tail) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
+		return false
+	}
+	if reason := rw.inf.reserveClassifyBytes(int64(len(tail))); reason != "" {
+		rw.logClassifyDrop(reason)
+		return false
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial, tail...)
+	return true
+}
+
+// replaceClassify swaps classifyPartial for buf, adjusting byte accounting.
+func (rw *raceWriter) replaceClassify(buf []byte) bool {
+	if len(buf) > maxClassifyPartial {
+		rw.logClassifyDrop("per_attempt_cap")
+		return false
+	}
+	delta := int64(len(buf) - len(rw.inf.classifyPartial))
+	if delta > 0 {
+		if reason := rw.inf.reserveClassifyBytes(delta); reason != "" {
+			rw.logClassifyDrop(reason)
+			return false
+		}
+	} else if delta < 0 {
+		rw.inf.adjustClassifyBytes(delta)
+	}
+	rw.inf.classifyPartial = append(rw.inf.classifyPartial[:0], buf...)
+	return true
+}
+
+// dropClassify releases the per-attempt buffer and its accounted bytes.
+func (rw *raceWriter) dropClassify() {
+	rw.inf.releaseClassifyPartial()
+}
+
+// reserveClassifyBytes charges n bytes against the participant then global cap,
+// rolling back on the first cap hit. Returns the drop reason, "" on success.
+func (inf *inflight) reserveClassifyBytes(n int64) string {
+	participant := inf.participantClassifyBytes
+	if participant != nil && participant.Add(n) > maxClassifyPartialParticipant {
+		participant.Add(-n)
+		return "participant_cap"
+	}
+	if classifyPartialBytes.Add(n) > maxClassifyPartialGlobal {
+		classifyPartialBytes.Add(-n)
+		if participant != nil {
+			participant.Add(-n)
+		}
+		return "global_cap"
+	}
+	return ""
+}
+
+// adjustClassifyBytes adds delta to the global and per-participant counters.
+func (inf *inflight) adjustClassifyBytes(delta int64) {
+	classifyPartialBytes.Add(delta)
+	if inf.participantClassifyBytes != nil {
+		inf.participantClassifyBytes.Add(delta)
+	}
+}
+
+// releaseClassifyPartial frees the reassembly buffer's backing array and
+// decrements the counters. Nils the slice so cap doesn't outlive the gauge.
+func (inf *inflight) releaseClassifyPartial() {
+	if n := len(inf.classifyPartial); n > 0 {
+		inf.adjustClassifyBytes(-int64(n))
+	}
+	inf.classifyPartial = nil
+}
+
 func (rw *raceWriter) ctxErr() error {
 	if rw.group == nil || rw.group.writeCtx == nil {
 		return nil
@@ -1174,6 +1524,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	rw.inf.outputChunks.Add(1)
 	rw.inf.outputBytes.Add(int64(len(p)))
 	rw.inf.lastChunkAt.Store(now.UnixNano())
+	rw.inf.captureShortContentResponseChunk(p)
 
 	// Detect whether this Write contains the first content-bearing event for
 	// this attempt. Only content events promote a nonce to winner; role-only
@@ -1182,32 +1533,27 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	var chunkHasContent bool
 	var chunkHasError bool
 	if !rw.inf.probe {
-		if src, ok := sseChunkContentSource(p); ok {
-			chunkHasContent = true
-			if rw.inf.contentSource == "" {
-				rw.inf.contentSource = src
-			}
-		} else if details, ok := sseChunkErrorDetails(p); ok {
-			src := "error"
-			if details.Type != "" {
-				src = "error." + details.Type
-			}
-			chunkHasError = !isRetriableCapabilityErrorMessage(details.Message)
-			if rw.inf.errorSource == "" {
-				rw.inf.errorSource = src
-				rw.inf.errorCode = details.Code
-				rw.inf.errorType = details.Type
-				rw.inf.errorMessage = details.Message
-				rw.inf.errorBodySample = append(rw.inf.errorBodySample, p...)
-			}
+		parseable := rw.takeParseable(p)
+		chunkHasContent, chunkHasError = rw.classifyParseable(parseable)
+		// Track completion_tokens so isModelBurnEmpty can tell stripped-
+		// content empties from no-tokens-generated empties.
+		if tokens, ok := sseChunkUsageCompletionTokens(parseable); ok {
+			rw.inf.usageComplTokens.Store(tokens)
+		} else if tokens, ok := sseChunkUsageCompletionTokens(rw.inf.classifyPartial); ok {
+			// Handle a newline-less final event buffered into classifyPartial.
+			rw.inf.usageComplTokens.Store(tokens)
 		}
 	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
 		rw.group.maybeHoldWinnerCandidate(rw.inf)
 	}
-	if chunkHasContent {
+	if chunkHasContent && !rw.inf.suspicious {
 		rw.group.setWinner(rw.nonce)
+	} else if chunkHasContent && rw.inf.suspicious {
+		rw.inf.suspiciousWinnerDeferredLog.Do(func() {
+			logInferenceStage(rw.group.logCtx, rw.inf.escrowID, rw.nonce, "suspicious_winner_deferred", "host", rw.inf.hostID)
+		})
 	}
 
 	rw.group.mu.Lock()
@@ -1359,20 +1705,38 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 		}
 		return err
 	}
+	primary.role = "primary"
+	primary.startReason = "primary"
 	triedParticipants[e.session.HostParticipantKey(primary.hostIdx)] = true
 
 	decision := e.Decide(primary.hostIdx, params.InputLength)
 	maxAttempts := e.maxAttempts()
+	if primary.suspicious && maxAttempts > 1 && (!decision.RunSecondary || decision.Delay > 0) {
+		decision = Decision{RunSecondary: true, Delay: 0, Reason: "primary_suspicious", ImmediateAttempts: 1}
+	}
 	if e.metrics != nil {
 		e.metrics.RecordSpeculativeDecision(decision.Reason)
 	}
-	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made",
+	decisionFields := []any{
 		"host", primary.hostID,
 		"decision", decision.Reason,
 		"delay_ms", decision.Delay.Milliseconds(),
 		"max_attempts", maxAttempts,
 		"group_size", e.groupSize,
-	)
+	}
+	if primary.suspicious {
+		decisionFields = append(decisionFields,
+			"primary_no_winner", true,
+			"primary_no_winner_reason", primary.noWinnerReason,
+		)
+		if primary.noWinnerQuarantineMode != "" {
+			decisionFields = append(decisionFields, "primary_quarantine_mode", primary.noWinnerQuarantineMode)
+		}
+		if primary.noWinnerFailureStrikes > 0 {
+			decisionFields = append(decisionFields, "primary_failure_strikes", primary.noWinnerFailureStrikes)
+		}
+	}
+	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made", decisionFields...)
 	race := newRaceGroup(settleCtx, ctx, e.devshardID, w)
 	attempts := []*inflight{primary}
 
@@ -1460,16 +1824,23 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			}
 			return nil, fmt.Errorf("prepare: %w", res.err)
 		}
+		participantKey := e.session.HostParticipantKey(res.prepared.HostIdx())
+		noWinner, noWinnerOK := e.noWinnerStatusForParticipant(participantKey)
 		inf := &inflight{
-			prepared:     res.prepared,
-			hostIdx:      res.prepared.HostIdx(),
-			hostID:       e.session.HostLabel(res.prepared.HostIdx()),
-			nonce:        res.prepared.Nonce(),
-			escrowID:     e.devshardID,
-			probe:        res.isProbe,
-			done:         make(chan struct{}),
-			receiptCh:    make(chan struct{}),
-			firstTokenCh: make(chan struct{}),
+			prepared:                 res.prepared,
+			hostIdx:                  res.prepared.HostIdx(),
+			hostID:                   e.session.HostLabel(res.prepared.HostIdx()),
+			nonce:                    res.prepared.Nonce(),
+			escrowID:                 e.devshardID,
+			probe:                    res.isProbe,
+			suspicious:               noWinnerOK,
+			noWinnerReason:           noWinner.reason,
+			noWinnerQuarantineMode:   noWinner.quarantineMode,
+			noWinnerFailureStrikes:   noWinner.failureStrikes,
+			done:                     make(chan struct{}),
+			receiptCh:                make(chan struct{}),
+			firstTokenCh:             make(chan struct{}),
+			participantClassifyBytes: participantClassify.counterFor(participantKey),
 		}
 		e.recordAccountingAttempt(ctx, inf)
 		return inf, nil
@@ -1493,7 +1864,22 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			close(inf.receiptCh)
 		})
 	}
-	logInferenceStage(ctx, inf.escrowID, inf.nonce, "prepared", "host", inf.hostID)
+	preparedFields := []any{"host", inf.hostID}
+	if inf.suspicious {
+		preparedFields = append(preparedFields,
+			"participant_key", e.participantKeyForHost(inf.hostIdx),
+			"model_id", e.model,
+			"no_winner", true,
+			"no_winner_reason", inf.noWinnerReason,
+		)
+		if inf.noWinnerQuarantineMode != "" {
+			preparedFields = append(preparedFields, "quarantine_mode", inf.noWinnerQuarantineMode)
+		}
+		if inf.noWinnerFailureStrikes > 0 {
+			preparedFields = append(preparedFields, "failure_strikes", inf.noWinnerFailureStrikes)
+		}
+	}
+	logInferenceStage(ctx, inf.escrowID, inf.nonce, "prepared", preparedFields...)
 	if inf.probe {
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "poc_probe_prepared", "host", inf.hostID, "max_tokens", pocProbeMaxTokens, "poc_reason", currentPoCPhaseReason())
 	}
@@ -1511,11 +1897,14 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// before awaitRace can observe the attempt.
 	inf.sendTime = time.Now()
 	inf.startedBeforePoCGeneration = !currentPoCGenerationActive()
+	e.recordGatewayAttemptStarted(inf, params)
 	go e.monitorInflight(ctx, inf, race)
 
 	go func() {
 		defer close(inf.done)
 		defer cancel()
+		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
+		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
 		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
@@ -1547,7 +1936,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		// stream_bytes_read > 0 but output_chunks == 0 because only devshard
 		// receipt/meta events were parsed and no inference data was forwarded to
 		// the race writer.
-		if isEmptyStreamAttempt(inf) {
+		if rw.flushClassifyAndCheckEmpty() {
 			responseBodySample, responseSampleTruncated := bodySampleForLog(inf.pendingBuf, emptyStreamBodySampleLimit)
 			inf.emptyResponseBodySample = responseBodySample
 			inf.emptyResponseBodySampleTruncated = responseSampleTruncated
@@ -1627,6 +2016,8 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 		return nil
 	}
 	triedParticipants[e.session.HostParticipantKey(next.hostIdx)] = true
+	next.role = "extra"
+	next.startReason = reason
 	if e.metrics != nil {
 		e.metrics.RecordSpeculativeAttemptStart(reason)
 	}
@@ -1912,7 +2303,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 						"max_wait_ms", SecondaryWaitAfterWinner.Milliseconds(),
 						"decision", decision.Reason,
 					)
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+					e.goTrackedRaceCleanup(func() {
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+					})
 					return nil
 				}
 			}
@@ -2009,6 +2402,14 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if nonStreamingTimeoutTimer != nil {
 					stopTimer(nonStreamingTimeoutTimer)
 				}
+				if winner == 0 {
+					if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
+						if err := race.promoteFallbackWinner(fallback); err != nil {
+							return err
+						}
+						winner = fallback.nonce
+					}
+				}
 				return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
 			}
 		}
@@ -2029,9 +2430,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					e.markPhaseTransitionAbort(inf)
 					e.recordWinnerTerminalFailureOnce(inf, params, w)
-					go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
-						forceTreatAsFailure:  true,
-						recordFailureSamples: true,
+					e.goTrackedRaceCleanup(func() {
+						e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, w, raceFinishOptions{
+							forceTreatAsFailure:  true,
+							recordFailureSamples: true,
+						})
 					})
 					logRequestStage(settleCtx, "winner_failed_after_content", "escrow", e.devshardID, "winner_nonce", w, "error", err)
 					return err
@@ -2095,7 +2498,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				recordFailureSamples:            true,
 				nonStreamingReducedTokenTimeout: true,
 			}
-			go func() {
+			e.goTrackedRaceCleanup(func() {
 				if err := e.finishRaceOutcome(settleCtx, attempts, params, decision, 0, opts); err != nil {
 					var timeoutErr *nonStreamingReducedMaxTokensTimeoutError
 					if errors.As(err, &timeoutErr) {
@@ -2103,7 +2506,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					}
 					logRequestStage(settleCtx, "background_finish_failed", "escrow", e.devshardID, "error", err)
 				}
-			}()
+			})
 			return &nonStreamingReducedMaxTokensTimeoutError{}
 		case <-stallC:
 			now := time.Now()
@@ -2172,7 +2575,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 			pending := pendingInflights(attempts)
 			logRequestStage(settleCtx, "request_stream_canceled", "escrow", e.devshardID, "winner_nonce", winner, "pending", len(pending), "decision", decision.Reason, "error", streamCtx.Err())
-			go e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
+			e.goTrackedRaceCleanup(func() {
+				e.finishRaceWhenPendingDone(settleCtx, attempts, params, decision, winner, raceFinishOptions{})
+			})
 			return streamCtx.Err()
 		}
 
@@ -2222,6 +2627,14 @@ func (e *Redundancy) nextEscalationTrigger(attempts []*inflight, params user.Inf
 func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceParams) (escalationTrigger, bool) {
 	if inf == nil || inf.escalated {
 		return escalationTrigger{}, false
+	}
+	if inf.suspicious {
+		return escalationTrigger{
+			inf:      inf,
+			deadline: time.Now(),
+			stage:    "suspicious_host_immediate_escalation",
+			reason:   "suspicious_host",
+		}, true
 	}
 	if inf.probe {
 		return escalationTrigger{
@@ -2333,6 +2746,19 @@ type raceFinishOptions struct {
 	forceTreatAsFailure             bool
 	recordFailureSamples            bool
 	nonStreamingReducedTokenTimeout bool
+}
+
+// goTrackedRaceCleanup runs a background race cleanup detached while keeping the drain barrier aware of it; onRaceCleanupStart fires synchronously so the winning handler can never see the runtime as quiet mid-cleanup.
+func (e *Redundancy) goTrackedRaceCleanup(fn func()) {
+	if e.onRaceCleanupStart != nil {
+		e.onRaceCleanupStart()
+	}
+	go func() {
+		if e.onRaceCleanupDone != nil {
+			defer e.onRaceCleanupDone()
+		}
+		fn()
+	}()
 }
 
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
@@ -2751,6 +3177,18 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	return inf.contentChunks.Load() == 0
 }
 
+// isModelBurnEmpty: empty stream where the model generated tokens that vLLM
+// stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
+// not a host fault — must not penalize. Scoped to the reasoning route: the
+// completion_tokens signal is host-reported, so honoring it on non-reasoning
+// models would let any host dodge empty-stream quarantine by faking usage.
+func isModelBurnEmpty(inf *inflight, model string) bool {
+	if model != kimiK26ModelID || !isEmptyStreamAttempt(inf) {
+		return false
+	}
+	return inf.usageComplTokens.Load() > 0
+}
+
 func inflightByNonce(attempts []*inflight, nonce uint64) *inflight {
 	for _, inf := range attempts {
 		if inf.nonce == nonce {
@@ -2967,6 +3405,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		sample := RequestSample{
 			HostIdx:        inf.hostIdx,
 			ParticipantKey: participantKey,
+			Model:          gatewayMetricModel(params, e.model),
 			Responsive:     false,
 			SendTime:       inf.sendTime,
 			ReceiptTime:    inf.receiptTime,
@@ -2978,7 +3417,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 		}
 		e.perf.Record(sample)
 		if e.participantLimiter != nil && e.perf.ParticipantFailureThresholdExceeded(participantKey) {
-			e.participantLimiter.ObserveStalledWinner(participantKey)
+			e.participantLimiter.ObserveStalledWinnerForModel(participantKey, e.model)
 		}
 		if e.metrics != nil {
 			e.metrics.ObserveRequestSample(e.devshardID, sample)
@@ -3084,15 +3523,18 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			"content_source", inf.contentSource,
 			"error_source", inf.errorSource,
 			"probe", inf.probe,
+			"suspicious", inf.suspicious,
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)
+		e.recordGatewayAttemptTerminal(inf, params, winnerNonce, ok)
 		if !ok {
 			e.recordWinnerTerminalFailureOnce(inf, params, winnerNonce)
 			failed = append(failed, inf)
 		}
 	}
 	captureEmptyStreamAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
+	captureShortContentAttemptRequest(ctx, e.devshardID, params, attempts, winnerNonce)
 	effectiveSuccess := anySucceeded && !opts.forceTreatAsFailure
 	if !effectiveSuccess {
 		if opts.recordFailureSamples {
@@ -3106,16 +3548,19 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			if inf.phaseTransitionAborted {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", "phase_transition_aborted")
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "phase_transition_aborted")
 				continue
 			}
 			if reason, skip := emptyStreamWithoutWinnerTimeoutSkipReason(inf, e.session); skip {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", reason)
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", reason)
 				continue
 			}
 			if !shouldRunHandleTimeout(inf, e.session) {
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_skipped",
 					"host", inf.hostID, "reason", "nonce_already_finished")
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "nonce_already_finished")
 				continue
 			}
 			if e.longResponseFailureExempt(inf) {
@@ -3126,6 +3571,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 					"content_chunks", inf.contentChunks.Load(),
 					"output_bytes", inf.outputBytes.Load(),
 				)
+				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "long_response_after_content")
 				continue
 			}
 			payload := &host.InferencePayload{
@@ -3135,17 +3581,22 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				MaxTokens:   params.MaxTokens,
 				StartedAt:   params.StartedAt,
 			}
+			e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "started", "none")
 			result, err := e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, payload)
 			if result.Reason != "" && e.metrics != nil {
 				e.metrics.RecordInferenceTimeout(result.Reason)
 			}
 			if err != nil {
+				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_failed", "host", inf.hostID, "error", err)
+			} else {
+				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 			}
 		}
 		if hostErr := hostApplicationErrorFromAttempts(attempts, winnerNonce); hostErr != nil {
 			captureAllAttemptsFailedRequest(ctx, e.devshardID, params, hostErr)
 			logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", hostErr)
+			e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 			e.completeAccountingRequest(ctx, 0, decision, "failed")
 			e.logRequestSettled(ctx, 0, decision, "failed")
 			e.checkEscrowMissing(ctx, attempts)
@@ -3160,6 +3611,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
 		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
+		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 		e.completeAccountingRequest(ctx, 0, decision, "failed")
 		e.logRequestSettled(ctx, 0, decision, "failed")
 		e.checkEscrowMissing(ctx, attempts)
@@ -3198,7 +3650,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			StartedAt:   params.StartedAt,
 		}
 		if anySucceeded {
-			go func() {
+			e.goTrackedRaceCleanup(func() {
 				bgCtx, _ := ensureRequestLogContext(context.Background())
 				bgCtx = logging.PropagateRequestID(bgCtx, ctx)
 				for _, inf := range failed {
@@ -3209,16 +3661,19 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 					if inf.phaseTransitionAborted {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", "phase_transition_aborted")
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "phase_transition_aborted")
 						continue
 					}
 					if reason, blocked := e.escrowStateBlockReason(e.participantKeyForHost(inf.hostIdx)); blocked {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", reason)
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", reason)
 						continue
 					}
 					if !shouldRunHandleTimeout(inf, e.session) {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "timeout_skipped",
 							"host", inf.hostID, "reason", "nonce_already_finished")
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "nonce_already_finished")
 						continue
 					}
 					if e.longResponseFailureExempt(inf) {
@@ -3229,22 +3684,30 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 							"content_chunks", inf.contentChunks.Load(),
 							"output_bytes", inf.outputBytes.Load(),
 						)
+						e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "long_response_after_content")
 						continue
 					}
+					e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "started", "none")
 					result, err := e.session.HandleTimeout(bgCtx, inf.nonce, inf.sendTime, payload)
 					if result.Reason != "" && e.metrics != nil {
 						e.metrics.RecordInferenceTimeout(result.Reason)
 					}
 					if err != nil {
+						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "background_timeout_failed", "host", inf.hostID, "error", err)
+					} else {
+						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
 					}
 				}
 				e.logRequestSettled(bgCtx, winnerNonce, decision, "success")
-			}()
+			})
 		}
 	}
 
 	e.completeAccountingRequest(ctx, winnerNonce, decision, "success")
+	e.recordGatewayRequestOutcome(params.Model, "success", "none")
+	e.recordGatewayUserVisibleWin(attempts, params, winnerNonce)
+	e.recordGatewayHiddenFailure(params.Model, failed)
 	logRequestStage(ctx, "request_succeeded", "escrow", e.devshardID, "winner_nonce", winnerNonce, "decision", decision.Reason)
 	if len(failed) == 0 {
 		e.logRequestSettled(ctx, winnerNonce, decision, "success")
@@ -3271,7 +3734,15 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 		return winnerNonce
 	}
 	for _, inf := range attempts {
-		if inf.probe {
+		if inf.probe || inf.suspicious {
+			continue
+		}
+		if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
+			return inf.nonce
+		}
+	}
+	for _, inf := range attempts {
+		if inf.probe || !inf.suspicious {
 			continue
 		}
 		if e.session.IsNonceFinished(inf.nonce) && !isFailedStreamAttempt(inf) {
@@ -3279,6 +3750,18 @@ func (e *Redundancy) resolvedWinnerNonce(attempts []*inflight, winnerNonce uint6
 		}
 	}
 	return 0
+}
+
+func fallbackSuspiciousWinner(attempts []*inflight) *inflight {
+	for _, inf := range attempts {
+		if inf == nil || inf.probe || !inf.suspicious {
+			continue
+		}
+		if inf.contentChunks.Load() > 0 && !isFailedStreamAttempt(inf) {
+			return inf
+		}
+	}
+	return nil
 }
 
 func stopTimer(t *time.Timer) {
@@ -3334,6 +3817,175 @@ func (e *Redundancy) completeAccountingRequest(ctx context.Context, winnerNonce 
 	e.perf.CompleteAccountingRequest(requestID, e.devshardID, winnerNonce, decision.Reason, outcome, time.Now())
 }
 
+func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
+	if e == nil || e.metrics == nil {
+		return
+	}
+	e.metrics.RecordGatewayRequest(model, outcome, reason)
+	if outcome == "failed" {
+		e.metrics.RecordCriticalUserFailure(model, reason)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	role := gatewayAttemptRole(inf)
+	reason := gatewayAttemptStartReason(inf)
+	quarantineMode := e.quarantineModeForParticipant(participantKey)
+	e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		EscrowID:       inf.escrowID,
+		Decision:       "real_send",
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	e.metrics.RecordGatewayAttemptStarted(GatewayAttemptStartMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	if inf.suspicious {
+		e.metrics.RecordGatewayNoWinnerAttempt(participantKey, model, inf.noWinnerReason, inf.noWinnerQuarantineMode)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	outcome := "success"
+	if !ok {
+		outcome = "failed"
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	visibility := gatewayAttemptVisibility(inf, winnerNonce, ok)
+	role := gatewayAttemptRole(inf)
+	e.metrics.RecordGatewayAttemptTerminal(GatewayAttemptTerminalMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Outcome:        outcome,
+		Visibility:     visibility,
+	})
+	if !ok {
+		e.metrics.RecordGatewayAttemptFailure(GatewayAttemptFailureMetric{
+			ParticipantKey: participantKey,
+			Model:          model,
+			Role:           role,
+			Reason:         gatewayAttemptFailureReason(inf, e.session),
+			Visibility:     visibility,
+		})
+	}
+}
+
+func (e *Redundancy) recordGatewayUserVisibleWin(attempts []*inflight, params user.InferenceParams, winnerNonce uint64) {
+	if e == nil || e.metrics == nil || winnerNonce == 0 {
+		return
+	}
+	if winner := inflightByNonce(attempts, winnerNonce); winner != nil && !winner.probe {
+		e.metrics.RecordGatewayUserVisibleWin(e.participantKeyForHost(winner.hostIdx), gatewayMetricModel(params, e.model))
+	}
+}
+
+func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight) {
+	if e == nil || e.metrics == nil || len(failed) == 0 {
+		return
+	}
+	for _, inf := range failed {
+		if inf == nil || inf.probe {
+			continue
+		}
+		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session))
+		return
+	}
+}
+
+func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string) {
+	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+		return
+	}
+	e.metrics.RecordGatewayTimeoutAction(GatewayTimeoutActionMetric{
+		ParticipantKey: e.participantKeyForHost(inf.hostIdx),
+		Model:          gatewayMetricModel(params, e.model),
+		Kind:           kind,
+		Action:         action,
+		Reason:         reason,
+	})
+}
+
+func (e *Redundancy) quarantineModeForParticipant(participantKey string) string {
+	if e == nil || participantKey == "" {
+		return "none"
+	}
+	if status, ok := e.noWinnerStatusForParticipant(participantKey); ok {
+		if status.quarantineMode != "" {
+			return status.quarantineMode
+		}
+		return "probation"
+	}
+	if e.participantLimiter != nil && e.participantLimiter.IsBlockedForModel(participantKey, e.model) {
+		return participantQuarantineProbe.String()
+	}
+	return "none"
+}
+
+func gatewayMetricModel(params user.InferenceParams, fallback string) string {
+	if params.Model != "" {
+		return params.Model
+	}
+	return fallback
+}
+
+func gatewayAttemptRole(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.role) == "" {
+		return "primary"
+	}
+	return inf.role
+}
+
+func gatewayAttemptStartReason(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.startReason) == "" {
+		return "primary"
+	}
+	return inf.startReason
+}
+
+func gatewayRequestFailureReason(failed []*inflight) string {
+	for _, inf := range failed {
+		if inf != nil && !inf.probe {
+			return gatewayAttemptFailureReason(inf, nil)
+		}
+	}
+	return "unknown"
+}
+
+func timeoutKindForInflight(inf *inflight) string {
+	if inf == nil {
+		return "unknown"
+	}
+	if inf.receiptTime.IsZero() {
+		return "refused"
+	}
+	return "execution"
+}
+
+func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
+	switch result.Reason {
+	case "refused", "execution":
+		return result.Reason
+	default:
+		return timeoutKindForInflight(inf)
+	}
+}
+
 func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params user.InferenceParams) HostInvolvement {
 	successfulForPerf := attemptCountsAsSuccessfulForPerf(inf, params, e.session)
 	hi := HostInvolvement{
@@ -3365,18 +4017,32 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	if inf.phaseTransitionAborted {
 		return
 	}
-	if !requestSucceeded && isEmptyStreamAttempt(inf) {
-		return
-	}
 	// Long non-stream responses that end empty around the client timeout are
 	// still useful timing samples, but should not be treated like fast empty
 	// stream faults for participant quarantine.
 	longNonStreamEmptyExempt := longNonStreamEmptyFailureExempt(inf, params)
-	responsive := attemptCountsAsSuccessfulForPerf(inf, params, e.session)
+	emptyStream := isEmptyStreamAttempt(inf)
+	if emptyStream && emptyStreamAccountingSuppressedByPoC() {
+		return
+	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
+	if emptyStream && !longNonStreamEmptyExempt && e.participantLimiter != nil {
+		if isModelBurnEmpty(inf, e.model) {
+			// Reasoning-burn outcome: the model emitted completion tokens but
+			// no content. Telemetry-only — not a host fault, no quarantine.
+			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
+		} else {
+			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+		}
+	}
+	if !requestSucceeded && emptyStream {
+		return
+	}
+	responsive := attemptCountsAsSuccessfulForPerf(inf, params, e.session)
 	sample := RequestSample{
 		HostIdx:        inf.hostIdx,
 		ParticipantKey: participantKey,
+		Model:          gatewayMetricModel(params, e.model),
 		Responsive:     responsive,
 		SendTime:       inf.sendTime,
 		ReceiptTime:    inf.receiptTime,
@@ -3389,13 +4055,17 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	e.perf.Record(sample)
 	if e.participantLimiter != nil {
 		switch {
-		case e.session.IsNonceFinished(inf.nonce) && !longNonStreamEmptyExempt:
-			e.participantLimiter.ObserveSuccessfulInference(participantKey)
+		case responsive && !longNonStreamEmptyExempt:
+			e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
 		}
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveRequestSample(e.devshardID, sample)
 	}
+}
+
+func emptyStreamAccountingSuppressedByPoC() bool {
+	return relaxedPoCBypassActive()
 }
 
 func probeParams(params user.InferenceParams) user.InferenceParams {
@@ -3464,6 +4134,17 @@ func ghostProbeParams(model string) user.InferenceParams {
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
+	}
+	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: e.quarantineModeForParticipant(participantKey),
+		})
 	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",

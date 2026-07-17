@@ -122,6 +122,8 @@ services:
       - JWT_SECRET_PATH=/data/jwt/jwt.hex
       - BRIDGE_POSTBLOCK=http://api:9200/admin/v1/bridge/block
       - BRIDGE_GETADDRESSES=http://api:9000/v1/bridge/addresses
+      - BRIDGE_GETLASTBLOCK=${BRIDGE_GETLASTBLOCK:-http://api:9000/v1/bridge/block/latest}
+      - BRIDGE_CACHE_RANGES=${BRIDGE_CACHE_RANGES:-4}
       - BEACON_STATE_URL=https://beaconstate.info/
       - PERSISTENT_DB_DIR=/persistent-db
     volumes:

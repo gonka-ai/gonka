@@ -46,6 +46,35 @@ func HasSQLiteSessions(storeDir string) (bool, error) {
 	return count > 0, nil
 }
 
+// HasSQLiteArtifacts reports whether storeDir contains files that could belong
+// to a SQLite-backed store. Unlike NewSQLite, it never creates _meta.db.
+func HasSQLiteArtifacts(storeDir string) (bool, error) {
+	if _, err := os.Stat(MetaDBPath(storeDir)); err != nil {
+		if !os.IsNotExist(err) {
+			return false, err
+		}
+	} else {
+		return true, nil
+	}
+
+	entries, err := os.ReadDir(storeDir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	for _, ent := range entries {
+		if ent.IsDir() {
+			continue
+		}
+		if epochFileRegex.MatchString(ent.Name()) {
+			return true, nil
+		}
+	}
+	return false, nil
+}
+
 // ReadPGBound reports whether the Postgres-mode marker file exists.
 func ReadPGBound(storeDir string) (bool, error) {
 	_, err := os.Stat(PGBoundPath(storeDir))
@@ -65,12 +94,38 @@ func WritePGBound(storeDir string) error {
 	}
 	target := PGBoundPath(storeDir)
 	tmp := target + ".tmp"
-	if err := os.WriteFile(tmp, []byte("1\n"), 0o644); err != nil {
+	f, err := os.OpenFile(tmp, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644)
+	if err != nil {
+		return fmt.Errorf("open pg-bound tmp: %w", err)
+	}
+	if _, err := f.Write([]byte("1\n")); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
 		return fmt.Errorf("write pg-bound tmp: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		_ = f.Close()
+		_ = os.Remove(tmp)
+		return fmt.Errorf("sync pg-bound tmp: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		_ = os.Remove(tmp)
+		return fmt.Errorf("close pg-bound tmp: %w", err)
 	}
 	if err := os.Rename(tmp, target); err != nil {
 		_ = os.Remove(tmp)
 		return fmt.Errorf("rename pg-bound: %w", err)
+	}
+	dir, err := os.Open(storeDir)
+	if err != nil {
+		return fmt.Errorf("open store dir for sync: %w", err)
+	}
+	if err := dir.Sync(); err != nil {
+		_ = dir.Close()
+		return fmt.Errorf("sync store dir: %w", err)
+	}
+	if err := dir.Close(); err != nil {
+		return fmt.Errorf("close store dir: %w", err)
 	}
 	return nil
 }

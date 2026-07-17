@@ -3,7 +3,7 @@
 ################################################################################
 # Build the application
 ################################################################################
-FROM golang:1.24.2-alpine3.20 AS builder
+FROM golang:1.24.2-alpine3.21 AS builder
 
 ARG GOOS
 ARG GOARCH
@@ -96,14 +96,14 @@ FROM scratch AS binary-exporter
 # Copy all required files to a flat structure
 COPY --from=builder /app/decentralized-api/build/dapi /build_output/decentralized-api
 COPY --from=builder /app/inference-chain/build/inferenced /build_output/inferenced
-COPY --from=builder /lib/libwasmvm_muslc.x86_64.a /build_output/libwasmvm_muslc.x86_64.a
+COPY --from=builder /lib/libwasmvm_muslc.*.a /build_output/
 COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
 
 ################################################################################
 # Final image
 ################################################################################
 ARG TARGETPLATFORM
-FROM --platform=$TARGETPLATFORM alpine:3.18 AS final
+FROM --platform=$TARGETPLATFORM alpine:3.21 AS final
 
 ARG GOOS
 ARG GOARCH

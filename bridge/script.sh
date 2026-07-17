@@ -12,6 +12,23 @@ GETH_DISCOVERY_PORT=${GETH_DISCOVERY_PORT:-$GETH_P2P_PORT}
 PRYSM_P2P_TCP_PORT=${PRYSM_P2P_TCP_PORT:-13000}
 PRYSM_P2P_UDP_PORT=${PRYSM_P2P_UDP_PORT:-12000}
 
+# Bridge continuity settings.
+# Default endpoints and beacon URL to local production API service if unset.
+BRIDGE_POSTBLOCK=${BRIDGE_POSTBLOCK:-http://api:9200/admin/v1/bridge/block}
+BRIDGE_GETADDRESSES=${BRIDGE_GETADDRESSES:-http://api:9000/v1/bridge/addresses}
+BRIDGE_GETLASTBLOCK=${BRIDGE_GETLASTBLOCK:-http://api:9000/v1/bridge/block/latest}
+BEACON_STATE_URL=${BEACON_STATE_URL:-https://beaconstate.info/}
+
+BRIDGE_CACHE_RANGES=${BRIDGE_CACHE_RANGES:-4}
+
+# Build the optional --bridge.getlastblock flag only when the URL is set, so an empty
+# value is never passed as a bare flag. URLs contain no spaces, so word-splitting the
+# unquoted variable into the geth invocation is safe.
+BRIDGE_GETLASTBLOCK_FLAG=""
+if [ -n "$BRIDGE_GETLASTBLOCK" ]; then
+    BRIDGE_GETLASTBLOCK_FLAG="--bridge.getlastblock $BRIDGE_GETLASTBLOCK"
+fi
+
 require_env_vars() {
     missing=false
     for var_name in "$@"; do
@@ -43,13 +60,18 @@ PRYSM_FORMATTED_LOG=/var/log/prysm/beacon.log
 
 # Determine network flags
 NETWORK_FLAGS=""
+CHAIN_ID="ethereum"
 if [ "$ETHEREUM_NETWORK" = "sepolia" ] || [ "$ETHEREUM_NETWORK" = "testnet" ]; then
     echo "Running on Sepolia testnet"
     NETWORK_FLAGS="--sepolia"
+    CHAIN_ID="sepolia"
 else
     echo "Running on Mainnet (default)"
     # Geth defaults to mainnet, no flag needed
 fi
+
+# Watchdog timer variables
+ZERO_PEERS_START_TIME=0
 
 echo "Initializing Ethereum Bridge Service Version 0.1.0"
 
@@ -188,6 +210,9 @@ start_geth() {
           --ipcdisable \
          --bridge.postblock $BRIDGE_POSTBLOCK \
          --bridge.getaddresses $BRIDGE_GETADDRESSES \
+         --bridge.chain "$CHAIN_ID" \
+         $BRIDGE_GETLASTBLOCK_FLAG \
+         --bridge.cacheranges "$BRIDGE_CACHE_RANGES" \
          --authrpc.addr 127.0.0.1 \
          --authrpc.port $GETH_AUTHRPC_PORT \
          --authrpc.jwtsecret $JWT_SECRET_PATH \
@@ -215,6 +240,9 @@ start_geth() {
                  --ipcdisable \
                  --bridge.postblock $BRIDGE_POSTBLOCK \
                  --bridge.getaddresses $BRIDGE_GETADDRESSES \
+                 --bridge.chain "$CHAIN_ID" \
+                 $BRIDGE_GETLASTBLOCK_FLAG \
+                 --bridge.cacheranges "$BRIDGE_CACHE_RANGES" \
                  --authrpc.addr 127.0.0.1 \
                  --authrpc.port $GETH_AUTHRPC_PORT \
                  --authrpc.jwtsecret $JWT_SECRET_PATH \
@@ -312,6 +340,25 @@ restart_processes() {
     fi
 }
 
+# Function to query geth peer count via JSON-RPC
+get_geth_peer_count() {
+    local resp
+    resp=$(curl -s -m 5 -X POST -H "Content-Type: application/json" \
+        -d '{"jsonrpc":"2.0","method":"net_peerCount","params":[],"id":1}' \
+        "http://127.0.0.1:$GETH_HTTP_PORT" 2>/dev/null)
+    if [ $? -ne 0 ] || [ -z "$resp" ]; then
+        echo "-1"
+        return
+    fi
+    local hex_val
+    hex_val=$(echo "$resp" | grep -o '"result":"[^"]*"' | cut -d'"' -f4)
+    if [ -z "$hex_val" ]; then
+        echo "-1"
+        return
+    fi
+    printf "%d" "$hex_val" 2>/dev/null || echo "-1"
+}
+
 # Function to check if processes are still running and restart if needed
 check_and_restart_processes() {
     local restart_needed=false
@@ -352,6 +399,39 @@ check_and_restart_processes() {
     if [ "$restart_needed" = "true" ]; then
         echo "Restarting processes due to crash..."
         restart_processes
+        return
+    fi
+
+    # Peer count watchdog check (Mainnet only)
+    if [ "$ETHEREUM_NETWORK" != "sepolia" ] && [ "$ETHEREUM_NETWORK" != "testnet" ]; then
+        if [ -n "$GETH_PID" ] && kill -0 "$GETH_PID" 2>/dev/null; then
+            local peers
+            peers=$(get_geth_peer_count)
+            if [ "$peers" = "0" ]; then
+                if [ "$ZERO_PEERS_START_TIME" -eq 0 ]; then
+                    ZERO_PEERS_START_TIME=$(date +%s)
+                    echo "Geth peer count is zero. Starting watchdog timer..."
+                else
+                    local now
+                    now=$(date +%s)
+                    local elapsed=$((now - ZERO_PEERS_START_TIME))
+                    if [ $elapsed -ge 3600 ]; then
+                        echo "Geth has had zero peers for $elapsed seconds (>= 1 hour). Triggering watchdog restart..."
+                        ZERO_PEERS_START_TIME=0
+                        restart_processes
+                    fi
+                fi
+            else
+                if [ "$ZERO_PEERS_START_TIME" -ne 0 ]; then
+                    echo "Geth peer count recovered to $peers. Resetting watchdog timer."
+                    ZERO_PEERS_START_TIME=0
+                fi
+            fi
+        else
+            ZERO_PEERS_START_TIME=0
+        fi
+    else
+        ZERO_PEERS_START_TIME=0
     fi
 }
 

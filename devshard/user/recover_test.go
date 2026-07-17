@@ -536,7 +536,7 @@ func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, types.ProtocolV1, pv)
 
-	pv, ok = recoveredProtocolVersion(types.LegacyRouteSessionVersion)
+	pv, ok = recoveredProtocolVersion(types.SessionVersionV1)
 	require.True(t, ok)
 	require.Equal(t, types.ProtocolV1, pv)
 

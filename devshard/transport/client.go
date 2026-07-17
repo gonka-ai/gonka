@@ -18,7 +18,6 @@ import (
 
 	json "github.com/goccy/go-json"
 
-	devshardpkg "devshard"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/signing"
@@ -46,10 +45,6 @@ func getTransport(baseURL string) *http.Transport {
 	return actual.(*http.Transport)
 }
 
-// DefaultRoutePrefix is the legacy URL prefix dapi mounts the in-process
-// HostManager under. Versioned binaries use devshard.VersionedRoutePrefix(...).
-const DefaultRoutePrefix = devshardpkg.LegacyRoutePrefix
-
 func transportAddress(baseURL string) string {
 	parsed, err := url.Parse(strings.TrimSpace(baseURL))
 	if err == nil && parsed != nil && parsed.Host != "" {
@@ -65,7 +60,7 @@ type ClientConfig struct {
 	VerifyTimeout    time.Duration                   // verify-timeout, default 3m
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
-	RoutePrefix      string                          // path prefix for all session routes; default /v1/devshard
+	RoutePrefix      string                          // path prefix for all session routes; callers should pass /devshard/{version}
 	ProtocolVersion  types.ProtocolVersion           // runtime protocol version configured for the escrow
 	// ParticipantKey is the canonical participant identifier passed to
 	// the admission controller for both AllowRequest and ObserveResult.
@@ -140,7 +135,6 @@ func DefaultClientConfig() ClientConfig {
 		GossipTimeout:    10 * time.Second,
 		VerifyTimeout:    3 * time.Minute,
 		QueryTimeout:     30 * time.Second,
-		RoutePrefix:      DefaultRoutePrefix,
 	}
 }
 
@@ -161,7 +155,6 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	if len(cfgs) > 0 {
 		cfg = cfgs[0]
 	}
-	cfg.RoutePrefix = devshardpkg.NormalizeRoutePrefix(cfg.RoutePrefix)
 	return &HTTPClient{
 		baseURL:     baseURL,
 		routePrefix: cfg.RoutePrefix,
@@ -258,7 +251,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 	contentType := resp.Header.Get("Content-Type")
 	if strings.HasPrefix(contentType, "text/event-stream") {
 		cr := &countingReader{r: resp.Body}
-		result, err := c.parseSSEResponse(cr, stream, receiptHandler)
+		result, err := c.parseSSEResponse(ctx, cr, stream, receiptHandler)
 		if result != nil {
 			result.StreamBytesRead = cr.n
 		}
@@ -292,7 +285,7 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 //     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
 //     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
 //     a successful completion from a peer / middlebox closing the body early.
-func (c *HTTPClient) parseSSEResponse(r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
 	br := bufio.NewReaderSize(r, 64<<10)
 	var result host.HostResponse
 	var writeErrLogged bool
@@ -307,6 +300,16 @@ func (c *HTTPClient) parseSSEResponse(r io.Reader, stream io.Writer, receiptHand
 		}
 		if readErr != nil {
 			if readErr == io.EOF {
+				// A cancelled context (client disconnect, race resolved, drain)
+				// can surface as a clean EOF once the peer closes the body after
+				// we abort the request. The receipt event sets sawTerminator
+				// early, so without this check a cancelled stream that never
+				// carried content would be reported as a successful empty
+				// response and wrongly scored against the host. Report the
+				// cancellation as the error it is.
+				if ctxErr := ctx.Err(); ctxErr != nil {
+					return &result, fmt.Errorf("read SSE stream: %w", ctxErr)
+				}
 				if !sawTerminator {
 					return &result, ErrSSEStreamTruncated
 				}
@@ -707,6 +710,12 @@ func (c *HTTPClient) observeResultWithBody(path string, statusCode int, body str
 
 func (c *HTTPClient) observeTransportFailure(path string, err error) {
 	if c == nil || c.config.Admission == nil || strings.TrimSpace(c.config.ParticipantKey) == "" {
+		return
+	}
+	// A cancelled request context is our own signal (client disconnect, race
+	// resolved, drain), not a fault of the host. Attributing it as a transport
+	// failure would quarantine a healthy host, so skip it.
+	if errors.Is(err, context.Canceled) {
 		return
 	}
 	c.config.Admission.ObserveTransportFailure(c.config.ParticipantKey, path, err)
