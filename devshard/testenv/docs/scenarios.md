@@ -1,4 +1,4 @@
-# Stack citest scenarios (S1–S8)
+# Stack citest scenarios (S1–S9)
 
 Implemented Go integration tests for the devshard testenv v2 stack. Each scenario
 boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
@@ -18,9 +18,10 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
 
-Citest uses an **isolated config** (subnet `172.31.0.0/24`, router `:18080`, gateway
-`:18081`, mock ports `19xxx`) so tests can run while a dev `make up` stack is active on
-default ports.
+Citest uses an **isolated config** (subnet `172.31.0.0/24`) and lets Docker assign
+localhost host ports for router, gateway, and mock services. The harness discovers the
+actual ports with `docker compose port`, so tests can run while a dev `make up` stack is
+active on default ports.
 
 Harness: `citest/harness/` — temp workdir, `gencompose`, `docker compose up --wait`,
 HTTP/gRPC helpers, log dump on failure.
@@ -32,7 +33,7 @@ HTTP/gRPC helpers, log dump on failure.
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack          # S1–S8
+make citest-stack          # S1–S9
 ```
 
 Or run a single scenario:
@@ -45,7 +46,7 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestS3_ParamsLongPoll -v
 |----------------|---------|
 | `TESTENV_CITEST=1` | Opt-in gate (`harness.SkipUnlessEnv`) |
 | `-tags=testenvci` | Build tag on `s*_*.go` tests |
-| `make citest-stack` | Builds mock images + runs all S1–S8 |
+| `make citest-stack` | Builds mock images + runs all S1–S9 |
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
 
@@ -63,8 +64,9 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **S6** | versiond fault & restart | Stop without failover; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
 | **S7** | Legacy version pin | Non-HA path → `VERSIOND_LEGACY_HOST` only; HA path still multi-upstream | `TestS7_LegacyVersionPinnedToSingleHost` |
 | **S8** | SQLite → HA-fail → PG migrate | §3.3 Phases 0–4: sqlite single-host, multi-host 503, postgres migrate, HA OK | `TestS8_SqliteHaFailMigrate` |
+| **S9** | versiond rolling update | Same-name sha change through `/versions`; Postgres rolls with drain, hybrid falls back without overlap | `TestS9_VersiondRollingUpdateSameVersionSHA`, `TestS9_VersiondSameVersionSHAHybridFallsBack` |
 
-Source: `devshard/testenv/citest/s{1..6}_*.go` (S6 spans `s6_versiond_stop_test.go` and `s6_versiond_restart_test.go`).
+Source: `devshard/testenv/citest/s{1..9}_*.go` (S6 spans `s6_versiond_stop_test.go` and `s6_versiond_restart_test.go`).
 
 ### Phase 12 transport scenarios (gRPC-only gateway)
 
@@ -167,6 +169,42 @@ See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 
 **Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
 index; HA + postgres serves. Test: `TestS8_SqliteHaFailMigrate`.
+
+---
+
+## S9 — versiond rolling update
+
+**What we test:** A governance-style `/versions` change that keeps the same
+version name but changes archive `sha256` causes `versiond` to download the new
+devshardd archive. In Postgres mode, `versiond` runs a blue/green swap and
+drains the old child without dropping already accepted work. In hybrid mode, the
+same change falls back to stop-then-start and must not overlap old and new
+children.
+
+**How:**
+
+1. Boot S1 stack with `VERSIOND_OVERRIDE_<version>` removed, so `versiond`
+   downloads devshardd from mock-dapi rather than copying a local override.
+2. Serve two zip archives from mock-dapi `/testenv/binaries/*`; both contain the
+   real linux `devshardd`, but have different archive sha values.
+3. Wait both versiond hosts to report old sha `running` in `/healthz`.
+4. For each versiond host, boot a fresh stack with versiond-router pinned to
+   that host, slow mock-openai SSE chunks, start a streaming gateway chat, and
+   wait for the first content chunk from the old child.
+5. `POST /testenv/versions` with the same version name and new archive sha.
+6. Poll the pinned versiond host `/healthz`; require a moment where a new child
+   is `running` while the old sha is `draining`. The positive test repeats this
+   for both versiond hosts.
+7. Send a new gateway chat and require success while the old stream is still
+   finishing; continue probing router health during the swap.
+8. Require the original stream to finish with `[DONE]` and the old draining child
+   to disappear.
+
+**Pass criteria:** In Postgres mode, no router-health interruption occurs during
+the swap; new traffic succeeds on the new child; the old stream completes; each
+versiond host is exercised in a pinned subtest and shows the expected
+`running(new sha)` + `draining(old sha)` overlap. In hybrid mode, both hosts
+converge to the new sha without ever reporting an old draining child.
 
 ---
 
@@ -284,7 +322,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 ---
 
-## Related tests (not S1–S8)
+## Related tests (not S1–S9)
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
@@ -294,17 +332,6 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
 See [`README.md`](../README.md) for adversarial and observability detail.
-
-## Not yet implemented
-
-| ID | Scenario | Notes |
-|----|----------|-------|
-| **S7** | Same-name sha swap | Phase 13 — rolling update |
-| **S8** | Router host drain | Phase 13 — upstream evacuation |
-
-Tracked in [`testenv-v2-plan.md`](./testenv-v2-plan.md) § Phase 13.
-
----
 
 ## G1 — gRPC escrow create ✅
 

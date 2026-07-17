@@ -11,7 +11,7 @@ import (
 )
 
 // WriteS1Config writes a minimal multi-versiond (2 hosts) config skeleton for Phase 8 S1.
-// Host ports are chosen at runtime so citest can run alongside local-test-net / dev stacks.
+// Service listen ports are chosen at runtime; Docker assigns localhost host ports later.
 func WriteS1Config(t *testing.T, dir string) {
 	t.Helper()
 	chainGRPC := pickFreePort(t)

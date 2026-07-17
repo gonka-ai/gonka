@@ -14,5 +14,5 @@ func BootMockChainStack(t *testing.T, prefix string) (*Stack, *config.File, Endp
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	stack.UpServices(t, false, "mock-chain")
-	return stack, cfg, EndpointsFromConfig(cfg)
+	return stack, cfg, stack.MockChainEndpoints(t, cfg)
 }

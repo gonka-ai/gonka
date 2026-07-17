@@ -4,13 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"common/nodemanager/gen"
-	"devshard/testenv/config"
 	"devshard/testenv/mockchain/adminface"
 
 	"github.com/stretchr/testify/require"
@@ -24,11 +22,11 @@ type MockDAPIEndpoints struct {
 	GRPC string
 }
 
-// MockDAPIFromConfig returns published mock-dapi URLs for citest.
-func MockDAPIFromConfig(cfg *config.File) MockDAPIEndpoints {
+// MockDAPIFromEndpoints returns published mock-dapi URLs discovered from compose.
+func MockDAPIFromEndpoints(eps Endpoints) MockDAPIEndpoints {
 	return MockDAPIEndpoints{
-		HTTP: fmt.Sprintf("http://127.0.0.1:%d", cfg.MockDapi.HTTPPort),
-		GRPC: fmt.Sprintf("127.0.0.1:%d", cfg.MockDapi.GRPCPort),
+		HTTP: eps.MockDapiHTTP,
+		GRPC: eps.MockDapiGRPC,
 	}
 }
 

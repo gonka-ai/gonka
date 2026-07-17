@@ -66,6 +66,9 @@ services:
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
       CHAIN_ID: "{{ .ChainID }}"
+      MOCK_DAPI_BINARY_DIR: /testenv-binaries
+    volumes:
+      - ./binaries:/testenv-binaries:ro
     ports:
       - "{{ .MockDapi.GRPCPort }}:{{ .MockDapi.GRPCPort }}"
       - "{{ .MockDapi.HTTPPort }}:{{ .MockDapi.HTTPPort }}"
@@ -242,11 +245,11 @@ services:
 
 func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
-		"versionEnvSuffix":    versionEnvSuffix,
-		"versiondHosts":       versiondHosts,
-		"legacyVersiondHost":  legacyVersiondHost,
-		"primaryEscrowID":     primaryEscrowID,
-		"primaryModelID":      primaryModelID,
+		"versionEnvSuffix":   versionEnvSuffix,
+		"versiondHosts":      versiondHosts,
+		"legacyVersiondHost": legacyVersiondHost,
+		"primaryEscrowID":    primaryEscrowID,
+		"primaryModelID":     primaryModelID,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {

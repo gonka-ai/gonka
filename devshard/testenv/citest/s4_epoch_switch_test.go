@@ -24,7 +24,7 @@ func TestS4_EpochSwitch(t *testing.T) {
 	client := harness.HTTPClient()
 	harness.WaitS1Healthy(t, stack, eps)
 
-	mockDapi := harness.MockDAPIFromConfig(cfg)
+	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	grpcConn := harness.DialMockDAPI(t, mockDapi.GRPC)
 	nm := gen.NewNodeManagerClient(grpcConn)
 	ctx := context.Background()
@@ -35,7 +35,7 @@ func TestS4_EpochSwitch(t *testing.T) {
 	}
 
 	harness.Step(t, "baseline mock-chain epoch snapshot")
-	before := harness.GetMockChainSnapshot(t, cfg, client)
+	before := harness.GetMockChainSnapshot(t, cfg, eps, client)
 	require.Equal(t, uint64(1), before.EpochIndex)
 	require.Greater(t, before.NextPocStart, before.BlockHeight)
 	targetHeight := before.NextPocStart
@@ -83,7 +83,7 @@ func TestS4_EpochSwitch(t *testing.T) {
 		updated.Config.CurrentEpochId, updated.Config.ParamsBlockHeight)
 
 	harness.Step(t, "mock-chain caught up to next PoC start and rolled next_poc forward")
-	after := harness.GetMockChainSnapshot(t, cfg, client)
+	after := harness.GetMockChainSnapshot(t, cfg, eps, client)
 	require.Equal(t, updated.Config.CurrentEpochId, after.EpochIndex)
 	require.GreaterOrEqual(t, after.BlockHeight, targetHeight)
 	require.Equal(t, targetHeight, after.PocStart)

@@ -18,7 +18,7 @@ func TestA2_MLUpstream5xx(t *testing.T) {
 
 	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a2-*")
 	client := harness.GatewayChatClient()
-	mockOpenAI := harness.MockOpenAIFromConfig(cfg)
+	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
@@ -28,7 +28,7 @@ func TestA2_MLUpstream5xx(t *testing.T) {
 
 	status := http.StatusServiceUnavailable
 	harness.PatchMockOpenAIFault(t, client, mockOpenAI, mockopenai.FaultPatch{HTTPStatus: &status})
-	harness.PatchAdversarialFastTimeouts(t, client, harness.MockDAPIFromConfig(cfg).HTTP)
+	harness.PatchAdversarialFastTimeouts(t, client, eps.MockDapiHTTP)
 
 	req := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),

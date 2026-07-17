@@ -18,6 +18,7 @@ type Config struct {
 	BlockInterval     time.Duration
 	ChainID           string
 	Versions          []cosrv.Version
+	BinaryDir         string
 	// BlockSeed seeds the mock block observer (deterministic headers).
 	BlockSeed int64
 	// GatewayBlockHeight / GatewayEpochIndex feed devshardctl public-API stubs.

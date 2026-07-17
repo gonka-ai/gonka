@@ -71,8 +71,8 @@ citest-images: ## Pull hub images and build all compose images required for cite
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
-citest-stack: citest-images ## Phase 8 S1–S8 citest (TESTENV_CITEST=1; needs Docker + build-devshardd).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS1_|TestS2_|TestS3_|TestS4_|TestS5_|TestS6_|TestS7_|TestS8_' -count=1 -v -timeout 60m
+citest-stack: citest-images ## Phase 8 S1–S9 citest (TESTENV_CITEST=1; needs Docker + build-devshardd).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS1_|TestS2_|TestS3_|TestS4_|TestS5_|TestS6_|TestS7_|TestS8_|TestS9_' -count=1 -v -timeout 60m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
@@ -96,7 +96,7 @@ obs-up: ## Start base stack + observability overlay (Jaeger/Loki/Prometheus/Graf
 obs-down: ## Stop observability overlay (and base stack if merged).
 	docker compose $(OBS_OVERLAY) down
 
-citest-stack-build: dev-build ## Build dev images then run S1–S6 citest.
+citest-stack-build: dev-build ## Build dev images then run S1–S9 citest.
 	$(MAKE) citest-stack
 
 test-gateway-smoke: ## Full-stack gateway smoke (TESTENV_GATEWAY_SMOKE=1; needs Docker + build-devshardd).

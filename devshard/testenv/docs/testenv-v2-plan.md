@@ -1090,17 +1090,17 @@ citest harness, and rolling-update **Track A** (blue/green sha swap) at minimum.
 2. **mock-dapi:** extend `/versions` + `/testenv/*` to bump **sha256 for same version name**
    (simulates governance publishing a new binary).
 3. **Binaries:** mount two devshardd builds (or tagged overrides) for swap scenarios.
-4. **New citest scenarios** (after S1–S6):
+4. **New citest scenarios**:
 
    | ID | Scenario | Asserts |
    |----|----------|---------|
-   | **S7** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
-   | **S8** | Router host drain | Escrow pinned to `versiond-N`; mark upstream down; in-flight completes; no new traffic to N |
+   | **S9** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
+   | **future** | Router host drain | Escrow pinned to `versiond-N`; mark upstream down; in-flight completes; no new traffic to N |
 
 **Tests:** align with `rolling-update.md` §1.9 (versiond unit/e2e + devshardd readiness);
 Phase 13 adds **stack-level** Go citest on top.
 
-**Exit:** `make citest-stack` includes S7 (+ S8 when Track B lands); rolling-update semantics
+**Exit:** `make citest-stack` includes S9 (+ router drain when Track B lands); rolling-update semantics
 validated before deploy/join.
 
 ---

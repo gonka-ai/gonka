@@ -7,15 +7,16 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"path/filepath"
 	"time"
 
 	"common/chain"
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
-	cosrv "devshard/chainoracle/server"
 	"devshard/chainoracle/blocks"
 	"devshard/chainoracle/blocks/observer"
 	"devshard/chainoracle/params"
+	cosrv "devshard/chainoracle/server"
 	"devshard/signing"
 	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockchain/adminface"
@@ -34,6 +35,7 @@ type Service struct {
 	runtimeFetcher fetcher.SnapshotFetcher
 	blockMock      *observer.Mock
 	admin          *adminface.Client
+	versions       *versionStore
 	grpcServer     *grpc.Server
 	httpEcho       *echo.Echo
 }
@@ -99,6 +101,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		runtimeFetcher: runtimeFetcher,
 		blockMock:      blockMock,
 		admin:          adminClient,
+		versions:       newVersionStore(cfg.Versions),
 	}
 	return s, nil
 }
@@ -204,14 +207,17 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 	e := echo.New()
 	e.HideBanner = true
 	cosrv.Mount(e.Group(""), cosrv.Config{
-		Blocks:   s.blockMock,
-		Versions: s.cfg.Versions,
+		Blocks:          s.blockMock,
+		VersionProvider: s.versions,
 	})
+	if s.cfg.BinaryDir != "" {
+		mountBinaryFiles(e.Group(""), s.cfg.BinaryDir)
+	}
 	gatewayphase.Mount(e.Group(""), gatewayphase.Config{
 		BlockHeight: s.cfg.GatewayBlockHeight,
 		EpochIndex:  s.cfg.GatewayEpochIndex,
 	})
-	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig)
+	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {
@@ -225,6 +231,16 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		return err
 	}
 	return ctx.Err()
+}
+
+func mountBinaryFiles(g *echo.Group, dir string) {
+	g.GET("/testenv/binaries/:name", func(c echo.Context) error {
+		name := filepath.Base(c.Param("name"))
+		if name == "." || name == ".." || name == string(filepath.Separator) || name == "" {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid binary name")
+		}
+		return c.File(filepath.Join(dir, name))
+	})
 }
 
 // ParamsSource exposes the cached params source for tests.

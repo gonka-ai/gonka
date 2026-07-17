@@ -31,7 +31,7 @@ func TestG1_GatewayEscrowCreateGRPC(t *testing.T) {
 	})
 	harness.WaitGETOK(t, harness.HTTPClient(), eps.MockChainRPC+"/health", 5*time.Minute, "mock-chain RPC health")
 
-	conn := harness.DialMockChainGRPC(t, cfg)
+	conn := harness.DialMockChainGRPC(t, eps)
 	txMgr, err := chaintx.New(conn, chaintx.Config{
 		ChainID:      cfg.ChainID,
 		PollInterval: 500 * time.Millisecond,

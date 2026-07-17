@@ -24,7 +24,7 @@ func TestS3_ParamsLongPoll(t *testing.T) {
 	client := harness.HTTPClient()
 	harness.WaitS1Healthy(t, stack, eps)
 
-	mockDapi := harness.MockDAPIFromConfig(stack.LoadConfig(t))
+	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	grpcConn := harness.DialMockDAPI(t, mockDapi.GRPC)
 	nm := gen.NewNodeManagerClient(grpcConn)
 	ctx := context.Background()

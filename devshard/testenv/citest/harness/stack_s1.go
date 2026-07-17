@@ -21,7 +21,7 @@ func BootS1Stack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) 
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
 	stack.Up(t)
-	return stack, cfg, EndpointsFromConfig(cfg)
+	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
 // BootS1StackBuild is like BootS1Stack but rebuilds compose images first (devshardctl gRPC wiring).
@@ -35,7 +35,7 @@ func BootS1StackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoi
 	requireTwoVersiondHosts(t, cfg)
 	RequireGatewayGRPCOnlyCompose(t, stack.ComposePath)
 	stack.UpBuild(t)
-	return stack, cfg, EndpointsFromConfig(cfg)
+	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
 func BootS1ObsStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
@@ -47,7 +47,7 @@ func BootS1ObsStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoint
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
 	stack.UpWithObservability(t, cfg)
-	return stack, cfg, EndpointsFromConfig(cfg), DefaultObservabilityEndpoints()
+	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
 }
 
 // WaitS1Healthy polls the S1 boundary health endpoints (chain, dapi, router, gateway).

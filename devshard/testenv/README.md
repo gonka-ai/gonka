@@ -7,7 +7,7 @@ Config-driven via `config/config.yaml` and `cmd/gencompose`.
 
 ## Documentation
 
-- **Stack scenarios (S1–S6):** [`docs/scenarios.md`](docs/scenarios.md)
+- **Stack scenarios (S1–S9):** [`docs/scenarios.md`](docs/scenarios.md)
 - **gRPC transport plan (G1–G4):** [`docs/chain-transport-consolidation.md`](docs/chain-transport-consolidation.md)
 - **Phase 12 index:** [`docs/phase12-followup.md`](docs/phase12-followup.md)
 - **Operator runbook:** [`../docs/testenv-v2.md`](../docs/testenv-v2.md)
@@ -29,7 +29,7 @@ Go packages under `devshard/testenv/` — what each one is for:
 | **`mockopenai/`** | Fake ML node library: minimal OpenAI HTTP API used by production `devshardd` after `AcquireMLNode`. |
 | **`gatewayphase/`** | Tiny HTTP stubs for devshardctl’s **chain epoch phase** poller (`ChainPhaseGate`): `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
 | **`keymaterial/`** | Builds deterministic Cosmos **file keyrings** from config host keys so devshardd can sign txs in containers (`KEYRING_DIR`, `KEY_NAME`). |
-| **`citest/`** | Go integration tests: compose validation, gateway wiring, Phase 8 harness (`citest/harness/`), S1–S6 citest (`make citest-stack`), Phase 9 adversarial A1–A4 (`make citest-adversarial`, `-tags=testenvci`), optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
+| **`citest/`** | Go integration tests: compose validation, gateway wiring, Phase 8 harness (`citest/harness/`), S1–S9 citest (`make citest-stack`), Phase 9 adversarial A1–A4 (`make citest-adversarial`, `-tags=testenvci`), optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
 
 Production binaries (`devshardd`, `devshardctl`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
 
@@ -201,12 +201,12 @@ go test ./testenv/... -count=1
 
 ### Phase 8 citest (Docker)
 
-S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch + S5 gateway chat + S6 versiond stop fault. Uses an isolated 2× versiond stack on alternate ports (`18080` router, `18081` gateway, subnet `172.31.0.0/24`) so it can run while a dev `make up` stack is active.
+S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch + S5 gateway chat + S6 versiond fault/restart + S7 legacy routing + S8 SQLite→Postgres migration + S9 rolling update. Uses an isolated 2× versiond stack on a dedicated subnet with Docker-assigned localhost ports, so it can run while a dev `make up` stack is active.
 
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack    # S1 + S2 + S3 + S4 + S5 + S6 (builds mock-chain + mock-dapi images)
+make citest-stack    # S1–S9 (builds mock-chain + mock-dapi images)
 # or: ./scripts/run-stack-citest.sh
 ```
 
