@@ -184,6 +184,23 @@ func NewOffChainValidator(
 	}
 }
 
+// SyncArtifactStoreStage keeps only the current PoC/CPoC stage open in RAM for
+// the whole generate→validate window, and refuses/unloads everything else.
+// Called every synced block so a restart mid-window re-pins without waiting
+// for an exact transition height.
+func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochState) {
+	if v.artifactStore == nil {
+		return
+	}
+	if ShouldKeepPocArtifactStageActive(&epochState) {
+		if height := GetCurrentPocStageHeight(&epochState); height > 0 {
+			v.artifactStore.ActivateStage(height)
+			return
+		}
+	}
+	v.artifactStore.DeactivateStage()
+}
+
 // MaybeCaptureEarlyShare is invoked once per block by the dispatcher. From the
 // first-fraction height until the end of the generation window it attempts the
 // early-share capture. The capture query is pinned to the exact first-fraction

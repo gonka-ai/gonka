@@ -250,6 +250,48 @@ func TestGetCurrentPocStageHeight_NilOrNotSynced(t *testing.T) {
 	assert.Equal(t, int64(0), GetCurrentPocStageHeight(notSynced))
 }
 
+func TestShouldKeepPocArtifactStageActive(t *testing.T) {
+	tests := []struct {
+		name   string
+		phase  types.EpochPhase
+		want   bool
+	}{
+		{"generate", types.PoCGeneratePhase, true},
+		{"generate wind down", types.PoCGenerateWindDownPhase, true},
+		{"validate", types.PoCValidatePhase, true},
+		{"validate wind down", types.PoCValidateWindDownPhase, true},
+		{"inference", types.InferencePhase, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			st := createTestEpochState(tt.phase, 110, 100)
+			assert.Equal(t, tt.want, ShouldKeepPocArtifactStageActive(st))
+		})
+	}
+
+	t.Run("confirmation generation", func(t *testing.T) {
+		st := createTestEpochState(types.InferencePhase, 500, 100)
+		st.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+			TriggerHeight: 400,
+			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+		}
+		assert.True(t, ShouldKeepPocArtifactStageActive(st))
+	})
+
+	t.Run("confirmation validation", func(t *testing.T) {
+		st := createTestEpochState(types.InferencePhase, 500, 100)
+		st.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+			TriggerHeight: 400,
+			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
+		}
+		assert.True(t, ShouldKeepPocArtifactStageActive(st))
+	})
+
+	t.Run("nil", func(t *testing.T) {
+		assert.False(t, ShouldKeepPocArtifactStageActive(nil))
+	})
+}
+
 func TestShouldAcceptStoreCommit_RegularPoC(t *testing.T) {
 	tests := []struct {
 		name           string
