@@ -198,9 +198,14 @@ func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochSt
 		return
 	}
 	if keep {
-		if height := GetCurrentPocStageHeight(&epochState); height > 0 {
-			v.artifactStore.ActivateStage(height)
+		height := GetCurrentPocStageHeight(&epochState)
+		if height <= 0 {
+			// Fail closed: avoid leaving a stale stage pinned if the current
+			// stage height is invalid.
+			v.artifactStore.DeactivateStage()
+			return
 		}
+		v.artifactStore.ActivateStage(height)
 		return
 	}
 	v.artifactStore.DeactivateStage()
