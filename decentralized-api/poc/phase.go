@@ -170,22 +170,25 @@ func ShouldHaveDistributedWeights(epochState *chainphase.EpochState) bool {
 // must keep the current PoC/CPoC stage pinned in RAM (generate through validate,
 // including wind-down). Outside these windows the store must be inactive so
 // proof/artifact opens for old heights are refused.
-func ShouldKeepPocArtifactStageActive(epochState *chainphase.EpochState) bool {
+//
+// decided is false when epoch state is nil or not synced: callers must leave
+// the current pin unchanged (a transient catch-up must not unload mid-PoC).
+func ShouldKeepPocArtifactStageActive(epochState *chainphase.EpochState) (keep bool, decided bool) {
 	if epochState.IsNilOrNotSynced() {
-		return false
+		return false, false
 	}
 	switch epochState.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase,
 		types.PoCValidatePhase, types.PoCValidateWindDownPhase:
-		return true
+		return true, true
 	}
 	if epochState.CurrentPhase == types.InferencePhase &&
 		epochState.ActiveConfirmationPoCEvent != nil {
 		switch epochState.ActiveConfirmationPoCEvent.Phase {
 		case types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
 			types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION:
-			return true
+			return true, true
 		}
 	}
-	return false
+	return false, true
 }

@@ -187,16 +187,21 @@ func NewOffChainValidator(
 // SyncArtifactStoreStage keeps only the current PoC/CPoC stage open in RAM for
 // the whole generate→validate window, and refuses/unloads everything else.
 // Called every synced block so a restart mid-window re-pins without waiting
-// for an exact transition height.
+// for an exact transition height. If epoch state is nil/unsynced, leaves the
+// current pin alone.
 func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochState) {
 	if v.artifactStore == nil {
 		return
 	}
-	if ShouldKeepPocArtifactStageActive(&epochState) {
+	keep, decided := ShouldKeepPocArtifactStageActive(&epochState)
+	if !decided {
+		return
+	}
+	if keep {
 		if height := GetCurrentPocStageHeight(&epochState); height > 0 {
 			v.artifactStore.ActivateStage(height)
-			return
 		}
+		return
 	}
 	v.artifactStore.DeactivateStage()
 }

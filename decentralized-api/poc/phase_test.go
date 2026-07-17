@@ -252,9 +252,9 @@ func TestGetCurrentPocStageHeight_NilOrNotSynced(t *testing.T) {
 
 func TestShouldKeepPocArtifactStageActive(t *testing.T) {
 	tests := []struct {
-		name   string
-		phase  types.EpochPhase
-		want   bool
+		name string
+		phase types.EpochPhase
+		want  bool
 	}{
 		{"generate", types.PoCGeneratePhase, true},
 		{"generate wind down", types.PoCGenerateWindDownPhase, true},
@@ -265,7 +265,9 @@ func TestShouldKeepPocArtifactStageActive(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			st := createTestEpochState(tt.phase, 110, 100)
-			assert.Equal(t, tt.want, ShouldKeepPocArtifactStageActive(st))
+			keep, decided := ShouldKeepPocArtifactStageActive(st)
+			assert.True(t, decided)
+			assert.Equal(t, tt.want, keep)
 		})
 	}
 
@@ -275,7 +277,9 @@ func TestShouldKeepPocArtifactStageActive(t *testing.T) {
 			TriggerHeight: 400,
 			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
 		}
-		assert.True(t, ShouldKeepPocArtifactStageActive(st))
+		keep, decided := ShouldKeepPocArtifactStageActive(st)
+		assert.True(t, decided)
+		assert.True(t, keep)
 	})
 
 	t.Run("confirmation validation", func(t *testing.T) {
@@ -284,11 +288,23 @@ func TestShouldKeepPocArtifactStageActive(t *testing.T) {
 			TriggerHeight: 400,
 			Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION,
 		}
-		assert.True(t, ShouldKeepPocArtifactStageActive(st))
+		keep, decided := ShouldKeepPocArtifactStageActive(st)
+		assert.True(t, decided)
+		assert.True(t, keep)
 	})
 
-	t.Run("nil", func(t *testing.T) {
-		assert.False(t, ShouldKeepPocArtifactStageActive(nil))
+	t.Run("nil makes no decision", func(t *testing.T) {
+		keep, decided := ShouldKeepPocArtifactStageActive(nil)
+		assert.False(t, decided)
+		assert.False(t, keep)
+	})
+
+	t.Run("unsynced makes no decision", func(t *testing.T) {
+		st := createTestEpochState(types.PoCValidatePhase, 200, 100)
+		st.IsSynced = false
+		keep, decided := ShouldKeepPocArtifactStageActive(st)
+		assert.False(t, decided)
+		assert.False(t, keep)
 	})
 }
 
