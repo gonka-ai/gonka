@@ -39,7 +39,7 @@ func TestGenerationHealthStatusKeepsRetirementOutOfRoutes(t *testing.T) {
 	}
 }
 
-func TestConditionsReportPartialConvergenceAsDegraded(t *testing.T) {
+func TestConditionsReportPartialConvergenceAsProgressing(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000})
 	m.mu.Lock()
 	m.conditions = Conditions{Desired: 2, Reconciled: true}
@@ -48,18 +48,20 @@ func TestConditionsReportPartialConvergenceAsDegraded(t *testing.T) {
 	m.mu.Unlock()
 
 	conditions := m.Conditions()
-	if !conditions.Available || conditions.Reconciled || !conditions.Degraded {
+	if !conditions.Available || conditions.Reconciled ||
+		!conditions.Progressing || conditions.Degraded {
 		t.Fatalf("unexpected partial conditions: %+v", conditions)
 	}
-	if conditions.ReconcileError == "" {
-		t.Fatal("partial convergence has no diagnostic")
+	if conditions.ReconcileError != "" {
+		t.Fatalf("expected no failure during progress, got %q", conditions.ReconcileError)
 	}
 
 	m.mu.Lock()
 	m.processes["v2"].status = statusRunning
 	m.mu.Unlock()
 	conditions = m.Conditions()
-	if !conditions.Available || !conditions.Reconciled || conditions.Degraded {
+	if !conditions.Available || !conditions.Reconciled ||
+		conditions.Progressing || conditions.Degraded {
 		t.Fatalf("unexpected converged conditions: %+v", conditions)
 	}
 }
@@ -78,6 +80,21 @@ func TestConditionsKeepServingWhenReconcileSourceFails(t *testing.T) {
 	}
 	if conditions.ReconcileError != "oracle unavailable" {
 		t.Fatalf("reconcile error = %q", conditions.ReconcileError)
+	}
+}
+
+func TestConditionsReportBinaryReplacementAsProgressing(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	m.mu.Lock()
+	m.conditions = Conditions{Desired: 1, Reconciled: true}
+	m.processes["v1"] = &child{status: statusRunning}
+	m.downloading["v1"] = struct{}{}
+	m.mu.Unlock()
+
+	conditions := m.Conditions()
+	if !conditions.Available || conditions.Reconciled ||
+		!conditions.Progressing || conditions.Degraded {
+		t.Fatalf("unexpected replacement conditions: %+v", conditions)
 	}
 }
 

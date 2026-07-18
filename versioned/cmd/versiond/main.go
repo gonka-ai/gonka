@@ -64,8 +64,11 @@ func run(ctx context.Context) error {
 			mgr.CachedStatusWithInflight(),
 			health.Conditions{
 				Available:      managerConditions.Available,
+				Progressing:    managerConditions.Progressing,
 				Reconciled:     managerConditions.Reconciled,
 				Degraded:       managerConditions.Degraded,
+				Desired:        managerConditions.Desired,
+				Running:        managerConditions.Running,
 				ReconcileError: managerConditions.ReconcileError,
 			},
 		)

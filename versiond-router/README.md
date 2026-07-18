@@ -145,8 +145,8 @@ The command performs these ordered steps:
 2. Poll `versiond:8080/healthz?summary=1` until the host is known idle or the
    drain timeout expires.
 3. Reconfirm the router `draining` state before the first irreversible action.
-4. Disable the Docker restart policy, send `SIGTERM`, and wait for versiond to
-   drain and reap its children.
+4. Capture the Docker restart policy once, reassert `restart=no`, send
+   `SIGTERM`, and wait for versiond to drain and reap its children.
 5. Send `SIGKILL` only if the kill grace expires.
 6. Move the router host to `offline`.
 
@@ -154,10 +154,12 @@ For systemd, set both runtime flags to `systemd`. The stop step uses
 `systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
 evacuation. Before router drain, hostctl requires `TimeoutStopSec` to cover the
 configured kill grace, `KillMode=control-group` or `mixed`, and
-`SendSIGKILL=yes`. Docker receives the equivalent preflight against the
-container's explicit `StopTimeout`. The supplied compose files set
-`stop_grace_period: 30m`; custom deployments must provide the same runtime
-contract.
+`SendSIGKILL=yes`. Docker hostctl uses explicit `TERM`/`KILL` signals, so its
+kill grace is owned by hostctl. The separate preflight for an explicit
+`StopTimeout` protects external `docker stop`, Compose teardown, daemon
+shutdown, and redeploy from using Docker's short default. The supplied compose
+files set `stop_grace_period: 30m`; custom deployments must provide the same
+runtime contract.
 
 For example, the systemd unit should include:
 
@@ -192,12 +194,14 @@ without leaving the cluster blocked:
   --versiond-service versiond2
 ```
 
-The command checks that versiond is still running, restores a Docker restart
-policy if it was disabled, and only then returns the upstream to `active`.
-Cancellation is rejected at and after the durable `term_requested` phase, which
-is written before the remote signal command. At that point rerun `evacuate` with
-the same operation ID; do not reactivate the host even if SSH lost the command
-result.
+The command checks that versiond is still running and first persists a
+cancellation intent. It then checkpoints Docker restart-policy restoration and
+the router transition to `active` as separate compensating phases. If either
+step fails, rerun `cancel` with the same operation ID. The forward `evacuate`
+command refuses to continue through an unfinished cancellation. Cancellation
+is rejected at and after the durable `term_requested` phase, which is written
+before the remote signal command. At that point rerun `evacuate`; do not
+reactivate the host even if SSH lost the command result.
 
 ## Host replacement
 
@@ -221,12 +225,15 @@ still `offline`, then run:
 
 The replacement remains `joining` and therefore down in nginx while it starts.
 It becomes `active` only after the versioned health summary reports
-`state=serving`, `ready=true`, and `accepting=true`.
+`state=serving`, `ready=true`, `accepting=true`, `available=true`,
+`reconciled=true`, `progressing=false`, and `degraded=false`.
 
 For Docker, replacement has no implicit restart-policy default. When reusing a
 service, pass its completed evacuation journal as above; the exact original
-policy, including an `on-failure` retry count, is restored. For a new service,
-set the intended policy explicitly, for example
+policy, including an `on-failure` retry count, is restored. The journal must
+match the same router upstream and logical versiond runtime/service; the SSH
+destination and upstream address may change for a replacement machine. For a
+new service, set the intended policy explicitly, for example
 `--docker-restart-policy unless-stopped`. Policy validation happens before the
 router moves the host to `joining`.
 
@@ -259,7 +266,8 @@ host or inside its container, not on the administration machine.
 2. Rerun `gonka-hostctl evacuate` or `replace` with the original operation ID,
    flags, and journal path. Completed phases are not repeated.
 3. If evacuation must be abandoned before `term_requested`, run `gonka-hostctl
-   cancel` with the same operation ID and scope.
+   cancel` with the same operation ID and scope. If cancellation itself was
+   interrupted, rerun `cancel`, not `evacuate`.
 4. If `term_requested` is durable, finish evacuation. Never reactivate an
    upstream whose process may already be stopping.
 

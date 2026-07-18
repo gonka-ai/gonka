@@ -18,19 +18,36 @@ func TestBuildSummaryUsesConservativeInflightCount(t *testing.T) {
 	}
 }
 
-func TestBuildSummaryUsesAvailabilityForReadiness(t *testing.T) {
+func TestBuildSummarySeparatesAvailabilityFromConvergence(t *testing.T) {
 	summary := BuildSummary(
 		"serving",
 		true,
 		0,
 		[]StatusEntry{{Status: "running"}, {Status: "starting"}},
-		Conditions{Available: true, Reconciled: false, Degraded: true},
+		Conditions{
+			Available:   true,
+			Progressing: true,
+			Desired:     2,
+			Running:     1,
+		},
 	)
 	if !summary.Ready {
 		t.Fatal("an available host became unready while another version was starting")
 	}
-	if !summary.Degraded || summary.Reconciled {
-		t.Fatalf("summary conditions = degraded:%v reconciled:%v", summary.Degraded, summary.Reconciled)
+	if !summary.Progressing || summary.Degraded || summary.Reconciled {
+		t.Fatalf(
+			"summary conditions = progressing:%v degraded:%v reconciled:%v",
+			summary.Progressing,
+			summary.Degraded,
+			summary.Reconciled,
+		)
+	}
+	if summary.DesiredChildren != 2 || summary.RunningChildren != 1 {
+		t.Fatalf(
+			"summary child counts = desired:%d running:%d",
+			summary.DesiredChildren,
+			summary.RunningChildren,
+		)
 	}
 }
 

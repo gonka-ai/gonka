@@ -22,6 +22,7 @@ type fakeRemote struct {
 	health             HealthSummary
 	restartPolicyJSON  string
 	stopTimeout        string
+	activateErrors     int
 }
 
 func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) (string, error) {
@@ -31,6 +32,9 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 	r.calls = append(r.calls, command)
 	joined := strings.Join(args, " ")
 	switch {
+	case strings.Contains(joined, "gonka-routerctl host activate") && r.activateErrors > 0:
+		r.activateErrors--
+		return "", errors.New("transient router activation failure")
 	case strings.Contains(joined, "/healthz?summary=1"):
 		data, _ := json.Marshal(r.health)
 		return string(data), nil
@@ -115,7 +119,8 @@ func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
 	remote := &fakeRemote{
 		health: HealthSummary{
 			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, InflightKnown: true, Idle: true,
+			Accepting: true, Available: true, Reconciled: true,
+			InflightKnown: true, Idle: true,
 		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "replace-order")
@@ -137,17 +142,20 @@ func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
 	remote := &fakeRemote{
 		health: HealthSummary{
 			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, InflightKnown: true, Idle: true,
+			Accepting: true, Available: true, Reconciled: true,
+			InflightKnown: true, Idle: true,
 		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "replace-policy")
 	orchestrator.config.DockerRestartPolicy = ""
 	orchestrator.config.EvacuationJournal = filepath.Join(t.TempDir(), "evacuation.json")
+	evacuationScope := orchestrator.operationScope()
+	evacuationScope.VersiondSSH = "retired-versiond-host"
 	evacuation := Journal{
 		SchemaVersion:         1,
 		OperationID:           "evacuated-policy",
 		Mode:                  "evacuate",
-		Scope:                 orchestrator.operationScope(),
+		Scope:                 evacuationScope,
 		Phase:                 "complete",
 		PreviousRestartPolicy: "always",
 		UpdatedAt:             time.Now().UTC(),
@@ -167,6 +175,38 @@ func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
 		t.Fatalf("replacement did not restore evacuation policy:\n%s", calls)
 	}
 	assertJournalRestartPolicy(t, orchestrator.config.JournalPath, "always")
+}
+
+func TestReplaceRejectsPolicyFromAnotherLogicalHost(t *testing.T) {
+	remote := &fakeRemote{}
+	orchestrator := newTestOrchestrator(t, remote, "replace-wrong-host")
+	orchestrator.config.DockerRestartPolicy = ""
+	orchestrator.config.EvacuationJournal = filepath.Join(t.TempDir(), "evacuation.json")
+	scope := orchestrator.operationScope()
+	scope.VersiondService = "another-versiond"
+	evacuation := Journal{
+		SchemaVersion:         1,
+		OperationID:           "another-host",
+		Mode:                  "evacuate",
+		Scope:                 scope,
+		Phase:                 "complete",
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}
+	data, err := json.Marshal(evacuation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orchestrator.config.EvacuationJournal, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Replace(context.Background()); err == nil {
+		t.Fatal("replacement accepted restart policy from another logical host")
+	}
+	if calls := remote.callLog(); strings.Contains(calls, "host join") {
+		t.Fatalf("replacement mutated router before journal validation:\n%s", calls)
+	}
 }
 
 func TestDockerRestartPolicyPreservesRetryCount(t *testing.T) {
@@ -221,6 +261,92 @@ func TestCancelEvacuationRestoresPolicyBeforeReactivating(t *testing.T) {
 		"gonka-routerctl host activate",
 	)
 	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
+}
+
+func TestCancelEvacuationResumesItsDurableCompensation(t *testing.T) {
+	remote := &fakeRemote{running: true, activateErrors: 1}
+	orchestrator := newTestOrchestrator(t, remote, "cancel-resume")
+	journal := Journal{
+		SchemaVersion:         1,
+		OperationID:           "cancel-resume",
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 "restart_disabled",
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}
+	if err := orchestrator.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.CancelEvacuation(context.Background()); err == nil {
+		t.Fatal("cancellation succeeded despite router activation failure")
+	}
+	assertJournalCancellationPhase(t, orchestrator.config.JournalPath, "restart_restored")
+	if err := orchestrator.Evacuate(context.Background()); err == nil ||
+		!strings.Contains(err.Error(), "cancellation is in progress") {
+		t.Fatalf("evacuation resumed through cancellation: %v", err)
+	}
+	if calls := remote.callLog(); strings.Contains(calls, "docker kill --signal TERM") {
+		t.Fatalf("evacuation signaled versiond during cancellation:\n%s", calls)
+	}
+
+	if err := orchestrator.CancelEvacuation(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
+}
+
+func TestEvacuationReassertsDisabledRestartPolicyBeforeSignal(t *testing.T) {
+	remote := &fakeRemote{
+		running:    true,
+		stopOnTerm: true,
+		health: HealthSummary{
+			SchemaVersion: 1, InflightKnown: true, Idle: true,
+		},
+	}
+	orchestrator := newTestOrchestrator(t, remote, "restart-reassert")
+	journal := Journal{
+		SchemaVersion:         1,
+		OperationID:           "restart-reassert",
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 "restart_disabled",
+		PreviousRestartPolicy: "unless-stopped",
+		UpdatedAt:             time.Now().UTC(),
+	}
+	if err := orchestrator.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCallOrder(
+		t,
+		remote.callLog(),
+		"docker update --restart=no",
+		"docker kill --signal TERM",
+	)
+}
+
+func TestReplacementActivationRequiresFullConvergence(t *testing.T) {
+	health := HealthSummary{
+		SchemaVersion: 1,
+		State:         "serving",
+		Ready:         true,
+		Accepting:     true,
+		Available:     true,
+		Progressing:   true,
+	}
+	if health.readyForActivation() {
+		t.Fatal("progressing replacement was ready for router activation")
+	}
+	health.Progressing = false
+	health.Reconciled = true
+	if !health.readyForActivation() {
+		t.Fatal("fully reconciled replacement was not ready for router activation")
+	}
 }
 
 func TestProbeFailureBeforeSignalIntentCanBeCanceled(t *testing.T) {
@@ -320,6 +446,16 @@ func TestParseSystemdTimeSpan(t *testing.T) {
 	got, err = parseSystemdTimeSpan("infinity")
 	if err != nil || got < 100*365*24*time.Hour {
 		t.Fatalf("infinity = %s, %v", got, err)
+	}
+	got, err = parseSystemdTimeSpan("1y 2months 3days")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := time.Duration(365.25*float64(24*time.Hour)) +
+		2*time.Duration(30.44*float64(24*time.Hour)) +
+		3*24*time.Hour
+	if got != want {
+		t.Fatalf("extended duration = %s, want %s", got, want)
 	}
 }
 
@@ -493,6 +629,25 @@ func assertJournalRestartPolicy(t *testing.T, path, want string) {
 		t.Fatalf(
 			"journal restart policy = %q, want %q",
 			journal.PreviousRestartPolicy,
+			want,
+		)
+	}
+}
+
+func assertJournalCancellationPhase(t *testing.T, path, want string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal Journal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		t.Fatal(err)
+	}
+	if journal.CancellationPhase != want {
+		t.Fatalf(
+			"journal cancellation phase = %q, want %q",
+			journal.CancellationPhase,
 			want,
 		)
 	}

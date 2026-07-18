@@ -113,8 +113,11 @@ add per-generation proxy counters without changing the response shape.
   "inflight_known": true,
   "idle": true,
   "available": false,
+  "progressing": false,
   "reconciled": true,
   "degraded": false,
+  "desired_children": 0,
+  "running_children": 0,
   "children": []
 }
 ```
@@ -130,8 +133,17 @@ Lifecycle counters are refreshed by a bounded background sampler and served
 from cache. The live host admission counter is merged at request time, so health
 cannot report idle while a newly accepted proxy request is running. `ready`
 tracks host availability: one routable generation keeps the host ready while a
-different version starts or fails. `reconciled` and `degraded` expose desired
-state convergence independently.
+different version starts or fails. `progressing` reports expected convergence
+when the running and desired generation counts differ. `degraded` is reserved
+for an actual reconcile or oracle error; it is not raised merely because an
+update is in progress. `desired_children` and `running_children` make that
+distinction observable without parsing an error string.
+
+Host availability and router admission are separate contracts. A replacement
+is returned to the consistent-hash pool only when it is serving, ready,
+accepting, available, fully reconciled, no longer progressing, and not
+degraded. This keeps healthy routes available during local convergence without
+publishing a partially converged replacement as a full host.
 
 ## Control plane and trust boundary
 
@@ -171,18 +183,19 @@ routerctl host drain HOST
 
 poll HOST:8080/healthz?summary=1 until idle or ROUTER_DRAIN_TIMEOUT
 reconfirm routerctl host drain HOST
-disable the versiond service's automatic restart policy
+capture the original restart policy once and enforce restart=no
 send SIGTERM to versiond
 wait ROUTER_DRAIN_KILL_GRACE
 send SIGKILL only if the process still exists
 routerctl host offline HOST
 ```
 
-On replacement, start the new host, move it to `joining`, wait for a serving and
-ready health summary, and only then move it to `active`. A replacement may keep
-the logical host name while changing its upstream address. SSH disconnects and
-operator retries resume from the persisted router state and the local hostctl
-checkpoint rather than infer success from an in-memory command step.
+On replacement, start the new host, move it to `joining`, wait for a serving,
+ready, and fully reconciled health summary, and only then move it to `active`.
+A replacement may keep the logical host name while changing its upstream
+address. SSH disconnects and operator retries resume from the persisted router
+state and the local hostctl checkpoint rather than infer success from an
+in-memory command step.
 
 `gonka-hostctl` defaults to `15m` for the external idle wait, `2s` for polling,
 `30s` for each local or SSH command, and `30m` after `SIGTERM` before the kill
@@ -191,12 +204,14 @@ covers versiond's default `15m` host drain, `10m` child stop grace, and an
 escalation cushion. Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
-Before the first router mutation, hostctl validates the service runtime. Docker
-must have an explicit `StopTimeout` at least as large as the configured kill
-grace. systemd must provide a sufficient `TimeoutStopSec`, `KillMode` of
-`control-group` or `mixed`, and `SendSIGKILL=yes`. The standard compose files
-set `stop_grace_period: 30m` for both versiond and the nginx router so direct
-container stop/redeploy cannot fall back to Docker's ten-second default.
+Before the first router mutation, hostctl validates the service runtime.
+systemd evacuation uses a managed stop job, so `TimeoutStopSec`, `KillMode`, and
+`SendSIGKILL` directly govern that path. Docker evacuation uses explicit
+`TERM`/`KILL` signals and its own hostctl deadline; Docker `StopTimeout` instead
+guards external `docker stop`, Compose teardown, daemon shutdown, and redeploy.
+It remains a fail-closed deployment requirement so those paths cannot bypass
+the application drain budget. The standard compose files, including the local
+test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 
 ## Failure policy
 
@@ -213,8 +228,10 @@ container stop/redeploy cannot fall back to Docker's ten-second default.
 - second `SIGINT`: transition to `forcing`, close HTTP, force children, and wait
   for process reap.
 - replacement readiness failure: keep the upstream in `joining`/down.
-- abandoned pre-signal evacuation: `gonka-hostctl cancel` verifies versiond is
-  running, restores its Docker restart policy, and then reactivates the upstream.
+- abandoned pre-signal evacuation: `gonka-hostctl cancel` first persists a
+  cancellation intent, then checkpoints restart-policy restoration and router
+  activation separately. If either action fails, rerun `cancel`; `evacuate`
+  cannot cross the unfinished compensation transaction.
 - evacuation at or after `term_requested`: cancellation is forbidden; that
   intent is durable before SSH sends `SIGTERM`, so resume to `offline` even when
   the remote command result is unknown.
@@ -229,7 +246,9 @@ a control-plane outage as permission to drain a second host.
 
 The full-stack S10 test exercises both recovery choices. It interrupts and
 cancels one pre-signal evacuation, then interrupts a second evacuation and
-resumes it from the same journal before replacing and reactivating the host.
+resumes it from the same journal before replacing and reactivating the host. It
+also checks the loaded nginx stream timeout and requires successful HTTP status
+for sticky-route observations.
 
 For Docker replacement, the restart policy has no guessed default. Reusing an
 evacuated service requires its completed evacuation journal; a newly provisioned

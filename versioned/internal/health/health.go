@@ -28,16 +28,22 @@ type Summary struct {
 	InflightKnown     bool          `json:"inflight_known"`
 	Idle              bool          `json:"idle"`
 	Available         bool          `json:"available"`
+	Progressing       bool          `json:"progressing"`
 	Reconciled        bool          `json:"reconciled"`
 	Degraded          bool          `json:"degraded"`
+	DesiredChildren   int           `json:"desired_children"`
+	RunningChildren   int           `json:"running_children"`
 	ReconcileError    string        `json:"reconcile_error,omitempty"`
 	Children          []StatusEntry `json:"children"`
 }
 
 type Conditions struct {
 	Available      bool
+	Progressing    bool
 	Reconciled     bool
 	Degraded       bool
+	Desired        int
+	Running        int
 	ReconcileError string
 }
 
@@ -86,8 +92,11 @@ func BuildSummary(
 		InflightKnown:     inflightKnown,
 		Idle:              inflightKnown && inflight == 0,
 		Available:         conditions.Available,
+		Progressing:       conditions.Progressing,
 		Reconciled:        conditions.Reconciled,
 		Degraded:          conditions.Degraded,
+		DesiredChildren:   conditions.Desired,
+		RunningChildren:   conditions.Running,
 		ReconcileError:    conditions.ReconcileError,
 		Children:          children,
 	}

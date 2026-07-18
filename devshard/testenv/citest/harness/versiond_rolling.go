@@ -43,6 +43,13 @@ type VersiondHealthSummary struct {
 	Inflight          int64                 `json:"inflight"`
 	InflightKnown     bool                  `json:"inflight_known"`
 	Idle              bool                  `json:"idle"`
+	Available         bool                  `json:"available"`
+	Progressing       bool                  `json:"progressing"`
+	Reconciled        bool                  `json:"reconciled"`
+	Degraded          bool                  `json:"degraded"`
+	DesiredChildren   int                   `json:"desired_children"`
+	RunningChildren   int                   `json:"running_children"`
+	ReconcileError    string                `json:"reconcile_error,omitempty"`
 	Children          []VersiondHealthEntry `json:"children"`
 }
 

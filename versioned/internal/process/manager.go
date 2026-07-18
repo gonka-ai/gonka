@@ -430,6 +430,10 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		desiredHash, err := snap.version.ResolvedSHA256()
 		if err != nil {
 			slog.Error("cannot resolve sha256, skipping", "version", snap.version.Name, "error", err)
+			actionErrs = append(
+				actionErrs,
+				fmt.Errorf("resolve sha256 for %s: %w", snap.version.Name, err),
+			)
 			continue
 		}
 		desiredHashes[snap.version.Name] = desiredHash

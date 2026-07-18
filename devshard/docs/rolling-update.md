@@ -681,9 +681,11 @@ request never fans out to every child. `proxy_inflight` remains a live host
 admission count, so a just-accepted request cannot be hidden by the cache.
 
 `ready` means the host is serving, accepting, and has at least one routable
-generation. A failed or still-starting version is reported through
-`reconciled=false`, `degraded=true`, and `reconcile_error`; it does not make
-healthy versions on the same host return `503`.
+generation. Expected convergence is reported as `progressing=true` with the
+`desired_children` and `running_children` counts. `degraded=true` and
+`reconcile_error` are reserved for an actual reconcile or oracle failure; they
+do not describe a routine generation transition. Healthy versions on the same
+host remain available throughout either condition.
 
 On `SIGTERM`, versiond transitions
 `serving -> draining -> stopping -> stopped`. Admission closes immediately,
@@ -722,15 +724,20 @@ Evacuate a Docker-managed host:
   --versiond-service versiond2
 ```
 
-The command disables the container restart policy before signaling versiond.
+The command captures the original container restart policy once and reasserts
+`restart=no` before every attempt to signal versiond. A durable phase is a
+checkpoint, not proof that mutable external runtime state still matches it.
 For systemd, use `--router-runtime systemd --versiond-runtime systemd`; the
 orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
 unit. Before changing router state, hostctl validates the runtime shutdown
-contract: Docker `StopTimeout` or systemd `TimeoutStopSec` must cover
-`ROUTER_DRAIN_KILL_GRACE`; systemd must use `KillMode=control-group` or `mixed`
-with `SendSIGKILL=yes`. Compose deployments set `stop_grace_period: 30m` for
-versiond and versiond-router. Rerun an interrupted command with the same
-operation ID and journal path to continue after its last durable phase.
+contract. systemd's `TimeoutStopSec` directly bounds the managed stop job and
+must cover `ROUTER_DRAIN_KILL_GRACE`; it must also use `KillMode=control-group`
+or `mixed` with `SendSIGKILL=yes`. Hostctl signals Docker directly, while its
+required `StopTimeout` protects external `docker stop`, Compose teardown, and
+redeploy from undercutting the same budget. Compose deployments, including the
+local test network, set `stop_grace_period: 30m` for versiond and
+versiond-router. Rerun an interrupted command with the same operation ID and
+journal path to continue after its last durable phase.
 
 A direct `SIGTERM` that bypasses router drain closes versiond admission and may
 return `503` to a new request already selected by nginx. The router deliberately
@@ -740,10 +747,12 @@ the request twice. Operators must use `gonka-hostctl` for planned maintenance.
 Before `SIGTERM`, every fresh or resumed operation repeats the idempotent router
 `drain` transition. If evacuation must be abandoned before the durable
 `term_requested` phase, run `gonka-hostctl cancel` with the same operation ID
-and scope. It verifies that versiond is running, restores any disabled Docker
-restart policy, and only then reactivates the upstream. `term_requested` is
-persisted before the SSH signal command; at or after it, the operation must be
-resumed to `offline` because the remote outcome can be unknown.
+and scope. Cancellation is a durable compensation FSM: it records the intent,
+restores any disabled Docker restart policy, checkpoints that action, and then
+reactivates the upstream. A failed cancellation must be resumed with `cancel`;
+the forward evacuation FSM refuses to cross it. `term_requested` is persisted
+before the SSH signal command; at or after it, the operation must be resumed to
+`offline` because the remote outcome can be unknown.
 
 After preparing a replacement container or unit, keep it out of the pool until
 the replacement transaction completes:
@@ -764,10 +773,11 @@ the replacement transaction completes:
 ```
 
 The upstream remains `joining`/down until versiond reports `state=serving`,
-`ready=true`, and `accepting=true`. Router state, recovery journal, and audit log
-are stored below `/var/lib/gonka/versiond-router` on a persistent volume. See
-`versiond-router/README.md` and `versiond-host-evacuation.md` for the complete
-failure and recovery contract.
+`ready=true`, `accepting=true`, `available=true`, `reconciled=true`,
+`progressing=false`, and `degraded=false`. Router state, recovery journal, and
+audit log are stored below `/var/lib/gonka/versiond-router` on a persistent
+volume. See `versiond-router/README.md` and `versiond-host-evacuation.md` for the
+complete failure and recovery contract.
 
 Docker replacement restores the exact policy captured by evacuation, including
 an `on-failure` retry count. A newly provisioned service without that journal

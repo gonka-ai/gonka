@@ -45,13 +45,20 @@ type Config struct {
 }
 
 type HealthSummary struct {
-	SchemaVersion int    `json:"schema_version"`
-	State         string `json:"state"`
-	Ready         bool   `json:"ready"`
-	Accepting     bool   `json:"accepting"`
-	Inflight      int64  `json:"inflight"`
-	InflightKnown bool   `json:"inflight_known"`
-	Idle          bool   `json:"idle"`
+	SchemaVersion   int    `json:"schema_version"`
+	State           string `json:"state"`
+	Ready           bool   `json:"ready"`
+	Accepting       bool   `json:"accepting"`
+	Available       bool   `json:"available"`
+	Progressing     bool   `json:"progressing"`
+	Reconciled      bool   `json:"reconciled"`
+	Degraded        bool   `json:"degraded"`
+	DesiredChildren int    `json:"desired_children"`
+	RunningChildren int    `json:"running_children"`
+	ReconcileError  string `json:"reconcile_error,omitempty"`
+	Inflight        int64  `json:"inflight"`
+	InflightKnown   bool   `json:"inflight_known"`
+	Idle            bool   `json:"idle"`
 }
 
 type OperationScope struct {
@@ -74,6 +81,7 @@ type Journal struct {
 	Mode                  string         `json:"mode"`
 	Scope                 OperationScope `json:"scope"`
 	Phase                 string         `json:"phase"`
+	CancellationPhase     string         `json:"cancellation_phase,omitempty"`
 	DrainTimedOut         bool           `json:"drain_timed_out,omitempty"`
 	PreviousRestartPolicy string         `json:"previous_restart_policy,omitempty"`
 	LastHealth            *HealthSummary `json:"last_health,omitempty"`
@@ -153,6 +161,9 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 	if journal.Phase == "canceled" {
 		return errors.New("evacuation was canceled; start a new operation")
 	}
+	if journal.CancellationPhase != "" {
+		return errors.New("evacuation cancellation is in progress; resume cancel")
+	}
 	if before(journal.Phase, "term_requested", evacuationPhases) {
 		if err := o.versiondRuntime.ValidateStopContract(ctx, o.config.KillGrace); err != nil {
 			return fmt.Errorf("versiond runtime preflight: %w", err)
@@ -190,7 +201,7 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 		if err := o.routerTransition(ctx, "drain"); err != nil {
 			return fmt.Errorf("reconfirm router drain before SIGTERM: %w", err)
 		}
-		if o.config.VersiondRuntime == RuntimeDocker && before(journal.Phase, "restart_disabled", evacuationPhases) {
+		if o.config.VersiondRuntime == RuntimeDocker {
 			if journal.PreviousRestartPolicy == "" {
 				policy, err := o.dockerRestartPolicy(ctx)
 				if err != nil {
@@ -204,8 +215,10 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 			if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
 				return err
 			}
-			if err := o.advance(&journal, "restart_disabled"); err != nil {
-				return err
+			if before(journal.Phase, "restart_disabled", evacuationPhases) {
+				if err := o.advance(&journal, "restart_disabled"); err != nil {
+					return err
+				}
 			}
 		}
 		running, err := o.versiondRunning(ctx)
@@ -268,12 +281,25 @@ func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
 		if journal.Phase == "canceled" {
 			return nil
 		}
-		if !before(journal.Phase, "term_requested", evacuationPhases) {
-			return fmt.Errorf(
-				"cannot cancel evacuation at or after signal intent (%s); resume it instead",
-				journal.Phase,
-			)
+		if journal.CancellationPhase == "" {
+			if !before(journal.Phase, "term_requested", evacuationPhases) {
+				return fmt.Errorf(
+					"cannot cancel evacuation at or after signal intent (%s); resume it instead",
+					journal.Phase,
+				)
+			}
+			running, err := o.versiondRunning(ctx)
+			if err != nil {
+				return err
+			}
+			if !running {
+				return errors.New("cannot reactivate a stopped versiond host")
+			}
+			if err := o.advanceCancellation(&journal, "requested"); err != nil {
+				return err
+			}
 		}
+
 		running, err := o.versiondRunning(ctx)
 		if err != nil {
 			return err
@@ -281,15 +307,28 @@ func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
 		if !running {
 			return errors.New("cannot reactivate a stopped versiond host")
 		}
-		if o.config.VersiondRuntime == RuntimeDocker && journal.PreviousRestartPolicy != "" {
-			if err := o.setDockerRestartPolicy(ctx, journal.PreviousRestartPolicy); err != nil {
-				return fmt.Errorf("restore Docker restart policy: %w", err)
+		if before(journal.CancellationPhase, "restart_restored", cancellationPhases) {
+			if o.config.VersiondRuntime == RuntimeDocker && journal.PreviousRestartPolicy != "" {
+				if err := o.setDockerRestartPolicy(ctx, journal.PreviousRestartPolicy); err != nil {
+					return fmt.Errorf("restore Docker restart policy: %w", err)
+				}
+			}
+			if err := o.advanceCancellation(&journal, "restart_restored"); err != nil {
+				return err
 			}
 		}
-		if err := o.routerTransition(ctx, "activate"); err != nil {
-			return err
+		if before(journal.CancellationPhase, "router_active", cancellationPhases) {
+			if err := o.routerTransition(ctx, "activate"); err != nil {
+				return err
+			}
+			if err := o.advanceCancellation(&journal, "router_active"); err != nil {
+				return err
+			}
 		}
-		return o.advance(&journal, "canceled")
+		journal.Phase = "canceled"
+		journal.CancellationPhase = "complete"
+		journal.UpdatedAt = time.Now().UTC()
+		return o.writeJournal(journal)
 	})
 }
 
@@ -360,6 +399,7 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 
 var evacuationPhases = []string{"started", "router_draining", "host_idle", "restart_disabled", "term_requested", "term_sent", "host_stopped", "router_offline", "complete"}
 var replacementPhases = []string{"started", "router_joining", "host_started", "host_ready", "router_active", "complete"}
+var cancellationPhases = []string{"requested", "restart_restored", "router_active", "complete"}
 
 func before(current, target string, phases []string) bool {
 	currentIndex, targetIndex := -1, -1
@@ -449,18 +489,39 @@ func (o *Orchestrator) waitForIdle(ctx context.Context) (*HealthSummary, bool, e
 
 func (o *Orchestrator) waitForReady(ctx context.Context) (*HealthSummary, error) {
 	deadline := time.Now().Add(o.config.DrainTimeout)
+	var last *HealthSummary
 	var lastErr error
 	for {
 		health, err := o.health(ctx)
-		if err == nil && health.Ready && health.Accepting && health.State == "serving" {
-			return health, nil
+		if err == nil {
+			last = health
+			if health.readyForActivation() {
+				return health, nil
+			}
 		}
 		lastErr = err
 		if time.Now().After(deadline) {
-			if lastErr != nil {
-				return nil, fmt.Errorf("replacement readiness timeout: %w", lastErr)
+			if last == nil {
+				if lastErr != nil {
+					return nil, fmt.Errorf("replacement readiness timeout: %w", lastErr)
+				}
+				return nil, errors.New("replacement readiness timeout without a health sample")
 			}
-			return health, errors.New("replacement readiness timeout")
+			return last, fmt.Errorf(
+				"replacement readiness timeout: state=%s ready=%t accepting=%t "+
+					"available=%t progressing=%t reconciled=%t degraded=%t "+
+					"children=%d/%d reconcile_error=%q",
+				last.State,
+				last.Ready,
+				last.Accepting,
+				last.Available,
+				last.Progressing,
+				last.Reconciled,
+				last.Degraded,
+				last.RunningChildren,
+				last.DesiredChildren,
+				last.ReconcileError,
+			)
 		}
 		if err := wait(ctx, o.config.PollInterval); err != nil {
 			return nil, err
@@ -567,17 +628,17 @@ func (o *Orchestrator) replacementRestartPolicy() (string, error) {
 	if journal.SchemaVersion != 1 || journal.Mode != "evacuate" {
 		return "", errors.New("restart-policy source is not an evacuation journal")
 	}
+	if !validJournalPhase(journal.Mode, journal.Phase) || !validCancellationState(journal) {
+		return "", errors.New("restart-policy source has an invalid evacuation state")
+	}
 	if before(journal.Phase, "router_offline", evacuationPhases) {
 		return "", fmt.Errorf(
 			"evacuation journal has not reached router_offline: %s",
 			journal.Phase,
 		)
 	}
-	if journal.Scope.RouterSSH != o.config.RouterSSH ||
-		journal.Scope.RouterRuntime != o.config.RouterRuntime ||
-		journal.Scope.RouterService != o.config.RouterService ||
-		journal.Scope.Upstream != o.config.Upstream {
-		return "", errors.New("evacuation journal belongs to a different router upstream")
+	if !sameLogicalVersiondHost(journal.Scope, o.operationScope()) {
+		return "", errors.New("evacuation journal belongs to a different logical versiond host")
 	}
 	if err := validateDockerRestartPolicy(journal.PreviousRestartPolicy); err != nil {
 		return "", fmt.Errorf("evacuation journal restart policy: %w", err)
@@ -617,6 +678,13 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 	if !validJournalPhase(journal.Mode, journal.Phase) {
 		return Journal{}, fmt.Errorf("invalid %s journal phase %q", journal.Mode, journal.Phase)
 	}
+	if !validCancellationState(journal) {
+		return Journal{}, fmt.Errorf(
+			"invalid evacuation cancellation phase %q at %q",
+			journal.CancellationPhase,
+			journal.Phase,
+		)
+	}
 	return journal, nil
 }
 
@@ -655,6 +723,50 @@ func validJournalPhase(mode, phase string) bool {
 		}
 	}
 	return false
+}
+
+func validCancellationState(journal Journal) bool {
+	if journal.Mode != "evacuate" {
+		return journal.CancellationPhase == ""
+	}
+	if journal.CancellationPhase == "" {
+		// Journals written before cancellation checkpoints were introduced may
+		// already contain the terminal canceled phase.
+		return journal.Phase != "canceled" || journal.SchemaVersion == 1
+	}
+	found := false
+	for _, phase := range cancellationPhases {
+		if journal.CancellationPhase == phase {
+			found = true
+			break
+		}
+	}
+	if !found {
+		return false
+	}
+	if journal.CancellationPhase == "complete" {
+		return journal.Phase == "canceled"
+	}
+	return before(journal.Phase, "term_requested", evacuationPhases)
+}
+
+func (health HealthSummary) readyForActivation() bool {
+	return health.State == "serving" &&
+		health.Ready &&
+		health.Accepting &&
+		health.Available &&
+		health.Reconciled &&
+		!health.Progressing &&
+		!health.Degraded
+}
+
+func sameLogicalVersiondHost(left, right OperationScope) bool {
+	return left.RouterSSH == right.RouterSSH &&
+		left.RouterRuntime == right.RouterRuntime &&
+		left.RouterService == right.RouterService &&
+		left.Upstream == right.Upstream &&
+		left.VersiondRuntime == right.VersiondRuntime &&
+		left.VersiondService == right.VersiondService
 }
 
 func (o *Orchestrator) operationScope() OperationScope {
@@ -701,6 +813,12 @@ func (o *Orchestrator) withOperationLock(ctx context.Context, fn func() error) e
 
 func (o *Orchestrator) advance(journal *Journal, phase string) error {
 	journal.Phase = phase
+	journal.UpdatedAt = time.Now().UTC()
+	return o.writeJournal(*journal)
+}
+
+func (o *Orchestrator) advanceCancellation(journal *Journal, phase string) error {
+	journal.CancellationPhase = phase
 	journal.UpdatedAt = time.Now().UTC()
 	return o.writeJournal(*journal)
 }

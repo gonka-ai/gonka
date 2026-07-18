@@ -201,12 +201,18 @@ go test ./testenv/... -count=1
 
 ### Phase 8 citest (Docker)
 
-S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch + S5 gateway chat + S6 versiond fault/restart + S7 legacy routing + S8 SQLite→Postgres migration + S9 rolling update. Uses an isolated 2× versiond stack on a dedicated subnet with Docker-assigned localhost ports, so it can run while a dev `make up` stack is active.
+S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch +
+S5 gateway chat + S6 versiond fault/restart + S7 legacy routing + S8
+SQLite-to-Postgres migration + S9 rolling update + S10 versiond host
+evacuation. S10 also covers interrupted cancellation, durable evacuation resume,
+SSE continuity, and replacement admission after full convergence. The suite
+uses an isolated 2x versiond stack on a dedicated subnet with Docker-assigned
+localhost ports, so it can run while a dev `make up` stack is active.
 
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack    # S1–S9 (builds mock-chain + mock-dapi images)
+make citest-stack    # S1-S10 (builds mock-chain + mock-dapi images)
 # or: ./scripts/run-stack-citest.sh
 ```
 

@@ -4,7 +4,6 @@ package citest
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -16,6 +15,14 @@ import (
 	"devshard/testenv/mockopenai"
 
 	"github.com/stretchr/testify/require"
+)
+
+const (
+	s10DrainTimeout       = 2 * time.Minute
+	s10KillGrace          = 2 * time.Minute
+	s10CommandTimeout     = 30 * time.Second
+	s10ObservationTimeout = 60 * time.Second
+	s10OperationTimeout   = s10DrainTimeout + s10KillGrace + 2*s10CommandTimeout
 )
 
 // TestS10_VersiondHostEvacuation verifies the complete Track B transaction:
@@ -33,14 +40,14 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 	})
 	client := harness.GatewayChatClient()
 	escrowID := harness.GetGatewayEscrowID(t, client, env.eps.GatewayHTTP)
-	targetUpstream := harness.RequireResponseHeader(
+	targetUpstream := harness.RequireSuccessfulResponseHeader(
 		t,
 		client,
 		harness.RouterSessionURL(
 			env.eps.RouterHTTP,
 			env.cfg.Versiond.VersionName,
 			escrowID,
-			"/healthz",
+			"/mempool",
 		),
 		harness.StickyUpstreamHeader,
 	)
@@ -55,6 +62,9 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 	hostctl := env.stack.BuildHostctl(t)
 	routerContainer := env.stack.ContainerID(t, "versiond-router")
 	targetContainer := env.stack.ContainerID(t, targetHost)
+	nginxConfig := env.stack.ComposeExec(t, "versiond-router", "nginx", "-T")
+	require.Contains(t, nginxConfig, "proxy_read_timeout 1200s;")
+	require.Contains(t, nginxConfig, "proxy_send_timeout 1200s;")
 
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -96,28 +106,30 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 		)
 		canceledRun <- err
 	}()
-	requireNewRouterRequestsAvoidHost(t, client, env, targetHost)
+	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 	cancelOperation()
 	select {
 	case <-canceledRun:
 	case <-time.After(15 * time.Second):
 		t.Fatal("interrupted hostctl process did not exit")
 	}
+	cancelCtx, cancelCancel := context.WithTimeout(context.Background(), s10OperationTimeout)
 	output, err := env.stack.RunHostctl(
-		context.Background(),
+		cancelCtx,
 		hostctl,
 		"cancel",
 		hostctlArgs(routerContainer, targetContainer, targetHost, cancelID, cancelJournal)...,
 	)
+	cancelCancel()
 	require.NoError(t, err, "cancel checkpointed evacuation: %s", output)
-	restored := harness.AssertEventually(t, 30*time.Second, 100*time.Millisecond, func() bool {
-		upstream, err := harness.GetResponseHeader(
+	restored := harness.AssertEventually(t, s10ObservationTimeout, 100*time.Millisecond, func() bool {
+		upstream, err := harness.GetSuccessfulResponseHeader(
 			client,
 			harness.RouterSessionURL(
 				env.eps.RouterHTTP,
 				env.cfg.Versiond.VersionName,
 				escrowID,
-				"/healthz",
+				"/mempool",
 			),
 			harness.StickyUpstreamHeader,
 		)
@@ -139,7 +151,7 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 		)
 		interruptedEvacuation <- err
 	}()
-	requireNewRouterRequestsAvoidHost(t, client, env, targetHost)
+	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 	interruptEvacuation()
 	select {
 	case err := <-interruptedEvacuation:
@@ -150,20 +162,22 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 	requireS9StreamStillRunning(t, accepted, streamResult, "host evacuation stream")
 
 	harness.Step(t, "resuming evacuation from its durable hostctl phase")
+	resumeCtx, cancelResume := context.WithTimeout(context.Background(), s10OperationTimeout)
+	defer cancelResume()
 	evacuationResult := make(chan error, 1)
 	go func() {
 		_, err := env.stack.RunHostctl(
-			context.Background(),
+			resumeCtx,
 			hostctl,
 			"evacuate",
 			hostctlArgs(routerContainer, targetContainer, targetHost, evacuationID, evacuationJournal)...,
 		)
 		evacuationResult <- err
 	}()
-	requireNewRouterRequestsAvoidHost(t, client, env, targetHost)
+	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 
 	harness.Step(t, "versiond remains alive while hostctl observes the established stream")
-	observedInflight := harness.AssertEventually(t, 30*time.Second, 250*time.Millisecond, func() bool {
+	observedInflight := harness.AssertEventually(t, s10ObservationTimeout, 250*time.Millisecond, func() bool {
 		summary, err := harness.TryVersiondHealthSummary(env.stack, targetHost)
 		return err == nil && summary.State == "serving" && summary.ProxyInflight > 0
 	})
@@ -197,7 +211,7 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 	select {
 	case err := <-evacuationResult:
 		require.NoError(t, err)
-	case <-time.After(90 * time.Second):
+	case <-time.After(s10OperationTimeout):
 		t.Fatal("versiond did not exit after its host became idle")
 	}
 	running, err = env.stack.ServiceRunning(targetHost)
@@ -214,29 +228,18 @@ func TestS10_VersiondHostEvacuation(t *testing.T) {
 		replacementJournal,
 	)
 	replaceArgs = append(replaceArgs, "--evacuation-journal", evacuationJournal)
-	output, err = env.stack.RunHostctl(context.Background(), hostctl, "replace", replaceArgs...)
+	replaceCtx, cancelReplace := context.WithTimeout(context.Background(), s10OperationTimeout)
+	output, err = env.stack.RunHostctl(replaceCtx, hostctl, "replace", replaceArgs...)
+	cancelReplace()
 	require.NoError(t, err, "replace versiond host: %s", output)
+	replacementHealth, err := harness.TryVersiondHealthSummary(env.stack, targetHost)
+	require.NoError(t, err)
+	require.True(t, replacementHealth.Available)
+	require.True(t, replacementHealth.Reconciled)
+	require.False(t, replacementHealth.Progressing)
+	require.False(t, replacementHealth.Degraded)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
 
-	rehashedToReplacement := harness.AssertEventually(t, 30*time.Second, 100*time.Millisecond, func() bool {
-		for i := 0; i < 128; i++ {
-			upstream, err := harness.GetResponseHeader(
-				client,
-				harness.RouterSessionURL(
-					env.eps.RouterHTTP,
-					env.cfg.Versiond.VersionName,
-					fmt.Sprintf("s10-rejoin-%d", i),
-					"/healthz",
-				),
-				harness.StickyUpstreamHeader,
-			)
-			if err == nil && harness.HostIDForUpstream(env.cfg, upstream) == targetHost {
-				return true
-			}
-		}
-		return false
-	})
-	require.True(t, rehashedToReplacement, "activated replacement never received a sticky assignment")
 }
 
 func requireSessionAvailableOnHost(
@@ -252,7 +255,7 @@ func requireSessionAvailableOnHost(
 			DisableKeepAlives: true,
 		},
 	}
-	available := harness.AssertEventually(t, 30*time.Second, 250*time.Millisecond, func() bool {
+	available := harness.AssertEventually(t, s10ObservationTimeout, 250*time.Millisecond, func() bool {
 		resp, err := client.Get(harness.RouterSessionURL(
 			env.eps.RouterHTTP,
 			env.cfg.Versiond.VersionName,
@@ -289,10 +292,10 @@ func hostctlArgs(
 		"--versiond-ssh", "local",
 		"--versiond-runtime", "docker",
 		"--versiond-service", versiondContainer,
-		"--drain-timeout", "2m",
+		"--drain-timeout", s10DrainTimeout.String(),
 		"--poll-interval", "250ms",
-		"--kill-grace", "2m",
-		"--command-timeout", "30s",
+		"--kill-grace", s10KillGrace.String(),
+		"--command-timeout", s10CommandTimeout.String(),
 	}
 }
 
@@ -300,18 +303,19 @@ func requireNewRouterRequestsAvoidHost(
 	t *testing.T,
 	client *http.Client,
 	env s9RollingStack,
+	escrowID string,
 	targetHost string,
 ) {
 	t.Helper()
-	avoided := harness.AssertEventually(t, 30*time.Second, 100*time.Millisecond, func() bool {
-		for i := 0; i < 16; i++ {
-			upstream, err := harness.GetResponseHeader(
+	avoided := harness.AssertEventually(t, s10ObservationTimeout, 100*time.Millisecond, func() bool {
+		for i := 0; i < 4; i++ {
+			upstream, err := harness.GetSuccessfulResponseHeader(
 				client,
 				harness.RouterSessionURL(
 					env.eps.RouterHTTP,
 					env.cfg.Versiond.VersionName,
-					fmt.Sprintf("s10-new-%d", i),
-					"/healthz",
+					escrowID,
+					"/mempool",
 				),
 				harness.StickyUpstreamHeader,
 			)

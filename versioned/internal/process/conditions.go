@@ -1,9 +1,8 @@
 package process
 
-import "fmt"
-
 type Conditions struct {
 	Available      bool
+	Progressing    bool
 	Reconciled     bool
 	Degraded       bool
 	Desired        int
@@ -18,15 +17,10 @@ func (m *Manager) Conditions() Conditions {
 	conditions.Running = runningChildrenLocked(m.processes)
 	conditions.Available = conditions.Running > 0
 	converged := conditions.Running == conditions.Desired
-	conditions.Reconciled = conditions.Reconciled && converged
-	conditions.Degraded = conditions.Available && !conditions.Reconciled
-	if !converged && conditions.ReconcileError == "" {
-		conditions.ReconcileError = fmt.Sprintf(
-			"running %d of %d desired child generations",
-			conditions.Running,
-			conditions.Desired,
-		)
-	}
+	progressing := !converged || len(m.downloading) > 0
+	conditions.Reconciled = conditions.Reconciled && !progressing
+	conditions.Progressing = progressing && conditions.ReconcileError == ""
+	conditions.Degraded = conditions.ReconcileError != ""
 	return conditions
 }
 

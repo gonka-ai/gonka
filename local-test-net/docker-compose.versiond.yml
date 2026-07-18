@@ -13,6 +13,7 @@
 x-versiond: &versiond
   image: versiond:latest
   platform: ${DOCKER_PLATFORM:-linux/amd64}
+  stop_grace_period: 30m
   build:
     context: ./versioned
     dockerfile: Dockerfile
@@ -71,6 +72,7 @@ services:
 
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
+    stop_grace_period: 30m
     build:
       context: ./versiond-router
       dockerfile: Dockerfile

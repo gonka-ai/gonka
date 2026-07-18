@@ -46,7 +46,7 @@ func (r dockerRuntime) ValidateStopContract(ctx context.Context, minimum time.Du
 	raw := strings.TrimSpace(output)
 	if raw == "" || raw == "null" || raw == "0" {
 		return fmt.Errorf(
-			"Docker service %s has no explicit stop timeout; configure stop_grace_period >= %s",
+			"Docker service %s has no external stop timeout; configure stop_grace_period >= %s",
 			r.service,
 			minimum,
 		)
@@ -58,7 +58,7 @@ func (r dockerRuntime) ValidateStopContract(ctx context.Context, minimum time.Du
 	actual := time.Duration(seconds) * time.Second
 	if actual < minimum {
 		return fmt.Errorf(
-			"Docker stop timeout for %s is %s, require at least %s",
+			"Docker external stop timeout for %s is %s, require at least %s",
 			r.service,
 			actual,
 			minimum,
@@ -147,7 +147,11 @@ func (r systemdRuntime) ValidateStopContract(ctx context.Context, minimum time.D
 	properties := parseSystemdProperties(output)
 	timeout, err := parseSystemdTimeSpan(properties["TimeoutStopUSec"])
 	if err != nil {
-		return fmt.Errorf("parse systemd TimeoutStopSec for %s: %w", r.service, err)
+		return fmt.Errorf(
+			"parse systemd TimeoutStopUSec (configured by TimeoutStopSec) for %s: %w",
+			r.service,
+			err,
+		)
 	}
 	if timeout < minimum {
 		return fmt.Errorf(
@@ -220,7 +224,12 @@ func parseSystemdProperties(output string) map[string]string {
 	return properties
 }
 
-var systemdTimePart = regexp.MustCompile(`([0-9]+(?:\.[0-9]+)?)(us|ms|s|min|h|d|w)`)
+var systemdTimePart = regexp.MustCompile(
+	`([0-9]+(?:\.[0-9]+)?)(` +
+		`nsec|ns|usec|us|msec|ms|seconds|second|sec|s|` +
+		`months|month|M|minutes|minute|min|m|hours|hour|hr|h|` +
+		`days|day|d|weeks|week|w|years|year|y)`,
+)
 
 func parseSystemdTimeSpan(raw string) (time.Duration, error) {
 	raw = strings.TrimSpace(raw)
@@ -240,19 +249,46 @@ func parseSystemdTimeSpan(raw string) (time.Duration, error) {
 		if err != nil {
 			return 0, err
 		}
-		unit := map[string]time.Duration{
-			"us":  time.Microsecond,
-			"ms":  time.Millisecond,
-			"s":   time.Second,
-			"min": time.Minute,
-			"h":   time.Hour,
-			"d":   24 * time.Hour,
-			"w":   7 * 24 * time.Hour,
-		}[match[2]]
-		total += time.Duration(value * float64(unit))
+		unit, ok := systemdTimeUnit(match[2])
+		if !ok {
+			return 0, fmt.Errorf("unsupported unit %q", match[2])
+		}
+		part := value * float64(unit)
+		if part >= float64(math.MaxInt64-total) {
+			return time.Duration(math.MaxInt64), nil
+		}
+		total += time.Duration(part)
 	}
 	if consumed != compact {
 		return 0, fmt.Errorf("unsupported value %q", raw)
 	}
 	return total, nil
+}
+
+func systemdTimeUnit(raw string) (time.Duration, bool) {
+	day := 24 * time.Hour
+	switch raw {
+	case "nsec", "ns":
+		return time.Nanosecond, true
+	case "usec", "us":
+		return time.Microsecond, true
+	case "msec", "ms":
+		return time.Millisecond, true
+	case "seconds", "second", "sec", "s":
+		return time.Second, true
+	case "minutes", "minute", "min", "m":
+		return time.Minute, true
+	case "hours", "hour", "hr", "h":
+		return time.Hour, true
+	case "days", "day", "d":
+		return day, true
+	case "weeks", "week", "w":
+		return 7 * day, true
+	case "months", "month", "M":
+		return time.Duration(30.44 * float64(day)), true
+	case "years", "year", "y":
+		return time.Duration(365.25 * float64(day)), true
+	default:
+		return 0, false
+	}
 }
