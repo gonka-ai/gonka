@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -503,10 +504,10 @@ func TestAssignPort_ReusesReleasedPorts(t *testing.T) {
 	m := NewManager(cfg)
 
 	m.mu.Lock()
-	p1 := m.assignPort()
-	p2 := m.assignPort()
+	p1 := mustAssignPort(t, m)
+	p2 := mustAssignPort(t, m)
 	m.releasePort(p1)
-	p3 := m.assignPort()
+	p3 := mustAssignPort(t, m)
 	m.mu.Unlock()
 
 	if p1 != 5000 {
@@ -524,8 +525,8 @@ func TestAssignPort_SkipsVersiondListenPort(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 8079})
 
 	m.mu.Lock()
-	p1 := m.assignPort()
-	p2 := m.assignPort()
+	p1 := mustAssignPort(t, m)
+	p2 := mustAssignPort(t, m)
 	m.mu.Unlock()
 
 	if p1 != 8079 {
@@ -540,12 +541,106 @@ func TestAssignPort_NormalizesOutOfRangeBasePort(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 70000})
 
 	m.mu.Lock()
-	port := m.assignPort()
+	port := mustAssignPort(t, m)
 	m.mu.Unlock()
 
 	if port != 5000 {
 		t.Errorf("port = %d, want 5000", port)
 	}
+}
+
+func TestAssignPort_ReturnsErrorWhenPoolExhausted(t *testing.T) {
+	m := NewManager(config.Config{BasePort: maxChildPort})
+	m.allocatedPorts[maxChildPort] = struct{}{}
+
+	m.mu.Lock()
+	port, err := m.assignPort()
+	m.mu.Unlock()
+
+	if port != 0 {
+		t.Fatalf("port = %d, want zero value", port)
+	}
+	if !errors.Is(err, errChildPortPoolExhausted) {
+		t.Fatalf("assignPort error = %v, want %v", err, errChildPortPoolExhausted)
+	}
+}
+
+func TestStartChild_DoesNotPublishWhenPortPoolExhausted(t *testing.T) {
+	m := NewManager(config.Config{BasePort: maxChildPort})
+	m.allocatedPorts[maxChildPort] = struct{}{}
+	v := oracle.Version{Name: "v1"}
+
+	m.mu.Lock()
+	err := m.startChild(context.Background(), v, "sha", "unused", true)
+	_, published := m.processes[v.Name]
+	m.mu.Unlock()
+
+	if !errors.Is(err, errChildPortPoolExhausted) {
+		t.Fatalf("startChild error = %v, want %v", err, errChildPortPoolExhausted)
+	}
+	if published {
+		t.Fatal("child with no assigned port must not be published")
+	}
+}
+
+func TestRunChild_ReleasesPublicPortWhenAdminPoolExhausted(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "devshardd")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v2" ;;
+--print-admin-api-version) echo "1" ;;
+--print-storage-mode) echo "postgres" ;;
+*) exit 99 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BinDir:     filepath.Join(dir, "bin"),
+		DataDir:    filepath.Join(dir, "data"),
+		BinaryName: "devshardd",
+		BasePort:   maxChildPort,
+	})
+	v := oracle.Version{Name: "v2"}
+
+	m.mu.Lock()
+	if err := m.startChild(context.Background(), v, "sha", binPath, true); err != nil {
+		m.mu.Unlock()
+		t.Fatal(err)
+	}
+	c := m.processes[v.Name]
+	m.mu.Unlock()
+
+	select {
+	case <-c.done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("child did not stop after admin port allocation failed")
+	}
+
+	m.mu.Lock()
+	_, published := m.processes[v.Name]
+	allocated := len(m.allocatedPorts)
+	m.mu.Unlock()
+
+	if published {
+		t.Fatal("child with no admin port must not remain published")
+	}
+	if allocated != 0 {
+		t.Fatalf("allocated ports = %d, want public port released", allocated)
+	}
+}
+
+func mustAssignPort(t *testing.T, m *Manager) int {
+	t.Helper()
+	port, err := m.assignPort()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return port
 }
 
 func TestAtomicCopy(t *testing.T) {
@@ -811,7 +906,10 @@ func TestRunChild_RemovesFromProcessesOnStartFailure(t *testing.T) {
 	v := oracle.Version{Name: "v1"}
 
 	m.mu.Lock()
-	m.startChild(ctx, v, "missing", filepath.Join(dir, "missing"), true)
+	if err := m.startChild(ctx, v, "missing", filepath.Join(dir, "missing"), true); err != nil {
+		m.mu.Unlock()
+		t.Fatal(err)
+	}
 	c := m.processes["v1"]
 	m.mu.Unlock()
 

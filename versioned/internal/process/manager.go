@@ -33,14 +33,16 @@ const (
 	statusStopped  = "stopped"
 
 	childLoopbackHost            = "127.0.0.1"
-	invalidChildPort             = -1
 	maxChildPort                 = 65535
 	storageModePostgres          = "postgres"
 	defaultDevshardShutdownGrace = 10 * time.Minute
 	installedVersionRetain       = 3
 )
 
-var errLegacyDrainStatus = errors.New("drain status endpoint unavailable")
+var (
+	errChildPortPoolExhausted = errors.New("child port pool exhausted")
+	errLegacyDrainStatus      = errors.New("drain status endpoint unavailable")
+)
 
 type child struct {
 	version       oracle.Version
@@ -133,7 +135,7 @@ func normalizeConfig(cfg config.Config) config.Config {
 
 // assignPort returns a currently-free child port.
 // Must be called with m.mu held.
-func (m *Manager) assignPort() int {
+func (m *Manager) assignPort() (int, error) {
 	for port := m.cfg.BasePort; port <= maxChildPort; port++ {
 		if _, used := m.allocatedPorts[port]; used {
 			continue
@@ -142,10 +144,14 @@ func (m *Manager) assignPort() int {
 			continue
 		}
 		m.allocatedPorts[port] = struct{}{}
-		return port
+		return port, nil
 	}
-	slog.Error("no child ports available", "base_port", m.cfg.BasePort, "max_port", maxChildPort)
-	return invalidChildPort
+	return 0, fmt.Errorf(
+		"%w in range %d-%d",
+		errChildPortPoolExhausted,
+		m.cfg.BasePort,
+		maxChildPort,
+	)
 }
 
 func reservedChildPorts() map[int]struct{} {
@@ -349,6 +355,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 
 	// Phase C (lock): apply decisions -- start ready children, mark downloads, stop removed.
 	m.mu.Lock()
+	var startErrs []error
 	started := 0
 	for _, a := range toStart {
 		if _, already := m.processes[a.version.Name]; already {
@@ -357,7 +364,10 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 		if m.versionStartBlockedLocked(a.version.Name) {
 			continue
 		}
-		m.startChild(ctx, a.version, a.sha256, a.binPath, true)
+		if err := m.startChild(ctx, a.version, a.sha256, a.binPath, true); err != nil {
+			startErrs = append(startErrs, fmt.Errorf("start cached version %s: %w", a.version.Name, err))
+			continue
+		}
 		started++
 	}
 	scheduledDownloads := make([]versionAction, 0, len(toDownload))
@@ -409,7 +419,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	// Downloads outside the lock (can be slow).
 	for _, a := range scheduledDownloads {
 		if err := m.downloadAndStart(ctx, a.version, a.sha256); err != nil {
-			slog.Error("download failed, skipping", "version", a.version.Name, "error", err)
+			slog.Error("download or start failed, skipping", "version", a.version.Name, "error", err)
 		}
 	}
 
@@ -421,7 +431,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	}
 
 	m.gcInstalledVersions(desiredHashes)
-	return nil
+	return errors.Join(startErrs...)
 }
 
 type versionAction struct {
@@ -516,7 +526,11 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		m.mu.Unlock()
 		return
 	}
-	m.startChild(ctx, v, overrideID, binPath, true)
+	if err := m.startChild(ctx, v, overrideID, binPath, true); err != nil {
+		m.mu.Unlock()
+		slog.Error("override start failed", "version", v.Name, "error", err)
+		return
+	}
 	m.rebuildRoutes()
 	m.mu.Unlock()
 }
@@ -693,11 +707,18 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 	m.mu.Lock()
 	delete(m.downloading, v.Name)
 	_, running := m.processes[v.Name]
+	var startErr error
 	if dlErr == nil && ctx.Err() == nil && !running && !m.versionStartBlockedLocked(v.Name) {
-		m.startChild(ctx, v, sha, m.installBinPath(v.Name, sha), true)
+		startErr = m.startChild(ctx, v, sha, m.installBinPath(v.Name, sha), true)
 	}
 	m.mu.Unlock()
-	return dlErr
+	if dlErr != nil {
+		return dlErr
+	}
+	if startErr != nil {
+		return fmt.Errorf("start downloaded version %s: %w", v.Name, startErr)
+	}
+	return nil
 }
 
 // downloadAndSwap downloads the new binary, starts it on a fresh port, swaps the
@@ -724,13 +745,21 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		if current, ok := m.processes[v.Name]; ok && current == old {
 			delete(m.processes, v.Name)
 		}
-		m.startChild(ctx, v, sha, newBinPath, true)
+		startErr := m.startChild(ctx, v, sha, newBinPath, true)
 		m.mu.Unlock()
+		if startErr != nil {
+			return fmt.Errorf("start replacement version %s: %w", v.Name, startErr)
+		}
 		return nil
 	}
 
 	m.mu.Lock()
-	newChild := m.newChild(ctx, v, sha, newBinPath, false)
+	newChild, startErr := m.newChild(ctx, v, sha, newBinPath, false)
+	if startErr != nil {
+		delete(m.downloading, v.Name)
+		m.mu.Unlock()
+		return fmt.Errorf("create replacement version %s: %w", v.Name, startErr)
+	}
 	m.mu.Unlock()
 	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
@@ -946,13 +975,17 @@ type childStart struct {
 	ctx   context.Context
 }
 
-func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) childStart {
+func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) (childStart, error) {
+	port, err := m.assignPort()
+	if err != nil {
+		return childStart{}, fmt.Errorf("allocate public port for version %s: %w", v.Name, err)
+	}
 	childCtx, childCancel := context.WithCancel(ctx)
 	c := &child{
 		version:       v,
 		archiveSHA256: sha,
 		binPath:       binPath,
-		port:          m.assignPort(),
+		port:          port,
 		stop:          childCancel,
 		forceStopCh:   make(chan struct{}),
 		done:          make(chan struct{}),
@@ -960,15 +993,19 @@ func (m *Manager) newChild(ctx context.Context, v oracle.Version, sha, binPath s
 		status:        statusStarting,
 		restart:       restart,
 	}
-	return childStart{child: c, ctx: childCtx}
+	return childStart{child: c, ctx: childCtx}, nil
 }
 
 // startChild must be called with m.mu held.
-func (m *Manager) startChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) {
-	start := m.newChild(ctx, v, sha, binPath, restart)
+func (m *Manager) startChild(ctx context.Context, v oracle.Version, sha, binPath string, restart bool) error {
+	start, err := m.newChild(ctx, v, sha, binPath, restart)
+	if err != nil {
+		return err
+	}
 	c := start.child
 	m.processes[v.Name] = c
 	go m.runChild(start.ctx, c)
+	return nil
 }
 
 func (m *Manager) Shutdown(ctx context.Context) error {
@@ -1060,7 +1097,14 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
 	if preflight.adminAPISupported && c.adminPort == 0 {
-		c.adminPort = m.assignPort()
+		adminPort, portErr := m.assignPort()
+		if portErr != nil {
+			c.status = statusStopped
+			m.mu.Unlock()
+			slog.Error("allocate child admin port failed", "version", c.version.Name, "error", portErr)
+			return
+		}
+		c.adminPort = adminPort
 	}
 	adminAddr := c.adminAddr()
 	m.mu.Unlock()

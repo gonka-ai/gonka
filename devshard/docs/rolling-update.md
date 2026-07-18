@@ -309,7 +309,10 @@ func (m *Manager) assignPort(name string) int {
 port even when `name` already has one, and a `releasePort` on drain completion.
 The implementation uses a bounded child-port pool starting at `BasePort`,
 reuses ports after child exit, and reserves versiond's own listen port so a
-long-lived supervisor does not eventually allocate it to a child.
+long-lived supervisor does not eventually allocate it to a child. Port-pool
+exhaustion is returned as an explicit start error: versiond does not execute or
+route a child without all required ports, and a rolling-update candidate that
+cannot obtain a port leaves the current child serving traffic.
 
 #### c) Readiness gate instead of TCP-accept
 
