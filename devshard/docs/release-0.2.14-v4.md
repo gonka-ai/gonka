@@ -112,13 +112,16 @@ See [storage-design.md](./storage-design.md) and
 clients / gateway (devshardctl)
        │
        ▼
- versiond-router  (sticky hash on session id; first-502 failover)
+ public edge proxy  (deploy/join `proxy` — nginx)
        │
-       ├── versiond-0 ──► devshardd (per approved version)
-       ├── versiond-1 ──► …
-       └── …
-              │
-              └── shared Postgres
+       ├── /v1/ Tier A ──► edge-api  (or edge-api-router)
+       └── /devshard/ ──► versiond-router  (sticky hash; first-502 failover)
+                                 │
+                                 ├── versiond-0 ──► devshardd (per approved version)
+                                 ├── versiond-1 ──► …
+                                 └── …
+                                        │
+                                        └── shared Postgres
 ```
 
 | Variable | Role |
@@ -126,10 +129,130 @@ clients / gateway (devshardctl)
 | `VERSIOND_HOSTS` | HA pool hostnames |
 | `VERSIOND_LEGACY_HOST` | Single host for pre-HA SQLite versions (default: first of `VERSIOND_HOSTS`) |
 | `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (join default: `v1 v2 v3`) |
+| `VERSIOND_SERVICE_NAME` | Edge proxy upstream for `/devshard/` (set to `versiond-router` by HA overlay) |
+| `EDGE_API_SERVICE_NAME` | Edge proxy upstream for Tier A `/v1/` (default `edge-api`; multi → `edge-api-router`) |
 | `DEVSHARD_STORAGE_MODE=postgres` | Fail-closed shared storage for HA-capable versions |
 | `DEVSHARD_POSTGRES_PASSWORD` / `PG*` | Shared DB |
 | `DEVSHARD_CHAIN_GRPC` | Gateway chain gRPC (no LCD) |
 | `KEY_NAME` (+ shared keyring) | **Same** on every HA replica of one participant |
+
+### Join docker-compose (must bump for v4)
+
+Production join stack lives under **`deploy/join/`**. Operators must pull/update
+these files (or equivalent k8s manifests) when rolling v4 — image tags, the
+**edge-api** service, edge **proxy** `EDGE_API_*` / `VERSIOND_SERVICE_NAME`, and
+the HA overlays.
+
+| File | Role |
+| --- | --- |
+| [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Base: node, api (dapi), **edge-api**, versiond, **proxy** (edge), explorer, … |
+| [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | HA: postgres + versiond2 + versiond-router; proxy → router |
+| [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional: edge-api2/3 + edge-api-router; proxy → router |
+| [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Optional gateway |
+
+```bash
+# Baseline join
+cd deploy/join
+docker compose -f docker-compose.yml up -d
+
+# HA versiond (+ shared Postgres)
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+
+# Optional multi edge-api
+docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+```
+
+**Base `edge-api` + edge `proxy` (from `docker-compose.yml`):**
+
+```yaml
+  edge-api:
+    container_name: edge-api
+    image: ghcr.io/product-science/edge-api:0.2.13
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=node:9090
+      - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+    depends_on:
+      - node
+    restart: always
+
+  proxy:
+    container_name: proxy
+    image: ghcr.io/product-science/proxy:0.2.13
+    ports:
+      - "${API_PORT:-8000}:80"
+      - "${API_SSL_PORT:-8443}:443"
+    environment:
+      # … other proxy env …
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-edge-api}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+    depends_on:
+      # … node, api, versiond, explorer, …
+      edge-api:
+        condition: service_started
+```
+
+**HA overlay (`docker-compose.versiond.yml`) — points edge proxy at versiond-router:**
+
+```yaml
+  versiond-router:
+    container_name: versiond-router
+    image: ghcr.io/product-science/versiond-router:0.2.13
+    environment:
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      - VERSIOND_PORT=8080
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
+
+  proxy:
+    environment:
+      - VERSIOND_SERVICE_NAME=versiond-router
+      - VERSIOND_PORT=8080
+```
+
+**Multi edge-api overlay (`docker-compose.edge-api-multi.yml`):**
+
+```yaml
+  edge-api-router:
+    container_name: edge-api-router
+    image: ghcr.io/product-science/edge-api-router:0.2.13
+    environment:
+      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
+      - EDGE_API_PORT=18080
+
+  proxy:
+    environment:
+      - EDGE_API_SERVICE_NAME=edge-api-router
+```
+
+Bump image tags (`edge-api`, `proxy`, `versiond`, `versiond-router`, …) to the
+v4 release tag when publishing. Full file contents: see the paths in the table
+above (do not edit only env without refreshing compose from the release branch).
+
+### Images / release tooling note (`edge-api`)
+
+| Artifact | Local build | In `make release` | Upgrade zip (`make build-for-upgrade`) | GH Actions publish to GHCR |
+| --- | --- | --- | --- | --- |
+| `ghcr.io/product-science/edge-api` | `make edge-api` / `edge-api-build-docker` | Yes (`edge-api-release` → build + `docker-push`) | Yes → `public-html/v2/edge-api/edge-api-amd64.zip` (also uploaded by `publish_upgrade_binaries.yml` on `release/v*` tags) | **No** dedicated push workflow — use local `VERSION=<tag> make edge-api-release` (same as other join images) |
+| `ghcr.io/product-science/edge-api-router` | `make edge-api-router-build-docker` | **No** — still not a `release` dependency | **No** | **No** |
+| `ghcr.io/product-science/proxy` (edge proxy) | `make proxy-build-docker` | Yes (`proxy-release` → buildx `--push`) | **No** | Manual via `make release` / proxy Makefile |
+
+CI today:
+
+- [`.github/workflows/verify.yml`](../../.github/workflows/verify.yml) — `build-and-test-edge-api` (compile + `scripts/validate-edge-api.sh`); does **not** push images.
+- [`.github/workflows/test-workflow.yml`](../../.github/workflows/test-workflow.yml) — builds via `make build-docker`, saves `edge-api.tar` / `edge-api-router.tar` as **job artifacts** for Testermint (retention 1 day); not a GHCR release.
+- [`.github/workflows/docker-build.yml`](../../.github/workflows/docker-build.yml) — only decentralized-api + inference-chain (different image names under `ghcr.io/<owner>/…`).
+- [`.github/workflows/publish_upgrade_binaries.yml`](../../.github/workflows/publish_upgrade_binaries.yml) — on `release/v*` tag push, uploads upgrade zips (including `edge-api-*.zip`) to `product-science/race-releases`; does **not** push GHCR images.
+
+Publish the join image with:
+
+```bash
+VERSION=<tag> make edge-api-release
+# or as part of the full join release:
+VERSION=<tag> make release
+```
 
 ### Routing rules (critical)
 
@@ -150,7 +273,8 @@ Debug headers: `X-Upstream-Addr`, `X-Versiond-Backend`
 
 **Phase A — Single-instance baseline**
 
-1. Deploy v4 binaries (`versiond`, `devshardd`, gateway, edge-api, versiond-router).
+1. Refresh `deploy/join/` compose; deploy v4 images (`proxy` / edge, `edge-api`,
+   `versiond`, `versiond-router`, gateway, …).
 2. Pin pre-HA versions: `VERSIOND_NON_HA_VERSIONS=v1 v2 v3`.
 3. Bring up shared Postgres; set `postgres` mode on HA-capable children.
 4. Approve/force **v4**; leave pre-v4 on the legacy host’s SQLite volumes.
@@ -181,6 +305,12 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 
 ## Upgrade / rollout checklist
 
+- [ ] Refresh **`deploy/join/`** compose from the release branch (base + versiond /
+      edge-api overlays); bump image tags including **edge-api** and **proxy**
+- [ ] Edge proxy: `EDGE_API_SERVICE_NAME` / `EDGE_API_PORT` set; HA overlay sets
+      `VERSIOND_SERVICE_NAME=versiond-router`
+- [ ] Publish / pull `ghcr.io/product-science/edge-api:<tag>` via
+      `VERSION=<tag> make edge-api-release` (or full `make release`)
 - [ ] Gateway: replace `--chain-rest` / `DEVSHARD_CHAIN_REST` with `--chain-grpc` /
       `DEVSHARD_CHAIN_GRPC`
 - [ ] Shared Postgres up; `DEVSHARD_STORAGE_MODE=postgres` + `PGHOST` on HA children
@@ -188,7 +318,7 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 - [ ] HA replicas share one `KEY_NAME` / keyring for the participant
 - [ ] Per-versiond SQLite volumes remain **distinct**; Postgres is shared
 - [ ] Monitors read `session_version`, not `protocol_version`
-- [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path
+- [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path; Tier A `/v1/` via edge-api
 - [ ] Optional: run §2 lease race and §3 kill/restart from the deploy test plan
 
 ---

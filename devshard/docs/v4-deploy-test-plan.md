@@ -90,13 +90,16 @@ Rollout topology, routing rules, and verification for multi-instance HA + Postgr
 clients / gateway
        │
        ▼
- versiond-router  (nginx consistent-hash on session id)
+ public edge proxy  (`proxy` in deploy/join)
        │
-       ├── versiond-0 ──► devshardd children (per approved version)
-       ├── versiond-1 ──► …
-       └── …
-              │
-              └── shared Postgres  (required when N>1 for eligible versions)
+       ├── /v1/ Tier A ──► edge-api  (optional edge-api-router)
+       └── /devshard/ ──► versiond-router  (nginx consistent-hash on session id)
+                                 │
+                                 ├── versiond-0 ──► devshardd children (per approved version)
+                                 ├── versiond-1 ──► …
+                                 └── …
+                                        │
+                                        └── shared Postgres  (required when N>1 for eligible versions)
 ```
 
 Env (join / compose overlays already seed this for multi-versiond):
@@ -108,9 +111,81 @@ Env (join / compose overlays already seed this for multi-versiond):
 | `DEVSHARD_CHAIN_GRPC` | Gateway chain I/O (no LCD REST) |
 | `VERSIOND_LEGACY_HOST` | versiond host that owns pre-HA SQLite data dirs (default: first of `VERSIOND_HOSTS`) |
 | `VERSIOND_NON_HA_VERSIONS` | Pre-HA version path segments pinned to legacy (whitespace and/or comma; see §1.2) |
+| `VERSIOND_SERVICE_NAME` | Edge proxy → versiond upstream (`versiond-router` when HA overlay applied) |
+| `EDGE_API_SERVICE_NAME` | Edge proxy → edge-api upstream (default `edge-api`) |
 | `KEY_NAME` (+ shared keyring) | **Same on every HA versiond replica** of one participant (join); see §1.1.1 |
 
-See addendum operator checklist and `deploy/join/docker-compose.versiond.yml`.
+#### Join compose files (source of truth)
+
+Update **`deploy/join/`** from the release branch — not only binaries. Canonical
+paths:
+
+| File | What to update |
+| --- | --- |
+| [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Image tags; **edge-api** service; **proxy** (`EDGE_API_SERVICE_NAME`, depends_on edge-api) |
+| [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | Postgres + versiond2 + versiond-router; `proxy.VERSIOND_SERVICE_NAME` |
+| [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional multi edge-api + router |
+| [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Gateway (`DEVSHARD_CHAIN_GRPC`) |
+
+```bash
+cd deploy/join
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+# optional:
+# docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+```
+
+Relevant excerpts (tags shown are current compose pins — bump for v4):
+
+```yaml
+# --- deploy/join/docker-compose.yml (edge-api + edge proxy) ---
+  edge-api:
+    container_name: edge-api
+    image: ghcr.io/product-science/edge-api:0.2.13
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=node:9090
+    depends_on:
+      - node
+    restart: always
+
+  proxy:
+    container_name: proxy
+    image: ghcr.io/product-science/proxy:0.2.13
+    environment:
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-edge-api}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+    depends_on:
+      edge-api:
+        condition: service_started
+      versiond:
+        condition: service_started
+
+# --- deploy/join/docker-compose.versiond.yml ---
+  versiond-router:
+    image: ghcr.io/product-science/versiond-router:0.2.13
+    environment:
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
+
+  proxy:
+    environment:
+      - VERSIOND_SERVICE_NAME=versiond-router
+      - VERSIOND_PORT=8080
+
+# --- deploy/join/docker-compose.edge-api-multi.yml ---
+  edge-api-router:
+    image: ghcr.io/product-science/edge-api-router:0.2.13
+    environment:
+      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
+
+  proxy:
+    environment:
+      - EDGE_API_SERVICE_NAME=edge-api-router
+```
+
+See also [release-0.2.14-v4.md](./release-0.2.14-v4.md) (images / CI note for
+`edge-api`).
 
 ### 1.1.1 Same participant key on HA replicas (required)
 
@@ -165,8 +240,9 @@ add HA-capable versions to the non-HA list.
 
 #### Phase A — Single-instance baseline (safe for all versions)
 
-1. Deploy this PR binaries (`versiond`, `devshardd`, gateway, edge-api,
-   **versiond-router** with legacy/HA split).
+1. Refresh **`deploy/join/`** compose and deploy this PR images (`proxy` edge,
+   `edge-api`, `versiond`, `devshardd`, gateway, **versiond-router** with
+   legacy/HA split).
 2. Multi-versiond overlay with `VERSIOND_NON_HA_VERSIONS=v1 v2 v3` pins those
    paths to `VERSIOND_LEGACY_HOST` (SQLite-safe).
 3. Bring up shared Postgres; set `DEVSHARD_STORAGE_MODE=postgres` on versiond /
