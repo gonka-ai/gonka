@@ -81,8 +81,9 @@ type Journal struct {
 }
 
 type Orchestrator struct {
-	config Config
-	remote Remote
+	config          Config
+	remote          Remote
+	versiondRuntime serviceRuntime
 }
 
 func New(config Config, remote Remote) (*Orchestrator, error) {
@@ -123,7 +124,15 @@ func New(config Config, remote Remote) (*Orchestrator, error) {
 	if remote == nil {
 		remote = SSHRemote{}
 	}
-	return &Orchestrator{config: config, remote: remote}, nil
+	orchestrator := &Orchestrator{config: config, remote: remote}
+	orchestrator.versiondRuntime = newServiceRuntime(
+		config.VersiondRuntime,
+		config.VersiondService,
+		func(ctx context.Context, args ...string) (string, error) {
+			return orchestrator.runRemote(ctx, config.VersiondSSH, args...)
+		},
+	)
+	return orchestrator, nil
 }
 
 func validRuntime(runtime Runtime) bool {
@@ -143,6 +152,11 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 	}
 	if journal.Phase == "canceled" {
 		return errors.New("evacuation was canceled; start a new operation")
+	}
+	if before(journal.Phase, "term_requested", evacuationPhases) {
+		if err := o.versiondRuntime.ValidateStopContract(ctx, o.config.KillGrace); err != nil {
+			return fmt.Errorf("versiond runtime preflight: %w", err)
+		}
 	}
 	if before(journal.Phase, "router_draining", evacuationPhases) {
 		if err := o.routerTransition(ctx, "drain"); err != nil {
@@ -289,6 +303,11 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 	journal, err := o.loadOrCreateJournal("replace")
 	if err != nil {
 		return err
+	}
+	if before(journal.Phase, "host_started", replacementPhases) {
+		if err := o.versiondRuntime.ValidateStopContract(ctx, o.config.KillGrace); err != nil {
+			return fmt.Errorf("versiond runtime preflight: %w", err)
+		}
 	}
 	if o.config.VersiondRuntime == RuntimeDocker &&
 		before(journal.Phase, "host_started", replacementPhases) &&
@@ -450,98 +469,23 @@ func (o *Orchestrator) waitForReady(ctx context.Context) (*HealthSummary, error)
 }
 
 func (o *Orchestrator) signalVersiond(ctx context.Context, signal string) error {
-	var args []string
-	if o.config.VersiondRuntime == RuntimeDocker {
-		args = []string{"docker", "kill", "--signal", signal, o.config.VersiondService}
-	} else if signal == "TERM" {
-		args = []string{"systemctl", "stop", "--no-block", o.config.VersiondService}
-	} else {
-		args = []string{"systemctl", "kill", "--kill-who=all", "--signal", signal, o.config.VersiondService}
-	}
-	_, err := o.runRemote(ctx, o.config.VersiondSSH, args...)
-	return err
+	return o.versiondRuntime.Signal(ctx, signal)
 }
 
 func (o *Orchestrator) startVersiond(ctx context.Context, restartPolicy string) error {
-	var args []string
-	if o.config.VersiondRuntime == RuntimeDocker {
-		if restartPolicy == "" {
-			return errors.New("Docker restart policy is required for replacement")
-		}
-		if err := o.setDockerRestartPolicy(ctx, restartPolicy); err != nil {
-			return err
-		}
-		args = []string{"docker", "start", o.config.VersiondService}
-	} else {
-		args = []string{"systemctl", "start", o.config.VersiondService}
-	}
-	_, err := o.runRemote(ctx, o.config.VersiondSSH, args...)
-	return err
+	return o.versiondRuntime.Start(ctx, restartPolicy)
 }
 
 func (o *Orchestrator) dockerRestartPolicy(ctx context.Context) (string, error) {
-	output, err := o.runRemote(
-		ctx,
-		o.config.VersiondSSH,
-		"docker", "inspect", "--format", "{{json .HostConfig.RestartPolicy}}", o.config.VersiondService,
-	)
-	if err != nil {
-		return "", err
-	}
-	var policy struct {
-		Name              string `json:"Name"`
-		MaximumRetryCount int    `json:"MaximumRetryCount"`
-	}
-	if err := json.Unmarshal([]byte(strings.TrimSpace(output)), &policy); err != nil {
-		return "", fmt.Errorf("decode Docker restart policy: %w", err)
-	}
-	value := policy.Name
-	if value == "" {
-		value = "no"
-	}
-	if value == "on-failure" && policy.MaximumRetryCount > 0 {
-		value += ":" + strconv.Itoa(policy.MaximumRetryCount)
-	}
-	if err := validateDockerRestartPolicy(value); err != nil {
-		return "", err
-	}
-	return value, nil
+	return o.versiondRuntime.RestartPolicy(ctx)
 }
 
 func (o *Orchestrator) setDockerRestartPolicy(ctx context.Context, policy string) error {
-	if err := validateDockerRestartPolicy(policy); err != nil {
-		return err
-	}
-	_, err := o.runRemote(
-		ctx,
-		o.config.VersiondSSH,
-		"docker", "update", "--restart="+policy, o.config.VersiondService,
-	)
-	return err
+	return o.versiondRuntime.SetRestartPolicy(ctx, policy)
 }
 
 func (o *Orchestrator) versiondRunning(ctx context.Context) (bool, error) {
-	var args []string
-	if o.config.VersiondRuntime == RuntimeDocker {
-		args = []string{"docker", "inspect", "--format", "{{.State.Running}}", o.config.VersiondService}
-	} else {
-		args = []string{"systemctl", "is-active", o.config.VersiondService}
-	}
-	output, err := o.runRemote(ctx, o.config.VersiondSSH, args...)
-	value := strings.TrimSpace(output)
-	if o.config.VersiondRuntime == RuntimeDocker {
-		if err != nil {
-			return false, err
-		}
-		return value == "true", nil
-	}
-	if value == "inactive" || value == "failed" || value == "unknown" {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return value == "active" || value == "activating" || value == "deactivating", nil
+	return o.versiondRuntime.Running(ctx)
 }
 
 func (o *Orchestrator) waitForStopped(ctx context.Context, timeout time.Duration) (bool, error) {

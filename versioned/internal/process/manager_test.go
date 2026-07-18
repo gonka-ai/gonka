@@ -463,7 +463,7 @@ func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
 	}
 	var sawDraining bool
 	for _, status := range statuses {
-		if status.Status == statusDraining && status.Port == 9001 && status.SHA256 == "old-sha" {
+		if status.Status == "draining" && status.Port == 9001 && status.SHA256 == "old-sha" {
 			sawDraining = true
 		}
 	}
@@ -486,11 +486,11 @@ func TestStatusWithInflightReadsChildLifecycleCounter(t *testing.T) {
 	c := &child{
 		version:     oracle.Version{Name: "v1"},
 		port:        9001,
-		adminPort:   adminPort,
 		done:        make(chan struct{}),
 		status:      statusRunning,
 		proxyTarget: proxy.NewTarget("localhost:9001"),
 	}
+	c.setAdminPort(adminPort)
 	m.mu.Lock()
 	m.processes[c.version.Name] = c
 	m.children[c] = struct{}{}
@@ -583,12 +583,12 @@ func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 	c := &child{
 		version:     oracle.Version{Name: "v1"},
 		port:        9001,
-		adminPort:   adminPort,
 		done:        make(chan struct{}),
 		status:      statusRunning,
 		restart:     true,
 		proxyTarget: proxy.NewTarget("localhost:9001"),
 	}
+	c.setAdminPort(adminPort)
 	m.mu.Lock()
 	m.processes[c.version.Name] = c
 	m.children[c] = struct{}{}
@@ -601,8 +601,8 @@ func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
 	if !drainCalled.Load() {
 		t.Fatal("child drain endpoint was not called")
 	}
-	if c.status != statusDraining {
-		t.Fatalf("child status = %q, want draining", c.status)
+	if c.status != statusRetiring {
+		t.Fatalf("child status = %q, want retiring", c.status)
 	}
 	if c.restart {
 		t.Fatal("draining child should not restart")
@@ -1756,7 +1756,8 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 	}))
 	defer publicShutdown()
 
-	c := &child{port: publicPort, adminPort: adminPort}
+	c := &child{port: publicPort}
+	c.setAdminPort(adminPort)
 	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond) {
 		t.Fatal("admin readiness must not hide an unavailable public listener")
 	}
@@ -1791,7 +1792,8 @@ func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
 	}))
 	defer publicShutdown()
 
-	c := &child{port: publicPort, adminPort: adminPort}
+	c := &child{port: publicPort}
+	c.setAdminPort(adminPort)
 	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond) {
 		t.Fatal("child became ready without admin and public health at the same time")
 	}
@@ -1864,10 +1866,10 @@ func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
 		DrainStatusPath: "/drain/status",
 	})
 	c := &child{
-		version:   oracle.Version{Name: "v1"},
-		port:      publicPort,
-		adminPort: adminPort,
+		version: oracle.Version{Name: "v1"},
+		port:    publicPort,
 	}
+	c.setAdminPort(adminPort)
 
 	if err := m.requestDrain(context.Background(), c); err != nil {
 		t.Fatal(err)

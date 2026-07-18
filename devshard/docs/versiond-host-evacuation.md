@@ -24,6 +24,9 @@ rolling updates remain a separate operation managed inside one live `versiond`.
    be drained by the normal command.
 7. The external kill grace must exceed versiond's host-drain and child-stop
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
+8. An established request stays on its original nginx worker and versiond
+   generation. A later request for the same HA escrow may recover on another
+   host from shared Postgres; legacy SQLite escrows never enter the HA pool.
 
 ## State machines
 
@@ -48,6 +51,23 @@ This state machine is intentionally separate from each child's process FSM
 (`running -> terminating -> killing -> exited`). The host FSM decides when a
 child should stop; the process FSM owns signal delivery, escalation, and reap.
 
+Each child generation has a lifecycle above the OS process FSM:
+
+```text
+preparing -> starting -> running -> retiring -> draining -> stopping -> stopped
+                 |          |
+                 +-> failed <-+
+                       |
+                       +-> starting
+```
+
+`retiring` removes the generation from route admission, `draining` waits for
+proxy and child lifecycle counters, and `stopping` owns post-`SIGTERM` grace.
+Every reconcile is also registered as a cancellable control operation. Entering
+host `draining` cancels these operations before waiting for the poll worker, so
+downloads, preflight probes, readiness, and non-overlap stop/start waits cannot
+hide the force path.
+
 The router persists this upstream lifecycle:
 
 ```text
@@ -71,6 +91,8 @@ old worker processes finish established connections.
 
 Cancelling the poll context must not signal a running child. This separation is
 required because host evacuation stops reconciliation before it drains work.
+The host supervisor listens for force signals while canceled reconcile work is
+unwinding; it never waits for the poll worker before arming force handling.
 
 ## Health contract
 
@@ -90,6 +112,9 @@ add per-generation proxy counters without changing the response shape.
   "inflight": 0,
   "inflight_known": true,
   "idle": true,
+  "available": false,
+  "reconciled": true,
+  "degraded": false,
   "children": []
 }
 ```
@@ -100,6 +125,13 @@ so `inflight` is their maximum, not their sum. `idle` is true only when the host
 proxy count is zero and every child counter is known and zero. A legacy child
 without `/drain/status` keeps `inflight_known=false`; the operator must use the
 timeout path and report that reduced certainty.
+
+Lifecycle counters are refreshed by a bounded background sampler and served
+from cache. The live host admission counter is merged at request time, so health
+cannot report idle while a newly accepted proxy request is running. `ready`
+tracks host availability: one routable generation keeps the host ready while a
+different version starts or fails. `reconciled` and `degraded` expose desired
+state convergence independently.
 
 ## Control plane and trust boundary
 
@@ -159,6 +191,13 @@ covers versiond's default `15m` host drain, `10m` child stop grace, and an
 escalation cushion. Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
+Before the first router mutation, hostctl validates the service runtime. Docker
+must have an explicit `StopTimeout` at least as large as the configured kill
+grace. systemd must provide a sufficient `TimeoutStopSec`, `KillMode` of
+`control-group` or `mixed`, and `SendSIGKILL=yes`. The standard compose files
+set `stop_grace_period: 30m` for both versiond and the nginx router so direct
+container stop/redeploy cannot fall back to Docker's ten-second default.
+
 ## Failure policy
 
 - nginx validation failure: keep the old config and state; do not signal host.
@@ -179,11 +218,18 @@ escalation cushion. Exact Docker and systemd commands are documented in
 - evacuation at or after `term_requested`: cancellation is forbidden; that
   intent is durable before SSH sends `SIGTERM`, so resume to `offline` even when
   the remote command result is unknown.
+- direct, uncoordinated `SIGTERM`: versiond returns `503` after admission closes;
+  nginx does not replay inference POSTs because duplicate execution is less safe
+  than an explicit client-visible failure.
 
 The one-host-at-a-time router guard deliberately has no automatic expiry. A
 stale `draining` or `joining` owner must be resumed or, before `term_requested`,
 canceled with the same operation ID. This avoids another operator interpreting
 a control-plane outage as permission to drain a second host.
+
+The full-stack S10 test exercises both recovery choices. It interrupts and
+cancels one pre-signal evacuation, then interrupts a second evacuation and
+resumes it from the same journal before replacing and reactivating the host.
 
 For Docker replacement, the restart policy has no guessed default. Reusing an
 evacuated service requires its completed evacuation journal; a newly provisioned

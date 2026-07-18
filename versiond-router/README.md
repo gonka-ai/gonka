@@ -33,8 +33,17 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Append-only transition audit log |
 | `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Write-ahead transaction journal |
 | `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
+| `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
+| `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `75s` | Upstream connection deadline |
+| `VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT` | no | `20m` | Idle deadline in either direction for long HTTP/SSE requests |
+| `VERSIOND_ROUTER_UPSTREAM_KEEPALIVE` | no | `64` | Idle upstream connections retained per nginx worker |
 
 Debug response headers: `X-Upstream-Addr`, `X-Versiond-Backend`.
+
+Proxy stream timeouts are inactivity deadlines, not limits on total inference
+duration. Streaming responses may run longer while data continues to flow. If
+the outer Gonka API proxy is customized, keep its body limit and transfer idle
+timeout at least as large as the versiond-router policy.
 
 After the first bootstrap, the persistent state is authoritative. Changing
 `VERSIOND_HOSTS` alone does not overwrite runtime host states. Use
@@ -143,7 +152,21 @@ The command performs these ordered steps:
 
 For systemd, set both runtime flags to `systemd`. The stop step uses
 `systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
-evacuation.
+evacuation. Before router drain, hostctl requires `TimeoutStopSec` to cover the
+configured kill grace, `KillMode=control-group` or `mixed`, and
+`SendSIGKILL=yes`. Docker receives the equivalent preflight against the
+container's explicit `StopTimeout`. The supplied compose files set
+`stop_grace_period: 30m`; custom deployments must provide the same runtime
+contract.
+
+For example, the systemd unit should include:
+
+```ini
+[Service]
+TimeoutStopSec=30min
+KillMode=control-group
+SendSIGKILL=yes
+```
 
 The operation journal defaults to
 `~/.config/gonka/hostctl/<operation-id>.json`. If SSH or the operator process is
@@ -219,6 +242,11 @@ The orchestration flags default from these environment variables:
 Keep `ROUTER_DRAIN_KILL_GRACE` greater than the versiond shutdown budget. With
 the defaults it covers `VERSIOND_HOST_DRAIN_TIMEOUT` (`15m`) plus the child
 shutdown grace (`10m`) and an escalation cushion.
+
+Planned stops must use `gonka-hostctl`. A direct signal can close versiond
+admission after nginx has selected that upstream, producing `503`. Nginx does
+not retry an inference POST after it has been sent because replay can duplicate
+work.
 
 Use `--health-url` when versiond does not expose its summary at
 `http://127.0.0.1:8080/healthz?summary=1`. This URL is evaluated on the versiond

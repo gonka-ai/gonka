@@ -27,7 +27,18 @@ type Summary struct {
 	Inflight          int64         `json:"inflight"`
 	InflightKnown     bool          `json:"inflight_known"`
 	Idle              bool          `json:"idle"`
+	Available         bool          `json:"available"`
+	Reconciled        bool          `json:"reconciled"`
+	Degraded          bool          `json:"degraded"`
+	ReconcileError    string        `json:"reconcile_error,omitempty"`
 	Children          []StatusEntry `json:"children"`
+}
+
+type Conditions struct {
+	Available      bool
+	Reconciled     bool
+	Degraded       bool
+	ReconcileError string
 }
 
 type SummaryFunc func(context.Context) Summary
@@ -49,6 +60,7 @@ func BuildSummary(
 	accepting bool,
 	proxyInflight int64,
 	children []StatusEntry,
+	conditions Conditions,
 ) Summary {
 	lifecycleInflight := int64(0)
 	inflightKnown := true
@@ -62,7 +74,7 @@ func BuildSummary(
 	if lifecycleInflight > inflight {
 		inflight = lifecycleInflight
 	}
-	ready := state == "serving" && accepting && childrenReady(children)
+	ready := state == "serving" && accepting && conditions.Available
 	return Summary{
 		SchemaVersion:     1,
 		State:             state,
@@ -73,20 +85,10 @@ func BuildSummary(
 		Inflight:          inflight,
 		InflightKnown:     inflightKnown,
 		Idle:              inflightKnown && inflight == 0,
+		Available:         conditions.Available,
+		Reconciled:        conditions.Reconciled,
+		Degraded:          conditions.Degraded,
+		ReconcileError:    conditions.ReconcileError,
 		Children:          children,
 	}
-}
-
-func childrenReady(children []StatusEntry) bool {
-	running := 0
-	for _, child := range children {
-		switch child.Status {
-		case "running":
-			running++
-		case "draining":
-		default:
-			return false
-		}
-	}
-	return running > 0
 }

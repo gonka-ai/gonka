@@ -173,6 +173,7 @@ services:
       - mock-dapi
       - mock-openai
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
@@ -199,6 +200,7 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 
   devshardctl:

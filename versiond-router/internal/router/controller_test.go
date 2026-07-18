@@ -196,7 +196,7 @@ func stagePendingDrain(
 	if err != nil {
 		t.Fatal(err)
 	}
-	newConfig, err := Render(template, newState)
+	newConfig, err := Render(template, newState, DefaultProxyPolicy())
 	if err != nil {
 		t.Fatal(err)
 	}

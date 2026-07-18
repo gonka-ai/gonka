@@ -637,9 +637,11 @@ upgrade, scale-down, or decommission.
 Key invariants:
 
 - **Stop new traffic first:** router marks the upstream `down`
-  before any `SIGTERM` to versiond. Consistent hash means escrows already on
-  `versiond-N` cannot fail over to another replica — that instance must drain
-  its pinned escrows before exit.
+  before any `SIGTERM` to versiond. An established HTTP/SSE request cannot be
+  moved and must finish on its original host. A later request for the same
+  escrow may be re-hashed to a survivor and recover from shared Postgres;
+  affinity is placement, not exclusive in-memory ownership. Non-HA versions
+  remain pinned to the legacy host and are protected by the router guard.
 - **Drain before kill:** do not free the machine until step 2 reports idle (or
   the safety timeout fires with an operator-visible warning).
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
@@ -657,7 +659,7 @@ until a host is activated.
 |---|---|
 | `gonka-routerctl` | Local, locked router FSM mutation with journal, `nginx -t`, atomic publish, reload, rollback, and audit |
 | `gonka-hostctl` | Resumable SSH orchestration for evacuation and replacement; no network listener |
-| `GET /healthz?summary=1` | Versioned host state, readiness, admission, per-child and aggregate inflight |
+| `GET /healthz?summary=1` | Versioned host state, availability/convergence conditions, admission, and aggregate inflight |
 | `VERSIOND_HOST_DRAIN_TIMEOUT` | Internal versiond budget for admission and child idle, default `15m` |
 | `ROUTER_DRAIN_TIMEOUT` | External maximum wait for known host idle, default `15m` |
 | `ROUTER_DRAIN_POLL_INTERVAL` | External health/process polling interval, default `2s` |
@@ -674,6 +676,14 @@ admin counters. Because they observe overlapping work, aggregate `inflight` is
 their maximum rather than their sum. `idle=true` requires both zero work and
 known counters for every child. Legacy children without `/drain/status` keep
 `inflight_known=false`, forcing the timeout path instead of a false idle result.
+Child lifecycle counters are sampled in the background and cached; a health
+request never fans out to every child. `proxy_inflight` remains a live host
+admission count, so a just-accepted request cannot be hidden by the cache.
+
+`ready` means the host is serving, accepting, and has at least one routable
+generation. A failed or still-starting version is reported through
+`reconciled=false`, `degraded=true`, and `reconcile_error`; it does not make
+healthy versions on the same host return `503`.
 
 On `SIGTERM`, versiond transitions
 `serving -> draining -> stopping -> stopped`. Admission closes immediately,
@@ -682,6 +692,13 @@ children receive the existing `/drain` and idle sequence, and only then receive
 `SIGTERM`. Repeated `SIGTERM` is idempotent so orchestration retries cannot force
 the host accidentally; a second `SIGINT` is the explicit interactive transition
 to `forcing`.
+
+Active reconcile work is registered as a cancellable control operation. Host
+drain cancels that registry before waiting for the poll worker. Child preflight,
+downloads, readiness, and stop/start waits inherit the operation context, so a
+non-overlap swap cannot make force handling unavailable. Child generations use
+the typed lifecycle `preparing -> starting -> running -> retiring -> draining
+-> stopping -> stopped`, with `failed -> starting` for supervised retry.
 
 #### Operator commands
 
@@ -708,8 +725,17 @@ Evacuate a Docker-managed host:
 The command disables the container restart policy before signaling versiond.
 For systemd, use `--router-runtime systemd --versiond-runtime systemd`; the
 orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
-unit. Rerun an interrupted command with the same operation ID and journal path
-to continue after its last durable phase.
+unit. Before changing router state, hostctl validates the runtime shutdown
+contract: Docker `StopTimeout` or systemd `TimeoutStopSec` must cover
+`ROUTER_DRAIN_KILL_GRACE`; systemd must use `KillMode=control-group` or `mixed`
+with `SendSIGKILL=yes`. Compose deployments set `stop_grace_period: 30m` for
+versiond and versiond-router. Rerun an interrupted command with the same
+operation ID and journal path to continue after its last durable phase.
+
+A direct `SIGTERM` that bypasses router drain closes versiond admission and may
+return `503` to a new request already selected by nginx. The router deliberately
+does not retry an already-sent inference `POST`: automatic replay could execute
+the request twice. Operators must use `gonka-hostctl` for planned maintenance.
 
 Before `SIGTERM`, every fresh or resumed operation repeats the idempotent router
 `drain` transition. If evacuation must be abandoned before the durable
@@ -792,9 +818,11 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
   resume/order without requiring SSH.
 - **full stack (`devshard/testenv`, S10):** pin a long stream to one versiond,
-  mark that upstream down through the real nginx controller, verify new work
-  reaches the survivor, stop versiond while the stream is active, and verify
-  the replacement remains down until healthy and explicitly activated.
+  interrupt and cancel one checkpointed operation, then interrupt and resume a
+  real `gonka-hostctl evacuate` from its durable phase before running `replace`.
+  Verify new work and the same escrow recover on the survivor, the barrier-held
+  stream finishes on its old connection, and the replacement remains down
+  until healthy.
 
 ### 1.10 Rollout order
 

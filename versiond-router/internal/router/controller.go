@@ -23,6 +23,7 @@ type Config struct {
 	TemplatePath string
 	OutputPath   string
 	NginxBinary  string
+	ProxyPolicy  ProxyPolicy
 }
 
 type CommandRunner interface {
@@ -92,6 +93,7 @@ func NewController(config Config, runner CommandRunner) *Controller {
 	if runner == nil {
 		runner = ExecRunner{}
 	}
+	config.ProxyPolicy = config.ProxyPolicy.withDefaults()
 	return &Controller{config: config, runner: runner}
 }
 
@@ -215,7 +217,7 @@ func (c *Controller) apply(
 	if err != nil {
 		return err
 	}
-	newConfig, err := Render(template, newState)
+	newConfig, err := Render(template, newState, c.config.ProxyPolicy)
 	if err != nil {
 		return err
 	}
@@ -304,7 +306,7 @@ func (c *Controller) ensureRendered(ctx context.Context, state State, reload boo
 	if err != nil {
 		return err
 	}
-	want, err := Render(template, state)
+	want, err := Render(template, state, c.config.ProxyPolicy)
 	if err != nil {
 		return err
 	}

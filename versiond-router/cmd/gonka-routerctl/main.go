@@ -125,7 +125,37 @@ func loadConfig() router.Config {
 		TemplatePath: envOrDefault("VERSIOND_ROUTER_TEMPLATE", "/etc/nginx/template/nginx.conf.template"),
 		OutputPath:   envOrDefault("VERSIOND_ROUTER_OUT", "/etc/nginx/conf.d/default.conf"),
 		NginxBinary:  envOrDefault("VERSIOND_ROUTER_NGINX_BIN", "nginx"),
+		ProxyPolicy: router.ProxyPolicy{
+			MaxBodyBytes:      parsePositiveInt64Env("VERSIOND_ROUTER_MAX_BODY_BYTES", 10*1024*1024),
+			ConnectTimeout:    parsePositiveDurationEnv("VERSIOND_ROUTER_CONNECT_TIMEOUT", 75*time.Second),
+			StreamIdleTimeout: parsePositiveDurationEnv("VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT", 20*time.Minute),
+			UpstreamKeepalive: int(parsePositiveInt64Env("VERSIOND_ROUTER_UPSTREAM_KEEPALIVE", 64)),
+		},
 	}
+}
+
+func parsePositiveInt64Env(key string, fallback int64) int64 {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil || value <= 0 {
+		return fallback
+	}
+	return value
+}
+
+func parsePositiveDurationEnv(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil || value < time.Second {
+		return fallback
+	}
+	return value
 }
 
 func splitList(raw string) []string {

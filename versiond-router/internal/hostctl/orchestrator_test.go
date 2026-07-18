@@ -21,6 +21,7 @@ type fakeRemote struct {
 	stopOnTerm         bool
 	health             HealthSummary
 	restartPolicyJSON  string
+	stopTimeout        string
 }
 
 func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) (string, error) {
@@ -38,6 +39,11 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 			return r.restartPolicyJSON + "\n", nil
 		}
 		return `{"Name":"unless-stopped","MaximumRetryCount":0}` + "\n", nil
+	case strings.Contains(joined, "Config.StopTimeout"):
+		if r.stopTimeout != "" {
+			return r.stopTimeout + "\n", nil
+		}
+		return "1800\n", nil
 	case strings.Contains(joined, ".State.Running"):
 		if r.runningProbeErrors > 0 {
 			r.runningProbeErrors--
@@ -288,6 +294,57 @@ func TestRemoteCommandTimeout(t *testing.T) {
 	err := orchestrator.routerTransition(context.Background(), "drain")
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("remote command error = %v, want deadline exceeded", err)
+	}
+}
+
+func TestEvacuateRejectsShortRuntimeStopContractBeforeRouterMutation(t *testing.T) {
+	remote := &fakeRemote{stopTimeout: "10"}
+	orchestrator := newTestOrchestrator(t, remote, "short-stop")
+	orchestrator.config.KillGrace = 30 * time.Minute
+	if err := orchestrator.Evacuate(context.Background()); err == nil {
+		t.Fatal("evacuation accepted a ten-second Docker stop timeout")
+	}
+	if calls := remote.callLog(); strings.Contains(calls, "gonka-routerctl host drain") {
+		t.Fatalf("router changed before runtime preflight completed:\n%s", calls)
+	}
+}
+
+func TestParseSystemdTimeSpan(t *testing.T) {
+	got, err := parseSystemdTimeSpan("25min 30s")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 25*time.Minute + 30*time.Second; got != want {
+		t.Fatalf("duration = %s, want %s", got, want)
+	}
+	got, err = parseSystemdTimeSpan("infinity")
+	if err != nil || got < 100*365*24*time.Hour {
+		t.Fatalf("infinity = %s, %v", got, err)
+	}
+}
+
+func TestSystemdRuntimeValidatesContractAndUsesManagedStop(t *testing.T) {
+	var calls []string
+	runtime := newServiceRuntime(
+		RuntimeSystemd,
+		"versiond.service",
+		func(_ context.Context, args ...string) (string, error) {
+			calls = append(calls, strings.Join(args, " "))
+			if len(args) >= 2 && args[0] == "systemctl" && args[1] == "show" {
+				return "TimeoutStopUSec=30min\nKillMode=control-group\nSendSIGKILL=yes\n", nil
+			}
+			return "", nil
+		},
+	)
+	if err := runtime.ValidateStopContract(context.Background(), 25*time.Minute); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Signal(context.Background(), "TERM"); err != nil {
+		t.Fatal(err)
+	}
+	joined := strings.Join(calls, "\n")
+	if !strings.Contains(joined, "systemctl stop --no-block versiond.service") {
+		t.Fatalf("systemd runtime did not use a managed stop job:\n%s", joined)
 	}
 }
 

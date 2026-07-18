@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -50,13 +51,23 @@ func run(ctx context.Context) error {
 	oracleClient := oracle.NewClient(cfg.OracleURL)
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", health.Handler(mgr.Status, func(ctx context.Context) health.Summary {
+	healthCtx, cancelHealth := context.WithCancel(context.Background())
+	defer cancelHealth()
+	mgr.StartHealthMonitor(healthCtx, time.Second)
+	mux.HandleFunc("/healthz", health.Handler(mgr.Status, func(context.Context) health.Summary {
 		hostStatus := hostLifecycle.Snapshot()
+		managerConditions := mgr.Conditions()
 		return health.BuildSummary(
 			string(hostStatus.State),
 			hostStatus.Accepting,
 			hostStatus.Inflight,
-			mgr.StatusWithInflight(ctx),
+			mgr.CachedStatusWithInflight(),
+			health.Conditions{
+				Available:      managerConditions.Available,
+				Reconciled:     managerConditions.Reconciled,
+				Degraded:       managerConditions.Degraded,
+				ReconcileError: managerConditions.ReconcileError,
+			},
 		)
 	}))
 	mux.Handle("/", hostLifecycle.Admission(proxy.Handler(mgr.RouteTable())))
@@ -78,50 +89,12 @@ func run(ctx context.Context) error {
 		}
 	}()
 
-	// Initial fetch + reconcile
-	if versions, err := oracleClient.Fetch(pollCtx); err != nil {
-		slog.Error("initial oracle fetch failed", "error", err)
-	} else if err := mgr.Reconcile(pollCtx, versions.Versions); err != nil {
-		slog.Error("initial reconcile failed", "error", err)
-	} else if err := hostLifecycle.Transition(host.StateServing); err != nil {
-		return err
-	}
+	go promoteHostWhenAvailable(pollCtx, mgr, hostLifecycle)
 
-	// Poll loop
-	var pollWG sync.WaitGroup
-	pollWG.Add(1)
+	pollDone := make(chan struct{})
 	go func() {
-		defer pollWG.Done()
-		ticker := time.NewTicker(cfg.PollInterval)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-pollCtx.Done():
-				return
-			case <-ticker.C:
-				versions, err := oracleClient.Fetch(pollCtx)
-				if err != nil {
-					slog.Error("oracle fetch failed, keeping current versions", "error", err)
-					continue
-				}
-				// Guard against empty responses killing all running children.
-				// An empty version list from the API is likely a misconfiguration,
-				// not an intentional "stop everything" signal.
-				if len(versions.Versions) == 0 && len(mgr.Status()) > 0 {
-					slog.Warn("oracle returned empty version list, keeping current versions")
-					continue
-				}
-				if err := mgr.Reconcile(pollCtx, versions.Versions); err != nil {
-					slog.Error("reconcile failed", "error", err)
-					continue
-				}
-				if hostLifecycle.Snapshot().State == host.StateStarting {
-					if err := hostLifecycle.Transition(host.StateServing); err != nil {
-						slog.Error("host state transition failed", "error", err)
-					}
-				}
-			}
-		}
+		defer close(pollDone)
+		runPollLoop(pollCtx, cfg.PollInterval, oracleClient, mgr)
 	}()
 
 	select {
@@ -131,21 +104,94 @@ func run(ctx context.Context) error {
 		slog.Info("host shutdown requested", "signal", sig.String())
 	}
 
-	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
-		return err
-	}
-	// Close admission and freeze desired-state changes as one host transition.
-	// Child lifetimes are owned by Manager and remain independent from pollCtx.
-	mgr.BeginHostDrain()
-	cancelPoll()
-	pollWG.Wait()
-
 	force := make(chan struct{})
 	shutdownDone := make(chan struct{})
 	go watchForceSignals(signals, shutdownDone, force)
 	defer close(shutdownDone)
 
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		return err
+	}
+	// Close admission, freeze desired-state changes, and cancel every active
+	// generation operation as one host transition. Child process contexts stay
+	// alive until the drain phase decides to stop or force them.
+	mgr.BeginHostDrain()
+	cancelPoll()
+
+	select {
+	case <-pollDone:
+	case <-force:
+		mgr.ForceStopChildren()
+		<-pollDone
+		return forceHostShutdown(srv, mgr, hostLifecycle)
+	}
+
 	return shutdownHost(cfg, srv, mgr, hostLifecycle, force)
+}
+
+func runPollLoop(
+	ctx context.Context,
+	interval time.Duration,
+	oracleClient *oracle.Client,
+	mgr *process.Manager,
+) {
+	reconcileOnce(ctx, oracleClient, mgr)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+			reconcileOnce(ctx, oracleClient, mgr)
+		}
+	}
+}
+
+func reconcileOnce(ctx context.Context, oracleClient *oracle.Client, mgr *process.Manager) {
+	versions, err := oracleClient.Fetch(ctx)
+	if err != nil {
+		if ctx.Err() == nil {
+			mgr.ReportReconcileError(fmt.Errorf("oracle fetch: %w", err))
+			slog.Error("oracle fetch failed, keeping current versions", "error", err)
+		}
+		return
+	}
+	// An empty API response is treated as an upstream fault while this host owns
+	// children. Intentional removals still arrive as a non-empty desired set.
+	if len(versions.Versions) == 0 && len(mgr.Status()) > 0 {
+		mgr.ReportReconcileError(errors.New("oracle returned an empty version list"))
+		slog.Warn("oracle returned empty version list, keeping current versions")
+		return
+	}
+	if err := mgr.Reconcile(ctx, versions.Versions); err != nil &&
+		!errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
+		slog.Error("reconcile failed", "error", err)
+	}
+}
+
+func promoteHostWhenAvailable(
+	ctx context.Context,
+	mgr *process.Manager,
+	hostLifecycle *host.Controller,
+) {
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-mgr.Available():
+		}
+		if !mgr.Conditions().Available {
+			continue
+		}
+		if hostLifecycle.Snapshot().State != host.StateStarting {
+			return
+		}
+		if err := hostLifecycle.Transition(host.StateServing); err != nil {
+			slog.Error("host state transition failed", "error", err)
+		}
+		return
+	}
 }
 
 func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, force chan<- struct{}) {
@@ -239,7 +285,9 @@ func forceHostShutdown(srv *http.Server, mgr *process.Manager, hostLifecycle *ho
 	}
 	mgr.ForceStopChildren()
 	_ = srv.Close()
-	if err := mgr.Shutdown(context.Background()); err != nil {
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
+	defer cancel()
+	if err := mgr.Shutdown(shutdownCtx); err != nil {
 		return err
 	}
 	return hostLifecycle.Transition(host.StateStopped)

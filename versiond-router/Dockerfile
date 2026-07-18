@@ -7,7 +7,7 @@ COPY internal ./internal
 RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
     -o /out/gonka-routerctl ./cmd/gonka-routerctl
 
-FROM nginx:1.27-alpine
+FROM nginx:1.27.5-alpine
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond. Plays

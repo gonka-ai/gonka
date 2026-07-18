@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"common/completionapi"
 	"devshard/testenv/mockopenai"
@@ -83,6 +84,48 @@ func TestChatCompletions_StreamCompletionAPI(t *testing.T) {
 	content, err := cr.GetEnforcedStr()
 	require.NoError(t, err)
 	require.True(t, strings.HasPrefix(content, "mock-openai:"))
+}
+
+func TestChatCompletions_StreamPauseCanBeReleased(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{
+			PauseStream:      true,
+			StreamChunkDelay: time.Millisecond,
+		},
+	}).Handler())
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"pause"}]}`)
+	resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+
+	scanner := bufio.NewScanner(resp.Body)
+	require.True(t, scanner.Scan(), "stream did not publish its first chunk")
+	require.True(t, strings.HasPrefix(scanner.Text(), "data: "))
+	done := make(chan error, 1)
+	go func() {
+		for scanner.Scan() {
+		}
+		done <- scanner.Err()
+	}()
+
+	select {
+	case err := <-done:
+		t.Fatalf("paused stream completed before release: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release, err := http.Post(srv.URL+"/testenv/stream/release", "application/json", nil)
+	require.NoError(t, err)
+	_ = release.Body.Close()
+	require.Equal(t, http.StatusOK, release.StatusCode)
+	select {
+	case err := <-done:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("stream did not complete after release")
+	}
 }
 
 func TestChatCompletions_FaultHTTPStatus(t *testing.T) {

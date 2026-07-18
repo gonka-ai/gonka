@@ -37,6 +37,7 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
+  stop_grace_period: 30m
   restart: always
 
 services:
@@ -91,6 +92,7 @@ services:
       - versiond2
     volumes:
       - versiond-router-state:/var/lib/gonka/versiond-router
+    stop_grace_period: 30m
     restart: always
 
   proxy:

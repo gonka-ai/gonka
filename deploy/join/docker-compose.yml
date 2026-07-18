@@ -123,6 +123,7 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
+    stop_grace_period: 30m
     restart: always
 
   bridge:

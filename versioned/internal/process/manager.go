@@ -27,11 +27,6 @@ import (
 )
 
 const (
-	statusStarting = "starting"
-	statusRunning  = "running"
-	statusDraining = "draining"
-	statusStopped  = "stopped"
-
 	childLoopbackHost            = "127.0.0.1"
 	maxChildPort                 = 65535
 	storageModePostgres          = "postgres"
@@ -52,7 +47,7 @@ type child struct {
 	storageMode   string
 	binPath       string
 	port          int
-	adminPort     int
+	adminPort     atomic.Int64
 	stop          context.CancelFunc
 	forceStopCh   chan struct{}
 	forceStopOnce sync.Once
@@ -60,7 +55,7 @@ type child struct {
 	ready         chan struct{} // closed after readiness succeeds
 	readyOnce     sync.Once
 	proxyTarget   *proxy.Target
-	status        string
+	status        generationState
 	restart       bool
 }
 
@@ -82,18 +77,24 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg            config.Config
-	processes      map[string]*child
-	draining       map[string][]*child
-	children       map[*child]struct{}
-	downloading    map[string]struct{}
-	allocatedPorts map[int]struct{}
-	reservedPorts  map[int]struct{}
-	childCtx       context.Context
-	cancelChildren context.CancelFunc
-	hostDraining   bool
-	mu             sync.Mutex
-	routes         atomic.Value // proxy.RouteTable
+	cfg               config.Config
+	processes         map[string]*child
+	draining          map[string][]*child
+	children          map[*child]struct{}
+	downloading       map[string]struct{}
+	allocatedPorts    map[int]struct{}
+	reservedPorts     map[int]struct{}
+	operations        map[uint64]controlOperation
+	nextOperationID   uint64
+	conditions        Conditions
+	healthCache       atomic.Value // []health.StatusEntry
+	healthMonitorOnce sync.Once
+	available         chan struct{}
+	childCtx          context.Context
+	cancelChildren    context.CancelFunc
+	hostDraining      bool
+	mu                sync.Mutex
+	routes            atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
@@ -107,10 +108,13 @@ func NewManager(cfg config.Config) *Manager {
 		downloading:    make(map[string]struct{}),
 		allocatedPorts: make(map[int]struct{}),
 		reservedPorts:  reservedChildPorts(),
+		operations:     make(map[uint64]controlOperation),
 		childCtx:       childCtx,
 		cancelChildren: cancelChildren,
+		available:      make(chan struct{}, 1),
 	}
 	m.routes.Store(proxy.RouteTable{})
+	m.healthCache.Store([]health.StatusEntry{})
 	return m
 }
 
@@ -208,6 +212,10 @@ func (m *Manager) RouteTable() *atomic.Value {
 	return &m.routes
 }
 
+func (m *Manager) Available() <-chan struct{} {
+	return m.available
+}
+
 func (m *Manager) Status() []health.StatusEntry {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -237,7 +245,7 @@ func statusEntry(c *child) health.StatusEntry {
 	entry := health.StatusEntry{
 		Name:          c.version.Name,
 		Port:          c.port,
-		Status:        c.status,
+		Status:        healthGenerationStatus(c.status),
 		SHA256:        c.archiveSHA256,
 		BinaryVersion: c.binaryVersion,
 	}
@@ -317,13 +325,18 @@ func (m *Manager) StatusWithInflight(ctx context.Context) []health.StatusEntry {
 // The desired sha256 is the archive identity from the oracle. Downloaded
 // versions also record local install metadata so we can distinguish archive
 // identity from the extracted executable bytes on disk.
-func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error {
-	m.mu.Lock()
-	if m.hostDraining {
-		m.mu.Unlock()
-		return ErrHostDraining
+func (m *Manager) Reconcile(parent context.Context, desired []oracle.Version) error {
+	ctx, operationID, err := m.beginOperation(parent, operationReconcile)
+	if err != nil {
+		return err
 	}
-	m.mu.Unlock()
+	defer m.endOperation(operationID)
+	desiredCount, err := m.reconcile(ctx, desired)
+	m.recordReconcileResult(desiredCount, err)
+	return err
+}
+
+func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int, error) {
 
 	// Step 0: build desired set, injecting forced versions.
 	desiredSet := make(map[string]oracle.Version, len(desired))
@@ -392,12 +405,16 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	m.mu.Unlock()
 
 	// Phase B (no lock): resolve hashes, do disk I/O for overrides and hash checks.
+	var actionErrs []error
 	for _, o := range overrides {
 		if o.blockedByDrain {
 			slog.Info("version start deferred while previous child is draining", "version", o.version.Name)
 			continue
 		}
-		m.reconcileOverride(ctx, o.version, o.overrideSrc, o.binPath)
+		if err := m.reconcileOverride(ctx, o.version, o.overrideSrc, o.binPath); err != nil {
+			slog.Error("override reconcile failed", "version", o.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("override %s: %w", o.version.Name, err))
+		}
 	}
 
 	var toDownload []versionAction
@@ -454,7 +471,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	m.mu.Lock()
 	if m.hostDraining {
 		m.mu.Unlock()
-		return ErrHostDraining
+		return len(desiredSet), ErrHostDraining
 	}
 	var startErrs []error
 	started := 0
@@ -493,7 +510,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for name, c := range m.processes {
 		if _, wanted := desiredSet[name]; !wanted {
 			toStop = append(toStop, c)
-			c.status = statusDraining
+			transitionGenerationLocked(c, statusRetiring)
 			c.restart = false
 			delete(m.processes, name)
 			m.draining[name] = append(m.draining[name], c)
@@ -521,6 +538,7 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for _, a := range scheduledDownloads {
 		if err := m.downloadAndStart(ctx, a.version, a.sha256); err != nil {
 			slog.Error("download or start failed, skipping", "version", a.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("download or start %s: %w", a.version.Name, err))
 		}
 	}
 
@@ -528,11 +546,12 @@ func (m *Manager) Reconcile(ctx context.Context, desired []oracle.Version) error
 	for _, a := range toSwap {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
+			actionErrs = append(actionErrs, fmt.Errorf("swap %s: %w", a.version.Name, err))
 		}
 	}
 
 	m.gcInstalledVersions(desiredHashes)
-	return errors.Join(startErrs...)
+	return len(desiredSet), errors.Join(append(startErrs, actionErrs...)...)
 }
 
 type versionAction struct {
@@ -550,11 +569,11 @@ func (m *Manager) versionStartBlockedLocked(name string) bool {
 
 // reconcileOverride handles a version with a local override binary.
 // Does disk I/O outside the lock, then takes the lock to update state.
-func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overrideSrc, binPath string) {
+func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overrideSrc, binPath string) error {
 	m.mu.Lock()
 	if m.hostDraining {
 		m.mu.Unlock()
-		return
+		return ErrHostDraining
 	}
 	m.mu.Unlock()
 
@@ -566,7 +585,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
 			"error", statErr,
 		)
-		return
+		return statErr
 	} else if stat.IsDir() {
 		slog.Error(
 			"override path points to directory, expected file",
@@ -574,13 +593,13 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 			"path", overrideSrc,
 			"env_key", fmt.Sprintf("VERSIOND_OVERRIDE_%s", strings.ReplaceAll(v.Name, ".", "_")),
 		)
-		return
+		return fmt.Errorf("override path %s is a directory", overrideSrc)
 	}
 
 	srcHash, err := download.HashFile(overrideSrc)
 	if err != nil {
 		slog.Error("override source unreadable", "version", v.Name, "path", overrideSrc, "error", err)
-		return
+		return err
 	}
 	overrideID := "override:" + srcHash
 
@@ -592,7 +611,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	if isRunning && existing.binPath == binPath && existing.archiveSHA256 == overrideID {
 		diskHash, hashErr := download.HashFile(binPath)
 		if hashErr == nil && diskHash == srcHash {
-			return // already running the same override binary
+			return nil // already running the same override binary
 		}
 	}
 	if isRunning {
@@ -600,24 +619,26 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		m.mu.Lock()
 		if m.hostDraining {
 			m.mu.Unlock()
-			return
+			return ErrHostDraining
 		}
 		m.mu.Unlock()
 		slog.Info("override binary changed, restarting", "version", v.Name)
 		existing.Stop()
-		waitForChild(existing)
+		if err := waitForChildContext(ctx, existing); err != nil {
+			return err
+		}
 	}
 
 	// Disk I/O outside the lock.
 	binDir := filepath.Join(m.cfg.BinDir, v.Name)
 	if err := os.MkdirAll(binDir, 0755); err != nil {
 		slog.Error("override mkdir failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 
 	if err := atomicCopy(overrideSrc, binPath); err != nil {
 		slog.Error("override copy failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 
 	slog.Info("using override binary", "version", v.Name, "path", overrideSrc)
@@ -625,7 +646,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 	m.mu.Lock()
 	if m.hostDraining {
 		m.mu.Unlock()
-		return
+		return ErrHostDraining
 	}
 	// Verify the process is still the one we captured before deleting.
 	// A concurrent reconcile could have replaced it.
@@ -633,24 +654,25 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		if current, ok := m.processes[v.Name]; ok {
 			if current != existing {
 				m.mu.Unlock()
-				return
+				return nil
 			}
 			delete(m.processes, v.Name)
 		} else if m.versionStartBlockedLocked(v.Name) {
 			m.mu.Unlock()
-			return
+			return nil
 		}
 	} else if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
 		m.mu.Unlock()
-		return
+		return nil
 	}
 	if err := m.startChild(ctx, v, overrideID, binPath, true); err != nil {
 		m.mu.Unlock()
 		slog.Error("override start failed", "version", v.Name, "error", err)
-		return
+		return err
 	}
 	m.rebuildRoutes()
 	m.mu.Unlock()
+	return nil
 }
 
 func versionNames(vs []oracle.Version) []string {
@@ -861,10 +883,15 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 		return ErrHostDraining
 	}
 	m.mu.Unlock()
-	if !m.rollingOverlapAllowed(v.Name, old, newBinPath) {
+	if !m.rollingOverlapAllowedContext(ctx, v.Name, old, newBinPath) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
 		old.Stop()
-		waitForChild(old)
+		if err := waitForChildContext(ctx, old); err != nil {
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return err
+		}
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		if current, ok := m.processes[v.Name]; ok && current == old {
@@ -894,7 +921,7 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	go m.runChild(newChild.ctx, newChild.child)
 	if err := waitForChildReady(ctx, newChild.child); err != nil {
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
 		m.mu.Unlock()
@@ -906,22 +933,22 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	if m.hostDraining {
 		m.mu.Unlock()
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		return ErrHostDraining
 	}
 	if current, ok := m.processes[v.Name]; !ok || current != old {
 		m.mu.Unlock()
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		return fmt.Errorf("current child changed during swap")
 	}
 	if newChild.child.status != statusRunning || childDone(newChild.child) {
 		m.mu.Unlock()
 		newChild.child.Stop()
-		waitForChild(newChild.child)
+		_ = waitForChildContext(ctx, newChild.child)
 		return fmt.Errorf("new child stopped before swap")
 	}
-	old.status = statusDraining
+	transitionGenerationLocked(old, statusRetiring)
 	old.restart = false
 	delete(m.processes, v.Name)
 	m.draining[v.Name] = append(m.draining[v.Name], old)
@@ -1129,7 +1156,7 @@ func (m *Manager) newChild(_ context.Context, v oracle.Version, sha, binPath str
 		forceStopCh:   make(chan struct{}),
 		done:          make(chan struct{}),
 		ready:         make(chan struct{}),
-		status:        statusStarting,
+		status:        statusPreparing,
 		restart:       restart,
 	}
 	m.children[c] = struct{}{}
@@ -1159,16 +1186,9 @@ func (m *Manager) BeginHostDrain() {
 	for c := range m.children {
 		c.restart = false
 	}
-	for _, c := range m.processes {
-		c.restart = false
-	}
-	for _, children := range m.draining {
-		for _, c := range children {
-			c.restart = false
-		}
-	}
 	m.downloading = make(map[string]struct{})
 	m.mu.Unlock()
+	m.cancelOperations()
 }
 
 func (m *Manager) HostDraining() bool {
@@ -1280,7 +1300,7 @@ func (m *Manager) prepareChildrenForDrain() []*child {
 	for _, c := range children {
 		c.restart = false
 		if !childDone(c) {
-			c.status = statusDraining
+			transitionGenerationLocked(c, statusRetiring)
 		}
 		delete(m.processes, c.version.Name)
 		m.appendDrainingLocked(c)
@@ -1333,6 +1353,7 @@ func (m *Manager) snapshotChildren() []*child {
 }
 
 func (m *Manager) ForceStopChildren() {
+	m.cancelOperations()
 	m.cancelChildren()
 	for _, c := range m.snapshotChildren() {
 		c.ForceStop()
@@ -1343,6 +1364,9 @@ func (m *Manager) Shutdown(ctx context.Context) error {
 	children := m.prepareChildrenForDrain()
 	defer m.clearStoppedChildren()
 	for _, c := range children {
+		m.mu.Lock()
+		transitionGenerationLocked(c, statusStopping)
+		m.mu.Unlock()
 		c.Stop()
 	}
 	m.cancelChildren()
@@ -1398,10 +1422,20 @@ func waitForChild(c *child) {
 	<-c.Done()
 }
 
+func waitForChildContext(ctx context.Context, c *child) error {
+	select {
+	case <-c.Done():
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func (m *Manager) runChild(ctx context.Context, c *child) {
 	defer close(c.done)
 	defer func() {
 		m.mu.Lock()
+		transitionGenerationLocked(c, statusStopped)
 		delete(m.children, c)
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			delete(m.processes, c.version.Name)
@@ -1409,7 +1443,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.removeDrainingLocked(c)
 		m.releasePort(c.port)
-		m.releasePort(c.adminPort)
+		m.releasePort(int(c.adminPort.Load()))
 		m.mu.Unlock()
 	}()
 
@@ -1419,24 +1453,33 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		return
 	}
 
-	preflight, err := preflightChildWithAdminProbe(c.binPath, c.version.Name, m.devshardAdminEligible())
+	preflight, err := preflightChildWithAdminProbeContext(
+		ctx,
+		c.binPath,
+		c.version.Name,
+		m.devshardAdminEligible(),
+	)
 	if err != nil {
 		slog.Error("child preflight failed", "version", c.version.Name, "bin", c.binPath, "error", err)
+		m.mu.Lock()
+		transitionGenerationFailureLocked(c)
+		m.mu.Unlock()
 		return
 	}
 	m.mu.Lock()
 	c.binaryVersion = preflight.binaryLogVersion
 	c.storageMode = preflight.storageMode
-	if preflight.adminAPISupported && c.adminPort == 0 {
+	if preflight.adminAPISupported && c.adminPort.Load() == 0 {
 		adminPort, portErr := m.assignPort()
 		if portErr != nil {
-			c.status = statusStopped
+			transitionGenerationFailureLocked(c)
 			m.mu.Unlock()
 			slog.Error("allocate child admin port failed", "version", c.version.Name, "error", portErr)
 			return
 		}
-		c.adminPort = adminPort
+		c.adminPort.Store(int64(adminPort))
 	}
+	transitionGenerationLocked(c, statusStarting)
 	adminAddr := c.adminAddr()
 	m.mu.Unlock()
 
@@ -1449,6 +1492,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			return
 		default:
 		}
+
+		m.mu.Lock()
+		if c.status == statusFailed {
+			transitionGenerationLocked(c, statusStarting)
+		}
+		m.mu.Unlock()
 
 		cmd := exec.Command(c.binPath,
 			"--data-dir", dataDir,
@@ -1465,7 +1514,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		if err != nil {
 			slog.Error("child start failed", "version", c.version.Name, "error", err)
 			m.mu.Lock()
-			c.status = statusStopped
+			transitionGenerationFailureLocked(c)
 			m.mu.Unlock()
 			return
 		}
@@ -1475,8 +1524,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			proc.ForceStop()
 			_ = proc.Wait()
 			m.mu.Lock()
-			c.status = statusStopped
 			restart := c.restart
+			transitionGenerationFailureLocked(c)
 			if current, ok := m.processes[c.version.Name]; ok && current == c {
 				m.rebuildRoutes()
 			}
@@ -1494,7 +1543,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			continue
 		}
 		m.mu.Lock()
-		c.status = statusRunning
+		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
 		c.readyOnce.Do(func() { close(c.ready) })
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
@@ -1513,8 +1562,8 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		slog.Error("child exited", "version", c.version.Name, "error", err)
 
 		m.mu.Lock()
-		c.status = statusStopped
 		restart := c.restart
+		transitionGenerationFailureLocked(c)
 		if current, ok := m.processes[c.version.Name]; ok && current == c {
 			m.rebuildRoutes()
 		}
@@ -1603,6 +1652,15 @@ func parseDevshardShutdownGrace(raw string) time.Duration {
 }
 
 func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPath string) bool {
+	return m.rollingOverlapAllowedContext(context.Background(), versionName, old, newBinPath)
+}
+
+func (m *Manager) rollingOverlapAllowedContext(
+	ctx context.Context,
+	versionName string,
+	old *child,
+	newBinPath string,
+) bool {
 	name := strings.ToLower(m.cfg.BinaryName)
 	if name != "devshard" && name != "devshardd" {
 		return true
@@ -1624,7 +1682,7 @@ func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPa
 		return false
 	}
 
-	newMode, err := readStorageMode(newBinPath)
+	newMode, err := readStorageModeContext(ctx, newBinPath)
 	if err != nil {
 		slog.Warn(
 			"rolling overlap disabled: cannot probe new devshard storage mode",
@@ -1667,17 +1725,22 @@ func childDone(c *child) bool {
 }
 
 func (c *child) lifecyclePort() int {
-	if c.adminPort != 0 {
-		return c.adminPort
+	if adminPort := int(c.adminPort.Load()); adminPort != 0 {
+		return adminPort
 	}
 	return c.port
 }
 
+func (c *child) setAdminPort(port int) {
+	c.adminPort.Store(int64(port))
+}
+
 func (c *child) adminAddr() string {
-	if c.adminPort == 0 {
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
 		return ""
 	}
-	return fmt.Sprintf("%s:%d", childLoopbackHost, c.adminPort)
+	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
 func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
@@ -1690,11 +1753,12 @@ func waitForReady(ctx context.Context, port int, path string, timeout time.Durat
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
 func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
-	if c.adminPort == 0 {
+	adminPort := int(c.adminPort.Load())
+	if adminPort == 0 {
 		return waitForReady(ctx, c.port, path, timeout)
 	}
 	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
-		return readyEndpointReady(probeCtx, client, c.adminPort, path, false) &&
+		return readyEndpointReady(probeCtx, client, adminPort, path, false) &&
 			publicEndpointReady(probeCtx, client, c.port)
 	})
 }
@@ -1841,6 +1905,9 @@ func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 	case <-timer.C:
 		slog.Warn("proxy drain timeout reached", "version", c.version.Name, "port", c.port)
 	}
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusDraining)
+	m.mu.Unlock()
 	if err := m.requestDrain(context.Background(), c); err != nil {
 		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "error", err)
 	}
@@ -1848,6 +1915,14 @@ func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 }
 
 func (m *Manager) drainAndStop(c *child) {
+	m.mu.Lock()
+	if c.status == statusRunning {
+		transitionGenerationLocked(c, statusRetiring)
+	}
+	if c.status == statusRetiring {
+		transitionGenerationLocked(c, statusDraining)
+	}
+	m.mu.Unlock()
 	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 }
 
@@ -1895,6 +1970,9 @@ func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {
 		case <-time.After(m.cfg.DrainPollInterval):
 		}
 	}
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusStopping)
+	m.mu.Unlock()
 	c.Stop()
 	waitForChild(c)
 }
@@ -1988,6 +2066,12 @@ func (m *Manager) rebuildRoutes() {
 		}
 	}
 	m.routes.Store(routes)
+	if len(routes) > 0 {
+		select {
+		case m.available <- struct{}{}:
+		default:
+		}
+	}
 	for version, target := range previous {
 		if routes[version] != target {
 			target.Retire()

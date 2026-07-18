@@ -15,14 +15,18 @@ import (
 
 // Server serves OpenAI-compatible /v1/chat/completions.
 type Server struct {
-	echo  *echo.Echo
-	mu    sync.RWMutex
-	fault FaultConfig
+	echo       *echo.Echo
+	mu         sync.RWMutex
+	fault      FaultConfig
+	streamGate chan struct{}
 }
 
 // NewServer builds the HTTP server.
 func NewServer(cfg Config) *Server {
 	s := &Server{fault: cfg.Faults}
+	if s.fault.PauseStream {
+		s.streamGate = make(chan struct{})
+	}
 	if s.fault.StreamChunkDelay <= 0 {
 		s.fault.StreamChunkDelay = 5 * time.Millisecond
 	}
@@ -31,20 +35,48 @@ func NewServer(cfg Config) *Server {
 	e.POST("/v1/chat/completions", s.handleChatCompletions)
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
 	e.POST("/testenv/fault", s.handleFaultPatch)
+	e.POST("/testenv/stream/release", s.handleStreamRelease)
 	s.echo = e
 	return s
-}
-
-func (s *Server) faults() FaultConfig {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return s.fault
 }
 
 func (s *Server) patchFault(p FaultPatch) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if p.PauseStream != nil {
+		if *p.PauseStream {
+			s.releaseStreamLocked()
+			s.streamGate = make(chan struct{})
+		} else {
+			s.releaseStreamLocked()
+		}
+	}
 	p.apply(&s.fault)
+}
+
+func (s *Server) streamFaults() (FaultConfig, <-chan struct{}) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.fault, s.streamGate
+}
+
+func (s *Server) releaseStreamLocked() {
+	if s.streamGate == nil {
+		return
+	}
+	select {
+	case <-s.streamGate:
+	default:
+		close(s.streamGate)
+	}
+}
+
+func (s *Server) handleStreamRelease(c echo.Context) error {
+	s.mu.Lock()
+	s.releaseStreamLocked()
+	s.fault.PauseStream = false
+	s.mu.Unlock()
+	return c.JSON(http.StatusOK, map[string]string{"status": "released"})
 }
 
 func (s *Server) handleFaultPatch(c echo.Context) error {
@@ -57,7 +89,7 @@ func (s *Server) handleFaultPatch(c echo.Context) error {
 }
 
 func (s *Server) handleChatCompletions(c echo.Context) error {
-	f := s.faults()
+	f, streamGate := s.streamFaults()
 	if f.Latency > 0 {
 		time.Sleep(f.Latency)
 	}
@@ -80,7 +112,7 @@ func (s *Server) handleChatCompletions(c echo.Context) error {
 
 	text := completionText(body)
 	if req.Stream {
-		return s.streamCompletion(c, req.Model, text, body, f)
+		return s.streamCompletion(c, req.Model, text, body, f, streamGate)
 	}
 	return s.jsonCompletion(c, req.Model, text, body)
 }
@@ -102,8 +134,8 @@ func (s *Server) jsonCompletion(c echo.Context, model, text string, body []byte)
 				"role":    "assistant",
 				"content": text,
 			},
-			"logprobs":       nil,
-			"finish_reason":  "stop",
+			"logprobs":      nil,
+			"finish_reason": "stop",
 		}},
 		"usage": map[string]any{
 			"prompt_tokens":     promptTok,
@@ -114,7 +146,14 @@ func (s *Server) jsonCompletion(c echo.Context, model, text string, body []byte)
 	return c.JSON(http.StatusOK, resp)
 }
 
-func (s *Server) streamCompletion(c echo.Context, model, text string, body []byte, f FaultConfig) error {
+func (s *Server) streamCompletion(
+	c echo.Context,
+	model string,
+	text string,
+	body []byte,
+	f FaultConfig,
+	streamGate <-chan struct{},
+) error {
 	c.Response().Header().Set(echo.HeaderContentType, "text/event-stream")
 	c.Response().Header().Set("Cache-Control", "no-cache")
 	c.Response().Header().Set("Connection", "keep-alive")
@@ -157,6 +196,7 @@ func (s *Server) streamCompletion(c echo.Context, model, text string, body []byt
 		tokens = []rune(" ")
 	}
 	first := true
+	paused := false
 	for i, r := range tokens {
 		if first && f.DropFirstChunk {
 			first = false
@@ -165,6 +205,14 @@ func (s *Server) streamCompletion(c echo.Context, model, text string, body []byt
 		first = false
 		if err := writeChunk(map[string]any{"content": string(r)}, nil); err != nil {
 			return err
+		}
+		if !paused && f.PauseStream && streamGate != nil {
+			paused = true
+			select {
+			case <-streamGate:
+			case <-c.Request().Context().Done():
+				return c.Request().Context().Err()
+			}
 		}
 		if f.PartialStream && i == len(tokens)/2 {
 			return nil
