@@ -161,7 +161,7 @@ func SetValidationRate(t *testing.T, client *http.Client, mockDapiHTTP string, r
 	PatchTestenvParams(t, client, mockDapiHTTP, adminface.ParamsRequest{ValidationRate: &rate})
 }
 
-// SetValidationRate100 is SetValidationRate(10000) — 100% for dense lease races (S9).
+// SetValidationRate100 configures a 100% rate for dense lease races.
 func SetValidationRate100(t *testing.T, client *http.Client, mockDapiHTTP string) {
 	t.Helper()
 	SetValidationRate(t, client, mockDapiHTTP, 10000)
@@ -199,7 +199,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{
-				{Role: "user", Content: fmt.Sprintf("citest s9 lease race non-stream %d", i)},
+				{Role: "user", Content: fmt.Sprintf("citest validation lease race non-stream %d", i)},
 			},
 			MaxTokens: 32,
 		}
@@ -210,7 +210,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{
-				{Role: "user", Content: fmt.Sprintf("citest s9 lease race stream %d", i)},
+				{Role: "user", Content: fmt.Sprintf("citest validation lease race stream %d", i)},
 			},
 			MaxTokens: 32,
 		}

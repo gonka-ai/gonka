@@ -11,13 +11,13 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestO1_ObservabilitySmoke starts the S1 stack with Jaeger/Loki/Prometheus/Grafana,
+// TestO1_ObservabilitySmoke starts the standard stack with observability services,
 // runs a gateway chat, and asserts devshardd spans and structured logs appear.
 func TestO1_ObservabilitySmoke(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootS1ObsStack(t, "citest-o1-*")
+	stack, cfg, eps, obs := harness.BootObservabilityStack(t, "citest-o1-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -26,7 +26,7 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 	})
 
 	harness.WaitObservabilityReady(t, obs, 3*time.Minute)
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 
 	model := config.PrimaryModelID(cfg)

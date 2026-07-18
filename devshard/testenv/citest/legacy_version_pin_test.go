@@ -20,14 +20,14 @@ const (
 	legacyVersionPath = "v1"
 )
 
-// TestS7_LegacyVersionPinnedToSingleHost asserts versiond-router sends
+// TestLegacyVersionPinnedToSingleHost asserts versiond-router sends
 // VERSIOND_NON_HA_VERSIONS prefixes only to VERSIOND_LEGACY_HOST, while other
 // versions sticky-hash across the pool (see pr-1366-deploy-test-plan.md §3.2).
-func TestS7_LegacyVersionPinnedToSingleHost(t *testing.T) {
+func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s7-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-legacy-version-pin-*")
 	client := harness.HTTPClient()
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -70,7 +70,7 @@ func TestS7_LegacyVersionPinnedToSingleHost(t *testing.T) {
 	_, upstreamA, _, upstreamB := harness.FindDistinctStickySessions(t, client, eps.RouterHTTP, haVersion)
 	require.NotEqual(t, upstreamA, upstreamB)
 
-	urlHA := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "citest-s7-ha-check", "/healthz")
+	urlHA := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "citest-legacy-version-pin-ha-check", "/healthz")
 	haBackend := harness.RequireResponseHeader(t, client, urlHA, versiondBackendHeader)
 	require.Equal(t, backendHA, haBackend, "HA path X-Versiond-Backend")
 

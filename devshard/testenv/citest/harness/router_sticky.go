@@ -21,12 +21,12 @@ func FindDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 	if client == nil {
 		client = HTTPClient()
 	}
-	sessionA = "citest-s6-session-a"
+	sessionA = "citest-failover-session-a"
 	urlA := RouterSessionURL(routerHTTP, version, sessionA, "/healthz")
 	upstreamA = RequireResponseHeader(t, client, urlA, StickyUpstreamHeader)
 
 	for n := 0; n < 64; n++ {
-		candidate := fmt.Sprintf("citest-s6-%d", n)
+		candidate := fmt.Sprintf("citest-failover-%d", n)
 		if candidate == sessionA {
 			continue
 		}

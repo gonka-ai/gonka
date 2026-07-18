@@ -194,7 +194,7 @@ HA means **one escrow participant** is served by **N versiond/devshardd processe
 | Topology | Identity wiring | What it proves |
 | --- | --- | --- |
 | **Join / real HA** (`deploy/join/docker-compose.versiond.yml`) | Every HA versiond uses the **same** `KEY_NAME` and mounts the **same** keyring | Sticky routing, shared Postgres sessions, validation-lease dedup for that participant |
-| **Testenv multi** (`gencompose`) | Every versiond replica uses `KEY_NAME=hosts[0]` (usually `versiond-0`); other host keys stay in the shared keyring + participants but are **not** HA replica identities; escrow slots all belong to the HA participant | Same as join for the HA participant; S7/S8 exercise that topology |
+| **Testenv multi** (`gencompose`) | Every versiond replica uses `KEY_NAME=hosts[0]` (usually `versiond-0`); other host keys stay in the shared keyring + participants but are **not** HA replica identities; escrow slots all belong to the HA participant | Same as join for the HA participant; legacy routing and storage migration tests exercise that topology |
 
 For **manual** HA checks in this document (Phase B, §1.7 Phase 4, §1.8 T2/T5, §1.9, and §3), keep join/testenv multi as above: **identical `KEY_NAME` / key material on all hosts in `versiond_ha_pool`**. Validation leases (`devshard_validation_leases`) only dedupe work when those processes share one signer address (`instance_address`).
 
@@ -268,7 +268,7 @@ migrated) sessions; `X-Versiond-Backend: versiond_legacy` for non-HA paths.
 4. Confirm non-HA paths still show `X-Versiond-Backend: versiond_legacy` and
    `X-Upstream-Addr` always the legacy host.
 5. Exercise stickiness + stop-one-host behaviour **on HA versions only**
-   (testenv S2 / S6 / S7 patterns). With same-key replicas, optionally confirm
+   (router stickiness, failover, and legacy routing tests). With same-key replicas, optionally confirm
    validation leases: one row per `(epoch_id, escrow_id, inference_id)` in
    `devshard_validation_leases`.
 
@@ -305,13 +305,13 @@ make -C versiond-router test-render   # config render only (no live nginx)
 
 | Focus | Scenarios | Covers legacy pin (`v < v4` → one host)? |
 | --- | --- | --- |
-| HA stickiness | **S2** (`TestS2_RouterStickiness`) | **No** — probes a version **outside** `VERSIOND_NON_HA_VERSIONS` (testenv: `v2`) and asserts **distinct** upstreams |
-| Validation lease exclusivity | **S9** (`TestS9_ValidationLeaseRace*`) | **No** — same-key HA + Postgres lease PASS/FAIL; see **§2 Validation race plan** (and citest S9) |
-| Legacy pin | **S7** (`TestS7_LegacyVersionPinnedToSingleHost`) | **Yes** — `v1` (in non-HA list) → `versiond_legacy` / `versiond-0` only; other versions still multi-upstream |
-| SQLite → HA-fail → migrate → HA | **S8** (`TestS8_SqliteHaFailMigrate`) | **Yes** — full §1.7 Phases 0–4 |
-| One HA upstream down | **S6** | **No** — first-502 failover to survivor (HA pool) |
-| Gateway chat / gRPC | S5, G1–G4 | No |
-| Params / epoch | S3, S4 | No |
+| HA stickiness | `TestRouterStickiness` | **No** — probes a version **outside** `VERSIOND_NON_HA_VERSIONS` (testenv: `v2`) and asserts **distinct** upstreams |
+| Validation lease exclusivity | `TestValidationLeaseRace*` | **No** — same-key HA + Postgres lease PASS/FAIL; see **§2 Validation race plan** |
+| Legacy pin | `TestLegacyVersionPinnedToSingleHost` | **Yes** — `v1` (in non-HA list) → `versiond_legacy` / `versiond-0` only; other versions still multi-upstream |
+| SQLite → HA-fail → migrate → HA | `TestSQLiteToPostgresHAMigration` | **Yes** — full §1.7 Phases 0–4 |
+| One HA upstream down | `TestVersiondStickySessionFailover` | **No** — first-502 failover to survivor (HA pool) |
+| Gateway chat / gRPC | `TestGatewayChat`, G1–G4 | No |
+| Params / epoch | `TestParamsLongPoll`, `TestEpochSwitch` | No |
 | Faults | A1–A4 | No |
 | Router template render | `versiond-router` `test-render` | **Partial** — asserts map text for mixed / all-legacy / `*`; does **not** hit a running nginx or check `X-Upstream-Addr` |
 
@@ -319,20 +319,20 @@ make -C versiond-router test-render   # config render only (no live nginx)
 
 **Goal:** with ≥2 versiond hosts in `VERSIOND_HOSTS`, traffic for a non-HA version path never leaves `VERSIOND_LEGACY_HOST`.
 
-#### Autotest: **S7** (`TestS7_LegacyVersionPinnedToSingleHost`) — implemented
+#### Autotest: `TestLegacyVersionPinnedToSingleHost` — implemented
 
 ```bash
 make -C devshard/testenv build-devshardd citest-images
 cd devshard/testenv && TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
-  -run TestS7_LegacyVersionPinnedToSingleHost -count=1 -v -timeout 45m
+  -run TestLegacyVersionPinnedToSingleHost -count=1 -v -timeout 45m
 ```
 
-#### Autotest: **S8** (`TestS8_SqliteHaFailMigrate`) — §1.7 Phases 0–4
+#### Autotest: `TestSQLiteToPostgresHAMigration` — §1.7 Phases 0–4
 
 ```bash
 make -C devshard/testenv build-devshardd citest-images
 cd devshard/testenv && TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
-  -run TestS8_SqliteHaFailMigrate -count=1 -v -timeout 45m
+  -run TestSQLiteToPostgresHAMigration -count=1 -v -timeout 45m
 ```
 
 | Step | Action | Expect |
@@ -388,7 +388,8 @@ VERSIOND_NON_HA_VERSIONS=v1 v2 v3       # join-style; whitespace or commas
 | Paths in `VERSIOND_NON_HA_VERSIONS` | `X-Versiond-Backend: versiond_legacy`, always the legacy host |
 | Path **not** in the list (e.g. `v4`) with a **single** host | `versiond_ha_pool` but **no** `Devshard-Ha` header (header only when `len(VERSIOND_HOSTS) > 1`) |
 
-Also covered by **S7** once multi-host is enabled (Phase 2).
+Also covered by `TestLegacyVersionPinnedToSingleHost` once multi-host is enabled
+(Phase 2).
 
 #### Phase 1 — Create v4 sessions on SQLite (still single host)
 
@@ -487,13 +488,13 @@ With multi-host router + `postgres` mode still set:
 | Check | Expect |
 | --- | --- |
 | `/devshard/v4/…` | `versiond_ha_pool`, `Devshard-Ha: true`, **2xx** (no 503 from HA guard) |
-| Stickiness | Same session id → same upstream across retries; distinct sessions can hit both hosts (S2-style) |
+| Stickiness | Same session id → same upstream across retries; distinct sessions can hit both hosts (`TestRouterStickiness`) |
 | Migrated escrows | Readable/servable from either HA host (shared Postgres), not only the original SQLite volume |
 | NON_HA paths | Unchanged — still legacy host / no `Devshard-Ha` |
 
 #### Phase checklist
 
-Covered by **S8** (`TestS8_SqliteHaFailMigrate`) in testenv (citest version name is
+Covered by `TestSQLiteToPostgresHAMigration` in testenv (citest version name is
 `v2`, not `v4`):
 
 - [x] Separate SQLite volumes per versiond; one shared Postgres
@@ -526,7 +527,7 @@ in §1.7).
 | T2 | Create escrow / bind session on **v4** (postgres mode); write diffs | Session lands in **shared Postgres**; sticky hash may pin either HA host |
 | T3 | Mix: several NON_HA + several v4 escrows active concurrently | NON_HA SQLite-bound on legacy volume; v4 Postgres-bound; no cross-host SQLite bleed |
 | T4 | Stop a **non-legacy** HA host while NON_HA traffic runs | NON_HA unaffected (never routed there) |
-| T5 | Stop one HA host while **v4** sticky sessions exist | First-502 failover to survivor (S6); mid-stream SSE not spliced |
+| T5 | Stop one HA host while **v4** sticky sessions exist | First-502 failover to survivor; mid-stream SSE not spliced |
 | T6 | Boot v4 child with **empty** data dir + `postgres` mode | Boot migrate finds nothing; Postgres-only |
 | T7 | (Negative) §1.7 Phase 2 — multi-host + sqlite for v4 | 503 from `Devshard-Ha` / `RequireConfiguredForHA` |
 | T8 | §1.7 Phases 3–4 — sqlite estate then `postgres` mode on that data dir | Full migrate + HA serve; row inventory matches |
@@ -557,8 +558,10 @@ Checklist:
 - [ ] **Same `KEY_NAME` on all HA versiond replicas** of the participant under test
       (join + testenv multi default)
 - [ ] v4 chat stream + non-stream through router → Postgres-backed session
-- [ ] **NON_HA path:** covered by **S7** (`X-Versiond-Backend: versiond_legacy`)
-- [ ] HA path: `versiond_ha_pool` with ≥2 distinct upstreams (S2 / S7)
+- [ ] **NON_HA path:** covered by `TestLegacyVersionPinnedToSingleHost`
+      (`X-Versiond-Backend: versiond_legacy`)
+- [ ] HA path: `versiond_ha_pool` with ≥2 distinct upstreams
+      (`TestRouterStickiness` / `TestLegacyVersionPinnedToSingleHost`)
 - [ ] §1.7 walkthrough (sqlite → Devshard-Ha 503 → postgres migrate → HA OK)
 - [ ] `DEVSHARD_STORAGE_MODE=postgres` on HA children; join fails closed without
       Postgres password / `PGHOST` as documented
@@ -589,7 +592,8 @@ Companion to §1.1.1 (same participant key) and §1.6 / §1.8 (HA routing).
 acquires a row in `devshard_validation_leases`; the loser cannot insert a
 second lease and must not submit a second `MsgValidation`.
 
-This is a **manual** walkthrough (also covered by citest **S9**). Primary
+This is a **manual** walkthrough (also covered by
+`TestValidationLeaseRace*`). Primary
 evidence is the Postgres lease table; logs are corroboration.
 
 ### 2.0. Preconditions
@@ -606,13 +610,13 @@ evidence is the Postgres lease table; logs are corroboration.
 | Chat path healthy (gateway → router / solo → mock-openai) | Generates finished inferences for the HA participant to validate |
 | Chain `validation_rate` = **10000** (100%) before escrow create | Every finished inference is a validation candidate → denser lease races (§2.1a) |
 
-**Host count is a minimum, not a ceiling.** Default / citest S9 uses **3** versionds
+**Host count is a minimum, not a ceiling.** The validation lease race citest uses **3** versionds
 (HA pair + one solo). For a manual stack you can add more hosts in
 `config/config.yaml` (`versiond-3`, …); gencompose keeps only the first two in
 `VERSIOND_HOSTS` and treats every `hosts[i≥2]` as an extra solo participant.
 
-**Out of scope:** stickiness alone (S2), legacy pin (S7), sqlite→migrate (S8),
-kill/restart routing (§3). Those do not assert lease exclusivity.
+**Out of scope:** router stickiness, legacy pin, SQLite migration, and
+kill/restart routing (§3). Those tests do not assert lease exclusivity.
 
 ---
 
@@ -731,7 +735,7 @@ escrow Host so both can `Offer` → `LeaseValidator.Acquire`.
 ESCROW=<escrow_id>
 VER=v2
 
-# Session routes have no /healthz — /mempool lazy-loads the Host (same as S6).
+# Session routes have no /healthz; /mempool lazy-loads the Host.
 curl -sS -o /dev/null -w "%{http_code}\n" \
   "http://versiond-0:8080/${VER}/sessions/${ESCROW}/mempool"
 curl -sS -o /dev/null -w "%{http_code}\n" \
@@ -753,7 +757,7 @@ reliable than direct warm.
 ### 2.4. Load + Postgres monitor (automated)
 
 Drive chat load and analyze `devshard_validation_leases` in parallel. Prefer the
-testenv scripts (same checks as citest **S9**).
+testenv scripts (the same checks as `TestValidationLeaseRace*`).
 
 #### Scripts (from `devshard/testenv/`)
 
@@ -823,20 +827,20 @@ docker compose logs -f versiond-0 versiond-1 2>&1 | \
   grep -E 'validation lease|AlreadyLeased|leased by another|mark validation submitted|submit abandoned'
 ```
 
-#### Automated citest (S9)
+#### Automated validation lease race citest
 
 ```bash
 cd devshard/testenv
 make build-devshardd citest-images
 TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
-  -run 'TestS9_' -count=1 -v -timeout 45m
+  -run '^TestValidationLeaseRace' -count=1 -v -timeout 45m
 ```
 
 | Test | Covers |
 | --- | --- |
-| `TestS9_ValidationLeaseRaceCore` | §2.4 load + monitor PASS/FAIL |
-| `TestS9_ValidationLeaseRacePendingStretch` | §2.6a slow ML → pending |
-| `TestS9_ValidationLeaseRaceStaleReclaim` | §2.6b short TTL + pause ML + stop replica |
+| `TestValidationLeaseRaceCore` | §2.4 load + monitor PASS/FAIL |
+| `TestValidationLeaseRacePendingStretch` | §2.6a slow ML → pending |
+| `TestValidationLeaseRaceStaleReclaim` | §2.6b short TTL + pause ML + stop replica |
 
 ---
 
@@ -855,9 +859,9 @@ Record: escrow id, monitor output, status histogram.
 
 ---
 
-### 2.6. Stronger race (also in S9)
+### 2.6. Stronger race
 
-#### 2.6a. Stretch the pending window (S9 `…PendingStretch`)
+#### 2.6a. Stretch the pending window (`TestValidationLeaseRacePendingStretch`)
 
 1. Warm escrow on both replicas (§2.3).
 2. **Slow ML** (testenv: `POST mock-openai /testenv/fault` with high
@@ -876,7 +880,7 @@ ORDER BY claimed_at DESC;
 | Pending rows | At most **one** row per inference while both try |
 | After ML recovers | Row → `submitted`/`skipped`; uniqueness still PASS |
 
-#### 2.6b. Stale reclaim (S9 `…StaleReclaim`)
+#### 2.6b. Stale reclaim (`TestValidationLeaseRaceStaleReclaim`)
 
 Default `DEVSHARD_VALIDATION_LEASE_TTL` is **30m** — only with a shortened TTL.
 
@@ -928,9 +932,9 @@ Restore any fault / TTL env overrides before other scenarios.
 - [ ] Chain `validation_rate` = **10000** before escrow create (§2.1a)
 - [ ] HA routing: `versiond_ha_pool`, multi upstream (§2.2)
 - [ ] Escrow warm on **both** replicas (§2.3)
-- [ ] `./scripts/lease-race-run.sh` (or S9) → monitor **PASS** (§2.4–§2.5)
+- [ ] `./scripts/lease-race-run.sh` (or `TestValidationLeaseRaceCore`) → monitor **PASS** (§2.4–§2.5)
 - [ ] One lease row per inference; `pending` → `submitted`/`skipped` (§2.5)
-- [ ] (Optional / S9) pending stretch + stale reclaim with ML pause (§2.6)
+- [ ] Optional pending stretch + stale reclaim with ML pause (§2.6)
 
 ---
 
@@ -941,7 +945,7 @@ Restore any fault / TTL env overrides before other scenarios.
 - Stale reclaim: `devshard/cmd/devshardd/session/retry.go` (`AcquireOneStale`)
 - HA identity + routing: this document (§1)
 - Testenv scripts: `devshard/testenv/scripts/lease-race-*.sh`
-- Citest S9: `devshard/testenv/citest/s9_validation_lease_race_test.go`
+- Citest: `devshard/testenv/citest/validation_lease_race_test.go`
 - Unit coverage: `devshard/storage/leases_test.go`
 
 
@@ -961,8 +965,8 @@ open a **new** request (which then lands on a survivor).
 
 **Out of scope for this plan:** validation-lease exclusivity (§2), sqlite→migrate
 (§1.7), legacy pin (§1.6). Those are separate. Automated coverage for stop/restart
-semantics also exists as citest **S6** (`TestS6_VersiondStop`,
-`TestS6_VersiondRestartPersistence`); this section is the operator walkthrough.
+semantics also exists as `TestVersiondStickySessionFailover` and
+`TestVersiondRestartSessionPersistence`); this section is the operator walkthrough.
 
 ### 3.0 Preconditions
 

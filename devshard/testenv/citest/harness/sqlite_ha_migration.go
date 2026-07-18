@@ -18,14 +18,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// BootS8MigrateStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
+// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
 // DEVSHARD_STORAGE_MODE=sqlite and VERSIOND_HOSTS=versiond-0 only. versiond-1 is stopped
 // so SQLite sessions land on the legacy host volume.
-func BootS8MigrateStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)

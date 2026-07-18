@@ -19,19 +19,19 @@ type MultiConfigOpts struct {
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
 }
 
-// WriteS1Config writes a minimal multi-versiond (2 hosts) config skeleton for Phase 8 S1.
+// WriteStackConfig writes the standard two-versiond stack config.
 // Service ports are selected at runtime and published on Docker-assigned
 // localhost ports, so citest can coexist with local-test-net and dev stacks.
-// S1 uses the default validation_rate rather than the S9 100% rate.
-func WriteS1Config(t *testing.T, dir string) {
+// It uses the default validation_rate rather than the lease-race 100% rate.
+func WriteStackConfig(t *testing.T, dir string) {
 	t.Helper()
 	WriteMultiConfig(t, dir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2})
 }
 
-// WriteS9Config writes a 3-host multi config for validation lease races:
+// WriteValidationLeaseRaceConfig writes a three-host validation lease config:
 // hosts[0]+hosts[1] = HA same KEY_NAME; hosts[2] = solo executor participant.
 // Seeds validation_rate=10000 (100%) for dense lease races.
-func WriteS9Config(t *testing.T, dir string) {
+func WriteValidationLeaseRaceConfig(t *testing.T, dir string) {
 	t.Helper()
 	WriteMultiConfig(t, dir, MultiConfigOpts{
 		Hosts:          3,

@@ -32,7 +32,7 @@ create/settle paths are gone.
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
 | **Status field** | Gateway `protocol_version` → `session_version` (bind / settlement tag) |
-| **testenv** | Docker citest S1–S9, G1–G4, A1–A4 (see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) |
+| **testenv** | Named stack behavior tests plus G1–G4 and A1–A4 (see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) |
 
 ---
 
@@ -283,7 +283,7 @@ Debug headers: `X-Upstream-Addr`, `X-Versiond-Backend`
 
 1. Add versiond-1…N with the same Postgres credentials and **same `KEY_NAME`**.
 2. Keep NON_HA pin; confirm HA paths show `versiond_ha_pool` + multi upstream.
-3. Exercise stickiness, kill-one-host failover (S6 / §3 plan), optional lease race (§2).
+3. Exercise stickiness, kill-one-host failover (§3), and the optional lease race (§2).
 
 **Phase C — Retire pre-v4 (later)**
 

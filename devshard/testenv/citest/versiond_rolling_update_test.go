@@ -138,7 +138,7 @@ func bootVersiondRollingStack(t *testing.T, namePattern string, requireRouterChi
 	harness.Step(t, "starting stack with versiond download path (no local override)")
 	stack := harness.NewStack(t, namePattern)
 	harness.RequireLinuxDevshardd(t, stack.TestenvDir)
-	harness.WriteS1Config(t, stack.WorkDir)
+	harness.WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	require.Len(t, cfg.Hosts, 2)
@@ -176,7 +176,7 @@ func bootVersiondRollingStack(t *testing.T, namePattern string, requireRouterChi
 	stack.Up(t)
 	eps := stack.Endpoints(t, cfg)
 	client := harness.GatewayChatClient()
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	if requireRouterChild {
 		harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+versionName+"/healthz", 5*time.Minute,

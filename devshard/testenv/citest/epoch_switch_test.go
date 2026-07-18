@@ -13,16 +13,16 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS4_EpochSwitch verifies POST /testenv/epoch advance fast-forwards mock-chain to the
+// TestEpochSwitch verifies POST /testenv/epoch advance fast-forwards mock-chain to the
 // next PoC start block, rolls next_poc_start forward, and wakes GetRuntimeConfig long-poll
 // with a higher CurrentEpochID while devshardd is running.
-func TestS4_EpochSwitch(t *testing.T) {
+func TestEpochSwitch(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s4-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-epoch-switch-*")
 	client := harness.HTTPClient()
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 
 	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	grpcConn := harness.DialMockDAPI(t, mockDapi.GRPC)

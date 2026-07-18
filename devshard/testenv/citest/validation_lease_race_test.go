@@ -15,13 +15,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS9_ValidationLeaseRaceCore drives chat load under HA + 100% validation_rate,
+// TestValidationLeaseRaceCore drives chat load under HA + 100% validation_rate,
 // monitors Postgres leases in parallel, and PASS/FAILs on uniqueness (manual plan §§4–6).
-func TestS9_ValidationLeaseRaceCore(t *testing.T) {
+func TestValidationLeaseRaceCore(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS9Stack(t, "citest-s9-core-*")
+	stack, cfg, eps := harness.BootValidationLeaseRaceStack(t, "citest-validation-lease-race-core-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -29,7 +29,7 @@ func TestS9_ValidationLeaseRaceCore(t *testing.T) {
 		}
 	})
 
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health", stack)
 
@@ -42,7 +42,7 @@ func TestS9_ValidationLeaseRaceCore(t *testing.T) {
 	seed := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s9 seed"},
+			{Role: "user", Content: "citest validation lease race seed"},
 		},
 		MaxTokens: 16,
 	}
@@ -88,13 +88,13 @@ func TestS9_ValidationLeaseRaceCore(t *testing.T) {
 	harness.RequireLeaseExclusivityPass(t, final, 5)
 }
 
-// TestS9_ValidationLeaseRacePendingStretch covers manual plan §7a: slow ML keeps
+// TestValidationLeaseRacePendingStretch covers manual plan §7a: slow ML keeps
 // leases pending while exclusivity still holds.
-func TestS9_ValidationLeaseRacePendingStretch(t *testing.T) {
+func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS9Stack(t, "citest-s9-7a-*")
+	stack, cfg, eps := harness.BootValidationLeaseRaceStack(t, "citest-validation-lease-race-pending-*")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -104,7 +104,7 @@ func TestS9_ValidationLeaseRacePendingStretch(t *testing.T) {
 		}
 	})
 
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	dapi := harness.MockDAPIFromEndpoints(eps)
 	harness.SetValidationRate100(t, client, dapi.HTTP)
@@ -112,7 +112,7 @@ func TestS9_ValidationLeaseRacePendingStretch(t *testing.T) {
 	model := config.PrimaryModelID(cfg)
 	seed := harness.ChatCompletionRequest{
 		Model:     model,
-		Messages:  []harness.ChatMessage{{Role: "user", Content: "citest s9 7a seed"}},
+		Messages:  []harness.ChatMessage{{Role: "user", Content: "citest validation lease race 7a seed"}},
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
@@ -131,7 +131,7 @@ func TestS9_ValidationLeaseRacePendingStretch(t *testing.T) {
 			req := harness.ChatCompletionRequest{
 				Model: model,
 				Messages: []harness.ChatMessage{
-					{Role: "user", Content: fmt.Sprintf("citest s9 7a slow %d", i)},
+					{Role: "user", Content: fmt.Sprintf("citest validation lease race 7a slow %d", i)},
 				},
 				MaxTokens: 16,
 			}
@@ -157,13 +157,13 @@ func TestS9_ValidationLeaseRacePendingStretch(t *testing.T) {
 	harness.RequireLeaseExclusivityPass(t, final, 1)
 }
 
-// TestS9_ValidationLeaseRaceStaleReclaim covers manual plan §7b: short TTL, pause ML
+// TestValidationLeaseRaceStaleReclaim covers manual plan §7b: short TTL, pause ML
 // so leases stay pending, stop one replica, survivor reclaim + submit.
-func TestS9_ValidationLeaseRaceStaleReclaim(t *testing.T) {
+func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS9Stack(t, "citest-s9-7b-*")
+	stack, cfg, eps := harness.BootValidationLeaseRaceStack(t, "citest-validation-lease-race-stale-reclaim-*")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -177,7 +177,7 @@ func TestS9_ValidationLeaseRaceStaleReclaim(t *testing.T) {
 	harness.PatchVersiondLeaseTTL(t, stack.ComposePath, "15s", "5s")
 	// Recreate HA pair + solo so TTL env applies everywhere validations can run.
 	stack.RecreateServices(t, harness.VersiondHostIDs(cfg)...)
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd after TTL patch", stack)
 
@@ -187,7 +187,7 @@ func TestS9_ValidationLeaseRaceStaleReclaim(t *testing.T) {
 	model := config.PrimaryModelID(cfg)
 	seed := harness.ChatCompletionRequest{
 		Model:     model,
-		Messages:  []harness.ChatMessage{{Role: "user", Content: "citest s9 7b seed"}},
+		Messages:  []harness.ChatMessage{{Role: "user", Content: "citest validation lease race 7b seed"}},
 		MaxTokens: 16,
 	}
 	harness.PostGatewayChatCompletion(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, seed)
@@ -207,7 +207,7 @@ func TestS9_ValidationLeaseRaceStaleReclaim(t *testing.T) {
 			req := harness.ChatCompletionRequest{
 				Model: model,
 				Messages: []harness.ChatMessage{
-					{Role: "user", Content: fmt.Sprintf("citest s9 7b inflight %d", i)},
+					{Role: "user", Content: fmt.Sprintf("citest validation lease race 7b inflight %d", i)},
 				},
 				MaxTokens: 16,
 			}
