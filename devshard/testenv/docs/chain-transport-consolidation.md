@@ -111,7 +111,7 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 | --- | ----------------------------------------------------------------------------------------------------------- | ---------- | ------ |
 | C1  | Replace `RESTChainTxClient` with `common/chain/tx` in `escrow_rotator.go`, `gateway.go`                     | PR-3       | ✅      |
 | C2  | Port `chain_tx_rest_mockchain_test.go` → gRPC-only (`TestGRPCChainTxClient_CreateDevshardEscrow_MockChain`) | PR-3       | ✅      |
-| C3  | Delete `chain_tx_rest.go` + `chain_tx_rest_test.go` when C2 + G2 green                                      | PR-4       | ⬜      |
+| C3  | Delete `chain_tx_rest.go` + `chain_tx_rest_test.go` when C2 + G2 green                                      | PR-4       | ✅      |
 | C4  | Remove `DEVSHARD_TX_QUERY_REST` from gencompose + gateway wiring tests                                      | PR-4       | ✅      |
 
 

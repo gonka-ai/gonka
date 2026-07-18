@@ -10,10 +10,46 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+// MultiConfigOpts customizes WriteMultiConfig skeletons.
+// ValidationRate 0 omits the field so gencompose/ApplyDefaults use the
+// testenv default (6000 bps). Pass a non-zero value (e.g. 10000) per scenario.
+type MultiConfigOpts struct {
+	Hosts          int
+	EscrowSlots    int
+	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
+}
+
 // WriteS1Config writes a minimal multi-versiond (2 hosts) config skeleton for Phase 8 S1.
-// Service listen ports are chosen at runtime; Docker assigns localhost host ports later.
+// Service ports are selected at runtime and published on Docker-assigned
+// localhost ports, so citest can coexist with local-test-net and dev stacks.
+// S1 uses the default validation_rate rather than the S9 100% rate.
 func WriteS1Config(t *testing.T, dir string) {
 	t.Helper()
+	WriteMultiConfig(t, dir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2})
+}
+
+// WriteS9Config writes a 3-host multi config for validation lease races:
+// hosts[0]+hosts[1] = HA same KEY_NAME; hosts[2] = solo executor participant.
+// Seeds validation_rate=10000 (100%) for dense lease races.
+func WriteS9Config(t *testing.T, dir string) {
+	t.Helper()
+	WriteMultiConfig(t, dir, MultiConfigOpts{
+		Hosts:          3,
+		EscrowSlots:    4,
+		ValidationRate: 10000,
+	})
+}
+
+// WriteMultiConfig writes a multi-versiond citest skeleton with the given opts.
+func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
+	t.Helper()
+	if opts.Hosts < 2 {
+		opts.Hosts = 2
+	}
+	if opts.EscrowSlots <= 0 {
+		opts.EscrowSlots = opts.Hosts
+	}
+
 	chainGRPC := pickFreePort(t)
 	chainRPC := pickFreePort(t)
 	chainTestenv := pickFreePort(t)
@@ -23,6 +59,18 @@ func WriteS1Config(t *testing.T, dir string) {
 	routerPort := pickFreePort(t)
 	gatewayPort := pickFreePort(t)
 
+	paramsRate := ""
+	escrowRate := ""
+	if opts.ValidationRate > 0 {
+		paramsRate = fmt.Sprintf("\n  validation_rate: %d", opts.ValidationRate)
+		escrowRate = fmt.Sprintf("\n    validation_rate: %d", opts.ValidationRate)
+	}
+
+	var hosts strings.Builder
+	for i := 0; i < opts.Hosts; i++ {
+		hosts.WriteString(fmt.Sprintf("  - id: versiond-%d\n    private_key_hex: TODO\n", i))
+	}
+
 	skeleton := fmt.Sprintf(`chain_id: gonka-test
 block_height: 150
 epoch:
@@ -30,7 +78,7 @@ epoch:
   poc_start_block_height: 100
   epoch_length: 400
 params:
-  devshard_requests_enabled: true
+  devshard_requests_enabled: true%s
 mock_chain:
   grpc_port: %d
   rpc_port: %d
@@ -54,24 +102,20 @@ network:
   subnet: 172.31.0.0/24
   base_ip: 172.31.0
 escrow:
-  slots: 2
+  slots: %d
 hosts:
-  - id: versiond-0
-    private_key_hex: TODO
-  - id: versiond-1
-    private_key_hex: TODO
-user:
+%suser:
   private_key_hex: TODO
 warm_grantee:
   private_key_hex: TODO
 escrows:
   - id: 1
-    model_id: test-model
+    model_id: test-model%s
 grantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort)
+`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 

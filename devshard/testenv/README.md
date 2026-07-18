@@ -91,15 +91,22 @@ The default skeleton defines **three** hosts (`versiond-0`, `versiond-1`, `versi
 `gencompose` emits one compose service per host and sets:
 
 ```text
-VERSIOND_HOSTS="versiond-0 versiond-1 versiond-2"
+VERSIOND_HOSTS="versiond-0 versiond-1"
 ```
 
-on **versiond-router**. Escrow slots round-robin across hosts (`escrow.slots: 4` with 3 hosts).
+on **versiond-router** (sticky HA pool). `versiond-2` is a **solo** participant reached via
+direct `inference_url` (`http://versiond-2:8080`), not the HA pool. Escrow slots round-robin
+across the HA identity (`hosts[0]`) and solo hosts (`hosts[2+]`). Solo uses **sqlite**
+storage so it does not multi-write the HA pair’s shared Postgres diffs; the HA pair keeps
+`DEVSHARD_STORAGE_MODE=postgres` (leases + sticky single-writer).
 
 ### Shared keyring
 
 All versiond containers mount the **same** `./keyring/` directory at `/keyring`. `gencompose`
-imports one Cosmos key per host; the key name is the host id (`KEY_NAME=versiond-0`, etc.).
+imports one Cosmos key per host (key name = host id). In **multi/HA** mode the HA pair
+(`hosts[0]`, `hosts[1]`) sets `KEY_NAME` to the HA participant (`versiond-0`) — join-style
+same-identity HA. Solo hosts (`hosts[2+]`) keep their own `KEY_NAME`. Escrow slots alternate
+HA + solo so validations (and lease races) can run; a host never validates its own executions.
 Passphrase is `versiond.keyring_password` in config (default `testenv1`).
 
 To **recreate** the keyring after a failed or stale materialize:
@@ -199,14 +206,19 @@ go test ./testenv/cmd/gencompose/... ./testenv/citest/... ./testenv/keymaterial/
 go test ./testenv/... -count=1
 ```
 
-### Phase 8 citest (Docker)
+### Stack citest (Docker)
 
-S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch + S5 gateway chat + S6 versiond fault/restart + S7 legacy routing + S8 SQLite→Postgres migration + S9 rolling update. Uses an isolated 2× versiond stack on a dedicated subnet with Docker-assigned localhost ports, so it can run while a dev `make up` stack is active.
+The numbered scenarios cover S1 stack smoke through S9 validation lease races.
+The versiond rolling-update checks use descriptive test names outside the S*
+sequence. Tests use isolated stacks on dedicated subnets with Docker-assigned
+localhost ports, so they can run while a dev `make up` stack is active.
 
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack    # S1–S9 (builds mock-chain + mock-dapi images)
+make citest-stack    # S1-S9 plus versiond rolling update
+make citest-s9       # validation lease race only
+make citest-versiond-rolling-update
 # or: ./scripts/run-stack-citest.sh
 ```
 
@@ -218,7 +230,11 @@ S4 posts `POST /testenv/epoch` `{advance:true}`; mock-chain fast-forwards CometB
 
 S5 posts pooled `POST /v1/chat/completions` on devshardctl (non-stream and SSE stream) and asserts HTTP 200 through versiond-router → devshardd → mock-openai.
 
-S6 stops one versiond container and asserts sticky sessions pinned to that upstream either fail (502/503) or re-hash to the surviving instance; sessions on the other upstream keep working.
+S6 stops one versiond container and asserts sticky sessions pinned to that upstream fail over to the surviving instance on the first 502 / connect failure; sessions on the other upstream keep working.
+
+S9 exercises validation lease exclusivity across a same-key HA pair and a solo
+executor. `TestVersiondRollingUpdate*` separately checks same-version sha
+replacement with Postgres overlap and the hybrid stop-then-start fallback.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 

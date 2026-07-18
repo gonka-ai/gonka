@@ -23,7 +23,7 @@ gRPC (same as devshardd). Testenv scenarios **G1–G3**; see [`scenarios.md`](./
 |-------|---------|--------|
 | A | `common/chain/tx` package | ⬜ |
 | B | mock-chain gRPC tx/auth face | ⬜ |
-| C | Gateway tx migration (drop `chain_tx_rest.go`) | ⬜ |
+| C | Gateway tx migration (drop `chain_tx_rest.go`) | ✅ |
 | D | Gateway queries (`RESTBridge` → gRPC) | ⬜ |
 | E | Compose/settings cleanup | ⬜ |
 | F | Citest G1–G4 | ⬜ |

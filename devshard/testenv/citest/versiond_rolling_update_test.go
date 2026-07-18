@@ -20,7 +20,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-type s9RollingStack struct {
+type versiondRollingTestStack struct {
 	stack      *harness.Stack
 	cfg        *config.File
 	eps        harness.Endpoints
@@ -29,16 +29,16 @@ type s9RollingStack struct {
 	hosts      []string
 }
 
-// TestS9_VersiondRollingUpdateSameVersionSHA verifies that a same-name sha
+// TestVersiondRollingUpdateSameVersionSHA verifies that a same-name sha
 // change through the real oracle path keeps already accepted work alive while
 // versiond swaps traffic to the newly downloaded devshardd archive.
-func TestS9_VersiondRollingUpdateSameVersionSHA(t *testing.T) {
+func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
 	for targetHostIndex := 0; targetHostIndex < 2; targetHostIndex++ {
 		t.Run(fmt.Sprintf("host_%d", targetHostIndex), func(t *testing.T) {
-			env := bootS9RollingStack(t, "citest-s9-*", true, func(stack *harness.Stack, cfg *config.File) {
+			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true, func(stack *harness.Stack, cfg *config.File) {
 				harness.PatchRouterVersiondHosts(t, stack.ComposePath, cfg.Hosts[targetHostIndex].ID)
 			})
 			client := harness.GatewayChatClient()
@@ -49,14 +49,14 @@ func TestS9_VersiondRollingUpdateSameVersionSHA(t *testing.T) {
 			})
 
 			targetHost := env.hosts[targetHostIndex]
-			exerciseS9RollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
+			exerciseVersiondRollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
 		})
 	}
 }
 
-func exerciseS9RollingFlip(
+func exerciseVersiondRollingFlip(
 	t *testing.T,
-	env *s9RollingStack,
+	env *versiondRollingTestStack,
 	client *http.Client,
 	overlapHost string,
 	fromVersion cosrv.Version,
@@ -72,10 +72,10 @@ func exerciseS9RollingFlip(
 			MaxTokens: 64,
 			Messages: []harness.ChatMessage{{
 				Role:    "user",
-				Content: "s9 " + label + " rolling update long stream",
+				Content: label + " rolling update long stream",
 			}},
 		})
-	requireS9StreamStillRunning(t, accepted, gatewayStreamResult, "gateway stream")
+	requireVersiondStreamStillRunning(t, accepted, gatewayStreamResult, "gateway stream")
 
 	probeCtx, stopProbe := context.WithCancel(context.Background())
 	probeErr := startRouterContinuityProbe(probeCtx, client, env.eps.RouterHTTP+"/"+env.cfg.Versiond.VersionName+"/healthz")
@@ -93,7 +93,7 @@ func exerciseS9RollingFlip(
 			MaxTokens: 64,
 			Messages: []harness.ChatMessage{{
 				Role:    "user",
-				Content: "s9 " + label + " after rolling update",
+				Content: label + " after rolling update",
 			}},
 		})
 	harness.RequireMockOpenAIContent(t, after.Choices[0].Message.Content)
@@ -115,13 +115,13 @@ func exerciseS9RollingFlip(
 	requireNoOldDraining(t, env.stack, env.hosts, env.cfg.Versiond.VersionName, fromVersion.SHA256)
 }
 
-// TestS9_VersiondSameVersionSHAHybridFallsBack verifies that the same sha-flip
+// TestVersiondRollingUpdateHybridFallback verifies that the same sha-flip
 // does not overlap old and new children when devshardd storage is not Postgres.
-func TestS9_VersiondSameVersionSHAHybridFallsBack(t *testing.T) {
+func TestVersiondRollingUpdateHybridFallback(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	env := bootS9RollingStack(t, "citest-s9-hybrid-*", false, func(stack *harness.Stack, _ *config.File) {
+	env := bootVersiondRollingStack(t, "citest-versiond-rolling-hybrid-*", false, func(stack *harness.Stack, _ *config.File) {
 		harness.PatchVersiondStorageMode(t, stack.ComposePath, "hybrid")
 	})
 	client := harness.GatewayChatClient()
@@ -132,7 +132,7 @@ func TestS9_VersiondSameVersionSHAHybridFallsBack(t *testing.T) {
 		env.oldVersion.SHA256, env.newVersion.SHA256)
 }
 
-func bootS9RollingStack(t *testing.T, namePattern string, requireRouterChild bool, patchCompose func(*harness.Stack, *config.File)) s9RollingStack {
+func bootVersiondRollingStack(t *testing.T, namePattern string, requireRouterChild bool, patchCompose func(*harness.Stack, *config.File)) versiondRollingTestStack {
 	t.Helper()
 
 	harness.Step(t, "starting stack with versiond download path (no local override)")
@@ -148,8 +148,8 @@ func bootS9RollingStack(t *testing.T, namePattern string, requireRouterChild boo
 	binDir := filepath.Join(stack.WorkDir, "binaries")
 	oldFile := "devshardd-old.zip"
 	newFile := "devshardd-new.zip"
-	oldSHA := harness.WriteDevsharddZip(t, devsharddPath, filepath.Join(binDir, oldFile), "s9-old")
-	newSHA := harness.WriteDevsharddZip(t, devsharddPath, filepath.Join(binDir, newFile), "s9-new")
+	oldSHA := harness.WriteDevsharddZip(t, devsharddPath, filepath.Join(binDir, oldFile), "rolling-old")
+	newSHA := harness.WriteDevsharddZip(t, devsharddPath, filepath.Join(binDir, newFile), "rolling-new")
 	oldVersion := cosrv.Version{
 		Name:   versionName,
 		Binary: harness.VersiondBinaryURL(cfg.MockDapi.HTTPPort, oldFile),
@@ -186,7 +186,7 @@ func bootS9RollingStack(t *testing.T, namePattern string, requireRouterChild boo
 	hosts := []string{cfg.Hosts[0].ID, cfg.Hosts[1].ID}
 	requireAllVersiondRunningSHA(t, stack, hosts, versionName, oldSHA)
 
-	return s9RollingStack{
+	return versiondRollingTestStack{
 		stack:      stack,
 		cfg:        cfg,
 		eps:        eps,
@@ -196,7 +196,7 @@ func bootS9RollingStack(t *testing.T, namePattern string, requireRouterChild boo
 	}
 }
 
-func requireS9StreamStillRunning(t *testing.T, accepted <-chan struct{}, result <-chan harness.GatewayStreamResult, label string) {
+func requireVersiondStreamStillRunning(t *testing.T, accepted <-chan struct{}, result <-chan harness.GatewayStreamResult, label string) {
 	t.Helper()
 	select {
 	case <-accepted:

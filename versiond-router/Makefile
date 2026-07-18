@@ -14,6 +14,9 @@ test-render:
 	grep -q 'v3 versiond_legacy' "$$tmpdir/mixed.conf"; \
 	grep -q 'versiond_ha_pool "true"' "$$tmpdir/mixed.conf"; \
 	grep -q 'proxy_set_header Devshard-Ha' "$$tmpdir/mixed.conf"; \
+	grep -q 'proxy_next_upstream error timeout http_502' "$$tmpdir/mixed.conf"; \
+	grep -q 'max_fails=1 fail_timeout=10s' "$$tmpdir/mixed.conf"; \
+	grep -q 'proxy_connect_timeout 2s' "$$tmpdir/mixed.conf"; \
 	VERSIOND_HOSTS='versiond versiond2' \
 	VERSIOND_NON_HA_VERSIONS= \
 	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \

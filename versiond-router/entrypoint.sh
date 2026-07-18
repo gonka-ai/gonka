@@ -16,6 +16,9 @@
 # sets request header Devshard-Ha: true so devshardd can require
 # DEVSHARD_STORAGE_MODE=postgres + PGHOST.
 #
+# HA servers use max_fails=1; location sets proxy_next_upstream for first-502
+# failover (see nginx.conf.template).
+#
 # Mounted into nginx:alpine as /docker-entrypoint.d/40-render-versiond-upstream.sh
 # so the stock entrypoint runs it before exec'ing nginx. The template lives at
 # /etc/nginx/template/ (NOT /etc/nginx/templates/) to bypass the stock
@@ -39,10 +42,12 @@ if [ -z "${LEGACY_HOST}" ]; then
     LEGACY_HOST=$(set -- ${VERSIOND_HOSTS}; echo "$1")
 fi
 
+# max_fails=1: first unsuccessful attempt (see proxy_next_upstream) marks the
+# peer down for fail_timeout so sticky hash skips it without waiting on DNS.
 HA_LINES=""
 HOST_COUNT=0
 for host in ${VERSIOND_HOSTS}; do
-    HA_LINES="${HA_LINES}    server ${host}:${PORT} resolve;
+    HA_LINES="${HA_LINES}    server ${host}:${PORT} resolve max_fails=1 fail_timeout=10s;
 "
     HOST_COUNT=$((HOST_COUNT + 1))
 done

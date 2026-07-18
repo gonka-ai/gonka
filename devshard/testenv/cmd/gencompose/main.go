@@ -178,6 +178,28 @@ func assignSlots(cfg *config.File) {
 	if n == 0 {
 		return
 	}
+	if cfg.Versiond.Mode == config.VersiondModeMulti {
+		// HA-only (2 hosts): one participant owns every slot — chat works, but
+		// the executor never validates its own work (no lease races).
+		if n <= 2 {
+			for slot := 0; slot < cfg.Escrow.Slots; slot++ {
+				cfg.Hosts[0].SlotIDs = append(cfg.Hosts[0].SlotIDs, slot)
+			}
+			return
+		}
+		// HA pair (hosts[0], hosts[1]) + solo participants (hosts[2+]):
+		// round-robin slots across distinct identities so solos execute and
+		// the HA participant validates (lease exclusivity needs this).
+		identities := []int{0}
+		for i := 2; i < n; i++ {
+			identities = append(identities, i)
+		}
+		for slot := 0; slot < cfg.Escrow.Slots; slot++ {
+			idx := identities[slot%len(identities)]
+			cfg.Hosts[idx].SlotIDs = append(cfg.Hosts[idx].SlotIDs, slot)
+		}
+		return
+	}
 	for slot := 0; slot < cfg.Escrow.Slots; slot++ {
 		idx := slot % n
 		cfg.Hosts[idx].SlotIDs = append(cfg.Hosts[idx].SlotIDs, slot)
@@ -237,23 +259,45 @@ func syncChainSeed(cfg *config.File) {
 	}
 	cfg.Escrow.SlotURL = routerURL
 
-	n := len(cfg.Hosts)
 	slots := make([]string, cfg.Escrow.Slots)
+	for _, h := range cfg.Hosts {
+		for _, sid := range h.SlotIDs {
+			if sid >= 0 && sid < len(slots) && h.Address != "" {
+				slots[sid] = h.Address
+			}
+		}
+	}
+	// Fill any gaps (should not happen after assignSlots).
+	n := len(cfg.Hosts)
 	for i := range slots {
-		if n == 0 {
-			break
+		if slots[i] != "" || n == 0 {
+			continue
+		}
+		if cfg.Versiond.Mode == config.VersiondModeMulti {
+			slots[i] = cfg.Hosts[0].Address
+			continue
 		}
 		slots[i] = cfg.Hosts[i%n].Address
 	}
 
+	// Distinct on-chain participants. hosts[1] is the HA replica of hosts[0]
+	// (same KEY_NAME) — skip its generated address. Solo hosts (index ≥ 2)
+	// use a direct InferenceURL so gateway/gossip bypass the HA sticky pool.
 	participants := make([]config.Participant, 0, len(cfg.Hosts))
-	for _, h := range cfg.Hosts {
+	for i, h := range cfg.Hosts {
 		if h.Address == "" {
 			continue
 		}
+		if cfg.Versiond.Mode == config.VersiondModeMulti && i == 1 {
+			continue
+		}
+		url := routerURL
+		if cfg.Versiond.Mode == config.VersiondModeMulti && i >= 2 {
+			url = fmt.Sprintf("http://%s:%d", h.ID, config.DefaultHostPort)
+		}
 		participants = append(participants, config.Participant{
 			Address:      h.Address,
-			InferenceURL: routerURL,
+			InferenceURL: url,
 		})
 	}
 	cfg.Participants = participants

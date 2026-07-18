@@ -28,6 +28,14 @@ When `VERSIOND_HOSTS` has **more than one** host and the request uses
 
 Debug response headers: `X-Upstream-Addr`, `X-Versiond-Backend`.
 
+### Failover (HA pool)
+
+On the first upstream connect error / timeout / **502**, nginx retries another
+peer in `versiond_ha_pool` (`proxy_next_upstream`; `max_fails=1`). Sticky hash
+is unchanged while peers are healthy. **503** is not retried (drain / HA guard
+must stay sticky). Mid-stream SSE after headers/receipt is not replayed —
+clients reconnect with a new request.
+
 ## Local render check
 
 ```bash
@@ -43,4 +51,4 @@ VERSIOND_ROUTER_OUT=/tmp/versiond-router.conf \
 
 ## Deploy notes
 
-See `devshard/docs/pr-1366-deploy-test-plan.md` §2.2.
+See `devshard/docs/v4-deploy-test-plan.md` §1.2 (routing) and §3 (HA kill / first-502).

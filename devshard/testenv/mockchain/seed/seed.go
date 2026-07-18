@@ -1,9 +1,11 @@
 package seed
 
 import (
+	"encoding/base64"
 	"fmt"
 	"os"
 
+	"devshard/signing"
 	"devshard/testenv/config"
 	"devshard/testenv/mockchain/store"
 
@@ -183,13 +185,33 @@ func FromFile(f *config.File) (*store.Store, error) {
 		}
 	}
 
+	// Seed AccountByAddress pubkeys from materialised private keys (payload auth).
+	seedPubkey := func(hexKey string) {
+		if hexKey == "" {
+			return
+		}
+		signer, err := signing.SignerFromHex(hexKey)
+		if err != nil {
+			return
+		}
+		s.Pubkeys[signer.Address()] = base64.StdEncoding.EncodeToString(signer.CompressedPublicKeyBytes())
+	}
+	for _, h := range f.Hosts {
+		seedPubkey(h.PrivateKeyHex)
+	}
+	seedPubkey(f.User.PrivateKeyHex)
+	seedPubkey(f.WarmGrantee.PrivateKeyHex)
+
 	for _, g := range f.Grantees {
 		if g.GranterAddress == "" || g.MessageTypeURL == "" {
 			continue
 		}
 		grantees := make([]inferencetypes.Grantee, 0, len(g.Grantees))
 		for _, addr := range g.Grantees {
-			grantees = append(grantees, inferencetypes.Grantee{Address: addr})
+			grantees = append(grantees, inferencetypes.Grantee{
+				Address: addr,
+				PubKey:  s.Pubkeys[addr],
+			})
 		}
 		s.Grantees[store.GranteeKey{
 			GranterAddress: g.GranterAddress,

@@ -77,7 +77,7 @@ func (s *Stack) ComposeExecOutput(service string, cmdArgs ...string) (string, er
 	cmd.Dir = s.WorkDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return string(out), fmt.Errorf("compose exec %s %v: %w", service, cmdArgs, err)
+		return string(out), fmt.Errorf("compose exec %s %v: %w\n%s", service, cmdArgs, err, out)
 	}
 	return string(out), nil
 }

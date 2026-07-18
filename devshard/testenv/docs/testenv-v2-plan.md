@@ -1094,14 +1094,15 @@ citest harness, and rolling-update **Track A** (blue/green sha swap) at minimum.
 
    | ID | Scenario | Asserts |
    |----|----------|---------|
-   | **S9** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
+   | **Versiond rolling update** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
    | **future** | Router host drain | Escrow pinned to `versiond-N`; mark upstream down; in-flight completes; no new traffic to N |
 
 **Tests:** align with `rolling-update.md` §1.9 (versiond unit/e2e + devshardd readiness);
 Phase 13 adds **stack-level** Go citest on top.
 
-**Exit:** `make citest-stack` includes S9 (+ router drain when Track B lands); rolling-update semantics
-validated before deploy/join.
+**Exit:** `make citest-stack` includes `TestVersiondRollingUpdate*` (+ router
+drain when Track B lands); rolling-update semantics are validated before
+deploy/join.
 
 ---
 

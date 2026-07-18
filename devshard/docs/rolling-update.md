@@ -216,6 +216,11 @@ the compatible stop-then-start path. This makes the first migration into
 `DEVSHARD_STORAGE_MODE=postgres` exclusive, and only later updates of
 Postgres-only binaries use blue/green.
 
+Point every overlapping child at the same external Postgres. Single-instance
+development without overlap may keep using SQLite; see
+`devshard/docs/storage-design.md` for storage-mode selection and
+`devshard/docs/release-0.2.14-v4.md` for the HA deployment requirement.
+
 ### 1.3 devshardd changes
 
 New `devshardd` exposes lifecycle controls on a loopback admin listener selected
