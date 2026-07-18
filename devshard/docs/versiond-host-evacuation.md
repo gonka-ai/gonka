@@ -114,6 +114,13 @@ it, reloads nginx, and persists an audit record. Repeating an already completed
 operation is idempotent. Router state, journal, and audit data live on the
 persistent `/var/lib/gonka/versiond-router` volume.
 
+`gonka-routerctl status` is read-only and reports a `pending_operation` when the
+journal is present. `gonka-routerctl recover` is the explicit mutating recovery
+command. A transaction interrupted before confirmed reload rolls back. A
+transaction whose journal reached `reloaded` verifies `new_config_sha256`, runs
+`nginx -t`, reapplies the graceful reload, and commits the new state. Recovery
+stops on a config SHA mismatch instead of silently choosing one side.
+
 Each transitional host is owned by a stable operation ID. The same ID advances
 `draining -> offline`; a separate replacement ID advances
 `joining -> active`. This prevents two SSH orchestrators from controlling the
@@ -131,6 +138,7 @@ routerctl host drain HOST
   -> verify and persist generation
 
 poll HOST:8080/healthz?summary=1 until idle or ROUTER_DRAIN_TIMEOUT
+reconfirm routerctl host drain HOST
 disable the versiond service's automatic restart policy
 send SIGTERM to versiond
 wait ROUTER_DRAIN_KILL_GRACE
@@ -145,19 +153,39 @@ operator retries resume from the persisted router state and the local hostctl
 checkpoint rather than infer success from an in-memory command step.
 
 `gonka-hostctl` defaults to `15m` for the external idle wait, `2s` for polling,
-and `30m` after `SIGTERM` before the kill backstop. The latter covers versiond's
-default `15m` host drain, `10m` child stop grace, and an escalation cushion.
-Exact Docker and systemd commands are documented in
+`30s` for each local or SSH command, and `30m` after `SIGTERM` before the kill
+backstop. SSH also uses bounded connect and keepalive settings. The kill grace
+covers versiond's default `15m` host drain, `10m` child stop grace, and an
+escalation cushion. Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
 ## Failure policy
 
 - nginx validation failure: keep the old config and state; do not signal host.
 - nginx reload failure: restore the old config and reload it; record failure.
+- interrupted router transaction: show it in read-only status; roll back before
+  confirmed reload or verify the candidate SHA and roll forward after reload.
 - host drain timeout with work: warn with the last health snapshot, then follow
   the configured stop policy.
+- remote command timeout: retain the last durable hostctl phase and require an
+  idempotent retry; no SSH call can block the whole operation indefinitely.
 - unknown child inflight: never report idle; use timeout and legacy grace.
 - repeated `SIGTERM`: keep draining; this makes SSH retries safe.
 - second `SIGINT`: transition to `forcing`, close HTTP, force children, and wait
   for process reap.
 - replacement readiness failure: keep the upstream in `joining`/down.
+- abandoned pre-signal evacuation: `gonka-hostctl cancel` verifies versiond is
+  running, restores its Docker restart policy, and then reactivates the upstream.
+- evacuation at or after `term_requested`: cancellation is forbidden; that
+  intent is durable before SSH sends `SIGTERM`, so resume to `offline` even when
+  the remote command result is unknown.
+
+The one-host-at-a-time router guard deliberately has no automatic expiry. A
+stale `draining` or `joining` owner must be resumed or, before `term_requested`,
+canceled with the same operation ID. This avoids another operator interpreting
+a control-plane outage as permission to drain a second host.
+
+For Docker replacement, the restart policy has no guessed default. Reusing an
+evacuated service requires its completed evacuation journal; a newly provisioned
+service requires an explicit `--docker-restart-policy`. The policy is resolved
+before the router enters `joining`.

@@ -645,6 +645,12 @@ Key invariants:
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
   keep serving while one host evacuates.
 
+`Devshard-Ha` remains based on the configured multi-host topology while one host
+is down; changing it with active capacity could switch the survivor to an unsafe
+non-HA storage mode. The normal guard rejects draining the last active host.
+Forcing that transition is an explicit outage and leaves nginx returning `502`
+until a host is activated.
+
 #### Implemented controls
 
 | Piece | Meaning |
@@ -656,6 +662,7 @@ Key invariants:
 | `ROUTER_DRAIN_TIMEOUT` | External maximum wait for known host idle, default `15m` |
 | `ROUTER_DRAIN_POLL_INTERVAL` | External health/process polling interval, default `2s` |
 | `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` before `SIGKILL`, default `30m` |
+| `ROUTER_COMMAND_TIMEOUT` | Deadline for one local or SSH command, default `30s` |
 
 `ROUTER_DRAIN_KILL_GRACE` must exceed versiond's internal shutdown budget. Its
 default covers `VERSIOND_HOST_DRAIN_TIMEOUT`, the default child shutdown grace,
@@ -704,6 +711,14 @@ orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
 unit. Rerun an interrupted command with the same operation ID and journal path
 to continue after its last durable phase.
 
+Before `SIGTERM`, every fresh or resumed operation repeats the idempotent router
+`drain` transition. If evacuation must be abandoned before the durable
+`term_requested` phase, run `gonka-hostctl cancel` with the same operation ID
+and scope. It verifies that versiond is running, restores any disabled Docker
+restart policy, and only then reactivates the upstream. `term_requested` is
+persisted before the SSH signal command; at or after it, the operation must be
+resumed to `offline` because the remote outcome can be unknown.
+
 After preparing a replacement container or unit, keep it out of the pool until
 the replacement transaction completes:
 
@@ -717,7 +732,9 @@ the replacement transaction completes:
   --upstream-address replacement-versiond2 \
   --versiond-ssh replacement-2.example.net \
   --versiond-runtime docker \
-  --versiond-service versiond2
+  --versiond-service versiond2 \
+  --evacuation-journal \
+    ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
 ```
 
 The upstream remains `joining`/down until versiond reports `state=serving`,
@@ -725,6 +742,17 @@ The upstream remains `joining`/down until versiond reports `state=serving`,
 are stored below `/var/lib/gonka/versiond-router` on a persistent volume. See
 `versiond-router/README.md` and `versiond-host-evacuation.md` for the complete
 failure and recovery contract.
+
+Docker replacement restores the exact policy captured by evacuation, including
+an `on-failure` retry count. A newly provisioned service without that journal
+must pass `--docker-restart-policy` explicitly. Policy resolution happens before
+the host enters `joining`.
+
+`gonka-routerctl status` never performs recovery or reload. It exposes an
+unfinished journal as `pending_operation`; `gonka-routerctl recover` resolves it
+under the controller lock. Pre-reload phases roll back. A `reloaded` phase rolls
+forward only after the on-disk config matches the journaled SHA and passes
+`nginx -t`.
 
 #### When to use which layer
 

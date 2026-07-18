@@ -16,6 +16,13 @@ type SSHRemote struct {
 	Options []string
 }
 
+var defaultSSHOptions = []string{
+	"-o", "BatchMode=yes",
+	"-o", "ConnectTimeout=10",
+	"-o", "ServerAliveInterval=5",
+	"-o", "ServerAliveCountMax=3",
+}
+
 func (r SSHRemote) Run(ctx context.Context, destination string, args ...string) (string, error) {
 	if destination == "" || destination == "local" {
 		if len(args) == 0 {
@@ -32,6 +39,7 @@ func (r SSHRemote) Run(ctx context.Context, destination string, args ...string) 
 		remoteCommand = append(remoteCommand, shellQuote(arg))
 	}
 	sshArgs := append([]string(nil), r.Options...)
+	sshArgs = append(sshArgs, defaultSSHOptions...)
 	sshArgs = append(sshArgs, destination, "--", strings.Join(remoteCommand, " "))
 	return runCommand(ctx, binary, sshArgs...)
 }

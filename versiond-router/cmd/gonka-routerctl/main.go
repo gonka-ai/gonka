@@ -38,6 +38,12 @@ func run(ctx context.Context, args []string) error {
 			return err
 		}
 		return printJSON(state)
+	case "recover":
+		state, err := controller.Recover(ctx)
+		if err != nil {
+			return err
+		}
+		return printJSON(state)
 	default:
 		return usageError()
 	}
@@ -146,5 +152,5 @@ func envOrDefault(key, fallback string) string {
 }
 
 func usageError() error {
-	return errors.New("usage: gonka-routerctl bootstrap | status | host <drain|offline|join|activate> [flags] HOST")
+	return errors.New("usage: gonka-routerctl bootstrap | status | recover | host <drain|offline|join|activate> [flags] HOST")
 }

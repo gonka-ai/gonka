@@ -45,6 +45,19 @@ type Controller struct {
 	runner CommandRunner
 }
 
+type PendingOperation struct {
+	OperationID   string    `json:"operation_id"`
+	Phase         string    `json:"phase"`
+	NewGeneration uint64    `json:"new_generation"`
+	NewConfigSHA  string    `json:"new_config_sha256"`
+	CreatedAt     time.Time `json:"created_at"`
+}
+
+type Status struct {
+	State
+	PendingOperation *PendingOperation `json:"pending_operation,omitempty"`
+}
+
 type AuditRecord struct {
 	Time        time.Time `json:"time"`
 	OperationID string    `json:"operation_id"`
@@ -61,6 +74,9 @@ type operationJournal struct {
 	SchemaVersion int       `json:"schema_version"`
 	OperationID   string    `json:"operation_id"`
 	Phase         string    `json:"phase"`
+	Action        string    `json:"action,omitempty"`
+	Host          string    `json:"host,omitempty"`
+	From          HostState `json:"from,omitempty"`
 	OldState      *State    `json:"old_state,omitempty"`
 	NewState      State     `json:"new_state"`
 	OldConfig     []byte    `json:"old_config,omitempty"`
@@ -146,7 +162,33 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 	return result, err
 }
 
-func (c *Controller) Status(ctx context.Context) (State, error) {
+func (c *Controller) Status(ctx context.Context) (Status, error) {
+	var status Status
+	err := c.withLock(ctx, func() error {
+		state, err := c.loadState()
+		if err != nil {
+			return err
+		}
+		status.State = state
+		journal, err := c.loadOperationJournal()
+		if err != nil {
+			return err
+		}
+		if journal != nil {
+			status.PendingOperation = &PendingOperation{
+				OperationID:   journal.OperationID,
+				Phase:         journal.Phase,
+				NewGeneration: journal.NewState.Generation,
+				NewConfigSHA:  journal.NewConfigSHA,
+				CreatedAt:     journal.CreatedAt,
+			}
+		}
+		return nil
+	})
+	return status, err
+}
+
+func (c *Controller) Recover(ctx context.Context) (State, error) {
 	var state State
 	err := c.withLock(ctx, func() error {
 		if err := c.recoverPending(ctx, true); err != nil {
@@ -185,6 +227,9 @@ func (c *Controller) apply(
 		SchemaVersion: SchemaVersion,
 		OperationID:   operationID,
 		Phase:         "prepared",
+		Action:        action,
+		Host:          host,
+		From:          from,
 		OldState:      oldState,
 		NewState:      newState,
 		OldConfig:     oldConfig,
@@ -271,33 +316,120 @@ func (c *Controller) ensureRendered(ctx context.Context, state State, reload boo
 }
 
 func (c *Controller) recoverPending(ctx context.Context, reload bool) error {
-	data, err := os.ReadFile(c.config.JournalPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
+	journal, err := c.loadOperationJournal()
 	if err != nil {
 		return err
 	}
+	if journal == nil {
+		return nil
+	}
+	switch journal.Phase {
+	case "prepared", "config_published":
+		return c.rollBackPending(ctx, *journal, reload)
+	case "reloaded":
+		return c.rollForwardPending(ctx, *journal, reload)
+	default:
+		return fmt.Errorf(
+			"recover operation %s: unknown journal phase %q",
+			journal.OperationID,
+			journal.Phase,
+		)
+	}
+}
+
+func (c *Controller) loadOperationJournal() (*operationJournal, error) {
+	data, err := os.ReadFile(c.config.JournalPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
 	var journal operationJournal
 	if err := json.Unmarshal(data, &journal); err != nil {
-		return fmt.Errorf("decode operation journal: %w", err)
+		return nil, fmt.Errorf("decode operation journal: %w", err)
 	}
+	if journal.SchemaVersion != SchemaVersion {
+		return nil, fmt.Errorf(
+			"unsupported operation journal schema %d",
+			journal.SchemaVersion,
+		)
+	}
+	return &journal, nil
+}
+
+func (c *Controller) rollBackPending(
+	ctx context.Context,
+	journal operationJournal,
+	reload bool,
+) error {
 	if err := c.restoreConfig(ctx, journal.OldConfig, journal.Reload && reload); err != nil {
 		return fmt.Errorf("recover operation %s: %w", journal.OperationID, err)
 	}
-	if journal.OldState != nil {
-		if err := writeJSONAtomic(c.config.StatePath, *journal.OldState, 0o600); err != nil {
+	if journal.OldState == nil {
+		if err := os.Remove(c.config.StatePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
 			return err
 		}
+	} else if err := writeJSONAtomic(c.config.StatePath, *journal.OldState, 0o600); err != nil {
+		return err
 	}
-	if err := c.appendAudit(AuditRecord{
-		Time: time.Now().UTC(), OperationID: journal.OperationID,
-		Action: "recovery", Generation: journal.NewState.Generation,
-		Result: "rolled_back", Error: "recovered incomplete operation at phase " + journal.Phase,
-	}); err != nil {
+	if err := c.appendRecoveryAudit(journal, "rolled_back"); err != nil {
 		return err
 	}
 	return os.Remove(c.config.JournalPath)
+}
+
+func (c *Controller) rollForwardPending(
+	ctx context.Context,
+	journal operationJournal,
+	reload bool,
+) error {
+	if err := journal.NewState.Validate(); err != nil {
+		return fmt.Errorf("recover operation %s: invalid new state: %w", journal.OperationID, err)
+	}
+	config, err := os.ReadFile(c.config.OutputPath)
+	if err != nil {
+		return fmt.Errorf("recover operation %s: read published config: %w", journal.OperationID, err)
+	}
+	if got := hashBytes(config); got != journal.NewConfigSHA {
+		return fmt.Errorf(
+			"recover operation %s: published config sha256 is %s, want %s",
+			journal.OperationID,
+			got,
+			journal.NewConfigSHA,
+		)
+	}
+	if err := c.runner.Run(ctx, c.config.NginxBinary, "-t"); err != nil {
+		return fmt.Errorf("recover operation %s: validate nginx config: %w", journal.OperationID, err)
+	}
+	if journal.Reload && reload {
+		if err := c.runner.Run(ctx, c.config.NginxBinary, "-s", "reload"); err != nil {
+			return fmt.Errorf("recover operation %s: reload nginx: %w", journal.OperationID, err)
+		}
+	}
+	if err := writeJSONAtomic(c.config.StatePath, journal.NewState, 0o600); err != nil {
+		return err
+	}
+	if err := c.appendRecoveryAudit(journal, "rolled_forward"); err != nil {
+		return err
+	}
+	return os.Remove(c.config.JournalPath)
+}
+
+func (c *Controller) appendRecoveryAudit(journal operationJournal, result string) error {
+	to := HostState("")
+	if index := journal.NewState.hostIndex(journal.Host); index >= 0 {
+		to = journal.NewState.Hosts[index].State
+	}
+	if err := c.appendAudit(AuditRecord{
+		Time: time.Now().UTC(), OperationID: journal.OperationID,
+		Action: "recovery", Host: journal.Host, From: journal.From, To: to,
+		Generation: journal.NewState.Generation, Result: result,
+		Error: "recovered incomplete operation at phase " + journal.Phase,
+	}); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (c *Controller) restoreConfig(ctx context.Context, oldConfig []byte, reload bool) error {

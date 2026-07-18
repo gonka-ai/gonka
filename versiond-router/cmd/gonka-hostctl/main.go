@@ -20,8 +20,9 @@ func main() {
 }
 
 func run(ctx context.Context, args []string) error {
-	if len(args) == 0 || (args[0] != "evacuate" && args[0] != "replace") {
-		return errors.New("usage: gonka-hostctl <evacuate|replace> [flags]")
+	if len(args) == 0 ||
+		(args[0] != "evacuate" && args[0] != "replace" && args[0] != "cancel") {
+		return errors.New("usage: gonka-hostctl <evacuate|replace|cancel> [flags]")
 	}
 	mode := args[0]
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
@@ -35,10 +36,13 @@ func run(ctx context.Context, args []string) error {
 	versiondService := flags.String("versiond-service", "", "versiond container or systemd unit")
 	operationID := flags.String("operation-id", "", "stable operation identifier used for resume")
 	journalPath := flags.String("journal", "", "local operation checkpoint path")
+	evacuationJournal := flags.String("evacuation-journal", "", "completed evacuation journal used to restore Docker policy")
 	drainTimeout := flags.Duration("drain-timeout", durationEnv("ROUTER_DRAIN_TIMEOUT", 15*time.Minute), "maximum idle/readiness wait")
 	pollInterval := flags.Duration("poll-interval", durationEnv("ROUTER_DRAIN_POLL_INTERVAL", 2*time.Second), "health/process poll interval")
 	killGrace := flags.Duration("kill-grace", durationEnv("ROUTER_DRAIN_KILL_GRACE", 30*time.Minute), "wait after SIGTERM before SIGKILL")
-	dockerRestartPolicy := flags.String("docker-restart-policy", "unless-stopped", "restart policy restored during replacement")
+	commandTimeout := flags.Duration("command-timeout", durationEnv("ROUTER_COMMAND_TIMEOUT", 30*time.Second), "timeout for one SSH or local command")
+	healthURL := flags.String("health-url", "http://127.0.0.1:8080/healthz?summary=1", "versiond health URL on its host")
+	dockerRestartPolicy := flags.String("docker-restart-policy", "", "explicit restart policy applied during replacement")
 	force := flags.Bool("force-router-guard", false, "override last-host or legacy-host router guard")
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
@@ -67,19 +71,26 @@ func run(ctx context.Context, args []string) error {
 		VersiondService:     *versiondService,
 		OperationID:         *operationID,
 		JournalPath:         *journalPath,
+		EvacuationJournal:   *evacuationJournal,
 		DrainTimeout:        *drainTimeout,
 		PollInterval:        *pollInterval,
 		KillGrace:           *killGrace,
+		CommandTimeout:      *commandTimeout,
+		HealthURL:           *healthURL,
 		DockerRestartPolicy: *dockerRestartPolicy,
 		ForceRouterGuard:    *force,
-	}, hostctl.SSHRemote{Options: []string{"-o", "BatchMode=yes"}})
+	}, hostctl.SSHRemote{})
 	if err != nil {
 		return err
 	}
-	if mode == "evacuate" {
+	switch mode {
+	case "evacuate":
 		return orchestrator.Evacuate(ctx)
+	case "cancel":
+		return orchestrator.CancelEvacuation(ctx)
+	default:
+		return orchestrator.Replace(ctx)
 	}
-	return orchestrator.Replace(ctx)
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

@@ -17,6 +17,10 @@ When `VERSIOND_HOSTS` has **more than one** host and the request uses
 `devshardd` rejects that header unless `DEVSHARD_STORAGE_MODE=postgres` and
 `PGHOST` are set (`common/storage/mode.RequireConfiguredForHA`).
 
+The header reflects the configured HA topology, not the number of hosts that
+are currently `active`. Draining one host must not switch requests on the
+survivor to a non-HA storage mode while both hosts still share PostgreSQL.
+
 ## Environment
 
 | Variable | Required | Default | Meaning |
@@ -58,6 +62,8 @@ listener:
 ```bash
 docker exec versiond-router gonka-routerctl status
 
+docker exec versiond-router gonka-routerctl recover
+
 docker exec versiond-router gonka-routerctl host drain \
   --operation-id maintenance-20260718-versiond2 versiond2
 
@@ -81,10 +87,20 @@ no-op. The operation ID owns the transitional state: use the same ID for
 operation cannot take over a transitional host unless the operator explicitly
 uses `--force`.
 
+`status` is read-only. When a journal is present, its operation ID, phase,
+candidate generation, and config SHA are returned as `pending_operation`; the
+command never rewrites config or reloads nginx. `recover` resolves that journal
+under the controller lock. A transaction interrupted before confirmed reload
+rolls back. A transaction in `reloaded` verifies the published config SHA,
+validates it, reloads idempotently, and commits the new state. A SHA mismatch is
+left for explicit operator investigation rather than guessing which file is
+authoritative.
+
 Normal commands reject concurrent host operations, draining the last active HA
 host, and draining the legacy host while it owns non-HA versions. `--force`
 overrides the capacity and legacy guards for an explicitly approved outage; it
-does not permit two hosts to transition at once.
+does not permit two hosts to transition at once. Forcing the last active host
+creates an all-down upstream and nginx returns `502` until a host is activated.
 
 ## Host evacuation
 
@@ -94,9 +110,11 @@ Build the operator tools on a trusted administration machine:
 make build-tools
 ```
 
-`gonka-hostctl` connects through SSH in batch mode. It has no admin HTTP API and
-adds no credentials of its own. The SSH account needs narrowly scoped rights to
-run `gonka-routerctl` and to manage the selected versiond service.
+`gonka-hostctl` connects through SSH in batch mode with bounded connect and
+keepalive settings. Every local or SSH command also has a configurable deadline.
+It has no admin HTTP API and adds no credentials of its own. The SSH account
+needs narrowly scoped rights to run `gonka-routerctl` and to manage the selected
+versiond service.
 
 Docker example:
 
@@ -117,10 +135,11 @@ The command performs these ordered steps:
 1. Move the router host to `draining`, validate the nginx config, and reload.
 2. Poll `versiond:8080/healthz?summary=1` until the host is known idle or the
    drain timeout expires.
-3. Disable the Docker restart policy, send `SIGTERM`, and wait for versiond to
+3. Reconfirm the router `draining` state before the first irreversible action.
+4. Disable the Docker restart policy, send `SIGTERM`, and wait for versiond to
    drain and reap its children.
-4. Send `SIGKILL` only if the kill grace expires.
-5. Move the router host to `offline`.
+5. Send `SIGKILL` only if the kill grace expires.
+6. Move the router host to `offline`.
 
 For systemd, set both runtime flags to `systemd`. The stop step uses
 `systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
@@ -134,6 +153,28 @@ SSH destination, runtime, and service scope; a retry with different targets is
 rejected.
 An operation-wide local file lock prevents two processes from replaying the
 same checkpoint and duplicating lifecycle steps.
+
+If an operation cannot continue before `SIGTERM` was sent, it may be abandoned
+without leaving the cluster blocked:
+
+```bash
+.bin/gonka-hostctl cancel \
+  --operation-id maintenance-20260718-versiond2 \
+  --router-ssh router.example.net \
+  --router-runtime docker \
+  --router-service versiond-router \
+  --upstream versiond2 \
+  --versiond-ssh worker-2.example.net \
+  --versiond-runtime docker \
+  --versiond-service versiond2
+```
+
+The command checks that versiond is still running, restores a Docker restart
+policy if it was disabled, and only then returns the upstream to `active`.
+Cancellation is rejected at and after the durable `term_requested` phase, which
+is written before the remote signal command. At that point rerun `evacuate` with
+the same operation ID; do not reactivate the host even if SSH lost the command
+result.
 
 ## Host replacement
 
@@ -150,12 +191,21 @@ still `offline`, then run:
   --upstream-address replacement-versiond2 \
   --versiond-ssh replacement-2.example.net \
   --versiond-runtime docker \
-  --versiond-service versiond2
+  --versiond-service versiond2 \
+  --evacuation-journal \
+    ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
 ```
 
 The replacement remains `joining` and therefore down in nginx while it starts.
 It becomes `active` only after the versioned health summary reports
 `state=serving`, `ready=true`, and `accepting=true`.
+
+For Docker, replacement has no implicit restart-policy default. When reusing a
+service, pass its completed evacuation journal as above; the exact original
+policy, including an `on-failure` retry count, is restored. For a new service,
+set the intended policy explicitly, for example
+`--docker-restart-policy unless-stopped`. Policy validation happens before the
+router moves the host to `joining`.
 
 The orchestration flags default from these environment variables:
 
@@ -164,10 +214,31 @@ The orchestration flags default from these environment variables:
 | `ROUTER_DRAIN_TIMEOUT` | `15m` | Maximum wait for known host idle or replacement readiness |
 | `ROUTER_DRAIN_POLL_INTERVAL` | `2s` | Health and process polling interval |
 | `ROUTER_DRAIN_KILL_GRACE` | `30m` | Maximum wait after `SIGTERM` before the kill backstop |
+| `ROUTER_COMMAND_TIMEOUT` | `30s` | Maximum duration of one local or SSH command |
 
 Keep `ROUTER_DRAIN_KILL_GRACE` greater than the versiond shutdown budget. With
 the defaults it covers `VERSIOND_HOST_DRAIN_TIMEOUT` (`15m`) plus the child
 shutdown grace (`10m`) and an escalation cushion.
+
+Use `--health-url` when versiond does not expose its summary at
+`http://127.0.0.1:8080/healthz?summary=1`. This URL is evaluated on the versiond
+host or inside its container, not on the administration machine.
+
+## Interrupted operations
+
+1. Run `gonka-routerctl status`. If it reports `pending_operation`, run
+   `gonka-routerctl recover` locally in the router container.
+2. Rerun `gonka-hostctl evacuate` or `replace` with the original operation ID,
+   flags, and journal path. Completed phases are not repeated.
+3. If evacuation must be abandoned before `term_requested`, run `gonka-hostctl
+   cancel` with the same operation ID and scope.
+4. If `term_requested` is durable, finish evacuation. Never reactivate an
+   upstream whose process may already be stopping.
+
+A host intentionally left in `draining` or `joining` blocks another host
+transition. This is the cluster's one-host-at-a-time safety guard, not a lease
+that expires automatically. Recovery must finish or cancel the owning operation
+before starting maintenance on another host.
 
 ## Local render check
 

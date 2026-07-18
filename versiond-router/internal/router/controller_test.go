@@ -96,17 +96,96 @@ func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 	}
 }
 
-func TestControllerRecoversIncompleteReloadByRollingBack(t *testing.T) {
+func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
+		t.Fatal(err)
+	}
+	newState, _, newConfig := stagePendingDrain(t, paths, oldState, "reloaded")
+	runner.mu.Lock()
+	callsBefore := len(runner.calls)
+	runner.mu.Unlock()
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != oldState.Generation {
+		t.Fatalf("committed generation = %d, want %d", status.Generation, oldState.Generation)
+	}
+	if status.PendingOperation == nil || status.PendingOperation.Phase != "reloaded" {
+		t.Fatalf("pending operation = %#v, want reloaded phase", status.PendingOperation)
+	}
+	assertFileEquals(t, paths.OutputPath, newConfig)
+	runner.mu.Lock()
+	callsAfter := len(runner.calls)
+	runner.mu.Unlock()
+	if callsAfter != callsBefore {
+		t.Fatalf("status executed %d command(s)", callsAfter-callsBefore)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != newState.Generation {
+		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, newState.Generation)
+	}
+	assertFileEquals(t, paths.OutputPath, newConfig)
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("rolled-forward journal should be removed, stat error = %v", err)
+	}
+}
+
+func TestControllerRecoveryRollsBackBeforeReload(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
 		t.Fatal(err)
 	}
+	_, oldConfig, _ := stagePendingDrain(t, paths, oldState, "config_published")
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != oldState.Generation {
+		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, oldState.Generation)
+	}
+	assertFileEquals(t, paths.OutputPath, oldConfig)
+}
+
+func TestControllerRecoveryRejectsChangedReloadedConfig(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
+		t.Fatal(err)
+	}
+	stagePendingDrain(t, paths, oldState, "reloaded")
+	if err := writeFileAtomic(paths.OutputPath, []byte("changed"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := controller.Recover(context.Background()); err == nil {
+		t.Fatal("expected recovery to reject a changed published config")
+	}
+	if _, err := os.Stat(paths.JournalPath); err != nil {
+		t.Fatalf("failed recovery removed its journal: %v", err)
+	}
+}
+
+func stagePendingDrain(
+	t *testing.T,
+	paths Config,
+	oldState State,
+	phase string,
+) (State, []byte, []byte) {
+	t.Helper()
 	oldConfig, err := os.ReadFile(paths.OutputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-
 	newState := oldState.Clone()
 	if _, _, _, err := newState.Apply(Transition{
 		Action: ActionDrain, Host: "versiond-2", OperationID: "interrupted",
@@ -127,7 +206,10 @@ func TestControllerRecoversIncompleteReloadByRollingBack(t *testing.T) {
 	journal := operationJournal{
 		SchemaVersion: SchemaVersion,
 		OperationID:   "interrupted",
-		Phase:         "reloaded",
+		Phase:         phase,
+		Action:        string(ActionDrain),
+		Host:          "versiond-2",
+		From:          HostActive,
 		OldState:      &oldState,
 		NewState:      newState,
 		OldConfig:     oldConfig,
@@ -138,15 +220,7 @@ func TestControllerRecoversIncompleteReloadByRollingBack(t *testing.T) {
 	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	recovered, err := controller.Status(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if recovered.Generation != oldState.Generation {
-		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, oldState.Generation)
-	}
-	assertFileEquals(t, paths.OutputPath, oldConfig)
+	return newState, oldConfig, newConfig
 }
 
 func newTestController(t *testing.T) (*Controller, *fakeRunner, Config) {
