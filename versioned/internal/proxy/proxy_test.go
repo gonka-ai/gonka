@@ -398,6 +398,9 @@ func TestProxy_SSEStreaming(t *testing.T) {
 			events = append(events, line)
 		}
 	}
+	if err := scanner.Err(); err != nil {
+		t.Fatalf("scan SSE body: %v", err)
+	}
 	if len(events) != 3 {
 		t.Errorf("got %d events, want 3", len(events))
 	}
