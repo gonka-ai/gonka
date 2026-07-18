@@ -175,7 +175,10 @@ func (m *Manager) GetTxEscrowID(ctx context.Context, txHash string) (uint64, boo
 	return escrowID, true, nil
 }
 
-// SettleDevshardEscrow broadcasts an unordered settle escrow tx.
+// SettleDevshardEscrow broadcasts an unordered settle escrow tx and waits until
+// GetTx shows the tx committed with Code == 0 (DeliverTx success). SYNC CheckTx
+// alone is not treated as success — callers must not clear settlement_pending
+// until this returns.
 func (m *Manager) SettleDevshardEscrow(ctx context.Context, signer UnorderedSigner, settlement SettleParams) (*SettleDevshardEscrowResult, error) {
 	if m == nil {
 		return nil, fmt.Errorf("chain tx manager is nil")
@@ -200,6 +203,9 @@ func (m *Manager) SettleDevshardEscrow(ctx context.Context, signer UnorderedSign
 	}
 	txHash, err := m.broadcastTx(ctx, txBytes)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.waitForTxSuccess(ctx, txHash); err != nil {
 		return nil, err
 	}
 	return &SettleDevshardEscrowResult{
@@ -253,8 +259,11 @@ func (m *Manager) SubmitDisputeState(ctx context.Context, escrowID uint64, state
 	if err != nil {
 		return fmt.Errorf("chain tx: encode MsgSettleDevshardEscrow (dispute): %w", err)
 	}
-	_, err = m.broadcastTx(ctx, raw)
-	return err
+	txHash, err := m.broadcastTx(ctx, raw)
+	if err != nil {
+		return err
+	}
+	return m.waitForTxSuccess(ctx, txHash)
 }
 
 func (m *Manager) chainID(ctx context.Context) (string, error) {
@@ -334,6 +343,32 @@ func (m *Manager) waitForCreatedEscrowID(ctx context.Context, txHash string) (ui
 		select {
 		case <-ctx.Done():
 			return 0, ctx.Err()
+		case <-time.After(m.cfg.PollInterval):
+		}
+	}
+}
+
+// waitForTxSuccess polls GetTx until the tx is indexed with Code == 0 (DeliverTx
+// success). NotFound / index lag retries until PollTimeout.
+func (m *Manager) waitForTxSuccess(ctx context.Context, txHash string) error {
+	deadline := time.Now().Add(m.cfg.PollTimeout)
+	var lastErr error
+	for {
+		resp, err := m.getTx(ctx, txHash)
+		if err == nil {
+			if resp.Code != 0 {
+				return fmt.Errorf("tx %s failed code=%d codespace=%s raw_log=%s",
+					txHash, resp.Code, resp.Codespace, resp.RawLog)
+			}
+			return nil
+		}
+		lastErr = err
+		if time.Now().After(deadline) {
+			return fmt.Errorf("wait for tx %s: %w", txHash, lastErr)
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
 		case <-time.After(m.cfg.PollInterval):
 		}
 	}
