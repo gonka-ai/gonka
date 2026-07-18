@@ -1,11 +1,12 @@
 # Release guide: `devshard-0.2.14-v4`
 
 Operator-facing notes for the v4 line: multi-instance HA, Postgres storage,
-gRPC-only gateway chain transport, and rollout constraints for mixed pre-v4 /
-v4 estates.
+gRPC-only gateway chain transport, versionless observability, and rollout
+constraints for mixed pre-v4 / v4 estates.
 
 Detailed deploy verification: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
+Observability: [pr-versionless-observability.md](./pr-versionless-observability.md).
 
 ---
 
@@ -19,6 +20,11 @@ and validation-lease exclusivity. Pre-v4 approved versions stay **single-host**
 The gateway (`devshardctl`) talks to the chain over **gRPC only** — LCD REST
 create/settle paths are gone.
 
+Public observability is **versionless**: dashboards scrape
+`/devshard/sessions|stats|metrics` without binding protocol version. Only the
+escrow owner binds via signed chat. Legacy `/devshard/{version}/…` obs URLs keep
+working via join-proxy internal rewrite.
+
 ---
 
 ## What's in this release
@@ -31,6 +37,7 @@ create/settle paths are gone.
 | **Gateway transport** | Chain queries + escrow tx via gRPC; `--chain-rest` / `DEVSHARD_CHAIN_REST` removed |
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
+| **Versionless obs** | Obs GETs never bind; owner chat binds; join rewrite + PG session lookup; `devshard_obs` rate limit |
 | **Status field** | Gateway `protocol_version` → `session_version` (bind / settlement tag) |
 | **testenv** | Docker citest S1–S9, G1–G4, A1–A4 (see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) |
 
@@ -101,6 +108,36 @@ literal `DEVSHARD_STORAGE_MODE=postgres` and `PGHOST` or the child returns
 
 See [storage-design.md](./storage-design.md) and
 [rolling-update.md](./rolling-update.md).
+
+### Versionless observability (bind safety + canonical URLs)
+
+Observability GETs no longer call `CreateSession`. Unbound escrow obs returns
+**404**; the first signed owner `POST …/chat/completions` binds the chosen
+version. Prefer canonical monitor paths:
+
+| Preferred | Legacy (still works) |
+| --- | --- |
+| `/devshard/sessions/{id}/diffs` | `/devshard/{version}/sessions/{id}/diffs` (join proxy rewrite, no `Location`) |
+| `/devshard/stats/shards/{id}` | `/devshard/{version}/stats/shards/{id}` |
+| `/devshard/metrics` | `/devshard/{version}/metrics` |
+
+| Path | Meaning |
+| --- | --- |
+| `/devshard/healthz` | versiond supervisor |
+| `/devshard/{version}/healthz` | that child (not rewritten) |
+
+With Postgres, versiond routes versionless session obs via `sessions.version`
+(fan-out fallback if lookup disabled / SQLite). Join proxy rate-limits obs GETs
+separately from chat:
+
+| Env | Where | Default |
+| --- | --- | --- |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | join proxy | 10 |
+| `DEVSHARD_OBS_BURST` | join proxy | 20 |
+| `VERSIOND_DISABLE_SESSION_LOOKUP` | versiond | unset (lookup on when `PGHOST` set) |
+
+Manual walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §4.
+Design note: [pr-versionless-observability.md](./pr-versionless-observability.md).
 
 ---
 
@@ -176,6 +213,7 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 | §1 Test deployment | NON_HA pin, sqlite→HA-fail→migrate→HA, mixed binding |
 | §2 Validation race | Same-key HA: one lease row per inference |
 | §3 High availability | Kill versiond → survivors serve (first-502); restart rejoins |
+| §4 Versionless observability | Unbound obs 404; owner chat binds; rewrite; PG route; rate limit |
 
 ---
 
@@ -188,8 +226,12 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 - [ ] HA replicas share one `KEY_NAME` / keyring for the participant
 - [ ] Per-versiond SQLite volumes remain **distinct**; Postgres is shared
 - [ ] Monitors read `session_version`, not `protocol_version`
+- [ ] Prefer versionless obs URLs (`/devshard/sessions|stats|metrics`); confirm
+      legacy `/devshard/{v}/…` still 200 with no public redirect
+- [ ] Join proxy: set/tune `DEVSHARD_OBS_RATE_LIMIT_RPS` / `DEVSHARD_OBS_BURST` if needed
 - [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path
-- [ ] Optional: run §2 lease race and §3 kill/restart from the deploy test plan
+- [ ] Optional: run §2 lease race, §3 kill/restart, and §4 versionless obs from
+      the deploy test plan
 
 ---
 
@@ -211,7 +253,8 @@ with larger protocol bumps rather than a standalone migration.
 
 | Doc | Use |
 | --- | --- |
-| [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) | Deploy + three manual/operator test plans |
+| [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) | Deploy + four manual/operator test plans (§1–§4) |
+| [pr-versionless-observability.md](./pr-versionless-observability.md) | Versionless obs design + unit/manual checklist |
 | [high-availability-architecture.md](./high-availability-architecture.md) | Current runtime topology |
 | [storage-design.md](./storage-design.md) | Storage mode selection |
 | [rolling-update.md](./rolling-update.md) | Binary swap / drain |

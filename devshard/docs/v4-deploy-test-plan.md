@@ -1,7 +1,7 @@
 # versiond high availability — Test plans
 
 This note covers **how to roll out** multi-instance HA + Postgres storage and
-**three operator test plans**, including a routing constraint that the boot-migrate
+**four operator test plans**, including a routing constraint that the boot-migrate
 path cannot paper over for already-deployed versions.
 
 | Plan | Section | What it proves |
@@ -9,10 +9,12 @@ path cannot paper over for already-deployed versions.
 | **Test deployment plan** | §1 | Rollout phases, NON_HA pin, sqlite→migrate→HA, mixed binding |
 | **Validation race plan** | §2 | Same-key HA + Postgres: one validation lease per inference |
 | **High availability plan** | §3 | Kill versiond → survivors serve; restart → rejoins (check logs) |
+| **Versionless observability plan** | §4 | Obs never binds version; rewrite + PG route; rate limit; health vs metrics |
 
 Related: [storage-design.md](./storage-design.md),
 [high-availability-architecture.md](./high-availability-architecture.md),
-[release-0.2.14-v4.md](./release-0.2.14-v4.md).
+[release-0.2.14-v4.md](./release-0.2.14-v4.md),
+[pr-versionless-observability.md](./pr-versionless-observability.md).
 
 ---
 
@@ -491,6 +493,8 @@ Checklist:
       loser does not double-submit — full walkthrough: **§2 Validation race plan**
 - [ ] Kill / restart HA versiond; survivors serve and restarted host rejoins —
       **§3 High availability plan** (verify in logs)
+- [ ] Versionless obs: unbound 404, owner chat binds, legacy rewrite —
+      **§4 Versionless observability plan**
 
 ### 1.10 Follow-up test (out of scope until tool exists)
 
@@ -1031,7 +1035,197 @@ make down
 
 ---
 
-## 4. Summary for operators
+## 4. Versionless observability plan (manual)
+
+Companion to [pr-versionless-observability.md](./pr-versionless-observability.md).
+Unit coverage already exists (`versioned/internal/proxy`, `SessionServerExisting`,
+owner-chat bind). This section is the **operator walkthrough**.
+
+**Goal:** public observability never binds protocol version; only the escrow
+owner binds via signed chat; versionless + legacy rewrite work; Postgres lookup
+routes session obs to the bound child; obs GETs are rate-limited separately from
+chat.
+
+```text
+Dashboard  GET /devshard/v2/sessions/E/diffs
+        → join proxy rewrite (no Location) → /devshard/sessions/E/diffs
+        → versiond (PG lookup or fan-out) → child
+        → SessionServerExisting (no CreateSession)
+        → 404 if unbound
+
+Creator   POST /devshard/v3/sessions/E/chat/completions (owner sig)
+        → BindOwnerChat → CreateSession(Version=v3)
+```
+
+**Out of scope:** multi-version merge of `/stats/shards` list; migrating already
+wrongly bound escrows; lease race (§2); kill/restart (§3).
+
+### 4.0 Preconditions
+
+| Requirement | Why |
+| --- | --- |
+| ≥1 approved HA version (testenv: `v2`) | Bind + obs targets |
+| Shared Postgres (`PGHOST`) on versiond | Bound-version lookup for versionless session obs |
+| Gateway for owner chat | Only signed chat binds |
+| **Join / genesis proxy** for rewrite + rate limit | Bare versiond-router has no `devshard_obs` rewrite zone |
+
+**Stacks:**
+
+| Cases | Stack |
+| --- | --- |
+| §4.1, §4.3, §4.4, §4.5 | testenv multi + Postgres (router `:8080`, gateway `:8081`) — use `/v2/…` or `/sessions/…` on the router; versionless paths work without join rewrite |
+| §4.2 rewrite, §4.6 rate limit | **Join / local-test-net with public proxy** in front of versiond (`/devshard/…`) |
+
+Env (see also [proxy/README.md](../../proxy/README.md)):
+
+| Variable | Where | Role |
+| --- | --- | --- |
+| `PGHOST` / `DATABASE_URL` | versiond | Enable session-version lookup |
+| `VERSIOND_DISABLE_SESSION_LOOKUP` | versiond | Force fan-out even when PG is set |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | join proxy | Per-IP obs GET limit (default 10) |
+| `DEVSHARD_OBS_BURST` | join proxy | Obs burst (default 20) |
+
+### 4.1 Unbound obs does not bind
+
+Pick an escrow id that has **no** session yet (new chain escrow, or a fake id
+that will 404).
+
+```bash
+# testenv router (no /devshard/ prefix)
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/sessions/UNBOUND-ESCROW/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/v2/sessions/UNBOUND-ESCROW/diffs"
+
+# join / public proxy
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1/devshard/sessions/UNBOUND-ESCROW/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1/devshard/v2/sessions/UNBOUND-ESCROW/diffs"
+```
+
+| Check | Pass |
+| --- | --- |
+| HTTP status | **404** (not 200) |
+| Side effect | No new row in `devshard_sessions` / session index for that escrow; no accidental version stamp |
+
+### 4.2 Legacy rewrite (join proxy)
+
+Requires the **public proxy** rewrite path (not bare versiond-router).
+
+1. Bind an escrow via owner chat on a chosen version (e.g. `v2`) — §4.3.
+2. Hit the **legacy** versioned obs URL and the canonical versionless URL:
+
+```bash
+# After bind; replace ESCROW and adjust host/port for join proxy
+curl -sSI "http://127.0.0.1/devshard/v2/sessions/${ESCROW}/diffs" \
+  | grep -Ei 'HTTP/|^[Ll]ocation:'
+curl -sS "http://127.0.0.1/devshard/v2/sessions/${ESCROW}/diffs" -o /tmp/legacy-diffs.body
+curl -sS "http://127.0.0.1/devshard/sessions/${ESCROW}/diffs" -o /tmp/canon-diffs.body
+cmp /tmp/legacy-diffs.body /tmp/canon-diffs.body && echo bodies_match
+```
+
+| Check | Pass | Fail |
+| --- | --- | --- |
+| Status | **200** (bound escrow) | 308/301 to another path, or 404 after bind |
+| `Location` | **Absent** (internal `rewrite … last`, not public redirect) | Client-visible redirect |
+| Body | Legacy and versionless responses match | Different payloads |
+
+### 4.3 Owner chat binds chosen version
+
+1. Create/bind escrow through the **gateway** (owner key).
+2. Confirm obs still **404** before first chat (§4.1).
+3. Owner chat on the intended version path (gateway OpenAI path, or signed
+   `POST /…/v{ver}/sessions/{id}/chat/completions`).
+4. Re-check obs:
+
+```bash
+# testenv router examples after gateway chat bound escrow ESCROW to v2
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/sessions/${ESCROW}/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/stats/shards/${ESCROW}"
+```
+
+| Check | Pass |
+| --- | --- |
+| Before chat | Obs **404** |
+| After owner chat | Diffs + stats detail **200** |
+| Bind source | Only owner chat created the session (not a prior obs GET) |
+
+### 4.4 PG routing (HA + lookup)
+
+With `PGHOST` set and session bound (Postgres holds `sessions.version`):
+
+1. Drive versionless `GET …/sessions/${ESCROW}/diffs` (via router or proxy).
+2. Confirm traffic hits the **bound** version’s child (versiond logs / child
+   access logs; with multi-versiond sticky router, correlate escrow → upstream).
+3. Optional negative: set `VERSIOND_DISABLE_SESSION_LOOKUP=true`, recreate
+   versiond — versionless obs still succeeds via **fan-out** (may be slower;
+   lookup-error / fan-out warn may appear when PG errors).
+
+| Check | Pass |
+| --- | --- |
+| Default PG lookup | Bound child serves diffs; unbound still 404 |
+| Lookup disabled | Fan-out still finds bound session when a child has it |
+
+### 4.5 Health vs metrics
+
+```bash
+# Join / public proxy shapes (adjust host). testenv router: omit /devshard/
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/healthz"
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/v2/healthz"
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/metrics"
+```
+
+| Path | Expect |
+| --- | --- |
+| `/devshard/healthz` (or router `/healthz`) | **versiond supervisor** status — not a child process metrics scrape |
+| `/devshard/{version}/healthz` | **That child** health (not rewritten to versionless) |
+| `/devshard/metrics` | Pins **newest** child by numeric/dotted version sort (`v10` > `v2`) |
+
+### 4.6 Obs rate limit (join proxy)
+
+Requires public proxy `devshard_obs` zone. Temporarily set e.g.
+`DEVSHARD_OBS_RATE_LIMIT_RPS=2`, `DEVSHARD_OBS_BURST=2`, reload proxy.
+
+```bash
+# Burst obs GETs — expect some 503
+for i in $(seq 1 30); do
+  curl -sS -o /dev/null -w "%{http_code}\n" \
+    "http://127.0.0.1/devshard/metrics"
+done | sort | uniq -c
+
+# Chat must remain exempt (gateway or signed chat POST still succeeds)
+```
+
+| Check | Pass | Fail |
+| --- | --- | --- |
+| Obs burst | Some responses **503** under low RPS | All 200 under deliberate flood |
+| Chat | Owner chat / gateway inference still **2xx** | Chat also rate-limited by `devshard_obs` |
+
+Restore default obs rate env after the exercise.
+
+### 4.7 Checklist summary
+
+- [ ] Unbound obs → **404**; no session bind (§4.1)
+- [ ] Legacy `/devshard/{v}/sessions/…/diffs` → **200**, no `Location` (§4.2)
+- [ ] Owner chat binds; then versionless diffs/stats **200** (§4.3)
+- [ ] PG lookup routes to bound child; fan-out works if lookup disabled (§4.4)
+- [ ] Supervisor `/healthz` vs `/{v}/healthz` vs `/metrics` (§4.5)
+- [ ] Obs rate limit 503; chat exempt (§4.6)
+
+### 4.8 Cleanup
+
+```bash
+cd devshard/testenv
+make down
+# Restore DEVSHARD_OBS_* / VERSIOND_DISABLE_SESSION_LOOKUP on join stacks
+```
+
+---
+
+## 5. Summary for operators
 
 1. **HA multi-instance + shared Postgres applies to versions outside
    `VERSIOND_NON_HA_VERSIONS`**, not to already-deployed pre-HA binaries.
@@ -1049,7 +1243,9 @@ make down
    versions, plus the sqlite→HA-fail→migrate sequence — not “all migrate to
    Postgres” blindly.
 
-7. **Three test plans in this doc:**
+7. **Four test plans in this doc:**
    - **§1 Test deployment plan** — rollout, routing, migrate, mixed binding.
    - **§2 Validation race plan** — lease exclusivity under same-key HA.
    - **§3 High availability plan** — kill / restart versiond; verify via logs.
+   - **§4 Versionless observability plan** — obs never binds; rewrite; PG route;
+     rate limit; health vs metrics.
