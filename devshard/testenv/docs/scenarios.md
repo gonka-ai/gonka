@@ -13,7 +13,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-chain** | Cosmos gRPC `:9090`, CometBFT RPC `:26657`, admin `/testenv/*` |
 | **mock-dapi** | NodeManager gRPC (`GetRuntimeConfig` long-poll), chainoracle HTTP, fault proxy |
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
-| **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`) |
+| **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
 | **versiond-router** | Sticky nginx (`consistent_hash` on session id) |
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
@@ -32,7 +32,8 @@ HTTP/gRPC helpers, log dump on failure.
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack          # S1–S8
+make citest-stack          # S1–S9
+make citest-s9             # validation lease race only
 ```
 
 Or run a single scenario:
@@ -63,6 +64,7 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **S6** | versiond fault & restart | Stop without failover; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
 | **S7** | Legacy version pin | Non-HA path → `VERSIOND_LEGACY_HOST` only; HA path still multi-upstream | `TestS7_LegacyVersionPinnedToSingleHost` |
 | **S8** | SQLite → HA-fail → PG migrate | §3.3 Phases 0–4: sqlite single-host, multi-host 503, postgres migrate, HA OK | `TestS8_SqliteHaFailMigrate` |
+| **S9** | Validation lease race | 3-host HA pair + solo executor; 100% `validation_rate`; Postgres lease exclusivity PASS/FAIL; §7a/§7b | `TestS9_ValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 
 Source: `devshard/testenv/citest/s{1..6}_*.go` (S6 spans `s6_versiond_stop_test.go` and `s6_versiond_restart_test.go`).
 
@@ -167,6 +169,39 @@ See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 
 **Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
 index; HA + postgres serves. Test: `TestS8_SqliteHaFailMigrate`.
+
+---
+
+## S9 — Validation lease race (HA exclusivity)
+
+**What we test:** join-style same-`KEY_NAME` HA replicas under
+`validation_rate=10000` do not double-validate. Postgres
+`devshard_validation_leases` uniqueness is the PASS/FAIL signal. Also covers
+pending stretch (slow ML) and stale reclaim (short TTL + pause ML + stop
+replica). Manual companion:
+[`../../docs/validation-lease-race-manual-test.md`](../../docs/validation-lease-race-manual-test.md).
+
+**Topology:** 3 versionds — `versiond-0`/`versiond-1` HA pair (same `KEY_NAME`),
+`versiond-2` solo executor. Escrow slots alternate HA + solo so the HA
+participant validates someone else's finished inferences (own executions are
+never validated).
+
+**How:**
+
+1. Boot S9 stack (`WriteS9Config` / `BootS9Stack`); seed chat; warm escrow on
+   all versionds.
+2. **Core:** parallel lease monitor + chat load; require zero duplicate groups
+   and ≥5 lease rows (`TestS9_ValidationLeaseRaceCore`).
+3. **7a:** slow mock-openai; observe `pending ≥ 1`; restore ML; uniqueness PASS
+   (`TestS9_ValidationLeaseRacePendingStretch`).
+4. **7b:** short `DEVSHARD_VALIDATION_LEASE_TTL`; slow then **pause ML (503)**;
+   stop one HA replica; wait TTL; restore ML; submitted grows; uniqueness PASS
+   (`TestS9_ValidationLeaseRaceStaleReclaim`).
+
+**Manual scripts:** `scripts/lease-race-run.sh` (monitor + load + PASS/FAIL).
+
+**Pass criteria:** Monitor / citest report PASS (no duplicate lease keys);
+optional paths prove pending visibility and stale reclaim after ML pause.
 
 ---
 

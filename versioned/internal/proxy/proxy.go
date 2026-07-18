@@ -11,10 +11,15 @@ import (
 
 // Handler returns an http.Handler that routes requests by version prefix.
 // First path segment is the version name, stripped before forwarding.
+// An optional leading /devshard/ is accepted (same as versiond-router) so
+// gateway clients that use RoutePrefix /devshard/<ver> can hit versiond
+// directly without going through the sticky router.
 // Example: /v0.2.11/chat/completions -> localhost:9001/chat/completions
+// Example: /devshard/v2/sessions/1/mempool -> localhost:9001/sessions/1/mempool
 func Handler(routes *atomic.Value) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		path := strings.TrimPrefix(r.URL.Path, "/")
+		path = strings.TrimPrefix(path, "devshard/")
 		parts := strings.SplitN(path, "/", 2)
 		if len(parts) == 0 || parts[0] == "" {
 			http.Error(w, "version prefix required", http.StatusBadRequest)

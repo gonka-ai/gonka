@@ -61,6 +61,12 @@ func (s *Stack) RecreateServices(t *testing.T, services ...string) {
 // ComposeExec runs `docker compose exec -T service cmd...` and returns stdout+stderr.
 func (s *Stack) ComposeExec(t *testing.T, service string, cmdArgs ...string) string {
 	t.Helper()
+	out, err := s.tryComposeExec(service, cmdArgs...)
+	require.NoError(t, err, "compose exec %s %v\n%s", service, cmdArgs, out)
+	return out
+}
+
+func (s *Stack) tryComposeExec(service string, cmdArgs ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	args := append([]string{"compose"}, s.composeFileArgs()...)
@@ -69,8 +75,10 @@ func (s *Stack) ComposeExec(t *testing.T, service string, cmdArgs ...string) str
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
 	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "compose exec %s %v\n%s", service, cmdArgs, out)
-	return string(out)
+	if err != nil {
+		return string(out), fmt.Errorf("compose exec %s %v: %w\n%s", service, cmdArgs, err, out)
+	}
+	return string(out), nil
 }
 
 // VersionStoreDir is the host path for a versiond child's per-version data dir.

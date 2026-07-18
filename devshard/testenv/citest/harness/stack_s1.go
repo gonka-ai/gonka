@@ -70,6 +70,26 @@ func requireTwoVersiondHosts(t *testing.T, cfg *config.File) {
 	}
 }
 
+// BootS9Stack renders the 3×versiond lease-race config (HA pair + solo executor).
+func BootS9Stack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteS9Config(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, EndpointsFromConfig(cfg)
+}
+
+func requireThreeVersiondHosts(t *testing.T, cfg *config.File) {
+	t.Helper()
+	if len(cfg.Hosts) != 3 {
+		t.Fatalf("expected 3 versiond hosts (HA pair + solo), got %d", len(cfg.Hosts))
+	}
+}
+
 // RouterSessionURL builds the sticky-routed path nginx hashes on the session id segment.
 func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 	return routerHTTP + "/" + version + "/sessions/" + sessionID + suffix

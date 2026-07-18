@@ -71,8 +71,11 @@ citest-images: ## Pull hub images and build all compose images required for cite
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
-citest-stack: citest-images ## Phase 8 S1–S8 citest (TESTENV_CITEST=1; needs Docker + build-devshardd).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS1_|TestS2_|TestS3_|TestS4_|TestS5_|TestS6_|TestS7_|TestS8_' -count=1 -v -timeout 60m
+citest-stack: citest-images ## Phase 8 S1–S9 citest (TESTENV_CITEST=1; needs Docker + build-devshardd).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS1_|TestS2_|TestS3_|TestS4_|TestS5_|TestS6_|TestS7_|TestS8_|TestS9_' -count=1 -v -timeout 90m
+
+citest-s9: citest-images ## S9 validation lease race (core + 7a + 7b).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS9_' -count=1 -v -timeout 45m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m

@@ -1,6 +1,6 @@
-# Release guide: `devshard-0.2.13-v2-r2`
+# Release guide: `devshard-0.2.14-v4`
 
-Placeholder for the r2 release notes, upgrade steps, and rollout checklist.
+Placeholder for the v4 release notes, upgrade steps, and rollout checklist.
 
 ---
 
