@@ -198,7 +198,7 @@ func (s *Server) postValidatedArtifactsV2(ctx echo.Context) error {
 
 func (s *Server) addToLocalStorage(pocStageStartHeight int64, modelID, nodeId string, protoArtifacts []*types.PoCArtifactV2) (uint32, map[string]uint32, error) {
 	if s.artifactStore == nil {
-		return 0, nil, echo.NewHTTPError(http.StatusServiceUnavailable, "artifact store not configured")
+		return 0, nil, errors.New("artifact store not configured")
 	}
 
 	store, err := s.artifactStore.GetOrCreateStore(pocStageStartHeight, modelID)

@@ -250,7 +250,7 @@ func TestGetCurrentPocStageHeight_NilOrNotSynced(t *testing.T) {
 	assert.Equal(t, int64(0), GetCurrentPocStageHeight(notSynced))
 }
 
-func TestGetCurrentPocStageHeight_ConfirmationSwitchesPinIdentity(t *testing.T) {
+func TestGetCurrentPocStageHeight_ConfirmationPoCChangesActiveStageHeight(t *testing.T) {
 	st := createTestEpochState(types.InferencePhase, 500, 100)
 	assert.Equal(t, int64(100), GetCurrentPocStageHeight(st))
 

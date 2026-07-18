@@ -42,8 +42,9 @@ type pocValidator interface {
 	// early-share guard capture the early on-chain commitment near the
 	// first-fraction boundary of the active PoC/CPoC generation window.
 	MaybeCaptureEarlyShare(epochState chainphase.EpochState)
-	// SyncArtifactStoreStage pins the current PoC/CPoC stage in RAM through
-	// validation, and unloads all stores outside that window.
+	// SyncArtifactStoreStage pins the current PoC/CPoC stage height in RAM
+	// while synced. The previous stage is unloaded only when that height
+	// changes (next PoC or confirmation PoC), not merely when leaving validate.
 	SyncArtifactStoreStage(epochState chainphase.EpochState)
 }
 
