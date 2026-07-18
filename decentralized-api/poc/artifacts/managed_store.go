@@ -136,6 +136,11 @@ func (m *ManagedArtifactStore) ActivateStage(stage int64) {
 		return
 	}
 
+	// Already pinned: skip write lock + unload scan (called every block).
+	if m.ActiveStage() == stage {
+		return
+	}
+
 	var prev int64
 	m.withWriteLock(func() {
 		prev = m.activeStage
