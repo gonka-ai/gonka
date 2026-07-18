@@ -9,7 +9,10 @@ import (
 	"time"
 )
 
-const DefaultDrainKillGrace = 10 * time.Minute
+const (
+	DefaultDrainKillGrace   = 10 * time.Minute
+	DefaultHostDrainTimeout = 15 * time.Minute
+)
 
 type Config struct {
 	OracleURL         string
@@ -25,6 +28,7 @@ type Config struct {
 	DrainTimeout      time.Duration
 	DrainPollInterval time.Duration
 	DrainKillGrace    time.Duration
+	HostDrainTimeout  time.Duration
 	Overrides         map[string]string // version name -> local binary path
 	ForceVersions     []string          // version names that must run regardless of oracle
 }
@@ -49,6 +53,7 @@ func Load() (Config, error) {
 		DrainTimeout:      parseDuration("VERSIOND_DRAIN_TIMEOUT", 15*time.Minute),
 		DrainPollInterval: parseDuration("VERSIOND_DRAIN_POLL_INTERVAL", time.Second),
 		DrainKillGrace:    parseDuration("VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace),
+		HostDrainTimeout:  parseDuration("VERSIOND_HOST_DRAIN_TIMEOUT", DefaultHostDrainTimeout),
 		Overrides:         loadOverrides(),
 		ForceVersions:     loadForceVersions(),
 	}

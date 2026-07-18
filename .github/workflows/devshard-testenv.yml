@@ -10,11 +10,15 @@ on:
       - 'common/runtimeconfig/**'
       - 'common/chain/**'
       - 'decentralized-api/nodemanager/**'
+      - 'versioned/**'
+      - 'versiond-router/**'
+      - 'devshard/docs/rolling-update.md'
+      - 'devshard/docs/versiond-host-evacuation.md'
       - '.github/workflows/devshard-testenv.yml'
   workflow_dispatch:
     inputs:
       integration:
-        description: 'Run Docker stack citest (S1–S6 + A1–A4)'
+        description: 'Run Docker stack citest (S1-S10 + A1-A4)'
         required: false
         type: boolean
         default: false

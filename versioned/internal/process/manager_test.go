@@ -472,6 +472,143 @@ func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
 	}
 }
 
+func TestStatusWithInflightReadsChildLifecycleCounter(t *testing.T) {
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/drain/status" {
+			http.NotFound(w, r)
+			return
+		}
+		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": 3})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{
+		version:     oracle.Version{Name: "v1"},
+		port:        9001,
+		adminPort:   adminPort,
+		done:        make(chan struct{}),
+		status:      statusRunning,
+		proxyTarget: proxy.NewTarget("localhost:9001"),
+	}
+	m.mu.Lock()
+	m.processes[c.version.Name] = c
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	statuses := m.StatusWithInflight(context.Background())
+	if len(statuses) != 1 {
+		t.Fatalf("statuses = %d, want 1", len(statuses))
+	}
+	if !statuses[0].InflightKnown {
+		t.Fatal("lifecycle inflight should be known")
+	}
+	if statuses[0].LifecycleInflight != 3 {
+		t.Fatalf("lifecycle inflight = %d, want 3", statuses[0].LifecycleInflight)
+	}
+}
+
+func TestChildLifetimeIsIndependentFromReconcileContext(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	reconcileCtx, cancelReconcile := context.WithCancel(context.Background())
+	m.mu.Lock()
+	start, err := m.newChild(
+		reconcileCtx,
+		oracle.Version{Name: "v1"},
+		"sha",
+		"/tmp/testapp",
+		true,
+	)
+	m.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelReconcile()
+	select {
+	case <-start.ctx.Done():
+		t.Fatal("cancelling reconcile context stopped the child lifetime")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	start.child.Stop()
+	select {
+	case <-start.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("child stop did not cancel its lifetime context")
+	}
+}
+
+func TestBeginHostDrainRejectsReconcileAndDisablesRestart(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+		status:  statusRunning,
+		restart: true,
+	}
+	m.mu.Lock()
+	m.processes[c.version.Name] = c
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	m.BeginHostDrain()
+	if !m.HostDraining() {
+		t.Fatal("manager should report host draining")
+	}
+	if c.restart {
+		t.Fatal("host drain should disable child restart")
+	}
+	if err := m.Reconcile(context.Background(), nil); !errors.Is(err, ErrHostDraining) {
+		t.Fatalf("Reconcile error = %v, want ErrHostDraining", err)
+	}
+}
+
+func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	var drainCalled atomic.Bool
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/drain" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
+			t.Error("child route was still published during lifecycle drain request")
+		}
+		drainCalled.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer shutdown()
+
+	c := &child{
+		version:     oracle.Version{Name: "v1"},
+		port:        9001,
+		adminPort:   adminPort,
+		done:        make(chan struct{}),
+		status:      statusRunning,
+		restart:     true,
+		proxyTarget: proxy.NewTarget("localhost:9001"),
+	}
+	m.mu.Lock()
+	m.processes[c.version.Name] = c
+	m.children[c] = struct{}{}
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if err := m.RequestChildrenDrain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !drainCalled.Load() {
+		t.Fatal("child drain endpoint was not called")
+	}
+	if c.status != statusDraining {
+		t.Fatalf("child status = %q, want draining", c.status)
+	}
+	if c.restart {
+		t.Fatal("draining child should not restart")
+	}
+}
+
 func TestHashFile(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "testfile")
@@ -1732,8 +1869,10 @@ func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
 		adminPort: adminPort,
 	}
 
-	m.requestDrain(c)
-	inflight, err := m.fetchInflight(c)
+	if err := m.requestDrain(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	inflight, err := m.fetchInflight(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}

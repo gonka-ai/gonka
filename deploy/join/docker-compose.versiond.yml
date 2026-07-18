@@ -89,9 +89,14 @@ services:
     depends_on:
       - versiond
       - versiond2
+    volumes:
+      - versiond-router-state:/var/lib/gonka/versiond-router
     restart: always
 
   proxy:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+
+volumes:
+  versiond-router-state:

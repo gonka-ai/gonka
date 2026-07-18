@@ -230,6 +230,24 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	}
 }
 
+// StopServiceGracefully sends the container stop signal and gives versiond a
+// caller-controlled grace before Docker's SIGKILL backstop. It returns errors
+// instead of failing a test so callers can run it concurrently with live work.
+func (s *Stack) StopServiceGracefully(service string, grace time.Duration) error {
+	graceSeconds := int((grace + time.Second - 1) / time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
+	defer cancel()
+	args := append([]string{"compose"}, s.composeFileArgs()...)
+	args = append(args, "stop", "--timeout", strconv.Itoa(graceSeconds), service)
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("docker compose stop %s: %w: %s", service, err, out)
+	}
+	return nil
+}
+
 // StartService starts a previously stopped compose service.
 func (s *Stack) StartService(t *testing.T, service string) {
 	t.Helper()
@@ -261,6 +279,15 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 	for _, name := range services {
 		require.Contains(t, running, name, "service %s not running; running=%v", name, running)
 	}
+}
+
+func (s *Stack) ServiceRunning(service string) (bool, error) {
+	running, err := s.runningServices()
+	if err != nil {
+		return false, err
+	}
+	_, ok := running[service]
+	return ok, nil
 }
 
 func (s *Stack) runningServices() (map[string]struct{}, error) {

@@ -207,6 +207,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
+	require.Contains(t, text, "versiond-router-state:/var/lib/gonka/versiond-router")
+	require.Contains(t, text, "versiond-router-state:")
 	require.Contains(t, text, "VERSIOND_ORACLE_URL")
 	require.Contains(t, text, "VERSIOND_OVERRIDE_v2")
 	require.Contains(t, text, "NODE_MANAGER_ADDR")

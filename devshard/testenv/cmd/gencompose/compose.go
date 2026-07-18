@@ -190,6 +190,8 @@ services:
       VERSIOND_NON_HA_VERSIONS: "v1"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka/versiond-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -241,6 +243,9 @@ services:
       retries: 12
       start_period: 30s
     restart: unless-stopped
+
+volumes:
+  versiond-router-state:
 `
 
 func writeCompose(cfg *config.File, outPath string) error {
