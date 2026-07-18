@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
-	"strings"
 	"time"
+
+	"common/storage/mode"
 )
 
 const defaultPGRetryInterval = 240 * time.Second
@@ -19,73 +20,66 @@ type OpenConfig struct {
 
 // Open creates the payload Storage for devshardd.
 //
-// Selection:
-//   - HA mode (DEVSHARD_HA=1 or DEVSHARD_REQUIRE_POSTGRES=1):
-//     PGHOST required; Postgres-only; boot fails if Postgres is unreachable.
-//     No file fallback (avoids multi-instance split-brain).
-//   - PGHOST unset, non-HA: file storage only under Dir.
-//   - PGHOST set, non-HA: Postgres primary with file fallback (lazy reconnect).
+// Selection is driven by common/storage/mode (DEVSHARD_STORAGE_MODE, default auto):
+//   - postgres: PGHOST required; Postgres-only; boot fails if unreachable.
+//     No file fallback (avoids multi-instance split-brain). Migrates local
+//     file payloads into Postgres at boot.
+//   - hybrid: PGHOST required; Postgres primary with file fallback (lazy reconnect).
+//   - sqlite: file storage only under Dir (PGHOST ignored).
+//
+// See devshard/docs/storage-design.md#storage-mode-selection.
 func Open(ctx context.Context, cfg OpenConfig) (Storage, func(), error) {
 	if err := os.MkdirAll(cfg.Dir, 0o755); err != nil {
 		return nil, nil, fmt.Errorf("payloads: mkdir %s: %w", cfg.Dir, err)
 	}
 
-	ha := haModeEnabled()
+	storageMode, err := mode.Resolve()
+	if err != nil {
+		return nil, nil, fmt.Errorf("payloads: %w", err)
+	}
+
 	pgHost := os.Getenv("PGHOST")
-	if pgHost == "" && ha {
+	if storageMode.RequiresPGHOST() && pgHost == "" {
 		return nil, nil, ErrSharedPostgresRequired
 	}
 
 	fileStore := NewFileStorage(cfg.Dir)
 
-	if pgHost == "" {
-		slog.Info("payload storage: using file only", "dir", cfg.Dir)
+	switch storageMode {
+	case mode.SQLite:
+		slog.Info("payload storage: using file only", "dir", cfg.Dir, "mode", storageMode)
 		return fileStore, func() {}, nil
-	}
 
-	pgStore, err := newPostgresStorage(ctx)
-	if err != nil {
-		if ha {
-			return nil, nil, fmt.Errorf("payloads: HA mode requires postgres at %s: %w", pgHost, err)
+	case mode.Postgres:
+		pgStore, err := newPostgresStorage(ctx)
+		if err != nil {
+			return nil, nil, fmt.Errorf("payloads: postgres mode requires postgres at %s: %w", pgHost, err)
 		}
-		slog.Warn("payload storage: postgres unavailable at boot, will retry on store",
-			"host", pgHost, "error", err)
-		hybrid := NewHybridStorage(nil, fileStore, pgRetryInterval())
-		return hybrid, hybrid.Close, nil
-	}
-
-	if ha {
 		n, err := MigrateFilePayloadsToPostgres(ctx, cfg.Dir, pgStore)
 		if err != nil {
 			pgStore.Close()
-			return nil, nil, fmt.Errorf("payloads: HA migrate file payloads: %w", err)
+			return nil, nil, fmt.Errorf("payloads: postgres mode migrate file payloads: %w", err)
 		}
 		if n > 0 {
-			slog.Info("payload storage: HA migrated file payloads to postgres", "host", pgHost, "files", n)
+			slog.Info("payload storage: migrated file payloads to postgres", "host", pgHost, "files", n)
 		}
-		slog.Info("payload storage: HA mode postgres-only", "host", pgHost)
+		slog.Info("payload storage: postgres-only", "host", pgHost, "mode", storageMode)
 		return pgStore, pgStore.Close, nil
-	}
 
-	slog.Info("payload storage: using postgres with file fallback", "host", pgHost)
-	hybrid := NewHybridStorage(pgStore, fileStore, pgRetryInterval())
-	return hybrid, hybrid.Close, nil
-}
+	case mode.Hybrid:
+		pgStore, err := newPostgresStorage(ctx)
+		if err != nil {
+			slog.Warn("payload storage: postgres unavailable at boot, will retry on store",
+				"host", pgHost, "error", err)
+			hybrid := NewHybridStorage(nil, fileStore, pgRetryInterval())
+			return hybrid, hybrid.Close, nil
+		}
+		slog.Info("payload storage: using postgres with file fallback", "host", pgHost, "mode", storageMode)
+		hybrid := NewHybridStorage(pgStore, fileStore, pgRetryInterval())
+		return hybrid, hybrid.Close, nil
 
-func haModeEnabled() bool {
-	return envTruthy("DEVSHARD_HA") || envTruthy("DEVSHARD_REQUIRE_POSTGRES")
-}
-
-func requiresSharedPostgres() bool {
-	return haModeEnabled()
-}
-
-func envTruthy(key string) bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
-	case "1", "true", "yes":
-		return true
 	default:
-		return false
+		return nil, nil, fmt.Errorf("payloads: unhandled storage mode %q", storageMode)
 	}
 }
 

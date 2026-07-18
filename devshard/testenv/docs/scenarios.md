@@ -1,4 +1,4 @@
-# Stack citest scenarios (S1–S6)
+# Stack citest scenarios (S1–S8)
 
 Implemented Go integration tests for the devshard testenv v2 stack. Each scenario
 boots a real Docker Compose stack (mock-chain, mock-dapi, mock-openai, versiond × 2,
@@ -13,7 +13,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-chain** | Cosmos gRPC `:9090`, CometBFT RPC `:26657`, admin `/testenv/*` |
 | **mock-dapi** | NodeManager gRPC (`GetRuntimeConfig` long-poll), chainoracle HTTP, fault proxy |
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
-| **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`) |
+| **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
 | **versiond-router** | Sticky nginx (`consistent_hash` on session id) |
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
@@ -32,7 +32,8 @@ HTTP/gRPC helpers, log dump on failure.
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack          # S1–S6
+make citest-stack          # S1–S9
+make citest-s9             # validation lease race only
 ```
 
 Or run a single scenario:
@@ -45,7 +46,7 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestS3_ParamsLongPoll -v
 |----------------|---------|
 | `TESTENV_CITEST=1` | Opt-in gate (`harness.SkipUnlessEnv`) |
 | `-tags=testenvci` | Build tag on `s*_*.go` tests |
-| `make citest-stack` | Builds mock images + runs all S1–S6 |
+| `make citest-stack` | Builds mock images + runs all S1–S8 |
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
 
@@ -60,7 +61,10 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **S3** | Params long-poll | Governance patch wakes `GetRuntimeConfig` | `TestS3_ParamsLongPoll` |
 | **S4** | Epoch switch | Epoch advance fast-forwards chain + bumps epoch in long-poll | `TestS4_EpochSwitch` |
 | **S5** | Gateway chat | devshardctl → router → devshardd → mock-openai (stream + non-stream) | `TestS5_GatewayChat` |
-| **S6** | versiond fault & restart | Stop without failover; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
+| **S6** | versiond fault & restart | Stop → first-502 failover to survivor; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
+| **S7** | Legacy version pin | Non-HA path → `VERSIOND_LEGACY_HOST` only; HA path still multi-upstream | `TestS7_LegacyVersionPinnedToSingleHost` |
+| **S8** | SQLite → HA-fail → PG migrate | §3.3 Phases 0–4: sqlite single-host, multi-host 503, postgres migrate, HA OK | `TestS8_SqliteHaFailMigrate` |
+| **S9** | Validation lease race | 3-host HA pair + solo executor; 100% `validation_rate`; Postgres lease exclusivity PASS/FAIL; §7a/§7b | `TestS9_ValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 
 Source: `devshard/testenv/citest/s{1..6}_*.go` (S6 spans `s6_versiond_stop_test.go` and `s6_versiond_restart_test.go`).
 
@@ -116,6 +120,88 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 **Pass criteria:** Stable upstream for session A; at least one session B routes elsewhere.
 Validates deploy/join-style sticky routing before chat or long-poll scenarios depend on it.
+
+---
+
+## S7 — Legacy version pinned to single host
+
+**What we test:** versiond-router sends version prefixes listed in
+`VERSIOND_NON_HA_VERSIONS` only to `VERSIOND_LEGACY_HOST` (`versiond_legacy`),
+while other versions sticky-hash across `VERSIOND_HOSTS` (and get
+`Devshard-Ha: true` for multi-host HA).
+
+**How:**
+
+1. Boot S1 stack (`VERSIOND_NON_HA_VERSIONS=v1`; legacy host `versiond-0`).
+2. Probe `/v1/sessions/<id>/healthz` for 16 distinct session ids. Assert every
+   response has `X-Versiond-Backend: versiond_legacy` and the same
+   `X-Upstream-Addr` mapped to `versiond-0`.
+3. Reuse S2-style probes on `VersionName` (e.g. `v2`); require ≥2 distinct
+   upstreams and `X-Versiond-Backend: versiond_ha_pool`.
+4. Stop the non-legacy versiond; repeat legacy probes — still pinned to
+   `versiond-0`.
+
+**Pass criteria:** Non-HA path never fans out; HA path still multi-upstream.
+See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
+
+---
+
+## S8 — SQLite → Devshard-Ha fail → Postgres migrate → HA
+
+**What we test:** full §3.3 walkthrough from
+`devshard/docs/pr-1366-deploy-test-plan.md` (Phases 0–4).
+
+**How:**
+
+1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
+   and `VERSIOND_HOSTS=versiond-0` only; stop `versiond-1`.
+2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` →
+   `versiond_ha_pool` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
+3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
+   (`escrow_epoch`).
+4. **Phase 2:** Expand `VERSIOND_HOSTS` to both hosts; recreate router; start
+   `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
+   still legacy-pinned.
+5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.
+   Assert `*.migrated.*`, `.pg-bound`, and Postgres `devshard_session_index`
+   matches the SQLite inventory.
+6. **Phase 4:** Gateway chat OK; sticky fan-out across hosts; NON_HA unchanged.
+
+**Pass criteria:** Multi-host + sqlite is rejected; migrate preserves escrow
+index; HA + postgres serves. Test: `TestS8_SqliteHaFailMigrate`.
+
+---
+
+## S9 — Validation lease race (HA exclusivity)
+
+**What we test:** join-style same-`KEY_NAME` HA replicas under
+`validation_rate=10000` do not double-validate. Postgres
+`devshard_validation_leases` uniqueness is the PASS/FAIL signal. Also covers
+pending stretch (slow ML) and stale reclaim (short TTL + pause ML + stop
+replica). Manual companion:
+[`../../docs/validation-lease-race-manual-test.md`](../../docs/validation-lease-race-manual-test.md).
+
+**Topology:** 3 versionds — `versiond-0`/`versiond-1` HA pair (same `KEY_NAME`),
+`versiond-2` solo executor. Escrow slots alternate HA + solo so the HA
+participant validates someone else's finished inferences (own executions are
+never validated).
+
+**How:**
+
+1. Boot S9 stack (`WriteS9Config` / `BootS9Stack`); seed chat; warm escrow on
+   all versionds.
+2. **Core:** parallel lease monitor + chat load; require zero duplicate groups
+   and ≥5 lease rows (`TestS9_ValidationLeaseRaceCore`).
+3. **7a:** slow mock-openai; observe `pending ≥ 1`; restore ML; uniqueness PASS
+   (`TestS9_ValidationLeaseRacePendingStretch`).
+4. **7b:** short `DEVSHARD_VALIDATION_LEASE_TTL`; slow then **pause ML (503)**;
+   stop one HA replica; wait TTL; restore ML; submitted grows; uniqueness PASS
+   (`TestS9_ValidationLeaseRaceStaleReclaim`).
+
+**Manual scripts:** `scripts/lease-race-run.sh` (monitor + load + PASS/FAIL).
+
+**Pass criteria:** Monitor / citest report PASS (no duplicate lease keys);
+optional paths prove pending visibility and stale reclaim after ML pause.
 
 ---
 
@@ -188,8 +274,9 @@ gateway session).
 
 ### S6.1 — versiond stop (fault)
 
-**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx does not
-silently proxy to a dead peer; sessions on a live upstream keep working.
+**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx
+reroutes on the first upstream **502** / connect failure (`proxy_next_upstream`) to a
+surviving peer; sessions already hashed to a live upstream keep working.
 
 **Test:** `TestS6_VersiondStop` (`citest/s6_versiond_stop_test.go`)
 
@@ -198,13 +285,13 @@ silently proxy to a dead peer; sessions on a live upstream keep working.
 1. Boot S1 stack; `harness.FindDistinctStickySessions` — two session ids on **different**
    upstreams (`X-Upstream-Addr`).
 2. `docker compose stop` the host mapped to session A's upstream.
-3. Retry session A's router URL — expect **502/503** (peer down) **or** consistent-hash
-   reroute to surviving upstream (ring shrink); not success via dead peer.
-4. Session B (live upstream) must still return 200 with correct `X-Upstream-Addr`.
+3. Retry session A's router URL — expect **non-gateway** response with survivor in
+   `X-Upstream-Addr` (first-502 failover; not sticky-502 forever).
+4. Session B (live upstream) must still succeed with correct `X-Upstream-Addr`.
 
-**Pass criteria:** Fault outcome classified (`FaultRouteFailed` or `FaultRouteRerouted`);
-surviving session keeps working. Documents **no transparent failover** for pinned sessions
-(matching production router semantics).
+**Pass criteria:** Sticky session on the stopped host fails over to the survivor;
+surviving session keeps working. Mid-stream SSE after StartConfirm is **not** spliced
+(client reconnects with a new request) — out of scope for this healthz probe.
 
 ### S6.2 — versiond restart persistence
 
@@ -233,7 +320,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 ---
 
-## Related tests (not S1–S6)
+## Related tests (not S1–S8)
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
@@ -291,6 +378,6 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Production gateway code must not call REST chain clients.
 
-**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl` (excluding legacy `chain_tx_rest*.go`).
+**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.

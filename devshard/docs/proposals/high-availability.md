@@ -225,13 +225,14 @@ clustered NATS (JetStream)** shared by all instances.
   Postgres/Redis so any instance is interchangeable.
 - This mirrors the devshardd rule: **multi-instance ⇒ Postgres**
   ([../high-availability-architecture.md](../high-availability-architecture.md) §4).
-- Operational flag: `DEVSHARD_HA=1` or `DEVSHARD_REQUIRE_POSTGRES=1`.
-  (`VERSIOND_FORCE` does not imply HA; multi-versiond compose must set a flag
-  explicitly.) In HA mode, payload and session stores are **Postgres-only**:
-  boot fails if Postgres is unreachable (no SQLite/file fallback). Before
-  serving traffic, HA boot fully migrates any local SQLite sessions (journal,
-  sealed inferences, validation obs) and any on-disk file payloads into
-  Postgres, then quarantines the local artifacts. See
+- Operational mode: `DEVSHARD_STORAGE_MODE=postgres` (resolved by
+  `common/storage/mode`; default `auto` is hybrid-if-`PGHOST`-else-sqlite).
+  (`VERSIOND_FORCE` does not imply postgres; multi-versiond compose must set
+  the mode explicitly.) In postgres mode, payload and session stores are
+  **Postgres-only**: boot fails if Postgres is unreachable (no SQLite/file
+  fallback). Before serving traffic, boot fully migrates any local SQLite
+  sessions (journal, sealed inferences, validation obs) and any on-disk file
+  payloads into Postgres, then quarantines the local artifacts. See
   [../storage-design.md](../storage-design.md)#storage-mode-selection.
 
 ### 4.5 Stateless echo workers (PoC callbacks + admin)

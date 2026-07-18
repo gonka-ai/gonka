@@ -5,28 +5,29 @@ import (
 	"path/filepath"
 	"testing"
 
+	"common/storage/mode"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func clearHAEnv(t *testing.T) {
+func clearStorageModeEnv(t *testing.T) {
 	t.Helper()
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
+	t.Setenv(mode.EnvStorageMode, "")
 }
 
 func TestOpen_FileFallback_SingleInstance(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "payloads")
-	clearHAEnv(t)
+	clearStorageModeEnv(t)
 	t.Setenv("PGHOST", "")
-	t.Setenv("VERSIOND_FORCE", "v1,v2") // multi force alone must not enable HA
+	t.Setenv("VERSIOND_FORCE", "v1,v2") // multi force alone must not enable postgres mode
 
 	store, closeFn, err := Open(context.Background(), OpenConfig{Dir: dir})
 	require.NoError(t, err)
 	defer closeFn()
 
 	_, ok := store.(*FileStorage)
-	require.True(t, ok, "expected file storage when PGHOST unset and HA flags unset")
+	require.True(t, ok, "expected file storage when PGHOST unset and mode auto/sqlite")
 
 	ctx := context.Background()
 	prompt := []byte(`{"prompt":true}`)
@@ -39,32 +40,21 @@ func TestOpen_FileFallback_SingleInstance(t *testing.T) {
 	assert.Equal(t, response, gotResponse)
 }
 
-func TestOpen_RequiresPostgres_ExplicitFlag(t *testing.T) {
+func TestOpen_RequiresPostgres_ExplicitMode(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "payloads")
+	clearStorageModeEnv(t)
 	t.Setenv("PGHOST", "")
 	t.Setenv("VERSIOND_FORCE", "v2")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "1")
-	t.Setenv("DEVSHARD_HA", "")
+	t.Setenv(mode.EnvStorageMode, "postgres")
 
 	_, _, err := Open(context.Background(), OpenConfig{Dir: dir})
 	require.ErrorIs(t, err, ErrSharedPostgresRequired)
 }
 
-func TestOpen_HA_RequiresPostgres_DEVSHARD_HA(t *testing.T) {
+func TestOpen_Postgres_FailsWhenPostgresUnreachable(t *testing.T) {
 	dir := filepath.Join(t.TempDir(), "payloads")
-	t.Setenv("PGHOST", "")
-	t.Setenv("VERSIOND_FORCE", "v2")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("DEVSHARD_HA", "1")
-
-	_, _, err := Open(context.Background(), OpenConfig{Dir: dir})
-	require.ErrorIs(t, err, ErrSharedPostgresRequired)
-}
-
-func TestOpen_HA_FailsWhenPostgresUnreachable(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "payloads")
-	t.Setenv("DEVSHARD_HA", "1")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "postgres")
 	t.Setenv("PGHOST", "127.0.0.1")
 	t.Setenv("PGPORT", "1")
 	t.Setenv("PGDATABASE", "missing")
@@ -73,7 +63,30 @@ func TestOpen_HA_FailsWhenPostgresUnreachable(t *testing.T) {
 
 	_, _, err := Open(context.Background(), OpenConfig{Dir: dir})
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "HA mode requires postgres")
+	require.Contains(t, err.Error(), "postgres mode requires postgres")
+}
+
+func TestOpen_Hybrid_RequiresPGHOST(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "payloads")
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "")
+
+	_, _, err := Open(context.Background(), OpenConfig{Dir: dir})
+	require.ErrorIs(t, err, ErrSharedPostgresRequired)
+}
+
+func TestOpen_SQLite_IgnoresPGHOST(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "payloads")
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "sqlite")
+	t.Setenv("PGHOST", "127.0.0.1")
+
+	store, closeFn, err := Open(context.Background(), OpenConfig{Dir: dir})
+	require.NoError(t, err)
+	defer closeFn()
+	_, ok := store.(*FileStorage)
+	require.True(t, ok, "explicit sqlite must stay file-only even when PGHOST is set")
 }
 
 func TestFileStorage_DropEpoch(t *testing.T) {
@@ -90,19 +103,4 @@ func TestFileStorage_DropEpoch(t *testing.T) {
 	require.NoError(t, err)
 	_, _, err = store.Retrieve(ctx, "escrow-1", 2, 10)
 	require.ErrorIs(t, err, ErrNotFound)
-}
-
-func TestRequiresSharedPostgres(t *testing.T) {
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("VERSIOND_FORCE", "v1, v2")
-	assert.False(t, requiresSharedPostgres(), "VERSIOND_FORCE alone must not enable HA")
-
-	t.Setenv("VERSIOND_FORCE", "v2")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "true")
-	assert.True(t, requiresSharedPostgres())
-
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("DEVSHARD_HA", "1")
-	assert.True(t, requiresSharedPostgres())
 }

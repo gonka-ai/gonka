@@ -16,6 +16,7 @@ func buildServer() *echo.Echo {
 	e.HideBanner = true
 	e.HidePort = true
 	e.Use(middleware.Recover())
+	e.Use(haStorageGuard())
 
 	observability.RegisterRuntimeCollectors()
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))

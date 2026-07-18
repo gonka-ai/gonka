@@ -45,6 +45,30 @@ func TestProxy_BasicForwarding(t *testing.T) {
 	}
 }
 
+func TestProxy_OptionalDevshardPrefix(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintf(w, "path=%s", r.URL.Path)
+	}))
+	defer backend.Close()
+
+	addr := strings.TrimPrefix(backend.URL, "http://")
+	routes := newRoutes(map[string]string{"v2": addr})
+	handler := Handler(routes)
+	srv := httptest.NewServer(handler)
+	defer srv.Close()
+
+	resp, err := http.Get(srv.URL + "/devshard/v2/sessions/1/mempool")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	if string(body) != "path=/sessions/1/mempool" {
+		t.Errorf("body = %q, want path=/sessions/1/mempool", string(body))
+	}
+}
+
 func TestProxy_RootPath(t *testing.T) {
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprintf(w, "path=%s", r.URL.Path)

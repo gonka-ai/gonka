@@ -80,9 +80,9 @@ versiond:
 ```
 
 `gencompose` trims or pads the `hosts` list to match. **Multi versiond without
-Postgres is rejected** at validate time. Compose also sets `DEVSHARD_HA=1` /
-`DEVSHARD_REQUIRE_POSTGRES=1` on versiond services so devshardd boots in
-Postgres-only HA mode: boot fails if Postgres is down, and any local SQLite
+Postgres is rejected** at validate time. Compose also sets
+`DEVSHARD_STORAGE_MODE=postgres` on versiond services so devshardd boots in
+Postgres-only mode: boot fails if Postgres is down, and any local SQLite
 sessions are batch-migrated into Postgres once at startup.
 
 ### Three versiond instances (multi mode)
@@ -91,15 +91,22 @@ The default skeleton defines **three** hosts (`versiond-0`, `versiond-1`, `versi
 `gencompose` emits one compose service per host and sets:
 
 ```text
-VERSIOND_HOSTS="versiond-0 versiond-1 versiond-2"
+VERSIOND_HOSTS="versiond-0 versiond-1"
 ```
 
-on **versiond-router**. Escrow slots round-robin across hosts (`escrow.slots: 4` with 3 hosts).
+on **versiond-router** (sticky HA pool). `versiond-2` is a **solo** participant reached via
+direct `inference_url` (`http://versiond-2:8080`), not the HA pool. Escrow slots round-robin
+across the HA identity (`hosts[0]`) and solo hosts (`hosts[2+]`). Solo uses **sqlite**
+storage so it does not multi-write the HA pair’s shared Postgres diffs; the HA pair keeps
+`DEVSHARD_STORAGE_MODE=postgres` (leases + sticky single-writer).
 
 ### Shared keyring
 
 All versiond containers mount the **same** `./keyring/` directory at `/keyring`. `gencompose`
-imports one Cosmos key per host; the key name is the host id (`KEY_NAME=versiond-0`, etc.).
+imports one Cosmos key per host (key name = host id). In **multi/HA** mode the HA pair
+(`hosts[0]`, `hosts[1]`) sets `KEY_NAME` to the HA participant (`versiond-0`) — join-style
+same-identity HA. Solo hosts (`hosts[2+]`) keep their own `KEY_NAME`. Escrow slots alternate
+HA + solo so validations (and lease races) can run; a host never validates its own executions.
 Passphrase is `versiond.keyring_password` in config (default `testenv1`).
 
 To **recreate** the keyring after a failed or stale materialize:
@@ -218,7 +225,7 @@ S4 posts `POST /testenv/epoch` `{advance:true}`; mock-chain fast-forwards CometB
 
 S5 posts pooled `POST /v1/chat/completions` on devshardctl (non-stream and SSE stream) and asserts HTTP 200 through versiond-router → devshardd → mock-openai.
 
-S6 stops one versiond container and asserts sticky sessions pinned to that upstream either fail (502/503) or re-hash to the surviving instance; sessions on the other upstream keep working.
+S6 stops one versiond container and asserts sticky sessions pinned to that upstream fail over to the surviving instance on the first 502 / connect failure; sessions on the other upstream keep working.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 

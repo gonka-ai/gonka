@@ -4207,7 +4207,7 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 			cancel()
 			if err == nil {
 				g.clearSettlementPending(id)
-				log.Printf("auto_settle_submitted escrow=%s reason=%s tx_hash=%s settler=%s",
+				log.Printf("auto_settle_confirmed escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
 				g.retireRuntime(id, reason)
 				return

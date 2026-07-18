@@ -194,7 +194,7 @@ separate process). **SQLite is not supported** for rolling update.
 **Requirement:** point every child at the same external Postgres before enabling
 this plan. Single-instance / local dev without overlap may keep using SQLite;
 see `devshard/docs/storage-design.md` (storage-mode selection) and
-`devshard/docs/release-0.2.13-v2-r2.md` (HA ⇒ Postgres).
+`devshard/docs/release-0.2.14-v4.md` (HA ⇒ Postgres).
 
 ### 1.3 devshardd changes
 

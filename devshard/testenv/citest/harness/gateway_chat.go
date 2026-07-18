@@ -63,6 +63,25 @@ func PostGatewayChatCompletion(t *testing.T, client *http.Client, gatewayURL, ad
 	return resp
 }
 
+// TryPostGatewayChatCompletion is like PostGatewayChatCompletion but returns an error
+// instead of failing the test (safe from worker goroutines).
+func TryPostGatewayChatCompletion(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (ChatCompletionResponse, error) {
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	var resp ChatCompletionResponse
+	if err := postGatewayJSON(client, gatewayURL+"/v1/chat/completions", adminAPIKey, req, &resp); err != nil {
+		return resp, err
+	}
+	if len(resp.Choices) == 0 {
+		return resp, fmt.Errorf("gateway chat returned no choices")
+	}
+	if resp.Choices[0].Message.Content == "" {
+		return resp, fmt.Errorf("empty assistant content")
+	}
+	return resp, nil
+}
+
 // PostGatewayChatCompletionStream posts stream=true and collects SSE until [DONE].
 func PostGatewayChatCompletionStream(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, sawDone bool) {
 	t.Helper()

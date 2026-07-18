@@ -9,16 +9,22 @@ import (
 	"testing"
 	"time"
 
+	"common/storage/mode"
+
 	"github.com/stretchr/testify/require"
 )
+
+func clearStorageModeEnv(t *testing.T) {
+	t.Helper()
+	t.Setenv(mode.EnvStorageMode, "")
+	t.Setenv("VERSIOND_FORCE", "")
+}
 
 func TestNewStorage_postgresWhenPGHOSTAndEmptyMeta(t *testing.T) {
 	if testing.Short() {
 		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
 	}
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	cleanup := setupPostgresContainer(t)
 	defer cleanup()
 
@@ -75,9 +81,7 @@ func TestNewStorage_pgBoundLifecycleTracksPGSessions(t *testing.T) {
 }
 
 func TestNewStorage_postgresBootDegradesWhenUnreachable(t *testing.T) {
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	t.Setenv("PGHOST", "127.0.0.1")
 	t.Setenv("PGPORT", "1")
 	t.Setenv("PGDATABASE", "missing")
@@ -102,9 +106,7 @@ func TestNewStorage_postgresBootDegradesWhenUnreachable(t *testing.T) {
 
 func TestNewStorage_pgUnavailableServesSQLiteOwnedOnlyAndRejectsNew(t *testing.T) {
 	storeDir := t.TempDir()
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 
 	t.Setenv("PGHOST", "")
 	sqliteStore, err := NewStorage(context.Background(), storeDir)
@@ -147,9 +149,7 @@ func TestNewStorage_pgUnavailableReconnectsAndPromotes(t *testing.T) {
 		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
 	}
 	storeDir := t.TempDir()
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	t.Setenv("PG_RECONNECT_INTERVAL", "20ms")
 
 	t.Setenv("PGHOST", "")
@@ -196,9 +196,7 @@ func TestNewStorage_pgUnavailableEmptyStoreReconnectsAndPromotes(t *testing.T) {
 		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
 	}
 	storeDir := t.TempDir()
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	t.Setenv("PG_RECONNECT_INTERVAL", "20ms")
 
 	t.Setenv("PGHOST", "127.0.0.1")
@@ -239,9 +237,7 @@ func TestNewStorage_attachesSQLiteAndPostgresWhenMetaHasRowsAndPGHOSTSet(t *test
 	if testing.Short() {
 		t.Skip("skipping postgres factory test in -short mode (requires Docker)")
 	}
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	cleanup := setupPostgresContainer(t)
 	defer cleanup()
 
@@ -667,34 +663,47 @@ func TestNewStorage_postgresModeNoForkWhenPGDownAfterSessionInPG(t *testing.T) {
 	require.True(t, os.IsNotExist(err), "must not open sqlite when postgres mode degrades without sqlite artifacts")
 }
 
-func TestHAModeEnabled(t *testing.T) {
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
+func TestNewStorage_ModeResolve(t *testing.T) {
+	clearStorageModeEnv(t)
+	t.Setenv("PGHOST", "")
 	t.Setenv("VERSIOND_FORCE", "v1,v2")
-	require.False(t, HAModeEnabled(), "VERSIOND_FORCE alone must not enable HA")
+	m, err := mode.Resolve()
+	require.NoError(t, err)
+	require.Equal(t, mode.SQLite, m, "VERSIOND_FORCE alone must not select postgres")
 
-	t.Setenv("DEVSHARD_HA", "1")
-	require.True(t, HAModeEnabled())
+	t.Setenv("PGHOST", "db.example")
+	m, err = mode.Resolve()
+	require.NoError(t, err)
+	require.Equal(t, mode.Hybrid, m)
 
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "true")
-	require.True(t, HAModeEnabled())
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "postgres")
+	m, err = mode.Resolve()
+	require.NoError(t, err)
+	require.Equal(t, mode.Postgres, m)
 }
 
-func TestNewStorage_HA_FailsWithoutPGHOST(t *testing.T) {
-	t.Setenv("DEVSHARD_HA", "1")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+func TestNewStorage_Postgres_FailsWithoutPGHOST(t *testing.T) {
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "postgres")
 	t.Setenv("PGHOST", "")
 
 	_, err := NewStorage(context.Background(), t.TempDir())
 	require.ErrorIs(t, err, ErrHAPostgresRequired)
 }
 
-func TestNewStorage_HA_FailsWhenPostgresUnreachable(t *testing.T) {
-	t.Setenv("DEVSHARD_HA", "1")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+func TestNewStorage_Hybrid_FailsWithoutPGHOST(t *testing.T) {
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "")
+
+	_, err := NewStorage(context.Background(), t.TempDir())
+	require.ErrorIs(t, err, ErrHAPostgresRequired)
+}
+
+func TestNewStorage_Postgres_FailsWhenPostgresUnreachable(t *testing.T) {
+	clearStorageModeEnv(t)
+	t.Setenv(mode.EnvStorageMode, "postgres")
 	t.Setenv("PGHOST", "127.0.0.1")
 	t.Setenv("PGPORT", "1")
 	t.Setenv("PGDATABASE", "missing")
@@ -714,9 +723,7 @@ func TestNewStorage_HA_MigratesSQLiteThenPostgresOnly(t *testing.T) {
 	pgHost := os.Getenv("PGHOST")
 
 	storeDir := t.TempDir()
-	t.Setenv("DEVSHARD_HA", "")
-	t.Setenv("DEVSHARD_REQUIRE_POSTGRES", "")
-	t.Setenv("VERSIOND_FORCE", "")
+	clearStorageModeEnv(t)
 	t.Setenv("PGHOST", "")
 
 	sqliteStore, err := NewStorage(context.Background(), storeDir)
@@ -727,14 +734,14 @@ func TestNewStorage_HA_MigratesSQLiteThenPostgresOnly(t *testing.T) {
 	require.NoError(t, sqliteStore.MarkFinalized("migrate-me", 1))
 	require.NoError(t, sqliteStore.Close())
 
-	t.Setenv("DEVSHARD_HA", "1")
+	t.Setenv(mode.EnvStorageMode, "postgres")
 	t.Setenv("PGHOST", pgHost)
 	store, err := NewStorage(context.Background(), storeDir)
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = store.Close() })
 
 	hybrid := store.(*HybridStorage)
-	require.Nil(t, hybrid.sqlite, "HA mode must not keep sqlite attached after migrate")
+	require.Nil(t, hybrid.sqlite, "postgres mode must not keep sqlite attached after migrate")
 	_, ok := hybrid.pg.(*Postgres)
 	require.True(t, ok)
 

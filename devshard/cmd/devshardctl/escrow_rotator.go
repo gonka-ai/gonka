@@ -695,10 +695,10 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		id, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
 	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
 	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=broadcast error=%q", id, err.Error())
+		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
 		return nil, err
 	}
-	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
 	// A settled escrow is terminal: drop the resident runtime so its memory
 	// (state machine, inference map, store handles) is released now rather
 	// than lingering until the next restart. Transient runtimes are closed by
