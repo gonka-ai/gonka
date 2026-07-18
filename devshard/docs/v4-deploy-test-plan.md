@@ -233,7 +233,7 @@ make -C versiond-router test-render   # config render only (no live nginx)
 | Validation lease exclusivity | **S9** (`TestS9_ValidationLeaseRace*`) | **No** — same-key HA + Postgres lease PASS/FAIL; see **§2 Validation race plan** (and citest S9) |
 | Legacy pin | **S7** (`TestS7_LegacyVersionPinnedToSingleHost`) | **Yes** — `v1` (in non-HA list) → `versiond_legacy` / `versiond-0` only; other versions still multi-upstream |
 | SQLite → HA-fail → migrate → HA | **S8** (`TestS8_SqliteHaFailMigrate`) | **Yes** — full §1.7 Phases 0–4 |
-| One HA upstream down | **S6** | **No** — same HA pool / sticky-hash behaviour |
+| One HA upstream down | **S6** | **No** — first-502 failover to survivor (HA pool) |
 | Gateway chat / gRPC | S5, G1–G4 | No |
 | Params / epoch | S3, S4 | No |
 | Faults | A1–A4 | No |
@@ -450,7 +450,7 @@ in §1.7).
 | T2 | Create escrow / bind session on **v4** (postgres mode); write diffs | Session lands in **shared Postgres**; sticky hash may pin either HA host |
 | T3 | Mix: several NON_HA + several v4 escrows active concurrently | NON_HA SQLite-bound on legacy volume; v4 Postgres-bound; no cross-host SQLite bleed |
 | T4 | Stop a **non-legacy** HA host while NON_HA traffic runs | NON_HA unaffected (never routed there) |
-| T5 | Stop one HA host while **v4** sticky sessions exist | Behaviour matches S6 for HA versions |
+| T5 | Stop one HA host while **v4** sticky sessions exist | First-502 failover to survivor (S6); mid-stream SSE not spliced |
 | T6 | Boot v4 child with **empty** data dir + `postgres` mode | Boot migrate finds nothing; Postgres-only |
 | T7 | (Negative) §1.7 Phase 2 — multi-host + sqlite for v4 | 503 from `Devshard-Ha` / `RequireConfiguredForHA` |
 | T8 | §1.7 Phases 3–4 — sqlite estate then `postgres` mode on that data dir | Full migrate + HA serve; row inventory matches |
@@ -873,8 +873,15 @@ Restore any fault / TTL env overrides before other scenarios.
 
 **Goal:** prove that with ≥2 HA `versiond` replicas behind `versiond-router`, killing
 one (or more) replicas does **not** take the HA pool offline — remaining instances
-keep serving traffic — and that a restarted replica rejoins and serves again.
+keep serving traffic (including sticky sessions that preferred the dead peer, via
+**first-502 reroute**) — and that a restarted replica rejoins and serves again.
 Primary evidence is **versiond / router logs** (and optional `X-Upstream-Addr`).
+
+Router behaviour (`versiond-router`): sticky hash while healthy; on first upstream
+**502** / connect error / timeout, `proxy_next_upstream` retries another HA peer
+(`max_fails=1`). **503** is not retried (drain / HA guard). Mid-stream SSE after
+StartConfirm / receipt is **not** spliced — that stream is lost; the client must
+open a **new** request (which then lands on a survivor).
 
 **Out of scope for this plan:** validation-lease exclusivity (§2), sqlite→migrate
 (§1.7), legacy pin (§1.6). Those are separate. Automated coverage for stop/restart
@@ -929,9 +936,11 @@ docker compose logs -f versiond-0 versiond-1 2>&1 | \
 
 Record which upstream addrs map to which compose services before the kill.
 
-### 3.2 Kill one versiond — survivors serve
+### 3.2 Kill one versiond — survivors serve (first-502 reroute)
 
-Stop one HA replica (repeat with a second kill if you have ≥3 HA hosts):
+Stop one HA replica (repeat with a second kill if you have ≥3 HA hosts). Before
+the kill, pick a session id that sticky-hashes to that host (record
+`X-Upstream-Addr`).
 
 ```bash
 # Example: take versiond-1 out of the pool
@@ -941,9 +950,14 @@ docker compose stop versiond-1
 docker compose ps versiond-1
 ```
 
-Drive traffic again (new session ids + any known-good sessions on survivors):
+Drive traffic again — **same** sticky session id that preferred the killed host,
+plus new session ids:
 
 ```bash
+# Same session that was pinned to the stopped host — must failover (not sticky 502)
+curl -sI "http://127.0.0.1:8080/v2/sessions/<pinned-session>/healthz" \
+  | grep -E 'HTTP|X-Versiond-Backend|X-Upstream-Addr'
+
 for i in $(seq 1 32); do
   curl -sI "http://127.0.0.1:8080/v2/sessions/ha-after-kill-$i/healthz" \
     | grep -E 'X-Versiond-Backend|X-Upstream-Addr|HTTP'
@@ -963,16 +977,14 @@ docker compose logs -f --since=1m versiond-0 versiond-1 2>&1 | \
 
 | # | Check | Pass | Fail |
 | --- | --- | --- | --- |
-| 1 | Pool still usable | New / rehashed requests get **2xx** from a live upstream | All HA traffic fails while a survivor is up |
-| 2 | Dead host idle | Stopped replica’s logs show **no new** request handling after stop | Stopped container still appears as successful upstream |
-| 3 | Survivors busy | Live replica logs show continued request / chat activity | Only errors; no survivor traffic |
-| 4 | Headers | `X-Upstream-Addr` values map only to **live** hosts for successful responses | Successful responses still cite the stopped host |
+| 1 | Sticky failover | Pinned session gets **non-502/503** with survivor in `X-Upstream-Addr` | Sticky 502 forever / only dead peer |
+| 2 | Pool still usable | New session ids get responses from live upstreams | All HA traffic fails while a survivor is up |
+| 3 | Dead host idle | Stopped replica’s logs show **no new** successful handling after stop | Stopped container still appears as successful sole upstream |
+| 4 | Survivors busy | Live replica logs show continued request / chat activity | Only errors; no survivor traffic |
 
-**Note (sticky hash):** a session id that was pinned to the killed host may return
-**502/503** until the hash ring shrinks or the client uses a different session id
-(same semantics as citest S6). That is expected for *that* sticky key. The pass
-criteria above are about the **pool remaining usable** via survivors, not about
-transparent failover of every pre-existing sticky session.
+**Stream caveat:** if an inference SSE already sent StartConfirm / receipt and the
+host is killed mid-stream, nginx does **not** replay that request. The client sees
+a truncated stream and must issue a **new** request; that new request fails over.
 
 ### 3.3 Restart the killed instance — it serves again
 
@@ -1005,8 +1017,8 @@ is up.
 ### 3.4 Checklist summary
 
 - [ ] Baseline: ≥2 HA versionds both logging request activity (§3.1)
-- [ ] Kill one versiond; survivors keep serving (logs + headers) (§3.2)
-- [ ] Dead host shows no new successful handling (§3.2)
+- [ ] Kill one versiond; **pinned** sticky session fails over (first 502 → survivor) (§3.2)
+- [ ] Survivors keep serving; dead host shows no new successful handling (§3.2)
 - [ ] Restart killed versiond; logs show it serving again (§3.3)
 - [ ] Multi-upstream fan-out restored after restart (§3.3)
 

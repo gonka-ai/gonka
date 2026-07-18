@@ -225,7 +225,7 @@ S4 posts `POST /testenv/epoch` `{advance:true}`; mock-chain fast-forwards CometB
 
 S5 posts pooled `POST /v1/chat/completions` on devshardctl (non-stream and SSE stream) and asserts HTTP 200 through versiond-router → devshardd → mock-openai.
 
-S6 stops one versiond container and asserts sticky sessions pinned to that upstream either fail (502/503) or re-hash to the surviving instance; sessions on the other upstream keep working.
+S6 stops one versiond container and asserts sticky sessions pinned to that upstream fail over to the surviving instance on the first 502 / connect failure; sessions on the other upstream keep working.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 

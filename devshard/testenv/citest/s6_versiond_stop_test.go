@@ -11,9 +11,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS6_VersiondStop verifies versiond-router consistent-hash does not failover a
-// sticky session to another versiond when its upstream is stopped; sessions hashed to
-// a live upstream keep working.
+// TestS6_VersiondStop verifies versiond-router fails over a sticky session to a
+// surviving versiond on the first upstream 502 / connect failure when its preferred
+// peer is stopped; sessions hashed to a live upstream keep working.
 func TestS6_VersiondStop(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -42,16 +42,9 @@ func TestS6_VersiondStop(t *testing.T) {
 	urlA := harness.RouterSessionURL(eps.RouterHTTP, version, sessionA, "/healthz")
 	urlB := harness.RouterSessionURL(eps.RouterHTTP, version, sessionB, "/healthz")
 
-	// Sticky hash pins the session to one upstream; when that versiond stops, nginx either
-	// returns 502/503 (peer unavailable) or re-hashes to the surviving instance (ring shrink).
-	harness.Step(t, "session on stopped upstream should fail or reroute (no silent stickiness to dead peer)")
-	outcome := harness.WaitStoppedUpstreamOutcome(t, client, urlA, upstreamA, upstreamB, 45*time.Second)
-	switch outcome {
-	case harness.FaultRouteFailed:
-		harness.Step(t, "observed gateway error for session on stopped %s", stoppedHost)
-	case harness.FaultRouteRerouted:
-		harness.Step(t, "observed consistent-hash reroute to surviving upstream %s", upstreamB)
-	}
+	// First 502 / connect failure → proxy_next_upstream to survivor (not sticky 502 forever).
+	harness.Step(t, "session on stopped upstream should reroute to surviving upstream %s", upstreamB)
+	harness.WaitStickyFailoverToSurvivor(t, client, urlA, upstreamA, upstreamB, 45*time.Second)
 
 	// Surviving upstream still serves requests for sessions hashed to it.
 	harness.Step(t, "session on live upstream should still route to %s", upstreamB)

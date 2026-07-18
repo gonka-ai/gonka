@@ -12,6 +12,10 @@
 # Multi-host HA requests also get proxy_set_header Devshard-Ha (see
 # $devshard_ha_header). See VERSIOND_NON_HA_VERSIONS / VERSIOND_LEGACY_HOST in
 # entrypoint.sh.
+#
+# Failover (HA pool): on first connect error / timeout / upstream 502, retry
+# another peer (proxy_next_upstream). Do not retry on 503 (drain / HA guard).
+# Mid-stream SSE after headers/receipt: no replay — client must reconnect.
 
 upstream versiond_ha_pool {
     # Required by the `resolve` flag below — nginx re-resolves upstream
@@ -74,10 +78,16 @@ server {
         proxy_buffering off;
         proxy_request_buffering off;
 
-        # Inference can be slow.
+        # Inference can be slow; connect fails fast so sticky can retry another peer.
         proxy_read_timeout 600s;
         proxy_send_timeout 600s;
-        proxy_connect_timeout 30s;
+        proxy_connect_timeout 2s;
+
+        # Reroute on first 502 / connect failure. No http_503 (drain stays sticky).
+        # No non_idempotent — do not double-fire POST chat bodies.
+        proxy_next_upstream error timeout http_502;
+        proxy_next_upstream_tries 3;
+        proxy_next_upstream_timeout 10s;
 
         # Lets citest (and operators) see which versiond upstream handled the request.
         add_header X-Upstream-Addr $upstream_addr always;

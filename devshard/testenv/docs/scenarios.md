@@ -61,7 +61,7 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **S3** | Params long-poll | Governance patch wakes `GetRuntimeConfig` | `TestS3_ParamsLongPoll` |
 | **S4** | Epoch switch | Epoch advance fast-forwards chain + bumps epoch in long-poll | `TestS4_EpochSwitch` |
 | **S5** | Gateway chat | devshardctl → router → devshardd → mock-openai (stream + non-stream) | `TestS5_GatewayChat` |
-| **S6** | versiond fault & restart | Stop without failover; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
+| **S6** | versiond fault & restart | Stop → first-502 failover to survivor; restart with session persistence | `TestS6_VersiondStop`, `TestS6_VersiondRestartPersistence` |
 | **S7** | Legacy version pin | Non-HA path → `VERSIOND_LEGACY_HOST` only; HA path still multi-upstream | `TestS7_LegacyVersionPinnedToSingleHost` |
 | **S8** | SQLite → HA-fail → PG migrate | §3.3 Phases 0–4: sqlite single-host, multi-host 503, postgres migrate, HA OK | `TestS8_SqliteHaFailMigrate` |
 | **S9** | Validation lease race | 3-host HA pair + solo executor; 100% `validation_rate`; Postgres lease exclusivity PASS/FAIL; §7a/§7b | `TestS9_ValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
@@ -274,8 +274,9 @@ gateway session).
 
 ### S6.1 — versiond stop (fault)
 
-**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx does not
-silently proxy to a dead peer; sessions on a live upstream keep working.
+**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx
+reroutes on the first upstream **502** / connect failure (`proxy_next_upstream`) to a
+surviving peer; sessions already hashed to a live upstream keep working.
 
 **Test:** `TestS6_VersiondStop` (`citest/s6_versiond_stop_test.go`)
 
@@ -284,13 +285,13 @@ silently proxy to a dead peer; sessions on a live upstream keep working.
 1. Boot S1 stack; `harness.FindDistinctStickySessions` — two session ids on **different**
    upstreams (`X-Upstream-Addr`).
 2. `docker compose stop` the host mapped to session A's upstream.
-3. Retry session A's router URL — expect **502/503** (peer down) **or** consistent-hash
-   reroute to surviving upstream (ring shrink); not success via dead peer.
-4. Session B (live upstream) must still return 200 with correct `X-Upstream-Addr`.
+3. Retry session A's router URL — expect **non-gateway** response with survivor in
+   `X-Upstream-Addr` (first-502 failover; not sticky-502 forever).
+4. Session B (live upstream) must still succeed with correct `X-Upstream-Addr`.
 
-**Pass criteria:** Fault outcome classified (`FaultRouteFailed` or `FaultRouteRerouted`);
-surviving session keeps working. Documents **no transparent failover** for pinned sessions
-(matching production router semantics).
+**Pass criteria:** Sticky session on the stopped host fails over to the survivor;
+surviving session keeps working. Mid-stream SSE after StartConfirm is **not** spliced
+(client reconnects with a new request) — out of scope for this healthz probe.
 
 ### S6.2 — versiond restart persistence
 
