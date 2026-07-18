@@ -372,3 +372,25 @@ func TestStatsShardDetailNegativeCacheForVersionMismatch(t *testing.T) {
 	require.Equal(t, http.StatusNotFound, rec2.Code)
 	require.Equal(t, 1, counting.metaCalls, "version mismatch should be negatively cached")
 }
+
+func TestStatsShardDetailSkipsSettledSession(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, base, "escrow-settled", 7, 1)
+	require.NoError(t, base.MarkSettled("escrow-settled"))
+
+	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-settled")
+	require.Equal(t, http.StatusNotFound, rec1.Code, "body: %s", rec1.Body.String())
+	require.Equal(t, 1, counting.metaCalls)
+	require.Equal(t, 0, counting.listCalls)
+
+	// Settled must not be revived into the live session map.
+	_, ok := mgr.existingServer("escrow-settled")
+	require.False(t, ok)
+
+	rec2 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-settled")
+	require.Equal(t, http.StatusNotFound, rec2.Code)
+	require.Equal(t, 1, counting.metaCalls, "settled miss should be negatively cached")
+}

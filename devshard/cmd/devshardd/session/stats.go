@@ -230,17 +230,21 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 }
 
 // lookupBoundVersionActiveSession is O(1): one GetSessionMeta, no full-store scan.
+// Only status=="active" sessions match (same filter as ListActiveSessions).
 // reason/metaVersion are set on not-found for negative-cache logging.
 func (m *HostManager) lookupBoundVersionActiveSession(escrowID string) (storage.ActiveSession, string, string, error) {
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
 		if errors.Is(err, storage.ErrSessionNotFound) {
-			return storage.ActiveSession{}, "absent_from_active_store", "", storage.ErrSessionNotFound
+			return storage.ActiveSession{}, "absent_from_store", "", storage.ErrSessionNotFound
 		}
 		return storage.ActiveSession{}, "meta_unreadable", "", err
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {
 		return storage.ActiveSession{}, "version_mismatch", meta.Version, storage.ErrSessionNotFound
+	}
+	if meta.Status != "active" {
+		return storage.ActiveSession{}, "not_active", meta.Version, storage.ErrSessionNotFound
 	}
 	return storage.ActiveSession{EscrowID: escrowID, EpochID: meta.EpochID}, "", meta.Version, nil
 }
