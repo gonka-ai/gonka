@@ -12,12 +12,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// BootS1Stack renders the 2×versiond citest config, starts compose, and returns handles.
-func BootS1Stack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+// BootStack renders the 2×versiond citest config, starts compose, and returns handles.
+func BootStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
@@ -25,12 +25,12 @@ func BootS1Stack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) 
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-// BootS1StackBuild is like BootS1Stack but rebuilds compose images first (devshardctl gRPC wiring).
-func BootS1StackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+// BootStackBuild is like BootStack but rebuilds compose images first (devshardctl gRPC wiring).
+func BootStackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
@@ -39,11 +39,11 @@ func BootS1StackBuild(t *testing.T, prefix string) (*Stack, *config.File, Endpoi
 	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
-func BootS1ObsStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
@@ -51,8 +51,8 @@ func BootS1ObsStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoint
 	return stack, cfg, stack.Endpoints(t, cfg), DefaultObservabilityEndpoints()
 }
 
-// WaitS1Healthy polls the S1 boundary health endpoints (chain, dapi, router, gateway).
-func WaitS1Healthy(t *testing.T, stack *Stack, eps Endpoints) {
+// WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.
+func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	t.Helper()
 	client := HTTPClient()
 	poll := 5 * time.Minute
@@ -68,6 +68,26 @@ func requireTwoVersiondHosts(t *testing.T, cfg *config.File) {
 	t.Helper()
 	if len(cfg.Hosts) != 2 {
 		t.Fatalf("expected 2 versiond hosts, got %d", len(cfg.Hosts))
+	}
+}
+
+// BootValidationLeaseRaceStack renders the 3×versiond lease-race config (HA pair + solo executor).
+func BootValidationLeaseRaceStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteValidationLeaseRaceConfig(t, stack.WorkDir)
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	stack.Up(t)
+	return stack, cfg, stack.Endpoints(t, cfg)
+}
+
+func requireThreeVersiondHosts(t *testing.T, cfg *config.File) {
+	t.Helper()
+	if len(cfg.Hosts) != 3 {
+		t.Fatalf("expected 3 versiond hosts (HA pair + solo), got %d", len(cfg.Hosts))
 	}
 }
 

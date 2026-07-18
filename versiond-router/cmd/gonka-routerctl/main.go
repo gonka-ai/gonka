@@ -127,7 +127,7 @@ func loadConfig() router.Config {
 		NginxBinary:  envOrDefault("VERSIOND_ROUTER_NGINX_BIN", "nginx"),
 		ProxyPolicy: router.ProxyPolicy{
 			MaxBodyBytes:      parsePositiveInt64Env("VERSIOND_ROUTER_MAX_BODY_BYTES", 10*1024*1024),
-			ConnectTimeout:    parsePositiveDurationEnv("VERSIOND_ROUTER_CONNECT_TIMEOUT", 75*time.Second),
+			ConnectTimeout:    parsePositiveDurationEnv("VERSIOND_ROUTER_CONNECT_TIMEOUT", 2*time.Second),
 			StreamIdleTimeout: parsePositiveDurationEnv("VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT", 20*time.Minute),
 			UpstreamKeepalive: int(parsePositiveInt64Env("VERSIOND_ROUTER_UPSTREAM_KEEPALIVE", 64)),
 		},

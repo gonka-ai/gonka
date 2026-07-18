@@ -32,10 +32,13 @@ type Store struct {
 	Params                 inferencetypes.Params
 	Epoch             inferencetypes.Epoch
 
-	Participants  map[string]*inferencetypes.Participant
-	Escrows       map[uint64]*inferencetypes.DevshardEscrow
-	Grantees      map[GranteeKey][]inferencetypes.Grantee
+	Participants   map[string]*inferencetypes.Participant
+	Escrows        map[uint64]*inferencetypes.DevshardEscrow
+	Grantees       map[GranteeKey][]inferencetypes.Grantee
 	EpochGroupData map[EpochGroupKey]*inferencetypes.EpochGroupData
+	// Pubkeys maps bech32 address → base64-encoded compressed secp256k1 pubkey
+	// for AccountByAddress (payload auth during validation).
+	Pubkeys map[string]string
 
 	Accounts     map[string]*Account
 	nextEscrowID uint64
@@ -54,6 +57,7 @@ func New() *Store {
 		Escrows:        make(map[uint64]*inferencetypes.DevshardEscrow),
 		Grantees:       make(map[GranteeKey][]inferencetypes.Grantee),
 		EpochGroupData: make(map[EpochGroupKey]*inferencetypes.EpochGroupData),
+		Pubkeys:        make(map[string]string),
 		Accounts:       make(map[string]*Account),
 		nextEscrowID:   1,
 	}
@@ -83,12 +87,25 @@ func (s *Store) Replace(other *Store) {
 	s.Escrows = cloneEscrowMap(other.Escrows)
 	s.Grantees = cloneGranteeMap(other.Grantees)
 	s.EpochGroupData = cloneEpochGroupMap(other.EpochGroupData)
+	if other.Pubkeys != nil {
+		s.Pubkeys = cloneStringMap(other.Pubkeys)
+	} else {
+		s.Pubkeys = make(map[string]string)
+	}
 	if other.Accounts != nil {
 		s.Accounts = cloneAccountMap(other.Accounts)
 	} else {
 		s.Accounts = make(map[string]*Account)
 	}
 	s.reinitEscrowCounterLocked()
+}
+
+func cloneStringMap(in map[string]string) map[string]string {
+	out := make(map[string]string, len(in))
+	for k, v := range in {
+		out[k] = v
+	}
+	return out
 }
 
 func cloneParticipantMap(in map[string]*inferencetypes.Participant) map[string]*inferencetypes.Participant {
@@ -168,6 +185,16 @@ func (s *Store) GetEpoch() inferencetypes.Epoch {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return s.Epoch
+}
+
+// GetPubkey returns the base64 compressed secp256k1 pubkey for address, or "".
+func (s *Store) GetPubkey(address string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.Pubkeys == nil {
+		return ""
+	}
+	return s.Pubkeys[address]
 }
 
 // Participant returns a participant by address or nil.

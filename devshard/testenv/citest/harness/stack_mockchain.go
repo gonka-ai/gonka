@@ -10,7 +10,7 @@ import (
 func BootMockChainStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	stack.UpServices(t, false, "mock-chain")

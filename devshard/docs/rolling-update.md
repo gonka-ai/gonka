@@ -216,6 +216,11 @@ the compatible stop-then-start path. This makes the first migration into
 `DEVSHARD_STORAGE_MODE=postgres` exclusive, and only later updates of
 Postgres-only binaries use blue/green.
 
+Point every overlapping child at the same external Postgres. Single-instance
+development without overlap may keep using SQLite; see
+`devshard/docs/storage-design.md` for storage-mode selection and
+`devshard/docs/release-0.2.14-v4.md` for the HA deployment requirement.
+
 ### 1.3 devshardd changes
 
 New `devshardd` exposes lifecycle controls on a loopback admin listener selected
@@ -827,7 +832,8 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **versiond-router:** test every router transition and guard, config validation,
   atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
   resume/order without requiring SSH.
-- **full stack (`devshard/testenv`, S10):** pin a long stream to one versiond,
+- **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a
+  long stream to one versiond,
   interrupt and cancel one checkpointed operation, then interrupt and resume a
   real `gonka-hostctl evacuate` from its durable phase before running `replace`.
   Verify new work and the same escrow recover on the survivor, the barrier-held
@@ -850,9 +856,10 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 
 7. Add versiond host FSM, aggregate health/inflight, transactional router FSM,
    and resumable SSH operator CLI for drain, stop, replacement, and activation.
-8. Run unit/race coverage plus S10: pin a long request to `versiond-N`, mark the
-   upstream down, assert completion and survivor routing, then assert process
-   exit after idle and healthy replacement activation.
+8. Run unit/race coverage plus `TestVersiondHostEvacuation`: pin a long request
+   to `versiond-N`, mark the upstream down, assert completion and survivor
+   routing, then assert process exit after idle and healthy replacement
+   activation.
 
 ---
 

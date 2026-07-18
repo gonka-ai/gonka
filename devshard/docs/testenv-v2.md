@@ -61,7 +61,7 @@ make -C devshard ci-testenv-unit
 Covers: `common/runtimeconfig` (+ client), `common/chain`, `devshard/chainoracle`,
 `devshard/runtimeparams`, `devshard/testenv` unit tests, `decentralized-api/nodemanager`.
 
-Docker stack citest (S1–S6 + A1–A4):
+Docker stack behavior and adversarial citests:
 
 ```bash
 make -C devshard ci-testenv-integration
@@ -116,6 +116,6 @@ Roadmap: [`testenv/docs/observability-plan.md`](../testenv/docs/observability-pl
 | Symptom | Check |
 |---------|-------|
 | `protocol mismatch` in versiond logs | Rebuild devshardd with `DEVSHARD_VERSION=v2` |
-| Router 502 on sticky session | `docker compose ps`; S6 documents no-failover stickiness |
+| Router 502 on sticky session | `docker compose ps`; `TestVersiondStickySessionFailover` expects first-502 failover to the survivor |
 | Long-poll stuck | mock-dapi `/healthz`; mock-chain gRPC `:9090` |
 | Citest port conflict | Citest uses `172.31.0.0/24` and ports `18080+` — stop dev `make up` or use harness isolation |

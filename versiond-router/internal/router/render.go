@@ -8,7 +8,7 @@ import (
 
 const (
 	defaultMaxBodyBytes      = 10 * 1024 * 1024
-	defaultConnectTimeout    = 75 * time.Second
+	defaultConnectTimeout    = 2 * time.Second
 	defaultStreamIdle        = 20 * time.Minute
 	defaultUpstreamKeepalive = 64
 )
@@ -76,7 +76,12 @@ func Render(template []byte, state State, policy ProxyPolicy) ([]byte, error) {
 
 	var ha strings.Builder
 	for _, host := range state.Hosts {
-		fmt.Fprintf(&ha, "    server %s:%d resolve", host.Address, state.Port)
+		fmt.Fprintf(
+			&ha,
+			"    server %s:%d resolve max_fails=1 fail_timeout=10s",
+			host.Address,
+			state.Port,
+		)
 		if host.State != HostActive {
 			ha.WriteString(" down")
 		}

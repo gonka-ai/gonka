@@ -21,12 +21,12 @@ func FindDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 	if client == nil {
 		client = HTTPClient()
 	}
-	sessionA = "citest-s6-session-a"
+	sessionA = "citest-failover-session-a"
 	urlA := RouterSessionURL(routerHTTP, version, sessionA, "/healthz")
 	upstreamA = RequireResponseHeader(t, client, urlA, StickyUpstreamHeader)
 
 	for n := 0; n < 64; n++ {
-		candidate := fmt.Sprintf("citest-s6-%d", n)
+		candidate := fmt.Sprintf("citest-failover-%d", n)
 		if candidate == sessionA {
 			continue
 		}
@@ -95,43 +95,45 @@ func RequireGETNotGatewayError(t *testing.T, client *http.Client, url, wantUpstr
 	require.Equal(t, wantUpstream, got, "sticky upstream changed for %s", url)
 }
 
-// FaultRouteOutcome is how versiond-router behaves after a versiond instance stops.
-type FaultRouteOutcome int
-
-const (
-	FaultRouteFailed FaultRouteOutcome = iota // 502/503 — sticky upstream unavailable
-	FaultRouteRerouted                          // consistent-hash ring shrank; session hit survivor
-)
-
-// WaitStoppedUpstreamOutcome polls until a session pinned to a stopped versiond either
-// fails (502/503) or is re-hashed to the surviving upstream when Docker DNS drops the peer.
-func WaitStoppedUpstreamOutcome(t *testing.T, client *http.Client, url, stoppedUpstream, survivorUpstream string, wait time.Duration) FaultRouteOutcome {
+// WaitStickyFailoverToSurvivor polls until a session pinned to a stopped versiond is
+// served by the surviving upstream (proxy_next_upstream on first 502 / connect fail).
+// X-Upstream-Addr may list every tried peer (comma-separated); the survivor must appear
+// and the response must not be a gateway error.
+func WaitStickyFailoverToSurvivor(t *testing.T, client *http.Client, url, stoppedUpstream, survivorUpstream string, wait time.Duration) {
 	t.Helper()
 	if client == nil {
 		client = HTTPClient()
 	}
-	var outcome FaultRouteOutcome
 	ok := AssertEventually(t, wait, time.Second, func() bool {
 		resp, err := client.Get(url)
 		if err != nil {
-			outcome = FaultRouteFailed
-			return true
-		}
-		defer resp.Body.Close()
-		upstream := resp.Header.Get(StickyUpstreamHeader)
-		switch {
-		case resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable:
-			outcome = FaultRouteFailed
-			return true
-		case upstream == survivorUpstream && upstream != stoppedUpstream:
-			outcome = FaultRouteRerouted
-			return true
-		default:
 			return false
 		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusBadGateway || resp.StatusCode == http.StatusServiceUnavailable {
+			return false
+		}
+		upstream := resp.Header.Get(StickyUpstreamHeader)
+		return upstreamContains(upstream, survivorUpstream) && !upstreamOnly(upstream, stoppedUpstream)
 	})
 	require.True(t, ok,
-		"session on stopped upstream %s did not fail or reroute to %s within %s",
+		"session on stopped upstream %s did not failover to survivor %s within %s",
 		stoppedUpstream, survivorUpstream, wait)
-	return outcome
+}
+
+func upstreamContains(header, addr string) bool {
+	for _, part := range strings.Split(header, ",") {
+		if strings.TrimSpace(part) == addr {
+			return true
+		}
+	}
+	return false
+}
+
+func upstreamOnly(header, addr string) bool {
+	parts := strings.Split(header, ",")
+	if len(parts) != 1 {
+		return false
+	}
+	return strings.TrimSpace(parts[0]) == addr
 }

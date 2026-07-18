@@ -26,12 +26,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// BootAdversarialStack boots the 2× versiond S1 stack and waits for gateway chat readiness.
+// BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
 func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
-	stack, cfg, eps := BootS1Stack(t, prefix)
+	stack, cfg, eps := BootStack(t, prefix)
 	client := GatewayChatClient()
-	WaitS1Healthy(t, stack, eps)
+	WaitStackHealthy(t, stack, eps)
 	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 	return stack, cfg, eps

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Run stack citest (S1–S9) from devshard/testenv.
+# Run core stack behavior and versiond rolling-update tests.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export TESTENV_CITEST=1

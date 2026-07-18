@@ -34,11 +34,19 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Write-ahead transaction journal |
 | `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
-| `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `75s` | Upstream connection deadline |
+| `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `2s` | Upstream connection deadline before HA failover |
 | `VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT` | no | `20m` | Idle deadline in either direction for long HTTP/SSE requests |
 | `VERSIOND_ROUTER_UPSTREAM_KEEPALIVE` | no | `64` | Idle upstream connections retained per nginx worker |
 
 Debug response headers: `X-Upstream-Addr`, `X-Versiond-Backend`.
+
+### Failover (HA pool)
+
+On the first upstream connect error, timeout, or **502**, nginx retries another
+peer in `versiond_ha_pool` (`proxy_next_upstream`; `max_fails=1`). Sticky hash
+is unchanged while peers are healthy. **503** is not retried because drain and
+HA-guard responses must stay sticky. A mid-stream SSE response is not replayed;
+the client must reconnect with a new request.
 
 Proxy stream timeouts are inactivity deadlines, not limits on total inference
 duration. Streaming responses may run longer while data continues to flow. If
@@ -295,4 +303,4 @@ go run ./cmd/gonka-routerctl bootstrap
 
 ## Deploy notes
 
-See `devshard/docs/pr-1366-deploy-test-plan.md` §2.2.
+See `devshard/docs/v4-deploy-test-plan.md` §1.2 (routing) and §3 (HA kill / first-502).

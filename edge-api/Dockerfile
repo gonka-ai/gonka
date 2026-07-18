@@ -48,6 +48,13 @@ RUN --mount=type=cache,id=edge-api-go-build,target=/root/.cache/go-build \
     go build -mod=readonly -tags muslc \
     -o ./build/edge-api ./cmd/edge-api
 
+################################################################################
+# Binary Exporter stage (for --output / build-for-upgrade)
+################################################################################
+FROM scratch AS binary-exporter
+COPY --from=builder /app/edge-api/build/edge-api /build_output/edge-api
+COPY --from=builder /usr/lib/libgcc_s.so.1 /build_output/libgcc_s.so.1
+
 FROM alpine:3.23 AS runtime
 RUN apk add --no-cache ca-certificates libgcc
 COPY --from=builder /app/edge-api/build/edge-api /usr/local/bin/edge-api

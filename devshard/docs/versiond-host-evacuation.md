@@ -244,11 +244,11 @@ stale `draining` or `joining` owner must be resumed or, before `term_requested`,
 canceled with the same operation ID. This avoids another operator interpreting
 a control-plane outage as permission to drain a second host.
 
-The full-stack S10 test exercises both recovery choices. It interrupts and
-cancels one pre-signal evacuation, then interrupts a second evacuation and
-resumes it from the same journal before replacing and reactivating the host. It
-also checks the loaded nginx stream timeout and requires successful HTTP status
-for sticky-route observations.
+The full-stack `TestVersiondHostEvacuation` test exercises both recovery
+choices. It interrupts and cancels one pre-signal evacuation, then interrupts a
+second evacuation and resumes it from the same journal before replacing and
+reactivating the host. It also checks the loaded nginx stream timeout and
+requires successful HTTP status for sticky-route observations.
 
 For Docker replacement, the restart policy has no guessed default. Reusing an
 evacuated service requires its completed evacuation journal; a newly provisioned

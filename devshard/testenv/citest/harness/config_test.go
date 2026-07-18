@@ -10,9 +10,9 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWriteS1Config_TwoHostsMultiMode(t *testing.T) {
+func TestWriteStackConfig_TwoHostsMultiMode(t *testing.T) {
 	dir := t.TempDir()
-	WriteS1Config(t, dir)
+	WriteStackConfig(t, dir)
 
 	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
 	require.NoError(t, err)
@@ -21,16 +21,40 @@ func TestWriteS1Config_TwoHostsMultiMode(t *testing.T) {
 	require.Len(t, cfg.Hosts, 2)
 	require.Equal(t, "versiond-0", cfg.Hosts[0].ID)
 	require.Equal(t, "versiond-1", cfg.Hosts[1].ID)
+	// The standard config omits validation_rate; ApplyDefaults sets 6000.
+	cfg.ApplyDefaults()
+	require.Equal(t, uint32(6000), cfg.Params.ValidationRate)
 }
 
-func TestWriteS1Config_GencomposeProducesTwoVersiondServices(t *testing.T) {
+func TestWriteValidationLeaseRaceConfig_ValidationRate100(t *testing.T) {
+	dir := t.TempDir()
+	WriteValidationLeaseRaceConfig(t, dir)
+
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.Len(t, cfg.Hosts, 3)
+	require.Equal(t, uint32(10000), cfg.Params.ValidationRate)
+	require.Equal(t, uint32(10000), cfg.Escrows[0].ValidationRate)
+}
+
+func TestWriteMultiConfig_CustomValidationRate(t *testing.T) {
+	dir := t.TempDir()
+	WriteMultiConfig(t, dir, MultiConfigOpts{Hosts: 2, EscrowSlots: 2, ValidationRate: 7500})
+
+	cfg, err := config.Load(filepath.Join(dir, "config.yaml"))
+	require.NoError(t, err)
+	require.Equal(t, uint32(7500), cfg.Params.ValidationRate)
+	require.Equal(t, uint32(7500), cfg.Escrows[0].ValidationRate)
+}
+
+func TestWriteStackConfig_GencomposeProducesTwoVersiondServices(t *testing.T) {
 	if os.Getenv("TESTENV_HARNESS_GENCOMPOSE") != "1" {
 		t.Skip("set TESTENV_HARNESS_GENCOMPOSE=1 to run gencompose harness test")
 	}
 	RequireDocker(t)
 
 	stack := NewStack(t, "citest-harness-gen-*")
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 
 	cfg := stack.LoadConfig(t)

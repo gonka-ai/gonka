@@ -31,8 +31,11 @@ func TestRenderMarksNonActiveHostDown(t *testing.T) {
 		t.Fatal(err)
 	}
 	text := string(config)
-	if !strings.Contains(text, "server versiond-2:8080 resolve down;") {
+	if !strings.Contains(text, "server versiond-2:8080 resolve max_fails=1 fail_timeout=10s down;") {
 		t.Fatalf("rendered config does not mark draining host down:\n%s", text)
+	}
+	if !strings.Contains(text, "server versiond-1:8080 resolve max_fails=1 fail_timeout=10s;") {
+		t.Fatalf("rendered config does not configure HA failover:\n%s", text)
 	}
 	if !strings.Contains(text, "v1 versiond_legacy;") {
 		t.Fatalf("rendered config lost non-HA mapping:\n%s", text)

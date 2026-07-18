@@ -10,13 +10,13 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestS6_VersiondRestartPersistence verifies gateway chat and session nonce/state survive
+// TestVersiondRestartSessionPersistence verifies gateway chat and session nonce/state survive
 // versiond → devshardd restarts without regression (postgres-backed host recovery).
-func TestS6_VersiondRestartPersistence(t *testing.T) {
+func TestVersiondRestartSessionPersistence(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s6-restart-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-versiond-restart-*")
 	client := harness.HTTPClient()
 	chatClient := harness.GatewayChatClient()
 	adminKey := harness.TestenvAdminAPIKey
@@ -26,7 +26,7 @@ func TestS6_VersiondRestartPersistence(t *testing.T) {
 		}
 	})
 
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, chatClient, eps.GatewayHTTP, 3*time.Minute, stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
@@ -37,7 +37,7 @@ func TestS6_VersiondRestartPersistence(t *testing.T) {
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s6 chat before restart"},
+			{Role: "user", Content: "citest versiond chat before restart"},
 		},
 		MaxTokens: 16,
 	})
@@ -54,7 +54,7 @@ func TestS6_VersiondRestartPersistence(t *testing.T) {
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s6 chat after one restart"},
+			{Role: "user", Content: "citest versiond chat after one restart"},
 		},
 		MaxTokens: 16,
 	})
@@ -72,7 +72,7 @@ func TestS6_VersiondRestartPersistence(t *testing.T) {
 	harness.PostGatewayChatCompletion(t, chatClient, eps.GatewayHTTP, adminKey, harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s6 chat after all restarts"},
+			{Role: "user", Content: "citest versiond chat after all restarts"},
 		},
 		MaxTokens: 16,
 	})

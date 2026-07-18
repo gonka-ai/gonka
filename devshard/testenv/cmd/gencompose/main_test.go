@@ -58,6 +58,68 @@ func TestGenerateHosts_FillsMissingFields(t *testing.T) {
 	require.Equal(t, seedKey.Address(), cfg.Hosts[2].Address)
 }
 
+func TestAssignSlots_MultiTwoHostsHAOwnsAllSlots(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:   config.EscrowMeta{Slots: 4},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0, 1, 2, 3}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1ha", "gonka1ha", "gonka1ha"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 1)
+	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
+}
+
+func TestAssignSlots_MultiThreeHostsHAPlusSolo(t *testing.T) {
+	cfg := &config.File{
+		Versiond:       config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Escrow:         config.EscrowMeta{Slots: 4, SlotURL: "http://router:8080"},
+		VersiondRouter: config.VersiondRouterCfg{Host: "versiond-router"},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0", Address: "gonka1ha"},
+			{ID: "versiond-1", Address: "gonka1replica"},
+			{ID: "versiond-2", Address: "gonka1solo"},
+		},
+	}
+	assignSlots(cfg)
+	require.Equal(t, []int{0, 2}, cfg.Hosts[0].SlotIDs)
+	require.Empty(t, cfg.Hosts[1].SlotIDs)
+	require.Equal(t, []int{1, 3}, cfg.Hosts[2].SlotIDs)
+
+	syncChainSeed(cfg)
+	require.Equal(t, []string{"gonka1ha", "gonka1solo", "gonka1ha", "gonka1solo"}, cfg.Escrows[0].Slots)
+	require.Len(t, cfg.Participants, 2)
+	require.Equal(t, "gonka1ha", cfg.Participants[0].Address)
+	require.Equal(t, "http://router:8080", cfg.Participants[0].InferenceURL)
+	require.Equal(t, "gonka1solo", cfg.Participants[1].Address)
+	require.Equal(t, "http://versiond-2:8080", cfg.Participants[1].InferenceURL)
+	require.Equal(t, "versiond-0 versiond-1", versiondHosts(cfg))
+}
+
+func TestVersiondKeyName_MultiHAPairAndSolo(t *testing.T) {
+	cfg := &config.File{
+		Versiond: config.VersiondCfg{Mode: config.VersiondModeMulti},
+		Hosts: []config.HostCfg{
+			{ID: "versiond-0"},
+			{ID: "versiond-1"},
+			{ID: "versiond-2"},
+		},
+	}
+	require.Equal(t, "versiond-0", versiondKeyName(cfg, cfg.Hosts[0]))
+	require.Equal(t, "versiond-0", versiondKeyName(cfg, cfg.Hosts[1]))
+	require.Equal(t, "versiond-2", versiondKeyName(cfg, cfg.Hosts[2]))
+
+	cfg.Versiond.Mode = config.VersiondModeSingle
+	require.Equal(t, "versiond-1", versiondKeyName(cfg, cfg.Hosts[1]))
+}
+
 func TestSyncChainSeed_FromHosts(t *testing.T) {
 	hostKey, err := signing.GenerateKey()
 	require.NoError(t, err)
@@ -158,19 +220,20 @@ grantees:
 	client := chain.NewFromConn(conn)
 	ctx := context.Background()
 
-	for _, addr := range []string{cfg.Hosts[0].Address, cfg.Hosts[1].Address} {
-		resp, err := client.InferenceQueryClient().Participant(ctx, &inferencetypes.QueryGetParticipantRequest{Index: addr})
-		require.NoError(t, err)
-		require.Equal(t, addr, resp.Participant.Address)
-	}
+	// Two-host multi: only the HA participant is on-chain (hosts[1] is a replica).
+	resp, err := client.InferenceQueryClient().Participant(ctx, &inferencetypes.QueryGetParticipantRequest{Index: cfg.Hosts[0].Address})
+	require.NoError(t, err)
+	require.Equal(t, cfg.Hosts[0].Address, resp.Participant.Address)
 
 	escrowResp, err := client.InferenceQueryClient().DevshardEscrow(ctx, &inferencetypes.QueryGetDevshardEscrowRequest{Id: 1})
 	require.NoError(t, err)
 	require.True(t, escrowResp.Found)
 	require.Equal(t, cfg.User.Address, escrowResp.Escrow.Creator)
 	require.Len(t, escrowResp.Escrow.Slots, 2)
+	// Two-host multi: every slot belongs to the HA participant.
 	require.Equal(t, cfg.Hosts[0].Address, escrowResp.Escrow.Slots[0])
-	require.Equal(t, cfg.Hosts[1].Address, escrowResp.Escrow.Slots[1])
+	require.Equal(t, cfg.Hosts[0].Address, escrowResp.Escrow.Slots[1])
+	require.Equal(t, config.VersiondModeMulti, cfg.Versiond.Mode)
 
 	grantResp, err := client.InferenceQueryClient().GranteesByMessageType(ctx, &inferencetypes.QueryGranteesByMessageTypeRequest{
 		GranterAddress: cfg.Hosts[0].Address,
@@ -215,6 +278,15 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: postgres")
 	require.Contains(t, text, "devshard-postgres:")
 	require.Contains(t, text, "PGHOST:")
+	// HA pair shares KEY_NAME=versiond-0; solo versiond-2 keeps its own key.
+	require.Equal(t, 2, strings.Count(text, "KEY_NAME: versiond-0"))
+	require.NotContains(t, text, "KEY_NAME: versiond-1")
+	require.Contains(t, text, "KEY_NAME: versiond-2")
+	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
+	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
+	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")
+	require.Contains(t, text, "DEVSHARD_VALIDATION_RETRY_INTERVAL")
 	require.Contains(t, text, "devshardctl:")
 	require.Contains(t, text, "DEVSHARD_PRIVATE_KEY")
 	require.Contains(t, text, "DEVSHARD_ESCROW_ID")

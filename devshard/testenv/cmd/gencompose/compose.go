@@ -134,18 +134,24 @@ services:
       KEYRING_BACKEND: file
       KEYRING_DIR: {{ $.Versiond.KeyringDir }}
       KEYRING_PASSWORD: ${TESTENV_KEYRING_PASSWORD:-{{ $.Versiond.KeyringPassword }}}
-      KEY_NAME: {{ .ID }}
+      # Multi/HA: hosts[0]+hosts[1] share KEY_NAME=hosts[0]; solo hosts (2+)
+      # keep their own key. Other keys remain in the shared keyring.
+      KEY_NAME: {{ versiondKeyName $ . }}
+      DEVSHARD_VALIDATION_LEASE_TTL: ${DEVSHARD_VALIDATION_LEASE_TTL:-30m}
+      DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
-{{ if eq $.Versiond.Mode "multi" }}
+{{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
+      # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
-{{ end }}
-{{ if $.Postgres.Enabled }}
       PGHOST: {{ $.Postgres.Host }}
       PGPORT: "{{ $.Postgres.Port }}"
       PGDATABASE: {{ $.Postgres.Database }}
       PGUSER: {{ $.Postgres.User }}
       PGPASSWORD: {{ $.Postgres.Password }}
+{{ else if eq $.Versiond.Mode "multi" }}
+      # Solo executor: local sqlite so it does not multi-write shared PG diffs.
+      DEVSHARD_STORAGE_MODE: sqlite
 {{ end }}
     volumes:
       - {{ $.Versiond.HostBinaryMount }}:{{ $.Versiond.OverridePath }}:ro
@@ -162,9 +168,11 @@ services:
         condition: service_started
       mock-openai:
         condition: service_started
+{{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
-{{ if eq .ID "versiond-1" }}
+{{ end }}
+{{ if ne .ID "versiond-0" }}
       versiond-0:
         condition: service_started
 {{ end }}
@@ -254,6 +262,8 @@ func writeCompose(cfg *config.File, outPath string) error {
 	funcs := template.FuncMap{
 		"versionEnvSuffix":   versionEnvSuffix,
 		"versiondHosts":      versiondHosts,
+		"versiondKeyName":    versiondKeyName,
+		"isHAReplica":        isHAReplica,
 		"legacyVersiondHost": legacyVersiondHost,
 		"primaryEscrowID":    primaryEscrowID,
 		"primaryModelID":     primaryModelID,
@@ -293,11 +303,53 @@ func versionEnvSuffix(versionName string) string {
 }
 
 func versiondHosts(cfg *config.File) string {
+	if cfg == nil {
+		return ""
+	}
+	// Sticky HA pool is only the first two hosts. Solo participants (hosts[2+])
+	// are reached via direct InferenceURL, not VERSIOND_HOSTS.
+	if cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) >= 2 {
+		return cfg.Hosts[0].ID + " " + cfg.Hosts[1].ID
+	}
 	names := make([]string, len(cfg.Hosts))
 	for i, h := range cfg.Hosts {
 		names[i] = h.ID
 	}
 	return strings.Join(names, " ")
+}
+
+// versiondKeyName is the Cosmos keyring entry each versiond child loads.
+// Multi/HA: hosts[0] and hosts[1] share hosts[0]'s key (join-style). Solo
+// hosts (index ≥ 2) keep their own key. Single mode is per-host.
+func versiondKeyName(cfg *config.File, h config.HostCfg) string {
+	if cfg != nil && cfg.Versiond.Mode == config.VersiondModeMulti && len(cfg.Hosts) > 0 {
+		for i, host := range cfg.Hosts {
+			if host.ID != h.ID {
+				continue
+			}
+			if i <= 1 {
+				return cfg.Hosts[0].ID
+			}
+			return h.ID
+		}
+	}
+	if h.ID != "" {
+		return h.ID
+	}
+	return ""
+}
+
+// isHAReplica reports whether h is in the sticky HA pair (hosts[0], hosts[1]).
+func isHAReplica(cfg *config.File, h config.HostCfg) bool {
+	if cfg == nil || cfg.Versiond.Mode != config.VersiondModeMulti {
+		return false
+	}
+	for i, host := range cfg.Hosts {
+		if host.ID == h.ID {
+			return i <= 1
+		}
+	}
+	return false
 }
 
 // legacyVersiondHost is the versiond instance that owns pre-HA SQLite data dirs.

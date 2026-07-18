@@ -12,13 +12,13 @@ import (
 
 const stickyUpstreamHeader = "X-Upstream-Addr"
 
-// TestS2_RouterStickiness asserts nginx consistent-hash routes the same session id
+// TestRouterStickiness asserts nginx consistent-hash routes the same session id
 // to the same versiond upstream across retries, and that two backends are reachable.
-func TestS2_RouterStickiness(t *testing.T) {
+func TestRouterStickiness(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s2-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-router-stickiness-*")
 	client := harness.HTTPClient()
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/healthz", 5*time.Minute, "versiond-router healthz", stack)
 

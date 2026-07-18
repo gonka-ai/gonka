@@ -45,6 +45,14 @@ func (s *InferenceServer) DevshardEscrow(_ context.Context, req *inferencetypes.
 	return &inferencetypes.QueryGetDevshardEscrowResponse{Escrow: e, Found: true}, nil
 }
 
+func (s *InferenceServer) AccountByAddress(_ context.Context, req *inferencetypes.QueryAccountByAddressRequest) (*inferencetypes.QueryAccountByAddressResponse, error) {
+	pk := s.store.GetPubkey(req.GetAddress())
+	if pk == "" {
+		return &inferencetypes.QueryAccountByAddressResponse{}, nil
+	}
+	return &inferencetypes.QueryAccountByAddressResponse{Pubkey: pk}, nil
+}
+
 func (s *InferenceServer) Participant(_ context.Context, req *inferencetypes.QueryGetParticipantRequest) (*inferencetypes.QueryGetParticipantResponse, error) {
 	p := s.store.GetParticipant(req.GetIndex())
 	if p == nil {

@@ -51,7 +51,9 @@ func TestControllerBootstrapAndDrainTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !bytes.Contains(config, []byte("server versiond-2:8080 resolve down;")) {
+	if !bytes.Contains(config, []byte(
+		"server versiond-2:8080 resolve max_fails=1 fail_timeout=10s down;",
+	)) {
 		t.Fatalf("draining host was not rendered down:\n%s", config)
 	}
 	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {

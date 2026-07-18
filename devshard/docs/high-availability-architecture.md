@@ -183,7 +183,7 @@ Therefore:
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every
 > instance selects Postgres. SQLite is for single-instance / local-dev / tests
 > only. This rule is also stated in
-> [release-0.2.13-v2-r2.md](./release-0.2.13-v2-r2.md) and
+> [release-0.2.14-v4.md](./release-0.2.14-v4.md) and
 > [rolling-update.md](./rolling-update.md).
 
 Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
