@@ -334,10 +334,11 @@ func (q *BridgeQueue) checkValidatorActive(ctx context.Context) (bool, error) {
 	return q.epochCache.IsActiveParticipant(ctx, resp.Epoch, q.recorder.GetAccountAddress())
 }
 
-// processBlockReceipts commits every receipt in a block. Three outcomes:
+// processBlockReceipts commits every receipt in a block. Outcomes:
 //   - active validator: broadcast + confirm each receipt (normal path).
-//   - not active: skip receipts and advance latest — other validators handle them.
-//   - epoch query error: pause the drain (return error), retry on next POST.
+//   - not active (pre-check): skip receipts and advance latest.
+//   - permanent submit rejects (see classifyBridgeExchangeSubmit): skip + advance.
+//   - uncertain submit / confirm / epoch query error: pause drain, retry next POST.
 func (q *BridgeQueue) processBlockReceipts(ctx context.Context, block *BridgeBlock) error {
 	if len(block.Receipts) > 0 {
 		active, err := q.checkValidatorActive(ctx)
@@ -359,10 +360,10 @@ func (q *BridgeQueue) processBlockReceipts(ctx context.Context, block *BridgeBlo
 	return nil
 }
 
-// commitReceipt sends a receipt optimistically (no pre-check) and then treats an
-// index-independent module-state read as the AUTHORITY for whether it is
-// committed. The chain's "already validated" dedup response is treated as success
-// (so re-sent blocks make forward progress instead of stalling on dedup errors).
+// commitReceipt sends a receipt optimistically (no pre-check). On submit:
+//   - permanent feeder rejects → specific log + return OK (advance drain)
+//   - success → confirm via index-independent state poll
+//   - uncertain / retryable → pause drain for the next POST
 func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, block BridgeBlock) error {
 	msg, err := q.buildBridgeExchangeMsg(receipt, block)
 	if err != nil {
@@ -377,15 +378,29 @@ func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, 
 		"blockNumber", block.BlockNumber,
 		"receiptIndex", receipt.ReceiptIndex)
 
-	// 1. Send optimistically. "already recorded by us" is success, not failure;
-	// any other error is uncertain -> stop and retry on the next POST. We do NOT
-	// rely on the broadcast's own nil (broadcastMessage can swallow Code != 0);
-	// the confirmation read below is the authority.
-	if err := q.recorder.BridgeExchange(msg); err != nil && !isAlreadyRecorded(err) {
-		return fmt.Errorf("Bridge: Exchange submit not confirmable: %w", err)
+	if err := q.recorder.BridgeExchange(msg); err != nil {
+		action, reason := classifyBridgeExchangeSubmit(err)
+		attrs := []any{
+			"reason", reason,
+			"chain", block.OriginChain,
+			"blockNumber", block.BlockNumber,
+			"receiptIndex", receipt.ReceiptIndex,
+			"err", err,
+		}
+		switch action {
+		case bridgeSubmitSkip:
+			if reason == bridgeSkipContentMismatch {
+				slog.Error("Bridge: Content mismatch on existing tx; skipping receipt (manual review)", attrs...)
+			} else {
+				slog.Info("Bridge: Permanent submit reject; skipping receipt", attrs...)
+			}
+			return nil
+		default:
+			slog.Warn("Bridge: Exchange submit not confirmable; pausing drain", attrs...)
+			return fmt.Errorf("Bridge: Exchange submit not confirmable (%s): %w", reason, err)
+		}
 	}
 
-	// 2. Confirm via index-independent state read (bounded poll).
 	return q.confirmReceiptRecorded(ctx, msg)
 }
 
@@ -484,15 +499,51 @@ func bridgeTxMatchesMsg(tx types.BridgeTransaction, msg *types.MsgBridgeExchange
 		tx.ReceiptsRoot == msg.ReceiptsRoot
 }
 
-// isAlreadyRecorded reports whether the broadcast error is the chain's dedup
-// signal that our validator already recorded this exact receipt. This is treated
-// as success (§1.3). The string match is fragile and only an optimization to skip
-// a redundant poll; the confirmation read remains the authority.
-func isAlreadyRecorded(err error) bool {
+// bridgeSubmitAction is how commitReceipt reacts to a BridgeExchange error.
+type bridgeSubmitAction int
+
+const (
+	bridgeSubmitRetry bridgeSubmitAction = iota // pause drain, retry later
+	bridgeSubmitSkip                            // log + return OK, advance
+)
+
+// Stable reason strings for logs / tests (match msg_server_bridge_exchange + permissions).
+const (
+	bridgeSkipAlreadyValidated = "already_validated"
+	bridgeSkipNotInTxEpoch     = "not_in_tx_epoch_group"
+	bridgeSkipNotActive        = "not_active_participant"
+	bridgeSkipContentMismatch  = "content_mismatch"
+	bridgeRetryUncertain       = "uncertain_retry"
+)
+
+// classifyBridgeExchangeSubmit maps chain RawLog / errors to skip vs retry.
+// Skip only when this feeder can never successfully vote this receipt.
+// Everything else (chain down, unknown msg, OOG, mint fail, epoch query, …)
+// stays retry so the cursor does not advance over uncertain state.
+func classifyBridgeExchangeSubmit(err error) (bridgeSubmitAction, string) {
+	switch {
+	case err == nil:
+		return bridgeSubmitRetry, bridgeRetryUncertain
+	case errContainsFold(err, "validator has already validated this transaction"):
+		return bridgeSubmitSkip, bridgeSkipAlreadyValidated
+	case errContainsFold(err, "validator not in transaction's epoch group"):
+		return bridgeSubmitSkip, bridgeSkipNotInTxEpoch
+	case errContainsFold(err, "validator not in active participants"),
+		errContainsFold(err, "participant is not active"):
+		// Msg-body inactive check + CheckPermission ErrActiveParticipantNotFound.
+		return bridgeSubmitSkip, bridgeSkipNotActive
+	case errContainsFold(err, "transaction content mismatch - potential attack detected"):
+		return bridgeSubmitSkip, bridgeSkipContentMismatch
+	default:
+		return bridgeSubmitRetry, bridgeRetryUncertain
+	}
+}
+
+func errContainsFold(err error, substr string) bool {
 	if err == nil {
 		return false
 	}
-	return strings.Contains(err.Error(), "Bridge: Validator has already validated this transaction")
+	return strings.Contains(strings.ToLower(err.Error()), strings.ToLower(substr))
 }
 
 // getLatestBridgeBlock serves the Geth startup/continuity handshake. It returns ONLY
