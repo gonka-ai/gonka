@@ -104,7 +104,7 @@ Enforced by the gateway's message validator:
 - **Lenient SDK compat:** orphan `role: "tool"` messages — those whose `tool_call_id` was never emitted by a prior `assistant.tool_calls[].id` — are silently dropped before validation. Long agent conversations sometimes lose part of a multi-tool fan-out during client-side history compaction.
 - **Lenient SDK compat:** empty `role: "assistant"` turns — no `content` AND no `tool_calls` AND no `function_call` — are silently dropped. The model can't observe an informationless turn; the drop is a semantic no-op.
 - **Strict (no lenient compat):** duplicate `tool_calls[].id` within a single assistant message is rejected per OpenAI spec — see [troubleshooting](troubleshooting.md#reject-duplicate-tool-call-id).
-- **Route-specific shape:** the `MiniMaxAI/MiniMax-M2.7` route uses a different `role:"tool"` contract — `content` is a `{name,type,text}[]` array, `tool_call_id` is absent (silently stripped if present), and the orphan-drop policy is "no preceding assistant.tool_calls[] block" rather than "no matching tool_call_id". See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md).
+- **Standard tool contract:** the `MiniMaxAI/MiniMax-M2.7` route uses the same `role:"tool"` contract as every other route — standard OpenAI string/text-part `content` with a matching `tool_call_id`. An earlier release required a MiniMax-native `{name,type,text}[]` array with no `tool_call_id`; that was removed, since vLLM's chat template renders the plain-string result directly. See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md).
 
 ## Errors
 
