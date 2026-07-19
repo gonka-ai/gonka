@@ -334,6 +334,8 @@ func TestGetPocArtifactsState_UsesModelScopedStore(t *testing.T) {
 	store := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer store.Close()
 
+	store.ActivateStage(100)
+
 	modelStore, err := store.GetOrCreateStore(100, "org/model-a")
 	assert.NoError(t, err)
 	assert.NoError(t, modelStore.AddWithNode(1, []byte("artifact-a"), ""))
@@ -364,6 +366,8 @@ func TestGetPocArtifactsState_UsesModelScopedStore(t *testing.T) {
 func TestPostPocProofs_UsesModelScopedStore(t *testing.T) {
 	store := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer store.Close()
+
+	store.ActivateStage(100)
 
 	modelAStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
@@ -430,6 +434,8 @@ func TestPostPocProofs_UsesModelScopedStore(t *testing.T) {
 func TestPostPocProofsByNonce_UsesModelScopedStore(t *testing.T) {
 	store := artifacts.NewManagedArtifactStore(t.TempDir(), 3)
 	defer store.Close()
+
+	store.ActivateStage(100)
 
 	modelAStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
