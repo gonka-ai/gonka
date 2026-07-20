@@ -1,0 +1,32 @@
+# Lightweight proxy front for testing the production-shaped blue/green update.
+# Intentionally NOT the full join-stack proxy (no node/api/versiond/explorer).
+#
+# Required names for the update script:
+#   container: proxy
+#   network:   join_default (external)
+#   upstream:  devshard-gateway:8080  (rewritten to devshard-gateway-temp:8080)
+#
+# Bind localhost-only so the harness does not claim public host ports.
+services:
+  proxy:
+    container_name: proxy
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:18090:80"
+    volumes:
+      # Read-write on purpose: the update script rewrites upstream hostnames
+      # inside /etc/nginx/nginx.conf, then runs nginx -t && nginx -s reload.
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf
+    networks:
+      - join_default
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+      start_period: 5s
+
+networks:
+  join_default:
+    external: true

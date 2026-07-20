@@ -1,0 +1,61 @@
+{
+  "image": {
+    "from_tag": "ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v2-obs-mem",
+    "to_tag": "ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-v3-post1",
+    "skip_pull": false
+  },
+  "models": [
+    { "model": "MiniMaxAI/MiniMax-M2.7", "escrow_count": 4, "main_seed_count": 1, "escrow_amount": 500000000 },
+    { "model": "moonshotai/Kimi-K2.6", "escrow_count": 4, "main_seed_count": 1, "escrow_amount": 500000000 }
+  ],
+  "allow_unavailable_models": [],
+  "escrow": {
+    "source_protocol_version": "2",
+    "protocol_version": "3",
+    "route_prefix": "/devshard/v3",
+    "private_key_env": "DEVSHARD_PRIVATE_KEY"
+  },
+  "deactivation": {
+    "mode": "sqlite",
+    "gateway_db": ".devshardctl/gateway.db"
+  },
+  "main": {
+    "admin_url": "http://127.0.0.1:18080",
+    "container": "gateway-v1",
+    "storage_host_dir": ".devshardctl",
+    "env_file": "./config.devshard.env"
+  },
+  "temp": {
+    "admin_port": 18081,
+    "upstream_alias": "devshard-gateway-temp",
+    "network": "join_default"
+  },
+  "routing": {
+    "type": "caddy",
+    "public_base_url": "https://gateway-2.gonka.ai",
+    "public_prefix": ""
+  },
+  "caddy": {
+    "proxy_container": "devshard-gateway-caddy",
+    "config_path": "/tmp/Caddyfile",
+    "old_upstream": "devshard-gateway",
+    "new_upstream": "devshard-gateway-temp",
+    "upstream_port": 8080
+  },
+  "compose": {
+    "file": "docker-compose.devshard-gateway.yml",
+    "service": "devshard-gateway"
+  },
+  "timeouts": {
+    "ready_timeout_seconds": 180,
+    "ready_poll_seconds": 3,
+    "drain_timeout_seconds": 7200,
+    "drain_poll_seconds": 10
+  },
+  "smoke_test": {
+    "model": "MiniMaxAI/MiniMax-M2.7"
+  },
+  "rotation": {
+    "restore_after_update": true
+  }
+}
