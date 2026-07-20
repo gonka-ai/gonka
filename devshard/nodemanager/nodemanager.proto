@@ -8,11 +8,16 @@ service NodeManager {
   rpc AcquireMLNode(AcquireMLNodeRequest) returns (AcquireMLNodeResponse);
   rpc ReleaseMLNode(ReleaseMLNodeRequest) returns (ReleaseMLNodeResponse);
   rpc GetRuntimeConfig(GetRuntimeConfigRequest) returns (GetRuntimeConfigResponse);
+  rpc GetHostEvents(GetHostEventsRequest) returns (GetHostEventsResponse);
+  rpc ListNodeCapacity(ListNodeCapacityRequest) returns (ListNodeCapacityResponse);
 }
 
 message AcquireMLNodeRequest {
   string model                   = 1;
   repeated string excluded_nodes = 2;
+  // Escrow that triggered this acquire (optional). Used by dapi to attribute
+  // per-escrow mlnode load for the capacity-fallback divisor.
+  string escrow_id               = 3;
 }
 
 message AcquireMLNodeResponse {
@@ -70,4 +75,94 @@ message ApprovedVersion {
   string name = 1;
   string binary = 2;
   string sha256 = 3;
+}
+
+// HostEventKind selects discrete escrow/maintenance events on GetHostEvents.
+// Values 1–2 are reserved for a possible future EPOCH/PARAMS fold; unused in v1.
+enum HostEventKind {
+  HOST_EVENT_KIND_UNSPECIFIED = 0;
+  HOST_EVENT_KIND_ESCROW_CREATED = 3;
+  HOST_EVENT_KIND_ESCROW_SETTLED = 4;
+  HOST_EVENT_KIND_MAINTENANCE_SCHEDULED = 5;
+  HOST_EVENT_KIND_MAINTENANCE_CANCELED = 6;
+}
+
+message GetHostEventsRequest {
+  // Last applied global seq; 0 = live from now (no replay of retained events).
+  uint64 cursor = 1;
+  // 0 = immediate reply; >0 = long-poll up to N seconds (server-capped).
+  uint32 max_wait_seconds = 2;
+  // Required; empty → InvalidArgument (no accidental firehose).
+  repeated HostEventKind subscribe = 3;
+  // Last generation from a prior response; 0 = first poll / unknown.
+  // Mismatch with the server boot nonce yields reset=true.
+  uint64 generation = 4;
+}
+
+message HostEvent {
+  uint64 seq = 1;
+  HostEventKind kind = 2;
+  int64 observed_at_unix = 3;
+  // Exactly one payload set per kind:
+  EscrowPayload escrow = 12;
+  MaintenancePayload maintenance = 13;
+}
+
+message EscrowPayload {
+  uint64 escrow_id = 1;
+  uint64 epoch_index = 2;
+  string model_id = 3;
+  string creator = 4;
+  string amount = 5;
+  string settler = 6;
+  string total_payout = 7;
+  string fees = 8;
+  string remainder = 9;
+}
+
+message MaintenancePayload {
+  uint64 reservation_id = 1;
+  string participant = 2;
+  int64 start_height = 3;
+  uint64 duration_blocks = 4;
+  string reason = 5;
+}
+
+message GetHostEventsResponse {
+  // Idle timeout / nothing in the subscribed set since cursor.
+  bool unchanged = 1;
+  // Only kinds in subscribe, in seq order.
+  repeated HostEvent events = 2;
+  uint64 next_cursor = 3;
+  // dapi boot nonce for the ring serving this response.
+  uint64 generation = 4;
+  // Client must re-hydrate (generation mismatch or cursor below retained window).
+  // Named needs_reset (not reset) so generated Go avoids clashing with proto.Message.Reset.
+  bool needs_reset = 5;
+  // Convenience when escrow topics are subscribed; 0 if unknown / not applicable.
+  int32 open_escrow_count = 6;
+  // Snapshot of active-escrow load (30-min avg mlnode req/min). Idle escrows
+  // (no acquires in the last 30m) are omitted. Full replace each response;
+  // independent of the event cursor. Empty until dapi attributes escrow_id.
+  repeated EscrowLoad escrow_load = 7;
+}
+
+message EscrowLoad {
+  uint64 escrow_id = 1;
+  double requests_per_min = 2;
+}
+
+message ListNodeCapacityRequest {}
+
+message NodeCapacityEntry {
+  string node_id = 1;
+  string model = 2;
+  int32 max_concurrent = 3;
+  int32 lock_count = 4;
+  string status = 5; // INFERENCE, POC, etc.
+}
+
+message ListNodeCapacityResponse {
+  repeated NodeCapacityEntry nodes = 1;
+  int64 served_at_unix = 2;
 }

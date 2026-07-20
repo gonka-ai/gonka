@@ -49,6 +49,7 @@ import (
 
 	devshardpkg "devshard"
 	devshardbridge "devshard/bridge"
+	"devshard/hostevents"
 	mlnodeclient "devshard/mlnode"
 	devshardobservability "devshard/observability"
 	devshardstorage "devshard/storage"
@@ -139,6 +140,13 @@ func main() {
 	mlNodeMgr := newMLNodeManager(ctx)
 	slog.Info("mlnode cache", "ttl", mlNodeMgrTTL())
 
+	escrowLoadMap := hostevents.NewLoadMap()
+	capacityCache := mlnodeclient.NewCache(mlClient.NodeManagerClient(), mlnodeclient.CacheOptions{
+		ActiveLoad: escrowLoadMap.Snapshot,
+		Log:        slog.Default(),
+	})
+	capacityCache.Start(ctx)
+
 	payloadDir := filepath.Join(*dataDir, "payloads")
 	if err := os.MkdirAll(payloadDir, 0o755); err != nil {
 		log.Fatalf("create payload dir: %v", err)
@@ -163,7 +171,7 @@ func main() {
 
 	br := internaldevshard.NewChainBridge(recorder)
 
-	engine := newDevshardEngine(mlClient, mlNodeMgr, payloadStore, httpClient, chainParams)
+	engine := newDevshardEngine(mlClient, mlNodeMgr, capacityCache, payloadStore, httpClient, chainParams)
 	validator := newDevshardValidator(mlClient, httpClient, runtimeVersion, br, recorder, engine, chainParams)
 
 	storeDir := filepath.Join(*dataDir, "devshardd")
@@ -212,6 +220,15 @@ func main() {
 	}
 	store.Start()
 	manager.SetReady()
+
+	hostEventsMaxWait, hostEventsSlack := hostEventsSettingsFromEnv()
+	go hostevents.Run(ctx, hostevents.Config{
+		Client:              mlClient.NodeManagerClient(),
+		ServerMaxWait:       hostEventsMaxWait,
+		ClientDeadlineSlack: hostEventsSlack,
+		Log:                 slog.Default(),
+		LoadMap:             escrowLoadMap,
+	}, manager)
 
 	e := echo.New()
 	e.HideBanner = true

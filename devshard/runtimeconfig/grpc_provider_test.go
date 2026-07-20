@@ -277,6 +277,14 @@ func (r *recordingClient) ReleaseMLNode(ctx context.Context, in *gen.ReleaseMLNo
 	return r.inner.ReleaseMLNode(ctx, in, opts...)
 }
 
+func (r *recordingClient) GetHostEvents(ctx context.Context, in *gen.GetHostEventsRequest, opts ...grpc.CallOption) (*gen.GetHostEventsResponse, error) {
+	return r.inner.GetHostEvents(ctx, in, opts...)
+}
+
+func (r *recordingClient) ListNodeCapacity(ctx context.Context, in *gen.ListNodeCapacityRequest, opts ...grpc.CallOption) (*gen.ListNodeCapacityResponse, error) {
+	return r.inner.ListNodeCapacity(ctx, in, opts...)
+}
+
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	srv := testserver.New()
 	handlers := []testserver.Handler{testserver.FullConfig(TestRuntimeConfigProto(100, 1, "raw"))}

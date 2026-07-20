@@ -7,6 +7,7 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	"devshard/bridge"
 	"devshard/observability"
 	"devshard/storage"
 	"devshard/transport"
@@ -109,6 +110,9 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	if errors.Is(err, ErrInitializing) {
 		return observability.MetricStatusError, observability.ReasonInitializing
 	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
+		return observability.MetricStatusError, observability.ReasonGetEscrowErr
+	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
 		return observability.MetricStatusError, observability.ReasonVersionConflict
 	}
@@ -152,6 +156,9 @@ func routeLabel(c echo.Context) string {
 func sessionHTTPError(c echo.Context, err error) error {
 	if errors.Is(err, ErrInitializing) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorInitializing, err.Error())
+	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
+		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) || errors.Is(err, storage.ErrSessionEpochConflict) {
 		return echo.NewHTTPError(http.StatusConflict, err.Error())

@@ -1153,6 +1153,9 @@ func (s *SQLite) PruneEpoch(epochID uint64) error {
 	if _, err := s.metaDB.Exec(`DELETE FROM escrow_epoch WHERE epoch_id = ?`, epochID); err != nil {
 		return fmt.Errorf("prune meta index for epoch %d: %w", epochID, err)
 	}
+	if _, err := s.metaDB.Exec(`DELETE FROM escrow_cache WHERE epoch_id = ?`, epochID); err != nil {
+		return fmt.Errorf("prune escrow cache for epoch %d: %w", epochID, err)
+	}
 	s.mu.Lock()
 	for esc, ep := range s.escrowIdx {
 		if ep == epochID {
@@ -1226,6 +1229,9 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 	if _, err := s.metaDB.Exec(`DELETE FROM escrow_epoch WHERE epoch_id < ?`, cutoff); err != nil {
 		return fmt.Errorf("prune meta index before epoch %d: %w", cutoff, err)
 	}
+	if _, err := s.metaDB.Exec(`DELETE FROM escrow_cache WHERE epoch_id < ?`, cutoff); err != nil {
+		return fmt.Errorf("prune escrow cache before epoch %d: %w", cutoff, err)
+	}
 	s.mu.Lock()
 	for esc, ep := range s.escrowIdx {
 		if ep < cutoff {
@@ -1235,6 +1241,48 @@ func (s *SQLite) pruneBefore(cutoff uint64) error {
 	s.mu.Unlock()
 	if firstCloseErr != nil {
 		return firstCloseErr
+	}
+	return nil
+}
+
+func (s *SQLite) PutEscrowCache(info EscrowCacheInfo) error {
+	raw, err := marshalEscrowCache(info)
+	if err != nil {
+		return err
+	}
+	_, err = s.metaDB.Exec(
+		`INSERT INTO escrow_cache (escrow_id, epoch_id, escrow_json, cached_at)
+		 VALUES (?, ?, ?, ?)
+		 ON CONFLICT(escrow_id) DO UPDATE SET
+		   epoch_id = excluded.epoch_id,
+		   escrow_json = excluded.escrow_json,
+		   cached_at = excluded.cached_at`,
+		info.EscrowID, info.EpochID, raw, escrowCacheNowUnix(),
+	)
+	if err != nil {
+		return fmt.Errorf("put escrow cache: %w", err)
+	}
+	return nil
+}
+
+func (s *SQLite) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	var raw string
+	err := s.metaDB.QueryRow(
+		`SELECT escrow_json FROM escrow_cache WHERE escrow_id = ?`, escrowID,
+	).Scan(&raw)
+	if err == sql.ErrNoRows {
+		return nil, ErrEscrowCacheNotFound
+	}
+	if err != nil {
+		return nil, fmt.Errorf("get escrow cache: %w", err)
+	}
+	return unmarshalEscrowCache(raw)
+}
+
+func (s *SQLite) DeleteEscrowCache(escrowID string) error {
+	_, err := s.metaDB.Exec(`DELETE FROM escrow_cache WHERE escrow_id = ?`, escrowID)
+	if err != nil {
+		return fmt.Errorf("delete escrow cache: %w", err)
 	}
 	return nil
 }

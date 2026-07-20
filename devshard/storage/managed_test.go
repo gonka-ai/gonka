@@ -125,6 +125,15 @@ func (s *legacyOnlyStorage) DrainInferenceValidationObs(escrowID string, inferen
 func (s *legacyOnlyStorage) GetValidationObservability(escrowID string) ([]SlotValidationObs, error) {
 	return s.inner.GetValidationObservability(escrowID)
 }
+func (s *legacyOnlyStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	return s.inner.PutEscrowCache(info)
+}
+func (s *legacyOnlyStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	return s.inner.GetEscrowCache(escrowID)
+}
+func (s *legacyOnlyStorage) DeleteEscrowCache(escrowID string) error {
+	return s.inner.DeleteEscrowCache(escrowID)
+}
 func (s *legacyOnlyStorage) PruneEpoch(epochID uint64) error {
 	s.pruneEpochCalls++
 	if epochID == s.failEpoch && !s.failed {

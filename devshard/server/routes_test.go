@@ -9,6 +9,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/storage"
 	"devshard/transport"
 )
@@ -45,6 +46,26 @@ func TestSessionHTTPErrorInitializing(t *testing.T) {
 	e.HTTPErrorHandler(err, c)
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Equal(t, transport.DevshardErrorInitializing, rec.Header().Get(transport.HeaderDevshardError))
+}
+
+func TestSessionHTTPErrorChainUnavailable(t *testing.T) {
+	e := echo.New()
+	req := httptest.NewRequest(http.MethodGet, "/sessions/x/chat/completions", nil)
+	rec := httptest.NewRecorder()
+	c := e.NewContext(req, rec)
+
+	err := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrChainUnavailable))
+	require.Error(t, err)
+	e.HTTPErrorHandler(err, c)
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, transport.DevshardErrorChainUnavailable, rec.Header().Get(transport.HeaderDevshardError))
+}
+
+func TestSessionHTTPErrorEscrowNotFoundStill500(t *testing.T) {
+	c := testEchoContext(t)
+	httpErr, ok := sessionHTTPError(c, fmt.Errorf("get escrow: %w", bridge.ErrEscrowNotFound)).(*echo.HTTPError)
+	require.True(t, ok)
+	require.Equal(t, http.StatusInternalServerError, httpErr.Code)
 }
 
 func TestSessionHTTPErrorDefault(t *testing.T) {
