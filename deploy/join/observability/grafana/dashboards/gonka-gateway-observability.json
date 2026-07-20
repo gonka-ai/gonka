@@ -653,7 +653,7 @@
         "h": 7,
         "w": 8,
         "x": 0,
-        "y": 44
+        "y": 37
       },
       "id": 99,
       "targets": [
@@ -1570,6 +1570,67 @@
       ],
       "title": "Non-Inference Transport Errors by Path",
       "type": "timeseries"
+    },
+    {
+      "datasource": {
+        "type": "prometheus",
+        "uid": "prometheus"
+      },
+      "description": "Escrows disabled because local state recovery failed during startup of the current gateway process. The signal clears after a later restart because already-inactive escrows are not retried.",
+      "fieldConfig": {
+        "defaults": {
+          "custom": {
+            "cellOptions": {
+              "type": "color-background"
+            }
+          },
+          "mappings": [
+            {
+              "options": {
+                "1": {
+                  "text": "QUARANTINED"
+                }
+              },
+              "type": "value"
+            }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              {
+                "color": "green",
+                "value": null
+              },
+              {
+                "color": "red",
+                "value": 1
+              }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "gridPos": {
+        "h": 7,
+        "w": 16,
+        "x": 8,
+        "y": 132
+      },
+      "id": 116,
+      "options": {
+        "cellHeight": "sm",
+        "showHeader": true
+      },
+      "targets": [
+        {
+          "expr": "devshard_gateway_startup_skipped_escrow{model=~\"$model\",escrow_id=~\"$escrow_id\",reason=\"local_recovery_failed\"} == 1",
+          "format": "table",
+          "instant": true,
+          "refId": "A"
+        }
+      ],
+      "title": "Startup Recovery Quarantines - Current Process",
+      "type": "table"
     }
   ],
   "refresh": "30s",

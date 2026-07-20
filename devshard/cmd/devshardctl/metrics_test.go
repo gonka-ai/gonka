@@ -74,6 +74,24 @@ func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
 	requireMetricCounterValue(t, families, "devshard_gateway_timeout_actions_total", map[string]string{"participant_key": "participant-1", "model": "Qwen/Test", "kind": "execution", "action": "completed", "reason": "none"}, 1)
 }
 
+func TestStartupSkippedEscrowMetric(t *testing.T) {
+	m := NewDevshardMetrics()
+
+	recordStartupSkippedEscrows(m, []startupSkippedEscrow{{
+		EscrowID: "32269",
+		Model:    "Qwen/Test",
+		Reason:   startupSkipReasonLocalRecovery,
+	}})
+
+	families, err := m.registry.Gather()
+	require.NoError(t, err)
+	requireMetricGaugeValue(t, families, "devshard_gateway_startup_skipped_escrow", map[string]string{
+		"escrow_id": "32269",
+		"model":     "Qwen/Test",
+		"reason":    "local_recovery_failed",
+	}, 1)
+}
+
 func TestGatewayMetricsCollectorIncludesParticipantQuarantineState(t *testing.T) {
 	limiter := NewParticipantRequestLimiter(10, 10)
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {

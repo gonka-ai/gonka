@@ -26,6 +26,7 @@ type DevshardMetrics struct {
 	gatewayLimitRejections     *prometheus.CounterVec
 	participantLimitRejections *prometheus.CounterVec
 	participantTransportErrors *prometheus.CounterVec
+	startupSkippedEscrows      *prometheus.GaugeVec
 	speculativeDecisions       *prometheus.CounterVec
 	speculativeAttempts        *prometheus.CounterVec
 	inferenceTimeouts          *prometheus.CounterVec
@@ -137,6 +138,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 				Help: "Total participant-bound transport request errors by participant, model, request kind, and upstream status.",
 			},
 			[]string{"participant_key", "model", "path_kind", "status"},
+		),
+		startupSkippedEscrows: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_startup_skipped_escrow",
+				Help: "Escrows persistently disabled because local state recovery failed during startup.",
+			},
+			[]string{"escrow_id", "model", "reason"},
 		),
 		speculativeDecisions: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
@@ -315,6 +323,7 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.gatewayLimitRejections,
 		m.participantLimitRejections,
 		m.participantTransportErrors,
+		m.startupSkippedEscrows,
 		m.speculativeDecisions,
 		m.speculativeAttempts,
 		m.inferenceTimeouts,
@@ -408,6 +417,17 @@ func (m *DevshardMetrics) RecordParticipantTransportError(participantKey, model,
 		metricLabel(pathKind, "unknown"),
 		strconv.Itoa(statusCode),
 	).Inc()
+}
+
+func (m *DevshardMetrics) RecordStartupSkippedEscrow(escrowID, model, reason string) {
+	if m == nil {
+		return
+	}
+	m.startupSkippedEscrows.WithLabelValues(
+		metricLabel(escrowID, "unknown"),
+		metricLabel(model, "unknown"),
+		metricLabel(reason, "unknown"),
+	).Set(1)
 }
 
 func (m *DevshardMetrics) RecordSpeculativeDecision(reason string) {
