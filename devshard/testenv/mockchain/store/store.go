@@ -42,6 +42,11 @@ type Store struct {
 
 	Accounts     map[string]*Account
 	nextEscrowID uint64
+
+	// escrowQueryFault, when true, makes DevshardEscrow gRPC queries fail. It
+	// lets citest simulate an unavailable request-time escrow fetch path so the
+	// devshardd escrow long-poll warm cache is exercised.
+	escrowQueryFault bool
 }
 
 // Account holds Cosmos auth sequence state for LCD tx signing (Phase 3c).
@@ -261,6 +266,20 @@ func (s *Store) PutEscrow(e *inferencetypes.DevshardEscrow) {
 		c.Slots = append([]string(nil), e.Slots...)
 	}
 	s.Escrows[e.Id] = &c
+}
+
+// SetEscrowQueryFault toggles DevshardEscrow query failures (citest fault injection).
+func (s *Store) SetEscrowQueryFault(faulted bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.escrowQueryFault = faulted
+}
+
+// EscrowQueryFaulted reports whether DevshardEscrow queries should fail.
+func (s *Store) EscrowQueryFaulted() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.escrowQueryFault
 }
 
 // AdvanceBlock increments the latest block height and returns the new value.

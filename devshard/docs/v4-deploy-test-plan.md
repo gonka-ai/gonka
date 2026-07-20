@@ -1599,12 +1599,27 @@ Run once per matrix row (**A** = dapi **0.2.14**, **B** = dapi
 | First inference (new session) **succeeds** without inference-node (§6.3) | [ ] | [ ] |
 | Evidence: logs + DB timestamps recorded | [ ] | [ ] |
 
-### 6.5 Schedule for testenv (do not implement here)
+### 6.5 Testenv automation (escrow long-poll warm — implemented)
 
-Add an automated citest (suggested name **S10** /
-`TestS10_EscrowLongPollWarmWithoutInferenceNode`) to
-`devshard/testenv/citest/` that encodes §6.1–§6.3 for **both** dapi
-pairings (or parametrize mock-dapi / image pin so A and B are covered):
+**Status: implemented** as `TestEscrowLongPollWarmWithoutInferenceNode` in
+`devshard/testenv/citest/escrow_longpoll_warm_test.go`. Run with
+`make -C devshard/testenv citest-escrow-longpoll` (or `-run TestEscrowLongPollWarm`). See
+[testenv/docs/scenarios.md](../testenv/docs/scenarios.md) → **Escrow long-poll
+warm** and **Chaining vs. parallelism**.
+
+The citest encodes §6.1–§6.3: a mock-dapi `GetHostEvents` escrow-created event is
+long-polled by v4 `devshardd`, which prefetches escrow metadata into
+`escrow_cache`; the first inference then binds from the warm cache with the live
+mock-chain `DevshardEscrow` query faulted (`POST /testenv/escrow-query-fault`).
+It wires the previously-unwired consumer side: `devshardd` now starts
+`devshard/hostevents.Run` with a sink that writes `escrow_cache`, and lazy bind
+reads through a `CachingEscrowBridge` (chain-first, cache fallback).
+
+Automation notes vs. the manual matrix: the citest runs against the single mock
+NodeManager producer rather than the two real dapi images (matrix rows A/B); the
+mock encodes the same `GetHostEvents` contract both images must honor, so the A/B
+image pinning stays a manual check. Original sketch (still the shape of the
+test):
 
 | Step | Autotest sketch |
 | --- | --- |
@@ -1613,11 +1628,11 @@ pairings (or parametrize mock-dapi / image pin so A and B are covered):
 | 3 | Stop / fault inference-node (or mock acquire fail) |
 | 4 | Gateway chat for that escrow → **2xx**; assert no acquire to the faulted node |
 | 5 | Repeat / matrix for dapi **0.2.14** contract and **devshard-0.2.14-v4** dapi (both green) |
-| 6 | Optional: capacity-fallback bounds once S10 is green |
+| 6 | Optional: capacity-fallback bounds once the escrow long-poll warm citest is green |
 
-Track in testenv backlog / scenarios index
-([testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) when implemented —
-**not** part of this doc’s implementation work.
+Tracked in the scenarios index
+([testenv/docs/scenarios.md](../testenv/docs/scenarios.md) → **Escrow long-poll
+warm**).
 
 ### 6.6 Cleanup
 
@@ -1942,7 +1957,7 @@ docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
 8. **Escrow long-poll warm:** create → DB cache → inference with inference-node
    down — **§6** ([PR #1443](https://github.com/gonka-ai/gonka/pull/1443));
    prove **v4 × dapi 0.2.14** and **v4 × dapi `devshard-0.2.14-v4`** (both);
-   schedule citest **S10** (not implemented in this pass).
+   citest `citest-escrow-longpoll` covers the automated path.
 9. **Rolling updates (same name, new sha):** Postgres blue/green + drain for
    in-flight SSE; hybrid/SQLite exclusive stop/start — **§7**
    ([rolling-update.md](./rolling-update.md)); stamp two builds
@@ -1958,6 +1973,6 @@ docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
    - **§5 Edge-api / deprecated dapi plan** — new proxy → edge-api; old proxy →
      dapi dual-serve.
    - **§6 Escrow long-poll warm plan** — host-events cache; inference without
-     inference-node; both dapi pins; testenv S10 scheduled.
+     inference-node; both dapi pins; testenv `citest-escrow-longpoll` implemented.
    - **§7 Rolling update plan** — same-name SHA swap; SSE continuity; Postgres
      overlap vs hybrid stop/start; client `binary_version` drift via stats.

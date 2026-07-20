@@ -104,6 +104,7 @@ type EscrowCacheInfo struct {
 	InferenceSealGraceSeconds uint32   `json:"inference_seal_grace_seconds"`
 	AutoSealEveryNNonces      uint32   `json:"auto_seal_every_n_nonces"`
 	ValidationRate            uint32   `json:"validation_rate"`
+	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
 	EpochID                   uint64   `json:"epoch_id"`
 }
 

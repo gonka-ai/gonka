@@ -36,6 +36,7 @@ type Service struct {
 	blockMock      *observer.Mock
 	admin          *adminface.Client
 	versions       *versionStore
+	hostEvents     *hostEventRing
 	grpcServer     *grpc.Server
 	httpEcho       *echo.Echo
 }
@@ -102,6 +103,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 		blockMock:      blockMock,
 		admin:          adminClient,
 		versions:       newVersionStore(cfg.Versions),
+		hostEvents:     newHostEventRing(),
 	}
 	return s, nil
 }
@@ -193,7 +195,7 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
 	gs := grpc.NewServer()
-	gen.RegisterNodeManagerServer(gs, s.paramsSrv)
+	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
 	s.grpcServer = gs
 	go func() {
 		<-ctx.Done()
@@ -217,7 +219,7 @@ func (s *Service) serveHTTPOn(ctx context.Context, lis net.Listener) error {
 		BlockHeight: s.cfg.GatewayBlockHeight,
 		EpochIndex:  s.cfg.GatewayEpochIndex,
 	})
-	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions)
+	mountTestenvProxy(e.Group(""), s.admin, s.RefreshRuntimeConfig, s.versions, s.hostEvents)
 	s.httpEcho = e
 	e.Server.BaseContext = func(net.Listener) context.Context { return ctx }
 	go func() {

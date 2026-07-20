@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -32,6 +33,7 @@ type runtimeConfig struct {
 	RuntimeVersion          string
 	ProtocolVersion         string
 	NodeManagerAddr         string
+	HostEventsEnabled       bool
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	ShutdownGrace           time.Duration
@@ -143,6 +145,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		RuntimeVersion:          protocolVersion,
 		ProtocolVersion:         protocolVersion,
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
+		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
 		ShutdownGrace:           shutdownGrace,
@@ -264,6 +267,20 @@ func envOr(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// envBoolOr parses a boolean env var (strconv.ParseBool). Unset or unparseable
+// values return fallback.
+func envBoolOr(key string, fallback bool) bool {
+	v := strings.TrimSpace(os.Getenv(key))
+	if v == "" {
+		return fallback
+	}
+	parsed, err := strconv.ParseBool(v)
+	if err != nil {
+		return fallback
+	}
+	return parsed
 }
 
 // parseDurationEnv parses a duration env var. Returns fallback if the var is unset.

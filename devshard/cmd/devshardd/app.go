@@ -16,10 +16,12 @@ import (
 	commrc "common/runtimeconfig"
 	"common/storage/payloads"
 	devshardpkg "devshard"
+	devshardbridge "devshard/cmd/devshardd/bridge"
 	"devshard/cmd/devshardd/events"
 	"devshard/cmd/devshardd/inference"
 	"devshard/cmd/devshardd/session"
 	chaintx "devshard/cmd/devshardd/tx"
+	"devshard/hostevents"
 	"devshard/runtimeparams"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
@@ -255,6 +257,12 @@ func buildHostManager(
 
 	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
 
+	// warmBridge lets lazy bind fall back to escrow_cache (populated by the
+	// host-events long-poll warm) when the live chain escrow query is
+	// unavailable. Only the session/bind read path is cache-aware; validation
+	// and settlement keep using the live chainBridge.
+	warmBridge := devshardbridge.NewCachingEscrowBridge(chainBridge, store, slog.Default())
+
 	manager := session.NewHostManager(
 		store,
 		chainRuntime.signer,
@@ -262,7 +270,7 @@ func buildHostManager(
 		leaseValidator,
 		leaseValidator,
 		cfg.RuntimeVersion,
-		chainBridge,
+		warmBridge,
 		payloadStore,
 		chainRuntime.identity,
 	)
@@ -270,6 +278,8 @@ func buildHostManager(
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
+
+	startHostEventsWarm(ctx, cfg, chainBridge, mlClient, store, closers)
 
 	if err := manager.RecoverSessions(); err != nil {
 		slog.Warn("recover sessions failed", "error", err)
@@ -309,6 +319,39 @@ func buildHostManager(
 	})
 
 	return manager, nil
+}
+
+// startHostEventsWarm launches the DAPI GetHostEvents long-poll consumer that
+// prefetches escrow metadata into escrow_cache (PR #1443). It is a no-op when
+// disabled, and the loop also stops cleanly against an old dapi that returns
+// Unimplemented, leaving lazy escrow create as the fallback.
+func startHostEventsWarm(
+	ctx context.Context,
+	cfg runtimeConfig,
+	chainBridge *devshardbridge.ChainBridge,
+	mlClient *mlnodeclient.Client,
+	store devshardstorage.Storage,
+	closers *closeStack,
+) {
+	if !cfg.HostEventsEnabled {
+		slog.Info("hostevents: escrow long-poll warm disabled (DEVSHARD_HOST_EVENTS_ENABLED=false)")
+		return
+	}
+	sink := newEscrowWarmSink(chainBridge, store, slog.Default())
+	hostCtx, cancel := context.WithCancel(ctx)
+	done := make(chan struct{})
+	closers.Add(func() {
+		cancel()
+		<-done
+	})
+	go func() {
+		defer close(done)
+		slog.Info("hostevents: starting escrow long-poll warm", "node_manager_addr", cfg.NodeManagerAddr)
+		hostevents.Run(hostCtx, hostevents.Config{
+			Client: mlClient.NodeManagerClient(),
+			Log:    slog.Default(),
+		}, sink)
+	}()
 }
 
 const availabilitySeedTimeout = 3 * time.Second
