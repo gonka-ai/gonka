@@ -184,6 +184,7 @@ func TestCommitWorker_MaybeSubmitCommit_SkipsUnchanged(t *testing.T) {
 	}
 
 	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
 
 	// Get or create store and add an artifact
 	artifactStore, err := store.GetOrCreateStore(pocHeight, "model-a")
@@ -222,6 +223,7 @@ func TestCommitWorker_MaybeSubmitCommit_BatchesModels(t *testing.T) {
 	}
 
 	pocHeight := int64(100)
+	store.ActivateStage(pocHeight)
 	for _, tc := range []struct {
 		modelID string
 		nonce   int32
@@ -318,6 +320,7 @@ func TestCommitWorker_SubmitWeightDistribution_NoCommitFound(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	_, err = store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)
@@ -330,6 +333,7 @@ func TestCommitWorker_SubmitWeightDistribution_BatchesModels(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for idx, modelID := range []string{"model-a", "org/model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -379,6 +383,7 @@ func TestCommitWorker_SubmitWeightDistribution_OneModelAlreadyOnChain(t *testing
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for idx, modelID := range []string{"model-a", "org/model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -428,6 +433,7 @@ func TestCommitWorker_HasPendingWeightDistribution(t *testing.T) {
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	for _, modelID := range []string{"model-a", "model-b"} {
 		artifactStore, err := store.GetOrCreateStore(100, modelID)
@@ -469,6 +475,7 @@ func TestCommitWorker_SubmitWeightDistribution_UpdatesLastAttemptOnNoOp(t *testi
 
 	store := artifacts.NewManagedArtifactStore(tmpDir, 5)
 	defer store.Close()
+	store.ActivateStage(100)
 
 	artifactStore, err := store.GetOrCreateStore(100, "model-a")
 	assert.NoError(t, err)

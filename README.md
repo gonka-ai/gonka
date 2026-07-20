@@ -26,20 +26,20 @@ We introduce a novel consensus mechanism, **Proof of Work 2.0**, that ensures ne
 For a deeper technical and conceptual explanation, check out [the White Paper](https://gonka.ai/whitepaper.pdf).
 ## Getting started
 
-For the most up-to-date documentation, please visit [https://gonka.ai/introduction/](https://gonka.ai/introduction/).
+For the most up-to-date documentation, please visit [https://gonka.ai/docs/introduction/](https://gonka.ai/docs/introduction/).
 
 To join Testnet:
-- **As Developer**: Explore the [Quickstart Guide](https://gonka.ai/developer/quickstart/) to understand how to create a user account and submit an inference request using the `inferenced` CLI tool.
+- **As Developer**: Explore the [Quickstart Guide](https://gonka.ai/docs/developer/quickstart/) to send your first inference request. The fastest way to start is through a **community broker** — a third party that runs a Gonka gateway and exposes a standard OpenAI-compatible API, so you just plug in a `base_url` and an API key. If you need to pay GNK directly on-chain instead of going through a broker, you can [run your own gateway](https://gonka.ai/docs/developer/gateway-developer-quickstart/) (advanced; requires an allow-listed address).
 - **As Host (Hardware Provider or Node)**:
-    - Review the [Hardware Specifications](https://gonka.ai/participant/hardware-specifications/) to ensure your equipment meets the requirements.
-    - Follow the [Participant Quickstart Guide](https://gonka.ai/participant/quickstart/) to set up your node and start contributing computational resources.
+    - Review the [Hardware Specifications](https://gonka.ai/docs/host/hardware-specifications/) to ensure your equipment meets the requirements.
+    - Follow the [Host Quickstart Guide](https://gonka.ai/docs/host/quickstart/) to set up your node and start contributing computational resources.
 ### Local Quickstart
 
 This section walks you through setting up a local development environment to build and test the core components, without joining the real network or running a full MLNode.
 #### 1. Environment setup
 Make sure you have the following installed:
 1. Git CLI
-2. Go 1.22.8
+2. Go 1.24.2
 3. Docker Desktop (4.37+)
 4. Make
 5. Java 19+
@@ -48,8 +48,8 @@ Make sure you have the following installed:
 #### 2. Build the project
 Clone the repository:
 ```
-git clone https://github.com/gonka-ai/gonka.git
-cd gonka (or repo name)**
+git clone https://github.com/gonka-ai/gonka.git -b main
+cd gonka
 ```
 
 Build chain and API nodes, and run unit tests:
@@ -63,7 +63,7 @@ This command will build locally, deploy a small network of Docker containers, an
 ```
 make run-tests
 ```
-There’s also an option to just run a Docker local chain, without running the tests, use `launch-local-test-chain-w-reset.sh` script for that. The script will spin up a miniature local chain consisting of 3 participants.
+There’s also an option to just run a Docker local chain, without running the tests, use the [`local-test-net/launch.sh`](https://github.com/gonka-ai/gonka/blob/main/local-test-net/launch.sh) script for that. The script will spin up a miniature local chain consisting of 3 participants (1 genesis node plus 2 joining nodes).
 
 To run Go unit tests for `chain` node (`inference-chain`)  and `api` node (`decentralized-api`) use `node-test` and `api-test` make targets.
 ## Architectural overview
@@ -97,7 +97,7 @@ The repository is organized as follows:
 /dev_notes          # Chain developer knowledge base
 /docs               # Documentation on specific aspects of the chain
 /inference-chain    # Chain node
-/prepare-local      # Scripts and configs for running local chain
+/local-test-net     # Scripts and configs for running a local chain
 /testermint         # Integration tests suite
 ```
 ## Testing
@@ -116,8 +116,7 @@ The system is designed around **containerized microservices**. Each component ru
 
 We maintain deployment examples and tooling in the [https://github.com/gonka-ai/gonka/](https://github.com/gonka-ai/gonka/).
 ## Model licenses
-[https://gonka.ai/model-licenses/](https://gonka.ai/model-licenses/)
+[https://gonka.ai/docs/model-licenses/](https://gonka.ai/docs/model-licenses/)
 ## Support
 
-- Reach us at hello@productscience.ai.
-- [Discord](https://discord.com/invite/RADwCT2U6R) – Join for real-time discussions, updates, and support.
+Join the [Gonka community on Discord](https://discord.com/invite/RADwCT2U6R) if you need assistance.
