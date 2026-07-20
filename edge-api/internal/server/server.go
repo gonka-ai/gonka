@@ -7,9 +7,9 @@ import (
 	"github.com/labstack/echo/v4/middleware"
 
 	"common/chain"
+	"common/queryapi"
+	"common/queryapi/gen"
 	"edge-api/observability"
-	"edge-api/queryapi"
-	"edge-api/queryapi/gen"
 )
 
 // New creates the Echo instance with Tier A read-only routes mounted:

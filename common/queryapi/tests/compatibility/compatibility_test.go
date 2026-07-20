@@ -10,7 +10,7 @@ package compatibility_test
 //	    -endpoint2 http://node1.gonka.ai:8000/api
 
 import (
-	. "edge-api/queryapi/gen"
+	. "common/queryapi/gen"
 	"context"
 	"encoding/json"
 	"flag"

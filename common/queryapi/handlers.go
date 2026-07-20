@@ -12,7 +12,7 @@ import (
 	"google.golang.org/grpc/status"
 
 	"common/chain"
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 // ChainClient is the interface queryapi handlers require from chain.Client.

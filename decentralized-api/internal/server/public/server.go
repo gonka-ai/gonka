@@ -153,6 +153,12 @@ func NewServer(
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
+
+	// Dual-serve Tier A /v1 reads for old proxies that still forward to dapi.
+	// Implementations come from common/queryapi (same as edge-api) and are
+	// marked Deprecation: true. Prefer edge-api for new proxy configs.
+	s.mountDeprecatedQueryAPIRoutes(e)
+
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
 	return s

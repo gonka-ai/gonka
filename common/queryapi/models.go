@@ -9,7 +9,7 @@ import (
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
 	"common/chain"
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 // Ported from decentralized-api/internal/server/public/get_models_handler.go:10

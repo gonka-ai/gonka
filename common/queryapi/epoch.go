@@ -17,7 +17,7 @@ import (
 	"common/chain"
 	"common/logging"
 	"common/observability"
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 	"common/utils"
 )
 

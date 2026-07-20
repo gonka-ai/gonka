@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 type stubBridgeServer struct {

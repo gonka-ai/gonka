@@ -16,7 +16,7 @@ import (
 	"google.golang.org/grpc/test/bufconn"
 
 	"common/chain"
-	"edge-api/queryapi"
+	"common/queryapi"
 )
 
 // fakeChain implements queryapi.ChainClient for tests.
