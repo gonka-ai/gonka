@@ -19,7 +19,7 @@ func TestA4_BadWarmKey(t *testing.T) {
 	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a4-*")
 	client := harness.HTTPClient()
 	chatClient := harness.GatewayChatClient()
-	mockDapi := harness.MockDAPIFromConfig(cfg)
+	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-dapi")
@@ -48,7 +48,7 @@ func TestA4_BadWarmKey(t *testing.T) {
 		GranterAddress: granter,
 		Grantees:       []string{"gonka1badwarm000000000000000000000000000"},
 	})
-	harness.RequireWarmKeyRevoked(t, cfg, granter, warm)
+	harness.RequireWarmKeyRevoked(t, eps, granter, warm)
 
 	harness.Step(t, "warm-key signed gossip/nonce via router should be forbidden after revocation")
 	harness.RequireWarmKeyTransportRejected(t, client, cfg, eps, cfg.WarmGrantee.PrivateKeyHex)

@@ -42,10 +42,10 @@ func TestPrimaryVersion(t *testing.T) {
 }
 
 func TestSortedVersions_NumericOrder(t *testing.T) {
-	got := sortedVersions(map[string]string{
-		"v10": "a",
-		"v2":  "b",
-		"v1":  "c",
+	got := sortedVersions(RouteTable{
+		"v10": NewTarget("a"),
+		"v2":  NewTarget("b"),
+		"v1":  NewTarget("c"),
 	})
 	want := []string{"v1", "v2", "v10"}
 	if len(got) != len(want) {

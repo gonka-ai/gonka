@@ -8,15 +8,154 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
 )
 
 func newRoutes(m map[string]string) *atomic.Value {
+	targets := make(RouteTable, len(m))
+	for version, address := range m {
+		targets[version] = NewTarget(address)
+	}
 	v := &atomic.Value{}
-	v.Store(m)
+	v.Store(targets)
 	return v
+}
+
+type sequenceRouteLoader struct {
+	tables []RouteTable
+	calls  int
+}
+
+func (l *sequenceRouteLoader) Load() any {
+	index := l.calls
+	if index >= len(l.tables) {
+		index = len(l.tables) - 1
+	}
+	l.calls++
+	return l.tables[index]
+}
+
+func TestAcquireTarget_RetriesRetiredRoute(t *testing.T) {
+	oldTarget := NewTarget("localhost:9001")
+	oldTarget.Retire()
+	newTarget := NewTarget("localhost:9002")
+	loader := &sequenceRouteLoader{tables: []RouteTable{
+		{"v1": oldTarget},
+		{"v1": newTarget},
+	}}
+
+	target, ok := acquireTarget(loader, "v1")
+	if !ok {
+		t.Fatal("new target should be acquired after retired route retry")
+	}
+	defer target.release()
+	if target != newTarget {
+		t.Fatal("acquired target is not the replacement target")
+	}
+	if loader.calls != 2 {
+		t.Fatalf("route loads = %d, want retired route plus replacement", loader.calls)
+	}
+}
+
+func TestTargetRetireWaitsForAcquiredRequest(t *testing.T) {
+	target := NewTarget("localhost:9001")
+	if !target.acquire() {
+		t.Fatal("active target should accept a request")
+	}
+
+	drained := target.Retire()
+	select {
+	case <-drained:
+		t.Fatal("target drained before its acquired request was released")
+	default:
+	}
+	if target.acquire() {
+		t.Fatal("retired target should reject new requests")
+	}
+
+	target.release()
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("target did not drain after its acquired request was released")
+	}
+}
+
+func TestProxy_RouteSwapKeepsAcquiredRequestOnRetiredTarget(t *testing.T) {
+	oldStarted := make(chan struct{})
+	releaseOld := make(chan struct{})
+	var oldStartedOnce sync.Once
+	var releaseOldOnce sync.Once
+	releaseOldRequest := func() { releaseOldOnce.Do(func() { close(releaseOld) }) }
+	defer releaseOldRequest()
+	oldBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		oldStartedOnce.Do(func() { close(oldStarted) })
+		<-releaseOld
+		fmt.Fprint(w, "old")
+	}))
+	defer oldBackend.Close()
+	newBackend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, "new")
+	}))
+	defer newBackend.Close()
+
+	oldTarget := NewTarget(strings.TrimPrefix(oldBackend.URL, "http://"))
+	newTarget := NewTarget(strings.TrimPrefix(newBackend.URL, "http://"))
+	routes := &atomic.Value{}
+	routes.Store(RouteTable{"v1": oldTarget})
+	server := httptest.NewServer(Handler(routes))
+	defer server.Close()
+
+	oldResult := make(chan string, 1)
+	go func() {
+		resp, err := http.Get(server.URL + "/v1/work")
+		if err != nil {
+			oldResult <- "request error: " + err.Error()
+			return
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil {
+			oldResult <- "read error: " + err.Error()
+			return
+		}
+		oldResult <- string(body)
+	}()
+	<-oldStarted
+
+	routes.Store(RouteTable{"v1": newTarget})
+	drained := oldTarget.Retire()
+
+	resp, err := http.Get(server.URL + "/v1/work")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, err := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(body) != "new" {
+		t.Fatalf("new request body = %q, want new target", body)
+	}
+	select {
+	case <-drained:
+		t.Fatal("old target drained while its request was still running")
+	default:
+	}
+
+	releaseOldRequest()
+	if body := <-oldResult; body != "old" {
+		t.Fatalf("old request body = %q, want old target", body)
+	}
+	select {
+	case <-drained:
+	case <-time.After(time.Second):
+		t.Fatal("old target did not drain after its request completed")
+	}
 }
 
 func TestProxy_BasicForwarding(t *testing.T) {

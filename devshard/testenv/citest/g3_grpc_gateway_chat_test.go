@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestG3_GatewayChatGRPCOnly is S5-equivalent chat (non-stream + SSE) with gRPC-only gateway
+// TestG3_GatewayChatGRPCOnly exercises chat with a gRPC-only gateway
 // chain transport — compose must not wire DEVSHARD_CHAIN_REST / DEVSHARD_TX_QUERY_REST.
 func TestG3_GatewayChatGRPCOnly(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-g3-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-g3-*")
 	harness.RequireGatewayGRPCOnlyCompose(t, stack.ComposePath)
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
@@ -26,7 +26,7 @@ func TestG3_GatewayChatGRPCOnly(t *testing.T) {
 			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai", "mock-chain")
 		}
 	})
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 

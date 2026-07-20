@@ -20,7 +20,7 @@ func TestA1_LostFirstChunk(t *testing.T) {
 
 	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a1-*")
 	client := harness.GatewayChatClient()
-	mockOpenAI := harness.MockOpenAIFromConfig(cfg)
+	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {

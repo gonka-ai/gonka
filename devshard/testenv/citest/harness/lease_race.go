@@ -17,12 +17,12 @@ import (
 
 // LeaseSnapshot is a point-in-time view of devshard_validation_leases.
 type LeaseSnapshot struct {
-	Total            int
-	Pending          int
-	Submitted        int
-	Skipped          int
-	DuplicateGroups  int
-	Rows             []LeaseRow
+	Total           int
+	Pending         int
+	Submitted       int
+	Skipped         int
+	DuplicateGroups int
+	Rows            []LeaseRow
 }
 
 // LeaseRow is one validation lease.
@@ -44,7 +44,7 @@ func (s *Stack) PostgresLeaseSnapshot(t *testing.T, cfg *config.File) LeaseSnaps
 // TryPostgresLeaseSnapshot is safe to call from worker goroutines (no testing.T).
 func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error) {
 	user, db, pass := postgresCreds(cfg)
-	dupRaw, err := s.tryComposeExec("devshard-postgres",
+	dupRaw, err := s.ComposeExecOutput("devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At",
 		"-c", `SELECT COUNT(*) FROM (
@@ -61,7 +61,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 		return LeaseSnapshot{}, fmt.Errorf("parse duplicate_groups %q: %w", dupRaw, err)
 	}
 
-	countsRaw, err := s.tryComposeExec("devshard-postgres",
+	countsRaw, err := s.ComposeExecOutput("devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", ",",
 		"-c", `SELECT
@@ -82,7 +82,7 @@ func (s *Stack) TryPostgresLeaseSnapshot(cfg *config.File) (LeaseSnapshot, error
 	submitted, _ := strconv.Atoi(parts[2])
 	skipped, _ := strconv.Atoi(parts[3])
 
-	rowsRaw, err := s.tryComposeExec("devshard-postgres",
+	rowsRaw, err := s.ComposeExecOutput("devshard-postgres",
 		"env", "PGPASSWORD="+pass,
 		"psql", "-U", user, "-d", db, "-At", "-F", "|",
 		"-c", `SELECT inference_id, instance_address, status, claimed_at
@@ -161,7 +161,7 @@ func SetValidationRate(t *testing.T, client *http.Client, mockDapiHTTP string, r
 	PatchTestenvParams(t, client, mockDapiHTTP, adminface.ParamsRequest{ValidationRate: &rate})
 }
 
-// SetValidationRate100 is SetValidationRate(10000) — 100% for dense lease races (S9).
+// SetValidationRate100 configures a 100% rate for dense lease races.
 func SetValidationRate100(t *testing.T, client *http.Client, mockDapiHTTP string) {
 	t.Helper()
 	SetValidationRate(t, client, mockDapiHTTP, 10000)
@@ -199,7 +199,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{
-				{Role: "user", Content: fmt.Sprintf("citest s9 lease race non-stream %d", i)},
+				{Role: "user", Content: fmt.Sprintf("citest validation lease race non-stream %d", i)},
 			},
 			MaxTokens: 32,
 		}
@@ -210,7 +210,7 @@ func DriveLeaseRaceLoad(t *testing.T, client *http.Client, gatewayURL, model str
 		req := ChatCompletionRequest{
 			Model: model,
 			Messages: []ChatMessage{
-				{Role: "user", Content: fmt.Sprintf("citest s9 lease race stream %d", i)},
+				{Role: "user", Content: fmt.Sprintf("citest validation lease race stream %d", i)},
 			},
 			MaxTokens: 32,
 		}

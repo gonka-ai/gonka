@@ -14,17 +14,17 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS3_ParamsLongPoll verifies mock-chain /testenv/params → mock-dapi chain poll →
+// TestParamsLongPoll verifies mock-chain /testenv/params → mock-dapi chain poll →
 // GetRuntimeConfig long-poll wake while devshardd children are running in the stack.
-func TestS3_ParamsLongPoll(t *testing.T) {
+func TestParamsLongPoll(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, _, eps := harness.BootS1Stack(t, "citest-s3-*")
+	stack, _, eps := harness.BootStack(t, "citest-params-longpoll-*")
 	client := harness.HTTPClient()
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 
-	mockDapi := harness.MockDAPIFromConfig(stack.LoadConfig(t))
+	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	grpcConn := harness.DialMockDAPI(t, mockDapi.GRPC)
 	nm := gen.NewNodeManagerClient(grpcConn)
 	ctx := context.Background()

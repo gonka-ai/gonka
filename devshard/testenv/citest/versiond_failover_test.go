@@ -11,14 +11,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS6_VersiondStop verifies versiond-router fails over a sticky session to a
+// TestVersiondStickySessionFailover verifies versiond-router fails over a sticky session to a
 // surviving versiond on the first upstream 502 / connect failure when its preferred
 // peer is stopped; sessions hashed to a live upstream keep working.
-func TestS6_VersiondStop(t *testing.T) {
+func TestVersiondStickySessionFailover(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s6-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-versiond-failover-*")
 	client := harness.HTTPClient()
 	t.Cleanup(func() {
 		if t.Failed() {

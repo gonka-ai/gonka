@@ -18,14 +18,14 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// BootS8MigrateStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
+// BootSQLiteHAMigrationStack boots the 2×versiond + Postgres stack patched for §3.3 Phase 0–1:
 // DEVSHARD_STORAGE_MODE=sqlite and VERSIOND_HOSTS=versiond-0 only. versiond-1 is stopped
 // so SQLite sessions land on the legacy host volume.
-func BootS8MigrateStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
+func BootSQLiteHAMigrationStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	stack := NewStack(t, prefix)
 	RequireLinuxDevshardd(t, stack.TestenvDir)
-	WriteS1Config(t, stack.WorkDir)
+	WriteStackConfig(t, stack.WorkDir)
 	stack.RunGencompose(t)
 	cfg := stack.LoadConfig(t)
 	requireTwoVersiondHosts(t, cfg)
@@ -35,7 +35,7 @@ func BootS8MigrateStack(t *testing.T, prefix string) (*Stack, *config.File, Endp
 
 	stack.Up(t)
 	stack.StopService(t, cfg.Hosts[1].ID)
-	return stack, cfg, EndpointsFromConfig(cfg)
+	return stack, cfg, stack.Endpoints(t, cfg)
 }
 
 // RecreateServices force-recreates named services (picks up compose env changes).
@@ -61,12 +61,13 @@ func (s *Stack) RecreateServices(t *testing.T, services ...string) {
 // ComposeExec runs `docker compose exec -T service cmd...` and returns stdout+stderr.
 func (s *Stack) ComposeExec(t *testing.T, service string, cmdArgs ...string) string {
 	t.Helper()
-	out, err := s.tryComposeExec(service, cmdArgs...)
+	out, err := s.ComposeExecOutput(service, cmdArgs...)
 	require.NoError(t, err, "compose exec %s %v\n%s", service, cmdArgs, out)
 	return out
 }
 
-func (s *Stack) tryComposeExec(service string, cmdArgs ...string) (string, error) {
+// ComposeExecOutput runs `docker compose exec -T service cmd...` and returns stdout+stderr.
+func (s *Stack) ComposeExecOutput(service string, cmdArgs ...string) (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	args := append([]string{"compose"}, s.composeFileArgs()...)

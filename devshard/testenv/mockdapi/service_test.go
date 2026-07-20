@@ -164,6 +164,27 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	require.Len(t, cfg.Versions, 1)
 	require.Equal(t, "v2", cfg.Versions[0].Name)
 	require.NotEmpty(t, cfg.Versions[0].Binary)
+
+	updated := cosrv.VersionConfig{Versions: []cosrv.Version{{
+		Name:   "v2",
+		Binary: "http://mock-dapi:9100/testenv/binaries/devshardd-new.zip",
+		SHA256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}}
+	body, err := json.Marshal(updated)
+	require.NoError(t, err)
+	postResp, err := http.Post(bed.httpURL+"/testenv/versions", "application/json", strings.NewReader(string(body)))
+	require.NoError(t, err)
+	require.Equal(t, http.StatusOK, postResp.StatusCode)
+	_ = postResp.Body.Close()
+
+	resp, err = http.Get(bed.httpURL + "/versions")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusOK, resp.StatusCode)
+
+	cfg = cosrv.VersionConfig{}
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cfg))
+	require.Equal(t, updated, cfg)
 }
 
 func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {

@@ -26,20 +26,15 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// BootAdversarialStack boots the 2× versiond S1 stack and waits for gateway chat readiness.
+// BootAdversarialStack boots the standard stack and waits for gateway chat readiness.
 func BootAdversarialStack(t *testing.T, prefix string) (*Stack, *config.File, Endpoints) {
 	t.Helper()
-	stack, cfg, eps := BootS1Stack(t, prefix)
+	stack, cfg, eps := BootStack(t, prefix)
 	client := GatewayChatClient()
-	WaitS1Healthy(t, stack, eps)
+	WaitStackHealthy(t, stack, eps)
 	WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 	return stack, cfg, eps
-}
-
-// MockOpenAIFromConfig returns the host-published mock-openai base URL.
-func MockOpenAIFromConfig(cfg *config.File) string {
-	return fmt.Sprintf("http://127.0.0.1:%d", cfg.MockOpenAI.HTTPPort)
 }
 
 // PatchMockOpenAIFault posts runtime fault knobs to mock-openai /testenv/fault.
@@ -86,9 +81,9 @@ func PatchTestenvGrantees(t *testing.T, client *http.Client, mockDapiHTTP string
 }
 
 // RequireWarmKeyRevoked asserts the warm grantee is no longer authorized for a validator granter.
-func RequireWarmKeyRevoked(t *testing.T, cfg *config.File, granter, warmAddress string) {
+func RequireWarmKeyRevoked(t *testing.T, eps Endpoints, granter, warmAddress string) {
 	t.Helper()
-	conn := dialMockChainGRPC(t, MockChainGRPCFromConfig(cfg))
+	conn := dialMockChainGRPC(t, eps.MockChainGRPC)
 	c := chain.NewFromConn(conn)
 	resp, err := c.InferenceQueryClient().GranteesByMessageType(context.Background(), &inferencetypes.QueryGranteesByMessageTypeRequest{
 		GranterAddress: granter,
@@ -143,9 +138,9 @@ func RequireWarmKeyTransportRejected(t *testing.T, client *http.Client, cfg *con
 }
 
 // DialMockChainGRPC dials the mock-chain inference gRPC port from a citest config.
-func DialMockChainGRPC(t *testing.T, cfg *config.File) *grpc.ClientConn {
+func DialMockChainGRPC(t *testing.T, eps Endpoints) *grpc.ClientConn {
 	t.Helper()
-	return dialMockChainGRPC(t, MockChainGRPCFromConfig(cfg))
+	return dialMockChainGRPC(t, eps.MockChainGRPC)
 }
 
 func dialMockChainGRPC(t *testing.T, addr string) *grpc.ClientConn {
@@ -157,9 +152,9 @@ func dialMockChainGRPC(t *testing.T, addr string) *grpc.ClientConn {
 }
 
 // RequireEscrowSettledOnChain queries mock-chain gRPC and requires the escrow is marked settled.
-func RequireEscrowSettledOnChain(t *testing.T, cfg *config.File, id uint64) {
+func RequireEscrowSettledOnChain(t *testing.T, eps Endpoints, id uint64) {
 	t.Helper()
-	conn := dialMockChainGRPC(t, MockChainGRPCFromConfig(cfg))
+	conn := dialMockChainGRPC(t, eps.MockChainGRPC)
 	c := chain.NewFromConn(conn)
 	resp, err := c.InferenceQueryClient().DevshardEscrow(context.Background(), &inferencetypes.QueryGetDevshardEscrowRequest{Id: id})
 	require.NoError(t, err)

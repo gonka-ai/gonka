@@ -452,31 +452,83 @@ data class LocalInferencePair(
         api.executor.exec(listOf("sh", "-c", "curl -sf '$url'"), null).joinToString("").trim()
     }
 
-    fun versiondBinaryPath(versionName: String, binaryName: String = "devshardd"): String =
-        "/opt/versiond/bin/$versionName/$binaryName"
+    private fun shQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
-    fun versiondInstallMetadataPath(versionName: String): String =
-        "/opt/versiond/bin/$versionName/install.json"
-
-    fun versiondBinaryExists(versionName: String, binaryName: String = "devshardd"): Boolean =
+    private fun versiondInstallDir(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String? =
         try {
-            execInVersiond(
-                listOf("sh", "-c", "test -x '${versiondBinaryPath(versionName, binaryName)}' && echo OK"),
-                null,
-            ).any { it.contains("OK") }
+            val base = "/opt/versiond/bin/$versionName"
+            val script = """
+                base=${shQuote(base)}
+                binary=${shQuote(binaryName)}
+                expected=${shQuote(archiveSha256 ?: "")}
+                if [ -n "${'$'}expected" ] && [ -x "${'$'}base/${'$'}expected/${'$'}binary" ]; then
+                  echo "${'$'}base/${'$'}expected"
+                  exit 0
+                fi
+                if [ -x "${'$'}base/${'$'}binary" ]; then
+                  echo "${'$'}base"
+                  exit 0
+                fi
+                best=""
+                best_mtime=-1
+                for dir in "${'$'}base"/*; do
+                  [ -d "${'$'}dir" ] || continue
+                  [ -x "${'$'}dir/${'$'}binary" ] || continue
+                  mtime=${'$'}(stat -c %Y "${'$'}dir/install.json" 2>/dev/null || echo 0)
+                  if [ "${'$'}mtime" -gt "${'$'}best_mtime" ]; then
+                    best="${'$'}dir"
+                    best_mtime="${'$'}mtime"
+                  fi
+                done
+                if [ -n "${'$'}best" ]; then
+                  echo "${'$'}best"
+                  exit 0
+                fi
+                exit 1
+            """.trimIndent()
+            execInVersiond(listOf("sh", "-c", script), null)
+                .firstOrNull()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
-            false
+            null
         }
 
-    fun readVersiondInstallMetadata(versionName: String): VersiondInstallMetadata? =
+    fun versiondBinaryPath(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String =
+        "${versiondInstallDir(versionName, binaryName, archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}" +
+                "/$binaryName"
+
+    fun versiondInstallMetadataPath(versionName: String, archiveSha256: String? = null): String =
+        "${versiondInstallDir(versionName, archiveSha256 = archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}/install.json"
+
+    fun versiondBinaryExists(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): Boolean =
+        versiondInstallDir(versionName, binaryName, archiveSha256) != null
+
+    fun readVersiondInstallMetadata(versionName: String, archiveSha256: String? = null): VersiondInstallMetadata? =
         try {
-            val installPath = versiondInstallMetadataPath(versionName)
-            val json = execInVersiond(
-                listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
-                null,
-            ).joinToString("").trim()
-            json.takeIf { it.isNotBlank() }?.let {
-                cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+            val installPath = versiondInstallMetadataPath(versionName, archiveSha256)
+            if (installPath.contains("<sha>")) {
+                null
+            } else {
+                val json = execInVersiond(
+                    listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
+                    null,
+                ).joinToString("").trim()
+                json.takeIf { it.isNotBlank() }?.let {
+                    cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+                }
             }
         } catch (_: Exception) {
             null

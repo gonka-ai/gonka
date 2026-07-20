@@ -30,10 +30,14 @@ import (
 const sessionEpochRetain = 3
 
 type devshardApp struct {
-	server      *echo.Echo
-	chainEvents *chainEventBridge
-	port        int
-	close       func()
+	server        *echo.Echo
+	adminServer   *echo.Echo
+	adminAddr     string
+	chainEvents   *chainEventBridge
+	port          int
+	lifecycle     *lifecycleState
+	shutdownGrace time.Duration
+	close         func()
 }
 
 type chainRuntime struct {
@@ -101,14 +105,24 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 		return nil, err
 	}
 
-	e := buildServer()
+	lifecycle := newLifecycleState()
+	e := buildServer(lifecycle)
+	var admin *echo.Echo
+	if cfg.AdminAddr != "" {
+		admin = buildAdminServer(lifecycle)
+	}
 	manager.Register(e.Group(""))
+	chainRuntime.chainEvents.OnReady(lifecycle.SetReady)
 
 	return &devshardApp{
-		server:      e,
-		chainEvents: chainRuntime.chainEvents,
-		port:        cfg.Port,
-		close:       closers.Close,
+		server:        e,
+		adminServer:   admin,
+		adminAddr:     cfg.AdminAddr,
+		chainEvents:   chainRuntime.chainEvents,
+		port:          cfg.Port,
+		lifecycle:     lifecycle,
+		shutdownGrace: cfg.ShutdownGrace,
+		close:         closers.Close,
 	}, nil
 }
 
@@ -254,6 +268,7 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetBinaryVersion(cfg.BinaryLogVersion)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	if err := manager.RecoverSessions(); err != nil {
@@ -333,13 +348,23 @@ func (a *devshardApp) Run(ctx context.Context) error {
 	}()
 
 	addr := fmt.Sprintf(":%d", a.port)
-	errCh := make(chan error, 1)
-	go func() {
-		slog.Info("listening", "addr", addr)
-		if err := a.server.Start(addr); err != nil && err != http.ErrServerClosed {
-			errCh <- err
-		}
-	}()
+	type serverError struct {
+		name string
+		err  error
+	}
+	errCh := make(chan serverError, 2)
+	startServer := func(name string, server *echo.Echo, addr string) {
+		go func() {
+			slog.Info("listening", "server", name, "addr", addr)
+			if err := server.Start(addr); err != nil && err != http.ErrServerClosed {
+				errCh <- serverError{name: name, err: err}
+			}
+		}()
+	}
+	startServer("public", a.server, addr)
+	if a.adminServer != nil {
+		startServer("admin", a.adminServer, a.adminAddr)
+	}
 
 	var runErr error
 	chainEventsStopped := false
@@ -347,7 +372,7 @@ func (a *devshardApp) Run(ctx context.Context) error {
 	case <-ctx.Done():
 		slog.Info("shutdown requested")
 	case err := <-errCh:
-		runErr = fmt.Errorf("server error: %w", err)
+		runErr = fmt.Errorf("%s server error: %w", err.name, err.err)
 	case err := <-chainEventsErrCh:
 		chainEventsStopped = true
 		if err != nil {
@@ -357,11 +382,15 @@ func (a *devshardApp) Run(ctx context.Context) error {
 		}
 	}
 
+	a.lifecycle.StartDrain()
 	cancel()
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()
 	_ = a.server.Shutdown(shutdownCtx)
+	if a.adminServer != nil {
+		_ = a.adminServer.Shutdown(shutdownCtx)
+	}
 	if !chainEventsStopped {
 		select {
 		case err := <-chainEventsErrCh:

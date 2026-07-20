@@ -21,6 +21,9 @@ services:
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: testapp
+      VERSIOND_DRAIN_POLL_INTERVAL: "200ms"
+      VERSIOND_DRAIN_TIMEOUT: "30s"
+      VERSIOND_DRAIN_KILL_GRACE: "2s"
     depends_on:
       - oracle
 
@@ -35,6 +38,7 @@ services:
       VERSIOND_POLL_INTERVAL: "5s"
       TESTAPP_PATH: /app/build/testapp
       TESTAPP2_PATH: /app/build/testapp2
+      TESTAPP_ROLLOUT_PATH: /app/build/testapp-rollout
     volumes:
       - ../build/test-results:/app/test-results
     depends_on:

@@ -18,16 +18,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// MockChainGRPCFromConfig returns mock-chain inference gRPC address.
-func MockChainGRPCFromConfig(cfg *config.File) string {
-	return fmt.Sprintf("127.0.0.1:%d", cfg.MockChain.GRPCPort)
-}
-
-// MockChainAdminFromConfig returns mock-chain admin HTTP base URL.
-func MockChainAdminFromConfig(cfg *config.File) string {
-	return fmt.Sprintf("http://127.0.0.1:%d", cfg.MockChain.TestenvPort)
-}
-
 // MockChainSnapshot holds block height and epoch from mock-chain queries.
 type MockChainSnapshot struct {
 	BlockHeight       int64
@@ -38,10 +28,10 @@ type MockChainSnapshot struct {
 }
 
 // GetMockChainSnapshot queries mock-chain gRPC EpochInfo and optional admin revision.
-func GetMockChainSnapshot(t *testing.T, cfg *config.File, client *http.Client) MockChainSnapshot {
+func GetMockChainSnapshot(t *testing.T, cfg *config.File, eps Endpoints, client *http.Client) MockChainSnapshot {
 	t.Helper()
-	snap := queryMockChainEpochInfo(t, MockChainGRPCFromConfig(cfg))
-	if rev, err := tryMockChainRevision(client, MockChainAdminFromConfig(cfg)); err == nil {
+	snap := queryMockChainEpochInfo(t, eps.MockChainGRPC)
+	if rev, err := tryMockChainRevision(client, eps.MockChainAdmin); err == nil {
 		snap.BlockHeight = rev.BlockHeight
 		snap.ParamsBlockHeight = rev.ParamsBlockHeight
 		snap.NextPocStart = rev.NextPocStartBlockHeight
@@ -69,9 +59,9 @@ func queryMockChainEpochInfo(t *testing.T, grpcAddr string) MockChainSnapshot {
 	resp, err := c.InferenceQueryClient().EpochInfo(context.Background(), &inferencetypes.QueryEpochInfoRequest{})
 	require.NoError(t, err)
 	return MockChainSnapshot{
-		BlockHeight:  resp.BlockHeight,
-		EpochIndex:   resp.LatestEpoch.Index,
-		PocStart:     resp.LatestEpoch.PocStartBlockHeight,
+		BlockHeight: resp.BlockHeight,
+		EpochIndex:  resp.LatestEpoch.Index,
+		PocStart:    resp.LatestEpoch.PocStartBlockHeight,
 	}
 }
 

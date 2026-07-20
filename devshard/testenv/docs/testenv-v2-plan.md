@@ -482,13 +482,14 @@ shared in-memory store and **three thin protocol faces**. Do **not** run a real
 `inferenced` node in testenv. Implement **only endpoints callers actually use**; add more
 as edge-api / gateway scenarios need them.
 
-**Why staged:** unblocks devshardd + chainoracle (S1–S4) before gateway tx work (S5).
+**Why staged:** unblocks devshardd + chainoracle behavior tests before gateway
+transaction work.
 
 | Stage | Face | Port | Unblocks | Scenarios |
 |-------|------|------|----------|-----------|
-| **3a** | Cosmos gRPC + cmtservice | `:9090` | devshardd bridge, params fetch, chainoracle | S1–S4 |
-| **3b** | CometBFT RPC (ws subscribe) | `:26657` | devshardd `events.Listener`, phase bootstrap | S1–S4 |
-| **3c** | Cosmos LCD REST (tx) | `:1317` | devshardctl create/settle escrow | S5 |
+| **3a** | Cosmos gRPC + cmtservice | `:9090` | devshardd bridge, params fetch, chainoracle | stack smoke, params, epoch |
+| **3b** | CometBFT RPC (ws subscribe) | `:26657` | devshardd `events.Listener`, phase bootstrap | stack smoke, epoch |
+| **3c** | Cosmos LCD REST (tx) | `:1317` | devshardctl create/settle escrow | gateway chat |
 
 **Layout**
 
@@ -611,7 +612,7 @@ escrow-created handler work end-to-end with 3a gRPC.
 
 ---
 
-#### Phase 3c — LCD REST face (`:1317`) — **third (gateway / S5)** ✅ **DONE**
+#### Phase 3c — LCD REST face (`:1317`) — **third (gateway chat)** ✅ **DONE**
 
 **Goal:** `devshardctl` creates/settles escrows without code changes (`chain_tx_rest.go`).
 
@@ -645,13 +646,13 @@ Env: `MOCK_CHAIN_REST_ADDR` (default `:1317`).
 cd devshard && go test ./testenv/mockchain/... ./cmd/devshardctl/ -run 'MockChain|REST' -count=1
 ```
 
-**Exit (3c):** S5 gateway chat path can create an escrow in testenv; full three-face
+**Exit (3c):** the gateway chat path can create an escrow in testenv; full three-face
 mock-chain ready for compose (Phase 6).
 
 ---
 
 **Phase 3 overall exit:** mock-chain container healthy; `docker compose up mock-chain` serves
-9090/26657/1317; integration tests for 3a+3b green before 3c; S5 blocked only until 3c
+9090/26657/1317; integration tests for 3a+3b green before 3c; gateway chat blocked only until 3c
 lands.
 
 **Explicitly rejected (D1):** Option B (real `inferenced` node), Option C (hybrid). Testenv
@@ -923,23 +924,23 @@ TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewayPhase7_Smoke -
    health polling, config skeletons). Build tag `testenvci` for Docker stack scenarios.
 2. Initial scenarios:
 
-   | ID | Scenario | Asserts | Status |
-   |----|----------|---------|--------|
-   | S1 | Stack smoke | mock-chain + mock-dapi + router + 2 versiond + gateway healthy | ✅ **DONE** |
-   | S2 | Router stickiness | same escrow/session → same versiond backend across retries | ✅ **DONE** |
-   | S3 | Params long-poll | `/testenv/params` change → devshardd session bind uses new timeouts | ✅ **DONE** |
-   | S4 | Epoch switch | `/testenv/epoch` advance → fast-forward blocks to `next_poc_start`, runtimeparams epoch bump | ✅ **DONE** |
-   | S5 | Gateway chat | devshardctl → router → devshardd → `mock-openai` `/v1/chat/completions` → 200 (stream + non-stream) | ✅ **DONE** |
-   | S6 | Fault: versiond stop | router retries another instance or fails as designed | ✅ **DONE** |
+   | Scenario | Asserts | Status |
+   |----------|---------|--------|
+   | Stack smoke | mock-chain + mock-dapi + router + 2 versiond + gateway healthy | ✅ **DONE** |
+   | Router stickiness | same escrow/session → same versiond backend across retries | ✅ **DONE** |
+   | Params long-poll | `/testenv/params` change → devshardd session bind uses new timeouts | ✅ **DONE** |
+   | Epoch switch | `/testenv/epoch` advance → fast-forward blocks to `next_poc_start`, runtimeparams epoch bump | ✅ **DONE** |
+   | Gateway chat | devshardctl → router → devshardd → `mock-openai` `/v1/chat/completions` → 200 (stream + non-stream) | ✅ **DONE** |
+   | Versiond failover | router retries the surviving instance | ✅ **DONE** |
 
-   **S4 implementation:** `citest/s4_epoch_switch_test.go` posts `POST /testenv/epoch`
+   **Epoch switch implementation:** `citest/epoch_switch_test.go` posts `POST /testenv/epoch`
    `{advance:true}` on mock-dapi; mock-chain `rpcface.AdvanceEpoch` publishes CometBFT
    `NewBlock` for each height up to `next_poc_start`, commits epoch index+2 with updated
    `next_poc_start`, and mock-dapi `RefreshRuntimeConfig` wakes `GetRuntimeConfig`
    long-poll with higher `current_epoch_id`. Included in `make citest-stack` (rebuild
    `mock-chain` image when epoch admin changes).
 
-   **S5 implementation:** `citest/s5_gateway_chat_test.go` boots the S1 stack and posts
+   **Gateway chat implementation:** `citest/gateway_chat_test.go` boots the standard stack and posts
    pooled `POST /v1/chat/completions` on devshardctl for non-stream and SSE stream;
    asserts HTTP 200, non-empty assistant content with `mock-openai:` prefix, and
    `data: [DONE]` on the stream path. Uses admin API key (`TESTENV_ADMIN_API_KEY`),
@@ -948,7 +949,7 @@ TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewayPhase7_Smoke -
    query, router `/devshard/` rewrite, `NODE_RPC_URL`, internal router URL `:8080`.
    Included in `make citest-stack`.
 
-   **S6 implementation:** `citest/s6_versiond_stop_test.go` finds two session ids
+   **Versiond failover implementation:** `citest/versiond_failover_test.go` finds two session ids
    routed to different versiond upstreams (sticky hash), stops the compose service for
    one upstream, asserts the pinned session either gets 502/503 (unavailable peer) or
    re-hashes to the surviving upstream (consistent-hash ring shrink when Docker DNS drops
@@ -956,32 +957,33 @@ TESTENV_GATEWAY_SMOKE=1 go test ./testenv/citest/ -run TestGatewayPhase7_Smoke -
    `X-Upstream-Addr`. Helpers in `citest/harness/router_sticky.go` and
    `Stack.StopService`. Included in `make citest-stack`.
 
-   **S3 implementation:** `citest/s3_params_longpoll_test.go` boots the S1 stack (devshardd
+   **Params long-poll implementation:** `citest/params_longpoll_test.go` boots the standard stack (devshardd
    long-polling mock-dapi via `NODE_MANAGER_ADDR`), blocks on `GetRuntimeConfig` at the current
    `params_block_height`, posts `POST /testenv/params` on mock-dapi (proxied to mock-chain admin),
    asserts the long-poll returns higher height plus updated `max_nonce` / timeouts, then
    verifies caught-up clients get immediate `unchanged` and stale-height clients receive the
    patched snapshot — the same `GetRuntimeConfig` lane-C feed devshardd consumes via
-   `NODE_MANAGER_ADDR` while the S1 stack is up. Included in `make citest-stack`.
+   `NODE_MANAGER_ADDR` while the standard stack is up. Included in `make citest-stack`.
 
-   **S2 implementation:** `citest/s2_router_stickiness_test.go` hits
+   **Router stickiness implementation:** `citest/router_stickiness_test.go` hits
    `/<version>/sessions/<id>/healthz` through versiond-router eight times and asserts
    identical `X-Upstream-Addr` (nginx `$upstream_addr`); probes additional session ids
    until a second upstream is observed. Router image exposes the header via
    `versiond-router/nginx.conf.template`. Included in `make citest-stack`.
 
-   **S1 implementation:** `citest/s1_stack_smoke_test.go` (`//go:build testenvci`) uses
-   `harness.WriteS1Config` (2× versiond, `mode: multi`, Postgres), `docker compose up --wait`,
+   **Stack smoke implementation:** `citest/stack_smoke_test.go` (`//go:build testenvci`) uses
+   `harness.WriteStackConfig` (2× versiond, `mode: multi`, Postgres), `docker compose up --wait`,
    then polls mock-chain RPC `/health`, mock-dapi `/healthz` + `/v1/epochs/latest`,
    versiond-router `/healthz`, gateway `/v1/status`, and `docker compose ps` for
    `versiond-0` + `versiond-1`. Run: `make citest-stack` or
-   `TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestS1_StackSmoke`.
+   `TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestStackSmoke`.
 
 3. **Drop:** `*HeightSync*`, cheat-anchor, force-anchor, height-sync audit scenarios.
 
-**Scripts:** `testenv/scripts/run-stack-citest.sh` (S1); `scripts/gen-integration-testenv-config.sh` (Phase 11).
+**Scripts:** `testenv/scripts/run-stack-citest.sh`;
+`scripts/gen-integration-testenv-config.sh` (Phase 11).
 
-**Exit:** `make citest-stack` green locally with Docker (S1–S6 ✅).
+**Exit:** `make citest-stack` green locally with Docker.
 
 ---
 
@@ -1014,7 +1016,8 @@ Run: `make citest-adversarial` or
 ### Phase 10 — Observability overlay (optional)
 
 Port `testenv/observability/` compose fragment (Jaeger/Prometheus/Loki/Grafana — same
-family as `deploy/join/docker-compose.observability.yml`). Lower priority than S1–S6.
+family as `deploy/join/docker-compose.observability.yml`). Lower priority than
+the core stack behavior suite.
 
 **Plan (backends, profiles, Alloy/Tempo roadmap):** [`observability-plan.md`](./observability-plan.md)
 
@@ -1090,18 +1093,19 @@ citest harness, and rolling-update **Track A** (blue/green sha swap) at minimum.
 2. **mock-dapi:** extend `/versions` + `/testenv/*` to bump **sha256 for same version name**
    (simulates governance publishing a new binary).
 3. **Binaries:** mount two devshardd builds (or tagged overrides) for swap scenarios.
-4. **New citest scenarios** (after S1–S6):
+4. **New citest scenarios**:
 
    | ID | Scenario | Asserts |
    |----|----------|---------|
-   | **S7** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
-   | **S8** | Router host drain | Escrow pinned to `versiond-N`; mark upstream down; in-flight completes; no new traffic to N |
+   | **Versiond rolling update** | Same-name sha swap | Long request on old child completes; concurrent new request hits new child; no 404 during swap |
+   | **future** | Router host drain | Escrow pinned to `versiond-N`; mark upstream down; in-flight completes; no new traffic to N |
 
 **Tests:** align with `rolling-update.md` §1.9 (versiond unit/e2e + devshardd readiness);
 Phase 13 adds **stack-level** Go citest on top.
 
-**Exit:** `make citest-stack` includes S7 (+ S8 when Track B lands); rolling-update semantics
-validated before deploy/join.
+**Exit:** `make citest-stack` includes `TestVersiondRollingUpdate*` (+ router
+drain when Track B lands); rolling-update semantics are validated before
+deploy/join.
 
 ---
 
@@ -1122,9 +1126,9 @@ wired in Phase 11 (`.github/workflows/devshard-testenv.yml`); integration on dis
 | mock-dapi (Phase 5) ✅ | `go test ./testenv/mockdapi/... -count=1` |
 | mock-openai (Phase 5b) ✅ | `go test ./testenv/mockopenai/... -count=1` |
 | mock-chain gRPC face (3a) ✅ | `go test ./devshard/testenv/mockchain/... -count=1` |
-| mock-chain CometBFT RPC / devshardd events (3b) ✅ | `go test ./devshard/testenv/mockchain/rpcface/... -count=1`; `make citest-stack` S1 |
-| mock-chain LCD REST / gateway escrow tx (3c) ✅ | `go test ./devshard/testenv/mockchain/restface/... -count=1`; `make citest-stack` S5 |
-| stack citest (Phase 8) ✅ | `make citest-stack` (S1–S6) |
+| mock-chain CometBFT RPC / devshardd events (3b) ✅ | `go test ./devshard/testenv/mockchain/rpcface/... -count=1`; `make citest-stack` |
+| mock-chain LCD REST / gateway escrow tx (3c) ✅ | `go test ./devshard/testenv/mockchain/restface/... -count=1`; `TestGatewayChat` |
+| stack citest (Phase 8) ✅ | `make citest-stack` |
 | adversarial citest (Phase 9) ✅ | `make citest-adversarial` (A1–A4) |
 | observability smoke (Phase 10) ✅ | `make citest-observability` (O1) |
 | common runtimeconfig client (Phase 12) ✅ | `go test ./common/runtimeconfig/client/... -count=1` |
@@ -1165,21 +1169,22 @@ Phase 4   gencompose stub + dev overlay (keys, air, dlv)  ✅ DONE
 Phase 5   mock-dapi + mock-openai (mounts chainoracle)  ✅ DONE
 Phase 6   gencompose versiond×N + router + devshardctl + keyrings  ✅ DONE
 Phase 7   devshardctl gateway in compose             ✅ DONE
-Phase 8   Go citest harness + S1–S6 (S1–S4 ✅ stack smoke + stickiness + params + epoch switch)
+Phase 8   Go citest harness + named stack behavior tests          ✅ DONE
 Phase 9   adversarial scenarios (A1–A4 ✅)
 Phase 10  observability overlay (optional)              ✅ DONE
 Phase 11  CI / Makefile / runbook                       ✅ DONE
 Phase 12  client long-poll → common (remainder tracked) ✅ client DONE
-Phase 13  rolling-update citest (S7/S8)           needs P6,P8 + rolling-update.md Track A/B
+Phase 13  rolling-update citest                   needs P6,P8 + rolling-update.md Track A/B
 ```
 
-- **MVP (devshardd-only):** Phases 1–2 + **3a+3b** + 5 + 6 + S1–S4 — stack up, long-poll
+- **MVP (devshardd-only):** Phases 1–2 + **3a+3b** + 5 + 6 plus stack smoke,
+  stickiness, params, and epoch tests — stack up, long-poll
   works, router routes, devshardd sees escrows/events. No gateway tx yet.
-- **MVP+ (full chat):** add **3c** + Phase 7 + S5 — gateway creates escrow over REST.
+- **MVP+ (full chat):** add **3c** + Phase 7 + gateway chat — gateway creates escrow over REST.
 - **Dev loop (early):** ✅ **available now** — Phase **3 + 4** done: `make gen-compose && make dev-up`;
   mock-chain hot reload with pinned keys while building Phase 5+.
-- **M2:** S2, S4–S6 + CI.
-- **M3 (rolling update):** Phase 13 + S7 (+ S8 when router drain lands) — after
+- **M2:** router stickiness, epoch, gateway, versiond lifecycle, and CI.
+- **M3 (rolling update):** Phase 13 plus legacy routing and storage migration — after
   `rolling-update.md` Track A/B in production code.
 
 ---

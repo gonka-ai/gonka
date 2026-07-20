@@ -16,7 +16,7 @@ gRPC — the same transport devshardd already uses.
 | Doc                                                         | Role                                                      |
 | ----------------------------------------------------------- | --------------------------------------------------------- |
 | `[phase12-followup.md](./phase12-followup.md)`              | Phase 12 index                                            |
-| `[scenarios.md](./scenarios.md)`                            | Citest scenarios (S1–S6 shipped; **G1–G4** planned below) |
+| `[scenarios.md](./scenarios.md)`                            | Named stack scenarios shipped; **G1–G4** planned below    |
 | `[testenv-v2-plan.md](./testenv-v2-plan.md)` § Phase 2b, 3c | Original transport decisions                              |
 | `devshard/docs/merge-plan.md`                               | “Cosmos chain clients → common/”                          |
 
@@ -153,7 +153,7 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 | ------ | ------------------ | ------------------------------------------------------------------------------ | ---------------------------------------------- | ------ |
 | **G1** | gRPC escrow create | Gateway creates escrow via gRPC tx only; visible on gRPC query                 | `TestG1_GatewayEscrowCreateGRPC`               | ✅      |
 | **G2** | gRPC escrow read   | Gateway reads escrow via gRPC bridge (no LCD)                                  | `TestG2_GatewayEscrowReadGRPC`                 | ✅      |
-| **G3** | S5 without LCD     | Full chat path with compose **without** `DEVSHARD_CHAIN_REST` / mock REST port | `TestG3_GatewayChatGRPCOnly`                   | ⬜      |
+| **G3** | Chat without LCD   | Full chat path with compose **without** `DEVSHARD_CHAIN_REST` / mock REST port | `TestG3_GatewayChatGRPCOnly`                   | ⬜      |
 | **G4** | REST removed gate  | CI grep: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl               | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅      |
 
 
@@ -166,7 +166,7 @@ citest-grpc-transport:  ## G1–G3 gRPC-only gateway citest
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 ```
 
-Fold **G3** into `make citest-stack` once green (S5 becomes gRPC-only).
+Fold **G3** into `make citest-stack` once `TestGatewayChat` is gRPC-only.
 
 ---
 
@@ -180,7 +180,8 @@ PR-4  G1–G3 citest + compose/settings cleanup                (C4, E1–E4, F)
 PR-5  delete REST code + optional mock-chain 3c removal      (C3, D6, E5)
 ```
 
-Each PR must keep **existing S1–S6** green until PR-4 switches S5 to gRPC-only.
+Each PR must keep the existing stack behavior suite green until PR-4 switches
+gateway chat to gRPC-only.
 
 ---
 
@@ -219,9 +220,9 @@ Do **not** force gateway onto file keyring in v1 — adapter keeps gateway deplo
 - [ ] `devshardctl` has **zero** production chain `http.Client` calls (excluding `DEVSHARD_PUBLIC_API` → mock-dapi).
 - [ ] `grep -r 'NewRESTBridge\|RESTChainTxClient\|DEVSHARD_CHAIN_REST' devshard/cmd/devshardctl` → empty.
 - [ ] gencompose devshardctl service: `DEVSHARD_CHAIN_GRPC` only (no REST chain env).
-- [ ] **G1, G2, G3** citest green; **S5** runs as part of G3 / `citest-stack` without LCD.
+- [ ] **G1, G2, G3** citest green; gateway chat runs through G3 / `citest-stack` without LCD.
 - [ ] `make -C devshard ci-testenv-unit` and `ci-testenv-integration` green.
-- [ ] `[scenarios.md](./scenarios.md)` updated: G1–G3 marked ✅, S5 note no longer mentions LCD.
+- [ ] `[scenarios.md](./scenarios.md)` updated: G1–G3 marked ✅ and gateway chat no longer mentions LCD.
 
 ---
 
@@ -233,7 +234,7 @@ Do **not** force gateway onto file keyring in v1 — adapter keeps gateway deplo
 | mock-chain gRPC tx parity with REST 3c | B4 event emission; port existing `restface` tx tests to gRPC |
 | Gateway signer ≠ keyring               | Signer interface in `common/chain/tx` (see above)            |
 | deploy/join still documents REST       | E4 doc pass; coordinate with ops before E5                   |
-| S5 regression during migration         | Keep LCD until G3 passes; dual-path one release optional     |
+| Gateway chat regression during migration | Keep LCD until G3 passes; dual-path one release optional   |
 
 
 ---
@@ -245,5 +246,4 @@ Do **not** force gateway onto file keyring in v1 — adapter keeps gateway deplo
 | ---------- | --- | ---------------------------------------------------------------------------- |
 | 2026-06-24 | —   | Track C + D: gateway gRPC tx/query, G2/G4 tests, gencompose REST env removed |
 | 2026-06-24 | —   | Track A + B: `common/chain/tx`, mock-chain gRPC auth/tx, G1 citest           |
-
 

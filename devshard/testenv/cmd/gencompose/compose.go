@@ -66,6 +66,9 @@ services:
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
       MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
       CHAIN_ID: "{{ .ChainID }}"
+      MOCK_DAPI_BINARY_DIR: /testenv-binaries
+    volumes:
+      - ./binaries:/testenv-binaries:ro
     ports:
       - "{{ .MockDapi.GRPCPort }}:{{ .MockDapi.GRPCPort }}"
       - "{{ .MockDapi.HTTPPort }}:{{ .MockDapi.HTTPPort }}"

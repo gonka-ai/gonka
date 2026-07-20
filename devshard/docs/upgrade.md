@@ -43,7 +43,10 @@ allowed binaries. Each entry carries:
 sha256 is the real identity. The URL is only a download hint. If two proposals
 point at different mirrors but the same hash, operators do not restart
 anything. If the name stays the same but the hash changes, versiond downloads
-the new binary first and then swaps over.
+the new binary first and then **rolls** to it: on Postgres, blue/green overlap
++ drain (new traffic on the new SHA while the old child finishes in-flight
+work); otherwise exclusive stop/start. See
+[rolling-update.md](./rolling-update.md).
 
 Versiond re-hashes cached binaries on startup so a tampered file on disk is
 detected before any traffic is routed to it.
@@ -79,9 +82,9 @@ Legacy versioned observability URLs are rewritten internally by the join proxy
 to the versionless forms; the version segment in those URLs does not bind.
 
 The target safety model is that the first **owner** request binds the session to
-one binary version off-chain. Every later diff must continue with that same
-version. A host running the wrong binary refuses to sign, so a version-mixing
-session cannot gather the threshold needed to settle.
+one **protocol** version off-chain. Every later diff must continue with that same
+protocol name. A host running the wrong protocol binary refuses to sign, so a
+version-mixing session cannot gather the threshold needed to settle.
 
 The bound version is recorded in shard state / storage (`sessions.version`).
 Use the `<version>` segment from `/devshard/<version>/*` for protocol traffic only.
@@ -112,21 +115,30 @@ Two strings, same governance slot:
 
 | Surface | Example | Role |
 |---------|---------|------|
-| Protocol name (`approved_versions.name`) | `v2` | Routing `/devshard/v2/`, session bind, state-root / settlement tag |
-| Binary build id | `0.2.13-v2-r2` | Log prefix only; can change when governance keeps the same protocol name |
+| Protocol name (`approved_versions.name`) | `v4` | Routing `/devshard/v4/`, session bind, state-root / settlement tag |
+| Binary build id | `0.2.14-v4-r2` | Link-time build stamp: logs, `--print-binary-version`, versiond `/healthz`, and `GET …/stats/shards` `binary_version` |
+
+Protocol name is what binds sessions and settlements. Binary build id is what
+distinguishes two artifacts that share the same protocol name (same-name SHA
+roll). Clients can poll stats during a roll and watch `binary_version` drift
+while `protocol_version` stays fixed — see
+[v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7.0.1 and
+[`scripts/poll-binary-version.sh`](../testenv/scripts/poll-binary-version.sh).
 
 | Build / runtime | Mechanism |
 |-----------------|-----------|
 | `DEVSHARD_VERSION` | Makefile / `-X main.Version=...` — protocol name at link time |
 | `DEVSHARD_BINARY_VERSION` | Makefile / `-X main.BinaryVersion=...` — build id at link time |
-| versiond slot | `c.version.Name` = protocol (`v2`) |
+| versiond slot | `c.version.Name` = protocol (`v4`) |
 | versiond → child | `DEVSHARD_BINARY_LOG_VERSION=<build id>` from `devshardd --print-binary-version` |
 | Session / settlement | protocol name only (`RuntimeVersion` = link-time `main.Version`) |
+| Stats / health | `protocol_version` + `binary_version` on `GET …/stats/shards` (and detail); `binary_version` also on versiond `/healthz` |
 
-Build example:
+Build example (same protocol, two roll stamps):
 
 ```bash
-make devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2
+make devshardd-build DEVSHARD_VERSION=v4 DEVSHARD_BINARY_VERSION=0.2.14-v4
+make devshardd-build DEVSHARD_VERSION=v4 DEVSHARD_BINARY_VERSION=0.2.14-v4-r2
 ```
 
 versiond verifies `--print-protocol-version` matches the slot name before start.
@@ -138,11 +150,27 @@ that value when it matches the link-time protocol name.
 **Legacy path:** `/v1/devshard/*` uses `v1` as the protocol tag (embedded dapi
 and historical sessions).
 
-**Graceful binary refresh:** When governance keeps the same `approved_versions`
-name but updates `binary` URL / `sha256`, versiond downloads the new artifact
-and restarts the child. New sessions pick up the refreshed binary under the
-same name. In-flight sessions keep the tag they were bound with until settled;
-hosts refuse mixed versions via storage `ErrSessionVersionConflict`.
+**Same-name binary refresh (rolling update):** When governance keeps the same
+`approved_versions.name` but updates `binary` URL / `sha256`, versiond
+downloads the new artifact under `bin/<name>/<sha>/` and rolls the child:
+
+1. Probe `--print-storage-mode` on old + new; overlap only if **both** are
+   exactly `postgres`.
+2. **Postgres:** start the new child on a new port → wait admin `/ready` +
+   public `/healthz` → publish the new route → drain the old generation
+   (proxy leases, then `POST /drain`) → SIGTERM old.
+3. **Otherwise (SQLite / hybrid / probe fail):** exclusive stop/start — no
+   concurrent children.
+
+New requests land on the new SHA after route publish. In-flight work on the
+old child is allowed to finish (long SSE / validation). Sessions stay bound to
+the **protocol** name they used; hosts refuse mixed protocol versions via
+storage `ErrSessionVersionConflict`. Stamp each roll with a distinct
+`DEVSHARD_BINARY_VERSION` so operators and clients can tell which generation
+is answering (`binary_version` on stats / `/healthz`).
+
+Full operator walkthrough: [rolling-update.md](./rolling-update.md) and
+[v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7.
 
 **Protocol-breaking changes** require a **new** approved name (new state-root /
 settlement rules). Do not reuse an existing name for incompatible wire or hash

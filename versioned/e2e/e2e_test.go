@@ -205,7 +205,7 @@ func TestHashMismatch(t *testing.T) {
 	// Use testapp binary (protocol "testapp") with a mismatched slot so even a
 	// correct hash would fail protocol checks; wrong hash fails earlier.
 	uploadBinary(t, "bad.zip", zipData)
-	putVersion(t, "badslot", fmt.Sprintf("%s/binaries/bad.zip", oracleURL), "wrong_hash", 9003)
+	putVersion(t, "badslot", fmt.Sprintf("%s/binaries/bad.zip", oracleURL), strings.Repeat("0", 64), 9003)
 
 	time.Sleep(10 * time.Second)
 
@@ -277,5 +277,50 @@ func TestHealthEndpoint(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("testapp not found in healthz response: %s", string(body))
+	}
+}
+
+func TestSameNameNewSHA_RollingUpdateDrainsOld(t *testing.T) {
+	oldZip, oldHash := buildTestappZip(t)
+	newZip, newHash := buildTestappRolloutZip(t)
+
+	uploadBinary(t, "testapp-old.zip", oldZip)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/testapp-old.zip", oracleURL), oldHash, 9001)
+	waitForVersionPrefix(t, "testapp", "testapp", 90*time.Second)
+
+	type result struct {
+		resp map[string]string
+		err  error
+	}
+	slowDone := make(chan result, 1)
+	go func() {
+		var resp map[string]string
+		err := getJSONIfOK(fmt.Sprintf("%s/testapp/slow?duration=8s", versiondURL), &resp)
+		slowDone <- result{resp: resp, err: err}
+	}()
+
+	time.Sleep(500 * time.Millisecond)
+
+	uploadBinary(t, "testapp-new.zip", newZip)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/testapp-new.zip", oracleURL), newHash, 9001)
+	waitForVersionPrefix(t, "testapp", "testapp-rollout", 90*time.Second)
+
+	select {
+	case got := <-slowDone:
+		if got.err != nil {
+			t.Fatalf("slow request failed: %v", got.err)
+		}
+		if got.resp["prefix"] != "testapp" {
+			t.Fatalf("slow request prefix = %q, want old prefix %q", got.resp["prefix"], "testapp")
+		}
+	case <-time.After(20 * time.Second):
+		t.Fatal("slow request did not finish")
+	}
+
+	waitForNoDraining(t, "testapp", 30*time.Second)
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/testapp/", versiondURL), &resp)
+	if resp["prefix"] != "testapp-rollout" {
+		t.Fatalf("new request prefix = %q, want %q", resp["prefix"], "testapp-rollout")
 	}
 }

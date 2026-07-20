@@ -11,5 +11,8 @@ RUN rm -rf /app/build && mkdir -p /app/build \
 	&& CGO_ENABLED=0 GOOS=linux go build -o /app/build/testapp ./e2e/testapp \
 	&& CGO_ENABLED=0 GOOS=linux go build \
 		-ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" \
-		-o /app/build/testapp2 ./e2e/testapp
+		-o /app/build/testapp2 ./e2e/testapp \
+	&& CGO_ENABLED=0 GOOS=linux go build \
+		-ldflags "-X main.Version=testapp -X main.BinaryVersion=testapp-rollout" \
+		-o /app/build/testapp-rollout ./e2e/testapp
 CMD ["gotestsum", "--format", "testname", "--junitfile", "/app/test-results/run-junit.xml", "--", "-tags", "e2e", "./e2e", "-v", "-timeout", "300s", "-skip", "^(TestRegisterStartupVersion|TestStartupFromExistingOracleState)$"]

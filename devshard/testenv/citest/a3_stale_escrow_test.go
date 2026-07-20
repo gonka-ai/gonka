@@ -23,7 +23,7 @@ func TestA3_StaleEscrow(t *testing.T) {
 	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a3-*")
 	client := harness.HTTPClient()
 	chatClient := harness.GatewayChatClient()
-	mockDapi := harness.MockDAPIFromConfig(cfg)
+	mockDapi := harness.MockDAPIFromEndpoints(eps)
 	adminKey := harness.TestenvAdminAPIKey
 	gatewayURL := eps.GatewayHTTP
 	t.Cleanup(func() {
@@ -51,7 +51,7 @@ func TestA3_StaleEscrow(t *testing.T) {
 
 	harness.Step(t, "settle escrow %d on mock-chain while 2× versiond stack is up", id)
 	harness.PatchTestenvEscrowSettle(t, client, mockDapi.HTTP, id)
-	harness.RequireEscrowSettledOnChain(t, cfg, id)
+	harness.RequireEscrowSettledOnChain(t, eps, id)
 	harness.PatchAdversarialFastTimeouts(t, client, mockDapi.HTTP)
 
 	staleReq := harness.ChatCompletionRequest{
@@ -72,5 +72,5 @@ func TestA3_StaleEscrow(t *testing.T) {
 
 	stillSettled := harness.GetGatewayEscrowID(t, client, gatewayURL)
 	require.Equal(t, escrowID, stillSettled, "gateway should not silently rotate to a new escrow after stale settlement")
-	harness.RequireEscrowSettledOnChain(t, cfg, id)
+	harness.RequireEscrowSettledOnChain(t, eps, id)
 }

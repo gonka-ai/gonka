@@ -12,20 +12,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestS5_GatewayChat verifies devshardctl pooled /v1/chat/completions reaches mock-openai
+// TestGatewayChat verifies devshardctl pooled /v1/chat/completions reaches mock-openai
 // through versiond-router and devshardd for both non-stream and SSE stream responses.
-func TestS5_GatewayChat(t *testing.T) {
+func TestGatewayChat(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootS1Stack(t, "citest-s5-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-gateway-chat-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack, "devshardctl", "versiond-0", "versiond-1", "mock-openai")
 		}
 	})
-	harness.WaitS1Healthy(t, stack, eps)
+	harness.WaitStackHealthy(t, stack, eps)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+cfg.Versiond.VersionName+"/healthz", 5*time.Minute, "devshardd health via router", stack)
 
@@ -36,7 +36,7 @@ func TestS5_GatewayChat(t *testing.T) {
 	nonStreamReq := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s5 non-stream"},
+			{Role: "user", Content: "citest gateway chat non-stream"},
 		},
 		MaxTokens: 32,
 	}
@@ -48,7 +48,7 @@ func TestS5_GatewayChat(t *testing.T) {
 	streamReq := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest s5 stream gateway"},
+			{Role: "user", Content: "citest gateway chat stream"},
 		},
 		MaxTokens: 32,
 	}

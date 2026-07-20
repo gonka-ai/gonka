@@ -18,7 +18,7 @@ func TestG2_GatewayEscrowReadGRPC(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootMockChainStack(t, "citest-g2-*")
+	stack, _, eps := harness.BootMockChainStack(t, "citest-g2-*")
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack, "mock-chain")
@@ -26,7 +26,7 @@ func TestG2_GatewayEscrowReadGRPC(t *testing.T) {
 	})
 	harness.WaitGETOK(t, harness.HTTPClient(), eps.MockChainRPC+"/health", 5*time.Minute, "mock-chain RPC health")
 
-	conn := harness.DialMockChainGRPC(t, cfg)
+	conn := harness.DialMockChainGRPC(t, eps)
 	br := bridge.NewGRPCBridge(chain.NewFromConn(conn))
 	info, err := br.GetEscrow("1")
 	require.NoError(t, err)

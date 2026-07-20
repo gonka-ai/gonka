@@ -8,7 +8,7 @@ import (
 
 // sortedVersions returns route map keys ordered from oldest to newest using
 // compareVersionNames (numeric / dotted-numeric aware, not lexicographic).
-func sortedVersions(routeMap map[string]string) []string {
+func sortedVersions(routeMap RouteTable) []string {
 	versions := make([]string, 0, len(routeMap))
 	for v := range routeMap {
 		versions = append(versions, v)

@@ -115,11 +115,17 @@ func run(ctx context.Context) error {
 	<-ctx.Done()
 	slog.Info("shutting down")
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
+	httpShutdownCtx, httpShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer httpShutdownCancel()
+	if err := srv.Shutdown(httpShutdownCtx); err != nil {
+		slog.Warn("http server shutdown incomplete", "error", err)
+	}
 
-	srv.Shutdown(shutdownCtx)
-	mgr.Shutdown(shutdownCtx)
+	managerShutdownCtx, managerShutdownCancel := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
+	defer managerShutdownCancel()
+	if err := mgr.Shutdown(managerShutdownCtx); err != nil {
+		slog.Warn("manager shutdown incomplete", "error", err)
+	}
 
 	return nil
 }

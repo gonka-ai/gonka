@@ -133,19 +133,41 @@ class DevshardVersiondAdvancedTests : DevshardVersiondTestBase() {
         logSection("Waiting for every pair to download ${preparedArtifact.approvedVersion.name}")
         waitUntil("downloaded binary and install metadata exist on every pair", timeoutSeconds = 120) {
             cluster.allPairs.all { pair ->
-                pair.versiondBinaryExists(preparedArtifact.approvedVersion.name, "devshardd") &&
-                    pair.readVersiondInstallMetadata(preparedArtifact.approvedVersion.name)?.archiveSha256 ==
+                pair.versiondBinaryExists(
+                    preparedArtifact.approvedVersion.name,
+                    "devshardd",
+                    preparedArtifact.approvedVersion.sha256,
+                ) &&
+                    pair.readVersiondInstallMetadata(
+                        preparedArtifact.approvedVersion.name,
+                        preparedArtifact.approvedVersion.sha256,
+                    )?.archiveSha256 ==
                     preparedArtifact.approvedVersion.sha256
             }
         }
         cluster.allPairs.forEach { pair ->
-            assertThat(pair.versiondBinaryExists(preparedArtifact.approvedVersion.name, "devshardd"))
+            assertThat(
+                pair.versiondBinaryExists(
+                    preparedArtifact.approvedVersion.name,
+                    "devshardd",
+                    preparedArtifact.approvedVersion.sha256,
+                )
+            )
                 .withFailMessage(
                     "Expected ${pair.name} versiond to download " +
-                        pair.versiondBinaryPath(preparedArtifact.approvedVersion.name, "devshardd"),
+                        pair.versiondBinaryPath(
+                            preparedArtifact.approvedVersion.name,
+                            "devshardd",
+                            preparedArtifact.approvedVersion.sha256,
+                        ),
                 )
                 .isTrue()
-            val installMetadata = assertNotNull(pair.readVersiondInstallMetadata(preparedArtifact.approvedVersion.name))
+            val installMetadata = assertNotNull(
+                pair.readVersiondInstallMetadata(
+                    preparedArtifact.approvedVersion.name,
+                    preparedArtifact.approvedVersion.sha256,
+                )
+            )
             assertThat(installMetadata.archiveSha256).isEqualTo(preparedArtifact.approvedVersion.sha256)
             assertThat(installMetadata.binarySha256).isNotBlank()
         }

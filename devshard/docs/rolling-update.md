@@ -1,6 +1,6 @@
-# Rolling Update Plan: versiond + devshardd
+# Rolling updates: versiond + devshardd
 
-Goal (operator requirement):
+Operator requirement:
 
 > Roll out a **new binary under the same version name** (name stays, e.g.
 > `v0.2.13`, only the `sha256` changes) such that:
@@ -11,370 +11,291 @@ Goal (operator requirement):
 > 3. once the new instance is reachable we route **new** requests to it, while
 >    the old instance keeps **draining** its in-flight requests.
 
-This document has two parts:
+This document describes:
 
-1. **Part 1 — versiond (detailed).** A concrete, blue/green + drain design for
-   the existing `versioned/` supervisor and `devshardd` child (governance binary
-   swap), plus a separate **`versiond-router` host-evacuation** track for HA
-   (§1.7–§1.8).
-2. **Part 2 — Kubernetes (high level).** A non-detailed sketch of how the same
-   guarantees map onto a future K8s deployment.
+1. **Part 1 — versiond (implemented).** Blue/green + drain for governance
+   binary swaps inside `versioned/` + `devshardd` (Track A), plus a separate
+   **`versiond-router` host-evacuation** track for HA (§1.7–§1.8, Track B —
+   not shipped).
+2. **Part 2 — Kubernetes (sketch).** How the same guarantees map onto a future
+   K8s deployment.
+
+Related: [release-0.2.14-v4.md](./release-0.2.14-v4.md),
+[v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7,
+[testenv/docs/scenarios.md](../testenv/docs/scenarios.md).
 
 ---
 
-## 0. Where we are today (baseline)
+## 0. Historical baseline (pre-rollout)
 
-### versiond supervisor
+Before Track A, same-name SHA changes were **stop-then-start on one port**:
 
-`versiond` polls the oracle every `VERSIOND_POLL_INTERVAL` (30s default) and
-reconciles desired vs. running children.
+- Route table was `map[versionName]host:port` (string addresses only).
+- `downloadAndSwap` downloaded the new binary, `SIGTERM`ed the old child
+  (`WaitDelay` ~5s), then started the new child on the **same** port.
+- “Ready” meant TCP-accept only (`waitForPort`), not HTTP readiness.
+- `devshardd` shutdown grace was a hard-coded ~5s `server.Shutdown`.
 
-- Routing is an in-process reverse proxy keyed by the version prefix:
-  `/<version>/...` → `localhost:<port>`. The route table is an
-  `atomic.Value` holding `map[versionName]host:port`.
+That could not keep old in-flight work (long SSE / validation) alive while a
+proven-ready new child took new traffic. The sections below describe the
+**current** implementation that closes those gaps.
 
-```15:57:versioned/internal/proxy/proxy.go
-func Handler(routes *atomic.Value) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		path := strings.TrimPrefix(r.URL.Path, "/")
-		parts := strings.SplitN(path, "/", 2)
-		...
-		routeMap := routes.Load().(map[string]string)
-		target, ok := routeMap[version]
-		...
-		p := &httputil.ReverseProxy{ ... FlushInterval: -1 }
-		p.ServeHTTP(w, r)
-	})
+---
+
+## Part 1 — versiond rolling update (current behavior)
+
+### 1.1 Flow summary
+
+```
+poll detects same name, new sha256
+        │
+        ▼
+download into bin/<name>/<sha>/          ← old child binary untouched on disk
+        │
+        ▼
+probe --print-storage-mode (old recorded + new binary)
+        │
+        ├── not both exactly postgres → exclusive stop/start (no overlap)
+        │
+        ▼
+start NEW child on a NEW port            ← old keeps serving
+        │
+        ▼
+wait NEW admin /ready == 200 and public /healthz == 2xx
+        │                               (VERSIOND_READY_TIMEOUT; abort keeps old)
+        ▼
+atomic route swap → NEW Target           ← retire OLD Target
+        │
+        ▼
+wait OLD proxy leases == 0  OR  VERSIOND_DRAIN_TIMEOUT
+        │
+        ▼
+POST OLD /drain; poll /drain/status until inflight == 0
+        │                               (or deadline)
+        ▼
+SIGTERM OLD → process FSM grace → SIGKILL backstop → reap
+```
+
+The proxy route value is a generation-specific `proxy.Target`, not just an
+address. Each forwarded request `acquire`s a lease and `release`s it after the
+full response (including SSE). A stale lookup that loses the race with
+retirement retries against the new route; an already acquired request stays on
+the old generation until it completes.
+
+```52:85:versioned/internal/proxy/proxy.go
+func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
+	// ...
+		target, ok := acquireTarget(routes, version)
+		if !ok {
+			http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
+			return
+		}
+		defer target.release()
+		reverseProxy(target.Address(), rest).ServeHTTP(w, r)
 }
 ```
 
-- Same-name/new-sha is detected in `Reconcile` and handled by `downloadAndSwap`:
-  it downloads the new binary first, then **stops the old child and starts the
-  new one on the same port**.
+(Versionless observability paths in the same handler are orthogonal to rolling
+swap; see `isVersionlessObsPath` / `WithSessionVersionLookup`.)
 
-```392:419:versioned/internal/process/manager.go
-// downloadAndSwap downloads the new binary, then atomically replaces the old one.
-// The old process is stopped only after the new binary is on disk.
-func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
-	dlErr := m.downloadBinary(ctx, v, sha)
-	...
-	// Stop old process after new binary is on disk.
-	old.cancel()
-	waitForChild(old, 5*time.Second)
+### 1.2 Storage prerequisite
 
-	m.mu.Lock()
-	delete(m.downloading, v.Name)
-	delete(m.processes, v.Name)
-	m.startChild(ctx, v)
-	m.mu.Unlock()
-	return nil
-}
-```
+Rolling update means old + new `devshardd` may run **concurrently**. That is
+safe only with **Postgres-only** storage. SQLite and hybrid can write under the
+child data dir; overlapping children would race local files / migrate paths.
 
-- A child is only added to the route table when its status is `running`, and a
-  child reaches `running` after a **TCP-accept** probe (not a readiness probe):
+- **Postgres-only** (`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST` / `PG*`):
+  shared external state — only mode that permits blue/green overlap.
+- **SQLite / hybrid / auto→hybrid**: exclusive stop/start only.
 
-```576:583:versioned/internal/process/manager.go
-		// Wait for the child to start accepting connections before routing traffic.
-		if !waitForPort(ctx, c.port, 10*time.Second) {
-			slog.Warn("child did not start listening in time, routing anyway", "version", c.version.Name)
-		}
-		m.mu.Lock()
-		c.status = statusRunning
-		m.rebuildRoutes()
-		m.mu.Unlock()
-```
+versiond does **not** reimplement storage resolution and does **not** probe
+`PGHOST` or local SQLite `_meta.db` for the overlap gate. It asks the binaries:
 
-- On stop, the child is sent `SIGTERM`, then `SIGKILL` after 5s
-  (`cmd.WaitDelay`), and `waitForChild` only waits 5s.
+- running child records `--print-storage-mode` at preflight;
+- incoming binary is probed with `--print-storage-mode` before overlap;
+- overlap is allowed only when **both** answers are exactly `postgres`.
 
-```559:563:versioned/internal/process/manager.go
-		cmd.Cancel = func() error {
-			return cmd.Process.Signal(syscall.SIGTERM)
-		}
-		cmd.WaitDelay = 5 * time.Second // SIGKILL after 5s if SIGTERM didn't work
-```
+Anything else (legacy binary without the flag, probe error, `hybrid`,
+`sqlite`, unknown) fails closed to stop/start. See
+[storage-design.md](./storage-design.md) and
+[release-0.2.14-v4.md](./release-0.2.14-v4.md).
 
-### devshardd child
+### 1.3 devshardd lifecycle (admin listener)
 
-- HTTP server (Echo) exposes `GET /healthz` that always returns `ok` — this is
-  a **liveness** signal, not a readiness or drain signal.
+Public traffic listener keeps `/healthz` (liveness) and inference routes.
+Lifecycle controls live on a **loopback admin** listener when versiond sets
+`DEVSHARD_ADMIN_ADDR=127.0.0.1:<port>` (after `--print-admin-api-version`
+succeeds). Those paths are **not** registered on the public Echo instance.
 
-```24:24:devshard/cmd/devshardd/server.go
-	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
-```
+1. **`GET /ready` (admin)** — `200` when chain-event subscriptions report ready
+   and the child is not draining; otherwise `503`. versiond also requires
+   public `/healthz` `2xx` before publishing the route for admin-capable
+   children (`waitForChildServingReady`).
+2. **`GET /drain/status` (admin)** — `{ready, draining, inflight}` from the
+   lifecycle middleware (all non-lifecycle HTTP, including full SSE duration).
+   Same count as Prometheus `devshardd_lifecycle_inflight_requests`.
+3. **`POST /drain` (admin)** — reject new non-lifecycle work; finish accepted
+   requests. Belt-and-braces after the proxy has already retired the old target.
+4. **`DEVSHARD_SHUTDOWN_GRACE`** (default `10m`) — `server.Shutdown` budget on
+   `SIGTERM` (public + admin servers).
 
-- On `SIGTERM` it does `server.Shutdown(ctx)` with a **5s** grace window, so any
-  request longer than ~5s (long SSE `/chat/completions`, validation) is cut off.
-
-```306:321:devshard/cmd/devshardd/app.go
-	cancel()
-
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
+```387:391:devshard/cmd/devshardd/app.go
+	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), a.shutdownGrace)
 	defer shutdownCancel()
 	_ = a.server.Shutdown(shutdownCtx)
+	if a.adminServer != nil {
+		_ = a.adminServer.Shutdown(shutdownCtx)
+	}
 ```
 
-- It already tracks in-flight work via a Prometheus gauge `devshard_inflight`
-  (by stage), so the supervisor has a data source for "is this child idle?".
+### 1.4 versiond supervisor
 
-```54:57:devshard/observability/metrics_lifecycle.go
-	inflight = prometheus.NewGaugeVec(prometheus.GaugeOpts{
-		Name: "devshard_inflight",
-		Help: "In-flight devshard operations by stage.",
-	}, []string{"stage"})
-```
+#### a) Serving + draining children
 
-### Gap analysis vs. the requirement
+`Manager` keeps:
 
-| Requirement | Today | Gap |
-|---|---|---|
-| New ready before traffic | TCP-accept only, then routed | No real readiness gate |
-| New reachable → route new requests to it | Route swapped after start | OK at proxy layer (per-request reverse proxy) |
-| Old finishes in-flight | `SIGTERM` then `SIGKILL` after 5s | **Old is killed, not drained** |
-| Don't kill old until idle | `waitForChild(old, 5s)` | **No idle wait** |
-| Same name, new binary | stop-then-start on **same port** | **Brief 404 gap; old + new can't coexist** |
+- `processes map[string]*child` — current **serving** child per version name;
+- `draining map[string][]*child` — retired generations finishing work.
 
-The single blocking fact: to keep the old child alive **while** the new child is
-already ready, both must run **at the same time, on different ports**. The
-current swap is stop-then-start on one port, so the two can never overlap.
+`rebuildRoutes` publishes only `statusRunning` children as `proxy.RouteTable`
+(`map[string]*Target`), then retires replaced targets:
 
----
-
-## Part 1 — versiond rolling update (detailed)
-
-### 1.1 Design summary
-
-Convert the in-place swap into a **blue/green + drain** swap inside versiond:
-
-```
-poll detects same name, new sha
-        │
-        ▼
-download new binary to disk (old keeps running, already exec'd in memory)
-        │
-        ▼
-start NEW child on a NEW port            ← old child keeps serving on old port
-        │
-        ▼
-wait for NEW child READINESS (HTTP /ready, not just TCP)
-        │
-        ▼
-atomic route swap: version → NEW port    ← new requests go to NEW child
-        │                                   in-flight requests stay on OLD conn
-        ▼
-mark OLD child "draining" (out of route table, NOT killed)
-        │
-        ▼
-poll OLD child in-flight count until 0  OR  VERSIOND_DRAIN_TIMEOUT
-        │
-        ▼
-SIGTERM OLD child  → wait (long grace) → SIGKILL only as last resort
-```
-
-At the proxy layer this is already graceful: `proxy.Handler` builds a
-`httputil.ReverseProxy` **per request** and dials the target named in the route
-table at that moment. A request that already started keeps its own connection to
-the old child until it completes; only *new* requests observe the swapped route.
-The only thing we must change is: **stop killing the old child immediately**.
-
-### 1.2 Storage prerequisite (must resolve first)
-
-Rolling update means old + new `devshardd` run **concurrently**. That only
-works when durable state lives in a **shared external database** (Postgres in a
-separate process). **SQLite is not supported** for rolling update.
-
-- **Postgres** (`PGHOST` + related `PG*` env): session store (`devshard/storage`),
-  payloads, and validation leases are multi-writer and shared — safe for
-  overlap. Validation leases dedupe duplicate validation across instances.
-- **SQLite** (`devshard/storage` under `cfg.DataDir`): single-writer file.
-  Two `devshardd` processes opening the same data dir will contend / corrupt.
-  Do not enable blue/green drain without Postgres.
-
-**Requirement:** point every child at the same external Postgres before enabling
-this plan. Single-instance / local dev without overlap may keep using SQLite;
-see `devshard/docs/storage-design.md` (storage-mode selection) and
-`devshard/docs/release-0.2.14-v4.md` (HA ⇒ Postgres).
-
-### 1.3 devshardd changes
-
-1. **Readiness endpoint** `GET /ready` (distinct from `/healthz`):
-   - returns `200` only after chain runtime is connected, host manager has
-     recovered sessions, store is started, and the listener is accepting.
-   - returns `503` until then.
-   - This is what versiond gates the route swap on (replaces the TCP-only
-     `waitForPort`).
-
-2. **Drain/idle endpoint** `GET /drain/status` (or reuse metrics):
-   - returns active in-flight count (sum of `devshard_inflight` stages plus open
-     long-lived streams). versiond polls this to decide the old child is idle.
-   - Optionally `POST /drain` to flip the child into "reject new, finish
-     existing" mode as a belt-and-braces measure (route is already swapped, so
-     new traffic shouldn't arrive, but this guards retries/direct hits).
-
-3. **Honor a long shutdown grace.** Replace the hard 5s in `app.go` with a
-   configurable `DEVSHARD_SHUTDOWN_GRACE` (default large enough for max
-   inference, e.g. 10m). On `SIGTERM`, stop accepting new requests but let
-   in-flight ones finish up to the grace window.
-
-   ```306:310:devshard/cmd/devshardd/app.go
-   	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-   	defer shutdownCancel()
-   	_ = a.server.Shutdown(shutdownCtx)
-   ```
-   → make `5*time.Second` come from config.
-
-### 1.4 versiond changes
-
-#### a) Allow two children per version name
-
-Today `Manager.processes` is `map[string]*child` (one child per name). Introduce
-a notion of `current` (serving) + `draining` children so a name can have both
-during a swap. Minimal shape:
-
-- keep `processes map[string]*child` for the **serving** child (route table key),
-- add `draining []*child` (or `map[string][]*child`) for children that have been
-  taken out of the route table but are still finishing work.
-
-`rebuildRoutes` already only emits running children; ensure draining children are
-**excluded** from the route table (they keep their port but receive no new
-traffic).
-
-```653:661:versioned/internal/process/manager.go
+```1642:1658:versioned/internal/process/manager.go
 func (m *Manager) rebuildRoutes() {
-	routes := make(map[string]string)
+	previous := m.routes.Load().(proxy.RouteTable)
+	routes := make(proxy.RouteTable)
 	for _, c := range m.processes {
 		if c.status == statusRunning {
-			routes[c.version.Name] = fmt.Sprintf("localhost:%d", c.port)
+			if c.proxyTarget == nil {
+				c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
+			}
+			routes[c.version.Name] = c.proxyTarget
 		}
 	}
 	m.routes.Store(routes)
-}
-```
-
-#### b) New child gets a NEW port
-
-`assignPort` currently returns a **stable** port per name, which forces overlap
-onto the same port. For a swap, allocate a fresh port for the incoming child so
-old and new coexist; release the old port after the old child fully exits.
-
-```60:71:versioned/internal/process/manager.go
-func (m *Manager) assignPort(name string) int {
-	if port, ok := m.assignedPorts[name]; ok {
-		return port
-	}
-	port := m.nextPort
-	m.nextPort++
-	m.assignedPorts[name] = port
-	return port
-}
-```
-→ add a swap-aware allocation (e.g. `assignSwapPort(name)`) that returns a new
-port even when `name` already has one, and a `releasePort` on drain completion.
-
-#### c) Readiness gate instead of TCP-accept
-
-Replace/augment `waitForPort` with an HTTP readiness probe against the new
-child's `/ready`, with timeout `VERSIOND_READY_TIMEOUT`. Only mark the new child
-`running` (and thus routable) once `/ready` returns `200`.
-
-```631:649:versioned/internal/process/manager.go
-func waitForPort(ctx context.Context, port int, timeout time.Duration) bool {
-	...
-		conn, err := net.DialTimeout("tcp", addr, 200*time.Millisecond)
-		if err == nil {
-			conn.Close()
-			return true
+	for version, target := range previous {
+		if routes[version] != target {
+			target.Retire()
 		}
-	...
+	}
 }
 ```
-→ add `waitForReady(ctx, port, path, timeout)` doing an HTTP GET on `/ready`.
 
-#### d) Rewrite `downloadAndSwap` as blue/green + drain
+`/healthz` lists both serving and draining entries (`status`, `sha256`,
+`binary_version`).
 
-New flow (replaces lines 392–419):
+#### b) Port pool
+
+Each child gets a port from a bounded pool (`BasePort`…65535). Ports are reused
+after exit; versiond’s own listen port (`:8080`) is reserved. Exhaustion is an
+explicit start error — a rolling candidate that cannot allocate a port leaves
+the current child serving.
+
+```138:154:versioned/internal/process/manager.go
+func (m *Manager) assignPort() (int, error) {
+	for port := m.cfg.BasePort; port <= maxChildPort; port++ {
+		// skip allocated + reserved
+		...
+		return port, nil
+	}
+	return 0, fmt.Errorf("%w in range %d-%d", errChildPortPoolExhausted, ...)
+}
+```
+
+Admin-capable children also allocate a second loopback admin port.
+
+#### c) Readiness gate
+
+`waitForChildServingReady` replaces TCP-only accept:
+
+- **Admin-capable:** admin `VERSIOND_READY_PATH` must return `200` **and**
+  public `/healthz` must return `2xx`, within `VERSIOND_READY_TIMEOUT`.
+- **Legacy (no admin API):** readiness probe on the public port with the
+  documented `/ready` → `/healthz` → TCP fallback for the default path only.
+
+Failure aborts the swap: new child is stopped; old keeps serving; next reconcile
+retries.
+
+#### d) `downloadAndSwap` (blue/green + drain)
+
+```724:799:versioned/internal/process/manager.go
+func (m *Manager) downloadAndSwap(...) error {
+	// downloadBinary
+	if !m.rollingOverlapAllowed(...) {
+		// exclusive: Stop old → wait → startChild new
+		return nil
+	}
+	// newChild on fresh port → waitForChildReady
+	// move old → draining; processes[name]=new; rebuildRoutes; retire old Target
+	go m.drainAfterProxy(old, proxyDrained)
+}
+```
+
+`drainAfterProxy` waits for proxy leases (same `VERSIOND_DRAIN_TIMEOUT`
+deadline), then `POST /drain` and polls `/drain/status` until `inflight == 0`
+(or deadline / legacy no-status cushion), then `Stop()` + reap + `releasePort`.
+
+Invariants:
+
+- New ready before traffic (admin `/ready` + public `/healthz`).
+- New requests use the new `Target` after publish.
+- No boundary gap: acquire lease or retry after retirement.
+- Old finishes in-flight: proxy leases then lifecycle inflight before SIGTERM.
+- Don’t kill until idle (or drain timeout / legacy cushion).
+
+#### e) Removed versions
+
+Route removal is immediate (`404` for new requests). The child moves to
+`draining` and drains asynchronously. Restoring the same name while draining
+**defers** the new start until the old generation exits (avoids two generations
+sharing one data dir).
+
+#### f) Process FSM + supervisor shutdown
+
+Each OS process is owned by `supervisedProcess`:
 
 ```text
-1. downloadBinary(new sha)                      // old child untouched in memory
-2. newChild = startChild(version, NEW port)   // same PGHOST / shared Postgres
-3. if !waitForReady(newChild, VERSIOND_READY_TIMEOUT):
-        stop newChild; keep old serving; abort swap (retry next poll)
-4. lock: move old child from processes -> draining[name]
-         set processes[name] = newChild (status running)
-         rebuildRoutes()        // route now points to NEW port
-   unlock
-5. go drainOld(oldChild):
-        deadline = now + VERSIOND_DRAIN_TIMEOUT
-        loop every VERSIOND_DRAIN_POLL_INTERVAL:
-            if inflight(oldChild) == 0: break
-            if now > deadline: log warn; break
-        oldChild.cancel()                       // SIGTERM, long WaitDelay
-        waitForChild(oldChild, VERSIOND_DRAIN_KILL_GRACE)
-        release oldChild port
+Running → Terminating → Killing → Exited
 ```
 
-Key invariants this enforces:
+`Stop()` sends `SIGTERM` to the process group and arms grace;
+expiry / `ForceStop()` escalate to `SIGKILL`. `Done()` closes only after
+`cmd.Wait()` reaps. Grace is `VERSIOND_DRAIN_KILL_GRACE` for non-devshard
+binaries, and `max(VERSIOND_DRAIN_KILL_GRACE, DEVSHARD_SHUTDOWN_GRACE)` for
+devshardd.
 
-- **New ready before traffic:** route is swapped only after `/ready` is `200`
-  (step 3–4).
-- **Route new requests to new:** step 4 atomic route swap.
-- **Old finishes in-flight:** step 5 waits for `inflight == 0` before any
-  signal; the proxy keeps existing requests on the old connection meanwhile.
-- **Don't kill until idle:** `SIGTERM` is sent only after idle or the safety
-  `VERSIOND_DRAIN_TIMEOUT`.
+`Manager.Shutdown` stops all current + draining children first, then waits for
+every `Done()`. If the shutdown context expires it `ForceStop`s remaining
+children but still waits for reap.
 
-#### e) `child` status + lifetimes
-
-Add `statusDraining` to the status enum and surface it in `/healthz` (`Status()`
-output) so operators can observe a drain in progress.
-
-```77:89:versioned/internal/process/manager.go
-func (m *Manager) Status() []health.StatusEntry {
-	...
-	for _, c := range m.processes {
-		out = append(out, health.StatusEntry{Name: c.version.Name, Port: c.port, Status: c.status})
-	}
-	return out
-}
-```
-→ also iterate `draining[...]` so draining children appear in `/healthz`.
-
-#### f) Graceful supervisor shutdown
-
-`Manager.Shutdown` waits 10s per child. When versiond itself is being stopped,
-draining children should also get the long grace (or at least be `SIGTERM`'d and
-waited on with `VERSIOND_DRAIN_KILL_GRACE`).
-
-```492:509:versioned/internal/process/manager.go
-func (m *Manager) Shutdown(ctx context.Context) error {
-	...
-	for _, c := range children {
-		waitForChild(c, 10*time.Second)
-	}
-	return nil
-}
-```
-
-### 1.5 New configuration (versiond `config.Config`)
-
-Add to `versioned/internal/config/config.go`:
+### 1.5 Configuration
 
 | Env var | Default | Meaning |
 |---|---|---|
-| `VERSIOND_READY_PATH` | `/ready` | devshardd readiness path the supervisor probes |
-| `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
-| `VERSIOND_DRAIN_TIMEOUT` | `15m` | max time to wait for old child to go idle before `SIGTERM` |
-| `VERSIOND_DRAIN_POLL_INTERVAL` | `2s` | how often to poll old child in-flight count |
-| `VERSIOND_DRAIN_KILL_GRACE` | `30s` | wait after `SIGTERM` before `SIGKILL` |
+| `VERSIOND_READY_PATH` | `/ready` | Admin readiness path; public `/healthz` must also pass for admin children |
+| `VERSIOND_READY_TIMEOUT` | `60s` | Max wait for incoming child before aborting swap |
+| `VERSIOND_DRAIN_PATH` | `/drain` | POST path to put old child into drain mode |
+| `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | Poll path for lifecycle inflight |
+| `VERSIOND_DRAIN_TIMEOUT` | `15m` | Shared deadline for proxy leases + child inflight before SIGTERM |
+| `VERSIOND_DRAIN_POLL_INTERVAL` | `1s` | Inflight poll cadence |
+| `VERSIOND_DRAIN_KILL_GRACE` | `10m` | Legacy no-status cushion; SIGTERM→SIGKILL backstop (and min for non-devshard) |
+| `DEVSHARD_SHUTDOWN_GRACE` | `10m` | `devshardd` HTTP shutdown budget after SIGTERM |
 
-And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
-`app.go`.
+versiond sets `DEVSHARD_ADMIN_ADDR` per child when `--print-admin-api-version`
+is supported. Operators normally do not set it by hand.
 
-> Note: `cmd.WaitDelay = 5s` in `runChild` will `SIGKILL` the child 5s after
-> context cancel regardless of the devshardd grace. For drained children, set
-> `WaitDelay` to `VERSIOND_DRAIN_KILL_GRACE` (or `0`/disabled) so the child's own
-> graceful shutdown can complete.
+**Install layout:** per-sha dirs `bin/<name>/<sha>/` with `install.json` commit
+marker; GC keeps desired/live/draining plus a small recent cushion; incomplete
+downloads are never GC’d. Legacy flat installs are promoted atomically into the
+per-sha layout when possible.
+
+**Legacy compatibility:** unsupported `--print-*` flags fall back only on
+recognized usage errors (fail-closed on timeouts/signals). Storage mode unknown
+⇒ no overlap. Default `/ready` missing ⇒ `/healthz` then TCP. Missing
+`/drain/status` ⇒ `VERSIOND_DRAIN_KILL_GRACE` cushion instead of full drain
+timeout. Oracle names must be safe unique path components; sha256 must be 64 hex
+chars — invalid oracle responses fail the poll and leave running children alone.
+
 
 ### 1.6 Single-instance limits (be honest)
 
@@ -437,8 +358,8 @@ upgrade, scale-down, or decommission.
         │  → in-flight connections to versiond-N keep running
         ▼
 2. Poll versiond-N until idle:
-        GET versiond-N:8080/healthz  (no draining children, or all idle)
-        and/or aggregate devshardd GET /drain/status on that host
+        GET versiond-N:8080/healthz  (child status visibility)
+        and aggregate devshardd GET /drain/status on that host
         loop until inflight == 0  OR  ROUTER_DRAIN_TIMEOUT
         ▼
 3. Graceful stop versiond-N:
@@ -469,13 +390,15 @@ Key invariants:
 |---|---|
 | Upstream `down` / removal + `nginx -s reload` | Stop routing new escrows to the host being evacuated |
 | `ROUTER_DRAIN_TIMEOUT` | Max wait for a host to go idle before forced stop |
-| `ROUTER_DRAIN_POLL_INTERVAL` | How often to poll versiond `/healthz` and devshardd `/drain/status` |
+| `ROUTER_DRAIN_POLL_INTERVAL` | How often to poll versiond `/healthz`; direct devshardd `/drain/status` polling requires access to the admin listener |
 | `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` to versiond before `SIGKILL` / container kill |
 | Operator script or sidecar | Orchestrate steps 1–4; re-render `VERSIOND_HOSTS` and reload |
 
-Re-use the devshardd endpoints from §1.3 (`/ready`, `/drain/status`) and
-versiond `/healthz` draining visibility from §1.4e — implement them once; the
-router track consumes the same signals.
+Re-use versiond `/healthz` draining visibility from §1.4a for public host
+evacuation. The devshardd endpoints from §1.3 (`/ready`, `/drain/status`,
+`/drain`) are an internal admin API for versiond-managed children; consume them
+directly only from a trusted sidecar or local supervisor with admin listener
+access.
 
 #### When to use which layer
 
@@ -490,35 +413,40 @@ router track consumes the same signals.
 Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 `preStop` instead of nginx reload; it is the same layer as §1.8, not §1.1.
 
-### 1.9 Test plan
+### 1.9 Test coverage
 
-- **Unit (`versioned/internal/process`):** extend `manager_test.go` with a swap
-  scenario asserting: old child still routed/alive until new `/ready`; route
-  points to new port after readiness; old child not `SIGTERM`'d until inflight
-  reports 0; old killed at `VERSIOND_DRAIN_TIMEOUT`.
-- **e2e (`versioned/e2e`):** drive a long request against the old child, trigger
-  an oracle sha change for the same name, assert the long request completes with
-  the old binary while a concurrently-started request is served by the new one.
-- **devshardd:** test `/ready` flips only after init; `/drain/status` reflects
-  `devshard_inflight`; `SIGTERM` honors `DEVSHARD_SHUTDOWN_GRACE`.
+- **Unit (`versioned/internal/process`):** swap readiness abort keeps old serving;
+  drain waits for proxy leases then lifecycle inflight; drain timeout; async
+  version removal; re-add deferred while draining; postgres-only overlap gate;
+  port pool exhaustion; process FSM graceful stop / SIGKILL escalation / reap;
+  manager shutdown forces then waits for Done.
+- **Unit (`versioned/internal/proxy`):** retired-route acquire retries; acquired
+  request stays on retired target across route swap until release.
+- **e2e (`versioned/e2e`):** `TestSameNameNewSHA_RollingUpdateDrainsOld` — long
+  request completes on old binary while concurrent work hits the new one.
+- **testenv:** `TestVersiondRollingUpdateSameVersionSHA` (Postgres overlap + SSE
+  continuity) and `TestVersiondRollingUpdateHybridFallback` (no overlap).
+  Target: `make -C devshard/testenv citest-versiond-rolling-update` (see
+  [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)).
+- **testermint:** `VersiondTests` same-version binary update drains old requests
+  and keeps serving.
+- **devshardd:** lifecycle tests for `/ready`, `/drain` / `/drain/status`, and
+  `devshardd_lifecycle_inflight_requests`.
 
-### 1.10 Rollout order
+Manual operator walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §7.
 
-**Track A — devshardd binary swap (§1.1–§1.6, required for governance updates):**
 
-1. devshardd: `/ready`, `/drain/status`, configurable shutdown grace.
-2. versiond: config flags (no behavior change yet).
-3. versiond: per-name two-child model + swap-aware ports + readiness probe.
-4. versiond: rewrite `downloadAndSwap` to blue/green + drain.
-5. Surface draining state in `/healthz`; long `WaitDelay` for drained children.
-6. Tests (§1.9), then enable by default.
+### 1.10 Status
 
-**Track B — versiond host removal/replacement (§1.8, HA only):**
+**Track A — devshardd binary swap (§1.1–§1.6): implemented** on the v4 /
+rolling-update line. Overlap is enabled automatically when both children report
+`postgres` via `--print-storage-mode`; otherwise versiond uses exclusive
+stop/start. No feature flag.
 
-7. versiond-router: upstream `down` + reload; drain poll loop; operator script
-   or sidecar for graceful stop → kill → free machine → re-add on replace.
-8. Tests: long request pinned to `versiond-N`; mark upstream down; assert
-   request completes; assert no new requests arrive; assert process exit after idle.
+**Track B — versiond host removal/replacement (§1.8): not implemented** —
+operator / future router automation. See also draft host-evacuation work
+(e.g. PR discussion for whole-`versiond` evacuation).
+
 
 ---
 
@@ -553,8 +481,9 @@ strategy:
 
 ### 2.3 Readiness + drain
 
-- **readinessProbe** → `GET /ready` on devshardd. Endpoints only include a pod
-  once it is truly ready; new traffic flows to the new pod automatically.
+- **readinessProbe** → `GET /ready` on a private/admin devshardd listener, not
+  through the public inference path. Endpoints only include a pod once it is
+  truly ready; new traffic flows to the new pod automatically.
 - **terminationGracePeriodSeconds**: large (cover max inference, e.g. minutes)
   so in-flight requests can finish after the pod is told to stop.
 - **preStop hook**: fail readiness / `sleep` so the pod is removed from Service
@@ -579,11 +508,13 @@ old pod: preStop (drop from endpoints + sleep) → SIGTERM → finish in-flight
 
 ### 2.5 What carries over from Part 1
 
-- devshardd `/ready` + `/drain` + configurable shutdown grace are the **same**
-  building blocks K8s probes and hooks consume — implement them once for both.
-- The drain/idle accounting (`devshard_inflight`) feeds the versiond binary-swap
-  drain loop (§1.1), the versiond-router host-evacuation loop (§1.8), and K8s
-  preStop logic / dashboards.
+- devshardd admin `/ready` + `/drain` + configurable shutdown grace are the
+  **same** building blocks K8s probes and hooks consume — implement them once
+  for both.
+- The drain/idle accounting (`devshardd_lifecycle_inflight_requests` via
+  `/drain/status`) feeds the versiond binary-swap drain loop (§1.1), the
+  versiond-router host-evacuation loop (§1.8), and K8s preStop logic / dashboards.
+  (`devshard_inflight` remains a separate stage-ops gauge.)
 - §1.1 (binary swap inside a live versiond) and §1.8 / this section (whole
   pod/host removal) remain separate: K8s `RollingUpdate` handles pod lifecycle;
   versiond `downloadAndSwap` handles governance sha changes without pod restart.

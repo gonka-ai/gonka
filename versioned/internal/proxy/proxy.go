@@ -11,6 +11,10 @@ import (
 	"sync/atomic"
 )
 
+type routeTableLoader interface {
+	Load() any
+}
+
 // SessionVersionLookup resolves which protocol version owns a bound escrow.
 // ok=false means the escrow is unbound (no session row).
 type SessionVersionLookup interface {
@@ -58,10 +62,8 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 			return
 		}
 
-		routeMap := routes.Load().(map[string]string)
-
 		if isVersionlessObsPath(path) {
-			serveVersionlessObs(w, r, routeMap, "/"+path, cfg.lookup)
+			serveVersionlessObs(w, r, routes, "/"+path, cfg.lookup)
 			return
 		}
 
@@ -72,14 +74,27 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 			rest = "/" + parts[1]
 		}
 
-		target, ok := routeMap[version]
+		target, ok := acquireTarget(routes, version)
 		if !ok {
 			http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
 			return
 		}
+		defer target.release()
 
-		reverseProxy(target, rest).ServeHTTP(w, r)
+		reverseProxy(target.Address(), rest).ServeHTTP(w, r)
 	})
+}
+
+func acquireTarget(routes routeTableLoader, version string) (*Target, bool) {
+	for {
+		target, ok := routes.Load().(RouteTable)[version]
+		if !ok {
+			return nil, false
+		}
+		if target.acquire() {
+			return target, true
+		}
+	}
 }
 
 // isVersionlessObsPath reports public observability paths that must not require
@@ -102,7 +117,8 @@ func isVersionlessObsPath(path string) bool {
 	return false
 }
 
-func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routeMap map[string]string, rest string, lookup SessionVersionLookup) {
+func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routes routeTableLoader, rest string, lookup SessionVersionLookup) {
+	routeMap, _ := routes.Load().(RouteTable)
 	versions := sortedVersions(routeMap)
 	if len(versions) == 0 {
 		http.Error(w, "no versions available", http.StatusServiceUnavailable)
@@ -115,7 +131,7 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routeMap map[st
 	// /healthz is owned by versiond's mux (not this handler).
 	escrowID, scoped := escrowIDFromObsPath(rest)
 	if !scoped {
-		reverseProxy(routeMap[primaryVersion(versions)], rest).ServeHTTP(w, r)
+		serveAcquired(w, r, routes, primaryVersion(versions), rest)
 		return
 	}
 
@@ -124,32 +140,46 @@ func serveVersionlessObs(w http.ResponseWriter, r *http.Request, routeMap map[st
 		if err != nil {
 			// Shared index unavailable — degrade to fan-out (visible via warn + counter).
 			noteLookupFanout(escrowID, err)
-			serveSessionObsFanout(w, r, routeMap, versions, rest)
+			serveSessionObsFanout(w, r, routes, versions, rest)
 			return
 		}
 		if !ok || ver == "" {
 			http.NotFound(w, r)
 			return
 		}
-		target, found := routeMap[ver]
-		if !found {
+		if _, found := routeMap[ver]; !found {
 			http.Error(w, fmt.Sprintf("bound version %q not running", ver), http.StatusNotFound)
 			return
 		}
-		reverseProxy(target, rest).ServeHTTP(w, r)
+		serveAcquired(w, r, routes, ver, rest)
 		return
 	}
 
-	serveSessionObsFanout(w, r, routeMap, versions, rest)
+	serveSessionObsFanout(w, r, routes, versions, rest)
 }
 
-func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routeMap map[string]string, versions []string, rest string) {
+func serveAcquired(w http.ResponseWriter, r *http.Request, routes routeTableLoader, version, rest string) {
+	target, ok := acquireTarget(routes, version)
+	if !ok {
+		http.Error(w, fmt.Sprintf("version %q not found", version), http.StatusNotFound)
+		return
+	}
+	defer target.release()
+	reverseProxy(target.Address(), rest).ServeHTTP(w, r)
+}
+
+func serveSessionObsFanout(w http.ResponseWriter, r *http.Request, routes routeTableLoader, versions []string, rest string) {
 	var fallback409 *httptest.ResponseRecorder
 	// Try newest first — more likely to own recently bound escrows.
 	for i := len(versions) - 1; i >= 0; i-- {
 		ver := versions[i]
+		target, ok := acquireTarget(routes, ver)
+		if !ok {
+			continue
+		}
 		rec := httptest.NewRecorder()
-		reverseProxy(routeMap[ver], rest).ServeHTTP(rec, r.Clone(r.Context()))
+		reverseProxy(target.Address(), rest).ServeHTTP(rec, r.Clone(r.Context()))
+		target.release()
 		switch {
 		case rec.Code == http.StatusNotFound:
 			continue

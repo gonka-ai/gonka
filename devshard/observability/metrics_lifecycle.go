@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	registryOnce sync.Once
-	registry     *prometheus.Registry
+	registryOnce          sync.Once
+	runtimeCollectorsOnce sync.Once
+	registry              *prometheus.Registry
 
 	inflight               *prometheus.GaugeVec
 	requestTerminalTotal   *prometheus.CounterVec
@@ -31,6 +32,7 @@ var (
 	validationQueueDepth   *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
+	lifecycleInflight      prometheus.Gauge
 	fallbackDivisor        *prometheus.GaugeVec
 )
 
@@ -125,6 +127,10 @@ func initRegistry() {
 		Name: "devshard_build_info",
 		Help: "Devshard build and runtime information.",
 	}, []string{"binary", "version", "commit"})
+	lifecycleInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshardd_lifecycle_inflight_requests",
+		Help: "In-flight HTTP requests counted by devshardd lifecycle drain state.",
+	})
 	fallbackDivisor = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshardd_fallback_divisor",
 		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
@@ -148,6 +154,7 @@ func initRegistry() {
 		validationQueueDepth,
 		mempoolSize,
 		buildInfo,
+		lifecycleInflight,
 		fallbackDivisor,
 	)
 }
@@ -161,16 +168,23 @@ func initRegistry() {
 // source for /metrics.
 func RegisterRuntimeCollectors() {
 	ensureMetrics()
-	registry.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
+	runtimeCollectorsOnce.Do(func() {
+		registry.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	})
 }
 
 func IncInflight(stage Stage) func() {
 	ensureMetrics()
 	inflight.WithLabelValues(string(stage)).Inc()
 	return func() { inflight.WithLabelValues(string(stage)).Dec() }
+}
+
+func SetLifecycleInflight(n int64) {
+	ensureMetrics()
+	lifecycleInflight.Set(float64(n))
 }
 
 func IncTerminal(terminal Terminal, reason Reason) {

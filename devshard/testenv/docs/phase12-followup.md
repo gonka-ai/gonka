@@ -32,7 +32,7 @@ gRPC (same as devshardd). Testenv scenarios **G1–G3**; see [`scenarios.md`](./
 
 ```bash
 make -C devshard/testenv citest-grpc-transport   # G1–G3
-make -C devshard/testenv citest-stack           # S1–S6 regression
+make -C devshard/testenv citest-stack           # stack behavior regression
 ```
 
 ## Remaining (separate PRs)

@@ -3,9 +3,11 @@ package harness
 import (
 	"context"
 	"fmt"
+	"net"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -29,10 +31,14 @@ type Stack struct {
 
 // Endpoints are host-published URLs for health probes.
 type Endpoints struct {
-	MockChainRPC string
-	MockDapiHTTP string
-	RouterHTTP   string
-	GatewayHTTP  string
+	MockChainRPC   string
+	MockChainGRPC  string
+	MockChainAdmin string
+	MockDapiHTTP   string
+	MockDapiGRPC   string
+	MockOpenAIHTTP string
+	RouterHTTP     string
+	GatewayHTTP    string
 }
 
 // NewStack creates a temp workdir under testenv and registers cleanup.
@@ -86,6 +92,7 @@ func (s *Stack) RunGencompose(t *testing.T) {
 		t.Fatalf("gencompose: %v\n%s", err, out)
 	}
 	fixComposePaths(t, s.ComposePath, s.TestenvDir)
+	PatchComposeUseRandomHostPorts(t, s.ComposePath)
 }
 
 // LoadConfig reads the generated config.yaml after gencompose.
@@ -96,14 +103,45 @@ func (s *Stack) LoadConfig(t *testing.T) *config.File {
 	return cfg
 }
 
-// EndpointsFromConfig maps published ports to localhost URLs.
-func EndpointsFromConfig(cfg *config.File) Endpoints {
+// Endpoints reads Docker-assigned localhost ports from a running compose stack.
+func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
+	t.Helper()
+	eps := s.MockChainEndpoints(t, cfg)
+	eps.MockDapiHTTP = "http://" + s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.HTTPPort)
+	eps.MockDapiGRPC = s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.GRPCPort)
+	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, "mock-openai", cfg.MockOpenAI.HTTPPort)
+	eps.RouterHTTP = "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
+	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, "devshardctl", cfg.Devshardctl.Port)
+	return eps
+}
+
+// MockChainEndpoints reads Docker-assigned host ports for a mock-chain-only stack.
+func (s *Stack) MockChainEndpoints(t *testing.T, cfg *config.File) Endpoints {
+	t.Helper()
 	return Endpoints{
-		MockChainRPC: fmt.Sprintf("http://127.0.0.1:%d", cfg.MockChain.RPCPort),
-		MockDapiHTTP: fmt.Sprintf("http://127.0.0.1:%d", cfg.MockDapi.HTTPPort),
-		RouterHTTP:   fmt.Sprintf("http://127.0.0.1:%d", cfg.VersiondRouter.Port),
-		GatewayHTTP:  fmt.Sprintf("http://127.0.0.1:%d", cfg.Devshardctl.Port),
+		MockChainRPC:   "http://" + s.composePublishedAddr(t, "mock-chain", cfg.MockChain.RPCPort),
+		MockChainGRPC:  s.composePublishedAddr(t, "mock-chain", cfg.MockChain.GRPCPort),
+		MockChainAdmin: "http://" + s.composePublishedAddr(t, "mock-chain", cfg.MockChain.TestenvPort),
 	}
+}
+
+func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort int) string {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	args := append([]string{"compose"}, s.composeFileArgs()...)
+	args = append(args, "port", service, strconv.Itoa(targetPort))
+	cmd := exec.CommandContext(ctx, "docker", args...)
+	cmd.Dir = s.WorkDir
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "docker compose port %s %d\n%s", service, targetPort, out)
+	raw := strings.TrimSpace(string(out))
+	host, port, err := net.SplitHostPort(raw)
+	require.NoError(t, err, "parse docker compose port output %q", raw)
+	if host == "" || host == "0.0.0.0" || host == "::" {
+		host = "127.0.0.1"
+	}
+	return net.JoinHostPort(host, port)
 }
 
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).

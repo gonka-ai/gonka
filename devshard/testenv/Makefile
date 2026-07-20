@@ -63,19 +63,27 @@ dev-clean: ## Stop dev stack and remove volumes.
 dev-logs: ## Follow dev overlay logs.
 	docker compose $(DEV_OVERLAY) logs -f
 
-.PHONY: citest-images citest-stack citest-stack-build citest-adversarial citest-observability citest-grpc-transport test-gateway-smoke obs-up obs-down
+.PHONY: citest-images citest-stack citest-stack-build
+.PHONY: citest-validation-lease-race
+.PHONY: citest-versiond-rolling-update citest-adversarial
+.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
+STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
 citest-images: ## Pull hub images and build all compose images required for citest.
 	docker compose $(COMPOSE_BASE) pull devshard-postgres
 	docker compose $(COMPOSE_BASE) build $(CITEST_BUILD_SERVICES)
 
-citest-stack: citest-images ## Phase 8 S1–S9 citest (TESTENV_CITEST=1; needs Docker + build-devshardd).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS1_|TestS2_|TestS3_|TestS4_|TestS5_|TestS6_|TestS7_|TestS8_|TestS9_' -count=1 -v -timeout 90m
+citest-stack: citest-images ## Full stack behavior citests (needs Docker + build-devshardd).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '$(STACK_CITEST_PATTERN)' -count=1 -v -timeout 90m
 
-citest-s9: citest-images ## S9 validation lease race (core + 7a + 7b).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestS9_' -count=1 -v -timeout 45m
+citest-validation-lease-race: citest-images ## Validation lease race, pending stretch, and stale reclaim.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestValidationLeaseRace' -count=1 -v -timeout 45m
+
+citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
 
 citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
@@ -99,7 +107,7 @@ obs-up: ## Start base stack + observability overlay (Jaeger/Loki/Prometheus/Graf
 obs-down: ## Stop observability overlay (and base stack if merged).
 	docker compose $(OBS_OVERLAY) down
 
-citest-stack-build: dev-build ## Build dev images then run S1–S6 citest.
+citest-stack-build: dev-build ## Build dev images then run full stack citests.
 	$(MAKE) citest-stack
 
 test-gateway-smoke: ## Full-stack gateway smoke (TESTENV_GATEWAY_SMOKE=1; needs Docker + build-devshardd).

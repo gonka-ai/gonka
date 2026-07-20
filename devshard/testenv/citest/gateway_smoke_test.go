@@ -25,7 +25,7 @@ func TestGatewayPhase7_Smoke(t *testing.T) {
 	stack.Up(t)
 
 	cfg := stack.LoadConfig(t)
-	eps := harness.EndpointsFromConfig(cfg)
+	eps := stack.Endpoints(t, cfg)
 	client := harness.HTTPClient()
 	poll := 3 * time.Minute
 

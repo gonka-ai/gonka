@@ -7,7 +7,7 @@ Config-driven via `config/config.yaml` and `cmd/gencompose`.
 
 ## Documentation
 
-- **Stack scenarios (S1–S6):** [`docs/scenarios.md`](docs/scenarios.md)
+- **Stack behavior scenarios:** [`docs/scenarios.md`](docs/scenarios.md)
 - **gRPC transport plan (G1–G4):** [`docs/chain-transport-consolidation.md`](docs/chain-transport-consolidation.md)
 - **Phase 12 index:** [`docs/phase12-followup.md`](docs/phase12-followup.md)
 - **Operator runbook:** [`../docs/testenv-v2.md`](../docs/testenv-v2.md)
@@ -29,7 +29,7 @@ Go packages under `devshard/testenv/` — what each one is for:
 | **`mockopenai/`** | Fake ML node library: minimal OpenAI HTTP API used by production `devshardd` after `AcquireMLNode`. |
 | **`gatewayphase/`** | Tiny HTTP stubs for devshardctl’s **chain epoch phase** poller (`ChainPhaseGate`): `/v1/epochs/latest` and `/v1/epochs/current/participants`. Mounted on mock-dapi; not a mock gateway. |
 | **`keymaterial/`** | Builds deterministic Cosmos **file keyrings** from config host keys so devshardd can sign txs in containers (`KEYRING_DIR`, `KEY_NAME`). |
-| **`citest/`** | Go integration tests: compose validation, gateway wiring, Phase 8 harness (`citest/harness/`), S1–S6 citest (`make citest-stack`), Phase 9 adversarial A1–A4 (`make citest-adversarial`, `-tags=testenvci`), optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
+| **`citest/`** | Go integration tests: compose validation, gateway wiring, full-stack behavior tests (`make citest-stack`), Phase 9 adversarial A1–A4 (`make citest-adversarial`, `-tags=testenvci`), and optional gateway chat smoke (`TESTENV_GATEWAY_SMOKE=1`). |
 
 Production binaries (`devshardd`, `devshardctl`, `versiond`) are **not** reimplemented here — testenv only fakes their external dependencies (chain, dapi, ML) and wires them in Compose.
 
@@ -206,26 +206,40 @@ go test ./testenv/cmd/gencompose/... ./testenv/citest/... ./testenv/keymaterial/
 go test ./testenv/... -count=1
 ```
 
-### Phase 8 citest (Docker)
+### Stack citest (Docker)
 
-S1 stack smoke + S2 router stickiness + S3 params long-poll + S4 epoch switch + S5 gateway chat + S6 versiond stop fault. Uses an isolated 2× versiond stack on alternate ports (`18080` router, `18081` gateway, subnet `172.31.0.0/24`) so it can run while a dev `make up` stack is active.
+The stack suite covers smoke, routing, runtime updates, gateway behavior,
+versiond lifecycle, storage migration, validation leases, and rolling updates.
+Tests use behavior-oriented names and isolated stacks on dedicated subnets with
+Docker-assigned localhost ports, so they can run while a dev `make up` stack is
+active.
 
 ```bash
 cd devshard/testenv
 make build-devshardd
-make citest-stack    # S1 + S2 + S3 + S4 + S5 + S6 (builds mock-chain + mock-dapi images)
+make citest-stack                  # all core stack behavior tests
+make citest-validation-lease-race # validation lease race only
+make citest-versiond-rolling-update
 # or: ./scripts/run-stack-citest.sh
 ```
 
-S2 checks that repeated requests to `/<version>/sessions/<id>/…` through versiond-router land on the same upstream (`X-Upstream-Addr` response header).
+`TestRouterStickiness` checks that repeated requests to
+`/<version>/sessions/<id>/…` land on the same versiond upstream.
 
-S3 posts `POST /testenv/params` on mock-dapi while a `GetRuntimeConfig` long-poll is blocked; asserts mock-dapi wakes with updated `max_nonce` / timeouts (the lane-C feed devshardd long-polls via `NODE_MANAGER_ADDR` while the stack runs).
+`TestParamsLongPoll` updates mock-dapi params while `GetRuntimeConfig` is blocked
+and requires the poll to wake with the new values.
 
-S4 posts `POST /testenv/epoch` `{advance:true}`; mock-chain fast-forwards CometBFT blocks to `next_poc_start`, rolls `next_poc_start` forward by `epoch_length`, and `GetRuntimeConfig` long-poll wakes with a higher `current_epoch_id`.
+`TestEpochSwitch` advances the mock-chain epoch and requires runtime config to
+report the higher epoch.
 
-S5 posts pooled `POST /v1/chat/completions` on devshardctl (non-stream and SSE stream) and asserts HTTP 200 through versiond-router → devshardd → mock-openai.
+`TestGatewayChat` exercises non-streaming and SSE chat through the full stack.
 
-S6 stops one versiond container and asserts sticky sessions pinned to that upstream fail over to the surviving instance on the first 502 / connect failure; sessions on the other upstream keep working.
+`TestVersiondStickySessionFailover` stops one versiond and requires affected
+sessions to fail over on the first upstream connection failure.
+
+`TestValidationLeaseRace*` exercises lease exclusivity across a same-key HA pair
+and a solo executor. `TestVersiondRollingUpdate*` separately checks same-version
+sha replacement with Postgres overlap and the hybrid stop-then-start fallback.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 
