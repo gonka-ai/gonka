@@ -10,6 +10,10 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
 
+// validationDeferredWarnDepth is the edge-triggered warn threshold for the
+// process-wide deferred validation heap (shared validation scheduler).
+const validationDeferredWarnDepth = 100
+
 var (
 	registryOnce sync.Once
 	registry     *prometheus.Registry
@@ -31,6 +35,17 @@ var (
 	validationQueueDepth   *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
+
+	validationDeferredDepth       prometheus.Gauge
+	validationPendingDepth        prometheus.Gauge
+	validationOutstanding         prometheus.Gauge
+	validationSoftMaxOut          prometheus.Gauge
+	validationEffectiveSoftMaxOut prometheus.Gauge
+	validationAcquireBusyRequeues prometheus.Counter
+
+	deferredDepthWarnMu     sync.Mutex
+	deferredDepthWasAbove   bool
+	deferredDepthWarnHook   func(depth int) // optional; tests inject a counter
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -116,6 +131,30 @@ func initRegistry() {
 		Name: "devshard_validation_queue_depth",
 		Help: "Current validation queue depth per devshard session.",
 	}, []string{"escrow_id"})
+	validationDeferredDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_validation_deferred_depth",
+		Help: "Process-wide deferred validation heap depth (acquire-busy waiters).",
+	})
+	validationPendingDepth = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_validation_pending_depth",
+		Help: "Process-wide pending validation WFQ depth (waiting to spawn).",
+	})
+	validationOutstanding = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_validation_outstanding",
+		Help: "In-flight validation goroutines (shared scheduler soft cap).",
+	})
+	validationSoftMaxOut = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_validation_soft_max_out",
+		Help: "Configured cluster-wide validation soft max (before HA scaling).",
+	})
+	validationEffectiveSoftMaxOut = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshard_validation_effective_soft_max_out",
+		Help: "Per-process validation spawn cap after HA multiplier.",
+	})
+	validationAcquireBusyRequeues = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "devshard_validation_acquire_busy_requeues_total",
+		Help: "Validation jobs deferred because Acquire returned no nodes available.",
+	})
 	mempoolSize = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshard_mempool_size",
 		Help: "Current devshard mempool size per session.",
@@ -141,6 +180,12 @@ func initRegistry() {
 		httpConnections,
 		httpConnectionsTotal,
 		validationQueueDepth,
+		validationDeferredDepth,
+		validationPendingDepth,
+		validationOutstanding,
+		validationSoftMaxOut,
+		validationEffectiveSoftMaxOut,
+		validationAcquireBusyRequeues,
 		mempoolSize,
 		buildInfo,
 	)
@@ -249,6 +294,62 @@ func ObserveTokens(path Path, nodeID string, kind TokenKind, tokens uint64) {
 func SetValidationQueueDepth(escrowID string, depth int) {
 	ensureMetrics()
 	validationQueueDepth.WithLabelValues(escrowID).Set(float64(depth))
+}
+
+// SetValidationDeferredDepth updates the process-wide deferred heap gauge and
+// edge-triggers a warn log when depth crosses above validationDeferredWarnDepth.
+func SetValidationDeferredDepth(depth int) {
+	ensureMetrics()
+	if depth < 0 {
+		depth = 0
+	}
+	validationDeferredDepth.Set(float64(depth))
+
+	deferredDepthWarnMu.Lock()
+	defer deferredDepthWarnMu.Unlock()
+	above := depth > validationDeferredWarnDepth
+	if above && !deferredDepthWasAbove {
+		logWarn("validation.deferred_depth_high",
+			"validation deferred queue depth above warn threshold",
+			"deferred_depth", depth,
+			"warn_threshold", validationDeferredWarnDepth,
+		)
+		if deferredDepthWarnHook != nil {
+			deferredDepthWarnHook(depth)
+		}
+	}
+	deferredDepthWasAbove = above
+}
+
+func SetValidationPendingDepth(depth int) {
+	ensureMetrics()
+	if depth < 0 {
+		depth = 0
+	}
+	validationPendingDepth.Set(float64(depth))
+}
+
+func SetValidationOutstanding(n int) {
+	ensureMetrics()
+	if n < 0 {
+		n = 0
+	}
+	validationOutstanding.Set(float64(n))
+}
+
+func SetValidationSoftMaxOut(n int) {
+	ensureMetrics()
+	validationSoftMaxOut.Set(float64(n))
+}
+
+func SetValidationEffectiveSoftMaxOut(n int) {
+	ensureMetrics()
+	validationEffectiveSoftMaxOut.Set(float64(n))
+}
+
+func IncValidationAcquireBusyRequeue() {
+	ensureMetrics()
+	validationAcquireBusyRequeues.Inc()
 }
 
 func SetMempoolSize(escrowID string, size int) {

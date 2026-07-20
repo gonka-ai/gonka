@@ -1,11 +1,9 @@
 package host
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"fmt"
-	"runtime/pprof"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
+
+	mlnodeclient "common/nodemanager"
 
 	"devshard"
 	"devshard/gossip"
@@ -22,12 +22,55 @@ import (
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
+	"devshard/validationpool"
 )
 
-func countValidationWorkerGoroutines() int {
-	var buf bytes.Buffer
-	_ = pprof.Lookup("goroutine").WriteTo(&buf, 2)
-	return bytes.Count(buf.Bytes(), []byte("devshard/host.(*Host).startValidationWorkers.func1"))
+// attachTestScheduler wires a process-local validationpool.Scheduler to h.
+// h must already exist; the RunFunc closes over the same pointer.
+func attachTestScheduler(t *testing.T, h *Host, cfg validationpool.Config) *validationpool.Scheduler {
+	t.Helper()
+	if cfg.Dispatchers == 0 {
+		cfg.Dispatchers = 2
+	}
+	if cfg.SoftMaxOut == 0 {
+		cfg.SoftMaxOut = 32
+	}
+	if cfg.DeferJitter == 0 {
+		cfg.DeferJitter = -1
+	}
+	s := validationpool.New(cfg,
+		func(ctx context.Context, job validationpool.Job) error {
+			return h.RunScheduledValidation(ctx, job)
+		},
+		func(_ string, id uint64) { h.ClearValidating(id) },
+	)
+	h.scheduler = s
+	t.Cleanup(func() { _ = s.Shutdown(context.Background()) })
+	return s
+}
+
+// captureScheduler records Offers for weight / Offer-path assertions.
+type captureScheduler struct {
+	mu   sync.Mutex
+	jobs []validationpool.Job
+}
+
+func (c *captureScheduler) Offer(job validationpool.Job) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.jobs = append(c.jobs, job)
+	return true
+}
+
+func (c *captureScheduler) ForgetHost(string) {}
+
+func (c *captureScheduler) lastJob() (validationpool.Job, bool) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.jobs) == 0 {
+		return validationpool.Job{}, false
+	}
+	return c.jobs[len(c.jobs)-1], true
 }
 
 // recordingPeer implements gossip.PeerClient and records GossipTxs calls.
@@ -1152,7 +1195,7 @@ func (e *blockingValidationEngine) Validate(ctx context.Context, _ devshard.Vali
 	}
 }
 
-func TestHost_NewHostDoesNotStartValidationWorkers(t *testing.T) {
+func TestHost_NewHostDoesNotEnableValidationOffers(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -1165,14 +1208,13 @@ func TestHost_NewHostDoesNotStartValidationWorkers(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-lifecycle", config, group, 1_000_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-lifecycle", user.Address(), config, group, 1_000_000))
 	require.NoError(t, err)
 
-	before := countValidationWorkerGoroutines()
-	_, err = NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lifecycle", group, nil,
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lifecycle", group, nil,
 		WithValidator(stub.NewValidationEngine()))
 	require.NoError(t, err)
-	require.Equal(t, before, countValidationWorkerGoroutines(), "NewHost must not start validation workers before Start")
+	require.False(t, h.validationOffersEnabled(), "NewHost must not enable Offers before Start")
 }
 
-func TestHost_StartCloseStopsValidationWorkers(t *testing.T) {
+func TestHost_StartCloseEnablesOffersNoStandingWorkers(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{
 		testutil.MustGenerateKey(t),
 		testutil.MustGenerateKey(t),
@@ -1185,21 +1227,16 @@ func TestHost_StartCloseStopsValidationWorkers(t *testing.T) {
 	sm, err := state.NewStateMachine("escrow-lifecycle-close", config, group, 1_000_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-lifecycle-close", user.Address(), config, group, 1_000_000))
 	require.NoError(t, err)
 
+	capSched := &captureScheduler{}
 	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lifecycle-close", group, nil,
-		WithValidator(stub.NewValidationEngine()))
+		WithValidator(stub.NewValidationEngine()), WithValidationScheduler(capSched))
 	require.NoError(t, err)
 
-	before := countValidationWorkerGoroutines()
 	h.Start()
-	require.Eventually(t, func() bool {
-		return countValidationWorkerGoroutines() >= before+defaultValidationWorkers
-	}, time.Second, 10*time.Millisecond)
-
+	require.True(t, h.validationOffersEnabled())
 	h.Close()
 	h.Close()
-	require.Eventually(t, func() bool {
-		return countValidationWorkerGoroutines() == before
-	}, time.Second, 10*time.Millisecond)
+	require.False(t, h.validationOffersEnabled())
 }
 
 func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
@@ -1225,6 +1262,7 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithGrace(10), WithValidator(valEngine), WithEpochID(42))
 	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
 	h.Start()
 	t.Cleanup(h.Close)
 
@@ -1302,99 +1340,410 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	require.True(t, foundValidation, "MsgValidation should be in response mempool")
 }
 
-func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
-	const totalJobs = defaultValidationWorkers + 5
-
-	hosts := []*signing.Secp256k1Signer{
-		testutil.MustGenerateKey(t),
-		testutil.MustGenerateKey(t),
-		testutil.MustGenerateKey(t),
-	}
+func TestOffer_SetsSlotWeight(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
 	group := testutil.MakeGroup(hosts)
 	config := types.SessionConfig{
-		RefusalTimeout:   60,
-		ExecutionTimeout: 1200,
-		TokenPrice:       1,
-		VoteThreshold:    1,
-		ValidationRate:   10000,
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
 	}
 	verifier := signing.NewSecp256k1Verifier()
-	sm, err := state.NewStateMachine("escrow-queue", config, group, 1_000_000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-queue", user.Address(), config, group, 1_000_000))
+	sm, err := state.NewStateMachine("escrow-weight", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-weight", user.Address(), config, group, 100000))
 	require.NoError(t, err)
 
-	validator := newBlockingValidationEngine(totalJobs)
-	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-queue", group, nil,
-		WithGrace(100), WithValidator(validator))
+	capSched := &captureScheduler{}
+	engine := stub.NewInferenceEngine()
+	h, err := NewHost(sm, hosts[0], engine, "escrow-weight", group, nil,
+		WithGrace(10), WithValidator(&trackingValidationEngine{valid: true}), WithValidationScheduler(capSched))
 	require.NoError(t, err)
+	// Simulate multi-slot host for WFQ weight.
+	h.slotIDs[99] = true
+	h.slotIDs[100] = true
 	h.Start()
 	t.Cleanup(h.Close)
 
-	var diffs []types.Diff
-	nonce := uint64(1)
-	for i := 0; i < totalJobs; i++ {
-		inferenceID := nonce // 1, 4, 7... all execute on slot 1 for a 3-host group.
-		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{
-			testutil.StartTx(inferenceID),
-		}))
-		nonce++
-
-		confirmedAt := int64(2000 + i)
-		execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-queue", inferenceID,
-			testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
-		confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-			InferenceId: inferenceID,
-			ExecutorSig: execSig,
-			ConfirmedAt: confirmedAt,
-		}}}
-		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{confirmTx}))
-		nonce++
-
-		finishMsg := &types.MsgFinishInference{
-			InferenceId:  inferenceID,
-			ResponseHash: []byte{byte(i)},
-			InputTokens:  80,
-			OutputTokens: 40,
-			ExecutorSlot: 1,
-			EscrowId:     "escrow-queue",
-		}
-		finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
-		challengeMsg := &types.MsgValidation{
-			InferenceId:   inferenceID,
-			ValidatorSlot: 2,
-			Valid:         false,
-			EscrowId:      "escrow-queue",
-		}
-		challengeMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], challengeMsg)
-		diffs = append(diffs, testutil.SignDiff(t, user, "escrow-queue", nonce, []*types.DevshardTx{
-			{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}},
-			{Tx: &types.DevshardTx_Validation{Validation: challengeMsg}},
-		}))
-		nonce++
+	diff1 := testutil.SignDiff(t, user, "escrow-weight", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-weight", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}
+	finishMsg := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		ExecutorSlot: 1, EscrowId: "escrow-weight",
 	}
-
-	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: diffs})
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+	diff2 := testutil.SignDiff(t, user, "escrow-weight", 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, "escrow-weight", 3, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
 	require.NoError(t, err)
 
-	for i := 0; i < defaultValidationWorkers; i++ {
-		select {
-		case <-validator.started:
-		case <-time.After(2 * time.Second):
-			t.Fatalf("expected validation worker %d to start", i)
-		}
-	}
-
-	select {
-	case <-validator.started:
-		t.Fatalf("validation exceeded worker limit %d", defaultValidationWorkers)
-	case <-time.After(100 * time.Millisecond):
-	}
-	require.LessOrEqual(t, validator.maxInflight.Load(), int64(defaultValidationWorkers))
-
-	close(validator.release)
 	require.Eventually(t, func() bool {
-		return validator.inflight.Load() == 0
+		_, ok := capSched.lastJob()
+		return ok
+	}, time.Second, 10*time.Millisecond)
+	job, ok := capSched.lastJob()
+	require.True(t, ok)
+	require.Equal(t, uint32(3), job.Weight, "Weight = max(1, len(slotIDs))")
+}
+
+func TestValidateAsync_AlreadyLeasedIsSkip(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-leased", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-leased", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-leased", group, nil,
+		WithGrace(10), WithValidator(&errorValidationEngine{err: devshard.ErrValidationAlreadyLeased}))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
+	h.Start()
+	t.Cleanup(h.Close)
+
+	finishValidationSetup(t, h, hosts, user, "escrow-leased")
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		_, ok := h.validating[1]
+		return !ok
 	}, 2*time.Second, 10*time.Millisecond)
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	for _, tx := range h.mempool.Txs() {
+		require.Nil(t, tx.GetValidation(), "AlreadyLeased must not publish")
+	}
+}
+
+func TestValidateAsync_SubmitAbandonedAfterForgetHost(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-forget", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-forget", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	blocker := newBlockingValidationEngine(1)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-forget", group, nil,
+		WithGrace(10), WithValidator(blocker))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{SoftMaxOut: 4})
+	h.Start()
+
+	finishValidationSetup(t, h, hosts, user, "escrow-forget")
+	select {
+	case <-blocker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not start")
+	}
+	h.Close()
+	close(blocker.release)
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.mempool.Txs()) == 0
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestValidateAsync_SubmitAbandonedOnCtxCancel(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-cancel", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-cancel", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	blocker := newBlockingValidationEngine(1)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-cancel", group, nil,
+		WithGrace(10), WithValidator(blocker))
+	require.NoError(t, err)
+	sched := attachTestScheduler(t, h, validationpool.Config{SoftMaxOut: 4})
+	h.Start()
+	t.Cleanup(h.Close)
+
+	finishValidationSetup(t, h, hosts, user, "escrow-cancel")
+	select {
+	case <-blocker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validation did not start")
+	}
+	sched.ForgetHost(h.escrowID)
+	close(blocker.release)
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		return len(h.mempool.Txs()) == 0
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestScheduler_DeferTerminatesOnPayloadPruned(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-prune", config, group, 100000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-prune", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	var attempts atomic.Int32
+	eng := &sequenceValidationEngine{fns: []func() (*devshard.ValidateResult, error){
+		func() (*devshard.ValidateResult, error) {
+			attempts.Add(1)
+			return nil, mlnodeclient.ErrNoNodesAvailable
+		},
+		func() (*devshard.ValidateResult, error) {
+			attempts.Add(1)
+			return nil, devshard.ErrValidationSkipped
+		},
+	}}
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-prune", group, nil,
+		WithGrace(10), WithValidator(eng))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{
+		DeferDelay: 15 * time.Millisecond, DeferJitter: -1, SoftMaxOut: 4,
+	})
+	h.Start()
+	t.Cleanup(h.Close)
+
+	finishValidationSetup(t, h, hosts, user, "escrow-prune")
+	require.Eventually(t, func() bool { return attempts.Load() >= 2 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		_, ok := h.validating[1]
+		return !ok
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+type errorValidationEngine struct{ err error }
+
+func (e *errorValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	return nil, e.err
+}
+
+type sequenceValidationEngine struct {
+	mu  sync.Mutex
+	fns []func() (*devshard.ValidateResult, error)
+	i   int
+}
+
+func (e *sequenceValidationEngine) Validate(context.Context, devshard.ValidateRequest) (*devshard.ValidateResult, error) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	if e.i >= len(e.fns) {
+		return &devshard.ValidateResult{Valid: true}, nil
+	}
+	fn := e.fns[e.i]
+	e.i++
+	return fn()
+}
+
+func finishValidationSetup(t *testing.T, h *Host, hosts []*signing.Secp256k1Signer, user *signing.Secp256k1Signer, escrowID string) {
+	t.Helper()
+	engine := stub.NewInferenceEngine()
+	diff1 := testutil.SignDiff(t, user, escrowID, 1, []*types.DevshardTx{testutil.StartTx(1)})
+	_, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
+	require.NoError(t, err)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+	}}}
+	finishMsg := &types.MsgFinishInference{
+		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
+		ExecutorSlot: 1, EscrowId: escrowID,
+	}
+	finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[1], finishMsg)
+	diff2 := testutil.SignDiff(t, user, escrowID, 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, escrowID, 3, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_FinishInference{FinishInference: finishMsg}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
+	require.NoError(t, err)
+}
+
+type stubLeaseFinisher struct {
+	ttl       time.Duration
+	owned     bool
+	markCalls atomic.Int32
+	ownsCalls atomic.Int32
+	markErr   error
+}
+
+func (f *stubLeaseFinisher) OwnsPendingLease(context.Context, string, uint64) (bool, error) {
+	f.ownsCalls.Add(1)
+	return f.owned, nil
+}
+func (f *stubLeaseFinisher) MarkSubmitted(context.Context, string, uint64) error {
+	f.markCalls.Add(1)
+	return f.markErr
+}
+func (f *stubLeaseFinisher) LeaseTTL() time.Duration {
+	if f.ttl > 0 {
+		return f.ttl
+	}
+	return 30 * time.Minute
+}
+
+func TestLeaseHeld_SetResultOnlyAfterMempool(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lh-order", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-lh-order", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	finisher := &stubLeaseFinisher{owned: true}
+	blocker := newBlockingValidationEngine(1)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lh-order", group, nil,
+		WithGrace(10), WithValidator(blocker), WithDirectValidator(blocker), WithLeaseFinisher(finisher))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{SoftMaxOut: 4})
+	finishValidationSetup(t, h, hosts, user, "escrow-lh-order")
+	h.Start()
+	t.Cleanup(h.Close)
+
+	offered, finishable := h.OfferLeaseHeldValidation(1, 1, time.Now())
+	require.True(t, finishable)
+	require.True(t, offered)
+	select {
+	case <-blocker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validate did not start")
+	}
+	require.Equal(t, int32(0), finisher.markCalls.Load(), "MarkSubmitted before mempool")
+	close(blocker.release)
+	require.Eventually(t, func() bool { return finisher.markCalls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for _, tx := range h.mempool.Txs() {
+			if tx.GetValidation() != nil {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestLeaseHeld_FinishPathSameAsNormal(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lh-same", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-lh-same", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	finisher := &stubLeaseFinisher{owned: true}
+	eng := &trackingValidationEngine{valid: true}
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lh-same", group, nil,
+		WithGrace(10), WithValidator(eng), WithDirectValidator(eng), WithLeaseFinisher(finisher))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
+	finishValidationSetup(t, h, hosts, user, "escrow-lh-same")
+	h.Start()
+	t.Cleanup(h.Close)
+
+	offered, finishable := h.OfferLeaseHeldValidation(1, 1, time.Now())
+	require.True(t, finishable && offered)
+	require.Eventually(t, func() bool { return finisher.markCalls.Load() >= 1 }, 2*time.Second, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		h.mu.Lock()
+		defer h.mu.Unlock()
+		for _, tx := range h.mempool.Txs() {
+			if v := tx.GetValidation(); v != nil && v.InferenceId == 1 && v.Valid {
+				return true
+			}
+		}
+		return false
+	}, 2*time.Second, 10*time.Millisecond)
+}
+
+func TestLeaseHeld_SubmitAbandonedWhenLeaseLost(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lh-lost", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-lh-lost", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	finisher := &stubLeaseFinisher{owned: false}
+	eng := &trackingValidationEngine{valid: true}
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lh-lost", group, nil,
+		WithGrace(10), WithValidator(eng), WithDirectValidator(eng), WithLeaseFinisher(finisher))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
+	finishValidationSetup(t, h, hosts, user, "escrow-lh-lost")
+	h.Start()
+	t.Cleanup(h.Close)
+
+	offered, _ := h.OfferLeaseHeldValidation(1, 1, time.Now())
+	require.True(t, offered)
+	require.Eventually(t, func() bool { return !h.IsValidating(1) }, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(0), finisher.markCalls.Load())
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	require.Empty(t, h.mempool.Txs())
+}
+
+func TestLeaseHeld_BarrierAbandonLeavesLeasePending(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := types.SessionConfig{
+		RefusalTimeout: 60, ExecutionTimeout: 1200, TokenPrice: 1, VoteThreshold: 1, ValidationRate: 10000,
+	}
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-lh-close", config, group, 100000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-lh-close", user.Address(), config, group, 100000))
+	require.NoError(t, err)
+
+	finisher := &stubLeaseFinisher{owned: true}
+	blocker := newBlockingValidationEngine(1)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-lh-close", group, nil,
+		WithGrace(10), WithValidator(blocker), WithDirectValidator(blocker), WithLeaseFinisher(finisher))
+	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{SoftMaxOut: 4})
+	finishValidationSetup(t, h, hosts, user, "escrow-lh-close")
+	h.Start()
+
+	offered, _ := h.OfferLeaseHeldValidation(1, 1, time.Now())
+	require.True(t, offered)
+	select {
+	case <-blocker.started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("validate did not start")
+	}
+	h.Close()
+	close(blocker.release)
+	require.Eventually(t, func() bool { return !h.IsValidating(1) }, 2*time.Second, 10*time.Millisecond)
+	require.Equal(t, int32(0), finisher.markCalls.Load(), "abandon must leave lease pending (no MarkSubmitted)")
 }
 
 func TestHost_ResponseCache_Lifecycle(t *testing.T) {

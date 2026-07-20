@@ -87,19 +87,44 @@ func (e *Engine) executeMLRequest(ctx context.Context, model string, body []byte
 // doWithLockedNode tries NodeManager gRPC first. On success it records the
 // node in the passive cache (Observe), POSTs, and Releases. If dapi is
 // unreachable it falls back to mgr.PickNode round-robin without lock/release.
-// ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path.
+// ResourceExhausted (dapi up, no free nodes) stays on the gRPC retry path
+// with sleep between attempts (inference latency path).
 func (e *Engine) doWithLockedNode(
 	ctx context.Context,
 	path observability.Path,
 	model string,
 	fn func(endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
+	return e.doWithLockedNodeAttempts(ctx, path, model, fn, maxAcquireAttempts, true)
+}
+
+// doWithLockedNodeOnce is the validation acquire path: one Acquire attempt and
+// no sleep-retry on ErrNoNodesAvailable. DAPI-down still falls back to the
+// passive cache. Used so the shared validation scheduler can defer on busy
+// without parking a goroutine for ~20s.
+func (e *Engine) doWithLockedNodeOnce(
+	ctx context.Context,
+	path observability.Path,
+	model string,
+	fn func(endpoint string) (*http.Response, error),
+) (*http.Response, error) {
+	return e.doWithLockedNodeAttempts(ctx, path, model, fn, 1, false)
+}
+
+func (e *Engine) doWithLockedNodeAttempts(
+	ctx context.Context,
+	path observability.Path,
+	model string,
+	fn func(endpoint string) (*http.Response, error),
+	maxAttempts int,
+	sleepOnBusy bool,
+) (*http.Response, error) {
 	var excluded []string
 	excludedSet := make(map[string]struct{})
 	var lastErr error
 	lastReason := observability.ReasonAcquireErr
 
-	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
+	for attempt := 0; attempt < maxAttempts; attempt++ {
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
 		acq, err := e.mlClient.Acquire(acqCtx, model, excluded)
 		cancel()
@@ -114,10 +139,14 @@ func (e *Engine) doWithLockedNode(
 			}
 
 			// dapi up but no nodes (ResourceExhausted) or other transient
-			// acquire errors: sleep and retry; do not fall back.
+			// acquire errors: inference sleeps and retries; validation returns
+			// immediately so the scheduler can defer.
 			lastReason = observability.ReasonAcquireErr
 			observability.IncMLNodeAttempt(path, lastReason, "")
 			lastErr = fmt.Errorf("acquire: %w", err)
+			if !sleepOnBusy {
+				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
+			}
 			select {
 			case <-ctx.Done():
 				lastReason = observability.ReasonTimeout

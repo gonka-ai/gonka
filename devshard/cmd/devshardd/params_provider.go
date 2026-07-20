@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"log/slog"
 
-	mlnodeclient "common/nodemanager"
 	"common/chain"
+	mlnodeclient "common/nodemanager"
 	devshardpkg "devshard"
 	"devshard/runtimeparams"
 	devshardstorage "devshard/storage"

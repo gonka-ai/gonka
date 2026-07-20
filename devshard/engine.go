@@ -3,6 +3,7 @@ package devshard
 import (
 	"context"
 	"errors"
+	"time"
 )
 
 // ErrValidationAlreadyLeased is returned when another devshardd instance already
@@ -40,4 +41,13 @@ type ValidationCompletionRecorder interface {
 	// ErrValidationLeaseAbandoned means skip submit and do not mark submitted.
 	AllowValidationSubmit(ctx context.Context, escrowID string, inferenceID uint64) error
 	MarkValidationSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error
+}
+
+// LeaseFinisher finishes RetryLoop-held validation leases from Host.validateAsync
+// (shared-validation-pool Option B). OwnsPendingLease / MarkSubmitted must be
+// scoped to this instance; LeaseTTL is the abandon threshold for LeaseClaimedAt.
+type LeaseFinisher interface {
+	OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64) (bool, error)
+	MarkSubmitted(ctx context.Context, escrowID string, inferenceID uint64) error
+	LeaseTTL() time.Duration
 }

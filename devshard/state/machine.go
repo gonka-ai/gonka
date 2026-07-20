@@ -87,8 +87,8 @@ type StateMachine struct {
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
 	// validation lives in committedEntries (and on disk in the snapshot).
-	sealedNonces map[uint64]uint64
-	inferenceStore    storage.Storage
+	sealedNonces   map[uint64]uint64
+	inferenceStore storage.Storage
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -96,7 +96,7 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	warmResolver WarmKeyResolver // optional, nil = no warm key support
 }
 
 // SMOption configures optional StateMachine behavior.
@@ -172,15 +172,15 @@ func NewStateMachine(
 
 	sm := &StateMachine{
 		state: &types.EscrowState{
-			EscrowID:   escrowID,
+			EscrowID:                    escrowID,
 			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
-			Config:     config,
-			Group:      groupCopy,
-			Balance:    initialBalance,
-			Fees:       config.CreateDevshardFee,
-			Inferences: make(map[uint64]*types.InferenceRecord),
-			HostStats:  hostStats,
-			WarmKeys:   make(map[uint32]string),
+			Config:                      config,
+			Group:                       groupCopy,
+			Balance:                     initialBalance,
+			Fees:                        config.CreateDevshardFee,
+			Inferences:                  make(map[uint64]*types.InferenceRecord),
+			HostStats:                   hostStats,
+			WarmKeys:                    make(map[uint32]string),
 		},
 		verifier:           verifier,
 		userAddress:        userAddress,
@@ -1272,6 +1272,17 @@ func (sm *StateMachine) GetInference(id uint64) (types.InferenceRecord, bool) {
 		return types.InferenceRecord{}, false
 	}
 	return *rec, ok
+}
+
+// ForEachInference calls fn for each live inference under a shared read lock.
+// The record pointer is valid only for the duration of fn; copy fields if
+// retained. fn must not call StateMachine methods that take sm.mu (deadlock).
+func (sm *StateMachine) ForEachInference(fn func(id uint64, rec *types.InferenceRecord)) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	for id, rec := range sm.state.Inferences {
+		fn(id, rec)
+	}
 }
 
 // VoteThreshold returns the session's vote threshold.

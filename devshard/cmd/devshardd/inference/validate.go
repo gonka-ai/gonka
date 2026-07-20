@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	mlnodeclient "common/nodemanager"
 	commonvalidation "common/validation"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -143,6 +144,10 @@ func fetchPayloadsFromExecutor(
 func classifyExecuteValidationErr(err error) error {
 	if err == nil {
 		return nil
+	}
+	// Preserve acquire-busy sentinel for the shared validation scheduler.
+	if mlnodeclient.IsNoNodesAvailable(err) {
+		return observability.Classify(observability.ReasonAcquireErr, observability.WhereEngineMLNodeCall, err)
 	}
 	var classified *observability.ClassifiedError
 	if errors.As(err, &classified) {

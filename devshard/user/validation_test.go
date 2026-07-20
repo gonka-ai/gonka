@@ -16,7 +16,53 @@ import (
 	"devshard/state"
 	"devshard/stub"
 	"devshard/types"
+	"devshard/validationpool"
 )
+
+// newHostWithValidationScheduler builds a Host with a private validationpool
+// Scheduler (required for Start / Offers after the shared-pool cutover).
+// Each in-process test host gets its own scheduler because they share an
+// escrow ID and ForgetHost is keyed by escrow.
+func newHostWithValidationScheduler(
+	t *testing.T,
+	sm *state.StateMachine,
+	signer *signing.Secp256k1Signer,
+	escrow string,
+	group []types.SlotAssignment,
+	grace uint64,
+	validator devshard.ValidationEngine,
+) *host.Host {
+	t.Helper()
+	var h *host.Host
+	sched := validationpool.New(validationpool.Config{
+		Dispatchers: 2,
+		SoftMaxOut:  128,
+		DeferJitter: -1,
+	},
+		func(ctx context.Context, job validationpool.Job) error {
+			return h.RunScheduledValidation(ctx, job)
+		},
+		func(_ string, id uint64) {
+			if h != nil {
+				h.ClearValidating(id)
+			}
+		},
+	)
+	t.Cleanup(func() { _ = sched.Shutdown(context.Background()) })
+
+	var err error
+	h, err = host.NewHost(
+		sm, signer, stub.NewInferenceEngine(),
+		escrow, group, nil,
+		host.WithGrace(grace),
+		host.WithValidator(validator),
+		host.WithValidationScheduler(sched),
+	)
+	require.NoError(t, err)
+	h.Start()
+	t.Cleanup(h.Close)
+	return h
+}
 
 // rejectingValidator returns Valid=false. delay simulates ML re-execution
 // time so the first finisher's MsgValidation propagates before slower
@@ -90,14 +136,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 	for i := range hosts {
 		sm, err := state.NewStateMachine("escrow-validation", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-validation", user.Address(), config, group, balance))
 		require.NoError(t, err)
-		h, err := host.NewHost(
-			sm, hosts[i], stub.NewInferenceEngine(),
-			"escrow-validation", group, nil,
-			host.WithGrace(grace), host.WithValidator(validators[i]),
-		)
-		require.NoError(t, err)
-		h.Start()
-		t.Cleanup(h.Close)
+		h := newHostWithValidationScheduler(t, sm, hosts[i], "escrow-validation", group, grace, validators[i])
 		clients[i] = &InProcessClient{Host: h}
 	}
 
@@ -221,15 +260,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 	for i := range hosts {
 		sm, err := state.NewStateMachine("escrow-multi", config, group, balance, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-multi", user.Address(), config, group, balance))
 		require.NoError(t, err)
-		h, err := host.NewHost(
-			sm, hosts[i], stub.NewInferenceEngine(),
-			"escrow-multi", group, nil,
-			host.WithGrace(grace), host.WithValidator(validators[i]),
-		)
-		require.NoError(t, err)
-		h.Start()
-		t.Cleanup(h.Close)
-		hostBySigner[i] = h
+		hostBySigner[i] = newHostWithValidationScheduler(t, sm, hosts[i], "escrow-multi", group, grace, validators[i])
 	}
 	clients := make([]HostClient, len(group))
 	for i, slot := range group {

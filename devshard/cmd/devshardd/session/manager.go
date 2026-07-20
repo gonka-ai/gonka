@@ -43,18 +43,21 @@ type HostManager struct {
 	resolutionFailures map[string]resolutionFailure
 	sf                 singleflight.Group
 
-	store              storage.Storage
-	signer             *signing.Secp256k1Signer
-	verifier           signing.Verifier
-	engine             devshardpkg.InferenceEngine
-	validator          devshardpkg.ValidationEngine
-	validationRecorder devshardpkg.ValidationCompletionRecorder
-	boundVersion       string
-	bridge             bridge.MainnetBridge
-	payloadStore       PayloadStore
-	recorder           PayloadAuthClient
-	availability       devshardpkg.AvailabilityProvider
-	maxNonce           devshardpkg.MaxNonceProvider
+	store               storage.Storage
+	signer              *signing.Secp256k1Signer
+	verifier            signing.Verifier
+	engine              devshardpkg.InferenceEngine
+	validator           devshardpkg.ValidationEngine
+	validationRecorder  devshardpkg.ValidationCompletionRecorder
+	validationScheduler host.ValidationScheduler
+	directValidator     devshardpkg.ValidationEngine
+	leaseFinisher       devshardpkg.LeaseFinisher
+	boundVersion        string
+	bridge              bridge.MainnetBridge
+	payloadStore        PayloadStore
+	recorder            PayloadAuthClient
+	availability        devshardpkg.AvailabilityProvider
+	maxNonce            devshardpkg.MaxNonceProvider
 
 	statsMu           sync.Mutex
 	statsShardsCache  *statsShardsResponse
@@ -111,8 +114,35 @@ func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
 }
 
-// Close stops all live session hosts and releases storage resources.
-func (m *HostManager) Close() error {
+// SetValidationScheduler injects the process-wide shared validation pool.
+// Must be called before RecoverSessions / host creation so Offers are enabled.
+func (m *HostManager) SetValidationScheduler(s host.ValidationScheduler) {
+	m.validationScheduler = s
+}
+
+// SetDirectValidator sets the engine used for LeaseHeld jobs (no lease re-acquire).
+func (m *HostManager) SetDirectValidator(v devshardpkg.ValidationEngine) {
+	m.directValidator = v
+}
+
+// SetLeaseFinisher sets the LeaseHeld submit barrier + SetResult helper.
+func (m *HostManager) SetLeaseFinisher(f devshardpkg.LeaseFinisher) {
+	m.leaseFinisher = f
+}
+
+// ExistingHost returns the in-memory host for escrowID, if loaded.
+func (m *HostManager) ExistingHost(escrowID string) (*host.Host, bool) {
+	srv, ok := m.existingServer(escrowID)
+	if !ok {
+		return nil, false
+	}
+	return srv.Host(), true
+}
+
+// CloseHosts stops all live session hosts (each Host.Close → ForgetHost).
+// Does not close storage — call store.Close only after the shared validation
+// scheduler has shut down (see app shutdown order).
+func (m *HostManager) CloseHosts() {
 	m.sessionsMutex.Lock()
 	sessions := make([]*transport.Server, 0, len(m.sessions))
 	for _, srv := range m.sessions {
@@ -124,6 +154,11 @@ func (m *HostManager) Close() error {
 	for _, srv := range sessions {
 		srv.Host().Close()
 	}
+}
+
+// Close stops all live session hosts and releases storage resources.
+func (m *HostManager) Close() error {
+	m.CloseHosts()
 	return m.store.Close()
 }
 
@@ -741,6 +776,15 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		host.WithStorage(m.store),
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
+	}
+	if m.validationScheduler != nil {
+		opts = append(opts, host.WithValidationScheduler(m.validationScheduler))
+	}
+	if m.directValidator != nil {
+		opts = append(opts, host.WithDirectValidator(m.directValidator))
+	}
+	if m.leaseFinisher != nil {
+		opts = append(opts, host.WithLeaseFinisher(m.leaseFinisher))
 	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))

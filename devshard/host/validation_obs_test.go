@@ -14,6 +14,7 @@ import (
 	"devshard/storage"
 	"devshard/stub"
 	"devshard/types"
+	"devshard/validationpool"
 )
 
 const (
@@ -489,6 +490,7 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithStorage(store), WithValidator(valEngine), WithVerifier(verifier))
 	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
 	h.Start()
 	t.Cleanup(h.Close)
 
@@ -549,6 +551,7 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 	h, err := NewHost(sm, hosts[0], engine, "escrow-1", group, nil,
 		WithStorage(store), WithValidator(valEngine), WithVerifier(verifier))
 	require.NoError(t, err)
+	attachTestScheduler(t, h, validationpool.Config{})
 	h.Start()
 	t.Cleanup(h.Close)
 

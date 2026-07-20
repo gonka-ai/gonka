@@ -23,6 +23,7 @@ import (
 	"devshard/runtimeparams"
 	"devshard/signing"
 	devshardstorage "devshard/storage"
+	"devshard/validationpool"
 
 	"github.com/labstack/echo/v4"
 )
@@ -53,6 +54,30 @@ func (s closeStack) Close() {
 	for i := len(s) - 1; i >= 0; i-- {
 		s[i]()
 	}
+}
+
+type closer interface {
+	Close() error
+}
+
+// registerValidationShutdown registers store → scheduler → hosts closers.
+// Caller must Add discovery-cancel (OfferRescan/RetryLoop) AFTER this so LIFO
+// runs: cancel discovery → CloseHosts → scheduler.Shutdown → store.Close.
+func registerValidationShutdown(
+	closers *closeStack,
+	manager *session.HostManager,
+	sched *validationpool.Scheduler,
+	store closer,
+) {
+	closers.Add(func() { _ = store.Close() })
+	closers.Add(func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := sched.Shutdown(shutdownCtx); err != nil {
+			slog.Warn("validation scheduler shutdown", "error", err)
+		}
+	})
+	closers.Add(func() { manager.CloseHosts() })
 }
 
 type phaseEpochProvider struct {
@@ -227,7 +252,6 @@ func buildHostManager(
 	if cancel := paramsSetup.RegisterEpochPrune(store); cancel != nil {
 		closers.Add(cancel)
 	}
-	closers.Add(func() { _ = store.Close() })
 
 	leaseValidator := inference.NewLeaseValidator(validator, phase, store, instanceAddr, cfg.ValidationLeaseTTL)
 
@@ -244,6 +268,32 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetDirectValidator(validator)
+	manager.SetLeaseFinisher(inference.NewStorageLeaseFinisher(store, instanceAddr, cfg.ValidationLeaseTTL))
+
+	validationSched := validationpool.New(cfg.ValidationPool,
+		func(jobCtx context.Context, job validationpool.Job) error {
+			h, ok := manager.ExistingHost(job.EscrowID)
+			if !ok {
+				return nil
+			}
+			return h.RunScheduledValidation(jobCtx, job)
+		},
+		func(escrowID string, inferenceID uint64) {
+			if h, ok := manager.ExistingHost(escrowID); ok {
+				h.ClearValidating(inferenceID)
+			}
+		},
+	)
+	manager.SetValidationScheduler(validationSched)
+
+	// Shutdown order is LIFO of closers.Add below:
+	//   1. cancel OfferRescan + RetryLoop
+	//   2. HostManager.CloseHosts (ForgetHost each)
+	//   3. scheduler.Shutdown
+	//   4. store.Close
+	registerValidationShutdown(closers, manager, validationSched, store)
+
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	if err := manager.RecoverSessions(); err != nil {
@@ -251,19 +301,31 @@ func buildHostManager(
 	}
 	store.Start()
 
-	retryLoop := session.NewRetryLoop(store, validator, manager, phase, instanceAddr)
+	offerRescan := session.NewOfferRescan(manager).WithInterval(cfg.ValidationOfferRescan)
+	offerRescanCtx, cancelOfferRescan := context.WithCancel(ctx)
+	offerRescanDone := make(chan struct{})
+	go func() {
+		defer close(offerRescanDone)
+		offerRescan.Run(offerRescanCtx)
+	}()
+
+	retryLoop := session.NewRetryLoop(store, manager, phase, instanceAddr)
 	retryLoop.WithInterval(cfg.ValidationRetryInterval)
 	retryLoop.WithLeaseTTL(cfg.ValidationLeaseTTL)
 	retryLoopCtx, cancelRetryLoop := context.WithCancel(ctx)
 	retryLoopDone := make(chan struct{})
-	closers.Add(func() {
-		cancelRetryLoop()
-		<-retryLoopDone
-	})
 	go func() {
 		defer close(retryLoopDone)
 		retryLoop.Run(retryLoopCtx)
 	}()
+
+	// Last Add = first Close (after registerValidationShutdown's store/sched/hosts).
+	closers.Add(func() {
+		cancelOfferRescan()
+		cancelRetryLoop()
+		<-offerRescanDone
+		<-retryLoopDone
+	})
 
 	var lastCleanEpoch atomic.Uint64
 	chainRuntime.chainEvents.OnNewBlock(func(bctx context.Context, e events.NewBlockEvent) {

@@ -6,8 +6,8 @@ import (
 	"sync"
 	"time"
 
-	commonvalidation "common/validation"
 	commrc "common/runtimeconfig"
+	commonvalidation "common/validation"
 	"devshard/bridge"
 )
 
