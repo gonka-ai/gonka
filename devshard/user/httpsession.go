@@ -14,7 +14,6 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
-	"devshard/types"
 )
 
 // HTTPSessionConfig holds the parameters needed to create an HTTP-backed user session.
@@ -26,7 +25,6 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
-	ProtocolVersion  types.ProtocolVersion // optional: defaults to types.ProtocolV1
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
