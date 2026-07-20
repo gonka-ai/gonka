@@ -167,3 +167,27 @@ func TestSessionPayloadPath(t *testing.T) {
 		})
 	}
 }
+
+func TestVersionlessObservabilityPaths(t *testing.T) {
+	if got := VersionlessSessionDiffsPath("42"); got != "/devshard/sessions/42/diffs" {
+		t.Fatalf("diffs = %q", got)
+	}
+	if got := VersionlessSessionMempoolPath("42"); got != "/devshard/sessions/42/mempool" {
+		t.Fatalf("mempool = %q", got)
+	}
+	if got := VersionlessSessionSignaturesPath("42"); got != "/devshard/sessions/42/signatures" {
+		t.Fatalf("signatures = %q", got)
+	}
+	if got := VersionlessStatsShardsPath(); got != "/devshard/stats/shards" {
+		t.Fatalf("stats = %q", got)
+	}
+	if got := VersionlessStatsShardDetailPath("42"); got != "/devshard/stats/shards/42" {
+		t.Fatalf("stats detail = %q", got)
+	}
+	if got := VersionlessMetricsPath(); got != "/devshard/metrics" {
+		t.Fatalf("metrics = %q", got)
+	}
+	if got := VersionlessHealthzPath(); got != "/devshard/healthz" {
+		t.Fatalf("healthz = %q", got)
+	}
+}

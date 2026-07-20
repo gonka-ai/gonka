@@ -292,3 +292,105 @@ func TestStatsShardDetailSkipsForeignVersionSession(t *testing.T) {
 	rec := requestStats(t, mgr, "/v1/devshard", "/stats/shards/escrow-v2")
 	require.Equal(t, http.StatusNotFound, rec.Code, "body: %s", rec.Body.String())
 }
+
+type countingMetaStore struct {
+	storage.Storage
+	metaCalls int
+	listCalls int
+}
+
+func (s *countingMetaStore) GetSessionMeta(escrowID string) (*storage.SessionMeta, error) {
+	s.metaCalls++
+	return s.Storage.GetSessionMeta(escrowID)
+}
+
+func (s *countingMetaStore) ListActiveSessions() ([]storage.ActiveSession, error) {
+	s.listCalls++
+	return s.Storage.ListActiveSessions()
+}
+
+func TestStatsShardDetailResolvesO1WithoutListScan(t *testing.T) {
+	base := newManagerTestStore(t)
+	group, user, hostSigner := createStoredSession(t, base, "escrow-o1", 7, 1)
+	createStoredSession(t, base, "escrow-noise-a", 7, 0)
+	createStoredSession(t, base, "escrow-noise-b", 7, 0)
+
+	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "escrow-o1",
+			EpochID:        7,
+			Amount:         100000000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+	counting.metaCalls = 0
+	counting.listCalls = 0
+
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-o1")
+	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
+	require.Equal(t, 0, counting.listCalls, "detail must not ListActiveSessions")
+	require.Equal(t, 1, counting.metaCalls, "detail should GetSessionMeta once")
+}
+
+func TestStatsShardDetailNegativeCacheSkipsStoreOnRepeatMiss(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, base, "escrow-other", 7, 0)
+	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/missing-escrow")
+	require.Equal(t, http.StatusNotFound, rec1.Code, "body: %s", rec1.Body.String())
+	require.Equal(t, 0, counting.listCalls)
+	require.Equal(t, 1, counting.metaCalls)
+
+	rec2 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/missing-escrow")
+	require.Equal(t, http.StatusNotFound, rec2.Code, "body: %s", rec2.Body.String())
+	require.Equal(t, 0, counting.listCalls)
+	require.Equal(t, 1, counting.metaCalls, "negative cache must skip GetSessionMeta on repeat miss")
+}
+
+func TestStatsShardDetailNegativeCacheForVersionMismatch(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSessionWithVersion(t, base, "escrow-foreign", 7, "foreign", 0)
+	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-foreign")
+	require.Equal(t, http.StatusNotFound, rec1.Code)
+	require.Equal(t, 1, counting.metaCalls)
+	require.Equal(t, 0, counting.listCalls)
+
+	rec2 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-foreign")
+	require.Equal(t, http.StatusNotFound, rec2.Code)
+	require.Equal(t, 1, counting.metaCalls, "version mismatch should be negatively cached")
+}
+
+func TestStatsShardDetailSkipsSettledSession(t *testing.T) {
+	base := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, base, "escrow-settled", 7, 1)
+	require.NoError(t, base.MarkSettled("escrow-settled"))
+
+	counting := &countingMetaStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
+	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	rec1 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-settled")
+	require.Equal(t, http.StatusNotFound, rec1.Code, "body: %s", rec1.Body.String())
+	require.Equal(t, 1, counting.metaCalls)
+	require.Equal(t, 0, counting.listCalls)
+
+	// Settled must not be revived into the live session map.
+	_, ok := mgr.existingServer("escrow-settled")
+	require.False(t, ok)
+
+	rec2 := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-settled")
+	require.Equal(t, http.StatusNotFound, rec2.Code)
+	require.Equal(t, 1, counting.metaCalls, "settled miss should be negatively cached")
+}

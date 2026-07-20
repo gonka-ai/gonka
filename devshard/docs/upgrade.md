@@ -65,19 +65,26 @@ tested or forced locally.
 Escrow creation stays version-agnostic. `MsgCreateDevshardEscrow` does not take
 a version.
 
-The user chooses a version by selecting the HTTP path at session start:
+The **escrow creator** chooses a version by calling a versioned protocol path
+with a valid owner signature. Bind is the first successful owner
+`POST /devshard/<version>/sessions/{id}/chat/completions` (see
+[versionless-observability-plan.md](./versionless-observability-plan.md)).
 
 ```
-/devshard/<version>/* -> versiond -> devshard binary for <version>
+/devshard/<version>/sessions/.../chat/completions  → versiond → bind + protocol
+/devshard/sessions/.../diffs|mempool|signatures      → versionless observability (no bind)
 ```
 
-The target safety model is that the first request binds the session to one
-binary version off-chain. Every later diff must continue with that same
+Legacy versioned observability URLs are rewritten internally by the join proxy
+to the versionless forms; the version segment in those URLs does not bind.
+
+The target safety model is that the first **owner** request binds the session to
+one binary version off-chain. Every later diff must continue with that same
 version. A host running the wrong binary refuses to sign, so a version-mixing
 session cannot gather the threshold needed to settle.
 
-The bound version is recorded in shard state. Use the `<version>` segment from
-`/devshard/<version>/*`.
+The bound version is recorded in shard state / storage (`sessions.version`).
+Use the `<version>` segment from `/devshard/<version>/*` for protocol traffic only.
 
 ## Deprecation
 
