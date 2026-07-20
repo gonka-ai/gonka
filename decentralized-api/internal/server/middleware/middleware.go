@@ -1,7 +1,8 @@
 package middleware
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
+
 	"github.com/labstack/echo/v4"
 	"github.com/productscience/inference/x/inference/types"
 )

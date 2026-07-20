@@ -1,6 +1,6 @@
 module versioned
 
-go 1.24.2
+go 1.25.9
 
 require (
 	google.golang.org/grpc v1.80.0

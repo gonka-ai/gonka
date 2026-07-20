@@ -1,0 +1,58 @@
+# Genesis overlay: shared Postgres for devshardd payload/lease storage.
+# Layer with docker-compose.versiond.yml on genesis only.
+#
+# Sets PG env on all versiond instances (see docker-compose.versiond.yml anchor).
+# dapi keeps its per-node ${KEY_NAME}-postgres from docker-compose-base.yml.
+services:
+  devshard-postgres:
+    container_name: devshard-postgres
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: devshardd
+      POSTGRES_USER: devshardd
+      POSTGRES_PASSWORD: devshardd
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U devshardd -d devshardd"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+    networks:
+      - chain-public
+
+  versiond:
+    environment:
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: devshard-postgres
+      PGDATABASE: devshardd
+      PGUSER: devshardd
+      PGPASSWORD: devshardd
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+
+  versiond-2:
+    environment:
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: devshard-postgres
+      PGDATABASE: devshardd
+      PGUSER: devshardd
+      PGPASSWORD: devshardd
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+
+  versiond-3:
+    environment:
+      DEVSHARD_STORAGE_MODE: postgres
+      PGHOST: devshard-postgres
+      PGDATABASE: devshardd
+      PGUSER: devshardd
+      PGPASSWORD: devshardd
+    depends_on:
+      devshard-postgres:
+        condition: service_healthy
+
+networks:
+  chain-public:
+    name: chain-public
+    external: true

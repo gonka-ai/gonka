@@ -39,9 +39,9 @@ jobs:
 
     steps:
       - name: Set up Go
-        uses: actions/setup-go@v3.0.0
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       - name: Checkout code
         uses: actions/checkout@v3
@@ -104,9 +104,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Go
-        uses: actions/setup-go@v2
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -166,9 +166,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Go
-        uses: actions/setup-go@v3.0.0
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       - name: Cache Go modules
         uses: actions/cache@v4
@@ -211,6 +211,68 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
+  build-and-test-edge-api:
+    runs-on: ubuntu-latest
+    name: Build and Test edge-api (validation)
+    permissions:
+      contents: read
+      checks: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+
+      - name: Cache Go modules
+        uses: actions/cache@v4
+        with:
+          path: ~/go/pkg/mod
+          key: ${{ runner.os }}-go-${{ hashFiles('edge-api/go.sum', 'common/go.sum') }}
+          restore-keys: |
+            ${{ runner.os }}-go-
+
+      - name: Install dependencies
+        working-directory: edge-api
+        run: go mod download
+
+      - name: Build edge-api
+        working-directory: edge-api
+        run: go build ./...
+
+      - name: Run edge-api tests (fork PRs)
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
+        run: bash scripts/validate-edge-api.sh
+
+      - name: Install go-junit-report
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
+
+      - name: Run edge-api tests and generate JUnit report
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: |
+          cd edge-api
+          go test ./queryapi/... -count=1 -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
+          cd ..
+          bash scripts/validate-edge-api.sh
+
+      - name: Publish Test Results
+        uses: actions/upload-artifact@v4
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        with:
+          name: edge-api-junit-report
+          path: edge-api/junit-report.xml
+
+      - name: Report Test Results in GitHub
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        uses: dorny/test-reporter@v1
+        with:
+          name: edge-api Tests
+          path: edge-api/junit-report.xml
+          reporter: java-junit
+
   build-and-test-devshard:
     runs-on: ubuntu-22.04
     name: Build and Test Devshard
@@ -226,9 +288,9 @@ jobs:
         uses: actions/checkout@v3
 
       - name: Set up Go
-        uses: actions/setup-go@v3.0.0
+        uses: actions/setup-go@v5
         with:
-          go-version: '1.24.2'
+          go-version: '1.25.9'
 
       - name: Cache Go modules
         uses: actions/cache@v4

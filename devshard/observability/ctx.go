@@ -101,6 +101,7 @@ const (
 	ReasonSignVoteErr                 Reason = "sign_vote_err"
 	ReasonValidationStatusChanged     Reason = "validation_status_changed"
 	ReasonPartialResponseInterrupted  Reason = "partial_response_after_interruption"
+	ReasonApplicationErr              Reason = "application_err"
 	ReasonTransportErr                Reason = "transport_err"
 	ReasonTimeout                     Reason = "timeout"
 	ReasonHTTP5xx                     Reason = "http_5xx"

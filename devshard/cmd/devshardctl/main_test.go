@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync/atomic"
@@ -52,12 +51,12 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 	require.True(t, ok)
 
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
 		switch cfg.ID {
 		case "12":
 			return nil, fmt.Errorf("runtime %s: create session: build group: get escrow: %w", cfg.ID, bridge.ErrEscrowNotFound)
 		case "24":
-			return &devshardRuntime{id: cfg.ID, model: defaultModel}, nil
+			return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
 		default:
 			return nil, fmt.Errorf("unexpected runtime id %s", cfg.ID)
 		}
@@ -66,7 +65,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingEscrow(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, "24", runtimes[0].id)
@@ -104,12 +103,12 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 	require.True(t, ok)
 
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
 		switch cfg.ID {
 		case "12":
 			return nil, fmt.Errorf("runtime %s: %w", cfg.ID, errRuntimePrivateKeyMissing)
 		case "24":
-			return &devshardRuntime{id: cfg.ID, model: defaultModel}, nil
+			return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
 		default:
 			return nil, fmt.Errorf("unexpected runtime id %s", cfg.ID)
 		}
@@ -118,7 +117,7 @@ func TestBuildGatewayRuntimesDeactivatesMissingPrivateKey(t *testing.T) {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, 1)
 	require.Equal(t, "24", runtimes[0].id)
@@ -155,14 +154,14 @@ func TestBuildGatewayRuntimesPreservesActiveOnOtherErrors(t *testing.T) {
 	require.True(t, ok)
 
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
 		return nil, fmt.Errorf("runtime %s: create session: dial tcp timeout", cfg.ID)
 	}
 	t.Cleanup(func() {
 		gatewayRuntimeBuilder = savedBuilder
 	})
 
-	_, err = buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	_, err = buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.Error(t, err)
 
 	reloaded, ok, err := store.LoadState()
@@ -194,7 +193,7 @@ func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 
 	var inFlight, peakInFlight atomic.Int64
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
 		running := inFlight.Add(1)
 		for {
 			peak := peakInFlight.Load()
@@ -207,18 +206,18 @@ func measurePeakRuntimeBuildConcurrency(t *testing.T, n int) int64 {
 		// async work.
 		time.Sleep(25 * time.Millisecond)
 		inFlight.Add(-1)
-		return &devshardRuntime{id: cfg.ID, model: defaultModel}, nil
+		return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 	require.NoError(t, err)
 	require.Len(t, runtimes, n)
 	return peakInFlight.Load()
 }
 
 func TestBuildGatewayRuntimesBoundsBuilderConcurrency(t *testing.T) {
-	// An unbounded fan-out floods the chain LCD (429) and crash-loops startup;
+	// An unbounded fan-out floods the chain (429) and crash-loops startup;
 	// builder concurrency must stay within the resolved bound.
 	const devshardCount = 32
 	limit := int64(resolveMaxConcurrentRuntimeBuilds())
@@ -249,12 +248,12 @@ func activeDevshardStates(n int) []GatewayDevshardState {
 }
 
 func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) {
-	// Regression: an unbounded builder fan-out floods the chain LCD, which
+	// Regression: an unbounded builder fan-out floods the chain, which
 	// answers 429. A 429 is not a soft error (unlike ErrEscrowNotFound /
 	// private-key-missing), so it becomes firstFatal and the gateway fails to
 	// start — restart repeats the same fan-out — crash loop. With the fan-out
-	// bounded, at most the resolved limit of builders hit the LCD at once, so an
-	// LCD that tolerates that many never rate-limits and startup succeeds.
+	// bounded, at most the resolved limit of builders hit the chain at once, so a
+	// backend that tolerates that many never rate-limits and startup succeeds.
 	const devshardCount = 32
 	limit := int64(resolveMaxConcurrentRuntimeBuilds())
 
@@ -274,27 +273,27 @@ func TestBuildGatewayRuntimesBoundedFanoutSurvivesRateLimitingLCD(t *testing.T) 
 	require.NoError(t, err)
 	require.True(t, ok)
 
-	// The fake LCD tolerates up to the resolved limit of concurrent builds and
+	// The fake chain tolerates up to the resolved limit of concurrent builds and
 	// rejects the one that exceeds it with a 429.
 	var inFlight atomic.Int64
 	var rateLimited atomic.Bool
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
 		defer inFlight.Add(-1)
 		if inFlight.Add(1) > limit {
 			rateLimited.Store(true)
-			return nil, fmt.Errorf("runtime %s: get escrow: chain LCD: 429 Too Many Requests", cfg.ID)
+			return nil, fmt.Errorf("runtime %s: get escrow: chain: 429 Too Many Requests", cfg.ID)
 		}
 		// Hold the slot so genuinely concurrent builders overlap.
 		time.Sleep(25 * time.Millisecond)
-		return &devshardRuntime{id: cfg.ID, model: defaultModel}, nil
+		return &devshardRuntime{id: cfg.ID, model: deps.defaultModel}, nil
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = savedBuilder })
 
-	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil))
+	runtimes, err := buildGatewayRuntimes(store, &state, t.TempDir(), NewPerfTracker(nil), dialTestChainGRPC(t))
 
-	require.False(t, rateLimited.Load(), "fan-out exceeded the LCD's concurrency tolerance and tripped a 429")
-	require.NoError(t, err, "bounded startup must survive a rate-limiting LCD")
+	require.False(t, rateLimited.Load(), "fan-out exceeded the chain's concurrency tolerance and tripped a 429")
+	require.NoError(t, err, "bounded startup must survive a rate-limiting chain")
 	require.Len(t, runtimes, devshardCount)
 }
 
@@ -322,15 +321,6 @@ func TestResolveMaxConcurrentRuntimeBuildsParsesOverride(t *testing.T) {
 	}
 }
 
-func TestBuildRuntimeBridgeClientPinsIdleConnPool(t *testing.T) {
-	client := buildRuntimeBridgeClient(4)
-	transport, ok := client.Transport.(*http.Transport)
-	require.True(t, ok)
-	require.Equal(t, 4, transport.MaxIdleConnsPerHost)
-	require.Equal(t, 4, transport.MaxIdleConns)
-	require.Equal(t, 10*time.Second, client.Timeout)
-}
-
 func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
@@ -339,7 +329,7 @@ func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testin
 	})
 
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
+		ChainGRPC:               "",
 		PublicAPI:               "",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
@@ -351,17 +341,20 @@ func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testin
 	require.True(t, ok)
 
 	t.Setenv("DEVSHARD_PUBLIC_API", "http://api:9000")
+	t.Setenv("DEVSHARD_CHAIN_GRPC", "mock-chain:19090")
 	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
-		chainREST: defaultChainRESTURL,
+		chainGRPC: defaultChainGRPCURL,
 		publicAPI: defaultPublicAPIURL,
 	})
 
 	require.Equal(t, "http://api:9000", state.Settings.PublicAPI)
+	require.Equal(t, "mock-chain:19090", state.Settings.ChainGRPC)
 
 	reloaded, ok := reloadGatewayStateForTest(t, store)
 	require.True(t, ok)
 	require.Equal(t, "http://api:9000", reloaded.Settings.PublicAPI)
-	require.Equal(t, "http://node:1317", reloaded.Settings.ChainREST)
+	// chain_grpc is runtime-only until gateway.db schema migration; startup uses env/flags.
+	require.Empty(t, reloaded.Settings.ChainGRPC)
 }
 
 func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *testing.T) {
@@ -385,7 +378,6 @@ func TestRepairPersistedGatewayEndpointSettingsPreservesConfiguredPublicAPI(t *t
 
 	t.Setenv("DEVSHARD_PUBLIC_API", "http://env-api:9000")
 	mustRepairPersistedGatewayEndpointSettings(store, &state, cliFlags{
-		chainREST: defaultChainRESTURL,
 		publicAPI: defaultPublicAPIURL,
 	})
 

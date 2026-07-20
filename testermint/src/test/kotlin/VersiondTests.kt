@@ -14,6 +14,9 @@ import java.util.concurrent.TimeUnit
  *   4. versiond downloads the binary and proxies traffic
  *   5. Second proposal adds another version, both route correctly
  *
+ * Approved version names must match each binary's --print-protocol-version
+ * (see versioned/e2e/testapp: "testapp" and "testapp2").
+ *
  * Requires docker-compose.versiond.yml (adds versiond + testapp-server services).
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -23,11 +26,15 @@ class VersiondTests : TestermintTest() {
 
     private val testappServerUrl = "http://localhost:$TESTAPP_SERVER_HOST_PORT"
     private val dapiMlUrl = "http://localhost:$DAPI_ML_HOST_PORT"
-    private val testappBinaryDockerUrl = "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp.zip"
+    private val testappBinaryDockerUrl =
+        "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp.zip"
+    private val testapp2BinaryDockerUrl =
+        "http://${GENESIS_KEY_NAME}-testapp-server:8080/testapp2.zip"
 
     private lateinit var cluster: LocalCluster
     private lateinit var genesis: LocalInferencePair
     private lateinit var testappSha256: String
+    private lateinit var testapp2Sha256: String
 
     @BeforeAll
     fun setup() {
@@ -44,8 +51,10 @@ class VersiondTests : TestermintTest() {
         genesis = g
 
         logSection("Waiting for testapp-server readiness")
-        testappSha256 = waitForTestappServer()
+        testappSha256 = waitForTestappArtifactSha256(TESTAPP_VERSION)
+        testapp2Sha256 = waitForTestappArtifactSha256(TESTAPP2_VERSION)
         Logger.info("testapp zip sha256: $testappSha256")
+        Logger.info("testapp2 zip sha256: $testapp2Sha256")
     }
 
     @AfterAll
@@ -76,7 +85,7 @@ class VersiondTests : TestermintTest() {
     @Test
     @Order(2)
     fun `governance proposal adds first version and versiond downloads it`() {
-        val versionName = "v0.2.11"
+        val versionName = TESTAPP_VERSION
 
         logSection("Submitting governance proposal to add $versionName")
         val params = genesis.getParams()
@@ -114,7 +123,7 @@ class VersiondTests : TestermintTest() {
     @Test
     @Order(3)
     fun `subnet binary can talk to nodemanager grpc service`() {
-        val versionName = "v0.2.11"
+        val versionName = TESTAPP_VERSION
 
         logSection("Calling /nodemanager-test through versiond proxy")
         val response = getNodeManagerTest(versionName)
@@ -143,8 +152,8 @@ class VersiondTests : TestermintTest() {
     @Test
     @Order(4)
     fun `governance proposal adds second version and both route`() {
-        val v1 = "v0.2.11"
-        val v2 = "v0.2.12"
+        val v1 = TESTAPP_VERSION
+        val v2 = TESTAPP2_VERSION
 
         logSection("Submitting governance proposal to add $v2 (keeping $v1)")
         val params = genesis.getParams()
@@ -157,8 +166,8 @@ class VersiondTests : TestermintTest() {
                 ),
                 DevshardApprovedVersion(
                     name = v2,
-                    binary = testappBinaryDockerUrl,
-                    sha256 = testappSha256,
+                    binary = testapp2BinaryDockerUrl,
+                    sha256 = testapp2Sha256,
                 ),
             )
         )
@@ -201,21 +210,23 @@ class VersiondTests : TestermintTest() {
         )
     }
 
-    private fun waitForTestappServer(): String {
+    private fun waitForTestappArtifactSha256(artifactBase: String): String {
         var sha256: String? = null
         val deadline = System.currentTimeMillis() + 120_000
         while (sha256 == null && System.currentTimeMillis() < deadline) {
             try {
-                val (_, _, result) = Fuel.get("$testappServerUrl/testapp.zip.sha256")
+                val (_, _, result) = Fuel.get("$testappServerUrl/$artifactBase.zip.sha256")
                     .timeoutRead(5000)
                     .responseString()
                 sha256 = result.get().trim()
             } catch (e: Exception) {
-                Logger.debug("testapp-server not ready: ${e.message}")
+                Logger.debug("testapp-server artifact $artifactBase not ready: ${e.message}")
                 Thread.sleep(2000)
             }
         }
-        check(sha256 != null) { "testapp-server did not become ready within 120s" }
+        check(sha256 != null) {
+            "testapp-server did not publish $artifactBase.zip.sha256 within 120s"
+        }
         return sha256
     }
 
@@ -257,13 +268,11 @@ class VersiondTests : TestermintTest() {
     }
 
     private fun waitForVersionedProxy(versionName: String): Map<String, Any> {
-        var lastError: Exception? = null
         waitUntil("proxy routes $versionName", timeoutSeconds = 90) {
             try {
                 getVersiondProxy(versionName)
                 true
-            } catch (e: Exception) {
-                lastError = e
+            } catch (e: Throwable) {
                 Logger.debug("proxy route for $versionName not ready: ${e.message}")
                 false
             }
@@ -281,6 +290,12 @@ class VersiondTests : TestermintTest() {
     }
 
     companion object {
+        /** Governance slot / --print-protocol-version for testapp.zip */
+        const val TESTAPP_VERSION = "testapp"
+
+        /** Governance slot / --print-protocol-version for testapp2.zip */
+        const val TESTAPP2_VERSION = "testapp2"
+
         const val TESTAPP_SERVER_HOST_PORT = 7090
         const val DAPI_ML_HOST_PORT = 9001
     }

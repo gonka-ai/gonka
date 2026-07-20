@@ -538,6 +538,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		return
 	}
 
+	preflight, err := preflightChild(binPath, c.version.Name)
+	if err != nil {
+		slog.Error("child preflight failed", "version", c.version.Name, "bin", binPath, "error", err)
+		return
+	}
+
 	backoff := time.Second
 	lastStart := time.Now()
 
@@ -552,7 +558,7 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
 		)
-		cmd.Env = childEnv(c.version.Name)
+		cmd.Env = childEnv(preflight.binaryLogVersion)
 		cmd.Stdout = os.Stdout
 		cmd.Stderr = os.Stderr
 		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
@@ -617,12 +623,16 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 }
 
 // childEnv sets per-child env vars for devshardd (and testapp in e2e).
-// version is the oracle approved_versions name for this slot.
-func childEnv(version string) []string {
+// binaryLogVersion is normally the link-time build id from --print-binary-version
+// (e.g. 0.2.13-v2-r2). Legacy binaries without that flag use the governance
+// slot name (e.g. v2) instead.
+func childEnv(binaryLogVersion string) []string {
+	if binaryLogVersion == "" {
+		return os.Environ()
+	}
 	return append(
 		os.Environ(),
-		fmt.Sprintf("DEVSHARD_LOG_PREFIX=%s", version),
-		fmt.Sprintf("DEVSHARD_BINARY_VERSION=%s", version),
+		fmt.Sprintf("DEVSHARD_BINARY_LOG_VERSION=%s", binaryLogVersion),
 	)
 }
 

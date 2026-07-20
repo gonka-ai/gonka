@@ -23,7 +23,7 @@ import (
 )
 
 const (
-	httpClientTimeout          = 30 * time.Minute
+	httpClientTimeout          = 20 * time.Minute
 	deprecatedDevshardV1Prefix = "/v1/devshard"
 )
 
@@ -103,7 +103,6 @@ func NewServer(
 	e.Use(echoMiddleware.BodyLimit(MaxRequestBodyLimit))
 	g := e.Group("/v1/")
 
-	g.GET("status", s.getStatus)
 	g.GET("identity", s.getIdentity)
 
 	g.POST("chat/completions", classicInferenceDeprecated)
@@ -111,50 +110,17 @@ func NewServer(
 	g.GET("chat/completions", classicInferenceDeprecated)
 	g.GET("inference/payloads", s.getInferencePayloads)
 
-	g.GET("participants/:address", s.getAccountByAddress)
-	g.GET("participants", s.getAllParticipants)
 	g.POST("participants", s.submitNewParticipantHandler)
 
-	g.POST("verify-proof", s.postVerifyProof)
-	g.POST("verify-block", s.postVerifyBlock)
-
-	g.GET("pricing", s.getPricing)
-	g.GET("supply/total", s.getTotalSupply)
-	g.GET("models", s.getModels)
 	g.GET("governance/pricing", s.getGovernancePricing)
-	g.GET("governance/models", s.getGovernanceModels)
-	//TODO: Remove later - response format used by old dashboard
-	g.GET("governance/models-legacy", s.getGovernanceModelsLegacy)
 	g.GET("stats/models", s.getStatsModels)
 	g.GET("stats/developers/:developer/inferences", s.getStatsDeveloperInferences)
 	g.GET("stats/developers/:developer/summary/epochs", s.getStatsDeveloperSummaryEpochs)
 	g.GET("stats/summary/epochs", s.getStatsSummaryEpochs)
 	g.GET("stats/summary/time", s.getStatsSummaryTime)
 	g.GET("stats/debug/developers", s.getStatsDebugDevelopers)
-	g.GET("poc-batches/:epoch", s.getPoCBatches)
-
-	g.GET("debug/pubkey-to-addr/:pubkey", s.debugPubKeyToAddr)
-	g.GET("debug/verify/:height", s.debugVerify)
-
-	g.GET("versions", s.getVersions)
 
 	g.GET("bridge/status", s.getBridgeStatus)
-	g.GET("bridge/addresses", s.getBridgeAddresses)
-	g.GET("bridge/block/latest", s.getLatestBridgeBlock)
-
-	g.GET("epochs/:epoch", s.getEpochById)
-	g.GET("epochs/:epoch/participants", s.getParticipantsByEpoch)
-
-	// BLS Query Endpoints
-	blsGroup := g.Group("bls/")
-	blsGroup.GET("epoch/:id", s.getBLSEpochByID)
-	blsGroup.GET("epochs/:id", s.getBLSEpochByID)
-	blsGroup.GET("signatures/:request_id", s.getBLSSignatureByRequestID)
-
-	// Restrictions public API (query-only)
-	g.GET("restrictions/status", s.getRestrictionsStatus)
-	g.GET("restrictions/exemptions", s.getRestrictionsExemptions)
-	g.GET("restrictions/exemptions/:id/usage/:account", s.getRestrictionsExemptionUsage)
 
 	// PoC proofs endpoint with IP rate limiting (300 req/min per IP)
 	pocProofsRateLimiter := echomw.RateLimiter(echomw.NewRateLimiterMemoryStoreWithConfig(
@@ -192,6 +158,10 @@ func NewServer(
 	return s
 }
 
+func (s *Server) Start(addr string) {
+	go s.e.Start(addr)
+}
+
 func legacyDevshardDeprecated(c echo.Context) error {
 	c.Response().Header().Set("Deprecation", "true")
 	c.Response().Header().Set("Link", `</devshard/{version}>; rel="successor-version"`)
@@ -208,10 +178,6 @@ func classicInferenceDeprecated(c echo.Context) error {
 		"error":   "deprecated",
 		"message": "classic inference is deprecated; use devshard",
 	})
-}
-
-func (s *Server) Start(addr string) {
-	go s.e.Start(addr)
 }
 
 func (s *Server) getStatus(ctx echo.Context) error {

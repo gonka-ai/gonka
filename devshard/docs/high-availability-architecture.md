@@ -1,0 +1,249 @@
+# Architecture: edge-api, versiond, devshardd, decentralized-api
+
+Current runtime architecture of the Gonka node stack after the
+`pixelplex-refactoring` → `r2` merge. This document describes **what exists
+today**. For the planned high-availability evolution see
+[proposals/high-availability.md](./proposals/high-availability.md); for binary
+rollout mechanics see [rolling-update.md](./rolling-update.md).
+
+Related: [merge-plan.md](./merge-plan.md) (runtime topology),
+[pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
+[storage-design.md](./storage-design.md) (storage-mode selection).
+
+---
+
+## 1. Top-level topology
+
+A single public nginx (`proxy/`) is the edge of every node. It fans requests
+out to three independently-deployable backends:
+
+```text
+                         ┌──────────────┐
+        client  ───────▶ │   proxy      │  :80 / :443  (proxy/)
+                         └──────┬───────┘
+          ┌─────────────────────┼─────────────────────────┐
+          ▼                     ▼                           ▼
+  ┌───────────────┐     ┌──────────────┐         ┌────────────────────┐
+  │  edge-api      │     │ decentralized│         │ versiond[-router]  │
+  │ [-router]      │     │ -api (dapi)  │         │      :8080         │
+  │   :18080       │     │    :9000     │         └─────────┬──────────┘
+  └───────┬────────┘     └──────┬───────┘                   │ per-version child
+          │ Tier A /v1          │ chat, PoC, admin,         ▼
+          │ (read-only)         │ node mgmt, bridge   ┌──────────────┐
+          ▼                     ▼                     │  devshardd   │ :5000+
+   inference-chain         inference-chain            │ (per version)│
+     gRPC :9090         gRPC :9090 + RPC :26657       └──────┬───────┘
+                                                             │
+                                              ┌──────────────┼───────────────┐
+                                              ▼              ▼               ▼
+                                        sqlite OR      nodemanager      chain RPC
+                                      devshard-postgres  :9400 → ML        + gRPC
+```
+
+| Path (public) | Backend | Purpose |
+|---------------|---------|---------|
+| 22 Tier A `/v1/*` query routes | `edge-api` (or `edge-api-router`) | Read-only chain queries |
+| Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
+| `/devshard/<version>/sessions/...` | `versiond` (or `versiond-router`) → `devshardd` | Devshard session protocol |
+| `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
+| `/chain-rpc`, `/chain-api`, `/chain-grpc` | `chain-node` | Direct chain access |
+
+Routing is rendered by `proxy/entrypoint.sh` into
+`proxy/nginx.unified.conf.template`. Tier A locations are emitted **before** the
+generic `/v1/ → dapi` location so they take precedence. Key env:
+`EDGE_API_SERVICE_NAME`, `VERSIOND_SERVICE_NAME` (set to the `*-router` service
+name when running multi-instance overlays).
+
+---
+
+## 2. edge-api — stateless read-only chain query API
+
+`edge-api/` is a small standalone service extracted from dapi (see
+[pixelplex-changes.md](./pixelplex-changes.md)). It owns the **22 Tier A
+`/v1/` query routes** (status, models, pricing, participants, epochs,
+poc-batches, restrictions, BLS, bridge addresses, verify-proof/block, debug
+helpers, versions).
+
+- **Transport:** chain **gRPC only** via `common/chain.Client`
+  (`CHAIN_GRPC_URL`, default `:9090`); a few routes use CometBFT gRPC
+  (`cmtservice`) and ABCI store queries. No Tendermint HTTP RPC.
+- **Stateless:** no DB, no keyring, no ML nodes, no broker. Each request is
+  served directly from chain gRPC. Dependencies are `common/chain`,
+  `common/logging`, `common/utils`, `edge-api/observability`.
+- **Entry / wiring:** `edge-api/cmd/edge-api/main.go`,
+  `edge-api/internal/server/server.go`, handlers under `edge-api/queryapi/`.
+- **Port:** `EDGE_API_PORT` (default `18080`).
+
+### Multi-instance today
+
+Because edge-api holds no state, it scales horizontally already:
+
+- `edge-api-router/` is an nginx **round-robin** (not sticky) load balancer over
+  `EDGE_API_HOSTS`.
+- Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
+  (`local-test-net/docker-compose.edge-api.yml`,
+  `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the
+  router via `EDGE_API_SERVICE_NAME=edge-api-router`.
+
+> edge-api is the natural foundation for the future HA "chain access layer" — see
+> the [HA proposal](./proposals/high-availability.md).
+
+---
+
+## 3. versiond + devshardd — versioned devshard hosts
+
+### versiond (`versioned/`, binary `versiond`)
+
+A supervisor + version-prefix reverse proxy:
+
+- **Version discovery (oracle):** polls `VERSIOND_ORACLE_URL`
+  (`VERSIOND_POLL_INTERVAL`, default 30s) for
+  `{ versions: [{ name, binary, sha256 }] }`. The source of truth is chain
+  governance (`approved_versions`) surfaced by dapi at `:9100/versions`.
+  Files: `versioned/internal/oracle/client.go`, `cmd/versiond/main.go`.
+- **Child processes:** spawns one `devshardd` per approved version, each on a
+  stable local port from `BasePort=5000` (`internal/process/manager.go`,
+  `assignPort`). Binaries are downloaded + sha256-verified before launch.
+- **Routing:** in-process reverse proxy keyed by the first path segment
+  (`/<version>/...`), backed by an `atomic.Value` route table of
+  `version → localhost:port` for **running** children only
+  (`internal/proxy/proxy.go`, `rebuildRoutes`).
+- **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix proxy.
+- **Overrides:** `VERSIOND_OVERRIDE_<name>` (local binary), `VERSIOND_FORCE`
+  (force-run a version).
+
+### devshardd (`devshard/cmd/devshardd/`)
+
+The standalone devshard **host** process (a versiond child, never a direct
+compose service). It runs the per-escrow session protocol:
+
+- **Routes:** `GET /healthz`, `GET /metrics`, and session routes
+  `POST /sessions/:id/chat/completions`, `verify-timeout`, `challenge-receipt`,
+  `gossip/*`, `GET /sessions/:id/{diffs,mempool,signatures,payloads}`
+  (`devshard/cmd/devshardd/server.go`, `devshard/server/routes.go`).
+- **Chain:** gRPC client (`common/chain`) + CometBFT WebSocket for
+  `NewBlock`, `devshard_escrow_created`, `devshard_escrow_settled`; tracks a
+  `chain.Phase` (epoch/height). Bridge queries + dispute submission via
+  `cmd/devshardd/bridge/chain.go` and `cmd/devshardd/tx/manager.go`.
+- **ML nodes:** acquires a locked node through dapi's NodeManager gRPC
+  (`common/nodemanager`, `NODE_MANAGER_ADDR` default `:9400`) and forwards
+  inference.
+- **Process contract:** `--port <N> --data-dir <path>`; the rest via env
+  inherited from the versiond container.
+
+### versiond-router (`versiond-router/`)
+
+nginx with **consistent hashing on escrow/session ID** (`hash $sticky_key
+consistent`), so all requests for one escrow stick to the same versiond host.
+Renders upstreams from `VERSIOND_HOSTS`. Streaming-friendly (no buffering, 600s
+timeouts). Request path:
+
+```text
+client → proxy (/devshard/) → versiond-router:8080 → versiond-N:8080 → devshardd :500x
+```
+
+### Multiple versiond instances (multi-host)
+
+This is the **key capability**: versiond instances can run on **separate
+IPs/machines**, each supervising its own set of devshardd children per version,
+all behind `versiond-router` for sticky session affinity. Compose overlays
+demonstrate it: `local-test-net/docker-compose.versiond.yml` (3 versiond +
+router), `deploy/join/docker-compose.versiond.yml` (2 versiond + router).
+
+> **Multi-instance requires a shared Postgres** — see §4.
+
+---
+
+## 4. Storage: per-instance SQLite vs shared Postgres
+
+devshardd selects exactly one storage backend per process at boot
+(`devshard/storage/factory.go`; see [storage-design.md](./storage-design.md)):
+
+| Condition | Backend |
+|-----------|---------|
+| Store dir already has SQLite sessions | **SQLite** (drain mode even if `PGHOST` set) |
+| No SQLite sessions + `PGHOST` set + Postgres connects | **Postgres** (writes `.pg-bound` marker) |
+| Fresh store, no `PGHOST` | **SQLite** |
+| `.pg-bound` exists but `PGHOST` unset | **Boot error** (would orphan PG sessions) |
+
+The crucial property for multi-instance:
+
+- **SQLite is a single-writer, per-instance file.** It cannot be shared across
+  processes/machines. Its validation-lease store is now a **no-op**
+  (`devshard/storage/leases.go`: `SQLite.Acquire` always grants;
+  `AcquireOneStale`/`SetResult` do nothing), because there is no second instance
+  to coordinate with.
+- **Postgres is a shared, multi-writer DB.** It provides the real
+  cross-instance validation-lease table (`devshard_validation_leases`) that
+  guarantees only one devshardd validates each `(escrow_id, inference_id)` pair.
+
+Therefore:
+
+> **Running multiple versiond/devshardd instances (HA) requires the shared
+> `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every
+> instance selects Postgres. SQLite is for single-instance / local-dev / tests
+> only. This rule is also stated in
+> [release-0.2.14-v4.md](./release-0.2.14-v4.md) and
+> [rolling-update.md](./rolling-update.md).
+
+Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
+`deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`
+for all versiond children.
+
+---
+
+## 5. decentralized-api (dapi) — current responsibilities
+
+dapi (`decentralized-api/`) is the largest service and today bundles many
+responsibilities into one process (`decentralized-api/main.go`):
+
+| Area | Where | Notes |
+|------|-------|-------|
+| **Chain event listener** | `internal/event_listener/` | CometBFT WebSocket `NewBlock` + RPC `BlockResults` per-tx events; drives the phase engine |
+| **Phase engine** | `internal/event_listener/new_block_dispatcher.go` | Phase transitions → broker commands, PoC stages, validation sampling, reward recovery |
+| **Inference API** | `internal/server/public/` | `/v1/chat/completions`, `/completions`, payloads, identity, participants, bridge status |
+| **ML callbacks** | `internal/server/mlnode/` | PoC v2 artifact ingest, `/versions` oracle feed (:9100) |
+| **Admin REST** | `internal/server/admin/` | Node CRUD, model registration, raw tx, BLS request, setup report, etc. |
+| **Node manager (broker)** | `broker/` | ML node lifecycle reconciliation per epoch phase |
+| **NodeManager gRPC** | `nodemanager/` | `AcquireMLNode`/`ReleaseMLNode`/`GetRuntimeConfig` (used by devshardd) |
+| **PoC / cPoC** | `poc/` | Artifact store, commit worker, off-chain validation, proof client/serve |
+| **Tx pipeline** | `cosmosclient/`, `cosmosclient/tx_manager/` | Sign (warm key + authz/feegrant), batch, broadcast, observe |
+| **NATS** | `internal/nats/server/server.go` | **Embedded per process** JetStream for tx send/observe/batch queues |
+| **BLS** | `internal/bls/` | DKG, threshold signing driven by chain events |
+| **Storage** | `payloadstorage/`, `statsstorage/`, `apiconfig/` | Payloads (PG/file), stats (PG), config (SQLite KV) |
+
+### Single-instance constraints today
+
+- **Chain queries:** dapi still queries the inference-chain **directly** over
+  gRPC (`cosmosclient/`) for params, epochs, participants, inferences, PoC
+  commits, bridge addresses, etc. It does not depend on edge-api.
+- **No leader election:** the event listener and phase engine have no singleton
+  guard. Two dapi instances against the same keys would **duplicate chain
+  transactions and ML-node commands**.
+- **Embedded NATS + local keyring + local `last_processed_height`:** all
+  per-process; nothing is shared across replicas.
+
+These are the constraints the [HA proposal](./proposals/high-availability.md)
+addresses by splitting dapi into independently-scalable services around shared
+NATS, Redis, and Postgres, and by sourcing chain state/events from a
+highly-available edge-api.
+
+---
+
+## 6. Service / instance summary
+
+| Service | Stateless? | Multi-instance today | Shared state needed for HA |
+|---------|-----------|----------------------|----------------------------|
+| `proxy` | yes | yes (immutable) | — |
+| `edge-api` | yes | **yes** (+ `edge-api-router`, round-robin) | none |
+| `versiond` + `devshardd` | per-escrow state | **yes** (+ `versiond-router`, sticky hash) | **shared Postgres** |
+| `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
+
+---
+
+## 7. Where to go next
+
+- **Binary rollout (same version, new sha; multi-instance drain):**
+  [rolling-update.md](./rolling-update.md).
+- **Full HA target architecture (HA edge-api event hub, dapi service split,
+  signer/NATS, Redis):** [proposals/high-availability.md](./proposals/high-availability.md).

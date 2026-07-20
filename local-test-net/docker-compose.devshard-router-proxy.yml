@@ -1,0 +1,13 @@
+# Genesis-only overlay: route /devshard/ through versiond-router (sticky LB)
+# instead of the canonical single versiond upstream.
+#
+# Requires docker-compose.versiond.yml (versiond + versiond-2 + versiond-3 +
+# versiond-router). Applied via Testermint additionalDockerFilesByKeyName for
+# GENESIS_KEY_NAME, or manually:
+#   docker compose -p genesis -f docker-compose-base.yml ... \
+#     -f docker-compose.versiond.yml \
+#     -f docker-compose.devshard-router-proxy.yml up -d
+services:
+  proxy:
+    environment:
+      VERSIOND_SERVICE_NAME: versiond-router

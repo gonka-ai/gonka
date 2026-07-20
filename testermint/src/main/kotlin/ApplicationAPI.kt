@@ -491,6 +491,15 @@ data class ApplicationAPI(
         get(url, "admin/v1/config")
     }
 
+    fun getDevshardMempool(escrowId: Long): DevshardMempoolResponse = wrapLog("GetDevshardMempool", false) {
+        val url = urlFor(SERVER_TYPE_PUBLIC)
+        val resp = Fuel.get("$url${defaultDevshardRoutePrefix()}/sessions/$escrowId/mempool")
+            .timeoutRead(1000 * 30)
+            .responseObject<DevshardMempoolResponse>(gsonDeserializer(cosmosJson))
+        logResponse(resp)
+        resp.third.get()
+    }
+
 }
 
 // Retry helper for transient 502 Bad Gateway errors during cluster boot.

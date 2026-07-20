@@ -1,20 +1,18 @@
 # Inference lifecycle and state-leaning design
 
 Design-decisions summary. The corresponding implementation plans live
-in the three companion documents and are not repeated here:
+in the two companion documents and are not repeated here:
 
 - [remove-reveal-seed.md](./remove-reveal-seed.md) — RevealSeed removal.
 - [inferences-pruning.md](./inferences-pruning.md) — in-memory and
   state-root pruning of inference records.
-- [payload-pruning.md](./payload-pruning.md) — per-inference prompt /
-  response payload pruning.
 
-These three changes are independent in the source tree but share one
-underlying observation: once the commit-reveal phase is gone, the chain
-no longer needs devshard to keep inference state alive past the moment
-the local validation window closes. We can therefore stop carrying
-inference records in RAM, stop hashing them into the state root, and
-delete their payloads.
+These changes share one underlying observation: once the commit-reveal
+phase is gone, the chain no longer needs devshard to keep inference
+state alive past the moment the local validation window closes. We can
+therefore stop carrying inference records in RAM, stop hashing them
+into the state root, and rely on epoch-scoped payload retention instead
+of per-inference payload deletes.
 
 ## 1. Remove the RevealSeed phase
 
@@ -64,7 +62,7 @@ zero, keeping the wire format bit-identical with
   returning `RequiredValidations` / `CompletedValidations` constantly
   at zero.
 - Host-local **validation observability** (outside the state root, exposed
-  on `GET /devshard/<version>/stats/shards/{escrow_id}`) is populated when signed
+  on `GET /v1/devshard/stats/shards/{escrow_id}`) is populated when signed
   diffs are applied; see
   [validation-observability-diff-apply.md](./validation-observability-diff-apply.md).
 
@@ -73,11 +71,10 @@ zero, keeping the wire format bit-identical with
 ### What changes
 
 `Mutable.Inferences` no longer accumulates records for the lifetime of
-a session. A record is evicted from RAM the moment the host fires its
-prune trigger for that inference (see §4 for the trigger). The
-diff log remains the canonical source of truth, so any record can be
-rematerialized from disk if a late, post-eviction tx legitimately
-needs it.
+a session. A record is evicted from RAM the moment the host seals that
+inference (see §4 for the seal triggers). The diff log remains the
+canonical source of truth, so any record can be rematerialized from disk
+if a late, post-eviction tx legitimately needs it.
 
 A small, durable per-inference index is maintained for the *only*
 protocol path that may legitimately fire after eviction: the dedup /
@@ -135,54 +132,73 @@ authenticity.
   chain-side allowlist) and pins composition per-binary, not
   per-session.
 
-## 3. Delete inference payloads when they become unreachable
+## 3. Payload retention is epoch-scoped, not per-inference
 
 ### What changes
 
-`PayloadStorage` gains a per-inference `DeleteInference` operation
-alongside the existing epoch-granular `PruneEpoch`. The host emits a
-prune event over a small callback interface
-(`PruneEventSink.OnInferencePrunable(InferencePruneEvent)`); the
-adapter inside `decentralized-api` translates each event into a
-`DeleteInference` call under the host's pinned escrow epoch (epoch
-`PruneEpoch` sweep is the backstop for orphans). A validator that fetches a payload after it
-has been deleted receives an HTTP 404 from the executor and **skips
-silently**: no `MsgValidation`, no challenge, no failure record.
+Devshard executor payloads (prompt / response bytes) live in
+`common/storage/payloads` inside **devshardd**, keyed by
+`(escrow_id, inference_id, epoch_id)`.
+
+**Single versiond / local dev:** when `PGHOST` is unset, payloads are stored as
+files under `{data-dir}/payloads` (same policy as `decentralized-api/payloadstorage`
+on `devshard-0.2.13-v2-r2`).
+
+**Multi versiond / rolling overlap:** shared Postgres is required; see
+`devshard/docs/storage-design.md` (payload storage section).
+`(escrow_id, inference_id, epoch_id)`. There is **no** per-inference
+delete when an inference is sealed. Payloads are reclaimed only when
+devshardd drops an entire epoch partition on a new block:
+
+```
+expiredPayloadEpoch := currentEpoch - 3   // retain last 3 epochs
+payloadStore.DropEpoch(expiredPayloadEpoch)
+```
+
+Sealing an inference (§4) updates session storage (`InsertSealedInference`)
+and evicts the live RAM record, but leaves payload bytes in place until
+the epoch partition is dropped.
+
+Mainnet executor payloads in **decentralized-api**
+(`decentralized-api/payloadstorage/`) are a separate subsystem with its
+own epoch `PruneEpoch` / `ManagedStorage` retention policy. It is not
+coupled to devshard host sealing.
+
+A validator that fetches a payload after the epoch partition has been
+dropped receives an HTTP 404 from the executor and **skips silently**:
+no `MsgValidation`, no challenge, no failure record.
 
 ### Why this is safe
 
 Validation feedback is invisible to the chain after the RevealSeed
 removal (§1). A validator that arrives too late to find the payload
 has no on-chain consequence whether it fails, retries, or skips, so
-"skip and log" is the cheapest correct behavior. The host-side prune
-events are emitted only after a diff has been durably applied, so we
-never delete a payload speculatively. The pre-existing epoch sweep in
-`payloadstorage.ManagedStorage` remains as a backstop for orphans
-(e.g. a host crash between `Store` and the prune callback).
+"skip and log" is the cheapest correct behavior. Three epochs of
+retention is enough for normal validation catch-up; the partition drop
+is deterministic from the chain epoch counter, not from host-local
+seal timing.
 
 ### Operational consequences
 
-- Per-inference deletions reduce payload disk / Postgres pressure to
-  the active validation window rather than the full epoch retention
-  horizon.
-- The change is purely executor-side. No proto bumps, no new chain
-  txs, no state-root impact. It can be deployed host-by-host: hosts
-  that have not upgraded still keep their payloads and their
-  validators still see the same payloads as before.
+- Payload disk / Postgres pressure scales with epoch throughput, not
+  with per-inference seal timing. Worst-case retention is roughly
+  three chain epochs of executor traffic.
+- No proto bumps, no new chain txs, no state-root impact from payload
+  cleanup. Epoch drops run in devshardd on every new block once
+  `currentEpoch >= 4`.
 
-## 4. Pruning triggers — when an inference is dropped
+## 4. Seal triggers — when an inference leaves live RAM
 
-The same set of triggers drives both the in-RAM eviction (§2) and the
-payload deletion (§3). They are evaluated by the host inside
-`applyAndPersist`, after the diff has been applied and persisted, so
-no host can emit a prune for state that did not durably land.
+The same set of triggers drives in-RAM eviction and the durable sealed
+index write. They are evaluated inside the state machine (`autoSealLocked`
+during `ApplyDiff`) and persisted by the host in `applyAndPersist` after
+the diff has been applied.
 
 ### Trigger A — terminal status
 
 An applied diff transitions an inference to
 `StatusValidated`, `StatusInvalidated`, or `StatusTimedOut`. There is
-no further protocol path that needs either the inference record or
-its payload. Fired by:
+no further protocol path that needs the live inference record. Fired by:
 
 - `applyValidation` flipping `Status` from `Finished` / `Challenged`
   to `Validated` / `Invalidated`,
@@ -193,13 +209,12 @@ its payload. Fired by:
 `PhaseFinalizing → PhaseSettlement` transitions (deadline-only after
 §1). At that point no further `MsgValidation`, `MsgChallenge`, or
 `MsgValidationVote` will be accepted by the state machine. The host
-emits one bulk prune for every inference still in `StatusFinished` or
-`StatusChallenged`.
+seals every inference still in `StatusFinished` or `StatusChallenged`.
 
 ### Trigger C — stale-finished grace (temporary)
 
 An inference that finished during the Active phase but was never
-touched by a validation, challenge, or timeout. The host evicts it
+touched by a validation, challenge, or timeout. The host seals it
 only when **both** of:
 
 - enough nonces have passed since `MsgFinishInference`
@@ -217,17 +232,17 @@ A wall-clock-only gate is unsafe in the opposite direction at low
 traffic. Both must pass.
 
 **Trigger C is explicitly a temporary measure.** It is the only
-trigger that prunes an inference whose validation outcome is still
+trigger that seals an inference whose validation outcome is still
 formally undecided. It is justified today only because the chain
 does not act on missed validations (§1) and the validation protocol
 treats every host's verdict as advisory. The intent is to **redesign
-the validation protocol** so that an inference's payload retention
+the validation protocol** so that an inference's live-state retention
 requirement is bounded by a protocol-visible event (e.g. an explicit
 "validation window closed" message or an on-chain commitment), at
 which point Trigger C disappears.
 
 Under v2 composition, **Trigger A** uses the same nonce and
-wall-clock gates before sealing and pruning post-terminal inferences
+wall-clock gates before sealing post-terminal inferences
 (delayed seal after terminal). The grace values are frozen in
 `SessionConfig` at session create (from chain `DevshardEscrowParams`
 via `GetEscrow`) and do not feed into the state root, so adjusting
@@ -240,29 +255,26 @@ governance defaults only affects newly created sessions.
   host's `validateAsync` loop, so the host produces no
   `MsgValidation` and the validator does not retry the same id.
 - **Diff replay on recovery.** The diff log is canonical and is
-  replayed on cold start. Tier A and B events naturally re-fire on
+  replayed on cold start. Tier A and B seals naturally re-fire on
   the same terminal transitions and settlement entry. Tier C's
   bookkeeping is host-local and not persisted, so inferences that
   finished before a snapshot are not Tier-C-eligible after recovery
-  from that snapshot — Tier A, Tier B, and the epoch sweep remain
-  the backstops.
-- **Storage layering.** Inference payload storage
-  (`decentralized-api/payloadstorage/`) and devshard session storage
-  (`devshard/storage/`, see [storage-design.md](./storage-design.md))
-  remain independent subsystems with separate retention policies and
-  separate backends, but a prune trigger now writes to both at the
-  same point in time:
-  - **payload storage** loses the prompt / response bytes via
-    `DeleteInference`,
-  - **session storage** gains exactly one row in the new sealed
-    `inferences` table (write-once at seal, single-row update on a
-    late `MsgValidation`), and loses the live `Mutable.Inferences`
-    entry from any future snapshot.
-  Diffs and signatures in session storage are untouched. Epoch-level
-  partition drops in either subsystem remain the long-tail
-  reclamation path for everything else.
+  from that snapshot — Tier A, Tier B, and the epoch partition drop
+  remain the backstops.
+- **Storage layering.** Three independent retention paths:
+  - **devshardd payload storage** (`common/storage/payloads`) — epoch
+    partition drop on new block (`DropEpoch` at `currentEpoch - 3`).
+  - **dapi payload storage** (`decentralized-api/payloadstorage/`) —
+    mainnet executor payloads; `ManagedStorage` epoch prune only.
+  - **devshard session storage** (`devshard/storage/`) — diffs,
+    signatures, and the sealed `inferences` index. Sealing writes
+    one row to the index and removes the live `Mutable.Inferences`
+    entry from future snapshots; payload bytes are untouched.
+  Epoch-level partition drops in payload storage and `PruneEpoch` in
+  session storage remain the long-tail reclamation path for everything
+  else.
 - **Wire compatibility.** No proto field is renumbered, removed, or
-  reinterpreted by §1 or §3. §2 Phase 1 is gated by a binary
+  reinterpreted by §1. §2 Phase 1 is gated by a binary
   version tag that the chain allowlists; v1 and v2 share the same
   opaque-`rest_hash` settlement shape, so chain code does not branch
   on the tag.

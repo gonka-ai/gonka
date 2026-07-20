@@ -3,14 +3,42 @@ package devshard
 import (
 	"fmt"
 	"strings"
+
+	"devshard/types"
 )
 
 func VersionedRoutePrefix(version string) string {
 	return "/devshard/" + version
 }
 
-// VersionForRoutePrefix maps a versioned HTTP route prefix to the runtime tag
-// used when creating a user-side session.
+// DefaultRoutePrefix is the HTTP mount used when no explicit route prefix is set.
+func DefaultRoutePrefix() string {
+	return VersionedRoutePrefix(types.EffectiveStateRootAndProtocolVersion)
+}
+
+// ResolveVersionedRoutePrefix returns routePrefix when set, otherwise the
+// versioned mount for version.
+func ResolveVersionedRoutePrefix(version, routePrefix string) string {
+	if routePrefix != "" {
+		return routePrefix
+	}
+	return VersionedRoutePrefix(version)
+}
+
+// NormalizeRoutePrefix returns a canonical route prefix. Empty input defaults
+// to DefaultRoutePrefix(); otherwise ResolveRoutePrefix must succeed.
+func NormalizeRoutePrefix(routePrefix string) string {
+	if strings.TrimSpace(routePrefix) == "" {
+		return DefaultRoutePrefix()
+	}
+	normalized, _, err := ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		return routePrefix
+	}
+	return normalized
+}
+
+// ResolveRoutePrefix parses a versioned HTTP route prefix into (prefix, version).
 func ResolveRoutePrefix(routePrefix string) (string, string, error) {
 	normalized := strings.TrimRight(strings.TrimSpace(routePrefix), "/")
 	if !strings.HasPrefix(normalized, "/") {
@@ -25,7 +53,7 @@ func ResolveRoutePrefix(routePrefix string) (string, string, error) {
 }
 
 func VersionForRoutePrefix(routePrefix string) (string, error) {
-	_, version, err := ResolveRoutePrefix(routePrefix)
+	_, version, err := ResolveRoutePrefix(NormalizeRoutePrefix(routePrefix))
 	if err != nil {
 		return "", err
 	}
@@ -33,7 +61,7 @@ func VersionForRoutePrefix(routePrefix string) (string, error) {
 }
 
 func SessionPayloadPath(routePrefix, escrowID string) string {
-	normalized := strings.TrimPrefix(routePrefix, "/")
+	normalized := strings.TrimPrefix(NormalizeRoutePrefix(routePrefix), "/")
 	return fmt.Sprintf("%s/sessions/%s/payloads", normalized, escrowID)
 }
 

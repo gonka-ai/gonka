@@ -1,7 +1,5 @@
 package bridge
 
-import "devshard/types"
-
 // MainnetBridge defines the interface between the devshard and mainnet.
 // Phase 1: interface only, no implementation.
 type MainnetBridge interface {
@@ -20,18 +18,12 @@ type MainnetBridge interface {
 	SubmitDisputeState(escrowID string, stateRoot []byte, nonce uint64, sigs map[uint32][]byte) error
 }
 
-// SessionBindParamsBridge supplies lane-B governance fields read from chain
-// Params at session bind time (see devshard/docs/params-dataflow.md).
-type SessionBindParamsBridge interface {
-	GetSessionBindParams() (types.LiveSessionBindParams, error)
-}
-
 type EscrowInfo struct {
-	EscrowID                  string
-	Amount                    uint64
-	CreatorAddress            string
-	AppHash                   []byte
-	Slots                     []string // host addresses, len == DevshardGroupSize
+	EscrowID       string
+	Amount         uint64
+	CreatorAddress string
+	AppHash        []byte
+	Slots          []string // host addresses, len == DevshardGroupSize
 	TokenPrice                uint64
 	CreateDevshardFee         uint64
 	FeePerNonce               uint64
@@ -39,6 +31,7 @@ type EscrowInfo struct {
 	InferenceSealGraceSeconds uint32
 	AutoSealEveryNNonces      uint32
 	ValidationRate            uint32
+	VoteThresholdFactor       uint32
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64

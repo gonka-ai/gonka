@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -373,6 +374,10 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if len(candidates) == 0 && len(sealed) == 0 {
 		return
 	}
+	candidatesJSON, err := json.Marshal(candidates)
+	if err != nil {
+		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
+	}
 	args := []any{
 		"subsystem", side,
 		"diagnostic", "auto_seal",
@@ -382,9 +387,9 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
 		"state_clock_confirmed_at", stateClock,
+		"candidates", string(candidatesJSON),
 		"sealed_ids", sealed,
 		"sealed_count", len(sealed),
-		"candidates_count", len(candidates),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
 	if clockWin.Known {
@@ -616,6 +621,20 @@ func (sm *StateMachine) RebuildSealedInferenceIndex() error {
 func (sm *StateMachine) persistLiveInferenceObsLocked(id uint64, rec *types.InferenceRecord) error {
 	sealNonce, _ := sm.sealedNonces[id]
 	return sm.upsertInferenceObsLocked(id, sealNonce, rec)
+}
+
+// persistLiveInferenceObsBestEffortLocked upserts live inference obs for
+// observability only. Storage errors are logged and never fail the tx caller,
+// matching the auto-seal contract (recovery rebuilds from the diff journal).
+func (sm *StateMachine) persistLiveInferenceObsBestEffortLocked(id uint64, rec *types.InferenceRecord) {
+	if err := sm.persistLiveInferenceObsLocked(id, rec); err != nil {
+		logging.Warn("failed to persist live inference obs; continuing (best-effort, recovery rebuilds from diffs)",
+			"subsystem", "state",
+			"escrow_id", sm.state.EscrowID,
+			"inference_id", id,
+			"error", err,
+		)
+	}
 }
 
 // upsertInferenceObsLocked writes or updates the observability row for an inference.

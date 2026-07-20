@@ -76,6 +76,11 @@ func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
+func (r *recordingStorage) ClearValidationObs(escrowID string) error {
+	r.lastMethod = "ClearValidationObs"
+	return nil
+}
+
 func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	r.lastMethod = "RecordValidationsAppliedOnce"
 	return nil

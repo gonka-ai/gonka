@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"decentralized-api/apiconfig"
+	"common/utils"
 	"decentralized-api/cosmosclient"
-	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal"
 	"errors"
 
@@ -393,7 +393,7 @@ func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, 
 // owner's Cosmos address from its public key. The same content fields feed the
 // confirmation query, so the on-chain content hash matches exactly.
 func (q *BridgeQueue) buildBridgeExchangeMsg(receipt BridgeReceipt, block BridgeBlock) (*types.MsgBridgeExchange, error) {
-	cosmosAddress, err := cosmos_client.PubKeyToAddress(receipt.OwnerPubKey)
+	cosmosAddress, err := utils.PubKeyToAddress(receipt.OwnerPubKey)
 	if err != nil {
 		return nil, fmt.Errorf("Bridge: Failed to derive Cosmos address from public key %q: %w", receipt.OwnerPubKey, err)
 	}

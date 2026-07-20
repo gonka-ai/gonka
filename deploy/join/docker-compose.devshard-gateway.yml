@@ -1,67 +1,4 @@
 services:
-  # Optional HTTPS frontend for standalone devshard-gateway.
-  #
-  # HTTP-01 certificate:
-  #   export DEVSHARD_GATEWAY_DOMAIN=your.domain.com
-  #
-  # Cloudflare DNS-01 certificate:
-  #   export DEVSHARD_GATEWAY_DOMAIN=your.domain.com
-  #   export CLOUDFLARE_API_TOKEN=<cloudflare token with DNS edit access>
-  #
-  # Start:
-  #   docker compose --profile ssl -f docker-compose.devshard-gateway.yml up -d
-  devshard-gateway-caddy:
-    profiles:
-      - ssl
-    container_name: ${DEVSHARD_CADDY_INSTANCE_NAME:-devshard-gateway-caddy}
-    image: gonka-devshard-gateway-caddy:local
-    build:
-      dockerfile_inline: |
-        FROM caddy:2-builder AS builder
-        RUN xcaddy build --with github.com/caddy-dns/cloudflare
-
-        FROM caddy:2
-        COPY --from=builder /usr/bin/caddy /usr/bin/caddy
-    command:
-      - sh
-      - -ec
-      - |
-        if [ -z "$${DEVSHARD_GATEWAY_DOMAIN:-}" ]; then
-          echo "DEVSHARD_GATEWAY_DOMAIN is required"
-          exit 1
-        fi
-
-        {
-          if [ -n "$${CLOUDFLARE_API_TOKEN:-}" ]; then
-            printf '{\n  acme_dns cloudflare {env.CLOUDFLARE_API_TOKEN}\n}\n\n'
-          fi
-          printf '%s {\n' "$${DEVSHARD_GATEWAY_DOMAIN}"
-          printf '  @metrics path /metrics*\n'
-          printf '  respond @metrics 404\n\n'
-          printf '  handle /grafana* {\n'
-          printf '    reverse_proxy grafana:3000\n'
-          printf '  }\n\n'
-          printf '  reverse_proxy devshard-gateway:8080\n'
-          printf '}\n'
-        } > /tmp/Caddyfile
-
-        exec caddy run --config /tmp/Caddyfile --adapter caddyfile
-    environment:
-      - DEVSHARD_GATEWAY_DOMAIN=${DEVSHARD_GATEWAY_DOMAIN:-}
-      - CLOUDFLARE_API_TOKEN=${CLOUDFLARE_API_TOKEN:-}
-    volumes:
-      - caddy_devshard_data:/data
-      - caddy_devshard_config:/config
-    ports:
-      - "${DEVSHARD_HTTPS_HTTP_PORT:-80}:80"
-      - "${DEVSHARD_HTTPS_PORT:-443}:443"
-    networks:
-      - join_default
-    depends_on:
-      devshard-gateway:
-        condition: service_started
-    restart: unless-stopped
-
   devshard-gateway:
     container_name: ${DEVSHARD_INSTANCE_NAME:-devshard-gateway}
     image: ghcr.io/gonka-ai/devshard-gateway:mainnet-v0.2.13-latest
@@ -89,7 +26,3 @@ services:
 networks:
   join_default:
     external: true
-
-volumes:
-  caddy_devshard_data:
-  caddy_devshard_config:

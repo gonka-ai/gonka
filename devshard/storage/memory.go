@@ -60,8 +60,9 @@ type sessionData struct {
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
-	mu       sync.RWMutex
-	sessions map[string]*sessionData
+	mu               sync.RWMutex
+	sessions         map[string]*sessionData
+	validationLeases map[string]map[uint64]memoryLease
 }
 
 func NewMemory() *Memory {
@@ -151,6 +152,16 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 
 	s.diffs = append(s.diffs, rec)
 	s.nonceToIndex[rec.Nonce] = len(s.diffs) - 1
+	return nil
+}
+
+// AppendDiffs appends many diffs under one lock (used by HA migrate).
+func (m *Memory) AppendDiffs(escrowID string, diffs []types.DiffRecord) error {
+	for _, rec := range diffs {
+		if err := m.AppendDiff(escrowID, rec); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 
@@ -314,7 +325,50 @@ func (m *Memory) DeleteSealedInferences(escrowID string) error {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
 	s.inferences = make(map[uint64]InferenceRow)
+	return nil
+}
+
+func (m *Memory) ClearValidationObs(escrowID string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
 	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	return nil
+}
+
+// ImportValidationObs replaces live/sealed validation-obs maps for an escrow
+// with the provided rows (HA migrate).
+func (m *Memory) ImportValidationObs(escrowID string, live, sealed []ValidationObsRow) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	s, ok := m.sessions[escrowID]
+	if !ok {
+		return fmt.Errorf("session %s not found", escrowID)
+	}
+	s.inferenceValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	s.sealedValidationObs = make(map[uint64]map[uint32]SlotValidationObs)
+	put := func(dst map[uint64]map[uint32]SlotValidationObs, rows []ValidationObsRow) {
+		for _, r := range rows {
+			bySlot := dst[r.InferenceID]
+			if bySlot == nil {
+				bySlot = make(map[uint32]SlotValidationObs)
+				dst[r.InferenceID] = bySlot
+			}
+			bySlot[r.SlotID] = SlotValidationObs{
+				SlotID:               r.SlotID,
+				RequiredValidations:  r.Required,
+				CompletedValidations: r.Completed,
+			}
+		}
+	}
+	put(s.inferenceValidationObs, live)
+	put(s.sealedValidationObs, sealed)
 	return nil
 }
 
@@ -421,6 +475,7 @@ func (m *Memory) PruneEpoch(epochID uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.pruneValidationLeasesBefore(epochID + 1)
 	return nil
 }
 
@@ -433,6 +488,7 @@ func (m *Memory) pruneBefore(cutoff uint64) error {
 			delete(m.sessions, id)
 		}
 	}
+	m.pruneValidationLeasesBefore(cutoff)
 	return nil
 }
 

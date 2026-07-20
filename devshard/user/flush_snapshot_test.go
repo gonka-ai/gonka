@@ -72,7 +72,7 @@ func buildLiveSession(
 
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
 		EscrowID:       "escrow-1",
-		Version:        types.SessionVersionV1,
+		Version:        testutil.RuntimeTestVersion,
 		CreatorAddr:    user.Address(),
 		Config:         config,
 		Group:          group,
@@ -136,7 +136,7 @@ func TestFlushSnapshot_RetiredEscrowRebuildsWithoutReplay(t *testing.T) {
 	// replay) any post-snapshot diff.
 	verifier := signing.NewSecp256k1Verifier()
 	spy := &replaySpyStore{Storage: store}
-	rec, recSM, err := RecoverSession(spy, user, verifier, "escrow-1", types.SessionVersionV1, group, buildRecoveryClients(t, hosts, group, user))
+	rec, recSM, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group, buildRecoveryClients(t, hosts, group, user))
 	require.NoError(t, err)
 	require.Equal(t, uint64(numInferences), rec.Nonce())
 	require.Zero(t, spy.replayedRecords(snapNonce), "retired escrow must rebuild with zero diff replay")

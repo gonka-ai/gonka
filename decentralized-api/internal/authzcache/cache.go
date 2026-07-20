@@ -1,9 +1,9 @@
 package authzcache
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"sync"
 	"time"
 

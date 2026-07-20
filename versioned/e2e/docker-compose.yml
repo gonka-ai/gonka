@@ -30,6 +30,7 @@ services:
       ORACLE_URL: http://oracle:8080
       VERSIOND_URL: http://versiond:8080
       TESTAPP_PATH: /app/build/testapp
+      TESTAPP2_PATH: /app/build/testapp2
     depends_on:
       - oracle
       - versiond

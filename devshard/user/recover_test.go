@@ -29,7 +29,7 @@ func newTestStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
-	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion)}, opts...)
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion)}, opts...)
 	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance), opts...)
 	require.NoError(t, err)
 	return sm
@@ -531,19 +531,6 @@ func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
 	require.NotNil(t, blob.State, "snapshot must be upgraded to wrapper format on legacy recovery")
 }
 
-func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
-	pv, ok := recoveredProtocolVersion(string(types.ProtocolV1))
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	pv, ok = recoveredProtocolVersion(types.SessionVersionV1)
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	_, ok = recoveredProtocolVersion("")
-	require.False(t, ok)
-}
-
 // legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
 // specific escrow, simulating a corrupt or pre-versioning row. GetSessionMeta
 // on real backends rejects empty stored versions; this wrapper is only used
@@ -596,8 +583,8 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
-	require.Equal(t, types.EffectiveStateRootAndProtocolVersion, exported.StateRootAndProtocolVersion,
-		"recovered state machine uses the binary's state-root protocol version")
+	require.Equal(t, testutil.RuntimeTestVersion, exported.StateRootAndProtocolVersion,
+		"recovered state machine uses the session protocol version")
 }
 
 // TestRecoverSession_EmptyVersionRejected requires a version from storage or caller.

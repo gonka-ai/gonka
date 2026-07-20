@@ -1,6 +1,5 @@
 import com.productscience.EpochStage
 import com.productscience.assertions.assertThat
-import com.productscience.data.ClaimRecipientEntry
 import com.productscience.data.UnfundedInferenceParticipant
 import com.productscience.inferenceConfig
 import com.productscience.initCluster

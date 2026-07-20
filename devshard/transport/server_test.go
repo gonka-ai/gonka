@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
 	"devshard/signing"
@@ -23,6 +24,8 @@ import (
 	"devshard/stub"
 	"devshard/types"
 )
+
+const testRoutePrefix = "/devshard/v2"
 
 type serverTestEnv struct {
 	server     *Server
@@ -34,10 +37,24 @@ type serverTestEnv struct {
 	config     types.SessionConfig
 }
 
-const testRoutePrefix = "/devshard/test"
-
-func testSessionPath(path string) string {
-	return testRoutePrefix + "/sessions/escrow-1" + path
+// registerServer wires srv's handlers onto g using the same auth + rate-limit
+// chain as server/routes.go withSessionAuth. Kept in tests; production wiring
+// uses RegisterLazySessionRoutes.
+func registerServer(g *echo.Group, srv *Server) {
+	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
+			return srv.AuthMiddleware(wrapped)(c)
+		}
+	}
+	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
+	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
+	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
+	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
+	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }
 
 func setupServerEnv(t *testing.T) *serverTestEnv {
@@ -67,8 +84,8 @@ func setupServerEnv(t *testing.T) *serverTestEnv {
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group(testRoutePrefix)
-	srv.Register(g)
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
 
 	return &serverTestEnv{
 		server:     srv,
@@ -127,7 +144,7 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 	body, err := json.Marshal(ir)
 	require.NoError(t, err)
 
-	rec := env.doPost(t, testSessionPath("/chat/completions"), body)
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 
@@ -165,7 +182,7 @@ func TestServer_Inference_NoAuth(t *testing.T) {
 	env := setupServerEnv(t)
 
 	body := []byte(`{}`)
-	req := httptest.NewRequest(http.MethodPost, testSessionPath("/chat/completions"),
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/chat/completions",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	rec := httptest.NewRecorder()
@@ -182,7 +199,7 @@ func TestServer_Inference_NotInGroup(t *testing.T) {
 	sig, err := SignRequest(outsider, "escrow-1", body, ts)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, testSessionPath("/chat/completions"),
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/chat/completions",
 		strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
@@ -205,11 +222,11 @@ func TestServer_GetDiffs(t *testing.T) {
 		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
-	rec := env.doPost(t, testSessionPath("/chat/completions"), body)
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// Now GET diffs.
-	rec = env.doGet(t, testSessionPath("/diffs?from=1&to=1"))
+	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/diffs?from=1&to=1")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var diffs []json.RawMessage
@@ -230,11 +247,11 @@ func TestServer_GetMempool(t *testing.T) {
 		Payload: &PayloadJSON{Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000},
 	}
 	body, _ := json.Marshal(ir)
-	rec := env.doPost(t, testSessionPath("/chat/completions"), body)
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	// GET mempool.
-	rec = env.doGet(t, testSessionPath("/mempool"))
+	rec = env.doGet(t, "/devshard/v2/sessions/escrow-1/mempool")
 	require.Equal(t, http.StatusOK, rec.Code)
 
 	var result struct {
@@ -254,14 +271,14 @@ func TestServer_RateLimit(t *testing.T) {
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group(testRoutePrefix)
-	srv.Register(g)
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
 
 	body := []byte(`{}`)
 	doReq := func() int {
 		ts := time.Now().Unix()
 		sig, _ := SignRequest(env.userSigner, "escrow-1", body, ts)
-		req := httptest.NewRequest(http.MethodPost, testSessionPath("/chat/completions"),
+		req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/chat/completions",
 			strings.NewReader(string(body)))
 		req.Header.Set("Content-Type", "application/json")
 		req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
@@ -331,8 +348,8 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group(testRoutePrefix)
-	srv.Register(g)
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
 
 	// Apply diffs through the host to populate storage.
 	_, err = h.HandleRequest(context.Background(), host.HostRequest{Diffs: []types.Diff{diff1, diff2}})
@@ -368,7 +385,7 @@ func TestHandleGossipNonce_WarmKey(t *testing.T) {
 	sig, err := SignRequest(warmSigner, "escrow-1", body, ts)
 	require.NoError(t, err)
 
-	req := httptest.NewRequest(http.MethodPost, testSessionPath("/gossip/nonce"), strings.NewReader(string(body)))
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/gossip/nonce", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
 	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
@@ -400,7 +417,7 @@ func TestServer_StreamingInference(t *testing.T) {
 	body, err := json.Marshal(ir)
 	require.NoError(t, err)
 
-	rec := env.doPost(t, testSessionPath("/chat/completions"), body)
+	rec := env.doPost(t, "/devshard/v2/sessions/escrow-1/chat/completions", body)
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "text/event-stream", rec.Header().Get("Content-Type"))
 
@@ -452,15 +469,65 @@ func (env *serverTestEnv) doPostAs(t *testing.T, path string, body []byte, signe
 func TestServer_Inference_GroupMemberRejected(t *testing.T) {
 	env := setupServerEnv(t)
 	body := []byte(`{}`)
-	rec := env.doPostAs(t, testSessionPath("/chat/completions"), body, env.hostSigner)
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/chat/completions", body, env.hostSigner)
 	require.Equal(t, http.StatusForbidden, rec.Code)
 }
 
 func TestServer_VerifyTimeout_GroupMemberRejected(t *testing.T) {
 	env := setupServerEnv(t)
 	body := []byte(`{}`)
-	rec := env.doPostAs(t, testSessionPath("/verify-timeout"), body, env.hostSigner)
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/verify-timeout", body, env.hostSigner)
 	require.Equal(t, http.StatusForbidden, rec.Code)
+}
+
+func TestServer_VerifyTimeout_RequestsDisabled(t *testing.T) {
+	hostSigner := testutil.MustGenerateKey(t)
+	userSigner := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
+	config := testutil.DefaultConfig(1)
+	verifier := signing.NewSecp256k1Verifier()
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
+	require.NoError(t, err)
+	engine := stub.NewInferenceEngine()
+	store := storage.NewMemory()
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
+
+	tracker := devshard.NewAvailabilityTracker(false, 100, 7)
+	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil,
+		host.WithGrace(100),
+		host.WithStorage(store),
+		host.WithAvailabilityProvider(tracker),
+	)
+	require.NoError(t, err)
+
+	srv, err := NewServer(h, store, verifier, userSigner.Address())
+	require.NoError(t, err)
+
+	e := echo.New()
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
+
+	body := []byte(`{}`)
+	ts := time.Now().Unix()
+	sig, err := SignRequest(userSigner, "escrow-1", body, ts)
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/verify-timeout", strings.NewReader(string(body)))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
+	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.Equal(t, DevshardErrorRequestsDisabled, rec.Header().Get(HeaderDevshardError))
 }
 
 func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
@@ -468,7 +535,7 @@ func TestServer_ChallengeReceipt_GroupMemberAllowed(t *testing.T) {
 	// Group members (peer hosts) must be allowed to call ChallengeReceipt
 	// during timeout verification. Empty diffs + no matching inference = 200 with empty receipt.
 	body := []byte(`{"inference_id":999,"diffs":[],"payload":null}`)
-	rec := env.doPostAs(t, testSessionPath("/challenge-receipt"), body, env.hostSigner)
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/challenge-receipt", body, env.hostSigner)
 	require.Equal(t, http.StatusOK, rec.Code)
 }
 
@@ -500,8 +567,8 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group(testRoutePrefix)
-	srv.Register(g)
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
 
 	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	dj, err := DiffToJSON(diff)
@@ -518,7 +585,7 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	sig, sigErr := SignRequest(userSigner, "escrow-1", body, reqTime)
 	ts.NoError(sigErr)
 
-	req := httptest.NewRequest(http.MethodPost, testSessionPath("/chat/completions"), strings.NewReader(string(body)))
+	req := httptest.NewRequest(http.MethodPost, "/devshard/v2/sessions/escrow-1/chat/completions", strings.NewReader(string(body)))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
 	req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", reqTime))

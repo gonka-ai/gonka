@@ -1,15 +1,16 @@
 package event_listener
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"fmt"
+	"log"
+	"net/url"
+
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
-	"log"
-	"net/url"
 )
 
 func subscribeToEvents(ws *websocket.Conn, id uint32, query string) {

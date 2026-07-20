@@ -19,10 +19,9 @@ import (
 )
 
 func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
-	env := childEnv("v0.2.11")
+	env := childEnv("0.2.13-v2-r2")
 	want := map[string]bool{
-		"DEVSHARD_LOG_PREFIX=v0.2.11":     false,
-		"DEVSHARD_BINARY_VERSION=v0.2.11": false,
+		"DEVSHARD_BINARY_LOG_VERSION=0.2.13-v2-r2": false,
 	}
 	for _, entry := range env {
 		if _, ok := want[entry]; ok {
@@ -33,6 +32,131 @@ func TestChildEnvIncludesVersionLogPrefix(t *testing.T) {
 		if !present {
 			t.Fatalf("childEnv missing %q", key)
 		}
+	}
+}
+
+func TestChildEnvSlotNameFallback(t *testing.T) {
+	env := childEnv("v2")
+	want := "DEVSHARD_BINARY_LOG_VERSION=v2"
+	found := false
+	for _, entry := range env {
+		if entry == want {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("childEnv missing %q", want)
+	}
+}
+
+func TestPreflightChild_MissingBinary(t *testing.T) {
+	_, err := preflightChild(filepath.Join(t.TempDir(), "missing"), "v2")
+	if err == nil {
+		t.Fatal("expected error for missing binary")
+	}
+}
+
+func TestPreflightChild_LegacyFallback(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "legacy-bin")
+	if err := os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChild(binPath, "v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preflight.binaryLogVersion != "v2" {
+		t.Fatalf("legacy preflight binaryLogVersion = %q, want %q", preflight.binaryLogVersion, "v2")
+	}
+}
+
+func TestPreflightChild_ProtocolFlagUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "binary-only-stamp")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChild(binPath, "v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preflight.binaryLogVersion != "0.2.13-v2-r2" {
+		t.Fatalf("binaryLogVersion = %q, want stamped build id", preflight.binaryLogVersion)
+	}
+}
+
+func TestPreflightChild_BinaryFlagUnsupported(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "protocol-only-stamp")
+	script := `#!/bin/sh
+case "$1" in
+--print-protocol-version) echo "v2" ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChild(binPath, "v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preflight.binaryLogVersion != "v2" {
+		t.Fatalf("binaryLogVersion = %q, want slot name fallback %q", preflight.binaryLogVersion, "v2")
+	}
+}
+
+func TestPreflightChild_ProtocolMismatch(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "stamped-bin")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v1" ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := preflightChild(binPath, "v2")
+	if err == nil {
+		t.Fatal("expected protocol mismatch error")
+	}
+}
+
+func TestPreflightChild_StampedBinary(t *testing.T) {
+	dir := t.TempDir()
+	binPath := filepath.Join(dir, "stamped-bin")
+	script := `#!/bin/sh
+case "$1" in
+--print-binary-version) echo "0.2.13-v2-r2" ;;
+--print-protocol-version) echo "v2" ;;
+*) exit 1 ;;
+esac
+`
+	if err := os.WriteFile(binPath, []byte(script), 0755); err != nil {
+		t.Fatal(err)
+	}
+
+	preflight, err := preflightChild(binPath, "v2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if preflight.binaryLogVersion != "0.2.13-v2-r2" {
+		t.Fatalf("binaryLogVersion = %q, want %q", preflight.binaryLogVersion, "0.2.13-v2-r2")
 	}
 }
 

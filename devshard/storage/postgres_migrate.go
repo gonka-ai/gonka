@@ -153,6 +153,21 @@ CREATE TABLE IF NOT EXISTS devshard_inference_validation_obs (
     PRIMARY KEY (epoch_id, escrow_id, inference_id, slot_id)
 ) PARTITION BY RANGE (epoch_id)`},
 	},
+	{
+		ID:   10,
+		Name: "devshard_validation_leases_parent",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_validation_leases (
+    epoch_id         BIGINT      NOT NULL,
+    escrow_id        TEXT        NOT NULL,
+    inference_id     BIGINT      NOT NULL,
+    instance_address TEXT        NOT NULL,
+    claimed_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+    status           TEXT        NOT NULL DEFAULT 'pending'
+                         CHECK (status IN ('pending', 'submitted', 'skipped')),
+    PRIMARY KEY (epoch_id, escrow_id, inference_id)
+) PARTITION BY RANGE (epoch_id)`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/poc/earlyshare"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"

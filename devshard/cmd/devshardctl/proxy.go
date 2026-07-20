@@ -373,6 +373,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	started := time.Now()
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
+	defer stopClientWatch()
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
 	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
@@ -381,10 +382,6 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// upstream may run after the client is gone.
 	var doneWriteErr error
 	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
-	// The response is fully delivered; detach the disconnect watcher so the
-	// handler returning does not masquerade as a client disconnect and cut
-	// down speculative losers still draining in the background finalizer.
-	stopClientWatch()
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -543,13 +540,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	var buf bytes.Buffer
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
+	defer stopClientWatch()
 
 	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
-	// Winner settled and the response body is buffered; detach the disconnect
-	// watcher so the handler returning does not masquerade as a client
-	// disconnect and cut down speculative losers still draining in the
-	// background finalizer.
-	stopClientWatch()
 	if flag.Gone() {
 		return
 	}

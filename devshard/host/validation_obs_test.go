@@ -16,6 +16,15 @@ import (
 	"devshard/types"
 )
 
+const (
+	// obsTestInferenceSealGraceNonces is the nonce gate used by obs tests: an
+	// inference id may be sealed only once nonce >= id + this.
+	obsTestInferenceSealGraceNonces = 2
+	// obsTestInferenceSealGraceSeconds is the clock gate: an inference may be sealed
+	// only once stateClock - ConfirmedAt >= this many "seconds".
+	obsTestInferenceSealGraceSeconds = 5
+)
+
 type obsTestRig struct {
 	t        *testing.T
 	hosts    []*signing.Secp256k1Signer
@@ -44,8 +53,8 @@ func newObsRig(t *testing.T, store storage.Storage, opts ...HostOption) *obsTest
 		VoteThreshold:    uint32(len(hosts)) / 2,
 		ValidationRate:   0,
 		// Small, explicit seal gates for deterministic auto-seal in tests.
-		InferenceSealGraceNonces:  pruneTestInferenceSealGraceNonces,
-		InferenceSealGraceSeconds: pruneTestInferenceSealGraceSeconds,
+		InferenceSealGraceNonces:  obsTestInferenceSealGraceNonces,
+		InferenceSealGraceSeconds: obsTestInferenceSealGraceSeconds,
 	}
 	verifier := signing.NewSecp256k1Verifier()
 
@@ -128,23 +137,20 @@ func (r *obsTestRig) sealedRow(inferenceID uint64) storage.InferenceRow {
 // awaitTerminalSeal waits for the terminal seal once the nonce gate clears and
 // the state clock is non-zero. If the terminalizing diff already sealed the
 // inference, this returns immediately; otherwise it advances empty diffs.
-func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64, sink *recordingPruneSink) uint64 {
+func (r *obsTestRig) awaitTerminalSeal(inferenceID uint64, nonce uint64) uint64 {
 	r.t.Helper()
-	if events := sink.findFor(inferenceID); len(events) == 1 {
-		require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+	if row, ok, err := r.store.GetSealedInference(r.escrowID, inferenceID); err == nil && ok && row.SealedNonce != 0 {
 		return nonce
 	}
 	after := r.host.LatestNonce()
 	for i := 0; i < 3; i++ {
 		nonce = r.advanceToNextAutoSealNonce(after)
-		if events := sink.findFor(inferenceID); len(events) == 1 {
-			require.Equal(r.t, PruneReasonTerminal, events[0].Reason)
+		if row, ok, err := r.store.GetSealedInference(r.escrowID, inferenceID); err == nil && ok && row.SealedNonce != 0 {
 			return nonce
 		}
 		after = nonce - 1
 	}
-	r.t.Fatalf("expected exactly one terminal prune for inference %d, got %d events",
-		inferenceID, len(sink.findFor(inferenceID)))
+	r.t.Fatalf("expected inference %d to be sealed", inferenceID)
 	return nonce
 }
 
@@ -360,7 +366,7 @@ func TestHost_ApplyAndPersist_ValidationVoteObs_DedupDuplicateVote(t *testing.T)
 	r.applyDiff(next, []*types.DevshardTx{voteTx})
 
 	// Exercise batch dedup directly (sync path).
-	writeValidationObsBatch(r.store, r.escrowID, extractValidationObsEntries([]*types.DevshardTx{voteTx, voteTx}))
+	writeValidationObsBatch(r.store, r.escrowID, storage.ValidationObsEntriesFromTxs([]*types.DevshardTx{voteTx, voteTx}))
 
 	require.Equal(t, uint32(1), obsCompletedForSlot(t, r.store, r.escrowID, 2))
 }
@@ -590,7 +596,7 @@ func TestExtractValidationObsEntries(t *testing.T) {
 	valTx := r.signValidation(1, 0, true)
 	voteTx := r.signValidationVote(1, 2, true)
 
-	entries := extractValidationObsEntries([]*types.DevshardTx{valTx, voteTx})
+	entries := storage.ValidationObsEntriesFromTxs([]*types.DevshardTx{valTx, voteTx})
 	require.Len(t, entries, 2)
 	require.Equal(t, uint64(1), entries[0].InferenceID)
 	require.Equal(t, uint32(0), entries[0].SlotID)
@@ -610,10 +616,7 @@ func TestHost_ApplyAndPersist_ValidationObs_AsyncBatchMultipleTxs(t *testing.T) 
 }
 
 func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
-	sink := &recordingPruneSink{}
-	r := newObsRig(t, nil,
-		WithPruneSink(sink),
-	)
+	r := newObsRig(t, nil)
 
 	const inferenceID = uint64(1)
 	next := r.driveStartConfirmFinish(inferenceID, 1)
@@ -628,7 +631,7 @@ func TestHost_ApplyAndPersist_NoObsRecordForSealedInference(t *testing.T) {
 	waitObsCompletedForSlot(t, r.store, r.escrowID, 1, 1)
 	waitObsRowCount(t, r.store, r.escrowID, 2)
 
-	next = r.awaitTerminalSeal(inferenceID, next, sink)
+	next = r.awaitTerminalSeal(inferenceID, next)
 	r.inferenceMissing(inferenceID)
 	require.NotZero(t, r.sealedRow(inferenceID).SealedNonce)
 

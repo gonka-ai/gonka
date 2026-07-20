@@ -1,0 +1,77 @@
+name: devshard testenv
+
+on:
+  pull_request:
+    paths:
+      - 'devshard/testenv/**'
+      - 'devshard/chainoracle/**'
+      - 'devshard/runtimeconfig/**'
+      - 'devshard/runtimeparams/**'
+      - 'common/runtimeconfig/**'
+      - 'common/chain/**'
+      - 'decentralized-api/nodemanager/**'
+      - '.github/workflows/devshard-testenv.yml'
+  workflow_dispatch:
+    inputs:
+      integration:
+        description: 'Run Docker stack citest (S1–S6 + A1–A4)'
+        required: false
+        type: boolean
+        default: false
+  issue_comment:
+    types: [created]
+
+jobs:
+  unit:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: testenv unit
+    defaults:
+      run:
+        working-directory: ./devshard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+          cache-dependency-path: |
+            devshard/go.sum
+            common/go.sum
+            decentralized-api/go.sum
+
+      - name: Run ci-testenv-unit
+        run: make ci-testenv-unit
+
+  integration:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.integration) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/run-testenv') &&
+        (
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER'
+        )
+      )
+    runs-on: ubuntu-latest
+    name: testenv integration (Docker)
+    permissions:
+      contents: read
+      pull-requests: read
+    defaults:
+      run:
+        working-directory: ./devshard
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+          cache-dependency-path: devshard/go.sum
+
+      - name: Run ci-testenv-integration
+        run: make ci-testenv-integration

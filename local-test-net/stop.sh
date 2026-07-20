@@ -1,24 +1,20 @@
 #!/usr/bin/env bash
+# Tear down local-test-net compose projects. Run from local-test-net/ or via stop-rebuild.sh.
 set -euo pipefail
 
-compose_down() {
-  local project="$1"
-  shift
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-  docker compose -p "${project}" "$@" down -v
-}
+docker compose -p genesis down -v || true
+docker compose -p join1 down -v || true
+docker compose -p join2 down -v || true
+docker compose -p join3 down -v || true
+docker compose -p join4 down -v || true
 
-compose_down genesis \
-  -f docker-compose-base.yml \
-  -f docker-compose.genesis.yml \
-  -f docker-compose.dns.yml \
-  -f docker-compose.dns-overrides.yml \
-  -f docker-compose.postgres.yml
+# Long-lived shared CoreDNS (compose project testdns) — not owned by genesis/join.
+docker compose -p testdns \
+  -f "${SCRIPT_DIR}/docker-compose.dns.yml" \
+  --project-directory "${REPO_ROOT}" \
+  down -v || true
 
-for project in join1 join2 join3 join4; do
-  compose_down "${project}" \
-    -f docker-compose-base.yml \
-    -f docker-compose.join.yml \
-    -f docker-compose.dns.yml \
-    -f docker-compose.dns-overrides.yml
-done
+docker network rm chain-public 2>/dev/null || true

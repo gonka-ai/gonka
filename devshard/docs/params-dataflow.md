@@ -2,7 +2,7 @@
 
 **Motivation.** Decentralized API (dapi) already subscribes to chain events and keeps governance params in memory (`ConfigManager`). Devshard processes should not run their own periodic `QueryParams` / epoch polls. Instead, **dapi** is the single source of truth: its event listener refreshes params when blocks arrive, and **devshardd** pulls a snapshot over gRPC with **long-polling** so updates arrive as soon as dapi sees a param or epoch change—not on a fixed 30s (or 60s) timer.
 
-See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implementation phases), [protocol-version.md](./protocol-version.md) (state-root vs runtime version), [params-provider-adaptive-plan.md](./params-provider-adaptive-plan.md) (adaptive gRPC ↔ chain supervisor — implemented).
+See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implementation phases), [upgrade.md](./upgrade.md) (version naming and versiond flow), [params-provider-adaptive-plan.md](./params-provider-adaptive-plan.md) (adaptive gRPC ↔ chain supervisor — implemented).
 
 ---
 
@@ -12,15 +12,15 @@ See also: [session-config-flow-plan.md](./session-config-flow-plan.md) (implemen
 
 | In message | On chain after create |
 |------------|------------------------|
-| `creator`, `amount`, `model_id` | `id`, `slots`, `epoch_index`, `app_hash`, `token_price`, **`create_devshard_fee`**, **`fee_per_nonce`**, `settled`, … |
+| `creator`, `amount`, `model_id` | `id`, `slots`, `epoch_index`, `app_hash`, `token_price`, **`create_devshard_fee`**, **`fee_per_nonce`**, **`validation_rate`**, **`vote_threshold_factor`**, seal-grace snapshots, `settled`, … |
 
-Governance defaults for fees (`DevshardEscrowParams.create_devshard_fee`, `fee_per_nonce`) are **copied onto the escrow row** at create. Zero on the row means “use compiled default” when building `SessionConfig`.
+Governance defaults for fees, consensus params, and seal grace (`DevshardEscrowParams`) are **copied onto the escrow row** at create. Zero on the row means “use compiled default” when building `SessionConfig` (except `vote_threshold_factor == 0`, which keeps legacy `groupSize/2` at bind).
 
 Tx response: **`escrow_id` only** — not the full record.
 
 ### Session bind (host / user — protocol uses escrow id)
 
-HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per bind (group build reuses the result). `HostManager.create` / user bind then merge **three lanes** into `SessionConfig`:
+HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per bind (group build reuses the result). `HostManager.create` / user bind merge **two lanes** into `SessionConfig`:
 
 #### Lane A — from `QueryGetDevshardEscrow` (per-escrow, frozen on chain)
 
@@ -30,20 +30,13 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | `token_price` | Frozen for the life of the escrow |
 | **`create_devshard_fee`**, **`fee_per_nonce`** | Snapshotted at escrow create; hashed into state root / settlement |
 | **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
+| **`validation_rate`** | Consensus-sensitive; snapshotted at escrow create (default **5000** bps when unset) |
+| **`vote_threshold_factor`** → `VoteThreshold` | Snapshotted at escrow create; derived at bind: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
 | `settled`, `model_id`, `amount` | Operational / display |
 
-The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach grace defaults to `EscrowInfo`.
+The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach governance defaults to `EscrowInfo`. `bridge.SessionConfigAtBind` maps the escrow row into `SessionConfig`.
 
-#### Lane B — from dapi runtime cache / `GetRuntimeConfig` snapshot (**frozen at bind**)
-
-Read once via `RuntimeParamsProvider` (`ConfigManagerRuntimeParams` embedded, `RuntimeConfigRuntimeParams` on standalone devshardd) and copied into `SessionConfig` in `HostManager.create` (`ApplyLiveSessionParams`):
-
-| Field | Notes |
-|-------|--------|
-| `validation_rate` | Consensus-sensitive |
-| `vote_threshold_factor` → `VoteThreshold` | Derived: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
-
-**Open sessions do not hot-reload** lane B fields after governance changes (same rule as `token_price` and escrow fees). Mid-flight governance updates only affect **new** binds.
+**Open sessions do not hot-reload** lane A fields after governance changes (same rule as `token_price` and escrow fees). Mid-flight governance updates only affect **new** escrows at create and **new** binds on escrows that were backfilled. Recovered sessions load frozen `SessionConfig` from SQLite unchanged.
 
 #### Lane C — from dapi runtime cache (**live**, not frozen in consensus)
 
@@ -56,9 +49,10 @@ Read once via `RuntimeParamsProvider` (`ConfigManagerRuntimeParams` embedded, `R
 | `approved_versions` | versiond / routing | Child process policy; **only updated while long-poll is active** (see adaptive section) |
 | `current_epoch_id` | Prune, availability | Epoch transitions wake long-poll or chain refresh |
 
-Proxy may still expose bound `RefusalTimeout` / `ExecutionTimeout` on `/status`; live inference uses the provider when configured.
+`SessionConfig` still carries default `RefusalTimeout` / `ExecutionTimeout` for host timeout verification and `/status` display; live proxy inference uses the lane C provider when configured.
 
-**Protocol version** (`StateRootAndProtocolVersion` / `types.DevshardStateRootAndProtocolVersion`) is **not** `approved_versions`: it tags state-root and settlement hashing and is fixed per binary build. See [protocol-version.md](./protocol-version.md).
+**Protocol version** (`StateRootAndProtocolVersion`) equals the session bind tag:
+`approved_versions.name` for versiond routes, or `v1` for `/v1/devshard`. See [upgrade.md](./upgrade.md).
 
 ### Still per-escrow / per-address chain queries (not on long-poll)
 
@@ -70,7 +64,7 @@ Proxy may still expose bound `RefusalTimeout` / `ExecutionTimeout` on `/status`;
 | `QueryGranteesByMessageType` | Per validator warm-key grants |
 | `QueryAccountByAddress` | Per address pubkey |
 
-`bindGraceDefaults`, `DevshardDefaults`, and nested `QueryParams` on `GetEscrow` are **removed** — governance session fields (except grace) come from lane B at bind; seal grace comes from lane A on the escrow row.
+`bindGraceDefaults`, `DevshardDefaults`, and nested `QueryParams` on `GetEscrow` are **removed** — all session consensus fields come from lane A on the escrow row.
 
 ---
 
@@ -102,18 +96,18 @@ devshardd (active_chain — fallback):
 
 **`RuntimeConfig` snapshot fields (wire / cache):**
 
-| Field | Bind lane |
-|-------|-----------|
+| Field | Lane |
+|-------|------|
 | `params_block_height`, `served_at_unix` | Metadata |
 | `current_epoch_id` | C (live) |
 | `logprobs_mode` | C |
 | `devshard_requests_enabled` | C |
 | `max_nonce` | C |
 | `approved_versions` | C |
-| `refusal_timeout`, `execution_timeout` | C (live at proxy; also copied at bind for `/status`) |
-| `validation_rate`, `vote_threshold_factor` | B (frozen) |
+| `refusal_timeout`, `execution_timeout` | C (live at proxy) |
+| `validation_rate`, `vote_threshold_factor` | On-chain escrow only (lane A); still on wire for dapi cache / observability |
 
-**Consumers:** standalone **devshardd** (`runtimeconfig.NewAdaptive` + `RuntimeParamsProvider`); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no adaptive loop). **Epoch change** triggers `ManagedStorage.PruneOnce` (devshardd via `runtimeconfig.OnEpochChange` on the shared base; embedded dapi via `ConfigManager.SetEpochChangeHandler`). No 30s storage prune ticker.
+**Consumers:** standalone **devshardd** (`runtimeconfig.NewAdaptive` + `MaxNonceFromSnapshot`); **embedded devshard inside dapi** uses the same `ConfigManager` in-process (no adaptive loop). **Epoch change** triggers `ManagedStorage.PruneOnce` (devshardd via `runtimeconfig.OnEpochChange` on the shared base; embedded dapi via `ConfigManager.SetEpochChangeHandler`). No 30s storage prune ticker.
 
 **Idle cost (healthy):** when the chain is quiet and dapi is up, devshardd holds `active_grpc` and gets at most one long-poll RPC per `max_wait` (~1/min with a 60s cap). Chain polls run **only** while `active_chain`.
 
@@ -212,9 +206,9 @@ Implementation details: [params-provider-adaptive-plan.md](./params-provider-ada
 | `devshard_requests_enabled` | **Moved** | devshardd + `AvailabilityTracker` |
 | `logprobs_mode` | **Moved** | Validation |
 | Seal grace (`inference_seal_grace_*`) | On-chain escrow | Lane A — snapshotted at create; not on `RuntimeConfig` |
+| `validation_rate`, `vote_threshold_factor` | On-chain escrow | Lane A — snapshotted at create; v0.2.14 backfills legacy escrows |
 | `max_nonce` | **Moved** | `MaxNonceProvider` |
 | `refusal_timeout`, `execution_timeout` | **Moved** | Live proxy + long-poll snapshot |
-| `validation_rate`, `vote_threshold_factor` | **Moved** | Frozen at bind (lane B) |
 | Escrow fees (`create_devshard_fee`, `fee_per_nonce`) | On-chain escrow | Lane A — not on `RuntimeConfig` |
 
 | Still direct chain | Why |
@@ -242,8 +236,8 @@ Run: `cd testermint && ./gradlew :test --tests "<Class>" -DexcludeTags=unstable,
 | 6 | Governance `UpdateParams` wakes long-poll (`max_nonce`) within ~30s |
 | 7 | Governance `refusal_timeout` propagates to runtime snapshot within ~30s |
 | 8 | Governance `execution_timeout` propagates within ~30s |
-| 9 | Governance `validation_rate` propagates within ~30s |
-| 10 | Governance `vote_threshold_factor` propagates within ~30s |
+| 9 | Governance `validation_rate` propagates to runtime snapshot within ~30s (observability; bind uses escrow row) |
+| 10 | Governance `vote_threshold_factor` propagates to runtime snapshot within ~30s (observability; bind uses escrow row) |
 
 ### `DevsharddRuntimeConfigTests` — versiond + devshardd host path, ~6–12 min
 

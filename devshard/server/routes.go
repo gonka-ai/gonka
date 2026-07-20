@@ -89,7 +89,9 @@ func withSessionAuth(
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return srv.AuthMiddleware(pick(srv))(c)
+		handler := pick(srv)
+		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
+		return srv.AuthMiddleware(wrapped)(c)
 	}
 }
 

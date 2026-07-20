@@ -19,10 +19,10 @@ import (
 
 // Postgres implements Storage on top of PostgreSQL declarative partitioning.
 //
-// Three parent tables -- devshard_sessions, devshard_diffs, devshard_signatures
-// -- each PARTITION BY RANGE (epoch_id). One partition per epoch is created
-// lazily on first write. PruneEpoch is a single DROP TABLE per parent, so it is
-// O(1) and never touches other epochs' pages.
+// Nine parent tables (sessions, diffs, signatures, snapshots, sealed inferences,
+// validation obs tables, validation leases) use PARTITION BY RANGE (epoch_id).
+// One child partition per epoch is created lazily on first write. PruneEpoch is
+// a DROP TABLE per child partition, so it is O(1) and never touches other epochs.
 //
 // Layout mirrors the per-epoch SQLite backend so that callers behave identically
 // against both. A small unpartitioned escrowID -> epochID index enforces the
@@ -64,8 +64,23 @@ const (
 	pgValidationObsParent          = "devshard_slot_validation_obs"
 	pgInferenceValidationObsParent = "devshard_inference_validation_obs"
 	pgSealedValidationObsParent    = "devshard_sealed_validation_obs"
+	pgValidationLeasesParent       = "devshard_validation_leases"
 	pgSessionIndex                 = "devshard_session_index"
 )
+
+// postgresPartitionedParents lists every PARTITION BY RANGE (epoch_id) parent
+// table; ensurePartition creates one child partition per epoch for each.
+var postgresPartitionedParents = []string{
+	pgSessionsParent,
+	pgDiffsParent,
+	pgSignaturesParent,
+	pgSnapshotsParent,
+	pgInferencesParent,
+	pgValidationObsParent,
+	pgInferenceValidationObsParent,
+	pgSealedValidationObsParent,
+	pgValidationLeasesParent,
+}
 
 func pgSessionsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSessionsParent, epochID)
@@ -90,6 +105,9 @@ func pgInferenceValidationObsPartition(epochID uint64) string {
 }
 func pgSealedValidationObsPartition(epochID uint64) string {
 	return fmt.Sprintf("%s_epoch_%d", pgSealedValidationObsParent, epochID)
+}
+func pgValidationLeasesPartition(epochID uint64) string {
+	return fmt.Sprintf("%s_epoch_%d", pgValidationLeasesParent, epochID)
 }
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
@@ -257,6 +275,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 		return err
 	}
 	if err := create(pgSealedValidationObsParent, pgSealedValidationObsPartition(epochID)); err != nil {
+		return err
+	}
+	if err := create(pgValidationLeasesParent, pgValidationLeasesPartition(epochID)); err != nil {
 		return err
 	}
 
@@ -528,6 +549,154 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return fmt.Errorf("update latest_nonce: %w", err)
 	}
 
+	return tx.Commit(ctx)
+}
+
+// AppendDiffs inserts many diffs for one escrow in a single transaction using
+// COPY for diffs and signatures, then one latest_nonce update. Empty input is a
+// no-op. Callers must only pass new nonces (no duplicates with existing rows).
+func (s *Postgres) AppendDiffs(escrowID string, diffs []types.DiffRecord) error {
+	if len(diffs) == 0 {
+		return nil
+	}
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+
+	type preparedDiff struct {
+		rec      types.DiffRecord
+		txsProto []byte
+		warmJSON *string
+	}
+	prepared := make([]preparedDiff, 0, len(diffs))
+	var maxNonce uint64
+	sigCount := 0
+	for _, rec := range diffs {
+		txsProto, err := marshalTxs(rec.Txs)
+		if err != nil {
+			return err
+		}
+		var warmJSON *string
+		if len(rec.WarmKeyDelta) > 0 {
+			b, err := json.Marshal(rec.WarmKeyDelta)
+			if err != nil {
+				return fmt.Errorf("marshal warm keys nonce %d: %w", rec.Nonce, err)
+			}
+			str := string(b)
+			warmJSON = &str
+		}
+		prepared = append(prepared, preparedDiff{rec: rec, txsProto: txsProto, warmJSON: warmJSON})
+		sigCount += len(rec.Signatures)
+		if rec.Nonce > maxNonce {
+			maxNonce = rec.Nonce
+		}
+	}
+
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	_, err = tx.CopyFrom(ctx,
+		pgx.Identifier{pgDiffsParent},
+		[]string{"epoch_id", "escrow_id", "nonce", "txs_proto", "user_sig", "post_state_root", "state_hash", "warm_keys_json", "created_at"},
+		pgx.CopyFromSlice(len(prepared), func(i int) ([]any, error) {
+			p := prepared[i]
+			return []any{
+				epochID,
+				escrowID,
+				p.rec.Nonce,
+				p.txsProto,
+				p.rec.UserSig,
+				p.rec.PostStateRoot,
+				p.rec.StateHash,
+				p.warmJSON,
+				p.rec.CreatedAt,
+			}, nil
+		}),
+	)
+	if err != nil {
+		return fmt.Errorf("copy diffs: %w", err)
+	}
+
+	if sigCount > 0 {
+		sigRows := make([][]any, 0, sigCount)
+		for _, p := range prepared {
+			for slotID, sig := range p.rec.Signatures {
+				sigRows = append(sigRows, []any{epochID, escrowID, p.rec.Nonce, slotID, sig})
+			}
+		}
+		_, err = tx.CopyFrom(ctx,
+			pgx.Identifier{pgSignaturesParent},
+			[]string{"epoch_id", "escrow_id", "nonce", "slot_id", "sig"},
+			pgx.CopyFromRows(sigRows),
+		)
+		if err != nil {
+			return fmt.Errorf("copy signatures: %w", err)
+		}
+	}
+
+	_, err = tx.Exec(ctx,
+		`UPDATE devshard_sessions SET latest_nonce = GREATEST(latest_nonce, $1)
+		 WHERE epoch_id = $2 AND escrow_id = $3`,
+		maxNonce, epochID, escrowID,
+	)
+	if err != nil {
+		return fmt.Errorf("update latest_nonce: %w", err)
+	}
+	return tx.Commit(ctx)
+}
+
+// ImportValidationObs upserts live and sealed validation-obs rows with exact
+// counters. Used by HA SQLite→Postgres migrate.
+func (s *Postgres) ImportValidationObs(escrowID string, live, sealed []ValidationObsRow) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if err := s.ensurePartition(ctx, epochID); err != nil {
+		return err
+	}
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback(ctx)
+
+	importRows := func(table string, rows []ValidationObsRow) error {
+		if len(rows) == 0 {
+			return nil
+		}
+		for _, r := range rows {
+			_, err := tx.Exec(ctx, fmt.Sprintf(
+				`INSERT INTO %s (epoch_id, escrow_id, inference_id, slot_id, required_validations, completed_validations)
+				 VALUES ($1, $2, $3, $4, $5, $6)
+				 ON CONFLICT (epoch_id, escrow_id, inference_id, slot_id) DO UPDATE SET
+				   required_validations = EXCLUDED.required_validations,
+				   completed_validations = EXCLUDED.completed_validations`, table),
+				epochID, escrowID, r.InferenceID, r.SlotID, r.Required, r.Completed,
+			)
+			if err != nil {
+				return fmt.Errorf("import %s: %w", table, err)
+			}
+		}
+		return nil
+	}
+	if err := importRows(pgInferenceValidationObsParent, live); err != nil {
+		return err
+	}
+	if err := importRows(pgSealedValidationObsParent, sealed); err != nil {
+		return err
+	}
 	return tx.Commit(ctx)
 }
 
@@ -891,11 +1060,27 @@ func (s *Postgres) DeleteSealedInferences(escrowID string) error {
 	); err != nil {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
+	return nil
+}
+
+func (s *Postgres) ClearValidationObs(escrowID string) error {
+	epochID, err := s.lookupEpoch(escrowID)
+	if err != nil {
+		return err
+	}
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	if _, err := s.pool.Exec(ctx,
+		`DELETE FROM devshard_inference_validation_obs WHERE epoch_id = $1 AND escrow_id = $2`,
+		epochID, escrowID,
+	); err != nil {
+		return fmt.Errorf("clear inference validation obs: %w", err)
+	}
 	if _, err := s.pool.Exec(ctx,
 		`DELETE FROM devshard_sealed_validation_obs WHERE epoch_id = $1 AND escrow_id = $2`,
 		epochID, escrowID,
 	); err != nil {
-		return fmt.Errorf("delete sealed validation obs: %w", err)
+		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
 }
@@ -1049,6 +1234,8 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 		pgValidationObsPartition(epochID),
 		pgInferenceValidationObsPartition(epochID),
 		pgSealedValidationObsPartition(epochID),
+		pgSealedValidationObsPartition(epochID),
+		pgValidationLeasesPartition(epochID),
 		pgSessionsPartition(epochID),
 	} {
 		_, err := s.pool.Exec(ctx, fmt.Sprintf(`DROP TABLE IF EXISTS %s`, partition))
@@ -1083,7 +1270,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 		FROM pg_class c
 		JOIN pg_inherits i ON i.inhrelid = c.oid
 		JOIN pg_class p ON p.oid = i.inhparent
-		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences')
+		WHERE p.relname IN ('devshard_sessions', 'devshard_diffs', 'devshard_signatures', 'devshard_snapshots', 'devshard_sealed_inferences', 'devshard_validation_leases', 'devshard_slot_validation_obs', 'devshard_inference_validation_obs', 'devshard_sealed_validation_obs')
 	`)
 	if err != nil {
 		return fmt.Errorf("list devshard partitions: %w", err)
@@ -1129,7 +1316,7 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 }
 
 func pgPartitionEpoch(name string) (uint64, bool) {
-	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent} {
+	for _, parent := range []string{pgSessionsParent, pgDiffsParent, pgSignaturesParent, pgSnapshotsParent, pgInferencesParent, pgValidationLeasesParent, pgValidationObsParent, pgInferenceValidationObsParent, pgSealedValidationObsParent} {
 		prefix := parent + "_epoch_"
 		if strings.HasPrefix(name, prefix) {
 			epochID, err := strconv.ParseUint(strings.TrimPrefix(name, prefix), 10, 64)

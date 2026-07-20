@@ -1,0 +1,19 @@
+# air + dlv config for mock-dapi. Debug port: 2346.
+root = "/workspace/devshard"
+tmp_dir = "/tmp/air/mock-dapi"
+
+[build]
+  cmd = "go build -gcflags 'all=-N -l' -o /tmp/air/mock-dapi/mockdapi ./testenv/cmd/mockdapi"
+  full_bin = "dlv exec /tmp/air/mock-dapi/mockdapi --listen=:2346 --headless=true --api-version=2 --accept-multiclient --continue --"
+  include_ext = ["go", "yaml", "toml", "proto"]
+  exclude_dir = [".git", "docs", "testenv/docs", "testenv/db"]
+  delay = 500
+  kill_delay = "1s"
+  stop_on_error = true
+
+[log]
+  main_only = false
+  time = true
+
+[misc]
+  clean_on_exit = true

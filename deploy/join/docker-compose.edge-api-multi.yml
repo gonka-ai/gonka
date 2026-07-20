@@ -1,0 +1,46 @@
+# Multi edge-api + round-robin router overlay for deploy/join.
+#
+# Requires base docker-compose.yml (single edge-api). Adds edge-api2,
+# edge-api3, and edge-api-router in front of all three. Sets proxy
+# EDGE_API_SERVICE_NAME=edge-api-router.
+#
+#   docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+#
+# x-edge-api anchor holds everything shared between instances.
+
+x-edge-api: &edge-api
+  image: ghcr.io/product-science/edge-api:0.2.13
+  environment:
+    - EDGE_API_PORT=18080
+    - CHAIN_GRPC_URL=node:9090
+    - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+    - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+    - OTEL_HEADERS=${OTEL_HEADERS:-}
+  depends_on:
+    - node
+  restart: always
+
+services:
+  edge-api2:
+    <<: *edge-api
+    container_name: edge-api2
+
+  edge-api3:
+    <<: *edge-api
+    container_name: edge-api3
+
+  edge-api-router:
+    container_name: edge-api-router
+    image: ghcr.io/product-science/edge-api-router:0.2.13
+    environment:
+      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
+      - EDGE_API_PORT=18080
+    depends_on:
+      - edge-api
+      - edge-api2
+      - edge-api3
+    restart: always
+
+  proxy:
+    environment:
+      - EDGE_API_SERVICE_NAME=edge-api-router

@@ -1,6 +1,7 @@
 package state
 
 import (
+	"fmt"
 	"math"
 	"testing"
 
@@ -2877,4 +2878,49 @@ func TestApplyDiff_DoesNotIncrementValidationObs(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 	require.Equal(t, 0, track.recordCalls, "SM must not record validation obs; host records via RecordValidationsAppliedOnce")
+}
+
+type failingObsInsertStore struct {
+	*storage.Memory
+}
+
+func (s *failingObsInsertStore) InsertSealedInference(escrowID string, row storage.InferenceRow) error {
+	return fmt.Errorf("injected obs insert failure")
+}
+
+func TestApplyLocalBestEffort_ChallengeObsInsertFailure_StillApplied(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	mem := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)
+	failStore := &failingObsInsertStore{Memory: mem}
+
+	sm, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, failStore)
+	require.NoError(t, err)
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	valTx := txValidation(valMsg)
+
+	nonce := sm.SnapshotState().LatestNonce + 1
+	root, applied, err := sm.ApplyLocalBestEffort(nonce, []*types.DevshardTx{valTx})
+	require.NoError(t, err)
+	require.Len(t, applied, 1)
+	require.Equal(t, types.StatusChallenged, sm.SnapshotState().Inferences[1].Status)
+
+	hostSM, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	applyStartConfirmFinish(t, hostSM, user, hosts, 1)
+
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", nonce, applied, root)
+
+	hostRoot, err := hostSM.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, root, hostRoot)
+	require.Equal(t, types.StatusChallenged, hostSM.SnapshotState().Inferences[1].Status)
 }

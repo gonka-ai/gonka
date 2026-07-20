@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"devshard/signing"
 	"devshard/state"
@@ -122,10 +121,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append(smOpts, state.WithVersion(types.EffectiveStateRootAndProtocolVersion))
-	if pv, ok := recoveredProtocolVersion(boundVersion); ok {
-		stateOpts = append(stateOpts, state.WithProtocolVersion(pv))
-	}
+	stateOpts := append(smOpts, state.WithVersion(recoveredVersion))
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
@@ -257,22 +253,29 @@ func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.Stat
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
-	return sess, sm, nil
-}
-
-// recoveredProtocolVersion derives protocol compatibility only from explicit
-// protocol-version tokens. Route versions like "v1" stay on the normal path
-// unless the caller provided WithProtocolVersion in smOpts.
-func recoveredProtocolVersion(boundVersion string) (types.ProtocolVersion, bool) {
-	raw := strings.TrimSpace(boundVersion)
-	if raw == "" {
-		return "", false
+	if sess.store == nil {
+		return sess, sm, nil
 	}
-	pv, err := types.ParseProtocolVersion(raw)
+	meta, err := sess.store.GetSessionMeta(sess.escrowID)
 	if err != nil {
-		return "", false
+		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	return pv, true
+	var records []types.DiffRecord
+	if meta.LatestNonce > 0 {
+		records, err = sess.store.GetDiffs(sess.escrowID, 1, meta.LatestNonce)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
+		}
+	}
+	if err := storage.RebuildValidationObsFromDiffs(
+		sess.store,
+		sess.escrowID,
+		records,
+		storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+	); err != nil {
+		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+	}
+	return sess, sm, nil
 }
 
 // saveSnapshot is the synchronous snapshot writer used during recovery.

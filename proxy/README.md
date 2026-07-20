@@ -106,6 +106,54 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
+| `EDGE_API_SERVICE_NAME` | edge-api | Upstream for read-only `/v1/` query routes (status, models, epochs, participants, BLS, bridge addresses, etc.) served by **edge-api**. Set to `edge-api-router` when using the multi-instance overlay. Leave empty to send all `/v1/` traffic to dapi. |
+| `EDGE_API_PORT` | 18080 | Port on the edge-api (or edge-api-router) upstream. |
+| `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
+| `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
+| `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
+| `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
+| `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
+| `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
+
+When `VERSIOND_SERVICE_NAME=versiond-router`, this proxy still has a **single**
+upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
+**versiond-router** itself:
+
+| Router env | Role |
+| --- | --- |
+| `VERSIOND_HOSTS` | HA pool (space-separated) |
+| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: first of `VERSIOND_HOSTS`) |
+| `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (whitespace and/or comma). Empty = all versions HA. Future versions are HA by default |
+
+Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
+`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See `versiond-router/` and
+`devshard/docs/pr-1366-deploy-test-plan.md`.
+
+### edge-api vs dapi routing
+
+`/v1/` is split across two backends. The proxy registers **exact/regex locations for read-only query paths** before the generic `/v1/` catch-all:
+
+- **edge-api (public Tier A)** — status, models, pricing, participants (GET), epochs, restrictions, BLS, bridge addresses, poc-batches
+- **edge-api (optional)** — `verify-proof` / `verify-block` / `debug/*`; private by default (`EDGE_API_EXPOSE_OPTIONAL_ROUTES=false` → 403). Opt in when needed; auth can be enforced in nginx before this proxy.
+- **dapi (`api`)** — inference and node operations: chat/completions, inference payloads, PoC proofs, stats, bridge queue, participant registration (`POST /v1/participants`)
+- **versiond** — devshard sessions: `/v1/devshard/*` is rewritten internally to `/devshard/v1/*`, then proxied like other `/devshard/` traffic
+
+`/v1/participants` is method-split: GET/HEAD/OPTIONS → edge-api; other methods (notably POST registration) → dapi via an internal named location. Without that split, nginx would send POST to edge-api and return 405.
+
+To publish verify/debug on the public proxy:
+
+```bash
+export EDGE_API_EXPOSE_OPTIONAL_ROUTES=true
+# Optional: front with nginx basic auth / allowlist before this container.
+```
+
+Multi-instance edge-api (local-test-net or `deploy/join/docker-compose.edge-api-multi.yml`):
+
+```text
+Client → proxy → edge-api-router:18080 → edge-api-N:18080
+```
+
+This mirrors the `versiond-router` pattern but uses round-robin (read-only queries are stateless).
 
 ### Observability UI security
 

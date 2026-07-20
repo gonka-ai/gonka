@@ -1,6 +1,9 @@
 # This script runs 1 genesis node, which is used as seed node also, and 2 full nodes
 set -e
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+"${SCRIPT_DIR}/ensure-chain-public.sh"
+
 # launch genesis node
 export PUBLIC_SERVER_PORT=9000
 export ML_SERVER_PORT=9001

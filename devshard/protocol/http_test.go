@@ -36,12 +36,26 @@ type httpTestEnv struct {
 	gossips     []*gossip.Gossip
 }
 
-const httpTestRoutePrefix = "/devshard/test"
+const httpTestRoutePrefix = "/devshard/v2"
 
 func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
 	cfg := transport.DefaultClientConfig()
 	cfg.RoutePrefix = httpTestRoutePrefix
 	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
+}
+
+// registerServer wires srv's handlers onto g, mirroring the old Server.Register
+// method. Production wiring uses server/routes.go RegisterLazySessionRoutes.
+func registerServer(g *echo.Group, srv *transport.Server) {
+	g.Use(srv.AuthMiddleware)
+	g.POST("/sessions/:id/chat/completions", srv.HandleInference)
+	g.POST("/sessions/:id/verify-timeout", srv.HandleVerifyTimeout)
+	g.POST("/sessions/:id/challenge-receipt", srv.HandleChallengeReceipt)
+	g.POST("/sessions/:id/gossip/nonce", srv.HandleGossipNonce)
+	g.POST("/sessions/:id/gossip/txs", srv.HandleGossipTxs)
+	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }
 
 // setupHTTPEnv creates a full HTTP test environment with storage, gossip,
@@ -90,8 +104,8 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		servers[i] = srv
 
 		e := echo.New()
-		g := e.Group(httpTestRoutePrefix)
-		srv.Register(g)
+		g := e.Group("/devshard/v2")
+		registerServer(g, srv)
 		ts := httptest.NewServer(e)
 		t.Cleanup(ts.Close)
 		httpServers[i] = ts

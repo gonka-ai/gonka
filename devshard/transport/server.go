@@ -100,26 +100,6 @@ func (s *Server) Host() *host.Host { return s.host }
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 
-// Register mounts all devshard routes on the given echo group.
-// Public callers should mount this under a versioned /devshard/{version} prefix.
-func (s *Server) Register(g *echo.Group) {
-	g.Use(observability.EchoMiddleware())
-	g.Use(observability.RequestIDMiddleware)
-	g.Use(s.AuthMiddleware)
-	if s.rateLimit != nil {
-		g.Use(rateLimitMiddleware(s.rateLimit, true))
-	}
-	g.POST("/sessions/:id/chat/completions", s.HandleInference)
-	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
-	g.POST("/sessions/:id/challenge-receipt", s.HandleChallengeReceipt)
-	g.POST("/sessions/:id/gossip/nonce", s.HandleGossipNonce)
-	g.POST("/sessions/:id/gossip/txs", s.HandleGossipTxs)
-	// TODO: GET endpoints are intentionally unauthenticated for now.
-	// Before production, restrict these to group members or add read-only auth.
-	g.GET("/sessions/:id/diffs", s.HandleGetDiffs)
-	g.GET("/sessions/:id/mempool", s.HandleGetMempool)
-	g.GET("/sessions/:id/signatures", s.HandleGetSignatures)
-}
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
@@ -135,11 +115,6 @@ func writeJSON(c echo.Context, code int, v interface{}) error {
 // startHandlerSpan opens an internal observability span for a handler and
 // updates the request context so downstream code inherits it. The returned
 // closure must be deferred to finalize the span with the handler's error.
-//
-// Auto-attached attributes: http.method, http.route, http.target, peer.address,
-// http.request_content_length, devshard.handler. The returned *Operation can
-// be used by the caller to attach handler-specific attributes (e.g. nonce,
-// inference id, sender) once they are parsed from the request.
 func startHandlerSpan(c echo.Context, handlerName string) (*observability.Operation, func(*error)) {
 	sessionID := c.Param("id")
 	req := c.Request()
@@ -462,6 +437,16 @@ func writeSSEEvent(w http.ResponseWriter, data interface{}) error {
 		f.Flush()
 	}
 	return nil
+}
+
+// RateLimitMiddleware returns per-sender rate limiting for authenticated POST
+// routes. Install inside AuthMiddleware so contextKeySender is set first.
+// recordChatTerminal=true records throttled chat requests as terminal outcomes.
+func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFunc {
+	if s.rateLimit == nil {
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
+	return rateLimitMiddleware(s.rateLimit, recordChatTerminal)
 }
 
 // SetPeerClients sets the executor clients for timeout verification.

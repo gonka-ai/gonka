@@ -103,24 +103,14 @@ func TestComputeVoteThreshold(t *testing.T) {
 	require.Equal(t, uint32(6), ComputeVoteThreshold(6, 100))
 }
 
-func TestApplyLiveSessionParams_FreezesLiveFields(t *testing.T) {
+func TestSessionConfigFromEscrow_ConsensusFieldsFromEscrow(t *testing.T) {
 	const groupSize = 6
-	cfg := ApplyLiveSessionParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
-			InferenceSealGraceNonces:  55,
-			InferenceSealGraceSeconds: 99,
-			ValidationRate:            6000,
-		}),
-		groupSize,
-		LiveSessionBindParams{
-			RefusalTimeout:      90,
-			ExecutionTimeout:    1800,
-			ValidationRate:      9999, // lane B must not override lane A
-			VoteThresholdFactor: 67,
-		},
-	)
-	require.Equal(t, int64(90), cfg.RefusalTimeout)
-	require.Equal(t, int64(1800), cfg.ExecutionTimeout)
+	cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{
+		InferenceSealGraceNonces:  55,
+		InferenceSealGraceSeconds: 99,
+		ValidationRate:            6000,
+		VoteThresholdFactor:       67,
+	})
 	require.Equal(t, uint32(6000), cfg.ValidationRate)
 	require.Equal(t, uint32(55), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(99), cfg.InferenceSealGraceSeconds)
@@ -133,42 +123,9 @@ func TestSessionConfigFromEscrow_PreservesDefaultValidationRateWhenZero(t *testi
 		InferenceSealGraceNonces:  1,
 		InferenceSealGraceSeconds: 10,
 	})
-	require.Equal(t, DefaultValidationRate, cfg.ValidationRate)
+	require.Equal(t, uint32(5000), cfg.ValidationRate)
 	require.Equal(t, uint32(1), cfg.InferenceSealGraceNonces)
 	require.Equal(t, uint32(10), cfg.InferenceSealGraceSeconds)
-}
-
-func TestSessionConfigFromEscrow_ValidationRateOverride(t *testing.T) {
-	const groupSize = 6
-	cfg := SessionConfigFromEscrow(groupSize, EscrowSessionFields{
-		ValidationRate: 6000,
-	})
-	require.Equal(t, uint32(6000), cfg.ValidationRate)
-}
-
-func TestApplyChainSessionBindParams_DoesNotOverrideValidationRate(t *testing.T) {
-	const groupSize = 16
-	cfg := ApplyChainSessionBindParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{
-			InferenceSealGraceNonces:  1,
-			InferenceSealGraceSeconds: 10,
-			ValidationRate:            6000,
-		}),
-		groupSize,
-		LiveSessionBindParams{
-			ValidationRate: 0, // older chain/dapi omit the field
-		},
-	)
-	require.Equal(t, uint32(6000), cfg.ValidationRate)
-	require.Equal(t, uint32(1), cfg.InferenceSealGraceNonces)
-	require.Equal(t, uint32(10), cfg.InferenceSealGraceSeconds)
-
-	cfgDefault := ApplyChainSessionBindParams(
-		SessionConfigFromEscrow(groupSize, EscrowSessionFields{}),
-		groupSize,
-		LiveSessionBindParams{ValidationRate: 0},
-	)
-	require.Equal(t, DefaultValidationRate, cfgDefault.ValidationRate)
 }
 
 func TestSessionConfigWithPrice_WrapsBuilder(t *testing.T) {

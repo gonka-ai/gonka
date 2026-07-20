@@ -1,8 +1,8 @@
 package payloadstorage
 
 import (
-	"decentralized-api/completionapi"
-	"decentralized-api/utils"
+	"common/completionapi"
+	"common/utils"
 )
 
 // Matches getPromptHash in post_chat_handler.go

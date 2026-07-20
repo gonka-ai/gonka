@@ -1,0 +1,71 @@
+# Dev overlay: live-reload (air) + remote debug (dlv) for mock-chain.
+#
+# Usage:
+#   make gen-compose && make dev-build && make dev-up
+#
+# Or:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+
+services:
+  mock-chain:
+    build:
+      context: ../..
+      dockerfile: devshard/testenv/Dockerfile.dev
+    image: devshard-dev:latest
+    command: ["-c", "/workspace/devshard/testenv/.air.mock-chain.debug.toml"]
+    working_dir: /workspace/devshard
+    volumes:
+      - ../..:/workspace
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "2345:2345"
+
+  mock-dapi:
+    build:
+      context: ../..
+      dockerfile: devshard/testenv/Dockerfile.dev
+    image: devshard-dev:latest
+    command: ["-c", "/workspace/devshard/testenv/.air.mock-dapi.debug.toml"]
+    working_dir: /workspace/devshard
+    volumes:
+      - ../..:/workspace
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "2346:2346"
+    depends_on:
+      - mock-chain
+
+  mock-openai:
+    build:
+      context: ../..
+      dockerfile: devshard/testenv/Dockerfile.dev
+    image: devshard-dev:latest
+    command: ["-c", "/workspace/devshard/testenv/.air.mock-openai.debug.toml"]
+    working_dir: /workspace/devshard
+    volumes:
+      - ../..:/workspace
+      - gomodcache:/go/pkg/mod
+      - gobuildcache:/root/.cache/go-build
+    cap_add:
+      - SYS_PTRACE
+    security_opt:
+      - seccomp:unconfined
+    ports:
+      - "2347:2347"
+      - "8088:8088"
+    environment:
+      MOCK_OPENAI_ADDR: ":8088"
+
+volumes:
+  gomodcache:
+  gobuildcache:

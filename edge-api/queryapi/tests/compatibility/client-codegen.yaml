@@ -1,0 +1,8 @@
+package: compatibility_test
+generate:
+  client: true
+  models: false
+output: client.gen.go
+additional-imports:
+  - package: edge-api/queryapi/gen
+    alias: .

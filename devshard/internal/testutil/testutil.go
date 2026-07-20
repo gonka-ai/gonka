@@ -61,13 +61,13 @@ const TestInferenceSealGraceSeconds uint32 = 1
 // and the production default ValidationRate.
 func DefaultConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:            60,
-		ExecutionTimeout:          1200,
-		TokenPrice:                1,
-		VoteThreshold:             uint32(numHosts) / 2,
-		ValidationRate:            types.DefaultValidationRate,
-		CreateDevshardFee:         0,
-		FeePerNonce:               0,
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              uint32(numHosts) / 2,
+		ValidationRate:             5000,
+		CreateDevshardFee:          0,
+		FeePerNonce:                0,
 		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
 	}, numHosts)
 }

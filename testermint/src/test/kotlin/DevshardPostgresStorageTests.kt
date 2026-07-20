@@ -11,24 +11,31 @@ import java.time.Instant
  * PostgresClient and assert on the parent tables + per-epoch partitions.
  *
  * Postgres is unconditional infrastructure for this cluster (see
- * docker-compose.postgres.yml + DockerGroup.kt), so these tests run in the
- * default suite alongside the versioned devshardd tests.
+ * docker-compose.postgres.yml + DockerGroup.kt). Devshard traffic is routed
+ * through versiond -> devshardd (see docker-compose.versiond.yml), with PG env
+ * propagated per pair so devshardd writes to ${KEY_NAME}-postgres.
  */
 class DevshardPostgresStorageTests : TestermintTest() {
-    private val standaloneTestVersionName = devshardTestVersion()
-    private val routePrefix = devshardVersionedRoutePrefix(standaloneTestVersionName)
     private val devshardEscrowModel = defaultModel
 
-    private val noRestrictionsConfig = devshardVersiondConfig(
-        genesisSpec = mergedDevshardGenesisSpec(devshardNoRestrictionsSpec),
-        env = versiondOverrideEnv(standaloneTestVersionName),
+    // defaultDevshardRoutePrefix() is /devshard/<version>/, which nginx forwards
+    // to versiond. Without the versiond compose overlay every participant 502s.
+    private val versiondComposeFilesByPairName = listOf(GENESIS_KEY_NAME, "join1", "join2")
+        .associateWith { listOf("docker-compose.versiond.yml") }
+
+    private val versiondEnv = versiondOverrideEnv()
+
+    private val noRestrictionsConfig = inferenceConfig.copy(
+        genesisSpec = inferenceConfig.genesisSpec?.merge(devshardNoRestrictionsSpec) ?: devshardNoRestrictionsSpec,
+        additionalDockerFilesByKeyName = versiondComposeFilesByPairName,
+        additionalEnvVars = versiondEnv,
     )
 
     @Test
     fun `devshard sessions, diffs, signatures land in postgres`() {
         val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
+        genesis.waitForVersiondOverrideReady()
         genesis.waitForNextEpoch()
-        waitForVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -43,11 +50,7 @@ class DevshardPostgresStorageTests : TestermintTest() {
         logSection("Escrow $escrowId is in epoch $epochIndex")
 
         logSection("Driving inferences through devshard proxy")
-        val handle = genesis.startDevshardProxy(
-            escrowId = escrowId,
-            keyName = user.keyName,
-            routePrefix = routePrefix,
-        )
+        val handle = genesis.startDevshardProxy(escrowId = escrowId, keyName = user.keyName)
         try {
             genesis.waitForDevshardProxyWarmup()
             for (i in 0 until 10) {
@@ -118,21 +121,14 @@ class DevshardPostgresStorageTests : TestermintTest() {
             .isEmpty()
     }
 
-    // TODO: a third test that drives the same flow through the standalone
-    // devshardd binary (versiond -> devshardd, mirroring DevshardStandaloneTests)
-    // would close the loop on env propagation through versiond. It needs the
-    // versiond compose extension + VERSIOND_BINARY_NAME=devshardd setup that
-    // DevshardStandaloneTests already encapsulates -- factor that harness out
-    // of DevshardStandaloneTests when adding here so we don't duplicate.
-
     @Test
     fun `devshard pruning drops only the target epoch partition`() {
         // Long enough run-time that we can advance past the retention window
         // (N=3 epochs in production). Keep the default 10-block epoch length
         // so the chain naturally ticks during the test.
         val (cluster, genesis) = initCluster(config = noRestrictionsConfig, reboot = true)
+        genesis.waitForVersiondOverrideReady()
         genesis.waitForNextEpoch()
-        waitForVersionedHealth(genesis)
 
         cluster.stubDevshardChatResponse()
 
@@ -146,11 +142,7 @@ class DevshardPostgresStorageTests : TestermintTest() {
         val firstEpoch = genesis.node.queryDevshardEscrow(firstEscrowId).escrow!!.epochIndex.toLong()
 
         run {
-            val handle = genesis.startDevshardProxy(
-                escrowId = firstEscrowId,
-                keyName = user.keyName,
-                routePrefix = routePrefix,
-            )
+            val handle = genesis.startDevshardProxy(escrowId = firstEscrowId, keyName = user.keyName)
             try {
                 genesis.waitForDevshardProxyWarmup()
                 for (i in 0 until 5) {
@@ -182,11 +174,7 @@ class DevshardPostgresStorageTests : TestermintTest() {
             val tickUser = genesis.createFundedDevshardUser("devshard-pg-prune-tick-${tick++}")
             val newEscrowId = genesis.createDevshardEscrowForUser(escrowAmount, tickUser.keyName, modelId = devshardEscrowModel)
             lastTickEpoch = genesis.node.queryDevshardEscrow(newEscrowId).escrow!!.epochIndex.toLong()
-            val handle = genesis.startDevshardProxy(
-                escrowId = newEscrowId,
-                keyName = tickUser.keyName,
-                routePrefix = routePrefix,
-            )
+            val handle = genesis.startDevshardProxy(escrowId = newEscrowId, keyName = tickUser.keyName)
             try {
                 genesis.waitForDevshardProxyWarmup()
                 genesis.sendChatCompletion(handle.proxyUrl, defaultModel, "tick")
@@ -223,16 +211,5 @@ class DevshardPostgresStorageTests : TestermintTest() {
                 .describedAs("last-tick epoch $lastTickEpoch sessions partition must survive prune of $firstEpoch")
                 .isTrue()
         }
-    }
-
-    private fun waitForVersionedHealth(genesis: LocalInferencePair) {
-        val deadline = System.currentTimeMillis() + 90_000L
-        while (System.currentTimeMillis() < deadline) {
-            if (genesis.queryVersionedHealth(standaloneTestVersionName) == "200:ok") {
-                return
-            }
-            Thread.sleep(1_000L)
-        }
-        error("Timed out waiting for proxy to serve $routePrefix/healthz")
     }
 }

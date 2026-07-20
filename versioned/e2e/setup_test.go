@@ -28,17 +28,25 @@ func envOrDefault(key, fallback string) string {
 	return fallback
 }
 
-// buildTestappZip creates a zip archive containing the pre-built testapp binary.
-// Returns the zip bytes and sha256 hash.
+// buildTestappZip creates a zip archive containing the pre-built testapp binary
+// at TESTAPP_PATH (protocol slot "testapp"). Returns the zip bytes and sha256 hash.
 func buildTestappZip(t *testing.T) ([]byte, string) {
 	t.Helper()
+	return buildTestappZipFrom(t, envOrDefault("TESTAPP_PATH", "/app/build/testapp"))
+}
 
-	// The testapp binary should be pre-built and available at /app/build/testapp
-	// or via TESTAPP_PATH env var
-	testappPath := envOrDefault("TESTAPP_PATH", "/app/build/testapp")
+// buildTestapp2Zip is the second protocol slot ("testapp2") for multi-version tests.
+func buildTestapp2Zip(t *testing.T) ([]byte, string) {
+	t.Helper()
+	return buildTestappZipFrom(t, envOrDefault("TESTAPP2_PATH", "/app/build/testapp2"))
+}
+
+func buildTestappZipFrom(t *testing.T, testappPath string) ([]byte, string) {
+	t.Helper()
+
 	binData, err := os.ReadFile(testappPath)
 	if err != nil {
-		t.Fatalf("read testapp binary: %v (set TESTAPP_PATH if not at default location)", err)
+		t.Fatalf("read testapp binary %s: %v", testappPath, err)
 	}
 
 	var buf bytes.Buffer

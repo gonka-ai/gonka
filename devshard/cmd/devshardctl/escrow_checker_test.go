@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"net/http"
-	"net/http/httptest"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -13,8 +12,36 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"devshard/bridge"
 	"devshard/transport"
 )
+
+type stubMainnetBridge struct {
+	getEscrow func(escrowID string) (*bridge.EscrowInfo, error)
+	delay     time.Duration
+}
+
+func (s *stubMainnetBridge) OnEscrowCreated(bridge.EscrowInfo) error          { return bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) OnSettlementProposed(string, []byte, uint64) error { return bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) OnSettlementFinalized(string) error              { return bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) GetHostInfo(string) (*bridge.HostInfo, error)      { return nil, bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) GetValidationThreshold(uint64, string) (*bridge.Decimal, error) {
+	return nil, bridge.ErrNotImplemented
+}
+func (s *stubMainnetBridge) VerifyWarmKey(string, string) (bool, error) { return false, bridge.ErrNotImplemented }
+func (s *stubMainnetBridge) SubmitDisputeState(string, []byte, uint64, map[uint32][]byte) error {
+	return bridge.ErrNotImplemented
+}
+
+func (s *stubMainnetBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+	if s.delay > 0 {
+		time.Sleep(s.delay)
+	}
+	if s.getEscrow != nil {
+		return s.getEscrow(escrowID)
+	}
+	return nil, bridge.ErrEscrowNotFound
+}
 
 func TestIsUpstreamEscrowNotFound(t *testing.T) {
 	tests := []struct {
@@ -78,15 +105,14 @@ func TestIsUpstreamEscrowNotFound(t *testing.T) {
 
 func TestEscrowCheckerDeduplicates(t *testing.T) {
 	var chainCalls atomic.Int64
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		chainCalls.Add(1)
-		time.Sleep(50 * time.Millisecond)
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"found": false}`)
-	}))
-	defer srv.Close()
-
-	checker := NewEscrowChecker(func() string { return srv.URL })
+	stub := &stubMainnetBridge{
+		delay: 50 * time.Millisecond,
+		getEscrow: func(string) (*bridge.EscrowInfo, error) {
+			chainCalls.Add(1)
+			return nil, bridge.ErrEscrowNotFound
+		},
+	}
+	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
 	var deactivated atomic.Int64
 
 	var wg sync.WaitGroup
@@ -106,13 +132,12 @@ func TestEscrowCheckerDeduplicates(t *testing.T) {
 }
 
 func TestEscrowCheckerKeepsActiveWhenFound(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"escrow":{"id":"42","creator":"addr","amount":"1000","slots":["a","b"],"epoch_index":"0","app_hash":"","token_price":"1"},"found":true}`)
-	}))
-	defer srv.Close()
-
-	checker := NewEscrowChecker(func() string { return srv.URL })
+	stub := &stubMainnetBridge{
+		getEscrow: func(escrowID string) (*bridge.EscrowInfo, error) {
+			return &bridge.EscrowInfo{EscrowID: escrowID}, nil
+		},
+	}
+	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
 	var deactivated atomic.Int64
 
 	checker.TriggerCheck("42", func() {
@@ -123,12 +148,12 @@ func TestEscrowCheckerKeepsActiveWhenFound(t *testing.T) {
 }
 
 func TestEscrowCheckerKeepsActiveOnChainError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusServiceUnavailable)
-	}))
-	defer srv.Close()
-
-	checker := NewEscrowChecker(func() string { return srv.URL })
+	stub := &stubMainnetBridge{
+		getEscrow: func(string) (*bridge.EscrowInfo, error) {
+			return nil, fmt.Errorf("service unavailable")
+		},
+	}
+	checker := NewEscrowChecker(func() bridge.MainnetBridge { return stub })
 	var deactivated atomic.Int64
 
 	checker.TriggerCheck("42", func() {

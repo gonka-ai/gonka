@@ -100,6 +100,8 @@ http {
     # Grafana upstream - only included if GRAFANA_ENABLED is set
     ${GRAFANA_UPSTREAM}
 
+    ${EDGE_API_UPSTREAM}
+
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
     # devshard binary.

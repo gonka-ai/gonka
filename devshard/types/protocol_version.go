@@ -1,17 +1,14 @@
+// Protocol version link stamps (see devshard/docs/upgrade.md):
+//
+// buildStateRootProtocolVersion — baked in at build via -X (DEVSHARD_VERSION).
+// EffectiveStateRootAndProtocolVersion — resolved in init(): link stamp, or
+// DevshardStateRootAndProtocolVersion when the link stamp is "".
 package types
 
 import "strings"
 
-// buildStateRootProtocolVersion is set at link time (see Makefile / Dockerfile
-// DEVSHARD_PROTOCOL_VERSION). Empty in plain `go test` / `go run` falls back to
-// DevshardStateRootAndProtocolVersion.
 var buildStateRootProtocolVersion string
 
-// EffectiveStateRootAndProtocolVersion is the state-root / settlement protocol tag
-// for this process. Resolved once in init() from the link-time stamp or
-// DevshardStateRootAndProtocolVersion; it does not change at runtime.
-// Testermint reads the same value from build/devshard-protocol-version written by
-// `make devshardd-build`.
 var EffectiveStateRootAndProtocolVersion string
 
 func init() {

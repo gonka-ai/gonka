@@ -1747,7 +1747,7 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // sendTime is when the nonce's network call started.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
 	s.mu.Lock()
-	cfg := s.sm.Config()
+	cfg := s.sm.SnapshotState().Config
 	confirmedAt := int64(0)
 	if o, ok := s.nonceStates[nonce]; ok {
 		confirmedAt = o.confirmedAt

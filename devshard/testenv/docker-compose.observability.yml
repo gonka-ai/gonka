@@ -1,0 +1,99 @@
+# Optional observability overlay for devshard testenv.
+# Usage (from devshard/testenv/):
+#   TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=http://jaeger:4317 \
+#     docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d
+#
+# Host ports are offset from deploy/join defaults to avoid clashing with a local join stack.
+
+services:
+  jaeger:
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+    user: "0:0"
+    command:
+      - --config
+      - /jaeger/config.yaml
+    expose:
+      - "16686"
+      - "4317"
+    ports:
+      - "127.0.0.1:11686:16686"
+    volumes:
+      - ./observability/jaeger.config.yaml:/jaeger/config.yaml:ro
+      - testenv_jaeger_data:/var/lib/jaeger
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.11.3
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=7d
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - testenv_prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:19099:9090"
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  loki:
+    image: grafana/loki:3.6.10
+    command:
+      - -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/config.yaml:ro
+      - testenv_loki_data:/loki
+    ports:
+      - "127.0.0.1:13101:3100"
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  promtail:
+    image: grafana/promtail:3.6.10
+    command:
+      - -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./observability/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - testenv_promtail_data:/tmp
+    depends_on:
+      - loki
+    networks:
+      - testenv
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:13.0.1
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin1}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=http://localhost:13000/
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ../../../deploy/join/observability/grafana/dashboards:/var/lib/grafana/dashboards-src:ro
+      - ./observability/grafana/entrypoint.sh:/entrypoint.sh:ro
+      - testenv_grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:13000:3000"
+    depends_on:
+      - prometheus
+      - loki
+      - jaeger
+    networks:
+      - testenv
+    restart: unless-stopped
+
+volumes:
+  testenv_jaeger_data:
+  testenv_prometheus_data:
+  testenv_loki_data:
+  testenv_promtail_data:
+  testenv_grafana_data:

@@ -972,7 +972,7 @@ func gatewayAttemptFailureReason(inf *inflight, session nonceFinishedChecker) st
 			return "transport_error"
 		}
 	}
-	if inf.receiptTime.IsZero() {
+	if !inf.hasReceipt() {
 		return "no_receipt"
 	}
 	if session != nil && !session.IsNonceFinished(inf.nonce) {
@@ -1005,10 +1005,10 @@ func gatewayAttemptVisibility(inf *inflight, winnerNonce uint64, successful bool
 	if inf == nil {
 		return "unknown"
 	}
-	if inf.suspicious {
-		return "no_winner"
-	}
 	if successful && winnerNonce != 0 && inf.nonce == winnerNonce {
+		if inf.suspicious {
+			return "no_winner"
+		}
 		return "user_visible_winner"
 	}
 	if successful {

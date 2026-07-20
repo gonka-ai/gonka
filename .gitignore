@@ -20,8 +20,11 @@ inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api
 /decentralized-api/devshardd
+/edge-api/build/edge-api
 /devshard/devshardctl
 /devshard/devshardd
+/devshard/cmd/devshardd/devshardd
+/devshard/cmd/devshardctl/devshardctl
 chain-venv/
 .inference/
 prod-genesis/
@@ -55,4 +58,4 @@ actionlint
 inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
-/inference-chain/.docker-context/
+inference-chain/.docker-context

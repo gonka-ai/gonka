@@ -95,14 +95,7 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, len(PostgresMigrationSteps()), n1)
 
-	parents := []string{
-		"devshard_session_index",
-		"devshard_sessions",
-		"devshard_diffs",
-		"devshard_signatures",
-		"devshard_snapshots",
-		"devshard_sealed_inferences",
-	}
+	parents := append([]string{pgSessionIndex}, postgresPartitionedParents...)
 	for _, table := range parents {
 		exists, err := migrate.TableExistsPG(ctx, pool, table)
 		require.NoError(t, err)
@@ -150,7 +143,7 @@ func TestSaveSnapshot_SameEpoch_PartitionCreateOnce(t *testing.T) {
 		"SaveSnapshot must not issue PARTITION OF DDL when partitions already exist for the epoch")
 }
 
-func TestEnsurePartition_AllFiveParents(t *testing.T) {
+func TestEnsurePartition_CreatesAllParentPartitionsOnce(t *testing.T) {
 	ctx := context.Background()
 	tracer := &postgresPartitionDDLTracer{}
 	pool, cleanup := setupDevshardPostgresPool(t, tracer)
@@ -163,9 +156,12 @@ func TestEnsurePartition_AllFiveParents(t *testing.T) {
 	}
 	require.NoError(t, MigratePostgres(ctx, pool))
 
+	want := len(postgresPartitionedParents)
 	require.NoError(t, pg.ensurePartition(ctx, 77))
-	require.Equal(t, 8, tracer.partitionDDLCount(), "first ensurePartition should create eight child partitions")
+	require.Equal(t, want, tracer.partitionDDLCount(),
+		"first ensurePartition should create one child per partitioned parent (%d tables)", want)
 
 	require.NoError(t, pg.ensurePartition(ctx, 77))
-	require.Equal(t, 8, tracer.partitionDDLCount(), "second ensurePartition must not issue partition DDL")
+	require.Equal(t, want, tracer.partitionDDLCount(),
+		"second ensurePartition must not issue partition DDL")
 }

@@ -97,7 +97,6 @@ type StateMachine struct {
 	totalSlots         uint32
 
 	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
-	protocolVersion types.ProtocolVersion // surfaced for gateway status/config compatibility
 }
 
 // SMOption configures optional StateMachine behavior.
@@ -125,25 +124,6 @@ func WithVersion(version string) SMOption {
 // state-root composition. This binary always returns true (sealed accumulator).
 func (sm *StateMachine) EffectiveV2Composition() bool {
 	return true
-}
-
-// WithProtocolVersion records the configured protocol version and enables
-// status/config reporting.
-func WithProtocolVersion(v types.ProtocolVersion) SMOption {
-	return func(sm *StateMachine) {
-		if v == "" {
-			v = types.ProtocolV1
-		}
-		sm.protocolVersion = v
-	}
-}
-
-// ProtocolVersion returns the configured protocol version.
-func (sm *StateMachine) ProtocolVersion() types.ProtocolVersion {
-	if sm.protocolVersion == "" {
-		return types.ProtocolV1
-	}
-	return sm.protocolVersion
 }
 
 func NewStateMachine(
@@ -211,7 +191,6 @@ func NewStateMachine(
 		committedEntries:   make(map[uint64][]byte),
 		sealedNonces:       make(map[uint64]uint64),
 		inferenceStore:     store,
-		protocolVersion:    types.ProtocolV1,
 	}
 	for _, o := range opts {
 		o(sm)
@@ -227,7 +206,6 @@ func NewStateMachine(
 		"vote_threshold", config.VoteThreshold,
 		"validation_rate", config.ValidationRate,
 		"user_address", userAddress,
-		"protocol_version", sm.ProtocolVersion(),
 	)
 
 	return sm, nil
@@ -540,27 +518,6 @@ func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	return s
 }
 
-// SnapshotInferences returns a deep copy of just the inference map. Use it for
-// endpoints that render the full inference list without paying to copy the
-// rest of the escrow state.
-func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	return copyInferences(sm.state.Inferences)
-}
-
-// InferenceStatusCounts returns the total number of inferences and a per-status
-// breakdown, computed under the read lock without deep-copying any records.
-func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
-	sm.mu.RLock()
-	defer sm.mu.RUnlock()
-	counts := make(map[types.InferenceStatus]int)
-	for _, rec := range sm.state.Inferences {
-		counts[rec.Status]++
-	}
-	return len(sm.state.Inferences), counts
-}
-
 // ExportState returns a deep-copied pointer form used by recovery snapshots.
 func (sm *StateMachine) ExportState() *types.EscrowState {
 	sm.mu.RLock()
@@ -605,6 +562,27 @@ func cloneEscrowState(src *types.EscrowState) *types.EscrowState {
 	}
 
 	return &s
+}
+
+// SnapshotInferences returns a deep copy of just the inference map. Use it for
+// endpoints that render the full inference list without paying to copy the
+// rest of the escrow state.
+func (sm *StateMachine) SnapshotInferences() map[uint64]*types.InferenceRecord {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	return copyInferences(sm.state.Inferences)
+}
+
+// InferenceStatusCounts returns the total number of inferences and a per-status
+// breakdown, computed under the read lock without deep-copying any records.
+func (sm *StateMachine) InferenceStatusCounts() (int, map[types.InferenceStatus]int) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	counts := make(map[types.InferenceStatus]int)
+	for _, rec := range sm.state.Inferences {
+		counts[rec.Status]++
+	}
+	return len(sm.state.Inferences), counts
 }
 
 // mutableSnapshot holds the mutable fields of EscrowState for rollback.
@@ -963,9 +941,10 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		} else {
 			rec.VotesInvalid += weight
 			rec.Status = types.StatusChallenged
-			if err := sm.persistLiveInferenceObsLocked(msg.InferenceId, rec); err != nil {
-				return err
-			}
+			// Obs row is not part of post_state_root; a storage blip must not fail
+			// the tx (ApplyLocalBestEffort would drop it but keep the mutation).
+			// Recovery rebuilds obs from the diff journal; see autoSealLocked.
+			sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
 			logging.Debug("inference finished -> challenged", "subsystem", "state",
 				"inference_id", msg.InferenceId,
 				"validator_slot", msg.ValidatorSlot,
@@ -1066,9 +1045,8 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 
 	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
-		if err := sm.persistLiveInferenceObsLocked(msg.InferenceId, rec); err != nil {
-			return err
-		}
+		// Same as challenge path: obs is observability-only, never consensus.
+		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
 	}
 
 	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)

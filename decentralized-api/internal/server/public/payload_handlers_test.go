@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"decentralized-api/utils"
+	"common/utils"
 
 	"github.com/cosmos/cosmos-sdk/crypto/keys/secp256k1"
 	"github.com/productscience/inference/x/inference/calculations"
@@ -250,5 +250,3 @@ func TestExecutorSignature_HashMismatchDetection(t *testing.T) {
 func pubKeyToBase64(key *secp256k1.PrivKey) string {
 	return base64.StdEncoding.EncodeToString(key.PubKey().Bytes())
 }
-
-

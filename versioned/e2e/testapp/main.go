@@ -16,12 +16,34 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
+// Version is the protocol slot name for e2e (maps to approved_versions.name).
+// versiond requires --print-protocol-version to equal the oracle slot name, so
+// e2e registers the slot as "testapp". A second binary can override via
+// -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2".
+var Version = "testapp"
+
+// BinaryVersion is the build id printed by --print-binary-version and exposed
+// as DEVSHARD_BINARY_LOG_VERSION (used as the HTTP "prefix" field).
+var BinaryVersion = "testapp"
+
 func main() {
+	if len(os.Args) == 2 && os.Args[1] == "--print-binary-version" {
+		fmt.Println(BinaryVersion)
+		return
+	}
+	if len(os.Args) == 2 && os.Args[1] == "--print-protocol-version" {
+		fmt.Println(Version)
+		return
+	}
+
 	port := flag.Int("port", 8080, "listen port")
 	dataDir := flag.String("data-dir", "", "data directory")
 	flag.Parse()
 
-	prefix := os.Getenv("DEVSHARD_LOG_PREFIX")
+	prefix := os.Getenv("DEVSHARD_BINARY_LOG_VERSION")
+	if prefix == "" {
+		prefix = BinaryVersion
+	}
 	nmAddr := os.Getenv("NODE_MANAGER_ADDR")
 	log.Printf("[%s] starting testapp on port %d, data-dir=%s, node-manager=%s", prefix, *port, *dataDir, nmAddr)
 

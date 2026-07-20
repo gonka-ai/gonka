@@ -211,8 +211,13 @@ func TestGatewayParticipantTimingMetricsRecordAddressAndModel(t *testing.T) {
 func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	now := time.Now()
 
-	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(&inflight{receiptTime: now}, nil))
-	require.Equal(t, "error_stream", gatewayAttemptFailureReason(&inflight{receiptTime: now, errorSource: "error.BadRequestError"}, nil))
+	emptyStreamAttempt := &inflight{}
+	emptyStreamAttempt.setReceiptAt(now)
+	errorStreamAttempt := &inflight{errorSource: "error.BadRequestError"}
+	errorStreamAttempt.setReceiptAt(now)
+
+	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil))
+	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil))
 	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil))
 	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil))
 

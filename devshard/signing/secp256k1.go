@@ -3,6 +3,7 @@ package signing
 import (
 	"crypto/ecdsa"
 	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 
 	"github.com/cosmos/btcutil/bech32"
@@ -62,6 +63,11 @@ func (s *Secp256k1Signer) PublicKeyBytes() []byte {
 
 func (s *Secp256k1Signer) CompressedPublicKeyBytes() []byte {
 	return crypto.CompressPubkey(&s.key.PublicKey)
+}
+
+// PrivateKeyHex returns the 32-byte secp256k1 private key as a lowercase hex string.
+func (s *Secp256k1Signer) PrivateKeyHex() string {
+	return hex.EncodeToString(crypto.FromECDSA(s.key))
 }
 
 func GenerateKey() (*Secp256k1Signer, error) {

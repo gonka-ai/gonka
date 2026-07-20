@@ -5,7 +5,6 @@ import (
 
 	"devshard/bridge"
 	"devshard/storage"
-	"devshard/types"
 
 	"github.com/stretchr/testify/require"
 )
@@ -21,12 +20,11 @@ func TestNewHTTPSessionUsesRouteVersionForStorageBind(t *testing.T) {
 	storagePath := t.TempDir() + "/session.db"
 
 	session, _, err := NewHTTPSession(HTTPSessionConfig{
-		PrivateKeyHex:   privateKeyHex,
-		EscrowID:        "escrow-1",
-		Bridge:          httpsessionTestBridge{},
-		StoragePath:     storagePath,
-		RoutePrefix:     " /devshard/dev/ ",
-		ProtocolVersion: types.ProtocolV1,
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "escrow-1",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   " /devshard/dev/ ",
 	})
 	require.NoError(t, err)
 	require.NoError(t, session.Close())

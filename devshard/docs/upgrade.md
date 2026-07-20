@@ -92,12 +92,57 @@ Because escrow creation carries no version, deprecation enforcement can only
 happen later in the flow. The intended enforcement point is settlement, not
 escrow creation.
 
-Settlement carries a cleartext **state root and protocol version** tag
+Settlement carries a cleartext **protocol version** tag
 (`state_root_and_protocol_version`) and that same value is part of the signed
 state commitment. Mainnet recomputes the root with
-`version_hash = sha256(tag_utf8)`. That tag is independent of versiond runtime
-names in `approved_versions`; bump it only when state-root or settlement protocol
-changes — see [protocol-version.md](./protocol-version.md).
+`version_hash = sha256(tag_utf8)`. The tag equals the session bind version:
+`approved_versions.name` for `/devshard/<name>/*`, or `v1` for the legacy
+`/v1/devshard/*` path. See [Version naming](#version-naming) below.
+
+## Version naming
+
+Two strings, same governance slot:
+
+| Surface | Example | Role |
+|---------|---------|------|
+| Protocol name (`approved_versions.name`) | `v2` | Routing `/devshard/v2/`, session bind, state-root / settlement tag |
+| Binary build id | `0.2.13-v2-r2` | Log prefix only; can change when governance keeps the same protocol name |
+
+| Build / runtime | Mechanism |
+|-----------------|-----------|
+| `DEVSHARD_VERSION` | Makefile / `-X main.Version=...` — protocol name at link time |
+| `DEVSHARD_BINARY_VERSION` | Makefile / `-X main.BinaryVersion=...` — build id at link time |
+| versiond slot | `c.version.Name` = protocol (`v2`) |
+| versiond → child | `DEVSHARD_BINARY_LOG_VERSION=<build id>` from `devshardd --print-binary-version` |
+| Session / settlement | protocol name only (`RuntimeVersion` = link-time `main.Version`) |
+
+Build example:
+
+```bash
+make devshardd-build DEVSHARD_VERSION=v2 DEVSHARD_BINARY_VERSION=0.2.13-v2-r2
+```
+
+versiond verifies `--print-protocol-version` matches the slot name before start.
+When that flag is absent, versiond trusts the governance slot name and skips
+the embed check. When `--print-binary-version` is absent, versiond sets
+`DEVSHARD_BINARY_LOG_VERSION` to the slot name (legacy path). devshardd accepts
+that value when it matches the link-time protocol name.
+
+**Legacy path:** `/v1/devshard/*` uses `v1` as the protocol tag (embedded dapi
+and historical sessions).
+
+**Graceful binary refresh:** When governance keeps the same `approved_versions`
+name but updates `binary` URL / `sha256`, versiond downloads the new artifact
+and restarts the child. New sessions pick up the refreshed binary under the
+same name. In-flight sessions keep the tag they were bound with until settled;
+hosts refuse mixed versions via storage `ErrSessionVersionConflict`.
+
+**Protocol-breaking changes** require a **new** approved name (new state-root /
+settlement rules). Do not reuse an existing name for incompatible wire or hash
+layout changes.
+
+Build stamp: `make devshardd-build` writes `build/devshard-version` (used by
+Testermint `VERSIOND_FORCE` and settlement assertions).
 
 ## Operator overrides
 

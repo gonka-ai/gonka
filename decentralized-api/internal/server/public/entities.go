@@ -6,10 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
-
-	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
-	comettypes "github.com/cometbft/cometbft/types"
-	"github.com/productscience/inference/x/inference/types"
 )
 
 type ChatRequest struct {
@@ -176,74 +172,11 @@ type ExecutorDestination struct {
 	Address string `json:"address"`
 }
 
-type ModelsResponse struct {
-	Models []types.Model `json:"models"`
-}
-
-type ActiveParticipantWithProof struct {
-	ActiveParticipants      types.ActiveParticipants `json:"active_participants"`
-	Addresses               []string                 `json:"addresses"`
-	ActiveParticipantsBytes string                   `json:"active_participants_bytes"`
-	ProofOps                *cryptotypes.ProofOps    `json:"proof_ops"`
-	Validators              []*comettypes.Validator  `json:"validators"`
-	Block                   *comettypes.Block        `json:"block"`
-	ExcludedParticipants    []ExcludedParticipant    `json:"excluded_participants"`
-	// CommitInfo              storetypes.CommitInfo    `json:"commit_info"`
-}
-
-type ExcludedParticipant struct {
-	Address              string `json:"address"`
-	Reason               string `json:"reason"`
-	ExclusionBlockHeight int64  `json:"exclusion_block_height"`
-}
-
-type ParticipantDto struct {
-	Id          string  `json:"id"`
-	Url         string  `json:"url"`
-	CoinsOwed   int64   `json:"coins_owed"`
-	RefundsOwed int64   `json:"refunds_owed"`
-	Balance     int64   `json:"balance"`
-	VotingPower int64   `json:"voting_power"`
-	Reputation  float32 `json:"reputation"`
-}
-
-type ParticipantsDto struct {
-	Participants []ParticipantDto `json:"participants"`
-	BlockHeight  int64            `json:"block_height"`
-}
-
-type ProofVerificationRequest struct {
-	Value    string               `json:"value"`
-	AppHash  string               `json:"app_hash"`
-	ProofOps cryptotypes.ProofOps `json:"proof_ops"`
-	Epoch    int64                `json:"epoch"`
-}
-
-type VerifyBlockRequest struct {
-	Block      comettypes.Block `json:"block"`
-	Validators []Validator      `json:"validators"`
-}
-
-type Validator struct {
-	PubKey      string `json:"pub_key"`
-	VotingPower int64  `json:"voting_power"`
-}
-
-type UnitOfComputePriceProposalDto struct {
-	Price uint64 `json:"price"`
-	Denom string `json:"denom"`
-}
-
 type PricingDto struct {
 	Price  uint64          `json:"unit_of_compute_price"` // Legacy field for backward compatibility
 	Models []ModelPriceDto `json:"models"`
 	// Dynamic pricing information
 	DynamicPricingEnabled bool `json:"dynamic_pricing_enabled"`
-}
-
-type RegisterModelDto struct {
-	Id                     string `json:"id"`
-	UnitsOfComputePerToken uint64 `json:"units_of_compute_per_token"`
 }
 
 type ModelPriceDto struct {

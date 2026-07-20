@@ -5,11 +5,19 @@ WORKDIR /build
 COPY versioned/go.mod versioned/go.sum ./
 RUN go mod download
 COPY versioned/ .
-RUN CGO_ENABLED=0 GOOS=linux go build -o testapp ./e2e/testapp
+RUN CGO_ENABLED=0 GOOS=linux go build -o testapp ./e2e/testapp && \
+    CGO_ENABLED=0 GOOS=linux go build \
+        -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" \
+        -o testapp2 ./e2e/testapp
 
+# versiond extracts VERSIOND_BINARY_NAME ("testapp") from every zip; the slot
+# identity comes from --print-protocol-version inside the binary, not the zip entry name.
 RUN mkdir -p /srv/files && \
     zip -j /srv/files/testapp.zip testapp && \
-    sha256sum /srv/files/testapp.zip | cut -d' ' -f1 > /srv/files/testapp.zip.sha256
+    sha256sum /srv/files/testapp.zip | cut -d' ' -f1 > /srv/files/testapp.zip.sha256 && \
+    cp testapp2 testapp && \
+    zip -j /srv/files/testapp2.zip testapp && \
+    sha256sum /srv/files/testapp2.zip | cut -d' ' -f1 > /srv/files/testapp2.zip.sha256
 
 FROM python:3.12-alpine3.21
 COPY --from=builder /srv/files /srv/files

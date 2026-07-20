@@ -51,7 +51,8 @@ func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error {
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }
-func (s *closeCountingStore) PruneEpoch(uint64) error { return nil }
+func (s *closeCountingStore) ClearValidationObs(string) error { return nil }
+func (s *closeCountingStore) PruneEpoch(uint64) error         { return nil }
 func (s *closeCountingStore) Close() error {
 	s.closeCalls++
 	return nil

@@ -47,16 +47,6 @@ func (m *mockStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
 	return nil
 }
 
-func (m *mockStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	if _, ok := m.data[inferenceId]; !ok {
-		return ErrNotFound
-	}
-	delete(m.data, inferenceId)
-	return nil
-}
-
 func (m *mockStorage) getPruned() []uint64 {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -200,42 +190,6 @@ func TestManagedStorage_AutoPruneSkipsOldEpochs(t *testing.T) {
 		if e < 88 {
 			t.Errorf("should not prune epoch %d (too old, should skip)", e)
 		}
-	}
-}
-
-func TestManagedStorage_DeleteInferenceEvictsCache(t *testing.T) {
-	mock := newMockStorage()
-	ms := NewManagedStorageWithSize(mock, 3, time.Minute, 100)
-	ctx := context.Background()
-
-	if err := ms.Store(ctx, "inf-1", 4, []byte("prompt"), []byte("response")); err != nil {
-		t.Fatalf("Store failed: %v", err)
-	}
-
-	// Warm the cache.
-	if _, _, err := ms.Retrieve(ctx, "inf-1", 4); err != nil {
-		t.Fatalf("Retrieve (warm) failed: %v", err)
-	}
-
-	if err := ms.DeleteInference(ctx, "inf-1", 4); err != nil {
-		t.Fatalf("DeleteInference failed: %v", err)
-	}
-
-	// Backing storage is gone and cache must have been evicted; a fresh Retrieve
-	// has to surface ErrNotFound rather than returning the cached blob.
-	_, _, err := ms.Retrieve(ctx, "inf-1", 4)
-	if err != ErrNotFound {
-		t.Errorf("expected ErrNotFound after DeleteInference, got %v", err)
-	}
-}
-
-func TestManagedStorage_DeleteInferenceMissing(t *testing.T) {
-	mock := newMockStorage()
-	ms := NewManagedStorageWithSize(mock, 3, time.Minute, 100)
-	ctx := context.Background()
-
-	if err := ms.DeleteInference(ctx, "nope", 1); err != ErrNotFound {
-		t.Errorf("expected ErrNotFound for missing payload, got %v", err)
 	}
 }
 

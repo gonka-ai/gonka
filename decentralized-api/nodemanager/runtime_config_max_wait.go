@@ -4,9 +4,11 @@ import (
 	"os"
 	"strconv"
 	"time"
+
+	"common/runtimeconfig"
 )
 
-const defaultRuntimeConfigMaxWaitCap = 60 * time.Second
+const defaultRuntimeConfigMaxWaitCap = runtimeconfig.DefaultMaxWaitCap
 
 // runtimeConfigMaxWaitCap is the server-side upper bound for positive max_wait_seconds.
 func runtimeConfigMaxWaitCap() time.Duration {
@@ -19,18 +21,6 @@ func runtimeConfigMaxWaitCap() time.Duration {
 }
 
 // clampMaxWait maps client max_wait_seconds to an effective hold duration.
-//
-// Wire contract:
-//   - <= 0: immediate reply (3a contract; field absent decodes as 0)
-//   - > 0: long-poll up to min(requested, server cap)
 func clampMaxWait(maxWaitSeconds int32) time.Duration {
-	if maxWaitSeconds <= 0 {
-		return 0
-	}
-	maxWaitCap := runtimeConfigMaxWaitCap()
-	requested := time.Duration(maxWaitSeconds) * time.Second
-	if requested > maxWaitCap {
-		return maxWaitCap
-	}
-	return requested
+	return runtimeconfig.ClampMaxWait(maxWaitSeconds, runtimeConfigMaxWaitCap())
 }
