@@ -37,6 +37,8 @@ type statsNegativeCacheEntry struct {
 }
 
 type statsShardsResponse struct {
+	ProtocolVersion string              `json:"protocol_version,omitempty"` // --print-protocol-version / bind slot (e.g. v4)
+	BinaryVersion   string              `json:"binary_version,omitempty"`   // --print-binary-version / build id
 	CurrentEpochID  uint64              `json:"current_epoch_id"`
 	CachedAt        int64               `json:"cached_at"`
 	CacheTTLSeconds int64               `json:"cache_ttl_seconds"`
@@ -54,6 +56,8 @@ type statsShardDetailResponse struct {
 	EpochID                     uint64                       `json:"epoch_id"`
 	Nonce                       uint64                       `json:"nonce"`
 	Version                     string                       `json:"version"` // versiond runtime bind (m.boundVersion)
+	ProtocolVersion             string                       `json:"protocol_version,omitempty"`
+	BinaryVersion               string                       `json:"binary_version,omitempty"`
 	StateRootAndProtocolVersion string                       `json:"state_root_and_protocol_version"`
 	CachedAt                    int64                        `json:"cached_at"`
 	CacheTTLSeconds             int64                        `json:"cache_ttl_seconds"`
@@ -156,6 +160,8 @@ func (m *HostManager) statsShards(now time.Time) (*statsShardsResponse, error) {
 	}
 
 	resp := &statsShardsResponse{
+		ProtocolVersion: m.boundVersion,
+		BinaryVersion:   m.binaryVersion,
 		CurrentEpochID:  currentEpochID,
 		CachedAt:        now.Unix(),
 		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
@@ -214,6 +220,8 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 		EpochID:                     sess.EpochID,
 		Nonce:                       st.LatestNonce,
 		Version:                     m.boundVersion,
+		ProtocolVersion:             m.boundVersion,
+		BinaryVersion:               m.binaryVersion,
 		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
 		CachedAt:                    now.Unix(),
 		CacheTTLSeconds:             int64(statsCacheTTL / time.Second),

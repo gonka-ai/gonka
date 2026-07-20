@@ -1,7 +1,7 @@
 # versiond high availability — Test plans
 
 This note covers **how to roll out** multi-instance HA + Postgres storage and
-**six operator test plans**, including a routing constraint that the boot-migrate
+**seven operator test plans**, including a routing constraint that the boot-migrate
 path cannot paper over for already-deployed versions.
 
 | Plan | Section | What it proves |
@@ -12,10 +12,12 @@ path cannot paper over for already-deployed versions.
 | **Versionless observability plan** | §4 | Obs never binds version; rewrite + PG route; rate limit; health vs metrics |
 | **Edge-api / deprecated dapi plan** | §5 | New proxy → edge-api Tier A; old proxy → deprecated dapi dual-serve |
 | **Escrow long-poll warm plan** | §6 | Host-events warm → DB cache; inference with inference-node down (v4 × dapi **0.2.14** and **devshard-0.2.14-v4**) |
+| **Rolling update plan** | §7 | Same-name SHA swap: in-flight SSE survives; Postgres blue/green overlap; hybrid stop/start |
 
 Related: [storage-design.md](./storage-design.md),
 [high-availability-architecture.md](./high-availability-architecture.md),
 [release-0.2.14-v4.md](./release-0.2.14-v4.md),
+[rolling-update.md](./rolling-update.md),
 [pr-versionless-observability.md](./pr-versionless-observability.md),
 [escrow-longpoll-plan.md](./escrow-longpoll-plan.md) / [ml-node-capacity-fallback-plan.md](./ml-node-capacity-fallback-plan.md)
 ([PR #1443](https://github.com/gonka-ai/gonka/pull/1443)).
@@ -1626,7 +1628,299 @@ docker compose start <inference-node-service>   # if stopped in §6.2
 
 ---
 
-## 7. Summary for operators
+## 7. Rolling update plan (manual)
+
+**Goal:** prove that a **same-name, new-sha256** governance (or mock-oracle)
+binary update keeps already-accepted work alive while `versiond` blue/green
+swaps the `devshardd` child. On Postgres, old and new generations **overlap**;
+new requests land on the new SHA; the old child drains and exits. On hybrid /
+SQLite, the swap must **not** overlap (exclusive stop/start).
+
+Design reference: [rolling-update.md](./rolling-update.md) (Track A — child
+swap inside one `versiond`). Release notes:
+[release-0.2.14-v4.md](./release-0.2.14-v4.md).
+
+```text
+oracle / ApprovedVersions: same name, new sha256
+        │
+        ▼
+ versiond: probe --print-storage-mode (old + new)
+        │
+        ├── both postgres → start NEW on new port → /ready+/healthz
+        │                 → publish NEW route → drain OLD → SIGTERM
+        └── else         → exclusive stop/start (no concurrent children)
+```
+
+**Out of scope for this plan:** whole-`versiond` host evacuation / router drain
+(Track B — separate from a child SHA swap); validation-lease race (§2);
+edge-api (§5); long-poll warm (§6).
+
+Automated coverage already exists as
+`TestVersiondRollingUpdateSameVersionSHA` /
+`TestVersiondRollingUpdateHybridFallback`
+(`make -C devshard/testenv citest-versiond-rolling-update`; see
+[testenv/docs/scenarios.md](../testenv/docs/scenarios.md) — **Versiond rolling
+update**) and `versioned/e2e` `TestSameNameNewSHA_RollingUpdateDrainsOld`. This
+section is the **operator walkthrough** on join or a live-like stack; the steps
+below follow the same assertions as the citest.
+
+**Client-visible stamp:** protocol name (`v4`) alone cannot tell old vs new SHA.
+Build two archives with the **same** `DEVSHARD_VERSION=v4` but different
+`DEVSHARD_BINARY_VERSION` stamps, then poll `GET …/stats/shards` for
+`binary_version` drift during the flip (§7.0.1, §7.3).
+
+### 7.0 Preconditions
+
+| Requirement | Why |
+| --- | --- |
+| HA (or single) `versiond` with a **v4** `devshardd` child for the version under test | Must support admin `/ready` + `--print-storage-mode` |
+| **Postgres path (§7.1–§7.4):** `DEVSHARD_STORAGE_MODE=postgres` + `PGHOST` / `PG*` | Only mode that allows blue/green overlap (citest default stack) |
+| Ability to publish a **new archive** under the **same** version name (new sha256) | Drive the swap — governance proposal, or mock-dapi `POST /testenv/versions` (citest path) |
+| Two zip archives with different sha256 **and** preferably different binary stamps | Same protocol `v4`; stamps `0.2.14-v4` vs `0.2.14-v4-r2` make client poll readable (§7.0.1). Citest may use identical binaries + zip markers |
+| Gateway chat path that can hold a **long SSE** stream | Citest: `stream=true` + mock-openai `StreamChunkDelay` (e.g. 750ms) |
+| Access to each versiond container’s local `GET /healthz` | Observe `status` / `sha256` / draining (citest polls via compose exec) |
+| Public (or versioned) `GET …/stats/shards` | Exposes `protocol_version` + `binary_version` for client-side drift checks |
+| **Multi-HA tip:** pin router traffic to **one** versiond host while observing overlap | Citest sets `VERSIOND_HOSTS=<one host>` per subtest so sticky hashing cannot hide drain on another replica |
+| Optional: compose patch `DEVSHARD_STORAGE_MODE=hybrid` (§7.5) | Citest: `TestVersiondRollingUpdateHybridFallback` |
+
+#### 7.0.1 Build two same-protocol archives (distinct binary stamps)
+
+Protocol / bind name stays **`v4`**; only the link-time binary id changes. From
+repo root:
+
+```bash
+# Old generation (pre-flip) — protocol v4, binary 0.2.14-v4
+make devshardd-build DEVSHARD_VERSION=v4 DEVSHARD_BINARY_VERSION=0.2.14-v4
+cp build/devshardd /tmp/devshardd-0.2.14-v4
+# Confirm stamps:
+/tmp/devshardd-0.2.14-v4 --print-protocol-version   # → v4
+/tmp/devshardd-0.2.14-v4 --print-binary-version     # → 0.2.14-v4
+
+# New generation (post-flip) — same protocol, new binary id
+make devshardd-build DEVSHARD_VERSION=v4 DEVSHARD_BINARY_VERSION=0.2.14-v4-r2
+cp build/devshardd /tmp/devshardd-0.2.14-v4-r2
+/tmp/devshardd-0.2.14-v4-r2 --print-protocol-version  # → v4
+/tmp/devshardd-0.2.14-v4-r2 --print-binary-version    # → 0.2.14-v4-r2
+
+# Zip for versiond download (entry name inside archive must be `devshardd`)
+mkdir -p /tmp/pack
+cp /tmp/devshardd-0.2.14-v4 /tmp/pack/devshardd
+(cd /tmp/pack && zip -j /tmp/devshardd-old.zip devshardd)
+cp /tmp/devshardd-0.2.14-v4-r2 /tmp/pack/devshardd
+(cd /tmp/pack && zip -j /tmp/devshardd-new.zip devshardd)
+shasum -a 256 /tmp/devshardd-old.zip /tmp/devshardd-new.zip
+```
+
+Publish `devshardd-old.zip` first (ApprovedVersions / mock-dapi), run baseline,
+then switch the same version **name** to `devshardd-new.zip` (§7.2).
+
+Record before the flip:
+
+```bash
+VERSION=v4   # protocol / ApprovedVersions.name under test
+# Optional (matches citest host_0 / host_1 subtests): pin router to one replica
+#   VERSIOND_HOSTS=versiond-0   # or the compose service id for that host
+#
+# Public path (through router / proxy — join often prefixes /devshard/)
+curl -sS "http://127.0.0.1:8080/devshard/healthz" | jq .
+# Or per versiond host (loopback inside the container) — citest uses this
+docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
+
+# Client-facing stamp (through proxy / versioned child):
+curl -sS "http://127.0.0.1:8000/devshard/${VERSION}/stats/shards" | \
+  jq '{protocol_version, binary_version, current_epoch_id}'
+# expect: protocol_version=v4, binary_version=0.2.14-v4
+```
+
+Note the **running** entry on `/healthz`: `name`, `sha256`, `status=running`,
+`binary_version`. Confirm storage mode (manual extra; citest assumes stack mode):
+
+```bash
+docker compose exec versiond-0 \
+  sh -c 'bin=$(find /opt/versiond/bin -type f -name devshardd | head -1); "$bin" --print-storage-mode'
+# expect: postgres
+```
+
+Start a stats poller in a side terminal (leave it running through §7.2–§7.4).
+From `devshard/testenv/` (same folder as §2 lease-race scripts):
+
+```bash
+cd devshard/testenv
+
+./scripts/poll-binary-version.sh \
+  --url "http://127.0.0.1:8000/devshard/${VERSION}/stats/shards" \
+  --interval 1 \
+  --expect-from 0.2.14-v4 \
+  --expect-to 0.2.14-v4-r2
+```
+
+Versionless obs path works the same once a session is bound:
+`/devshard/stats/shards` (see §4). On multi-host HA without a pin, samples may
+interleave hosts — that is the drift you want to see.
+
+### 7.1 Baseline — long stream accepted on the old SHA
+
+Start a **slow / streaming** chat so the old child has non-zero lifecycle
+inflight before the SHA change. Keep this request open through §7.2–§7.3
+(citest: `StartGatewayChatCompletionStream`, wait until first content chunk).
+
+```bash
+# Example: stream=true with delayed chunks (testenv: POST mock-openai /testenv/fault
+# StreamChunkDelay≈750, or a long max_tokens prompt on a real ML node).
+curl -N -sS "$GATEWAY/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -H "Accept: text/event-stream" \
+  -d '{"model":"<model>","stream":true,"max_tokens":64,"messages":[{"role":"user","content":"rolling-update-long-stream"}]}'
+```
+
+In another terminal, confirm the stream is live and probe continuity on the
+**versioned** health path (citest probes `router/{VERSION}/healthz`):
+
+```bash
+# Continuity probes must keep succeeding during the swap (no routing gap)
+while true; do
+  curl -sf -o /dev/null -w "%{http_code}\n" \
+    "http://127.0.0.1:8080/${VERSION}/healthz" || echo FAIL
+  # join proxy may need: .../devshard/${VERSION}/healthz
+  sleep 0.3
+done
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Stream started | First SSE chunks arrive; HTTP 200 (citest waits on first content) | Immediate error / stream ends before flip |
+| 2 | Old SHA serving | Host `/healthz` shows this version `running` with the **pre-flip** sha256 | Wrong version / not running |
+| 3 | Continuity probe | Periodic `/{VERSION}/healthz` stays 2xx | Gaps / non-200 during quiet baseline |
+
+### 7.2 Publish the new same-name SHA
+
+Update approved versions so **name stays**, **sha256** (and binary URL) change.
+Citest does **not** use a gov proposal — it calls mock-dapi:
+
+```bash
+# A) Governance / params update (join / mainnet-like) — same ApprovedVersions.name,
+#    new Binary + Sha256 for the artifact you built and published.
+# B) testenv mock-dapi (citest path — no gov proposal):
+curl -sS -X POST "$MOCK_DAPI/testenv/versions" \
+  -H "Content-Type: application/json" \
+  -d "{\"versions\":[{\"name\":\"${VERSION}\",\"binary\":\"http://mock-dapi:<port>/testenv/binaries/devshardd-new.zip\",\"sha256\":\"<64-hex>\"}]}"
+```
+
+Watch versiond reconcile (poll interval is often ~30s; shorten
+`VERSIOND_POLL_INTERVAL` in lab stacks):
+
+```bash
+docker compose logs -f --since=1m versiond-0 2>&1 | \
+  grep -Ei 'download|rolling|overlap|ready|drain|storage.mode|starting child|sha256'
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Download | Logs show download / install of the new sha under `bin/<name>/<sha>/` (manual; citest asserts outcomes via `/healthz`) | Stuck / hash mismatch abort with no retry later |
+| 2 | Storage gate | Logs indicate overlap **enabled** (postgres) or exclusive fallback | Silent wrong path |
+| 3 | Old still serving | Until route publish, long stream continues and old sha remains `running` | Old killed before new ready |
+
+### 7.3 Observe blue/green overlap and route swap (Postgres)
+
+While the long stream is still open, poll the **pinned** versiond host health
+until you see **both** generations (citest:
+`requireVersiondRollingOverlap` — `running` new sha **and** `draining` old sha):
+
+```bash
+watch -n1 'docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .'
+```
+
+Expected transition on Postgres (matches citest):
+
+1. New child appears → `running` with **new** sha256.
+2. Old entry moves to `status=draining` (same name, **old** sha256) while new is
+   already `running` — **overlap window**.
+3. New short **non-stream** chat succeeds while the old stream is still open.
+
+```bash
+# New traffic after swap — citest: PostGatewayChatCompletion (non-stream)
+curl -sS "$GATEWAY/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model>","max_tokens":64,"messages":[{"role":"user","content":"after-rolling-update"}]}'
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Overlap visible | Poll shows **running** new sha **and** **draining** old sha for the same name on the pinned host | Never drain / only one child ever |
+| 2 | New traffic | Post-swap chat 2xx while old stream still open | 5xx / still stuck on old-only |
+| 3 | Continuity | `/{VERSION}/healthz` probes stay 200 across the publish | Routing black hole |
+| 4 | Long stream | Original SSE from §7.1 still open (not reset mid-body) | Connection reset when route flips |
+| 5 | Binary drift | Stats poller (§7.0) shows `protocol_version=v4` throughout; `binary_version` moves from `0.2.14-v4` toward `0.2.14-v4-r2` | Always one stamp / protocol changed |
+
+On multi-host HA without a router pin, repeat §7.1–§7.4 once per versiond host
+(citest `host_0` / `host_1` subtests).
+
+### 7.4 Drain completes — old generation exits
+
+Let the long stream finish (`[DONE]` / clean close — citest requires
+`SawDone` + mock content). Then wait until the old sha is gone from draining
+on the host(s) under test (citest: `requireNoOldDraining`):
+
+```bash
+# Repeat until no draining entry for the old sha
+docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Stream completes | Original request ends 200 with a full body / `[DONE]` | Cut mid-stream after SIGTERM too early |
+| 2 | Drain clears | Old sha leaves `draining`; only **new** sha remains `running` | Old stuck draining past `VERSIOND_DRAIN_TIMEOUT` |
+| 3 | Process gone (manual) | Old child PID / port no longer listening (versiond logs shutdown / reap) | Zombie / restart loop of the drained child |
+
+### 7.5 Negative: hybrid — no overlap
+
+Repeat a same-name SHA flip with `DEVSHARD_STORAGE_MODE=hybrid` on the versiond
+children (citest: `PatchVersiondStorageMode(..., "hybrid")`). Do **not** require
+a long stream — citest only asserts health convergence.
+
+```bash
+# After publishing the new sha, poll health during the swap window
+docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Exclusive path | Logs: rolling overlap disabled / stop-start fallback (manual) | Overlap enabled on hybrid |
+| 2 | No draining old | While converging, **never** see `draining` for the **old** sha (citest asserts this) | `draining` old appears (blue/green on unsafe storage) |
+| 3 | Ends on new sha | All hosts show only the new sha `running` | Stuck on old / version missing |
+
+### 7.6 Checklist summary
+
+| Check | Pass |
+| --- | --- |
+| Pre-flip: old sha `running` on host(s); postgres mode for §7.1–§7.4 (§7.0) | [ ] |
+| Two archives: `DEVSHARD_VERSION=v4` + stamps `0.2.14-v4` / `0.2.14-v4-r2` (§7.0.1) | [ ] |
+| Long SSE accepted (first chunk) before SHA publish (§7.1) | [ ] |
+| Same-name new sha via mock-dapi `/testenv/versions` or gov (§7.2) | [ ] |
+| Postgres: overlap `running(new)` + `draining(old)` on pinned host (§7.3) | [ ] |
+| New chat succeeds while old stream open; continuity probes OK (§7.3) | [ ] |
+| Stats poll: `binary_version` drifts `0.2.14-v4` → `0.2.14-v4-r2` (§7.3) | [ ] |
+| Long stream `[DONE]`; old draining clears (§7.4) | [ ] |
+| Hybrid: converge to new sha **without** old `draining` (§7.5) | [ ] |
+| Evidence: `/healthz` + stats poll histogram (+ optional versiond logs) saved | [ ] |
+
+### 7.7 Cleanup
+
+```bash
+# Stop continuity probe loops; leave ApprovedVersions on the new sha (or
+# restore the previous artifact if this was a lab-only flip).
+# Full reset:
+#   cd deploy/join && docker compose down
+#   # or: make -C devshard/testenv down
+# Automated replay:
+#   make -C devshard/testenv citest-versiond-rolling-update
+```
+
+---
+
+## 8. Summary for operators
 
 1. **HA multi-instance + shared Postgres applies to versions outside
    `VERSIOND_NON_HA_VERSIONS`**, not to already-deployed pre-HA binaries.
@@ -1649,8 +1943,13 @@ docker compose start <inference-node-service>   # if stopped in §6.2
    down — **§6** ([PR #1443](https://github.com/gonka-ai/gonka/pull/1443));
    prove **v4 × dapi 0.2.14** and **v4 × dapi `devshard-0.2.14-v4`** (both);
    schedule citest **S10** (not implemented in this pass).
+9. **Rolling updates (same name, new sha):** Postgres blue/green + drain for
+   in-flight SSE; hybrid/SQLite exclusive stop/start — **§7**
+   ([rolling-update.md](./rolling-update.md)); stamp two builds
+   (`0.2.14-v4` / `0.2.14-v4-r2`) and poll `stats/shards` `binary_version`;
+   citest `citest-versiond-rolling-update` already covers the automated path.
 
-9. **Six test plans in this doc:**
+10. **Seven test plans in this doc:**
    - **§1 Test deployment plan** — rollout, routing, migrate, mixed binding.
    - **§2 Validation race plan** — lease exclusivity under same-key HA.
    - **§3 High availability plan** — kill / restart versiond; verify via logs.
@@ -1660,3 +1959,5 @@ docker compose start <inference-node-service>   # if stopped in §6.2
      dapi dual-serve.
    - **§6 Escrow long-poll warm plan** — host-events cache; inference without
      inference-node; both dapi pins; testenv S10 scheduled.
+   - **§7 Rolling update plan** — same-name SHA swap; SSE continuity; Postgres
+     overlap vs hybrid stop/start; client `binary_version` drift via stats.

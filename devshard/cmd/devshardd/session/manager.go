@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -61,6 +62,8 @@ type HostManager struct {
 	statsShardsCached  time.Time
 	statsDetailsCache  map[string]statsShardDetailCache
 	statsNegativeCache map[string]statsNegativeCacheEntry
+
+	binaryVersion string
 }
 
 const (
@@ -111,6 +114,12 @@ func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
+}
+
+// SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
+// (same value as --print-binary-version / DEVSHARD_BINARY_LOG_VERSION).
+func (m *HostManager) SetBinaryVersion(v string) {
+	m.binaryVersion = strings.TrimSpace(v)
 }
 
 // Close stops all live session hosts and releases storage resources.

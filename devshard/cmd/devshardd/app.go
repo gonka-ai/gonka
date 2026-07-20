@@ -268,6 +268,7 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	manager.SetBinaryVersion(cfg.BinaryLogVersion)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 
 	if err := manager.RecoverSessions(); err != nil {

@@ -113,6 +113,7 @@ func TestStatsShardsListsNonPrunedActiveWithoutDetails(t *testing.T) {
 
 	counting := &countingListStore{Storage: currentEpochStore{Storage: base, epoch: 7}}
 	mgr := NewHostManager(counting, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+	mgr.SetBinaryVersion("0.2.14-v4-r2")
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards")
 	require.Equal(t, http.StatusOK, rec.Code, "body: %s", rec.Body.String())
@@ -122,14 +123,18 @@ func TestStatsShardsListsNonPrunedActiveWithoutDetails(t *testing.T) {
 	require.NotContains(t, rec.Body.String(), "inferences")
 
 	var resp struct {
-		CurrentEpochID uint64   `json:"current_epoch_id"`
-		ActiveEscrows  []string `json:"active_escrows"`
-		Shards         []struct {
+		ProtocolVersion string   `json:"protocol_version"`
+		BinaryVersion   string   `json:"binary_version"`
+		CurrentEpochID  uint64   `json:"current_epoch_id"`
+		ActiveEscrows   []string `json:"active_escrows"`
+		Shards          []struct {
 			EscrowID string `json:"escrow_id"`
 			EpochID  uint64 `json:"epoch_id"`
 		} `json:"shards"`
 	}
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &resp))
+	require.Equal(t, testutil.RuntimeTestVersion, resp.ProtocolVersion)
+	require.Equal(t, "0.2.14-v4-r2", resp.BinaryVersion)
 	require.Equal(t, uint64(7), resp.CurrentEpochID)
 	// Lexicographic escrow id order from boundVersionActiveSessions.
 	require.Equal(t, []string{"escrow-current", "escrow-old"}, resp.ActiveEscrows)
@@ -199,6 +204,7 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 		},
 	}
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	mgr.SetBinaryVersion("0.2.14-v4")
 	require.NoError(t, mgr.RecoverSessions())
 
 	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/escrow-detail")
@@ -213,6 +219,8 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 		EpochID                     uint64 `json:"epoch_id"`
 		Nonce                       uint64 `json:"nonce"`
 		Version                     string `json:"version"`
+		ProtocolVersion             string `json:"protocol_version"`
+		BinaryVersion               string `json:"binary_version"`
 		StateRootAndProtocolVersion string `json:"state_root_and_protocol_version"`
 		HostStats                   map[string]struct {
 			Missed               uint32 `json:"missed"`
@@ -238,6 +246,8 @@ func TestStatsShardDetailReturnsStatsOnly(t *testing.T) {
 	require.Equal(t, uint64(7), resp.EpochID)
 	require.Equal(t, uint64(1), resp.Nonce)
 	require.Equal(t, testutil.RuntimeTestVersion, resp.Version)
+	require.Equal(t, testutil.RuntimeTestVersion, resp.ProtocolVersion)
+	require.Equal(t, "0.2.14-v4", resp.BinaryVersion)
 	require.Equal(t, types.EffectiveStateRootAndProtocolVersion, resp.StateRootAndProtocolVersion)
 	require.Len(t, resp.HostStats, len(group))
 	require.Equal(t, group, resp.Group)
