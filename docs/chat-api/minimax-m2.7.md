@@ -41,7 +41,7 @@ Infrastructure-level constraints that must hold BEFORE this route is served — 
 | `thinking_token_budget` | injected/clamped on Kimi; silent-strip on Qwen | **silent-strip** — no equivalent knob in MiniMax chat template | [[MiniMax-2]](references.md#minimax) |
 | `enable_thinking` (top-level) | translated to `chat_template_kwargs.enable_thinking` on Qwen | **silent-strip on this route** — MiniMax does not honor; thinking is structural to the chat template, not configurable per request ([[vLLM-25]](references.md#vllm)). | [why](troubleshooting.md#strip-enable_thinking-minimax) |
 | `safety_identifier` | strip (universal); pass-through on Kimi | strip (no MiniMax abuse-tracking API contract) | [[MiniMax-1]](references.md#minimax) |
-| Content of `role:"tool"` messages | universal: string or text-part array, flattened to string; `tool_call_id` required | **MiniMax shape**: `content: [{name, type:"text", text}]` array; no `tool_call_id` (silently stripped if dual-emitted). Per-entry caps: ≤16 entries × `name` ≤64 B × `text` ≤64 KiB; closed allow-list of keys. | [[MiniMax-4]](references.md#minimax), [why](troubleshooting.md#accept-tool-message-minimax-shape) |
+| Content of `role:"tool"` messages | universal: string or text-part array, flattened to string; `tool_call_id` required | **same as universal** — served via vLLM's OpenAI endpoint, whose chat template renders a string tool result as `<response>…</response>` (and reads only `text`, never `name`, from an array); no MiniMax-native array shape is required. | [[MiniMax-4]](references.md#minimax), [why](troubleshooting.md#accept-tool-message-minimax-shape) |
 
 ## Native extensions
 

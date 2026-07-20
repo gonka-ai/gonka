@@ -13,6 +13,33 @@ import (
 	"devshard/types"
 )
 
+// ErrLocalStateUnrecoverable marks a proven integrity failure in persisted
+// diff history: a nonce gap, a missing tail, or a state-root mismatch during
+// replay. Gateway startup deactivates and skips such escrows (like
+// bridge.ErrEscrowNotFound). Transient failures (I/O errors, full disk, chain
+// timeouts) are never classified and stay fatal, so escrow rotation cannot
+// mint replacements into a broken environment.
+var ErrLocalStateUnrecoverable = errors.New("local session state unrecoverable")
+
+// validateDiffRange verifies the stored diffs cover [from, to] contiguously.
+// A missing tail (diffs end before latest_nonce) would otherwise recover
+// silently behind the hosts.
+func validateDiffRange(records []types.DiffRecord, from, to uint64) error {
+	expected := from
+	for _, rec := range records {
+		if rec.Nonce != expected {
+			return fmt.Errorf("%w: missing nonce %d, next stored nonce is %d",
+				ErrLocalStateUnrecoverable, expected, rec.Nonce)
+		}
+		expected++
+	}
+	if expected <= to {
+		return fmt.Errorf("%w: missing trailing nonces %d..%d",
+			ErrLocalStateUnrecoverable, expected, to)
+	}
+	return nil
+}
+
 // snapshotInterval controls how often a state snapshot is saved -- both
 // during diff replay at recovery time AND during runtime via
 // Session.maybeSaveSnapshotLocked. After replay finishes, a final
@@ -147,6 +174,7 @@ func RecoverSession(
 	// below so any stranded host can self-heal.
 	var snapshotCursor map[int]uint64
 	legacySnapshot := false
+	snapshotRestored := false
 	replayFrom := uint64(1)
 	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
 	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
@@ -159,6 +187,7 @@ func RecoverSession(
 			sess.nonce = snapNonce
 			snapshotCursor = cursor
 			legacySnapshot = cursor == nil
+			snapshotRestored = true
 			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d legacy=%t",
 				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor), legacySnapshot)
 		}
@@ -182,12 +211,18 @@ func RecoverSession(
 	// small. For a legacy snapshot (cursor unknown) min returns 0 and we
 	// load the entire pre-snapshot history once -- a one-time slow
 	// recovery that self-heals stranded hosts.
-	if snapNonce > 0 {
+	//
+	// Gated on snapshotRestored, not snapNonce: an ignored snapshot (future
+	// nonce, decode failure) replays from 1, which already covers the range.
+	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
 		if backfillFrom <= snapNonce {
 			backfillRecords, berr := store.GetDiffs(escrowID, backfillFrom, snapNonce)
 			if berr != nil {
 				return nil, nil, fmt.Errorf("get backfill diffs %d..%d: %w", backfillFrom, snapNonce, berr)
+			}
+			if verr := validateDiffRange(backfillRecords, backfillFrom, snapNonce); verr != nil {
+				return nil, nil, fmt.Errorf("backfill diffs %d..%d: %w", backfillFrom, snapNonce, verr)
 			}
 			log.Printf("recover_session escrow=%s diff_backfill from=%d to=%d count=%d",
 				escrowID, backfillFrom, snapNonce, len(backfillRecords))
@@ -211,6 +246,9 @@ func RecoverSession(
 	if err != nil {
 		return nil, nil, fmt.Errorf("get diffs: %w", err)
 	}
+	if err := validateDiffRange(records, replayFrom, meta.LatestNonce); err != nil {
+		return nil, nil, fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
+	}
 
 	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, len(records))
 
@@ -218,11 +256,16 @@ func RecoverSession(
 		sm.InjectWarmKeys(rec.WarmKeyDelta)
 		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
 		if applyErr != nil {
+			if errors.Is(applyErr, types.ErrInvalidNonce) {
+				return nil, nil, fmt.Errorf("%w: replay nonce %d: %w",
+					ErrLocalStateUnrecoverable, rec.Nonce, applyErr)
+			}
 			return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 		}
 		if len(rec.StateHash) > 0 && len(root) > 0 {
 			if !bytes.Equal(root, rec.StateHash) {
-				return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+				return nil, nil, fmt.Errorf("%w: state root mismatch at nonce %d",
+					ErrLocalStateUnrecoverable, rec.Nonce)
 			}
 		}
 

@@ -183,6 +183,15 @@ func buildMLNodeManager(ctx context.Context) *mlnodeclient.Manager {
 	return mgr
 }
 
+// buildMLNodeCapacityCache polls ListNodeCapacity via mlClient to bound the
+// passive-fallback path (see mlnodeclient.Cache). Old dapi builds that do not
+// implement the RPC leave the cache unobserved, so fallback stays unbounded.
+func buildMLNodeCapacityCache(ctx context.Context, mlClient *mlnodeclient.Client) *mlnodeclient.Cache {
+	cache := mlnodeclient.NewCache(mlClient.NodeManagerClient(), mlnodeclient.CacheOptions{})
+	cache.Start(ctx)
+	return cache
+}
+
 func buildHostManager(
 	ctx context.Context,
 	cfg runtimeConfig,
@@ -204,7 +213,8 @@ func buildHostManager(
 	chainBridge := chainRuntime.chainEvents.Bridge()
 	chainParams := paramsSetup.Provider
 	mlNodeMgr := buildMLNodeManager(ctx)
-	eng := inference.NewEngine(mlClient, mlNodeMgr, payloadStore, chainParams, phase)
+	mlNodeCapacity := buildMLNodeCapacityCache(ctx, mlClient)
+	eng := inference.NewEngine(mlClient, mlNodeMgr, mlNodeCapacity, payloadStore, chainParams, phase)
 
 	instanceAddr := chainRuntime.identity.GetSignerAddress()
 

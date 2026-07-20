@@ -216,6 +216,8 @@ func main() {
 			logging.Warn("Failed to initialize dealer openings persistence", types.BLS, "error", err)
 		}
 	}
+	hostEventRing := apiconfig.NewHostEventRing(0, uint64(time.Now().UnixNano()))
+	escrowLoadTracker := broker.NewEscrowLoadTracker(0)
 	listener := event_listener.NewEventListener(
 		configManager,
 		offChainValidator,
@@ -226,6 +228,8 @@ func main() {
 		cancel,
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
+		event_listener.WithHostEventRing(hostEventRing),
+		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
 	)
 	go listener.Start(ctx)
 
@@ -287,7 +291,10 @@ func main() {
 	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
 	if nmGrpcPort != 0 {
 		nmGrpcServer := grpc.NewServer()
-		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker))
+		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
+			nodemanager.WithHostEventRing(hostEventRing),
+			nodemanager.WithEscrowLoadTracker(escrowLoadTracker),
+		))
 		reflection.Register(nmGrpcServer)
 		nodeManagerAddr := fmt.Sprintf(":%v", nmGrpcPort)
 		nmLis, err := net.Listen("tcp", nodeManagerAddr)

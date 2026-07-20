@@ -52,7 +52,12 @@ func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotV
 	return nil, nil
 }
 func (s *closeCountingStore) ClearValidationObs(string) error { return nil }
-func (s *closeCountingStore) PruneEpoch(uint64) error         { return nil }
+func (s *closeCountingStore) PutEscrowCache(storage.EscrowCacheInfo) error { return nil }
+func (s *closeCountingStore) GetEscrowCache(string) (*storage.EscrowCacheInfo, error) {
+	return nil, storage.ErrEscrowCacheNotFound
+}
+func (s *closeCountingStore) DeleteEscrowCache(string) error { return nil }
+func (s *closeCountingStore) PruneEpoch(uint64) error        { return nil }
 func (s *closeCountingStore) Close() error {
 	s.closeCalls++
 	return nil

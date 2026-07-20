@@ -168,6 +168,19 @@ CREATE TABLE IF NOT EXISTS devshard_validation_leases (
     PRIMARY KEY (epoch_id, escrow_id, inference_id)
 ) PARTITION BY RANGE (epoch_id)`},
 	},
+	{
+		ID:   11,
+		Name: "devshard_escrow_cache",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
+    escrow_id   TEXT   PRIMARY KEY,
+    epoch_id    BIGINT NOT NULL,
+    escrow_json TEXT   NOT NULL,
+    cached_at   BIGINT NOT NULL DEFAULT 0
+)`,
+			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

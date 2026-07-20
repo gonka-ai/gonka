@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.13
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.14
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -127,7 +127,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.5-post5@sha256:8d2f217115c65b27fcb6fe1497471c30891534f18685bd3007d168aa7f1a9371
+    image: ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -137,8 +137,12 @@ services:
       - BRIDGE_GETADDRESSES=http://api:9000/v1/bridge/addresses
       - BRIDGE_GETLASTBLOCK=${BRIDGE_GETLASTBLOCK:-http://api:9000/v1/bridge/block/latest}
       - BRIDGE_CACHE_RANGES=${BRIDGE_CACHE_RANGES:-4}
-      - BEACON_STATE_URL=https://beaconstate.info/
+      - BEACON_STATE_URL=${BEACON_STATE_URL:-https://mainnet.checkpoint.sigp.io/}
       - PERSISTENT_DB_DIR=/persistent-db
+    ports:
+      # Geth EL P2P (TCP + UDP discovery). Optional host port via GETH_P2P_PORT.
+      - "${GETH_P2P_PORT:-30303}:30303/tcp"
+      - "${GETH_P2P_PORT:-30303}:30303/udp"
     volumes:
       - .inference-eth/geth:/data/geth
       - .inference-eth/prysm:/data/prysm
