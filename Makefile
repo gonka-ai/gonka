@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release print-devshard-version print-devshard-protocol-version versiond-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker testapp-server-build-docker
 
 # For binary release: default linux/amd64 before local Docker defaults.
 DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
@@ -12,6 +12,8 @@ VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= dev
 # State-root / settlement protocol tag (not versiond runtime name). See devshard/docs/protocol-version.md.
 DEVSHARD_PROTOCOL_VERSION ?= v2
+DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
+DEVSHARD_GATEWAY_TAGS ?=
 
 print-devshard-version:
 	@echo $(DEVSHARD_VERSION)
@@ -186,6 +188,15 @@ devshardd-release:
 		shasum -a 256 "$$release_dir/devshardd.zip" | awk '{print $$1}' > "$$release_dir/devshardd.zip.sha256"; \
 		echo "Built $$release_dir/devshardd.zip"; \
 		echo "SHA256: $$(cat "$$release_dir/devshardd.zip.sha256")"
+
+devshard-gateway-release: DEVSHARD_PROTOCOL_VERSION = v3
+devshard-gateway-release:
+	@$(MAKE) -C devshard devshard-gateway-release \
+		DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
+		DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
+		DEVSHARD_GATEWAY_IMAGE=$(DEVSHARD_GATEWAY_IMAGE) \
+		DEVSHARD_GATEWAY_TAGS="$(DEVSHARD_GATEWAY_TAGS)" \
+		PLATFORM=$(PLATFORM)
 
 node-local-build:
 	@echo "Building inference-chain locally..."

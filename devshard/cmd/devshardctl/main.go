@@ -17,18 +17,26 @@ import (
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
+	"devshard/user"
 )
 
 type adminAuthContextKey struct{}
 type adminAPIKeySuffixContextKey struct{}
 
 const (
-	defaultChainRESTURL          = "http://localhost:1317"
-	defaultPublicAPIURL          = "http://localhost:9000"
-	defaultModelName             = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort            = "8080"
-	defaultMaxConcurrentRequests = 512
+	defaultChainRESTURL            = "http://localhost:1317"
+	defaultPublicAPIURL            = "http://localhost:9000"
+	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort              = "8080"
+	defaultMaxConcurrentRequests   = 512
+	startupSkipReasonLocalRecovery = "local_recovery_failed"
 )
+
+type startupSkippedEscrow struct {
+	EscrowID string
+	Model    string
+	Reason   string
+}
 
 type SettlementJSON struct {
 	EscrowID string `json:"escrow_id"`
@@ -360,7 +368,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	}
 	perf := NewPerfTracker(perfStore)
 
-	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
+	runtimes, startupSkipped, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
 	if err != nil {
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
@@ -375,11 +383,18 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, perf)
+	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
 	return gateway
 }
 
-func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
+func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
+	for _, escrow := range skipped {
+		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
+	}
+}
+
+func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, []startupSkippedEscrow, error) {
 	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
 	// finalized, or settled) stay in the registry but are not built into
 	// memory-resident runtimes: keeping hundreds of dormant escrows resident
@@ -407,7 +422,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	allCfgs, err := finalizeRuntimeConfigs(allCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
 	if err != nil {
-		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
+		return nil, nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
 
 	type buildResult struct {
@@ -431,6 +446,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 
 	runtimes := make([]*devshardRuntime, len(allCfgs))
 	var skipped []int
+	var startupSkipped []startupSkippedEscrow
 	var firstFatal error
 	for range allCfgs {
 		res := <-ch
@@ -441,9 +457,12 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				skipped = append(skipped, res.idx)
 				continue
 			}
-			if errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
+			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
-				if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				if brokenLocalState {
+					reason = "local state unrecoverable"
+				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
 					reason = "escrow missing on chain"
 				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
 					reason = "private key missing"
@@ -458,6 +477,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				}
 				markDevshardInactive(gatewayState, cfg.ID)
 				skipped = append(skipped, res.idx)
+				if brokenLocalState {
+					startupSkipped = append(startupSkipped, startupSkippedEscrow{
+						EscrowID: cfg.ID,
+						Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+						Reason:   startupSkipReasonLocalRecovery,
+					})
+				}
 				continue
 			}
 			if firstFatal == nil {
@@ -473,7 +499,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				rt.close()
 			}
 		}
-		return nil, firstFatal
+		return nil, nil, firstFatal
 	}
 
 	// Mark inactive runtimes so they're excluded from inference routing
@@ -503,7 +529,15 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
 		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
-	return out, nil
+	if len(startupSkipped) > 0 {
+		escrowIDs := make([]string, 0, len(startupSkipped))
+		for _, skippedEscrow := range startupSkipped {
+			escrowIDs = append(escrowIDs, skippedEscrow.EscrowID)
+		}
+		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
+			len(startupSkipped), startupSkipReasonLocalRecovery, strings.Join(escrowIDs, ","))
+	}
+	return out, startupSkipped, nil
 }
 
 func markDevshardInactive(gatewayState *GatewayState, id string) {
