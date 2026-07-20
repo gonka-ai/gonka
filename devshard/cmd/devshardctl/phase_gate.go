@@ -82,6 +82,7 @@ type ChainPhaseGate struct {
 type chainEpochInfoResponse struct {
 	BlockHeight             jsonInt64                         `json:"block_height"`
 	Phase                   string                            `json:"phase"`
+	EffectiveEpochIndex     jsonUint64                        `json:"effective_epoch_index"`
 	LatestEpoch             chainLatestEpoch                  `json:"latest_epoch"`
 	EpochStages             chainEpochStages                  `json:"epoch_stages"`
 	NextEpochStages         chainEpochStages                  `json:"next_epoch_stages"`
@@ -242,18 +243,23 @@ func (e *RequestAdmissionError) Error() string {
 	return "request admission blocked"
 }
 
-func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
+func NewChainPhaseGate(chainREST string, pollInterval time.Duration) *ChainPhaseGate {
+	chainREST = strings.TrimSpace(chainREST)
+	if chainREST == "" {
 		return nil
 	}
 	if pollInterval <= 0 {
 		pollInterval = defaultChainPhasePollInterval
 	}
+	base := strings.TrimRight(chainREST, "/")
 	client := &http.Client{Timeout: 5 * time.Second}
 	return &ChainPhaseGate{
-		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
-		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
+		// EpochInfo exposes latest_epoch (PoC-advanced) plus effective_epoch_index
+		// (current/effective) and a chain-computed phase from latest.
+		endpoint: base + "/productscience/inference/inference/epoch_info",
+		// epoch_index=0 resolves to effective/current, not latest. During main PoC
+		// those differ; inference routing must use the still-serving cohort.
+		participantsEndpoint:          base + "/productscience/inference/inference/active_participants/0",
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
@@ -273,6 +279,8 @@ func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// Prefer the constructor's chain-REST snapshot URL; only override when the
+	// caller points at a different chain REST base (admin settings update).
 	g.preservedSnapshotEndpoint = strings.TrimRight(baseURL, "/") + "/productscience/inference/inference/preserved_nodes_snapshot"
 }
 

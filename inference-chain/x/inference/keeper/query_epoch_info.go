@@ -38,11 +38,22 @@ func (k Keeper) EpochInfo(goCtx context.Context, req *types.QueryEpochInfoReques
 		isActive = false
 	}
 
+	effectiveEpochIndex, _ := k.GetEffectiveEpochIndex(ctx)
+
 	response := &types.QueryEpochInfoResponse{
 		BlockHeight:             ctx.BlockHeight(),
 		Params:                  params,
 		LatestEpoch:             *latestEpoch,
 		IsConfirmationPocActive: isActive,
+		EffectiveEpochIndex:     effectiveEpochIndex,
+	}
+
+	if params.EpochParams != nil {
+		epochContext := types.NewEpochContext(*latestEpoch, *params.EpochParams)
+		nextEpochContext := epochContext.NextEpochContext()
+		response.Phase = string(epochContext.GetCurrentPhase(ctx.BlockHeight()))
+		response.EpochStages = epochContext.GetEpochStages()
+		response.NextEpochStages = nextEpochContext.GetEpochStages()
 	}
 
 	if isActive && activeEvent != nil {

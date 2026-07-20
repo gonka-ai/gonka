@@ -37,6 +37,8 @@ import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
 import "inference/inference/claim_recipient.proto";
+import "inference/inference/activeparticipants.proto";
+import "inference/inference/epoch_stages.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
 
@@ -411,6 +413,14 @@ service Query {
   rpc ExcludedParticipants (QueryExcludedParticipantsRequest) returns (QueryExcludedParticipantsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/excluded_participants/{epoch_index}";
 
+  }
+
+  // Queries ActiveParticipants for an epoch.
+  // epoch_index 0 resolves to the effective/current epoch (not latest).
+  // During main PoC, latest advances while effective/current stay put until
+  // set_new_validators; inference routing should use effective/current.
+  rpc ActiveParticipants (QueryActiveParticipantsRequest) returns (QueryActiveParticipantsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/active_participants/{epoch_index}";
   }
 
   // Queries the currently active confirmation PoC event.
@@ -1058,6 +1068,15 @@ message QueryEpochInfoResponse {
   Epoch                 latest_epoch                  = 3 [(gogoproto.nullable) = false];
   bool                  is_confirmation_poc_active    = 4;
   ConfirmationPoCEvent  active_confirmation_poc_event = 5;
+  // effective_epoch_index is the current/effective epoch pointer. Synonymous
+  // with "current epoch". Differs from latest_epoch.index during main PoC:
+  // PoC start advances latest, while effective advances only at set_new_validators.
+  uint64                effective_epoch_index         = 6;
+  // phase is derived from latest_epoch + epoch params at block_height.
+  string                phase                         = 7;
+  // Precomputed stage heights for latest_epoch (same shape as dapi /v1/epochs/latest).
+  EpochStages           epoch_stages                  = 8 [(gogoproto.nullable) = false];
+  EpochStages           next_epoch_stages             = 9 [(gogoproto.nullable) = false];
 }
 
 message QueryCountPoCbatchesAtHeightRequest {
@@ -1165,6 +1184,19 @@ message QueryExcludedParticipantsRequest {
 // QueryExcludedParticipantsResponse returns a list of excluded participants for the epoch.
 message QueryExcludedParticipantsResponse {
   repeated ExcludedParticipant items = 1;
+}
+
+// QueryActiveParticipantsRequest requests ActiveParticipants for an epoch.
+// If epoch_index is 0, the query returns the effective/current epoch.
+message QueryActiveParticipantsRequest {
+  uint64 epoch_index = 1;
+}
+
+// QueryActiveParticipantsResponse returns the stored ActiveParticipants record.
+// epoch_index is the resolved epoch that was queried.
+message QueryActiveParticipantsResponse {
+  ActiveParticipants active_participants = 1 [(gogoproto.nullable) = false];
+  uint64             epoch_index         = 2;
 }
 
 // QueryActiveConfirmationPoCEventRequest is request type for the Query/ActiveConfirmationPoCEvent RPC method.

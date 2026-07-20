@@ -88,6 +88,7 @@ const (
 	Query_LastUpgradeHeight_FullMethodName                         = "/inference.inference.Query/LastUpgradeHeight"
 	Query_ParticipantAllowList_FullMethodName                      = "/inference.inference.Query/ParticipantAllowList"
 	Query_ExcludedParticipants_FullMethodName                      = "/inference.inference.Query/ExcludedParticipants"
+	Query_ActiveParticipants_FullMethodName                        = "/inference.inference.Query/ActiveParticipants"
 	Query_ActiveConfirmationPoCEvent_FullMethodName                = "/inference.inference.Query/ActiveConfirmationPoCEvent"
 	Query_ListConfirmationPoCEvents_FullMethodName                 = "/inference.inference.Query/ListConfirmationPoCEvents"
 	Query_ListRandomSeeds_FullMethodName                           = "/inference.inference.Query/ListRandomSeeds"
@@ -226,6 +227,11 @@ type QueryClient interface {
 	ParticipantAllowList(ctx context.Context, in *QueryParticipantAllowListRequest, opts ...grpc.CallOption) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(ctx context.Context, in *QueryExcludedParticipantsRequest, opts ...grpc.CallOption) (*QueryExcludedParticipantsResponse, error)
+	// Queries ActiveParticipants for an epoch.
+	// epoch_index 0 resolves to the effective/current epoch (not latest).
+	// During main PoC, latest advances while effective/current stay put until
+	// set_new_validators; inference routing should use effective/current.
+	ActiveParticipants(ctx context.Context, in *QueryActiveParticipantsRequest, opts ...grpc.CallOption) (*QueryActiveParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
 	ActiveConfirmationPoCEvent(ctx context.Context, in *QueryActiveConfirmationPoCEventRequest, opts ...grpc.CallOption) (*QueryActiveConfirmationPoCEventResponse, error)
 	// Queries confirmation PoC events for a specific epoch.
@@ -885,6 +891,15 @@ func (c *queryClient) ExcludedParticipants(ctx context.Context, in *QueryExclude
 	return out, nil
 }
 
+func (c *queryClient) ActiveParticipants(ctx context.Context, in *QueryActiveParticipantsRequest, opts ...grpc.CallOption) (*QueryActiveParticipantsResponse, error) {
+	out := new(QueryActiveParticipantsResponse)
+	err := c.cc.Invoke(ctx, Query_ActiveParticipants_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *queryClient) ActiveConfirmationPoCEvent(ctx context.Context, in *QueryActiveConfirmationPoCEventRequest, opts ...grpc.CallOption) (*QueryActiveConfirmationPoCEventResponse, error) {
 	out := new(QueryActiveConfirmationPoCEventResponse)
 	err := c.cc.Invoke(ctx, Query_ActiveConfirmationPoCEvent_FullMethodName, in, out, opts...)
@@ -1149,6 +1164,11 @@ type QueryServer interface {
 	ParticipantAllowList(context.Context, *QueryParticipantAllowListRequest) (*QueryParticipantAllowListResponse, error)
 	// Queries the list of excluded participants for an epoch (0 = current epoch).
 	ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error)
+	// Queries ActiveParticipants for an epoch.
+	// epoch_index 0 resolves to the effective/current epoch (not latest).
+	// During main PoC, latest advances while effective/current stay put until
+	// set_new_validators; inference routing should use effective/current.
+	ActiveParticipants(context.Context, *QueryActiveParticipantsRequest) (*QueryActiveParticipantsResponse, error)
 	// Queries the currently active confirmation PoC event.
 	ActiveConfirmationPoCEvent(context.Context, *QueryActiveConfirmationPoCEventRequest) (*QueryActiveConfirmationPoCEventResponse, error)
 	// Queries confirmation PoC events for a specific epoch.
@@ -1390,6 +1410,9 @@ func (UnimplementedQueryServer) ParticipantAllowList(context.Context, *QueryPart
 }
 func (UnimplementedQueryServer) ExcludedParticipants(context.Context, *QueryExcludedParticipantsRequest) (*QueryExcludedParticipantsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ExcludedParticipants not implemented")
+}
+func (UnimplementedQueryServer) ActiveParticipants(context.Context, *QueryActiveParticipantsRequest) (*QueryActiveParticipantsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ActiveParticipants not implemented")
 }
 func (UnimplementedQueryServer) ActiveConfirmationPoCEvent(context.Context, *QueryActiveConfirmationPoCEventRequest) (*QueryActiveConfirmationPoCEventResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ActiveConfirmationPoCEvent not implemented")
@@ -2694,6 +2717,24 @@ func _Query_ExcludedParticipants_Handler(srv interface{}, ctx context.Context, d
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Query_ActiveParticipants_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(QueryActiveParticipantsRequest)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(QueryServer).ActiveParticipants(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Query_ActiveParticipants_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(QueryServer).ActiveParticipants(ctx, req.(*QueryActiveParticipantsRequest))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Query_ActiveConfirmationPoCEvent_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(QueryActiveConfirmationPoCEventRequest)
 	if err := dec(in); err != nil {
@@ -3264,6 +3305,10 @@ var Query_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ExcludedParticipants",
 			Handler:    _Query_ExcludedParticipants_Handler,
+		},
+		{
+			MethodName: "ActiveParticipants",
+			Handler:    _Query_ActiveParticipants_Handler,
 		},
 		{
 			MethodName: "ActiveConfirmationPoCEvent",
