@@ -13,6 +13,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/gossip"
 	"devshard/logging"
@@ -1477,7 +1479,8 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 	return h.signer.Sign(data)
 }
 
-// VerifyPayload checks that an InferencePayload matches the expected on-chain fields.
+// VerifyPayload checks that an InferencePayload matches the expected on-chain fields
+// and that those accounting fields cover the actual prompt workload.
 // Used by both executor (signReceipt) and verifier (VerifyRefusedTimeout) paths.
 func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt int64) error {
 	hash, err := devshard.CanonicalPromptHash(p.Prompt)
@@ -1498,6 +1501,27 @@ func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLe
 	}
 	if p.Model != model {
 		return fmt.Errorf("%w: model %s vs %s", types.ErrPayloadMismatch, p.Model, model)
+	}
+	if err := verifyPayloadWorkload(p); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyPayloadWorkload binds signed accounting fields to the prompt body the
+// executor will run: input_length must equal prompt byte length (gateway
+// convention), and declared max_tokens must cover the effective body limit.
+func verifyPayloadWorkload(p *InferencePayload) error {
+	promptLen := uint64(len(p.Prompt))
+	if p.InputLength != promptLen {
+		return fmt.Errorf("%w: input_length %d != prompt bytes %d", types.ErrPayloadMismatch, p.InputLength, promptLen)
+	}
+	bodyMaxTokens, err := completionapi.EffectiveMaxTokens(p.Prompt)
+	if err != nil {
+		return fmt.Errorf("%w: prompt max_tokens: %v", types.ErrPayloadMismatch, err)
+	}
+	if bodyMaxTokens > p.MaxTokens {
+		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
 	}
 	return nil
 }
