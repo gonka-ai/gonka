@@ -24,7 +24,7 @@ import (
 const EnvChainGRPCTLS = "CHAIN_GRPC_TLS"
 
 // InferenceClient is the narrow subset of inferencetypes.QueryClient used by this module.
-// Defined here so dependents (e.g. edge-api/queryapi, devshard/bridge) can reference it without
+// Defined here so dependents (e.g. common/queryapi, devshard/bridge) can reference it without
 // importing the full generated proto package.
 type InferenceClient interface {
 	Params(context.Context, *inferencetypes.QueryParamsRequest, ...grpc.CallOption) (*inferencetypes.QueryParamsResponse, error)

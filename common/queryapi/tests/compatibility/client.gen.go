@@ -13,7 +13,7 @@ import (
 	"net/url"
 	"strings"
 
-	. "edge-api/queryapi/gen"
+	. "common/queryapi/gen"
 
 	"github.com/oapi-codegen/runtime"
 )

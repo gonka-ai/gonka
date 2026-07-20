@@ -11,7 +11,7 @@ import (
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 // decompressG1To128 converts a 48-byte compressed G1 point into a 128-byte

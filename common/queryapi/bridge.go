@@ -7,7 +7,7 @@ import (
 	"github.com/labstack/echo/v4"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 // See: decentralized-api/internal/server/public/bridge_handlers.go:375

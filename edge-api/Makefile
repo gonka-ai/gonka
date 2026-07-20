@@ -111,10 +111,10 @@ build-for-upgrade:
 generate: generate-api
 
 generate-api:
-	go generate ./queryapi/...
+	$(MAKE) -C ../common generate-queryapi
 
 check-gen: generate-api
-	git diff --exit-code queryapi/gen/
+	git diff --exit-code ../common/queryapi/gen/
 
 build:
 	CGO_ENABLED=1 go build $(BUILD_FLAGS) -o build/edge-api ./cmd/edge-api

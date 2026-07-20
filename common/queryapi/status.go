@@ -10,7 +10,7 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 
 	"common/logging"
-	"edge-api/queryapi/gen"
+	"common/queryapi/gen"
 )
 
 // Ported from decentralized-api/internal/server/public/server.go:173

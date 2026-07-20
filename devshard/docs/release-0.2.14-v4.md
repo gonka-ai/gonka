@@ -39,6 +39,7 @@ working via join-proxy internal rewrite.
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
 | **Versionless obs** | Obs GETs never bind; owner chat binds; join rewrite + PG session lookup; `devshard_obs` rate limit |
 | **Status field** | Gateway `protocol_version` → `session_version` (bind / settlement tag) |
+| **Tier A `/v1` reads** | Served by **edge-api** on new proxies; same handlers still dual-served on **dapi** as deprecated |
 | **testenv** | Docker citest S1–S9, G1–G4, A1–A4 (see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) |
 
 ---
@@ -160,6 +161,14 @@ clients / gateway (devshardctl)
                                         │
                                         └── shared Postgres
 ```
+
+**Deprecated dapi dual-serve:** New join proxies steer Tier A `/v1/` reads to
+**edge-api** (see `EDGE_API_ROUTE_PATHS` in `proxy/entrypoint.sh`). The same
+handlers (from `common/queryapi`) remain mounted on **decentralized-api** for
+operators still running **pre-v4 / old proxy** configs that forward `/v1/*` to
+dapi. Those dapi responses set `Deprecation: true` (and a `Link` successor hint);
+prefer edge-api. Also still on dapi (deprecated): `/v1/bridge/block/latest` and
+`/v1/supply/total` (not on edge-api Tier A).
 
 | Variable | Role |
 | --- | --- |
@@ -360,6 +369,8 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
       legacy `/devshard/{v}/…` still 200 with no public redirect
 - [ ] Join proxy: set/tune `DEVSHARD_OBS_RATE_LIMIT_RPS` / `DEVSHARD_OBS_BURST` if needed
 - [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path; Tier A `/v1/` via edge-api
+- [ ] Confirm old proxies (no `EDGE_API_SERVICE_NAME`) still reach Tier A via
+      deprecated dapi dual-serve; new proxies should use edge-api
 - [ ] Optional: run §2 lease race, §3 kill/restart, and §4 versionless obs from
       the deploy test plan
 

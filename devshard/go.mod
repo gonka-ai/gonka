@@ -12,7 +12,7 @@ require (
 	common v0.0.0-00010101000000-000000000000
 	github.com/cometbft/cometbft v0.38.21
 	github.com/cosmos/btcutil v1.0.5
-	github.com/cosmos/cosmos-sdk v0.50.14
+	github.com/cosmos/cosmos-sdk v0.53.3
 	github.com/cosmos/gogoproto v1.7.0
 	github.com/ethereum/go-ethereum v1.17.2
 	github.com/goccy/go-json v0.10.5
