@@ -21,6 +21,7 @@ inference-chain/dist/
 /decentralized-api/decentralized-api
 /decentralized-api/devshardd
 /edge-api/build/edge-api
+devshard/build/
 /devshard/devshardctl
 /devshard/devshardd
 /devshard/cmd/devshardctl/devshardctl
