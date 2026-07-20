@@ -29,6 +29,8 @@ RUN --mount=type=cache,id=devshard-go-build,target=/root/.cache/go-build \
 FROM alpine:3.23 AS devshardctl-runtime
 RUN apk add --no-cache ca-certificates wget
 COPY --from=devshardctl-builder /devshardctl /usr/local/bin/devshardctl
+EXPOSE 8080
+ENTRYPOINT ["devshardctl"]
 
 FROM golang:1.25.9-alpine3.23 AS builder
 

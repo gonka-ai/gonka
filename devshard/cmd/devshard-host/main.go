@@ -153,7 +153,7 @@ func loadConfig() (hostConfig, error) {
 
 func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
 	verifier := signing.NewSecp256k1Verifier()
-	sessionConfig := types.SessionConfigWithPrice(len(cfg.group), cfg.tokenPrice)
+	sessionConfig := sessionConfigFromEnv(len(cfg.group))
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
@@ -205,6 +205,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	if err != nil {
 		return nil, err
 	}
+	h.Start()
 
 	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress)
 	if err != nil {
@@ -265,6 +266,21 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 		}
 	}
 	return nil
+}
+
+// sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
+// aligned with devshardctl when escrow params come from mock-chain gRPC.
+func sessionConfigFromEnv(groupSize int) types.SessionConfig {
+	return types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
+		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
+		FeePerNonce:               uintEnv("DEVSHARD_FEE_PER_NONCE", 0),
+		InferenceSealGraceNonces:  uint32(uintEnv("DEVSHARD_INFERENCE_SEAL_GRACE_NONCES", 0)),
+		InferenceSealGraceSeconds: uint32(uintEnv("DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS", 0)),
+		AutoSealEveryNNonces:      uint32(uintEnv("DEVSHARD_AUTO_SEAL_EVERY_N_NONCES", 0)),
+		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
+		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
+	})
 }
 
 func groupFromKeys(keys []string) ([]types.SlotAssignment, error) {

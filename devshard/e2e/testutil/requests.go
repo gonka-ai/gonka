@@ -102,7 +102,7 @@ func DriveUntilValidationObserved(t *testing.T, client *http.Client, clientURL s
 	const maxExtraCompletions = 20
 	const validationTarget = 2
 	for attempt := 0; attempt <= maxExtraCompletions; attempt++ {
-		state := GetJSON(t, client, clientURL+"/v1/state")
+		state := GetJSON(t, client, clientURL+"/v1/debug/inferences")
 		reached, summary := HasInferenceValidationTarget(t, state, validationTarget)
 		DebugLogf(t, "inference validation evidence before finalize target=%d reached=%t (%s)",
 			validationTarget, reached, summary)

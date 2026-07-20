@@ -1,27 +1,25 @@
 # syntax=docker/dockerfile:1.4
+# Build context: repo root (make e2e-images passes ..)
 
-FROM golang:1.24.2-alpine3.20 AS builder
-
-WORKDIR /app
-
-COPY go.mod go.sum ./
+FROM golang:1.25.9-alpine3.23 AS build
+RUN apk add --no-cache git ca-certificates
+COPY common/ /src/common
+COPY inference-chain/ /src/inference-chain
+WORKDIR /src/devshard
+COPY devshard/go.mod devshard/go.sum ./
 RUN --mount=type=cache,id=go-mod-cache-devshard-mock-chain,target=/go/pkg/mod \
     go mod download
-
-COPY . .
+COPY devshard/ .
 RUN --mount=type=cache,id=go-build-cache-devshard-mock-chain,target=/root/.cache/go-build \
-    CGO_ENABLED=0 go build -o /mock-chain ./cmd/mock-chain
+    CGO_ENABLED=0 go build -o /mockchain ./testenv/cmd/mockchain
 
-FROM alpine:3.20
-
-RUN apk add --no-cache ca-certificates curl && \
-    rm -rf /var/cache/apk/*
-
-COPY --from=builder /mock-chain /usr/bin/mock-chain
-
-EXPOSE 8090
-
-HEALTHCHECK --interval=10s --timeout=3s --retries=6 --start-period=3s \
-    CMD curl -f http://localhost:${MOCK_CHAIN_PORT:-8090}/health || exit 1
-
-ENTRYPOINT ["mock-chain"]
+FROM alpine:3.23
+RUN apk add --no-cache ca-certificates
+COPY --from=build /mockchain /usr/local/bin/mockchain
+COPY devshard/e2e/mock-chain-config.yaml /app/mock-chain-config.yaml
+ENV MOCK_CHAIN_CONFIG=/app/mock-chain-config.yaml
+ENV MOCK_CHAIN_GRPC_ADDR=:9090
+ENV MOCK_CHAIN_RPC_ADDR=:26657
+ENV MOCK_CHAIN_TESTENV_ADDR=:9191
+EXPOSE 9090 26657 9191
+ENTRYPOINT ["mockchain"]

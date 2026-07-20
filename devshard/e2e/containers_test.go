@@ -46,15 +46,16 @@ type namedContainer struct {
 }
 
 type containerSpec struct {
-	name     string
-	image    string
-	port     string
-	aliases  []string
-	env      map[string]string
-	tmpfs    map[string]string
-	waitPath string
-	waitLog  string
-	mounts   []mount.Mount
+	name              string
+	image             string
+	port              string
+	aliases           []string
+	env               map[string]string
+	tmpfs             map[string]string
+	waitPath          string
+	waitLog           string
+	waitLogOccurrence int
+	mounts            []mount.Mount
 }
 
 type e2eEnvOptions struct {
@@ -101,15 +102,9 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	mockChain := env.startContainer(ctx, t, containerSpec{
 		name:    mockChainAlias,
 		image:   images.mockChain,
-		port:    "8080/tcp",
+		port:    "9090/tcp",
 		aliases: []string{mockChainAlias},
-		env: map[string]string{
-			"MOCK_CHAIN_PORT":              "8080",
-			"DEVSHARD_E2E_ESCROW_ID":       defaultEscrowID,
-			"DEVSHARD_E2E_CREATOR_ADDRESS": signerAddress(t, testutil.UserPrivateKey),
-			"DEVSHARD_E2E_HOSTS":           e2eHostList(t),
-		},
-		waitPath: "/health",
+		waitLog: "mock-chain gRPC listening",
 	})
 
 	postgres := env.startContainer(ctx, t, containerSpec{
@@ -127,6 +122,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 			"/tmp/pgdata": "rw",
 		},
 		waitLog: "database system is ready to accept connections",
+		waitLogOccurrence: 2,
 	})
 
 	env.hostURLs = make([]string, 3)
@@ -146,16 +142,15 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		port:    "8080/tcp",
 		aliases: []string{devshardCtlName},
 		env: map[string]string{
-			"DEVSHARD_E2E_MODE":      "1",
-			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
-			"DEVSHARD_CHAIN_REST":    "http://" + mockChainAlias + ":8080",
-			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":8080",
-			"DEVSHARD_HOST_URLS":     strings.Join(env.hostURLs, ","),
-			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
-			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
-			"DEVSHARD_MODEL":         "stub-model",
-			"GATEWAY_MAX_TOKENS_CAP": "4096",
+			"DEVSHARD_ESCROW_ID":       defaultEscrowID,
+			"DEVSHARD_CHAIN_GRPC":      mockChainAlias + ":9090",
+			"DEVSHARD_PUBLIC_API":      "http://" + mockChainAlias + ":9191",
+			"DEVSHARD_PARAMS_SOURCE":   "chain",
+			"DEVSHARD_PRIVATE_KEY":     testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+			"DEVSHARD_ADMIN_API_KEY":   testutil.AdminAPIKey,
+			"DEVSHARD_STORAGE_PATH":    "/tmp/devshardctl",
+			"DEVSHARD_MODEL":           "stub-model",
+			"GATEWAY_MAX_TOKENS_CAP":   "4096",
 		},
 		waitPath: "/v1/status",
 	})
@@ -195,18 +190,33 @@ func (e *e2eEnv) createPostgresHostDatabases(ctx context.Context, t *testing.T, 
 	}
 }
 
+// e2eHostSessionEnv returns escrow session fields that must match
+// e2e/mock-chain-config.yaml so devshardctl (chain-backed) and hosts agree.
+func e2eHostSessionEnv() map[string]string {
+	return map[string]string{
+		"DEVSHARD_TOKEN_PRICE":                  "1",
+		"DEVSHARD_CREATE_DEVSHARD_FEE":          "10000",
+		"DEVSHARD_FEE_PER_NONCE":                "1",
+		"DEVSHARD_VALIDATION_RATE":              "6000",
+		"DEVSHARD_VOTE_THRESHOLD_FACTOR":        "50",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "3",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "30",
+		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "100",
+	}
+}
+
 func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
 	t.Helper()
 	env := map[string]string{
-		"DEVSHARD_E2E_MODE":          "1",
 		"DEVSHARD_ESCROW_ID":         defaultEscrowID,
 		"DEVSHARD_HOST_INDEX":        fmt.Sprintf("%d", index),
 		"DEVSHARD_HOST_PRIVATE_KEYS": strings.Join(testutil.HostPrivateKeys, ","),
 		"DEVSHARD_USER_PRIVATE_KEY":  testutil.UserPrivateKey,
-		"DEVSHARD_CHAIN_REST":        "http://" + mockChainAlias + ":8080",
-		"DEVSHARD_PUBLIC_API":        "http://" + mockChainAlias + ":8080",
 		"DEVSHARD_PEER_URLS":         strings.Join(e.hostURLs, ","),
 		"DEVSHARD_STUB_INFERENCE":    "1",
+	}
+	for k, v := range e2eHostSessionEnv() {
+		env[k] = v
 	}
 	var mounts []mount.Mount
 	if index < len(e.hostVolumeNames) && e.hostVolumeNames[index] != "" {
@@ -266,15 +276,6 @@ func (e *e2eEnv) restartAllHosts(ctx context.Context, t *testing.T) {
 	}
 }
 
-func e2eHostList(t *testing.T) string {
-	t.Helper()
-	entries := make([]string, len(testutil.HostPrivateKeys))
-	for i, key := range testutil.HostPrivateKeys {
-		entries[i] = fmt.Sprintf("%s=http://devshard-host-%d:8080", signerAddress(t, key), i)
-	}
-	return strings.Join(entries, ",")
-}
-
 func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containerSpec) testcontainers.Container {
 	t.Helper()
 	testutil.DebugLogf(t, "starting container %s image=%s aliases=%s port=%s waitPath=%s waitLog=%q",
@@ -282,9 +283,17 @@ func (e *e2eEnv) startContainer(ctx context.Context, t *testing.T, spec containe
 
 	var waitStrategy wait.Strategy
 	if spec.waitLog != "" {
-		waitStrategy = wait.ForLog(spec.waitLog).WithOccurrence(2).WithStartupTimeout(testutil.DefaultRequestTimeout)
+		occurrence := spec.waitLogOccurrence
+		if occurrence <= 0 {
+			occurrence = 1
+		}
+		waitStrategy = wait.ForLog(spec.waitLog).
+			WithOccurrence(occurrence).
+			WithStartupTimeout(testutil.DefaultRequestTimeout)
 	} else {
-		waitStrategy = wait.ForHTTP(spec.waitPath).WithPort(nat.Port(spec.port)).WithStartupTimeout(testutil.DefaultRequestTimeout)
+		waitStrategy = wait.ForHTTP(spec.waitPath).
+			WithPort(nat.Port(spec.port)).
+			WithStartupTimeout(testutil.DefaultRequestTimeout)
 	}
 
 	container, err := testcontainers.GenericContainer(ctx, testcontainers.GenericContainerRequest{

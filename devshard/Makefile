@@ -10,6 +10,9 @@ DEVSHARD_E2E_MOCK_CHAIN_IMAGE ?= devshard-mock-chain:local
 DEVSHARD_E2E_HOST_IMAGE ?= devshard-host:local
 DEVSHARD_E2E_DEVSHARDCTL_IMAGE ?= devshardctl:local
 DEVSHARD_E2E_POSTGRES_IMAGE ?= postgres:18.1-bookworm
+# Pin e2e host+ctl protocol stamp to "dev" so images stay aligned without
+# bumping this on every release protocol version change.
+DEVSHARD_E2E_VERSION ?= $(DEVSHARD_VERSION)
 DOCKER_BUILD ?= DOCKER_BUILDKIT=1 docker build
 DEVSHARD_E2E_GO_IMAGE ?= golang:1.25.9-alpine3.23
 DEVSHARD_E2E_GO_TMPFS_SIZE ?= 1g
@@ -52,9 +55,9 @@ ci-testenv-integration:
 	$(MAKE) -C testenv citest-adversarial
 
 e2e-images:
-	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain .
-	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_HOST_IMAGE) -f Dockerfile.host .
-	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_DEVSHARDCTL_IMAGE) -f Dockerfile .
+	$(DOCKER_BUILD) -t $(DEVSHARD_E2E_MOCK_CHAIN_IMAGE) -f Dockerfile.mock-chain ..
+	$(DOCKER_BUILD) --build-arg DEVSHARD_VERSION=$(DEVSHARD_E2E_VERSION) -t $(DEVSHARD_E2E_HOST_IMAGE) -f Dockerfile.host ..
+	$(DOCKER_BUILD) --build-arg DEVSHARD_VERSION=$(DEVSHARD_E2E_VERSION) --target devshardctl-runtime -t $(DEVSHARD_E2E_DEVSHARDCTL_IMAGE) -f Dockerfile ..
 
 e2e-test:
 	docker compose -f docker-compose.e2e.yml run --rm e2e-test

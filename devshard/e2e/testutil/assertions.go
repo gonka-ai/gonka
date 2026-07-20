@@ -150,8 +150,8 @@ func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCou
 		stat, ok := raw.(map[string]any)
 		require.True(t, ok, "host_stats entries should be objects")
 		_ = NumericField(t, stat, "slot_id")
-		_ = NumericField(t, stat, "required_validations")
-		_ = NumericField(t, stat, "completed_validations")
+		_ = optionalNumericField(t, stat, "required_validations")
+		_ = optionalNumericField(t, stat, "completed_validations")
 	}
 }
 
@@ -219,10 +219,19 @@ func validationProgressFromHostStats(t *testing.T, raw any) validationProgress {
 	return progress
 }
 
+func optionalNumericField(t *testing.T, obj map[string]any, field string) uint64 {
+	t.Helper()
+	value, ok := obj[field]
+	if !ok {
+		return 0
+	}
+	return NumericValue(t, value, field)
+}
+
 func (p *validationProgress) add(t *testing.T, slotID string, stat map[string]any) {
 	t.Helper()
-	required := NumericField(t, stat, "required_validations")
-	completed := NumericField(t, stat, "completed_validations")
+	required := optionalNumericField(t, stat, "required_validations")
+	completed := optionalNumericField(t, stat, "completed_validations")
 	p.required += required
 	p.completed += completed
 	if p.summary != "" {

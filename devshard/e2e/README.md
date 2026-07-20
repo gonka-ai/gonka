@@ -11,7 +11,9 @@ The Go tests own the service topology through `testcontainers-go`. The
 
 Each test starts an isolated Docker network with:
 
-- `mock-chain`: E2E mock chain API for escrow and host metadata.
+- `mock-chain`: testenv gRPC mock chain (`testenv/cmd/mockchain`) seeded from
+  `e2e/mock-chain-config.yaml`; serves escrow/participant queries on `:9090` and
+  devshardctl phase-gate stubs on `:9191` (`/v1/epochs/*`).
 - `postgres`: smoke CI storage dependency.
 - `devshard-host-0..2`: three participant hosts with stub inference.
 - `devshardctl`: OpenAI-compatible HTTP entry point for the test client.
