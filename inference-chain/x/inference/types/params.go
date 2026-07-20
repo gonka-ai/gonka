@@ -104,7 +104,7 @@ const (
 	DefaultDevshardCreateDevshardFee   uint64 = 10_000
 	DefaultDevshardFeePerNonce         uint64 = 1_000
 	DefaultDevshardRefusalTimeout      int64  = 60
-	DefaultDevshardExecutionTimeout    int64  = 1200
+	DefaultDevshardExecutionTimeout    int64  = 32 * 60
 	DefaultDevshardValidationRate      uint32 = 1000
 	DefaultDevshardVoteThresholdFactor uint32 = 50
 
