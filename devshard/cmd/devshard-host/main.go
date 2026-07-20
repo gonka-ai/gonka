@@ -15,8 +15,10 @@ import (
 
 	"github.com/labstack/echo/v4"
 
+	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -50,13 +52,37 @@ func main() {
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	srv.Register(e.Group("/v1/devshard"))
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
 
 	addr := ":" + *port
-	log.Printf("devshard-host listening on %s slot=%d address=%s", addr, cfg.hostIndex, cfg.signer.Address())
+	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
+		addr, cfg.hostIndex, cfg.signer.Address(), devshardpkg.DefaultRoutePrefix())
 	if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// registerServer mounts the transport handlers the same way production
+// RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
+func registerServer(g *echo.Group, srv *transport.Server) {
+	g.Use(observability.EchoMiddleware())
+	g.Use(observability.RequestIDMiddleware)
+
+	withAuth := func(recordChatTerminal bool, handler echo.HandlerFunc) echo.HandlerFunc {
+		return func(c echo.Context) error {
+			wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
+			return srv.AuthMiddleware(wrapped)(c)
+		}
+	}
+
+	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
+	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
+	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
+	g.POST("/sessions/:id/gossip/txs", withAuth(false, srv.HandleGossipTxs))
+	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
+	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
+	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
 }
 
 type hostConfig struct {
@@ -121,7 +147,7 @@ func loadConfig() (hostConfig, error) {
 		balance:     uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
 		epochID:     uintEnv("DEVSHARD_EPOCH_ID", 1),
 		tokenPrice:  uintEnv("DEVSHARD_TOKEN_PRICE", 1),
-		version:     envDefault("DEVSHARD_VERSION", types.LegacyRouteSessionVersion),
+		version:     envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
 	}, nil
 }
 
