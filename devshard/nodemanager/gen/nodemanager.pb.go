@@ -73,10 +73,70 @@ func (ReleaseOutcome) EnumDescriptor() ([]byte, []int) {
 	return file_nodemanager_proto_rawDescGZIP(), []int{0}
 }
 
+// HostEventKind selects discrete escrow/maintenance events on GetHostEvents.
+// Values 1–2 are reserved for a possible future EPOCH/PARAMS fold; unused in v1.
+type HostEventKind int32
+
+const (
+	HostEventKind_HOST_EVENT_KIND_UNSPECIFIED           HostEventKind = 0
+	HostEventKind_HOST_EVENT_KIND_ESCROW_CREATED        HostEventKind = 3
+	HostEventKind_HOST_EVENT_KIND_ESCROW_SETTLED        HostEventKind = 4
+	HostEventKind_HOST_EVENT_KIND_MAINTENANCE_SCHEDULED HostEventKind = 5
+	HostEventKind_HOST_EVENT_KIND_MAINTENANCE_CANCELED  HostEventKind = 6
+)
+
+// Enum value maps for HostEventKind.
+var (
+	HostEventKind_name = map[int32]string{
+		0: "HOST_EVENT_KIND_UNSPECIFIED",
+		3: "HOST_EVENT_KIND_ESCROW_CREATED",
+		4: "HOST_EVENT_KIND_ESCROW_SETTLED",
+		5: "HOST_EVENT_KIND_MAINTENANCE_SCHEDULED",
+		6: "HOST_EVENT_KIND_MAINTENANCE_CANCELED",
+	}
+	HostEventKind_value = map[string]int32{
+		"HOST_EVENT_KIND_UNSPECIFIED":           0,
+		"HOST_EVENT_KIND_ESCROW_CREATED":        3,
+		"HOST_EVENT_KIND_ESCROW_SETTLED":        4,
+		"HOST_EVENT_KIND_MAINTENANCE_SCHEDULED": 5,
+		"HOST_EVENT_KIND_MAINTENANCE_CANCELED":  6,
+	}
+)
+
+func (x HostEventKind) Enum() *HostEventKind {
+	p := new(HostEventKind)
+	*p = x
+	return p
+}
+
+func (x HostEventKind) String() string {
+	return protoimpl.X.EnumStringOf(x.Descriptor(), protoreflect.EnumNumber(x))
+}
+
+func (HostEventKind) Descriptor() protoreflect.EnumDescriptor {
+	return file_nodemanager_proto_enumTypes[1].Descriptor()
+}
+
+func (HostEventKind) Type() protoreflect.EnumType {
+	return &file_nodemanager_proto_enumTypes[1]
+}
+
+func (x HostEventKind) Number() protoreflect.EnumNumber {
+	return protoreflect.EnumNumber(x)
+}
+
+// Deprecated: Use HostEventKind.Descriptor instead.
+func (HostEventKind) EnumDescriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{1}
+}
+
 type AcquireMLNodeRequest struct {
 	state         protoimpl.MessageState `protogen:"open.v1"`
 	Model         string                 `protobuf:"bytes,1,opt,name=model,proto3" json:"model,omitempty"`
 	ExcludedNodes []string               `protobuf:"bytes,2,rep,name=excluded_nodes,json=excludedNodes,proto3" json:"excluded_nodes,omitempty"`
+	// Escrow that triggered this acquire (optional). Used by dapi to attribute
+	// per-escrow mlnode load for the capacity-fallback divisor.
+	EscrowId      string `protobuf:"bytes,3,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
@@ -123,6 +183,13 @@ func (x *AcquireMLNodeRequest) GetExcludedNodes() []string {
 		return x.ExcludedNodes
 	}
 	return nil
+}
+
+func (x *AcquireMLNodeRequest) GetEscrowId() string {
+	if x != nil {
+		return x.EscrowId
+	}
+	return ""
 }
 
 type AcquireMLNodeResponse struct {
@@ -569,14 +636,666 @@ func (x *ApprovedVersion) GetSha256() string {
 	return ""
 }
 
+type GetHostEventsRequest struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Last applied global seq; 0 = live from now (no replay of retained events).
+	Cursor uint64 `protobuf:"varint,1,opt,name=cursor,proto3" json:"cursor,omitempty"`
+	// 0 = immediate reply; >0 = long-poll up to N seconds (server-capped).
+	MaxWaitSeconds uint32 `protobuf:"varint,2,opt,name=max_wait_seconds,json=maxWaitSeconds,proto3" json:"max_wait_seconds,omitempty"`
+	// Required; empty → InvalidArgument (no accidental firehose).
+	Subscribe []HostEventKind `protobuf:"varint,3,rep,packed,name=subscribe,proto3,enum=nodemanager.HostEventKind" json:"subscribe,omitempty"`
+	// Last generation from a prior response; 0 = first poll / unknown.
+	// Mismatch with the server boot nonce yields reset=true.
+	Generation    uint64 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetHostEventsRequest) Reset() {
+	*x = GetHostEventsRequest{}
+	mi := &file_nodemanager_proto_msgTypes[8]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetHostEventsRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetHostEventsRequest) ProtoMessage() {}
+
+func (x *GetHostEventsRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[8]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetHostEventsRequest.ProtoReflect.Descriptor instead.
+func (*GetHostEventsRequest) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *GetHostEventsRequest) GetCursor() uint64 {
+	if x != nil {
+		return x.Cursor
+	}
+	return 0
+}
+
+func (x *GetHostEventsRequest) GetMaxWaitSeconds() uint32 {
+	if x != nil {
+		return x.MaxWaitSeconds
+	}
+	return 0
+}
+
+func (x *GetHostEventsRequest) GetSubscribe() []HostEventKind {
+	if x != nil {
+		return x.Subscribe
+	}
+	return nil
+}
+
+func (x *GetHostEventsRequest) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+type HostEvent struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	Seq            uint64                 `protobuf:"varint,1,opt,name=seq,proto3" json:"seq,omitempty"`
+	Kind           HostEventKind          `protobuf:"varint,2,opt,name=kind,proto3,enum=nodemanager.HostEventKind" json:"kind,omitempty"`
+	ObservedAtUnix int64                  `protobuf:"varint,3,opt,name=observed_at_unix,json=observedAtUnix,proto3" json:"observed_at_unix,omitempty"`
+	// Exactly one payload set per kind:
+	Escrow        *EscrowPayload      `protobuf:"bytes,12,opt,name=escrow,proto3" json:"escrow,omitempty"`
+	Maintenance   *MaintenancePayload `protobuf:"bytes,13,opt,name=maintenance,proto3" json:"maintenance,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *HostEvent) Reset() {
+	*x = HostEvent{}
+	mi := &file_nodemanager_proto_msgTypes[9]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *HostEvent) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*HostEvent) ProtoMessage() {}
+
+func (x *HostEvent) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[9]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use HostEvent.ProtoReflect.Descriptor instead.
+func (*HostEvent) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{9}
+}
+
+func (x *HostEvent) GetSeq() uint64 {
+	if x != nil {
+		return x.Seq
+	}
+	return 0
+}
+
+func (x *HostEvent) GetKind() HostEventKind {
+	if x != nil {
+		return x.Kind
+	}
+	return HostEventKind_HOST_EVENT_KIND_UNSPECIFIED
+}
+
+func (x *HostEvent) GetObservedAtUnix() int64 {
+	if x != nil {
+		return x.ObservedAtUnix
+	}
+	return 0
+}
+
+func (x *HostEvent) GetEscrow() *EscrowPayload {
+	if x != nil {
+		return x.Escrow
+	}
+	return nil
+}
+
+func (x *HostEvent) GetMaintenance() *MaintenancePayload {
+	if x != nil {
+		return x.Maintenance
+	}
+	return nil
+}
+
+type EscrowPayload struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId      uint64                 `protobuf:"varint,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	EpochIndex    uint64                 `protobuf:"varint,2,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	ModelId       string                 `protobuf:"bytes,3,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
+	Creator       string                 `protobuf:"bytes,4,opt,name=creator,proto3" json:"creator,omitempty"`
+	Amount        string                 `protobuf:"bytes,5,opt,name=amount,proto3" json:"amount,omitempty"`
+	Settler       string                 `protobuf:"bytes,6,opt,name=settler,proto3" json:"settler,omitempty"`
+	TotalPayout   string                 `protobuf:"bytes,7,opt,name=total_payout,json=totalPayout,proto3" json:"total_payout,omitempty"`
+	Fees          string                 `protobuf:"bytes,8,opt,name=fees,proto3" json:"fees,omitempty"`
+	Remainder     string                 `protobuf:"bytes,9,opt,name=remainder,proto3" json:"remainder,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *EscrowPayload) Reset() {
+	*x = EscrowPayload{}
+	mi := &file_nodemanager_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EscrowPayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EscrowPayload) ProtoMessage() {}
+
+func (x *EscrowPayload) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EscrowPayload.ProtoReflect.Descriptor instead.
+func (*EscrowPayload) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *EscrowPayload) GetEscrowId() uint64 {
+	if x != nil {
+		return x.EscrowId
+	}
+	return 0
+}
+
+func (x *EscrowPayload) GetEpochIndex() uint64 {
+	if x != nil {
+		return x.EpochIndex
+	}
+	return 0
+}
+
+func (x *EscrowPayload) GetModelId() string {
+	if x != nil {
+		return x.ModelId
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetCreator() string {
+	if x != nil {
+		return x.Creator
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetAmount() string {
+	if x != nil {
+		return x.Amount
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetSettler() string {
+	if x != nil {
+		return x.Settler
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetTotalPayout() string {
+	if x != nil {
+		return x.TotalPayout
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetFees() string {
+	if x != nil {
+		return x.Fees
+	}
+	return ""
+}
+
+func (x *EscrowPayload) GetRemainder() string {
+	if x != nil {
+		return x.Remainder
+	}
+	return ""
+}
+
+type MaintenancePayload struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	ReservationId  uint64                 `protobuf:"varint,1,opt,name=reservation_id,json=reservationId,proto3" json:"reservation_id,omitempty"`
+	Participant    string                 `protobuf:"bytes,2,opt,name=participant,proto3" json:"participant,omitempty"`
+	StartHeight    int64                  `protobuf:"varint,3,opt,name=start_height,json=startHeight,proto3" json:"start_height,omitempty"`
+	DurationBlocks uint64                 `protobuf:"varint,4,opt,name=duration_blocks,json=durationBlocks,proto3" json:"duration_blocks,omitempty"`
+	Reason         string                 `protobuf:"bytes,5,opt,name=reason,proto3" json:"reason,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *MaintenancePayload) Reset() {
+	*x = MaintenancePayload{}
+	mi := &file_nodemanager_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *MaintenancePayload) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*MaintenancePayload) ProtoMessage() {}
+
+func (x *MaintenancePayload) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use MaintenancePayload.ProtoReflect.Descriptor instead.
+func (*MaintenancePayload) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *MaintenancePayload) GetReservationId() uint64 {
+	if x != nil {
+		return x.ReservationId
+	}
+	return 0
+}
+
+func (x *MaintenancePayload) GetParticipant() string {
+	if x != nil {
+		return x.Participant
+	}
+	return ""
+}
+
+func (x *MaintenancePayload) GetStartHeight() int64 {
+	if x != nil {
+		return x.StartHeight
+	}
+	return 0
+}
+
+func (x *MaintenancePayload) GetDurationBlocks() uint64 {
+	if x != nil {
+		return x.DurationBlocks
+	}
+	return 0
+}
+
+func (x *MaintenancePayload) GetReason() string {
+	if x != nil {
+		return x.Reason
+	}
+	return ""
+}
+
+type GetHostEventsResponse struct {
+	state protoimpl.MessageState `protogen:"open.v1"`
+	// Idle timeout / nothing in the subscribed set since cursor.
+	Unchanged bool `protobuf:"varint,1,opt,name=unchanged,proto3" json:"unchanged,omitempty"`
+	// Only kinds in subscribe, in seq order.
+	Events     []*HostEvent `protobuf:"bytes,2,rep,name=events,proto3" json:"events,omitempty"`
+	NextCursor uint64       `protobuf:"varint,3,opt,name=next_cursor,json=nextCursor,proto3" json:"next_cursor,omitempty"`
+	// dapi boot nonce for the ring serving this response.
+	Generation uint64 `protobuf:"varint,4,opt,name=generation,proto3" json:"generation,omitempty"`
+	// Client must re-hydrate (generation mismatch or cursor below retained window).
+	// Named needs_reset (not reset) so generated Go avoids clashing with proto.Message.Reset.
+	NeedsReset bool `protobuf:"varint,5,opt,name=needs_reset,json=needsReset,proto3" json:"needs_reset,omitempty"`
+	// Convenience when escrow topics are subscribed; 0 if unknown / not applicable.
+	OpenEscrowCount int32 `protobuf:"varint,6,opt,name=open_escrow_count,json=openEscrowCount,proto3" json:"open_escrow_count,omitempty"`
+	// Snapshot of active-escrow load (30-min avg mlnode req/min). Idle escrows
+	// (no acquires in the last 30m) are omitted. Full replace each response;
+	// independent of the event cursor. Empty until dapi attributes escrow_id.
+	EscrowLoad    []*EscrowLoad `protobuf:"bytes,7,rep,name=escrow_load,json=escrowLoad,proto3" json:"escrow_load,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *GetHostEventsResponse) Reset() {
+	*x = GetHostEventsResponse{}
+	mi := &file_nodemanager_proto_msgTypes[12]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *GetHostEventsResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*GetHostEventsResponse) ProtoMessage() {}
+
+func (x *GetHostEventsResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[12]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use GetHostEventsResponse.ProtoReflect.Descriptor instead.
+func (*GetHostEventsResponse) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{12}
+}
+
+func (x *GetHostEventsResponse) GetUnchanged() bool {
+	if x != nil {
+		return x.Unchanged
+	}
+	return false
+}
+
+func (x *GetHostEventsResponse) GetEvents() []*HostEvent {
+	if x != nil {
+		return x.Events
+	}
+	return nil
+}
+
+func (x *GetHostEventsResponse) GetNextCursor() uint64 {
+	if x != nil {
+		return x.NextCursor
+	}
+	return 0
+}
+
+func (x *GetHostEventsResponse) GetGeneration() uint64 {
+	if x != nil {
+		return x.Generation
+	}
+	return 0
+}
+
+func (x *GetHostEventsResponse) GetNeedsReset() bool {
+	if x != nil {
+		return x.NeedsReset
+	}
+	return false
+}
+
+func (x *GetHostEventsResponse) GetOpenEscrowCount() int32 {
+	if x != nil {
+		return x.OpenEscrowCount
+	}
+	return 0
+}
+
+func (x *GetHostEventsResponse) GetEscrowLoad() []*EscrowLoad {
+	if x != nil {
+		return x.EscrowLoad
+	}
+	return nil
+}
+
+type EscrowLoad struct {
+	state          protoimpl.MessageState `protogen:"open.v1"`
+	EscrowId       uint64                 `protobuf:"varint,1,opt,name=escrow_id,json=escrowId,proto3" json:"escrow_id,omitempty"`
+	RequestsPerMin float64                `protobuf:"fixed64,2,opt,name=requests_per_min,json=requestsPerMin,proto3" json:"requests_per_min,omitempty"`
+	unknownFields  protoimpl.UnknownFields
+	sizeCache      protoimpl.SizeCache
+}
+
+func (x *EscrowLoad) Reset() {
+	*x = EscrowLoad{}
+	mi := &file_nodemanager_proto_msgTypes[13]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *EscrowLoad) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*EscrowLoad) ProtoMessage() {}
+
+func (x *EscrowLoad) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[13]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use EscrowLoad.ProtoReflect.Descriptor instead.
+func (*EscrowLoad) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{13}
+}
+
+func (x *EscrowLoad) GetEscrowId() uint64 {
+	if x != nil {
+		return x.EscrowId
+	}
+	return 0
+}
+
+func (x *EscrowLoad) GetRequestsPerMin() float64 {
+	if x != nil {
+		return x.RequestsPerMin
+	}
+	return 0
+}
+
+type ListNodeCapacityRequest struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeCapacityRequest) Reset() {
+	*x = ListNodeCapacityRequest{}
+	mi := &file_nodemanager_proto_msgTypes[14]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeCapacityRequest) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeCapacityRequest) ProtoMessage() {}
+
+func (x *ListNodeCapacityRequest) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[14]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeCapacityRequest.ProtoReflect.Descriptor instead.
+func (*ListNodeCapacityRequest) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{14}
+}
+
+type NodeCapacityEntry struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	NodeId        string                 `protobuf:"bytes,1,opt,name=node_id,json=nodeId,proto3" json:"node_id,omitempty"`
+	Model         string                 `protobuf:"bytes,2,opt,name=model,proto3" json:"model,omitempty"`
+	MaxConcurrent int32                  `protobuf:"varint,3,opt,name=max_concurrent,json=maxConcurrent,proto3" json:"max_concurrent,omitempty"`
+	LockCount     int32                  `protobuf:"varint,4,opt,name=lock_count,json=lockCount,proto3" json:"lock_count,omitempty"`
+	Status        string                 `protobuf:"bytes,5,opt,name=status,proto3" json:"status,omitempty"` // INFERENCE, POC, etc.
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *NodeCapacityEntry) Reset() {
+	*x = NodeCapacityEntry{}
+	mi := &file_nodemanager_proto_msgTypes[15]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *NodeCapacityEntry) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*NodeCapacityEntry) ProtoMessage() {}
+
+func (x *NodeCapacityEntry) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[15]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use NodeCapacityEntry.ProtoReflect.Descriptor instead.
+func (*NodeCapacityEntry) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{15}
+}
+
+func (x *NodeCapacityEntry) GetNodeId() string {
+	if x != nil {
+		return x.NodeId
+	}
+	return ""
+}
+
+func (x *NodeCapacityEntry) GetModel() string {
+	if x != nil {
+		return x.Model
+	}
+	return ""
+}
+
+func (x *NodeCapacityEntry) GetMaxConcurrent() int32 {
+	if x != nil {
+		return x.MaxConcurrent
+	}
+	return 0
+}
+
+func (x *NodeCapacityEntry) GetLockCount() int32 {
+	if x != nil {
+		return x.LockCount
+	}
+	return 0
+}
+
+func (x *NodeCapacityEntry) GetStatus() string {
+	if x != nil {
+		return x.Status
+	}
+	return ""
+}
+
+type ListNodeCapacityResponse struct {
+	state         protoimpl.MessageState `protogen:"open.v1"`
+	Nodes         []*NodeCapacityEntry   `protobuf:"bytes,1,rep,name=nodes,proto3" json:"nodes,omitempty"`
+	ServedAtUnix  int64                  `protobuf:"varint,2,opt,name=served_at_unix,json=servedAtUnix,proto3" json:"served_at_unix,omitempty"`
+	unknownFields protoimpl.UnknownFields
+	sizeCache     protoimpl.SizeCache
+}
+
+func (x *ListNodeCapacityResponse) Reset() {
+	*x = ListNodeCapacityResponse{}
+	mi := &file_nodemanager_proto_msgTypes[16]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *ListNodeCapacityResponse) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*ListNodeCapacityResponse) ProtoMessage() {}
+
+func (x *ListNodeCapacityResponse) ProtoReflect() protoreflect.Message {
+	mi := &file_nodemanager_proto_msgTypes[16]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use ListNodeCapacityResponse.ProtoReflect.Descriptor instead.
+func (*ListNodeCapacityResponse) Descriptor() ([]byte, []int) {
+	return file_nodemanager_proto_rawDescGZIP(), []int{16}
+}
+
+func (x *ListNodeCapacityResponse) GetNodes() []*NodeCapacityEntry {
+	if x != nil {
+		return x.Nodes
+	}
+	return nil
+}
+
+func (x *ListNodeCapacityResponse) GetServedAtUnix() int64 {
+	if x != nil {
+		return x.ServedAtUnix
+	}
+	return 0
+}
+
 var File_nodemanager_proto protoreflect.FileDescriptor
 
 const file_nodemanager_proto_rawDesc = "" +
 	"\n" +
-	"\x11nodemanager.proto\x12\vnodemanager\"S\n" +
+	"\x11nodemanager.proto\x12\vnodemanager\"p\n" +
 	"\x14AcquireMLNodeRequest\x12\x14\n" +
 	"\x05model\x18\x01 \x01(\tR\x05model\x12%\n" +
-	"\x0eexcluded_nodes\x18\x02 \x03(\tR\rexcludedNodes\"e\n" +
+	"\x0eexcluded_nodes\x18\x02 \x03(\tR\rexcludedNodes\x12\x1b\n" +
+	"\tescrow_id\x18\x03 \x01(\tR\bescrowId\"e\n" +
 	"\x15AcquireMLNodeResponse\x12\x17\n" +
 	"\alock_id\x18\x01 \x01(\tR\x06lockId\x12\x1a\n" +
 	"\bendpoint\x18\x02 \x01(\tR\bendpoint\x12\x17\n" +
@@ -607,16 +1326,82 @@ const file_nodemanager_proto_rawDesc = "" +
 	"\x0fApprovedVersion\x12\x12\n" +
 	"\x04name\x18\x01 \x01(\tR\x04name\x12\x16\n" +
 	"\x06binary\x18\x02 \x01(\tR\x06binary\x12\x16\n" +
-	"\x06sha256\x18\x03 \x01(\tR\x06sha256*V\n" +
+	"\x06sha256\x18\x03 \x01(\tR\x06sha256\"\xb2\x01\n" +
+	"\x14GetHostEventsRequest\x12\x16\n" +
+	"\x06cursor\x18\x01 \x01(\x04R\x06cursor\x12(\n" +
+	"\x10max_wait_seconds\x18\x02 \x01(\rR\x0emaxWaitSeconds\x128\n" +
+	"\tsubscribe\x18\x03 \x03(\x0e2\x1a.nodemanager.HostEventKindR\tsubscribe\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\x04R\n" +
+	"generation\"\xee\x01\n" +
+	"\tHostEvent\x12\x10\n" +
+	"\x03seq\x18\x01 \x01(\x04R\x03seq\x12.\n" +
+	"\x04kind\x18\x02 \x01(\x0e2\x1a.nodemanager.HostEventKindR\x04kind\x12(\n" +
+	"\x10observed_at_unix\x18\x03 \x01(\x03R\x0eobservedAtUnix\x122\n" +
+	"\x06escrow\x18\f \x01(\v2\x1a.nodemanager.EscrowPayloadR\x06escrow\x12A\n" +
+	"\vmaintenance\x18\r \x01(\v2\x1f.nodemanager.MaintenancePayloadR\vmaintenance\"\x89\x02\n" +
+	"\rEscrowPayload\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\x04R\bescrowId\x12\x1f\n" +
+	"\vepoch_index\x18\x02 \x01(\x04R\n" +
+	"epochIndex\x12\x19\n" +
+	"\bmodel_id\x18\x03 \x01(\tR\amodelId\x12\x18\n" +
+	"\acreator\x18\x04 \x01(\tR\acreator\x12\x16\n" +
+	"\x06amount\x18\x05 \x01(\tR\x06amount\x12\x18\n" +
+	"\asettler\x18\x06 \x01(\tR\asettler\x12!\n" +
+	"\ftotal_payout\x18\a \x01(\tR\vtotalPayout\x12\x12\n" +
+	"\x04fees\x18\b \x01(\tR\x04fees\x12\x1c\n" +
+	"\tremainder\x18\t \x01(\tR\tremainder\"\xc1\x01\n" +
+	"\x12MaintenancePayload\x12%\n" +
+	"\x0ereservation_id\x18\x01 \x01(\x04R\rreservationId\x12 \n" +
+	"\vparticipant\x18\x02 \x01(\tR\vparticipant\x12!\n" +
+	"\fstart_height\x18\x03 \x01(\x03R\vstartHeight\x12'\n" +
+	"\x0fduration_blocks\x18\x04 \x01(\x04R\x0edurationBlocks\x12\x16\n" +
+	"\x06reason\x18\x05 \x01(\tR\x06reason\"\xad\x02\n" +
+	"\x15GetHostEventsResponse\x12\x1c\n" +
+	"\tunchanged\x18\x01 \x01(\bR\tunchanged\x12.\n" +
+	"\x06events\x18\x02 \x03(\v2\x16.nodemanager.HostEventR\x06events\x12\x1f\n" +
+	"\vnext_cursor\x18\x03 \x01(\x04R\n" +
+	"nextCursor\x12\x1e\n" +
+	"\n" +
+	"generation\x18\x04 \x01(\x04R\n" +
+	"generation\x12\x1f\n" +
+	"\vneeds_reset\x18\x05 \x01(\bR\n" +
+	"needsReset\x12*\n" +
+	"\x11open_escrow_count\x18\x06 \x01(\x05R\x0fopenEscrowCount\x128\n" +
+	"\vescrow_load\x18\a \x03(\v2\x17.nodemanager.EscrowLoadR\n" +
+	"escrowLoad\"S\n" +
+	"\n" +
+	"EscrowLoad\x12\x1b\n" +
+	"\tescrow_id\x18\x01 \x01(\x04R\bescrowId\x12(\n" +
+	"\x10requests_per_min\x18\x02 \x01(\x01R\x0erequestsPerMin\"\x19\n" +
+	"\x17ListNodeCapacityRequest\"\xa0\x01\n" +
+	"\x11NodeCapacityEntry\x12\x17\n" +
+	"\anode_id\x18\x01 \x01(\tR\x06nodeId\x12\x14\n" +
+	"\x05model\x18\x02 \x01(\tR\x05model\x12%\n" +
+	"\x0emax_concurrent\x18\x03 \x01(\x05R\rmaxConcurrent\x12\x1d\n" +
+	"\n" +
+	"lock_count\x18\x04 \x01(\x05R\tlockCount\x12\x16\n" +
+	"\x06status\x18\x05 \x01(\tR\x06status\"v\n" +
+	"\x18ListNodeCapacityResponse\x124\n" +
+	"\x05nodes\x18\x01 \x03(\v2\x1e.nodemanager.NodeCapacityEntryR\x05nodes\x12$\n" +
+	"\x0eserved_at_unix\x18\x02 \x01(\x03R\fservedAtUnix*V\n" +
 	"\x0eReleaseOutcome\x12\v\n" +
 	"\aSUCCESS\x10\x00\x12\x13\n" +
 	"\x0fTRANSPORT_ERROR\x10\x01\x12\x15\n" +
 	"\x11APPLICATION_ERROR\x10\x02\x12\v\n" +
-	"\aTIMEOUT\x10\x032\x9e\x02\n" +
+	"\aTIMEOUT\x10\x03*\xcd\x01\n" +
+	"\rHostEventKind\x12\x1f\n" +
+	"\x1bHOST_EVENT_KIND_UNSPECIFIED\x10\x00\x12\"\n" +
+	"\x1eHOST_EVENT_KIND_ESCROW_CREATED\x10\x03\x12\"\n" +
+	"\x1eHOST_EVENT_KIND_ESCROW_SETTLED\x10\x04\x12)\n" +
+	"%HOST_EVENT_KIND_MAINTENANCE_SCHEDULED\x10\x05\x12(\n" +
+	"$HOST_EVENT_KIND_MAINTENANCE_CANCELED\x10\x062\xd7\x03\n" +
 	"\vNodeManager\x12V\n" +
 	"\rAcquireMLNode\x12!.nodemanager.AcquireMLNodeRequest\x1a\".nodemanager.AcquireMLNodeResponse\x12V\n" +
 	"\rReleaseMLNode\x12!.nodemanager.ReleaseMLNodeRequest\x1a\".nodemanager.ReleaseMLNodeResponse\x12_\n" +
-	"\x10GetRuntimeConfig\x12$.nodemanager.GetRuntimeConfigRequest\x1a%.nodemanager.GetRuntimeConfigResponseB\x1aZ\x18devshard/nodemanager/genb\x06proto3"
+	"\x10GetRuntimeConfig\x12$.nodemanager.GetRuntimeConfigRequest\x1a%.nodemanager.GetRuntimeConfigResponse\x12V\n" +
+	"\rGetHostEvents\x12!.nodemanager.GetHostEventsRequest\x1a\".nodemanager.GetHostEventsResponse\x12_\n" +
+	"\x10ListNodeCapacity\x12$.nodemanager.ListNodeCapacityRequest\x1a%.nodemanager.ListNodeCapacityResponseB\x1aZ\x18devshard/nodemanager/genb\x06proto3"
 
 var (
 	file_nodemanager_proto_rawDescOnce sync.Once
@@ -630,34 +1415,55 @@ func file_nodemanager_proto_rawDescGZIP() []byte {
 	return file_nodemanager_proto_rawDescData
 }
 
-var file_nodemanager_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 8)
+var file_nodemanager_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
+var file_nodemanager_proto_msgTypes = make([]protoimpl.MessageInfo, 17)
 var file_nodemanager_proto_goTypes = []any{
 	(ReleaseOutcome)(0),              // 0: nodemanager.ReleaseOutcome
-	(*AcquireMLNodeRequest)(nil),     // 1: nodemanager.AcquireMLNodeRequest
-	(*AcquireMLNodeResponse)(nil),    // 2: nodemanager.AcquireMLNodeResponse
-	(*ReleaseMLNodeRequest)(nil),     // 3: nodemanager.ReleaseMLNodeRequest
-	(*ReleaseMLNodeResponse)(nil),    // 4: nodemanager.ReleaseMLNodeResponse
-	(*GetRuntimeConfigRequest)(nil),  // 5: nodemanager.GetRuntimeConfigRequest
-	(*GetRuntimeConfigResponse)(nil), // 6: nodemanager.GetRuntimeConfigResponse
-	(*RuntimeConfig)(nil),            // 7: nodemanager.RuntimeConfig
-	(*ApprovedVersion)(nil),          // 8: nodemanager.ApprovedVersion
+	(HostEventKind)(0),               // 1: nodemanager.HostEventKind
+	(*AcquireMLNodeRequest)(nil),     // 2: nodemanager.AcquireMLNodeRequest
+	(*AcquireMLNodeResponse)(nil),    // 3: nodemanager.AcquireMLNodeResponse
+	(*ReleaseMLNodeRequest)(nil),     // 4: nodemanager.ReleaseMLNodeRequest
+	(*ReleaseMLNodeResponse)(nil),    // 5: nodemanager.ReleaseMLNodeResponse
+	(*GetRuntimeConfigRequest)(nil),  // 6: nodemanager.GetRuntimeConfigRequest
+	(*GetRuntimeConfigResponse)(nil), // 7: nodemanager.GetRuntimeConfigResponse
+	(*RuntimeConfig)(nil),            // 8: nodemanager.RuntimeConfig
+	(*ApprovedVersion)(nil),          // 9: nodemanager.ApprovedVersion
+	(*GetHostEventsRequest)(nil),     // 10: nodemanager.GetHostEventsRequest
+	(*HostEvent)(nil),                // 11: nodemanager.HostEvent
+	(*EscrowPayload)(nil),            // 12: nodemanager.EscrowPayload
+	(*MaintenancePayload)(nil),       // 13: nodemanager.MaintenancePayload
+	(*GetHostEventsResponse)(nil),    // 14: nodemanager.GetHostEventsResponse
+	(*EscrowLoad)(nil),               // 15: nodemanager.EscrowLoad
+	(*ListNodeCapacityRequest)(nil),  // 16: nodemanager.ListNodeCapacityRequest
+	(*NodeCapacityEntry)(nil),        // 17: nodemanager.NodeCapacityEntry
+	(*ListNodeCapacityResponse)(nil), // 18: nodemanager.ListNodeCapacityResponse
 }
 var file_nodemanager_proto_depIdxs = []int32{
-	0, // 0: nodemanager.ReleaseMLNodeRequest.outcome:type_name -> nodemanager.ReleaseOutcome
-	7, // 1: nodemanager.GetRuntimeConfigResponse.config:type_name -> nodemanager.RuntimeConfig
-	8, // 2: nodemanager.RuntimeConfig.approved_versions:type_name -> nodemanager.ApprovedVersion
-	1, // 3: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
-	3, // 4: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
-	5, // 5: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
-	2, // 6: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
-	4, // 7: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
-	6, // 8: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
-	6, // [6:9] is the sub-list for method output_type
-	3, // [3:6] is the sub-list for method input_type
-	3, // [3:3] is the sub-list for extension type_name
-	3, // [3:3] is the sub-list for extension extendee
-	0, // [0:3] is the sub-list for field type_name
+	0,  // 0: nodemanager.ReleaseMLNodeRequest.outcome:type_name -> nodemanager.ReleaseOutcome
+	8,  // 1: nodemanager.GetRuntimeConfigResponse.config:type_name -> nodemanager.RuntimeConfig
+	9,  // 2: nodemanager.RuntimeConfig.approved_versions:type_name -> nodemanager.ApprovedVersion
+	1,  // 3: nodemanager.GetHostEventsRequest.subscribe:type_name -> nodemanager.HostEventKind
+	1,  // 4: nodemanager.HostEvent.kind:type_name -> nodemanager.HostEventKind
+	12, // 5: nodemanager.HostEvent.escrow:type_name -> nodemanager.EscrowPayload
+	13, // 6: nodemanager.HostEvent.maintenance:type_name -> nodemanager.MaintenancePayload
+	11, // 7: nodemanager.GetHostEventsResponse.events:type_name -> nodemanager.HostEvent
+	15, // 8: nodemanager.GetHostEventsResponse.escrow_load:type_name -> nodemanager.EscrowLoad
+	17, // 9: nodemanager.ListNodeCapacityResponse.nodes:type_name -> nodemanager.NodeCapacityEntry
+	2,  // 10: nodemanager.NodeManager.AcquireMLNode:input_type -> nodemanager.AcquireMLNodeRequest
+	4,  // 11: nodemanager.NodeManager.ReleaseMLNode:input_type -> nodemanager.ReleaseMLNodeRequest
+	6,  // 12: nodemanager.NodeManager.GetRuntimeConfig:input_type -> nodemanager.GetRuntimeConfigRequest
+	10, // 13: nodemanager.NodeManager.GetHostEvents:input_type -> nodemanager.GetHostEventsRequest
+	16, // 14: nodemanager.NodeManager.ListNodeCapacity:input_type -> nodemanager.ListNodeCapacityRequest
+	3,  // 15: nodemanager.NodeManager.AcquireMLNode:output_type -> nodemanager.AcquireMLNodeResponse
+	5,  // 16: nodemanager.NodeManager.ReleaseMLNode:output_type -> nodemanager.ReleaseMLNodeResponse
+	7,  // 17: nodemanager.NodeManager.GetRuntimeConfig:output_type -> nodemanager.GetRuntimeConfigResponse
+	14, // 18: nodemanager.NodeManager.GetHostEvents:output_type -> nodemanager.GetHostEventsResponse
+	18, // 19: nodemanager.NodeManager.ListNodeCapacity:output_type -> nodemanager.ListNodeCapacityResponse
+	15, // [15:20] is the sub-list for method output_type
+	10, // [10:15] is the sub-list for method input_type
+	10, // [10:10] is the sub-list for extension type_name
+	10, // [10:10] is the sub-list for extension extendee
+	0,  // [0:10] is the sub-list for field type_name
 }
 
 func init() { file_nodemanager_proto_init() }
@@ -670,8 +1476,8 @@ func file_nodemanager_proto_init() {
 		File: protoimpl.DescBuilder{
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_nodemanager_proto_rawDesc), len(file_nodemanager_proto_rawDesc)),
-			NumEnums:      1,
-			NumMessages:   8,
+			NumEnums:      2,
+			NumMessages:   17,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

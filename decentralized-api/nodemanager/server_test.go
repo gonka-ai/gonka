@@ -8,6 +8,7 @@ import (
 	"decentralized-api/broker"
 	"devshard/nodemanager/gen"
 
+	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -15,8 +16,9 @@ import (
 
 // mockBroker implements brokerAcquirer for testing.
 type mockBroker struct {
-	acquireFunc func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
-	releaseFunc func(lockID string, outcome broker.InferenceResult) error
+	acquireFunc  func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
+	releaseFunc  func(lockID string, outcome broker.InferenceResult) error
+	getNodesFunc func() ([]broker.NodeResponse, error)
 }
 
 func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error) {
@@ -26,6 +28,12 @@ func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult
 	return m.releaseFunc(lockID, outcome)
 }
 func (m *mockBroker) TriggerStatusQuery(_ bool) {}
+func (m *mockBroker) GetNodes() ([]broker.NodeResponse, error) {
+	if m.getNodesFunc == nil {
+		return nil, nil
+	}
+	return m.getNodesFunc()
+}
 
 func TestAcquireMLNode_Success(t *testing.T) {
 	srv := NewServer(&mockBroker{
@@ -101,4 +109,59 @@ func TestReleaseMLNode_NotFound(t *testing.T) {
 	}, nil, nil)
 	_, err := srv.ReleaseMLNode(context.Background(), &gen.ReleaseMLNodeRequest{LockId: "bad"})
 	require.Equal(t, codes.NotFound, status.Code(err))
+}
+
+func TestListNodeCapacity_MapsBrokerNodes(t *testing.T) {
+	srv := NewServer(&mockBroker{
+		getNodesFunc: func() ([]broker.NodeResponse, error) {
+			return []broker.NodeResponse{{
+				Node: broker.Node{
+					Id:            "node-1",
+					MaxConcurrent: 8,
+					Models: map[string]broker.ModelArgs{
+						"model-a": {},
+						"model-b": {},
+					},
+				},
+				State: broker.NodeState{
+					CurrentStatus: types.HardwareNodeStatus_INFERENCE,
+					LockCount:     3,
+				},
+			}}, nil
+		},
+	}, nil, nil)
+
+	resp, err := srv.ListNodeCapacity(context.Background(), &gen.ListNodeCapacityRequest{})
+	require.NoError(t, err)
+	require.NotZero(t, resp.ServedAtUnix)
+	require.Len(t, resp.Nodes, 2)
+
+	byModel := map[string]*gen.NodeCapacityEntry{}
+	for _, e := range resp.Nodes {
+		byModel[e.Model] = e
+		require.Equal(t, "node-1", e.NodeId)
+		require.Equal(t, int32(8), e.MaxConcurrent)
+		require.Equal(t, int32(3), e.LockCount)
+		require.Equal(t, types.HardwareNodeStatus_INFERENCE.String(), e.Status)
+	}
+	require.Contains(t, byModel, "model-a")
+	require.Contains(t, byModel, "model-b")
+}
+
+func TestListNodeCapacity_EmptyBroker(t *testing.T) {
+	srv := NewServer(&mockBroker{
+		getNodesFunc: func() ([]broker.NodeResponse, error) {
+			return []broker.NodeResponse{}, nil
+		},
+	}, nil, nil)
+	resp, err := srv.ListNodeCapacity(context.Background(), &gen.ListNodeCapacityRequest{})
+	require.NoError(t, err)
+	require.Empty(t, resp.Nodes)
+	require.NotZero(t, resp.ServedAtUnix)
+}
+
+func TestListNodeCapacity_NilBroker(t *testing.T) {
+	srv := NewServer(nil, nil, nil)
+	_, err := srv.ListNodeCapacity(context.Background(), &gen.ListNodeCapacityRequest{})
+	require.Equal(t, codes.FailedPrecondition, status.Code(err))
 }

@@ -30,7 +30,7 @@ Cause: Kimi-K2.6 reads from `chat_template_kwargs.thinking` only — the gateway
 
 ### "My tool message is rejected on MiniMax-M2.7"
 
-Cause: MiniMax-M2.7 uses a different `role:"tool"` contract from OpenAI — `content` must be an array of `{name, type:"text", text}` entries, with no `tool_call_id`. Bare-string `content` or OpenAI-style `tool_call_id`-correlated messages are rejected with HTTP 400. See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md). Clients dual-emitting `tool_call_id` for portability across routes are fine — the gateway silently strips it.
+Cause: The MiniMax-M2.7 route now uses the **standard OpenAI** `role:"tool"` contract — string (or text-part) `content` with a `tool_call_id` matching the assistant `tool_calls[].id` you received. The usual cause is a missing or mismatched `tool_call_id`, same as any route. An earlier release required a MiniMax-native `{name, type:"text", text}[]` array and rejected bare-string content; that requirement was removed. See [accept-tool-message-minimax-shape](troubleshooting.md#accept-tool-message-minimax-shape) and the [MiniMax-M2.7 per-model doc](minimax-m2.7.md).
 
 ### "My `<think>` blocks disappeared on MiniMax-M2.7"
 

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -635,6 +636,71 @@ func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValid
 		return nil, err
 	}
 	return b.GetValidationObservability(escrowID)
+}
+
+func (h *HybridStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	// Best-effort fan-out to every available backend. Escrow cache is advisory
+	// pre-init data: a write failure must not fail warm, and both SQLite and
+	// Postgres may hold a copy when both are configured.
+	wrote := false
+	for _, b := range h.backends() {
+		if err := b.PutEscrowCache(info); err != nil {
+			slog.Warn("devshard storage: escrow cache put failed",
+				"escrow_id", info.EscrowID,
+				"epoch_id", info.EpochID,
+				"backend", escrowCacheBackendName(b),
+				"error", err)
+			continue
+		}
+		wrote = true
+	}
+	if !wrote && len(h.backends()) == 0 {
+		slog.Warn("devshard storage: escrow cache put skipped; no backends",
+			"escrow_id", info.EscrowID)
+	}
+	return nil
+}
+
+func (h *HybridStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	for _, b := range h.backends() {
+		info, err := b.GetEscrowCache(escrowID)
+		if err == nil {
+			return info, nil
+		}
+		if errors.Is(err, ErrEscrowCacheNotFound) {
+			continue
+		}
+		slog.Warn("devshard storage: escrow cache get failed",
+			"escrow_id", escrowID,
+			"backend", escrowCacheBackendName(b),
+			"error", err)
+	}
+	return nil, ErrEscrowCacheNotFound
+}
+
+func (h *HybridStorage) DeleteEscrowCache(escrowID string) error {
+	for _, b := range h.backends() {
+		if err := b.DeleteEscrowCache(escrowID); err != nil {
+			slog.Warn("devshard storage: escrow cache delete failed",
+				"escrow_id", escrowID,
+				"backend", escrowCacheBackendName(b),
+				"error", err)
+		}
+	}
+	return nil
+}
+
+func escrowCacheBackendName(b Storage) string {
+	switch b.(type) {
+	case *SQLite:
+		return "sqlite"
+	case *Postgres:
+		return "postgres"
+	case *Memory:
+		return "memory"
+	default:
+		return fmt.Sprintf("%T", b)
+	}
 }
 
 // PruneEpoch drops the epoch partition in every backend.

@@ -45,6 +45,7 @@ type HostManager struct {
 	mu                 sync.RWMutex
 	sessions           map[string]*transport.Server
 	resolutionFailures map[string]resolutionFailure
+	openSet            map[string]struct{} // escrow IDs this host currently serves
 	sf                 singleflight.Group
 
 	readyMu      sync.RWMutex
@@ -150,6 +151,7 @@ func NewHostManager(
 	m := &HostManager{
 		sessions:           make(map[string]*transport.Server),
 		resolutionFailures: make(map[string]resolutionFailure),
+		openSet:            make(map[string]struct{}),
 		initializing:       true,
 		store:              store,
 		signer:             signer,
@@ -187,6 +189,7 @@ func (m *HostManager) Close() error {
 		sessions = append(sessions, srv)
 	}
 	m.sessions = make(map[string]*transport.Server)
+	m.openSet = make(map[string]struct{})
 	m.mu.Unlock()
 	for _, srv := range sessions {
 		srv.Host().Close()
@@ -358,12 +361,183 @@ func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Serve
 	defer m.mu.Unlock()
 	if existing, ok := m.sessions[escrowID]; ok {
 		srv.Host().Close()
+		m.openSet[escrowID] = struct{}{}
 		return existing
 	}
 	delete(m.resolutionFailures, escrowID)
 	m.sessions[escrowID] = srv
+	m.openSet[escrowID] = struct{}{}
 	srv.Host().Start()
 	return srv
+}
+
+// WarmEscrow pre-inits escrow metadata from chain without CreateSession /
+// state-machine bind. Runtime version is unknown until the first request path;
+// full init stays lazy so multiple versiond children can share Postgres safely.
+func (m *HostManager) WarmEscrow(escrowID string) error {
+	if escrowID == "" {
+		return nil
+	}
+	if _, ok := m.session(escrowID); ok {
+		return nil
+	}
+	if _, err := m.store.GetEscrowCache(escrowID); err == nil {
+		return nil
+	} else if err != nil && !errors.Is(err, storage.ErrEscrowCacheNotFound) {
+		logging.Warn("host_events: escrow cache get failed; continuing warm", inferenceTypes.System,
+			"escrow_id", escrowID, "error", err)
+	}
+
+	_, err, _ := m.sf.Do("warm:"+escrowID, func() (interface{}, error) {
+		if _, ok := m.session(escrowID); ok {
+			return nil, nil
+		}
+		if _, err := m.store.GetEscrowCache(escrowID); err == nil {
+			return nil, nil
+		} else if err != nil && !errors.Is(err, storage.ErrEscrowCacheNotFound) {
+			logging.Warn("host_events: escrow cache get failed; continuing warm", inferenceTypes.System,
+				"escrow_id", escrowID, "error", err)
+		}
+
+		escrow, err := m.bridge.GetEscrow(escrowID)
+		if err != nil {
+			return nil, fmt.Errorf("get escrow: %w", err)
+		}
+		if err := m.ensureHostInEscrowGroup(escrow); err != nil {
+			if errors.Is(err, types.ErrHostNotInGroup) {
+				logging.Debug("host_events: WarmEscrow skipped; host not in group", inferenceTypes.System,
+					"escrow_id", escrowID)
+				return nil, nil
+			}
+			return nil, err
+		}
+		cache := escrowInfoToCache(escrow)
+		if cache.EscrowID == "" {
+			cache.EscrowID = escrowID
+		}
+		if err := m.store.PutEscrowCache(cache); err != nil {
+			logging.Warn("host_events: escrow cache put failed", inferenceTypes.System,
+				"escrow_id", escrowID, "error", err)
+		}
+		return nil, nil
+	})
+	return err
+}
+
+func (m *HostManager) ensureHostInEscrowGroup(escrow *bridge.EscrowInfo) error {
+	group, err := bridge.BuildGroupFromEscrow(escrow)
+	if err != nil {
+		return fmt.Errorf("build group: %w", err)
+	}
+	addr := m.signer.Address()
+	for _, slot := range group {
+		if slot.ValidatorAddress == addr {
+			return nil
+		}
+	}
+	for _, slot := range group {
+		ok, err := m.bridge.VerifyWarmKey(addr, slot.ValidatorAddress)
+		if err != nil {
+			continue
+		}
+		if ok {
+			return nil
+		}
+	}
+	return fmt.Errorf("%w: %s", types.ErrHostNotInGroup, addr)
+}
+
+func escrowInfoToCache(escrow *bridge.EscrowInfo) storage.EscrowCacheInfo {
+	if escrow == nil {
+		return storage.EscrowCacheInfo{}
+	}
+	return storage.EscrowCacheInfo{
+		EscrowID:                  escrow.EscrowID,
+		Amount:                    escrow.Amount,
+		CreatorAddress:            escrow.CreatorAddress,
+		AppHash:                   append([]byte(nil), escrow.AppHash...),
+		Slots:                     append([]string(nil), escrow.Slots...),
+		TokenPrice:                escrow.TokenPrice,
+		CreateDevshardFee:         escrow.CreateDevshardFee,
+		FeePerNonce:               escrow.FeePerNonce,
+		InferenceSealGraceNonces:  escrow.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: escrow.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      escrow.AutoSealEveryNNonces,
+		ValidationRate:            escrow.ValidationRate,
+		EpochID:                   escrow.EpochID,
+	}
+}
+
+func escrowCacheToInfo(cached *storage.EscrowCacheInfo) *bridge.EscrowInfo {
+	if cached == nil {
+		return nil
+	}
+	return &bridge.EscrowInfo{
+		EscrowID:                  cached.EscrowID,
+		Amount:                    cached.Amount,
+		CreatorAddress:            cached.CreatorAddress,
+		AppHash:                   append([]byte(nil), cached.AppHash...),
+		Slots:                     append([]string(nil), cached.Slots...),
+		TokenPrice:                cached.TokenPrice,
+		CreateDevshardFee:         cached.CreateDevshardFee,
+		FeePerNonce:               cached.FeePerNonce,
+		InferenceSealGraceNonces:  cached.InferenceSealGraceNonces,
+		InferenceSealGraceSeconds: cached.InferenceSealGraceSeconds,
+		AutoSealEveryNNonces:      cached.AutoSealEveryNNonces,
+		ValidationRate:            cached.ValidationRate,
+		EpochID:                   cached.EpochID,
+	}
+}
+
+// OnEscrowSettled marks the session settled in storage and evicts it from memory.
+// Idempotent when the session is already gone.
+func (m *HostManager) OnEscrowSettled(escrowID string) error {
+	if escrowID == "" {
+		return nil
+	}
+	if err := m.store.DeleteEscrowCache(escrowID); err != nil {
+		logging.Warn("host_events: DeleteEscrowCache failed", inferenceTypes.System,
+			"escrow_id", escrowID, "error", err)
+	}
+	if err := m.store.MarkSettled(escrowID); err != nil {
+		logging.Debug("host_events: MarkSettled", inferenceTypes.System,
+			"escrow_id", escrowID, "error", err)
+	}
+
+	m.mu.Lock()
+	srv := m.sessions[escrowID]
+	delete(m.sessions, escrowID)
+	delete(m.resolutionFailures, escrowID)
+	delete(m.openSet, escrowID)
+	m.mu.Unlock()
+
+	if srv != nil {
+		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
+		m.statsMu.Lock()
+		m.statsShardsCache = nil
+		delete(m.statsDetailsCache, escrowID)
+		m.statsMu.Unlock()
+	}
+	return nil
+}
+
+// OpenEscrowCount returns how many escrows this host currently tracks as open.
+func (m *HostManager) OpenEscrowCount() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return len(m.openSet)
+}
+
+// RehydrateOpenEscrows rebuilds openSet from live in-memory sessions (after
+// GetHostEvents needs_reset / dapi restart).
+func (m *HostManager) RehydrateOpenEscrows() {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.openSet = make(map[string]struct{}, len(m.sessions))
+	for id := range m.sessions {
+		m.openSet[id] = struct{}{}
+	}
 }
 
 func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
@@ -379,6 +553,13 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 		evicted[escrowID] = srv
 		delete(m.sessions, escrowID)
 		delete(m.resolutionFailures, escrowID)
+		delete(m.openSet, escrowID)
+	}
+	// Leak guard: drop openSet entries that no longer have a live session.
+	for id := range m.openSet {
+		if _, ok := m.sessions[id]; !ok {
+			delete(m.openSet, id)
+		}
 	}
 	m.mu.Unlock()
 
@@ -397,7 +578,7 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 }
 
 func (m *HostManager) create(escrowID string) (*transport.Server, error) {
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	escrow, err := m.resolveEscrow(escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get escrow: %w", err)
 	}
@@ -448,6 +629,7 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 		h.Close()
 		return nil, fmt.Errorf("init storage session: %w", err)
 	}
+	_ = m.store.DeleteEscrowCache(escrowID)
 
 	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
 		transport.WithBridge(m.bridge),
@@ -458,6 +640,18 @@ func (m *HostManager) create(escrowID string) (*transport.Server, error) {
 	}
 
 	return srv, nil
+}
+
+func (m *HostManager) resolveEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+	cached, err := m.store.GetEscrowCache(escrowID)
+	if err == nil {
+		return escrowCacheToInfo(cached), nil
+	}
+	if !errors.Is(err, storage.ErrEscrowCacheNotFound) {
+		logging.Warn("escrow cache read failed; falling back to chain", inferenceTypes.System,
+			"escrow_id", escrowID, "error", err)
+	}
+	return m.bridge.GetEscrow(escrowID)
 }
 
 // RecoverSessions rebuilds in-memory sessions from the shared store.
@@ -529,6 +723,7 @@ func (m *HostManager) RecoverSessions() error {
 		"version_skipped_count", versionSkippedCount.Load(),
 		"duration", time.Since(startedAt))
 
+	m.RehydrateOpenEscrows()
 	return nil
 }
 
@@ -919,6 +1114,9 @@ func validationObservabilityFromStore(store storage.Storage, escrowID string) st
 
 func statsHTTPError(err error) error {
 	if errors.Is(err, devshardserver.ErrInitializing) {
+		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+	}
+	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {

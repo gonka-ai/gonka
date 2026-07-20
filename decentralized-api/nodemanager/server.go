@@ -9,6 +9,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
+	"decentralized-api/internal/longpoll"
 	"decentralized-api/logging"
 	"devshard/nodemanager/gen"
 
@@ -23,6 +24,7 @@ type brokerAcquirer interface {
 	AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (lockID, endpoint, nodeID string, err error)
 	ReleaseMLNode(lockID string, outcome broker.InferenceResult) error
 	TriggerStatusQuery(bypassDebounce bool)
+	GetNodes() ([]broker.NodeResponse, error)
 }
 
 // Server implements gen.NodeManagerServer.
@@ -31,21 +33,45 @@ type Server struct {
 	broker        brokerAcquirer
 	configManager *apiconfig.ConfigManager
 	phaseTracker  *chainphase.ChainPhaseTracker
+	hostEvents    *apiconfig.HostEventRing
+	escrowLoad    *broker.EscrowLoadTracker
+}
+
+// ServerOption configures optional Server dependencies.
+type ServerOption func(*Server)
+
+// WithHostEventRing enables GetHostEvents. Without it the RPC returns FailedPrecondition.
+func WithHostEventRing(ring *apiconfig.HostEventRing) ServerOption {
+	return func(s *Server) { s.hostEvents = ring }
+}
+
+// WithEscrowLoadTracker attaches the per-escrow acquire rate tracker used to
+// populate GetHostEventsResponse.escrow_load.
+func WithEscrowLoadTracker(t *broker.EscrowLoadTracker) ServerOption {
+	return func(s *Server) { s.escrowLoad = t }
 }
 
 // NewServer creates a NodeManager gRPC server. configManager and phaseTracker are
 // required for GetRuntimeConfig; either may be nil to disable that RPC.
-func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTracker *chainphase.ChainPhaseTracker) *Server {
-	return &Server{
+// Pass WithHostEventRing to enable GetHostEvents (nil / omitted → FailedPrecondition).
+func NewServer(b brokerAcquirer, configManager *apiconfig.ConfigManager, phaseTracker *chainphase.ChainPhaseTracker, opts ...ServerOption) *Server {
+	s := &Server{
 		broker:        b,
 		configManager: configManager,
 		phaseTracker:  phaseTracker,
 	}
+	for _, opt := range opts {
+		opt(s)
+	}
+	return s
 }
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 	lockID, endpoint, nodeID, err := s.broker.AcquireMLNode(ctx, req.Model, req.ExcludedNodes)
 	if err == nil {
+		if s.escrowLoad != nil {
+			s.escrowLoad.Record(req.GetEscrowId())
+		}
 		return &gen.AcquireMLNodeResponse{LockId: lockID, Endpoint: endpoint, NodeId: nodeID}, nil
 	}
 	if errors.Is(err, broker.ErrNoNodesAvailable) {
@@ -74,6 +100,43 @@ func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest)
 		return nil, status.Error(codes.NotFound, broker.ErrLockNotFound.Error())
 	}
 	return nil, status.Error(codes.Internal, err.Error())
+}
+
+func (s *Server) ListNodeCapacity(_ context.Context, _ *gen.ListNodeCapacityRequest) (*gen.ListNodeCapacityResponse, error) {
+	if s.broker == nil {
+		return nil, status.Error(codes.FailedPrecondition, "node capacity: broker not configured")
+	}
+	nodes, err := s.broker.GetNodes()
+	if err != nil {
+		return nil, status.Errorf(codes.Internal, "node capacity: get nodes: %v", err)
+	}
+	out := &gen.ListNodeCapacityResponse{
+		ServedAtUnix: time.Now().Unix(),
+	}
+	for _, nr := range nodes {
+		statusStr := nr.State.CurrentStatus.String()
+		maxConcurrent := int32(nr.Node.MaxConcurrent)
+		lockCount := int32(nr.State.LockCount)
+		if len(nr.Node.Models) == 0 {
+			out.Nodes = append(out.Nodes, &gen.NodeCapacityEntry{
+				NodeId:        nr.Node.Id,
+				MaxConcurrent: maxConcurrent,
+				LockCount:     lockCount,
+				Status:        statusStr,
+			})
+			continue
+		}
+		for model := range nr.Node.Models {
+			out.Nodes = append(out.Nodes, &gen.NodeCapacityEntry{
+				NodeId:        nr.Node.Id,
+				Model:         model,
+				MaxConcurrent: maxConcurrent,
+				LockCount:     lockCount,
+				Status:        statusStr,
+			})
+		}
+	}
+	return out, nil
 }
 
 func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfigRequest) (*gen.GetRuntimeConfigResponse, error) {
@@ -140,17 +203,11 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 			"epochID", epochID,
 			"maxWait", maxWait,
 		)
-		timer := time.NewTimer(maxWait)
-		select {
-		case <-wake:
-			timer.Stop()
-			logging.Debug("runtime_config: GetRuntimeConfig long-poll notified, retrying", types.Config,
-				"clientParamsBlockHeight", clientHeight,
-				"serverParamsBlockHeight", s.configManager.RuntimeParamsBlockHeight(),
-				"epochID", epochID,
-				"devshardRequestsEnabled", s.configManager.RuntimeConfigSnapshot(epochID).DevshardRequestsEnabled,
-			)
-		case <-timer.C:
+		outcome, err := longpoll.Wait(ctx, wake, maxWait)
+		if err != nil {
+			return nil, status.FromContextError(err).Err()
+		}
+		if outcome == longpoll.TimedOut {
 			logging.Debug("runtime_config: GetRuntimeConfig long-poll timed out", types.Config,
 				"clientParamsBlockHeight", clientHeight,
 				"serverParamsBlockHeight", snap.ParamsBlockHeight,
@@ -158,10 +215,13 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 				"maxWait", maxWait,
 			)
 			return &gen.GetRuntimeConfigResponse{Unchanged: true}, nil
-		case <-ctx.Done():
-			timer.Stop()
-			return nil, status.FromContextError(ctx.Err()).Err()
 		}
+		logging.Debug("runtime_config: GetRuntimeConfig long-poll notified, retrying", types.Config,
+			"clientParamsBlockHeight", clientHeight,
+			"serverParamsBlockHeight", s.configManager.RuntimeParamsBlockHeight(),
+			"epochID", epochID,
+			"devshardRequestsEnabled", s.configManager.RuntimeConfigSnapshot(epochID).DevshardRequestsEnabled,
+		)
 	}
 }
 

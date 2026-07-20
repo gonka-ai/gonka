@@ -60,6 +60,21 @@ func runtimeConfigSettingsFromEnv() (serverMaxWait, deadlineSlack time.Duration)
 	return serverMaxWait, deadlineSlack
 }
 
+func hostEventsSettingsFromEnv() (serverMaxWait, deadlineSlack time.Duration) {
+	serverMaxWait, deadlineSlack = runtimeConfigSettingsFromEnv()
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_HOST_EVENTS_MAX_WAIT_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			serverMaxWait = time.Duration(n) * time.Second
+		}
+	}
+	if s := strings.TrimSpace(os.Getenv("DEVSHARDD_HOST_EVENTS_CLIENT_DEADLINE_SLACK_SECONDS")); s != "" {
+		if n, err := strconv.Atoi(s); err == nil && n > 0 {
+			deadlineSlack = time.Duration(n) * time.Second
+		}
+	}
+	return serverMaxWait, deadlineSlack
+}
+
 func chainParamsSettingsFromEnv() (refreshInterval, initialTimeout time.Duration) {
 	refreshInterval = 60 * time.Second
 	initialTimeout = 5 * time.Second

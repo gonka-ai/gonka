@@ -135,7 +135,7 @@ func (b *RESTBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 
 	resp, err := doGet[escrowResponse](b.client, u)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("get escrow: %w", ClassifyQueryError(err))
 	}
 	if resp == nil || !resp.Found {
 		return nil, ErrEscrowNotFound
