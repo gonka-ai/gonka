@@ -232,6 +232,9 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
+	// Carry the client's original logprobs intent to the response strip boundary.
+	r = r.WithContext(withLogprobClientIntent(r.Context(), logprobClientIntentFromRequest(req)))
+
 	if req.Stream {
 		p.handleStreaming(w, r, params)
 	} else {
@@ -264,6 +267,7 @@ type deferredWriter struct {
 	escrow         string
 	requestID      string
 	clientFlag     *cancelFlag
+	logprobIntent  logprobClientIntent
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -276,7 +280,7 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag}
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, logprobIntent: logprobClientIntentFromContext(ctx)}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -303,7 +307,7 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p)
+	rewritten := rewriteStreamingPayload(p, d.logprobIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -558,7 +562,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	}
 
 	assembled := assembleSSEChunks(buf.String())
-	assembled = filterClientInternalFields(assembled)
+	assembled = filterClientInternalFields(assembled, logprobClientIntentFromContext(r.Context()))
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}

@@ -13,7 +13,10 @@ import (
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
-var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"prompt"}]}`)
+// TestPrompt is exactly 100 bytes and includes max_tokens:50 so host workload
+// checks (input_length == len(prompt), body max_tokens <= declared) pass with
+// the StartTx defaults below.
+var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":50}`)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
 
 func mustCanonicalPromptHash(prompt []byte) [32]byte {

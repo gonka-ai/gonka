@@ -1,9 +1,12 @@
-.PHONY: generate generate-proto build test check-gen ci-testenv-runtimeconfig
+.PHONY: generate generate-proto generate-queryapi build test check-gen ci-testenv-runtimeconfig
 
-generate: generate-proto
+generate: generate-proto generate-queryapi
 
 generate-proto:
 	go generate ./nodemanager/...
+
+generate-queryapi:
+	go generate ./queryapi/...
 
 build:
 	go build ./...
@@ -18,3 +21,4 @@ ci-testenv-runtimeconfig:
 
 check-gen: generate
 	git diff --exit-code nodemanager/gen/
+	git diff --exit-code queryapi/gen/

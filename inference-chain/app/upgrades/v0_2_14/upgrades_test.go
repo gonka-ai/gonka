@@ -17,6 +17,21 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.14", UpgradeName)
 }
 
+func TestSetPocValidationVoteThreshold(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.ValidationVoteThresholdBps = 6667
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setPocValidationVoteThreshold(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultPocValidationVoteThresholdBps, got.PocParams.ValidationVoteThresholdBps)
+}
+
 func TestBurnFeeCollectorBalance(t *testing.T) {
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
@@ -55,6 +70,7 @@ func TestBurnFeeCollectorBalance_NoBaseDenomBalanceIsNoOp(t *testing.T) {
 
 func TestSetDevshardAllowedCreatorAddressesAddsDahl(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	ctx = ctx.WithChainID(mainnetChainID)
 
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -71,6 +87,23 @@ func TestSetDevshardAllowedCreatorAddressesAddsDahl(t *testing.T) {
 		"gonka1existing",
 		"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
 	}, got.DevshardEscrowParams.AllowedCreatorAddresses)
+}
+
+func TestSetDevshardAllowedCreatorAddressesSkipsTestnet(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	ctx = ctx.WithChainID("gonka-testnet")
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.AllowedCreatorAddresses = []string{"gonka1existing"}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setDevshardAllowedCreatorAddresses(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gonka1existing"}, got.DevshardEscrowParams.AllowedCreatorAddresses)
 }
 
 func TestBackfillDevshardEscrowParamDefaults_DefaultInferenceSealGraceNonces(t *testing.T) {
@@ -220,6 +253,51 @@ func TestBackfillDevshardEscrowFees_NoEscrowsIsNoOp(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	require.NoError(t, backfillDevshardEscrowFees(ctx, k))
+}
+
+func TestBackfillDevshardEscrowInferenceSealGraceUsesHistoricalValues(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	legacy := &inferencetypes.DevshardEscrow{
+		Creator: "gonka1legacy",
+		Slots:   make([]string, 16),
+	}
+	_, err := k.StoreDevshardEscrow(ctx, legacy, 1)
+	require.NoError(t, err)
+
+	partial := &inferencetypes.DevshardEscrow{
+		Creator:                  "gonka1partial",
+		Slots:                    []string{"s"},
+		InferenceSealGraceNonces: 77,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, partial, 2)
+	require.NoError(t, err)
+
+	fresh := &inferencetypes.DevshardEscrow{
+		Creator:                   "gonka1fresh",
+		Slots:                     []string{"s"},
+		InferenceSealGraceNonces:  88,
+		InferenceSealGraceSeconds: 99,
+	}
+	_, err = k.StoreDevshardEscrow(ctx, fresh, 3)
+	require.NoError(t, err)
+
+	require.NoError(t, backfillDevshardEscrowInferenceSealGrace(ctx, k))
+
+	gotLegacy, found := k.GetDevshardEscrow(ctx, 1)
+	require.True(t, found)
+	require.Equal(t, uint32(20), gotLegacy.InferenceSealGraceNonces)
+	require.Equal(t, uint32(3600), gotLegacy.InferenceSealGraceSeconds)
+
+	gotPartial, found := k.GetDevshardEscrow(ctx, 2)
+	require.True(t, found)
+	require.Equal(t, uint32(77), gotPartial.InferenceSealGraceNonces)
+	require.Equal(t, uint32(3600), gotPartial.InferenceSealGraceSeconds)
+
+	gotFresh, found := k.GetDevshardEscrow(ctx, 3)
+	require.True(t, found)
+	require.Equal(t, uint32(88), gotFresh.InferenceSealGraceNonces)
+	require.Equal(t, uint32(99), gotFresh.InferenceSealGraceSeconds)
 }
 
 func TestBackfillDevshardEscrowParamDefaults_PreservesExistingDefaultInferenceSealGraceNonces(t *testing.T) {

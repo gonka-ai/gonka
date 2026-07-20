@@ -157,6 +157,8 @@ func TestExecuteValidation_ExecuteError(t *testing.T) {
 }
 
 func TestExecuteValidation_400Response_TreatedAsPass(t *testing.T) {
+	// Mainnet parity: a 4xx from the validator's own re-execution is treated as
+	// passed (warn + autopass), not invalid. See inference_validation.go (~944).
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
@@ -166,7 +168,7 @@ func TestExecuteValidation_400Response_TreatedAsPass(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
-	assert.True(t, result.IsSuccessful())
+	assert.True(t, result.IsSuccessful(), "validator re-exec 400 must autopass per mainnet 4xx semantics")
 }
 
 func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
@@ -179,7 +181,7 @@ func TestExecuteValidation_422Response_TreatedAsPass(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.IsType(t, &SimilarityValidationResult{}, result)
-	assert.True(t, result.IsSuccessful())
+	assert.True(t, result.IsSuccessful(), "validator re-exec 422 must autopass per mainnet 4xx semantics")
 }
 
 func TestExecuteValidation_NonNumericTokens_ReturnsInvalid(t *testing.T) {
@@ -272,21 +274,60 @@ func TestExecuteValidation_MatchingLogits_PassesSimilarityThreshold(t *testing.T
 	assert.True(t, result.IsSuccessful())
 }
 
-func TestExecuteValidation_NoLogitsInValidatorResponse_ReturnsError(t *testing.T) {
-	// Validator returns a response with no logprobs content.
-	emptyLogitsResponse, _ := json.Marshal(map[string]interface{}{
-		"id":      "test",
-		"object":  "chat.completion",
-		"choices": []map[string]interface{}{{"index": 0, "logprobs": map[string]interface{}{"content": []interface{}{}}}},
+func emptyLogprobsResponsePayload() []byte {
+	b, _ := json.Marshal(map[string]interface{}{
+		"id":     "test",
+		"object": "chat.completion",
+		"choices": []map[string]interface{}{{
+			"index":    0,
+			"logprobs": map[string]interface{}{"content": []interface{}{}},
+		}},
 	})
-	_, err := ExecuteValidation(
+	return b
+}
+
+func TestExecuteValidation_EmptyOriginalLogits_IsInvalid(t *testing.T) {
+	// Executor stored no logprobs but validator re-exec has logits: asymmetric
+	// fail-open closed. Unpatched CompareLogits([], x) would return similarity 1.0.
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		emptyLogprobsResponsePayload(),
+		staticExecutor(http.StatusOK, responsePayloadJSON("42", -0.5)),
+		0, 0, "processed_logprobs",
+	)
+	require.NoError(t, err)
+	require.IsType(t, &InvalidInferenceResult{}, result)
+	assert.False(t, result.IsSuccessful(), "executor response with no logprobs must be rejected")
+}
+
+func TestExecuteValidation_NoLogitsInValidatorResponse_IsInvalid(t *testing.T) {
+	// Validator returns a response with no logprobs content while original has logits.
+	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
 		minimalPrompt,
 		responsePayloadJSON("42", -0.5),
-		staticExecutor(http.StatusOK, emptyLogitsResponse),
+		staticExecutor(http.StatusOK, emptyLogprobsResponsePayload()),
 		0, 0, "processed_logprobs",
 	)
-	require.Error(t, err)
+	require.NoError(t, err)
+	require.IsType(t, &InvalidInferenceResult{}, result)
+	assert.False(t, result.IsSuccessful())
+}
+
+func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
+	// Legitimate reasoning-burn empties (both sides empty) must remain a match.
+	empty := emptyLogprobsResponsePayload()
+	result, err := ExecuteValidation(
+		context.Background(), "inf-1",
+		minimalPrompt,
+		empty,
+		staticExecutor(http.StatusOK, empty),
+		0, 0, "processed_logprobs",
+	)
+	require.NoError(t, err)
+	require.IsType(t, &SimilarityValidationResult{}, result)
+	assert.True(t, result.IsSuccessful(), "legitimate both-empty must remain valid")
 }
 
 func TestExecuteValidation_TokenInflationWithinTolerance_Passes(t *testing.T) {

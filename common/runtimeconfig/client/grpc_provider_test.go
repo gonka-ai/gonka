@@ -246,6 +246,14 @@ func (r *recordingClient) ReleaseMLNode(ctx context.Context, in *gen.ReleaseMLNo
 	return r.inner.ReleaseMLNode(ctx, in, opts...)
 }
 
+func (r *recordingClient) GetHostEvents(ctx context.Context, in *gen.GetHostEventsRequest, opts ...grpc.CallOption) (*gen.GetHostEventsResponse, error) {
+	return r.inner.GetHostEvents(ctx, in, opts...)
+}
+
+func (r *recordingClient) ListNodeCapacity(ctx context.Context, in *gen.ListNodeCapacityRequest, opts ...grpc.CallOption) (*gen.ListNodeCapacityResponse, error) {
+	return r.inner.ListNodeCapacity(ctx, in, opts...)
+}
+
 func TestGRPCProvider_LongPoll_ServerTimeoutDoesNotApply(t *testing.T) {
 	srv := testserver.New()
 	handlers := []testserver.Handler{testserver.FullConfig(TestRuntimeConfigProto(100, 1, "raw"))}
@@ -458,11 +466,19 @@ func TestGRPCProvider_OnEpochChange_FiresOncePerTransition(t *testing.T) {
 	var fires []struct{ old, new uint64 }
 	var mu sync.Mutex
 
+	releaseThird := make(chan struct{})
 	srv := testserver.New()
 	srv.SetHandlers(
 		testserver.FullConfig(TestRuntimeConfigProto(10, 1, "a")),
 		testserver.FullConfig(TestRuntimeConfigProto(11, 2, "a")),
-		testserver.FullConfig(TestRuntimeConfigProto(12, 3, "a")),
+		func(ctx context.Context, _ *gen.GetRuntimeConfigRequest) (*gen.GetRuntimeConfigResponse, error) {
+			select {
+			case <-ctx.Done():
+				return nil, ctx.Err()
+			case <-releaseThird:
+			}
+			return &gen.GetRuntimeConfigResponse{Config: TestRuntimeConfigProto(12, 3, "a")}, nil
+		},
 	)
 	client := testserver.Dial(t, srv)
 
@@ -476,7 +492,20 @@ func TestGRPCProvider_OnEpochChange_FiresOncePerTransition(t *testing.T) {
 	})
 	defer cancelListen()
 
+	waitForHeight(t, p, 11)
+
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fires) == 1
+	}, time.Second, 10*time.Millisecond)
+	close(releaseThird)
 	waitForHeight(t, p, 12)
+	require.Eventually(t, func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(fires) == 2
+	}, time.Second, 10*time.Millisecond)
 
 	mu.Lock()
 	defer mu.Unlock()

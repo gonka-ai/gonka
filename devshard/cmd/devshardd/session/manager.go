@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -56,10 +57,13 @@ type HostManager struct {
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
 
-	statsMu           sync.Mutex
-	statsShardsCache  *statsShardsResponse
-	statsShardsCached time.Time
-	statsDetailsCache map[string]statsShardDetailCache
+	statsMu            sync.Mutex
+	statsShardsCache   *statsShardsResponse
+	statsShardsCached  time.Time
+	statsDetailsCache  map[string]statsShardDetailCache
+	statsNegativeCache map[string]statsNegativeCacheEntry
+
+	binaryVersion string
 }
 
 const (
@@ -98,6 +102,7 @@ func NewHostManager(
 		payloadStore:       ps,
 		recorder:           recorder,
 		statsDetailsCache:  make(map[string]statsShardDetailCache),
+		statsNegativeCache: make(map[string]statsNegativeCacheEntry),
 	}
 }
 
@@ -109,6 +114,12 @@ func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p
+}
+
+// SetBinaryVersion sets the link-time / log build id exposed on stats endpoints
+// (same value as --print-binary-version / DEVSHARD_BINARY_LOG_VERSION).
+func (m *HostManager) SetBinaryVersion(v string) {
+	m.binaryVersion = strings.TrimSpace(v)
 }
 
 // Close stops all live session hosts and releases storage resources.
@@ -128,8 +139,65 @@ func (m *HostManager) Close() error {
 }
 
 // SessionServer resolves or creates the per-escrow transport server.
+// Prefer BindOwnerChat for HTTP chat; this remains for tests and explicit bind.
 func (m *HostManager) SessionServer(escrowID string) (*transport.Server, error) {
-	return m.getOrCreate(escrowID)
+	return m.getOrCreate(escrowID, nil)
+}
+
+// SessionServerExisting returns a live or recovered session server.
+// It never CreateSession / binds a protocol version. Missing sessions return
+// storage.ErrSessionNotFound.
+func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server, error) {
+	if srv, ok := m.existingServer(escrowID); ok {
+		return srv, nil
+	}
+	srv, err := m.recoverAndStoreSession(escrowID)
+	if err != nil {
+		return nil, err
+	}
+	return srv, nil
+}
+
+// BindOwnerChat verifies the request as the escrow owner, then returns an
+// existing session or binds a new one with this process's boundVersion.
+// Auth context (sender + body) is injected for HandleInference.
+func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
+	escrowID := c.Param("id")
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, 0)
+	if err != nil {
+		return nil, err
+	}
+
+	srv, err := m.SessionServerExisting(escrowID)
+	if err == nil {
+		if !srv.IsOwner(addr) {
+			return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+		}
+		transport.InjectAuthContext(c, addr, body)
+		return srv, nil
+	}
+	if !errors.Is(err, storage.ErrSessionNotFound) {
+		return nil, err
+	}
+
+	escrow, err := m.bridge.GetEscrow(escrowID)
+	if err != nil {
+		return nil, fmt.Errorf("get escrow: %w", err)
+	}
+	if escrow == nil || escrow.CreatorAddress == "" || addr != escrow.CreatorAddress {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+
+	// Pass the already-fetched escrow so create() does not GetEscrow again.
+	srv, err = m.getOrCreate(escrowID, escrow)
+	if err != nil {
+		return nil, err
+	}
+	if !srv.IsOwner(addr) {
+		return nil, echo.NewHTTPError(http.StatusForbidden, "restricted to escrow owner")
+	}
+	transport.InjectAuthContext(c, addr, body)
+	return srv, nil
 }
 
 // HandleSettlementFinalized marks the session inactive and drops the live
@@ -153,7 +221,10 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	return nil
 }
 
-func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
+// getOrCreate returns a live session, recovering from store or creating.
+// When escrow is non-nil (BindOwnerChat first-bind path), create reuses it and
+// skips a second bridge.GetEscrow.
+func (m *HostManager) getOrCreate(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
 	if srv, ok := m.existingServer(escrowID); ok {
 		return srv, nil
 	}
@@ -169,7 +240,16 @@ func (m *HostManager) getOrCreate(escrowID string) (*transport.Server, error) {
 			return nil, err
 		}
 
-		srv, err := m.create(escrowID)
+		// Prefer recovering an already-bound session over CreateSession.
+		srv, err := m.recoverStoredSession(escrowID)
+		if err == nil {
+			return m.storeSessionIfAbsent(escrowID, srv), nil
+		}
+		if !errors.Is(err, storage.ErrSessionNotFound) {
+			return nil, err
+		}
+
+		srv, err = m.create(escrowID, escrow)
 		if err != nil {
 			return nil, err
 		}
@@ -265,15 +345,18 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	return len(evicted)
 }
 
-func (m *HostManager) create(escrowID string) (*transport.Server, error) {
-	group, err := bridge.BuildGroup(escrowID, m.bridge)
-	if err != nil {
-		return nil, fmt.Errorf("build group: %w", err)
+func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
+	if escrow == nil {
+		var err error
+		escrow, err = m.bridge.GetEscrow(escrowID)
+		if err != nil {
+			return nil, fmt.Errorf("get escrow: %w", err)
+		}
 	}
 
-	escrow, err := m.bridge.GetEscrow(escrowID)
+	group, err := bridge.BuildGroupFromEscrow(escrow)
 	if err != nil {
-		return nil, fmt.Errorf("get escrow: %w", err)
+		return nil, fmt.Errorf("build group: %w", err)
 	}
 
 	creatorAddr := escrow.CreatorAddress
@@ -440,7 +523,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 func (m *HostManager) Register(g *echo.Group) {
 	g.GET("/stats/shards", m.handleStatsShards)
 	g.GET("/stats/shards/:escrow_id", m.handleStatsShard)
-	devshardserver.RegisterLazySessionRoutes(g, m, m)
+	devshardserver.RegisterLazySessionRoutes(g, m, m, m)
 }
 
 // HandlePayloads serves payloads to validators for devshard validation.

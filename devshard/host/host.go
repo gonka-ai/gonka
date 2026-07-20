@@ -13,6 +13,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/gossip"
 	"devshard/logging"
@@ -300,6 +302,12 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
+//
+// Production HostManager intentionally does not use this option: settlement
+// protection comes from deterministic drain accounting (settleLiveRecordLocked),
+// not signature withholding. WithGrace must not be paired with finish-gossip
+// recovery — gossip is a best-effort convenience for the user to sequence a
+// real Finish at actual cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
@@ -646,6 +654,10 @@ func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
 // collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
 // that the user sequencer has not yet included in a diff after the grace
 // period. Caller must hold h.mu. See Mempool.StaleFinishes for the criterion.
+//
+// Recovery gossip (broadcastTxsBestEffort) is independent of WithGrace: it
+// gives the payer another path to pick up a Finish before settlement drain
+// auto-credits at reserved cost. It does not gate signing.
 func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
 	if h.gsp == nil {
 		return nil
@@ -699,6 +711,10 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
 // Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
 // and cached response body if the inference already completed (reconnect case).
+//
+// Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
+// bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
+// skipped bytes must never authorize execution.
 // Caller must hold h.mu.
 func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
@@ -706,90 +722,101 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		outcome.reason = observability.ReasonPayloadAbsent
 		return nil, 0, nil, nil, outcome, nil
 	}
-	targetDiff := h.findDiff(req.Diffs, req.Nonce)
-	if targetDiff == nil {
+	if h.findDiff(req.Diffs, req.Nonce) == nil {
 		outcome.reason = observability.ReasonTargetDiffAbsent
 		return nil, 0, nil, nil, outcome, nil
 	}
 
-	for _, tx := range targetDiff.Txs {
-		start := tx.GetStartInference()
-		if start == nil {
-			continue
-		}
-		outcome.inferenceID = start.InferenceId
-		executorSlot := h.group[start.InferenceId%uint64(len(h.group))].SlotID
-		if !h.slotIDs[executorSlot] {
-			continue
-		}
-		outcome.receiptExpected = true
-
-		// Verify payload matches signed diff.
-		if err := VerifyPayload(req.Payload, start.PromptHash, start.Model, start.InputLength, start.MaxTokens, start.StartedAt); err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
-		}
-
-		// Sign executor receipt with wall-clock confirmed_at.
-		confirmedAt := time.Now().Unix()
-		receiptContent := &types.ExecutorReceiptContent{
-			InferenceId: start.InferenceId,
-			PromptHash:  start.PromptHash,
-			Model:       start.Model,
-			InputLength: start.InputLength,
-			MaxTokens:   start.MaxTokens,
-			StartedAt:   start.StartedAt,
-			EscrowId:    h.escrowID,
-			ConfirmedAt: confirmedAt,
-		}
-		receiptData, err := proto.Marshal(receiptContent)
-		if err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
-		}
-		sig, err := h.signer.Sign(receiptData)
-		if err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
-		}
-
-		// Add MsgConfirmStart to mempool so it survives HTTP failures.
-		// If the response is lost (e.g. 503), the next request delivers it via mempool.
-		h.mempool.Add(MempoolEntry{
-			Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: start.InferenceId,
-				ExecutorSig: sig,
-				ConfirmedAt: confirmedAt,
-			}}},
-			ProposedAt: h.sm.LatestNonce(),
-		})
-
-		// Dedup: return receipt (proves executor alive) but skip execution.
-		if _, dup := h.executing[start.InferenceId]; dup {
-			outcome.reason = observability.ReasonAlreadyExecuting
-			return sig, confirmedAt, nil, nil, outcome, nil
-		}
-
-		// Already completed: execution finished, response cached.
-		if cached, ok := h.completedResponses[start.InferenceId]; ok {
-			outcome.reason = observability.ReasonCachedResponse
-			return sig, confirmedAt, nil, cached, outcome, nil
-		}
-
-		h.executing[start.InferenceId] = struct{}{}
-		outcome.executionExpected = true
-		outcome.reason = observability.ReasonOK
-
-		job := &devshard.ExecuteRequest{
-			InferenceID: start.InferenceId,
-			Model:       start.Model,
-			Prompt:      req.Payload.Prompt,
-			PromptHash:  start.PromptHash,
-			InputLength: start.InputLength,
-			MaxTokens:   start.MaxTokens,
-			EscrowID:    h.escrowID,
-			EpochID:     h.epochID,
-		}
-		return sig, confirmedAt, job, nil, outcome, nil
+	// Protocol: inference_id == nonce. Authorize only from applied state.
+	inferenceID := req.Nonce
+	outcome.inferenceID = inferenceID
+	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
+	if !h.slotIDs[executorSlot] {
+		// Here reason is default observability.ReasonNotExecutor
+		return nil, 0, nil, nil, outcome, nil
 	}
-	return nil, 0, nil, nil, outcome, nil
+	outcome.receiptExpected = true
+
+	// HandleRequest applies diffs before signReceipt. A newly applied
+	// MsgStartInference creates Inferences[id] in memory (and reserves cost).
+	// If the target diff was stale/skipped, ApplyDiff never ran and ok is false.
+	rec, ok := h.sm.GetInference(inferenceID)
+	if !ok {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil, 0, nil, nil, outcome, nil
+	}
+
+	// Verify payload against the applied record (not unverified request-diff fields).
+	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
+	}
+
+	_, alreadyExecuting := h.executing[inferenceID]
+	cached, hasCached := h.completedResponses[inferenceID]
+	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil, 0, nil, nil, outcome, nil
+	}
+
+	// Sign executor receipt with wall-clock confirmed_at.
+	confirmedAt := time.Now().Unix()
+	receiptContent := &types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  rec.PromptHash,
+		Model:       rec.Model,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		StartedAt:   rec.StartedAt,
+		EscrowId:    h.escrowID,
+		ConfirmedAt: confirmedAt,
+	}
+	receiptData, err := proto.Marshal(receiptContent)
+	if err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+	}
+	sig, err := h.signer.Sign(receiptData)
+	if err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
+	}
+
+	// Add MsgConfirmStart to mempool so it survives HTTP failures.
+	// If the response is lost (e.g. 503), the next request delivers it via mempool.
+	h.mempool.Add(MempoolEntry{
+		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: inferenceID,
+			ExecutorSig: sig,
+			ConfirmedAt: confirmedAt,
+		}}},
+		ProposedAt: h.sm.LatestNonce(),
+	})
+
+	// Dedup: return receipt (proves executor alive) but skip execution.
+	if alreadyExecuting {
+		outcome.reason = observability.ReasonAlreadyExecuting
+		return sig, confirmedAt, nil, nil, outcome, nil
+	}
+
+	// Already completed: execution finished, response cached.
+	if hasCached {
+		outcome.reason = observability.ReasonCachedResponse
+		return sig, confirmedAt, nil, cached, outcome, nil
+	}
+
+	h.executing[inferenceID] = struct{}{}
+	outcome.executionExpected = true
+	outcome.reason = observability.ReasonOK
+
+	job := &devshard.ExecuteRequest{
+		InferenceID: inferenceID,
+		Model:       rec.Model,
+		Prompt:      req.Payload.Prompt,
+		PromptHash:  rec.PromptHash,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		EscrowID:    h.escrowID,
+		EpochID:     h.epochID,
+	}
+	return sig, confirmedAt, job, nil, outcome, nil
 }
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
@@ -1462,7 +1489,8 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 	return h.signer.Sign(data)
 }
 
-// VerifyPayload checks that an InferencePayload matches the expected on-chain fields.
+// VerifyPayload checks that an InferencePayload matches the expected on-chain fields
+// and that those accounting fields cover the actual prompt workload.
 // Used by both executor (signReceipt) and verifier (VerifyRefusedTimeout) paths.
 func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt int64) error {
 	hash, err := devshard.CanonicalPromptHash(p.Prompt)
@@ -1483,6 +1511,27 @@ func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLe
 	}
 	if p.Model != model {
 		return fmt.Errorf("%w: model %s vs %s", types.ErrPayloadMismatch, p.Model, model)
+	}
+	if err := verifyPayloadWorkload(p); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyPayloadWorkload binds signed accounting fields to the prompt body the
+// executor will run: input_length must equal prompt byte length (gateway
+// convention), and declared max_tokens must cover the effective body limit.
+func verifyPayloadWorkload(p *InferencePayload) error {
+	promptLen := uint64(len(p.Prompt))
+	if p.InputLength != promptLen {
+		return fmt.Errorf("%w: input_length %d != prompt bytes %d", types.ErrPayloadMismatch, p.InputLength, promptLen)
+	}
+	bodyMaxTokens, err := completionapi.EffectiveMaxTokens(p.Prompt)
+	if err != nil {
+		return fmt.Errorf("%w: prompt max_tokens: %v", types.ErrPayloadMismatch, err)
+	}
+	if bodyMaxTokens > p.MaxTokens {
+		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
 	}
 	return nil
 }

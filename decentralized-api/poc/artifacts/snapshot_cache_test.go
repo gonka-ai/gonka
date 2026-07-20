@@ -105,6 +105,10 @@ func TestLiveCountServedWithoutCache(t *testing.T) {
 }
 
 func TestWarmSnapshotPinsEntry(t *testing.T) {
+	// Cold path: tip already past the count and no retained capture, so Warm
+	// rebuilds into the process snapshot cache. COW off so flush does not
+	// retain; tip advance then leaves earlyCount without an in-memory clone.
+	t.Setenv(envSMSTCOW, "0")
 	store, err := OpenSMST(t.TempDir())
 	if err != nil {
 		t.Fatalf("OpenSMST: %v", err)

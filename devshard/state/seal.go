@@ -230,6 +230,7 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 
 	for _, id := range ids {
 		rec := sm.state.Inferences[id]
+		sm.settleLiveRecordLocked(rec)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}

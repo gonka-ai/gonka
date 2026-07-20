@@ -184,6 +184,24 @@ func NewOffChainValidator(
 	}
 }
 
+// SyncArtifactStoreStage pins GetCurrentPocStageHeight in RAM while synced.
+// The previous stage is unloaded only when that height changes (next PoC or
+// confirmation PoC). Nil/unsynced leaves the pin alone. Invalid height leaves
+// the pin alone (do not fail-closed deactivate — that can drop a live tree).
+func (v *OffChainValidator) SyncArtifactStoreStage(epochState chainphase.EpochState) {
+	if v.artifactStore == nil {
+		return
+	}
+	if epochState.IsNilOrNotSynced() {
+		return
+	}
+	height := GetCurrentPocStageHeight(&epochState)
+	if height <= 0 {
+		return
+	}
+	v.artifactStore.ActivateStage(height)
+}
+
 // MaybeCaptureEarlyShare is invoked once per block by the dispatcher. From the
 // first-fraction height until the end of the generation window it attempts the
 // early-share capture. The capture query is pinned to the exact first-fraction

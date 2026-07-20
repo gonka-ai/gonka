@@ -91,6 +91,8 @@ const (
 	LogprobsModeProcessed = "processed_logprobs"
 	LogprobsModeRaw       = "raw_logprobs"
 	DefaultLogprobsMode   = LogprobsModeProcessed
+
+	DefaultPocValidationVoteThresholdBps uint32 = 5000
 )
 
 const (
@@ -104,7 +106,7 @@ const (
 	DefaultDevshardCreateDevshardFee   uint64 = 10_000
 	DefaultDevshardFeePerNonce         uint64 = 1_000
 	DefaultDevshardRefusalTimeout      int64  = 60
-	DefaultDevshardExecutionTimeout    int64  = 1200
+	DefaultDevshardExecutionTimeout    int64  = 32 * 60
 	DefaultDevshardValidationRate      uint32 = 1000
 	DefaultDevshardVoteThresholdFactor uint32 = 50
 
@@ -271,6 +273,7 @@ func DefaultPocParams() *PocParams {
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
+		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
 	}
 }
 
@@ -758,6 +761,13 @@ func (p Params) Validate() error {
 func (p *PocParams) Validate() error {
 	if p == nil {
 		return nil
+	}
+	// Non-zero thresholds below 50% would let both valid and invalid votes
+	// clear the threshold at once, making the accept/reject check order
+	// decide the outcome. Majority (>=5000) guarantees at most one side passes.
+	if p.ValidationVoteThresholdBps != 0 &&
+		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
+		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {

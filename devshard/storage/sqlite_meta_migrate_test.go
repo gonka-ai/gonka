@@ -37,6 +37,11 @@ func TestMigrateMeta_Idempotent(t *testing.T) {
 	).Scan(&tableCount))
 	require.Equal(t, 1, tableCount)
 
+	require.NoError(t, db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM sqlite_schema WHERE type = 'table' AND name = 'escrow_cache'`,
+	).Scan(&tableCount))
+	require.Equal(t, 1, tableCount)
+
 	var indexCount int
 	require.NoError(t, db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'escrow_epoch_by_epoch'`,

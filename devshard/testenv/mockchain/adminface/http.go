@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"devshard/testenv/gatewayphase"
 	"devshard/testenv/mockchain/store"
 
 	"github.com/labstack/echo/v4"
@@ -22,6 +23,12 @@ func NewServer(st *store.Store, advancer EpochAdvancer, escrowPub EscrowPublishe
 	e := echo.New()
 	e.HideBanner = true
 	Mount(e.Group(""), st, advancer, escrowPub)
+	epoch := st.GetEpoch()
+	gatewayphase.Mount(e.Group(""), gatewayphase.Config{
+		BlockHeight:         st.GetBlockHeight(),
+		EpochIndex:          epoch.Index,
+		PoCStartBlockHeight: epoch.PocStartBlockHeight,
+	})
 	return &Server{echo: e}
 }
 

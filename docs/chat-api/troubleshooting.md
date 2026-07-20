@@ -208,18 +208,6 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ---
 
-### #strip-tool_call_id-minimax
-
-**What**: `tool_call_id` on `role:"tool"` messages silent-stripped on the MiniMax-M2.7 route during message normalization.
-
-**Why**: MiniMax-M2.7 tool messages correlate by `name` + positional order within a tool-result block, not by `tool_call_id` ([[MiniMax-4]](references.md#minimax)). Clients porting OpenAI code may dual-emit the field. Forwarding it is harmless (vLLM ignores) but rejecting it would force every OpenAI-compat client to fork their tool-message serializer per route. Silent-strip preserves compat without implying semantics we don't honor.
-
-**When to restore**: never — the field has no consumer on this route.
-
-**Fix (client-side)**: omit `tool_call_id` for cleanest payloads. If you must dual-emit (e.g. shared serializer across routes), it's a free pass-through to silent-strip.
-
----
-
 ## Validates-then-strips
 
 ### #strip-reasoning_effort
@@ -429,20 +417,14 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 ### #accept-tool-message-minimax-shape
 
-**What**: On the MiniMaxAI/MiniMax-M2.7 route, `role:"tool"` messages MUST carry `content` as an array of `{name, type:"text", text}` objects (the MiniMax-native shape per [[MiniMax-4]](references.md#minimax)) — not the OpenAI string + `tool_call_id` shape. Bare-string content is rejected with HTTP 400.
+**What**: The MiniMaxAI/MiniMax-M2.7 route accepts the **standard OpenAI** `role:"tool"` message — plain-string (or text-part) `content` plus a matching `tool_call_id` — exactly like every other route. No MiniMax-native `{name,type,text}[]` array is required, and bare-string content is **not** rejected.
 
-**Why**: MiniMax's tool-calling contract correlates tool results by per-entry `name` + positional order inside a tool-result block; there is no `tool_call_id`. The MinimaxToolMessage content validator (registered in the per-model role policy override) enforces the entry shape and caps (≤16 entries, name ≤64 B, text ≤64 KiB, closed allow-list of keys to defend against [[SGLang-2]](references.md#sglang) union-with-null crash class). `tool_call_id`, if dual-emitted by a client porting from OpenAI, is silently stripped — see [strip-tool_call_id-minimax](#strip-tool_call_id-minimax).
+**Why**: MiniMax-M2.7 is served through vLLM's OpenAI-compatible endpoint, whose chat template renders a plain-string tool result directly as `<response>…</response>` and reads only `text` (never `name`) from an array result. An earlier release required the `{name,type,text}[]` shape, mistaking MiniMax's *internal* tool-result representation (documented in [[MiniMax-4]](references.md#minimax) for manual / `transformers` use) for the served endpoint's input contract — which broke the standard OpenAI tool loop, since vLLM already returns OpenAI `tool_calls[]` on the response. Oversized or malformed tool content is still bounded by the universal content-validation path.
 
-**When to restore**: when MiniMax adds OpenAI-compat tool-message handling to their parser.
-
-**Fix (client-side)**: emit the M2.7 shape:
+**Fix (client-side)**: send the standard OpenAI tool message — no route-specific shaping needed:
 ```json
-{"role": "tool",
- "content": [
-    {"name": "<function_name>", "type": "text", "text": "<json-stringified result>"}
- ]}
+{"role": "tool", "tool_call_id": "<id from assistant tool_calls[]>", "content": "<result>"}
 ```
-Multiple parallel tool results in one block: one array entry per call.
 
 ---
 
