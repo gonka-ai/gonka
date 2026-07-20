@@ -33,6 +33,12 @@ var devshardAllowedCreatorAddressesToAdd = []string{
 	"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
 }
 
+const (
+	mainnetChainID                         = "gonka-mainnet"
+	legacyInferenceSealGraceFloor   uint32 = 20
+	legacyInferenceSealGraceSeconds uint32 = 3600
+)
+
 const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
 const BountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
 
@@ -136,6 +142,9 @@ func CreateUpgradeHandler(
 		// v0.2.13 introduced new DevshardEscrowParams fields but mainnet executed
 		// that upgrade before these backfills landed. Repair on-disk state here.
 		if err := backfillDevshardEscrowParamDefaults(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setPocValidationVoteThreshold(ctx, k); err != nil {
 			return nil, err
 		}
 		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
@@ -255,6 +264,9 @@ func burnFeeCollectorBalance(ctx context.Context, k keeper.Keeper) error {
 }
 
 func setDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper) error {
+	if isTestnet(ctx) {
+		return nil
+	}
 	return addDevshardAllowedCreatorAddresses(ctx, k, devshardAllowedCreatorAddressesToAdd)
 }
 
@@ -356,6 +368,23 @@ func initMaintenanceParams(ctx context.Context, k keeper.Keeper) error {
 		"credit_cap_blocks", params.MaintenanceParams.MaintenanceCreditCapBlocks,
 		"credit_earn_per_epoch_blocks", params.MaintenanceParams.MaintenanceCreditEarnPerSuccessfulEpochBlocks,
 	)
+	return nil
+}
+
+func setPocValidationVoteThreshold(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		params.PocParams = types.DefaultPocParams()
+	}
+	params.PocParams.ValidationVoteThresholdBps = types.DefaultPocValidationVoteThresholdBps
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set PoC validation vote threshold", types.Upgrades,
+		"validation_vote_threshold_bps", params.PocParams.ValidationVoteThresholdBps)
 	return nil
 }
 
@@ -483,20 +512,10 @@ func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
 	return nil
 }
 
-// backfillDevshardEscrowInferenceSealGrace populates per-escrow inference seal
-// grace snapshots on DevshardEscrow rows created before those fields existed.
-// Rows that already carry a non-zero snapshot are left untouched.
+// backfillDevshardEscrowInferenceSealGrace freezes the historical devshard
+// fallback on escrows created before seal-grace snapshots existed. New escrows
+// receive the current defaults when they are created.
 func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keeper) error {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		return err
-	}
-	if params.DevshardEscrowParams == nil {
-		k.LogInfo("backfill devshard escrow inference seal grace skipped: devshard escrow params missing", types.Upgrades)
-		return nil
-	}
-	ep := params.DevshardEscrowParams
-
 	var updateIDs []uint64
 	if err := k.DevshardEscrows.Walk(ctx, nil, func(_ uint64, escrow types.DevshardEscrow) (bool, error) {
 		if escrow.InferenceSealGraceNonces != 0 && escrow.InferenceSealGraceSeconds != 0 {
@@ -514,19 +533,19 @@ func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keep
 			return fmt.Errorf("get devshard escrow %d during inference seal grace backfill: not found", id)
 		}
 		if escrow.InferenceSealGraceNonces == 0 {
-			escrow.InferenceSealGraceNonces = types.DevshardInferenceSealGraceNoncesForCreate(ep, uint32(len(escrow.Slots)))
+			escrow.InferenceSealGraceNonces = legacyInferenceSealGraceNonces(uint32(len(escrow.Slots)))
 		}
 		if escrow.InferenceSealGraceSeconds == 0 {
-			escrow.InferenceSealGraceSeconds = types.DevshardInferenceSealGraceSecondsForCreate(ep)
+			escrow.InferenceSealGraceSeconds = legacyInferenceSealGraceSeconds
 		}
 		if err := k.SetDevshardEscrow(ctx, escrow); err != nil {
 			return fmt.Errorf("set devshard escrow %d during inference seal grace backfill: %w", escrow.Id, err)
 		}
 	}
-	k.LogInfo("backfilled devshard escrow inference seal grace", types.Upgrades,
+	k.LogInfo("backfilled legacy devshard escrow inference seal grace", types.Upgrades,
 		"updated", len(updateIDs),
-		"default_inference_seal_grace_nonces", ep.DefaultInferenceSealGraceNonces,
-		"default_inference_seal_grace_seconds", ep.DefaultInferenceSealGraceSeconds,
+		"nonce_floor", legacyInferenceSealGraceFloor,
+		"seconds", legacyInferenceSealGraceSeconds,
 	)
 	return nil
 }
@@ -649,4 +668,17 @@ func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
 	}
 
 	return nil
+}
+
+// ######### Utils #########
+
+func isTestnet(ctx context.Context) bool {
+	return sdk.UnwrapSDKContext(ctx).ChainID() != mainnetChainID
+}
+
+func legacyInferenceSealGraceNonces(slotCount uint32) uint32 {
+	if slotCount < legacyInferenceSealGraceFloor {
+		return legacyInferenceSealGraceFloor
+	}
+	return slotCount
 }

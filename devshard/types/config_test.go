@@ -6,6 +6,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestDefaultSessionConfig_ExecutionTimeout(t *testing.T) {
+	require.Equal(t, int64(32*60), DefaultSessionConfig(16).ExecutionTimeout)
+}
+
 func TestDefaultInferenceSealGraceNonces(t *testing.T) {
 	t.Run("floor", func(t *testing.T) {
 		require.Equal(t, uint32(20), DefaultInferenceSealGraceNonces(0))

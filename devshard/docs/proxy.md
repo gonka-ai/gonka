@@ -142,7 +142,7 @@ Returns current session state.
   "balance": 5000000000,
   "config": {
     "refusal_timeout": 60,
-    "execution_timeout": 1200,
+    "execution_timeout": 1920,
     "token_price": 1,
     "create_devshard_fee": 10000,
     "fee_per_nonce": 1000,
