@@ -10,10 +10,13 @@ package v0_2_14
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
+	"strconv"
 
 	math "cosmossdk.io/math"
 	upgradetypes "cosmossdk.io/x/upgrade/types"
+	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 	authtypes "github.com/cosmos/cosmos-sdk/x/auth/types"
@@ -28,6 +31,96 @@ import (
 var devshardAllowedCreatorAddressesToAdd = []string{
 	// Dahl / @paranjko
 	"gonka1t9akhsrqjkavh68c7cannlfdj58y25vsewfflt",
+}
+
+const (
+	mainnetChainID                         = "gonka-mainnet"
+	legacyInferenceSealGraceFloor   uint32 = 20
+	legacyInferenceSealGraceSeconds uint32 = 3600
+)
+
+const BountyCommunitySaleContractAddress = "gonka18pkq9mwxxlmyq7kr5txhm060wemg2s4u94wvsfd9w2kdc0u99d6spk8pz2"
+const BountyIbcUsdtDenom = "ibc/115F68FBA220A028C6F6ED08EA0C1A9C8C52798B14FB66E6C89D5D8C06A524D4"
+
+func USDT(amount int64) int64 {
+	return amount * 1_000_000
+}
+
+type BountyReward struct {
+	Address string
+	Amount  int64
+}
+
+var bountyRewards = []BountyReward{
+	// RM: devshards v3 release management, review of 0.2.14 upgrade, HackerOne reviews.
+	// Public name: @akup
+	{Address: "gonka1ejkupq3cy6p8xd64ew2wlzveml86ckpzn9dl56", Amount: USDT(5000)},
+
+	// RM: release management, HackerOne reviews.
+	// Public name: @x0152
+	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(6000)},
+
+	// RM: release management, HackerOne reviews, R&D for MiniMax M2.7,
+	// Inference During PoC (including cost of GPUs for testing) and SMST optimization (PR #1432).
+	// Public name: @qdanik
+	{Address: "gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8", Amount: USDT(11500)},
+
+	// PR #1253: fix: stop stale PoC validation promptly.
+	// Public name: @ouicate
+	{Address: "gonka1f0elpwnx7ezytdlck35003nz6qk8kzvurvnj4a", Amount: USDT(1000)},
+
+	// PR #1255: fix(inference): settle accounts before releasing matured unbonding collateral.
+	// Public name: @ouicate
+	{Address: "gonka1f0elpwnx7ezytdlck35003nz6qk8kzvurvnj4a", Amount: USDT(1000)},
+
+	// PR #1278: bound event-listener tx queue to stop a single zero-fee attacker
+	// from OOMing validator nodes.
+	// Public name: @ouicate
+	{Address: "gonka1f0elpwnx7ezytdlck35003nz6qk8kzvurvnj4a", Amount: USDT(1000)},
+
+	// PR #1100: fix: prevent uint64 wrap in settle amount sums.
+	// Public name: @0xMayoor
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(500)},
+
+	// PR #1101: fix: widen ShouldValidate to uint64 to prevent silent validation skip.
+	// Public name: @0xMayoor
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(750)},
+
+	// PR #1347: fix(devshard): distribute unsettled escrow per slot, not per unique address.
+	// Public name: @0xMayoor
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(500)},
+
+	// PR #1376: vulnerability finding (bridge block sync).
+	// Public name: @0xMayoor
+	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(2000)},
+
+	// PR #889: on-chain configurable reward claim recipients.
+	// Public name: @alancapex
+	{Address: "gonka10mmdjau4dnj8krs7sh7t7635ttnmq9u3vqgz09", Amount: USDT(3000)},
+
+	// PR #998: implementing maintenance windows.
+	// Public name: @Ryanchen911
+	{Address: "gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57", Amount: USDT(7500)},
+
+	// PR #1307: fix(setup-report): avoid query-gas-limit on grant check.
+	// Public name: @redstartechno
+	{Address: "gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l", Amount: USDT(500)},
+
+	// Vulnerability report for #1378.
+	// Public name: @Lelouch33
+	{Address: "gonka128nd36m2pz5qcs4q6rd69622flyls05nleazqq", Amount: USDT(5000)},
+
+	// Vulnerability report for reward power-cap.
+	// Public name: @Lelouch33
+	{Address: "gonka128nd36m2pz5qcs4q6rd69622flyls05nleazqq", Amount: USDT(1000)},
+
+	// Vulnerability report and fix #1415
+	// Public name: @maksimenkoff
+	{Address: "gonka1gmuxdcxlsxn5z72elx77w9zym7yrgfxqgzg6ry", Amount: USDT(3000)},
+
+	// v0.2.13: review of the upgrade.
+	// Public name: @blizko
+	{Address: "gonka12jaf7m4eysyqt32mrgarum6z96vt55tckvcleq", Amount: USDT(1000)},
 }
 
 func CreateUpgradeHandler(
@@ -49,6 +142,9 @@ func CreateUpgradeHandler(
 		// v0.2.13 introduced new DevshardEscrowParams fields but mainnet executed
 		// that upgrade before these backfills landed. Repair on-disk state here.
 		if err := backfillDevshardEscrowParamDefaults(ctx, k); err != nil {
+			return nil, err
+		}
+		if err := setPocValidationVoteThreshold(ctx, k); err != nil {
 			return nil, err
 		}
 		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
@@ -79,6 +175,10 @@ func CreateUpgradeHandler(
 		// Update genesistransfer params to enable the whitelist and restrict to founders
 		if err := updateGenesisTransferParams(ctx, gtKeeper); err != nil {
 			return nil, fmt.Errorf("update genesistransfer params: %w", err)
+		}
+
+		if err := distributeBountyRewards(ctx, k); err != nil {
+			return nil, err
 		}
 
 		toVM, err := mm.RunMigrations(ctx, configurator, fromVM)
@@ -164,6 +264,9 @@ func burnFeeCollectorBalance(ctx context.Context, k keeper.Keeper) error {
 }
 
 func setDevshardAllowedCreatorAddresses(ctx context.Context, k keeper.Keeper) error {
+	if isTestnet(ctx) {
+		return nil
+	}
 	return addDevshardAllowedCreatorAddresses(ctx, k, devshardAllowedCreatorAddressesToAdd)
 }
 
@@ -265,6 +368,23 @@ func initMaintenanceParams(ctx context.Context, k keeper.Keeper) error {
 		"credit_cap_blocks", params.MaintenanceParams.MaintenanceCreditCapBlocks,
 		"credit_earn_per_epoch_blocks", params.MaintenanceParams.MaintenanceCreditEarnPerSuccessfulEpochBlocks,
 	)
+	return nil
+}
+
+func setPocValidationVoteThreshold(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		params.PocParams = types.DefaultPocParams()
+	}
+	params.PocParams.ValidationVoteThresholdBps = types.DefaultPocValidationVoteThresholdBps
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set PoC validation vote threshold", types.Upgrades,
+		"validation_vote_threshold_bps", params.PocParams.ValidationVoteThresholdBps)
 	return nil
 }
 
@@ -392,20 +512,10 @@ func backfillDevshardEscrowFees(ctx context.Context, k keeper.Keeper) error {
 	return nil
 }
 
-// backfillDevshardEscrowInferenceSealGrace populates per-escrow inference seal
-// grace snapshots on DevshardEscrow rows created before those fields existed.
-// Rows that already carry a non-zero snapshot are left untouched.
+// backfillDevshardEscrowInferenceSealGrace freezes the historical devshard
+// fallback on escrows created before seal-grace snapshots existed. New escrows
+// receive the current defaults when they are created.
 func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keeper) error {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		return err
-	}
-	if params.DevshardEscrowParams == nil {
-		k.LogInfo("backfill devshard escrow inference seal grace skipped: devshard escrow params missing", types.Upgrades)
-		return nil
-	}
-	ep := params.DevshardEscrowParams
-
 	var updateIDs []uint64
 	if err := k.DevshardEscrows.Walk(ctx, nil, func(_ uint64, escrow types.DevshardEscrow) (bool, error) {
 		if escrow.InferenceSealGraceNonces != 0 && escrow.InferenceSealGraceSeconds != 0 {
@@ -423,19 +533,19 @@ func backfillDevshardEscrowInferenceSealGrace(ctx context.Context, k keeper.Keep
 			return fmt.Errorf("get devshard escrow %d during inference seal grace backfill: not found", id)
 		}
 		if escrow.InferenceSealGraceNonces == 0 {
-			escrow.InferenceSealGraceNonces = types.DevshardInferenceSealGraceNoncesForCreate(ep, uint32(len(escrow.Slots)))
+			escrow.InferenceSealGraceNonces = legacyInferenceSealGraceNonces(uint32(len(escrow.Slots)))
 		}
 		if escrow.InferenceSealGraceSeconds == 0 {
-			escrow.InferenceSealGraceSeconds = types.DevshardInferenceSealGraceSecondsForCreate(ep)
+			escrow.InferenceSealGraceSeconds = legacyInferenceSealGraceSeconds
 		}
 		if err := k.SetDevshardEscrow(ctx, escrow); err != nil {
 			return fmt.Errorf("set devshard escrow %d during inference seal grace backfill: %w", escrow.Id, err)
 		}
 	}
-	k.LogInfo("backfilled devshard escrow inference seal grace", types.Upgrades,
+	k.LogInfo("backfilled legacy devshard escrow inference seal grace", types.Upgrades,
 		"updated", len(updateIDs),
-		"default_inference_seal_grace_nonces", ep.DefaultInferenceSealGraceNonces,
-		"default_inference_seal_grace_seconds", ep.DefaultInferenceSealGraceSeconds,
+		"nonce_floor", legacyInferenceSealGraceFloor,
+		"seconds", legacyInferenceSealGraceSeconds,
 	)
 	return nil
 }
@@ -492,4 +602,83 @@ func updateGenesisTransferParams(ctx context.Context, gtKeeper genesistransferke
 		RestrictToList:  true,
 	}
 	return gtKeeper.SetParams(ctx, params)
+}
+
+func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
+	if len(bountyRewards) == 0 {
+		k.Logger().Info("No bounty rewards to distribute")
+		return nil
+	}
+
+	communitySaleAddr, err := sdk.AccAddressFromBech32(BountyCommunitySaleContractAddress)
+	if err != nil {
+		k.Logger().Error("invalid hardcoded community sale contract address", "address", BountyCommunitySaleContractAddress, "error", err)
+		return nil
+	}
+	authorityAddr, err := sdk.AccAddressFromBech32(k.GetAuthority())
+	if err != nil {
+		k.Logger().Error("invalid authority address", "authority", k.GetAuthority(), "error", err)
+		return nil
+	}
+
+	var totalRequired int64
+	for _, bounty := range bountyRewards {
+		totalRequired += bounty.Amount
+	}
+
+	available := k.BankView.SpendableCoin(ctx, communitySaleAddr, BountyIbcUsdtDenom).Amount.Int64()
+	if available < totalRequired {
+		k.Logger().Warn("insufficient community sale balance, skipping bounty distribution",
+			"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+		return nil
+	}
+
+	k.Logger().Info("community sale balance sufficient for bounty distribution",
+		"required", totalRequired, "available", available, "denom", BountyIbcUsdtDenom)
+
+	permissionedKeeper := wasmkeeper.NewGovPermissionKeeper(k.GetWasmKeeper())
+	sdkCtx := sdk.UnwrapSDKContext(ctx)
+	for _, bounty := range bountyRewards {
+		recipient, err := sdk.AccAddressFromBech32(bounty.Address)
+		if err != nil {
+			k.Logger().Error("invalid bounty address", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		msgBz, err := json.Marshal(map[string]any{
+			"withdraw_ibc": map[string]string{
+				"denom":     BountyIbcUsdtDenom,
+				"amount":    strconv.FormatInt(bounty.Amount, 10),
+				"recipient": recipient.String(),
+			},
+		})
+		if err != nil {
+			k.Logger().Error("failed to marshal community sale withdraw message", "address", bounty.Address, "error", err)
+			continue
+		}
+
+		if _, err := permissionedKeeper.Execute(sdkCtx, communitySaleAddr, authorityAddr, msgBz, sdk.NewCoins()); err != nil {
+			k.Logger().Error("failed to distribute bounty from community sale contract",
+				"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom, "error", err)
+			continue
+		}
+
+		k.Logger().Info("bounty distributed from community sale contract",
+			"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom)
+	}
+
+	return nil
+}
+
+// ######### Utils #########
+
+func isTestnet(ctx context.Context) bool {
+	return sdk.UnwrapSDKContext(ctx).ChainID() != mainnetChainID
+}
+
+func legacyInferenceSealGraceNonces(slotCount uint32) uint32 {
+	if slotCount < legacyInferenceSealGraceFloor {
+		return legacyInferenceSealGraceFloor
+	}
+	return slotCount
 }

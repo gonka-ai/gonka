@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -24,6 +25,17 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
+}
+
+func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
+	var recoveryComplete atomic.Bool
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		if !recoveryComplete.Load() {
+			return false, nil
+		}
+		return resolve(warmAddr, coldAddr)
+	}
+	return resolver, func() { recoveryComplete.Store(true) }
 }
 
 func resolveHTTPSessionStoragePath(escrowID, configured string) string {
@@ -162,13 +174,15 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	// Check if there is an existing session to recover from.
 	_, metaErr := sqlStore.GetSessionMeta(cfg.EscrowID)
 	if metaErr == nil {
+		warmKeyResolver, enableWarmKeyResolver := deferredWarmKeyResolver(cfg.Bridge.VerifyWarmKey)
 		session, recSM, recErr := RecoverSession(sqlStore, signer, verifier, cfg.EscrowID, sessionVersion, group, clients,
-			state.WithWarmKeyResolver(cfg.Bridge.VerifyWarmKey),
+			state.WithWarmKeyResolver(warmKeyResolver),
 		)
 		if recErr != nil {
 			sqlStore.Close()
 			return nil, nil, fmt.Errorf("recover session: %w", recErr)
 		}
+		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
 		return session, recSM, nil
 	}

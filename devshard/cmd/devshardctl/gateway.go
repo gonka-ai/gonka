@@ -33,12 +33,13 @@ import (
 )
 
 type RuntimeConfig struct {
-	ID            string `json:"id"`
-	PrivateKeyHex string `json:"private_key,omitempty"`
-	PrivateKeyEnv string `json:"private_key_env,omitempty"`
-	Model         string `json:"model,omitempty"`
-	StoragePath   string `json:"storage_path,omitempty"`
-	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ID              string `json:"id"`
+	PrivateKeyHex   string `json:"private_key,omitempty"`
+	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
+	Model           string `json:"model,omitempty"`
+	StoragePath     string `json:"storage_path,omitempty"`
+	RoutePrefix     string `json:"route_prefix,omitempty"`
+	ProtocolVersion string `json:"protocol_version,omitempty"`
 }
 
 type Gateway struct {

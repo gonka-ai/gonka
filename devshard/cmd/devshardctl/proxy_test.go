@@ -414,13 +414,13 @@ func TestDeferredWriterTracksForwardedDoneMarker(t *testing.T) {
 
 func TestRewriteStreamingPayload_PassthroughWhenNoConversionNeeded(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
 }
 
 func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]},"finish_reason":null}]}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload)
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{})
 
 	require.NotContains(t, string(rewritten), "logprob")
 	require.Contains(t, string(rewritten), `"content":"Hi"`)
@@ -429,7 +429,7 @@ func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T)
 func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload)
+	filtered := filterClientInternalFields(payload, logprobClientIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
@@ -437,14 +437,14 @@ func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 func TestFilterClientInternalFields_RemovesTokenIDsAndPromptTokenIDs(t *testing.T) {
 	payload := []byte(`{"prompt_token_ids":[1,2,3],"choices":[{"message":{"content":"Hi"},"token_ids":[4,5,6]}]}`)
 
-	filtered := filterClientInternalFields(payload)
+	filtered := filterClientInternalFields(payload, logprobClientIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
 
 func TestRewriteStreamingPayload_PreservesOriginalBytesWhenConvertibleRewriteFails(t *testing.T) {
 	payload := []byte("data: {\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}\r\n\r\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
 }
 
 func TestHasMsgFinish(t *testing.T) {
@@ -1330,6 +1330,10 @@ func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	require.Eventually(t, func() bool {
+		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+		return blocked
+	}, time.Second, 10*time.Millisecond)
 
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.

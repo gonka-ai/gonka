@@ -1,4 +1,9 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version versiond-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build devshardd-release devshard-gateway-release print-devshard-version print-devshard-protocol-version versiond-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+
+# For binary release: default linux/amd64 before local Docker defaults.
+DEVSHARDD_RELEASE_DOCKER_PLATFORM := $(if $(DOCKER_PLATFORM),$(DOCKER_PLATFORM),linux/amd64)
+DEVSHARDD_RELEASE_DOCKER_GOOS := $(if $(DOCKER_GOOS),$(DOCKER_GOOS),linux)
+DEVSHARDD_RELEASE_DOCKER_GOARCH := $(if $(DOCKER_GOARCH),$(DOCKER_GOARCH),$(if $(filter linux/arm64,$(DEVSHARDD_RELEASE_DOCKER_PLATFORM)),arm64,amd64))
 
 include scripts/blst-portable.mk
 
@@ -7,9 +12,15 @@ VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= dev
 # devshardd build id for logs (e.g. 0.2.13-v2-r2); can change without protocol bump.
 DEVSHARD_BINARY_VERSION ?= dev-log
+# State-root / settlement protocol tag (not versiond runtime name). See devshard/docs/protocol-version.md.
+DEVSHARD_PROTOCOL_VERSION ?= v2
+DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
+DEVSHARD_GATEWAY_TAGS ?=
 
 print-devshard-version:
 	@echo $(DEVSHARD_VERSION)
+print-devshard-protocol-version:
+	@echo $(DEVSHARD_PROTOCOL_VERSION)
 TAG_NAME := "release/v$(VERSION)"
 USE_REGISTRY_CACHE ?= 0
 GHCR_CACHE_NAMESPACE ?= gonka-ai
@@ -197,6 +208,15 @@ devshardd-release:
 		shasum -a 256 "$$release_dir/devshardd.zip" | awk '{print $$1}' > "$$release_dir/devshardd.zip.sha256"; \
 		echo "Built $$release_dir/devshardd.zip"; \
 		echo "SHA256: $$(cat "$$release_dir/devshardd.zip.sha256")"
+
+devshard-gateway-release: DEVSHARD_PROTOCOL_VERSION = v3
+devshard-gateway-release:
+	@$(MAKE) -C devshard devshard-gateway-release \
+		DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
+		DEVSHARD_PROTOCOL_VERSION=$(DEVSHARD_PROTOCOL_VERSION) \
+		DEVSHARD_GATEWAY_IMAGE=$(DEVSHARD_GATEWAY_IMAGE) \
+		DEVSHARD_GATEWAY_TAGS="$(DEVSHARD_GATEWAY_TAGS)" \
+		PLATFORM=$(PLATFORM)
 
 node-local-build:
 	@echo "Building inference-chain locally..."

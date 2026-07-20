@@ -219,7 +219,7 @@ func TestRecoverSessions_Nonce0(t *testing.T) {
 	require.NotNil(t, srv)
 	require.NotNil(t, srv.Host())
 
-	srv2, err := mgr.getOrCreate("1")
+	srv2, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)
 	require.Equal(t, srv, srv2)
 }
@@ -248,7 +248,7 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 
 	const standaloneVersion = "v0.2.11"
 	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, standaloneVersion, br, nil, nil)
-	_, err := mgr.getOrCreate("1")
+	_, err := mgr.getOrCreate("1", nil)
 	require.NoError(t, err)
 
 	meta, err := store.GetSessionMeta("1")

@@ -467,8 +467,17 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 
 func (icc *InferenceCosmosClient) BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error {
 	transaction.Validator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
-	return err
+	resp, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	if err != nil {
+		return err
+	}
+	// BroadcastTxSync returns nil error even when CheckTx/DeliverTx fails
+	// (Code != 0). Surface RawLog so bridge drain can skip permanent rejects
+	// (out-of-epoch-group) instead of waiting on confirm timeout.
+	if resp != nil && resp.Code != 0 {
+		return fmt.Errorf("bridge exchange failed: code=%d rawLog=%s", resp.Code, resp.RawLog)
+	}
+	return nil
 }
 
 // GetBridgeAddresses retrieves all bridge addresses for a specific chain

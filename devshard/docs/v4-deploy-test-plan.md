@@ -1,7 +1,7 @@
 # versiond high availability — Test plans
 
 This note covers **how to roll out** multi-instance HA + Postgres storage and
-**three operator test plans**, including a routing constraint that the boot-migrate
+**six operator test plans**, including a routing constraint that the boot-migrate
 path cannot paper over for already-deployed versions.
 
 | Plan | Section | What it proves |
@@ -9,10 +9,16 @@ path cannot paper over for already-deployed versions.
 | **Test deployment plan** | §1 | Rollout phases, NON_HA pin, sqlite→migrate→HA, mixed binding |
 | **Validation race plan** | §2 | Same-key HA + Postgres: one validation lease per inference |
 | **High availability plan** | §3 | Kill versiond → survivors serve; restart → rejoins (check logs) |
+| **Versionless observability plan** | §4 | Obs never binds version; rewrite + PG route; rate limit; health vs metrics |
+| **Edge-api / deprecated dapi plan** | §5 | New proxy → edge-api Tier A; old proxy → deprecated dapi dual-serve |
+| **Escrow long-poll warm plan** | §6 | Host-events warm → DB cache; inference with inference-node down (v4 × dapi **0.2.14** and **devshard-0.2.14-v4**) |
 
 Related: [storage-design.md](./storage-design.md),
 [high-availability-architecture.md](./high-availability-architecture.md),
-[release-0.2.14-v4.md](./release-0.2.14-v4.md).
+[release-0.2.14-v4.md](./release-0.2.14-v4.md),
+[pr-versionless-observability.md](./pr-versionless-observability.md),
+[escrow-longpoll-plan.md](./escrow-longpoll-plan.md) / [ml-node-capacity-fallback-plan.md](./ml-node-capacity-fallback-plan.md)
+([PR #1443](https://github.com/gonka-ai/gonka/pull/1443)).
 
 ---
 
@@ -570,6 +576,8 @@ Checklist:
       loser does not double-submit — full walkthrough: **§2 Validation race plan**
 - [ ] Kill / restart HA versiond; survivors serve and restarted host rejoins —
       **§3 High availability plan** (verify in logs)
+- [ ] Versionless obs: unbound 404, owner chat binds, legacy rewrite —
+      **§4 Versionless observability plan**
 
 ### 1.10 Follow-up test (out of scope until tool exists)
 
@@ -1111,7 +1119,514 @@ make down
 
 ---
 
-## 4. Summary for operators
+## 4. Versionless observability plan (manual)
+
+Companion to [pr-versionless-observability.md](./pr-versionless-observability.md).
+Unit coverage already exists (`versioned/internal/proxy`, `SessionServerExisting`,
+owner-chat bind). This section is the **operator walkthrough**.
+
+**Goal:** public observability never binds protocol version; only the escrow
+owner binds via signed chat; versionless + legacy rewrite work; Postgres lookup
+routes session obs to the bound child; obs GETs are rate-limited separately from
+chat.
+
+```text
+Dashboard  GET /devshard/v2/sessions/E/diffs
+        → join proxy rewrite (no Location) → /devshard/sessions/E/diffs
+        → versiond (PG lookup or fan-out) → child
+        → SessionServerExisting (no CreateSession)
+        → 404 if unbound
+
+Creator   POST /devshard/v3/sessions/E/chat/completions (owner sig)
+        → BindOwnerChat → CreateSession(Version=v3)
+```
+
+**Out of scope:** multi-version merge of `/stats/shards` list; migrating already
+wrongly bound escrows; lease race (§2); kill/restart (§3).
+
+### 4.0 Preconditions
+
+| Requirement | Why |
+| --- | --- |
+| ≥1 approved HA version (testenv: `v2`) | Bind + obs targets |
+| Shared Postgres (`PGHOST`) on versiond | Bound-version lookup for versionless session obs |
+| Gateway for owner chat | Only signed chat binds |
+| **Join / genesis proxy** for rewrite + rate limit | Bare versiond-router has no `devshard_obs` rewrite zone |
+
+**Stacks:**
+
+| Cases | Stack |
+| --- | --- |
+| §4.1, §4.3, §4.4, §4.5 | testenv multi + Postgres (router `:8080`, gateway `:8081`) — use `/v2/…` or `/sessions/…` on the router; versionless paths work without join rewrite |
+| §4.2 rewrite, §4.6 rate limit | **Join / local-test-net with public proxy** in front of versiond (`/devshard/…`) |
+
+Env (see also [proxy/README.md](../../proxy/README.md)):
+
+| Variable | Where | Role |
+| --- | --- | --- |
+| `PGHOST` / `DATABASE_URL` | versiond | Enable session-version lookup |
+| `VERSIOND_DISABLE_SESSION_LOOKUP` | versiond | Force fan-out even when PG is set |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | join proxy | Per-IP obs GET limit (default 10) |
+| `DEVSHARD_OBS_BURST` | join proxy | Obs burst (default 20) |
+
+### 4.1 Unbound obs does not bind
+
+Pick an escrow id that has **no** session yet (new chain escrow, or a fake id
+that will 404).
+
+```bash
+# testenv router (no /devshard/ prefix)
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/sessions/UNBOUND-ESCROW/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/v2/sessions/UNBOUND-ESCROW/diffs"
+
+# join / public proxy
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1/devshard/sessions/UNBOUND-ESCROW/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1/devshard/v2/sessions/UNBOUND-ESCROW/diffs"
+```
+
+| Check | Pass |
+| --- | --- |
+| HTTP status | **404** (not 200) |
+| Side effect | No new row in `devshard_sessions` / session index for that escrow; no accidental version stamp |
+
+### 4.2 Legacy rewrite (join proxy)
+
+Requires the **public proxy** rewrite path (not bare versiond-router).
+
+1. Bind an escrow via owner chat on a chosen version (e.g. `v2`) — §4.3.
+2. Hit the **legacy** versioned obs URL and the canonical versionless URL:
+
+```bash
+# After bind; replace ESCROW and adjust host/port for join proxy
+curl -sSI "http://127.0.0.1/devshard/v2/sessions/${ESCROW}/diffs" \
+  | grep -Ei 'HTTP/|^[Ll]ocation:'
+curl -sS "http://127.0.0.1/devshard/v2/sessions/${ESCROW}/diffs" -o /tmp/legacy-diffs.body
+curl -sS "http://127.0.0.1/devshard/sessions/${ESCROW}/diffs" -o /tmp/canon-diffs.body
+cmp /tmp/legacy-diffs.body /tmp/canon-diffs.body && echo bodies_match
+```
+
+| Check | Pass | Fail |
+| --- | --- | --- |
+| Status | **200** (bound escrow) | 308/301 to another path, or 404 after bind |
+| `Location` | **Absent** (internal `rewrite … last`, not public redirect) | Client-visible redirect |
+| Body | Legacy and versionless responses match | Different payloads |
+
+### 4.3 Owner chat binds chosen version
+
+1. Create/bind escrow through the **gateway** (owner key).
+2. Confirm obs still **404** before first chat (§4.1).
+3. Owner chat on the intended version path (gateway OpenAI path, or signed
+   `POST /…/v{ver}/sessions/{id}/chat/completions`).
+4. Re-check obs:
+
+```bash
+# testenv router examples after gateway chat bound escrow ESCROW to v2
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/sessions/${ESCROW}/diffs"
+curl -sS -o /dev/null -w "%{http_code}\n" \
+  "http://127.0.0.1:8080/stats/shards/${ESCROW}"
+```
+
+| Check | Pass |
+| --- | --- |
+| Before chat | Obs **404** |
+| After owner chat | Diffs + stats detail **200** |
+| Bind source | Only owner chat created the session (not a prior obs GET) |
+
+### 4.4 PG routing (HA + lookup)
+
+With `PGHOST` set and session bound (Postgres holds `sessions.version`):
+
+1. Drive versionless `GET …/sessions/${ESCROW}/diffs` (via router or proxy).
+2. Confirm traffic hits the **bound** version’s child (versiond logs / child
+   access logs; with multi-versiond sticky router, correlate escrow → upstream).
+3. Optional negative: set `VERSIOND_DISABLE_SESSION_LOOKUP=true`, recreate
+   versiond — versionless obs still succeeds via **fan-out** (may be slower;
+   lookup-error / fan-out warn may appear when PG errors).
+
+| Check | Pass |
+| --- | --- |
+| Default PG lookup | Bound child serves diffs; unbound still 404 |
+| Lookup disabled | Fan-out still finds bound session when a child has it |
+
+### 4.5 Health vs metrics
+
+```bash
+# Join / public proxy shapes (adjust host). testenv router: omit /devshard/
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/healthz"
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/v2/healthz"
+curl -sS -o /dev/null -w "%{http_code}\n" "http://127.0.0.1/devshard/metrics"
+```
+
+| Path | Expect |
+| --- | --- |
+| `/devshard/healthz` (or router `/healthz`) | **versiond supervisor** status — not a child process metrics scrape |
+| `/devshard/{version}/healthz` | **That child** health (not rewritten to versionless) |
+| `/devshard/metrics` | Pins **newest** child by numeric/dotted version sort (`v10` > `v2`) |
+
+### 4.6 Obs rate limit (join proxy)
+
+Requires public proxy `devshard_obs` zone. Temporarily set e.g.
+`DEVSHARD_OBS_RATE_LIMIT_RPS=2`, `DEVSHARD_OBS_BURST=2`, reload proxy.
+
+```bash
+# Burst obs GETs — expect some 503
+for i in $(seq 1 30); do
+  curl -sS -o /dev/null -w "%{http_code}\n" \
+    "http://127.0.0.1/devshard/metrics"
+done | sort | uniq -c
+
+# Chat must remain exempt (gateway or signed chat POST still succeeds)
+```
+
+| Check | Pass | Fail |
+| --- | --- | --- |
+| Obs burst | Some responses **503** under low RPS | All 200 under deliberate flood |
+| Chat | Owner chat / gateway inference still **2xx** | Chat also rate-limited by `devshard_obs` |
+
+Restore default obs rate env after the exercise.
+
+### 4.7 Checklist summary
+
+- [ ] Unbound obs → **404**; no session bind (§4.1)
+- [ ] Legacy `/devshard/{v}/sessions/…/diffs` → **200**, no `Location` (§4.2)
+- [ ] Owner chat binds; then versionless diffs/stats **200** (§4.3)
+- [ ] PG lookup routes to bound child; fan-out works if lookup disabled (§4.4)
+- [ ] Supervisor `/healthz` vs `/{v}/healthz` vs `/metrics` (§4.5)
+- [ ] Obs rate limit 503; chat exempt (§4.6)
+
+### 4.8 Cleanup
+
+```bash
+cd devshard/testenv
+make down
+# Restore DEVSHARD_OBS_* / VERSIOND_DISABLE_SESSION_LOOKUP on join stacks
+```
+
+---
+
+## 5. Edge-api / deprecated dapi plan (manual)
+
+Companion to [release-0.2.14-v4.md](./release-0.2.14-v4.md) (Tier A dual-serve note).
+
+**Goal:** prove Tier A `/v1/` reads work in both estates operators will run
+during rollout:
+
+1. **New join proxy** (v4) steers Tier A to **edge-api** (or **edge-api-router**).
+2. **Previous proxy** (no edge-api upstream) still reaches the **same** handlers
+   on **decentralized-api**, which dual-serves them as **deprecated**.
+
+Handlers are shared (`common/queryapi`). Prefer edge-api for new configs; dapi
+keeps old proxies working until they upgrade.
+
+```text
+New proxy (v4)
+  /v1/status|models|participants|…  ──►  edge-api (:18080)
+                                         (no Deprecation header)
+
+Old proxy (pre-edge / EDGE_API unset)
+  /v1/* catch-all  ──►  dapi (:9000)
+                        same Tier A handlers + Deprecation: true
+```
+
+**Out of scope:** versiond HA (§3), lease race (§2), versionless obs (§4).
+
+### 5.0 Preconditions
+
+| Requirement | Why |
+| --- | --- |
+| Chain gRPC reachable (`CHAIN_GRPC_URL` / node `:9090`) | edge-api + query handlers need chain queries |
+| **edge-api** up on join stack | New-proxy path |
+| **dapi** (`api`) up on `:9000` | Old-proxy / direct dual-serve path |
+| Sample Tier A paths known | `EDGE_API_ROUTE_PATHS_DEFAULT` in [`proxy/entrypoint.sh`](../../proxy/entrypoint.sh) |
+
+Representative probes (adjust host/port for your stack):
+
+| Path | Notes |
+| --- | --- |
+| `GET /v1/status` | Lightweight; always on Tier A |
+| `GET /v1/versions` | Hits comet / node info |
+| `GET /v1/models` | Chain models |
+| `GET /v1/participants` | GET only on edge-api; POST registration stays on dapi |
+| `GET /v1/epochs/latest` | Sidecar / epoch clients |
+| `GET /v1/bridge/addresses?chain=ethereum` | Bridge compose still uses dapi URL today |
+
+### 5.1 New proxy + edge-api (and optional edge-api-router)
+
+Bring up join with **v4 proxy** + **edge-api** (optional multi overlay):
+
+```bash
+cd deploy/join
+docker compose -f docker-compose.yml up -d
+# optional multi edge-api:
+# docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+```
+
+Confirm proxy env points at edge:
+
+```bash
+docker compose exec proxy printenv EDGE_API_SERVICE_NAME EDGE_API_PORT
+# Expect: edge-api (or edge-api-router) and 18080
+```
+
+Probe Tier A **through the public proxy** (default `:8000`):
+
+```bash
+PROXY=http://127.0.0.1:8000
+
+curl -sSI "$PROXY/v1/status" | grep -Ei 'HTTP/|Deprecation|^[Ss]erver:'
+curl -sS "$PROXY/v1/status"
+curl -sS -o /dev/null -w "%{http_code}\n" "$PROXY/v1/versions"
+curl -sS -o /dev/null -w "%{http_code}\n" "$PROXY/v1/models"
+curl -sS -o /dev/null -w "%{http_code}\n" "$PROXY/v1/participants"
+curl -sS -o /dev/null -w "%{http_code}\n" "$PROXY/v1/epochs/latest"
+```
+
+Optional — confirm traffic hits edge-api (logs / direct hit):
+
+```bash
+curl -sS -o /dev/null -w "%{http_code}\n" http://127.0.0.1:18080/v1/status
+# or: docker compose logs --since=1m edge-api
+# with multi overlay: EDGE_API_SERVICE_NAME=edge-api-router
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Status / versions / models via proxy | **2xx** JSON | 502/404 to wrong upstream |
+| 2 | `Deprecation` on proxy responses | **Absent** (or not `true`) for Tier A via new proxy | Every Tier A response marked deprecated (likely still on dapi) |
+| 3 | edge-api direct | `:18080/v1/status` **200** | edge-api down / miswired gRPC |
+| 4 | Multi (if overlay) | Proxy `EDGE_API_SERVICE_NAME=edge-api-router`; probes still **2xx** | Router misconfigured |
+
+### 5.2 Previous proxy → deprecated dapi dual-serve
+
+Simulate an **old proxy** that still forwards `/v1/*` to dapi (no edge-api
+locations), while running the **new** dapi binary that dual-serves Tier A.
+
+**Option A — hit dapi directly** (same handlers the old proxy would call):
+
+```bash
+DAPI=http://127.0.0.1:9000   # published api port; adjust if needed
+
+curl -sSI "$DAPI/v1/status" | grep -Ei 'HTTP/|Deprecation|Link:'
+curl -sS "$DAPI/v1/status"
+curl -sSI "$DAPI/v1/versions" | grep -Ei 'HTTP/|Deprecation'
+curl -sS -o /dev/null -w "%{http_code}\n" "$DAPI/v1/models"
+curl -sS -o /dev/null -w "%{http_code}\n" "$DAPI/v1/participants"
+curl -sS -o /dev/null -w "%{http_code}\n" "$DAPI/v1/epochs/latest"
+curl -sSI "$DAPI/v1/bridge/block/latest?chain=ethereum" | grep -Ei 'HTTP/|Deprecation'
+```
+
+**Option B — run previous proxy image** against the same stack (compose pin
+proxy to a pre-edge tag, or unset `EDGE_API_SERVICE_NAME` so Tier A is not
+steered). Then repeat the probes through that proxy’s public port.
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Tier A on dapi | **2xx** for status / versions / models / participants / epochs | 404 (routes not remounted) |
+| 2 | Deprecation header | `Deprecation: true` on those responses | Missing header on dual-serve path |
+| 3 | Link hint | `Link` mentions edge-api / successor | Empty |
+| 4 | Legacy-only | `/v1/bridge/block/latest?chain=…` **2xx** + deprecated (not on edge Tier A) | 404 |
+| 5 | POST participants | Still on dapi (registration), not broken by GET dual-serve | POST 404/410 unexpectedly |
+
+Body payloads for shared routes should match edge-api for the same chain state
+(spot-check `status` + one models/participants sample).
+
+### 5.3 Checklist summary
+
+- [ ] New proxy: Tier A `/v1/` → edge-api (or edge-api-router); **2xx**, not deprecated (§5.1)
+- [ ] edge-api healthy on `:18080` / router (§5.1)
+- [ ] Old proxy or direct dapi: same Tier A paths **2xx** with `Deprecation: true` (§5.2)
+- [ ] `/v1/bridge/block/latest` still works on dapi (deprecated) (§5.2)
+- [ ] Spot-check response parity edge-api vs dapi for one/two routes (§5.2)
+
+### 5.4 Cleanup
+
+```bash
+cd deploy/join
+# Restore EDGE_API_SERVICE_NAME / proxy image pin if you changed them for §5.2
+docker compose ps
+```
+
+---
+
+## 6. Escrow long-poll warm plan (manual)
+
+Verifies [PR #1443](https://github.com/gonka-ai/gonka/pull/1443) host-events
+long-poll: DAPI publishes escrow-created events over NodeManager
+`GetHostEvents`; **v4 `devshardd`** (via versiond) consumes them and prefetches
+escrow metadata into storage (`escrow_cache` / equivalent) **without** needing
+a request-time round-trip through the inference node / DAPI warm path.
+
+**Goal:** after a new escrow is long-polled into v4, the **first** inference for
+a new session can succeed with the **inference-node down**, using the DB record
+prepared by the long-poll.
+
+### Compatibility matrix (both must pass)
+
+Run the full §6.1–§6.3 flow **twice** — once per dapi image — with the **same**
+v4 `devshardd`. Both pairings must succeed.
+
+| # | `devshardd` | `dapi` (api image) | Expect |
+| --- | --- | --- | --- |
+| A | **v4** (`devshard-0.2.14-v4` / this release) | **0.2.14** (upgrade / chain-aligned dapi) | Long-poll warm + cold inference-node path works |
+| B | **v4** (same as A) | **`devshard-0.2.14-v4` release** dapi | Same as A |
+
+Do not treat “works with one dapi” as sufficient; mixed-deploy hosts may run
+either api image against v4 children.
+
+```text
+chain escrow create
+       │
+       ▼
+ DAPI HostEventRing ──GetHostEvents (long-poll)──► v4 devshardd
+                                                    │
+                                                    ▼
+                                              escrow_cache / session meta in DB
+                                                    │
+ inference-node DOWN ──► first chat (new session id) ──► serve from cache
+                         (must NOT require inference-node / lazy DAPI warm)
+```
+
+Design notes: [escrow-longpoll-plan.md](./escrow-longpoll-plan.md),
+[ml-node-capacity-fallback-plan.md](./ml-node-capacity-fallback-plan.md).
+
+**Out of scope for this manual plan:** capacity-fallback concurrency bounds
+(ListNodeCapacity / EMA load) — optional follow-up; lease race (§2); edge-api
+(§5).
+
+### 6.0 Preconditions
+
+| Requirement | Why |
+| --- | --- |
+| Join (or testenv) with **v4** `devshardd` + **dapi** NodeManager (`NODE_MANAGER_ADDR`, typically `:9400`) | Long-poll consumer + producer |
+| Ability to swap / pin **dapi** to **0.2.14** and to **`devshard-0.2.14-v4` release** (matrix A then B) | Both pairings must pass |
+| Shared Postgres (or SQLite single-host) for the v4 child | Observable `escrow_cache` / session tables |
+| Gateway / owner key able to create escrows and chat | Drive create + first inference |
+| Ability to stop / network-partition the **inference-node** (or DAPI ML acquire path used for lazy warm) | Negative proof in §6.3 |
+| Logs on dapi + versiond/devshardd | Confirm GetHostEvents delivery / warm |
+
+For each matrix row: bring up the stack with that dapi pin, run §6.1–§6.3,
+record pass/fail, then switch dapi and repeat (restore inference-node between
+runs — §6.6).
+
+### 6.1 Create escrow → long-poll → DB record
+
+1. Note baseline: no row for the upcoming escrow in storage.
+
+```bash
+# Postgres (shared HA DB — table name is prefixed)
+docker compose exec -it devshard-postgres \
+  psql -U devshardd -d devshardd -c \
+  "SELECT escrow_id, epoch_id, cached_at FROM devshard_escrow_cache ORDER BY cached_at DESC LIMIT 5;"
+# SQLite (versiond meta DB): table is escrow_cache
+# sqlite3 …/meta.db "SELECT escrow_id, epoch_id, cached_at FROM escrow_cache ORDER BY cached_at DESC LIMIT 5;"
+```
+
+2. Create a **new** escrow that includes this participant’s slot (gateway admin /
+   chain tx / testenv escrow create — same path you use for normal chat).
+
+3. Wait for long-poll delivery (seconds; watch logs):
+
+```bash
+docker compose logs -f --since=1m api versiond 2>&1 | \
+  grep -Ei 'GetHostEvents|host.event|escrow.*(creat|warm|cache)|HostEvent'
+```
+
+4. Re-query the DB for the new `escrow_id`.
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Event consumed | dapi / devshardd logs show escrow-created (or host-events apply) for the new id | No host-events activity after create |
+| 2 | DB row | `devshard_escrow_cache` (Postgres) or `escrow_cache` (SQLite) has the new `escrow_id` + epoch / payload | Empty / missing row |
+| 3 | Timing | Row appears **before** any chat to that escrow | Row only after first inference (lazy path, not long-poll) |
+
+Record: `escrow_id`, epoch, `cached_at`, log timestamps.
+
+### 6.2 Take inference-node down
+
+Stop or partition the **inference-node** (ML / node manager acquire path) so
+request-time warm / `AcquireMLNode` through that node cannot succeed.
+
+```bash
+# Example — adjust to your compose service name
+docker compose stop <inference-node-service>
+# or: iptables / disconnect the node from dapi; confirm Acquire / health fails
+```
+
+| Check | Pass |
+| --- | --- |
+| Node unreachable | Health / acquire against that node fails; confirm in dapi or node logs |
+
+Do **not** stop dapi itself if you still need chain event ingest for other
+tests; this step isolates the inference-node (or the path chat would use to
+lazy-warm via inference).
+
+### 6.3 First inference (new session) without inference-node
+
+Send the **first** chat / completion for this escrow (new OpenAI-style session /
+request id) through the gateway → v4 `/devshard/…` path.
+
+```bash
+# Gateway OpenAI path (adjust URL / key / model)
+curl -sS "$GATEWAY/v1/chat/completions" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"model":"<model>","messages":[{"role":"user","content":"longpoll-warm-1"}]}'
+```
+
+| # | Check | Pass | Fail |
+| --- | --- | --- | --- |
+| 1 | Response | Inference **succeeds** (2xx stream or JSON) | 5xx / timeout waiting on inference-node |
+| 2 | No inference-node hit | Stopped node shows **no** new successful acquire / chat handling for this request | Request still routed to the down node |
+| 3 | Uses long-poll prep | Logs / metrics show session resolved from escrow cache / warm metadata (not “create via DAPI lazy”) | Cold create attempted against down path |
+| 4 | DB still consistent | Escrow cache / session rows intact after the request | Cache wiped or only created mid-request |
+
+### 6.4 Checklist summary
+
+Run once per matrix row (**A** = dapi **0.2.14**, **B** = dapi
+**devshard-0.2.14-v4** release). Both columns must be checked.
+
+| Check | A (dapi 0.2.14) | B (dapi v4 release) |
+| --- | --- | --- |
+| New escrow long-polled to v4; **DB record** before chat (§6.1) | [ ] | [ ] |
+| Inference-node down (§6.2) | [ ] | [ ] |
+| First inference (new session) **succeeds** without inference-node (§6.3) | [ ] | [ ] |
+| Evidence: logs + DB timestamps recorded | [ ] | [ ] |
+
+### 6.5 Schedule for testenv (do not implement here)
+
+Add an automated citest (suggested name **S10** /
+`TestS10_EscrowLongPollWarmWithoutInferenceNode`) to
+`devshard/testenv/citest/` that encodes §6.1–§6.3 for **both** dapi
+pairings (or parametrize mock-dapi / image pin so A and B are covered):
+
+| Step | Autotest sketch |
+| --- | --- |
+| 1 | Stack with mock-chain + mock-dapi (NodeManager `GetHostEvents`) + versiond/v4 + gateway |
+| 2 | Create escrow → assert host-events delivery → assert `escrow_cache` (or storage API) row |
+| 3 | Stop / fault inference-node (or mock acquire fail) |
+| 4 | Gateway chat for that escrow → **2xx**; assert no acquire to the faulted node |
+| 5 | Repeat / matrix for dapi **0.2.14** contract and **devshard-0.2.14-v4** dapi (both green) |
+| 6 | Optional: capacity-fallback bounds once S10 is green |
+
+Track in testenv backlog / scenarios index
+([testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) when implemented —
+**not** part of this doc’s implementation work.
+
+### 6.6 Cleanup
+
+```bash
+docker compose start <inference-node-service>   # if stopped in §6.2
+# or make down for a full testenv reset
+```
+
+---
+
+## 7. Summary for operators
 
 1. **HA multi-instance + shared Postgres applies to versions outside
    `VERSIOND_NON_HA_VERSIONS`**, not to already-deployed pre-HA binaries.
@@ -1128,8 +1643,20 @@ make down
 6. **Test both bindings**: SQLite-bound NON_HA versions and Postgres-bound HA
    versions, plus the sqlite→HA-fail→migrate sequence — not “all migrate to
    Postgres” blindly.
+7. **Tier A `/v1` reads:** new proxy → **edge-api**; old proxy → **deprecated
+   dapi** dual-serve (`common/queryapi`) — **§5**.
+8. **Escrow long-poll warm:** create → DB cache → inference with inference-node
+   down — **§6** ([PR #1443](https://github.com/gonka-ai/gonka/pull/1443));
+   prove **v4 × dapi 0.2.14** and **v4 × dapi `devshard-0.2.14-v4`** (both);
+   schedule citest **S10** (not implemented in this pass).
 
-7. **Three test plans in this doc:**
+9. **Six test plans in this doc:**
    - **§1 Test deployment plan** — rollout, routing, migrate, mixed binding.
    - **§2 Validation race plan** — lease exclusivity under same-key HA.
    - **§3 High availability plan** — kill / restart versiond; verify via logs.
+   - **§4 Versionless observability plan** — obs never binds; rewrite; PG route;
+     rate limit; health vs metrics.
+   - **§5 Edge-api / deprecated dapi plan** — new proxy → edge-api; old proxy →
+     dapi dual-serve.
+   - **§6 Escrow long-poll warm plan** — host-events cache; inference without
+     inference-node; both dapi pins; testenv S10 scheduled.

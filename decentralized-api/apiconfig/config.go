@@ -74,6 +74,10 @@ type ApiConfig struct {
 	TestMode                  bool   `koanf:"test_mode" json:"test_mode"`
 	NodeManagerGrpcPort       int    `koanf:"node_manager_grpc_port" json:"node_manager_grpc_port"`
 	NodeManagerLockTTLSeconds int    `koanf:"node_manager_lock_ttl_seconds" json:"node_manager_lock_ttl_seconds"`
+	// MLNodeMetricsDisabled turns off the public /v1/mlnodes/metrics
+	// federation endpoint (env: DAPI_API__MLNODE_METRICS_DISABLED=true).
+	// Default (zero value) keeps it enabled.
+	MLNodeMetricsDisabled bool `koanf:"mlnode_metrics_disabled" json:"mlnode_metrics_disabled"`
 }
 
 type ChainNodeConfig struct {

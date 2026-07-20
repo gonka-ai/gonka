@@ -87,8 +87,8 @@ type StateMachine struct {
 	// sealed. It is the only piece of per-id seal metadata that survives in
 	// the durable sealed-inference index; everything else needed for cold-path
 	// validation lives in committedEntries (and on disk in the snapshot).
-	sealedNonces map[uint64]uint64
-	inferenceStore    storage.Storage
+	sealedNonces   map[uint64]uint64
+	inferenceStore storage.Storage
 
 	// Lookup maps derived from group at construction time.
 	slotToAddress      map[uint32]string
@@ -172,15 +172,15 @@ func NewStateMachine(
 
 	sm := &StateMachine{
 		state: &types.EscrowState{
-			EscrowID:   escrowID,
+			EscrowID:                    escrowID,
 			StateRootAndProtocolVersion: types.EffectiveStateRootAndProtocolVersion,
-			Config:     config,
-			Group:      groupCopy,
-			Balance:    initialBalance,
-			Fees:       config.CreateDevshardFee,
-			Inferences: make(map[uint64]*types.InferenceRecord),
-			HostStats:  hostStats,
-			WarmKeys:   make(map[uint32]string),
+			Config:                      config,
+			Group:                       groupCopy,
+			Balance:                     initialBalance,
+			Fees:                        config.CreateDevshardFee,
+			Inferences:                  make(map[uint64]*types.InferenceRecord),
+			HostStats:                   hostStats,
+			WarmKeys:                    make(map[uint32]string),
 		},
 		verifier:           verifier,
 		userAddress:        userAddress,
@@ -1155,6 +1155,28 @@ func (sm *StateMachine) applyFinalizeRound() error {
 	}
 	sm.state.Phase = types.PhaseFinalizing
 	return nil
+}
+
+// settleLiveRecordLocked applies the deterministic settlement default to a
+// still-live inference at the Finalizing->Settlement drain.
+func (sm *StateMachine) settleLiveRecordLocked(rec *types.InferenceRecord) {
+	switch rec.Status {
+	case types.StatusStarted:
+		// Host committed via signed receipt: pay reserved (surplus == 0).
+		rec.ActualCost = rec.ReservedCost
+		rec.Status = types.StatusFinished
+		sm.state.HostStats[rec.ExecutorSlot].Cost += rec.ReservedCost
+	case types.StatusPending:
+		// No commitment: refund the reservation to the creator.
+		sm.state.Balance += rec.ReservedCost
+		rec.ActualCost = 0
+		rec.Status = types.StatusTimedOut
+		// Do not Missed++: state cannot distinguish user censorship from host absence.
+	case types.StatusChallenged:
+		// Mid-dispute: keep current tally-driven status; seal as-is.
+	default:
+		// Terminal already; seal unchanged.
+	}
 }
 
 // BuildDiffContent creates the proto DiffContent from nonce, txs, escrowID, and postStateRoot for signing.

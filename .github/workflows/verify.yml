@@ -151,6 +151,46 @@ jobs:
           path: decentralized-api/junit-report.xml
           reporter: java-junit
 
+  versioned-e2e:
+    runs-on: ubuntu-latest
+    name: Versioned E2E
+    permissions:
+      contents: read
+      checks: write
+    defaults:
+      run:
+        working-directory: ./versioned
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+
+      - name: Set up Go
+        uses: actions/setup-go@v3.0.0
+        with:
+          go-version: '1.24.2'
+
+      - name: Install uv (e2e-report JUnit merge)
+        run: pip install uv
+
+      - name: Run E2E tests
+        run: make e2e
+
+      - name: Publish E2E JUnit report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: versioned-e2e-junit-report
+          path: versioned/build/test-results/e2e-junit.xml
+
+      - name: Report E2E results in GitHub
+        if: always()
+        uses: dorny/test-reporter@v1
+        with:
+          name: Versioned E2E
+          path: versioned/build/test-results/e2e-junit.xml
+          reporter: java-junit
+
   build-and-test-versioned:
     runs-on: ubuntu-latest
     name: Build and Test Versioned
@@ -235,8 +275,9 @@ jobs:
             ${{ runner.os }}-go-
 
       - name: Install dependencies
-        working-directory: edge-api
-        run: go mod download
+        run: |
+          (cd edge-api && go mod download)
+          (cd common && go mod download)
 
       - name: Build edge-api
         working-directory: edge-api
@@ -250,12 +291,11 @@ jobs:
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 
+      # queryapi lives in common/ (shared by edge-api + dapi); edge-api only mounts it.
       - name: Run edge-api tests and generate JUnit report
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: |
-          cd edge-api
-          go test ./queryapi/... -count=1 -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
-          cd ..
+          (cd common && go test ./queryapi/... -count=1 -v 2>&1) | go-junit-report -set-exit-code > edge-api/junit-report.xml
           bash scripts/validate-edge-api.sh
 
       - name: Publish Test Results
@@ -322,6 +362,16 @@ jobs:
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
+      - name: Verify Docker Installation
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: |
+          docker --version
+          docker compose version
+
+      - name: Run E2E Tests
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: make e2e
+
       - name: Publish Test Results
         uses: actions/upload-artifact@v4
         if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
@@ -335,4 +385,19 @@ jobs:
         with:
           name: Devshard Tests
           path: devshard/junit-report.xml
+          reporter: java-junit
+
+      - name: Publish E2E Test Results
+        uses: actions/upload-artifact@v4
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        with:
+          name: devshard-e2e-junit-report
+          path: devshard/build/test-results/e2e/junit.xml
+
+      - name: Report E2E Test Results in GitHub
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        uses: dorny/test-reporter@v1
+        with:
+          name: Devshard E2E Tests
+          path: devshard/build/test-results/e2e/junit.xml
           reporter: java-junit

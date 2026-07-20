@@ -37,10 +37,10 @@ const longResponseFailureExemption = 280 * time.Second
 
 var (
 	nonStreamingReducedMaxTokensFallbackDelay = 140 * time.Second
-	nonStreamingNoContentTimeout              = 20 * time.Minute
+	nonStreamingNoContentTimeout              = 30 * time.Minute
 	nonStreamingMaxAttemptWait                = 30 * time.Minute
 	InterChunkStallLogThreshold               = 30 * time.Second
-	StreamingAttemptHardTimeout               = 20 * time.Minute
+	StreamingAttemptHardTimeout               = 30 * time.Minute
 )
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
@@ -430,9 +430,9 @@ func DefaultRedundancySettings() RedundancySettings {
 		FirstTokenTimeoutFloorMS:      1000,
 		PerInputTokenFirstTokenLagMS:  10,
 		InterChunkStallTimeoutMS:      60000,
-		StreamingAttemptHardTimeoutMS: 1200000,
+		StreamingAttemptHardTimeoutMS: 1800000,
 		NonStreamResponseFloorMS:      20000,
-		NonStreamNoContentTimeoutMS:   1200000,
+		NonStreamNoContentTimeoutMS:   1800000,
 		NonStreamMaxAttemptWaitMS:     1800000,
 		PerInputTokenResponseLagMS:    20,
 		SecondaryWaitAfterWinnerMS:    600000,

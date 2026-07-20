@@ -106,7 +106,7 @@ func (v *Validator) Validate(ctx context.Context, req devshardpkg.ValidateReques
 		promptPayload,
 		responsePayload,
 		func(ctx context.Context, body []byte) (*http.Response, error) {
-			return v.executeMLRequest(ctx, req.Model, body)
+			return v.executeMLRequest(ctx, req.Model, req.EscrowID, body)
 		},
 		req.InputTokens, req.OutputTokens,
 		v.chainParams.LogprobsMode(),
@@ -149,8 +149,8 @@ func evaluateValidationResult(
 	}
 }
 
-func (v *Validator) executeMLRequest(ctx context.Context, model string, body []byte) (*http.Response, error) {
-	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, func(endpoint string) (*http.Response, error) {
+func (v *Validator) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+	resp, err := v.engine.doWithLockedNode(ctx, observability.PathValidate, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
