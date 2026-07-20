@@ -17,8 +17,9 @@ import (
 )
 
 var (
-	oracleURL   = envOrDefault("ORACLE_URL", "http://oracle:8080")
-	versiondURL = envOrDefault("VERSIOND_URL", "http://versiond:8080")
+	oracleURL            = envOrDefault("ORACLE_URL", "http://oracle:8080")
+	versiondURL          = envOrDefault("VERSIOND_URL", "http://versiond:8080")
+	versiondPollInterval = durationEnvOrDefault("VERSIOND_POLL_INTERVAL", 5*time.Second)
 )
 
 func envOrDefault(key, fallback string) string {
@@ -26,6 +27,18 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func durationEnvOrDefault(key string, fallback time.Duration) time.Duration {
+	v := os.Getenv(key)
+	if v == "" {
+		return fallback
+	}
+	d, err := time.ParseDuration(v)
+	if err != nil || d <= 0 {
+		return fallback
+	}
+	return d
 }
 
 // buildTestappZip creates a zip archive containing the pre-built testapp binary
@@ -123,6 +136,64 @@ func deleteVersion(t *testing.T, name string) {
 		t.Fatalf("delete version: %v", err)
 	}
 	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete version status: %d", resp.StatusCode)
+	}
+}
+
+// deleteAllVersions removes every version from the mock oracle.
+func deleteAllVersions(t *testing.T) {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodDelete, oracleURL+"/versions", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("delete all versions: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("delete all versions status: %d", resp.StatusCode)
+	}
+}
+
+// setOracleFailure toggles the mock oracle's failure mode for version metadata.
+func setOracleFailure(t *testing.T, enabled bool) {
+	t.Helper()
+	url := fmt.Sprintf("%s/fail?enabled=%t", oracleURL, enabled)
+	req, err := http.NewRequest(http.MethodPost, url, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("set oracle failure: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("set oracle failure status: %d", resp.StatusCode)
+	}
+}
+
+// assertOracleFailureMode verifies mock oracle GET /versions reflects failure mode.
+func assertOracleFailureMode(t *testing.T, wantFailure bool) {
+	t.Helper()
+	resp, err := http.Get(oracleURL + "/versions")
+	if err != nil {
+		t.Fatalf("GET oracle versions: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if wantFailure {
+		if resp.StatusCode != http.StatusInternalServerError {
+			t.Fatalf("oracle failure mode: status = %d, want 500", resp.StatusCode)
+		}
+		return
+	}
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("oracle healthy mode: status = %d, want 200", resp.StatusCode)
+	}
 }
 
 // waitForVersion polls versiond until the given version responds through the proxy.
@@ -144,6 +215,31 @@ func waitForVersion(t *testing.T, version string, timeout time.Duration) {
 	t.Fatalf("version %s not available after %v", version, timeout)
 }
 
+// waitForVersionUnavailable polls until the version stops returning 200.
+func waitForVersionUnavailable(t *testing.T, version string, timeout time.Duration) {
+	t.Helper()
+	deadline := time.Now().Add(timeout)
+	url := fmt.Sprintf("%s/%s/", versiondURL, version)
+	for time.Now().Before(deadline) {
+		resp, err := http.Get(url)
+		if err != nil {
+			return
+		}
+		if resp.StatusCode != http.StatusOK {
+			resp.Body.Close()
+			return
+		}
+		resp.Body.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+	t.Fatalf("version %s did not become temporarily unavailable after %v", version, timeout)
+}
+
+// waitForPollCycles waits long enough for versiond to observe oracle state changes.
+func waitForPollCycles(cycles int) {
+	time.Sleep(time.Duration(cycles)*versiondPollInterval + 2*time.Second)
+}
+
 // waitForVersionGone polls versiond until the given version is no longer proxied.
 func waitForVersionGone(t *testing.T, version string, timeout time.Duration) {
 	t.Helper()
@@ -161,6 +257,32 @@ func waitForVersionGone(t *testing.T, version string, timeout time.Duration) {
 		time.Sleep(time.Second)
 	}
 	t.Fatalf("version %s still available after %v", version, timeout)
+}
+
+// assertHealthStatus verifies that versiond reports the expected status for a version.
+func assertHealthStatus(t *testing.T, version, wantStatus string) {
+	t.Helper()
+	resp, err := http.Get(fmt.Sprintf("%s/healthz", versiondURL))
+	if err != nil {
+		t.Fatalf("GET healthz: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, _ := io.ReadAll(resp.Body)
+	var statuses []map[string]interface{}
+	if err := json.Unmarshal(body, &statuses); err != nil {
+		t.Fatalf("decode healthz: %v, body: %s", err, string(body))
+	}
+
+	for _, s := range statuses {
+		if s["name"] == version {
+			if s["status"] != wantStatus {
+				t.Errorf("%s status = %q, want %s", version, s["status"], wantStatus)
+			}
+			return
+		}
+	}
+	t.Fatalf("%s not found in healthz response: %s", version, string(body))
 }
 
 // getJSON does a GET and decodes the JSON response into out.

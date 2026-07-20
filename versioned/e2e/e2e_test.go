@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -20,10 +21,7 @@ func TestBasicFlow(t *testing.T) {
 	zipData, hash := buildTestappZip(t)
 
 	uploadBinary(t, "testapp.zip", zipData)
-
-	binaryURL := fmt.Sprintf("%s/binaries/testapp.zip", oracleURL)
-	putVersion(t, "testapp", binaryURL, hash, 9001)
-
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/testapp.zip", oracleURL), hash, 9001)
 	waitForVersion(t, "testapp", 90*time.Second)
 
 	var resp map[string]string
@@ -31,6 +29,63 @@ func TestBasicFlow(t *testing.T) {
 	if resp["prefix"] != "testapp" {
 		t.Errorf("prefix = %q, want %q", resp["prefix"], "testapp")
 	}
+}
+
+func TestChildProcessCrashRecovery(t *testing.T) {
+	zipData, hash := buildTestappZip(t)
+	slot := "testapp"
+
+	uploadBinary(t, "crash-testapp.zip", zipData)
+	putVersion(t, slot, fmt.Sprintf("%s/binaries/crash-testapp.zip", oracleURL), hash, 9001)
+	waitForVersion(t, slot, 90*time.Second)
+
+	req, err := http.NewRequest(http.MethodPost, fmt.Sprintf("%s/%s/exit", versiondURL, slot), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("request child exit: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("child exit status = %d, want 204", resp.StatusCode)
+	}
+
+	waitForVersionUnavailable(t, slot, 25*time.Second)
+	waitForVersion(t, slot, 90*time.Second)
+
+	var recovered map[string]string
+	getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, slot), &recovered)
+	if recovered["prefix"] != slot {
+		t.Errorf("prefix = %q, want %q", recovered["prefix"], slot)
+	}
+}
+
+func TestRegisterStartupVersion(t *testing.T) {
+	if os.Getenv("REGISTER_STARTUP_VERSION") == "" {
+		t.Skip("startup version registration is enabled only by the startup scenario")
+	}
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "startup-testapp.zip", zipData)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/startup-testapp.zip", oracleURL), hash, 9001)
+}
+
+func TestStartupFromExistingOracleState(t *testing.T) {
+	if os.Getenv("EXPECT_INITIAL_TESTAPP") == "" {
+		t.Skip("startup oracle state scenario is enabled only after versiond restart")
+	}
+
+	waitForVersion(t, "testapp", 90*time.Second)
+
+	var proxied map[string]string
+	getJSON(t, fmt.Sprintf("%s/testapp/", versiondURL), &proxied)
+	if proxied["prefix"] != "testapp" {
+		t.Errorf("prefix = %q, want %q", proxied["prefix"], "testapp")
+	}
+	assertHealthStatus(t, "testapp", "running")
 }
 
 func TestAddVersion(t *testing.T) {
@@ -75,6 +130,72 @@ func TestRemoveVersion(t *testing.T) {
 	if resp["prefix"] != "testapp2" {
 		t.Errorf("testapp2 prefix = %q", resp["prefix"])
 	}
+}
+
+func TestOracleTemporaryFailureKeepsVersionsRunning(t *testing.T) {
+	setOracleFailure(t, false)
+	t.Cleanup(func() {
+		setOracleFailure(t, false)
+	})
+
+	zipData, hash := buildTestappZip(t)
+	slot := "testapp"
+
+	uploadBinary(t, "oracle-failure-testapp.zip", zipData)
+	putVersion(t, slot, fmt.Sprintf("%s/binaries/oracle-failure-testapp.zip", oracleURL), hash, 9004)
+	waitForVersion(t, slot, 90*time.Second)
+
+	setOracleFailure(t, true)
+	assertOracleFailureMode(t, true)
+	waitForPollCycles(3)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, slot), &resp)
+	if resp["prefix"] != slot {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], slot)
+	}
+}
+
+func TestEmptyOracleResponseKeepsVersionsRunning(t *testing.T) {
+	setOracleFailure(t, false)
+	deleteAllVersions(t)
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "empty-oracle-testapp.zip", zipData)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/empty-oracle-testapp.zip", oracleURL), hash, 9001)
+	waitForVersion(t, "testapp", 90*time.Second)
+
+	deleteVersion(t, "testapp")
+	waitForPollCycles(3)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/testapp/", versiondURL), &resp)
+	if resp["prefix"] != "testapp" {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], "testapp")
+	}
+}
+
+func TestFailedSameVersionUpdateKeepsOldChildRunning(t *testing.T) {
+	setOracleFailure(t, false)
+
+	zipData, hash := buildTestappZip(t)
+
+	uploadBinary(t, "failed-update-testapp.zip", zipData)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/failed-update-testapp.zip", oracleURL), hash, 9001)
+	waitForVersion(t, "testapp", 90*time.Second)
+
+	uploadBinary(t, "failed-update-testapp-bad.zip", zipData)
+	putVersion(t, "testapp", fmt.Sprintf("%s/binaries/failed-update-testapp-bad.zip", oracleURL), "wrong_hash", 9001)
+
+	waitForPollCycles(3)
+
+	var resp map[string]string
+	getJSON(t, fmt.Sprintf("%s/testapp/", versiondURL), &resp)
+	if resp["prefix"] != "testapp" {
+		t.Errorf("prefix = %q, want %q", resp["prefix"], "testapp")
+	}
+	assertHealthStatus(t, "testapp", "running")
 }
 
 func TestHashMismatch(t *testing.T) {
