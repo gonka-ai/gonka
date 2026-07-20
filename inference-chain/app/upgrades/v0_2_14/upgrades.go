@@ -144,6 +144,9 @@ func CreateUpgradeHandler(
 		if err := backfillDevshardEscrowParamDefaults(ctx, k); err != nil {
 			return nil, err
 		}
+		if err := setPocValidationVoteThreshold(ctx, k); err != nil {
+			return nil, err
+		}
 		if err := setDevshardAllowedCreatorAddresses(ctx, k); err != nil {
 			return nil, err
 		}
@@ -365,6 +368,23 @@ func initMaintenanceParams(ctx context.Context, k keeper.Keeper) error {
 		"credit_cap_blocks", params.MaintenanceParams.MaintenanceCreditCapBlocks,
 		"credit_earn_per_epoch_blocks", params.MaintenanceParams.MaintenanceCreditEarnPerSuccessfulEpochBlocks,
 	)
+	return nil
+}
+
+func setPocValidationVoteThreshold(ctx context.Context, k keeper.Keeper) error {
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	if params.PocParams == nil {
+		params.PocParams = types.DefaultPocParams()
+	}
+	params.PocParams.ValidationVoteThresholdBps = types.DefaultPocValidationVoteThresholdBps
+	if err := k.SetParams(ctx, params); err != nil {
+		return err
+	}
+	k.LogInfo("set PoC validation vote threshold", types.Upgrades,
+		"validation_vote_threshold_bps", params.PocParams.ValidationVoteThresholdBps)
 	return nil
 }
 

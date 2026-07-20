@@ -17,6 +17,21 @@ func TestUpgradeName(t *testing.T) {
 	require.Equal(t, "v0.2.14", UpgradeName)
 }
 
+func TestSetPocValidationVoteThreshold(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.ValidationVoteThresholdBps = 6667
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, setPocValidationVoteThreshold(ctx, k))
+
+	got, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	require.Equal(t, inferencetypes.DefaultPocValidationVoteThresholdBps, got.PocParams.ValidationVoteThresholdBps)
+}
+
 func TestBurnFeeCollectorBalance(t *testing.T) {
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
 
