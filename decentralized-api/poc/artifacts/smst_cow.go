@@ -10,7 +10,9 @@ import (
 // SMST_PARALLEL_HASH default on when unset.
 // Profiling overrides:
 //
-//	SMST_COW=0             — in-place Insert (no path-copy)
+//	SMST_COW=0             — Deprecated: in-place Insert (no path-copy). Keep
+//	                         COW enabled in production; this flag is for
+//	                         profiling baselines only.
 //	SMST_DEFERRED_HASH=0   — hash on every insert (upgrade-v0.2.14 baseline)
 //	SMST_SNAPSHOT_IN_MEMORY_CLONE=0  — tip Prebuild rebuilds from artifacts without holding
 //	                         the write lock (upgrade-v0.2.14 Warm/Prebuild path);
@@ -40,6 +42,9 @@ func smstEnvBool(key string, def bool) bool {
 }
 
 // smstCOWEnabledFromEnv reports COW inserts; default true.
+//
+// Deprecated: returning false (SMST_COW=0) selects the legacy in-place Insert
+// path. Production must leave COW enabled.
 func smstCOWEnabledFromEnv() bool {
 	return smstEnvBool(envSMSTCOW, true)
 }

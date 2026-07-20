@@ -42,6 +42,10 @@ type pocValidator interface {
 	// early-share guard capture the early on-chain commitment near the
 	// first-fraction boundary of the active PoC/CPoC generation window.
 	MaybeCaptureEarlyShare(epochState chainphase.EpochState)
+	// SyncArtifactStoreStage pins the current PoC/CPoC stage height in RAM
+	// while synced. The previous stage is unloaded only when that height
+	// changes (next PoC or confirmation PoC), not merely when leaving validate.
+	SyncArtifactStoreStage(epochState chainphase.EpochState)
 }
 
 // PoCParams contains Proof of Compute parameters
@@ -289,6 +293,10 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 		logging.Info("The blockchain node is still catching up, skipping on new block phase transitions", types.Stages)
 		return nil
 	}
+
+	// Pin/unpin the PoC artifact stage before any generate/validate work on
+	// this block so proof serving cannot race an unloaded store.
+	d.offChainValidator.SyncArtifactStoreStage(*epochState)
 
 	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") {
 		d.configManager.ApplyRuntimeConfigBlockIfChanged(

@@ -144,7 +144,9 @@ func OpenSMST(dir string) (*SMSTArtifactStore, error) {
 	}
 	s.smst.deferredHash = smstDeferredHashFromEnv()
 	s.smst.parallelHash = smstParallelHashFromEnv()
-
+	if !s.cowEnabled {
+		log.Printf("[WARN] SMST_COW=0: non-COW insert path is deprecated; use only for profiling baselines")
+	}
 
 	if err := s.recover(); err != nil {
 		s.dataFile.Close()
@@ -910,6 +912,9 @@ func (s *SMSTArtifactStore) liveRootHashed() bool {
 
 // insertLeaf adds a leaf via insertCOW (default) or in-place Insert when
 // SMST_COW is disabled. Both paths use deferred hashing.
+//
+// Deprecated: the SMST_COW=0 in-place branch is a profiling baseline only.
+// Production must keep copy-on-write enabled.
 func (s *SMSTArtifactStore) insertLeaf(nonce int32, leafHash []byte) (uint32, error) {
 	if s.cowEnabled {
 		return s.smst.insertCOW(nonce, leafHash)
