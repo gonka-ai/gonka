@@ -450,6 +450,29 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 	return cappedParticipants, wasCapped
 }
 
+func applyFullWeightPowerCapping(participants []*types.ActiveParticipant, totalFullWeight uint64) bool {
+	if len(participants) <= 1 || totalFullWeight == 0 {
+		return false
+	}
+
+	maxPercentageDecimal := types.DecimalFromFloat(0.30)
+	if len(participants) < 4 {
+		if limit := getSmallNetworkLimit(len(participants)); limit.ToDecimal().GreaterThan(maxPercentageDecimal.ToDecimal()) {
+			maxPercentageDecimal = limit
+		}
+	}
+
+	cap := maxPercentageDecimal.ToDecimal().Mul(decimal.NewFromUint64(totalFullWeight)).IntPart()
+	wasCapped := false
+	for _, p := range participants {
+		if p.Weight > cap {
+			p.Weight = cap
+			wasCapped = true
+		}
+	}
+	return wasCapped
+}
+
 // CalculateOptimalCap implements the power capping algorithm
 // Returns capped participants, new total power, and whether capping was applied
 func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int64, maxPercentage *types.Decimal) ([]*types.ActiveParticipant, int64, bool) {
@@ -850,11 +873,18 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		})
 	}
 
+	// Calculate total weight using FULL weights (for denominator)
+	// This includes invalidated participants and pre-CPoC-capping weights
+	totalFullWeight := uint64(0)
+	for _, weight := range participantFullWeights {
+		totalFullWeight += weight
+	}
+
 	// 3. Apply power capping to effective weights
-	cappedParticipants, wasCapped := ApplyPowerCappingForWeights(effectiveWeights)
+	wasCapped := applyFullWeightPowerCapping(effectiveWeights, totalFullWeight)
 
 	// Map capped weights back to participants
-	for _, cappedParticipant := range cappedParticipants {
+	for _, cappedParticipant := range effectiveWeights {
 		if cappedParticipant.Weight < 0 {
 			participantWeights[cappedParticipant.Index] = 0
 		} else {
@@ -865,13 +895,6 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	logger.Info("Bitcoin Rewards: Applied power capping to effective weights",
 		"participantCount", len(effectiveWeights),
 		"wasCapped", wasCapped)
-
-	// Calculate total weight using FULL weights (for denominator)
-	// This includes invalidated participants and pre-CPoC-capping weights
-	totalFullWeight := uint64(0)
-	for _, weight := range participantFullWeights {
-		totalFullWeight += weight
-	}
 
 	// Calculate actual distributed weight (for logging/comparison)
 	totalPoCWeight := uint64(0)
