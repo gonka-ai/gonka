@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -58,7 +59,7 @@ func TestMockChain_RESTContract(t *testing.T) {
 	getJSON(t, srv.URL+"/productscience/inference/inference/params", &params)
 	defaults := types.DefaultSessionConfig(len(cfg.Hosts))
 	require.Equal(t, "60", params.Params.DevshardEscrowParams.RefusalTimeout)
-	require.Equal(t, "1200", params.Params.DevshardEscrowParams.ExecutionTimeout)
+	require.Equal(t, strconv.FormatInt(defaults.ExecutionTimeout, 10), params.Params.DevshardEscrowParams.ExecutionTimeout)
 	require.Equal(t, defaults.ValidationRate, params.Params.DevshardEscrowParams.ValidationRate)
 	require.Equal(t, uint32(50), params.Params.DevshardEscrowParams.VoteThresholdFactor)
 
