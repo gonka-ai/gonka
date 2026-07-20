@@ -3,6 +3,8 @@ package artifacts
 import (
 	"crypto/sha256"
 	"encoding/binary"
+	"runtime"
+	"sync"
 )
 
 const (
@@ -13,6 +15,9 @@ const (
 	// committed roots and must only happen at a coordinated protocol upgrade.
 	smstDefaultDepth = 24
 	smstMaxDepth     = 32
+	// smstParallelHashMinCount: only fan out ensureHashed work when both
+	// children need hashing and the subtree has at least this many leaves.
+	smstParallelHashMinCount = 256
 )
 
 type smstNode struct {
@@ -31,6 +36,20 @@ type SMST struct {
 	emptyHash [][]byte
 	leafCount uint32
 	hasNonce  map[int32]bool // tracks which nonces exist (for duplicate detection)
+
+	// navExistence makes HasNonce walk the tree instead of the hasNonce map.
+	// Snapshot views share nodes with the live tree but carry no map, so nonce
+	// existence must be read from the retained structure at that count.
+	navExistence bool
+
+	// deferredHash invalidates node.hash on insert and fills via ensureHashed
+	// (default). When false, hashes are computed on every insert (upgrade-v0.2.14).
+	deferredHash bool
+
+	// parallelHash fans out ensureHashed across GOMAXPROCS when both children
+	// need hashing (default on). Eager per-insert path hashing stays serial
+	// (parent depends on child); this flag mainly accelerates deferred fill.
+	parallelHash bool
 }
 
 // NewSMST creates a new sparse merkle sum tree.
@@ -44,9 +63,11 @@ func NewSMST(depth int) *SMST {
 	}
 
 	s := &SMST{
-		depth:     depth,
-		emptyHash: make([][]byte, depth+1),
-		hasNonce:  make(map[int32]bool),
+		depth:         depth,
+		emptyHash:     make([][]byte, depth+1),
+		hasNonce:      make(map[int32]bool),
+		deferredHash:  true,
+		parallelHash:  true,
 	}
 
 	s.emptyHash[0] = smstHashEmpty()
@@ -99,7 +120,11 @@ func (s *SMST) insertAt(node *smstNode, path []bool, level int, leafHash []byte)
 	}
 
 	node.count = s.nodeCount(node.left) + s.nodeCount(node.right)
-	node.hash = s.computeHash(node, level)
+	if s.deferredHash {
+		node.hash = nil // invalidated; recomputed lazily by ensureHashed
+	} else {
+		node.hash = s.computeHash(node, level)
+	}
 
 	return node
 }
@@ -129,7 +154,71 @@ func (s *SMST) GetRoot() ([]byte, uint32) {
 	if s.root == nil {
 		return s.emptyHash[s.depth], 0
 	}
+	s.ensureHashed()
 	return s.root.hash, s.root.count
+}
+
+// ensureHashed fills node hashes left nil by insertAt. Each node is hashed once
+// here rather than on every insert that passes through it, so a shared upper
+// node is not re-hashed for each descendant insert. Idempotent: a node whose
+// hash is already set stops the recursion. When parallelHash is on, independent
+// subtrees are hashed concurrently (bounded by GOMAXPROCS).
+func (s *SMST) ensureHashed() {
+	if s.root == nil {
+		return
+	}
+	if !s.parallelHash {
+		s.hashNode(s.root, 0)
+		return
+	}
+	workers := runtime.GOMAXPROCS(0)
+	if workers < 2 {
+		s.hashNode(s.root, 0)
+		return
+	}
+	// Main goroutine counts as one worker; sem holds the remaining slots.
+	sem := make(chan struct{}, workers-1)
+	s.hashNodeParallel(s.root, 0, sem)
+}
+
+func (s *SMST) hashNode(node *smstNode, level int) {
+	if node == nil || node.hash != nil {
+		return
+	}
+	s.hashNode(node.left, level+1)
+	s.hashNode(node.right, level+1)
+	node.hash = s.computeHash(node, level)
+}
+
+func (s *SMST) hashNodeParallel(node *smstNode, level int, sem chan struct{}) {
+	if node == nil || node.hash != nil {
+		return
+	}
+	left, right := node.left, node.right
+	canFanOut := left != nil && left.hash == nil &&
+		right != nil && right.hash == nil &&
+		node.count >= smstParallelHashMinCount
+	if canFanOut {
+		select {
+		case sem <- struct{}{}:
+			var wg sync.WaitGroup
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				defer func() { <-sem }()
+				s.hashNodeParallel(left, level+1, sem)
+			}()
+			s.hashNodeParallel(right, level+1, sem)
+			wg.Wait()
+			node.hash = s.computeHash(node, level)
+			return
+		default:
+			// All worker slots busy; finish this subtree on the current goroutine.
+		}
+	}
+	s.hashNodeParallel(left, level+1, sem)
+	s.hashNodeParallel(right, level+1, sem)
+	node.hash = s.computeHash(node, level)
 }
 
 // GetLeafByDenseIndex navigates to a leaf using sum-based dense indexing.
@@ -194,7 +283,34 @@ func (s *SMST) Depth() int {
 
 // HasNonce checks if a nonce exists in the tree.
 func (s *SMST) HasNonce(nonce int32) bool {
+	if s.navExistence {
+		return s.hasNonceInTree(nonce)
+	}
 	return s.hasNonce[nonce]
+}
+
+func (s *SMST) hasNonceInTree(nonce int32) bool {
+	if s.root == nil {
+		return false
+	}
+	// A nonce needing more depth than this tree has could never have been
+	// inserted without expanding it, so it is absent. Below the depth the path
+	// bits are injective, making the walk exact — matching the hasNonce map.
+	if s.requiredDepth(nonce) > s.depth {
+		return false
+	}
+	node := s.root
+	for _, goRight := range s.noncePath(nonce) {
+		if node == nil {
+			return false
+		}
+		if goRight {
+			node = node.right
+		} else {
+			node = node.left
+		}
+	}
+	return node != nil
 }
 
 func (s *SMST) denseIndexForNonce(nonce int32) (uint32, error) {
@@ -270,15 +386,24 @@ func (s *SMST) expandDepth(newDepth int) {
 	diff := newDepth - oldDepth
 	for i := 0; i < diff; i++ {
 		if s.root != nil {
-			// This wrapper will be at level (diff - 1 - i) in final tree
-			level := diff - 1 - i
-			siblingHeight := newDepth - level - 1
-			newRoot := &smstNode{
-				left:  s.root,
-				count: s.root.count,
+			if s.deferredHash {
+				// Wrapper hash is deferred; ensureHashed fills it from the wrapped
+				// subtree and the empty sibling, identical to eager computation.
+				s.root = &smstNode{
+					left:  s.root,
+					count: s.root.count,
+				}
+			} else {
+				// This wrapper will be at level (diff - 1 - i) in final tree
+				level := diff - 1 - i
+				siblingHeight := newDepth - level - 1
+				newRoot := &smstNode{
+					left:  s.root,
+					count: s.root.count,
+				}
+				newRoot.hash = smstHashNode(s.root.hash, s.emptyHash[siblingHeight], newRoot.count)
+				s.root = newRoot
 			}
-			newRoot.hash = smstHashNode(s.root.hash, s.emptyHash[siblingHeight], newRoot.count)
-			s.root = newRoot
 		}
 	}
 }

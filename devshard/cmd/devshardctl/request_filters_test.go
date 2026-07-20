@@ -2854,69 +2854,6 @@ func TestNormalizeForMinimaxStripsSafetyIdentifier(t *testing.T) {
 	require.NotContains(t, raw, "safety_identifier")
 }
 
-func TestNormalizeForMinimaxAcceptsToolMessageArrayShape(t *testing.T) {
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"weather in Paris?"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"get_weather","arguments":"{}"}}]},
-			{"role":"tool","content":[{"name":"get_weather","type":"text","text":"{\"temp\":\"18\"}"}]}
-		]
-	}`
-	out, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.NoError(t, err)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(out, &raw))
-	msgs, ok := raw["messages"].([]any)
-	require.True(t, ok)
-	require.Len(t, msgs, 3)
-	toolMsg := msgs[2].(map[string]any)
-	content, ok := toolMsg["content"].([]any)
-	require.True(t, ok, "M2.7 tool content must remain an array (no flatten)")
-	require.Len(t, content, 1)
-	entry := content[0].(map[string]any)
-	require.Equal(t, "get_weather", entry["name"])
-	require.Equal(t, "text", entry["type"])
-}
-
-func TestNormalizeForMinimaxStripsToolCallIDFromToolMessage(t *testing.T) {
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","tool_call_id":"call_1","content":[{"name":"fn","type":"text","text":"ok"}]}
-		]
-	}`
-	out, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.NoError(t, err)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(out, &raw))
-	msgs := raw["messages"].([]any)
-	toolMsg := msgs[2].(map[string]any)
-	require.NotContains(t, toolMsg, "tool_call_id", "M2.7 strips tool_call_id silently for dual-emit compat")
-}
-
-func TestNormalizeForMinimaxDropsOrphanToolMessage(t *testing.T) {
-	// Orphan = no preceding assistant.tool_calls[] block.
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"tool","content":[{"name":"fn","type":"text","text":"strayed"}]},
-			{"role":"assistant","content":"hello"}
-		]
-	}`
-	out, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.NoError(t, err)
-	var raw map[string]any
-	require.NoError(t, json.Unmarshal(out, &raw))
-	msgs := raw["messages"].([]any)
-	require.Len(t, msgs, 2, "orphan tool message must be dropped")
-	require.Equal(t, "user", msgs[0].(map[string]any)["role"])
-	require.Equal(t, "assistant", msgs[1].(map[string]any)["role"])
-}
-
 func TestNormalizeForMinimaxPreservesThinkBlocksInAssistantContent(t *testing.T) {
 	// MiniMax-M2.7 interleaved-thinking constraint: <think>...</think> in
 	// assistant content history must round-trip byte-identical.
@@ -2937,61 +2874,26 @@ func TestNormalizeForMinimaxPreservesThinkBlocksInAssistantContent(t *testing.T)
 	require.Equal(t, "<think>let me reason about this</think> here is the answer", asst["content"])
 }
 
-func TestValidateForMinimaxRejectsBareStringToolContent(t *testing.T) {
+func TestValidateForMinimaxAcceptsBareStringToolContent(t *testing.T) {
+	// MiniMax-M2.7 is served via vLLM's OpenAI-compatible endpoint, whose chat
+	// template renders a plain-string tool result as <response>…</response>. The
+	// route therefore accepts the standard OpenAI tool message (string content +
+	// tool_call_id) like every other route — no MiniMax-native array required.
 	body := `{
 		"model":"MiniMaxAI/MiniMax-M2.7",
 		"messages":[
 			{"role":"user","content":"hi"},
 			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":"bare string instead of array"}
+			{"role":"tool","tool_call_id":"call_1","content":"42"}
 		]
 	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "content")
-	require.Equal(t, http.StatusBadRequest, chatRequestErrorStatus(err, http.StatusInternalServerError))
-}
-
-func TestValidateForMinimaxRejectsToolEntryMissingName(t *testing.T) {
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[{"type":"text","text":"missing name"}]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "name")
-}
-
-func TestValidateForMinimaxRejectsToolEntryWrongType(t *testing.T) {
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[{"name":"fn","type":"image_url","text":"x"}]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "type")
-}
-
-func TestValidateForMinimaxRejectsExtraKeysInToolEntry(t *testing.T) {
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[{"name":"fn","type":"text","text":"ok","unexpected":true}]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "unsupported key")
+	out, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
+	require.NoError(t, err)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	msgs := raw["messages"].([]any)
+	toolMsg := msgs[2].(map[string]any)
+	require.Equal(t, "42", toolMsg["content"], "string tool content passes through unchanged")
 }
 
 func TestNormalizeForOpenAIRouteStillRequiresToolCallID(t *testing.T) {
@@ -3062,54 +2964,6 @@ func TestNormalizeForMinimaxPreservesReasoningDetailsOnAssistantTurn(t *testing.
 	details, ok := asst["reasoning_details"].([]any)
 	require.True(t, ok, "reasoning_details must round-trip on assistant turn")
 	require.Len(t, details, 2)
-}
-
-func TestValidateForMinimaxRejectsToolMessageExceedingMaxEntries(t *testing.T) {
-	entries := make([]string, 0, MinimaxToolMessageMaxEntries+1)
-	for i := 0; i < MinimaxToolMessageMaxEntries+1; i++ {
-		entries = append(entries, `{"name":"fn","type":"text","text":"r"}`)
-	}
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[` + strings.Join(entries, ",") + `]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "exceeds limit")
-}
-
-func TestValidateForMinimaxRejectsToolMessageNameTooLong(t *testing.T) {
-	tooLongName := strings.Repeat("x", MinimaxToolMessageNameMaxLen+1)
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[{"name":"` + tooLongName + `","type":"text","text":"ok"}]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "name length")
-}
-
-func TestValidateForMinimaxRejectsToolMessageTextTooLarge(t *testing.T) {
-	tooLongText := strings.Repeat("a", MinimaxToolMessageTextMaxSize+1)
-	body := `{
-		"model":"MiniMaxAI/MiniMax-M2.7",
-		"messages":[
-			{"role":"user","content":"hi"},
-			{"role":"assistant","content":"","tool_calls":[{"id":"call_1","type":"function","function":{"name":"fn","arguments":"{}"}}]},
-			{"role":"tool","content":[{"name":"fn","type":"text","text":"` + tooLongText + `"}]}
-		]
-	}`
-	_, _, err := normalizeChatRequestForModel([]byte(body), miniMaxM27ModelID)
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "text size")
 }
 
 func TestNormalizeForMinimaxStripsToolsFunctionStrict(t *testing.T) {

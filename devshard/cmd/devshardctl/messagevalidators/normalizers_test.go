@@ -72,75 +72,6 @@ func TestOrphanToolMessageDropper_ConsumesPendingOnMatch(t *testing.T) {
 }
 
 // ============================================================
-// MinimaxOrphanToolMessageDropper
-// ============================================================
-
-func TestMinimaxOrphanToolMessageDropper_DropsToolBeforeAnyAssistant(t *testing.T) {
-	msgs := []any{
-		map[string]any{"role": "user", "content": "hi"},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "x"}}},
-		map[string]any{"role": "assistant", "content": "hello"},
-	}
-	out, changed, _ := MinimaxOrphanToolMessageDropper{}.Apply(msgs)
-	if !changed {
-		t.Fatal("orphan tool before assistant must be dropped")
-	}
-	if len(out) != 2 {
-		t.Fatalf("want 2 survivors, got %d", len(out))
-	}
-}
-
-func TestMinimaxOrphanToolMessageDropper_KeepsConsecutiveToolsInBlock(t *testing.T) {
-	// After assistant.tool_calls=[...], tool block stays open across all
-	// consecutive tool messages (parallel results).
-	msgs := []any{
-		map[string]any{"role": "user", "content": "q"},
-		map[string]any{"role": "assistant", "tool_calls": []any{
-			map[string]any{"id": "c1"}, map[string]any{"id": "c2"},
-		}},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "r1"}}},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "r2"}}},
-	}
-	out, changed, _ := MinimaxOrphanToolMessageDropper{}.Apply(msgs)
-	if changed {
-		t.Fatal("both tool messages are part of the block, no drops")
-	}
-	if len(out) != 4 {
-		t.Fatalf("want 4 messages preserved, got %d", len(out))
-	}
-}
-
-func TestMinimaxOrphanToolMessageDropper_NonToolMessageClosesBlock(t *testing.T) {
-	msgs := []any{
-		map[string]any{"role": "assistant", "tool_calls": []any{map[string]any{"id": "c1"}}},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "r"}}},
-		map[string]any{"role": "user", "content": "follow up"},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "stray"}}},
-	}
-	out, changed, _ := MinimaxOrphanToolMessageDropper{}.Apply(msgs)
-	if !changed {
-		t.Fatal("tool after user must be dropped")
-	}
-	if len(out) != 3 {
-		t.Fatalf("want 3 survivors (drop final orphan), got %d", len(out))
-	}
-}
-
-func TestMinimaxOrphanToolMessageDropper_EmptyToolCallsDoesNotOpenBlock(t *testing.T) {
-	msgs := []any{
-		map[string]any{"role": "assistant", "content": "no tools", "tool_calls": []any{}},
-		map[string]any{"role": "tool", "content": []any{map[string]any{"name": "fn", "type": "text", "text": "x"}}},
-	}
-	out, changed, _ := MinimaxOrphanToolMessageDropper{}.Apply(msgs)
-	if !changed {
-		t.Fatal("empty tool_calls does not open a block; tool is orphan")
-	}
-	if len(out) != 1 {
-		t.Fatalf("want 1 survivor, got %d", len(out))
-	}
-}
-
-// ============================================================
 // EmptyAssistantTurnDropper
 // ============================================================
 
@@ -227,23 +158,6 @@ func TestEmptyContentNormalizer_LeavesAssistantWithoutCalls(t *testing.T) {
 	}
 }
 
-func TestEmptyContentNormalizer_SkipRolesBypassesTool(t *testing.T) {
-	// MiniMax chain: tool messages carry array content with non-OpenAI shape.
-	// The normalizer must NOT replace it with the sentinel.
-	msg := map[string]any{"role": "tool", "content": []any{}}
-	msgs := []any{msg}
-	_, changed, _ := EmptyContentNormalizer{
-		ToolSentinel: "(no result)",
-		SkipRoles:    []string{"tool"},
-	}.Apply(msgs)
-	if changed {
-		t.Fatal("SkipRoles must bypass tool messages")
-	}
-	if _, ok := msg["content"].([]any); !ok {
-		t.Fatalf("tool content must remain array, got %T", msg["content"])
-	}
-}
-
 func TestEmptyContentNormalizer_LeavesUserRoleAlone(t *testing.T) {
 	// User role isn't a special case: empty content is the validator's
 	// concern, not the normalizer's.
@@ -282,28 +196,6 @@ func TestLegacyToolNameStripper(t *testing.T) {
 }
 
 // ============================================================
-// MinimaxToolCallIDStripper
-// ============================================================
-
-func TestMinimaxToolCallIDStripper(t *testing.T) {
-	msgs := []any{
-		map[string]any{"role": "user", "tool_call_id": "weird-but-kept", "content": "hi"}, // not tool
-		map[string]any{"role": "tool", "tool_call_id": "c1", "content": []any{}},          // tool — stripped
-		map[string]any{"role": "tool", "content": []any{}},                                // tool no id — no-op
-	}
-	_, changed, _ := MinimaxToolCallIDStripper{}.Apply(msgs)
-	if !changed {
-		t.Fatal("must strip from one tool message")
-	}
-	if _, has := testutil.MapAt(t, msgs, 0)["tool_call_id"]; !has {
-		t.Fatal("non-tool role: tool_call_id preserved (validator's problem)")
-	}
-	if _, has := testutil.MapAt(t, msgs, 1)["tool_call_id"]; has {
-		t.Fatal("tool message: tool_call_id must be stripped")
-	}
-}
-
-// ============================================================
 // TextPartsFlattener
 // ============================================================
 
@@ -332,23 +224,6 @@ func TestTextPartsFlattener_LeavesStringAlone(t *testing.T) {
 	_, changed, _ := TextPartsFlattener{}.Apply([]any{msg})
 	if changed {
 		t.Fatal("string content must not trigger change")
-	}
-}
-
-func TestTextPartsFlattener_SkipRolesBypassesTool(t *testing.T) {
-	// MiniMax tool messages carry {name,type,text}[] arrays — must NOT be flattened.
-	msg := map[string]any{
-		"role": "tool",
-		"content": []any{
-			map[string]any{"name": "fn", "type": "text", "text": "result"},
-		},
-	}
-	_, changed, _ := TextPartsFlattener{SkipRoles: []string{"tool"}}.Apply([]any{msg})
-	if changed {
-		t.Fatal("SkipRoles must skip tool")
-	}
-	if _, ok := msg["content"].([]any); !ok {
-		t.Fatalf("tool content must remain array, got %T", msg["content"])
 	}
 }
 

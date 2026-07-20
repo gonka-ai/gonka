@@ -31,10 +31,6 @@ type MessageRolePolicy struct {
 	RequireName       bool
 	RequireToolCallID bool
 	ContentRule       MessageContentRule
-	// ContentValidator, when non-nil, replaces the default role-specific
-	// content shape check. Used by MiniMax-M2.7 tool messages whose content
-	// is a {name,type,text}[] array instead of a string.
-	ContentValidator messagevalidators.ContentValidator
 }
 
 // MessageNormalizer rewrites the messages array before ValidateDocument runs.
@@ -59,24 +55,7 @@ var defaultMessageProcessor = defaultChatMessageProcessor()
 func defaultChatMessageProcessor() ChatMessageProcessor {
 	return ChatMessageProcessor{
 		defaultRoles: openAIRolePolicies(),
-		// Per-model role-policy overrides. Adding a model = add one row.
-		modelRoles: map[string]map[string]MessageRolePolicy{
-			// MiniMax-M2.7 tool messages omit tool_call_id and carry results as a
-			// {name,type,text}[] array — see docs/chat-api/minimax-m2.7.md.
-			miniMaxM27ModelID: {
-				string(MessageRoleTool): {
-					Role:              MessageRoleTool,
-					DisallowedFields:  []string{"tool_calls", "function_call"},
-					RequireToolCallID: false,
-					ContentRule:       MessageContentRequired,
-					ContentValidator: messagevalidators.MinimaxToolMessage{
-						MaxEntries:  MinimaxToolMessageMaxEntries,
-						NameMaxLen:  MinimaxToolMessageNameMaxLen,
-						TextMaxSize: MinimaxToolMessageTextMaxSize,
-					},
-				},
-			},
-		},
+		modelRoles:   map[string]map[string]MessageRolePolicy{},
 		defaultNormalizers: []MessageNormalizer{
 			messagevalidators.OrphanToolMessageDropper{},
 			messagevalidators.EmptyAssistantTurnDropper{},
@@ -84,22 +63,7 @@ func defaultChatMessageProcessor() ChatMessageProcessor {
 			messagevalidators.LegacyToolNameStripper{},
 			messagevalidators.TextPartsFlattener{},
 		},
-		// Per-model normalizer chain overrides. Adding a model = add one row.
-		modelNormalizers: map[string][]MessageNormalizer{
-			miniMaxM27ModelID: {
-				messagevalidators.MinimaxOrphanToolMessageDropper{},
-				messagevalidators.EmptyAssistantTurnDropper{},
-				messagevalidators.EmptyContentNormalizer{
-					ToolSentinel: emptyToolResultContent,
-					SkipRoles:    []string{string(MessageRoleTool)},
-				},
-				messagevalidators.LegacyToolNameStripper{},
-				messagevalidators.MinimaxToolCallIDStripper{},
-				messagevalidators.TextPartsFlattener{
-					SkipRoles: []string{string(MessageRoleTool)},
-				},
-			},
-		},
+		modelNormalizers: map[string][]MessageNormalizer{},
 	}
 }
 
@@ -167,8 +131,8 @@ func (p ChatMessageProcessor) NormalizeDocument(document *ChatRequestDocument, r
 }
 
 // ValidateDocument enforces the per-role policies resolved against the routed
-// model. RequireToolCallID and ContentValidator are honored as policy fields
-// so per-model overrides reuse the same validation skeleton.
+// model. Policy fields (RequireToolCallID, DisallowedFields, ContentRule) are
+// honored so per-model overrides reuse the same validation skeleton.
 func (p ChatMessageProcessor) ValidateDocument(document *ChatRequestDocument, routedModel string) error {
 	rawMessages, exists := document.Array("messages")
 	if !exists {
@@ -237,15 +201,7 @@ func (p ChatMessageProcessor) validateRoleSpecific(message map[string]any, i int
 			}
 			delete(pendingToolCalls, toolCallID)
 		}
-		if policy.ContentValidator != nil {
-			content, exists := message["content"]
-			if !exists {
-				return badChatRequest("messages[%d].content: is required", i)
-			}
-			if err := policy.ContentValidator.Validate(content); err != nil {
-				return badChatRequest("messages[%d].%v", i, err)
-			}
-		} else if err := messagevalidators.ValidateRequiredContentField(message); err != nil {
+		if err := messagevalidators.ValidateRequiredContentField(message); err != nil {
 			return badChatRequest("messages[%d].content: %v", i, err)
 		}
 	case MessageRoleFunction:

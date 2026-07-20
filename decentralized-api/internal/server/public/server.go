@@ -8,10 +8,12 @@ import (
 	"decentralized-api/internal"
 	"decentralized-api/internal/authzcache"
 	"decentralized-api/internal/server/middleware"
+	"decentralized-api/observability"
 	"decentralized-api/payloadstorage"
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"net/http"
+	"net/url"
 	"time"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -41,7 +43,6 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
-	pocSnapshotLimiter  *snapshotCountLimiter
 }
 
 // ServerOption configures optional Server dependencies.
@@ -70,6 +71,9 @@ func NewServer(
 	opts ...ServerOption) *Server {
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
+	// Avoid Echo's legacy RealIP behavior, which trusts the left-most XFF value.
+	// This extracts the nearest untrusted hop from XFF (falling back to RemoteAddr).
+	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 
 	// Set the package-level configManagerRef
 	configManagerRef = configManager
@@ -87,7 +91,6 @@ func NewServer(
 		epochGroupDataCache: internal.NewEpochGroupDataCache(recorder),
 		authzCache:          authzcache.NewAuthzCache(recorder),
 		httpClient:          NewNoRedirectClient(httpClientTimeout),
-		pocSnapshotLimiter:  newSnapshotCountLimiter(),
 	}
 
 	for _, opt := range opts {
@@ -153,10 +156,10 @@ func NewServer(
 	g.GET("restrictions/exemptions", s.getRestrictionsExemptions)
 	g.GET("restrictions/exemptions/:id/usage/:account", s.getRestrictionsExemptionUsage)
 
-	// PoC proofs endpoint with IP rate limiting (100 req/min per IP)
+	// PoC proofs endpoint with IP rate limiting (300 req/min per IP)
 	pocProofsRateLimiter := echomw.RateLimiter(echomw.NewRateLimiterMemoryStoreWithConfig(
 		echomw.RateLimiterMemoryStoreConfig{
-			Rate:      300.0 / 60.0, // 100 requests per minute
+			Rate:      300.0 / 60.0, // 300 requests per minute
 			Burst:     30,
 			ExpiresIn: 3 * time.Minute,
 		},
@@ -166,6 +169,20 @@ func NewServer(
 
 	// PoC artifact state endpoint (for testermint/validators to get real count and root_hash)
 	g.GET("poc/artifacts/state", s.getPocArtifactsState)
+
+	// Public mlnode metrics federation; see observability.MLNodeMetricsHandler.
+	// Rate limiting lives in the proxy's dedicated metrics_zone (team
+	// decision: one source of truth); compute stays bounded regardless via
+	// the cached single-flight fan-out. Kill switch:
+	// DAPI_API__MLNODE_METRICS_DISABLED=true.
+	mlnodeMetricsHandler := echo.WrapHandler(observability.MLNodeMetricsHandler(s.mlNodeMetricsTargets, observability.MLNodeMetricsConfig{}))
+	g.GET("mlnodes/metrics", func(c echo.Context) error {
+		// evaluated per request so the kill switch works without a restart
+		if configManager.GetApiConfig().MLNodeMetricsDisabled {
+			return c.NoContent(http.StatusNotFound)
+		}
+		return mlnodeMetricsHandler(c)
+	}, echomw.Gzip())
 
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
@@ -201,4 +218,29 @@ func (s *Server) getStatus(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, struct {
 		Status string `json:"status"`
 	}{Status: "ok"})
+}
+
+// mlNodeMetricsTargets snapshots the current mlnodes and their exporter URLs
+// (the mlnode API on the PoC port — it owns allowlist filtering; raw vLLM
+// /metrics is deliberately not scraped).
+func (s *Server) mlNodeMetricsTargets() ([]observability.MLNodeTarget, error) {
+	nodes, err := s.nodeBroker.GetNodes()
+	if err != nil {
+		return nil, err
+	}
+	targets := make([]observability.MLNodeTarget, 0, len(nodes))
+	for _, n := range nodes {
+		target, err := url.JoinPath(n.Node.PoCUrl(), "/api/v1/metrics")
+		if err != nil {
+			// unreachable for PoCUrl's format, but a silently vanished node
+			// is the exact failure class this endpoint must not have
+			_ = observability.LogMLNodeTargetError(n.Node.Id, err)
+			continue
+		}
+		targets = append(targets, observability.MLNodeTarget{
+			ID:  n.Node.Id,
+			URL: target,
+		})
+	}
+	return targets, nil
 }
