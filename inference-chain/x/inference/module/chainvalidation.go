@@ -3,6 +3,7 @@ package inference
 import (
 	"context"
 	"log/slog"
+	"math/bits"
 	"slices"
 	"strconv"
 	"strings"
@@ -277,6 +278,7 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 			"participant", key.ParticipantAddress, "modelId", key.ModelID)
 		return false
 	}
+	thresholdBps := wc.validationVoteThresholdBps()
 
 	if wc.ValidationSlots > 0 {
 		// Slot-based: sample validators, count per-slot (each slot = 1 weight).
@@ -306,17 +308,16 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 				invalidSlots++
 			}
 		}
-		twoThirdsSlots := totalSlots * 2 / 3
-		if validSlots > twoThirdsSlots {
+		if passesValidationVoteThreshold(validSlots, totalSlots, thresholdBps) {
 			wc.Logger.LogInfo("Calculate: Valid majority (slot-sampled). Accepting.", types.PoC,
 				"participant", key.ParticipantAddress, "modelId", key.ModelID,
-				"validSlots", validSlots, "totalSlots", totalSlots)
+				"validSlots", validSlots, "totalSlots", totalSlots, "thresholdBps", thresholdBps)
 			return true
 		}
-		if invalidSlots > twoThirdsSlots {
+		if passesValidationVoteThreshold(invalidSlots, totalSlots, thresholdBps) {
 			wc.Logger.LogWarn("Calculate: Invalid majority (slot-sampled). Rejecting.", types.PoC,
 				"participant", key.ParticipantAddress, "modelId", key.ModelID,
-				"invalidSlots", invalidSlots, "totalSlots", totalSlots)
+				"invalidSlots", invalidSlots, "totalSlots", totalSlots, "thresholdBps", thresholdBps)
 			return false
 		}
 		return wc.guardianProtection(key, ValidationOutcome{
@@ -329,20 +330,35 @@ func (wc *PoCWeightCalculator) pocValidated(vals []types.PoCValidationV2, key ty
 	// Non-slot: weight approvals by votingPower, threshold against totalNetworkWeight.
 	outcome := calculateValidationOutcome(votingPowers, vals)
 	outcome.TotalWeight = wc.TotalNetworkWeight
-	twoThirds := wc.TotalNetworkWeight * 2 / 3
-	if outcome.ValidWeight > twoThirds {
+	if passesValidationVoteThreshold(outcome.ValidWeight, wc.TotalNetworkWeight, thresholdBps) {
 		wc.Logger.LogInfo("Calculate: Valid majority. Accepting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+			"validWeight", outcome.ValidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
 		return true
 	}
-	if outcome.InvalidWeight > twoThirds {
+	if passesValidationVoteThreshold(outcome.InvalidWeight, wc.TotalNetworkWeight, thresholdBps) {
 		wc.Logger.LogWarn("Calculate: Invalid majority. Rejecting.", types.PoC,
 			"participant", key.ParticipantAddress, "modelId", key.ModelID,
-			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight)
+			"invalidWeight", outcome.InvalidWeight, "totalNetworkWeight", wc.TotalNetworkWeight, "thresholdBps", thresholdBps)
 		return false
 	}
 	return wc.guardianProtection(key, outcome)
+}
+
+func (wc *PoCWeightCalculator) validationVoteThresholdBps() int64 {
+	if wc.PocParams == nil || wc.PocParams.ValidationVoteThresholdBps == 0 {
+		return int64(types.DefaultPocValidationVoteThresholdBps)
+	}
+	return int64(wc.PocParams.ValidationVoteThresholdBps)
+}
+
+func passesValidationVoteThreshold(votes, total, thresholdBps int64) bool {
+	if votes <= 0 || total <= 0 || thresholdBps <= 0 {
+		return false
+	}
+	votesHi, votesLo := bits.Mul64(uint64(votes), 10000)
+	thresholdHi, thresholdLo := bits.Mul64(uint64(total), uint64(thresholdBps))
+	return votesHi > thresholdHi || votesHi == thresholdHi && votesLo > thresholdLo
 }
 
 // ValidationOutcome holds aggregated vote weight sums.

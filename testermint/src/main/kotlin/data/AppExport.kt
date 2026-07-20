@@ -349,6 +349,8 @@ data class PocParams(
     val statTest: PoCStatTestParams? = null,
     @SerializedName("validation_slots")
     val validationSlots: Long = 2,
+    @SerializedName("validation_vote_threshold_bps")
+    val validationVoteThresholdBps: Long = 5000,
     @SerializedName("poc_normalization_enabled")
     val pocNormalizationEnabled: Boolean = false,  // Disabled by default in tests
 ) {

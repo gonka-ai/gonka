@@ -48,7 +48,7 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return NormalizeSessionConfig(SessionConfig{
 		RefusalTimeout:    60,
-		ExecutionTimeout:  1200,
+		ExecutionTimeout:  32 * 60,
 		TokenPrice:        1,
 		CreateDevshardFee: 10_000,
 		FeePerNonce:       1_000,
