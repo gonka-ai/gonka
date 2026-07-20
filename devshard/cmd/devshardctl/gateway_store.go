@@ -461,6 +461,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard settlement pending: %w", err)
 	}
+	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard protocol version: %w", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
 		tokens REAL NOT NULL DEFAULT 0,
@@ -530,6 +534,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	)`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("init escrow rotation commitments table: %w", err)
+	}
+	if err := ensureColumn(db, "escrow_rotation_commitments", "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate escrow rotation commitments protocol version: %w", err)
 	}
 
 	return &GatewayStore{db: db}, nil
@@ -655,7 +663,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -676,6 +684,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 			&devshard.CreatedAt,
 			&devshard.UpdatedAt,
 			&devshard.RoutePrefix,
+			&devshard.ProtocolVersion,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
 			&settlementPending,
@@ -1040,8 +1049,8 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-			rotation_role, rotation_epoch, settlement_pending
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			protocol_version, rotation_role, rotation_epoch, settlement_pending
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -1051,6 +1060,7 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 		createdAt,
 		now,
 		strings.TrimSpace(devshard.RoutePrefix),
+		strings.TrimSpace(devshard.ProtocolVersion),
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
 		settlementPending,
@@ -1071,7 +1081,7 @@ func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error
 	var settlementPending int
 	err := s.db.QueryRow(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
-		       rotation_role, rotation_epoch, settlement_pending
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending
 		FROM gateway_devshards
 		WHERE id = ?`, id).Scan(
 		&devshard.ID,
@@ -1083,6 +1093,7 @@ func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error
 		&devshard.CreatedAt,
 		&devshard.UpdatedAt,
 		&devshard.RoutePrefix,
+		&devshard.ProtocolVersion,
 		&devshard.RotationRole,
 		&devshard.RotationEpoch,
 		&settlementPending,
@@ -1269,13 +1280,14 @@ func splitGatewayModelIDs(modelIDs string) []string {
 
 // GatewayEscrowCommitment is the write-ahead intent for one escrow create, keyed by tx hash.
 type GatewayEscrowCommitment struct {
-	TxHash        string
-	Model         string
-	Role          string
-	Epoch         uint64
-	PrivateKeyEnv string
-	BlockHeight   uint64
-	CreatedAt     time.Time
+	TxHash          string
+	Model           string
+	Role            string
+	Epoch           uint64
+	PrivateKeyEnv   string
+	ProtocolVersion string
+	BlockHeight     uint64
+	CreatedAt       time.Time
 }
 
 // SaveCommitment records a create intent, keyed by tx hash.
@@ -1291,13 +1303,14 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 	}
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO escrow_rotation_commitments (
-			tx_hash, model, role, epoch, private_key_env, block_height, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+			tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(c.TxHash),
 		strings.TrimSpace(c.Model),
 		strings.TrimSpace(c.Role),
 		c.Epoch,
 		c.PrivateKeyEnv,
+		strings.TrimSpace(c.ProtocolVersion),
 		c.BlockHeight,
 		createdAt.Format(time.RFC3339Nano),
 	)
@@ -1313,7 +1326,7 @@ func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
 		return nil, nil
 	}
 	rows, err := s.db.Query(`
-		SELECT tx_hash, model, role, epoch, private_key_env, block_height, created_at
+		SELECT tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
 		FROM escrow_rotation_commitments
 		ORDER BY created_at ASC`)
 	if err != nil {
@@ -1324,7 +1337,7 @@ func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
 	for rows.Next() {
 		var c GatewayEscrowCommitment
 		var createdAt string
-		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.BlockHeight, &createdAt); err != nil {
+		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.ProtocolVersion, &c.BlockHeight, &createdAt); err != nil {
 			return nil, fmt.Errorf("scan escrow commitment: %w", err)
 		}
 		c.CreatedAt = scanGatewayDBTime(createdAt)

@@ -1,4 +1,4 @@
-.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version versiond-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
+.PHONY: release decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release edge-api edge-api-release edge-api-router-release check-docker build-testermint run-blockchain-tests test-blockchain local-build api-local-build node-local-build api-test node-test mock-server-build-docker proxy-build-docker proxy-ssl-build-docker bridge-build-docker run-bls-tests devshardctl-build devshardd-build print-devshard-version versiond-build-docker edge-api-build-docker edge-api-router-build-docker testapp-server-build-docker
 
 include scripts/blst-portable.mk
 
@@ -75,7 +75,7 @@ testapp-server-build-docker:
 	@echo "Building testapp-server docker image ($(DOCKER_PLATFORM))..."
 	@docker build --platform $(DOCKER_PLATFORM) -t testapp-server:latest -f local-test-net/Dockerfile.testapp-server .
 
-release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release
+release: decentralized-api-release inference-chain-release tmkms-release proxy-release proxy-ssl-release bridge-release versiond-release edge-api-release
 	@git tag $(TAG_NAME)
 	@git push origin $(TAG_NAME)
 
@@ -111,6 +111,13 @@ versiond-release:
 	@echo "Releasing versiond..."
 	@make -C versioned release
 	@make -C versioned docker-push
+
+edge-api: edge-api-build-docker
+
+edge-api-release:
+	@echo "Releasing edge-api..."
+	@make -C edge-api release
+	@make -C edge-api docker-push
 
 check-docker:
 	@docker info > /dev/null 2>&1 || (echo "Docker Desktop is not running. Please start Docker Desktop." && exit 1)
@@ -253,14 +260,16 @@ local-build: api-local-build node-local-build api-test node-test
 
 build-for-upgrade:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
-	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
-	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi public-html/v2/edge-api
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip public-html/v2/edge-api/edge-api-*.zip
 	@make -C inference-chain build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 	@make -C decentralized-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 
 build-for-upgrade-tests:
 	@rm -f public-html/v2/checksums.txt public-html/v2/urls.txt
-	@mkdir -p public-html/v2/inferenced public-html/v2/dapi
-	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip
+	@mkdir -p public-html/v2/inferenced public-html/v2/dapi public-html/v2/edge-api
+	@rm -f public-html/v2/inferenced/inferenced-*.zip public-html/v2/dapi/decentralized-api-*.zip public-html/v2/edge-api/edge-api-*.zip
 	@make -C inference-chain build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
 	@make -C decentralized-api build-for-upgrade TESTS=1 PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
+	@make -C edge-api build-for-upgrade PLATFORM=linux/amd64 GOOS=linux GOARCH=amd64
