@@ -249,10 +249,15 @@ func TestGatewayDashboardHasNoGridOverlap(t *testing.T) {
 		title, _ := panel["title"].(string)
 		grid, ok := panel["gridPos"].(map[string]any)
 		require.True(t, ok, "panel %q missing gridPos", title)
-		x := int(grid["x"].(float64))
-		y := int(grid["y"].(float64))
-		w := int(grid["w"].(float64))
-		h := int(grid["h"].(float64))
+		gridInt := func(field string) int {
+			v, numeric := grid[field].(float64)
+			require.True(t, numeric, "panel %q gridPos.%s is not a number", title, field)
+			return int(v)
+		}
+		x := gridInt("x")
+		y := gridInt("y")
+		w := gridInt("w")
+		h := gridInt("h")
 		for yy := y; yy < y+h; yy++ {
 			for xx := x; xx < x+w; xx++ {
 				key := [2]int{xx, yy}

@@ -251,7 +251,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("get diffs: %w", err)
 	}
 	if err := validateDiffRange(records, replayFrom, meta.LatestNonce); err != nil {
-		return nil, nil, err
+		return nil, nil, fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
 	}
 
 	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, len(records))

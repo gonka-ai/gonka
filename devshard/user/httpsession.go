@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 
 	devshardpkg "devshard"
 	"devshard/bridge"
@@ -29,15 +30,14 @@ type HTTPSessionConfig struct {
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
-	recoveryComplete := false
-	return func(warmAddr, coldAddr string) (bool, error) {
-			if !recoveryComplete {
-				return false, nil
-			}
-			return resolve(warmAddr, coldAddr)
-		}, func() {
-			recoveryComplete = true
+	var recoveryComplete atomic.Bool
+	resolver := func(warmAddr, coldAddr string) (bool, error) {
+		if !recoveryComplete.Load() {
+			return false, nil
 		}
+		return resolve(warmAddr, coldAddr)
+	}
+	return resolver, func() { recoveryComplete.Store(true) }
 }
 
 func resolveHTTPSessionStoragePath(escrowID, configured string) string {
