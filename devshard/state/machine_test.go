@@ -2294,6 +2294,218 @@ func TestV2_FinalizeDrainDeterministicOrder(t *testing.T) {
 	require.Equal(t, rootA, rootB)
 }
 
+func advanceToSettlement(t *testing.T, sm *StateMachine, user *signing.Secp256k1Signer, groupSize int) {
+	t.Helper()
+	nonce := sm.LatestNonce() + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txFinalize()})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, types.PhaseFinalizing, sm.Phase())
+
+	st := sm.SnapshotState()
+	for n := st.LatestNonce + 1; n <= st.FinalizeNonce+uint64(groupSize); n++ {
+		diff = testutil.SignDiff(t, user, "escrow-1", n, nil)
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+	}
+	require.Equal(t, types.PhaseSettlement, sm.Phase())
+}
+
+func TestDrainSettle_StartedAutoFinishes(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+
+	before := sm.SnapshotState()
+	require.Equal(t, uint64(0), before.HostStats[1].Cost)
+
+	advanceToSettlement(t, sm, user, len(hosts))
+
+	after := sm.SnapshotState()
+	require.Equal(t, uint64(150), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance, after.Balance)
+
+	sealed, ok := sm.LookupSealedInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusFinished, sealed.Status)
+	require.Equal(t, uint64(150), sealed.ActualCost)
+}
+
+func TestDrainSettle_PendingRefunds(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	before := sm.SnapshotState()
+	require.Equal(t, types.StatusPending, before.Inferences[1].Status)
+
+	advanceToSettlement(t, sm, user, len(hosts))
+
+	after := sm.SnapshotState()
+	require.Equal(t, before.Balance+150, after.Balance)
+	require.Equal(t, uint64(0), after.HostStats[1].Cost)
+	require.Equal(t, uint32(0), after.HostStats[1].Missed)
+
+	sealed, ok := sm.LookupSealedInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusTimedOut, sealed.Status)
+	require.Equal(t, uint64(0), sealed.ActualCost)
+}
+
+func TestDrainSettle_ChallengedUnchanged(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	before := sm.SnapshotState()
+	require.Equal(t, types.StatusChallenged, before.Inferences[1].Status)
+	require.Equal(t, uint64(120), before.HostStats[1].Cost)
+
+	advanceToSettlement(t, sm, user, len(hosts))
+
+	after := sm.SnapshotState()
+	require.Equal(t, before.Balance, after.Balance)
+	require.Equal(t, uint64(120), after.HostStats[1].Cost)
+
+	sealed, ok := sm.LookupSealedInference(1)
+	require.True(t, ok)
+	require.Equal(t, types.StatusChallenged, sealed.Status)
+	require.Equal(t, uint32(1), sealed.VotesInvalid)
+}
+
+// TestDrainSettle_CensoredFinishCreditsHost is the settlement-drain regression
+// for the "free compute" exploit: user sequences start+confirm, censors finish,
+// and finalizes — the host must be credited ReservedCost without WithGrace.
+func TestDrainSettle_CensoredFinishCreditsHost(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+
+	before := sm.SnapshotState()
+	require.Equal(t, types.StatusStarted, before.Inferences[1].Status)
+	require.Equal(t, uint64(0), before.HostStats[1].Cost)
+
+	advanceToSettlement(t, sm, user, len(hosts))
+
+	after := sm.SnapshotState()
+	require.Equal(t, uint64(150), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance, after.Balance)
+}
+
+func TestDrainSettle_MixedDeterministic(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+
+	driveMixed := func(t *testing.T) *StateMachine {
+		t.Helper()
+		sm, user := newTestSM(t, hosts, 20000)
+
+		// inf 1: pending (executor slot 1).
+		diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})})
+		_, err := sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		for nonce := uint64(2); nonce <= 3; nonce++ {
+			diff = testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+			_, err = sm.ApplyDiff(diff)
+			require.NoError(t, err)
+		}
+
+		// inf 4: started (executor slot 4).
+		diff = testutil.SignDiff(t, user, "escrow-1", 4, []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: 4, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		execSig := testutil.SignExecutorReceipt(t, hosts[4], "escrow-1", 4, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+		diff = testutil.SignDiff(t, user, "escrow-1", 5, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+			InferenceId: 4, ExecutorSig: execSig, ConfirmedAt: 1000,
+		})})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		diff = testutil.SignDiff(t, user, "escrow-1", 6, nil)
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		// inf 7: finished (executor slot 2).
+		diff = testutil.SignDiff(t, user, "escrow-1", 7, []*types.DevshardTx{txStart(&types.MsgStartInference{
+			InferenceId: 7, PromptHash: []byte("prompt"), Model: "llama",
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		execSig = testutil.SignExecutorReceipt(t, hosts[2], "escrow-1", 7, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+		diff = testutil.SignDiff(t, user, "escrow-1", 8, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+			InferenceId: 7, ExecutorSig: execSig, ConfirmedAt: 1000,
+		})})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		finishMsg := &types.MsgFinishInference{
+			InferenceId: 7, ResponseHash: []byte("response"),
+			InputTokens: 80, OutputTokens: 40, ExecutorSlot: 2,
+			EscrowId: "escrow-1",
+		}
+		finishMsg.ProposerSig = testutil.SignProposerTx(t, hosts[2], finishMsg)
+		diff = testutil.SignDiff(t, user, "escrow-1", 9, []*types.DevshardTx{txFinish(finishMsg)})
+		_, err = sm.ApplyDiff(diff)
+		require.NoError(t, err)
+
+		advanceToSettlement(t, sm, user, len(hosts))
+		return sm
+	}
+
+	a := driveMixed(t)
+	b := driveMixed(t)
+
+	stA := a.SnapshotState()
+	stB := b.SnapshotState()
+	require.Equal(t, stA.SealedAcc, stB.SealedAcc)
+	require.Equal(t, stA.HostStats, stB.HostStats)
+	require.Equal(t, stA.Balance, stB.Balance)
+
+	require.Equal(t, uint64(0), stA.HostStats[1].Cost)
+	require.Equal(t, uint64(150), stA.HostStats[4].Cost)
+	require.Equal(t, uint64(120), stA.HostStats[2].Cost)
+
+	var totalCost uint64
+	for _, hs := range stA.HostStats {
+		totalCost += hs.Cost
+	}
+	require.LessOrEqual(t, totalCost+stA.Fees, uint64(20000))
+}
+
 // --- Warm Key Tests ---
 
 func newTestSMWithWarmKey(t *testing.T, hosts []*signing.Secp256k1Signer, balance uint64, resolver WarmKeyResolver) (*StateMachine, *signing.Secp256k1Signer) {
@@ -2923,4 +3135,104 @@ func TestApplyLocalBestEffort_ChallengeObsInsertFailure_StillApplied(t *testing.
 	require.NoError(t, err)
 	require.Equal(t, root, hostRoot)
 	require.Equal(t, types.StatusChallenged, hostSM.SnapshotState().Inferences[1].Status)
+}
+
+func callSettleLiveRecordLocked(t *testing.T, sm *StateMachine, rec *types.InferenceRecord) {
+	t.Helper()
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.settleLiveRecordLocked(rec)
+}
+
+func TestSettleLiveRecordLocked_Started(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish_Setup(t, sm, user, hosts, 1)
+
+	before := sm.SnapshotState()
+	rec := before.Inferences[1]
+	require.Equal(t, types.StatusStarted, rec.Status)
+	require.Equal(t, uint64(150), rec.ReservedCost)
+	require.Equal(t, uint64(0), before.HostStats[1].Cost)
+
+	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
+
+	after := sm.SnapshotState()
+	require.Equal(t, types.StatusFinished, after.Inferences[1].Status)
+	require.Equal(t, uint64(150), after.Inferences[1].ActualCost)
+	require.Equal(t, uint64(150), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance, after.Balance)
+}
+
+func TestSettleLiveRecordLocked_Pending(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	before := sm.SnapshotState()
+	rec := before.Inferences[1]
+	require.Equal(t, types.StatusPending, rec.Status)
+	require.Equal(t, uint64(150), rec.ReservedCost)
+	require.Equal(t, uint32(0), before.HostStats[1].Missed)
+
+	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
+
+	after := sm.SnapshotState()
+	require.Equal(t, types.StatusTimedOut, after.Inferences[1].Status)
+	require.Equal(t, uint64(0), after.Inferences[1].ActualCost)
+	require.Equal(t, before.Balance+rec.ReservedCost, after.Balance)
+	require.Equal(t, uint64(0), after.HostStats[1].Cost)
+	require.Equal(t, uint32(0), after.HostStats[1].Missed)
+}
+
+func TestSettleLiveRecordLocked_ChallengedUnchanged(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := sm.SnapshotState().LatestNonce + 1
+	diff := testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{txValidation(valMsg)})
+	_, err := sm.ApplyDiff(diff)
+	require.NoError(t, err)
+
+	before := sm.SnapshotState()
+	require.Equal(t, types.StatusChallenged, before.Inferences[1].Status)
+
+	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
+
+	after := sm.SnapshotState()
+	require.Equal(t, types.StatusChallenged, after.Inferences[1].Status)
+	require.Equal(t, before.Balance, after.Balance)
+	require.Equal(t, before.HostStats[1].Cost, after.HostStats[1].Cost)
+	require.Equal(t, before.Inferences[1].VotesInvalid, after.Inferences[1].VotesInvalid)
+}
+
+func TestSettleLiveRecordLocked_TerminalUnchanged(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+	applyStartConfirmFinish(t, sm, user, hosts, 1)
+
+	before := sm.SnapshotState()
+	require.Equal(t, types.StatusFinished, before.Inferences[1].Status)
+	require.Equal(t, uint64(120), before.Inferences[1].ActualCost)
+	require.Equal(t, uint64(120), before.HostStats[1].Cost)
+
+	callSettleLiveRecordLocked(t, sm, sm.state.Inferences[1])
+
+	after := sm.SnapshotState()
+	require.Equal(t, types.StatusFinished, after.Inferences[1].Status)
+	require.Equal(t, uint64(120), after.Inferences[1].ActualCost)
+	require.Equal(t, uint64(120), after.HostStats[1].Cost)
+	require.Equal(t, before.Balance, after.Balance)
 }
