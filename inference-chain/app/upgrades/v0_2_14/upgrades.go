@@ -54,10 +54,10 @@ var bountyRewards = []BountyReward{
 	// Public name: @x0152
 	{Address: "gonka18enyz7h6hh5zjveee5wnhkhrcexamfz0zdxxqe", Amount: USDT(6000)},
 
-	// RM: release management, HackerOne reviews, R&D for MiniMax M2.7 and
-	// Inference During PoC (including cost of GPUs for testing).
+	// RM: release management, HackerOne reviews, R&D for MiniMax M2.7,
+	// Inference During PoC (including cost of GPUs for testing) and SMST optimization (PR #1432).
 	// Public name: @qdanik
-	{Address: "gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8", Amount: USDT(10000)},
+	{Address: "gonka1j3f2xkapx8cmczpjqcsrh7cc3peyj3ngkjv4p8", Amount: USDT(11500)},
 
 	// PR #1253: fix: stop stale PoC validation promptly.
 	// Public name: @ouicate
@@ -100,13 +100,17 @@ var bountyRewards = []BountyReward{
 	// Public name: @redstartechno
 	{Address: "gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l", Amount: USDT(500)},
 
-	// Vulnerability report 1.
+	// Vulnerability report for #1378.
 	// Public name: @Lelouch33
 	{Address: "gonka128nd36m2pz5qcs4q6rd69622flyls05nleazqq", Amount: USDT(5000)},
 
-	// Vulnerability report 2.
+	// Vulnerability report for reward power-cap.
 	// Public name: @Lelouch33
 	{Address: "gonka128nd36m2pz5qcs4q6rd69622flyls05nleazqq", Amount: USDT(1000)},
+
+	// Vulnerability report and fix #1415
+	// Public name: @maksimenkoff
+	{Address: "gonka1gmuxdcxlsxn5z72elx77w9zym7yrgfxqgzg6ry", Amount: USDT(3000)},
 
 	// v0.2.13: review of the upgrade.
 	// Public name: @blizko
