@@ -51,8 +51,9 @@ type ChainPhaseSnapshot struct {
 }
 
 type ChainPhaseGate struct {
+	chainRESTBase                 string
 	endpoint                      string
-	participantsEndpoint          string
+	currentEpochEndpoint          string
 	preservedSnapshotEndpoint     string
 	client                        *http.Client
 	pollInterval                  time.Duration
@@ -83,10 +84,15 @@ type chainEpochInfoResponse struct {
 	BlockHeight             jsonInt64                         `json:"block_height"`
 	Phase                   string                            `json:"phase"`
 	LatestEpoch             chainLatestEpoch                  `json:"latest_epoch"`
+	Params                  chainEpochInfoParams              `json:"params"`
 	EpochStages             chainEpochStages                  `json:"epoch_stages"`
 	NextEpochStages         chainEpochStages                  `json:"next_epoch_stages"`
 	IsConfirmationPoCActive bool                              `json:"is_confirmation_poc_active"`
 	ActiveConfirmationPoC   *chainConfirmationPoCEventPayload `json:"active_confirmation_poc_event,omitempty"`
+}
+
+type chainEpochInfoParams struct {
+	EpochParams chainEpochParams `json:"epoch_params"`
 }
 
 type chainLatestEpoch struct {
@@ -103,10 +109,6 @@ type chainEpochStages struct {
 type chainConfirmationPoCEventPayload struct {
 	Phase         confirmationPoCPhaseValue `json:"phase"`
 	TriggerHeight jsonInt64                 `json:"trigger_height"`
-}
-
-type chainCurrentParticipantsResponse struct {
-	ActiveParticipants chainActiveParticipantsGroup `json:"active_participants"`
 }
 
 type chainActiveParticipantsGroup struct {
@@ -242,18 +244,23 @@ func (e *RequestAdmissionError) Error() string {
 	return "request admission blocked"
 }
 
-func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
+func NewChainPhaseGate(chainREST string, pollInterval time.Duration) *ChainPhaseGate {
+	chainREST = strings.TrimSpace(chainREST)
+	if chainREST == "" {
 		return nil
 	}
 	if pollInterval <= 0 {
 		pollInterval = defaultChainPhasePollInterval
 	}
+	base := strings.TrimRight(chainREST, "/")
 	client := &http.Client{Timeout: 5 * time.Second}
 	return &ChainPhaseGate{
-		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
-		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
+		// Phase gate talks only to chain LCD: EpochInfo + GetCurrentEpoch +
+		// ABCI store query for ActiveParticipants. No decentralized-api, and
+		// no new Inference Chain query endpoints required.
+		chainRESTBase:                 base,
+		endpoint:                      base + "/productscience/inference/inference/epoch_info",
+		currentEpochEndpoint:          base + "/productscience/inference/inference/get_current_epoch",
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
@@ -273,6 +280,8 @@ func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
+	// Prefer the constructor's chain-REST snapshot URL; only override when the
+	// caller points at a different chain REST base (admin settings update).
 	g.preservedSnapshotEndpoint = strings.TrimRight(baseURL, "/") + "/productscience/inference/inference/preserved_nodes_snapshot"
 }
 
@@ -480,6 +489,7 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
 	}
+	enrichEpochInfoStages(&payload)
 	return &payload, nil
 }
 
@@ -523,19 +533,14 @@ func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, er
 }
 
 func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
-	resp, err := g.client.Get(g.participantsEndpoint)
+	// Effective/current epoch (not latest): during main PoC latest advances
+	// while inference still routes against the still-serving cohort.
+	epochIndex, err := g.fetchEffectiveEpochIndex()
 	if err != nil {
 		return nil, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
-		return nil, fmt.Errorf("current participants status %d", resp.StatusCode)
-	}
-
-	var payload chainCurrentParticipantsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
+	group, err := g.fetchActiveParticipantsGroup(epochIndex)
+	if err != nil {
 		return nil, err
 	}
 
@@ -555,17 +560,17 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 
 	state := &participantsState{
 		preservedByModel:   make(map[string][]string),
-		weights:            make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		weights:            make(map[string]float64, len(group.Participants)),
 		weightsByModel:     make(map[string]map[string]float64),
-		fullWeights:        make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		fullWeights:        make(map[string]float64, len(group.Participants)),
 		fullWeightsByModel: make(map[string]map[string]float64),
-		inferenceURLs:      make(map[string]string, len(payload.ActiveParticipants.Participants)),
-		nodesByParticipant: make(map[string][]participantNode, len(payload.ActiveParticipants.Participants)),
+		inferenceURLs:      make(map[string]string, len(group.Participants)),
+		nodesByParticipant: make(map[string][]participantNode, len(group.Participants)),
 	}
-	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
+	seenPreserved := make(map[string]struct{}, len(group.Participants))
 	seenPreservedByModel := make(map[string]map[string]struct{})
-	seenExcluded := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
-	for _, participant := range payload.ActiveParticipants.Participants {
+	seenExcluded := make(map[string]struct{}, len(group.Participants))
+	for _, participant := range group.Participants {
 		key := strings.TrimSpace(participant.Index)
 		if key == "" {
 			// A participant with no chain Index is not addressable
