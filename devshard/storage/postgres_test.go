@@ -69,7 +69,19 @@ func newTestPostgres(t *testing.T) *Postgres {
 	pg, err := NewPostgres(context.Background())
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = pg.Close() })
+	require.NoError(t, pg.WaitReady(context.Background()))
 	return pg
+}
+
+// markPostgresIndexReadyForTest marks a manually constructed *Postgres as
+// index-ready so escrow-keyed methods (CreateSession, SaveSnapshot, …) do not
+// block on waitReadyForOp. NewPostgres already starts the async rebuild; this
+// is only for tests that wire pool/maps directly.
+func markPostgresIndexReadyForTest(pg *Postgres) {
+	if pg.readyCh == nil {
+		pg.readyCh = make(chan struct{})
+	}
+	pg.markIndexDone(nil)
 }
 
 func captureStorageLogs(t *testing.T) *bytes.Buffer {
@@ -458,6 +470,179 @@ func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {
 	canceled, cancelWait := context.WithCancel(context.Background())
 	cancelWait()
 	require.Error(t, pg.WaitReady(canceled))
+}
+
+func TestPostgres_LookupEpoch_FillsFromDurableIndex(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	pg1, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	require.NoError(t, pg1.WaitReady(ctx))
+	require.NoError(t, pg1.CreateSession(paramsForEpoch("peer-created", 7)))
+	require.NoError(t, pg1.Close())
+
+	// Fresh handle: index rebuild loads the row. Clear the in-memory map to
+	// simulate a peer that created the session after our rebuild finished.
+	pg2, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer pg2.Close()
+	require.NoError(t, pg2.WaitReady(ctx))
+
+	pg2.mu.Lock()
+	delete(pg2.escrowIdx, "peer-created")
+	pg2.mu.Unlock()
+	require.False(t, func() bool {
+		pg2.mu.RLock()
+		defer pg2.mu.RUnlock()
+		_, ok := pg2.escrowIdx["peer-created"]
+		return ok
+	}())
+
+	meta, err := pg2.GetSessionMeta("peer-created")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), meta.EpochID)
+	require.True(t, pg2.HasEscrow("peer-created"),
+		"miss must backfill escrowIdx from durable session_index")
+}
+
+// TestPostgres_HAPeerCreateAfterBootIndex_StalesMemoryAndBackfills reproduces the
+// multi-host race fixed for warm /mempool: instance A finishes async
+// indexExisting, then peer B CreateSession's a new escrow. A's in-memory
+// escrowIdx stays stale until lookupEpoch reads devshard_session_index.
+func TestPostgres_HAPeerCreateAfterBootIndex_StalesMemoryAndBackfills(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	// A is mid-lifecycle after boot: connect + migrate done, index rebuild done.
+	starter, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer starter.Close()
+	require.NoError(t, starter.WaitReady(ctx))
+
+	// B is a second process handle on the same Postgres (HA peer).
+	peer, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer peer.Close()
+	require.NoError(t, peer.WaitReady(ctx))
+
+	const (
+		escrowID = "ha-peer-created-after-sibling-boot-index"
+		epochID  = uint64(42)
+	)
+
+	// Peer accepts a new session while starter's boot-time index is already a
+	// finished snapshot — starter.escrowIdx will not include this escrow.
+	require.NoError(t, peer.CreateSession(paramsForEpoch(escrowID, epochID)))
+
+	starter.mu.RLock()
+	_, inMem := starter.escrowIdx[escrowID]
+	starter.mu.RUnlock()
+	require.False(t, inMem,
+		"starter boot index must be outdated after peer CreateSession")
+
+	// SessionServerExisting / warm paths call GetSessionMeta → lookupEpoch.
+	// Without durable backfill this returned "session not found".
+	meta, err := starter.GetSessionMeta(escrowID)
+	require.NoError(t, err)
+	require.Equal(t, epochID, meta.EpochID)
+	require.True(t, starter.HasEscrow(escrowID))
+
+	starter.mu.RLock()
+	filled, ok := starter.escrowIdx[escrowID]
+	starter.mu.RUnlock()
+	require.True(t, ok, "lookup must backfill escrowIdx from durable index")
+	require.Equal(t, epochID, filled)
+}
+
+// TestPostgres_HAPeerCreateWhileSiblingIndexRebuild_StillVisibleAfterReady covers
+// the overlapping-start window: peer CreateSession while the sibling is still
+// inside indexExisting (blocked in the test hook). When the rebuild runs after
+// the create, the durable row is present; a later peer create after Ready still
+// requires durable backfill on the starter.
+func TestPostgres_HAPeerCreateWhileSiblingIndexRebuild_StillVisibleAfterReady(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+	ctx := context.Background()
+
+	peer, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer peer.Close()
+	require.NoError(t, peer.WaitReady(ctx))
+
+	entered := make(chan struct{})
+	release := make(chan struct{})
+	indexExistingHook = func(context.Context) {
+		close(entered)
+		<-release
+	}
+	t.Cleanup(func() {
+		indexExistingHook = nil
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	starterErr := make(chan error, 1)
+	var starter *Postgres
+	go func() {
+		pg, err := NewPostgres(ctx)
+		if err != nil {
+			starterErr <- err
+			return
+		}
+		starter = pg
+		starterErr <- nil
+	}()
+
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("starter index rebuild did not start")
+	}
+	select {
+	case err := <-starterErr:
+		require.NoError(t, err, "NewPostgres must return before index finishes")
+	case <-time.After(5 * time.Second):
+		t.Fatal("NewPostgres did not return while index was blocked")
+	}
+	require.NotNil(t, starter)
+	defer starter.Close()
+	require.False(t, starter.Ready(), "starter still indexing")
+
+	const (
+		duringEscrow = "created-while-sibling-indexing"
+		duringEpoch  = uint64(11)
+		afterEscrow  = "created-after-sibling-ready"
+		afterEpoch   = uint64(12)
+	)
+	require.NoError(t, peer.CreateSession(paramsForEpoch(duringEscrow, duringEpoch)))
+
+	close(release)
+	require.NoError(t, starter.WaitReady(ctx))
+
+	// Create that landed before indexExisting's scan must be in starter memory.
+	starter.mu.RLock()
+	duringMem, duringOK := starter.escrowIdx[duringEscrow]
+	starter.mu.RUnlock()
+	require.True(t, duringOK, "indexExisting after peer create must load durable row")
+	require.Equal(t, duringEpoch, duringMem)
+
+	// Post-ready peer create is the stale-index race: memory miss + durable hit.
+	require.NoError(t, peer.CreateSession(paramsForEpoch(afterEscrow, afterEpoch)))
+	starter.mu.RLock()
+	_, afterInMem := starter.escrowIdx[afterEscrow]
+	starter.mu.RUnlock()
+	require.False(t, afterInMem, "post-ready peer create must leave starter memory stale")
+
+	meta, err := starter.GetSessionMeta(afterEscrow)
+	require.NoError(t, err)
+	require.Equal(t, afterEpoch, meta.EpochID)
+	require.True(t, starter.HasEscrow(afterEscrow))
 }
 
 func TestMigrateLegacy_IntoPostgresStorage(t *testing.T) {

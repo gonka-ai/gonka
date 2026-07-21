@@ -496,12 +496,38 @@ func (s *Postgres) lookupEpoch(escrowID string) (uint64, error) {
 		return 0, err
 	}
 	s.mu.RLock()
-	defer s.mu.RUnlock()
 	epochID, ok := s.escrowIdx[escrowID]
-	if !ok {
-		return 0, fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+	s.mu.RUnlock()
+	if ok {
+		return epochID, nil
 	}
-	return epochID, nil
+
+	// HA / multi-instance: peers may CreateSession after our boot-time index
+	// rebuild. Fill the in-memory map from the durable index on miss so
+	// SessionServerExisting (/mempool warm) can recover without a restart.
+	ctx, cancel := s.opCtx()
+	defer cancel()
+	var diskEpoch uint64
+	err := s.pool.QueryRow(ctx,
+		`SELECT epoch_id FROM devshard_session_index WHERE escrow_id = $1`,
+		escrowID,
+	).Scan(&diskEpoch)
+	if err != nil {
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, fmt.Errorf("%w: %s", ErrSessionNotFound, escrowID)
+		}
+		return 0, fmt.Errorf("lookup session index for %s: %w", escrowID, err)
+	}
+
+	s.mu.Lock()
+	if existing, ok := s.escrowIdx[escrowID]; ok {
+		s.mu.Unlock()
+		return existing, nil
+	}
+	s.escrowIdx[escrowID] = diskEpoch
+	s.knownEpochs[diskEpoch] = struct{}{}
+	s.mu.Unlock()
+	return diskEpoch, nil
 }
 
 // HasEscrow reports whether escrowID is present in the in-memory routing index
