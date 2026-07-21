@@ -111,6 +111,15 @@ func (m *HostManager) SetAvailabilityProvider(p devshardpkg.AvailabilityProvider
 	m.availability = p
 }
 
+// StorageReady reports whether the backing storage is ready to serve. When the
+// store does not expose readiness (e.g. pure SQLite), it is considered ready.
+func (m *HostManager) StorageReady() bool {
+	if r, ok := m.store.(interface{ Ready() bool }); ok {
+		return r.Ready()
+	}
+	return true
+}
+
 // SetMaxNonceProvider enforces chain max_nonce on every host.
 func (m *HostManager) SetMaxNonceProvider(p devshardpkg.MaxNonceProvider) {
 	m.maxNonce = p

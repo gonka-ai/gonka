@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"strconv"
 	"strings"
 	"sync"
@@ -28,12 +29,23 @@ import (
 // against both. A small unpartitioned escrowID -> epochID index enforces the
 // mainnet-pinned mapping, and the in-memory copy lets escrow-keyed methods
 // route to the right partition without scanning.
+//
+// Connect and index rebuild are separate: NewPostgres returns after pool +
+// migrate succeed, while indexExisting runs in the background. Callers must
+// WaitReady (or use a factory helper that does) before treating the handle as
+// serving; escrow-keyed methods also WaitReady so requests block until rebuild
+// finishes or fails.
 type Postgres struct {
 	pool *pgxpool.Pool
 
 	mu          sync.RWMutex
 	knownEpochs map[uint64]struct{}
 	escrowIdx   map[string]uint64
+
+	readyCh     chan struct{}
+	readyOnce   sync.Once
+	indexErr    error
+	indexCancel context.CancelFunc
 }
 
 const (
@@ -53,6 +65,9 @@ const (
 	// after a failed (often timed-out) create, so it must not extend the lock
 	// hold time by another full op timeout during an outage.
 	postgresLivePresenceTimeout = 2 * time.Second
+	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
+	// devshard_session_index so a large divergence does not hold one giant lock.
+	postgresIndexRepairBatchSize = 1000
 )
 
 const (
@@ -112,7 +127,8 @@ func pgValidationLeasesPartition(epochID uint64) string {
 
 // NewPostgres opens a Postgres-backed Storage using the standard libpq env
 // vars (PGHOST, PGPORT, PGDATABASE, PGUSER, PGPASSWORD). Schema is created
-// idempotently and the escrow index is rebuilt by scanning devshard_sessions.
+// idempotently. The escrow index is rebuilt asynchronously; use WaitReady
+// (bounded by PG_INDEX_TIMEOUT) before promote/boot paths that need ownership.
 func NewPostgres(ctx context.Context) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars
 	if err != nil {
@@ -143,83 +159,271 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 		pool:        pool,
 		knownEpochs: make(map[uint64]struct{}),
 		escrowIdx:   make(map[string]uint64),
+		readyCh:     make(chan struct{}),
 	}
-	if err := s.indexExisting(ctx); err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("index existing sessions: %w", err)
-	}
+	s.startIndexRebuild()
 	return s, nil
 }
 
-func (s *Postgres) indexExisting(ctx context.Context) error {
-	sessionsOnDisk := make(map[string]uint64)
-	rows, err := s.pool.Query(ctx, `SELECT epoch_id, escrow_id FROM devshard_sessions`)
-	if err != nil {
-		return err
-	}
-	for rows.Next() {
-		var epochID uint64
-		var escrowID string
-		if err := rows.Scan(&epochID, &escrowID); err != nil {
-			rows.Close()
-			return err
-		}
-		if existingEpoch, ok := sessionsOnDisk[escrowID]; ok && existingEpoch != epochID {
-			rows.Close()
-			return fmt.Errorf("%w: escrow %s exists in epochs %d and %d",
-				ErrSessionEpochConflict, escrowID, existingEpoch, epochID)
-		}
-		sessionsOnDisk[escrowID] = epochID
-	}
-	rows.Close()
-	if err := rows.Err(); err != nil {
-		return err
-	}
+func (s *Postgres) startIndexRebuild() {
+	indexCtx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.indexCancel = cancel
+	s.mu.Unlock()
 
-	indexRows, err := s.pool.Query(ctx, `SELECT escrow_id, epoch_id FROM devshard_session_index`)
-	if err != nil {
-		return err
-	}
-	for indexRows.Next() {
-		var escrowID string
-		var epochID uint64
-		if err := indexRows.Scan(&escrowID, &epochID); err != nil {
-			indexRows.Close()
-			return err
-		}
-		if diskEpoch, ok := sessionsOnDisk[escrowID]; ok && diskEpoch == epochID {
-			continue
-		}
-		if _, err := s.pool.Exec(ctx,
-			`DELETE FROM devshard_session_index WHERE escrow_id = $1 AND epoch_id = $2`,
-			escrowID, epochID,
-		); err != nil {
-			indexRows.Close()
-			return fmt.Errorf("remove stale session index for %s: %w", escrowID, err)
-		}
-	}
-	indexRows.Close()
-	if err := indexRows.Err(); err != nil {
-		return err
-	}
+	go func() {
+		timeoutCtx, timeoutCancel := context.WithTimeout(indexCtx, pgIndexTimeout())
+		defer timeoutCancel()
 
-	for escrowID, epochID := range sessionsOnDisk {
-		if _, err := s.pool.Exec(ctx,
-			`INSERT INTO devshard_session_index (escrow_id, epoch_id)
-			 VALUES ($1, $2)
-			 ON CONFLICT (escrow_id) DO NOTHING`,
-			escrowID, epochID,
-		); err != nil {
-			return fmt.Errorf("repair session index for %s: %w", escrowID, err)
+		start := time.Now()
+		if indexExistingHook != nil {
+			indexExistingHook(timeoutCtx)
 		}
-		s.escrowIdx[escrowID] = epochID
-		s.knownEpochs[epochID] = struct{}{}
+		err := s.indexExisting(timeoutCtx)
+		if err != nil {
+			slog.Warn("devshard storage: postgres session index rebuild failed",
+				"error", err, "duration", time.Since(start))
+		} else {
+			s.mu.RLock()
+			n := len(s.escrowIdx)
+			s.mu.RUnlock()
+			slog.Info("devshard storage: postgres session index rebuild finished",
+				"duration", time.Since(start), "sessions", n)
+		}
+		s.markIndexDone(err)
+	}()
+}
+
+// indexExistingHook is set by tests to delay or observe index rebuild.
+var indexExistingHook func(context.Context)
+
+func (s *Postgres) markIndexDone(err error) {
+	s.mu.Lock()
+	s.indexErr = err
+	s.mu.Unlock()
+	s.readyOnce.Do(func() { close(s.readyCh) })
+}
+
+// WaitReady blocks until the session index rebuild finishes or ctx is done.
+// On rebuild failure it returns the index error (handle must not be promoted).
+func (s *Postgres) WaitReady(ctx context.Context) error {
+	select {
+	case <-s.readyCh:
+		return s.indexReadyErr()
+	case <-ctx.Done():
+		select {
+		case <-s.readyCh:
+			return s.indexReadyErr()
+		default:
+			return fmt.Errorf("wait for postgres session index: %w", ctx.Err())
+		}
+	}
+}
+
+func (s *Postgres) indexReadyErr() error {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.indexErr != nil {
+		return fmt.Errorf("index existing sessions: %w", s.indexErr)
 	}
 	return nil
 }
 
-// Close releases the pool. Subsequent calls return immediately.
+// Ready reports whether the session index rebuild has completed successfully.
+func (s *Postgres) Ready() bool {
+	select {
+	case <-s.readyCh:
+		return s.indexReadyErr() == nil
+	default:
+		return false
+	}
+}
+
+// waitReadyForOp gates an escrow-keyed operation on the session-index rebuild
+// using a bounded budget (postgresOpTimeout) instead of blocking indefinitely.
+// A still-in-progress rebuild returns ErrStorageIndexRebuilding (retryable /
+// 503); a failed rebuild returns the underlying index error.
+func (s *Postgres) waitReadyForOp() error {
+	select {
+	case <-s.readyCh:
+		return s.indexReadyErr()
+	default:
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), postgresOpTimeout)
+	defer cancel()
+	if err := s.WaitReady(ctx); err != nil {
+		if errors.Is(err, context.DeadlineExceeded) || errors.Is(err, context.Canceled) {
+			return ErrStorageIndexRebuilding
+		}
+		return err
+	}
+	return nil
+}
+
+func (s *Postgres) indexExisting(ctx context.Context) error {
+	sessionsOnDisk, err := s.loadSessionsForIndex(ctx)
+	if err != nil {
+		return err
+	}
+
+	staleEscrows, staleEpochs, indexedOK, err := s.diffSessionIndex(ctx, sessionsOnDisk)
+	if err != nil {
+		return err
+	}
+
+	if err := s.deleteStaleSessionIndex(ctx, staleEscrows, staleEpochs); err != nil {
+		return err
+	}
+
+	missingEscrows, missingEpochs := missingSessionIndexRows(sessionsOnDisk, indexedOK)
+	if err := s.insertMissingSessionIndex(ctx, missingEscrows, missingEpochs); err != nil {
+		return err
+	}
+
+	// Publish the rebuilt routing index atomically. Readers are gated on
+	// readyCh, but populate under the lock anyway so the maps are never mutated
+	// off-lock (keeps every escrowIdx/knownEpochs access uniformly synchronized).
+	knownEpochs := make(map[uint64]struct{})
+	escrowIdx := make(map[string]uint64, len(sessionsOnDisk))
+	for escrowID, epochID := range sessionsOnDisk {
+		escrowIdx[escrowID] = epochID
+		knownEpochs[epochID] = struct{}{}
+	}
+	s.mu.Lock()
+	s.escrowIdx = escrowIdx
+	s.knownEpochs = knownEpochs
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *Postgres) loadSessionsForIndex(ctx context.Context) (map[string]uint64, error) {
+	sessionsOnDisk := make(map[string]uint64)
+	rows, err := s.pool.Query(ctx, `SELECT epoch_id, escrow_id FROM devshard_sessions`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var epochID uint64
+		var escrowID string
+		if err := rows.Scan(&epochID, &escrowID); err != nil {
+			return nil, err
+		}
+		if existingEpoch, ok := sessionsOnDisk[escrowID]; ok && existingEpoch != epochID {
+			return nil, fmt.Errorf("%w: escrow %s exists in epochs %d and %d",
+				ErrSessionEpochConflict, escrowID, existingEpoch, epochID)
+		}
+		sessionsOnDisk[escrowID] = epochID
+	}
+	return sessionsOnDisk, rows.Err()
+}
+
+// diffSessionIndex compares the durable index to sessionsOnDisk. Matching rows
+// are recorded in indexedOK so the repair INSERT can skip them. Index rows
+// with no matching session (or a wrong epoch) are returned for batch delete.
+func (s *Postgres) diffSessionIndex(
+	ctx context.Context,
+	sessionsOnDisk map[string]uint64,
+) (staleEscrows []string, staleEpochs []int64, indexedOK map[string]struct{}, err error) {
+	indexedOK = make(map[string]struct{})
+	indexRows, err := s.pool.Query(ctx, `SELECT escrow_id, epoch_id FROM devshard_session_index`)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	defer indexRows.Close()
+	for indexRows.Next() {
+		var escrowID string
+		var epochID uint64
+		if err := indexRows.Scan(&escrowID, &epochID); err != nil {
+			return nil, nil, nil, err
+		}
+		if diskEpoch, ok := sessionsOnDisk[escrowID]; ok && diskEpoch == epochID {
+			indexedOK[escrowID] = struct{}{}
+			continue
+		}
+		staleEscrows = append(staleEscrows, escrowID)
+		staleEpochs = append(staleEpochs, int64(epochID))
+	}
+	if err := indexRows.Err(); err != nil {
+		return nil, nil, nil, err
+	}
+	return staleEscrows, staleEpochs, indexedOK, nil
+}
+
+func missingSessionIndexRows(
+	sessionsOnDisk map[string]uint64,
+	indexedOK map[string]struct{},
+) (escrows []string, epochs []int64) {
+	for escrowID, epochID := range sessionsOnDisk {
+		if _, ok := indexedOK[escrowID]; ok {
+			continue
+		}
+		escrows = append(escrows, escrowID)
+		epochs = append(epochs, int64(epochID))
+	}
+	return escrows, epochs
+}
+
+// forEachEscrowEpochBatch invokes fn on each chunk of at most
+// postgresIndexRepairBatchSize (1000) paired escrow/epoch rows.
+func forEachEscrowEpochBatch(escrows []string, epochs []int64, fn func([]string, []int64) error) error {
+	if len(escrows) != len(epochs) {
+		return fmt.Errorf("escrow/epoch batch length mismatch: %d vs %d", len(escrows), len(epochs))
+	}
+	for start := 0; start < len(escrows); start += postgresIndexRepairBatchSize {
+		end := start + postgresIndexRepairBatchSize
+		if end > len(escrows) {
+			end = len(escrows)
+		}
+		if err := fn(escrows[start:end], epochs[start:end]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Postgres) deleteStaleSessionIndex(ctx context.Context, escrows []string, epochs []int64) error {
+	return forEachEscrowEpochBatch(escrows, epochs, func(batchEscrows []string, batchEpochs []int64) error {
+		if _, err := s.pool.Exec(ctx,
+			`DELETE FROM devshard_session_index AS i
+			 USING unnest($1::text[], $2::bigint[]) AS t(escrow_id, epoch_id)
+			 WHERE i.escrow_id = t.escrow_id AND i.epoch_id = t.epoch_id`,
+			batchEscrows, batchEpochs,
+		); err != nil {
+			return fmt.Errorf("remove stale session index batch: %w", err)
+		}
+		return nil
+	})
+}
+
+func (s *Postgres) insertMissingSessionIndex(ctx context.Context, escrows []string, epochs []int64) error {
+	return forEachEscrowEpochBatch(escrows, epochs, func(batchEscrows []string, batchEpochs []int64) error {
+		if _, err := s.pool.Exec(ctx,
+			`INSERT INTO devshard_session_index (escrow_id, epoch_id)
+			 SELECT t.escrow_id, t.epoch_id
+			 FROM unnest($1::text[], $2::bigint[]) AS t(escrow_id, epoch_id)
+			 ON CONFLICT (escrow_id) DO NOTHING`,
+			batchEscrows, batchEpochs,
+		); err != nil {
+			return fmt.Errorf("repair session index batch: %w", err)
+		}
+		return nil
+	})
+}
+
+// Close cancels an in-flight index rebuild, waits for it to finish, then
+// releases the pool. Subsequent calls return immediately.
 func (s *Postgres) Close() error {
+	s.mu.Lock()
+	cancel := s.indexCancel
+	s.mu.Unlock()
+	if cancel != nil {
+		cancel()
+	}
+	select {
+	case <-s.readyCh:
+	case <-time.After(postgresOpTimeout):
+	}
 	s.pool.Close()
 	return nil
 }
@@ -288,6 +492,9 @@ func (s *Postgres) ensurePartition(ctx context.Context, epochID uint64) error {
 }
 
 func (s *Postgres) lookupEpoch(escrowID string) (uint64, error) {
+	if err := s.waitReadyForOp(); err != nil {
+		return 0, err
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	epochID, ok := s.escrowIdx[escrowID]
@@ -310,6 +517,9 @@ func (s *Postgres) HasEscrow(escrowID string) bool {
 // and by prune, so this is an accurate emptiness check without a round trip.
 // The hybrid router uses it to clear the .pg-bound marker once PG is drained.
 func (s *Postgres) HasAnySessions() bool {
+	if err := s.waitReadyForOp(); err != nil {
+		return false
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	return len(s.escrowIdx) > 0
@@ -317,6 +527,9 @@ func (s *Postgres) HasAnySessions() bool {
 
 // EscrowIDs returns a snapshot of escrows in the in-memory routing index.
 func (s *Postgres) EscrowIDs() []string {
+	if err := s.waitReadyForOp(); err != nil {
+		return nil
+	}
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	ids := make([]string, 0, len(s.escrowIdx))
@@ -331,6 +544,9 @@ func (s *Postgres) EscrowIDs() []string {
 // a timed-out CreateSession may have committed server-side without updating
 // the in-memory index, so emptiness must be proven against the DB, not RAM.
 func (s *Postgres) HasAnySessionsLive() (bool, error) {
+	if err := s.waitReadyForOp(); err != nil {
+		return false, err
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), postgresLivePresenceTimeout)
 	defer cancel()
 	var exists bool
@@ -349,6 +565,9 @@ func (s *Postgres) opCtx() (context.Context, context.CancelFunc) {
 }
 
 func (s *Postgres) CreateSession(params CreateSessionParams) error {
+	if err := s.waitReadyForOp(); err != nil {
+		return err
+	}
 	params.Config = types.NormalizeSessionConfig(params.Config, len(params.Group))
 	configJSON, err := json.Marshal(params.Config)
 	if err != nil {
@@ -469,6 +688,9 @@ func (s *Postgres) MarkSettled(escrowID string) error {
 }
 
 func (s *Postgres) ListActiveSessions() ([]ActiveSession, error) {
+	if err := s.waitReadyForOp(); err != nil {
+		return nil, err
+	}
 	ctx, cancel := s.opCtx()
 	defer cancel()
 	rows, err := s.pool.Query(ctx,
@@ -1224,6 +1446,9 @@ func (s *Postgres) GetValidationObservability(escrowID string) ([]SlotValidation
 // escrow index entry that pointed at it. Other epochs are not touched.
 // No-op if the partitions do not exist.
 func (s *Postgres) PruneEpoch(epochID uint64) error {
+	if err := s.waitReadyForOp(); err != nil {
+		return err
+	}
 	ctx, cancel := s.opCtx()
 	defer cancel()
 	for _, partition := range []string{
@@ -1264,6 +1489,9 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 func (s *Postgres) pruneBefore(cutoff uint64) error {
 	if cutoff == 0 {
 		return nil
+	}
+	if err := s.waitReadyForOp(); err != nil {
+		return err
 	}
 
 	ctx, cancel := s.opCtx()

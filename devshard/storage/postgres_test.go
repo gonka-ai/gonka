@@ -290,6 +290,176 @@ func TestPostgres_RecoversIndexAcrossReopen(t *testing.T) {
 	require.Len(t, diffs, 2)
 }
 
+// TestPostgres_IndexRepair_MissingAndStale verifies indexExisting batch-repairs
+// a diverged durable index: orphan index rows are deleted, missing rows are
+// inserted, and already-matching rows are left alone.
+func TestPostgres_IndexRepair_MissingAndStale(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+
+	ctx := context.Background()
+	pg, err := NewPostgres(ctx)
+	require.NoError(t, err)
+
+	require.NoError(t, pg.CreateSession(paramsForEpoch("keep", 10)))
+	require.NoError(t, pg.CreateSession(paramsForEpoch("missing-idx", 11)))
+	require.NoError(t, pg.ensurePartition(ctx, 12))
+	_, err = pg.pool.Exec(ctx,
+		`INSERT INTO devshard_sessions
+		    (epoch_id, escrow_id, version, creator_addr, config_json, group_json, initial_balance)
+		 VALUES (12, 'orphan-session', 'v-test', 'creator', '{}', '[]', 1)`)
+	require.NoError(t, err)
+	// Drop the index row that CreateSession wrote for missing-idx, leave keep intact,
+	// and plant a stale index row with no matching session.
+	_, err = pg.pool.Exec(ctx, `DELETE FROM devshard_session_index WHERE escrow_id = $1`, "missing-idx")
+	require.NoError(t, err)
+	_, err = pg.pool.Exec(ctx,
+		`INSERT INTO devshard_session_index (escrow_id, epoch_id) VALUES ('stale-idx', 99)`)
+	require.NoError(t, err)
+	require.NoError(t, pg.Close())
+
+	pg2, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer pg2.Close()
+
+	require.True(t, pg2.HasEscrow("keep"))
+	require.True(t, pg2.HasEscrow("missing-idx"))
+	require.True(t, pg2.HasEscrow("orphan-session"))
+	require.False(t, pg2.HasEscrow("stale-idx"))
+
+	var keepEpoch, missingEpoch, orphanEpoch uint64
+	require.NoError(t, pg2.pool.QueryRow(ctx,
+		`SELECT epoch_id FROM devshard_session_index WHERE escrow_id = $1`, "keep",
+	).Scan(&keepEpoch))
+	require.NoError(t, pg2.pool.QueryRow(ctx,
+		`SELECT epoch_id FROM devshard_session_index WHERE escrow_id = $1`, "missing-idx",
+	).Scan(&missingEpoch))
+	require.NoError(t, pg2.pool.QueryRow(ctx,
+		`SELECT epoch_id FROM devshard_session_index WHERE escrow_id = $1`, "orphan-session",
+	).Scan(&orphanEpoch))
+	require.Equal(t, uint64(10), keepEpoch)
+	require.Equal(t, uint64(11), missingEpoch)
+	require.Equal(t, uint64(12), orphanEpoch)
+
+	var staleCount int
+	require.NoError(t, pg2.pool.QueryRow(ctx,
+		`SELECT COUNT(*) FROM devshard_session_index WHERE escrow_id = $1`, "stale-idx",
+	).Scan(&staleCount))
+	require.Equal(t, 0, staleCount)
+}
+
+func TestMissingSessionIndexRows_SkipsIndexed(t *testing.T) {
+	sessions := map[string]uint64{"a": 1, "b": 2, "c": 3}
+	indexedOK := map[string]struct{}{"a": {}, "c": {}}
+	escrows, epochs := missingSessionIndexRows(sessions, indexedOK)
+	require.Len(t, escrows, 1)
+	require.Equal(t, "b", escrows[0])
+	require.Equal(t, []int64{2}, epochs)
+}
+
+func TestForEachEscrowEpochBatch_ChunksBy1000(t *testing.T) {
+	const n = postgresIndexRepairBatchSize + 3
+	escrows := make([]string, n)
+	epochs := make([]int64, n)
+	for i := 0; i < n; i++ {
+		escrows[i] = "e"
+		epochs[i] = int64(i)
+	}
+	var sizes []int
+	err := forEachEscrowEpochBatch(escrows, epochs, func(batchEscrows []string, batchEpochs []int64) error {
+		require.Equal(t, len(batchEscrows), len(batchEpochs))
+		sizes = append(sizes, len(batchEscrows))
+		return nil
+	})
+	require.NoError(t, err)
+	require.Equal(t, []int{postgresIndexRepairBatchSize, 3}, sizes)
+}
+
+func TestPostgres_WaitReady_BlocksUntilIndex(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	indexExistingHook = func(ctx context.Context) {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}
+	t.Cleanup(func() { indexExistingHook = nil })
+
+	ctx := context.Background()
+	pg, err := NewPostgres(ctx)
+	require.NoError(t, err)
+	defer pg.Close()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("index hook did not start")
+	}
+	require.False(t, pg.Ready())
+
+	waitErr := make(chan error, 1)
+	go func() {
+		waitCtx, cancel := context.WithTimeout(ctx, 2*time.Second)
+		defer cancel()
+		waitErr <- pg.WaitReady(waitCtx)
+	}()
+
+	select {
+	case err := <-waitErr:
+		t.Fatalf("WaitReady returned before index release: %v", err)
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(release)
+	require.NoError(t, <-waitErr)
+	require.True(t, pg.Ready())
+	require.NoError(t, pg.CreateSession(paramsForEpoch("after-ready", 1)))
+}
+
+func TestPostgres_NewPostgres_ConnectBudgetDoesNotIncludeIndex(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	defer cleanup()
+
+	release := make(chan struct{})
+	entered := make(chan struct{})
+	indexExistingHook = func(ctx context.Context) {
+		close(entered)
+		select {
+		case <-release:
+		case <-ctx.Done():
+		}
+	}
+	t.Cleanup(func() {
+		indexExistingHook = nil
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+
+	connectCtx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	pg, err := NewPostgres(connectCtx)
+	require.NoError(t, err)
+	defer pg.Close()
+
+	select {
+	case <-entered:
+	case <-time.After(2 * time.Second):
+		t.Fatal("index hook did not start")
+	}
+	require.False(t, pg.Ready(), "index must still be in progress after NewPostgres returns")
+	canceled, cancelWait := context.WithCancel(context.Background())
+	cancelWait()
+	require.Error(t, pg.WaitReady(canceled))
+}
+
 func TestMigrateLegacy_IntoPostgresStorage(t *testing.T) {
 	cleanup := setupPostgresContainer(t)
 	defer cleanup()
