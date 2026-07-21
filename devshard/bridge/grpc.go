@@ -82,6 +82,7 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		CreatorAddress:            e.Creator,
 		AppHash:                   appHash,
 		Slots:                     slots,
+		ModelID:                   e.ModelId,
 		TokenPrice:                e.TokenPrice,
 		CreateDevshardFee:         e.CreateDevshardFee,
 		FeePerNonce:               e.FeePerNonce,

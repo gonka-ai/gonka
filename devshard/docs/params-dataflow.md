@@ -32,7 +32,7 @@ HTTP/storage key is the id. First bind calls **`GetEscrow(escrowID)`** once per 
 | **`inference_seal_grace_nonces`**, **`inference_seal_grace_seconds`** | Snapshotted at escrow create from governance defaults (default grace seconds: **3600** / 1 hour); hashed into state root / auto-seal |
 | **`validation_rate`** | Consensus-sensitive; snapshotted at escrow create (default **5000** bps when unset) |
 | **`vote_threshold_factor`** → `VoteThreshold` | Snapshotted at escrow create; derived at bind: `floor(groupSize * factor / 100)`; `factor == 0` → `groupSize / 2` |
-| `settled`, `model_id`, `amount` | Operational / display |
+| `settled`, `model_id`, `amount` | Operational / display; gateway wires `model_id` into runtime routing at bind |
 
 The bridge (`ChainBridge`, `RESTBridge`) is a **pure escrow query** — it does **not** call `QueryParams` or attach governance defaults to `EscrowInfo`. `bridge.SessionConfigAtBind` maps the escrow row into `SessionConfig`.
 

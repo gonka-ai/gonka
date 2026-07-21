@@ -258,11 +258,6 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, errRuntimePrivateKeyMissing)
 	}
 
-	model := cfg.Model
-	if model == "" {
-		model = deps.defaultModel
-	}
-
 	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
 	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil {
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
@@ -280,6 +275,11 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
+	escrow, err := br.GetEscrow(cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: get escrow: %w", cfg.ID, err)
+	}
+	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:    keyHex,
@@ -288,6 +288,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		StoragePath:      cfg.StoragePath,
 		RoutePrefix:      routePrefix,
 		RequestAdmission: sharedParticipantRequestLimiter,
+		Escrow:           escrow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
@@ -3122,6 +3123,7 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 	if err != nil {
 		return record, err
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		return record, err
@@ -3383,6 +3385,7 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -3549,6 +3552,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -4264,6 +4268,59 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 		return strings.Compare(a.ID, b.ID)
 	})
 	return out, nil
+}
+
+// resolveRuntimeModel picks the gateway runtime model label.
+// On-chain model_id wins when present so routing matches host assignment.
+func resolveRuntimeModel(configured, chainModelID, defaultModel, escrowID string) string {
+	configured = strings.TrimSpace(configured)
+	chainModelID = strings.TrimSpace(chainModelID)
+	defaultModel = strings.TrimSpace(defaultModel)
+	if chainModelID != "" {
+		if configured != "" && configured != chainModelID {
+			log.Printf("runtime %s: configured model %q differs from on-chain model_id %q; using on-chain",
+				escrowID, configured, chainModelID)
+		}
+		return chainModelID
+	}
+	if configured != "" {
+		return configured
+	}
+	return defaultModel
+}
+
+// persistRuntimeModel updates gateway.db when buildRuntime reconciled the model
+// from chain. Best-effort: failures are logged and do not abort startup.
+func persistRuntimeModel(store *GatewayStore, state *GatewayState, escrowID, model string) {
+	if store == nil || strings.TrimSpace(escrowID) == "" {
+		return
+	}
+	model = strings.TrimSpace(model)
+	record, ok, err := store.GetDevshard(escrowID)
+	if err != nil {
+		log.Printf("runtime %s: load devshard to persist model %q: %v", escrowID, model, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(record.Model) == model {
+		return
+	}
+	record.Model = model
+	if err := store.UpsertDevshard(record); err != nil {
+		log.Printf("runtime %s: persist on-chain model %q: %v", escrowID, model, err)
+		return
+	}
+	if state != nil {
+		for i := range state.Devshards {
+			if state.Devshards[i].ID == escrowID {
+				state.Devshards[i].Model = model
+				break
+			}
+		}
+	}
+	log.Printf("runtime %s: persisted model from chain model_id=%q", escrowID, model)
 }
 
 func buildRuntimes(configs []RuntimeConfig, deps runtimeBuildDeps) ([]*devshardRuntime, error) {

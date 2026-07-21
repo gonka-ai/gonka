@@ -25,6 +25,9 @@ type HTTPSessionConfig struct {
 	StreamCallback   func(nonce uint64, line string) // optional: receives raw SSE data lines during inference
 	RoutePrefix      string                          // HTTP path prefix used to reach hosts; default devshard.DefaultRoutePrefix()
 	RequestAdmission transport.RequestAdmissionController
+	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
+	// skips Bridge.GetEscrow and builds the group from this value.
+	Escrow *bridge.EscrowInfo
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
@@ -118,14 +121,17 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("resolve route version: %w", err)
 	}
 
-	group, err := bridge.BuildGroup(cfg.EscrowID, cfg.Bridge)
+	escrow := cfg.Escrow
+	if escrow == nil {
+		fetched, fetchErr := cfg.Bridge.GetEscrow(cfg.EscrowID)
+		if fetchErr != nil {
+			return nil, nil, fmt.Errorf("get escrow: %w", fetchErr)
+		}
+		escrow = fetched
+	}
+	group, err := bridge.BuildGroupFromEscrow(escrow)
 	if err != nil {
 		return nil, nil, fmt.Errorf("build group: %w", err)
-	}
-
-	escrow, err := cfg.Bridge.GetEscrow(cfg.EscrowID)
-	if err != nil {
-		return nil, nil, fmt.Errorf("get escrow: %w", err)
 	}
 
 	config := bridge.SessionConfigAtBind(len(group), escrow)

@@ -535,6 +535,10 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			continue
 		}
 		runtimes[res.idx] = res.rt
+		if res.rt != nil && strings.TrimSpace(res.rt.model) != strings.TrimSpace(cfg.Model) {
+			persistRuntimeModel(gatewayStore, gatewayState, cfg.ID, res.rt.model)
+			allCfgs[res.idx].Model = res.rt.model
+		}
 	}
 	if firstFatal != nil {
 		for _, rt := range runtimes {

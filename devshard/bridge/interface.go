@@ -24,6 +24,9 @@ type EscrowInfo struct {
 	CreatorAddress string
 	AppHash        []byte
 	Slots          []string // host addresses, len == DevshardGroupSize
+	// ModelID is the on-chain model_id from escrow create (host assignment).
+	// Used by the gateway for runtime routing; hosts ignore it at bind.
+	ModelID                   string
 	TokenPrice                uint64
 	CreateDevshardFee         uint64
 	FeePerNonce               uint64
