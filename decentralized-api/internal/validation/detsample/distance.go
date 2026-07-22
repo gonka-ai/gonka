@@ -10,7 +10,10 @@ package detsample
 // (gonka-ai/gonka#1199): MAE over the top-K support separates honest from a wrong
 // model by ~40-65x, while the sampled-token delta alone overlaps and cannot gate.
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // Stage2MAEFraudThreshold is the fraud cut on MAEDistance. PLACEHOLDER pending
 // Decision D (#1199): Experiments 4/5 put the honest floor near ~0.01 MAE and a
@@ -40,10 +43,17 @@ func MAEDistance(executor, validator []map[string]float64) float64 {
 			continue
 		}
 		val := validator[i]
+		// Sum over sorted token IDs so the float accumulation order matches the
+		// Python validator's (byte-exact cross-language distance).
+		tids := make([]string, 0, len(exec))
+		for tid := range exec {
+			tids = append(tids, tid)
+		}
+		sort.Strings(tids)
 		var sum float64
-		for tid, e := range exec {
+		for _, tid := range tids {
 			if v, ok := val[tid]; ok {
-				sum += math.Abs(e - v)
+				sum += math.Abs(exec[tid] - v)
 			} else {
 				sum += maeMissingPenalty
 			}
