@@ -144,6 +144,10 @@ Each transitional host is owned by a stable operation ID. The same ID advances
 `draining -> offline`; a separate replacement ID advances
 `joining -> active`. This prevents two SSH orchestrators from controlling the
 same host concurrently. A forced takeover is an explicit recovery action.
+The local operation lock is fail-fast rather than a queue: a second hostctl
+process receives the active action, PID, start time, and journal phase. An
+operator who wants to cancel a running pre-signal evacuation first interrupts
+that process, then runs `cancel`; after `term_requested`, evacuation must resume.
 
 ## Evacuation transaction
 
@@ -203,6 +207,8 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
   leases, force child/HTTP teardown, and continue process reap.
 - remote command timeout: retain the last durable hostctl phase and require an
   idempotent retry; no SSH call can block the whole operation indefinitely.
+- concurrent hostctl command: fail immediately with lock-owner and journal
+  diagnostics; never wait silently behind a long evacuation.
 - unknown legacy child inflight: versiond uses its conservative legacy drain
   cushion inside the same host shutdown budget.
 - repeated `SIGTERM`: keep draining; this makes SSH retries safe.

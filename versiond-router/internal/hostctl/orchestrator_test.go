@@ -6,9 +6,9 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
-	"syscall"
 	"testing"
 	"time"
 )
@@ -505,30 +505,79 @@ func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	}
 }
 
-func TestOperationLockHonorsContext(t *testing.T) {
+func TestOperationLockReportsOwnerWithoutWaiting(t *testing.T) {
 	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "locked")
-	lock, err := os.OpenFile(
-		orchestrator.config.JournalPath+".lock",
-		os.O_CREATE|os.O_RDWR,
-		0o600,
-	)
-	if err != nil {
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: 1,
+		OperationID:   "locked",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         "router_draining",
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
 		t.Fatal(err)
 	}
-	defer lock.Close()
-	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX); err != nil {
-		t.Fatal(err)
+	acquired := make(chan struct{})
+	release := make(chan struct{})
+	ownerDone := make(chan error, 1)
+	go func() {
+		ownerDone <- orchestrator.withOperationLock(
+			context.Background(),
+			"evacuate",
+			func() error {
+				close(acquired)
+				<-release
+				return nil
+			},
+		)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("operation owner did not acquire lock")
 	}
-	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
-	defer cancel()
-	err = orchestrator.withOperationLock(ctx, func() error {
+	started := time.Now()
+	err := orchestrator.withOperationLock(context.Background(), "cancel", func() error {
 		t.Fatal("operation ran while its lock was held")
 		return nil
 	})
-	if !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("lock error = %v, want context deadline", err)
+	if !errors.Is(err, errOperationBusy) {
+		t.Fatalf("lock error = %v, want operation busy", err)
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("busy lock returned after %s, want fail-fast", elapsed)
+	}
+	message := err.Error()
+	for _, want := range []string{
+		`owner_action="evacuate"`,
+		"owner_pid=" + strconv.Itoa(os.Getpid()),
+		`journal_phase="router_draining"`,
+		"commands do not queue",
+		"interrupt the owner",
+		"term_requested",
+	} {
+		if !strings.Contains(message, want) {
+			t.Fatalf("busy error %q does not contain %q", message, want)
+		}
+	}
+
+	close(release)
+	if err := <-ownerDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationLockHonorsCanceledContext(t *testing.T) {
+	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "lock-canceled")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := orchestrator.withOperationLock(ctx, "evacuate", func() error {
+		t.Fatal("operation ran with canceled context")
+		return nil
+	})
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("lock error = %v, want context canceled", err)
 	}
 }
 

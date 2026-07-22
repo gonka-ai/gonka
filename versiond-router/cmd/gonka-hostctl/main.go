@@ -6,14 +6,22 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"syscall"
 	"time"
 
 	"versiond-router/internal/hostctl"
 )
 
 func main() {
-	if err := run(context.Background(), os.Args[1:]); err != nil {
+	ctx, stop := signal.NotifyContext(
+		context.Background(),
+		os.Interrupt,
+		syscall.SIGTERM,
+	)
+	defer stop()
+	if err := run(ctx, os.Args[1:]); err != nil {
 		fmt.Fprintln(os.Stderr, "gonka-hostctl:", err)
 		os.Exit(1)
 	}

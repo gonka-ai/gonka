@@ -69,6 +69,15 @@ type Journal struct {
 	UpdatedAt             time.Time      `json:"updated_at"`
 }
 
+var errOperationBusy = errors.New("host operation is already running")
+
+type operationLockOwner struct {
+	OperationID string    `json:"operation_id"`
+	Action      string    `json:"action"`
+	PID         int       `json:"pid"`
+	StartedAt   time.Time `json:"started_at"`
+}
+
 type Orchestrator struct {
 	config          Config
 	remote          Remote
@@ -129,7 +138,7 @@ func validRuntime(runtime Runtime) bool {
 }
 
 func (o *Orchestrator) Evacuate(ctx context.Context) error {
-	return o.withOperationLock(ctx, func() error {
+	return o.withOperationLock(ctx, "evacuate", func() error {
 		return o.evacuate(ctx)
 	})
 }
@@ -235,7 +244,7 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 }
 
 func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
-	return o.withOperationLock(ctx, func() error {
+	return o.withOperationLock(ctx, "cancel", func() error {
 		journal, err := o.loadExistingJournal("evacuate")
 		if err != nil {
 			return err
@@ -295,7 +304,7 @@ func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
 }
 
 func (o *Orchestrator) Replace(ctx context.Context) error {
-	return o.withOperationLock(ctx, func() error {
+	return o.withOperationLock(ctx, "replace", func() error {
 		return o.replace(ctx)
 	})
 }
@@ -691,7 +700,14 @@ func (o *Orchestrator) operationScope() OperationScope {
 	}
 }
 
-func (o *Orchestrator) withOperationLock(ctx context.Context, fn func() error) error {
+func (o *Orchestrator) withOperationLock(
+	ctx context.Context,
+	action string,
+	fn func() error,
+) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	lockPath := o.config.JournalPath + ".lock"
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
@@ -701,20 +717,96 @@ func (o *Orchestrator) withOperationLock(ctx context.Context, fn func() error) e
 		return err
 	}
 	defer lock.Close()
-	for {
-		err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB)
-		if err == nil {
-			break
+	if err := syscall.Flock(int(lock.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+		if errors.Is(err, syscall.EWOULDBLOCK) || errors.Is(err, syscall.EAGAIN) {
+			return o.operationBusyError(lockPath, action)
 		}
-		if !errors.Is(err, syscall.EWOULDBLOCK) && !errors.Is(err, syscall.EAGAIN) {
-			return err
-		}
-		if err := wait(ctx, 100*time.Millisecond); err != nil {
-			return err
-		}
+		return err
 	}
 	defer syscall.Flock(int(lock.Fd()), syscall.LOCK_UN)
+	if err := writeOperationLockOwner(lock, operationLockOwner{
+		OperationID: o.config.OperationID,
+		Action:      action,
+		PID:         os.Getpid(),
+		StartedAt:   time.Now().UTC(),
+	}); err != nil {
+		return fmt.Errorf("write operation lock owner: %w", err)
+	}
 	return fn()
+}
+
+func (o *Orchestrator) operationBusyError(lockPath, requestedAction string) error {
+	details := []string{"operation_id=" + strconv.Quote(o.config.OperationID)}
+	if owner, err := readOperationLockOwner(lockPath); err == nil {
+		details = append(
+			details,
+			"owner_action="+strconv.Quote(owner.Action),
+			"owner_pid="+strconv.Itoa(owner.PID),
+			"owner_since="+owner.StartedAt.Format(time.RFC3339),
+		)
+	}
+	if phase := readOperationPhase(o.config.JournalPath); phase != "" {
+		details = append(details, "journal_phase="+strconv.Quote(phase))
+	}
+
+	guidance := "wait for or interrupt the owner, then retry " + requestedAction
+	if requestedAction == "cancel" {
+		guidance += "; cancellation is valid only before term_requested, " +
+			"otherwise resume evacuate"
+	}
+	return fmt.Errorf(
+		"%w: %s; commands do not queue behind a live owner; %s",
+		errOperationBusy,
+		strings.Join(details, " "),
+		guidance,
+	)
+}
+
+func writeOperationLockOwner(lock *os.File, owner operationLockOwner) error {
+	data, err := json.Marshal(owner)
+	if err != nil {
+		return err
+	}
+	data = append(data, '\n')
+	if err := lock.Truncate(0); err != nil {
+		return err
+	}
+	if _, err := lock.Seek(0, 0); err != nil {
+		return err
+	}
+	if _, err := lock.Write(data); err != nil {
+		return err
+	}
+	return lock.Sync()
+}
+
+func readOperationLockOwner(path string) (operationLockOwner, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return operationLockOwner{}, err
+	}
+	var owner operationLockOwner
+	if err := json.Unmarshal(data, &owner); err != nil {
+		return operationLockOwner{}, err
+	}
+	if owner.Action == "" || owner.PID <= 0 {
+		return operationLockOwner{}, errors.New("operation lock owner is incomplete")
+	}
+	return owner, nil
+}
+
+func readOperationPhase(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	var journal struct {
+		Phase string `json:"phase"`
+	}
+	if err := json.Unmarshal(data, &journal); err != nil {
+		return ""
+	}
+	return journal.Phase
 }
 
 func (o *Orchestrator) advance(journal *Journal, phase string) error {

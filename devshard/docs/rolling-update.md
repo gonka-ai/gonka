@@ -755,12 +755,15 @@ the request twice. Operators must use `gonka-hostctl` for planned maintenance.
 Before `SIGTERM`, every fresh or resumed operation repeats the idempotent router
 `drain` transition. If evacuation must be abandoned before the durable
 `term_requested` phase, run `gonka-hostctl cancel` with the same operation ID
-and scope. Cancellation is a durable compensation FSM: it records the intent,
-restores any disabled Docker restart policy, checkpoints that action, and then
-reactivates the upstream. A failed cancellation must be resumed with `cancel`;
-the forward evacuation FSM refuses to cross it. `term_requested` is persisted
-before the SSH signal command; at or after it, the operation must be resumed to
-`offline` because the remote outcome can be unknown.
+and scope. A second command never waits behind the active operation lock: it
+reports the owner action, PID, and journal phase. Interrupt a still-running
+pre-signal `evacuate` process before invoking `cancel`. Cancellation is a durable
+compensation FSM: it records the intent, restores any disabled Docker restart
+policy, checkpoints that action, and then reactivates the upstream. A failed
+cancellation must be resumed with `cancel`; the forward evacuation FSM refuses
+to cross it. `term_requested` is persisted before the SSH signal command; at or
+after it, the operation must be resumed to `offline` because the remote outcome
+can be unknown.
 
 After preparing a replacement container or unit, keep it out of the pool until
 the replacement transaction completes:

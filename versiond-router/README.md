@@ -195,6 +195,10 @@ SSH destination, runtime, and service scope; a retry with different targets is
 rejected.
 An operation-wide local file lock prevents two processes from replaying the
 same checkpoint and duplicating lifecycle steps.
+Commands do not queue behind that lock. A concurrent command exits immediately
+with the owner action, PID, start time, and current journal phase. To abandon an
+active pre-signal evacuation, interrupt its owning process and then run
+`cancel`. At or after `term_requested`, resume `evacuate` instead.
 
 If an operation cannot continue before `SIGTERM` was sent, it may be abandoned
 without leaving the cluster blocked:
@@ -287,8 +291,10 @@ inside its container, not on the administration machine.
 2. Rerun `gonka-hostctl evacuate` or `replace` with the original operation ID,
    flags, and journal path. Completed phases are not repeated.
 3. If evacuation must be abandoned before `term_requested`, run `gonka-hostctl
-   cancel` with the same operation ID and scope. If cancellation itself was
-   interrupted, rerun `cancel`, not `evacuate`.
+   cancel` with the same operation ID and scope. If the original `evacuate`
+   process still owns the operation lock, interrupt it first; `cancel` reports
+   the owner instead of waiting. If cancellation itself was interrupted, rerun
+   `cancel`, not `evacuate`.
 4. If `term_requested` is durable, finish evacuation. Never reactivate an
    upstream whose process may already be stopping.
 
