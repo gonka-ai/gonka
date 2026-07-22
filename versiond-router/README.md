@@ -150,19 +150,28 @@ Docker example:
 The command performs these ordered steps:
 
 1. Move the router host to `draining`, validate the nginx config, and reload.
-2. Poll `versiond:8080/healthz?summary=1` until the host is known idle or the
-   drain timeout expires.
-3. Reconfirm the router `draining` state before the first irreversible action.
-4. Capture the Docker restart policy once, reassert `restart=no`, send
-   `SIGTERM`, and wait for versiond to drain and reap its children.
-5. Send `SIGKILL` only if the kill grace expires.
+2. Reconfirm the router `draining` state before the first irreversible action.
+3. Capture the Docker restart policy once, reassert `restart=no`, and start a
+   managed stop with `SIGTERM`.
+4. Let versiond close its own admission and drain accepted requests, children,
+   and HTTP within `VERSIOND_HOST_SHUTDOWN_BUDGET`; on expiry it forces
+   remaining work and confirms child reap.
+5. Wait for versiond to exit; send `SIGKILL` only if the outer kill grace
+   expires.
 6. Move the router host to `offline`.
+
+Hostctl does not poll versiond in-flight counters. Those counters are internal
+to versiond and are consumed by its shutdown state machine. This avoids making
+the compatibility-oriented `/healthz` response part of the control-plane
+protocol.
 
 For systemd, set both runtime flags to `systemd`. The stop step uses
 `systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
 evacuation. Before router drain, hostctl requires `TimeoutStopSec` to cover the
-configured kill grace, `KillMode=control-group` or `mixed`, and
-`SendSIGKILL=yes`. Docker hostctl uses explicit `TERM`/`KILL` signals, so its
+configured kill grace, `KillMode=mixed`, and `SendSIGKILL=yes`.
+`KillMode=mixed` sends the initial `SIGTERM` only to versiond so it can drain
+its children, while systemd retains the whole control group for final timeout
+enforcement. Docker hostctl uses explicit `TERM`/`KILL` signals, so its
 kill grace is owned by hostctl. The separate preflight for an explicit
 `StopTimeout` protects external `docker stop`, Compose teardown, daemon
 shutdown, and redeploy from using Docker's short default. The supplied compose
@@ -174,7 +183,7 @@ For example, the systemd unit should include:
 ```ini
 [Service]
 TimeoutStopSec=30min
-KillMode=control-group
+KillMode=mixed
 SendSIGKILL=yes
 ```
 
@@ -232,9 +241,10 @@ still `offline`, then run:
 ```
 
 The replacement remains `joining` and therefore down in nginx while it starts.
-It becomes `active` only after the versioned health summary reports
-`state=serving`, `ready=true`, `accepting=true`, `available=true`,
-`reconciled=true`, `progressing=false`, and `degraded=false`.
+It becomes `active` only after `GET /ready` returns `200`. The readiness
+endpoint stays at `503` until versiond is serving, accepting traffic, has an
+available child, and is fully reconciled without a progressing or degraded
+condition.
 
 For Docker, replacement has no implicit restart-policy default. When reusing a
 service, pass its completed evacuation journal as above; the exact original
@@ -249,23 +259,26 @@ The orchestration flags default from these environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ROUTER_DRAIN_TIMEOUT` | `15m` | Maximum wait for known host idle or replacement readiness |
-| `ROUTER_DRAIN_POLL_INTERVAL` | `2s` | Health and process polling interval |
+| `ROUTER_READY_TIMEOUT` | `15m` | Maximum wait for replacement readiness |
+| `ROUTER_DRAIN_POLL_INTERVAL` | `2s` | Readiness and process polling interval |
 | `ROUTER_DRAIN_KILL_GRACE` | `30m` | Maximum wait after `SIGTERM` before the kill backstop |
 | `ROUTER_COMMAND_TIMEOUT` | `30s` | Maximum duration of one local or SSH command |
 
 Keep `ROUTER_DRAIN_KILL_GRACE` greater than the versiond shutdown budget. With
-the defaults it covers `VERSIOND_HOST_DRAIN_TIMEOUT` (`15m`) plus the child
-shutdown grace (`10m`) and an escalation cushion.
+the defaults it covers the single `VERSIOND_HOST_SHUTDOWN_BUDGET` (`25m`) and
+leaves five minutes for process reap and control-plane delays. Admission drain,
+child drain, graceful child stop, and HTTP shutdown all share that one versiond
+deadline; their timeouts are not added together. Forced reap uses the outer
+reserve rather than receiving another application timeout.
 
 Planned stops must use `gonka-hostctl`. A direct signal can close versiond
 admission after nginx has selected that upstream, producing `503`. Nginx does
 not retry an inference POST after it has been sent because replay can duplicate
 work.
 
-Use `--health-url` when versiond does not expose its summary at
-`http://127.0.0.1:8080/healthz?summary=1`. This URL is evaluated on the versiond
-host or inside its container, not on the administration machine.
+Use `--ready-url` when versiond does not expose readiness at
+`http://127.0.0.1:8080/ready`. This URL is evaluated on the versiond host or
+inside its container, not on the administration machine.
 
 ## Interrupted operations
 

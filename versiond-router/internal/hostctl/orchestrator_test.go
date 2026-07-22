@@ -19,7 +19,8 @@ type fakeRemote struct {
 	running            bool
 	runningProbeErrors int
 	stopOnTerm         bool
-	health             HealthSummary
+	ready              bool
+	readinessErrors    int
 	restartPolicyJSON  string
 	stopTimeout        string
 	activateErrors     int
@@ -35,9 +36,15 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 	case strings.Contains(joined, "gonka-routerctl host activate") && r.activateErrors > 0:
 		r.activateErrors--
 		return "", errors.New("transient router activation failure")
-	case strings.Contains(joined, "/healthz?summary=1"):
-		data, _ := json.Marshal(r.health)
-		return string(data), nil
+	case strings.Contains(joined, "127.0.0.1:8080/ready"):
+		if r.readinessErrors > 0 {
+			r.readinessErrors--
+			return "", errors.New("versiond is not ready")
+		}
+		if !r.ready {
+			return "", errors.New("versiond is not ready")
+		}
+		return "", nil
 	case strings.Contains(joined, "HostConfig.RestartPolicy"):
 		if r.restartPolicyJSON != "" {
 			return r.restartPolicyJSON + "\n", nil
@@ -73,10 +80,6 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 	remote := &fakeRemote{
 		running:    true,
 		stopOnTerm: true,
-		health: HealthSummary{
-			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, InflightKnown: true, Idle: true,
-		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "evacuate-order")
 	if err := orchestrator.Evacuate(context.Background()); err != nil {
@@ -86,7 +89,6 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 	calls := remote.callLog()
 	assertCallOrder(t, calls,
 		"gonka-routerctl host drain",
-		"/healthz?summary=1",
 		"gonka-routerctl host drain",
 		"docker update --restart=no",
 		"docker kill --signal TERM",
@@ -95,16 +97,26 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 	if strings.Contains(calls, "docker kill --signal KILL") {
 		t.Fatalf("graceful evacuation unexpectedly used SIGKILL:\n%s", calls)
 	}
+	if strings.Contains(calls, "/healthz") {
+		t.Fatalf("evacuation used health as a control-plane API:\n%s", calls)
+	}
 	assertJournalPhase(t, orchestrator.config.JournalPath, "complete")
+}
+
+func TestReplaceRetriesDedicatedReadinessProbe(t *testing.T) {
+	remote := &fakeRemote{ready: true, readinessErrors: 1}
+	orchestrator := newTestOrchestrator(t, remote, "replace-ready-retry")
+	if err := orchestrator.Replace(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if calls := remote.callLog(); strings.Count(calls, "127.0.0.1:8080/ready") < 2 {
+		t.Fatalf("replacement did not retry readiness:\n%s", calls)
+	}
 }
 
 func TestEvacuateUsesSIGKILLOnlyAfterGrace(t *testing.T) {
 	remote := &fakeRemote{
 		running: true,
-		health: HealthSummary{
-			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, InflightKnown: true, Idle: true,
-		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "evacuate-force")
 	orchestrator.config.KillGrace = 5 * time.Millisecond
@@ -116,13 +128,7 @@ func TestEvacuateUsesSIGKILLOnlyAfterGrace(t *testing.T) {
 }
 
 func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
-	remote := &fakeRemote{
-		health: HealthSummary{
-			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, Available: true, Reconciled: true,
-			InflightKnown: true, Idle: true,
-		},
-	}
+	remote := &fakeRemote{ready: true}
 	orchestrator := newTestOrchestrator(t, remote, "replace-order")
 	orchestrator.config.UpstreamAddress = "replacement-2"
 	if err := orchestrator.Replace(context.Background()); err != nil {
@@ -133,19 +139,13 @@ func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
 		"gonka-routerctl host join --operation-id replace-order --address replacement-2 versiond-2",
 		"docker update --restart=unless-stopped",
 		"docker start",
-		"/healthz?summary=1",
+		"127.0.0.1:8080/ready",
 		"gonka-routerctl host activate",
 	)
 }
 
 func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
-	remote := &fakeRemote{
-		health: HealthSummary{
-			SchemaVersion: 1, State: "serving", Ready: true,
-			Accepting: true, Available: true, Reconciled: true,
-			InflightKnown: true, Idle: true,
-		},
-	}
+	remote := &fakeRemote{ready: true}
 	orchestrator := newTestOrchestrator(t, remote, "replace-policy")
 	orchestrator.config.DockerRestartPolicy = ""
 	orchestrator.config.EvacuationJournal = filepath.Join(t.TempDir(), "evacuation.json")
@@ -301,9 +301,6 @@ func TestEvacuationReassertsDisabledRestartPolicyBeforeSignal(t *testing.T) {
 	remote := &fakeRemote{
 		running:    true,
 		stopOnTerm: true,
-		health: HealthSummary{
-			SchemaVersion: 1, InflightKnown: true, Idle: true,
-		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "restart-reassert")
 	journal := Journal{
@@ -330,32 +327,10 @@ func TestEvacuationReassertsDisabledRestartPolicyBeforeSignal(t *testing.T) {
 	)
 }
 
-func TestReplacementActivationRequiresFullConvergence(t *testing.T) {
-	health := HealthSummary{
-		SchemaVersion: 1,
-		State:         "serving",
-		Ready:         true,
-		Accepting:     true,
-		Available:     true,
-		Progressing:   true,
-	}
-	if health.readyForActivation() {
-		t.Fatal("progressing replacement was ready for router activation")
-	}
-	health.Progressing = false
-	health.Reconciled = true
-	if !health.readyForActivation() {
-		t.Fatal("fully reconciled replacement was not ready for router activation")
-	}
-}
-
 func TestProbeFailureBeforeSignalIntentCanBeCanceled(t *testing.T) {
 	remote := &fakeRemote{
 		running:            true,
 		runningProbeErrors: 1,
-		health: HealthSummary{
-			SchemaVersion: 1, InflightKnown: true, Idle: true,
-		},
 	}
 	orchestrator := newTestOrchestrator(t, remote, "cancel-probe-failure")
 	if err := orchestrator.Evacuate(context.Background()); err == nil {
@@ -467,7 +442,7 @@ func TestSystemdRuntimeValidatesContractAndUsesManagedStop(t *testing.T) {
 		func(_ context.Context, args ...string) (string, error) {
 			calls = append(calls, strings.Join(args, " "))
 			if len(args) >= 2 && args[0] == "systemctl" && args[1] == "show" {
-				return "TimeoutStopUSec=30min\nKillMode=control-group\nSendSIGKILL=yes\n", nil
+				return "TimeoutStopUSec=30min\nKillMode=mixed\nSendSIGKILL=yes\n", nil
 			}
 			return "", nil
 		},
@@ -485,9 +460,7 @@ func TestSystemdRuntimeValidatesContractAndUsesManagedStop(t *testing.T) {
 }
 
 func TestEvacuateResumesFromCheckpoint(t *testing.T) {
-	remote := &fakeRemote{
-		health: HealthSummary{SchemaVersion: 1, InflightKnown: true, Idle: true},
-	}
+	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "resume")
 	journal := Journal{
 		SchemaVersion: 1,
@@ -571,7 +544,7 @@ func newTestOrchestrator(t *testing.T, remote Remote, operationID string) *Orche
 		VersiondService:     "versiond-2",
 		OperationID:         operationID,
 		JournalPath:         filepath.Join(t.TempDir(), operationID+".json"),
-		DrainTimeout:        50 * time.Millisecond,
+		ReadyTimeout:        50 * time.Millisecond,
 		PollInterval:        time.Millisecond,
 		KillGrace:           50 * time.Millisecond,
 		DockerRestartPolicy: "unless-stopped",

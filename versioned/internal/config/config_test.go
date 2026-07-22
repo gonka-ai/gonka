@@ -40,8 +40,12 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.DrainKillGrace != DefaultDrainKillGrace {
 		t.Errorf("DrainKillGrace = %v, want %v", cfg.DrainKillGrace, DefaultDrainKillGrace)
 	}
-	if cfg.HostDrainTimeout != DefaultHostDrainTimeout {
-		t.Errorf("HostDrainTimeout = %v, want %v", cfg.HostDrainTimeout, DefaultHostDrainTimeout)
+	if cfg.HostShutdownBudget != DefaultHostShutdownBudget {
+		t.Errorf(
+			"HostShutdownBudget = %v, want %v",
+			cfg.HostShutdownBudget,
+			DefaultHostShutdownBudget,
+		)
 	}
 }
 
@@ -51,7 +55,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_BIN_DIR", "/tmp/bin")
 	t.Setenv("VERSIOND_DATA_DIR", "/tmp/data")
 	t.Setenv("VERSIOND_BINARY_NAME", "myapp")
-	t.Setenv("VERSIOND_HOST_DRAIN_TIMEOUT", "12m")
+	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "12m")
 
 	cfg, err := Load()
 	if err != nil {
@@ -66,8 +70,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.BinaryName != "myapp" {
 		t.Errorf("BinaryName = %q, want %q", cfg.BinaryName, "myapp")
 	}
-	if cfg.HostDrainTimeout != 12*time.Minute {
-		t.Errorf("HostDrainTimeout = %v, want %v", cfg.HostDrainTimeout, 12*time.Minute)
+	if cfg.HostShutdownBudget != 12*time.Minute {
+		t.Errorf("HostShutdownBudget = %v, want %v", cfg.HostShutdownBudget, 12*time.Minute)
 	}
 }
 

@@ -23,34 +23,11 @@ import (
 
 // VersiondHealthEntry mirrors versiond /healthz entries.
 type VersiondHealthEntry struct {
-	Name              string `json:"name"`
-	Port              int    `json:"port"`
-	Status            string `json:"status"`
-	SHA256            string `json:"sha256,omitempty"`
-	BinaryVersion     string `json:"binary_version,omitempty"`
-	ProxyInflight     int64  `json:"proxy_inflight"`
-	LifecycleInflight int64  `json:"lifecycle_inflight"`
-	InflightKnown     bool   `json:"inflight_known"`
-}
-
-type VersiondHealthSummary struct {
-	SchemaVersion     int                   `json:"schema_version"`
-	State             string                `json:"state"`
-	Ready             bool                  `json:"ready"`
-	Accepting         bool                  `json:"accepting"`
-	ProxyInflight     int64                 `json:"proxy_inflight"`
-	LifecycleInflight int64                 `json:"lifecycle_inflight"`
-	Inflight          int64                 `json:"inflight"`
-	InflightKnown     bool                  `json:"inflight_known"`
-	Idle              bool                  `json:"idle"`
-	Available         bool                  `json:"available"`
-	Progressing       bool                  `json:"progressing"`
-	Reconciled        bool                  `json:"reconciled"`
-	Degraded          bool                  `json:"degraded"`
-	DesiredChildren   int                   `json:"desired_children"`
-	RunningChildren   int                   `json:"running_children"`
-	ReconcileError    string                `json:"reconcile_error,omitempty"`
-	Children          []VersiondHealthEntry `json:"children"`
+	Name          string `json:"name"`
+	Port          int    `json:"port"`
+	Status        string `json:"status"`
+	SHA256        string `json:"sha256,omitempty"`
+	BinaryVersion string `json:"binary_version,omitempty"`
 }
 
 // WriteDevsharddZip writes a versiond-downloadable archive and returns its sha256.
@@ -123,16 +100,12 @@ func TryVersiondHealth(stack *Stack, service string) ([]VersiondHealthEntry, err
 	return entries, nil
 }
 
-func TryVersiondHealthSummary(stack *Stack, service string) (VersiondHealthSummary, error) {
-	out, err := stack.ComposeExecOutput(service, "wget", "-q", "-O", "-", "http://127.0.0.1:8080/healthz?summary=1")
-	if err != nil {
-		return VersiondHealthSummary{}, err
-	}
-	var summary VersiondHealthSummary
-	if err := json.Unmarshal([]byte(out), &summary); err != nil {
-		return VersiondHealthSummary{}, fmt.Errorf("versiond health summary %s: %w: %s", service, err, out)
-	}
-	return summary, nil
+func TryVersiondReady(stack *Stack, service string) error {
+	_, err := stack.ComposeExecOutput(
+		service,
+		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready",
+	)
+	return err
 }
 
 // HasVersiondHealthEntry reports whether health contains the wanted version state.

@@ -22,7 +22,7 @@ rolling updates remain a separate operation managed inside one live `versiond`.
    idempotent. Every child process is reaped before `versiond` exits.
 6. Only one host is evacuated at a time, and the last active HA upstream cannot
    be drained by the normal command.
-7. The external kill grace must exceed versiond's host-drain and child-stop
+7. The external kill grace must exceed versiond's single absolute shutdown
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
 8. An established request stays on its original nginx worker and versiond
    generation. A later request for the same HA escrow may recover on another
@@ -86,64 +86,39 @@ old worker processes finish established connections.
 
 - poll context: oracle fetches, downloads, readiness waits, and reconcile;
 - child lifetime context: owned by `process.Manager`, never by a poll tick;
-- host drain context: admission and child-idle deadline;
-- child stop context: post-`SIGTERM` process grace and forced escalation.
+- host shutdown context: one absolute deadline shared by poll unwind, admission
+  drain, graceful child stop, and HTTP shutdown.
 
 Cancelling the poll context must not signal a running child. This separation is
 required because host evacuation stops reconciliation before it drains work.
 The host supervisor listens for force signals while canceled reconcile work is
-unwinding; it never waits for the poll worker before arming force handling.
+unwinding. Child process grace may impose a shorter phase-local limit, but no
+phase receives a fresh deadline that can extend the host shutdown budget. On
+expiry, versiond forces remaining children and HTTP connections, then confirms
+child reap during the external runtime reserve.
 
-## Health contract
+## Health and readiness contracts
 
-`GET /healthz` keeps the legacy JSON array for existing clients. Optional fields
-add per-generation proxy counters without changing the response shape.
+`GET /healthz` keeps the exact legacy JSON array for existing clients. Query
+parameters do not select a second control-plane schema. In particular, hostctl
+does not use health responses to infer whether evacuation is complete.
 
-`GET /healthz?summary=1` is the operator contract. It returns a versioned object:
+The authoritative proxy lease and child lifecycle counters remain inside
+versiond. Its host FSM consumes them after `SIGTERM`, waits for accepted work,
+and escalates when the single shutdown budget expires. Keeping that decision in
+the process that owns the counters avoids stale observations and avoids turning
+a compatibility health endpoint into an orchestration protocol.
 
-```json
-{
-  "schema_version": 1,
-  "state": "draining",
-  "ready": false,
-  "accepting": false,
-  "proxy_inflight": 0,
-  "lifecycle_inflight": 0,
-  "inflight": 0,
-  "inflight_known": true,
-  "idle": true,
-  "available": false,
-  "progressing": false,
-  "reconciled": true,
-  "degraded": false,
-  "desired_children": 0,
-  "running_children": 0,
-  "children": []
-}
-```
+`GET /ready` is a separate, status-only replacement gate:
 
-`proxy_inflight` is the host admission lease count. `lifecycle_inflight` is the
-sum reported by child admin endpoints. These counters observe overlapping work,
-so `inflight` is their maximum, not their sum. `idle` is true only when the host
-proxy count is zero and every child counter is known and zero. A legacy child
-without `/drain/status` keeps `inflight_known=false`; the operator must use the
-timeout path and report that reduced certainty.
+- `200` when the host is serving and accepting, at least one child is
+  available, reconciliation has converged, and the manager is not progressing
+  or degraded;
+- `503` for every other state.
 
-Lifecycle counters are refreshed by a bounded background sampler and served
-from cache. The live host admission counter is merged at request time, so health
-cannot report idle while a newly accepted proxy request is running. `ready`
-tracks host availability: one routable generation keeps the host ready while a
-different version starts or fails. `progressing` reports expected convergence
-when the running and desired generation counts differ. `degraded` is reserved
-for an actual reconcile or oracle error; it is not raised merely because an
-update is in progress. `desired_children` and `running_children` make that
-distinction observable without parsing an error string.
-
-Host availability and router admission are separate contracts. A replacement
-is returned to the consistent-hash pool only when it is serving, ready,
-accepting, available, fully reconciled, no longer progressing, and not
-degraded. This keeps healthy routes available during local convergence without
-publishing a partially converged replacement as a full host.
+Host availability and router admission remain separate contracts. A
+replacement stays `joining`/down in nginx until `/ready` returns `200`. The
+endpoint contains no control command and exports no drain counters.
 
 ## Control plane and trust boundary
 
@@ -181,27 +156,32 @@ routerctl host drain HOST
   -> nginx reload
   -> verify and persist generation
 
-poll HOST:8080/healthz?summary=1 until idle or ROUTER_DRAIN_TIMEOUT
 reconfirm routerctl host drain HOST
 capture the original restart policy once and enforce restart=no
-send SIGTERM to versiond
-wait ROUTER_DRAIN_KILL_GRACE
+send SIGTERM to versiond (managed stop)
+  -> close versiond admission
+  -> wait for accepted proxy leases
+  -> drain and gracefully stop children and HTTP
+  -> enforce one VERSIOND_HOST_SHUTDOWN_BUDGET across all graceful phases
+  -> force remaining work on expiry and confirm child reap
+wait for process exit up to ROUTER_DRAIN_KILL_GRACE
 send SIGKILL only if the process still exists
 routerctl host offline HOST
 ```
 
-On replacement, start the new host, move it to `joining`, wait for a serving,
-ready, and fully reconciled health summary, and only then move it to `active`.
+On replacement, start the new host, move it to `joining`, wait for `GET /ready`
+to return `200`, and only then move it to `active`.
 A replacement may keep the logical host name while changing its upstream
 address. SSH disconnects and operator retries resume from the persisted router
 state and the local hostctl checkpoint rather than infer success from an
 in-memory command step.
 
-`gonka-hostctl` defaults to `15m` for the external idle wait, `2s` for polling,
-`30s` for each local or SSH command, and `30m` after `SIGTERM` before the kill
-backstop. SSH also uses bounded connect and keepalive settings. The kill grace
-covers versiond's default `15m` host drain, `10m` child stop grace, and an
-escalation cushion. Exact Docker and systemd commands are documented in
+`gonka-hostctl` defaults to `15m` for replacement readiness, `2s` for readiness
+and process polling, `30s` for each local or SSH command, and `30m` after
+`SIGTERM` before the kill backstop. versiond uses one internal `25m` shutdown
+budget, leaving a five-minute outer reserve for forced process reap and
+control-plane delays. SSH also uses bounded connect and keepalive settings.
+Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
 Before the first router mutation, hostctl validates the service runtime.
@@ -219,11 +199,12 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 - nginx reload failure: restore the old config and reload it; record failure.
 - interrupted router transaction: show it in read-only status; roll back before
   confirmed reload or verify the candidate SHA and roll forward after reload.
-- host drain timeout with work: warn with the last health snapshot, then follow
-  the configured stop policy.
+- versiond shutdown budget expires with work: log the remaining internal proxy
+  leases, force child/HTTP teardown, and continue process reap.
 - remote command timeout: retain the last durable hostctl phase and require an
   idempotent retry; no SSH call can block the whole operation indefinitely.
-- unknown child inflight: never report idle; use timeout and legacy grace.
+- unknown legacy child inflight: versiond uses its conservative legacy drain
+  cushion inside the same host shutdown budget.
 - repeated `SIGTERM`: keep draining; this makes SSH retries safe.
 - second `SIGINT`: transition to `forcing`, close HTTP, force children, and wait
   for process reap.
@@ -244,11 +225,12 @@ stale `draining` or `joining` owner must be resumed or, before `term_requested`,
 canceled with the same operation ID. This avoids another operator interpreting
 a control-plane outage as permission to drain a second host.
 
-The full-stack `TestVersiondHostEvacuation` test exercises both recovery
-choices. It interrupts and cancels one pre-signal evacuation, then interrupts a
-second evacuation and resumes it from the same journal before replacing and
-reactivating the host. It also checks the loaded nginx stream timeout and
-requires successful HTTP status for sticky-route observations.
+The full-stack `TestVersiondHostEvacuation` test holds a stream on the selected
+host, drains that router upstream, and verifies that new work moves to a
+survivor while the established stream completes before versiond exits. It then
+replaces the host and verifies that router activation waits for `/ready`.
+Checkpoint recovery and cancellation transitions are covered by hostctl unit
+tests.
 
 For Docker replacement, the restart policy has no guessed default. Reusing an
 evacuated service requires its completed evacuation journal; a newly provisioned

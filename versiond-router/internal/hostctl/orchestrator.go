@@ -35,30 +35,13 @@ type Config struct {
 	OperationID         string
 	JournalPath         string
 	EvacuationJournal   string
-	DrainTimeout        time.Duration
+	ReadyTimeout        time.Duration
 	PollInterval        time.Duration
 	KillGrace           time.Duration
 	CommandTimeout      time.Duration
-	HealthURL           string
+	ReadinessURL        string
 	DockerRestartPolicy string
 	ForceRouterGuard    bool
-}
-
-type HealthSummary struct {
-	SchemaVersion   int    `json:"schema_version"`
-	State           string `json:"state"`
-	Ready           bool   `json:"ready"`
-	Accepting       bool   `json:"accepting"`
-	Available       bool   `json:"available"`
-	Progressing     bool   `json:"progressing"`
-	Reconciled      bool   `json:"reconciled"`
-	Degraded        bool   `json:"degraded"`
-	DesiredChildren int    `json:"desired_children"`
-	RunningChildren int    `json:"running_children"`
-	ReconcileError  string `json:"reconcile_error,omitempty"`
-	Inflight        int64  `json:"inflight"`
-	InflightKnown   bool   `json:"inflight_known"`
-	Idle            bool   `json:"idle"`
 }
 
 type OperationScope struct {
@@ -70,7 +53,7 @@ type OperationScope struct {
 	VersiondSSH         string  `json:"versiond_ssh"`
 	VersiondRuntime     Runtime `json:"versiond_runtime"`
 	VersiondService     string  `json:"versiond_service"`
-	HealthURL           string  `json:"health_url"`
+	ReadinessURL        string  `json:"readiness_url"`
 	EvacuationJournal   string  `json:"evacuation_journal,omitempty"`
 	DockerRestartPolicy string  `json:"docker_restart_policy,omitempty"`
 }
@@ -82,9 +65,7 @@ type Journal struct {
 	Scope                 OperationScope `json:"scope"`
 	Phase                 string         `json:"phase"`
 	CancellationPhase     string         `json:"cancellation_phase,omitempty"`
-	DrainTimedOut         bool           `json:"drain_timed_out,omitempty"`
 	PreviousRestartPolicy string         `json:"previous_restart_policy,omitempty"`
-	LastHealth            *HealthSummary `json:"last_health,omitempty"`
 	UpdatedAt             time.Time      `json:"updated_at"`
 }
 
@@ -107,19 +88,19 @@ func New(config Config, remote Remote) (*Orchestrator, error) {
 	if !validRuntime(config.RouterRuntime) || !validRuntime(config.VersiondRuntime) {
 		return nil, errors.New("runtime must be docker or systemd")
 	}
-	if config.DrainTimeout <= 0 || config.PollInterval <= 0 || config.KillGrace <= 0 {
-		return nil, errors.New("drain timeout, poll interval, and kill grace must be positive")
+	if config.ReadyTimeout <= 0 || config.PollInterval <= 0 || config.KillGrace <= 0 {
+		return nil, errors.New("ready timeout, poll interval, and kill grace must be positive")
 	}
 	if config.CommandTimeout <= 0 {
 		config.CommandTimeout = 30 * time.Second
 	}
-	if config.HealthURL == "" {
-		config.HealthURL = "http://127.0.0.1:8080/healthz?summary=1"
+	if config.ReadinessURL == "" {
+		config.ReadinessURL = "http://127.0.0.1:8080/ready"
 	}
-	parsedHealthURL, err := url.Parse(config.HealthURL)
-	if err != nil || parsedHealthURL.Host == "" ||
-		(parsedHealthURL.Scheme != "http" && parsedHealthURL.Scheme != "https") {
-		return nil, fmt.Errorf("invalid versiond health URL %q", config.HealthURL)
+	parsedReadinessURL, err := url.Parse(config.ReadinessURL)
+	if err != nil || parsedReadinessURL.Host == "" ||
+		(parsedReadinessURL.Scheme != "http" && parsedReadinessURL.Scheme != "https") {
+		return nil, fmt.Errorf("invalid versiond readiness URL %q", config.ReadinessURL)
 	}
 	if config.DockerRestartPolicy != "" {
 		if err := validateDockerRestartPolicy(config.DockerRestartPolicy); err != nil {
@@ -174,25 +155,6 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 			return err
 		}
 		if err := o.advance(&journal, "router_draining"); err != nil {
-			return err
-		}
-	}
-	if before(journal.Phase, "host_idle", evacuationPhases) {
-		health, timedOut, err := o.waitForIdle(ctx)
-		journal.LastHealth = health
-		journal.DrainTimedOut = timedOut
-		if err != nil {
-			return err
-		}
-		if timedOut {
-			slog.Warn(
-				"router drain timeout expired; proceeding with versiond shutdown",
-				"upstream", o.config.Upstream,
-				"inflight", health.Inflight,
-				"inflight_known", health.InflightKnown,
-			)
-		}
-		if err := o.advance(&journal, "host_idle"); err != nil {
 			return err
 		}
 	}
@@ -377,9 +339,7 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 		}
 	}
 	if before(journal.Phase, "host_ready", replacementPhases) {
-		health, err := o.waitForReady(ctx)
-		journal.LastHealth = health
-		if err != nil {
+		if err := o.waitForReady(ctx); err != nil {
 			return err
 		}
 		if err := o.advance(&journal, "host_ready"); err != nil {
@@ -397,7 +357,19 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 	return o.advance(&journal, "complete")
 }
 
-var evacuationPhases = []string{"started", "router_draining", "host_idle", "restart_disabled", "term_requested", "term_sent", "host_stopped", "router_offline", "complete"}
+// host_idle is retained so an operation journal written by the previous
+// external-health polling flow can resume without repeating router mutation.
+var evacuationPhases = []string{
+	"started",
+	"router_draining",
+	"host_idle",
+	"restart_disabled",
+	"term_requested",
+	"term_sent",
+	"host_stopped",
+	"router_offline",
+	"complete",
+}
 var replacementPhases = []string{"started", "router_joining", "host_started", "host_ready", "router_active", "complete"}
 var cancellationPhases = []string{"requested", "restart_restored", "router_active", "complete"}
 
@@ -430,7 +402,7 @@ func (o *Orchestrator) routerTransition(ctx context.Context, action string) erro
 	return err
 }
 
-func (o *Orchestrator) health(ctx context.Context) (*HealthSummary, error) {
+func (o *Orchestrator) probeReadiness(ctx context.Context) error {
 	timeoutSeconds := int((o.config.CommandTimeout + time.Second - 1) / time.Second)
 	if timeoutSeconds < 1 {
 		timeoutSeconds = 1
@@ -439,92 +411,36 @@ func (o *Orchestrator) health(ctx context.Context) (*HealthSummary, error) {
 	if o.config.VersiondRuntime == RuntimeDocker {
 		args = []string{
 			"docker", "exec", o.config.VersiondService,
-			"wget", "-q", "-T", strconv.Itoa(timeoutSeconds), "-O", "-", o.config.HealthURL,
+			"wget", "-q", "-T", strconv.Itoa(timeoutSeconds), "-O", "/dev/null", o.config.ReadinessURL,
 		}
 	} else {
 		args = []string{
 			"curl", "--fail", "--silent", "--show-error",
-			"--max-time", strconv.Itoa(timeoutSeconds), o.config.HealthURL,
+			"--output", "/dev/null",
+			"--max-time", strconv.Itoa(timeoutSeconds), o.config.ReadinessURL,
 		}
 	}
-	output, err := o.runRemote(ctx, o.config.VersiondSSH, args...)
-	if err != nil {
-		return nil, err
-	}
-	var health HealthSummary
-	if err := json.Unmarshal([]byte(output), &health); err != nil {
-		return nil, fmt.Errorf("decode versiond health: %w", err)
-	}
-	if health.SchemaVersion != 1 {
-		return nil, fmt.Errorf("unsupported versiond health schema %d", health.SchemaVersion)
-	}
-	return &health, nil
+	_, err := o.runRemote(ctx, o.config.VersiondSSH, args...)
+	return err
 }
 
-func (o *Orchestrator) waitForIdle(ctx context.Context) (*HealthSummary, bool, error) {
-	deadline := time.Now().Add(o.config.DrainTimeout)
-	var last *HealthSummary
-	for {
-		health, err := o.health(ctx)
-		if err == nil {
-			last = health
-			if health.Idle && health.InflightKnown && health.Inflight == 0 {
-				return health, false, nil
-			}
-		}
-		if time.Now().After(deadline) {
-			if last == nil {
-				if err != nil {
-					return nil, false, fmt.Errorf("versiond health unavailable until drain timeout: %w", err)
-				}
-				return nil, false, errors.New("versiond health unavailable until drain timeout")
-			}
-			return last, true, nil
-		}
-		if err := wait(ctx, o.config.PollInterval); err != nil {
-			return last, false, err
-		}
-	}
-}
-
-func (o *Orchestrator) waitForReady(ctx context.Context) (*HealthSummary, error) {
-	deadline := time.Now().Add(o.config.DrainTimeout)
-	var last *HealthSummary
+func (o *Orchestrator) waitForReady(ctx context.Context) error {
+	deadline := time.Now().Add(o.config.ReadyTimeout)
 	var lastErr error
 	for {
-		health, err := o.health(ctx)
+		err := o.probeReadiness(ctx)
 		if err == nil {
-			last = health
-			if health.readyForActivation() {
-				return health, nil
-			}
+			return nil
 		}
 		lastErr = err
 		if time.Now().After(deadline) {
-			if last == nil {
-				if lastErr != nil {
-					return nil, fmt.Errorf("replacement readiness timeout: %w", lastErr)
-				}
-				return nil, errors.New("replacement readiness timeout without a health sample")
+			if lastErr != nil {
+				return fmt.Errorf("replacement readiness timeout: %w", lastErr)
 			}
-			return last, fmt.Errorf(
-				"replacement readiness timeout: state=%s ready=%t accepting=%t "+
-					"available=%t progressing=%t reconciled=%t degraded=%t "+
-					"children=%d/%d reconcile_error=%q",
-				last.State,
-				last.Ready,
-				last.Accepting,
-				last.Available,
-				last.Progressing,
-				last.Reconciled,
-				last.Degraded,
-				last.RunningChildren,
-				last.DesiredChildren,
-				last.ReconcileError,
-			)
+			return errors.New("replacement readiness timeout")
 		}
 		if err := wait(ctx, o.config.PollInterval); err != nil {
-			return nil, err
+			return err
 		}
 	}
 }
@@ -750,16 +666,6 @@ func validCancellationState(journal Journal) bool {
 	return before(journal.Phase, "term_requested", evacuationPhases)
 }
 
-func (health HealthSummary) readyForActivation() bool {
-	return health.State == "serving" &&
-		health.Ready &&
-		health.Accepting &&
-		health.Available &&
-		health.Reconciled &&
-		!health.Progressing &&
-		!health.Degraded
-}
-
 func sameLogicalVersiondHost(left, right OperationScope) bool {
 	return left.RouterSSH == right.RouterSSH &&
 		left.RouterRuntime == right.RouterRuntime &&
@@ -779,7 +685,7 @@ func (o *Orchestrator) operationScope() OperationScope {
 		VersiondSSH:         o.config.VersiondSSH,
 		VersiondRuntime:     o.config.VersiondRuntime,
 		VersiondService:     o.config.VersiondService,
-		HealthURL:           o.config.HealthURL,
+		ReadinessURL:        o.config.ReadinessURL,
 		EvacuationJournal:   o.config.EvacuationJournal,
 		DockerRestartPolicy: o.config.DockerRestartPolicy,
 	}

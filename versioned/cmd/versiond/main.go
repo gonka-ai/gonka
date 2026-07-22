@@ -51,28 +51,8 @@ func run(ctx context.Context) error {
 	oracleClient := oracle.NewClient(cfg.OracleURL)
 
 	mux := http.NewServeMux()
-	healthCtx, cancelHealth := context.WithCancel(context.Background())
-	defer cancelHealth()
-	mgr.StartHealthMonitor(healthCtx, time.Second)
-	mux.HandleFunc("/healthz", health.Handler(mgr.Status, func(context.Context) health.Summary {
-		hostStatus := hostLifecycle.Snapshot()
-		managerConditions := mgr.Conditions()
-		return health.BuildSummary(
-			string(hostStatus.State),
-			hostStatus.Accepting,
-			hostStatus.Inflight,
-			mgr.CachedStatusWithInflight(),
-			health.Conditions{
-				Available:      managerConditions.Available,
-				Progressing:    managerConditions.Progressing,
-				Reconciled:     managerConditions.Reconciled,
-				Degraded:       managerConditions.Degraded,
-				Desired:        managerConditions.Desired,
-				Running:        managerConditions.Running,
-				ReconcileError: managerConditions.ReconcileError,
-			},
-		)
-	}))
+	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
+	mux.HandleFunc("/ready", readinessHandler(hostLifecycle, mgr))
 	mux.Handle("/", hostLifecycle.Admission(proxy.Handler(mgr.RouteTable())))
 
 	listenAddr := config.ListenAddr()
@@ -121,15 +101,7 @@ func run(ctx context.Context) error {
 	mgr.BeginHostDrain()
 	cancelPoll()
 
-	select {
-	case <-pollDone:
-	case <-force:
-		mgr.ForceStopChildren()
-		<-pollDone
-		return forceHostShutdown(srv, mgr, hostLifecycle)
-	}
-
-	return shutdownHost(cfg, srv, mgr, hostLifecycle, force)
+	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone)
 }
 
 func runPollLoop(
@@ -220,59 +192,74 @@ func shutdownHost(
 	mgr *process.Manager,
 	hostLifecycle *host.Controller,
 	force <-chan struct{},
+	pollDone <-chan struct{},
 ) error {
-	drainCtx, cancelDrain := context.WithTimeout(context.Background(), cfg.HostDrainTimeout)
-	defer cancelDrain()
-	stopForceWatch := cancelOnSignal(drainCtx, cancelDrain, force)
+	budget := cfg.HostShutdownBudget
+	if budget <= 0 {
+		budget = config.DefaultHostShutdownBudget
+	}
+	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), budget)
+	if forceRequested(force) {
+		cancelShutdown()
+	}
+	stopForceWatch := cancelOnSignal(shutdownCtx, cancelShutdown, force)
+	stopEscalationWatch := watchShutdownEscalation(shutdownCtx, srv, mgr, hostLifecycle)
+	defer func() {
+		stopEscalationWatch()
+		stopForceWatch()
+		cancelShutdown()
+	}()
 
-	if err := hostLifecycle.WaitIdle(drainCtx); err != nil {
+	select {
+	case <-pollDone:
+	case <-shutdownCtx.Done():
+		// Reconcile work owns manager operations that must unwind before process
+		// teardown mutates the same children. Its context is already canceled;
+		// the external runtime reserve remains the final backstop.
+		<-pollDone
+	}
+
+	if err := hostLifecycle.WaitIdle(shutdownCtx); err != nil {
 		slog.Warn("host proxy drain incomplete", "error", err, "inflight", hostLifecycle.Snapshot().Inflight)
 	}
-	if forceRequested(force) {
-		stopForceWatch()
-		return forceHostShutdown(srv, mgr, hostLifecycle)
+	if shutdownCtx.Err() == nil {
+		if err := mgr.RequestChildrenDrain(shutdownCtx); err != nil {
+			slog.Warn("one or more child drain requests failed", "error", err)
+		}
+		if err := mgr.WaitChildrenIdle(shutdownCtx); err != nil {
+			slog.Warn("child drain incomplete", "error", err)
+		}
 	}
 
-	if err := mgr.RequestChildrenDrain(drainCtx); err != nil {
-		slog.Warn("one or more child drain requests failed", "error", err)
-	}
-	if err := mgr.WaitChildrenIdle(drainCtx); err != nil {
-		slog.Warn("child drain incomplete", "error", err)
-	}
-	stopForceWatch()
-	if forceRequested(force) {
-		return forceHostShutdown(srv, mgr, hostLifecycle)
-	}
-
-	if err := hostLifecycle.Transition(host.StateStopping); err != nil {
+	forced := shutdownCtx.Err() != nil
+	if forced {
+		if err := transitionHostToForcing(hostLifecycle); err != nil {
+			return err
+		}
+	} else if err := hostLifecycle.Transition(host.StateStopping); err != nil {
 		return err
 	}
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
-	stopShutdownForceWatch := cancelOnSignal(shutdownCtx, cancelShutdown, force)
-	err := mgr.Shutdown(shutdownCtx)
-	stopShutdownForceWatch()
-	cancelShutdown()
-	if err != nil {
-		slog.Warn("manager shutdown required forced escalation", "error", err)
-		if transitionErr := hostLifecycle.Transition(host.StateForcing); transitionErr != nil {
-			return transitionErr
-		}
-	}
 
-	if forceRequested(force) {
-		return forceHostShutdown(srv, mgr, hostLifecycle)
-	}
-	httpShutdownCtx, cancelHTTPShutdown := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
-	stopHTTPForceWatch := cancelOnSignal(httpShutdownCtx, cancelHTTPShutdown, force)
-	err = srv.Shutdown(httpShutdownCtx)
-	stopHTTPForceWatch()
-	cancelHTTPShutdown()
-	if err != nil {
-		_ = srv.Close()
-		if forceRequested(force) {
-			return forceHostShutdown(srv, mgr, hostLifecycle)
+	httpDone := make(chan error, 1)
+	go func() {
+		httpDone <- srv.Shutdown(shutdownCtx)
+	}()
+	managerErr := mgr.Shutdown(shutdownCtx)
+	httpErr := <-httpDone
+	if shutdownCtx.Err() != nil {
+		forced = true
+		if err := transitionHostToForcing(hostLifecycle); err != nil {
+			return err
 		}
-		return fmt.Errorf("shutdown HTTP server: %w", err)
+	}
+	if managerErr != nil {
+		slog.Warn("manager shutdown required forced escalation", "error", managerErr)
+	}
+	if httpErr != nil {
+		if !forced {
+			return fmt.Errorf("shutdown HTTP server: %w", httpErr)
+		}
+		slog.Warn("HTTP shutdown required forced close", "error", httpErr)
 	}
 	if err := hostLifecycle.Transition(host.StateStopped); err != nil {
 		return err
@@ -280,20 +267,64 @@ func shutdownHost(
 	return nil
 }
 
-func forceHostShutdown(srv *http.Server, mgr *process.Manager, hostLifecycle *host.Controller) error {
-	if hostLifecycle.Snapshot().State != host.StateForcing {
-		if err := hostLifecycle.Transition(host.StateForcing); err != nil {
-			return err
+func readinessHandler(hostLifecycle *host.Controller, mgr *process.Manager) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Cache-Control", "no-store")
+		if r.Method != http.MethodGet {
+			w.Header().Set("Allow", http.MethodGet)
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
 		}
+		if !versiondReady(hostLifecycle.Snapshot(), mgr.Conditions()) {
+			http.Error(w, "not ready", http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("ready\n"))
 	}
-	mgr.ForceStopChildren()
-	_ = srv.Close()
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
-	defer cancel()
-	if err := mgr.Shutdown(shutdownCtx); err != nil {
-		return err
+}
+
+func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
+	return hostStatus.State == host.StateServing &&
+		hostStatus.Accepting &&
+		conditions.Available &&
+		conditions.Reconciled &&
+		!conditions.Progressing &&
+		!conditions.Degraded
+}
+
+func watchShutdownEscalation(
+	ctx context.Context,
+	srv *http.Server,
+	mgr *process.Manager,
+	hostLifecycle *host.Controller,
+) func() {
+	done := make(chan struct{})
+	go func() {
+		select {
+		case <-ctx.Done():
+			slog.Warn(
+				"host shutdown escalation requested",
+				"reason", ctx.Err(),
+				"proxy_inflight", hostLifecycle.Snapshot().Inflight,
+			)
+			mgr.ForceStopChildren()
+			_ = srv.Close()
+		case <-done:
+		}
+	}()
+	var once sync.Once
+	return func() {
+		once.Do(func() { close(done) })
 	}
-	return hostLifecycle.Transition(host.StateStopped)
+}
+
+func transitionHostToForcing(hostLifecycle *host.Controller) error {
+	state := hostLifecycle.Snapshot().State
+	if state == host.StateForcing || state == host.StateStopped {
+		return nil
+	}
+	return hostLifecycle.Transition(host.StateForcing)
 }
 
 func cancelOnSignal(parent context.Context, cancel context.CancelFunc, signal <-chan struct{}) func() {

@@ -472,42 +472,6 @@ func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
 	}
 }
 
-func TestStatusWithInflightReadsChildLifecycleCounter(t *testing.T) {
-	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != http.MethodGet || r.URL.Path != "/drain/status" {
-			http.NotFound(w, r)
-			return
-		}
-		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": 3})
-	}))
-	defer shutdown()
-
-	m := NewManager(config.Config{BasePort: 5000})
-	c := &child{
-		version:     oracle.Version{Name: "v1"},
-		port:        9001,
-		done:        make(chan struct{}),
-		status:      statusRunning,
-		proxyTarget: proxy.NewTarget("localhost:9001"),
-	}
-	c.setAdminPort(adminPort)
-	m.mu.Lock()
-	m.processes[c.version.Name] = c
-	m.children[c] = struct{}{}
-	m.mu.Unlock()
-
-	statuses := m.StatusWithInflight(context.Background())
-	if len(statuses) != 1 {
-		t.Fatalf("statuses = %d, want 1", len(statuses))
-	}
-	if !statuses[0].InflightKnown {
-		t.Fatal("lifecycle inflight should be known")
-	}
-	if statuses[0].LifecycleInflight != 3 {
-		t.Fatalf("lifecycle inflight = %d, want 3", statuses[0].LifecycleInflight)
-	}
-}
-
 func TestChildLifetimeIsIndependentFromReconcileContext(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000})
 	reconcileCtx, cancelReconcile := context.WithCancel(context.Background())

@@ -10,27 +10,27 @@ import (
 )
 
 const (
-	DefaultDrainKillGrace   = 10 * time.Minute
-	DefaultHostDrainTimeout = 15 * time.Minute
+	DefaultDrainKillGrace     = 10 * time.Minute
+	DefaultHostShutdownBudget = 25 * time.Minute
 )
 
 type Config struct {
-	OracleURL         string
-	PollInterval      time.Duration
-	BinDir            string
-	DataDir           string
-	BinaryName        string
-	BasePort          int
-	ReadyPath         string
-	ReadyTimeout      time.Duration
-	DrainPath         string
-	DrainStatusPath   string
-	DrainTimeout      time.Duration
-	DrainPollInterval time.Duration
-	DrainKillGrace    time.Duration
-	HostDrainTimeout  time.Duration
-	Overrides         map[string]string // version name -> local binary path
-	ForceVersions     []string          // version names that must run regardless of oracle
+	OracleURL          string
+	PollInterval       time.Duration
+	BinDir             string
+	DataDir            string
+	BinaryName         string
+	BasePort           int
+	ReadyPath          string
+	ReadyTimeout       time.Duration
+	DrainPath          string
+	DrainStatusPath    string
+	DrainTimeout       time.Duration
+	DrainPollInterval  time.Duration
+	DrainKillGrace     time.Duration
+	HostShutdownBudget time.Duration
+	Overrides          map[string]string // version name -> local binary path
+	ForceVersions      []string          // version names that must run regardless of oracle
 }
 
 func Load() (Config, error) {
@@ -53,15 +53,19 @@ func Load() (Config, error) {
 		DrainTimeout:      parseDuration("VERSIOND_DRAIN_TIMEOUT", 15*time.Minute),
 		DrainPollInterval: parseDuration("VERSIOND_DRAIN_POLL_INTERVAL", time.Second),
 		DrainKillGrace:    parseDuration("VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace),
-		HostDrainTimeout:  parseDuration("VERSIOND_HOST_DRAIN_TIMEOUT", DefaultHostDrainTimeout),
-		Overrides:         loadOverrides(),
-		ForceVersions:     loadForceVersions(),
+		HostShutdownBudget: parseDuration(
+			"VERSIOND_HOST_SHUTDOWN_BUDGET",
+			DefaultHostShutdownBudget,
+		),
+		Overrides:     loadOverrides(),
+		ForceVersions: loadForceVersions(),
 	}
 
 	slog.Info(
 		"versiond config loaded",
 		"oracle_url", cfg.OracleURL,
 		"binary_name", cfg.BinaryName,
+		"host_shutdown_budget", cfg.HostShutdownBudget,
 		"force_versions", cfg.ForceVersions,
 		"override_versions", sortedOverrideKeys(cfg.Overrides),
 	)

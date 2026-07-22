@@ -77,24 +77,22 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg               config.Config
-	processes         map[string]*child
-	draining          map[string][]*child
-	children          map[*child]struct{}
-	downloading       map[string]struct{}
-	allocatedPorts    map[int]struct{}
-	reservedPorts     map[int]struct{}
-	operations        map[uint64]controlOperation
-	nextOperationID   uint64
-	conditions        Conditions
-	healthCache       atomic.Value // []health.StatusEntry
-	healthMonitorOnce sync.Once
-	available         chan struct{}
-	childCtx          context.Context
-	cancelChildren    context.CancelFunc
-	hostDraining      bool
-	mu                sync.Mutex
-	routes            atomic.Value // proxy.RouteTable
+	cfg             config.Config
+	processes       map[string]*child
+	draining        map[string][]*child
+	children        map[*child]struct{}
+	downloading     map[string]struct{}
+	allocatedPorts  map[int]struct{}
+	reservedPorts   map[int]struct{}
+	operations      map[uint64]controlOperation
+	nextOperationID uint64
+	conditions      Conditions
+	available       chan struct{}
+	childCtx        context.Context
+	cancelChildren  context.CancelFunc
+	hostDraining    bool
+	mu              sync.Mutex
+	routes          atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
@@ -114,7 +112,6 @@ func NewManager(cfg config.Config) *Manager {
 		available:      make(chan struct{}, 1),
 	}
 	m.routes.Store(proxy.RouteTable{})
-	m.healthCache.Store([]health.StatusEntry{})
 	return m
 }
 
@@ -142,9 +139,6 @@ func normalizeConfig(cfg config.Config) config.Config {
 	}
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
-	}
-	if cfg.HostDrainTimeout <= 0 {
-		cfg.HostDrainTimeout = config.DefaultHostDrainTimeout
 	}
 	return cfg
 }
@@ -222,11 +216,6 @@ func (m *Manager) Status() []health.StatusEntry {
 	return m.statusLocked()
 }
 
-type childHealthSnapshot struct {
-	lifecyclePort int
-	entry         health.StatusEntry
-}
-
 func (m *Manager) statusLocked() []health.StatusEntry {
 	out := make([]health.StatusEntry, 0, len(m.processes)+len(m.draining))
 	for _, c := range m.processes {
@@ -242,17 +231,13 @@ func (m *Manager) statusLocked() []health.StatusEntry {
 }
 
 func statusEntry(c *child) health.StatusEntry {
-	entry := health.StatusEntry{
+	return health.StatusEntry{
 		Name:          c.version.Name,
 		Port:          c.port,
 		Status:        healthGenerationStatus(c.status),
 		SHA256:        c.archiveSHA256,
 		BinaryVersion: c.binaryVersion,
 	}
-	if c.proxyTarget != nil {
-		entry.ProxyInflight = c.proxyTarget.Snapshot().Inflight
-	}
-	return entry
 }
 
 func sortStatusEntries(entries []health.StatusEntry) {
@@ -265,60 +250,6 @@ func sortStatusEntries(entries []health.StatusEntry) {
 		}
 		return entries[i].Port < entries[j].Port
 	})
-}
-
-// StatusWithInflight augments the lock-only process snapshot with child-side
-// lifecycle counters. Probes run concurrently and never hold the manager lock.
-func (m *Manager) StatusWithInflight(ctx context.Context) []health.StatusEntry {
-	m.mu.Lock()
-	snapshots := make([]childHealthSnapshot, 0, len(m.processes)+len(m.draining))
-	seen := make(map[*child]struct{}, len(m.processes)+len(m.draining))
-	appendChild := func(c *child) {
-		if _, ok := seen[c]; ok {
-			return
-		}
-		seen[c] = struct{}{}
-		snapshots = append(snapshots, childHealthSnapshot{
-			lifecyclePort: c.lifecyclePort(),
-			entry:         statusEntry(c),
-		})
-	}
-	for _, c := range m.processes {
-		appendChild(c)
-	}
-	for _, children := range m.draining {
-		for _, c := range children {
-			appendChild(c)
-		}
-	}
-	m.mu.Unlock()
-
-	var wg sync.WaitGroup
-	for i := range snapshots {
-		wg.Add(1)
-		go func(snapshot *childHealthSnapshot) {
-			defer wg.Done()
-			inflight, err := m.fetchInflightAt(
-				ctx,
-				snapshot.entry.Name,
-				snapshot.entry.Port,
-				snapshot.lifecyclePort,
-			)
-			if err != nil {
-				return
-			}
-			snapshot.entry.LifecycleInflight = inflight
-			snapshot.entry.InflightKnown = true
-		}(&snapshots[i])
-	}
-	wg.Wait()
-
-	out := make([]health.StatusEntry, 0, len(snapshots))
-	for _, snapshot := range snapshots {
-		out = append(out, snapshot.entry)
-	}
-	sortStatusEntries(out)
-	return out
 }
 
 // Reconcile compares desired state against local state and converges.

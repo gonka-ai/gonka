@@ -162,9 +162,9 @@ func (r systemdRuntime) ValidateStopContract(ctx context.Context, minimum time.D
 		)
 	}
 	killMode := properties["KillMode"]
-	if killMode != "control-group" && killMode != "mixed" {
+	if killMode != "mixed" {
 		return fmt.Errorf(
-			"systemd KillMode for %s is %q, require control-group or mixed",
+			"systemd KillMode for %s is %q, require mixed so versiond drains its children before the final cgroup kill",
 			r.service,
 			killMode,
 		)

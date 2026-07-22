@@ -474,7 +474,7 @@ The implementation exposes these settings from
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | shared deadline for old proxy leases and child in-flight work before `SIGTERM` |
 | `VERSIOND_DRAIN_POLL_INTERVAL` | `1s` | how often to poll old child in-flight count |
 | `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status drain cushion and child stop backstop |
-| `VERSIOND_HOST_DRAIN_TIMEOUT` | `15m` | host-level budget for accepted proxy work and all child lifecycle counters after versiond receives `SIGTERM` |
+| `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | one absolute deadline for host admission drain, graceful child stop, and HTTP shutdown; expiry forces remaining work before reap |
 
 And on the child side: `DEVSHARD_SHUTDOWN_GRACE` (default `10m`) consumed in
 `app.go`. For new `devshardd` binaries, versiond also sets
@@ -623,20 +623,25 @@ upgrade, scale-down, or decommission.
         │  → no NEW requests hashed to versiond-N
         │  → in-flight connections to versiond-N keep running
         ▼
-2. Poll versiond-N until known idle:
-        GET versiond-N:8080/healthz?summary=1
-        loop until inflight == 0  OR  ROUTER_DRAIN_TIMEOUT
-        ▼
-3. Graceful stop versiond-N:
+2. Reconfirm the router barrier, then start a managed stop:
         disable automatic restart
-        SIGTERM versiond  →  host FSM drains and reaps children
+        SIGTERM versiond
+        ▼
+3. versiond owns graceful shutdown under one absolute deadline:
+        close proxy admission
+        wait for accepted proxy leases (including complete SSE streams)
+        drain and gracefully stop children, stop HTTP
+        on VERSIOND_HOST_SHUTDOWN_BUDGET expiry, force remaining work
+        reap children before process exit
+        ▼
+4. hostctl waits for process exit:
         wait up to ROUTER_DRAIN_KILL_GRACE  →  SIGKILL only as backstop
         ▼
-4. Kill process / free machine:
+5. Free machine:
         stop container or release VM; remove from VERSIOND_HOSTS; reload router
         (or leave marked down if host is gone permanently)
         ▼
-5. (Replacement only) Start new versiond-N, wait until healthy, re-add upstream
+6. (Replacement only) Start new versiond-N, wait for GET /ready, re-add upstream
 ```
 
 Key invariants:
@@ -647,8 +652,11 @@ Key invariants:
   escrow may be re-hashed to a survivor and recover from shared Postgres;
   affinity is placement, not exclusive in-memory ownership. Non-HA versions
   remain pinned to the legacy host and are protected by the router guard.
-- **Drain before kill:** do not free the machine until step 2 reports idle (or
-  the safety timeout fires with an operator-visible warning).
+- **One owner of drain state:** hostctl never infers idleness from `/healthz`.
+  versiond owns the admission leases and child lifecycle counters, so its host
+  FSM decides when graceful drain is complete. If the internal budget expires,
+  versiond logs the remaining work and forces teardown before the outer runtime
+  backstop.
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
   keep serving while one host evacuates.
 
@@ -664,33 +672,26 @@ until a host is activated.
 |---|---|
 | `gonka-routerctl` | Local, locked router FSM mutation with journal, `nginx -t`, atomic publish, reload, rollback, and audit |
 | `gonka-hostctl` | Resumable SSH orchestration for evacuation and replacement; no network listener |
-| `GET /healthz?summary=1` | Versioned host state, availability/convergence conditions, admission, and aggregate inflight |
-| `VERSIOND_HOST_DRAIN_TIMEOUT` | Internal versiond budget for admission and child idle, default `15m` |
-| `ROUTER_DRAIN_TIMEOUT` | External maximum wait for known host idle, default `15m` |
-| `ROUTER_DRAIN_POLL_INTERVAL` | External health/process polling interval, default `2s` |
+| `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
+| `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
+| `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
+| `ROUTER_READY_TIMEOUT` | External maximum wait for replacement readiness, default `15m` |
+| `ROUTER_DRAIN_POLL_INTERVAL` | External readiness/process polling interval, default `2s` |
 | `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` before `SIGKILL`, default `30m` |
 | `ROUTER_COMMAND_TIMEOUT` | Deadline for one local or SSH command, default `30s` |
 
 `ROUTER_DRAIN_KILL_GRACE` must exceed versiond's internal shutdown budget. Its
-default covers `VERSIOND_HOST_DRAIN_TIMEOUT`, the default child shutdown grace,
-and an escalation cushion.
+default leaves five minutes between versiond's `25m` deadline and the external
+`30m` kill backstop. Admission drain, child drain, graceful child stop, and HTTP
+shutdown share the same absolute deadline; phase-local limits can only shorten
+a phase and are never added to the host budget. After expiry, versiond forces
+remaining processes and confirms their reap during the outer reserve.
 
-The summary's `proxy_inflight` counts complete versiond proxy responses,
-including full SSE stream lifetimes. `lifecycle_inflight` aggregates child
-admin counters. Because they observe overlapping work, aggregate `inflight` is
-their maximum rather than their sum. `idle=true` requires both zero work and
-known counters for every child. Legacy children without `/drain/status` keep
-`inflight_known=false`, forcing the timeout path instead of a false idle result.
-Child lifecycle counters are sampled in the background and cached; a health
-request never fans out to every child. `proxy_inflight` remains a live host
-admission count, so a just-accepted request cannot be hidden by the cache.
-
-`ready` means the host is serving, accepting, and has at least one routable
-generation. Expected convergence is reported as `progressing=true` with the
-`desired_children` and `running_children` counts. `degraded=true` and
-`reconcile_error` are reserved for an actual reconcile or oracle failure; they
-do not describe a routine generation transition. Healthy versions on the same
-host remain available throughout either condition.
+Proxy leases still count complete versiond responses, including full SSE stream
+lifetimes, and child lifecycle counters still come from private child admin
+endpoints. Both signals are consumed inside versiond's shutdown state machine;
+they are deliberately not exported through a special `/healthz` response.
+Legacy `/healthz` clients therefore keep the existing JSON array contract.
 
 On `SIGTERM`, versiond transitions
 `serving -> draining -> stopping -> stopped`. Admission closes immediately,
@@ -736,8 +737,10 @@ For systemd, use `--router-runtime systemd --versiond-runtime systemd`; the
 orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
 unit. Before changing router state, hostctl validates the runtime shutdown
 contract. systemd's `TimeoutStopSec` directly bounds the managed stop job and
-must cover `ROUTER_DRAIN_KILL_GRACE`; it must also use `KillMode=control-group`
-or `mixed` with `SendSIGKILL=yes`. Hostctl signals Docker directly, while its
+must cover `ROUTER_DRAIN_KILL_GRACE`; it must use `KillMode=mixed` with
+`SendSIGKILL=yes`. The initial systemd `SIGTERM` then reaches versiond alone,
+while the final timeout still covers its complete cgroup. Hostctl signals
+Docker directly, while its
 required `StopTimeout` protects external `docker stop`, Compose teardown, and
 redeploy from undercutting the same budget. Compose deployments, including the
 local test network, set `stop_grace_period: 30m` for versiond and
@@ -777,12 +780,12 @@ the replacement transaction completes:
     ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
 ```
 
-The upstream remains `joining`/down until versiond reports `state=serving`,
-`ready=true`, `accepting=true`, `available=true`, `reconciled=true`,
-`progressing=false`, and `degraded=false`. Router state, recovery journal, and
-audit log are stored below `/var/lib/gonka/versiond-router` on a persistent
-volume. See `versiond-router/README.md` and `versiond-host-evacuation.md` for the
-complete failure and recovery contract.
+The upstream remains `joining`/down until `GET /ready` returns `200`. That gate
+means versiond is serving, accepting, has an available child, and is fully
+reconciled without a progressing or degraded condition. Router state, recovery
+journal, and audit log are stored below `/var/lib/gonka/versiond-router` on a
+persistent volume. See `versiond-router/README.md` and
+`versiond-host-evacuation.md` for the complete failure and recovery contract.
 
 Docker replacement restores the exact policy captured by evacuation, including
 an `on-failure` retry count. A newly provisioned service without that journal
@@ -832,13 +835,11 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **versiond-router:** test every router transition and guard, config validation,
   atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
   resume/order without requiring SSH.
-- **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a
-  long stream to one versiond,
-  interrupt and cancel one checkpointed operation, then interrupt and resume a
-  real `gonka-hostctl evacuate` from its durable phase before running `replace`.
-  Verify new work and the same escrow recover on the survivor, the barrier-held
-  stream finishes on its old connection, and the replacement remains down
-  until healthy.
+- **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a long
+  stream to one versiond, start a real `gonka-hostctl evacuate`, and verify new
+  work and the same escrow recover on the survivor while the barrier-held stream
+  finishes on its old connection. Verify versiond exits after that stream,
+  then run `replace` and keep the replacement down until `/ready` succeeds.
 
 ### 1.10 Rollout order
 
@@ -854,8 +855,9 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 
 **Track B — versiond host removal/replacement (§1.8, HA only):**
 
-7. Add versiond host FSM, aggregate health/inflight, transactional router FSM,
-   and resumable SSH operator CLI for drain, stop, replacement, and activation.
+7. Add versiond host FSM with an internal absolute shutdown budget,
+   transactional router FSM, replacement `/ready` gate, and resumable SSH
+   operator CLI for drain, stop, replacement, and activation.
 8. Run unit/race coverage plus `TestVersiondHostEvacuation`: pin a long request
    to `versiond-N`, mark the upstream down, assert completion and survivor
    routing, then assert process exit after idle and healthy replacement

@@ -27,18 +27,20 @@ func TestShutdownHostCompletesLifecycle(t *testing.T) {
 		w.WriteHeader(http.StatusNoContent)
 	}))
 	mgr := process.NewManager(config.Config{
-		BasePort:         5000,
-		HostDrainTimeout: time.Second,
-		DrainKillGrace:   time.Second,
+		BasePort:       5000,
+		DrainKillGrace: time.Second,
 	})
 	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostDrainTimeout: time.Second},
+		config.Config{HostShutdownBudget: time.Second},
 		server.Config,
 		mgr,
 		hostLifecycle,
 		force,
+		pollDone,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -58,18 +60,114 @@ func TestShutdownHostHonorsForceSignal(t *testing.T) {
 	mgr := process.NewManager(config.Config{BasePort: 5000})
 	force := make(chan struct{})
 	close(force)
+	pollDone := make(chan struct{})
+	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostDrainTimeout: time.Hour},
+		config.Config{HostShutdownBudget: time.Hour},
 		server.Config,
 		mgr,
 		hostLifecycle,
 		force,
+		pollDone,
 	); err != nil {
 		t.Fatal(err)
 	}
 	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
 		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+
+	requestStarted := make(chan struct{})
+	handlerDone := make(chan struct{})
+	server := httptest.NewServer(hostLifecycle.Admission(http.HandlerFunc(
+		func(_ http.ResponseWriter, r *http.Request) {
+			close(requestStarted)
+			<-r.Context().Done()
+			close(handlerDone)
+		},
+	)))
+	t.Cleanup(server.Close)
+	requestDone := make(chan struct{})
+	go func() {
+		response, _ := server.Client().Get(server.URL + "/v1")
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		close(requestDone)
+	}()
+
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("proxy request did not start")
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	mgr := process.NewManager(config.Config{BasePort: 5000})
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+	budget := 50 * time.Millisecond
+	started := time.Now()
+
+	if err := shutdownHost(
+		config.Config{HostShutdownBudget: budget},
+		server.Config,
+		mgr,
+		hostLifecycle,
+		force,
+		pollDone,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("shutdown took %s, want one bounded deadline", elapsed)
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
+		t.Fatalf("host state = %s, want stopped", got)
+	}
+	select {
+	case <-handlerDone:
+	case <-time.After(time.Second):
+		t.Fatal("HTTP handler survived shutdown escalation")
+	}
+	select {
+	case <-requestDone:
+	case <-time.After(time.Second):
+		t.Fatal("proxy request did not return after shutdown")
+	}
+}
+
+func TestVersiondReadyRequiresServingAndFullReconciliation(t *testing.T) {
+	status := host.Snapshot{State: host.StateServing, Accepting: true}
+	conditions := process.Conditions{Available: true, Reconciled: true}
+	if !versiondReady(status, conditions) {
+		t.Fatal("fully reconciled serving host is not ready")
+	}
+
+	conditions.Progressing = true
+	if versiondReady(status, conditions) {
+		t.Fatal("progressing host is ready")
+	}
+	conditions.Progressing = false
+	conditions.Degraded = true
+	if versiondReady(status, conditions) {
+		t.Fatal("degraded host is ready")
+	}
+	conditions.Degraded = false
+	status.State = host.StateDraining
+	status.Accepting = false
+	if versiondReady(status, conditions) {
+		t.Fatal("draining host is ready")
 	}
 }
 

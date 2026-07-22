@@ -37,11 +37,11 @@ func run(ctx context.Context, args []string) error {
 	operationID := flags.String("operation-id", "", "stable operation identifier used for resume")
 	journalPath := flags.String("journal", "", "local operation checkpoint path")
 	evacuationJournal := flags.String("evacuation-journal", "", "completed evacuation journal used to restore Docker policy")
-	drainTimeout := flags.Duration("drain-timeout", durationEnv("ROUTER_DRAIN_TIMEOUT", 15*time.Minute), "maximum idle/readiness wait")
-	pollInterval := flags.Duration("poll-interval", durationEnv("ROUTER_DRAIN_POLL_INTERVAL", 2*time.Second), "health/process poll interval")
+	readyTimeout := flags.Duration("ready-timeout", durationEnv("ROUTER_READY_TIMEOUT", 15*time.Minute), "maximum replacement readiness wait")
+	pollInterval := flags.Duration("poll-interval", durationEnv("ROUTER_DRAIN_POLL_INTERVAL", 2*time.Second), "readiness/process poll interval")
 	killGrace := flags.Duration("kill-grace", durationEnv("ROUTER_DRAIN_KILL_GRACE", 30*time.Minute), "wait after SIGTERM before SIGKILL")
 	commandTimeout := flags.Duration("command-timeout", durationEnv("ROUTER_COMMAND_TIMEOUT", 30*time.Second), "timeout for one SSH or local command")
-	healthURL := flags.String("health-url", "http://127.0.0.1:8080/healthz?summary=1", "versiond health URL on its host")
+	readinessURL := flags.String("ready-url", "http://127.0.0.1:8080/ready", "versiond readiness URL on its host")
 	dockerRestartPolicy := flags.String("docker-restart-policy", "", "explicit restart policy applied during replacement")
 	force := flags.Bool("force-router-guard", false, "override last-host or legacy-host router guard")
 	if err := flags.Parse(args[1:]); err != nil {
@@ -72,11 +72,11 @@ func run(ctx context.Context, args []string) error {
 		OperationID:         *operationID,
 		JournalPath:         *journalPath,
 		EvacuationJournal:   *evacuationJournal,
-		DrainTimeout:        *drainTimeout,
+		ReadyTimeout:        *readyTimeout,
 		PollInterval:        *pollInterval,
 		KillGrace:           *killGrace,
 		CommandTimeout:      *commandTimeout,
-		HealthURL:           *healthURL,
+		ReadinessURL:        *readinessURL,
 		DockerRestartPolicy: *dockerRestartPolicy,
 		ForceRouterGuard:    *force,
 	}, hostctl.SSHRemote{})

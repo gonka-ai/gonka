@@ -18,18 +18,18 @@ import (
 )
 
 const (
-	hostEvacuationDrainTimeout       = 2 * time.Minute
+	hostReplacementReadyTimeout      = 2 * time.Minute
 	hostEvacuationKillGrace          = 2 * time.Minute
 	hostEvacuationCommandTimeout     = 30 * time.Second
 	hostEvacuationObservationTimeout = 60 * time.Second
-	hostEvacuationOperationTimeout   = hostEvacuationDrainTimeout +
+	hostEvacuationOperationTimeout   = hostReplacementReadyTimeout +
 		hostEvacuationKillGrace + 2*hostEvacuationCommandTimeout
 )
 
 // TestVersiondHostEvacuation verifies the complete Track B transaction:
 // nginx removes one versiond from admission without breaking its established
 // stream, versiond exits only after that stream drains, and a replacement stays
-// down until it is healthy and explicitly activated.
+// down until versiond reports readiness and is explicitly activated.
 func TestVersiondHostEvacuation(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -38,6 +38,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		hosts := []string{cfg.Hosts[0].ID, cfg.Hosts[1].ID}
 		harness.PatchRouterVersiondHosts(t, stack.ComposePath, strings.Join(hosts, " "))
 		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
+		harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_HOST_SHUTDOWN_BUDGET", `"90s"`)
 	})
 	client := harness.GatewayChatClient()
 	escrowID := harness.GetGatewayEscrowID(t, client, env.eps.GatewayHTTP)
@@ -93,76 +94,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	)
 	requireVersiondStreamStillRunning(t, accepted, streamResult, "host evacuation stream")
 
-	harness.Step(t, "interrupting and canceling a checkpointed evacuation")
-	cancelID := "host-evacuation-cancel-" + targetHost
-	cancelJournal := filepath.Join(env.stack.WorkDir, cancelID+".json")
-	cancelCtx, cancelOperation := context.WithCancel(context.Background())
-	canceledRun := make(chan error, 1)
-	go func() {
-		_, err := env.stack.RunHostctl(
-			cancelCtx,
-			hostctl,
-			"evacuate",
-			hostctlArgs(routerContainer, targetContainer, targetHost, cancelID, cancelJournal)...,
-		)
-		canceledRun <- err
-	}()
-	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
-	cancelOperation()
-	select {
-	case <-canceledRun:
-	case <-time.After(15 * time.Second):
-		t.Fatal("interrupted hostctl process did not exit")
-	}
-	cancelCtx, cancelCancel := context.WithTimeout(context.Background(), hostEvacuationOperationTimeout)
-	output, err := env.stack.RunHostctl(
-		cancelCtx,
-		hostctl,
-		"cancel",
-		hostctlArgs(routerContainer, targetContainer, targetHost, cancelID, cancelJournal)...,
-	)
-	cancelCancel()
-	require.NoError(t, err, "cancel checkpointed evacuation: %s", output)
-	restored := harness.AssertEventually(t, hostEvacuationObservationTimeout, 100*time.Millisecond, func() bool {
-		upstream, err := harness.GetSuccessfulResponseHeader(
-			client,
-			harness.RouterSessionURL(
-				env.eps.RouterHTTP,
-				env.cfg.Versiond.VersionName,
-				escrowID,
-				"/mempool",
-			),
-			harness.StickyUpstreamHeader,
-		)
-		return err == nil && harness.HostIDForUpstream(env.cfg, upstream) == targetHost
-	})
-	require.True(t, restored, "cancel did not return the target upstream to active")
-	requireVersiondStreamStillRunning(t, accepted, streamResult, "host evacuation stream")
-
 	harness.Step(t, "evacuating the stream's target through gonka-hostctl")
 	evacuationJournal := filepath.Join(env.stack.WorkDir, evacuationID+".json")
-	evacuationCtx, interruptEvacuation := context.WithCancel(context.Background())
-	interruptedEvacuation := make(chan error, 1)
-	go func() {
-		_, err := env.stack.RunHostctl(
-			evacuationCtx,
-			hostctl,
-			"evacuate",
-			hostctlArgs(routerContainer, targetContainer, targetHost, evacuationID, evacuationJournal)...,
-		)
-		interruptedEvacuation <- err
-	}()
-	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
-	interruptEvacuation()
-	select {
-	case err := <-interruptedEvacuation:
-		require.Error(t, err, "interrupted evacuation unexpectedly completed")
-	case <-time.After(15 * time.Second):
-		t.Fatal("interrupted evacuation did not exit")
-	}
-	requireVersiondStreamStillRunning(t, accepted, streamResult, "host evacuation stream")
-
-	harness.Step(t, "resuming evacuation from its durable hostctl phase")
 	resumeCtx, cancelResume := context.WithTimeout(context.Background(), hostEvacuationOperationTimeout)
 	defer cancelResume()
 	evacuationResult := make(chan error, 1)
@@ -177,12 +110,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	}()
 	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 
-	harness.Step(t, "versiond remains alive while hostctl observes the established stream")
-	observedInflight := harness.AssertEventually(t, hostEvacuationObservationTimeout, 250*time.Millisecond, func() bool {
-		summary, err := harness.TryVersiondHealthSummary(env.stack, targetHost)
-		return err == nil && summary.State == "serving" && summary.ProxyInflight > 0
-	})
-	require.True(t, observedInflight, "target versiond did not expose host inflight")
+	harness.Step(t, "versiond remains alive while its internal FSM drains the established stream")
 	running, err := env.stack.ServiceRunning(targetHost)
 	require.NoError(t, err)
 	require.True(t, running, "target versiond exited before its accepted stream completed")
@@ -230,17 +158,11 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	)
 	replaceArgs = append(replaceArgs, "--evacuation-journal", evacuationJournal)
 	replaceCtx, cancelReplace := context.WithTimeout(context.Background(), hostEvacuationOperationTimeout)
-	output, err = env.stack.RunHostctl(replaceCtx, hostctl, "replace", replaceArgs...)
+	output, err := env.stack.RunHostctl(replaceCtx, hostctl, "replace", replaceArgs...)
 	cancelReplace()
 	require.NoError(t, err, "replace versiond host: %s", output)
-	replacementHealth, err := harness.TryVersiondHealthSummary(env.stack, targetHost)
-	require.NoError(t, err)
-	require.True(t, replacementHealth.Available)
-	require.True(t, replacementHealth.Reconciled)
-	require.False(t, replacementHealth.Progressing)
-	require.False(t, replacementHealth.Degraded)
+	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost))
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
-
 }
 
 func requireSessionAvailableOnHost(
@@ -293,7 +215,7 @@ func hostctlArgs(
 		"--versiond-ssh", "local",
 		"--versiond-runtime", "docker",
 		"--versiond-service", versiondContainer,
-		"--drain-timeout", hostEvacuationDrainTimeout.String(),
+		"--ready-timeout", hostReplacementReadyTimeout.String(),
 		"--poll-interval", "250ms",
 		"--kill-grace", hostEvacuationKillGrace.String(),
 		"--command-timeout", hostEvacuationCommandTimeout.String(),
