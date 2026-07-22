@@ -25,7 +25,7 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 
 | Variable | Required | Default | Meaning |
 | --- | --- | --- | --- |
-| `VERSIOND_HOSTS` | yes | - | Space-separated HA pool hostnames, used to bootstrap persistent state |
+| `VERSIOND_HOSTS` | first boot | - | Space-separated HA pool hostnames, used to bootstrap persistent state |
 | `VERSIOND_PORT` | no | `8080` | Upstream listen port |
 | `VERSIOND_LEGACY_HOST` | no | first of `VERSIOND_HOSTS` | Host that owns SQLite data dirs for non-HA versions |
 | `VERSIOND_NON_HA_VERSIONS` | no | empty | Whitespace and/or comma-separated version path segments pinned to legacy. Empty = all versions use the HA pool |
@@ -56,7 +56,10 @@ timeout at least as large as the versiond-router policy.
 After the first bootstrap, the persistent state is authoritative. Changing
 `VERSIOND_HOSTS` alone does not overwrite runtime host states. Use
 `gonka-routerctl` for every pool mutation. The router state directory must be
-stored on a persistent volume.
+stored on a persistent volume. On later starts, bootstrap recovers any pending
+transaction and loads that state before reading bootstrap environment variables.
+Missing or malformed bootstrap variables therefore do not block a restart when
+valid persistent state exists.
 
 ## Host lifecycle
 

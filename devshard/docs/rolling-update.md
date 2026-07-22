@@ -601,6 +601,10 @@ After bootstrap, `gonka-routerctl` owns that state and applies mutations as
 validated nginx transactions. It exposes no network admin API; remote operators
 invoke it through the deployment's existing SSH access.
 
+Bootstrap environment is read only when no persistent router state exists.
+On restart, pending recovery and the stored state take precedence, so a missing
+or malformed `VERSIOND_HOSTS` cannot block startup or overwrite the live pool.
+
 The persisted router FSM is:
 
 ```text

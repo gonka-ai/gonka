@@ -133,6 +133,10 @@ it, reloads nginx, and persists an audit record. Repeating an already completed
 operation is idempotent. Router state, journal, and audit data live on the
 persistent `/var/lib/gonka/versiond-router` volume.
 
+Bootstrap settings such as `VERSIOND_HOSTS` are fallback input for creating the
+first state only. On restart, journal recovery and the persisted state run first;
+bootstrap settings are not parsed when authoritative state already exists.
+
 `gonka-routerctl status` is read-only and reports a `pending_operation` when the
 journal is present. `gonka-routerctl recover` is the explicit mutating recovery
 command. A transaction interrupted before confirmed reload rolls back. A

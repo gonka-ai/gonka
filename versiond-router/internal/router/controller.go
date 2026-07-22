@@ -46,6 +46,10 @@ type Controller struct {
 	runner CommandRunner
 }
 
+// InitialStateFactory supplies bootstrap input only when no authoritative
+// state exists.
+type InitialStateFactory func() (State, error)
+
 type PendingOperation struct {
 	OperationID   string    `json:"operation_id"`
 	Phase         string    `json:"phase"`
@@ -97,7 +101,10 @@ func NewController(config Config, runner CommandRunner) *Controller {
 	return &Controller{config: config, runner: runner}
 }
 
-func (c *Controller) Bootstrap(ctx context.Context, initial State) (State, error) {
+func (c *Controller) Bootstrap(
+	ctx context.Context,
+	newInitialState InitialStateFactory,
+) (State, error) {
 	var result State
 	err := c.withLock(ctx, func() error {
 		if err := c.recoverPending(ctx, false); err != nil {
@@ -109,6 +116,13 @@ func (c *Controller) Bootstrap(ctx context.Context, initial State) (State, error
 			return c.ensureRendered(ctx, current, false)
 		}
 		if !errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+		if newInitialState == nil {
+			return errors.New("initial state factory is required when router state is absent")
+		}
+		initial, err := newInitialState()
+		if err != nil {
 			return err
 		}
 		if err := initial.Validate(); err != nil {

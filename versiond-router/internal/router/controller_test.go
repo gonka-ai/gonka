@@ -34,7 +34,7 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) error {
 func TestControllerBootstrapAndDrainTransaction(t *testing.T) {
 	controller, runner, paths := newTestController(t)
 	state := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), state); err != nil {
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -70,7 +70,7 @@ func TestControllerBootstrapAndDrainTransaction(t *testing.T) {
 func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 	controller, runner, paths := newTestController(t)
 	state := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), state); err != nil {
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
 		t.Fatal(err)
 	}
 	oldConfig, err := os.ReadFile(paths.OutputPath)
@@ -101,7 +101,7 @@ func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 	controller, runner, paths := newTestController(t)
 	oldState := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
+	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
 	newState, _, newConfig := stagePendingDrain(t, paths, oldState, "reloaded")
@@ -143,7 +143,7 @@ func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 func TestControllerRecoveryRollsBackBeforeReload(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
+	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
 	_, oldConfig, _ := stagePendingDrain(t, paths, oldState, "config_published")
@@ -161,7 +161,7 @@ func TestControllerRecoveryRollsBackBeforeReload(t *testing.T) {
 func TestControllerRecoveryRejectsChangedReloadedConfig(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), oldState); err != nil {
+	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
 	stagePendingDrain(t, paths, oldState, "reloaded")
@@ -174,6 +174,40 @@ func TestControllerRecoveryRejectsChangedReloadedConfig(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.JournalPath); err != nil {
 		t.Fatalf("failed recovery removed its journal: %v", err)
+	}
+}
+
+func TestControllerBootstrapBuildsInitialStateOnlyWhenMissing(t *testing.T) {
+	controller, _, _ := newTestController(t)
+	want := newTestState(t)
+	builds := 0
+
+	got, err := controller.Bootstrap(context.Background(), func() (State, error) {
+		builds++
+		return want, nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if builds != 1 {
+		t.Fatalf("initial state factory called %d times, want 1", builds)
+	}
+	if got.Generation != want.Generation || got.LastOperation != want.LastOperation {
+		t.Fatalf("bootstrap state = %#v, want %#v", got, want)
+	}
+
+	got, err = controller.Bootstrap(context.Background(), func() (State, error) {
+		builds++
+		return State{}, errors.New("bootstrap environment is unavailable")
+	})
+	if err != nil {
+		t.Fatalf("bootstrap with persisted state: %v", err)
+	}
+	if builds != 1 {
+		t.Fatalf("factory called after state was persisted: %d calls", builds)
+	}
+	if got.Generation != want.Generation || got.LastOperation != want.LastOperation {
+		t.Fatalf("persisted state = %#v, want %#v", got, want)
 	}
 }
 
@@ -253,6 +287,12 @@ func newTestState(t *testing.T) State {
 	}
 	state.LastOperation = fmt.Sprintf("bootstrap-%d", time.Now().UnixNano())
 	return state
+}
+
+func staticState(state State) InitialStateFactory {
+	return func() (State, error) {
+		return state, nil
+	}
 }
 
 func assertFileEquals(t *testing.T, path string, want []byte) {

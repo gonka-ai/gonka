@@ -31,6 +31,15 @@ test-render:
 	grep -q 'proxy_next_upstream error timeout http_502' "$$tmpdir/mixed.conf"; \
 	grep -q 'max_fails=1 fail_timeout=10s' "$$tmpdir/mixed.conf"; \
 	grep -q 'proxy_connect_timeout 2s' "$$tmpdir/mixed.conf"; \
+	VERSIOND_HOSTS= \
+	VERSIOND_PORT=invalid \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
 	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
 	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \

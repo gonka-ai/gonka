@@ -57,10 +57,18 @@ func bootstrap(ctx context.Context, controller *router.Controller, args []string
 	if flags.NArg() != 0 {
 		return errors.New("bootstrap accepts no positional arguments")
 	}
+	state, err := controller.Bootstrap(ctx, initialStateFromEnv)
+	if err != nil {
+		return err
+	}
+	return printJSON(state)
+}
+
+func initialStateFromEnv() (router.State, error) {
 	hosts := strings.Fields(os.Getenv("VERSIOND_HOSTS"))
 	port, err := strconv.Atoi(envOrDefault("VERSIOND_PORT", "8080"))
 	if err != nil {
-		return fmt.Errorf("parse VERSIOND_PORT: %w", err)
+		return router.State{}, fmt.Errorf("parse VERSIOND_PORT: %w", err)
 	}
 	state, err := router.NewState(
 		hosts,
@@ -69,14 +77,10 @@ func bootstrap(ctx context.Context, controller *router.Controller, args []string
 		splitList(os.Getenv("VERSIOND_NON_HA_VERSIONS")),
 	)
 	if err != nil {
-		return err
+		return router.State{}, err
 	}
 	state.LastOperation = operationID("bootstrap")
-	state, err = controller.Bootstrap(ctx, state)
-	if err != nil {
-		return err
-	}
-	return printJSON(state)
+	return state, nil
 }
 
 func mutateHost(ctx context.Context, controller *router.Controller, args []string) error {
