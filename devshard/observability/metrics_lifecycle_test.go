@@ -68,3 +68,30 @@ func TestIncValidationOrphanIncrementsCounter(t *testing.T) {
 		t.Fatalf("counter delta = %v, want 1", after-before)
 	}
 }
+
+func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
+	ensureMetrics()
+	const escrowID = "escrow-metrics-prune"
+
+	SetValidationQueueDepth(escrowID, 3)
+	SetMempoolSize(escrowID, 7)
+
+	DeleteEscrowMetrics(escrowID)
+
+	mf, err := Registry().Gather()
+	if err != nil {
+		t.Fatalf("Gather: %v", err)
+	}
+	for _, family := range mf {
+		switch family.GetName() {
+		case "devshard_validation_queue_depth", "devshard_mempool_size":
+			for _, m := range family.Metric {
+				for _, lp := range m.Label {
+					if lp.GetName() == "escrow_id" && lp.GetValue() == escrowID {
+						t.Fatalf("%s still has escrow_id=%q after DeleteEscrowMetrics", family.GetName(), escrowID)
+					}
+				}
+			}
+		}
+	}
+}

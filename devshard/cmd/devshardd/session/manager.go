@@ -134,15 +134,16 @@ func (m *HostManager) SetBinaryVersion(v string) {
 // Close stops all live session hosts and releases storage resources.
 func (m *HostManager) Close() error {
 	m.sessionsMutex.Lock()
-	sessions := make([]*transport.Server, 0, len(m.sessions))
-	for _, srv := range m.sessions {
-		sessions = append(sessions, srv)
+	sessions := make(map[string]*transport.Server, len(m.sessions))
+	for escrowID, srv := range m.sessions {
+		sessions[escrowID] = srv
 	}
 	m.sessions = make(map[string]*transport.Server)
 	m.sessionsMutex.Unlock()
 
-	for _, srv := range sessions {
+	for escrowID, srv := range sessions {
 		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
 	}
 	return m.store.Close()
 }
@@ -219,6 +220,7 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	m.sessionsMutex.Unlock()
 	if hadSession {
 		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
 	}
 
 	if err := m.store.MarkSettled(escrowID); err != nil {
@@ -348,8 +350,9 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 	}
 	m.sessionsMutex.Unlock()
 
-	for _, srv := range evicted {
+	for escrowID, srv := range evicted {
 		srv.Host().Close()
+		observability.DeleteEscrowMetrics(escrowID)
 	}
 	return len(evicted)
 }
