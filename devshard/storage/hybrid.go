@@ -83,6 +83,12 @@ type PostgresPromotionWatcher interface {
 	OnPostgresPromoted(func())
 }
 
+// readinessReporter is implemented by backends whose serving readiness may lag
+// their construction (Postgres rebuilds its session index asynchronously).
+type readinessReporter interface {
+	Ready() bool
+}
+
 // newHybridRouter wires the per-session router. Either backend may be nil, but
 // at least one must be non-nil. preferPG selects the backend for brand-new
 // escrows when both backends are present. storeDir enables .pg-bound marker
@@ -168,6 +174,20 @@ func (h *HybridStorage) postgresBackend() Storage {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.pg
+}
+
+// Ready reports whether the router can serve. A degraded / SQLite-only router
+// (no Postgres attached) is always ready for the escrows it owns. When Postgres
+// is attached, readiness tracks its async session-index rebuild.
+func (h *HybridStorage) Ready() bool {
+	pg := h.postgresBackend()
+	if pg == nil {
+		return true
+	}
+	if r, ok := pg.(readinessReporter); ok {
+		return r.Ready()
+	}
+	return true
 }
 
 func (h *HybridStorage) newSessionError() error {
@@ -329,6 +349,12 @@ func (h *HybridStorage) startPostgresReconnect(ctx context.Context, opener stora
 			pg, err := opener(ctx)
 			if err != nil {
 				slog.Warn("devshard storage: postgres reconnect failed; staying in degraded sqlite-owned-only mode",
+					"dir", h.storeDir, "error", err)
+				continue
+			}
+			if err := waitPostgresIndexReady(ctx, pg); err != nil {
+				_ = pg.Close()
+				slog.Warn("devshard storage: postgres reconnect index rebuild failed; staying in degraded sqlite-owned-only mode",
 					"dir", h.storeDir, "error", err)
 				continue
 			}

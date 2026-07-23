@@ -133,7 +133,7 @@ func recordSessionResolution(c echo.Context, err error, recordChatTerminal bool)
 }
 
 func sessionResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
-	if errors.Is(err, ErrInitializing) {
+	if errors.Is(err, ErrInitializing) || errors.Is(err, storage.ErrStorageIndexRebuilding) {
 		return observability.MetricStatusError, observability.ReasonInitializing
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {
@@ -194,7 +194,7 @@ func sessionHTTPError(c echo.Context, err error) error {
 	if errors.As(err, &he) {
 		return he
 	}
-	if errors.Is(err, ErrInitializing) {
+	if errors.Is(err, ErrInitializing) || errors.Is(err, storage.ErrStorageIndexRebuilding) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorInitializing, err.Error())
 	}
 	if errors.Is(err, storage.ErrSessionNotFound) {

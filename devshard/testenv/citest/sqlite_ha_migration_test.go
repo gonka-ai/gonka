@@ -84,6 +84,8 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	harness.PatchRouterVersiondHosts(t, stack.ComposePath, hostsBoth)
 	stack.RecreateServices(t, "versiond-router")
 	stack.StartService(t, secondHost)
+	// Force-recreate remaps Docker host ports; refresh probes before waiting.
+	eps = stack.Endpoints(t, cfg)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/healthz", 2*time.Minute, "router after expand", stack)
 
 	haHealth := eps.RouterHTTP + "/" + haVersion + "/healthz"
@@ -108,6 +110,8 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	harness.Step(t, "phase 4: multi-host HA serves with Devshard-Ha + postgres")
 	// Clear gateway limiter / in-flight state left from Phase 2 HA 503s.
 	harness.RestartService(t, stack, "devshardctl")
+	// Stop/start remaps Docker host ports; refresh before probing.
+	eps = stack.Endpoints(t, cfg)
 	harness.WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", 3*time.Minute, "gateway after restart", stack)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
 	okReq := harness.ChatCompletionRequest{
@@ -123,6 +127,9 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	// Refresh router DNS after versiond recreate so both HA upstreams are live.
 	stack.RequireServicesRunning(t, legacyHost, secondHost, "versiond-router")
 	stack.RecreateServices(t, "versiond-router")
+	eps = stack.Endpoints(t, cfg)
+	haHealth = eps.RouterHTTP + "/" + haVersion + "/healthz"
+	haURL = harness.RouterSessionURL(eps.RouterHTTP, haVersion, "sqlite-migration-phase0-ha", "/healthz")
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/healthz", 2*time.Minute, "router after HA refresh", stack)
 	harness.WaitGETOK(t, client, haHealth, 2*time.Minute, "devshardd health via refreshed router", stack)
 

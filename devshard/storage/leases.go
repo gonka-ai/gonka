@@ -168,6 +168,9 @@ func (s *SQLite) OwnsPendingLease(_ context.Context, _ string, _ uint64, _ strin
 }
 
 func (s *Postgres) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
+	if err := s.WaitReady(ctx); err != nil {
+		return false, err
+	}
 	if err := s.ensurePartition(ctx, epochID); err != nil {
 		return false, err
 	}

@@ -39,6 +39,12 @@ var ErrEpochPruned = errors.New("epoch already pruned")
 // ErrEscrowCacheNotFound is returned when no pre-init escrow cache row exists.
 var ErrEscrowCacheNotFound = errors.New("escrow cache not found")
 
+// ErrStorageIndexRebuilding is returned by escrow-keyed Postgres operations
+// while the session index rebuild has not finished within the per-operation
+// budget. It signals a transient, retryable state (not a hard storage failure),
+// so callers should surface it as "initializing" / 503 rather than a 500.
+var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is rebuilding")
+
 // Storage persists devshard session state and diffs.
 //
 // The store is partitioned by EpochID. PruneEpoch drops everything that

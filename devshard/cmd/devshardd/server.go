@@ -26,7 +26,7 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	return e
 }
 
-func buildAdminServer(lifecycle *lifecycleState) *echo.Echo {
+func buildAdminServer(lifecycle *lifecycleState, storageReady func() bool) *echo.Echo {
 	e := echo.New()
 	e.HideBanner = true
 	e.HidePort = true
@@ -34,10 +34,11 @@ func buildAdminServer(lifecycle *lifecycleState) *echo.Echo {
 
 	e.GET("/ready", func(c echo.Context) error {
 		status := lifecycle.Status()
-		if !status.Ready || status.Draining {
-			return c.JSON(http.StatusServiceUnavailable, status)
+		storeReady := storageReady == nil || storageReady()
+		if !status.Ready || status.Draining || !storeReady {
+			return c.JSON(http.StatusServiceUnavailable, readyResponse(status, storeReady))
 		}
-		return c.JSON(http.StatusOK, status)
+		return c.JSON(http.StatusOK, readyResponse(status, storeReady))
 	})
 	e.POST("/drain", func(c echo.Context) error {
 		lifecycle.StartDrain()
@@ -48,4 +49,14 @@ func buildAdminServer(lifecycle *lifecycleState) *echo.Echo {
 	})
 
 	return e
+}
+
+// readyStatus augments drainStatus with storage readiness for the /ready probe.
+type readyStatus struct {
+	drainStatus
+	StorageReady bool `json:"storage_ready"`
+}
+
+func readyResponse(status drainStatus, storeReady bool) readyStatus {
+	return readyStatus{drainStatus: status, StorageReady: storeReady}
 }

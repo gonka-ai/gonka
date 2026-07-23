@@ -147,6 +147,15 @@ func (m *ManagedStorage) Close() error {
 	return m.inner.Close()
 }
 
+// Ready reports whether the wrapped storage can serve. Returns true when the
+// inner backend does not report readiness (e.g. SQLite-only).
+func (m *ManagedStorage) Ready() bool {
+	if r, ok := m.inner.(interface{ Ready() bool }); ok {
+		return r.Ready()
+	}
+	return true
+}
+
 // --- Storage delegation ---
 
 func (m *ManagedStorage) CreateSession(params CreateSessionParams) error {
