@@ -51,6 +51,24 @@ run_keys_cmd() {
         --keyring-backend "$KEYRING_BACKEND" --home "$KEY_DIR"
 }
 
+wait_for_tx_inclusion() {
+    local tx_hash="$1"
+    local label="${2:-transaction}"
+    echo "Waiting for $label $tx_hash to be included..."
+    for _ in $(seq 1 30); do
+        local q height
+        q=$("$APP_NAME" query tx "$tx_hash" $NODE_OPTS --output json 2>/dev/null || echo "")
+        height=$(echo "$q" | sed -n '/{/,$p' | jq -r '.height // empty' 2>/dev/null)
+        if [ -n "$height" ] && [ "$height" != "null" ] && [ "$height" != "0" ]; then
+            echo "$label confirmed at height $height"
+            return 0
+        fi
+        sleep 2
+    done
+    echo "Error: $label $tx_hash not confirmed within timeout"
+    return 1
+}
+
 get_keyring_backend || exit 1
 
 MY_ADDR=$(run_keys_cmd show "$KEY_NAME" -a 2>/dev/null)
@@ -80,6 +98,7 @@ if [ "$TX_HASH" = "null" ] || [ -z "$TX_HASH" ]; then
     exit 1
 fi
 echo "Store TX: $TX_HASH"
+wait_for_tx_inclusion "$TX_HASH" "community_sale store" || exit 1
 
 CODE_ID=""
 for _ in $(seq 1 20); do
@@ -129,6 +148,7 @@ if [ "$INST_HASH" = "null" ] || [ -z "$INST_HASH" ]; then
     exit 1
 fi
 echo "Instantiate TX: $INST_HASH"
+wait_for_tx_inclusion "$INST_HASH" "community_sale instantiate" || exit 1
 
 CONTRACT_ADDR=""
 for _ in $(seq 1 20); do
@@ -185,6 +205,7 @@ if [ "$SEND_HASH" = "null" ] || [ -z "$SEND_HASH" ]; then
     exit 1
 fi
 echo "Fund TX: $SEND_HASH"
+wait_for_tx_inclusion "$SEND_HASH" "community_sale fund" || exit 1
 
 jq -n \
     --arg addr "$CONTRACT_ADDR" \

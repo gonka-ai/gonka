@@ -87,6 +87,7 @@ def load_config_from_env(hf_home: str = None):
         "BOUNTY_POOL_AMOUNT": "1500000000000",
         "BOUNTY_POOL_COMMUNITY_SALE_LABEL": "community-sale-testnet-v1",
         "BOUNTY_POOL_GOV_AUTHORITY": "gonka10d07y265gmmuvt4z0w9aw880jnsr700j2h5m33",
+        "WRAPPED_TOKEN_SETUP_ENABLED": "true",
     }
     
     config = default_config.copy()
@@ -1273,6 +1274,162 @@ def setup_bounty_pool():
         print(f"  contract: {state.get('community_sale_address')}")
         print(f"  denom: {state.get('ibc_denom')}")
         print(f"  amount: {state.get('amount')}")
+
+
+def _query_account_sequence(address: str, node_rpc_url: str) -> int | None:
+    """Return account sequence from chain, or None if account/query unavailable."""
+    result = subprocess.run(
+        [
+            str(INFERENCED_BINARY.path),
+            "q", "auth", "account", address,
+            "--node", _normalize_node_rpc_url(node_rpc_url),
+            "-o", "json",
+        ],
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    account = payload.get("account") or {}
+    if "base_account" in account:
+        account = account["base_account"]
+    seq = account.get("sequence")
+    if seq is None:
+        return None
+    return int(seq)
+
+
+def wait_for_cold_account_sequence_settled(
+    address: str,
+    node_rpc_url: str,
+    timeout_seconds: int = 60,
+) -> None:
+    """Wait until cold-key sequence is stable on RPC (avoids post-bounty race)."""
+    deadline = time.time() + timeout_seconds
+    last_seq: int | None = None
+    while time.time() < deadline:
+        seq = _query_account_sequence(address, node_rpc_url)
+        if seq is None:
+            time.sleep(2)
+            continue
+        if last_seq is not None and seq == last_seq:
+            time.sleep(2)
+            if _query_account_sequence(address, node_rpc_url) == seq:
+                print(f"Cold account sequence settled at {seq} ({node_rpc_url})")
+                return
+        last_seq = seq
+        time.sleep(2)
+    print(
+        f"Warning: cold account sequence may still be changing "
+        f"(last seen={last_seq}); proceeding with wrapped-token setup"
+    )
+
+
+def setup_wrapped_token_registration():
+    """Upload wrapped_token.wasm and submit a governance proposal to register its code ID."""
+    if CONFIG_ENV.get("WRAPPED_TOKEN_SETUP_ENABLED", "true").lower() != "true":
+        print("Wrapped token registration skipped (WRAPPED_TOKEN_SETUP_ENABLED is not true)")
+        return
+
+    script = GONKA_REPO_DIR / "test-net-cloud/nebius/bridge/bridge-register-wrapped.sh"
+    if not script.exists():
+        raise FileNotFoundError(f"Wrapped token registration script not found: {script}")
+
+    print("Running wrapped token registration (store WASM + governance proposal + vote)...")
+    env = os.environ.copy()
+    env.update(CONFIG_ENV)
+    env["CHAIN_ID"] = CONFIG_ENV.get("CHAIN_ID", "gonka-testnet")
+    env["TESTNET_BASE_DIR"] = str(BASE_DIR)
+    env["KEY_NAME"] = COLD_KEY_NAME
+    env["KEYRING_PASSWORD"] = CONFIG_ENV.get("KEYRING_PASSWORD", "12345678")
+    api_port = CONFIG_ENV.get("API_PORT", "8000")
+    node_rpc_url = f"http://localhost:{api_port}/chain-rpc/"
+    env["NODE_OPTS"] = f"--node {node_rpc_url}"
+
+    try:
+        cold_address = load_existing_cold_account_key().address
+        wait_for_cold_account_sequence_settled(cold_address, node_rpc_url)
+    except Exception as exc:
+        print(f"Note: could not wait for cold account sequence: {exc}")
+
+    result = subprocess.run(
+        ["bash", str(script), "--use-repo"],
+        cwd=str(BASE_DIR),
+        env=env,
+        capture_output=True,
+        text=True,
+    )
+    combined_output = ""
+    if result.stdout:
+        print(result.stdout)
+        combined_output += result.stdout
+    if result.stderr:
+        print(result.stderr)
+        combined_output += result.stderr
+    if result.returncode != 0:
+        print("")
+        print("=" * 72)
+        print("WARNING: Wrapped token registration failed (genesis launch continues)")
+        print("=" * 72)
+        print("Bounty pool setup succeeded; only wrapped-token code ID registration failed.")
+        print("Retry manually after checking the error above:")
+        print(
+            f"  cd {BASE_DIR} && "
+            f"CHAIN_ID={env['CHAIN_ID']} TESTNET_BASE_DIR={BASE_DIR} "
+            f"KEYRING_PASSWORD=$KEYRING_PASSWORD "
+            f"bash {script} --use-repo"
+        )
+        print("Common causes:")
+        print("  - account sequence mismatch after bounty pool (retry usually fixes it)")
+        print("  - wrapped_token.wasm missing/empty (build: inference-chain/contracts/wrapped-token/build.sh)")
+        print("  - cold key short on ngonka for gas/gov deposit")
+        print(f"  - API/chain RPC not reachable at http://localhost:{api_port}/chain-rpc/")
+        if combined_output.strip():
+            print("")
+            print("Last script output tail:")
+            print("\n".join(combined_output.strip().splitlines()[-20:]))
+        print("=" * 72)
+        print("")
+        return
+
+    voting_period = "10m"
+    try:
+        overrides_path = GONKA_REPO_DIR / "test-net-cloud/nebius/genesis-overrides.json"
+        local_overrides = BASE_DIR / "genesis-overrides.json"
+        if local_overrides.exists():
+            overrides_path = local_overrides
+        with open(overrides_path, "r") as f:
+            gov_params = json.load(f).get("app_state", {}).get("gov", {}).get("params", {})
+            voting_period = gov_params.get("voting_period", voting_period)
+    except (OSError, json.JSONDecodeError, AttributeError):
+        pass
+
+    print("")
+    print("=" * 72)
+    print("Wrapped token code ID registration: vote submitted (async)")
+    print("=" * 72)
+    print(
+        f"The governance proposal was submitted and voted YES by the genesis key, "
+        f"but launch.py does not wait for the voting period to finish "
+        f"(currently {voting_period} in genesis-overrides.json)."
+    )
+    print(
+        "Check proposal status asynchronously, for example:"
+    )
+    print(
+        f"  {INFERENCED_BINARY.path} q gov proposals "
+        f"--node {CONFIG_ENV.get('NODE_RPC_URL', 'http://127.0.0.1:26657')} -o json | jq '.proposals[-1]'"
+    )
+    print(
+        "Once the proposal shows PROPOSAL_STATUS_PASSED, wrapped_token code ID is registered. "
+        "USDC/USDT CW20 contracts are created later on the first bridge deposit (or via bridge-token-mint-sim.sh)."
+    )
+    print("=" * 72)
+    print("")
 
 
 def generate_gentx(account_key: AccountKey, consensus_key: str, node_id: str, warm_key_address: str, chain_id: str):
@@ -2618,6 +2775,7 @@ def main():
     grant_key_permissions(warm_key.address)
     if is_genesis:
         setup_bounty_pool()
+        setup_wrapped_token_registration()
     if not is_genesis:
         print_join_deploy_summary(account_key, warm_key, args.chainid)
 

@@ -15,7 +15,7 @@ else
 fi
 
 export KEY_DIR="$BASE_DIR/.inference"
-export CHAIN_ID="gonka-testnet"
+export CHAIN_ID="${CHAIN_ID:-gonka-testnet}"
 export KEY_NAME="${KEY_NAME:-gonka-account-key}"
 
 # Port 26657 is closed on host; node is running in Docker, protecting its RPC endpoint behind proxy on port 8000.
