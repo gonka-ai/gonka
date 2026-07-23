@@ -464,8 +464,12 @@ func ExecuteValidation(
 	// logits are empty, so an executor that stored a response with no logprobs
 	// would always pass. Reject only the asymmetric case (exactly one side empty):
 	// the executor's output cannot be verified against the validator's
-	// re-execution. Both-empty is left to CompareLogits so legitimate
-	// reasoning-burn empties (e.g. Kimi-K2.6, finish_reason=length) still match.
+	// re-execution.
+	//
+	// Both-empty intentionally autopasses (unlike mainnet's || fail-closed guard):
+	// legitimate reasoning-burn empties (e.g. Kimi-K2.6, finish_reason=length)
+	// still match. Keep warn+pass for now and gather logs before deciding whether
+	// to fail-close or require an explicit "legitimate empty" shape.
 	if (len(originalLogits) == 0) != (len(validationLogits) == 0) {
 		logging.Warn("validation failed: logit presence mismatch between original and validation response",
 			types.Validation,
@@ -477,6 +481,12 @@ func ExecuteValidation(
 			InferenceId: inferenceID,
 			Reason:      "Logit presence mismatch between original and validation response.",
 		}, nil
+	}
+	if len(originalLogits) == 0 {
+		logging.Warn("both original and validation logits empty; treating validation as passed (both-empty autopass)",
+			types.Validation,
+			"inferenceId", inferenceID,
+		)
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil

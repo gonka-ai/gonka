@@ -316,7 +316,8 @@ func TestExecuteValidation_NoLogitsInValidatorResponse_IsInvalid(t *testing.T) {
 }
 
 func TestExecuteValidation_BothEmptyLogits_StaysValid(t *testing.T) {
-	// Legitimate reasoning-burn empties (both sides empty) must remain a match.
+	// Legitimate reasoning-burn empties (both sides empty) must remain a match
+	// (warn + autopass). Deliberately looser than mainnet's || fail-closed guard.
 	empty := emptyLogprobsResponsePayload()
 	result, err := ExecuteValidation(
 		context.Background(), "inf-1",
