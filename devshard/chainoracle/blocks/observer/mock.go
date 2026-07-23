@@ -67,9 +67,17 @@ type Mock struct {
 	closed  bool
 }
 
+// subBufSize is the per-subscriber channel buffer. A full buffer drops the
+// subscription (catch-up or live) rather than blocking producers.
+const subBufSize = 16
+
 type subscription struct {
-	ch   chan *blocks.Header
-	from int64
+	ch     chan *blocks.Header
+	from   int64
+	cancel context.CancelFunc
+	// live is set only after catch-up finishes. Fanout ignores non-live
+	// subs so historical replay cannot race with new headers on ch.
+	live bool
 }
 
 // NewMock constructs a mock observer. The constructor validates the
@@ -411,80 +419,162 @@ func (m *Mock) Prove(_ context.Context, path string, height int64) (*blocks.Proo
 	}, nil
 }
 
-// Subscribe returns a channel that first replays any headers at or after
-// fromHeight, then receives every new header until ctx is cancelled.
-// The channel is closed when the subscription ends.
+// Subscribe returns a channel that first catches up (replay snapshot, then
+// any gap that appeared while sending), then receives every new header until
+// ctx is cancelled. The channel is closed when the subscription ends.
+//
+// Catch-up is the sole sender until live; fanout only delivers after that.
+// A full subscriber buffer drops the sub (cancel) without closing ch from
+// fanout — the Subscribe goroutine is the sole closer.
 func (m *Mock) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks.Header, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return nil, errors.New("mock observer: closed")
 	}
+	subCtx, cancel := context.WithCancel(ctx)
 	sub := &subscription{
-		ch:   make(chan *blocks.Header, 16),
-		from: fromHeight,
+		ch:     make(chan *blocks.Header, subBufSize),
+		from:   fromHeight,
+		cancel: cancel,
 	}
 	id := m.nextSub
 	m.nextSub++
-	m.subs[id] = sub
+	m.subs[id] = sub // live=false until catch-up finishes
 
-	// Replay history in ascending order without blocking under lock.
-	replay := make([]*blocks.Header, 0)
-	if m.latest != nil {
-		lo := fromHeight
-		if lo < m.cfg.InitialHeight {
-			lo = m.cfg.InitialHeight
-		}
-		for h := lo; h <= m.latest.Height; h++ {
-			if v, ok := m.history[h]; ok {
-				replay = append(replay, cloneHeader(v))
-			}
-		}
-	}
+	replay := m.snapshotFromLocked(fromHeight)
 	m.mu.Unlock()
 
-	// Deliver replay and wire the teardown goroutine.
 	go func() {
+		defer m.finishSub(id, sub)
+
+		lastSent := fromHeight - 1
 		for _, h := range replay {
-			select {
-			case <-ctx.Done():
-				m.unsubscribe(id)
+			if !trySendHeader(subCtx, sub.ch, h) {
 				return
-			case sub.ch <- h:
 			}
+			lastSent = h.Height
 		}
-		<-ctx.Done()
-		m.unsubscribe(id)
+		if !m.catchUpAndGoLive(subCtx, id, lastSent) {
+			return
+		}
+		<-subCtx.Done()
 	}()
 	return sub.ch, nil
 }
 
-func (m *Mock) unsubscribe(id int) {
-	m.mu.Lock()
-	sub, ok := m.subs[id]
-	if !ok {
-		m.mu.Unlock()
-		return
+// snapshotFromLocked copies history[fromHeight..] while m.mu is held.
+func (m *Mock) snapshotFromLocked(fromHeight int64) []*blocks.Header {
+	replay := make([]*blocks.Header, 0)
+	if m.latest == nil {
+		return replay
 	}
+	lo := fromHeight
+	if lo < m.cfg.InitialHeight {
+		lo = m.cfg.InitialHeight
+	}
+	for h := lo; h <= m.latest.Height; h++ {
+		if v, ok := m.history[h]; ok {
+			replay = append(replay, cloneHeader(v))
+		}
+	}
+	return replay
+}
+
+// catchUpAndGoLive sends any headers produced after lastSent, then marks the
+// sub live under the same lock so AdvanceOne cannot insert a gap between
+// catch-up and fanout eligibility.
+func (m *Mock) catchUpAndGoLive(ctx context.Context, id int, lastSent int64) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+
+		m.mu.Lock()
+		if m.closed {
+			m.mu.Unlock()
+			return false
+		}
+		sub, ok := m.subs[id]
+		if !ok {
+			m.mu.Unlock()
+			return false
+		}
+		gap := m.headersAfterLocked(lastSent, sub.from)
+		if len(gap) == 0 {
+			sub.live = true
+			m.mu.Unlock()
+			return true
+		}
+		ch := sub.ch
+		m.mu.Unlock()
+
+		for _, h := range gap {
+			if !trySendHeader(ctx, ch, h) {
+				return false
+			}
+			lastSent = h.Height
+		}
+	}
+}
+
+func (m *Mock) headersAfterLocked(after, from int64) []*blocks.Header {
+	if m.latest == nil {
+		return nil
+	}
+	lo := after + 1
+	if lo < from {
+		lo = from
+	}
+	if lo < m.cfg.InitialHeight {
+		lo = m.cfg.InitialHeight
+	}
+	out := make([]*blocks.Header, 0)
+	for h := lo; h <= m.latest.Height; h++ {
+		if v, ok := m.history[h]; ok {
+			out = append(out, cloneHeader(v))
+		}
+	}
+	return out
+}
+
+// trySendHeader delivers h without blocking. A full buffer drops the slow
+// subscriber (caller tears down). ctx cancel also aborts.
+func trySendHeader(ctx context.Context, ch chan *blocks.Header, h *blocks.Header) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- h:
+		return true
+	default:
+		return false
+	}
+}
+
+// finishSub is the sole closer of sub.ch. Fanout / Mock.close only cancel.
+func (m *Mock) finishSub(id int, sub *subscription) {
+	m.mu.Lock()
 	delete(m.subs, id)
 	m.mu.Unlock()
+	sub.cancel()
 	close(sub.ch)
 }
 
 func (m *Mock) fanoutLocked(h *blocks.Header) {
 	for id, sub := range m.subs {
-		if h.Height < sub.from {
+		if !sub.live || h.Height < sub.from {
 			continue
 		}
 		cp := cloneHeader(h)
 		select {
 		case sub.ch <- cp:
 		default:
-			// Slow consumer: drop the subscription rather than blocking the
-			// producer. Tests assert fan-out works; production uses the
-			// HTTP SSE bridge which has its own buffering.
+			// Slow live consumer: stop delivering and cancel so the
+			// Subscribe goroutine can close ch safely.
 			delete(m.subs, id)
-			close(sub.ch)
+			sub.cancel()
 		}
 	}
 }
@@ -498,7 +588,7 @@ func (m *Mock) close() {
 	m.closed = true
 	for id, sub := range m.subs {
 		delete(m.subs, id)
-		close(sub.ch)
+		sub.cancel()
 	}
 }
 
