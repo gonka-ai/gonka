@@ -198,6 +198,15 @@ func (c *InProcessClient) Send(ctx context.Context, req host.HostRequest, stream
 	return resp, nil
 }
 
+// GetSignatures implements SignatureFetcher for in-process hosts so Finalize
+// can pull already-stored signatures without re-sending diffs.
+func (c *InProcessClient) GetSignatures(_ context.Context, nonce uint64) (map[uint32][]byte, error) {
+	if c == nil || c.Host == nil {
+		return nil, fmt.Errorf("in-process client has no host")
+	}
+	return c.Host.GetSignatures(nonce)
+}
+
 // InferenceParams describes a new inference to send.
 type InferenceParams struct {
 	Model            string
@@ -455,13 +464,21 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 		var expected []byte
 		if root, ok := s.postStateRootForNonce(resp.Nonce); ok {
 			expected = root
-		} else {
-			// Finalize path: nonce beyond diffs array, compute live.
+		} else if resp.Nonce == s.nonce {
+			// Finalize/recovery path: the nonce is beyond the diffs array
+			// (empty or suffix-only after snapshot recovery). The SM's live
+			// root is authoritative only for the current frozen nonce.
 			var err error
 			expected, err = s.sm.ComputeStateRoot()
 			if err != nil {
 				return fmt.Errorf("compute local state root: %w", err)
 			}
+		} else {
+			// No stored root for a non-current nonce: we cannot reconstruct
+			// the expected root, so reject rather than compare against the
+			// wrong nonce's live root.
+			return fmt.Errorf("%w: host %d at nonce %d: no post-state-root (session nonce %d)",
+				types.ErrStateHashMismatch, hostIdx, resp.Nonce, s.nonce)
 		}
 		if !bytes.Equal(expected, resp.StateHash) {
 			return fmt.Errorf("%w: host %d at nonce %d (local %x, host %x)",
@@ -1270,6 +1287,13 @@ func (s *Session) hasQuorum(nonce uint64, threshold uint32) bool {
 	return s.sigWeight(sigs) >= threshold
 }
 
+// HasQuorumAt reports whether in-memory signatures at nonce meet the session
+// quorum threshold. Used by settle to decide whether Finalize must re-run
+// after a snapshot-only recovery left PhaseSettlement but empty signatures.
+func (s *Session) HasQuorumAt(nonce uint64) bool {
+	return s.hasQuorum(nonce, s.sm.QuorumThreshold())
+}
+
 // getFinalizeClients returns a client list with admission control stripped.
 // Built lazily and cached on s.finalizeClients. Each client that implements
 // a ClearAdmission method gets a shallow copy with admission disabled;
@@ -1344,9 +1368,25 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 
 	postRoot, ok := s.postStateRootForNonce(nonce)
 	if !ok {
-		logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
+		// Snapshot-only recovery can leave s.diffs empty while the SM is
+		// already restored to the frozen final state. Mirror processResponse:
+		// the SM's live root is authoritative ONLY for the current (frozen)
+		// nonce. For any other nonce we have no way to reconstruct the root,
+		// so refuse rather than verify against a root for a different nonce.
+		if nonce != s.nonce {
+			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
+				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "session_nonce", s.nonce)
+			return false
+		}
+		var err error
+		postRoot, err = s.sm.ComputeStateRoot()
+		if err != nil {
+			logging.Info("fetchSignature: no post-state-root for nonce", "subsystem", "finalize",
+				"escrow", s.escrowID, "nonce", nonce, "host", hostIdx, "error", err)
+			return false
+		}
+		logging.Info("fetchSignature: using live state root", "subsystem", "finalize",
 			"escrow", s.escrowID, "nonce", nonce, "host", hostIdx)
-		return false
 	}
 
 	for slotID := range sigs {
@@ -1364,6 +1404,12 @@ func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64,
 		}
 		for _, slot := range s.addrToSlots[expectedAddr] {
 			s.signatures[nonce][slot] = sigs[slotID]
+			if s.store != nil {
+				if sigErr := s.store.AddSignature(s.escrowID, nonce, slot, sigs[slotID]); sigErr != nil {
+					logging.Warn("failed to persist fetched signature",
+						"escrow_id", s.escrowID, "nonce", nonce, "slot", slot, "error", sigErr)
+				}
+			}
 		}
 		logging.Info("fetched existing signature", "subsystem", "finalize", "escrow", s.escrowID,
 			"nonce", nonce, "host", hostIdx, "address", expectedAddr)

@@ -228,6 +228,12 @@ func RecoverSession(
 				escrowID, backfillFrom, snapNonce, len(backfillRecords))
 			for _, rec := range backfillRecords {
 				sess.diffs = append(sess.diffs, rec.Diff)
+				for slotID, sig := range rec.Signatures {
+					if _, ok := sess.signatures[rec.Nonce]; !ok {
+						sess.signatures[rec.Nonce] = make(map[uint32][]byte)
+					}
+					sess.signatures[rec.Nonce][slotID] = sig
+				}
 			}
 		}
 	}
@@ -238,6 +244,13 @@ func RecoverSession(
 		// new format with the (possibly-empty) cursor for next time.
 		if legacySnapshot || snapshotCursor == nil {
 			saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
+		}
+		// Snapshot-only path never runs the replay loop that restores
+		// signatures from DiffRecords. Reload the final-nonce signatures
+		// from the store so settlement can proceed without host round-trips
+		// when they were persisted before the restart.
+		if err := restoreSignaturesFromStore(sess, store, escrowID, meta.LatestNonce); err != nil {
+			return nil, nil, err
 		}
 		return finishRecover(sess, sm)
 	}
@@ -290,6 +303,32 @@ func RecoverSession(
 	}
 
 	return finishRecover(sess, sm)
+}
+
+// restoreSignaturesFromStore loads persisted signatures for nonce into the
+// session. Used on the snapshot-only recovery path where the replay loop
+// (the usual signature restorer) is skipped. Missing/empty is not an error —
+// CollectSignatures can still refill from hosts after ComputeStateRoot
+// fallback in fetchSignature.
+func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID string, nonce uint64) error {
+	if store == nil || nonce == 0 {
+		return nil
+	}
+	sigs, err := store.GetSignatures(escrowID, nonce)
+	if err != nil {
+		return fmt.Errorf("get signatures at nonce %d: %w", nonce, err)
+	}
+	if len(sigs) == 0 {
+		return nil
+	}
+	if _, ok := sess.signatures[nonce]; !ok {
+		sess.signatures[nonce] = make(map[uint32][]byte)
+	}
+	for slotID, sig := range sigs {
+		sess.signatures[nonce][slotID] = sig
+	}
+	log.Printf("recover_session escrow=%s signatures_restored nonce=%d slots=%d", escrowID, nonce, len(sigs))
+	return nil
 }
 
 func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.StateMachine, error) {

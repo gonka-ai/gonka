@@ -702,9 +702,15 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
-	if rt.proxy.sm.Phase() != types.PhaseSettlement {
+	// Re-run Finalize when not yet in settlement, or when already settled but
+	// missing quorum (e.g. snapshot-only recovery left PhaseSettlement with
+	// empty in-memory signatures). Finalize's PhaseSettlement guard collects
+	// missing signatures and is a no-op when quorum is already present.
+	phase := rt.proxy.sm.Phase()
+	needFinalize := phase != types.PhaseSettlement || !rt.session.HasQuorumAt(rt.session.Nonce())
+	if needFinalize {
 		g.finalizeMu.Lock()
-		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
+		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle phase=%s", id, sessionPhaseLabel(phase))
 		if err := rt.session.Finalize(ctx); err != nil {
 			g.finalizeMu.Unlock()
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
@@ -713,7 +719,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
-		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
+		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {

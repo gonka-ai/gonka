@@ -4223,6 +4223,14 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 				// Settlement exhausted its retries; free the in-memory runtime
 				// anyway so a permanently-unsettleable escrow cannot leak its
 				// store. On-disk state is preserved for manual recovery.
+				//
+				// The escrow stays SettlementPending (we do NOT clear the flag),
+				// so a later restart's reconcilePendingSettlements retries it.
+				// Log loudly: real escrow funds remain unsettled until then and
+				// this may need operator attention.
+				log.Printf("auto_settle_exhausted escrow=%s reason=%s attempts=%d last_error=%v "+
+					"settlement_pending=true action=will_retry_on_restart_or_reenable",
+					id, reason, autoSettlementMaxAttempts, err)
 				g.retireRuntime(id, reason)
 				return
 			}
