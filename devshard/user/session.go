@@ -586,8 +586,14 @@ type HostBinding struct {
 // in the gap between wakeup and lock acquisition).
 type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err error)
 
-// composeDiffLocked builds, applies, persists, and returns a new diff.
-// extraTxs are prepended to pending txs. Caller must hold s.mu.
+// composeDiffLocked builds, persists, commits, and returns a new diff
+// (persist-first when a store is configured). extraTxs are prepended to
+// pending txs. Caller must hold s.mu.
+//
+// HA assumption: the gateway is the single-instance sequencer for this escrow,
+// so this path does not race another writer on the same nonce. With a store,
+// PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
+// so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
 func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
@@ -600,10 +606,39 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	candidates = append(candidates, s.pendingTxs...)
 	candidates = append(candidates, extraTxs...)
 
-	var warmBefore map[uint32]string
 	if s.store != nil {
-		warmBefore = s.sm.WarmKeys()
+		warmBefore := s.sm.WarmKeys()
+		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
+		if err != nil {
+			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
+		}
+		diff, err := s.signDiff(nonce, vd.Applied, vd.Root)
+		if err != nil {
+			return types.Diff{}, 0, err
+		}
+		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+		rec := types.DiffRecord{
+			Diff:         diff,
+			StateHash:    vd.Root,
+			WarmKeyDelta: delta,
+		}
+		if err := s.persistDiffRetryLocked(rec); err != nil {
+			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		}
+		// Install the previewed post-state without a second apply (no re-sign,
+		// so a retried compose cannot fork on a new UserSig after a durable
+		// write). The gateway is the single sequencer and holds s.mu across
+		// persist, so the nonce cannot have advanced concurrently.
+		if !s.sm.CommitValidated(vd) {
+			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
+		}
+		s.diffs = append(s.diffs, diff)
+		s.nonce = nonce
+		s.clearPendingTxs()
+		s.maybeSaveSnapshotLocked()
+		return diff, hostIdx, nil
 	}
+
 	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
 	if err != nil {
 		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
@@ -612,25 +647,18 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	if err != nil {
 		return types.Diff{}, 0, err
 	}
-
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
-
-	if s.store != nil {
-		warmAfter := s.sm.WarmKeys()
-		delta := types.ComputeWarmKeyDelta(warmBefore, warmAfter)
-		if err := s.store.AppendDiff(s.escrowID, types.DiffRecord{
-			Diff:         diff,
-			StateHash:    postStateRoot,
-			WarmKeyDelta: delta,
-		}); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
-		}
-		s.maybeSaveSnapshotLocked()
-	}
-
 	return diff, hostIdx, nil
+}
+
+// persistDiffRetryLocked retries AppendDiff with backoff while holding s.mu.
+// Unlocking during backoff would let a concurrent compose re-sign the same
+// next nonce and risk ErrDiffFork after a durable write. Persist-first means
+// sequencer state is not committed until this returns nil.
+func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
+	return storage.AppendDiffWithRetry(context.Background(), s.store, s.escrowID, rec)
 }
 
 // maybeSaveSnapshotLocked schedules an asynchronous snapshot save when

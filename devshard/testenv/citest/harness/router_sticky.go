@@ -43,6 +43,23 @@ func FindDistinctStickySessions(t *testing.T, client *http.Client, routerHTTP, v
 	return "", "", "", ""
 }
 
+// OtherStickyUpstream returns the candidate in {a,b} that is not primary.
+// Addresses are compared after trimming; comma-separated tried-upstream lists
+// are not accepted for primary (callers should pass a single sticky addr).
+func OtherStickyUpstream(primary, a, b string) string {
+	primary = strings.TrimSpace(primary)
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	switch {
+	case primary == a && a != b:
+		return b
+	case primary == b && a != b:
+		return a
+	default:
+		return ""
+	}
+}
+
 // HostIDForUpstream maps nginx upstream addr (host:port) to compose service id.
 func HostIDForUpstream(cfg *config.File, upstreamAddr string) string {
 	if cfg == nil {

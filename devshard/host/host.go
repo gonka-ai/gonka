@@ -399,11 +399,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 			h.mu.Unlock()
 			return nil, err
 		}
-		if err := h.applyAndPersist(diff); err != nil {
-			h.mu.Unlock()
-			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
-		}
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
 		}
@@ -543,10 +539,16 @@ func (h *Host) chainMaxNonce() uint32 {
 	return h.maxNonce.MaxNonce()
 }
 
-// applyAndPersist applies a diff, removes included txs from mempool, and persists.
-// Captures WarmKeyDelta (new warm key bindings introduced by this diff) for replay.
-// Caller must hold h.mu.
-func (h *Host) applyAndPersist(diff types.Diff) error {
+// applyAndPersist persists then commits a contiguous next-nonce diff
+// (persist-first). Captures WarmKeyDelta from ValidateDiff for replay.
+//
+// Callers that may see HA catch-up gaps must use applyAndPersistReconciling.
+// AppendDiff is idempotent for identical already-durable rows (Phase 1), so a
+// stale standby that fast-forwarded then re-persists the tip does not fail.
+// Persist uses bounded retry; on exhaustion memory is unchanged (no eviction).
+//
+// Caller must hold h.mu. May unlock briefly during persist backoff.
+func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	currentNonce := h.sm.LatestNonce()
 	if diff.Nonce <= currentNonce {
 		return nil
@@ -554,13 +556,27 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	if err := h.checkDiffNonceLimitLocked(diff); err != nil {
 		return err
 	}
+
 	phaseBefore := h.sm.Phase()
-	var warmBefore map[uint32]string
 	if h.store != nil {
-		warmBefore = h.sm.WarmKeys()
-	}
-	root, err := h.sm.ApplyDiff(diff)
-	if err != nil {
+		warmBefore := h.sm.WarmKeys()
+		vd, err := h.sm.ValidateDiff(diff)
+		if err != nil {
+			return fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
+		}
+		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+		rec := types.DiffRecord{Diff: diff, StateHash: vd.Root, WarmKeyDelta: delta}
+		if err := h.persistDiffRetryLocked(ctx, rec); err != nil {
+			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
+		}
+		// CommitValidated installs the precomputed post-state (no second
+		// applyCore) and flushes the buffered obs writes. It returns false when
+		// another request committed this nonce while we unlocked for persist
+		// backoff, in which case the diff is already applied.
+		if !h.sm.CommitValidated(vd) {
+			return nil
+		}
+	} else if _, err := h.sm.ApplyDiff(diff); err != nil {
 		return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
 	}
 	h.mempool.RemoveIncluded(diff.Txs)
@@ -576,15 +592,9 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	}
 
 	if h.store != nil {
-		warmAfter := h.sm.WarmKeys()
-		delta := types.ComputeWarmKeyDelta(warmBefore, warmAfter)
-		rec := types.DiffRecord{Diff: diff, StateHash: root, WarmKeyDelta: delta}
-		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
-			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
-		}
-		// Validation obs recording runs only after successful ApplyDiff. Correctness
-		// depends on ApplyDiff rejecting late/sealed validations before this runs;
-		// do not move recording before ApplyDiff.
+		// Validation obs recording runs only after the diff is committed.
+		// Correctness depends on the trial apply rejecting late/sealed
+		// validations before this runs; do not move recording before commit.
 		h.recordValidationObsFromAppliedDiff(diff.Txs)
 		phaseAfter := h.sm.Phase()
 		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
@@ -592,6 +602,15 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		h.maybeSaveSnapshotLocked(diff.Nonce, shouldSnapshot, settledNow)
 	}
 	return nil
+}
+
+// persistDiffRetryLocked retries AppendDiff with backoff, unlocking h.mu during
+// waits so other requests can proceed. On exhaustion returns ErrPersistExhausted
+// without mutating host memory (persist-first: ValidateDiff left the SM
+// unchanged, and the commit happens only after this returns nil). Caller must
+// hold h.mu; it is held again on return. See storage.AppendDiffWithRetry.
+func (h *Host) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
+	return storage.AppendDiffWithRetryUnlocked(ctx, h.store, h.escrowID, rec, h.mu.Lock, h.mu.Unlock)
 }
 
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
@@ -635,7 +654,7 @@ func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *
 func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Lock()
 	for _, diff := range diffs {
-		_ = h.applyAndPersist(diff)
+		_ = h.applyAndPersistReconciling(context.Background(), diff)
 	}
 	staleFinishes := h.collectStaleFinishesLocked()
 	h.mu.Unlock()
@@ -1308,7 +1327,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 	var sigs []gossip.GossipSig
 
 	for _, diff := range diffs {
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			return sigs, fmt.Errorf("apply recovered diff nonce %d: %w", diff.Nonce, err)
 		}
 
@@ -1358,7 +1377,7 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 	defer h.mu.Unlock()
 
 	for _, diff := range diffs {
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(context.Background(), diff); err != nil {
 			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
 		}
 	}

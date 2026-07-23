@@ -215,7 +215,6 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 	m.sessionsMutex.Lock()
 	srv, hadSession := m.sessions[escrowID]
 	delete(m.sessions, escrowID)
-	delete(m.resolutionFailures, escrowID)
 	m.sessionsMutex.Unlock()
 	if hadSession {
 		srv.Host().Close()
@@ -227,6 +226,9 @@ func (m *HostManager) HandleSettlementFinalized(escrowID string) error {
 		}
 		return err
 	}
+	// Negative-cache so a concurrent/next bind does not recoverStoredSession
+	// the just-settled row (getOrCreate also rejects non-active meta).
+	m.rememberResolutionFailure(escrowID, storage.ErrSessionNotActive, time.Now())
 	return nil
 }
 
@@ -314,7 +316,8 @@ func (m *HostManager) sweepExpiredResolutionFailuresLocked(now time.Time) {
 func isPermanentResolutionFailure(err error) bool {
 	return errors.Is(err, storage.ErrSessionVersionConflict) ||
 		errors.Is(err, storage.ErrSessionEpochConflict) ||
-		errors.Is(err, storage.ErrEpochPruned)
+		errors.Is(err, storage.ErrEpochPruned) ||
+		errors.Is(err, storage.ErrSessionNotActive)
 }
 
 func (m *HostManager) storeSessionIfAbsent(escrowID string, srv *transport.Server) *transport.Server {
@@ -462,6 +465,9 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
 		return nil, fmt.Errorf("get session meta: %w", err)
+	}
+	if meta.Status != "active" {
+		return nil, fmt.Errorf("%w: escrow %s status %q", storage.ErrSessionNotActive, escrowID, meta.Status)
 	}
 	if meta.Version != "" && meta.Version != m.boundVersion {
 		return nil, fmt.Errorf("%w: stored %s, host %s", storage.ErrSessionVersionConflict, meta.Version, m.boundVersion)

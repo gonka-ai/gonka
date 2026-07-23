@@ -642,7 +642,16 @@ func (sm *StateMachine) persistLiveInferenceObsBestEffortLocked(id uint64, rec *
 // On seal, DrainInferenceValidationObs moves live validation counters into sealed storage.
 // Caller must hold sm.mu.
 func (sm *StateMachine) upsertInferenceObsLocked(id, sealedNonce uint64, rec *types.InferenceRecord) error {
-	if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceObsRow(id, sealedNonce, rec)); err != nil {
+	row := inferenceObsRow(id, sealedNonce, rec)
+	// During a trial apply (persist-first validate/preview) buffer the write and
+	// replay it at commit, so obs is written exactly once and never for a diff
+	// that fails to persist. The row is resolved eagerly here because rec is
+	// mutated/restored after the trial apply returns.
+	if sm.obsDeferred != nil {
+		*sm.obsDeferred = append(*sm.obsDeferred, deferredObsWrite{id: id, row: row, drain: sealedNonce > 0})
+		return nil
+	}
+	if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, row); err != nil {
 		return err
 	}
 	if sealedNonce > 0 {

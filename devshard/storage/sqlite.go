@@ -625,13 +625,33 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(
+	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (escrow_id, nonce) DO NOTHING`,
 		escrowID, rec.Nonce, txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON, rec.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert diff: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var haveTxs, haveUserSig, havePost, haveHash []byte
+		var haveWarm *string
+		scanErr := tx.QueryRow(
+			`SELECT txs_proto, user_sig, post_state_root, state_hash, warm_keys_json
+			 FROM diffs WHERE escrow_id = ? AND nonce = ?`,
+			escrowID, rec.Nonce,
+		).Scan(&haveTxs, &haveUserSig, &havePost, &haveHash, &haveWarm)
+		if scanErr != nil {
+			return fmt.Errorf("read existing diff after conflict: %w", scanErr)
+		}
+		if idErr := checkDiffReplayIdentityRaw(
+			escrowID, rec.Nonce,
+			txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON,
+			haveTxs, haveUserSig, havePost, haveHash, haveWarm,
+		); idErr != nil {
+			return idErr
+		}
 	}
 
 	for slotID, sig := range rec.Signatures {

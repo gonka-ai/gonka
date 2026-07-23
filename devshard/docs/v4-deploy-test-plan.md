@@ -318,6 +318,7 @@ make -C versiond-router test-render   # config render only (no live nginx)
 | Legacy pin | `TestLegacyVersionPinnedToSingleHost` | **Yes** — `v1` (in non-HA list) → `versiond_legacy` / `versiond-0` only; other versions still multi-upstream |
 | SQLite → HA-fail → migrate → HA | `TestSQLiteToPostgresHAMigration` | **Yes** — full §1.7 Phases 0–4 |
 | One HA upstream down | `TestVersiondStickySessionFailover` | **No** — first-502 failover to survivor (HA pool) |
+| Stale standby catch-up | `TestHAStaleStandbyCatchupIdempotent` | **No** — primary advances PG, stop it; standby catch-up without `23505` |
 | Gateway chat / gRPC | `TestGatewayChat`, G1–G4 | No |
 | Params / epoch | `TestParamsLongPoll`, `TestEpochSwitch` | No |
 | Faults | A1–A4 | No |
@@ -975,8 +976,10 @@ open a **new** request (which then lands on a survivor).
 
 **Out of scope for this plan:** validation-lease exclusivity (§2), sqlite→migrate
 (§1.7), legacy pin (§1.6). Those are separate. Automated coverage for stop/restart
-semantics also exists as `TestVersiondStickySessionFailover` and
-`TestVersiondRestartSessionPersistence`); this section is the operator walkthrough.
+semantics also exists as `TestVersiondStickySessionFailover`,
+`TestVersiondRestartSessionPersistence`, and
+`TestHAStaleStandbyCatchupIdempotent` (stale-standby catch-up); this section is
+the operator walkthrough.
 
 ### 3.0 Preconditions
 
@@ -1111,12 +1114,92 @@ is up.
 - [ ] Survivors keep serving; dead host shows no new successful handling (§3.2)
 - [ ] Restart killed versiond; logs show it serving again (§3.3)
 - [ ] Multi-upstream fan-out restored after restart (§3.3)
+- [ ] Stale-standby catch-up / persist-hole checks (§3.6)
 
 ### 3.5 Cleanup
 
 ```bash
 cd devshard/testenv
 make down
+```
+
+### 3.6 Diff / persist consistency (failover catch-up + persist hole)
+
+**Goal:** after sticky primary advances shared Postgres, failover onto a lagging
+replica must succeed without SQLSTATE `23505`. Persist blips must not leave a
+permanent memory-ahead gap (persist-first + retry).
+
+**Automated:** `TestHAStaleStandbyCatchupIdempotent` (preferred for catch-up):
+
+```bash
+cd devshard/testenv
+make build-devshardd citest-images
+TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
+  -run '^TestHAStaleStandbyCatchupIdempotent$' -count=1 -v -timeout 45m
+```
+
+#### Manual — join / shared Postgres
+
+```bash
+cd deploy/join
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+docker compose ps
+# Confirm both HA versiond + versiond-router + devshard-postgres healthy
+```
+
+1. Drive gateway chat for one escrow until `LatestNonce` advances (repeat).
+2. Verify durable rows:
+
+```bash
+docker compose exec -it devshard-postgres psql -U devshardd -d devshardd
+```
+
+```sql
+SELECT epoch_id, escrow_id, MAX(nonce) FROM devshard_diffs
+GROUP BY 1,2 ORDER BY 3 DESC LIMIT 10;
+SELECT nonce FROM devshard_diffs WHERE escrow_id = '<ESC>' ORDER BY nonce;
+-- expect contiguous nonces; no duplicate PK possible
+```
+
+3. **Failover catch-up:** identify the sticky primary for that escrow
+   (`X-Upstream-Addr` on `/devshard/<version>/sessions/<escrow>/mempool`), stop
+   that `versiond` service, then send another chat for the same escrow.
+
+| Expect (v4) | Fail |
+| --- | --- |
+| Chat succeeds; gateway `LatestNonce` advances | HTTP 500 |
+| No `23505` / `duplicate key value violates unique constraint` in survivor logs | Unique violation on already-durable nonce |
+| Optional: `reconcile_fast_forward` in survivor logs | Silent durable gap / stuck nonce |
+
+4. **Persist hole:** briefly pause Postgres mid-chat, then unpause:
+
+```bash
+docker compose pause devshard-postgres
+# attempt chat (expect failure / retry pressure)
+docker compose unpause devshard-postgres
+# retry chat
+```
+
+| Expect (v4) | Fail |
+| --- | --- |
+| Persist retried (`diff_persist_retry`); on hard fail in-memory nonce **unchanged** | Memory advanced while PG row missing |
+| After unpause, retry chat persists and advances `LatestNonce` | Same nonce silently swallowed; durable gap remains |
+
+5. Watch signals:
+
+```bash
+docker compose logs -f versiond versiond2 2>&1 | \
+  grep -E 'reconcile_fast_forward|diff_persist_retry|diff_fork_detected'
+```
+
+| Metric / log | Healthy HA |
+| --- | --- |
+| `reconcile_fast_forward` | May appear on failover to a lagging replica |
+| `diff_persist_retry` | May appear under induced PG blips |
+| `diff_fork_detected` | **Must stay 0** (non-zero = real divergence) |
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
 ```
 
 ---
@@ -1967,7 +2050,8 @@ docker compose exec versiond-0 wget -q -O - http://127.0.0.1:8080/healthz | jq .
 10. **Seven test plans in this doc:**
    - **§1 Test deployment plan** — rollout, routing, migrate, mixed binding.
    - **§2 Validation race plan** — lease exclusivity under same-key HA.
-   - **§3 High availability plan** — kill / restart versiond; verify via logs.
+   - **§3 High availability plan** — kill / restart versiond; verify via logs;
+     **§3.6** stale-standby catch-up + persist-hole checks.
    - **§4 Versionless observability plan** — obs never binds; rewrite; PG route;
      rate limit; health vs metrics.
    - **§5 Edge-api / deprecated dapi plan** — new proxy → edge-api; old proxy →

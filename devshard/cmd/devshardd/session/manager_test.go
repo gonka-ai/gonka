@@ -270,6 +270,56 @@ func TestRecoverSessions_EmptyStore(t *testing.T) {
 	mgr.sessionsMutex.RUnlock()
 }
 
+// TestHandleSettlementFinalized_DoesNotResurrect pins the A3 stale-escrow
+// contract: after MarkSettled + drop, getOrCreate must not rebuild a live
+// host from the durable settled row (and must negative-cache the miss).
+func TestHandleSettlementFinalized_DoesNotResurrect(t *testing.T) {
+	store := newManagerTestStore(t)
+	slots, user, hostSigner := createStoredSession(t, store, "1", 7, 1)
+	addresses := make([]string, len(slots))
+	for i, s := range slots {
+		addresses[i] = s.ValidatorAddress
+	}
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+	_, ok := mgr.existingServer("1")
+	require.True(t, ok, "precondition: session live after recover")
+
+	require.NoError(t, mgr.HandleSettlementFinalized("1"))
+	_, ok = mgr.existingServer("1")
+	require.False(t, ok, "settlement must drop the live session")
+
+	_, err := mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+
+	// Permanent negative cache: a second bind must not re-read/rebuild.
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+	_, ok = mgr.existingServer("1")
+	require.False(t, ok, "settled session must stay out of the live map")
+}
+
+// TestRecoverStoredSession_RejectsSettledStatus covers the store-only path:
+// even without HandleSettlementFinalized's negative cache, a settled meta row
+// must not be rebuilt into a live host.
+func TestRecoverStoredSession_RejectsSettledStatus(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "1", 7, 1)
+	require.NoError(t, store.MarkSettled("1"))
+
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+	_, err := mgr.recoverStoredSession("1")
+	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+}
+
 func TestRecoverSessions_StateRootMismatch(t *testing.T) {
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
