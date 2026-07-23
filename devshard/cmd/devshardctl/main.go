@@ -674,6 +674,7 @@ func isAuthExemptPath(path string) bool {
 func isAdminPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/admin/") ||
 		strings.HasPrefix(path, "/v1/debug/") ||
+		strings.HasPrefix(path, "/debug/pprof/") ||
 		path == "/v1/finalize" ||
 		path == "/v1/state" {
 		return true
