@@ -71,14 +71,32 @@ hide the force path.
 The router persists this upstream lifecycle:
 
 ```text
-active -> draining -> offline -> joining -> active
-   ^          |
-   +----------+  (cancel before versiond receives SIGTERM)
+add -> joining -> active -> draining -> stopping -> offline
+                 ^          |
+                 +-- cancel-+
+
+offline -> joining -> active     replacement
+offline -> removed               terminal decommission
 ```
 
 Only `active` hosts are rendered as live nginx upstreams. Other states are
 rendered with the nginx `down` parameter so a reload stops new assignments while
 old worker processes finish established connections.
+
+The router FSM is table-driven. Every mutation supplies the expected `from`
+state, the immediate `to` state, and the final transfer target. The controller
+accepts it only when the `(from, to)` handler exists and the persisted
+membership is currently in `from`. A rejected handler leaves state and nginx
+unchanged.
+
+Every configured host is one membership with an immutable, generated
+`membership_id`. One durable `active_transfer` owns all intermediate edges for
+that membership and blocks a competing host transition. It is released only at
+the final target or on `draining -> active` cancellation. `removed` is terminal
+for that membership and is not persisted: the host disappears from state and
+nginx. Re-adding the same name creates a new membership ID. Completed operation
+IDs are deduplicated from the append-only audit log, so no routing tombstone or
+`removed -> removed` edge is needed.
 
 ## Context ownership
 
@@ -144,19 +162,22 @@ transaction whose journal reached `reloaded` verifies `new_config_sha256`, runs
 `nginx -t`, reapplies the graceful reload, and commits the new state. Recovery
 stops on a config SHA mismatch instead of silently choosing one side.
 
-Each transitional host is owned by a stable operation ID. The same ID advances
-`draining -> offline`; a separate replacement ID advances
-`joining -> active`. This prevents two SSH orchestrators from controlling the
-same host concurrently. A forced takeover is an explicit recovery action.
+Each active transfer is owned by a stable operation ID and membership ID. The
+same ID and transfer parameters advance every edge to `offline`, `removed`, or
+`active`; a replacement uses a new operation ID while retaining the membership
+ID. This prevents two SSH orchestrators from controlling the same host
+concurrently. `--force` may acknowledge topology or legacy-data risk, but
+cannot take ownership from another transfer.
 The local operation lock is fail-fast rather than a queue: a second hostctl
 process receives the active action, PID, start time, and journal phase. An
 operator who wants to cancel a running pre-signal evacuation first interrupts
-that process, then runs `cancel`; after `term_requested`, evacuation must resume.
+that process, then runs `cancel`; after `term_requested`, the original
+evacuation or decommission operation must resume.
 
 ## Evacuation transaction
 
 ```text
-routerctl host drain HOST
+routerctl host transfer --from active --to draining --target offline HOST
   -> persist intent
   -> render HOST as down
   -> nginx -t
@@ -164,8 +185,10 @@ routerctl host drain HOST
   -> nginx reload
   -> verify and persist generation
 
-reconfirm routerctl host drain HOST
 capture the original restart policy once and enforce restart=no
+persist term_requested
+reconfirm active -> draining (idempotent)
+routerctl host transfer --from draining --to stopping --target offline HOST
 send SIGTERM to versiond (managed stop)
   -> close versiond admission
   -> wait for accepted proxy leases
@@ -174,8 +197,24 @@ send SIGTERM to versiond (managed stop)
   -> force remaining work on expiry and confirm child reap
 wait for process exit up to ROUTER_DRAIN_KILL_GRACE
 send SIGKILL only if the process still exists
-routerctl host offline HOST
+routerctl host transfer --from stopping --to offline --target offline HOST
 ```
+
+Permanent scale-down uses `removed` as the final target of the same transfer:
+
+```text
+routerctl host transfer --from offline --to removed --target removed HOST
+  -> recheck at least one remaining configured host
+  -> atomically transfer legacy ownership when required
+  -> remove HOST from state.Hosts and rendered nginx upstreams
+  -> nginx -t, publish, reload, persist terminal audit result
+```
+
+`gonka-hostctl decommission` owns the full stop-plus-remove sequence.
+`gonka-hostctl add` performs the inverse admission sequence for a provisioned,
+stopped service: create a new membership in `joining`, start, wait for
+`/ready`, then activate.
+`evacuate` intentionally stops at `offline` so replacement remains possible.
 
 On replacement, start the new host, move it to `joining`, wait for `GET /ready`
 to return `200`, and only then move it to `active`.
@@ -219,6 +258,9 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 - second `SIGINT`: transition to `forcing`, close HTTP, force children, and wait
   for process reap.
 - replacement readiness failure: keep the upstream in `joining`/down.
+- removal reload failure: restore the `offline` host and previous nginx config.
+- interrupted decommission after removal: retry with the same operation ID; the
+  terminal audit result makes the completed operation a no-op.
 - abandoned pre-signal evacuation: `gonka-hostctl cancel` first persists a
   cancellation intent, then checkpoints restart-policy restoration and router
   activation separately. If either action fails, rerun `cancel`; `evacuate`
@@ -230,19 +272,24 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
   nginx does not replay inference POSTs because duplicate execution is less safe
   than an explicit client-visible failure.
 
-The one-host-at-a-time router guard deliberately has no automatic expiry. A
-stale `draining` or `joining` owner must be resumed or, before `term_requested`,
-canceled with the same operation ID. This avoids another operator interpreting
-a control-plane outage as permission to drain a second host.
+The one-host-at-a-time router transfer deliberately has no automatic expiry. A
+stale `draining`, `stopping`, or `joining` transfer must be resumed or, before
+`term_requested`, canceled with the same operation ID. This avoids another
+operator interpreting a control-plane outage as permission to drain a second
+host.
 
 The full-stack `TestVersiondHostEvacuation` test holds a stream on the selected
 host, drains that router upstream, and verifies that new work moves to a
 survivor while the established stream completes before versiond exits. It then
-replaces the host and verifies that router activation waits for `/ready`.
-Checkpoint recovery and cancellation transitions are covered by hostctl unit
-tests.
+replaces the host, permanently decommissions it, verifies that nginx no longer
+contains its DNS name, and adds it back through the readiness gate. Checkpoint
+recovery and cancellation transitions are covered by hostctl unit tests.
 
 For Docker replacement, the restart policy has no guessed default. Reusing an
 evacuated service requires its completed evacuation journal; a newly provisioned
 service requires an explicit `--docker-restart-policy`. The policy is resolved
 before the router enters `joining`.
+
+Persistent router state is authoritative after bootstrap, but operators must
+also update the deployment's `VERSIOND_HOSTS` source after add or decommission.
+Otherwise loss of the router state volume can reconstruct stale membership.

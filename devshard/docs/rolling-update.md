@@ -608,14 +608,21 @@ or malformed `VERSIOND_HOSTS` cannot block startup or overwrite the live pool.
 The persisted router FSM is:
 
 ```text
-active -> draining -> offline -> joining -> active
-   ^          |
-   +----------+  (cancel before versiond receives SIGTERM)
+add -> joining -> active -> draining -> stopping -> offline
+                 ^          |
+                 +-- cancel-+
+
+offline -> joining -> active     replacement
+offline -> removed               terminal decommission
 ```
 
 Only `active` hosts are live nginx upstreams. Other states are rendered with
 the nginx `down` parameter. A successful `nginx -s reload` stops new sticky
 assignments without terminating connections held by old nginx workers.
+Transitions are selected from an explicit `(from, to)` handler table. A durable
+transfer binds its intermediate edges to one operation ID, immutable membership
+ID, host, and final target. `removed` is not stored: the membership disappears,
+and a later add with the same name creates a new membership ID.
 
 #### Target flow (evacuate one versiond host)
 
@@ -627,7 +634,8 @@ upgrade, scale-down, or decommission.
         │  → no NEW requests hashed to versiond-N
         │  → in-flight connections to versiond-N keep running
         ▼
-2. Reconfirm the router barrier, then start a managed stop:
+2. Persist signal intent, reconfirm the router barrier, and move the membership
+   from draining to stopping before starting a managed stop:
         disable automatic restart
         SIGTERM versiond
         ▼
@@ -641,11 +649,13 @@ upgrade, scale-down, or decommission.
 4. hostctl waits for process exit:
         wait up to ROUTER_DRAIN_KILL_GRACE  →  SIGKILL only as backstop
         ▼
-5. Free machine:
-        stop container or release VM; remove from VERSIOND_HOSTS; reload router
-        (or leave marked down if host is gone permanently)
+5. Choose the durable outcome:
+        replacement → keep the logical host offline
+        decommission → remove it from router state and reload nginx
+        then update the deployment's VERSIOND_HOSTS bootstrap source
         ▼
-6. (Replacement only) Start new versiond-N, wait for GET /ready, re-add upstream
+6. Replacement/addition: enter joining, start versiond-N,
+        wait for GET /ready, then activate the upstream
 ```
 
 Key invariants:
@@ -674,12 +684,12 @@ until a host is activated.
 
 | Piece | Meaning |
 |---|---|
-| `gonka-routerctl` | Local, locked router FSM mutation with journal, `nginx -t`, atomic publish, reload, rollback, and audit |
-| `gonka-hostctl` | Resumable SSH orchestration for evacuation and replacement; no network listener |
+| `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, journal, `nginx -t`, atomic publish, reload, rollback, and audit |
+| `gonka-hostctl` | Resumable SSH orchestration for add, evacuation, decommission, and replacement; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
 | `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
-| `ROUTER_READY_TIMEOUT` | External maximum wait for replacement readiness, default `15m` |
+| `ROUTER_READY_TIMEOUT` | External maximum wait for replacement/addition readiness, default `15m` |
 | `ROUTER_DRAIN_POLL_INTERVAL` | External readiness/process polling interval, default `2s` |
 | `ROUTER_DRAIN_KILL_GRACE` | Wait after `SIGTERM` before `SIGKILL`, default `30m` |
 | `ROUTER_COMMAND_TIMEOUT` | Deadline for one local or SSH command, default `30s` |
@@ -766,8 +776,8 @@ compensation FSM: it records the intent, restores any disabled Docker restart
 policy, checkpoints that action, and then reactivates the upstream. A failed
 cancellation must be resumed with `cancel`; the forward evacuation FSM refuses
 to cross it. `term_requested` is persisted before the SSH signal command; at or
-after it, the operation must be resumed to `offline` because the remote outcome
-can be unknown.
+after it, the original evacuation or decommission operation must be resumed
+because the remote outcome can be unknown.
 
 After preparing a replacement container or unit, keep it out of the pool until
 the replacement transaction completes:
@@ -798,6 +808,16 @@ Docker replacement restores the exact policy captured by evacuation, including
 an `on-failure` retry count. A newly provisioned service without that journal
 must pass `--docker-restart-policy` explicitly. Policy resolution happens before
 the host enters `joining`.
+
+For permanent scale-down, `gonka-hostctl decommission` continues past
+`offline` and transactionally removes the host from the router pool. Removal is
+idempotent, never leaves an empty configured pool, and requires an active
+replacement owner when deleting the legacy host. For scale-up,
+`gonka-hostctl add` records a new host as `joining`, starts the provisioned
+service with an explicit Docker restart policy, waits for `/ready`, and then
+activates it. Add or remove the host in the deployment's `VERSIOND_HOSTS`
+bootstrap source after the runtime transaction; persistent state remains the
+live authority, while that source remains necessary for disaster recovery.
 
 `gonka-routerctl status` never performs recovery or reload. It exposes an
 unfinished journal as `pending_operation`; `gonka-routerctl recover` resolves it
@@ -841,12 +861,17 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   graceful/idempotent/forced process states.
 - **versiond-router:** test every router transition and guard, config validation,
   atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
-  resume/order without requiring SSH.
+  resume/order without requiring SSH. Removal must drop the DNS name from the
+  rendered pool, roll back to `offline` on reload failure, and replay
+  idempotently from the terminal operation audit. Re-adding the same host name
+  must create a new membership ID.
 - **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a long
   stream to one versiond, start a real `gonka-hostctl evacuate`, and verify new
   work and the same escrow recover on the survivor while the barrier-held stream
   finishes on its old connection. Verify versiond exits after that stream,
   then run `replace` and keep the replacement down until `/ready` succeeds.
+  Finally decommission it, verify nginx no longer contains the host, and add it
+  back through `joining` and `/ready`.
 
 ### 1.10 Rollout order
 

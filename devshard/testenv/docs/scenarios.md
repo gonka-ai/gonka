@@ -224,8 +224,9 @@ Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 
 **What we test:** Router-controlled evacuation removes a versiond host from new
 traffic without terminating its established SSE stream. The operation remains
-recoverable across an interrupted CLI process, stops versiond after idle, and
-keeps a replacement out of admission until full convergence.
+recoverable across an interrupted CLI process, stops versiond after idle, keeps
+a replacement out of admission until full convergence, and supports permanent
+decommission followed by a guarded add.
 
 **How:**
 
@@ -239,12 +240,14 @@ keeps a replacement out of admission until full convergence.
 5. Require new requests to use the survivor while the old host reports proxy
    inflight and remains alive.
 6. Release the SSE stream, require `[DONE]`, and require graceful versiond exit.
-7. Replace the host and require it to become active only after the health
-   summary reports complete convergence.
+7. Replace the host and require it to become active only after `/ready`
+   reports complete convergence.
+8. Decommission the host and require its DNS name to disappear from nginx.
+9. Add the stopped service back through `joining`, `/ready`, and `active`.
 
 **Pass criteria:** Established work completes, new work avoids the draining
-host, interrupted operations resume safely, and the replacement serves the
-same escrow only after it is ready.
+host, interrupted operations resume safely, removed hosts disappear from the
+pool, and replacement/addition serves the same escrow only after it is ready.
 
 Test: `TestVersiondHostEvacuation`.
 

@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -52,6 +53,12 @@ type InitialStateFactory func() (State, error)
 
 type PendingOperation struct {
 	OperationID   string    `json:"operation_id"`
+	Action        string    `json:"action,omitempty"`
+	Host          string    `json:"host,omitempty"`
+	MembershipID  string    `json:"membership_id,omitempty"`
+	From          HostState `json:"from,omitempty"`
+	To            HostState `json:"to,omitempty"`
+	Target        HostState `json:"target,omitempty"`
 	Phase         string    `json:"phase"`
 	NewGeneration uint64    `json:"new_generation"`
 	NewConfigSHA  string    `json:"new_config_sha256"`
@@ -64,15 +71,17 @@ type Status struct {
 }
 
 type AuditRecord struct {
-	Time        time.Time `json:"time"`
-	OperationID string    `json:"operation_id"`
-	Action      string    `json:"action"`
-	Host        string    `json:"host,omitempty"`
-	From        HostState `json:"from,omitempty"`
-	To          HostState `json:"to,omitempty"`
-	Generation  uint64    `json:"generation"`
-	Result      string    `json:"result"`
-	Error       string    `json:"error,omitempty"`
+	Time         time.Time `json:"time"`
+	OperationID  string    `json:"operation_id"`
+	Action       string    `json:"action"`
+	Host         string    `json:"host,omitempty"`
+	MembershipID string    `json:"membership_id,omitempty"`
+	From         HostState `json:"from,omitempty"`
+	To           HostState `json:"to,omitempty"`
+	Target       HostState `json:"target,omitempty"`
+	Generation   uint64    `json:"generation"`
+	Result       string    `json:"result"`
+	Error        string    `json:"error,omitempty"`
 }
 
 type operationJournal struct {
@@ -81,13 +90,28 @@ type operationJournal struct {
 	Phase         string    `json:"phase"`
 	Action        string    `json:"action,omitempty"`
 	Host          string    `json:"host,omitempty"`
+	MembershipID  string    `json:"membership_id,omitempty"`
 	From          HostState `json:"from,omitempty"`
+	To            HostState `json:"to,omitempty"`
+	Target        HostState `json:"target,omitempty"`
+	Result        string    `json:"result,omitempty"`
 	OldState      *State    `json:"old_state,omitempty"`
 	NewState      State     `json:"new_state"`
 	OldConfig     []byte    `json:"old_config,omitempty"`
 	NewConfigSHA  string    `json:"new_config_sha256"`
 	Reload        bool      `json:"reload"`
 	CreatedAt     time.Time `json:"created_at"`
+}
+
+type mutation struct {
+	OperationID  string
+	Action       string
+	Host         string
+	MembershipID string
+	From         HostState
+	To           HostState
+	Target       HostState
+	Result       string
 }
 
 func NewController(config Config, runner CommandRunner) *Controller {
@@ -128,7 +152,11 @@ func (c *Controller) Bootstrap(
 		if err := initial.Validate(); err != nil {
 			return err
 		}
-		if err := c.apply(ctx, nil, initial, "bootstrap", "", "", "", false); err != nil {
+		if err := c.apply(ctx, nil, initial, mutation{
+			OperationID: "bootstrap",
+			Action:      "bootstrap",
+			Result:      "completed",
+		}, false); err != nil {
 			return err
 		}
 		result = initial
@@ -147,29 +175,192 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 		if err != nil {
 			return err
 		}
+		completed, err := c.completedOperation(change.OperationID)
+		if err != nil {
+			return err
+		}
+		if completed != nil {
+			if err := matchCompletedOperation(
+				*completed,
+				change.Host,
+				change.MembershipID,
+				change.Target,
+			); err != nil {
+				return err
+			}
+			result = current
+			return nil
+		}
 		next := current.Clone()
-		changed, from, to, err := next.Apply(change)
+		outcome, err := next.Advance(change)
 		if err != nil {
 			_ = c.appendAudit(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
-				Action: string(change.Action), Host: change.Host,
-				From: from, To: to, Generation: current.Generation,
-				Result: "rejected", Error: err.Error(),
+				Action: "transfer", Host: change.Host,
+				MembershipID: change.MembershipID,
+				From:         change.From, To: change.To, Target: change.Target,
+				Generation: current.Generation,
+				Result:     "rejected", Error: err.Error(),
 			})
 			return err
 		}
-		if !changed {
+		record := mutation{
+			OperationID:  change.OperationID,
+			Action:       "transfer",
+			Host:         change.Host,
+			MembershipID: outcome.MembershipID,
+			From:         outcome.From,
+			To:           outcome.To,
+			Target:       outcome.Target,
+			Result:       transitionResult(outcome),
+		}
+		if !outcome.Changed {
 			result = current
 			return c.appendAudit(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
-				Action: string(change.Action), Host: change.Host,
-				From: from, To: to, Generation: current.Generation, Result: "noop",
+				Action: record.Action, Host: record.Host,
+				MembershipID: record.MembershipID,
+				From:         record.From, To: record.To, Target: record.Target,
+				Generation: current.Generation, Result: "noop",
 			})
 		}
-		if err := c.apply(
-			ctx, &current, next, change.OperationID, string(change.Action),
-			change.Host, from, true,
-		); err != nil {
+		if err := c.apply(ctx, &current, next, record, true); err != nil {
+			return err
+		}
+		result = next
+		return nil
+	})
+	return result, err
+}
+
+func (c *Controller) Add(ctx context.Context, change AddMembership) (State, error) {
+	var result State
+	err := c.withLock(ctx, func() error {
+		if err := c.recoverPending(ctx, true); err != nil {
+			return err
+		}
+		current, err := c.loadState()
+		if err != nil {
+			return err
+		}
+		completed, err := c.completedOperation(change.OperationID)
+		if err != nil {
+			return err
+		}
+		if completed != nil {
+			if err := matchCompletedOperation(
+				*completed,
+				change.Host,
+				change.MembershipID,
+				HostActive,
+			); err != nil {
+				return err
+			}
+			result = current
+			return nil
+		}
+		next := current.Clone()
+		outcome, err := next.Add(change)
+		if err != nil {
+			_ = c.appendAudit(AuditRecord{
+				Time: time.Now().UTC(), OperationID: change.OperationID,
+				Action: "add", Host: change.Host,
+				MembershipID: change.MembershipID,
+				To:           HostJoining, Target: HostActive,
+				Generation: current.Generation,
+				Result:     "rejected", Error: err.Error(),
+			})
+			return err
+		}
+		record := mutation{
+			OperationID:  change.OperationID,
+			Action:       "add",
+			Host:         change.Host,
+			MembershipID: outcome.MembershipID,
+			From:         outcome.From,
+			To:           outcome.To,
+			Target:       outcome.Target,
+			Result:       transitionResult(outcome),
+		}
+		if !outcome.Changed {
+			result = current
+			return c.appendAudit(AuditRecord{
+				Time: time.Now().UTC(), OperationID: record.OperationID,
+				Action: record.Action, Host: record.Host,
+				MembershipID: record.MembershipID,
+				From:         record.From, To: record.To, Target: record.Target,
+				Generation: current.Generation, Result: "noop",
+			})
+		}
+		if err := c.apply(ctx, &current, next, record, true); err != nil {
+			return err
+		}
+		result = next
+		return nil
+	})
+	return result, err
+}
+
+func (c *Controller) Cancel(ctx context.Context, change CancelTransfer) (State, error) {
+	var result State
+	err := c.withLock(ctx, func() error {
+		if err := c.recoverPending(ctx, true); err != nil {
+			return err
+		}
+		current, err := c.loadState()
+		if err != nil {
+			return err
+		}
+		completed, err := c.completedOperation(change.OperationID)
+		if err != nil {
+			return err
+		}
+		if completed != nil {
+			if err := matchCompletedOperation(
+				*completed,
+				change.Host,
+				change.MembershipID,
+				"",
+			); err != nil {
+				return err
+			}
+			result = current
+			return nil
+		}
+		next := current.Clone()
+		outcome, err := next.Cancel(change)
+		if err != nil {
+			_ = c.appendAudit(AuditRecord{
+				Time: time.Now().UTC(), OperationID: change.OperationID,
+				Action: "cancel", Host: change.Host,
+				MembershipID: change.MembershipID,
+				From:         HostDraining, To: HostActive, Target: HostActive,
+				Generation: current.Generation,
+				Result:     "rejected", Error: err.Error(),
+			})
+			return err
+		}
+		record := mutation{
+			OperationID:  change.OperationID,
+			Action:       "cancel",
+			Host:         change.Host,
+			MembershipID: outcome.MembershipID,
+			From:         outcome.From,
+			To:           outcome.To,
+			Target:       outcome.Target,
+			Result:       transitionResult(outcome),
+		}
+		if !outcome.Changed {
+			result = current
+			return c.appendAudit(AuditRecord{
+				Time: time.Now().UTC(), OperationID: record.OperationID,
+				Action: record.Action, Host: record.Host,
+				MembershipID: record.MembershipID,
+				From:         record.From, To: record.To, Target: record.Target,
+				Generation: current.Generation, Result: record.Result,
+			})
+		}
+		if err := c.apply(ctx, &current, next, record, true); err != nil {
 			return err
 		}
 		result = next
@@ -193,6 +384,12 @@ func (c *Controller) Status(ctx context.Context) (Status, error) {
 		if journal != nil {
 			status.PendingOperation = &PendingOperation{
 				OperationID:   journal.OperationID,
+				Action:        journal.Action,
+				Host:          journal.Host,
+				MembershipID:  journal.MembershipID,
+				From:          journal.From,
+				To:            journal.To,
+				Target:        journal.Target,
 				Phase:         journal.Phase,
 				NewGeneration: journal.NewState.Generation,
 				NewConfigSHA:  journal.NewConfigSHA,
@@ -221,10 +418,7 @@ func (c *Controller) apply(
 	ctx context.Context,
 	oldState *State,
 	newState State,
-	operationID string,
-	action string,
-	host string,
-	from HostState,
+	change mutation,
 	reload bool,
 ) error {
 	template, err := os.ReadFile(c.config.TemplatePath)
@@ -241,11 +435,15 @@ func (c *Controller) apply(
 	}
 	journal := operationJournal{
 		SchemaVersion: SchemaVersion,
-		OperationID:   operationID,
+		OperationID:   change.OperationID,
 		Phase:         "prepared",
-		Action:        action,
-		Host:          host,
-		From:          from,
+		Action:        change.Action,
+		Host:          change.Host,
+		MembershipID:  change.MembershipID,
+		From:          change.From,
+		To:            change.To,
+		Target:        change.Target,
+		Result:        change.Result,
 		OldState:      oldState,
 		NewState:      newState,
 		OldConfig:     oldConfig,
@@ -267,9 +465,11 @@ func (c *Controller) apply(
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 		record := AuditRecord{
-			Time: time.Now().UTC(), OperationID: operationID, Action: action,
-			Host: host, From: from, Generation: newState.Generation,
-			Result: "failed", Error: applyErr.Error(),
+			Time: time.Now().UTC(), OperationID: change.OperationID, Action: change.Action,
+			Host: change.Host, MembershipID: change.MembershipID,
+			From: change.From, To: change.To, Target: change.Target,
+			Generation: newState.Generation,
+			Result:     "failed", Error: applyErr.Error(),
 		}
 		_ = c.appendAudit(record)
 		if rollbackErr == nil {
@@ -301,14 +501,11 @@ func (c *Controller) apply(
 	if err := writeJSONAtomic(c.config.StatePath, newState, 0o600); err != nil {
 		return rollback(err)
 	}
-	to := HostState("")
-	if host != "" {
-		to = newState.Hosts[newState.hostIndex(host)].State
-	}
 	if err := c.appendAudit(AuditRecord{
-		Time: time.Now().UTC(), OperationID: operationID, Action: action,
-		Host: host, From: from, To: to, Generation: newState.Generation,
-		Result: "success",
+		Time: time.Now().UTC(), OperationID: change.OperationID, Action: change.Action,
+		Host: change.Host, MembershipID: change.MembershipID,
+		From: change.From, To: change.To, Target: change.Target,
+		Generation: newState.Generation, Result: change.Result,
 	}); err != nil {
 		return rollback(err)
 	}
@@ -328,7 +525,11 @@ func (c *Controller) ensureRendered(ctx context.Context, state State, reload boo
 	if err == nil && hashBytes(got) == hashBytes(want) {
 		return c.runner.Run(ctx, c.config.NginxBinary, "-t")
 	}
-	return c.apply(ctx, &state, state, "bootstrap-render", "bootstrap-render", "", "", reload)
+	return c.apply(ctx, &state, state, mutation{
+		OperationID: "bootstrap-render",
+		Action:      "bootstrap-render",
+		Result:      "completed",
+	}, reload)
 }
 
 func (c *Controller) recoverPending(ctx context.Context, reload bool) error {
@@ -433,13 +634,23 @@ func (c *Controller) rollForwardPending(
 }
 
 func (c *Controller) appendRecoveryAudit(journal operationJournal, result string) error {
-	to := HostState("")
-	if index := journal.NewState.hostIndex(journal.Host); index >= 0 {
-		to = journal.NewState.Hosts[index].State
+	to := journal.To
+	if to == "" {
+		if index := journal.NewState.hostIndex(journal.Host); index >= 0 {
+			to = journal.NewState.Hosts[index].State
+		}
+	}
+	action := journal.Action
+	if action == "" {
+		action = "recovery"
+	}
+	if result == "rolled_forward" && journal.Result != "" {
+		result = journal.Result
 	}
 	if err := c.appendAudit(AuditRecord{
 		Time: time.Now().UTC(), OperationID: journal.OperationID,
-		Action: "recovery", Host: journal.Host, From: journal.From, To: to,
+		Action: action, Host: journal.Host, From: journal.From, To: to,
+		MembershipID: journal.MembershipID, Target: journal.Target,
 		Generation: journal.NewState.Generation, Result: result,
 		Error: "recovered incomplete operation at phase " + journal.Phase,
 	}); err != nil {
@@ -529,6 +740,75 @@ func (c *Controller) appendAudit(record AuditRecord) error {
 		return err
 	}
 	return f.Close()
+}
+
+func (c *Controller) completedOperation(operationID string) (*AuditRecord, error) {
+	if operationID == "" {
+		return nil, nil
+	}
+	f, err := os.Open(c.config.AuditPath)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	var completed *AuditRecord
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
+	for scanner.Scan() {
+		var record AuditRecord
+		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
+			return nil, fmt.Errorf("decode router audit record: %w", err)
+		}
+		if record.OperationID != operationID || !terminalResult(record.Result) {
+			continue
+		}
+		copy := record
+		completed = &copy
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return completed, nil
+}
+
+func matchCompletedOperation(
+	record AuditRecord,
+	host string,
+	membershipID string,
+	target HostState,
+) error {
+	if record.Host == host &&
+		(membershipID == "" || record.MembershipID == membershipID) &&
+		(target == "" || record.Target == target) {
+		return nil
+	}
+	return fmt.Errorf(
+		"%w: operation %s already completed as %s for membership %s (%s)",
+		ErrOperationOwner,
+		record.OperationID,
+		record.Action,
+		record.MembershipID,
+		record.Host,
+	)
+}
+
+func transitionResult(result TransitionResult) string {
+	switch {
+	case result.Canceled:
+		return "canceled"
+	case result.Completed:
+		return "completed"
+	default:
+		return "advanced"
+	}
+}
+
+func terminalResult(result string) bool {
+	return result == "completed" || result == "canceled"
 }
 
 func writeJSONAtomic(path string, value any, mode fs.FileMode) error {

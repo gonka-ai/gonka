@@ -39,7 +39,8 @@ func TestControllerBootstrapAndDrainTransaction(t *testing.T) {
 	}
 
 	updated, err := controller.Transition(context.Background(), Transition{
-		Action: ActionDrain, Host: "versiond-2", OperationID: "drain-2",
+		OperationID: "drain-2", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -86,7 +87,8 @@ func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 	runner.failReloadOnce = true
 	runner.mu.Unlock()
 	_, err = controller.Transition(context.Background(), Transition{
-		Action: ActionDrain, Host: "versiond-2", OperationID: "failed-drain",
+		OperationID: "failed-drain", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
 	})
 	if err == nil {
 		t.Fatal("expected injected reload failure")
@@ -95,6 +97,197 @@ func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 	assertFileEquals(t, paths.StatePath, oldState)
 	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("rolled-back journal should be removed, stat error = %v", err)
+	}
+}
+
+func TestControllerRemoveDropsHostFromRenderedPool(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]HostState{
+		{HostActive, HostDraining},
+		{HostDraining, HostStopping},
+		{HostStopping, HostOffline},
+		{HostOffline, HostRemoved},
+	} {
+		if _, err := controller.Transition(context.Background(), Transition{
+			OperationID: "decommission-2", Host: "versiond-2",
+			From: edge[0], To: edge[1], Target: HostRemoved,
+		}); err != nil {
+			t.Fatalf("%s -> %s: %v", edge[0], edge[1], err)
+		}
+	}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.hostIndex("versiond-2") >= 0 {
+		t.Fatal("removed host remains in router state")
+	}
+	if status.ActiveTransfer != nil {
+		t.Fatalf("completed removal retained transfer %#v", status.ActiveTransfer)
+	}
+	config, err := os.ReadFile(paths.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(config, []byte("versiond-2:8080")) {
+		t.Fatalf("removed host remains in nginx config:\n%s", config)
+	}
+
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "decommission-2", Host: "versiond-2",
+		From: HostOffline, To: HostRemoved, Target: HostRemoved,
+	}); err != nil {
+		t.Fatalf("idempotent remove: %v", err)
+	}
+}
+
+func TestControllerRemoveReloadFailureRestoresOfflineHost(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]HostState{
+		{HostActive, HostDraining},
+		{HostDraining, HostStopping},
+		{HostStopping, HostOffline},
+	} {
+		if _, err := controller.Transition(context.Background(), Transition{
+			OperationID: "decommission-2", Host: "versiond-2",
+			From: edge[0], To: edge[1], Target: HostRemoved,
+		}); err != nil {
+			t.Fatalf("%s -> %s: %v", edge[0], edge[1], err)
+		}
+	}
+	oldConfig, err := os.ReadFile(paths.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldState, err := os.ReadFile(paths.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	runner.mu.Lock()
+	runner.failReloadOnce = true
+	runner.mu.Unlock()
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "decommission-2", Host: "versiond-2",
+		From: HostOffline, To: HostRemoved, Target: HostRemoved,
+	}); err == nil {
+		t.Fatal("expected injected reload failure")
+	}
+	assertFileEquals(t, paths.OutputPath, oldConfig)
+	assertFileEquals(t, paths.StatePath, oldState)
+}
+
+func TestControllerCompletedOperationDoesNotRunAgain(t *testing.T) {
+	controller, runner, _ := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]HostState{
+		{HostActive, HostDraining},
+		{HostDraining, HostStopping},
+		{HostStopping, HostOffline},
+	} {
+		if _, err := controller.Transition(context.Background(), Transition{
+			OperationID: "evacuate-2", Host: "versiond-2",
+			From: edge[0], To: edge[1], Target: HostOffline,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	runner.mu.Lock()
+	callCount := len(runner.calls)
+	runner.mu.Unlock()
+
+	got, err := controller.Transition(context.Background(), Transition{
+		OperationID: "evacuate-2", Host: "versiond-2",
+		From: HostStopping, To: HostOffline, Target: HostOffline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Hosts[got.hostIndex("versiond-2")].State != HostOffline {
+		t.Fatalf("completed retry changed host state: %#v", got.Hosts)
+	}
+	runner.mu.Lock()
+	callsAfterRetry := len(runner.calls)
+	runner.mu.Unlock()
+	if callsAfterRetry != callCount {
+		t.Fatalf("completed retry ran %d extra nginx commands", callsAfterRetry-callCount)
+	}
+
+	_, err = controller.Transition(context.Background(), Transition{
+		OperationID: "evacuate-2", Host: "versiond-1",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	})
+	if !errors.Is(err, ErrOperationOwner) {
+		t.Fatalf("reused operation error = %v, want ErrOperationOwner", err)
+	}
+}
+
+func TestControllerReAddCreatesNewMembershipWithoutRevivingRemovedOne(t *testing.T) {
+	controller, _, _ := newTestController(t)
+	state := newTestState(t)
+	oldMembership := membershipOf(t, state, "versiond-2")
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]HostState{
+		{HostActive, HostDraining},
+		{HostDraining, HostStopping},
+		{HostStopping, HostOffline},
+		{HostOffline, HostRemoved},
+	} {
+		if _, err := controller.Transition(context.Background(), Transition{
+			OperationID: "decommission-2", MembershipID: oldMembership,
+			Host: "versiond-2", From: edge[0], To: edge[1],
+			Target: HostRemoved,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	added, err := controller.Add(context.Background(), AddMembership{
+		OperationID: "add-2",
+		Host:        "versiond-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	newMembership := membershipOf(t, added, "versiond-2")
+	if newMembership == oldMembership {
+		t.Fatal("new host membership reused the removed membership id")
+	}
+	active, err := controller.Transition(context.Background(), Transition{
+		OperationID: "add-2", MembershipID: newMembership,
+		Host: "versiond-2", From: HostJoining, To: HostActive,
+		Target: HostActive,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active.Hosts[active.hostIndex("versiond-2")].State != HostActive {
+		t.Fatalf("re-added membership is not active: %#v", active.Hosts)
+	}
+
+	retried, err := controller.Transition(context.Background(), Transition{
+		OperationID: "decommission-2", MembershipID: oldMembership,
+		Host: "versiond-2", From: HostOffline, To: HostRemoved,
+		Target: HostRemoved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if membershipOf(t, retried, "versiond-2") != newMembership {
+		t.Fatal("retry of old decommission affected the new membership")
 	}
 }
 
@@ -118,6 +311,12 @@ func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 	}
 	if status.PendingOperation == nil || status.PendingOperation.Phase != "reloaded" {
 		t.Fatalf("pending operation = %#v, want reloaded phase", status.PendingOperation)
+	}
+	if status.PendingOperation.MembershipID == "" ||
+		status.PendingOperation.From != HostActive ||
+		status.PendingOperation.To != HostDraining ||
+		status.PendingOperation.Target != HostOffline {
+		t.Fatalf("pending FSM edge = %#v", status.PendingOperation)
 	}
 	assertFileEquals(t, paths.OutputPath, newConfig)
 	runner.mu.Lock()
@@ -223,9 +422,11 @@ func stagePendingDrain(
 		t.Fatal(err)
 	}
 	newState := oldState.Clone()
-	if _, _, _, err := newState.Apply(Transition{
-		Action: ActionDrain, Host: "versiond-2", OperationID: "interrupted",
-	}); err != nil {
+	result, err := newState.Advance(Transition{
+		OperationID: "interrupted", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	})
+	if err != nil {
 		t.Fatal(err)
 	}
 	template, err := os.ReadFile(paths.TemplatePath)
@@ -243,9 +444,13 @@ func stagePendingDrain(
 		SchemaVersion: SchemaVersion,
 		OperationID:   "interrupted",
 		Phase:         phase,
-		Action:        string(ActionDrain),
+		Action:        "transfer",
 		Host:          "versiond-2",
+		MembershipID:  result.MembershipID,
 		From:          HostActive,
+		To:            HostDraining,
+		Target:        HostOffline,
+		Result:        "advanced",
 		OldState:      &oldState,
 		NewState:      newState,
 		OldConfig:     oldConfig,

@@ -21,8 +21,9 @@ func TestRenderMarksNonActiveHostDown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, _, _, err := state.Apply(Transition{
-		Action: ActionDrain, Host: "versiond-2", OperationID: "drain-2",
+	if _, err := state.Advance(Transition{
+		OperationID: "drain-2", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
 	}); err != nil {
 		t.Fatal(err)
 	}

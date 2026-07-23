@@ -11,6 +11,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"versiond-router/internal/router"
 )
 
 type fakeRemote struct {
@@ -33,9 +35,15 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 	r.calls = append(r.calls, command)
 	joined := strings.Join(args, " ")
 	switch {
-	case strings.Contains(joined, "gonka-routerctl host activate") && r.activateErrors > 0:
+	case (strings.Contains(joined, "gonka-routerctl host cancel") ||
+		strings.Contains(joined, "--to active")) && r.activateErrors > 0:
 		r.activateErrors--
 		return "", errors.New("transient router activation failure")
+	case strings.Contains(joined, "gonka-routerctl"):
+		if strings.Contains(joined, "--to removed") {
+			return fakeRouterState(false), nil
+		}
+		return fakeRouterState(true), nil
 	case strings.Contains(joined, "127.0.0.1:8080/ready"):
 		if r.readinessErrors > 0 {
 			r.readinessErrors--
@@ -76,6 +84,34 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 	return "{}", nil
 }
 
+func fakeRouterState(includeTarget bool) string {
+	hosts := `[
+		{
+			"membership_id": "membership-versiond-1",
+			"name": "versiond-1",
+			"address": "versiond-1",
+			"state": "active"
+		}`
+	if includeTarget {
+		hosts += `,
+		{
+			"membership_id": "membership-versiond-2",
+			"name": "versiond-2",
+			"address": "versiond-2",
+			"state": "active"
+		}`
+	}
+	hosts += "]"
+	return `{
+		"schema_version": 1,
+		"generation": 1,
+		"port": 8080,
+		"legacy_host": "versiond-1",
+		"non_ha_versions": [],
+		"hosts": ` + hosts + `
+	}`
+}
+
 func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 	remote := &fakeRemote{
 		running:    true,
@@ -88,11 +124,12 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 
 	calls := remote.callLog()
 	assertCallOrder(t, calls,
-		"gonka-routerctl host drain",
-		"gonka-routerctl host drain",
+		"--from active --to draining --target offline",
+		"--from active --to draining --target offline",
+		"--from draining --to stopping --target offline",
 		"docker update --restart=no",
 		"docker kill --signal TERM",
-		"gonka-routerctl host offline",
+		"--from stopping --to offline --target offline",
 	)
 	if strings.Contains(calls, "docker kill --signal KILL") {
 		t.Fatalf("graceful evacuation unexpectedly used SIGKILL:\n%s", calls)
@@ -101,6 +138,113 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 		t.Fatalf("evacuation used health as a control-plane API:\n%s", calls)
 	}
 	assertJournalPhase(t, orchestrator.config.JournalPath, "complete")
+}
+
+func TestDecommissionRemovesHostAfterGracefulStop(t *testing.T) {
+	remote := &fakeRemote{
+		running:    true,
+		stopOnTerm: true,
+	}
+	orchestrator := newTestOrchestrator(t, remote, "decommission-order")
+	if err := orchestrator.Decommission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCallOrder(
+		t,
+		remote.callLog(),
+		"--from active --to draining --target removed",
+		"--from draining --to stopping --target removed",
+		"docker kill --signal TERM",
+		"--from stopping --to offline --target removed",
+		"--from offline --to removed --target removed",
+	)
+	assertJournal(t, orchestrator.config.JournalPath, "decommission", "complete")
+}
+
+func TestDecommissionResumesRemovalAfterOfflineCheckpoint(t *testing.T) {
+	remote := &fakeRemote{}
+	orchestrator := newTestOrchestrator(t, remote, "decommission-resume")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: 1,
+		OperationID:   "decommission-resume",
+		Mode:          "decommission",
+		Scope:         orchestrator.operationScope(),
+		Phase:         "router_offline",
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Decommission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := remote.callLog()
+	if strings.Contains(calls, "--to draining") || strings.Contains(calls, "docker kill") {
+		t.Fatalf("resumed decommission repeated stop phases:\n%s", calls)
+	}
+	if !strings.Contains(calls, "--from offline --to removed") {
+		t.Fatalf("resumed decommission did not remove the host:\n%s", calls)
+	}
+}
+
+func TestCancelDecommissionUsesTheCompensationFSM(t *testing.T) {
+	remote := &fakeRemote{running: true}
+	orchestrator := newTestOrchestrator(t, remote, "decommission-cancel")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion:         1,
+		OperationID:           "decommission-cancel",
+		Mode:                  "decommission",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 "restart_disabled",
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Cancel(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	assertCallOrder(
+		t,
+		remote.callLog(),
+		"docker update --restart=always",
+		"gonka-routerctl host cancel",
+	)
+	assertJournal(t, orchestrator.config.JournalPath, "decommission", "canceled")
+}
+
+func TestAddKeepsNewHostDownUntilReady(t *testing.T) {
+	remote := &fakeRemote{ready: true}
+	orchestrator := newTestOrchestrator(t, remote, "add-order")
+	orchestrator.config.UpstreamAddress = "new-versiond-3"
+	if err := orchestrator.Add(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertCallOrder(
+		t,
+		remote.callLog(),
+		"gonka-routerctl host add --operation-id add-order --address new-versiond-3 versiond-2",
+		"docker update --restart=unless-stopped",
+		"docker start",
+		"127.0.0.1:8080/ready",
+		"--from joining --to active --target active",
+	)
+	assertJournal(t, orchestrator.config.JournalPath, "add", "complete")
+}
+
+func TestAddRequiresExplicitDockerRestartPolicy(t *testing.T) {
+	remote := &fakeRemote{}
+	orchestrator := newTestOrchestrator(t, remote, "add-no-policy")
+	orchestrator.config.DockerRestartPolicy = ""
+	if err := orchestrator.Add(context.Background()); err == nil {
+		t.Fatal("add without a restart policy succeeded")
+	}
+	if calls := remote.callLog(); strings.Contains(calls, "host add") {
+		t.Fatalf("add changed router state before policy validation:\n%s", calls)
+	}
 }
 
 func TestReplaceRetriesDedicatedReadinessProbe(t *testing.T) {
@@ -136,11 +280,12 @@ func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
 	}
 	calls := remote.callLog()
 	assertCallOrder(t, calls,
-		"gonka-routerctl host join --operation-id replace-order --address replacement-2 versiond-2",
+		"--from offline --to joining --target active",
+		"--address replacement-2",
 		"docker update --restart=unless-stopped",
 		"docker start",
 		"127.0.0.1:8080/ready",
-		"gonka-routerctl host activate",
+		"--from joining --to active --target active",
 	)
 }
 
@@ -204,8 +349,40 @@ func TestReplaceRejectsPolicyFromAnotherLogicalHost(t *testing.T) {
 	if err := orchestrator.Replace(context.Background()); err == nil {
 		t.Fatal("replacement accepted restart policy from another logical host")
 	}
-	if calls := remote.callLog(); strings.Contains(calls, "host join") {
+	if calls := remote.callLog(); strings.Contains(calls, "--to joining") {
 		t.Fatalf("replacement mutated router before journal validation:\n%s", calls)
+	}
+}
+
+func TestReplaceRejectsPolicyFromPreviousMembership(t *testing.T) {
+	remote := &fakeRemote{}
+	orchestrator := newTestOrchestrator(t, remote, "replace-stale-membership")
+	orchestrator.config.DockerRestartPolicy = ""
+	orchestrator.config.EvacuationJournal = filepath.Join(t.TempDir(), "evacuation.json")
+	evacuation := Journal{
+		SchemaVersion:         1,
+		OperationID:           "old-membership",
+		MembershipID:          "membership-retired-versiond-2",
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 "complete",
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}
+	data, err := json.Marshal(evacuation)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(orchestrator.config.EvacuationJournal, data, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	err = orchestrator.Replace(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "different router membership") {
+		t.Fatalf("replace error = %v, want stale membership rejection", err)
+	}
+	if calls := remote.callLog(); strings.Contains(calls, "--to joining") {
+		t.Fatalf("replacement mutated router with a stale journal:\n%s", calls)
 	}
 }
 
@@ -230,7 +407,7 @@ func TestReplaceRequiresRestartPolicySource(t *testing.T) {
 	if err := orchestrator.Replace(context.Background()); err == nil {
 		t.Fatal("replacement without a restart-policy source succeeded")
 	}
-	if calls := remote.callLog(); strings.Contains(calls, "host join") {
+	if calls := remote.callLog(); strings.Contains(calls, "--to joining") {
 		t.Fatalf("replacement changed router state before policy validation:\n%s", calls)
 	}
 }
@@ -251,14 +428,14 @@ func TestCancelEvacuationRestoresPolicyBeforeReactivating(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := orchestrator.CancelEvacuation(context.Background()); err != nil {
+	if err := orchestrator.Cancel(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	assertCallOrder(
 		t,
 		remote.callLog(),
 		"docker update --restart=always",
-		"gonka-routerctl host activate",
+		"gonka-routerctl host cancel",
 	)
 	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
 }
@@ -279,7 +456,7 @@ func TestCancelEvacuationResumesItsDurableCompensation(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := orchestrator.CancelEvacuation(context.Background()); err == nil {
+	if err := orchestrator.Cancel(context.Background()); err == nil {
 		t.Fatal("cancellation succeeded despite router activation failure")
 	}
 	assertJournalCancellationPhase(t, orchestrator.config.JournalPath, "restart_restored")
@@ -291,7 +468,7 @@ func TestCancelEvacuationResumesItsDurableCompensation(t *testing.T) {
 		t.Fatalf("evacuation signaled versiond during cancellation:\n%s", calls)
 	}
 
-	if err := orchestrator.CancelEvacuation(context.Background()); err != nil {
+	if err := orchestrator.Cancel(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
@@ -341,7 +518,7 @@ func TestProbeFailureBeforeSignalIntentCanBeCanceled(t *testing.T) {
 		t.Fatalf("evacuation sent SIGTERM after a failed process probe:\n%s", calls)
 	}
 
-	if err := orchestrator.CancelEvacuation(context.Background()); err != nil {
+	if err := orchestrator.Cancel(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
@@ -362,7 +539,7 @@ func TestCancelEvacuationRejectsRequestedSignal(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if err := orchestrator.CancelEvacuation(context.Background()); err == nil {
+	if err := orchestrator.Cancel(context.Background()); err == nil {
 		t.Fatal("cancellation after SIGTERM succeeded")
 	}
 	if calls := remote.callLog(); calls != "" {
@@ -392,7 +569,13 @@ func (blockingRemote) Run(ctx context.Context, _ string, _ ...string) (string, e
 func TestRemoteCommandTimeout(t *testing.T) {
 	orchestrator := newTestOrchestrator(t, blockingRemote{}, "command-timeout")
 	orchestrator.config.CommandTimeout = 5 * time.Millisecond
-	err := orchestrator.routerTransition(context.Background(), "drain")
+	err := orchestrator.routerTransition(
+		context.Background(),
+		&Journal{},
+		router.HostActive,
+		router.HostDraining,
+		router.HostOffline,
+	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("remote command error = %v, want deadline exceeded", err)
 	}
@@ -405,7 +588,7 @@ func TestEvacuateRejectsShortRuntimeStopContractBeforeRouterMutation(t *testing.
 	if err := orchestrator.Evacuate(context.Background()); err == nil {
 		t.Fatal("evacuation accepted a ten-second Docker stop timeout")
 	}
-	if calls := remote.callLog(); strings.Contains(calls, "gonka-routerctl host drain") {
+	if calls := remote.callLog(); strings.Contains(calls, "--to draining") {
 		t.Fatalf("router changed before runtime preflight completed:\n%s", calls)
 	}
 }
@@ -477,10 +660,10 @@ func TestEvacuateResumesFromCheckpoint(t *testing.T) {
 		t.Fatal(err)
 	}
 	calls := remote.callLog()
-	if strings.Contains(calls, "host drain") || strings.Contains(calls, "docker kill") {
+	if strings.Contains(calls, "--to draining") || strings.Contains(calls, "docker kill") {
 		t.Fatalf("resumed operation repeated completed phases:\n%s", calls)
 	}
-	if !strings.Contains(calls, "host offline") {
+	if !strings.Contains(calls, "--from stopping --to offline") {
 		t.Fatalf("resumed operation did not finish router offline phase:\n%s", calls)
 	}
 }
@@ -634,6 +817,27 @@ func assertJournalPhase(t *testing.T, path, want string) {
 	}
 	if journal.Phase != want {
 		t.Fatalf("journal phase = %q, want %q", journal.Phase, want)
+	}
+}
+
+func assertJournal(t *testing.T, path, wantMode, wantPhase string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var journal Journal
+	if err := json.Unmarshal(data, &journal); err != nil {
+		t.Fatal(err)
+	}
+	if journal.Mode != wantMode || journal.Phase != wantPhase {
+		t.Fatalf(
+			"journal mode/phase = %q/%q, want %q/%q",
+			journal.Mode,
+			journal.Phase,
+			wantMode,
+			wantPhase,
+		)
 	}
 }
 

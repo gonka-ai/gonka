@@ -26,10 +26,11 @@ const (
 		hostEvacuationKillGrace + 2*hostEvacuationCommandTimeout
 )
 
-// TestVersiondHostEvacuation verifies the complete Track B transaction:
+// TestVersiondHostEvacuation verifies the complete Track B host lifecycle:
 // nginx removes one versiond from admission without breaking its established
 // stream, versiond exits only after that stream drains, and a replacement stays
-// down until versiond reports readiness and is explicitly activated.
+// down until versiond reports readiness and is explicitly activated. It then
+// permanently removes the host from the pool and adds it back through joining.
 func TestVersiondHostEvacuation(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
@@ -61,6 +62,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	}
 	evacuationID := "host-evacuation-" + targetHost
 	replacementID := "host-replacement-" + targetHost
+	decommissionID := "host-decommission-" + targetHost
+	addID := "host-add-" + targetHost
 	hostctl := env.stack.BuildHostctl(t)
 	routerContainer := env.stack.ContainerID(t, "versiond-router")
 	targetContainer := env.stack.ContainerID(t, targetHost)
@@ -161,6 +164,54 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	output, err := env.stack.RunHostctl(replaceCtx, hostctl, "replace", replaceArgs...)
 	cancelReplace()
 	require.NoError(t, err, "replace versiond host: %s", output)
+	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost))
+	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
+
+	harness.Step(t, "evacuating and permanently removing the host from the router pool")
+	decommissionJournal := filepath.Join(env.stack.WorkDir, decommissionID+".json")
+	decommissionArgs := hostctlArgs(
+		routerContainer,
+		targetContainer,
+		targetHost,
+		decommissionID,
+		decommissionJournal,
+	)
+	if targetHost == env.hosts[0] {
+		decommissionArgs = append(decommissionArgs, "--legacy-host", survivorHost)
+	}
+	decommissionCtx, cancelDecommission := context.WithTimeout(
+		context.Background(),
+		hostEvacuationOperationTimeout,
+	)
+	output, err = env.stack.RunHostctl(
+		decommissionCtx,
+		hostctl,
+		"decommission",
+		decommissionArgs...,
+	)
+	cancelDecommission()
+	require.NoError(t, err, "decommission versiond host: %s", output)
+	nginxConfig = env.stack.ComposeExec(t, "versiond-router", "nginx", "-T")
+	require.NotContains(t, nginxConfig, "server "+targetHost+":8080")
+	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
+
+	harness.Step(t, "adding the removed host through joining and readiness")
+	addJournal := filepath.Join(env.stack.WorkDir, addID+".json")
+	addArgs := hostctlArgs(
+		routerContainer,
+		targetContainer,
+		targetHost,
+		addID,
+		addJournal,
+	)
+	addArgs = append(addArgs, "--docker-restart-policy", "unless-stopped")
+	addCtx, cancelAdd := context.WithTimeout(
+		context.Background(),
+		hostEvacuationOperationTimeout,
+	)
+	output, err = env.stack.RunHostctl(addCtx, hostctl, "add", addArgs...)
+	cancelAdd()
+	require.NoError(t, err, "add versiond host: %s", output)
 	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost))
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
 }

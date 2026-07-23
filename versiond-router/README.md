@@ -66,61 +66,103 @@ valid persistent state exists.
 The local controller persists this state machine:
 
 ```text
-active -> draining -> offline -> joining -> active
-   ^          |
-   +----------+  cancel a drain before versiond receives SIGTERM
+add -> joining -> active -> draining -> stopping -> offline
+                 ^          |
+                 +-- cancel-+
+
+offline -> joining -> active     replace
+offline -> removed               terminal decommission
 ```
 
-Only `active` hosts receive new assignments. Nginx renders every other state
-with the `down` parameter. `nginx -s reload` starts workers with the new pool;
-old workers keep established HTTP and SSE connections until those connections
-finish.
+The FSM is table-driven. Every command states the expected `from` state, the
+immediate `to` state, and the final transfer target. The `(from, to)` pair must
+have a registered handler, and the persisted host state must equal `from`.
+Handler failure leaves both state and rendered config unchanged.
+
+Each entry has an immutable, generated `membership_id`. A durable
+`active_transfer` binds all intermediate steps to one operation ID, membership
+ID, and host. It also blocks a second host transition. Reaching the final target
+or canceling the drain releases that lease. This is operation ownership and
+recovery metadata, not a second state machine.
+
+Only `active` memberships receive new assignments. Nginx renders every other
+stored state with the `down` parameter. `nginx -s reload` starts workers with
+the new pool; old workers keep established HTTP and SSE connections until those
+connections finish. `removed` is terminal for one membership and is not stored:
+the host disappears from state and nginx. A later `add` with the same host name
+creates a new membership ID and has no transition from the removed membership.
+The audit log makes retries of a completed operation ID idempotent without
+keeping a routing tombstone.
 
 `gonka-routerctl` runs inside the router container and exposes no network
 listener:
 
 ```bash
+OPERATION_ID="maintenance-$(date +%s%N)-versiond2"
+
 docker exec versiond-router gonka-routerctl status
 
 docker exec versiond-router gonka-routerctl recover
 
-docker exec versiond-router gonka-routerctl host drain \
-  --operation-id maintenance-20260718-versiond2 versiond2
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id "$OPERATION_ID" \
+  --from active --to draining --target offline versiond2
 
-docker exec versiond-router gonka-routerctl host offline \
-  --operation-id maintenance-20260718-versiond2 versiond2
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id "$OPERATION_ID" \
+  --from draining --to stopping --target offline versiond2
 
-docker exec versiond-router gonka-routerctl host join \
-  --operation-id replacement-20260718-versiond2 \
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id "$OPERATION_ID" \
+  --from stopping --to offline --target offline versiond2
+
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id replacement-1784800000000000001-versiond2 \
+  --from offline --to joining --target active \
   --address replacement-versiond2 versiond2
 
-docker exec versiond-router gonka-routerctl host activate \
-  --operation-id replacement-20260718-versiond2 versiond2
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id replacement-1784800000000000001-versiond2 \
+  --from joining --to active --target active \
+  --address replacement-versiond2 versiond2
+
+docker exec versiond-router gonka-routerctl host add \
+  --operation-id add-1784800000000000002-versiond3 \
+  --address versiond3.internal versiond3
 ```
+
+Use a new operation ID for every lifecycle transaction. Unix epoch nanoseconds
+plus the host name provide a practical operator-generated ID; never reuse an ID
+for a new membership.
 
 The controller holds a file lock, validates the transition, writes a recovery
 journal, renders a candidate config, runs `nginx -t`, publishes atomically,
-reloads nginx, and then commits state and audit data. A failed validation or
-reload restores the previous config. Repeating a completed transition is a
-no-op. The operation ID owns the transitional state: use the same ID for
-`drain -> offline` and a new, stable ID for `join -> active`. A different
-operation cannot take over a transitional host unless the operator explicitly
-uses `--force`.
+reloads nginx, and then commits state and audit data. A failed handler,
+validation, or reload restores the previous config. Repeating an applied edge
+or a completed operation is a no-op. Use the same operation ID and parameters
+for every edge from the first transition to its final target. A different
+operation cannot take over `active_transfer`; `--force` bypasses topology and
+legacy-data guards, not operation ownership.
 
 `status` is read-only. When a journal is present, its operation ID, phase,
-candidate generation, and config SHA are returned as `pending_operation`; the
-command never rewrites config or reloads nginx. `recover` resolves that journal
-under the controller lock. A transaction interrupted before confirmed reload
-rolls back. A transaction in `reloaded` verifies the published config SHA,
-validates it, reloads idempotently, and commits the new state. A SHA mismatch is
-left for explicit operator investigation rather than guessing which file is
-authoritative.
+membership ID, `from -> to` edge, final target, candidate generation, and config
+SHA are returned as `pending_operation`; the command never rewrites config or
+reloads nginx. `recover` resolves that journal under the controller lock. A
+transaction interrupted before confirmed reload rolls back. A transaction in
+`reloaded` verifies the published config SHA, validates it, reloads
+idempotently, and commits the new state. A SHA mismatch is left for explicit
+operator investigation rather than guessing which file is authoritative.
 
-Normal commands reject concurrent host operations, draining the last active HA
-host, and draining the legacy host while it owns non-HA versions. `--force`
-overrides the capacity and legacy guards for an explicitly approved outage; it
-does not permit two hosts to transition at once. Forcing the last active host
-creates an all-down upstream and nginx returns `502` until a host is activated.
+Normal commands reject concurrent host operations, a mismatched membership ID,
+draining the last active HA host, draining the legacy host while it owns non-HA
+versions, skipping an FSM edge, and removing the last configured host. A
+decommission of the legacy host requires an active replacement via
+`--legacy-host`; when non-HA versions exist, migrate their local data first and
+acknowledge that operation with `--force`. These terminal guards run before the
+host starts draining and again before removal. `--force` does not permit two
+hosts to transition at once or an empty router pool. Forcing the last active
+drain creates an all-down upstream and nginx returns `502` until a host is
+activated.
 
 ## Host evacuation
 
@@ -140,7 +182,7 @@ Docker example:
 
 ```bash
 .bin/gonka-hostctl evacuate \
-  --operation-id maintenance-20260718-versiond2 \
+  --operation-id maintenance-1784800000000000000-versiond2 \
   --router-ssh router.example.net \
   --router-runtime docker \
   --router-service versiond-router \
@@ -152,16 +194,18 @@ Docker example:
 
 The command performs these ordered steps:
 
-1. Move the router host to `draining`, validate the nginx config, and reload.
-2. Reconfirm the router `draining` state before the first irreversible action.
-3. Capture the Docker restart policy once, reassert `restart=no`, and start a
-   managed stop with `SIGTERM`.
+1. Start a transfer to `offline`: move `active -> draining`, validate the nginx
+   config, and reload.
+2. Capture the Docker restart policy, set `restart=no`, and persist
+   `term_requested`.
+3. Reconfirm the traffic barrier, move `draining -> stopping`, reassert
+   `restart=no`, and start a managed stop with `SIGTERM`.
 4. Let versiond close its own admission and drain accepted requests, children,
    and HTTP within `VERSIOND_HOST_SHUTDOWN_BUDGET`; on expiry it forces
    remaining work and confirms child reap.
 5. Wait for versiond to exit; send `SIGKILL` only if the outer kill grace
    expires.
-6. Move the router host to `offline`.
+6. Confirm `stopping -> offline` and complete the transfer.
 
 Hostctl does not poll versiond in-flight counters. Those counters are internal
 to versiond and are consumed by its shutdown state machine. This avoids making
@@ -208,7 +252,7 @@ without leaving the cluster blocked:
 
 ```bash
 .bin/gonka-hostctl cancel \
-  --operation-id maintenance-20260718-versiond2 \
+  --operation-id maintenance-1784800000000000000-versiond2 \
   --router-ssh router.example.net \
   --router-runtime docker \
   --router-service versiond-router \
@@ -224,8 +268,67 @@ the router transition to `active` as separate compensating phases. If either
 step fails, rerun `cancel` with the same operation ID. The forward `evacuate`
 command refuses to continue through an unfinished cancellation. Cancellation
 is rejected at and after the durable `term_requested` phase, which is written
-before the remote signal command. At that point rerun `evacuate`; do not
-reactivate the host even if SSH lost the command result.
+before the remote signal command. At that point rerun the original `evacuate`
+or `decommission` command; do not reactivate the host even if SSH lost the
+command result.
+
+## Permanent decommission
+
+Use `decommission` for scale-down or permanent host removal. It executes the
+same drain and stop transaction as `evacuate`, moves the stopped host to
+`offline`, and then commits the terminal `offline -> removed` edge:
+
+```bash
+.bin/gonka-hostctl decommission \
+  --operation-id decommission-1784800000000000000-versiond2 \
+  --router-ssh router.example.net \
+  --router-runtime docker \
+  --router-service versiond-router \
+  --upstream versiond2 \
+  --versiond-ssh worker-2.example.net \
+  --versiond-runtime docker \
+  --versiond-service versiond2
+```
+
+The final edge deletes the membership from persistent router state and nginx.
+It cannot transition again. A retry is answered from the completed-operation
+audit, not by a `removed -> removed` FSM edge. If the target is
+`VERSIOND_LEGACY_HOST`, pass an active survivor with `--legacy-host`. With
+non-HA versions, migrate their local data before retrying with
+`--force-router-guard`.
+
+After a successful decommission, also remove the host from the deployment's
+bootstrap `VERSIOND_HOSTS` value. Persistent router state remains authoritative
+at runtime, but the bootstrap manifest is the disaster-recovery source if that
+volume is ever lost. Reducing a two-host pool to one also removes the
+`Devshard-Ha` request guard; it does not change the remaining process's
+`DEVSHARD_STORAGE_MODE`. Keep that process in `postgres` mode while it uses the
+shared database.
+
+## Host addition
+
+Use `add` for a new logical host. The service or container must already be
+provisioned but stopped. The router first records it as `joining`/down, hostctl
+starts it, waits for `GET /ready`, and only then activates it:
+
+```bash
+.bin/gonka-hostctl add \
+  --operation-id scale-up-1784800000000000000-versiond3 \
+  --router-ssh router.example.net \
+  --router-runtime docker \
+  --router-service versiond-router \
+  --upstream versiond3 \
+  --upstream-address versiond3.internal \
+  --versiond-ssh worker-3.example.net \
+  --versiond-runtime docker \
+  --versiond-service versiond3 \
+  --docker-restart-policy unless-stopped
+```
+
+A new Docker service requires an explicit restart policy; hostctl does not
+guess one. `add` creates a fresh membership ID even when the same host name was
+previously decommissioned. Add the host to the deployment's bootstrap
+`VERSIOND_HOSTS` value after the runtime transaction succeeds.
 
 ## Host replacement
 
@@ -234,7 +337,7 @@ still `offline`, then run:
 
 ```bash
 .bin/gonka-hostctl replace \
-  --operation-id replacement-20260718-versiond2 \
+  --operation-id replacement-1784800000000000000-versiond2 \
   --router-ssh router.example.net \
   --router-runtime docker \
   --router-service versiond-router \
@@ -244,7 +347,7 @@ still `offline`, then run:
   --versiond-runtime docker \
   --versiond-service versiond2 \
   --evacuation-journal \
-    ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
+    ~/.config/gonka/hostctl/maintenance-1784800000000000000-versiond2.json
 ```
 
 The replacement remains `joining` and therefore down in nginx while it starts.
@@ -266,7 +369,7 @@ The orchestration flags default from these environment variables:
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ROUTER_READY_TIMEOUT` | `15m` | Maximum wait for replacement readiness |
+| `ROUTER_READY_TIMEOUT` | `15m` | Maximum wait for replacement/addition readiness |
 | `ROUTER_DRAIN_POLL_INTERVAL` | `2s` | Readiness and process polling interval |
 | `ROUTER_DRAIN_KILL_GRACE` | `30m` | Maximum wait after `SIGTERM` before the kill backstop |
 | `ROUTER_COMMAND_TIMEOUT` | `30s` | Maximum duration of one local or SSH command |
@@ -291,15 +394,16 @@ inside its container, not on the administration machine.
 
 1. Run `gonka-routerctl status`. If it reports `pending_operation`, run
    `gonka-routerctl recover` locally in the router container.
-2. Rerun `gonka-hostctl evacuate` or `replace` with the original operation ID,
-   flags, and journal path. Completed phases are not repeated.
+2. Rerun the original `gonka-hostctl add`, `evacuate`, `decommission`, or
+   `replace` command with its operation ID, flags, and journal path. Completed
+   phases are not repeated.
 3. If evacuation must be abandoned before `term_requested`, run `gonka-hostctl
    cancel` with the same operation ID and scope. If the original `evacuate`
    process still owns the operation lock, interrupt it first; `cancel` reports
    the owner instead of waiting. If cancellation itself was interrupted, rerun
    `cancel`, not `evacuate`.
-4. If `term_requested` is durable, finish evacuation. Never reactivate an
-   upstream whose process may already be stopping.
+4. If `term_requested` is durable, finish `evacuate` or `decommission`. Never
+   reactivate an upstream whose process may already be stopping.
 
 A host intentionally left in `draining` or `joining` blocks another host
 transition. This is the cluster's one-host-at-a-time safety guard, not a lease

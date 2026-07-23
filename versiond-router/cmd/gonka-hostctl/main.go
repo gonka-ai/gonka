@@ -29,8 +29,14 @@ func main() {
 
 func run(ctx context.Context, args []string) error {
 	if len(args) == 0 ||
-		(args[0] != "evacuate" && args[0] != "replace" && args[0] != "cancel") {
-		return errors.New("usage: gonka-hostctl <evacuate|replace|cancel> [flags]")
+		(args[0] != "add" &&
+			args[0] != "evacuate" &&
+			args[0] != "decommission" &&
+			args[0] != "replace" &&
+			args[0] != "cancel") {
+		return errors.New(
+			"usage: gonka-hostctl <add|evacuate|decommission|replace|cancel> [flags]",
+		)
 	}
 	mode := args[0]
 	flags := flag.NewFlagSet(mode, flag.ContinueOnError)
@@ -39,6 +45,7 @@ func run(ctx context.Context, args []string) error {
 	routerService := flags.String("router-service", "versiond-router", "router container or systemd unit")
 	upstream := flags.String("upstream", "", "router upstream host name")
 	upstreamAddress := flags.String("upstream-address", "", "replacement address for the joining upstream")
+	legacyHost := flags.String("legacy-host", "", "new legacy owner when decommissioning the current owner")
 	versiondSSH := flags.String("versiond-ssh", "", "SSH destination for the versiond host")
 	versiondRuntime := flags.String("versiond-runtime", "docker", "versiond runtime: docker or systemd")
 	versiondService := flags.String("versiond-service", "", "versiond container or systemd unit")
@@ -51,12 +58,25 @@ func run(ctx context.Context, args []string) error {
 	commandTimeout := flags.Duration("command-timeout", durationEnv("ROUTER_COMMAND_TIMEOUT", 30*time.Second), "timeout for one SSH or local command")
 	readinessURL := flags.String("ready-url", "http://127.0.0.1:8080/ready", "versiond readiness URL on its host")
 	dockerRestartPolicy := flags.String("docker-restart-policy", "", "explicit restart policy applied during replacement")
-	force := flags.Bool("force-router-guard", false, "override last-host or legacy-host router guard")
+	force := flags.Bool(
+		"force-router-guard",
+		false,
+		"override drain capacity and legacy data-migration guards",
+	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
 	if flags.NArg() != 0 {
 		return errors.New("unexpected positional arguments")
+	}
+	if *upstreamAddress != "" && mode != "add" && mode != "replace" {
+		return errors.New("--upstream-address is valid only for add or replace")
+	}
+	if *legacyHost != "" && mode != "decommission" && mode != "cancel" {
+		return errors.New("--legacy-host is valid only for decommission or its cancellation")
+	}
+	if *evacuationJournal != "" && mode != "replace" {
+		return errors.New("--evacuation-journal is valid only for replace")
 	}
 	if *operationID == "" {
 		return errors.New("--operation-id is required so the operation can be resumed")
@@ -74,6 +94,7 @@ func run(ctx context.Context, args []string) error {
 		RouterService:       *routerService,
 		Upstream:            *upstream,
 		UpstreamAddress:     *upstreamAddress,
+		LegacyHost:          *legacyHost,
 		VersiondSSH:         *versiondSSH,
 		VersiondRuntime:     hostctl.Runtime(*versiondRuntime),
 		VersiondService:     *versiondService,
@@ -92,10 +113,14 @@ func run(ctx context.Context, args []string) error {
 		return err
 	}
 	switch mode {
+	case "add":
+		return orchestrator.Add(ctx)
 	case "evacuate":
 		return orchestrator.Evacuate(ctx)
+	case "decommission":
+		return orchestrator.Decommission(ctx)
 	case "cancel":
-		return orchestrator.CancelEvacuation(ctx)
+		return orchestrator.Cancel(ctx)
 	default:
 		return orchestrator.Replace(ctx)
 	}

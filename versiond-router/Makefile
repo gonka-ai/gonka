@@ -46,8 +46,51 @@ test-render:
 	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
 	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
 	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host drain --operation-id test-drain versiond2 >/dev/null; \
+	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
+		--from active --to draining --target removed versiond2 >/dev/null; \
 	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s down;' "$$tmpdir/mixed.conf"; \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
+		--from draining --to stopping --target removed versiond2 >/dev/null; \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
+		--from stopping --to offline --target removed versiond2 >/dev/null; \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
+		--from offline --to removed --target removed versiond2 >/dev/null; \
+	! grep -q 'versiond2:8080' "$$tmpdir/mixed.conf"; \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl host add --operation-id test-add versiond2 >/dev/null; \
+	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s down;' "$$tmpdir/mixed.conf"; \
+	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
+	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
+	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
+	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
+	VERSIOND_ROUTER_NGINX_BIN=true \
+	go run ./cmd/gonka-routerctl host transfer --operation-id test-add \
+		--from joining --to active --target active versiond2 >/dev/null; \
+	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s;' "$$tmpdir/mixed.conf"; \
 	VERSIOND_HOSTS='versiond versiond2' \
 	VERSIOND_NON_HA_VERSIONS= \
 	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \

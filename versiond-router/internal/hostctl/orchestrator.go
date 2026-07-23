@@ -14,6 +14,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"versiond-router/internal/router"
 )
 
 type Runtime string
@@ -29,6 +31,7 @@ type Config struct {
 	RouterService       string
 	Upstream            string
 	UpstreamAddress     string
+	LegacyHost          string
 	VersiondSSH         string
 	VersiondRuntime     Runtime
 	VersiondService     string
@@ -50,6 +53,7 @@ type OperationScope struct {
 	RouterService       string  `json:"router_service"`
 	Upstream            string  `json:"upstream"`
 	UpstreamAddress     string  `json:"upstream_address,omitempty"`
+	LegacyHost          string  `json:"legacy_host,omitempty"`
 	VersiondSSH         string  `json:"versiond_ssh"`
 	VersiondRuntime     Runtime `json:"versiond_runtime"`
 	VersiondService     string  `json:"versiond_service"`
@@ -61,6 +65,7 @@ type OperationScope struct {
 type Journal struct {
 	SchemaVersion         int            `json:"schema_version"`
 	OperationID           string         `json:"operation_id"`
+	MembershipID          string         `json:"membership_id,omitempty"`
 	Mode                  string         `json:"mode"`
 	Scope                 OperationScope `json:"scope"`
 	Phase                 string         `json:"phase"`
@@ -139,39 +144,52 @@ func validRuntime(runtime Runtime) bool {
 
 func (o *Orchestrator) Evacuate(ctx context.Context) error {
 	return o.withOperationLock(ctx, "evacuate", func() error {
-		return o.evacuate(ctx)
+		return o.stopHost(ctx, "evacuate")
 	})
 }
 
-func (o *Orchestrator) evacuate(ctx context.Context) error {
-	journal, err := o.loadOrCreateJournal("evacuate")
+func (o *Orchestrator) Decommission(ctx context.Context) error {
+	return o.withOperationLock(ctx, "decommission", func() error {
+		return o.stopHost(ctx, "decommission")
+	})
+}
+
+func (o *Orchestrator) stopHost(ctx context.Context, mode string) error {
+	phases := stopPhases(mode)
+	if phases == nil {
+		return fmt.Errorf("unsupported stop mode %q", mode)
+	}
+	journal, err := o.loadOrCreateJournal(mode)
 	if err != nil {
 		return err
 	}
 	if journal.Phase == "canceled" {
-		return errors.New("evacuation was canceled; start a new operation")
+		return fmt.Errorf("%s was canceled; start a new operation", mode)
 	}
 	if journal.CancellationPhase != "" {
-		return errors.New("evacuation cancellation is in progress; resume cancel")
+		return fmt.Errorf("%s cancellation is in progress; resume cancel", mode)
 	}
-	if before(journal.Phase, "term_requested", evacuationPhases) {
+	if before(journal.Phase, "term_requested", phases) {
 		if err := o.versiondRuntime.ValidateStopContract(ctx, o.config.KillGrace); err != nil {
 			return fmt.Errorf("versiond runtime preflight: %w", err)
 		}
 	}
-	if before(journal.Phase, "router_draining", evacuationPhases) {
-		if err := o.routerTransition(ctx, "drain"); err != nil {
+	if before(journal.Phase, "router_draining", phases) {
+		target := stopTarget(mode)
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostActive,
+			router.HostDraining,
+			target,
+		); err != nil {
 			return err
 		}
 		if err := o.advance(&journal, "router_draining"); err != nil {
 			return err
 		}
 	}
-	if before(journal.Phase, "term_sent", evacuationPhases) {
-		// Reconfirm the traffic barrier before the first irreversible action.
-		if err := o.routerTransition(ctx, "drain"); err != nil {
-			return fmt.Errorf("reconfirm router drain before SIGTERM: %w", err)
-		}
+	if before(journal.Phase, "term_requested", phases) {
 		if o.config.VersiondRuntime == RuntimeDocker {
 			if journal.PreviousRestartPolicy == "" {
 				policy, err := o.dockerRestartPolicy(ctx)
@@ -183,23 +201,59 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 					return err
 				}
 			}
-			if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
-				return err
-			}
-			if before(journal.Phase, "restart_disabled", evacuationPhases) {
+			if before(journal.Phase, "restart_disabled", phases) {
+				if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
+					return err
+				}
 				if err := o.advance(&journal, "restart_disabled"); err != nil {
 					return err
 				}
 			}
 		}
+		if _, err := o.versiondRunning(ctx); err != nil {
+			return err
+		}
+		if err := o.advance(&journal, "term_requested"); err != nil {
+			return err
+		}
+	}
+	if before(journal.Phase, "router_stopping", phases) {
+		target := stopTarget(mode)
+		// Reconfirm the traffic barrier before crossing the point where cancel
+		// is no longer allowed.
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostActive,
+			router.HostDraining,
+			target,
+		); err != nil {
+			return fmt.Errorf("reconfirm router drain before stopping: %w", err)
+		}
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostDraining,
+			router.HostStopping,
+			target,
+		); err != nil {
+			return err
+		}
+		if err := o.advance(&journal, "router_stopping"); err != nil {
+			return err
+		}
+	}
+	if before(journal.Phase, "term_sent", phases) {
+		if o.config.VersiondRuntime == RuntimeDocker {
+			// This is intentionally idempotent. A failed cancellation may have
+			// restored the policy before this stop operation was resumed.
+			if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
+				return err
+			}
+		}
 		running, err := o.versiondRunning(ctx)
 		if err != nil {
 			return err
-		}
-		if before(journal.Phase, "term_requested", evacuationPhases) {
-			if err := o.advance(&journal, "term_requested"); err != nil {
-				return err
-			}
 		}
 		if running {
 			if err := o.signalVersiond(ctx, "TERM"); err != nil {
@@ -210,7 +264,7 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 			return err
 		}
 	}
-	if before(journal.Phase, "host_stopped", evacuationPhases) {
+	if before(journal.Phase, "host_stopped", phases) {
 		stopped, err := o.waitForStopped(ctx, o.config.KillGrace)
 		if err != nil {
 			return err
@@ -232,30 +286,52 @@ func (o *Orchestrator) evacuate(ctx context.Context) error {
 			return err
 		}
 	}
-	if before(journal.Phase, "router_offline", evacuationPhases) {
-		if err := o.routerTransition(ctx, "offline"); err != nil {
+	if before(journal.Phase, "router_offline", phases) {
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostStopping,
+			router.HostOffline,
+			stopTarget(mode),
+		); err != nil {
 			return err
 		}
 		if err := o.advance(&journal, "router_offline"); err != nil {
 			return err
 		}
 	}
+	if mode == "decommission" && before(journal.Phase, "router_removed", phases) {
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostOffline,
+			router.HostRemoved,
+			router.HostRemoved,
+		); err != nil {
+			return err
+		}
+		if err := o.advance(&journal, "router_removed"); err != nil {
+			return err
+		}
+	}
 	return o.advance(&journal, "complete")
 }
 
-func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
+func (o *Orchestrator) Cancel(ctx context.Context) error {
 	return o.withOperationLock(ctx, "cancel", func() error {
-		journal, err := o.loadExistingJournal("evacuate")
+		journal, err := o.loadExistingStopJournal()
 		if err != nil {
 			return err
 		}
+		phases := stopPhases(journal.Mode)
 		if journal.Phase == "canceled" {
 			return nil
 		}
 		if journal.CancellationPhase == "" {
-			if !before(journal.Phase, "term_requested", evacuationPhases) {
+			if !before(journal.Phase, "term_requested", phases) {
 				return fmt.Errorf(
-					"cannot cancel evacuation at or after signal intent (%s); resume it instead",
+					"cannot cancel %s at or after signal intent (%s); resume it instead",
+					journal.Mode,
 					journal.Phase,
 				)
 			}
@@ -289,7 +365,7 @@ func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
 			}
 		}
 		if before(journal.CancellationPhase, "router_active", cancellationPhases) {
-			if err := o.routerTransition(ctx, "activate"); err != nil {
+			if err := o.routerCancel(ctx, &journal); err != nil {
 				return err
 			}
 			if err := o.advanceCancellation(&journal, "router_active"); err != nil {
@@ -305,24 +381,35 @@ func (o *Orchestrator) CancelEvacuation(ctx context.Context) error {
 
 func (o *Orchestrator) Replace(ctx context.Context) error {
 	return o.withOperationLock(ctx, "replace", func() error {
-		return o.replace(ctx)
+		return o.provision(ctx, "replace")
 	})
 }
 
-func (o *Orchestrator) replace(ctx context.Context) error {
-	journal, err := o.loadOrCreateJournal("replace")
+func (o *Orchestrator) Add(ctx context.Context) error {
+	return o.withOperationLock(ctx, "add", func() error {
+		return o.provision(ctx, "add")
+	})
+}
+
+func (o *Orchestrator) provision(ctx context.Context, mode string) error {
+	journal, err := o.loadOrCreateJournal(mode)
 	if err != nil {
 		return err
 	}
-	if before(journal.Phase, "host_started", replacementPhases) {
+	if mode == "replace" && journal.MembershipID == "" {
+		if err := o.loadRouterMembership(ctx, &journal); err != nil {
+			return err
+		}
+	}
+	if before(journal.Phase, "host_started", provisionPhases) {
 		if err := o.versiondRuntime.ValidateStopContract(ctx, o.config.KillGrace); err != nil {
 			return fmt.Errorf("versiond runtime preflight: %w", err)
 		}
 	}
 	if o.config.VersiondRuntime == RuntimeDocker &&
-		before(journal.Phase, "host_started", replacementPhases) &&
+		before(journal.Phase, "host_started", provisionPhases) &&
 		journal.PreviousRestartPolicy == "" {
-		policy, err := o.replacementRestartPolicy()
+		policy, err := o.provisionRestartPolicy(mode, journal.MembershipID)
 		if err != nil {
 			return err
 		}
@@ -331,15 +418,27 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 			return err
 		}
 	}
-	if before(journal.Phase, "router_joining", replacementPhases) {
-		if err := o.routerTransition(ctx, "join"); err != nil {
-			return err
+	if before(journal.Phase, "router_joining", provisionPhases) {
+		if mode == "add" {
+			if err := o.routerAdd(ctx, &journal); err != nil {
+				return err
+			}
+		} else {
+			if err := o.routerTransition(
+				ctx,
+				&journal,
+				router.HostOffline,
+				router.HostJoining,
+				router.HostActive,
+			); err != nil {
+				return err
+			}
 		}
 		if err := o.advance(&journal, "router_joining"); err != nil {
 			return err
 		}
 	}
-	if before(journal.Phase, "host_started", replacementPhases) {
+	if before(journal.Phase, "host_started", provisionPhases) {
 		if err := o.startVersiond(ctx, journal.PreviousRestartPolicy); err != nil {
 			return err
 		}
@@ -347,7 +446,7 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 			return err
 		}
 	}
-	if before(journal.Phase, "host_ready", replacementPhases) {
+	if before(journal.Phase, "host_ready", provisionPhases) {
 		if err := o.waitForReady(ctx); err != nil {
 			return err
 		}
@@ -355,8 +454,14 @@ func (o *Orchestrator) replace(ctx context.Context) error {
 			return err
 		}
 	}
-	if before(journal.Phase, "router_active", replacementPhases) {
-		if err := o.routerTransition(ctx, "activate"); err != nil {
+	if before(journal.Phase, "router_active", provisionPhases) {
+		if err := o.routerTransition(
+			ctx,
+			&journal,
+			router.HostJoining,
+			router.HostActive,
+			router.HostActive,
+		); err != nil {
 			return err
 		}
 		if err := o.advance(&journal, "router_active"); err != nil {
@@ -374,13 +479,45 @@ var evacuationPhases = []string{
 	"host_idle",
 	"restart_disabled",
 	"term_requested",
+	"router_stopping",
 	"term_sent",
 	"host_stopped",
 	"router_offline",
 	"complete",
 }
-var replacementPhases = []string{"started", "router_joining", "host_started", "host_ready", "router_active", "complete"}
+var decommissionPhases = []string{
+	"started",
+	"router_draining",
+	"host_idle",
+	"restart_disabled",
+	"term_requested",
+	"router_stopping",
+	"term_sent",
+	"host_stopped",
+	"router_offline",
+	"router_removed",
+	"complete",
+}
+var provisionPhases = []string{"started", "router_joining", "host_started", "host_ready", "router_active", "complete"}
 var cancellationPhases = []string{"requested", "restart_restored", "router_active", "complete"}
+
+func stopPhases(mode string) []string {
+	switch mode {
+	case "evacuate":
+		return evacuationPhases
+	case "decommission":
+		return decommissionPhases
+	default:
+		return nil
+	}
+}
+
+func stopTarget(mode string) router.HostState {
+	if mode == "decommission" {
+		return router.HostRemoved
+	}
+	return router.HostOffline
+}
 
 func before(current, target string, phases []string) bool {
 	currentIndex, targetIndex := -1, -1
@@ -395,20 +532,146 @@ func before(current, target string, phases []string) bool {
 	return currentIndex < targetIndex
 }
 
-func (o *Orchestrator) routerTransition(ctx context.Context, action string) error {
-	args := []string{"gonka-routerctl", "host", action, "--operation-id", o.config.OperationID}
-	if o.config.ForceRouterGuard && action == "drain" {
+func (o *Orchestrator) routerTransition(
+	ctx context.Context,
+	journal *Journal,
+	from router.HostState,
+	to router.HostState,
+	target router.HostState,
+) error {
+	if to == router.HostRemoved && journal.MembershipID == "" {
+		if err := o.loadRouterMembership(ctx, journal); err != nil {
+			return err
+		}
+	}
+	args := []string{
+		"gonka-routerctl", "host", "transfer",
+		"--operation-id", o.config.OperationID,
+		"--from", string(from),
+		"--to", string(to),
+		"--target", string(target),
+	}
+	if journal.MembershipID != "" {
+		args = append(args, "--membership-id", journal.MembershipID)
+	}
+	if o.config.ForceRouterGuard &&
+		(target == router.HostOffline || target == router.HostRemoved) {
 		args = append(args, "--force")
 	}
-	if action == "join" && o.config.UpstreamAddress != "" {
+	if target == router.HostActive && o.config.UpstreamAddress != "" {
+		args = append(args, "--address", o.config.UpstreamAddress)
+	}
+	if target == router.HostRemoved && o.config.LegacyHost != "" {
+		args = append(args, "--legacy-host", o.config.LegacyHost)
+	}
+	args = append(args, o.config.Upstream)
+	state, err := o.runRouterMutation(ctx, args)
+	if err != nil {
+		return err
+	}
+	return o.captureMembership(journal, state, to != router.HostRemoved)
+}
+
+func (o *Orchestrator) loadRouterMembership(
+	ctx context.Context,
+	journal *Journal,
+) error {
+	state, err := o.runRouterMutation(ctx, []string{"gonka-routerctl", "status"})
+	if err != nil {
+		return fmt.Errorf("read router membership: %w", err)
+	}
+	return o.captureMembership(journal, state, true)
+}
+
+func (o *Orchestrator) routerAdd(ctx context.Context, journal *Journal) error {
+	args := []string{
+		"gonka-routerctl", "host", "add",
+		"--operation-id", o.config.OperationID,
+	}
+	if journal.MembershipID != "" {
+		args = append(args, "--membership-id", journal.MembershipID)
+	}
+	if o.config.UpstreamAddress != "" {
 		args = append(args, "--address", o.config.UpstreamAddress)
 	}
 	args = append(args, o.config.Upstream)
+	state, err := o.runRouterMutation(ctx, args)
+	if err != nil {
+		return err
+	}
+	return o.captureMembership(journal, state, true)
+}
+
+func (o *Orchestrator) routerCancel(ctx context.Context, journal *Journal) error {
+	args := []string{
+		"gonka-routerctl", "host", "cancel",
+		"--operation-id", o.config.OperationID,
+	}
+	if journal.MembershipID != "" {
+		args = append(args, "--membership-id", journal.MembershipID)
+	}
+	args = append(args, o.config.Upstream)
+	state, err := o.runRouterMutation(ctx, args)
+	if err != nil {
+		return err
+	}
+	return o.captureMembership(journal, state, true)
+}
+
+func (o *Orchestrator) runRouterMutation(
+	ctx context.Context,
+	args []string,
+) (router.State, error) {
 	if o.config.RouterRuntime == RuntimeDocker {
 		args = append([]string{"docker", "exec", o.config.RouterService}, args...)
 	}
-	_, err := o.runRemote(ctx, o.config.RouterSSH, args...)
-	return err
+	output, err := o.runRemote(ctx, o.config.RouterSSH, args...)
+	if err != nil {
+		return router.State{}, err
+	}
+	var state router.State
+	if err := json.Unmarshal([]byte(output), &state); err != nil {
+		return router.State{}, fmt.Errorf("decode router state after transition: %w", err)
+	}
+	return state, nil
+}
+
+func (o *Orchestrator) captureMembership(
+	journal *Journal,
+	state router.State,
+	requireHost bool,
+) error {
+	for _, host := range state.Hosts {
+		if host.Name != o.config.Upstream {
+			continue
+		}
+		if journal.MembershipID != "" && journal.MembershipID != host.MembershipID {
+			return fmt.Errorf(
+				"router membership changed for %s: journal has %s, router has %s",
+				host.Name,
+				journal.MembershipID,
+				host.MembershipID,
+			)
+		}
+		if journal.MembershipID == host.MembershipID {
+			return nil
+		}
+		journal.MembershipID = host.MembershipID
+		return o.writeJournal(*journal)
+	}
+	if requireHost {
+		return fmt.Errorf(
+			"router response has no membership for host %s",
+			o.config.Upstream,
+		)
+	}
+	if journal.MembershipID == "" {
+		return fmt.Errorf(
+			"removed host %s has no membership recorded in the operation journal",
+			o.config.Upstream,
+		)
+	}
+	return nil
 }
 
 func (o *Orchestrator) probeReadiness(ctx context.Context) error {
@@ -444,9 +707,9 @@ func (o *Orchestrator) waitForReady(ctx context.Context) error {
 		lastErr = err
 		if time.Now().After(deadline) {
 			if lastErr != nil {
-				return fmt.Errorf("replacement readiness timeout: %w", lastErr)
+				return fmt.Errorf("versiond readiness timeout: %w", lastErr)
 			}
-			return errors.New("replacement readiness timeout")
+			return errors.New("versiond readiness timeout")
 		}
 		if err := wait(ctx, o.config.PollInterval); err != nil {
 			return err
@@ -533,7 +796,7 @@ func validateDockerRestartPolicy(policy string) error {
 	return nil
 }
 
-func (o *Orchestrator) replacementRestartPolicy() (string, error) {
+func (o *Orchestrator) replacementRestartPolicy(membershipID string) (string, error) {
 	if o.config.DockerRestartPolicy != "" {
 		return o.config.DockerRestartPolicy, nil
 	}
@@ -565,10 +828,31 @@ func (o *Orchestrator) replacementRestartPolicy() (string, error) {
 	if !sameLogicalVersiondHost(journal.Scope, o.operationScope()) {
 		return "", errors.New("evacuation journal belongs to a different logical versiond host")
 	}
+	if journal.MembershipID != "" &&
+		membershipID != "" &&
+		journal.MembershipID != membershipID {
+		return "", errors.New("evacuation journal belongs to a different router membership")
+	}
 	if err := validateDockerRestartPolicy(journal.PreviousRestartPolicy); err != nil {
 		return "", fmt.Errorf("evacuation journal restart policy: %w", err)
 	}
 	return journal.PreviousRestartPolicy, nil
+}
+
+func (o *Orchestrator) provisionRestartPolicy(
+	mode string,
+	membershipID string,
+) (string, error) {
+	if mode == "add" {
+		if o.config.DockerRestartPolicy == "" {
+			return "", errors.New("add requires --docker-restart-policy")
+		}
+		return o.config.DockerRestartPolicy, nil
+	}
+	if mode != "replace" {
+		return "", fmt.Errorf("unsupported provision mode %q", mode)
+	}
+	return o.replacementRestartPolicy(membershipID)
 }
 
 func wait(ctx context.Context, duration time.Duration) error {
@@ -613,6 +897,23 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 	return journal, nil
 }
 
+func (o *Orchestrator) loadExistingStopJournal() (Journal, error) {
+	data, err := os.ReadFile(o.config.JournalPath)
+	if err != nil {
+		return Journal{}, err
+	}
+	var identity struct {
+		Mode string `json:"mode"`
+	}
+	if err := json.Unmarshal(data, &identity); err != nil {
+		return Journal{}, err
+	}
+	if stopPhases(identity.Mode) == nil {
+		return Journal{}, fmt.Errorf("journal mode %q cannot be canceled", identity.Mode)
+	}
+	return o.loadExistingJournal(identity.Mode)
+}
+
 func (o *Orchestrator) loadOrCreateJournal(mode string) (Journal, error) {
 	journal, err := o.loadExistingJournal(mode)
 	if err == nil {
@@ -633,13 +934,13 @@ func (o *Orchestrator) loadOrCreateJournal(mode string) (Journal, error) {
 }
 
 func validJournalPhase(mode, phase string) bool {
-	if mode == "evacuate" && phase == "canceled" {
+	if stopPhases(mode) != nil && phase == "canceled" {
 		return true
 	}
-	phases := evacuationPhases
-	if mode == "replace" {
-		phases = replacementPhases
-	} else if mode != "evacuate" {
+	phases := stopPhases(mode)
+	if mode == "replace" || mode == "add" {
+		phases = provisionPhases
+	} else if phases == nil {
 		return false
 	}
 	for _, candidate := range phases {
@@ -651,7 +952,8 @@ func validJournalPhase(mode, phase string) bool {
 }
 
 func validCancellationState(journal Journal) bool {
-	if journal.Mode != "evacuate" {
+	phases := stopPhases(journal.Mode)
+	if phases == nil {
 		return journal.CancellationPhase == ""
 	}
 	if journal.CancellationPhase == "" {
@@ -672,7 +974,7 @@ func validCancellationState(journal Journal) bool {
 	if journal.CancellationPhase == "complete" {
 		return journal.Phase == "canceled"
 	}
-	return before(journal.Phase, "term_requested", evacuationPhases)
+	return before(journal.Phase, "term_requested", phases)
 }
 
 func sameLogicalVersiondHost(left, right OperationScope) bool {
@@ -691,6 +993,7 @@ func (o *Orchestrator) operationScope() OperationScope {
 		RouterService:       o.config.RouterService,
 		Upstream:            o.config.Upstream,
 		UpstreamAddress:     o.config.UpstreamAddress,
+		LegacyHost:          o.config.LegacyHost,
 		VersiondSSH:         o.config.VersiondSSH,
 		VersiondRuntime:     o.config.VersiondRuntime,
 		VersiondService:     o.config.VersiondService,
@@ -745,14 +1048,19 @@ func (o *Orchestrator) operationBusyError(lockPath, requestedAction string) erro
 			"owner_since="+owner.StartedAt.Format(time.RFC3339),
 		)
 	}
-	if phase := readOperationPhase(o.config.JournalPath); phase != "" {
+	mode, phase := readOperationStatus(o.config.JournalPath)
+	if phase != "" {
 		details = append(details, "journal_phase="+strconv.Quote(phase))
 	}
 
 	guidance := "wait for or interrupt the owner, then retry " + requestedAction
 	if requestedAction == "cancel" {
+		resumeAction := mode
+		if stopPhases(resumeAction) == nil {
+			resumeAction = "the stop operation"
+		}
 		guidance += "; cancellation is valid only before term_requested, " +
-			"otherwise resume evacuate"
+			"otherwise resume " + resumeAction
 	}
 	return fmt.Errorf(
 		"%w: %s; commands do not queue behind a live owner; %s",
@@ -795,18 +1103,19 @@ func readOperationLockOwner(path string) (operationLockOwner, error) {
 	return owner, nil
 }
 
-func readOperationPhase(path string) string {
+func readOperationStatus(path string) (string, string) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return ""
+		return "", ""
 	}
 	var journal struct {
+		Mode  string `json:"mode"`
 		Phase string `json:"phase"`
 	}
 	if err := json.Unmarshal(data, &journal); err != nil {
-		return ""
+		return "", ""
 	}
-	return journal.Phase
+	return journal.Mode, journal.Phase
 }
 
 func (o *Orchestrator) advance(journal *Journal, phase string) error {

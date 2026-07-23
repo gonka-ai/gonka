@@ -211,8 +211,8 @@ go test ./testenv/... -count=1
 The stack suite covers smoke, routing, runtime updates, gateway behavior,
 versiond lifecycle, storage migration, validation leases, rolling updates, and
 router-controlled host evacuation. The evacuation scenario covers interrupted
-cancellation, durable resume, SSE continuity, graceful exit, and replacement
-admission after full convergence.
+cancellation, durable resume, SSE continuity, graceful exit, permanent removal,
+and replacement/addition admission after full convergence.
 
 Tests use behavior-oriented names and isolated stacks on dedicated subnets with
 Docker-assigned localhost ports, so they can run while a dev `make up` stack is
@@ -248,7 +248,8 @@ sha replacement with Postgres overlap and the hybrid stop-then-start fallback.
 
 `TestVersiondHostEvacuation` removes a versiond host from router admission,
 allows an established SSE stream to finish, resumes an interrupted evacuation,
-and activates a converged replacement.
+activates a converged replacement, decommissions it from the rendered pool, and
+adds it back through the readiness gate.
 
 **Phase 9 adversarial** (`make citest-adversarial`): A1 lost first SSE chunk, A2 ML 503, A3 stale escrow on chain gRPC, A4 bad warm-key grantees. Fault hooks: `mock-openai` `/testenv/fault`, mock-chain `/testenv/escrow` + `/testenv/grantees` (via mock-dapi).
 

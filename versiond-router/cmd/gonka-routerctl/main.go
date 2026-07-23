@@ -87,31 +87,104 @@ func mutateHost(ctx context.Context, controller *router.Controller, args []strin
 	if len(args) == 0 {
 		return usageError()
 	}
-	action := router.Action(args[0])
-	switch action {
-	case router.ActionDrain, router.ActionOffline, router.ActionJoin, router.ActionActivate:
+	switch args[0] {
+	case "transfer":
+		return transferHost(ctx, controller, args[1:])
+	case "add":
+		return addHost(ctx, controller, args[1:])
+	case "cancel":
+		return cancelHost(ctx, controller, args[1:])
 	default:
-		return fmt.Errorf("unknown host action %q", args[0])
+		return fmt.Errorf("unknown host command %q", args[0])
 	}
-	flags := flag.NewFlagSet("host "+string(action), flag.ContinueOnError)
-	force := flags.Bool("force", false, "override last-active and legacy-host guards")
-	address := flags.String("address", "", "upstream address for a joining host")
+}
+
+func transferHost(
+	ctx context.Context,
+	controller *router.Controller,
+	args []string,
+) error {
+	flags := flag.NewFlagSet("host transfer", flag.ContinueOnError)
+	from := flags.String("from", "", "expected current membership state")
+	to := flags.String("to", "", "next membership state")
+	target := flags.String("target", "", "final transfer state")
+	force := flags.Bool("force", false, "override drain and legacy data-migration guards")
+	address := flags.String("address", "", "upstream address used by a join transfer")
+	legacyHost := flags.String("legacy-host", "", "new legacy owner when removing the current legacy host")
 	opID := flags.String("operation-id", "", "idempotent operation identifier")
-	if err := flags.Parse(args[1:]); err != nil {
+	membershipID := flags.String("membership-id", "", "expected immutable membership identifier")
+	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() != 1 {
-		return fmt.Errorf("host %s requires exactly one host name", action)
+		return errors.New("host transfer requires exactly one host name")
+	}
+	if *from == "" || *to == "" || *target == "" {
+		return errors.New("host transfer requires --from, --to, and --target")
 	}
 	if *opID == "" {
-		*opID = operationID(string(action))
+		*opID = operationID("transfer")
 	}
 	state, err := controller.Transition(ctx, router.Transition{
-		Action:      action,
-		Host:        flags.Arg(0),
-		Address:     *address,
-		Force:       *force,
-		OperationID: *opID,
+		OperationID:  *opID,
+		MembershipID: *membershipID,
+		Host:         flags.Arg(0),
+		From:         router.HostState(*from),
+		To:           router.HostState(*to),
+		Target:       router.HostState(*target),
+		Address:      *address,
+		LegacyHost:   *legacyHost,
+		Force:        *force,
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(state)
+}
+
+func addHost(ctx context.Context, controller *router.Controller, args []string) error {
+	flags := flag.NewFlagSet("host add", flag.ContinueOnError)
+	address := flags.String("address", "", "upstream address for the new membership")
+	opID := flags.String("operation-id", "", "idempotent operation identifier")
+	membershipID := flags.String("membership-id", "", "explicit membership identifier")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("host add requires exactly one host name")
+	}
+	if *opID == "" {
+		*opID = operationID("add")
+	}
+	state, err := controller.Add(ctx, router.AddMembership{
+		OperationID:  *opID,
+		MembershipID: *membershipID,
+		Host:         flags.Arg(0),
+		Address:      *address,
+	})
+	if err != nil {
+		return err
+	}
+	return printJSON(state)
+}
+
+func cancelHost(ctx context.Context, controller *router.Controller, args []string) error {
+	flags := flag.NewFlagSet("host cancel", flag.ContinueOnError)
+	opID := flags.String("operation-id", "", "operation identifier that owns the transfer")
+	membershipID := flags.String("membership-id", "", "expected immutable membership identifier")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() != 1 {
+		return errors.New("host cancel requires exactly one host name")
+	}
+	if *opID == "" {
+		return errors.New("host cancel requires --operation-id")
+	}
+	state, err := controller.Cancel(ctx, router.CancelTransfer{
+		OperationID:  *opID,
+		MembershipID: *membershipID,
+		Host:         flags.Arg(0),
 	})
 	if err != nil {
 		return err
@@ -186,5 +259,8 @@ func envOrDefault(key, fallback string) string {
 }
 
 func usageError() error {
-	return errors.New("usage: gonka-routerctl bootstrap | status | recover | host <drain|offline|join|activate> [flags] HOST")
+	return errors.New(
+		"usage: gonka-routerctl bootstrap | status | recover | " +
+			"host <transfer|add|cancel> [flags] HOST",
+	)
 }
