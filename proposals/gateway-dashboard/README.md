@@ -79,13 +79,15 @@ Finalization and dedicated timeout-submission diffs can create
 
 ### Nonce accounting
 
-Every `consumed_nonce` has one current `disposition`. For each escrow:
+Every `consumed_nonce` has one current `disposition`. For each escrow,
+`in_flight` is the derived residual:
 
 ```text
-terminal_dispositions + in_flight + unclassified = latest_nonce
+in_flight = latest_nonce - terminal_dispositions - unclassified
 ```
 
-Any difference is a `partition_error`.
+The residual must never be negative and must drain to zero once the escrow
+has no active work. A violation is an accounting error.
 
 ```text
 consumed_nonce
@@ -138,6 +140,12 @@ Protocol state determines receipt, finish, timeout, and invalid outcomes.
 Gateway state determines send, winner, and policy context. A stream that served
 the user without `protocol_finish` remains unfinished.
 
+The classification model is fixed; code paths are not allowed to reshape it.
+Unrecognized behavior and code-level failures degrade into `unknown` reasons
+or `unclassified` nonces, never into new, missing, or reinterpreted
+categories. Both buckets stay visible, so the statistics keep their meaning
+while the implementation evolves.
+
 Each `inference_nonce` also records bounded context:
 
 - `dispatch_phase` and `timeout_evaluation_phase`: `normal`, `poc`, or
@@ -152,8 +160,8 @@ Each `inference_nonce` also records bounded context:
   `transport_unknown`;
 - `detail_reason`: a bounded reason owned by the lifecycle event, or `unknown`.
 
-Block heights never appear in counters or Prometheus labels. An unknown
-reason increments `unknown_reason_total`.
+An unknown reason reports `unknown` and increments `unknown_reason_total`.
+Block heights never appear in counters or Prometheus labels.
 
 Probe quarantine uses `no_send_reason=participant_throttled_no_send` with
 `quarantine_mode=probe`. Shadow quarantine and probation remain `real_send`;
@@ -167,7 +175,8 @@ Strict PoC admission that consumes no nonce creates no accounting entry.
 ### Timeout accounting
 
 Every terminal `unfinished_refused` and `unfinished_execution` has
-`timeout_required=true`. Each required timeout has one `timeout_outcome`:
+`timeout_required=true`; `timeouts_required` counts these nonces. Each
+required timeout has one current `timeout_outcome`:
 
 - `skipped`: timeout handling did not start;
 - `vote_collection_failed`: verifier requests did not complete;
@@ -193,6 +202,11 @@ finished disposition and leaves `timeouts_required`. Existing gateway labels
 `nonce_already_finished` and `empty_stream_without_non_empty_winner` represent
 this race; they are not final `timeout_outcome` values.
 
+An applied timeout attributes `protocol_miss` to the timed-out
+`inference_nonce` and its executor slot. The carrier diff that submits
+`MsgTimeoutInference` consumes its own nonce, counted only as
+`protocol_only`.
+
 Receipt escalation, first-token timeout, and stream-stall timers can start
 redundant attempts. They are scheduling timers, not protocol timeouts.
 
@@ -208,7 +222,9 @@ timeout_outcome.applied       = HostStats.Missed
 recorded_invalid_transitions  = HostStats.Invalid
 ```
 
-A difference is a `cross_check_error`.
+`recorded_invalid_transitions` counts observed `StatusChallenged` to
+`StatusInvalidated` transitions, attributed to the executor slot. A
+difference is a `cross_check_error`.
 
 ### Settlement projection
 
@@ -235,14 +251,21 @@ protocol_completed   = assigned_nonces - protocol_misses
 non_execution_credit = protocol_completed - executed
 ```
 
-`non_execution_credit` decomposes into:
+`non_execution_credit` decomposes exactly:
 
-- `protocol_only`;
-- `ghost`;
-- `timeout_accounting_failure`: unfinished nonces with `timeout_outcome` equal
-  to `skipped`, `vote_collection_failed`, `insufficient_votes`, or
-  `diff_send_failed`;
-- `unresolved`: `in_flight` and `unclassified`.
+```text
+non_execution_credit = protocol_only
+                     + ghost
+                     + timeout_accounting_failure
+                     + unresolved
+
+timeout_accounting_failure: unfinished with a non-applied timeout_outcome
+timeout_pending:            unfinished with unset timeout_outcome
+unresolved:                 in_flight + timeout_pending + unclassified
+```
+
+The identity holds when funnel `applied` equals `HostStats.Missed`; a
+`cross_check_error` breaks it and is reported.
 
 This decomposition is an accounting identity, not a fault assignment.
 `protocol_only` and `ghost` are protocol or gateway policy effects.
@@ -286,7 +309,7 @@ do not contribute to `protocol_invalid`.
 The accounting view reports:
 
 - `protocol_invalid`;
-- unresolved protocol challenges;
+- unresolved protocol challenges: inferences currently in `StatusChallenged`;
 - `recorded_invalid_transitions - HostStats.Invalid`.
 
 Validation-duty gaps require durable validation assignment and completion
@@ -312,12 +335,12 @@ Each participant-model record contains:
 - per-slot `assigned_nonces` and dispositions;
 - timeout requirements, outcomes, and reasons;
 - `protocol_misses`, `protocol_invalid`, and unresolved challenges;
-- `partition_error`, `cross_check_error`, `unclassified`,
+- the `in_flight` residual, `cross_check_error`, `unclassified`,
   `unknown_reason_total`, and writer errors.
 
-The API returns counts, not rates. Diagnostic nonce records can be returned from
-a bounded recent window. Prompts, responses, payload hashes, raw errors, and
-private material are never stored or served.
+The API returns counts, not rates. Diagnostic nonce records can be returned
+from a bounded recent window. Prompts, responses, payload hashes, raw errors,
+and private material are never stored or served.
 
 The dashboard reads only this API and stores no accounting state.
 
@@ -348,16 +371,19 @@ accounting errors.
 
 Accounting stores counters, not per-nonce rows. One counter exists per
 configuration: a distinct tuple of `escrow_id`, `slot_id`, `disposition`, and
-the bounded context and timeout dimensions. Counters live in memory. A
-classification is one integer increment; the request path performs no writes.
+the bounded context and timeout dimensions. Counters live in memory and hold
+current state, not event history: a first classification increments one
+configuration, and a reclassification atomically moves the count to the new
+configuration. The request path performs no accounting writes.
 
-A snapshot writer upserts the current cumulative value of every counter into
-dedicated `perf.db` tables every five minutes and at escrow finalization,
-settlement, rotation, epoch transition, and shutdown. The tables hold one row
-per configuration, not history. Every dimension is a small enum and only
-observed combinations create counters, so an escrow produces at most a few
-hundred rows. RAM, CPU, and disk use are bounded and do not grow with request
-volume.
+A snapshot writer atomically upserts the current value of every counter,
+together with each escrow's `latest_nonce`, into dedicated `perf.db` tables
+every five minutes and at escrow finalization, settlement, rotation, epoch
+transition, and shutdown. A failed snapshot keeps the previous one and is
+reported as a writer error. The tables hold one row per configuration, not
+history. Every dimension is a small enum and only observed combinations
+create counters, so an escrow produces at most a few hundred rows. RAM, CPU,
+and disk use are bounded and do not grow with request volume.
 
 Query-time aggregation produces `epoch_index`, `model`, `participant`, slot,
 and optional `escrow_id` totals. Aggregates are not persisted separately from
@@ -373,10 +399,10 @@ owned by that address in matching escrows.
 `DEVSHARD_STATS_RETENTION_EPOCHS=0` disables automatic deletion. A positive
 value removes only complete epochs older than the configured count.
 
-On restart, counters resume from the last snapshot. Reconciliation compares
-counted totals against each session's `latest_nonce`; nonces classified in
-the lost window are added to `unclassified`. Reconciliation never fabricates
-a terminal outcome, and every remaining gap appears in accounting health.
+On restart, counters resume from the last snapshot. Nonces consumed after the
+snapshot's `latest_nonce` become `unclassified`. Reconciliation never
+fabricates a terminal outcome, and every remaining gap appears in accounting
+health.
 
 A bounded in-memory ring of recent nonce records, including block heights,
 supports diagnosis. Ring records are never persisted.
@@ -395,6 +421,9 @@ Record or reconcile data at:
 - `protocol_miss` and `protocol_invalid` transitions;
 - escrow finalization, settlement, rotation, and shutdown.
 
+A repeated or replayed callback that changes no session state changes no
+counter.
+
 `HandleTimeout` returns:
 
 - `timeout_kind`: `refused` or `execution`;
@@ -412,24 +441,25 @@ Add `DEVSHARD_STATS_LISTEN_ADDR`, empty by default; an empty value disables
 the listener. The API has no authentication: access control is network
 isolation. The listener is never published through the public proxy or Caddy,
 and the dashboard sidecar runs on the same private network, configured with
-the stats URL only.
+the stats URL only. Any container on the shared private Docker network can
+read the API; this exposure is accepted.
 
 The counter store also feeds Prometheus. A collector exports the in-memory
-counters as `devshard_accounting_*` metrics labeled by `epoch_index`,
-`participant`, `model`, and the context and timeout dimensions. Labels
-exclude `escrow_id`, nonce, and block heights to bound cardinality. Live
-dashboards and alerting therefore see the same values as the durable
-accounting, with no second bookkeeping path; exact epoch totals come from the
-snapshots and the API. Service health gauges (`partition_error`,
-`cross_check_error`, `unclassified`, `unknown_reason_total`, writer errors)
-are exported alongside. Existing `devshard_gateway_*` metrics remain the live
-operational view.
+counters as `devshard_accounting_*` gauges for the current epoch, labeled by
+`participant`, `model`, and the dimensions applicable to each metric family.
+Labels never include `escrow_id`, nonce, block heights, or `detail_reason`.
+The API and these metrics share one accounting store; exact and historical
+epoch totals come from the snapshots and the API. Existing
+`devshard_gateway_*` metrics remain the live operational view.
 
 ### Verification
 
 Tests cover:
 
-- nonce partition and `(escrow_id, nonce)` idempotency;
+- the residual: never negative, drains to zero on inactive escrows;
+- reclassification moving counts atomically between configurations;
+- replayed callbacks changing no counter;
+- the `non_execution_credit` identity, including `timeout_pending`;
 - settlement assignment parity, including slot `0` and `protocol_only_nonce`;
 - every refused and execution `timeout_outcome`;
 - cross-checks against `HostStats.Missed` and `HostStats.Invalid`;
@@ -438,8 +468,7 @@ Tests cover:
 - phase transitions and normal-phase filtering;
 - overscheduled winners and unfinished losers;
 - streamed output without `protocol_finish`;
-- snapshot restart reconciliation: nonces classified in the lost window land
-  in `unclassified` without fabricated terminal outcomes;
+- restart reconciliation without fabricated terminal outcomes;
 - aggregation across models, slots, participants, rotated escrows, and epochs;
 - API schema stability;
 - the Prometheus export reporting the same values as the counter store.
