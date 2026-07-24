@@ -78,27 +78,41 @@ func (i *receiptIndex) Record(operationID string, receipt operationReceipt) erro
 }
 
 func (c *Controller) loadOrCreateReceiptIndex() (receiptIndex, error) {
-	data, err := os.ReadFile(c.config.ReceiptsPath)
-	if err == nil {
-		var index receiptIndex
-		if err := json.Unmarshal(data, &index); err != nil {
-			return receiptIndex{}, fmt.Errorf("decode router receipt index: %w", err)
-		}
-		if err := index.Validate(); err != nil {
-			return receiptIndex{}, err
-		}
-		return index, nil
-	}
-	if !errors.Is(err, fs.ErrNotExist) {
+	index, missing, err := c.readReceiptIndex()
+	if err != nil {
 		return receiptIndex{}, err
 	}
-
-	index := newReceiptIndex()
-	c.importAuditReceipts(&index)
+	if !missing {
+		return index, nil
+	}
 	if err := writeJSONAtomic(c.config.ReceiptsPath, index, 0o600); err != nil {
 		return receiptIndex{}, err
 	}
 	return index, nil
+}
+
+func (c *Controller) readReceiptIndex() (receiptIndex, bool, error) {
+	data, err := os.ReadFile(c.config.ReceiptsPath)
+	if err == nil {
+		var index receiptIndex
+		if err := json.Unmarshal(data, &index); err != nil {
+			return receiptIndex{}, false, fmt.Errorf(
+				"decode router receipt index: %w",
+				err,
+			)
+		}
+		if err := index.Validate(); err != nil {
+			return receiptIndex{}, false, err
+		}
+		return index, false, nil
+	}
+	if !errors.Is(err, fs.ErrNotExist) {
+		return receiptIndex{}, false, err
+	}
+
+	index := newReceiptIndex()
+	c.importAuditReceipts(&index)
+	return index, true, nil
 }
 
 func (c *Controller) importAuditReceipts(index *receiptIndex) {

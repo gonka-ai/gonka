@@ -146,22 +146,25 @@ local `gonka-routerctl` command. Remote operation uses the deployment's existing
 SSH access to invoke local commands on the router and versiond hosts. Therefore
 this change adds no listener, credential format, mTLS PKI, or token lifecycle.
 
-The router command uses a file lock, validates state transitions, writes a
-recovery journal, tests the candidate nginx configuration, atomically publishes
-it, reloads nginx, and persists state, completion receipts, and an audit record.
-Repeating an already completed operation is idempotent. Router state, receipt
-index, journal, and audit data live on the persistent
-`/var/lib/gonka/versiond-router` volume.
+The router command uses a file lock and validates state transitions before
+commit. It then writes a WAL entry containing the complete desired state,
+completion receipts, and exact rendered nginx config. A reconciler persists
+that desired generation, runs `nginx -t`, atomically publishes and reloads the
+config, and records the applied generation. Repeating an already completed
+operation is idempotent.
 
-Back up router state, completion receipts, and a pending journal as one
-control-plane unit. The audit may be rotated, but the receipt index must not be
-rotated or pruned: it is the durable idempotency record for completed operation
-IDs.
+Router state, applied metadata, receipt index, pending journal, audit outbox,
+and audit data live on the persistent `/var/lib/gonka/versiond-router` volume.
+Back up all control-plane files together. The audit may be rotated, but the
+receipt index must not be rotated or pruned: it is the durable idempotency
+record for completed operation IDs.
 
 State schema 1 is migrated automatically to schema 2 under the router lock.
 Existing membership IDs are preserved; older per-host operation ownership is
-converted into one `active_transfer`. Pending schema-1 transaction journals are
-migrated before recovery. The receipt index is transactionally committed with
+converted into one `active_transfer`. Pending schema-1 and schema-2 transaction
+journals are migrated before recovery. Legacy pre-reload transactions retain
+their rollback behavior; legacy transactions that already reloaded nginx become
+forward-only desired-state intents. The receipt index is committed with desired
 state. If it does not exist during an upgrade, valid terminal audit entries are
 imported once; malformed audit lines are skipped and never block router
 mutation.
@@ -170,12 +173,17 @@ Bootstrap settings such as `VERSIOND_HOSTS` are fallback input for creating the
 first state only. On restart, journal recovery and the persisted state run first;
 bootstrap settings are not parsed when authoritative state already exists.
 
-`gonka-routerctl status` is read-only and reports a `pending_operation` when the
-journal is present. `gonka-routerctl recover` is the explicit mutating recovery
-command. A transaction interrupted before confirmed reload rolls back. A
-transaction whose journal reached `reloaded` verifies `new_config_sha256`, runs
-`nginx -t`, reapplies the graceful reload, and commits the new state. Recovery
-stops on a config SHA mismatch instead of silently choosing one side.
+`gonka-routerctl status` is read-only. It reports `pending_operation` plus
+desired/applied generations and a convergence flag. `gonka-routerctl recover`
+is the explicit mutating recovery command. Writing the current WAL is the
+desired-state commit point, so recovery always converges forward: it rewrites
+state and receipts, republishes the exact journaled config, validates it,
+reloads nginx idempotently, and updates applied metadata. An externally changed
+output config is repaired from the WAL instead of deadlocking recovery.
+
+Applied routing does not depend on audit availability. Audit events use a
+durable outbox and at-least-once delivery; a failed append leaves an event for a
+later retry without rolling back nginx or desired state.
 
 Each active transfer is owned by a stable operation ID and membership ID. The
 same ID and transfer parameters advance every edge to `offline`, `removed`, or
@@ -193,12 +201,14 @@ evacuation or decommission operation must resume.
 
 ```text
 routerctl host transfer --from active --to draining --target offline HOST
-  -> persist intent
-  -> render HOST as down
+  -> render exact config with HOST down
+  -> commit desired generation and exact config to WAL
+  -> persist desired state
+  -> atomically publish the WAL config
   -> nginx -t
-  -> atomic config replace
   -> nginx reload
-  -> verify and persist generation
+  -> persist applied generation
+  -> enqueue audit and retire WAL
 
 capture the original restart policy once and enforce restart=no
 persist term_requested
@@ -257,10 +267,13 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 
 ## Failure policy
 
-- nginx validation failure: keep the old config and state; do not signal host.
-- nginx reload failure: restore the old config and reload it; record failure.
-- interrupted router transaction: show it in read-only status; roll back before
-  confirmed reload or verify the candidate SHA and roll forward after reload.
+- nginx validation failure: restore the previous output projection, retain the
+  committed desired generation as pending, and do not signal the host.
+- nginx reload failure: keep the previous live nginx generation and valid new
+  output projection, retain the committed desired generation as pending, and do
+  not signal the host.
+- interrupted router transaction: show desired/applied divergence in read-only
+  status and reconcile the exact WAL config forward after the fault is fixed.
 - versiond shutdown budget expires with work: log the remaining internal proxy
   leases, force child/HTTP teardown, and continue process reap.
 - remote command timeout: retain the last durable hostctl phase and require an

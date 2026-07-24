@@ -31,7 +31,7 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_NON_HA_VERSIONS` | no | empty | Whitespace and/or comma-separated version path segments pinned to legacy. Empty = all versions use the HA pool |
 | `VERSIOND_ROUTER_STATE` | no | `/var/lib/gonka/versiond-router/state.json` | Persistent router FSM state |
 | `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Rotatable transition audit log |
-| `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Write-ahead transaction journal |
+| `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Committed desired-state intent awaiting reconciliation |
 | `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `2s` | Upstream connection deadline before HA failover |
@@ -61,21 +61,25 @@ transaction and loads that state before reading bootstrap environment variables.
 Missing or malformed bootstrap variables therefore do not block a restart when
 valid persistent state exists.
 
-The controller stores completion receipts in `<state>.receipts.json`. This is a
-compact control-plane index and must stay on the same persistent volume as
-`state.json` and its transaction journal. The audit log may be rotated,
-truncated, or archived; it is not consulted during normal replay. When the
-receipt index is first created, valid terminal records are imported from an
-existing audit on a best-effort basis and malformed audit lines are skipped.
-Back up state, receipts, and the pending journal together. Do not rotate or
-prune the receipt index: its entries are the durable idempotency records for
-completed operation IDs.
+The controller stores completion receipts in `<state>.receipts.json`, the last
+nginx-applied generation in `<state>.applied.json`, and undelivered audit events
+in `<state>.audit-outbox.json`. These files and a pending operation journal must
+stay on the same persistent volume as `state.json`. The audit log may be
+rotated, truncated, or archived; it is not consulted during normal replay.
+When the receipt index is first created, valid terminal records are imported
+from an existing audit on a best-effort basis and malformed audit lines are
+skipped. Back up state, receipts, applied metadata, audit outbox, and the
+pending journal together. Do not rotate or prune the receipt index: its entries
+are the durable idempotency records for completed operation IDs.
 
 Router state schema 1 is migrated under the controller lock to schema 2. The
 migration preserves existing membership IDs from intermediate builds, assigns
 deterministic IDs to older host records, reconstructs an in-progress
 `active_transfer`, and atomically persists the upgraded state. Pending schema-1
-transaction journals are upgraded before rollback or roll-forward.
+and schema-2 transaction journals are upgraded before recovery. A legacy
+pre-reload transaction keeps its old rollback semantics. A legacy transaction
+that already reloaded nginx is converted into a forward-only desired-state
+intent.
 
 ## Host lifecycle
 
@@ -151,24 +155,39 @@ Use a new operation ID for every lifecycle transaction. Unix epoch nanoseconds
 plus the host name provide a practical operator-generated ID; never reuse an ID
 for a new membership.
 
-The controller holds a file lock, validates the transition, writes a recovery
-journal, renders a candidate config, runs `nginx -t`, publishes atomically,
-reloads nginx, and then commits state, completion receipts, and audit data. A
-failed handler,
-validation, or reload restores the previous config. Repeating an applied edge
-or a completed operation is a no-op. Use the same operation ID and parameters
-for every edge from the first transition to its final target. A different
-operation cannot take over `active_transfer`; `--force` bypasses topology and
-legacy-data guards, not operation ownership.
+The controller holds a file lock and validates the transition before making a
+durable decision. It then writes a WAL record containing the complete desired
+state, completion receipts, and exact rendered nginx config. That write is the
+commit point. A reconciler persists the desired generation, validates and
+atomically publishes the journaled config, gracefully reloads nginx, and writes
+`applied.json`. Recovery always repeats these idempotent steps forward; it never
+guesses whether a partially applied committed operation should be undone.
+
+A handler or render failure before the WAL commit leaves state and nginx
+unchanged. A validation or reload failure after the commit leaves a visible
+pending operation: the desired generation is retained and `recover` retries
+application. Repeating an applied edge or a completed operation is a no-op. Use
+the same operation ID and parameters for every edge from the first transition
+to its final target. A different operation cannot take over
+`active_transfer`; `--force` bypasses topology and legacy-data guards, not
+operation ownership.
 
 `status` is read-only. When a journal is present, its operation ID, phase,
 membership ID, `from -> to` edge, final target, candidate generation, and config
 SHA are returned as `pending_operation`; the command never rewrites config or
-reloads nginx. `recover` resolves that journal under the controller lock. A
-transaction interrupted before confirmed reload rolls back. A transaction in
-`reloaded` verifies the published config SHA, validates it, reloads
-idempotently, and commits the new state. A SHA mismatch is left for explicit
-operator investigation rather than guessing which file is authoritative.
+reloads nginx. The `application` object reports desired/applied generations and
+config SHAs plus a `converged` flag. If a crash happens immediately after WAL
+commit, `status` reports the journaled state as desired even before
+`state.json` is rewritten. `recover` resolves the journal under the controller
+lock. It republishes the exact config stored in the WAL, so an altered or
+partially restored output file cannot deadlock recovery.
+
+Successful routing commits enqueue audit records before removing their journal.
+Audit delivery is at least once: an unavailable audit file leaves events in the
+durable outbox but does not roll back or block the applied routing generation.
+The next mutating or recovery command retries delivery. A crash after appending
+an event but before removing it from the outbox may produce a duplicate with
+the same `event_id`.
 
 Normal commands reject concurrent host operations, a mismatched membership ID,
 draining the last active HA host, draining the legacy host while it owns non-HA
@@ -411,7 +430,8 @@ inside its container, not on the administration machine.
 ## Interrupted operations
 
 1. Run `gonka-routerctl status`. If it reports `pending_operation`, run
-   `gonka-routerctl recover` locally in the router container.
+   `gonka-routerctl recover` locally in the router container. Continue only
+   when `application.converged` is `true`.
 2. Rerun the original `gonka-hostctl add`, `evacuate`, `decommission`, or
    `replace` command with its operation ID, flags, and journal path. Completed
    phases are not repeated.

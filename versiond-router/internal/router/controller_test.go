@@ -17,6 +17,7 @@ import (
 type fakeRunner struct {
 	mu             sync.Mutex
 	calls          []string
+	failTestOnce   bool
 	failReloadOnce bool
 }
 
@@ -25,6 +26,10 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) error {
 	defer r.mu.Unlock()
 	call := strings.Join(append([]string{name}, args...), " ")
 	r.calls = append(r.calls, call)
+	if r.failTestOnce && len(args) == 1 && args[0] == "-t" {
+		r.failTestOnce = false
+		return errors.New("injected config validation failure")
+	}
 	if r.failReloadOnce && len(args) == 2 && args[0] == "-s" && args[1] == "reload" {
 		r.failReloadOnce = false
 		return errors.New("injected reload failure")
@@ -69,17 +74,66 @@ func TestControllerBootstrapAndDrainTransaction(t *testing.T) {
 	}
 }
 
-func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
+func TestControllerValidationFailureRestoresOutputButKeepsDesiredState(
+	t *testing.T,
+) {
 	controller, runner, paths := newTestController(t)
 	state := newTestState(t)
-	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
 		t.Fatal(err)
 	}
 	oldConfig, err := os.ReadFile(paths.OutputPath)
 	if err != nil {
 		t.Fatal(err)
 	}
-	oldState, err := os.ReadFile(paths.StatePath)
+	runner.mu.Lock()
+	runner.failTestOnce = true
+	runner.mu.Unlock()
+
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "invalid-rendered-drain", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	}); err == nil {
+		t.Fatal("expected injected nginx validation failure")
+	}
+	assertFileEquals(t, paths.OutputPath, oldConfig)
+	desired, err := controller.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.Hosts[desired.hostIndex("versiond-2")].State != HostDraining {
+		t.Fatalf("desired state was rolled back: %#v", desired.Hosts)
+	}
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Application.Converged {
+		t.Fatalf("rejected config reported converged: %#v", status.Application)
+	}
+
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	status, err = controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Application.Converged {
+		t.Fatalf("router did not converge after validation retry: %#v", status.Application)
+	}
+}
+
+func TestControllerReloadFailureLeavesDesiredStateForRecovery(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
+		t.Fatal(err)
+	}
+	oldApplied, err := controller.loadAppliedState()
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -94,10 +148,45 @@ func TestControllerReloadFailureRollsBackConfigAndState(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected injected reload failure")
 	}
-	assertFileEquals(t, paths.OutputPath, oldConfig)
-	assertFileEquals(t, paths.StatePath, oldState)
+	desired, err := controller.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.Generation != state.Generation+1 ||
+		desired.Hosts[desired.hostIndex("versiond-2")].State != HostDraining {
+		t.Fatalf("desired state was not committed: %#v", desired)
+	}
+	applied, err := controller.loadAppliedState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if *applied != *oldApplied {
+		t.Fatalf("applied state changed after failed reload: %#v", applied)
+	}
+	journal, err := controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal == nil || journal.Phase != operationPhaseDesiredPersisted {
+		t.Fatalf("pending journal = %#v", journal)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != desired.Generation {
+		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, desired.Generation)
+	}
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Application.Converged {
+		t.Fatalf("router did not converge after retry: %#v", status.Application)
+	}
 	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
-		t.Fatalf("rolled-back journal should be removed, stat error = %v", err)
+		t.Fatalf("recovered journal remains, stat error = %v", err)
 	}
 }
 
@@ -147,7 +236,7 @@ func TestControllerRemoveDropsHostFromRenderedPool(t *testing.T) {
 	}
 }
 
-func TestControllerRemoveReloadFailureRestoresOfflineHost(t *testing.T) {
+func TestControllerRemoveReloadFailureKeepsTerminalDesiredState(t *testing.T) {
 	controller, runner, paths := newTestController(t)
 	state := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
@@ -165,15 +254,6 @@ func TestControllerRemoveReloadFailureRestoresOfflineHost(t *testing.T) {
 			t.Fatalf("%s -> %s: %v", edge[0], edge[1], err)
 		}
 	}
-	oldConfig, err := os.ReadFile(paths.OutputPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	oldState, err := os.ReadFile(paths.StatePath)
-	if err != nil {
-		t.Fatal(err)
-	}
-
 	runner.mu.Lock()
 	runner.failReloadOnce = true
 	runner.mu.Unlock()
@@ -183,20 +263,35 @@ func TestControllerRemoveReloadFailureRestoresOfflineHost(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected injected reload failure")
 	}
-	assertFileEquals(t, paths.OutputPath, oldConfig)
-	assertFileEquals(t, paths.StatePath, oldState)
+	desired, err := controller.loadState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if desired.hostIndex("versiond-2") >= 0 {
+		t.Fatalf("desired state retained removed host: %#v", desired.Hosts)
+	}
 	receipts, err := controller.loadOrCreateReceiptIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, completed := receipts.Completed["decommission-2"]; completed {
-		t.Fatal("rolled-back removal retained a completion receipt")
+	if _, completed := receipts.Completed["decommission-2"]; !completed {
+		t.Fatal("terminal desired state has no completion receipt")
 	}
 	if _, err := controller.Transition(context.Background(), Transition{
 		OperationID: "decommission-2", Host: "versiond-2",
 		From: HostOffline, To: HostRemoved, Target: HostRemoved,
 	}); err != nil {
-		t.Fatalf("retry removal after rollback: %v", err)
+		t.Fatalf("retry removal after reconcile failure: %v", err)
+	}
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !status.Application.Converged {
+		t.Fatalf("router did not converge after retry: %#v", status.Application)
+	}
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recovered journal remains, stat error = %v", err)
 	}
 }
 
@@ -252,6 +347,69 @@ func TestControllerCompletedOperationDoesNotDependOnAudit(t *testing.T) {
 	})
 	if !errors.Is(err, ErrOperationOwner) {
 		t.Fatalf("reused operation error = %v, want ErrOperationOwner", err)
+	}
+}
+
+func TestControllerAuditFailureDoesNotRollbackAppliedGeneration(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths.AuditPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(paths.AuditPath, 0o700); err != nil {
+		t.Fatal(err)
+	}
+
+	updated, err := controller.Transition(context.Background(), Transition{
+		OperationID: "drain-with-audit-down", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != updated.Generation || !status.Application.Converged {
+		t.Fatalf("routing commit depends on audit: %#v", status)
+	}
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("audit failure retained operation journal: %v", err)
+	}
+	outbox, err := controller.loadAuditOutbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outbox.Pending) != 1 {
+		t.Fatalf("pending audit events = %d, want 1", len(outbox.Pending))
+	}
+
+	if err := os.Remove(paths.AuditPath); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	outbox, err = controller.loadAuditOutbox()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(outbox.Pending) != 0 {
+		t.Fatalf("delivered audit events remain pending: %#v", outbox.Pending)
+	}
+	audit, err := os.ReadFile(paths.AuditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Contains(audit, []byte(`"operation_id":"drain-with-audit-down"`)) {
+		t.Fatalf("delivered audit record is missing:\n%s", audit)
 	}
 }
 
@@ -420,13 +578,18 @@ func TestControllerReAddCreatesNewMembershipWithoutRevivingRemovedOne(t *testing
 	}
 }
 
-func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
+func TestControllerStatusReportsCommittedIntentWithoutSideEffects(t *testing.T) {
 	controller, runner, paths := newTestController(t)
 	oldState := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
-	newState, _, newConfig := stagePendingDrain(t, paths, oldState, "reloaded")
+	newState, oldConfig, newConfig := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseIntentCommitted,
+	)
 	runner.mu.Lock()
 	callsBefore := len(runner.calls)
 	runner.mu.Unlock()
@@ -435,11 +598,15 @@ func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if status.Generation != oldState.Generation {
-		t.Fatalf("committed generation = %d, want %d", status.Generation, oldState.Generation)
+	if status.Generation != newState.Generation {
+		t.Fatalf("desired generation = %d, want %d", status.Generation, newState.Generation)
 	}
-	if status.PendingOperation == nil || status.PendingOperation.Phase != "reloaded" {
-		t.Fatalf("pending operation = %#v, want reloaded phase", status.PendingOperation)
+	if status.PendingOperation == nil ||
+		status.PendingOperation.Phase != operationPhaseIntentCommitted {
+		t.Fatalf(
+			"pending operation = %#v, want intent_committed phase",
+			status.PendingOperation,
+		)
 	}
 	if status.PendingOperation.MembershipID == "" ||
 		status.PendingOperation.From != HostActive ||
@@ -447,12 +614,15 @@ func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 		status.PendingOperation.Target != HostOffline {
 		t.Fatalf("pending FSM edge = %#v", status.PendingOperation)
 	}
-	assertFileEquals(t, paths.OutputPath, newConfig)
+	assertFileEquals(t, paths.OutputPath, oldConfig)
 	runner.mu.Lock()
 	callsAfter := len(runner.calls)
 	runner.mu.Unlock()
 	if callsAfter != callsBefore {
 		t.Fatalf("status executed %d command(s)", callsAfter-callsBefore)
+	}
+	if status.Application.Converged {
+		t.Fatalf("pending desired state reported converged: %#v", status.Application)
 	}
 
 	recovered, err := controller.Recover(context.Background())
@@ -468,22 +638,100 @@ func TestControllerStatusReportsPendingReloadWithoutSideEffects(t *testing.T) {
 	}
 }
 
-func TestControllerRecoveryRollsBackBeforeReload(t *testing.T) {
+func TestControllerStatusDoesNotPersistLegacyJournalMigration(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	journal, newState, _, _ := newLegacyV2DrainJournal(
+		t,
+		controller,
+		paths,
+		oldState,
+		"reloaded",
+	)
+	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	before, err := os.ReadFile(paths.JournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	callsBefore := len(runner.calls)
+	runner.mu.Unlock()
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.Generation != newState.Generation ||
+		status.PendingOperation == nil ||
+		status.PendingOperation.Phase != operationPhaseIntentCommitted {
+		t.Fatalf("legacy pending status = %#v", status)
+	}
+	assertFileEquals(t, paths.JournalPath, before)
+	runner.mu.Lock()
+	callsAfter := len(runner.calls)
+	runner.mu.Unlock()
+	if callsAfter != callsBefore {
+		t.Fatalf("status executed %d command(s)", callsAfter-callsBefore)
+	}
+}
+
+func TestControllerRecoveryRollsForwardCommittedIntent(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
-	_, oldConfig, _ := stagePendingDrain(t, paths, oldState, "config_published")
+	newState, _, newConfig := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseIntentCommitted,
+	)
 
 	recovered, err := controller.Recover(context.Background())
 	if err != nil {
 		t.Fatal(err)
 	}
-	if recovered.Generation != oldState.Generation {
-		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, oldState.Generation)
+	if recovered.Generation != newState.Generation {
+		t.Fatalf("recovered generation = %d, want %d", recovered.Generation, newState.Generation)
 	}
-	assertFileEquals(t, paths.OutputPath, oldConfig)
+	assertFileEquals(t, paths.OutputPath, newConfig)
+}
+
+func TestControllerRecoveryDoesNotReloadAppliedGeneration(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	stagePendingDrain(t, paths, oldState, operationPhaseApplied)
+	runner.mu.Lock()
+	reloadsBefore := countRunnerCalls(runner.calls, "nginx -s reload")
+	runner.mu.Unlock()
+
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	reloadsAfter := countRunnerCalls(runner.calls, "nginx -s reload")
+	runner.mu.Unlock()
+	if reloadsAfter != reloadsBefore {
+		t.Fatalf(
+			"recovery reloaded an applied generation %d time(s)",
+			reloadsAfter-reloadsBefore,
+		)
+	}
 }
 
 func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
@@ -530,10 +778,6 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldConfig, err := Render(template, oldState, DefaultProxyPolicy())
-	if err != nil {
-		t.Fatal(err)
-	}
 	oldReceipts, err := controller.loadOrCreateReceiptIndex()
 	if err != nil {
 		t.Fatal(err)
@@ -556,24 +800,24 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := writeJSONAtomic(paths.JournalPath, operationJournal{
-		SchemaVersion: operationJournalSchemaVersion,
-		OperationID:   change.OperationID,
-		Phase:         "reloaded",
-		Action:        change.Action,
-		Host:          change.Host,
-		MembershipID:  change.MembershipID,
-		From:          change.From,
-		To:            change.To,
-		Target:        change.Target,
-		Result:        change.Result,
-		OldState:      &oldState,
-		NewState:      newState,
-		OldReceipts:   &oldReceipts,
-		NewReceipts:   newReceipts,
-		OldConfig:     oldConfig,
-		NewConfigSHA:  hashBytes(newConfig),
-		Reload:        true,
-		CreatedAt:     time.Now().UTC(),
+		SchemaVersion:  operationJournalSchemaVersion,
+		OperationID:    change.OperationID,
+		Phase:          operationPhaseIntentCommitted,
+		Action:         change.Action,
+		Host:           change.Host,
+		MembershipID:   change.MembershipID,
+		From:           change.From,
+		To:             change.To,
+		Target:         change.Target,
+		Result:         change.Result,
+		NewState:       newState,
+		NewReceipts:    newReceipts,
+		NewConfig:      newConfig,
+		NewConfigSHA:   hashBytes(newConfig),
+		Audit:          auditRecord(change, newState.Generation, hashBytes(newConfig)),
+		RecoveryPolicy: recoveryPolicyRollForward,
+		Reload:         true,
+		CreatedAt:      time.Now().UTC(),
 	}, 0o600); err != nil {
 		t.Fatal(err)
 	}
@@ -601,22 +845,28 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 	}
 }
 
-func TestControllerRecoveryRejectsChangedReloadedConfig(t *testing.T) {
+func TestControllerRecoveryRepublishesChangedOutputConfig(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), staticState(oldState)); err != nil {
 		t.Fatal(err)
 	}
-	stagePendingDrain(t, paths, oldState, "reloaded")
+	_, _, newConfig := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseDesiredPersisted,
+	)
 	if err := writeFileAtomic(paths.OutputPath, []byte("changed"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
-	if _, err := controller.Recover(context.Background()); err == nil {
-		t.Fatal("expected recovery to reject a changed published config")
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	if _, err := os.Stat(paths.JournalPath); err != nil {
-		t.Fatalf("failed recovery removed its journal: %v", err)
+	assertFileEquals(t, paths.OutputPath, newConfig)
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recovered journal remains: %v", err)
 	}
 }
 
@@ -790,6 +1040,85 @@ func TestControllerBootstrapMigratesIntermediateMembershipState(t *testing.T) {
 		state.ActiveTransfer.ID != "intermediate-evacuation" ||
 		state.ActiveTransfer.Migrated {
 		t.Fatalf("intermediate transfer migration = %#v", state.ActiveTransfer)
+	}
+}
+
+func TestControllerRecoveryMigratesSchemaV2PreReloadByRollback(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	journal, _, oldConfig, newConfig := newLegacyV2DrainJournal(
+		t,
+		controller,
+		paths,
+		oldState,
+		"config_published",
+	)
+	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != oldState.Generation {
+		t.Fatalf(
+			"legacy pre-reload generation = %d, want %d",
+			recovered.Generation,
+			oldState.Generation,
+		)
+	}
+	assertFileEquals(t, paths.OutputPath, oldConfig)
+}
+
+func TestControllerRecoveryMigratesSchemaV2ReloadedByConvergingForward(
+	t *testing.T,
+) {
+	controller, _, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	journal, newState, _, newConfig := newLegacyV2DrainJournal(
+		t,
+		controller,
+		paths,
+		oldState,
+		"reloaded",
+	)
+	if err := writeFileAtomic(paths.OutputPath, []byte("partially rolled back"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != newState.Generation {
+		t.Fatalf(
+			"legacy reloaded generation = %d, want %d",
+			recovered.Generation,
+			newState.Generation,
+		)
+	}
+	assertFileEquals(t, paths.OutputPath, newConfig)
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migrated schema-2 journal remains: %v", err)
 	}
 }
 
@@ -1043,6 +1372,60 @@ func TestControllerRecoveryMigratesPreFSMJournalSchemaV1(t *testing.T) {
 	}
 }
 
+func newLegacyV2DrainJournal(
+	t *testing.T,
+	controller *Controller,
+	paths Config,
+	oldState State,
+	phase string,
+) (operationJournalV2, State, []byte, []byte) {
+	t.Helper()
+	oldConfig, err := os.ReadFile(paths.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState := oldState.Clone()
+	result, err := newState.Advance(Transition{
+		OperationID: "legacy-v2-drain", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := os.ReadFile(paths.TemplatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConfig, err := Render(template, newState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipts, err := controller.loadOrCreateReceiptIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	return operationJournalV2{
+		SchemaVersion: rollbackOperationJournalSchemaVersion,
+		OperationID:   "legacy-v2-drain",
+		Phase:         phase,
+		Action:        "transfer",
+		Host:          "versiond-2",
+		MembershipID:  result.MembershipID,
+		From:          HostActive,
+		To:            HostDraining,
+		Target:        HostOffline,
+		Result:        "advanced",
+		OldState:      &oldState,
+		NewState:      newState,
+		OldReceipts:   &receipts,
+		NewReceipts:   receipts.Clone(),
+		OldConfig:     oldConfig,
+		NewConfigSHA:  hashBytes(newConfig),
+		Reload:        true,
+		CreatedAt:     time.Now().UTC(),
+	}, newState, oldConfig, newConfig
+}
+
 func stagePendingDrain(
 	t *testing.T,
 	paths Config,
@@ -1070,9 +1453,6 @@ func stagePendingDrain(
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
-		t.Fatal(err)
-	}
 	receiptsData, err := os.ReadFile(paths.ReceiptsPath)
 	if err != nil {
 		t.Fatal(err)
@@ -1081,28 +1461,69 @@ func stagePendingDrain(
 	if err := json.Unmarshal(receiptsData, &receipts); err != nil {
 		t.Fatal(err)
 	}
+	change := mutation{
+		OperationID:  "interrupted",
+		Action:       "transfer",
+		Host:         "versiond-2",
+		MembershipID: result.MembershipID,
+		From:         HostActive,
+		To:           HostDraining,
+		Target:       HostOffline,
+		Result:       "advanced",
+	}
 	journal := operationJournal{
-		SchemaVersion: operationJournalSchemaVersion,
-		OperationID:   "interrupted",
-		Phase:         phase,
-		Action:        "transfer",
-		Host:          "versiond-2",
-		MembershipID:  result.MembershipID,
-		From:          HostActive,
-		To:            HostDraining,
-		Target:        HostOffline,
-		Result:        "advanced",
-		OldState:      &oldState,
-		NewState:      newState,
-		OldReceipts:   &receipts,
-		NewReceipts:   receipts.Clone(),
-		OldConfig:     oldConfig,
-		NewConfigSHA:  hashBytes(newConfig),
-		Reload:        true,
-		CreatedAt:     time.Now().UTC(),
+		SchemaVersion:  operationJournalSchemaVersion,
+		OperationID:    change.OperationID,
+		Phase:          phase,
+		Action:         change.Action,
+		Host:           change.Host,
+		MembershipID:   change.MembershipID,
+		From:           change.From,
+		To:             change.To,
+		Target:         change.Target,
+		Result:         change.Result,
+		NewState:       newState,
+		NewReceipts:    receipts.Clone(),
+		NewConfig:      newConfig,
+		NewConfigSHA:   hashBytes(newConfig),
+		Audit:          auditRecord(change, newState.Generation, hashBytes(newConfig)),
+		RecoveryPolicy: recoveryPolicyRollForward,
+		Reload:         true,
+		CreatedAt:      time.Now().UTC(),
 	}
 	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
 		t.Fatal(err)
+	}
+	switch phase {
+	case operationPhaseIntentCommitted:
+	case operationPhaseDesiredPersisted:
+		if err := writeJSONAtomic(paths.StatePath, newState, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSONAtomic(paths.ReceiptsPath, receipts, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	case operationPhaseApplied, operationPhaseAuditEnqueued:
+		if err := writeJSONAtomic(paths.StatePath, newState, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSONAtomic(paths.ReceiptsPath, receipts, 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		if err := writeJSONAtomic(paths.AppliedPath, appliedState{
+			SchemaVersion: appliedStateSchemaVersion,
+			Generation:    newState.Generation,
+			ConfigSHA:     hashBytes(newConfig),
+			OperationID:   "interrupted",
+			AppliedAt:     time.Now().UTC(),
+		}, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	default:
+		t.Fatalf("unsupported staged phase %q", phase)
 	}
 	return newState, oldConfig, newConfig
 }
@@ -1115,14 +1536,16 @@ func newTestController(t *testing.T) (*Controller, *fakeRunner, Config) {
 		t.Fatal(err)
 	}
 	config := Config{
-		StatePath:    filepath.Join(dir, "state.json"),
-		ReceiptsPath: filepath.Join(dir, "receipts.json"),
-		AuditPath:    filepath.Join(dir, "audit.jsonl"),
-		LockPath:     filepath.Join(dir, "router.lock"),
-		JournalPath:  filepath.Join(dir, "operation.json"),
-		TemplatePath: templatePath,
-		OutputPath:   filepath.Join(dir, "default.conf"),
-		NginxBinary:  "nginx",
+		StatePath:       filepath.Join(dir, "state.json"),
+		AppliedPath:     filepath.Join(dir, "applied.json"),
+		ReceiptsPath:    filepath.Join(dir, "receipts.json"),
+		AuditPath:       filepath.Join(dir, "audit.jsonl"),
+		AuditOutboxPath: filepath.Join(dir, "audit-outbox.json"),
+		LockPath:        filepath.Join(dir, "router.lock"),
+		JournalPath:     filepath.Join(dir, "operation.json"),
+		TemplatePath:    templatePath,
+		OutputPath:      filepath.Join(dir, "default.conf"),
+		NginxBinary:     "nginx",
 	}
 	runner := &fakeRunner{}
 	return NewController(config, runner), runner, config
@@ -1153,4 +1576,14 @@ func assertFileEquals(t *testing.T, path string, want []byte) {
 	if !bytes.Equal(got, want) {
 		t.Fatalf("file %s changed unexpectedly\ngot:\n%s\nwant:\n%s", path, got, want)
 	}
+}
+
+func countRunnerCalls(calls []string, want string) int {
+	count := 0
+	for _, call := range calls {
+		if call == want {
+			count++
+		}
+	}
+	return count
 }

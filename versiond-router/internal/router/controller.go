@@ -16,15 +16,17 @@ import (
 )
 
 type Config struct {
-	StatePath    string
-	ReceiptsPath string
-	AuditPath    string
-	LockPath     string
-	JournalPath  string
-	TemplatePath string
-	OutputPath   string
-	NginxBinary  string
-	ProxyPolicy  ProxyPolicy
+	StatePath       string
+	AppliedPath     string
+	ReceiptsPath    string
+	AuditPath       string
+	AuditOutboxPath string
+	LockPath        string
+	JournalPath     string
+	TemplatePath    string
+	OutputPath      string
+	NginxBinary     string
+	ProxyPolicy     ProxyPolicy
 }
 
 type CommandRunner interface {
@@ -68,9 +70,11 @@ type PendingOperation struct {
 type Status struct {
 	State
 	PendingOperation *PendingOperation `json:"pending_operation,omitempty"`
+	Application      ApplicationStatus `json:"application"`
 }
 
 type AuditRecord struct {
+	EventID      string    `json:"event_id,omitempty"`
 	Time         time.Time `json:"time"`
 	OperationID  string    `json:"operation_id"`
 	Action       string    `json:"action"`
@@ -85,29 +89,39 @@ type AuditRecord struct {
 }
 
 const (
-	legacyOperationJournalSchemaVersion = 1
-	operationJournalSchemaVersion       = 2
+	legacyOperationJournalSchemaVersion   = 1
+	rollbackOperationJournalSchemaVersion = 2
+	operationJournalSchemaVersion         = 3
+	recoveryPolicyRollForward             = "roll_forward"
+	recoveryPolicyLegacyRollback          = "legacy_rollback"
+	operationPhaseIntentCommitted         = "intent_committed"
+	operationPhaseDesiredPersisted        = "desired_persisted"
+	operationPhaseApplied                 = "applied"
+	operationPhaseAuditEnqueued           = "audit_enqueued"
 )
 
 type operationJournal struct {
-	SchemaVersion int           `json:"schema_version"`
-	OperationID   string        `json:"operation_id"`
-	Phase         string        `json:"phase"`
-	Action        string        `json:"action,omitempty"`
-	Host          string        `json:"host,omitempty"`
-	MembershipID  string        `json:"membership_id,omitempty"`
-	From          HostState     `json:"from,omitempty"`
-	To            HostState     `json:"to,omitempty"`
-	Target        HostState     `json:"target,omitempty"`
-	Result        string        `json:"result,omitempty"`
-	OldState      *State        `json:"old_state,omitempty"`
-	NewState      State         `json:"new_state"`
-	OldReceipts   *receiptIndex `json:"old_receipts,omitempty"`
-	NewReceipts   receiptIndex  `json:"new_receipts"`
-	OldConfig     []byte        `json:"old_config,omitempty"`
-	NewConfigSHA  string        `json:"new_config_sha256"`
-	Reload        bool          `json:"reload"`
-	CreatedAt     time.Time     `json:"created_at"`
+	SchemaVersion  int           `json:"schema_version"`
+	OperationID    string        `json:"operation_id"`
+	Phase          string        `json:"phase"`
+	Action         string        `json:"action,omitempty"`
+	Host           string        `json:"host,omitempty"`
+	MembershipID   string        `json:"membership_id,omitempty"`
+	From           HostState     `json:"from,omitempty"`
+	To             HostState     `json:"to,omitempty"`
+	Target         HostState     `json:"target,omitempty"`
+	Result         string        `json:"result,omitempty"`
+	OldState       *State        `json:"old_state,omitempty"`
+	NewState       State         `json:"new_state"`
+	OldReceipts    *receiptIndex `json:"old_receipts,omitempty"`
+	NewReceipts    receiptIndex  `json:"new_receipts"`
+	OldConfig      []byte        `json:"old_config,omitempty"`
+	NewConfig      []byte        `json:"new_config,omitempty"`
+	NewConfigSHA   string        `json:"new_config_sha256"`
+	Audit          AuditRecord   `json:"audit"`
+	RecoveryPolicy string        `json:"recovery_policy"`
+	Reload         bool          `json:"reload"`
+	CreatedAt      time.Time     `json:"created_at"`
 }
 
 type mutation struct {
@@ -126,8 +140,14 @@ func NewController(config Config, runner CommandRunner) *Controller {
 	if config.JournalPath == "" {
 		config.JournalPath = config.StatePath + ".operation.json"
 	}
+	if config.AppliedPath == "" {
+		config.AppliedPath = config.StatePath + ".applied.json"
+	}
 	if config.ReceiptsPath == "" {
 		config.ReceiptsPath = config.StatePath + ".receipts.json"
+	}
+	if config.AuditOutboxPath == "" {
+		config.AuditOutboxPath = config.StatePath + ".audit-outbox.json"
 	}
 	if runner == nil {
 		runner = ExecRunner{}
@@ -145,6 +165,7 @@ func (c *Controller) Bootstrap(
 		if err := c.recoverPending(ctx, false); err != nil {
 			return err
 		}
+		defer c.flushAuditBestEffort()
 		current, err := c.loadState()
 		if err == nil {
 			if _, err := c.loadOrCreateReceiptIndex(); err != nil {
@@ -166,7 +187,7 @@ func (c *Controller) Bootstrap(
 		if err := initial.Validate(); err != nil {
 			return err
 		}
-		if err := c.apply(ctx, nil, initial, mutation{
+		if err := c.commitDesired(ctx, initial, mutation{
 			OperationID: "bootstrap",
 			Action:      "bootstrap",
 			Result:      "completed",
@@ -206,7 +227,7 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 		next := current.Clone()
 		outcome, err := next.Advance(change)
 		if err != nil {
-			_ = c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
 				Action: "transfer", Host: change.Host,
 				MembershipID: change.MembershipID,
@@ -234,15 +255,16 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 		}
 		if !outcome.Changed {
 			result = current
-			return c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
 				Action: record.Action, Host: record.Host,
 				MembershipID: record.MembershipID,
 				From:         record.From, To: record.To, Target: record.Target,
 				Generation: current.Generation, Result: "noop",
 			})
+			return nil
 		}
-		if err := c.apply(ctx, &current, next, record, true); err != nil {
+		if err := c.commitDesired(ctx, next, record, true); err != nil {
 			return err
 		}
 		result = next
@@ -282,7 +304,7 @@ func (c *Controller) Add(ctx context.Context, change AddMembership) (State, erro
 		next := current.Clone()
 		outcome, err := next.Add(change)
 		if err != nil {
-			_ = c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
 				Action: "add", Host: change.Host,
 				MembershipID: change.MembershipID,
@@ -304,15 +326,16 @@ func (c *Controller) Add(ctx context.Context, change AddMembership) (State, erro
 		}
 		if !outcome.Changed {
 			result = current
-			return c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: record.OperationID,
 				Action: record.Action, Host: record.Host,
 				MembershipID: record.MembershipID,
 				From:         record.From, To: record.To, Target: record.Target,
 				Generation: current.Generation, Result: "noop",
 			})
+			return nil
 		}
-		if err := c.apply(ctx, &current, next, record, true); err != nil {
+		if err := c.commitDesired(ctx, next, record, true); err != nil {
 			return err
 		}
 		result = next
@@ -352,7 +375,7 @@ func (c *Controller) Cancel(ctx context.Context, change CancelTransfer) (State, 
 		next := current.Clone()
 		outcome, err := next.Cancel(change)
 		if err != nil {
-			_ = c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: change.OperationID,
 				Action: "cancel", Host: change.Host,
 				MembershipID: change.MembershipID,
@@ -374,15 +397,16 @@ func (c *Controller) Cancel(ctx context.Context, change CancelTransfer) (State, 
 		}
 		if !outcome.Changed {
 			result = current
-			return c.appendAudit(AuditRecord{
+			c.recordAuditBestEffort(AuditRecord{
 				Time: time.Now().UTC(), OperationID: record.OperationID,
 				Action: record.Action, Host: record.Host,
 				MembershipID: record.MembershipID,
 				From:         record.From, To: record.To, Target: record.Target,
 				Generation: current.Generation, Result: "noop",
 			})
+			return nil
 		}
-		if err := c.apply(ctx, &current, next, record, true); err != nil {
+		if err := c.commitDesired(ctx, next, record, true); err != nil {
 			return err
 		}
 		result = next
@@ -398,11 +422,27 @@ func (c *Controller) Status(ctx context.Context) (Status, error) {
 		if err != nil {
 			return err
 		}
-		status.State = state
-		journal, err := c.loadOperationJournal()
+		journal, err := c.readOperationJournal()
 		if err != nil {
 			return err
 		}
+		desired := state
+		var application ApplicationStatus
+		if journal != nil &&
+			journal.RecoveryPolicy == recoveryPolicyRollForward {
+			desired = journal.NewState
+			application, err = c.applicationStatusForConfig(
+				desired,
+				journal.NewConfig,
+			)
+		} else {
+			application, err = c.applicationStatus(desired)
+		}
+		if err != nil {
+			return err
+		}
+		status.State = desired
+		status.Application = application
 		if journal != nil {
 			status.PendingOperation = &PendingOperation{
 				OperationID:   journal.OperationID,
@@ -429,16 +469,24 @@ func (c *Controller) Recover(ctx context.Context) (State, error) {
 		if err := c.recoverPending(ctx, true); err != nil {
 			return err
 		}
+		defer c.flushAuditBestEffort()
 		loaded, err := c.loadState()
+		if err != nil {
+			return err
+		}
+		if err := c.ensureRendered(ctx, loaded, true); err != nil {
+			return err
+		}
 		state = loaded
-		return err
+		return nil
 	})
 	return state, err
 }
 
-func (c *Controller) apply(
+// commitDesired makes the WAL the commit point, then asks the reconciler to
+// converge all durable projections. Failures after the WAL never roll back.
+func (c *Controller) commitDesired(
 	ctx context.Context,
-	oldState *State,
 	newState State,
 	change mutation,
 	reload bool,
@@ -467,99 +515,31 @@ func (c *Controller) apply(
 	if err != nil {
 		return err
 	}
-	oldConfig, readErr := os.ReadFile(c.config.OutputPath)
-	if readErr != nil && !errors.Is(readErr, fs.ErrNotExist) {
-		return readErr
-	}
+	configSHA := hashBytes(newConfig)
 	journal := operationJournal{
-		SchemaVersion: operationJournalSchemaVersion,
-		OperationID:   change.OperationID,
-		Phase:         "prepared",
-		Action:        change.Action,
-		Host:          change.Host,
-		MembershipID:  change.MembershipID,
-		From:          change.From,
-		To:            change.To,
-		Target:        change.Target,
-		Result:        change.Result,
-		OldState:      oldState,
-		NewState:      newState,
-		OldReceipts:   &oldReceipts,
-		NewReceipts:   newReceipts,
-		OldConfig:     oldConfig,
-		NewConfigSHA:  hashBytes(newConfig),
-		Reload:        reload,
-		CreatedAt:     time.Now().UTC(),
+		SchemaVersion:  operationJournalSchemaVersion,
+		OperationID:    change.OperationID,
+		Phase:          operationPhaseIntentCommitted,
+		Action:         change.Action,
+		Host:           change.Host,
+		MembershipID:   change.MembershipID,
+		From:           change.From,
+		To:             change.To,
+		Target:         change.Target,
+		Result:         change.Result,
+		NewState:       newState,
+		NewReceipts:    newReceipts,
+		NewConfig:      newConfig,
+		NewConfigSHA:   configSHA,
+		Audit:          auditRecord(change, newState.Generation, configSHA),
+		RecoveryPolicy: recoveryPolicyRollForward,
+		Reload:         reload,
+		CreatedAt:      time.Now().UTC(),
 	}
 	if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
 		return err
 	}
-
-	rollback := func(applyErr error) error {
-		rollbackErr := c.restoreConfig(ctx, oldConfig, reload)
-		if oldState == nil {
-			if err := os.Remove(c.config.StatePath); err != nil && !errors.Is(err, fs.ErrNotExist) {
-				rollbackErr = errors.Join(rollbackErr, err)
-			}
-		} else if err := writeJSONAtomic(c.config.StatePath, *oldState, 0o600); err != nil {
-			rollbackErr = errors.Join(rollbackErr, err)
-		}
-		if err := writeJSONAtomic(
-			c.config.ReceiptsPath,
-			oldReceipts,
-			0o600,
-		); err != nil {
-			rollbackErr = errors.Join(rollbackErr, err)
-		}
-		record := AuditRecord{
-			Time: time.Now().UTC(), OperationID: change.OperationID, Action: change.Action,
-			Host: change.Host, MembershipID: change.MembershipID,
-			From: change.From, To: change.To, Target: change.Target,
-			Generation: newState.Generation,
-			Result:     "failed", Error: applyErr.Error(),
-		}
-		_ = c.appendAudit(record)
-		if rollbackErr == nil {
-			_ = os.Remove(c.config.JournalPath)
-			return applyErr
-		}
-		return errors.Join(applyErr, fmt.Errorf("rollback: %w", rollbackErr))
-	}
-
-	if err := writeFileAtomic(c.config.OutputPath, newConfig, 0o644); err != nil {
-		return rollback(err)
-	}
-	journal.Phase = "config_published"
-	if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
-		return rollback(err)
-	}
-	if err := c.runner.Run(ctx, c.config.NginxBinary, "-t"); err != nil {
-		return rollback(fmt.Errorf("validate nginx config: %w", err))
-	}
-	if reload {
-		if err := c.runner.Run(ctx, c.config.NginxBinary, "-s", "reload"); err != nil {
-			return rollback(fmt.Errorf("reload nginx: %w", err))
-		}
-		journal.Phase = "reloaded"
-		if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
-			return rollback(err)
-		}
-	}
-	if err := writeJSONAtomic(c.config.StatePath, newState, 0o600); err != nil {
-		return rollback(err)
-	}
-	if err := writeJSONAtomic(c.config.ReceiptsPath, newReceipts, 0o600); err != nil {
-		return rollback(err)
-	}
-	if err := c.appendAudit(AuditRecord{
-		Time: time.Now().UTC(), OperationID: change.OperationID, Action: change.Action,
-		Host: change.Host, MembershipID: change.MembershipID,
-		From: change.From, To: change.To, Target: change.Target,
-		Generation: newState.Generation, Result: change.Result,
-	}); err != nil {
-		return rollback(err)
-	}
-	return os.Remove(c.config.JournalPath)
+	return c.reconcileCommitted(ctx, journal, reload)
 }
 
 func (c *Controller) ensureRendered(ctx context.Context, state State, reload bool) error {
@@ -571,11 +551,22 @@ func (c *Controller) ensureRendered(ctx context.Context, state State, reload boo
 	if err != nil {
 		return err
 	}
-	got, err := os.ReadFile(c.config.OutputPath)
-	if err == nil && hashBytes(got) == hashBytes(want) {
+	applied, err := c.loadAppliedState()
+	if err != nil {
+		return err
+	}
+	got, outputErr := os.ReadFile(c.config.OutputPath)
+	if outputErr == nil &&
+		hashBytes(got) == hashBytes(want) &&
+		applied != nil &&
+		applied.Generation == state.Generation &&
+		applied.ConfigSHA == hashBytes(want) {
 		return c.runner.Run(ctx, c.config.NginxBinary, "-t")
 	}
-	return c.apply(ctx, &state, state, mutation{
+	if outputErr != nil && !errors.Is(outputErr, fs.ErrNotExist) {
+		return outputErr
+	}
+	return c.commitDesired(ctx, state, mutation{
 		OperationID: "bootstrap-render",
 		Action:      "bootstrap-render",
 		Result:      "completed",
@@ -588,23 +579,34 @@ func (c *Controller) recoverPending(ctx context.Context, reload bool) error {
 		return err
 	}
 	if journal == nil {
+		c.flushAuditBestEffort()
 		return nil
 	}
-	switch journal.Phase {
-	case "prepared", "config_published":
+	switch journal.RecoveryPolicy {
+	case recoveryPolicyLegacyRollback:
 		return c.rollBackPending(ctx, *journal, reload)
-	case "reloaded":
-		return c.rollForwardPending(ctx, *journal, reload)
+	case recoveryPolicyRollForward:
+		return c.reconcileCommitted(ctx, *journal, reload)
 	default:
 		return fmt.Errorf(
-			"recover operation %s: unknown journal phase %q",
+			"recover operation %s: unknown recovery policy %q",
 			journal.OperationID,
-			journal.Phase,
+			journal.RecoveryPolicy,
 		)
 	}
 }
 
 func (c *Controller) loadOperationJournal() (*operationJournal, error) {
+	return c.loadOperationJournalWithMigration(true)
+}
+
+func (c *Controller) readOperationJournal() (*operationJournal, error) {
+	return c.loadOperationJournalWithMigration(false)
+}
+
+func (c *Controller) loadOperationJournalWithMigration(
+	persistMigration bool,
+) (*operationJournal, error) {
 	data, err := os.ReadFile(c.config.JournalPath)
 	if errors.Is(err, fs.ErrNotExist) {
 		return nil, nil
@@ -616,7 +618,7 @@ func (c *Controller) loadOperationJournal() (*operationJournal, error) {
 	if err != nil {
 		return nil, err
 	}
-	if migrated {
+	if migrated && persistMigration {
 		if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
 			return nil, fmt.Errorf(
 				"persist migrated operation journal: %w",
@@ -654,13 +656,17 @@ func (c *Controller) rollBackPending(
 	); err != nil {
 		return err
 	}
-	if err := c.appendRecoveryAudit(journal, "rolled_back"); err != nil {
+	c.recordAuditBestEffort(recoveryAuditRecord(journal, "rolled_back"))
+	if err := os.Remove(c.config.JournalPath); err != nil {
 		return err
 	}
-	return os.Remove(c.config.JournalPath)
+	c.flushAuditBestEffort()
+	return nil
 }
 
-func (c *Controller) rollForwardPending(
+// reconcileCommitted materializes a committed intent in dependency order:
+// desired state, nginx application, audit outbox.
+func (c *Controller) reconcileCommitted(
 	ctx context.Context,
 	journal operationJournal,
 	reload bool,
@@ -675,25 +681,19 @@ func (c *Controller) rollForwardPending(
 			err,
 		)
 	}
-	config, err := os.ReadFile(c.config.OutputPath)
-	if err != nil {
-		return fmt.Errorf("recover operation %s: read published config: %w", journal.OperationID, err)
-	}
-	if got := hashBytes(config); got != journal.NewConfigSHA {
+	if len(journal.NewConfig) == 0 {
 		return fmt.Errorf(
-			"recover operation %s: published config sha256 is %s, want %s",
+			"recover operation %s: desired config is empty",
+			journal.OperationID,
+		)
+	}
+	if got := hashBytes(journal.NewConfig); got != journal.NewConfigSHA {
+		return fmt.Errorf(
+			"recover operation %s: journal config sha256 is %s, want %s",
 			journal.OperationID,
 			got,
 			journal.NewConfigSHA,
 		)
-	}
-	if err := c.runner.Run(ctx, c.config.NginxBinary, "-t"); err != nil {
-		return fmt.Errorf("recover operation %s: validate nginx config: %w", journal.OperationID, err)
-	}
-	if journal.Reload && reload {
-		if err := c.runner.Run(ctx, c.config.NginxBinary, "-s", "reload"); err != nil {
-			return fmt.Errorf("recover operation %s: reload nginx: %w", journal.OperationID, err)
-		}
 	}
 	if err := writeJSONAtomic(c.config.StatePath, journal.NewState, 0o600); err != nil {
 		return err
@@ -705,36 +705,61 @@ func (c *Controller) rollForwardPending(
 	); err != nil {
 		return err
 	}
-	if err := c.appendRecoveryAudit(journal, "rolled_forward"); err != nil {
+	journal.Phase = operationPhaseDesiredPersisted
+	if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
 		return err
 	}
-	return os.Remove(c.config.JournalPath)
-}
-
-func (c *Controller) appendRecoveryAudit(journal operationJournal, result string) error {
-	to := journal.To
-	if to == "" {
-		if index := journal.NewState.hostIndex(journal.Host); index >= 0 {
-			to = journal.NewState.Hosts[index].State
+	if err := c.reconcile(
+		ctx,
+		journal.NewState,
+		journal.NewConfig,
+		journal.OperationID,
+		journal.Reload && reload,
+	); err != nil {
+		return fmt.Errorf(
+			"reconcile operation %s: %w",
+			journal.OperationID,
+			err,
+		)
+	}
+	journal.Phase = operationPhaseApplied
+	if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
+		return err
+	}
+	if err := c.enqueueAudit(journal.Audit); err != nil {
+		c.recordAuditBestEffort(journal.Audit)
+	} else {
+		journal.Phase = operationPhaseAuditEnqueued
+		if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
+			return err
 		}
 	}
-	action := journal.Action
-	if action == "" {
-		action = "recovery"
-	}
-	if result == "rolled_forward" && journal.Result != "" {
-		result = journal.Result
-	}
-	if err := c.appendAudit(AuditRecord{
-		Time: time.Now().UTC(), OperationID: journal.OperationID,
-		Action: action, Host: journal.Host, From: journal.From, To: to,
-		MembershipID: journal.MembershipID, Target: journal.Target,
-		Generation: journal.NewState.Generation, Result: result,
-		Error: "recovered incomplete operation at phase " + journal.Phase,
-	}); err != nil {
+	if err := os.Remove(c.config.JournalPath); err != nil {
 		return err
 	}
+	c.flushAuditBestEffort()
 	return nil
+}
+
+func recoveryAuditRecord(journal operationJournal, result string) AuditRecord {
+	record := journal.Audit
+	if record.OperationID == "" {
+		record = AuditRecord{
+			OperationID:  journal.OperationID,
+			Action:       journal.Action,
+			Host:         journal.Host,
+			MembershipID: journal.MembershipID,
+			From:         journal.From,
+			To:           journal.To,
+			Target:       journal.Target,
+			Generation:   journal.NewState.Generation,
+		}
+	}
+	record.EventID = ""
+	record.Time = time.Now().UTC()
+	record.Result = result
+	record.Error = "recovered legacy operation at phase " + journal.Phase
+	return record
 }
 
 func (c *Controller) restoreConfig(ctx context.Context, oldConfig []byte, reload bool) error {
@@ -896,6 +921,39 @@ func transitionResult(result TransitionResult) string {
 	default:
 		return "advanced"
 	}
+}
+
+func auditRecord(
+	change mutation,
+	generation uint64,
+	configSHA string,
+) AuditRecord {
+	record := AuditRecord{
+		Time:         time.Now().UTC(),
+		OperationID:  change.OperationID,
+		Action:       change.Action,
+		Host:         change.Host,
+		MembershipID: change.MembershipID,
+		From:         change.From,
+		To:           change.To,
+		Target:       change.Target,
+		Generation:   generation,
+		Result:       change.Result,
+	}
+	record.EventID = "router-audit-" + hashBytes([]byte(fmt.Sprintf(
+		"%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s",
+		record.OperationID,
+		record.Action,
+		record.Host,
+		record.MembershipID,
+		record.From,
+		record.To,
+		record.Target,
+		record.Generation,
+		record.Result,
+		configSHA,
+	)))
+	return record
 }
 
 func terminalResult(result string) bool {

@@ -685,7 +685,7 @@ until a host is activated.
 
 | Piece | Meaning |
 |---|---|
-| `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, receipt index, journal, `nginx -t`, atomic publish, reload, rollback, and rotatable audit |
+| `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, desired/applied generations, forward-only reconciliation, receipt index, WAL, `nginx -t`, atomic publish, reload, and audit outbox |
 | `gonka-hostctl` | Resumable SSH orchestration for add, evacuation, decommission, and replacement; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
 | `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
@@ -803,11 +803,12 @@ the replacement transaction completes:
 
 The upstream remains `joining`/down until `GET /ready` returns `200`. That gate
 means versiond is serving, accepting, has an available child, and is fully
-reconciled without a progressing or degraded condition. Router state, completion
-receipt index, recovery journal, and audit log are stored below
-`/var/lib/gonka/versiond-router` on a persistent volume. The audit may be
-rotated; state, receipts, and journal are control-plane data and must remain
-together. See `versiond-router/README.md` and
+reconciled without a progressing or degraded condition. Router desired state,
+applied-generation metadata, completion receipt index, pending WAL, audit
+outbox, and audit log are stored below `/var/lib/gonka/versiond-router` on a
+persistent volume. The audit may be rotated; state, applied metadata, receipts,
+outbox, and journal are control-plane data and must remain together. See
+`versiond-router/README.md` and
 `versiond-host-evacuation.md` for the complete failure and recovery contract.
 
 Docker replacement restores the exact policy captured by evacuation, including
@@ -826,10 +827,12 @@ bootstrap source after the runtime transaction; persistent state remains the
 live authority, while that source remains necessary for disaster recovery.
 
 `gonka-routerctl status` never performs recovery or reload. It exposes an
-unfinished journal as `pending_operation`; `gonka-routerctl recover` resolves it
-under the controller lock. Pre-reload phases roll back. A `reloaded` phase rolls
-forward only after the on-disk config matches the journaled SHA and passes
-`nginx -t`.
+unfinished journal as `pending_operation` and reports desired/applied
+generations plus `application.converged`; `gonka-routerctl recover` resolves it
+under the controller lock. The WAL write is the desired-state commit point.
+Recovery republishes its exact config and converges forward through `nginx -t`,
+reload, and applied-generation persistence. Audit delivery is retried from the
+outbox and cannot roll back an applied routing generation.
 
 #### When to use which layer
 
@@ -866,12 +869,12 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   full streams, reconcile/restarts freeze, and first/second signals exercise
   graceful/idempotent/forced process states.
 - **versiond-router:** test every router transition and guard, config validation,
-  atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
+  committed-intent recovery, desired/applied convergence, and hostctl checkpoint
   resume/order without requiring SSH. Removal must drop the DNS name from the
-  rendered pool, roll back to `offline` on reload failure, and replay
-  idempotently from the terminal operation receipt. Re-adding the same host name
-  must create a new membership ID. State and pending journal schema-1 fixtures
-  must migrate without losing an in-progress transfer.
+  rendered pool after recovery from a reload failure and replay idempotently
+  from the terminal operation receipt. Re-adding the same host name must create
+  a new membership ID. State and pending journal schema-1/schema-2 fixtures must
+  migrate without losing an in-progress transfer.
 - **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a long
   stream to one versiond, start a real `gonka-hostctl evacuate`, and verify new
   work and the same escrow recover on the survivor while the barrier-held stream
