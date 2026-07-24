@@ -25,7 +25,7 @@ type handlerMeta struct {
 }
 
 // It's kind of brute force, but this asserts that we have handlers for all messages
-// and that each handler calls CheckPermission and matches the table in permissions.go
+// and that each handler calls CheckPermission and matches the table in permissions.go.
 func TestTxProtoMsgHandlersUseUnifiedPermissions(t *testing.T) {
 	protoRPCs := parseMsgServiceRPCs(t)
 	handlers := parseMsgServerHandlers(t)
@@ -36,10 +36,10 @@ func TestTxProtoMsgHandlersUseUnifiedPermissions(t *testing.T) {
 		assert.Truef(t, ok, "missing msgServer handler for rpc %s(%s)", methodName, msgType)
 		assert.Equalf(t, msgType, h.msgType, "handler %s uses wrong msg type", methodName)
 		assert.Truef(t, strings.HasPrefix(filepath.Base(h.filePath), "msg_server_"), "handler %s must be in msg_server_*.go, found %s", methodName, h.filePath)
-		assert.Truef(t, h.hasCheck, "handler %s is missing CheckPermission call", methodName)
 
 		perms, ok := mapPerms[msgType]
 		assert.Truef(t, ok, "permissions.go is missing MessagePermissions entry for %s", msgType)
+		assert.Truef(t, h.hasCheck, "handler %s is missing CheckPermission call", methodName)
 		assert.Equalf(t, sorted(perms), sorted(h.checkPermissions), "permissions mismatch for %s", methodName)
 	}
 }
@@ -102,16 +102,19 @@ func parseMsgServerHandlers(t *testing.T) map[string]handlerMeta {
 					return true
 				}
 				sel, ok := call.Fun.(*ast.SelectorExpr)
-				if !ok || sel.Sel == nil || sel.Sel.Name != "CheckPermission" {
+				if !ok || sel.Sel == nil {
 					return true
 				}
-				meta.hasCheck = true
-				for _, arg := range call.Args[2:] {
-					if id, ok := arg.(*ast.Ident); ok {
-						meta.checkPermissions = append(meta.checkPermissions, permissionIdentToValue(id.Name))
+				switch sel.Sel.Name {
+				case "CheckPermission":
+					meta.hasCheck = true
+					for _, arg := range call.Args[2:] {
+						if id, ok := arg.(*ast.Ident); ok {
+							meta.checkPermissions = append(meta.checkPermissions, permissionIdentToValue(id.Name))
+						}
 					}
 				}
-				return false
+				return true
 			})
 
 			out[fd.Name.Name] = meta

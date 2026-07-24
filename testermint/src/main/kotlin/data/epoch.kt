@@ -145,6 +145,8 @@ data class EpochGroupDataResponse(
 data class EpochGroupData(
     @SerializedName("epoch_index")
     val epochIndex: Long = 0,
+    @SerializedName("epoch_group_id")
+    val epochGroupId: Long = 0,
     @SerializedName("poc_start_block_height")
     val pocStartBlockHeight: Long = 0,
     @SerializedName("model_id")
