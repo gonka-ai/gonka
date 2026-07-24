@@ -55,6 +55,9 @@ or admission state.
 This state machine is intentionally separate from each child's process FSM
 (`running -> terminating -> killing -> exited`). The host FSM decides when a
 child should stop; the process FSM owns signal delivery, escalation, and reap.
+The process FSM is event-driven and table-defined: each state/event pair chooses
+the next state and `SIGTERM`, `SIGKILL`, or finish action. Finish is reachable
+only through the process-exited event produced by `cmd.Wait`.
 
 Each child generation has a lifecycle above the OS process FSM:
 

@@ -258,6 +258,13 @@ Each OS process is owned by `supervisedProcess`:
 Running → Terminating → Killing → Exited
 ```
 
+The supervisor is an event-driven, table-defined FSM. Each
+`(state, event)` entry selects both the next state and one action:
+`SIGTERM`, `SIGKILL`, or completion after `cmd.Wait`. Events are stop request,
+force request, grace expiry, and process exit. Only the `cmd.Wait` result emits
+the exit event, so no signal path can close `Done()` before the process is
+reaped.
+
 `Stop()` sends `SIGTERM` to the process group and arms grace;
 expiry / `ForceStop()` escalate to `SIGKILL`. `Done()` closes only after
 `cmd.Wait()` reaps. Grace is `VERSIOND_DRAIN_KILL_GRACE` for non-devshard
