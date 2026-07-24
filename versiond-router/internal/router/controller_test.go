@@ -284,6 +284,78 @@ func TestControllerNoopCancelDoesNotConsumeOperationID(t *testing.T) {
 	}
 }
 
+func TestControllerCompletedAddEdgeIsReplayable(t *testing.T) {
+	controller, runner, _ := newTestController(t)
+	state, err := NewState(
+		[]string{"versiond-1"},
+		8080,
+		"versiond-1",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	joining, err := controller.Add(context.Background(), AddMembership{
+		OperationID: "add-2",
+		Host:        "versiond-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	membershipID := membershipOf(t, joining, "versiond-2")
+	change := Transition{
+		OperationID: "add-2", MembershipID: membershipID,
+		Host: "versiond-2", From: HostJoining, To: HostActive,
+		Target: HostActive,
+	}
+	active, err := controller.Transition(context.Background(), change)
+	if err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	callsBeforeReplay := len(runner.calls)
+	runner.mu.Unlock()
+
+	replayed, err := controller.Transition(context.Background(), change)
+	if err != nil {
+		t.Fatalf("replay completed add edge: %v", err)
+	}
+	if replayed.Generation != active.Generation {
+		t.Fatalf(
+			"completed add replay changed generation from %d to %d",
+			active.Generation,
+			replayed.Generation,
+		)
+	}
+	runner.mu.Lock()
+	callsAfterReplay := len(runner.calls)
+	runner.mu.Unlock()
+	if callsAfterReplay != callsBeforeReplay {
+		t.Fatalf(
+			"completed add replay ran %d nginx commands",
+			callsAfterReplay-callsBeforeReplay,
+		)
+	}
+	otherEdge := change
+	otherEdge.From = HostActive
+	otherEdge.To = HostDraining
+	if _, err := controller.Transition(
+		context.Background(),
+		otherEdge,
+	); !errors.Is(err, ErrOperationOwner) {
+		t.Fatalf(
+			"unrelated edge error = %v, want ErrOperationOwner",
+			err,
+		)
+	}
+}
+
 func TestControllerReAddCreatesNewMembershipWithoutRevivingRemovedOne(t *testing.T) {
 	controller, _, _ := newTestController(t)
 	state := newTestState(t)
@@ -797,6 +869,84 @@ func TestControllerRecoveryMigratesPendingJournalSchemaV1(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("migrated journal remains: %v", err)
+	}
+}
+
+func TestMigratedAddJournalReceiptReplaysFinalEdge(t *testing.T) {
+	controller, _, _ := newTestController(t)
+	oldState, err := NewState(
+		[]string{"versiond-1"},
+		8080,
+		"versiond-1",
+		nil,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	added, err := oldState.Add(AddMembership{
+		OperationID: "legacy-add",
+		Host:        "versiond-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	change := Transition{
+		OperationID:  "legacy-add",
+		MembershipID: added.MembershipID,
+		Host:         "versiond-2",
+		From:         HostJoining,
+		To:           HostActive,
+		Target:       HostActive,
+	}
+	newState := oldState.Clone()
+	if _, err := newState.Advance(change); err != nil {
+		t.Fatal(err)
+	}
+	oldState.SchemaVersion = legacySchemaVersion
+	newState.SchemaVersion = legacySchemaVersion
+	oldStateJSON, err := json.Marshal(oldState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newStateJSON, err := json.Marshal(newState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJournalJSON, err := json.Marshal(operationJournalV1{
+		SchemaVersion: legacyOperationJournalSchemaVersion,
+		OperationID:   change.OperationID,
+		Phase:         "reloaded",
+		Action:        "transfer",
+		Host:          change.Host,
+		MembershipID:  change.MembershipID,
+		From:          change.From,
+		To:            change.To,
+		Target:        change.Target,
+		Result:        "completed",
+		OldState:      oldStateJSON,
+		NewState:      newStateJSON,
+		Reload:        true,
+		CreatedAt:     time.Now().UTC(),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	migrated, err := controller.migrateOperationJournalV1(
+		legacyJournalJSON,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, ok := migrated.NewReceipts.Completed[change.OperationID]
+	if !ok {
+		t.Fatal("migrated add journal has no completion receipt")
+	}
+	if receipt.Action != "add" {
+		t.Fatalf("migrated receipt action = %q, want add", receipt.Action)
+	}
+	if err := matchCompletedTransition(receipt, change); err != nil {
+		t.Fatalf("replay migrated add edge: %v", err)
 	}
 }
 

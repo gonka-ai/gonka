@@ -194,13 +194,9 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 			return err
 		}
 		if completed != nil {
-			if err := matchCompletedOperation(
+			if err := matchCompletedTransition(
 				*completed,
-				change.OperationID,
-				"transfer",
-				change.Host,
-				change.MembershipID,
-				change.Target,
+				change,
 			); err != nil {
 				return err
 			}
@@ -867,6 +863,27 @@ func matchCompletedOperation(
 		receipt.Action,
 		receipt.MembershipID,
 		receipt.Host,
+	)
+}
+
+func matchCompletedTransition(
+	receipt operationReceipt,
+	change Transition,
+) error {
+	action := "transfer"
+	if receipt.Action == "add" &&
+		change.From == HostJoining &&
+		change.To == HostActive &&
+		change.Target == HostActive {
+		action = "add"
+	}
+	return matchCompletedOperation(
+		receipt,
+		change.OperationID,
+		action,
+		change.Host,
+		change.MembershipID,
+		change.Target,
 	)
 }
 
