@@ -3,6 +3,7 @@ package router
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -184,10 +185,23 @@ func TestControllerRemoveReloadFailureRestoresOfflineHost(t *testing.T) {
 	}
 	assertFileEquals(t, paths.OutputPath, oldConfig)
 	assertFileEquals(t, paths.StatePath, oldState)
+	receipts, err := controller.loadOrCreateReceiptIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, completed := receipts.Completed["decommission-2"]; completed {
+		t.Fatal("rolled-back removal retained a completion receipt")
+	}
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "decommission-2", Host: "versiond-2",
+		From: HostOffline, To: HostRemoved, Target: HostRemoved,
+	}); err != nil {
+		t.Fatalf("retry removal after rollback: %v", err)
+	}
 }
 
-func TestControllerCompletedOperationDoesNotRunAgain(t *testing.T) {
-	controller, runner, _ := newTestController(t)
+func TestControllerCompletedOperationDoesNotDependOnAudit(t *testing.T) {
+	controller, runner, paths := newTestController(t)
 	state := newTestState(t)
 	if _, err := controller.Bootstrap(context.Background(), staticState(state)); err != nil {
 		t.Fatal(err)
@@ -207,6 +221,13 @@ func TestControllerCompletedOperationDoesNotRunAgain(t *testing.T) {
 	runner.mu.Lock()
 	callCount := len(runner.calls)
 	runner.mu.Unlock()
+	if err := os.WriteFile(
+		paths.AuditPath,
+		[]byte("{this is not valid json\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
 
 	got, err := controller.Transition(context.Background(), Transition{
 		OperationID: "evacuate-2", Host: "versiond-2",
@@ -231,6 +252,35 @@ func TestControllerCompletedOperationDoesNotRunAgain(t *testing.T) {
 	})
 	if !errors.Is(err, ErrOperationOwner) {
 		t.Fatalf("reused operation error = %v, want ErrOperationOwner", err)
+	}
+}
+
+func TestControllerNoopCancelDoesNotConsumeOperationID(t *testing.T) {
+	controller, _, _ := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Cancel(context.Background(), CancelTransfer{
+		OperationID: "future-cancel",
+		Host:        "versiond-2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "future-cancel", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	}); err != nil {
+		t.Fatalf("noop cancel consumed operation id: %v", err)
+	}
+	if _, err := controller.Cancel(context.Background(), CancelTransfer{
+		OperationID: "future-cancel",
+		Host:        "versiond-2",
+	}); err != nil {
+		t.Fatalf("cancel active transfer: %v", err)
 	}
 }
 
@@ -276,6 +326,13 @@ func TestControllerReAddCreatesNewMembershipWithoutRevivingRemovedOne(t *testing
 	}
 	if active.Hosts[active.hostIndex("versiond-2")].State != HostActive {
 		t.Fatalf("re-added membership is not active: %#v", active.Hosts)
+	}
+	if _, err := controller.Add(context.Background(), AddMembership{
+		OperationID:  "add-2",
+		MembershipID: newMembership,
+		Host:         "versiond-2",
+	}); err != nil {
+		t.Fatalf("idempotent completed add: %v", err)
 	}
 
 	retried, err := controller.Transition(context.Background(), Transition{
@@ -357,6 +414,121 @@ func TestControllerRecoveryRollsBackBeforeReload(t *testing.T) {
 	assertFileEquals(t, paths.OutputPath, oldConfig)
 }
 
+func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	for _, edge := range [][2]HostState{
+		{HostActive, HostDraining},
+		{HostDraining, HostStopping},
+		{HostStopping, HostOffline},
+	} {
+		var err error
+		state, err = controller.Transition(context.Background(), Transition{
+			OperationID: "decommission-2", Host: "versiond-2",
+			From: edge[0], To: edge[1], Target: HostRemoved,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	oldState := state
+	newState := oldState.Clone()
+	outcome, err := newState.Advance(Transition{
+		OperationID: "decommission-2", Host: "versiond-2",
+		From: HostOffline, To: HostRemoved, Target: HostRemoved,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := os.ReadFile(paths.TemplatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConfig, err := Render(template, newState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldConfig, err := Render(template, oldState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldReceipts, err := controller.loadOrCreateReceiptIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	newReceipts := oldReceipts.Clone()
+	change := mutation{
+		OperationID:  "decommission-2",
+		Action:       "transfer",
+		Host:         "versiond-2",
+		MembershipID: outcome.MembershipID,
+		From:         HostOffline,
+		To:           HostRemoved,
+		Target:       HostRemoved,
+		Result:       "completed",
+	}
+	if err := newReceipts.Record(
+		change.OperationID,
+		receiptFromMutation(change),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(paths.JournalPath, operationJournal{
+		SchemaVersion: operationJournalSchemaVersion,
+		OperationID:   change.OperationID,
+		Phase:         "reloaded",
+		Action:        change.Action,
+		Host:          change.Host,
+		MembershipID:  change.MembershipID,
+		From:          change.From,
+		To:            change.To,
+		Target:        change.Target,
+		Result:        change.Result,
+		OldState:      &oldState,
+		NewState:      newState,
+		OldReceipts:   &oldReceipts,
+		NewReceipts:   newReceipts,
+		OldConfig:     oldConfig,
+		NewConfigSHA:  hashBytes(newConfig),
+		Reload:        true,
+		CreatedAt:     time.Now().UTC(),
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.hostIndex("versiond-2") >= 0 {
+		t.Fatalf("rolled-forward host remains in state: %#v", recovered.Hosts)
+	}
+	receipts, err := controller.loadOrCreateReceiptIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := receipts.Completed["decommission-2"]; !ok {
+		t.Fatal("rolled-forward terminal transition has no receipt")
+	}
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "decommission-2", MembershipID: outcome.MembershipID,
+		Host: "versiond-2", From: HostOffline, To: HostRemoved,
+		Target: HostRemoved,
+	}); err != nil {
+		t.Fatalf("replay after roll-forward: %v", err)
+	}
+}
+
 func TestControllerRecoveryRejectsChangedReloadedConfig(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
@@ -410,6 +582,317 @@ func TestControllerBootstrapBuildsInitialStateOnlyWhenMissing(t *testing.T) {
 	}
 }
 
+func TestControllerBootstrapImportsReceiptsBeforeAuditRotation(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(paths.ReceiptsPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := controller.appendAudit(AuditRecord{
+		Time:         time.Now().UTC(),
+		OperationID:  "completed-before-upgrade",
+		Action:       "activate",
+		Host:         "versiond-2",
+		MembershipID: membershipOf(t, state, "versiond-2"),
+		To:           HostActive,
+		Target:       HostActive,
+		Result:       "completed",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := controller.Bootstrap(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(paths.AuditPath, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := controller.completedOperation("completed-before-upgrade")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if receipt == nil || receipt.Host != "versiond-2" {
+		t.Fatalf("bootstrap did not persist imported receipt: %#v", receipt)
+	}
+}
+
+func TestControllerBootstrapMigratesLegacyRouterState(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	updatedAt := time.Now().Add(-time.Hour).UTC()
+	legacy := stateV1{
+		SchemaVersion: legacySchemaVersion,
+		Generation:    7,
+		Port:          8080,
+		LegacyHost:    "versiond-1",
+		Hosts: []hostV1{
+			{
+				Name:    "versiond-1",
+				Address: "versiond-1",
+				State:   HostActive,
+			},
+			{
+				Name:        "versiond-2",
+				Address:     "versiond-2",
+				State:       HostDraining,
+				OperationID: "legacy-evacuation",
+			},
+		},
+		LastOperation: "legacy-evacuation",
+		UpdatedAt:     updatedAt,
+	}
+	if err := writeJSONAtomic(paths.StatePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := controller.Bootstrap(
+		context.Background(),
+		func() (State, error) {
+			return State{}, errors.New("initial-state factory must not run")
+		},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state.SchemaVersion != SchemaVersion {
+		t.Fatalf("schema = %d, want %d", state.SchemaVersion, SchemaVersion)
+	}
+	for _, host := range state.Hosts {
+		if !strings.HasPrefix(host.MembershipID, "membership-migrated-") {
+			t.Fatalf("host %s membership = %q", host.Name, host.MembershipID)
+		}
+	}
+	if state.ActiveTransfer == nil ||
+		state.ActiveTransfer.ID != "legacy-evacuation" ||
+		state.ActiveTransfer.To != HostOffline ||
+		!state.ActiveTransfer.Migrated {
+		t.Fatalf("migrated transfer = %#v", state.ActiveTransfer)
+	}
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "legacy-evacuation", Host: "versiond-2",
+		From: HostDraining, To: HostStopping, Target: HostOffline,
+	}); err != nil {
+		t.Fatalf("resume migrated transfer: %v", err)
+	}
+	persisted, err := os.ReadFile(paths.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope stateEnvelope
+	if err := json.Unmarshal(persisted, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != SchemaVersion {
+		t.Fatalf("persisted schema = %d", envelope.SchemaVersion)
+	}
+}
+
+func TestControllerBootstrapMigratesIntermediateMembershipState(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	legacy := newTestState(t)
+	membershipID := membershipOf(t, legacy, "versiond-2")
+	if _, err := legacy.Advance(Transition{
+		OperationID: "intermediate-evacuation", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	legacy.SchemaVersion = legacySchemaVersion
+	if err := writeJSONAtomic(paths.StatePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	state, err := controller.Bootstrap(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := membershipOf(t, state, "versiond-2"); got != membershipID {
+		t.Fatalf("membership changed from %s to %s", membershipID, got)
+	}
+	if state.ActiveTransfer == nil ||
+		state.ActiveTransfer.ID != "intermediate-evacuation" ||
+		state.ActiveTransfer.Migrated {
+		t.Fatalf("intermediate transfer migration = %#v", state.ActiveTransfer)
+	}
+}
+
+func TestControllerRecoveryMigratesPendingJournalSchemaV1(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	oldConfig, err := os.ReadFile(paths.OutputPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState := oldState.Clone()
+	result, err := newState.Advance(Transition{
+		OperationID: "legacy-journal", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := os.ReadFile(paths.TemplatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConfig, err := Render(template, newState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	oldState.SchemaVersion = legacySchemaVersion
+	newState.SchemaVersion = legacySchemaVersion
+	oldStateJSON, err := json.Marshal(oldState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newStateJSON, err := json.Marshal(newState)
+	if err != nil {
+		t.Fatal(err)
+	}
+	legacyJournal := operationJournalV1{
+		SchemaVersion: legacyOperationJournalSchemaVersion,
+		OperationID:   "legacy-journal",
+		Phase:         "reloaded",
+		Action:        "transfer",
+		Host:          "versiond-2",
+		MembershipID:  result.MembershipID,
+		From:          HostActive,
+		To:            HostDraining,
+		Target:        HostOffline,
+		Result:        "advanced",
+		OldState:      oldStateJSON,
+		NewState:      newStateJSON,
+		OldConfig:     oldConfig,
+		NewConfigSHA:  hashBytes(newConfig),
+		Reload:        true,
+		CreatedAt:     time.Now().UTC(),
+	}
+	if err := writeJSONAtomic(paths.JournalPath, legacyJournal, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.SchemaVersion != SchemaVersion {
+		t.Fatalf("recovered schema = %d", recovered.SchemaVersion)
+	}
+	if recovered.Hosts[recovered.hostIndex("versiond-2")].State != HostDraining {
+		t.Fatalf("recovered hosts = %#v", recovered.Hosts)
+	}
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migrated journal remains: %v", err)
+	}
+}
+
+func TestControllerRecoveryMigratesPreFSMJournalSchemaV1(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	updatedAt := time.Now().Add(-time.Hour).UTC()
+	oldStateV1 := stateV1{
+		SchemaVersion: legacySchemaVersion,
+		Generation:    9,
+		Port:          8080,
+		LegacyHost:    "versiond-1",
+		Hosts: []hostV1{
+			{Name: "versiond-1", Address: "versiond-1", State: HostActive},
+			{Name: "versiond-2", Address: "versiond-2", State: HostActive},
+		},
+		LastOperation: "previous-operation",
+		UpdatedAt:     updatedAt,
+	}
+	newStateV1 := oldStateV1
+	newStateV1.Generation++
+	newStateV1.LastOperation = "legacy-drain"
+	newStateV1.UpdatedAt = updatedAt.Add(time.Minute)
+	newStateV1.Hosts = append([]hostV1(nil), oldStateV1.Hosts...)
+	newStateV1.Hosts[1].State = HostDraining
+	newStateV1.Hosts[1].OperationID = "legacy-drain"
+
+	oldStateJSON, err := json.Marshal(oldStateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newStateJSON, err := json.Marshal(newStateV1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldState, err := migrateStateV1(oldStateJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	newState, err := migrateStateV1(newStateJSON)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template, err := os.ReadFile(paths.TemplatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	oldConfig, err := Render(template, oldState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	newConfig, err := Render(template, newState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(paths.StatePath, oldStateV1, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := writeJSONAtomic(paths.JournalPath, operationJournalV1{
+		SchemaVersion: legacyOperationJournalSchemaVersion,
+		OperationID:   "legacy-drain",
+		Phase:         "reloaded",
+		Action:        "drain",
+		Host:          "versiond-2",
+		From:          HostActive,
+		OldState:      oldStateJSON,
+		NewState:      newStateJSON,
+		OldConfig:     oldConfig,
+		NewConfigSHA:  hashBytes(newConfig),
+		Reload:        true,
+		CreatedAt:     updatedAt,
+	}, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	index := recovered.hostIndex("versiond-2")
+	if index < 0 || recovered.Hosts[index].State != HostDraining {
+		t.Fatalf("recovered hosts = %#v", recovered.Hosts)
+	}
+	if recovered.ActiveTransfer == nil ||
+		recovered.ActiveTransfer.ID != "legacy-drain" ||
+		recovered.ActiveTransfer.To != HostOffline ||
+		!recovered.ActiveTransfer.Migrated {
+		t.Fatalf("recovered transfer = %#v", recovered.ActiveTransfer)
+	}
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migrated journal remains: %v", err)
+	}
+}
+
 func stagePendingDrain(
 	t *testing.T,
 	paths Config,
@@ -440,8 +923,16 @@ func stagePendingDrain(
 	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
 		t.Fatal(err)
 	}
+	receiptsData, err := os.ReadFile(paths.ReceiptsPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var receipts receiptIndex
+	if err := json.Unmarshal(receiptsData, &receipts); err != nil {
+		t.Fatal(err)
+	}
 	journal := operationJournal{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: operationJournalSchemaVersion,
 		OperationID:   "interrupted",
 		Phase:         phase,
 		Action:        "transfer",
@@ -453,6 +944,8 @@ func stagePendingDrain(
 		Result:        "advanced",
 		OldState:      &oldState,
 		NewState:      newState,
+		OldReceipts:   &receipts,
+		NewReceipts:   receipts.Clone(),
 		OldConfig:     oldConfig,
 		NewConfigSHA:  hashBytes(newConfig),
 		Reload:        true,
@@ -473,6 +966,7 @@ func newTestController(t *testing.T) (*Controller, *fakeRunner, Config) {
 	}
 	config := Config{
 		StatePath:    filepath.Join(dir, "state.json"),
+		ReceiptsPath: filepath.Join(dir, "receipts.json"),
 		AuditPath:    filepath.Join(dir, "audit.jsonl"),
 		LockPath:     filepath.Join(dir, "router.lock"),
 		JournalPath:  filepath.Join(dir, "operation.json"),

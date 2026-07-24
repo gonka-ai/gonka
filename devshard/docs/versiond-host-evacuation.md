@@ -95,8 +95,9 @@ that membership and blocks a competing host transition. It is released only at
 the final target or on `draining -> active` cancellation. `removed` is terminal
 for that membership and is not persisted: the host disappears from state and
 nginx. Re-adding the same name creates a new membership ID. Completed operation
-IDs are deduplicated from the append-only audit log, so no routing tombstone or
-`removed -> removed` edge is needed.
+IDs are deduplicated from a compact persistent receipt index, so no routing
+tombstone or `removed -> removed` edge is needed. The audit is observability
+data and may be rotated without changing replay behavior.
 
 ## Context ownership
 
@@ -147,9 +148,23 @@ this change adds no listener, credential format, mTLS PKI, or token lifecycle.
 
 The router command uses a file lock, validates state transitions, writes a
 recovery journal, tests the candidate nginx configuration, atomically publishes
-it, reloads nginx, and persists an audit record. Repeating an already completed
-operation is idempotent. Router state, journal, and audit data live on the
-persistent `/var/lib/gonka/versiond-router` volume.
+it, reloads nginx, and persists state, completion receipts, and an audit record.
+Repeating an already completed operation is idempotent. Router state, receipt
+index, journal, and audit data live on the persistent
+`/var/lib/gonka/versiond-router` volume.
+
+Back up router state, completion receipts, and a pending journal as one
+control-plane unit. The audit may be rotated, but the receipt index must not be
+rotated or pruned: it is the durable idempotency record for completed operation
+IDs.
+
+State schema 1 is migrated automatically to schema 2 under the router lock.
+Existing membership IDs are preserved; older per-host operation ownership is
+converted into one `active_transfer`. Pending schema-1 transaction journals are
+migrated before recovery. The receipt index is transactionally committed with
+state. If it does not exist during an upgrade, valid terminal audit entries are
+imported once; malformed audit lines are skipped and never block router
+mutation.
 
 Bootstrap settings such as `VERSIOND_HOSTS` are fallback input for creating the
 first state only. On restart, journal recovery and the persisted state run first;
@@ -187,8 +202,8 @@ routerctl host transfer --from active --to draining --target offline HOST
 
 capture the original restart policy once and enforce restart=no
 persist term_requested
-reconfirm active -> draining (idempotent)
 routerctl host transfer --from draining --to stopping --target offline HOST
+  -> verify the same membership and active transfer still own the traffic barrier
 send SIGTERM to versiond (managed stop)
   -> close versiond admission
   -> wait for accepted proxy leases
@@ -207,7 +222,7 @@ routerctl host transfer --from offline --to removed --target removed HOST
   -> recheck at least one remaining configured host
   -> atomically transfer legacy ownership when required
   -> remove HOST from state.Hosts and rendered nginx upstreams
-  -> nginx -t, publish, reload, persist terminal audit result
+  -> nginx -t, publish, reload, persist terminal completion receipt
 ```
 
 `gonka-hostctl decommission` owns the full stop-plus-remove sequence.
@@ -260,7 +275,7 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 - replacement readiness failure: keep the upstream in `joining`/down.
 - removal reload failure: restore the `offline` host and previous nginx config.
 - interrupted decommission after removal: retry with the same operation ID; the
-  terminal audit result makes the completed operation a no-op.
+  terminal receipt makes the completed operation a no-op.
 - abandoned pre-signal evacuation: `gonka-hostctl cancel` first persists a
   cancellation intent, then checkpoints restart-policy restoration and router
   activation separately. If either action fails, rerun `cancel`; `evacuate`

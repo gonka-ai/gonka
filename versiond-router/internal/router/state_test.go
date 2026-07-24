@@ -210,6 +210,25 @@ func TestStateCancelReturnsDrainingMembershipToActive(t *testing.T) {
 	}
 }
 
+func TestStateCancelWithoutTransferIsNonTerminalNoop(t *testing.T) {
+	state := mustNewState(t, []string{"versiond-1", "versiond-2"}, "", nil)
+	generation := state.Generation
+
+	result, err := state.Cancel(CancelTransfer{
+		OperationID: "future-operation",
+		Host:        "versiond-2",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Changed || result.Completed || result.Canceled {
+		t.Fatalf("cancel without transfer = %#v, want non-terminal noop", result)
+	}
+	if state.Generation != generation {
+		t.Fatalf("noop cancel changed generation to %d", state.Generation)
+	}
+}
+
 func TestStateCancelIsRejectedAfterStoppingBegins(t *testing.T) {
 	state := mustNewState(t, []string{"versiond-1", "versiond-2"}, "", nil)
 	advanceTestState(

@@ -1,7 +1,6 @@
 package router
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -18,6 +17,7 @@ import (
 
 type Config struct {
 	StatePath    string
+	ReceiptsPath string
 	AuditPath    string
 	LockPath     string
 	JournalPath  string
@@ -84,39 +84,50 @@ type AuditRecord struct {
 	Error        string    `json:"error,omitempty"`
 }
 
+const (
+	legacyOperationJournalSchemaVersion = 1
+	operationJournalSchemaVersion       = 2
+)
+
 type operationJournal struct {
-	SchemaVersion int       `json:"schema_version"`
-	OperationID   string    `json:"operation_id"`
-	Phase         string    `json:"phase"`
-	Action        string    `json:"action,omitempty"`
-	Host          string    `json:"host,omitempty"`
-	MembershipID  string    `json:"membership_id,omitempty"`
-	From          HostState `json:"from,omitempty"`
-	To            HostState `json:"to,omitempty"`
-	Target        HostState `json:"target,omitempty"`
-	Result        string    `json:"result,omitempty"`
-	OldState      *State    `json:"old_state,omitempty"`
-	NewState      State     `json:"new_state"`
-	OldConfig     []byte    `json:"old_config,omitempty"`
-	NewConfigSHA  string    `json:"new_config_sha256"`
-	Reload        bool      `json:"reload"`
-	CreatedAt     time.Time `json:"created_at"`
+	SchemaVersion int           `json:"schema_version"`
+	OperationID   string        `json:"operation_id"`
+	Phase         string        `json:"phase"`
+	Action        string        `json:"action,omitempty"`
+	Host          string        `json:"host,omitempty"`
+	MembershipID  string        `json:"membership_id,omitempty"`
+	From          HostState     `json:"from,omitempty"`
+	To            HostState     `json:"to,omitempty"`
+	Target        HostState     `json:"target,omitempty"`
+	Result        string        `json:"result,omitempty"`
+	OldState      *State        `json:"old_state,omitempty"`
+	NewState      State         `json:"new_state"`
+	OldReceipts   *receiptIndex `json:"old_receipts,omitempty"`
+	NewReceipts   receiptIndex  `json:"new_receipts"`
+	OldConfig     []byte        `json:"old_config,omitempty"`
+	NewConfigSHA  string        `json:"new_config_sha256"`
+	Reload        bool          `json:"reload"`
+	CreatedAt     time.Time     `json:"created_at"`
 }
 
 type mutation struct {
-	OperationID  string
-	Action       string
-	Host         string
-	MembershipID string
-	From         HostState
-	To           HostState
-	Target       HostState
-	Result       string
+	OperationID   string
+	Action        string
+	ReceiptAction string
+	Host          string
+	MembershipID  string
+	From          HostState
+	To            HostState
+	Target        HostState
+	Result        string
 }
 
 func NewController(config Config, runner CommandRunner) *Controller {
 	if config.JournalPath == "" {
 		config.JournalPath = config.StatePath + ".operation.json"
+	}
+	if config.ReceiptsPath == "" {
+		config.ReceiptsPath = config.StatePath + ".receipts.json"
 	}
 	if runner == nil {
 		runner = ExecRunner{}
@@ -136,6 +147,9 @@ func (c *Controller) Bootstrap(
 		}
 		current, err := c.loadState()
 		if err == nil {
+			if _, err := c.loadOrCreateReceiptIndex(); err != nil {
+				return err
+			}
 			result = current
 			return c.ensureRendered(ctx, current, false)
 		}
@@ -182,6 +196,8 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 		if completed != nil {
 			if err := matchCompletedOperation(
 				*completed,
+				change.OperationID,
+				"transfer",
 				change.Host,
 				change.MembershipID,
 				change.Target,
@@ -213,6 +229,12 @@ func (c *Controller) Transition(ctx context.Context, change Transition) (State, 
 			To:           outcome.To,
 			Target:       outcome.Target,
 			Result:       transitionResult(outcome),
+		}
+		if outcome.Completed &&
+			current.ActiveTransfer != nil &&
+			current.ActiveTransfer.From == HostJoining &&
+			current.ActiveTransfer.To == HostActive {
+			record.ReceiptAction = "add"
 		}
 		if !outcome.Changed {
 			result = current
@@ -250,6 +272,8 @@ func (c *Controller) Add(ctx context.Context, change AddMembership) (State, erro
 		if completed != nil {
 			if err := matchCompletedOperation(
 				*completed,
+				change.OperationID,
+				"add",
 				change.Host,
 				change.MembershipID,
 				HostActive,
@@ -318,9 +342,11 @@ func (c *Controller) Cancel(ctx context.Context, change CancelTransfer) (State, 
 		if completed != nil {
 			if err := matchCompletedOperation(
 				*completed,
+				change.OperationID,
+				"cancel",
 				change.Host,
 				change.MembershipID,
-				"",
+				HostActive,
 			); err != nil {
 				return err
 			}
@@ -357,7 +383,7 @@ func (c *Controller) Cancel(ctx context.Context, change CancelTransfer) (State, 
 				Action: record.Action, Host: record.Host,
 				MembershipID: record.MembershipID,
 				From:         record.From, To: record.To, Target: record.Target,
-				Generation: current.Generation, Result: record.Result,
+				Generation: current.Generation, Result: "noop",
 			})
 		}
 		if err := c.apply(ctx, &current, next, record, true); err != nil {
@@ -421,6 +447,22 @@ func (c *Controller) apply(
 	change mutation,
 	reload bool,
 ) error {
+	oldReceipts, err := c.loadOrCreateReceiptIndex()
+	if err != nil {
+		return err
+	}
+	newReceipts := oldReceipts.Clone()
+	if deduplicatedMutation(change) && terminalResult(change.Result) {
+		if err := newReceipts.Record(
+			change.OperationID,
+			receiptFromMutation(change),
+		); err != nil {
+			return err
+		}
+	}
+	if err := newReceipts.Validate(); err != nil {
+		return err
+	}
 	template, err := os.ReadFile(c.config.TemplatePath)
 	if err != nil {
 		return err
@@ -434,7 +476,7 @@ func (c *Controller) apply(
 		return readErr
 	}
 	journal := operationJournal{
-		SchemaVersion: SchemaVersion,
+		SchemaVersion: operationJournalSchemaVersion,
 		OperationID:   change.OperationID,
 		Phase:         "prepared",
 		Action:        change.Action,
@@ -446,6 +488,8 @@ func (c *Controller) apply(
 		Result:        change.Result,
 		OldState:      oldState,
 		NewState:      newState,
+		OldReceipts:   &oldReceipts,
+		NewReceipts:   newReceipts,
 		OldConfig:     oldConfig,
 		NewConfigSHA:  hashBytes(newConfig),
 		Reload:        reload,
@@ -462,6 +506,13 @@ func (c *Controller) apply(
 				rollbackErr = errors.Join(rollbackErr, err)
 			}
 		} else if err := writeJSONAtomic(c.config.StatePath, *oldState, 0o600); err != nil {
+			rollbackErr = errors.Join(rollbackErr, err)
+		}
+		if err := writeJSONAtomic(
+			c.config.ReceiptsPath,
+			oldReceipts,
+			0o600,
+		); err != nil {
 			rollbackErr = errors.Join(rollbackErr, err)
 		}
 		record := AuditRecord{
@@ -499,6 +550,9 @@ func (c *Controller) apply(
 		}
 	}
 	if err := writeJSONAtomic(c.config.StatePath, newState, 0o600); err != nil {
+		return rollback(err)
+	}
+	if err := writeJSONAtomic(c.config.ReceiptsPath, newReceipts, 0o600); err != nil {
 		return rollback(err)
 	}
 	if err := c.appendAudit(AuditRecord{
@@ -562,15 +616,17 @@ func (c *Controller) loadOperationJournal() (*operationJournal, error) {
 	if err != nil {
 		return nil, err
 	}
-	var journal operationJournal
-	if err := json.Unmarshal(data, &journal); err != nil {
-		return nil, fmt.Errorf("decode operation journal: %w", err)
+	journal, migrated, err := c.decodeOperationJournal(data)
+	if err != nil {
+		return nil, err
 	}
-	if journal.SchemaVersion != SchemaVersion {
-		return nil, fmt.Errorf(
-			"unsupported operation journal schema %d",
-			journal.SchemaVersion,
-		)
+	if migrated {
+		if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
+			return nil, fmt.Errorf(
+				"persist migrated operation journal: %w",
+				err,
+			)
+		}
 	}
 	return &journal, nil
 }
@@ -590,6 +646,18 @@ func (c *Controller) rollBackPending(
 	} else if err := writeJSONAtomic(c.config.StatePath, *journal.OldState, 0o600); err != nil {
 		return err
 	}
+	if journal.OldReceipts == nil {
+		if err := os.Remove(c.config.ReceiptsPath); err != nil &&
+			!errors.Is(err, fs.ErrNotExist) {
+			return err
+		}
+	} else if err := writeJSONAtomic(
+		c.config.ReceiptsPath,
+		*journal.OldReceipts,
+		0o600,
+	); err != nil {
+		return err
+	}
 	if err := c.appendRecoveryAudit(journal, "rolled_back"); err != nil {
 		return err
 	}
@@ -603,6 +671,13 @@ func (c *Controller) rollForwardPending(
 ) error {
 	if err := journal.NewState.Validate(); err != nil {
 		return fmt.Errorf("recover operation %s: invalid new state: %w", journal.OperationID, err)
+	}
+	if err := journal.NewReceipts.Validate(); err != nil {
+		return fmt.Errorf(
+			"recover operation %s: invalid receipt index: %w",
+			journal.OperationID,
+			err,
+		)
 	}
 	config, err := os.ReadFile(c.config.OutputPath)
 	if err != nil {
@@ -625,6 +700,13 @@ func (c *Controller) rollForwardPending(
 		}
 	}
 	if err := writeJSONAtomic(c.config.StatePath, journal.NewState, 0o600); err != nil {
+		return err
+	}
+	if err := writeJSONAtomic(
+		c.config.ReceiptsPath,
+		journal.NewReceipts,
+		0o600,
+	); err != nil {
 		return err
 	}
 	if err := c.appendRecoveryAudit(journal, "rolled_forward"); err != nil {
@@ -683,12 +765,14 @@ func (c *Controller) loadState() (State, error) {
 	if err != nil {
 		return State{}, err
 	}
-	var state State
-	if err := json.Unmarshal(data, &state); err != nil {
+	state, migrated, err := decodeState(data)
+	if err != nil {
 		return State{}, err
 	}
-	if err := state.Validate(); err != nil {
-		return State{}, err
+	if migrated {
+		if err := writeJSONAtomic(c.config.StatePath, state, 0o600); err != nil {
+			return State{}, fmt.Errorf("persist migrated router state: %w", err)
+		}
 	}
 	return state, nil
 }
@@ -742,57 +826,47 @@ func (c *Controller) appendAudit(record AuditRecord) error {
 	return f.Close()
 }
 
-func (c *Controller) completedOperation(operationID string) (*AuditRecord, error) {
+func (c *Controller) completedOperation(operationID string) (*operationReceipt, error) {
 	if operationID == "" {
 		return nil, nil
 	}
-	f, err := os.Open(c.config.AuditPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil, nil
-	}
+	index, err := c.loadOrCreateReceiptIndex()
 	if err != nil {
 		return nil, err
 	}
-	defer f.Close()
-
-	var completed *AuditRecord
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	for scanner.Scan() {
-		var record AuditRecord
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			return nil, fmt.Errorf("decode router audit record: %w", err)
-		}
-		if record.OperationID != operationID || !terminalResult(record.Result) {
-			continue
-		}
-		copy := record
-		completed = &copy
+	receipt, ok := index.Completed[operationID]
+	if !ok {
+		return nil, nil
 	}
-	if err := scanner.Err(); err != nil {
-		return nil, err
-	}
-	return completed, nil
+	return &receipt, nil
 }
 
 func matchCompletedOperation(
-	record AuditRecord,
+	receipt operationReceipt,
+	operationID string,
+	action string,
 	host string,
 	membershipID string,
 	target HostState,
 ) error {
-	if record.Host == host &&
-		(membershipID == "" || record.MembershipID == membershipID) &&
-		(target == "" || record.Target == target) {
+	actionMatches := receipt.ActionAgnostic || receipt.Action == action
+	membershipMatches := membershipID == "" ||
+		receipt.MembershipID == "" ||
+		receipt.MembershipID == membershipID
+	if !receipt.Conflict &&
+		actionMatches &&
+		receipt.Host == host &&
+		membershipMatches &&
+		receipt.Target == target {
 		return nil
 	}
 	return fmt.Errorf(
 		"%w: operation %s already completed as %s for membership %s (%s)",
 		ErrOperationOwner,
-		record.OperationID,
-		record.Action,
-		record.MembershipID,
-		record.Host,
+		operationID,
+		receipt.Action,
+		receipt.MembershipID,
+		receipt.Host,
 	)
 }
 
@@ -809,6 +883,15 @@ func transitionResult(result TransitionResult) string {
 
 func terminalResult(result string) bool {
 	return result == "completed" || result == "canceled"
+}
+
+func deduplicatedMutation(change mutation) bool {
+	switch change.Action {
+	case "transfer", "add", "cancel":
+		return true
+	default:
+		return false
+	}
 }
 
 func writeJSONAtomic(path string, value any, mode fs.FileMode) error {

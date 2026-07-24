@@ -219,17 +219,6 @@ func (o *Orchestrator) stopHost(ctx context.Context, mode string) error {
 	}
 	if before(journal.Phase, "router_stopping", phases) {
 		target := stopTarget(mode)
-		// Reconfirm the traffic barrier before crossing the point where cancel
-		// is no longer allowed.
-		if err := o.routerTransition(
-			ctx,
-			&journal,
-			router.HostActive,
-			router.HostDraining,
-			target,
-		); err != nil {
-			return fmt.Errorf("reconfirm router drain before stopping: %w", err)
-		}
 		if err := o.routerTransition(
 			ctx,
 			&journal,

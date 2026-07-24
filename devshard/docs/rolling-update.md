@@ -634,8 +634,9 @@ upgrade, scale-down, or decommission.
         │  → no NEW requests hashed to versiond-N
         │  → in-flight connections to versiond-N keep running
         ▼
-2. Persist signal intent, reconfirm the router barrier, and move the membership
-   from draining to stopping before starting a managed stop:
+2. Persist signal intent and move the membership from draining to stopping. The
+   edge verifies the durable transfer owner and traffic barrier before starting
+   a managed stop:
         disable automatic restart
         SIGTERM versiond
         ▼
@@ -684,7 +685,7 @@ until a host is activated.
 
 | Piece | Meaning |
 |---|---|
-| `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, journal, `nginx -t`, atomic publish, reload, rollback, and audit |
+| `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, receipt index, journal, `nginx -t`, atomic publish, reload, rollback, and rotatable audit |
 | `gonka-hostctl` | Resumable SSH orchestration for add, evacuation, decommission, and replacement; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
 | `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
@@ -766,14 +767,17 @@ return `503` to a new request already selected by nginx. The router deliberately
 does not retry an already-sent inference `POST`: automatic replay could execute
 the request twice. Operators must use `gonka-hostctl` for planned maintenance.
 
-Before `SIGTERM`, every fresh or resumed operation repeats the idempotent router
-`drain` transition. If evacuation must be abandoned before the durable
-`term_requested` phase, run `gonka-hostctl cancel` with the same operation ID
-and scope. A second command never waits behind the active operation lock: it
-reports the owner action, PID, and journal phase. Interrupt a still-running
-pre-signal `evacuate` process before invoking `cancel`. Cancellation is a durable
-compensation FSM: it records the intent, restores any disabled Docker restart
-policy, checkpoints that action, and then reactivates the upstream. A failed
+Before `SIGTERM`, the `draining -> stopping` edge revalidates the membership,
+transfer owner, and final target. One router edge maps to one durable hostctl
+checkpoint, so replay can safely repeat an edge whose remote mutation completed
+before the local journal advanced. If evacuation must be abandoned before the
+durable `term_requested` phase, run `gonka-hostctl cancel` with the same
+operation ID and scope. A second command never waits behind the active operation
+lock: it reports the owner action, PID, and journal phase. Interrupt a
+still-running pre-signal `evacuate` process before invoking `cancel`.
+Cancellation is a durable compensation FSM: it records the intent, restores any
+disabled Docker restart policy, checkpoints that action, and then reactivates
+the upstream. A failed
 cancellation must be resumed with `cancel`; the forward evacuation FSM refuses
 to cross it. `term_requested` is persisted before the SSH signal command; at or
 after it, the original evacuation or decommission operation must be resumed
@@ -799,9 +803,11 @@ the replacement transaction completes:
 
 The upstream remains `joining`/down until `GET /ready` returns `200`. That gate
 means versiond is serving, accepting, has an available child, and is fully
-reconciled without a progressing or degraded condition. Router state, recovery
-journal, and audit log are stored below `/var/lib/gonka/versiond-router` on a
-persistent volume. See `versiond-router/README.md` and
+reconciled without a progressing or degraded condition. Router state, completion
+receipt index, recovery journal, and audit log are stored below
+`/var/lib/gonka/versiond-router` on a persistent volume. The audit may be
+rotated; state, receipts, and journal are control-plane data and must remain
+together. See `versiond-router/README.md` and
 `versiond-host-evacuation.md` for the complete failure and recovery contract.
 
 Docker replacement restores the exact policy captured by evacuation, including
@@ -863,8 +869,9 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   atomic rollback, interrupted-transaction recovery, and hostctl checkpoint
   resume/order without requiring SSH. Removal must drop the DNS name from the
   rendered pool, roll back to `offline` on reload failure, and replay
-  idempotently from the terminal operation audit. Re-adding the same host name
-  must create a new membership ID.
+  idempotently from the terminal operation receipt. Re-adding the same host name
+  must create a new membership ID. State and pending journal schema-1 fixtures
+  must migrate without losing an in-progress transfer.
 - **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a long
   stream to one versiond, start a real `gonka-hostctl evacuate`, and verify new
   work and the same escrow recover on the survivor while the barrier-held stream

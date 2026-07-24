@@ -103,7 +103,7 @@ func fakeRouterState(includeTarget bool) string {
 	}
 	hosts += "]"
 	return `{
-		"schema_version": 1,
+			"schema_version": 2,
 		"generation": 1,
 		"port": 8080,
 		"legacy_host": "versiond-1",
@@ -124,7 +124,6 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 
 	calls := remote.callLog()
 	assertCallOrder(t, calls,
-		"--from active --to draining --target offline",
 		"--from active --to draining --target offline",
 		"--from draining --to stopping --target offline",
 		"docker update --restart=no",
@@ -665,6 +664,33 @@ func TestEvacuateResumesFromCheckpoint(t *testing.T) {
 	}
 	if !strings.Contains(calls, "--from stopping --to offline") {
 		t.Fatalf("resumed operation did not finish router offline phase:\n%s", calls)
+	}
+}
+
+func TestEvacuateReplaysRouterStoppingWithoutRepeatingDrain(t *testing.T) {
+	remote := &fakeRemote{}
+	orchestrator := newTestOrchestrator(t, remote, "resume-router-stopping")
+	journal := Journal{
+		SchemaVersion: 1,
+		OperationID:   "resume-router-stopping",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         "term_requested",
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := orchestrator.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := remote.callLog()
+	if strings.Contains(calls, "--from active --to draining") {
+		t.Fatalf("resume repeated the already completed drain edge:\n%s", calls)
+	}
+	if !strings.Contains(calls, "--from draining --to stopping") {
+		t.Fatalf("resume did not replay the stopping edge:\n%s", calls)
 	}
 }
 

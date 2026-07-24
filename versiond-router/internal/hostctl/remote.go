@@ -1,6 +1,7 @@
 package hostctl
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os/exec"
@@ -46,9 +47,16 @@ func (r SSHRemote) Run(ctx context.Context, destination string, args ...string) 
 
 func runCommand(ctx context.Context, name string, args ...string) (string, error) {
 	cmd := exec.CommandContext(ctx, name, args...)
-	output, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	output, err := cmd.Output()
 	if err != nil {
-		return string(output), fmt.Errorf("%s: %w: %s", name, err, output)
+		return string(output), fmt.Errorf(
+			"%s: %w: %s",
+			name,
+			err,
+			strings.TrimSpace(stderr.String()),
+		)
 	}
 	return string(output), nil
 }

@@ -11,7 +11,10 @@ import (
 	"time"
 )
 
-const SchemaVersion = 1
+const (
+	legacySchemaVersion = 1
+	SchemaVersion       = 2
+)
 
 type HostState string
 
@@ -56,6 +59,7 @@ type Transfer struct {
 	Address      string    `json:"address,omitempty"`
 	LegacyHost   string    `json:"legacy_host,omitempty"`
 	Force        bool      `json:"force,omitempty"`
+	Migrated     bool      `json:"migrated,omitempty"`
 	StartedAt    time.Time `json:"started_at"`
 }
 
@@ -511,11 +515,9 @@ func (s *State) Advance(change Transition) (TransitionResult, error) {
 
 func (s *State) Cancel(change CancelTransfer) (TransitionResult, error) {
 	result := TransitionResult{
-		Completed: true,
-		Canceled:  true,
-		From:      HostDraining,
-		To:        HostActive,
-		Target:    HostActive,
+		From:   HostDraining,
+		To:     HostActive,
+		Target: HostActive,
 	}
 	if err := validateOperation(change.OperationID, change.Host); err != nil {
 		return result, err
@@ -560,6 +562,8 @@ func (s *State) Cancel(change CancelTransfer) (TransitionResult, error) {
 	s.ActiveTransfer = nil
 	s.commit(change.OperationID)
 	result.Changed = true
+	result.Completed = true
+	result.Canceled = true
 	return result, nil
 }
 
@@ -572,8 +576,24 @@ func matchActiveTransfer(transfer *Transfer, change Transition, host Host) error
 	if change.MembershipID != "" && change.MembershipID != transfer.MembershipID {
 		return membershipMismatch(host, change.MembershipID)
 	}
-	if transfer.To != change.Target ||
-		transfer.Address != change.Address ||
+	if transfer.To != change.Target {
+		return fmt.Errorf(
+			"%w: transfer %s target changed",
+			ErrOperationOwner,
+			transfer.ID,
+		)
+	}
+	if transfer.Migrated {
+		if change.Address != "" && change.Address != host.Address {
+			return fmt.Errorf(
+				"%w: migrated transfer %s address changed",
+				ErrOperationOwner,
+				transfer.ID,
+			)
+		}
+		return nil
+	}
+	if transfer.Address != change.Address ||
 		transfer.LegacyHost != change.LegacyHost ||
 		transfer.Force != change.Force {
 		return fmt.Errorf(

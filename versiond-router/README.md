@@ -30,7 +30,7 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_LEGACY_HOST` | no | first of `VERSIOND_HOSTS` | Host that owns SQLite data dirs for non-HA versions |
 | `VERSIOND_NON_HA_VERSIONS` | no | empty | Whitespace and/or comma-separated version path segments pinned to legacy. Empty = all versions use the HA pool |
 | `VERSIOND_ROUTER_STATE` | no | `/var/lib/gonka/versiond-router/state.json` | Persistent router FSM state |
-| `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Append-only transition audit log |
+| `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Rotatable transition audit log |
 | `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Write-ahead transaction journal |
 | `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
@@ -60,6 +60,22 @@ stored on a persistent volume. On later starts, bootstrap recovers any pending
 transaction and loads that state before reading bootstrap environment variables.
 Missing or malformed bootstrap variables therefore do not block a restart when
 valid persistent state exists.
+
+The controller stores completion receipts in `<state>.receipts.json`. This is a
+compact control-plane index and must stay on the same persistent volume as
+`state.json` and its transaction journal. The audit log may be rotated,
+truncated, or archived; it is not consulted during normal replay. When the
+receipt index is first created, valid terminal records are imported from an
+existing audit on a best-effort basis and malformed audit lines are skipped.
+Back up state, receipts, and the pending journal together. Do not rotate or
+prune the receipt index: its entries are the durable idempotency records for
+completed operation IDs.
+
+Router state schema 1 is migrated under the controller lock to schema 2. The
+migration preserves existing membership IDs from intermediate builds, assigns
+deterministic IDs to older host records, reconstructs an in-progress
+`active_transfer`, and atomically persists the upgraded state. Pending schema-1
+transaction journals are upgraded before rollback or roll-forward.
 
 ## Host lifecycle
 
@@ -91,7 +107,7 @@ the new pool; old workers keep established HTTP and SSE connections until those
 connections finish. `removed` is terminal for one membership and is not stored:
 the host disappears from state and nginx. A later `add` with the same host name
 creates a new membership ID and has no transition from the removed membership.
-The audit log makes retries of a completed operation ID idempotent without
+The receipt index makes retries of a completed operation ID idempotent without
 keeping a routing tombstone.
 
 `gonka-routerctl` runs inside the router container and exposes no network
@@ -137,7 +153,8 @@ for a new membership.
 
 The controller holds a file lock, validates the transition, writes a recovery
 journal, renders a candidate config, runs `nginx -t`, publishes atomically,
-reloads nginx, and then commits state and audit data. A failed handler,
+reloads nginx, and then commits state, completion receipts, and audit data. A
+failed handler,
 validation, or reload restores the previous config. Repeating an applied edge
 or a completed operation is a no-op. Use the same operation ID and parameters
 for every edge from the first transition to its final target. A different
@@ -198,8 +215,9 @@ The command performs these ordered steps:
    config, and reload.
 2. Capture the Docker restart policy, set `restart=no`, and persist
    `term_requested`.
-3. Reconfirm the traffic barrier, move `draining -> stopping`, reassert
-   `restart=no`, and start a managed stop with `SIGTERM`.
+3. Move `draining -> stopping`; that edge verifies the durable transfer owner
+   and traffic barrier. Reassert `restart=no` and start a managed stop with
+   `SIGTERM`.
 4. Let versiond close its own admission and drain accepted requests, children,
    and HTTP within `VERSIOND_HOST_SHUTDOWN_BUDGET`; on expiry it forces
    remaining work and confirms child reap.
@@ -292,7 +310,7 @@ same drain and stop transaction as `evacuate`, moves the stopped host to
 
 The final edge deletes the membership from persistent router state and nginx.
 It cannot transition again. A retry is answered from the completed-operation
-audit, not by a `removed -> removed` FSM edge. If the target is
+receipt index, not by a `removed -> removed` FSM edge. If the target is
 `VERSIOND_LEGACY_HOST`, pass an active survivor with `--legacy-host`. With
 non-HA versions, migrate their local data before retrying with
 `--force-router-guard`.
