@@ -227,18 +227,17 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
 		// Cheap mempool filters before signature verification (avoid crypto work on
-		// obviously invalid PoC / validation txs).
-		// Bridge early-reject runs AFTER signature verification: it does group membership
-		// and bridge-state reads, and an unauthenticated tx must not force that work.
-		// CheckTx ante failures discard state (including fee deduction), so fee-first
-		// is not an economic throttle.
+		// obviously invalid PoC / validation txs). CheckTx ante failures discard
+		// state (including fee deduction), so fee-first is not an economic throttle.
 		NewPocPeriodValidationDecorator(options.InferenceKeeper),
 		NewValidationEarlyRejectDecorator(options.InferenceKeeper),
-		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
 		ante.NewSetPubKeyDecorator(options.AccountKeeper),
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		// Bridge early-reject after sig verification: group membership / bridge-state
+		// reads must not run on unauthenticated txs.
+		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}
