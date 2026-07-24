@@ -1932,6 +1932,88 @@ func TestDrainAndStop_TimesOutWithInflightWork(t *testing.T) {
 	}
 }
 
+func TestWaitChildrenIdlePollsUntilInflightReachesZero(t *testing.T) {
+	var idle atomic.Bool
+	var firstStatus sync.Once
+	firstStatusSeen := make(chan struct{})
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		firstStatus.Do(func() {
+			close(firstStatusSeen)
+		})
+		inflight := int64(1)
+		if idle.Load() {
+			inflight = 0
+		}
+		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": inflight})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainPollInterval: 5 * time.Millisecond,
+	})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+	}
+	c.setAdminPort(adminPort)
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- m.WaitChildrenIdle(context.Background())
+	}()
+	select {
+	case <-firstStatusSeen:
+	case <-time.After(time.Second):
+		t.Fatal("child drain status was not polled")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("WaitChildrenIdle returned while work was in flight: %v", err)
+	default:
+	}
+
+	idle.Store(true)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitChildrenIdle did not return after the child became idle")
+	}
+}
+
+func TestWaitChildrenIdleReturnsDeadlineWhileWorkRemainsInflight(t *testing.T) {
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainPollInterval: 5 * time.Millisecond,
+	})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+	}
+	c.setAdminPort(adminPort)
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := m.WaitChildrenIdle(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitChildrenIdle error = %v, want context deadline exceeded", err)
+	}
+}
+
 func TestDownloadAndSwap_NewChildNotReadyKeepsOldServing(t *testing.T) {
 	dir := t.TempDir()
 	binDir := filepath.Join(dir, "bin")

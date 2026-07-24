@@ -190,7 +190,7 @@ func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, f
 	for {
 		select {
 		case sig := <-signals:
-			if sig == syscall.SIGTERM {
+			if !shouldForceShutdown(sig) {
 				slog.Warn("duplicate SIGTERM ignored while host is draining")
 				continue
 			}
@@ -203,10 +203,21 @@ func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, f
 	}
 }
 
+func shouldForceShutdown(sig os.Signal) bool {
+	return sig != syscall.SIGTERM
+}
+
+type hostShutdownManager interface {
+	RequestChildrenDrain(context.Context) error
+	WaitChildrenIdle(context.Context) error
+	Shutdown(context.Context) error
+	ForceStopChildren()
+}
+
 func shutdownHost(
 	cfg config.Config,
 	srv *http.Server,
-	mgr *process.Manager,
+	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
 	force <-chan struct{},
 	pollDone <-chan struct{},
@@ -313,7 +324,7 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 func watchShutdownEscalation(
 	ctx context.Context,
 	srv *http.Server,
-	mgr *process.Manager,
+	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
 ) func() {
 	done := make(chan struct{})

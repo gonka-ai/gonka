@@ -288,6 +288,92 @@ func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
 	)
 }
 
+func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
+	tests := []struct {
+		phase     string
+		required  []string
+		forbidden []string
+	}{
+		{
+			phase: "router_joining",
+			required: []string{
+				"docker start",
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+			forbidden: []string{"--from offline --to joining"},
+		},
+		{
+			phase: "host_started",
+			required: []string{
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+			forbidden: []string{
+				"--from offline --to joining",
+				"docker start",
+			},
+		},
+		{
+			phase:    "host_ready",
+			required: []string{"--from joining --to active --target active"},
+			forbidden: []string{
+				"--from offline --to joining",
+				"docker start",
+				"127.0.0.1:8080/ready",
+			},
+		},
+		{
+			phase: "router_active",
+			forbidden: []string{
+				"--from offline --to joining",
+				"docker start",
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.phase, func(t *testing.T) {
+			operationID := "replace-resume-" + strings.ReplaceAll(tt.phase, "_", "-")
+			remote := &fakeRemote{ready: true, running: true}
+			orchestrator := newTestOrchestrator(t, remote, operationID)
+			if err := orchestrator.writeJournal(Journal{
+				SchemaVersion:         1,
+				OperationID:           operationID,
+				MembershipID:          "membership-versiond-2",
+				Mode:                  "replace",
+				Scope:                 orchestrator.operationScope(),
+				Phase:                 tt.phase,
+				PreviousRestartPolicy: "unless-stopped",
+				UpdatedAt:             time.Now().UTC(),
+			}); err != nil {
+				t.Fatal(err)
+			}
+
+			if err := orchestrator.Replace(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+			calls := remote.callLog()
+			if len(tt.required) > 0 {
+				assertCallOrder(t, calls, tt.required...)
+			}
+			for _, fragment := range tt.forbidden {
+				if strings.Contains(calls, fragment) {
+					t.Fatalf(
+						"replace resumed from %s repeated %q:\n%s",
+						tt.phase,
+						fragment,
+						calls,
+					)
+				}
+			}
+			assertJournal(t, orchestrator.config.JournalPath, "replace", "complete")
+		})
+	}
+}
+
 func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
 	remote := &fakeRemote{ready: true}
 	orchestrator := newTestOrchestrator(t, remote, "replace-policy")

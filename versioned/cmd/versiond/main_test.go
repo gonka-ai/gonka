@@ -5,6 +5,8 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
+	"sync"
 	"syscall"
 	"testing"
 	"time"
@@ -13,6 +15,59 @@ import (
 	"versioned/internal/host"
 	"versioned/internal/process"
 )
+
+type fakeHostShutdownManager struct {
+	mu               sync.Mutex
+	calls            []string
+	waitChildrenIdle func(context.Context) error
+	shutdown         func(context.Context) error
+	forceCalled      chan struct{}
+	forceOnce        sync.Once
+}
+
+func newFakeHostShutdownManager() *fakeHostShutdownManager {
+	return &fakeHostShutdownManager{forceCalled: make(chan struct{})}
+}
+
+func (m *fakeHostShutdownManager) RequestChildrenDrain(context.Context) error {
+	m.record("request_children_drain")
+	return nil
+}
+
+func (m *fakeHostShutdownManager) WaitChildrenIdle(ctx context.Context) error {
+	m.record("wait_children_idle")
+	if m.waitChildrenIdle != nil {
+		return m.waitChildrenIdle(ctx)
+	}
+	return nil
+}
+
+func (m *fakeHostShutdownManager) Shutdown(ctx context.Context) error {
+	m.record("shutdown")
+	if m.shutdown != nil {
+		return m.shutdown(ctx)
+	}
+	return nil
+}
+
+func (m *fakeHostShutdownManager) ForceStopChildren() {
+	m.record("force_stop_children")
+	m.forceOnce.Do(func() {
+		close(m.forceCalled)
+	})
+}
+
+func (m *fakeHostShutdownManager) record(call string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.calls = append(m.calls, call)
+}
+
+func (m *fakeHostShutdownManager) callLog() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return strings.Join(m.calls, "\n")
+}
 
 func TestShutdownHostCompletesLifecycle(t *testing.T) {
 	hostLifecycle := host.NewController()
@@ -147,6 +202,133 @@ func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
 	}
 }
 
+func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	waitStarted := make(chan struct{})
+	childIdle := make(chan struct{})
+	mgr := newFakeHostShutdownManager()
+	mgr.waitChildrenIdle = func(ctx context.Context) error {
+		close(waitStarted)
+		select {
+		case <-childIdle:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+
+	result := make(chan error, 1)
+	go func() {
+		result <- shutdownHost(
+			config.Config{HostShutdownBudget: time.Second},
+			server.Config,
+			mgr,
+			hostLifecycle,
+			force,
+			pollDone,
+		)
+	}()
+
+	select {
+	case <-waitStarted:
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not start waiting for child idle")
+	}
+	if calls := mgr.callLog(); strings.Contains(calls, "\nshutdown") {
+		t.Fatalf("manager shutdown started before child became idle:\n%s", calls)
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateDraining {
+		t.Fatalf("host state = %s while child is busy, want draining", got)
+	}
+
+	close(childIdle)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown did not finish after child became idle")
+	}
+	assertCallOrder(
+		t,
+		mgr.callLog(),
+		"request_children_drain",
+		"wait_children_idle",
+		"shutdown",
+	)
+	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
+		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	mgr := newFakeHostShutdownManager()
+	mgr.waitChildrenIdle = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	mgr.shutdown = func(ctx context.Context) error {
+		select {
+		case <-mgr.forceCalled:
+			return ctx.Err()
+		case <-time.After(time.Second):
+			t.Fatal("shutdown escalation did not force child stop")
+			return nil
+		}
+	}
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+
+	if err := shutdownHost(
+		config.Config{HostShutdownBudget: 30 * time.Millisecond},
+		server.Config,
+		mgr,
+		hostLifecycle,
+		force,
+		pollDone,
+	); err != nil {
+		t.Fatal(err)
+	}
+	calls := mgr.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"request_children_drain",
+		"wait_children_idle",
+		"shutdown",
+	)
+	if !strings.Contains(calls, "force_stop_children") {
+		t.Fatalf("child idle timeout did not force child stop:\n%s", calls)
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
+		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
 func TestVersiondReadyRequiresServingAndFullReconciliation(t *testing.T) {
 	status := host.Snapshot{State: host.StateServing, Accepting: true}
 	conditions := process.Conditions{Available: true, Reconciled: true}
@@ -184,23 +366,46 @@ func TestCancelOnSignalCancelsContext(t *testing.T) {
 	}
 }
 
-func TestWatchForceSignalsIgnoresDuplicateSIGTERM(t *testing.T) {
+func TestShouldForceShutdown(t *testing.T) {
+	tests := []struct {
+		name string
+		sig  os.Signal
+		want bool
+	}{
+		{name: "duplicate SIGTERM", sig: syscall.SIGTERM, want: false},
+		{name: "SIGINT escalation", sig: syscall.SIGINT, want: true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := shouldForceShutdown(tt.sig); got != tt.want {
+				t.Fatalf("shouldForceShutdown(%s) = %t, want %t", tt.sig, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestWatchForceSignalsForcesOnSIGINT(t *testing.T) {
 	signals := make(chan os.Signal)
 	shutdownDone := make(chan struct{})
 	force := make(chan struct{})
 	go watchForceSignals(signals, shutdownDone, force)
 
-	signals <- syscall.SIGTERM
-	select {
-	case <-force:
-		t.Fatal("duplicate SIGTERM forced host shutdown")
-	default:
-	}
-
 	signals <- syscall.SIGINT
 	select {
 	case <-force:
 	case <-time.After(time.Second):
-		t.Fatal("second SIGINT did not force host shutdown")
+		t.Fatal("SIGINT did not force host shutdown")
+	}
+}
+
+func assertCallOrder(t *testing.T, calls string, fragments ...string) {
+	t.Helper()
+	position := -1
+	for _, fragment := range fragments {
+		next := strings.Index(calls[position+1:], fragment)
+		if next < 0 {
+			t.Fatalf("call %q missing or out of order:\n%s", fragment, calls)
+		}
+		position += next + 1
 	}
 }
