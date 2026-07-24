@@ -459,7 +459,7 @@ until a host is activated.
 | Piece | Meaning |
 |---|---|
 | `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, desired/applied generations, forward-only reconciliation, receipt index, WAL, `nginx -t`, atomic publish, reload, and audit outbox |
-| `gonka-hostctl` | Resumable SSH orchestration for add, evacuation, decommission, and replacement; no network listener |
+| `gonka-hostctl` | Table-driven, journaled SSH workflows for add, evacuation, decommission, replacement, and cancellation; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
 | `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
@@ -541,13 +541,15 @@ does not retry an already-sent inference `POST`: automatic replay could execute
 the request twice. Operators must use `gonka-hostctl` for planned maintenance.
 
 Before `SIGTERM`, the `draining -> stopping` edge revalidates the membership,
-transfer owner, and final target. One router edge maps to one durable hostctl
-checkpoint, so replay can safely repeat an edge whose remote mutation completed
-before the local journal advanced. If evacuation must be abandoned before the
-durable `term_requested` phase, run `gonka-hostctl cancel` with the same
-operation ID and scope. A second command never waits behind the active operation
-lock: it reports the owner action, PID, and journal phase. Interrupt a
-still-running pre-signal `evacuate` process before invoking `cancel`.
+transfer owner, and final target. Each hostctl operation uses a table of
+`current -> next + handler` transitions and checkpoints `next` only after the
+handler succeeds. Replay can therefore safely repeat the one edge whose remote
+mutation completed before the local journal advanced. If evacuation must be
+abandoned before the durable `term_requested` phase, run `gonka-hostctl cancel`
+with the same operation ID and scope. A second command never waits behind the
+active operation lock: it reports the owner action, PID, and journal phase.
+Interrupt a still-running pre-signal `evacuate` process before invoking
+`cancel`.
 Cancellation is a durable compensation FSM: it records the intent, restores any
 disabled Docker restart policy, checkpoints that action, and then reactivates
 the upstream. A failed

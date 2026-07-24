@@ -300,9 +300,20 @@ interrupted, rerun the same command with the same operation ID and journal. It
 resumes after the last durable phase. The journal records the router, upstream,
 SSH destination, runtime, and service scope; a retry with different targets is
 rejected.
-Hostctl journals use schema 2. A validated schema-1 journal is atomically
-migrated on first resume; a legacy terminal cancellation without explicit
-cancellation checkpoints is normalized to `cancellation_phase=complete`.
+Hostctl journals use schema 3. Validated schema-1 and schema-2 journals are
+atomically migrated on first resume; a legacy terminal cancellation without
+explicit cancellation checkpoints is normalized to
+`cancellation_phase=complete`.
+
+Hostctl orchestration is a table-driven durable workflow. Each persisted phase
+selects exactly one outgoing edge and named handler. The handler must succeed
+before hostctl atomically checkpoints the target phase, so a retry resumes at
+the failed edge without repeating earlier lifecycle work. Evacuation,
+decommission, add, replace, and cancellation have separate transition tables.
+Runtime validation and restart-policy capture have their own checkpoints;
+mutable safety settings are still revalidated or reasserted immediately before
+starting or signaling versiond. The legacy `host_idle` phase remains a
+resume-only alias for schema-1 and schema-2 journals.
 
 Completed journals are retained intentionally and are never deleted
 automatically. They remain the local replay record, and a completed evacuation

@@ -212,6 +212,13 @@ evacuation or decommission operation must resume.
 
 ## Evacuation transaction
 
+The operator workflow is table-driven and journaled. A persisted phase selects
+one `current -> next` edge and its handler; hostctl writes `next` only after the
+handler succeeds. A restart therefore retries one idempotent edge rather than
+reconstructing progress from a chain of procedural conditions. Separate tables
+drive evacuation, decommission, add, replace, and the cancellation compensation
+flow. Runtime validation and restart-policy capture are explicit checkpoints.
+
 ```text
 routerctl host transfer --from active --to draining --target offline HOST
   -> render config revision 1 with HOST down

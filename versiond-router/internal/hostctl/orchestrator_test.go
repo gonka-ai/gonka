@@ -295,6 +295,36 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 		forbidden []string
 	}{
 		{
+			phase: phaseMembershipLoaded,
+			required: []string{
+				"--from offline --to joining",
+				"docker start",
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+			forbidden: []string{"gonka-routerctl status"},
+		},
+		{
+			phase: phaseRuntimeValidated,
+			required: []string{
+				"--from offline --to joining",
+				"docker start",
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+			forbidden: []string{"gonka-routerctl status"},
+		},
+		{
+			phase: phaseRestartPolicyResolved,
+			required: []string{
+				"--from offline --to joining",
+				"docker start",
+				"127.0.0.1:8080/ready",
+				"--from joining --to active --target active",
+			},
+			forbidden: []string{"gonka-routerctl status"},
+		},
+		{
 			phase: "router_joining",
 			required: []string{
 				"docker start",
@@ -829,6 +859,37 @@ func TestEvacuateReplaysRouterStoppingWithoutRepeatingDrain(t *testing.T) {
 	}
 }
 
+func TestEvacuateResumesLegacyHostIdleCheckpoint(t *testing.T) {
+	remote := &fakeRemote{running: true, stopOnTerm: true}
+	orchestrator := newTestOrchestrator(t, remote, "resume-host-idle")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: previousHostctlJournalSchemaVersion,
+		OperationID:   "resume-host-idle",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         phaseLegacyHostIdle,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	calls := remote.callLog()
+	if strings.Contains(calls, "--from active --to draining") {
+		t.Fatalf("legacy resume repeated the completed drain edge:\n%s", calls)
+	}
+	assertCallOrder(
+		t,
+		calls,
+		"HostConfig.RestartPolicy",
+		"docker update --restart=no",
+		"--from draining --to stopping",
+		"docker kill --signal TERM",
+	)
+}
+
 func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "scope")
@@ -846,6 +907,35 @@ func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	orchestrator.config.VersiondService = "another-versiond"
 	if err := orchestrator.Evacuate(context.Background()); err == nil {
 		t.Fatal("resume with a changed operation scope was accepted")
+	}
+}
+
+func TestLoadExistingJournalMigratesSchemaTwoWorkflow(t *testing.T) {
+	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "schema-two")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: previousHostctlJournalSchemaVersion,
+		OperationID:   "schema-two",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         phaseRouterDraining,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	journal, err := orchestrator.loadExistingJournal("evacuate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.SchemaVersion != hostctlJournalSchemaVersion {
+		t.Fatalf(
+			"migrated journal schema = %d, want %d",
+			journal.SchemaVersion,
+			hostctlJournalSchemaVersion,
+		)
+	}
+	if journal.Phase != phaseRouterDraining {
+		t.Fatalf("migrated journal phase = %q, want router_draining", journal.Phase)
 	}
 }
 
