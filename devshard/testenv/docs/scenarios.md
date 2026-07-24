@@ -37,6 +37,7 @@ make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
 make citest-versiond-host-evacuation
+make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 ```
 
 Or run a single scenario:
@@ -53,7 +54,12 @@ TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestParamsLongPoll -v -t
 
 Wrapper script: [`scripts/run-stack-citest.sh`](../scripts/run-stack-citest.sh).
 
-CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (OWNER/MEMBER) → `make -C devshard ci-testenv-integration`.
+CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv`
+(OWNER/MEMBER). The `devshard testenv` workflow discovers the runnable suites via
+`make -C devshard/testenv list-citest-targets` and fans them out into a GitHub
+Actions matrix — **one runner per suite, in parallel**. New `citest-*` suites are
+picked up automatically (no workflow edit). For a local sequential subset, use
+`make -C devshard ci-testenv-integration`.
 
 ## Scenario index
 
@@ -71,6 +77,7 @@ CI: `workflow_dispatch` with `integration: true`, or PR comment `/run-testenv` (
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
 | **Versiond host evacuation** | Router drain, resumable stop, SSE completion, replacement activation | `TestVersiondHostEvacuation` |
+| **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
@@ -454,3 +461,102 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 **How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
+
+---
+
+## Escrow long-poll warm (first inference without live escrow fetch)
+
+**What we test:** the escrow long-poll warm path from
+[`../../docs/v4-deploy-test-plan.md`](../../docs/v4-deploy-test-plan.md) §6.1–§6.3.
+DAPI publishes an escrow-created event over NodeManager `GetHostEvents`; v4
+`devshardd` consumes it and prefetches escrow metadata into `escrow_cache`
+**before any chat**. A first inference for that escrow then binds from the warm
+cache even when the live chain escrow query is unavailable — i.e. without a
+request-time round-trip through the escrow fetch path.
+
+**Production wiring exercised (PR #1443 consumer side):**
+
+- `devshardd` starts `devshard/hostevents.Run` (gated by
+  `DEVSHARD_HOST_EVENTS_ENABLED`, default on) against `NODE_MANAGER_ADDR`.
+- The warm sink (`cmd/devshardd/hostevents_sink.go`) fetches escrow metadata
+  from chain and writes `storage.PutEscrowCache`.
+- Lazy bind reads through `CachingEscrowBridge`
+  (`cmd/devshardd/bridge/caching.go`): chain-first, with `escrow_cache` fallback
+  when the live query fails.
+
+**Mock support:**
+
+- mock-dapi implements `GetHostEvents` over an in-memory ring
+  (`mockdapi/hostevents.go`); `POST /testenv/host-events/escrow-created`
+  appends an event.
+- mock-chain can fault the `DevshardEscrow` query
+  (`POST /testenv/escrow-query-fault`) to simulate the request-time escrow
+  fetch path being down.
+
+**How:** `TestEscrowLongPollWarmWithoutInferenceNode`
+
+1. Boot the standard stack; wait gateway + router health. Read the gateway
+   escrow id.
+2. Assert `devshard_escrow_cache` has **no** row for the escrow (no chat yet).
+3. `POST /testenv/host-events/escrow-created` for the escrow; poll shared
+   Postgres until the warm row appears (before any chat).
+4. `POST /testenv/escrow-query-fault {faulted:true}` — live escrow fetch now
+   fails.
+5. Gateway chat for the escrow → **200** with mock-openai content; the first
+   bind is served from the warm cache.
+
+**Pass criteria:** warm row appears from the long-poll (not a chat); first
+inference succeeds with the live escrow query faulted.
+
+**Run:** `make citest-escrow-longpoll` (rebuilds `devshardd`; or `-run TestEscrowLongPollWarm`).
+
+---
+
+## Chaining vs. parallelism
+
+Every full-stack citest boots a Docker Compose stack that pins a **fixed subnet
+`172.31.0.0/24`** (`citest/harness/config.go` → `cmd/gencompose/compose.go`).
+Host ports are Docker-assigned (no clash), but two stacks with the same subnet
+**cannot be `up` at once on one host** — the second network create fails. This
+is why each Makefile group runs in a single `go test` process with a `-run`
+pattern and **no `t.Parallel()`**.
+
+**Must be chained (sequential — order/state dependent):**
+
+- Steps *within* a scenario are ordered and stateful:
+  - `TestSQLiteToPostgresHAMigration` — phases 0→1→2→3→4 (migration is
+    irreversible mid-test).
+  - `TestVersiondRollingUpdate*` — create → swap → drain, with per-host subtests
+    run one at a time.
+  - `TestValidationLeaseRace*` — seed → warm → load/monitor → verify.
+  - **`TestEscrowLongPollWarmWithoutInferenceNode`** — baseline → host-event
+    warm → assert cache row *before* chat → fault escrow query → first chat. The
+    first inference must be the first bind (so it exercises the cache path), so
+    nothing may chat that escrow earlier.
+- **On a single host, all full-stack scenarios are effectively serial** because
+  of the shared subnet. This is the current model.
+
+**Can run in parallel (only across isolated hosts / CI runners, or if
+`network.subnet` + `base_ip` are parameterized per stack):**
+
+- Distinct top-level scenarios that each `BootStack` are logically independent
+  (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
+  `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
+  `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
+  `A1–A4`, `O1`, and **escrow long-poll warm**.
+- They are grouped into separate Makefile targets (`citest-stack`,
+  `citest-validation-lease-race`, `citest-versiond-rolling-update`,
+  `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
+  `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  supported form of parallelism today. CI enumerates these targets automatically
+  with `make list-citest-targets` (excludes the `citest-images` /
+  `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,
+  so adding a new `citest-*` suite runs it in parallel with no workflow change.
+- **Escrow long-poll warm caveat:** although it can run on its own runner in
+  parallel with other *groups*, it must **not** share a stack (or run in the same
+  `-run` batch) with another scenario that chats its escrow, or the "first
+  inference binds from cache" assertion is invalidated. Keep it in its own
+  `citest-escrow-longpoll` target.
+
+To parallelize on a single host, parameterize `network.subnet` / `base_ip` per
+stack (e.g. derive from a worker index); it is hard-coded today.

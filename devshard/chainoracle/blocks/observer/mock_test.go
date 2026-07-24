@@ -187,6 +187,83 @@ func TestMockObserver_Subscribe_FanOut(t *testing.T) {
 	}
 }
 
+// TestMockObserver_Subscribe_DropSlowCatchUp ensures a non-consuming
+// subscriber is dropped during catch-up (buffer full) without panicking
+// when more headers exist than the channel buffer.
+func TestMockObserver_Subscribe_DropSlowCatchUp(t *testing.T) {
+	m, _ := newMockForTest(t, 1)
+	for i := 0; i < 16+5; i++ {
+		_, err := m.AdvanceOne()
+		require.NoError(t, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := m.Subscribe(ctx, 1)
+	require.NoError(t, err)
+
+	// Give catch-up time to fill the buffer and drop before we drain.
+	time.Sleep(50 * time.Millisecond)
+
+	n := 0
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				require.LessOrEqual(t, n, 16, "should drop once the 16-slot buffer fills")
+				return
+			}
+			n++
+		case <-deadline:
+			t.Fatal("expected slow catch-up subscriber to be dropped and channel closed")
+		}
+	}
+}
+
+// TestMockObserver_Subscribe_CatchUpThenLiveMonotonic advances the chain
+// while a subscriber is catching up and asserts strictly increasing heights
+// (no live/fanout interleaving with replay).
+func TestMockObserver_Subscribe_CatchUpThenLiveMonotonic(t *testing.T) {
+	m, _ := newMockForTest(t, 3)
+	for i := 0; i < 5; i++ {
+		_, err := m.AdvanceOne()
+		require.NoError(t, err)
+	}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	ch, err := m.Subscribe(ctx, 1)
+	require.NoError(t, err)
+
+	advDone := make(chan struct{})
+	go func() {
+		defer close(advDone)
+		for i := 0; i < 10; i++ {
+			_, err := m.AdvanceOne()
+			require.NoError(t, err)
+		}
+	}()
+
+	var last int64
+	got := 0
+	timeout := time.After(5 * time.Second)
+	for got < 15 { // 5 catch-up + 10 live
+		select {
+		case h, ok := <-ch:
+			require.True(t, ok, "channel closed early at got=%d last=%d", got, last)
+			require.Greater(t, h.Height, last)
+			last = h.Height
+			got++
+		case <-timeout:
+			t.Fatalf("timeout got=%d last=%d", got, last)
+		}
+	}
+	<-advDone
+}
+
 func TestMockObserver_At_ReturnsHistory(t *testing.T) {
 	m, _ := newMockForTest(t, 11)
 	for i := 0; i < 3; i++ {

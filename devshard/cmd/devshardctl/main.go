@@ -18,18 +18,26 @@ import (
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
+	"devshard/user"
 )
 
 type adminAuthContextKey struct{}
 type adminAPIKeySuffixContextKey struct{}
 
 const (
-	defaultChainGRPCURL          = "localhost:9090"
-	defaultPublicAPIURL          = "http://localhost:9000"
-	defaultModelName             = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort            = "8080"
-	defaultMaxConcurrentRequests = 512
+	defaultChainGRPCURL            = "localhost:9090"
+	defaultPublicAPIURL            = "http://localhost:9000"
+	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort              = "8080"
+	defaultMaxConcurrentRequests   = 512
+	startupSkipReasonLocalRecovery = "local_recovery_failed"
 )
+
+type startupSkippedEscrow struct {
+	EscrowID string
+	Model    string
+	Reason   string
+}
 
 type SettlementJSON struct {
 	EscrowID string `json:"escrow_id"`
@@ -388,7 +396,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		chainClient,
 	)
 
-	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf, chainClient)
+	runtimes, startupSkipped, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf, chainClient)
 	if err != nil {
 		runtimeParamsClose()
 		perfStore.Close()
@@ -404,19 +412,39 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf)
+	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.runtimeParams = runtimeParams
 	gateway.runtimeParamsClose = runtimeParamsClose
 	return gateway
 }
 
-func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, error) {
+func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
+	for _, escrow := range skipped {
+		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
+	}
+}
+
+func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker, chainClient *chain.Client) ([]*devshardRuntime, []startupSkippedEscrow, error) {
+	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
+	// finalized, or settled) stay in the registry but are not built into
+	// memory-resident runtimes: keeping hundreds of dormant escrows resident
+	// wastes RAM, and probing each one against the chain at startup causes a
+	// boot-time request storm. Inactive devshards are rehydrated on demand:
+	// read-only from local storage for debug/state endpoints, or fully (with
+	// chain access) for manual settlement. See hydrateReadOnlyRuntime and the
+	// lazy settle path.
 	type cfgEntry struct {
 		cfg    RuntimeConfig
 		active bool
 	}
 	allEntries := make([]cfgEntry, 0, len(gatewayState.Devshards))
+	skippedInactive := 0
 	for _, devshard := range gatewayState.Devshards {
+		if !devshard.Active {
+			skippedInactive++
+			continue
+		}
 		allEntries = append(allEntries, cfgEntry{cfg: devshard.RuntimeConfig, active: devshard.Active})
 	}
 	allCfgs := make([]RuntimeConfig, len(allEntries))
@@ -425,7 +453,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	allCfgs, err := finalizeRuntimeConfigs(allCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
 	if err != nil {
-		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
+		return nil, nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
 
 	type buildResult struct {
@@ -436,7 +464,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	t0 := time.Now()
 	ch := make(chan buildResult, len(allCfgs))
 	if chainClient == nil {
-		return nil, fmt.Errorf("chain gRPC client is required")
+		return nil, nil, fmt.Errorf("chain gRPC client is required")
 	}
 	deps := runtimeBuildDeps{
 		bridge:       bridge.NewGRPCBridge(chainClient),
@@ -445,7 +473,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 		perf:         perf,
 	}
 	if err := deps.validate(); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// Cap concurrent builders (see resolveMaxConcurrentRuntimeBuilds); results are
 	// still collected per-index below, so ordering and error handling are unchanged.
@@ -461,6 +489,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 
 	runtimes := make([]*devshardRuntime, len(allCfgs))
 	var skipped []int
+	var startupSkipped []startupSkippedEscrow
 	var firstFatal error
 	for range allCfgs {
 		res := <-ch
@@ -471,9 +500,12 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				skipped = append(skipped, res.idx)
 				continue
 			}
-			if errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
+			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
-				if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				if brokenLocalState {
+					reason = "local state unrecoverable"
+				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
 					reason = "escrow missing on chain"
 				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
 					reason = "private key missing"
@@ -488,6 +520,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				}
 				markDevshardInactive(gatewayState, cfg.ID)
 				skipped = append(skipped, res.idx)
+				if brokenLocalState {
+					startupSkipped = append(startupSkipped, startupSkippedEscrow{
+						EscrowID: cfg.ID,
+						Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+						Reason:   startupSkipReasonLocalRecovery,
+					})
+				}
 				continue
 			}
 			if firstFatal == nil {
@@ -496,6 +535,10 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			continue
 		}
 		runtimes[res.idx] = res.rt
+		if res.rt != nil && strings.TrimSpace(res.rt.model) != strings.TrimSpace(cfg.Model) {
+			persistRuntimeModel(gatewayStore, gatewayState, cfg.ID, res.rt.model)
+			allCfgs[res.idx].Model = res.rt.model
+		}
 	}
 	if firstFatal != nil {
 		for _, rt := range runtimes {
@@ -503,7 +546,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				rt.close()
 			}
 		}
-		return nil, firstFatal
+		return nil, nil, firstFatal
 	}
 
 	// Mark inactive runtimes so they're excluded from inference routing
@@ -531,9 +574,17 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			out = append(out, rt)
 		}
 	}
-	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d total_elapsed_ms=%d",
-		len(out), activeCount, inactiveCount, len(skipped), time.Since(t0).Milliseconds())
-	return out, nil
+	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
+		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
+	if len(startupSkipped) > 0 {
+		escrowIDs := make([]string, 0, len(startupSkipped))
+		for _, skippedEscrow := range startupSkipped {
+			escrowIDs = append(escrowIDs, skippedEscrow.EscrowID)
+		}
+		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
+			len(startupSkipped), startupSkipReasonLocalRecovery, strings.Join(escrowIDs, ","))
+	}
+	return out, startupSkipped, nil
 }
 
 func markDevshardInactive(gatewayState *GatewayState, id string) {
@@ -623,6 +674,7 @@ func isAuthExemptPath(path string) bool {
 func isAdminPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/admin/") ||
 		strings.HasPrefix(path, "/v1/debug/") ||
+		strings.HasPrefix(path, "/debug/pprof/") ||
 		path == "/v1/finalize" ||
 		path == "/v1/state" {
 		return true

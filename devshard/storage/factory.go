@@ -13,6 +13,7 @@ import (
 
 const (
 	defaultPGConnectTimeout    = 2 * time.Second
+	defaultPGIndexTimeout      = 30 * time.Second
 	defaultPGReconnectInterval = 5 * time.Second
 )
 
@@ -73,7 +74,7 @@ func newHAStorage(ctx context.Context, storeDir string) (Storage, error) {
 		return nil, ErrHAPostgresRequired
 	}
 
-	pg, err := openPostgresWithTimeout(ctx)
+	pg, err := openPostgresReady(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%w: %w", ErrStoragePostgresUnavailable, err)
 	}
@@ -155,7 +156,7 @@ func newStorageFlexible(ctx context.Context, storeDir string) (Storage, error) {
 		return nil, fmt.Errorf("open sqlite drain: %w", err)
 	}
 
-	pg, err := openPostgresWithTimeout(ctx)
+	pg, err := openPostgresReady(ctx)
 	if err != nil {
 		slog.Warn(
 			"devshard storage: postgres unavailable; entering degraded mode while reconnect runs",
@@ -215,12 +216,51 @@ func openPostgresWithTimeout(ctx context.Context) (Storage, error) {
 	return NewPostgres(connectCtx)
 }
 
+// openPostgresReady connects under PG_CONNECT_TIMEOUT then WaitReady under
+// PG_INDEX_TIMEOUT. Used at boot so migrate / routing never see an empty index.
+func openPostgresReady(ctx context.Context) (Storage, error) {
+	pg, err := openPostgresWithTimeout(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if err := waitPostgresIndexReady(ctx, pg); err != nil {
+		_ = pg.Close()
+		return nil, err
+	}
+	return pg, nil
+}
+
+type postgresIndexWaiter interface {
+	WaitReady(context.Context) error
+}
+
+func waitPostgresIndexReady(ctx context.Context, store Storage) error {
+	w, ok := store.(postgresIndexWaiter)
+	if !ok {
+		return nil
+	}
+	readyCtx, cancel := context.WithTimeout(ctx, pgIndexTimeout())
+	defer cancel()
+	if err := w.WaitReady(readyCtx); err != nil {
+		return err
+	}
+	return nil
+}
+
 func pgConnectTimeout() time.Duration {
 	connectTimeout, err := time.ParseDuration(os.Getenv("PG_CONNECT_TIMEOUT"))
 	if err != nil || connectTimeout <= 0 {
 		return defaultPGConnectTimeout
 	}
 	return connectTimeout
+}
+
+func pgIndexTimeout() time.Duration {
+	indexTimeout, err := time.ParseDuration(os.Getenv("PG_INDEX_TIMEOUT"))
+	if err != nil || indexTimeout <= 0 {
+		return defaultPGIndexTimeout
+	}
+	return indexTimeout
 }
 
 func pgReconnectInterval() time.Duration {

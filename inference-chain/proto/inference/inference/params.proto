@@ -191,6 +191,7 @@ message PocParams {
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
   bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
   repeated PoCModelConfig models = 14;
+  uint32 validation_vote_threshold_bps = 15;  // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
 }
 
 message Decimal {

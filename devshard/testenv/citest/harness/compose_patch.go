@@ -20,10 +20,14 @@ func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
 
-// PatchRouterVersiondHosts sets VERSIOND_HOSTS on versiond-router (quoted).
+// PatchRouterVersiondHosts replaces the router pool and keeps its legacy owner
+// inside that pool.
 func PatchRouterVersiondHosts(t *testing.T, composePath, hosts string) {
 	t.Helper()
+	hostNames := strings.Fields(hosts)
+	require.NotEmpty(t, hostNames, "VERSIOND_HOSTS must not be empty")
 	PatchComposeEnvKey(t, composePath, "VERSIOND_HOSTS", `"`+hosts+`"`)
+	PatchComposeEnvKey(t, composePath, "VERSIOND_LEGACY_HOST", `"`+hostNames[0]+`"`)
 }
 
 // PatchVersiondStorageMode sets DEVSHARD_STORAGE_MODE on all versiond services.

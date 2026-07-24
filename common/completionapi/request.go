@@ -177,6 +177,17 @@ func getMaxTokens(requestMap map[string]interface{}) int {
 	return calculations.DefaultMaxTokens // Default value if not specified
 }
 
+// EffectiveMaxTokens returns the output-token limit the ML execution path will
+// apply for this request body: explicit max_tokens / max_completion_tokens when
+// present, otherwise calculations.DefaultMaxTokens.
+func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
+	var requestMap map[string]interface{}
+	if err := json.Unmarshal(requestBytes, &requestMap); err != nil {
+		return 0, err
+	}
+	return uint64(getMaxTokens(requestMap)), nil
+}
+
 func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
 	logprobsValue, ok := requestMap["logprobs"]
 	if !ok {

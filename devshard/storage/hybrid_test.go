@@ -93,6 +93,18 @@ func (r *recordingStorage) GetValidationObservability(escrowID string) ([]SlotVa
 	r.lastMethod = "GetValidationObservability"
 	return nil, nil
 }
+func (r *recordingStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	r.lastMethod = "PutEscrowCache"
+	return nil
+}
+func (r *recordingStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	r.lastMethod = "GetEscrowCache"
+	return nil, ErrEscrowCacheNotFound
+}
+func (r *recordingStorage) DeleteEscrowCache(escrowID string) error {
+	r.lastMethod = "DeleteEscrowCache"
+	return nil
+}
 func (r *recordingStorage) PruneEpoch(epochID uint64) error {
 	r.lastMethod = "PruneEpoch"
 	return nil
@@ -168,6 +180,50 @@ func (o *owningRecordingStorage) CreateSession(params CreateSessionParams) error
 	}
 	o.owned[params.EscrowID] = struct{}{}
 	return nil
+}
+
+type failingPutEscrowCacheStorage struct {
+	Memory
+	err error
+}
+
+func (f *failingPutEscrowCacheStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	if f.err != nil {
+		return f.err
+	}
+	return f.Memory.PutEscrowCache(info)
+}
+
+func TestHybridStorage_PutEscrowCache_WritesBothBackends(t *testing.T) {
+	sqlite := NewMemory()
+	pg := NewMemory()
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	info := EscrowCacheInfo{EscrowID: "e1", EpochID: 3, Amount: 9}
+	require.NoError(t, h.PutEscrowCache(info))
+
+	gotSQLite, err := sqlite.GetEscrowCache("e1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), gotSQLite.Amount)
+
+	gotPG, err := pg.GetEscrowCache("e1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(9), gotPG.Amount)
+}
+
+func TestHybridStorage_PutEscrowCache_SoftFailsPartialWrite(t *testing.T) {
+	sqlite := &failingPutEscrowCacheStorage{err: errors.New("sqlite down")}
+	pg := NewMemory()
+	h := newHybridRouter(sqlite, pg, true, "")
+
+	require.NoError(t, h.PutEscrowCache(EscrowCacheInfo{EscrowID: "e2", EpochID: 1, Amount: 5}))
+
+	_, err := sqlite.GetEscrowCache("e2")
+	require.ErrorIs(t, err, ErrEscrowCacheNotFound)
+
+	got, err := h.GetEscrowCache("e2")
+	require.NoError(t, err)
+	require.Equal(t, uint64(5), got.Amount)
 }
 
 func TestHybridStorage_forwardsStorageMethods(t *testing.T) {
@@ -262,6 +318,46 @@ func TestHybridStorage_ReconnectPromotesDegradedRouter(t *testing.T) {
 
 	require.NoError(t, h.CreateSession(CreateSessionParams{EscrowID: "new-pg"}))
 	require.Equal(t, "CreateSession", pg.lastMethod, "new sessions must use PG after promotion")
+}
+
+type readyGateStorage struct {
+	recordingStorage
+	readyCh chan struct{}
+	err     error
+}
+
+func (r *readyGateStorage) WaitReady(ctx context.Context) error {
+	select {
+	case <-r.readyCh:
+		return r.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestHybridStorage_ReconnectWaitsForIndexReadyBeforePromote(t *testing.T) {
+	sqlite := &owningRecordingStorage{owned: map[string]struct{}{"sqlite-owned": {}}}
+	h := newDegradedSQLiteRouter(sqlite, t.TempDir(), ErrStoragePostgresUnavailable)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pg := &readyGateStorage{readyCh: make(chan struct{})}
+	h.startPostgresReconnect(ctx, func(context.Context) (Storage, error) {
+		return pg, nil
+	}, 5*time.Millisecond)
+
+	time.Sleep(40 * time.Millisecond)
+	h.mu.RLock()
+	promotedEarly := h.pg == pg
+	h.mu.RUnlock()
+	require.False(t, promotedEarly, "must not promote before WaitReady")
+
+	close(pg.readyCh)
+	require.Eventually(t, func() bool {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		return h.pg == pg && !h.degradedOwnerOnly
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestHybridStorage_PromoteClosesIncomingBackendWhenAlreadyPromoted(t *testing.T) {

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -80,6 +81,12 @@ type escrowIDLister interface {
 // Postgres in-process.
 type PostgresPromotionWatcher interface {
 	OnPostgresPromoted(func())
+}
+
+// readinessReporter is implemented by backends whose serving readiness may lag
+// their construction (Postgres rebuilds its session index asynchronously).
+type readinessReporter interface {
+	Ready() bool
 }
 
 // newHybridRouter wires the per-session router. Either backend may be nil, but
@@ -167,6 +174,20 @@ func (h *HybridStorage) postgresBackend() Storage {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.pg
+}
+
+// Ready reports whether the router can serve. A degraded / SQLite-only router
+// (no Postgres attached) is always ready for the escrows it owns. When Postgres
+// is attached, readiness tracks its async session-index rebuild.
+func (h *HybridStorage) Ready() bool {
+	pg := h.postgresBackend()
+	if pg == nil {
+		return true
+	}
+	if r, ok := pg.(readinessReporter); ok {
+		return r.Ready()
+	}
+	return true
 }
 
 func (h *HybridStorage) newSessionError() error {
@@ -328,6 +349,12 @@ func (h *HybridStorage) startPostgresReconnect(ctx context.Context, opener stora
 			pg, err := opener(ctx)
 			if err != nil {
 				slog.Warn("devshard storage: postgres reconnect failed; staying in degraded sqlite-owned-only mode",
+					"dir", h.storeDir, "error", err)
+				continue
+			}
+			if err := waitPostgresIndexReady(ctx, pg); err != nil {
+				_ = pg.Close()
+				slog.Warn("devshard storage: postgres reconnect index rebuild failed; staying in degraded sqlite-owned-only mode",
 					"dir", h.storeDir, "error", err)
 				continue
 			}
@@ -642,6 +669,71 @@ func (h *HybridStorage) GetValidationObservability(escrowID string) ([]SlotValid
 		return nil, err
 	}
 	return b.GetValidationObservability(escrowID)
+}
+
+func (h *HybridStorage) PutEscrowCache(info EscrowCacheInfo) error {
+	// Best-effort fan-out to every available backend. Escrow cache is advisory
+	// pre-init data: a write failure must not fail warm, and both SQLite and
+	// Postgres may hold a copy when both are configured.
+	wrote := false
+	for _, b := range h.backends() {
+		if err := b.PutEscrowCache(info); err != nil {
+			slog.Warn("devshard storage: escrow cache put failed",
+				"escrow_id", info.EscrowID,
+				"epoch_id", info.EpochID,
+				"backend", escrowCacheBackendName(b),
+				"error", err)
+			continue
+		}
+		wrote = true
+	}
+	if !wrote && len(h.backends()) == 0 {
+		slog.Warn("devshard storage: escrow cache put skipped; no backends",
+			"escrow_id", info.EscrowID)
+	}
+	return nil
+}
+
+func (h *HybridStorage) GetEscrowCache(escrowID string) (*EscrowCacheInfo, error) {
+	for _, b := range h.backends() {
+		info, err := b.GetEscrowCache(escrowID)
+		if err == nil {
+			return info, nil
+		}
+		if errors.Is(err, ErrEscrowCacheNotFound) {
+			continue
+		}
+		slog.Warn("devshard storage: escrow cache get failed",
+			"escrow_id", escrowID,
+			"backend", escrowCacheBackendName(b),
+			"error", err)
+	}
+	return nil, ErrEscrowCacheNotFound
+}
+
+func (h *HybridStorage) DeleteEscrowCache(escrowID string) error {
+	for _, b := range h.backends() {
+		if err := b.DeleteEscrowCache(escrowID); err != nil {
+			slog.Warn("devshard storage: escrow cache delete failed",
+				"escrow_id", escrowID,
+				"backend", escrowCacheBackendName(b),
+				"error", err)
+		}
+	}
+	return nil
+}
+
+func escrowCacheBackendName(b Storage) string {
+	switch b.(type) {
+	case *SQLite:
+		return "sqlite"
+	case *Postgres:
+		return "postgres"
+	case *Memory:
+		return "memory"
+	default:
+		return fmt.Sprintf("%T", b)
+	}
 }
 
 // PruneEpoch drops the epoch partition in every backend.

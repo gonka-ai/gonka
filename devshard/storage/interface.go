@@ -36,6 +36,15 @@ var ErrSnapshotNotFound = errors.New("snapshot not found")
 // in an epoch that has already passed the local retention horizon.
 var ErrEpochPruned = errors.New("epoch already pruned")
 
+// ErrEscrowCacheNotFound is returned when no pre-init escrow cache row exists.
+var ErrEscrowCacheNotFound = errors.New("escrow cache not found")
+
+// ErrStorageIndexRebuilding is returned by escrow-keyed Postgres operations
+// while the session index rebuild has not finished within the per-operation
+// budget. It signals a transient, retryable state (not a hard storage failure),
+// so callers should surface it as "initializing" / 503 rather than a 500.
+var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is rebuilding")
+
 // Storage persists devshard session state and diffs.
 //
 // The store is partitioned by EpochID. PruneEpoch drops everything that
@@ -75,8 +84,34 @@ type Storage interface {
 	DrainInferenceValidationObs(escrowID string, inferenceID uint64) error
 	// GetValidationObservability returns live + sealed validation counters aggregated by slot.
 	GetValidationObservability(escrowID string) ([]SlotValidationObs, error)
+	// PutEscrowCache stores chain-fetched escrow metadata for later lazy bind.
+	// It must not create a session, stamp a runtime version, or register HasEscrow.
+	PutEscrowCache(info EscrowCacheInfo) error
+	// GetEscrowCache returns cached escrow metadata for lazy CreateSession.
+	GetEscrowCache(escrowID string) (*EscrowCacheInfo, error)
+	// DeleteEscrowCache removes pre-init data (idempotent when missing).
+	DeleteEscrowCache(escrowID string) error
 	PruneEpoch(epochID uint64) error
 	Close() error
+}
+
+// EscrowCacheInfo is chain escrow metadata cached ahead of session bind.
+// No runtime/versiond tag — version is stamped only at CreateSession.
+type EscrowCacheInfo struct {
+	EscrowID                  string   `json:"escrow_id"`
+	Amount                    uint64   `json:"amount"`
+	CreatorAddress            string   `json:"creator_address"`
+	AppHash                   []byte   `json:"app_hash"`
+	Slots                     []string `json:"slots"`
+	TokenPrice                uint64   `json:"token_price"`
+	CreateDevshardFee         uint64   `json:"create_devshard_fee"`
+	FeePerNonce               uint64   `json:"fee_per_nonce"`
+	InferenceSealGraceNonces  uint32   `json:"inference_seal_grace_nonces"`
+	InferenceSealGraceSeconds uint32   `json:"inference_seal_grace_seconds"`
+	AutoSealEveryNNonces      uint32   `json:"auto_seal_every_n_nonces"`
+	ValidationRate            uint32   `json:"validation_rate"`
+	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
+	EpochID                   uint64   `json:"epoch_id"`
 }
 
 // ValidationObsEntry identifies one validation or validation-vote application

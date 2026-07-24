@@ -417,12 +417,16 @@ func ExecuteValidation(
 		return nil, err
 	}
 
-	// If the validator's inference node rejects the payload (400/422), treat as passed.
-	// This can happen when the original inference could not be executed due to upstream
-	// payload rejection, and validators on older versions may still attempt re-execution.
+	// A 4xx (400/422) from the validator's own re-execution means the validator
+	// could not process the executor-supplied request (e.g. the original inference
+	// failed on upstream payload rejection, or a validator on an older version
+	// cannot re-execute it). Mainnet treats this as autopass (warn + pass), not
+	// invalid: absent proof the executor cheated, it is not punished. Keep mainnet
+	// semantics and rely on the warn logs to surface any cases worth marking
+	// invalid later. Ref: decentralized-api/internal/validation/inference_validation.go (~944).
 	if resp.StatusCode == http.StatusBadRequest || resp.StatusCode == http.StatusUnprocessableEntity {
-		logging.Warn("Validator inference node rejected payload; treating validation as passed", types.Validation,
-			"inferenceId", inferenceID, "status", resp.StatusCode)
+		logging.Warn("validator re-execution rejected payload; treating validation as passed (mainnet 4xx autopass)",
+			types.Validation, "inferenceId", inferenceID, "status", resp.StatusCode)
 		return &SimilarityValidationResult{
 			BaseValidationResult: BaseValidationResult{InferenceId: inferenceID, ResponseBytes: []byte{}},
 			Value:                1.0,
@@ -456,14 +460,33 @@ func ExecuteValidation(
 	originalLogits := originalResponse.ExtractLogits()
 	validationLogits := responseValidation.ExtractLogits()
 	baseResult := BaseValidationResult{InferenceId: inferenceID, ResponseBytes: respBodyBytes}
-	if len(originalLogits) == 0 || len(validationLogits) == 0 {
-		logging.Error("No logits found in original or validation response",
+	// CompareLogits short-circuits to perfect similarity (1.0) when the ORIGINAL
+	// logits are empty, so an executor that stored a response with no logprobs
+	// would always pass. Reject only the asymmetric case (exactly one side empty):
+	// the executor's output cannot be verified against the validator's
+	// re-execution.
+	//
+	// Both-empty intentionally autopasses (unlike mainnet's || fail-closed guard):
+	// legitimate reasoning-burn empties (e.g. Kimi-K2.6, finish_reason=length)
+	// still match. Keep warn+pass for now and gather logs before deciding whether
+	// to fail-close or require an explicit "legitimate empty" shape.
+	if (len(originalLogits) == 0) != (len(validationLogits) == 0) {
+		logging.Warn("validation failed: logit presence mismatch between original and validation response",
 			types.Validation,
-			"id", inferenceID,
-			"originalLogits", originalLogits,
-			"validationLogits", validationLogits,
+			"inferenceId", inferenceID,
+			"originalLogits", len(originalLogits),
+			"validationLogits", len(validationLogits),
 		)
-		return nil, errors.New("no logits found in original or validation response")
+		return &InvalidInferenceResult{
+			InferenceId: inferenceID,
+			Reason:      "Logit presence mismatch between original and validation response.",
+		}, nil
+	}
+	if len(originalLogits) == 0 {
+		logging.Warn("both original and validation logits empty; treating validation as passed (both-empty autopass)",
+			types.Validation,
+			"inferenceId", inferenceID,
+		)
 	}
 
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil

@@ -20,14 +20,25 @@ import (
 	"devshard/types"
 )
 
-const statsCacheTTL = 60 * time.Second
+const (
+	statsCacheTTL          = 60 * time.Second
+	statsNegativeCacheTTL  = 10 * time.Second
+	statsNegativeCacheMax  = 4096
+)
 
 type statsShardDetailCache struct {
 	response *statsShardDetailResponse
 	cached   time.Time
 }
 
+type statsNegativeCacheEntry struct {
+	reason string
+	cached time.Time
+}
+
 type statsShardsResponse struct {
+	ProtocolVersion string              `json:"protocol_version,omitempty"` // --print-protocol-version / bind slot (e.g. v4)
+	BinaryVersion   string              `json:"binary_version,omitempty"`   // --print-binary-version / build id
 	CurrentEpochID  uint64              `json:"current_epoch_id"`
 	CachedAt        int64               `json:"cached_at"`
 	CacheTTLSeconds int64               `json:"cache_ttl_seconds"`
@@ -45,6 +56,8 @@ type statsShardDetailResponse struct {
 	EpochID                     uint64                       `json:"epoch_id"`
 	Nonce                       uint64                       `json:"nonce"`
 	Version                     string                       `json:"version"` // versiond runtime bind (m.boundVersion)
+	ProtocolVersion             string                       `json:"protocol_version,omitempty"`
+	BinaryVersion               string                       `json:"binary_version,omitempty"`
 	StateRootAndProtocolVersion string                       `json:"state_root_and_protocol_version"`
 	CachedAt                    int64                        `json:"cached_at"`
 	CacheTTLSeconds             int64                        `json:"cache_ttl_seconds"`
@@ -110,6 +123,9 @@ func recordStatsSessionResolutionFailure(c echo.Context, escrowID string, err er
 }
 
 func statsSessionResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return observability.MetricStatusError, observability.ReasonSessionResolveErr
+	}
 	if errors.Is(err, storage.ErrSessionVersionConflict) {
 		return observability.MetricStatusError, observability.ReasonVersionConflict
 	}
@@ -144,6 +160,8 @@ func (m *HostManager) statsShards(now time.Time) (*statsShardsResponse, error) {
 	}
 
 	resp := &statsShardsResponse{
+		ProtocolVersion: m.boundVersion,
+		BinaryVersion:   m.binaryVersion,
 		CurrentEpochID:  currentEpochID,
 		CachedAt:        now.Unix(),
 		CacheTTLSeconds: int64(statsCacheTTL / time.Second),
@@ -172,18 +190,26 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 		m.statsMu.Unlock()
 		return resp, nil
 	}
+	if neg, ok := m.statsNegativeCache[escrowID]; ok && now.Sub(neg.cached) < statsNegativeCacheTTL {
+		m.statsMu.Unlock()
+		return nil, storage.ErrSessionNotFound
+	}
 	m.statsMu.Unlock()
 
-	sess, err := m.boundVersionActiveSession(escrowID)
+	sess, reason, metaVersion, err := m.lookupBoundVersionActiveSession(escrowID)
 	if err != nil {
+		if errors.Is(err, storage.ErrSessionNotFound) {
+			m.rememberStatsMiss(escrowID, reason, metaVersion, now)
+		}
 		return nil, err
 	}
-	// Prefer recovering an already-persisted session over create-via-bridge.
-	if err := m.TryLoadFromStorage(escrowID); err != nil {
-		return nil, err
-	}
-	srv, err := m.SessionServer(escrowID)
+	m.clearStatsMiss(escrowID)
+
+	srv, err := m.SessionServerExisting(escrowID)
 	if err != nil {
+		if errors.Is(err, storage.ErrSessionNotFound) {
+			m.rememberStatsMiss(escrowID, "absent_from_memory_store", metaVersion, now)
+		}
 		return nil, err
 	}
 
@@ -194,6 +220,8 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 		EpochID:                     sess.EpochID,
 		Nonce:                       st.LatestNonce,
 		Version:                     m.boundVersion,
+		ProtocolVersion:             m.boundVersion,
+		BinaryVersion:               m.binaryVersion,
 		StateRootAndProtocolVersion: st.StateRootAndProtocolVersion,
 		CachedAt:                    now.Unix(),
 		CacheTTLSeconds:             int64(statsCacheTTL / time.Second),
@@ -204,93 +232,79 @@ func (m *HostManager) statsShardDetail(escrowID string, now time.Time) (*statsSh
 
 	m.statsMu.Lock()
 	m.statsDetailsCache[escrowID] = statsShardDetailCache{response: resp, cached: now}
+	delete(m.statsNegativeCache, escrowID)
 	m.statsMu.Unlock()
 	return resp, nil
 }
 
-func (m *HostManager) boundVersionActiveSession(escrowID string) (storage.ActiveSession, error) {
-	currentEpochID, active, err := m.boundVersionActiveSessions()
+// lookupBoundVersionActiveSession is O(1): one GetSessionMeta, no full-store scan.
+// Only status=="active" sessions match (same filter as ListActiveSessions).
+// reason/metaVersion are set on not-found for negative-cache logging.
+func (m *HostManager) lookupBoundVersionActiveSession(escrowID string) (storage.ActiveSession, string, string, error) {
+	meta, err := m.store.GetSessionMeta(escrowID)
 	if err != nil {
-		return storage.ActiveSession{}, err
-	}
-	for _, sess := range active {
-		if sess.EscrowID == escrowID {
-			return sess, nil
+		if errors.Is(err, storage.ErrSessionNotFound) {
+			return storage.ActiveSession{}, "absent_from_store", "", storage.ErrSessionNotFound
 		}
+		return storage.ActiveSession{}, "meta_unreadable", "", err
 	}
-	m.logStatsSessionNotFound(escrowID, currentEpochID, active)
-	return storage.ActiveSession{}, storage.ErrSessionNotFound
+	if meta.Version != "" && meta.Version != m.boundVersion {
+		return storage.ActiveSession{}, "version_mismatch", meta.Version, storage.ErrSessionNotFound
+	}
+	if meta.Status != "active" {
+		return storage.ActiveSession{}, "not_active", meta.Version, storage.ErrSessionNotFound
+	}
+	return storage.ActiveSession{EscrowID: escrowID, EpochID: meta.EpochID}, "", meta.Version, nil
 }
 
-// logStatsSessionNotFound explains why detail stats 404'd: missing from storage
-// (pruned / never created) or filtered by bound version. Rate-limited only by
-// the caller's polling; keep fields compact for grep in CI dumps.
-func (m *HostManager) logStatsSessionNotFound(escrowID string, currentEpochID uint64, filtered []storage.ActiveSession) {
-	all, listErr := m.store.ListActiveSessions()
-	filteredIDs := make([]string, 0, len(filtered))
-	for _, sess := range filtered {
-		filteredIDs = append(filteredIDs, sess.EscrowID)
+func (m *HostManager) rememberStatsMiss(escrowID, reason, metaVersion string, now time.Time) {
+	m.statsMu.Lock()
+	if neg, ok := m.statsNegativeCache[escrowID]; ok && now.Sub(neg.cached) < statsNegativeCacheTTL {
+		m.statsMu.Unlock()
+		return
 	}
-
-	var (
-		foundInStore bool
-		sessionEpoch uint64
-		metaVersion  string
-		versionMatch bool
-		metaErr      error
-	)
-	if listErr == nil {
-		for _, sess := range all {
-			if sess.EscrowID != escrowID {
-				continue
-			}
-			foundInStore = true
-			sessionEpoch = sess.EpochID
-			metaVersion, versionMatch, metaErr = m.sessionMatchesBoundVersion(escrowID)
-			break
-		}
+	if len(m.statsNegativeCache) >= statsNegativeCacheMax {
+		m.pruneStatsNegativeCacheLocked(now)
 	}
+	m.statsNegativeCache[escrowID] = statsNegativeCacheEntry{reason: reason, cached: now}
+	m.statsMu.Unlock()
 
-	reason := "absent_from_active_store"
-	switch {
-	case listErr != nil:
-		reason = "list_active_failed"
-	case !foundInStore:
-		reason = "absent_from_active_store"
-	case metaErr != nil:
-		reason = "meta_unreadable"
-	case !versionMatch:
-		reason = "version_mismatch"
-	default:
-		reason = "filtered_unknown"
-	}
-
-	storeSummary := make([]string, 0, len(all))
-	for _, sess := range all {
-		storeSummary = append(storeSummary, fmt.Sprintf("%s@%d", sess.EscrowID, sess.EpochID))
-	}
-
+	// Log once per escrow per negative-cache TTL (edge-triggered on insert).
 	logging.Warn("devshard stats session not in bound-version active set",
 		inferenceTypes.System,
 		"escrow_id", escrowID,
 		"filter_reason", reason,
-		"current_epoch_id", currentEpochID,
-		"session_epoch_id", sessionEpoch,
-		"found_in_store", foundInStore,
 		"bound_version", m.boundVersion,
 		"meta_version", metaVersion,
-		"version_match", versionMatch,
-		"meta_error", metaErr,
-		"list_error", listErr,
-		"filtered_escrows", strings.Join(filteredIDs, ","),
-		"store_escrows", strings.Join(storeSummary, ","),
 	)
+}
+
+func (m *HostManager) clearStatsMiss(escrowID string) {
+	m.statsMu.Lock()
+	delete(m.statsNegativeCache, escrowID)
+	m.statsMu.Unlock()
+}
+
+func (m *HostManager) pruneStatsNegativeCacheLocked(now time.Time) {
+	for id, neg := range m.statsNegativeCache {
+		if now.Sub(neg.cached) >= statsNegativeCacheTTL {
+			delete(m.statsNegativeCache, id)
+		}
+	}
+	// Still over cap: drop arbitrary entries until under limit.
+	for id := range m.statsNegativeCache {
+		if len(m.statsNegativeCache) < statsNegativeCacheMax {
+			break
+		}
+		delete(m.statsNegativeCache, id)
+	}
 }
 
 // boundVersionActiveSessions returns non-pruned active sessions for this
 // versiond bind. Epoch is recorded on each shard but not used as a filter:
 // unsettled sessions remain queryable across epoch boundaries until prune.
 // currentEpochID is still returned for list metadata / operators.
+// Used by the list endpoint only; detail uses lookupBoundVersionActiveSession.
 func (m *HostManager) boundVersionActiveSessions() (uint64, []storage.ActiveSession, error) {
 	active, err := m.store.ListActiveSessions()
 	if err != nil {

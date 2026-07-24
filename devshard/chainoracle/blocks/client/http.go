@@ -66,9 +66,17 @@ type Client struct {
 	rejected atomic.Int64 // headers dropped due to verification failure
 }
 
+// subBufSize is the per-subscriber channel buffer. A full buffer drops the
+// subscription (catch-up or live) rather than blocking the SSE ingest path.
+const subBufSize = 16
+
 type subscription struct {
-	ch   chan *blocks.Header
-	from int64
+	ch     chan *blocks.Header
+	from   int64
+	cancel context.CancelFunc
+	// live is set only after catch-up finishes. Fanout ignores non-live
+	// subs so historical replay cannot race with new headers on ch.
+	live bool
 }
 
 // NewHTTP constructs and starts an HTTP consumer. It opens a background
@@ -202,9 +210,19 @@ func (c *Client) Prove(ctx context.Context, path string, height int64) (*blocks.
 
 // Subscribe returns a channel of verified headers starting at
 // fromHeight. Each subscription is independent; the background SSE
-// goroutine fans out to all active subscribers.
+// goroutine fans out to live subscribers only.
+//
+// Delivery is phased: replay the cache snapshot, catch up any gap that
+// appeared while sending, then join live fanout. Fanout never closes the
+// subscriber channel — a full buffer only cancels; the Subscribe
+// goroutine is the sole closer.
 func (c *Client) Subscribe(ctx context.Context, fromHeight int64) (<-chan *blocks.Header, error) {
-	sub := &subscription{ch: make(chan *blocks.Header, 16), from: fromHeight}
+	subCtx, cancel := context.WithCancel(ctx)
+	sub := &subscription{
+		ch:     make(chan *blocks.Header, subBufSize),
+		from:   fromHeight,
+		cancel: cancel,
+	}
 
 	c.subMu.Lock()
 	id := len(c.subs)
@@ -214,10 +232,9 @@ func (c *Client) Subscribe(ctx context.Context, fromHeight int64) (<-chan *block
 		}
 		id++
 	}
-	c.subs[id] = sub
+	c.subs[id] = sub // live=false until catch-up finishes
 	c.subMu.Unlock()
 
-	// Replay anything we already have that matches fromHeight.
 	c.mu.RLock()
 	replay := make([]*blocks.Header, 0)
 	if c.latest != nil {
@@ -230,30 +247,95 @@ func (c *Client) Subscribe(ctx context.Context, fromHeight int64) (<-chan *block
 	c.mu.RUnlock()
 
 	go func() {
+		defer c.finishSub(id, sub)
+
+		lastSent := fromHeight - 1
 		for _, h := range replay {
-			select {
-			case <-ctx.Done():
-				c.unsubscribe(id)
+			if !trySendHeader(subCtx, sub.ch, h) {
 				return
-			case sub.ch <- h:
 			}
+			lastSent = h.Height
 		}
-		<-ctx.Done()
-		c.unsubscribe(id)
+		if !c.catchUpAndGoLive(subCtx, id, sub, lastSent) {
+			return
+		}
+		<-subCtx.Done()
 	}()
 
 	return sub.ch, nil
 }
 
-func (c *Client) unsubscribe(id int) {
-	c.subMu.Lock()
-	sub, ok := c.subs[id]
-	if !ok {
-		c.subMu.Unlock()
-		return
+// catchUpAndGoLive sends cache headers after lastSent, then marks the sub
+// live. The empty-gap check and live flip run under c.mu so store cannot
+// insert a header between them; fanout still takes subMu after store
+// releases c.mu (lock order: c.mu then subMu).
+func (c *Client) catchUpAndGoLive(ctx context.Context, id int, sub *subscription, lastSent int64) bool {
+	for {
+		select {
+		case <-ctx.Done():
+			return false
+		default:
+		}
+
+		c.mu.Lock()
+		gap := headersAfterLocked(c.cache, c.latest, lastSent, sub.from)
+		if len(gap) == 0 {
+			c.subMu.Lock()
+			if _, ok := c.subs[id]; !ok {
+				c.subMu.Unlock()
+				c.mu.Unlock()
+				return false
+			}
+			sub.live = true
+			c.subMu.Unlock()
+			c.mu.Unlock()
+			return true
+		}
+		c.mu.Unlock()
+
+		for _, h := range gap {
+			if !trySendHeader(ctx, sub.ch, h) {
+				return false
+			}
+			lastSent = h.Height
+		}
 	}
+}
+
+func headersAfterLocked(cache map[int64]*blocks.Header, latest *blocks.Header, after, from int64) []*blocks.Header {
+	if latest == nil {
+		return nil
+	}
+	lo := after + 1
+	if lo < from {
+		lo = from
+	}
+	out := make([]*blocks.Header, 0)
+	for h := lo; h <= latest.Height; h++ {
+		if v, ok := cache[h]; ok {
+			out = append(out, cloneHeader(v))
+		}
+	}
+	return out
+}
+
+func trySendHeader(ctx context.Context, ch chan *blocks.Header, h *blocks.Header) bool {
+	select {
+	case <-ctx.Done():
+		return false
+	case ch <- h:
+		return true
+	default:
+		return false
+	}
+}
+
+// finishSub is the sole closer of sub.ch. Fanout only cancels.
+func (c *Client) finishSub(id int, sub *subscription) {
+	c.subMu.Lock()
 	delete(c.subs, id)
 	c.subMu.Unlock()
+	sub.cancel()
 	close(sub.ch)
 }
 
@@ -413,16 +495,17 @@ func (c *Client) fanout(h *blocks.Header) {
 	c.subMu.Lock()
 	defer c.subMu.Unlock()
 	for id, sub := range c.subs {
-		if h.Height < sub.from {
+		if !sub.live || h.Height < sub.from {
 			continue
 		}
 		cp := cloneHeader(h)
 		select {
 		case sub.ch <- cp:
 		default:
-			// Drop slow subscribers.
+			// Slow live consumer: stop delivering and cancel so the
+			// Subscribe goroutine can close ch safely.
 			delete(c.subs, id)
-			close(sub.ch)
+			sub.cancel()
 		}
 	}
 }

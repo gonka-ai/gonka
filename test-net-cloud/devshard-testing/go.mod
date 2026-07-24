@@ -11,7 +11,7 @@ replace (
 )
 
 require (
-	github.com/cosmos/cosmos-sdk v0.50.14
+	github.com/cosmos/cosmos-sdk v0.53.3
 	github.com/productscience/inference v0.0.0-00010101000000-000000000000
 	google.golang.org/grpc v1.80.0
 )

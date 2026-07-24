@@ -5,6 +5,8 @@ import (
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc/codes"
+	"google.golang.org/grpc/status"
 
 	"devshard/testenv/mockchain/store"
 )
@@ -38,6 +40,9 @@ func (s *InferenceServer) GetCurrentEpoch(_ context.Context, _ *inferencetypes.Q
 }
 
 func (s *InferenceServer) DevshardEscrow(_ context.Context, req *inferencetypes.QueryGetDevshardEscrowRequest) (*inferencetypes.QueryGetDevshardEscrowResponse, error) {
+	if s.store.EscrowQueryFaulted() {
+		return nil, status.Error(codes.Unavailable, "devshard escrow query faulted (testenv)")
+	}
 	e := s.store.GetEscrow(req.GetId())
 	if e == nil {
 		return &inferencetypes.QueryGetDevshardEscrowResponse{Found: false}, nil

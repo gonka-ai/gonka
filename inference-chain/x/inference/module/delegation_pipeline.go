@@ -707,7 +707,7 @@ func ComputeModelVotingPowers(
 //
 // The per-model cap protects validation integrity: in slot-based validation,
 // a host that attracts enough delegations could single-handedly push a model
-// group past its supermajority threshold.
+// group past its configured validation threshold.
 type VotingPowerCapParams struct {
 	PerModel mathsdk.LegacyDec
 }
@@ -822,7 +822,7 @@ func sumInt64Safe(m map[string]int64) (int64, bool) {
 //
 // The cap is applied against the original pre-capping total, so the cap
 // value is stable regardless of how many hosts end up clipped. The group's
-// post-cap total shrinks, and downstream per-group math (2/3 validation
+// post-cap total shrinks, and downstream per-group math (configured validation
 // quorum, per-group reward shares, slot sampling) is expected to operate on
 // the post-cap total. Consensus-weight concentration is capped separately
 // and is unaffected by this function.

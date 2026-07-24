@@ -14,7 +14,7 @@ import (
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle)
+	admin := buildAdminServer(lifecycle, func() bool { return true })
 	e.GET("/work", func(c echo.Context) error {
 		time.Sleep(20 * time.Millisecond)
 		return c.String(http.StatusOK, "done")
@@ -62,7 +62,7 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	lifecycle := newLifecycleState()
 	lifecycle.SetReady(true)
 	e := buildServer(lifecycle)
-	admin := buildAdminServer(lifecycle)
+	admin := buildAdminServer(lifecycle, func() bool { return true })
 	e.GET("/work", func(c echo.Context) error {
 		return c.String(http.StatusOK, "done")
 	})
@@ -89,4 +89,22 @@ func TestLifecycleDrainRejectsNewWork(t *testing.T) {
 	var status drainStatus
 	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &status))
 	require.Zero(t, status.Inflight)
+}
+
+func TestReadyReflectsStorageReadiness(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	storageReady := false
+	admin := buildAdminServer(lifecycle, func() bool { return storageReady })
+
+	rec := httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code,
+		"chain-ready but storage rebuilding must report 503")
+
+	storageReady = true
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ready", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "\"storage_ready\":true")
 }

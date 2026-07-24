@@ -229,6 +229,58 @@ func TestClient_TrustModeAcceptsEverything(t *testing.T) {
 	require.Zero(t, c.RejectedCount())
 }
 
+func TestClient_Subscribe_DropSlowCatchUp(t *testing.T) {
+	ts, mock, v, cleanup := newServedMock(t)
+	defer cleanup()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	c, err := client.NewHTTP(ctx, client.HTTPConfig{
+		BaseURL:          ts.URL,
+		Verifier:         v,
+		SubscribeFrom:    1,
+		ResubscribeAfter: 20 * time.Millisecond,
+		StaleAfter:       time.Second,
+	})
+	require.NoError(t, err)
+	defer c.Close()
+
+	// Advance one-by-one and wait on stream-ingested tip via StaleDetails.
+	// Do NOT call Latest(): it GETs /block/latest, can jump lastVerified to the
+	// tip, then SSE catch-up of lower heights is rejected as stale and the
+	// cache never holds >16 headers — which made this test flake.
+	for want := int64(1); want <= 20; want++ {
+		_, err := mock.AdvanceOne()
+		require.NoError(t, err)
+		require.Eventually(t, func() bool {
+			_, _, height, never := c.StaleDetails()
+			return !never && height >= want
+		}, 3*time.Second, 5*time.Millisecond)
+	}
+
+	subCtx, subCancel := context.WithCancel(context.Background())
+	defer subCancel()
+	ch, err := c.Subscribe(subCtx, 1)
+	require.NoError(t, err)
+
+	time.Sleep(50 * time.Millisecond)
+
+	n := 0
+	deadline := time.After(3 * time.Second)
+	for {
+		select {
+		case _, ok := <-ch:
+			if !ok {
+				require.LessOrEqual(t, n, 16, "should drop once the 16-slot buffer fills")
+				return
+			}
+			n++
+		case <-deadline:
+			t.Fatal("expected slow catch-up subscriber to be dropped and channel closed")
+		}
+	}
+}
+
 func TestClient_ResubscribesAfterDisconnect(t *testing.T) {
 	ts, mock, v, cleanup := newServedMock(t)
 	defer cleanup()

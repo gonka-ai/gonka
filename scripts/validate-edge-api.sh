@@ -5,8 +5,8 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 
-echo "==> edge-api unit tests (queryapi + contract + proof roundtrip)"
-(cd "${REPO_ROOT}/edge-api" && go test ./queryapi/... -count=1)
+echo "==> common/queryapi unit tests (contract + proof roundtrip)"
+(cd "${REPO_ROOT}/common" && go test ./queryapi/... -count=1)
 
 echo "==> common observability + chain (edge-api transport deps)"
 (cd "${REPO_ROOT}/common" && go test ./observability/... ./chain/... -count=1)
@@ -63,7 +63,7 @@ fi
 
 if [[ -n "${EDGE_API_URL:-}" && -n "${DAPI_URL:-}" ]]; then
   echo "==> live dapi vs edge-api compatibility (-tags compat)"
-  (cd "${REPO_ROOT}/edge-api/queryapi/tests/compatibility" && go test -tags compat -count=1 -run TestCompatibility \
+  (cd "${REPO_ROOT}/common/queryapi/tests/compatibility" && go test -tags compat -count=1 -run TestCompatibility \
     -endpoint1="${EDGE_API_URL}" \
     -endpoint2="${DAPI_URL}")
 else

@@ -63,11 +63,19 @@ dev-clean: ## Stop dev stack and remove volumes.
 dev-logs: ## Follow dev overlay logs.
 	docker compose $(DEV_OVERLAY) logs -f
 
-.PHONY: citest-images citest-stack citest-stack-build
-.PHONY: citest-validation-lease-race
+.PHONY: citest-images citest-stack citest-stack-build list-citest-targets
+.PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-versiond-host-evacuation
 .PHONY: citest-adversarial
 .PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+
+# citest-images and citest-stack-build are build/helper rules, not standalone
+# suites, so they are excluded from the auto-discovered CI matrix.
+list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
+	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
+		| sed 's/://' \
+		| grep -vxE 'citest-images|citest-stack-build' \
+		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
 CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
@@ -82,6 +90,10 @@ citest-stack: citest-images ## Full stack behavior citests (needs Docker + build
 
 citest-validation-lease-race: citest-images ## Validation lease race, pending stretch, and stale reclaim.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestValidationLeaseRace' -count=1 -v -timeout 45m
+
+citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference without live escrow fetch (v4-deploy-test-plan §6).
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestEscrowLongPollWarm' -count=1 -v -timeout 30m
 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m

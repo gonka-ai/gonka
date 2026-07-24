@@ -9,7 +9,7 @@
 # x-edge-api anchor holds everything shared between instances.
 
 x-edge-api: &edge-api
-  image: ghcr.io/product-science/edge-api:0.2.13
+  image: ghcr.io/product-science/edge-api:0.2.14-devshard-v4
   environment:
     - EDGE_API_PORT=18080
     - CHAIN_GRPC_URL=node:9090
@@ -31,7 +31,7 @@ services:
 
   edge-api-router:
     container_name: edge-api-router
-    image: ghcr.io/product-science/edge-api-router:0.2.13
+    image: ghcr.io/product-science/edge-api-router:0.2.14-devshard-v4
     environment:
       - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
       - EDGE_API_PORT=18080

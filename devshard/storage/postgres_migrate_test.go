@@ -102,6 +102,10 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 		require.True(t, exists, "missing table %s", table)
 	}
 
+	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_escrow_cache")
+	require.NoError(t, err)
+	require.True(t, exists, "missing table devshard_escrow_cache")
+
 	var indexCount int
 	err = pool.QueryRow(ctx, `
 SELECT COUNT(*) FROM pg_indexes
@@ -126,6 +130,7 @@ func TestSaveSnapshot_SameEpoch_PartitionCreateOnce(t *testing.T) {
 		knownEpochs: make(map[uint64]struct{}),
 		escrowIdx:   make(map[string]uint64),
 	}
+	markPostgresIndexReadyForTest(pg)
 	require.NoError(t, MigratePostgres(ctx, pool))
 
 	const epochID = uint64(42)
@@ -154,6 +159,7 @@ func TestEnsurePartition_CreatesAllParentPartitionsOnce(t *testing.T) {
 		knownEpochs: make(map[uint64]struct{}),
 		escrowIdx:   make(map[string]uint64),
 	}
+	markPostgresIndexReadyForTest(pg)
 	require.NoError(t, MigratePostgres(ctx, pool))
 
 	want := len(postgresPartitionedParents)

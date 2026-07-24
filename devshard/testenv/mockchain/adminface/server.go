@@ -34,6 +34,11 @@ type EpochRequest struct {
 	Advance             bool    `json:"advance,omitempty"`
 }
 
+// EscrowQueryFaultRequest toggles DevshardEscrow query failures for citest.
+type EscrowQueryFaultRequest struct {
+	Faulted bool `json:"faulted"`
+}
+
 // Mount registers POST /testenv/params, POST /testenv/epoch, POST /testenv/escrow,
 // POST /testenv/grantees, and GET /testenv/revision on g.
 func Mount(g *echo.Group, st *store.Store, advancer EpochAdvancer, escrowPub EscrowPublisher) {
@@ -43,8 +48,20 @@ func Mount(g *echo.Group, st *store.Store, advancer EpochAdvancer, escrowPub Esc
 	g.POST("/testenv/params", handleParams(st))
 	g.POST("/testenv/epoch", handleEpoch(st, advancer))
 	g.POST("/testenv/escrow", handleEscrow(st, escrowPub))
+	g.POST("/testenv/escrow-query-fault", handleEscrowQueryFault(st))
 	g.POST("/testenv/grantees", handleGrantees(st))
 	g.GET("/testenv/revision", handleRevision(st))
+}
+
+func handleEscrowQueryFault(st *store.Store) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		var req EscrowQueryFaultRequest
+		if err := c.Bind(&req); err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		st.SetEscrowQueryFault(req.Faulted)
+		return c.JSON(http.StatusOK, map[string]any{"status": "ok", "faulted": req.Faulted})
+	}
 }
 
 func handleParams(st *store.Store) echo.HandlerFunc {
@@ -222,6 +239,13 @@ func (c *Client) PatchEscrow(ctx context.Context, req EscrowRequest) error {
 		return errors.New("adminface: client not configured")
 	}
 	return c.postJSON(ctx, "/testenv/escrow", req)
+}
+
+func (c *Client) PatchEscrowQueryFault(ctx context.Context, req EscrowQueryFaultRequest) error {
+	if c == nil || c.baseURL == "" {
+		return errors.New("adminface: client not configured")
+	}
+	return c.postJSON(ctx, "/testenv/escrow-query-fault", req)
 }
 
 func (c *Client) PatchGrantees(ctx context.Context, req GranteesRequest) error {
