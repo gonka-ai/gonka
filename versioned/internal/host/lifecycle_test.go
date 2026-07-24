@@ -22,6 +22,93 @@ func TestControllerTransitions(t *testing.T) {
 	}
 }
 
+func TestStateTableTransitionMatrix(t *testing.T) {
+	states := []State{
+		StateStarting,
+		StateServing,
+		StateDraining,
+		StateStopping,
+		StateForcing,
+		StateStopped,
+	}
+	allowed := map[State]map[State]bool{
+		StateStarting: {
+			StateStarting: true,
+			StateServing:  true,
+			StateDraining: true,
+			StateForcing:  true,
+		},
+		StateServing: {
+			StateServing:  true,
+			StateDraining: true,
+			StateForcing:  true,
+		},
+		StateDraining: {
+			StateDraining: true,
+			StateStopping: true,
+			StateForcing:  true,
+		},
+		StateStopping: {
+			StateStopping: true,
+			StateForcing:  true,
+			StateStopped:  true,
+		},
+		StateForcing: {
+			StateForcing: true,
+			StateStopped: true,
+		},
+		StateStopped: {
+			StateStopped: true,
+		},
+	}
+
+	for _, from := range states {
+		for _, to := range states {
+			if got, want := validTransition(from, to), allowed[from][to]; got != want {
+				t.Errorf("validTransition(%s, %s) = %t, want %t", from, to, got, want)
+			}
+		}
+	}
+	if validTransition("unknown", "unknown") {
+		t.Fatal("unknown host state accepted a self-transition")
+	}
+}
+
+func TestStateTableTargetsKnownStatesAndServingOwnsAdmission(t *testing.T) {
+	states := []State{
+		StateStarting,
+		StateServing,
+		StateDraining,
+		StateStopping,
+		StateForcing,
+		StateStopped,
+	}
+	if len(stateTable) != len(states) {
+		t.Fatalf("host state table has %d states, want %d", len(stateTable), len(states))
+	}
+
+	acceptingStates := 0
+	for state, spec := range stateTable {
+		if spec.accepting {
+			acceptingStates++
+			if state != StateServing {
+				t.Errorf("unexpected accepting state %s", state)
+			}
+		}
+		for _, target := range spec.targets {
+			if _, ok := stateTable[target]; !ok {
+				t.Errorf("%s targets unknown host state %s", state, target)
+			}
+		}
+	}
+	if acceptingStates != 1 {
+		t.Fatalf("host state table has %d accepting states, want 1", acceptingStates)
+	}
+	if len(stateTable[StateStopped].targets) != 0 {
+		t.Fatal("stopped host state has outgoing targets")
+	}
+}
+
 func TestControllerForceTransition(t *testing.T) {
 	for _, state := range []State{StateStarting, StateServing, StateDraining, StateStopping} {
 		t.Run(string(state), func(t *testing.T) {

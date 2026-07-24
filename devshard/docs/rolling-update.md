@@ -442,9 +442,11 @@ Key invariants:
   remain pinned to the legacy host and are protected by the router guard.
 - **One owner of drain state:** hostctl never infers idleness from `/healthz`.
   versiond owns the admission leases and child lifecycle counters, so its host
-  FSM decides when graceful drain is complete. If the internal budget expires,
-  versiond logs the remaining work and forces teardown before the outer runtime
-  backstop.
+  FSM decides when graceful drain is complete. Its table defines both allowed
+  state transitions and whether a state accepts new proxy leases, with
+  `serving` as the sole accepting state. If the internal budget expires,
+  versiond logs the remaining work and forces teardown before the outer
+  runtime backstop.
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
   keep serving while one host evacuates.
 

@@ -47,6 +47,11 @@ starting -> serving -> draining -> stopping -> stopped
   children.
 - `stopped`: all children have been reaped and the HTTP server has stopped.
 
+The host FSM is table-driven. Each state specification owns its allowed targets
+and admission policy; `serving` is the only state that can acquire new proxy
+leases. Unknown states and transitions are rejected without changing lifecycle
+or admission state.
+
 This state machine is intentionally separate from each child's process FSM
 (`running -> terminating -> killing -> exited`). The host FSM decides when a
 child should stop; the process FSM owns signal delivery, escalation, and reap.

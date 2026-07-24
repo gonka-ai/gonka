@@ -21,6 +21,44 @@ const (
 
 var ErrInvalidTransition = errors.New("invalid versiond host state transition")
 
+type stateSpec struct {
+	accepting bool
+	targets   []State
+}
+
+var stateTable = map[State]stateSpec{
+	StateStarting: {
+		targets: []State{
+			StateServing,
+			StateDraining,
+			StateForcing,
+		},
+	},
+	StateServing: {
+		accepting: true,
+		targets: []State{
+			StateDraining,
+			StateForcing,
+		},
+	},
+	StateDraining: {
+		targets: []State{
+			StateStopping,
+			StateForcing,
+		},
+	},
+	StateStopping: {
+		targets: []State{
+			StateStopped,
+			StateForcing,
+		},
+	},
+	StateForcing: {
+		targets: []State{StateStopped},
+	},
+	StateStopped: {},
+}
+
 type Snapshot struct {
 	State     State
 	Accepting bool
@@ -49,9 +87,6 @@ func NewController() *Controller {
 func (c *Controller) Transition(next State) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state == next {
-		return nil
-	}
 	if !validTransition(c.state, next) {
 		return fmt.Errorf("%w: %s -> %s", ErrInvalidTransition, c.state, next)
 	}
@@ -60,22 +95,25 @@ func (c *Controller) Transition(next State) error {
 }
 
 func validTransition(from, to State) bool {
-	switch from {
-	case StateStarting:
-		return to == StateServing || to == StateDraining || to == StateForcing
-	case StateServing:
-		return to == StateDraining || to == StateForcing
-	case StateDraining:
-		return to == StateStopping || to == StateForcing
-	case StateStopping:
-		return to == StateStopped || to == StateForcing
-	case StateForcing:
-		return to == StateStopped
-	case StateStopped:
-		return false
-	default:
+	spec, fromKnown := stateTable[from]
+	_, toKnown := stateTable[to]
+	if !fromKnown || !toKnown {
 		return false
 	}
+	if from == to {
+		return true
+	}
+	for _, target := range spec.targets {
+		if target == to {
+			return true
+		}
+	}
+	return false
+}
+
+func acceptsWork(state State) bool {
+	spec, ok := stateTable[state]
+	return ok && spec.accepting
 }
 
 func (c *Controller) Snapshot() Snapshot {
@@ -87,7 +125,7 @@ func (c *Controller) Snapshot() Snapshot {
 func (c *Controller) snapshotLocked() Snapshot {
 	return Snapshot{
 		State:     c.state,
-		Accepting: c.state == StateServing,
+		Accepting: acceptsWork(c.state),
 		Inflight:  c.inflight,
 		Idle:      c.inflight == 0,
 	}
@@ -124,7 +162,7 @@ func (c *Controller) Admission(next http.Handler) http.Handler {
 func (c *Controller) acquire() bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.state != StateServing {
+	if !acceptsWork(c.state) {
 		return false
 	}
 	if c.inflight == 0 {
