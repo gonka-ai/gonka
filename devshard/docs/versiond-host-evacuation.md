@@ -135,6 +135,10 @@ a compatibility health endpoint into an orchestration protocol.
   or degraded;
 - `503` for every other state.
 
+A reconciled but empty desired-version set remains unavailable because there is
+no child route that can serve traffic. Governance must expose at least one
+approved version before host addition or replacement.
+
 Host availability and router admission remain separate contracts. A
 replacement stays `joining`/down in nginx until `/ready` returns `200`. The
 endpoint contains no control command and exports no drain counters.

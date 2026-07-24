@@ -21,8 +21,10 @@ import (
 type Runtime string
 
 const (
-	RuntimeDocker  Runtime = "docker"
-	RuntimeSystemd Runtime = "systemd"
+	RuntimeDocker                     Runtime = "docker"
+	RuntimeSystemd                    Runtime = "systemd"
+	legacyHostctlJournalSchemaVersion         = 1
+	hostctlJournalSchemaVersion               = 2
 )
 
 type Config struct {
@@ -758,7 +760,17 @@ func (o *Orchestrator) runRemote(
 	commandCtx, cancel := context.WithTimeout(ctx, o.config.CommandTimeout)
 	defer cancel()
 	output, err := o.remote.Run(commandCtx, destination, args...)
-	if commandCtx.Err() != nil {
+	if err == nil {
+		return output, nil
+	}
+	if ctx.Err() != nil {
+		return output, fmt.Errorf(
+			"remote command on %s canceled: %w",
+			destination,
+			ctx.Err(),
+		)
+	}
+	if errors.Is(commandCtx.Err(), context.DeadlineExceeded) {
 		return output, fmt.Errorf(
 			"remote command on %s exceeded %s: %w",
 			destination,
@@ -802,7 +814,8 @@ func (o *Orchestrator) replacementRestartPolicy(membershipID string) (string, er
 	if err := json.Unmarshal(data, &journal); err != nil {
 		return "", fmt.Errorf("decode evacuation journal: %w", err)
 	}
-	if journal.SchemaVersion != 1 || journal.Mode != "evacuate" {
+	journal, _, err = migrateJournal(journal)
+	if err != nil || journal.Mode != "evacuate" {
 		return "", errors.New("restart-policy source is not an evacuation journal")
 	}
 	if !validJournalPhase(journal.Mode, journal.Phase) || !validCancellationState(journal) {
@@ -864,8 +877,9 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 	if err := json.Unmarshal(data, &journal); err != nil {
 		return Journal{}, err
 	}
-	if journal.SchemaVersion != 1 {
-		return Journal{}, fmt.Errorf("unsupported hostctl journal schema %d", journal.SchemaVersion)
+	journal, migrated, err := migrateJournal(journal)
+	if err != nil {
+		return Journal{}, err
 	}
 	if journal.OperationID != o.config.OperationID || journal.Mode != mode {
 		return Journal{}, fmt.Errorf("journal belongs to operation %s/%s", journal.OperationID, journal.Mode)
@@ -882,6 +896,11 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 			journal.CancellationPhase,
 			journal.Phase,
 		)
+	}
+	if migrated {
+		if err := o.writeJournal(journal); err != nil {
+			return Journal{}, fmt.Errorf("persist migrated hostctl journal: %w", err)
+		}
 	}
 	return journal, nil
 }
@@ -912,7 +931,7 @@ func (o *Orchestrator) loadOrCreateJournal(mode string) (Journal, error) {
 		return Journal{}, err
 	}
 	journal = Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   o.config.OperationID,
 		Mode:          mode,
 		Scope:         o.operationScope(),
@@ -920,6 +939,26 @@ func (o *Orchestrator) loadOrCreateJournal(mode string) (Journal, error) {
 		UpdatedAt:     time.Now().UTC(),
 	}
 	return journal, o.writeJournal(journal)
+}
+
+func migrateJournal(journal Journal) (Journal, bool, error) {
+	switch journal.SchemaVersion {
+	case hostctlJournalSchemaVersion:
+		return journal, false, nil
+	case legacyHostctlJournalSchemaVersion:
+		if stopPhases(journal.Mode) != nil &&
+			journal.Phase == "canceled" &&
+			journal.CancellationPhase == "" {
+			journal.CancellationPhase = "complete"
+		}
+		journal.SchemaVersion = hostctlJournalSchemaVersion
+		return journal, true, nil
+	default:
+		return Journal{}, false, fmt.Errorf(
+			"unsupported hostctl journal schema %d",
+			journal.SchemaVersion,
+		)
+	}
 }
 
 func validJournalPhase(mode, phase string) bool {
@@ -946,9 +985,7 @@ func validCancellationState(journal Journal) bool {
 		return journal.CancellationPhase == ""
 	}
 	if journal.CancellationPhase == "" {
-		// Journals written before cancellation checkpoints were introduced may
-		// already contain the terminal canceled phase.
-		return journal.Phase != "canceled" || journal.SchemaVersion == 1
+		return journal.Phase != "canceled"
 	}
 	found := false
 	for _, phase := range cancellationPhases {

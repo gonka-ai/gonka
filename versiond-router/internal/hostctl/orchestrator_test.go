@@ -165,7 +165,7 @@ func TestDecommissionResumesRemovalAfterOfflineCheckpoint(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "decommission-resume")
 	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "decommission-resume",
 		Mode:          "decommission",
 		Scope:         orchestrator.operationScope(),
@@ -191,7 +191,7 @@ func TestCancelDecommissionUsesTheCompensationFSM(t *testing.T) {
 	remote := &fakeRemote{running: true}
 	orchestrator := newTestOrchestrator(t, remote, "decommission-cancel")
 	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "decommission-cancel",
 		Mode:                  "decommission",
 		Scope:                 orchestrator.operationScope(),
@@ -340,7 +340,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			remote := &fakeRemote{ready: true, running: true}
 			orchestrator := newTestOrchestrator(t, remote, operationID)
 			if err := orchestrator.writeJournal(Journal{
-				SchemaVersion:         1,
+				SchemaVersion:         hostctlJournalSchemaVersion,
 				OperationID:           operationID,
 				MembershipID:          "membership-versiond-2",
 				Mode:                  "replace",
@@ -382,7 +382,7 @@ func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
 	evacuationScope := orchestrator.operationScope()
 	evacuationScope.VersiondSSH = "retired-versiond-host"
 	evacuation := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         legacyHostctlJournalSchemaVersion,
 		OperationID:           "evacuated-policy",
 		Mode:                  "evacuate",
 		Scope:                 evacuationScope,
@@ -415,7 +415,7 @@ func TestReplaceRejectsPolicyFromAnotherLogicalHost(t *testing.T) {
 	scope := orchestrator.operationScope()
 	scope.VersiondService = "another-versiond"
 	evacuation := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "another-host",
 		Mode:                  "evacuate",
 		Scope:                 scope,
@@ -445,7 +445,7 @@ func TestReplaceRejectsPolicyFromPreviousMembership(t *testing.T) {
 	orchestrator.config.DockerRestartPolicy = ""
 	orchestrator.config.EvacuationJournal = filepath.Join(t.TempDir(), "evacuation.json")
 	evacuation := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "old-membership",
 		MembershipID:          "membership-retired-versiond-2",
 		Mode:                  "evacuate",
@@ -501,7 +501,7 @@ func TestCancelEvacuationRestoresPolicyBeforeReactivating(t *testing.T) {
 	remote := &fakeRemote{running: true}
 	orchestrator := newTestOrchestrator(t, remote, "cancel")
 	journal := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "cancel",
 		Mode:                  "evacuate",
 		Scope:                 orchestrator.operationScope(),
@@ -529,7 +529,7 @@ func TestCancelEvacuationResumesItsDurableCompensation(t *testing.T) {
 	remote := &fakeRemote{running: true, activateErrors: 1}
 	orchestrator := newTestOrchestrator(t, remote, "cancel-resume")
 	journal := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "cancel-resume",
 		Mode:                  "evacuate",
 		Scope:                 orchestrator.operationScope(),
@@ -566,7 +566,7 @@ func TestEvacuationReassertsDisabledRestartPolicyBeforeSignal(t *testing.T) {
 	}
 	orchestrator := newTestOrchestrator(t, remote, "restart-reassert")
 	journal := Journal{
-		SchemaVersion:         1,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "restart-reassert",
 		Mode:                  "evacuate",
 		Scope:                 orchestrator.operationScope(),
@@ -613,7 +613,7 @@ func TestCancelEvacuationRejectsRequestedSignal(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "cancel-late")
 	journal := Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "cancel-late",
 		Mode:          "evacuate",
 		Scope:         orchestrator.operationScope(),
@@ -651,6 +651,17 @@ func (blockingRemote) Run(ctx context.Context, _ string, _ ...string) (string, e
 	return "", ctx.Err()
 }
 
+type successfulAtDeadlineRemote struct{}
+
+func (successfulAtDeadlineRemote) Run(
+	ctx context.Context,
+	_ string,
+	_ ...string,
+) (string, error) {
+	<-ctx.Done()
+	return "completed", nil
+}
+
 func TestRemoteCommandTimeout(t *testing.T) {
 	orchestrator := newTestOrchestrator(t, blockingRemote{}, "command-timeout")
 	orchestrator.config.CommandTimeout = 5 * time.Millisecond
@@ -663,6 +674,44 @@ func TestRemoteCommandTimeout(t *testing.T) {
 	)
 	if !errors.Is(err, context.DeadlineExceeded) {
 		t.Fatalf("remote command error = %v, want deadline exceeded", err)
+	}
+	if !strings.Contains(err.Error(), "exceeded 5ms") {
+		t.Fatalf("remote command error = %v, want command timeout context", err)
+	}
+}
+
+func TestRemoteCommandReportsParentCancellation(t *testing.T) {
+	orchestrator := newTestOrchestrator(t, blockingRemote{}, "command-canceled")
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	_, err := orchestrator.runRemote(ctx, "router-host", "status")
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("remote command error = %v, want context canceled", err)
+	}
+	if strings.Contains(err.Error(), "exceeded") {
+		t.Fatalf("parent cancellation reported as command timeout: %v", err)
+	}
+}
+
+func TestRemoteCommandAcceptsSuccessfulDeadlineResult(t *testing.T) {
+	orchestrator := newTestOrchestrator(
+		t,
+		successfulAtDeadlineRemote{},
+		"command-deadline-success",
+	)
+	orchestrator.config.CommandTimeout = 5 * time.Millisecond
+
+	output, err := orchestrator.runRemote(
+		context.Background(),
+		"router-host",
+		"status",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if output != "completed" {
+		t.Fatalf("remote command output = %q, want completed", output)
 	}
 }
 
@@ -731,7 +780,7 @@ func TestEvacuateResumesFromCheckpoint(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "resume")
 	journal := Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "resume",
 		Mode:          "evacuate",
 		Scope:         orchestrator.operationScope(),
@@ -757,7 +806,7 @@ func TestEvacuateReplaysRouterStoppingWithoutRepeatingDrain(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "resume-router-stopping")
 	journal := Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "resume-router-stopping",
 		Mode:          "evacuate",
 		Scope:         orchestrator.operationScope(),
@@ -784,7 +833,7 @@ func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "scope")
 	journal := Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "scope",
 		Mode:          "evacuate",
 		Scope:         orchestrator.operationScope(),
@@ -800,10 +849,74 @@ func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	}
 }
 
+func TestLoadExistingJournalMigratesLegacyCanceledState(t *testing.T) {
+	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "legacy-canceled")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: legacyHostctlJournalSchemaVersion,
+		OperationID:   "legacy-canceled",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         "canceled",
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	journal, err := orchestrator.loadExistingJournal("evacuate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.SchemaVersion != hostctlJournalSchemaVersion {
+		t.Fatalf(
+			"migrated journal schema = %d, want %d",
+			journal.SchemaVersion,
+			hostctlJournalSchemaVersion,
+		)
+	}
+	if journal.CancellationPhase != "complete" {
+		t.Fatalf(
+			"migrated cancellation phase = %q, want complete",
+			journal.CancellationPhase,
+		)
+	}
+
+	data, err := os.ReadFile(orchestrator.config.JournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var persisted Journal
+	if err := json.Unmarshal(data, &persisted); err != nil {
+		t.Fatal(err)
+	}
+	if persisted.SchemaVersion != hostctlJournalSchemaVersion ||
+		persisted.CancellationPhase != "complete" {
+		t.Fatalf("persisted migrated journal = %#v", persisted)
+	}
+}
+
+func TestLoadExistingJournalRejectsIncompleteCurrentCancellation(t *testing.T) {
+	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "invalid-canceled")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion: hostctlJournalSchemaVersion,
+		OperationID:   "invalid-canceled",
+		Mode:          "evacuate",
+		Scope:         orchestrator.operationScope(),
+		Phase:         "canceled",
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err := orchestrator.loadExistingJournal("evacuate")
+	if err == nil || !strings.Contains(err.Error(), "invalid evacuation cancellation phase") {
+		t.Fatalf("load error = %v, want invalid cancellation state", err)
+	}
+}
+
 func TestOperationLockReportsOwnerWithoutWaiting(t *testing.T) {
 	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "locked")
 	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion: 1,
+		SchemaVersion: hostctlJournalSchemaVersion,
 		OperationID:   "locked",
 		Mode:          "evacuate",
 		Scope:         orchestrator.operationScope(),

@@ -33,6 +33,9 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Rotatable transition audit log |
 | `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Committed desired-state intent awaiting reconciliation |
 | `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
+| `VERSIOND_ROUTER_TEMPLATE` | no | `/etc/nginx/template/nginx.conf.template` | Nginx configuration template rendered from router state |
+| `VERSIOND_ROUTER_OUT` | no | `/etc/nginx/conf.d/default.conf` | Published nginx configuration |
+| `VERSIOND_ROUTER_NGINX_BIN` | no | `nginx` | Nginx executable used for validation and reload |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `2s` | Upstream connection deadline before HA failover |
 | `VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT` | no | `20m` | Idle deadline in either direction for long HTTP/SSE requests |
@@ -297,6 +300,17 @@ interrupted, rerun the same command with the same operation ID and journal. It
 resumes after the last durable phase. The journal records the router, upstream,
 SSH destination, runtime, and service scope; a retry with different targets is
 rejected.
+Hostctl journals use schema 2. A validated schema-1 journal is atomically
+migrated on first resume; a legacy terminal cancellation without explicit
+cancellation checkpoints is normalized to `cancellation_phase=complete`.
+
+Completed journals are retained intentionally and are never deleted
+automatically. They remain the local replay record, and a completed evacuation
+journal can also supply the original Docker restart policy to `replace`. Keep
+them through the dependent replacement and the operational replay window. They
+may then be moved to an archive according to the operator's retention policy,
+but an archived operation ID must never be reused. A new maintenance action
+must always receive a new operation ID.
 An operation-wide local file lock prevents two processes from replaying the
 same checkpoint and duplicating lifecycle steps.
 Commands do not queue behind that lock. A concurrent command exits immediately
@@ -412,6 +426,10 @@ It becomes `active` only after `GET /ready` returns `200`. The readiness
 endpoint stays at `503` until versiond is serving, accepting traffic, has an
 available child, and is fully reconciled without a progressing or degraded
 condition.
+Availability deliberately requires at least one approved version and one
+running child route. A fresh host with an empty desired-version set remains in
+`starting` and cannot be activated. Ensure governance exposes at least one
+approved version before running `add` or `replace`.
 
 For Docker, replacement has no implicit restart-policy default. When reusing a
 service, pass its completed evacuation journal as above; the exact original
