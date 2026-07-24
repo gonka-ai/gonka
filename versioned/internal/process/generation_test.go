@@ -138,6 +138,31 @@ func TestGenerationStateTableMetadata(t *testing.T) {
 	}
 }
 
+func TestGenerationStateTableTargetsAdvancePhase(t *testing.T) {
+	for state, spec := range generationStateTable {
+		for _, target := range spec.targets {
+			targetSpec, ok := generationStateTable[target]
+			if !ok {
+				t.Errorf("%s targets unknown generation state %s", state, target)
+				continue
+			}
+			if spec.phase == unorderedGenerationPhase ||
+				targetSpec.phase == unorderedGenerationPhase {
+				continue
+			}
+			if targetSpec.phase <= spec.phase {
+				t.Errorf(
+					"%s phase %d targets non-advancing %s phase %d",
+					state,
+					spec.phase,
+					target,
+					targetSpec.phase,
+				)
+			}
+		}
+	}
+}
+
 func TestGenerationTransitionTreatsLaterPhaseAsAlreadySatisfied(t *testing.T) {
 	c := &child{status: statusDraining}
 	if !transitionGenerationLocked(c, statusRetiring) {
