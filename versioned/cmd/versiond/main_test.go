@@ -390,7 +390,17 @@ func TestWatchForceSignalsForcesOnSIGINT(t *testing.T) {
 	force := make(chan struct{})
 	go watchForceSignals(signals, shutdownDone, force)
 
-	signals <- syscall.SIGINT
+	signals <- syscall.SIGTERM
+	sentSIGINT := make(chan struct{})
+	go func() {
+		signals <- syscall.SIGINT
+		close(sentSIGINT)
+	}()
+	select {
+	case <-sentSIGINT:
+	case <-time.After(time.Second):
+		t.Fatal("watcher stopped after duplicate SIGTERM")
+	}
 	select {
 	case <-force:
 	case <-time.After(time.Second):

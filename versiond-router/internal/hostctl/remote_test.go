@@ -62,7 +62,7 @@ printf 'ok'
 
 	remote := SSHRemote{
 		Binary:  sshPath,
-		Options: []string{"-F", "config path"},
+		Options: []string{"-o", "ConnectTimeout=2", "-F", "config path"},
 	}
 	output, err := remote.Run(
 		context.Background(),
@@ -85,8 +85,21 @@ printf 'ok'
 		t.Fatal(err)
 	}
 	args := strings.Split(strings.TrimSuffix(string(data), "\n"), "\n")
-	if len(args) < 3 {
+	wantPrefix := []string{
+		"-o", "ConnectTimeout=2",
+		"-F", "config path",
+		"-o", "BatchMode=yes",
+		"-o", "ConnectTimeout=10",
+		"-o", "ServerAliveInterval=5",
+		"-o", "ServerAliveCountMax=3",
+	}
+	if len(args) < len(wantPrefix)+3 {
 		t.Fatalf("captured SSH arguments = %q, want destination and command", args)
+	}
+	for i, want := range wantPrefix {
+		if args[i] != want {
+			t.Fatalf("SSH option %d = %q, want %q", i, args[i], want)
+		}
 	}
 	gotTail := args[len(args)-3:]
 	wantTail := []string{
@@ -100,15 +113,4 @@ printf 'ok'
 		}
 	}
 
-	joined := strings.Join(args, "\n")
-	for _, option := range []string{
-		"BatchMode=yes",
-		"ConnectTimeout=10",
-		"ServerAliveInterval=5",
-		"ServerAliveCountMax=3",
-	} {
-		if !strings.Contains(joined, option) {
-			t.Fatalf("SSH arguments do not contain %q:\n%s", option, joined)
-		}
-	}
 }
