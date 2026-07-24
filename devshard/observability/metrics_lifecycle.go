@@ -297,6 +297,17 @@ func SetMempoolSize(escrowID string, size int) {
 	mempoolSize.WithLabelValues(escrowID).Set(float64(size))
 }
 
+// DeleteEscrowMetrics drops per-escrow gauge series so settled/evicted
+// sessions do not leave permanent labels in the /metrics registry.
+func DeleteEscrowMetrics(escrowID string) {
+	ensureMetrics()
+	if escrowID == "" {
+		return
+	}
+	validationQueueDepth.DeleteLabelValues(escrowID)
+	mempoolSize.DeleteLabelValues(escrowID)
+}
+
 func SetBuildInfo(binary, version, commit string) {
 	ensureMetrics()
 	buildInfo.WithLabelValues(binary, version, commit).Set(1)
