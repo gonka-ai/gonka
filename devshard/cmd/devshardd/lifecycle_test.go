@@ -4,12 +4,189 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
 )
+
+func TestLifecycleTransitionTable(t *testing.T) {
+	states := []lifecyclePhase{
+		lifecyclePhaseStarting,
+		lifecyclePhaseServing,
+		lifecyclePhaseDisconnected,
+		lifecyclePhaseDraining,
+	}
+	events := []lifecycleEvent{
+		lifecycleEventChainReady,
+		lifecycleEventChainDisconnected,
+		lifecycleEventDrainRequested,
+	}
+	expected := map[lifecyclePhase]map[lifecycleEvent]lifecyclePhase{
+		lifecyclePhaseStarting: {
+			lifecycleEventChainReady:        lifecyclePhaseServing,
+			lifecycleEventChainDisconnected: lifecyclePhaseStarting,
+			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
+		},
+		lifecyclePhaseServing: {
+			lifecycleEventChainReady:        lifecyclePhaseServing,
+			lifecycleEventChainDisconnected: lifecyclePhaseDisconnected,
+			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
+		},
+		lifecyclePhaseDisconnected: {
+			lifecycleEventChainReady:        lifecyclePhaseServing,
+			lifecycleEventChainDisconnected: lifecyclePhaseDisconnected,
+			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
+		},
+		lifecyclePhaseDraining: {
+			lifecycleEventChainReady:        lifecyclePhaseDraining,
+			lifecycleEventChainDisconnected: lifecyclePhaseDraining,
+			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
+		},
+	}
+
+	require.Len(t, lifecyclePhaseTable, len(expected))
+	for _, from := range states {
+		spec, ok := lifecyclePhaseTable[from]
+		require.Truef(t, ok, "missing lifecycle phase %s", from)
+		require.Lenf(t, spec.transitions, len(events), "transitions from %s", from)
+		for _, event := range events {
+			got, gotOK := nextLifecyclePhase(from, event)
+			want, wantOK := expected[from][event]
+			require.Equalf(
+				t,
+				wantOK,
+				gotOK,
+				"transition existence for %s + %s",
+				from,
+				event,
+			)
+			require.Equalf(
+				t,
+				want,
+				got,
+				"transition target for %s + %s",
+				from,
+				event,
+			)
+		}
+	}
+	_, ok := nextLifecyclePhase("unknown", lifecycleEventDrainRequested)
+	require.False(t, ok, "unknown lifecycle state accepted an event")
+	_, ok = nextLifecyclePhase(lifecyclePhaseServing, "unknown")
+	require.False(t, ok, "unknown lifecycle event was accepted")
+}
+
+func TestLifecyclePhaseTableProjections(t *testing.T) {
+	type projection struct {
+		ready     bool
+		draining  bool
+		accepting bool
+	}
+	expected := map[lifecyclePhase]projection{
+		lifecyclePhaseStarting: {
+			accepting: true,
+		},
+		lifecyclePhaseServing: {
+			ready:     true,
+			accepting: true,
+		},
+		lifecyclePhaseDisconnected: {
+			accepting: true,
+		},
+		lifecyclePhaseDraining: {
+			draining: true,
+		},
+	}
+
+	require.Len(t, lifecyclePhaseTable, len(expected))
+	for phase, want := range expected {
+		spec, ok := lifecyclePhaseTable[phase]
+		require.Truef(t, ok, "missing lifecycle phase %s", phase)
+		require.Equal(t, want.ready, spec.ready, "ready projection for %s", phase)
+		require.Equal(t, want.draining, spec.draining, "draining projection for %s", phase)
+		require.Equal(t, want.accepting, spec.accepting, "admission projection for %s", phase)
+		require.Falsef(
+			t,
+			spec.ready && spec.draining,
+			"phase %s projects both ready and draining",
+			phase,
+		)
+	}
+}
+
+func TestLifecycleTracksChainReconnect(t *testing.T) {
+	lifecycle := newLifecycleState()
+	require.False(t, lifecycle.Status().Ready)
+
+	lifecycle.SetReady(true)
+	require.True(t, lifecycle.Status().Ready)
+
+	lifecycle.SetReady(false)
+	status := lifecycle.Status()
+	require.False(t, status.Ready)
+	require.False(t, status.Draining)
+
+	lifecycle.SetReady(true)
+	require.True(t, lifecycle.Status().Ready)
+}
+
+func TestLifecycleDrainAbsorbsLateChainEvents(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	lifecycle.StartDrain()
+
+	lifecycle.SetReady(false)
+	lifecycle.SetReady(true)
+	lifecycle.StartDrain()
+
+	status := lifecycle.Status()
+	require.False(t, status.Ready)
+	require.True(t, status.Draining)
+}
+
+func TestLifecycleDrainKeepsAdmittedRequestInflight(t *testing.T) {
+	lifecycle := newLifecycleState()
+	lifecycle.SetReady(true)
+	e := buildServer(lifecycle)
+	started := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	finishRequest := sync.OnceFunc(func() {
+		close(release)
+		<-finished
+	})
+	t.Cleanup(finishRequest)
+	e.GET("/work", func(c echo.Context) error {
+		close(started)
+		<-release
+		return c.NoContent(http.StatusNoContent)
+	})
+
+	go func() {
+		defer close(finished)
+		e.ServeHTTP(
+			httptest.NewRecorder(),
+			httptest.NewRequest(http.MethodGet, "/work", nil),
+		)
+	}()
+	<-started
+
+	lifecycle.StartDrain()
+	status := lifecycle.Status()
+	require.True(t, status.Draining)
+	require.EqualValues(t, 1, status.Inflight)
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/work", nil))
+	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
+	require.EqualValues(t, 1, lifecycle.Status().Inflight)
+
+	finishRequest()
+	require.Zero(t, lifecycle.Status().Inflight)
+}
 
 func TestLifecycleReadyAndDrainStatus(t *testing.T) {
 	lifecycle := newLifecycleState()

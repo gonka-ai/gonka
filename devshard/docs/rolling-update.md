@@ -127,6 +127,25 @@ Lifecycle controls live on a **loopback admin** listener when versiond sets
 `DEVSHARD_ADMIN_ADDR=127.0.0.1:<port>` (after `--print-admin-api-version`
 succeeds). Those paths are **not** registered on the public Echo instance.
 
+The lifecycle controller is a table-driven FSM:
+
+```text
+starting --chain ready--> serving --chain disconnected--> disconnected
+                              ^                              |
+                              +--------- chain ready --------+
+
+starting / serving / disconnected --drain--> draining
+draining --any later lifecycle event------------> draining
+```
+
+The state table owns readiness, draining, and request-admission projections.
+`starting` and `disconnected` report `ready=false` but preserve the existing
+admission behavior during chain subscription startup/reconnect. Only
+`draining` closes admission. The transition to `draining` and request
+admission/inflight accounting use the same lock, so a racing request is either
+accepted and counted for its full response or rejected before its handler runs.
+Late chain-ready callbacks cannot move a draining process back to serving.
+
 1. **`GET /ready` (admin)** — `200` when chain-event subscriptions report ready
    and the child is not draining; otherwise `503`. versiond also requires
    public `/healthz` `2xx` before publishing the route for admin-capable
@@ -653,8 +672,10 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
 - **e2e (`versioned/e2e`):**
   `TestSameNameNewSHA_RollingUpdateDrainsOld` verifies that a long request
   completes on the old binary while concurrent work reaches the new binary.
-- **devshardd:** lifecycle tests cover `/ready`, `/drain`, `/drain/status`,
-  `devshardd_lifecycle_inflight_requests`, and `DEVSHARD_SHUTDOWN_GRACE`.
+- **devshardd:** lifecycle tests cover the complete state/event matrix,
+  terminal drain, atomic admission/inflight accounting, `/ready`, `/drain`,
+  `/drain/status`, `devshardd_lifecycle_inflight_requests`, and
+  `DEVSHARD_SHUTDOWN_GRACE`.
 - **versiond host FSM:** admission closes atomically on `draining`, leases span
   full streams, reconcile/restarts freeze, and first/second signals exercise
   graceful/idempotent/forced process states.
