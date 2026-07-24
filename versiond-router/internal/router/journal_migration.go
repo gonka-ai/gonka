@@ -54,6 +54,30 @@ type operationJournalV2 struct {
 	CreatedAt     time.Time     `json:"created_at"`
 }
 
+type operationJournalV3 struct {
+	SchemaVersion  int           `json:"schema_version"`
+	OperationID    string        `json:"operation_id"`
+	Phase          string        `json:"phase"`
+	Action         string        `json:"action,omitempty"`
+	Host           string        `json:"host,omitempty"`
+	MembershipID   string        `json:"membership_id,omitempty"`
+	From           HostState     `json:"from,omitempty"`
+	To             HostState     `json:"to,omitempty"`
+	Target         HostState     `json:"target,omitempty"`
+	Result         string        `json:"result,omitempty"`
+	OldState       *State        `json:"old_state,omitempty"`
+	NewState       State         `json:"new_state"`
+	OldReceipts    *receiptIndex `json:"old_receipts,omitempty"`
+	NewReceipts    receiptIndex  `json:"new_receipts"`
+	OldConfig      []byte        `json:"old_config,omitempty"`
+	NewConfig      []byte        `json:"new_config,omitempty"`
+	NewConfigSHA   string        `json:"new_config_sha256"`
+	Audit          AuditRecord   `json:"audit"`
+	RecoveryPolicy string        `json:"recovery_policy"`
+	Reload         bool          `json:"reload"`
+	CreatedAt      time.Time     `json:"created_at"`
+}
+
 func (c *Controller) decodeOperationJournal(
 	data []byte,
 ) (operationJournal, bool, error) {
@@ -74,6 +98,9 @@ func (c *Controller) decodeOperationJournal(
 			)
 		}
 		return journal, false, nil
+	case fixedConfigOperationJournalSchemaVersion:
+		journal, err := c.migrateOperationJournalV3(data)
+		return journal, err == nil, err
 	case rollbackOperationJournalSchemaVersion:
 		journal, err := c.migrateOperationJournalV2(data)
 		return journal, err == nil, err
@@ -86,6 +113,46 @@ func (c *Controller) decodeOperationJournal(
 			envelope.SchemaVersion,
 		)
 	}
+}
+
+func (c *Controller) migrateOperationJournalV3(
+	data []byte,
+) (operationJournal, error) {
+	var legacy operationJournalV3
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return operationJournal{}, fmt.Errorf(
+			"decode operation journal schema 3: %w",
+			err,
+		)
+	}
+	journal := operationJournal{
+		SchemaVersion:  operationJournalSchemaVersion,
+		OperationID:    legacy.OperationID,
+		Phase:          legacy.Phase,
+		Action:         legacy.Action,
+		Host:           legacy.Host,
+		MembershipID:   legacy.MembershipID,
+		From:           legacy.From,
+		To:             legacy.To,
+		Target:         legacy.Target,
+		Result:         legacy.Result,
+		OldState:       legacy.OldState,
+		NewState:       legacy.NewState,
+		OldReceipts:    legacy.OldReceipts,
+		NewReceipts:    legacy.NewReceipts,
+		OldConfig:      legacy.OldConfig,
+		NewConfig:      legacy.NewConfig,
+		NewConfigSHA:   legacy.NewConfigSHA,
+		Audit:          legacy.Audit,
+		RecoveryPolicy: legacy.RecoveryPolicy,
+		Reload:         legacy.Reload,
+		CreatedAt:      legacy.CreatedAt,
+	}
+	if journal.RecoveryPolicy == recoveryPolicyRollForward {
+		journal.RenderRevision = 1
+		journal.RenderSourceSHA = legacyRenderSourceSHA(journal.NewConfig)
+	}
+	return journal, nil
 }
 
 func (c *Controller) migrateOperationJournalV1(
@@ -225,6 +292,12 @@ func (c *Controller) migrateOperationJournalV2Value(
 	if len(newConfig) > 0 {
 		configSHA = hashBytes(newConfig)
 	}
+	var renderRevision uint64
+	var renderSourceSHA string
+	if policy == recoveryPolicyRollForward {
+		renderRevision = 1
+		renderSourceSHA = legacyRenderSourceSHA(newConfig)
+	}
 	change := mutation{
 		OperationID:  legacy.OperationID,
 		Action:       legacy.Action,
@@ -236,27 +309,29 @@ func (c *Controller) migrateOperationJournalV2Value(
 		Result:       legacy.Result,
 	}
 	return operationJournal{
-		SchemaVersion:  operationJournalSchemaVersion,
-		OperationID:    legacy.OperationID,
-		Phase:          phase,
-		Action:         legacy.Action,
-		Host:           legacy.Host,
-		MembershipID:   legacy.MembershipID,
-		From:           legacy.From,
-		To:             legacy.To,
-		Target:         legacy.Target,
-		Result:         legacy.Result,
-		OldState:       legacy.OldState,
-		NewState:       legacy.NewState,
-		OldReceipts:    legacy.OldReceipts,
-		NewReceipts:    legacy.NewReceipts,
-		OldConfig:      legacy.OldConfig,
-		NewConfig:      newConfig,
-		NewConfigSHA:   configSHA,
-		Audit:          auditRecord(change, legacy.NewState.Generation, configSHA),
-		RecoveryPolicy: policy,
-		Reload:         legacy.Reload,
-		CreatedAt:      legacy.CreatedAt,
+		SchemaVersion:   operationJournalSchemaVersion,
+		OperationID:     legacy.OperationID,
+		Phase:           phase,
+		Action:          legacy.Action,
+		Host:            legacy.Host,
+		MembershipID:    legacy.MembershipID,
+		From:            legacy.From,
+		To:              legacy.To,
+		Target:          legacy.Target,
+		Result:          legacy.Result,
+		OldState:        legacy.OldState,
+		NewState:        legacy.NewState,
+		OldReceipts:     legacy.OldReceipts,
+		NewReceipts:     legacy.NewReceipts,
+		OldConfig:       legacy.OldConfig,
+		NewConfig:       newConfig,
+		NewConfigSHA:    configSHA,
+		RenderRevision:  renderRevision,
+		RenderSourceSHA: renderSourceSHA,
+		Audit:           auditRecord(change, legacy.NewState.Generation, configSHA),
+		RecoveryPolicy:  policy,
+		Reload:          legacy.Reload,
+		CreatedAt:       legacy.CreatedAt,
 	}, nil
 }
 

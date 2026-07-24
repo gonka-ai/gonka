@@ -828,11 +828,16 @@ live authority, while that source remains necessary for disaster recovery.
 
 `gonka-routerctl status` never performs recovery or reload. It exposes an
 unfinished journal as `pending_operation` and reports desired/applied
-generations plus `application.converged`; `gonka-routerctl recover` resolves it
-under the controller lock. The WAL write is the desired-state commit point.
-Recovery republishes its exact config and converges forward through `nginx -t`,
-reload, and applied-generation persistence. Audit delivery is retried from the
-outbox and cannot roll back an applied routing generation.
+generations, render revision/source SHA, and `application.converged`;
+`gonka-routerctl recover` resolves it under the controller lock. The WAL write
+is the desired-state commit point. Recovery republishes the committed config
+projection and converges forward through `nginx -t`, reload, and
+applied-generation persistence. Before application, a repaired template, proxy
+policy, or renderer schema creates a new projection revision in the same WAL,
+so recovery does not require deleting committed state. Audit delivery is
+retried from the outbox and cannot roll back an applied routing generation. If
+both outbox persistence and direct audit append fail, routing remains committed
+but the audit event may be lost with a warning.
 
 #### When to use which layer
 
@@ -873,8 +878,10 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   resume/order without requiring SSH. Removal must drop the DNS name from the
   rendered pool after recovery from a reload failure and replay idempotently
   from the terminal operation receipt. Re-adding the same host name must create
-  a new membership ID. State and pending journal schema-1/schema-2 fixtures must
-  migrate without losing an in-progress transfer.
+  a new membership ID. State and pending journal schema-1/schema-2/schema-3
+  fixtures must migrate without losing an in-progress transfer. A rejected
+  config must recover through a new projection revision after its render source
+  is fixed, while an already applied operation remains immutable.
 - **full stack (`devshard/testenv`, `TestVersiondHostEvacuation`):** pin a long
   stream to one versiond, start a real `gonka-hostctl evacuate`, and verify new
   work and the same escrow recover on the survivor while the barrier-held stream

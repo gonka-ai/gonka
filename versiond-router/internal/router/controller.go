@@ -54,17 +54,19 @@ type Controller struct {
 type InitialStateFactory func() (State, error)
 
 type PendingOperation struct {
-	OperationID   string    `json:"operation_id"`
-	Action        string    `json:"action,omitempty"`
-	Host          string    `json:"host,omitempty"`
-	MembershipID  string    `json:"membership_id,omitempty"`
-	From          HostState `json:"from,omitempty"`
-	To            HostState `json:"to,omitempty"`
-	Target        HostState `json:"target,omitempty"`
-	Phase         string    `json:"phase"`
-	NewGeneration uint64    `json:"new_generation"`
-	NewConfigSHA  string    `json:"new_config_sha256"`
-	CreatedAt     time.Time `json:"created_at"`
+	OperationID     string    `json:"operation_id"`
+	Action          string    `json:"action,omitempty"`
+	Host            string    `json:"host,omitempty"`
+	MembershipID    string    `json:"membership_id,omitempty"`
+	From            HostState `json:"from,omitempty"`
+	To              HostState `json:"to,omitempty"`
+	Target          HostState `json:"target,omitempty"`
+	Phase           string    `json:"phase"`
+	NewGeneration   uint64    `json:"new_generation"`
+	RenderRevision  uint64    `json:"render_revision,omitempty"`
+	RenderSourceSHA string    `json:"render_source_sha256,omitempty"`
+	NewConfigSHA    string    `json:"new_config_sha256"`
+	CreatedAt       time.Time `json:"created_at"`
 }
 
 type Status struct {
@@ -89,39 +91,42 @@ type AuditRecord struct {
 }
 
 const (
-	legacyOperationJournalSchemaVersion   = 1
-	rollbackOperationJournalSchemaVersion = 2
-	operationJournalSchemaVersion         = 3
-	recoveryPolicyRollForward             = "roll_forward"
-	recoveryPolicyLegacyRollback          = "legacy_rollback"
-	operationPhaseIntentCommitted         = "intent_committed"
-	operationPhaseDesiredPersisted        = "desired_persisted"
-	operationPhaseApplied                 = "applied"
-	operationPhaseAuditEnqueued           = "audit_enqueued"
+	legacyOperationJournalSchemaVersion      = 1
+	rollbackOperationJournalSchemaVersion    = 2
+	fixedConfigOperationJournalSchemaVersion = 3
+	operationJournalSchemaVersion            = 4
+	recoveryPolicyRollForward                = "roll_forward"
+	recoveryPolicyLegacyRollback             = "legacy_rollback"
+	operationPhaseIntentCommitted            = "intent_committed"
+	operationPhaseDesiredPersisted           = "desired_persisted"
+	operationPhaseApplied                    = "applied"
+	operationPhaseAuditEnqueued              = "audit_enqueued"
 )
 
 type operationJournal struct {
-	SchemaVersion  int           `json:"schema_version"`
-	OperationID    string        `json:"operation_id"`
-	Phase          string        `json:"phase"`
-	Action         string        `json:"action,omitempty"`
-	Host           string        `json:"host,omitempty"`
-	MembershipID   string        `json:"membership_id,omitempty"`
-	From           HostState     `json:"from,omitempty"`
-	To             HostState     `json:"to,omitempty"`
-	Target         HostState     `json:"target,omitempty"`
-	Result         string        `json:"result,omitempty"`
-	OldState       *State        `json:"old_state,omitempty"`
-	NewState       State         `json:"new_state"`
-	OldReceipts    *receiptIndex `json:"old_receipts,omitempty"`
-	NewReceipts    receiptIndex  `json:"new_receipts"`
-	OldConfig      []byte        `json:"old_config,omitempty"`
-	NewConfig      []byte        `json:"new_config,omitempty"`
-	NewConfigSHA   string        `json:"new_config_sha256"`
-	Audit          AuditRecord   `json:"audit"`
-	RecoveryPolicy string        `json:"recovery_policy"`
-	Reload         bool          `json:"reload"`
-	CreatedAt      time.Time     `json:"created_at"`
+	SchemaVersion   int           `json:"schema_version"`
+	OperationID     string        `json:"operation_id"`
+	Phase           string        `json:"phase"`
+	Action          string        `json:"action,omitempty"`
+	Host            string        `json:"host,omitempty"`
+	MembershipID    string        `json:"membership_id,omitempty"`
+	From            HostState     `json:"from,omitempty"`
+	To              HostState     `json:"to,omitempty"`
+	Target          HostState     `json:"target,omitempty"`
+	Result          string        `json:"result,omitempty"`
+	OldState        *State        `json:"old_state,omitempty"`
+	NewState        State         `json:"new_state"`
+	OldReceipts     *receiptIndex `json:"old_receipts,omitempty"`
+	NewReceipts     receiptIndex  `json:"new_receipts"`
+	OldConfig       []byte        `json:"old_config,omitempty"`
+	NewConfig       []byte        `json:"new_config,omitempty"`
+	NewConfigSHA    string        `json:"new_config_sha256"`
+	RenderRevision  uint64        `json:"render_revision,omitempty"`
+	RenderSourceSHA string        `json:"render_source_sha256,omitempty"`
+	Audit           AuditRecord   `json:"audit"`
+	RecoveryPolicy  string        `json:"recovery_policy"`
+	Reload          bool          `json:"reload"`
+	CreatedAt       time.Time     `json:"created_at"`
 }
 
 type mutation struct {
@@ -445,17 +450,19 @@ func (c *Controller) Status(ctx context.Context) (Status, error) {
 		status.Application = application
 		if journal != nil {
 			status.PendingOperation = &PendingOperation{
-				OperationID:   journal.OperationID,
-				Action:        journal.Action,
-				Host:          journal.Host,
-				MembershipID:  journal.MembershipID,
-				From:          journal.From,
-				To:            journal.To,
-				Target:        journal.Target,
-				Phase:         journal.Phase,
-				NewGeneration: journal.NewState.Generation,
-				NewConfigSHA:  journal.NewConfigSHA,
-				CreatedAt:     journal.CreatedAt,
+				OperationID:     journal.OperationID,
+				Action:          journal.Action,
+				Host:            journal.Host,
+				MembershipID:    journal.MembershipID,
+				From:            journal.From,
+				To:              journal.To,
+				Target:          journal.Target,
+				Phase:           journal.Phase,
+				NewGeneration:   journal.NewState.Generation,
+				RenderRevision:  journal.RenderRevision,
+				RenderSourceSHA: journal.RenderSourceSHA,
+				NewConfigSHA:    journal.NewConfigSHA,
+				CreatedAt:       journal.CreatedAt,
 			}
 		}
 		return nil
@@ -507,34 +514,31 @@ func (c *Controller) commitDesired(
 	if err := newReceipts.Validate(); err != nil {
 		return err
 	}
-	template, err := os.ReadFile(c.config.TemplatePath)
+	projection, err := c.renderProjection(newState)
 	if err != nil {
 		return err
 	}
-	newConfig, err := Render(template, newState, c.config.ProxyPolicy)
-	if err != nil {
-		return err
-	}
-	configSHA := hashBytes(newConfig)
 	journal := operationJournal{
-		SchemaVersion:  operationJournalSchemaVersion,
-		OperationID:    change.OperationID,
-		Phase:          operationPhaseIntentCommitted,
-		Action:         change.Action,
-		Host:           change.Host,
-		MembershipID:   change.MembershipID,
-		From:           change.From,
-		To:             change.To,
-		Target:         change.Target,
-		Result:         change.Result,
-		NewState:       newState,
-		NewReceipts:    newReceipts,
-		NewConfig:      newConfig,
-		NewConfigSHA:   configSHA,
-		Audit:          auditRecord(change, newState.Generation, configSHA),
-		RecoveryPolicy: recoveryPolicyRollForward,
-		Reload:         reload,
-		CreatedAt:      time.Now().UTC(),
+		SchemaVersion:   operationJournalSchemaVersion,
+		OperationID:     change.OperationID,
+		Phase:           operationPhaseIntentCommitted,
+		Action:          change.Action,
+		Host:            change.Host,
+		MembershipID:    change.MembershipID,
+		From:            change.From,
+		To:              change.To,
+		Target:          change.Target,
+		Result:          change.Result,
+		NewState:        newState,
+		NewReceipts:     newReceipts,
+		NewConfig:       projection.Config,
+		NewConfigSHA:    projection.ConfigSHA,
+		RenderRevision:  1,
+		RenderSourceSHA: projection.SourceSHA,
+		Audit:           auditRecord(change, newState.Generation, projection.ConfigSHA),
+		RecoveryPolicy:  recoveryPolicyRollForward,
+		Reload:          reload,
+		CreatedAt:       time.Now().UTC(),
 	}
 	if err := writeJSONAtomic(c.config.JournalPath, journal, 0o600); err != nil {
 		return err
@@ -543,14 +547,11 @@ func (c *Controller) commitDesired(
 }
 
 func (c *Controller) ensureRendered(ctx context.Context, state State, reload bool) error {
-	template, err := os.ReadFile(c.config.TemplatePath)
+	projection, err := c.renderProjection(state)
 	if err != nil {
 		return err
 	}
-	want, err := Render(template, state, c.config.ProxyPolicy)
-	if err != nil {
-		return err
-	}
+	want := projection.Config
 	applied, err := c.loadAppliedState()
 	if err != nil {
 		return err
@@ -681,19 +682,18 @@ func (c *Controller) reconcileCommitted(
 			err,
 		)
 	}
-	if len(journal.NewConfig) == 0 {
+	if err := validateCommittedProjection(journal); err != nil {
+		return fmt.Errorf("recover operation %s: %w", journal.OperationID, err)
+	}
+	if err := c.refreshCommittedProjection(&journal); err != nil {
 		return fmt.Errorf(
-			"recover operation %s: desired config is empty",
+			"refresh operation %s config projection: %w",
 			journal.OperationID,
+			err,
 		)
 	}
-	if got := hashBytes(journal.NewConfig); got != journal.NewConfigSHA {
-		return fmt.Errorf(
-			"recover operation %s: journal config sha256 is %s, want %s",
-			journal.OperationID,
-			got,
-			journal.NewConfigSHA,
-		)
+	if err := validateCommittedProjection(journal); err != nil {
+		return fmt.Errorf("recover operation %s: %w", journal.OperationID, err)
 	}
 	if err := writeJSONAtomic(c.config.StatePath, journal.NewState, 0o600); err != nil {
 		return err
@@ -940,7 +940,12 @@ func auditRecord(
 		Generation:   generation,
 		Result:       change.Result,
 	}
-	record.EventID = "router-audit-" + hashBytes([]byte(fmt.Sprintf(
+	record.EventID = auditEventID(record, configSHA)
+	return record
+}
+
+func auditEventID(record AuditRecord, configSHA string) string {
+	return "router-audit-" + hashBytes([]byte(fmt.Sprintf(
 		"%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%s\x00%d\x00%s\x00%s",
 		record.OperationID,
 		record.Action,
@@ -953,7 +958,6 @@ func auditRecord(
 		record.Result,
 		configSHA,
 	)))
-	return record
 }
 
 func terminalResult(result string) bool {

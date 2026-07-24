@@ -64,3 +64,22 @@ func TestRenderAppliesProxyPolicy(t *testing.T) {
 		}
 	}
 }
+
+func TestRenderSourceSHATracksAllRenderInputs(t *testing.T) {
+	template := []byte(testTemplate)
+	defaultSHA := renderSourceSHA(template, ProxyPolicy{})
+	if got := renderSourceSHA(template, DefaultProxyPolicy()); got != defaultSHA {
+		t.Fatalf("normalized default policy sha = %s, want %s", got, defaultSHA)
+	}
+	if got := renderSourceSHA(
+		append(append([]byte(nil), template...), '#'),
+		DefaultProxyPolicy(),
+	); got == defaultSHA {
+		t.Fatal("template change did not change render source sha")
+	}
+	policy := DefaultProxyPolicy()
+	policy.UpstreamKeepalive++
+	if got := renderSourceSHA(template, policy); got == defaultSHA {
+		t.Fatal("proxy policy change did not change render source sha")
+	}
+}

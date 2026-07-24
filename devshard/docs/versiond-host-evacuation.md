@@ -148,23 +148,27 @@ this change adds no listener, credential format, mTLS PKI, or token lifecycle.
 
 The router command uses a file lock and validates state transitions before
 commit. It then writes a WAL entry containing the complete desired state,
-completion receipts, and exact rendered nginx config. A reconciler persists
-that desired generation, runs `nginx -t`, atomically publishes and reloads the
-config, and records the applied generation. Repeating an already completed
-operation is idempotent.
+completion receipts, and a revisioned nginx config projection. Its
+render-source SHA covers the template, normalized proxy policy, and renderer
+schema. A reconciler persists that desired generation, runs `nginx -t`,
+atomically publishes and reloads the config, and records the applied generation.
+Repeating an already completed operation is idempotent.
 
 Router state, applied metadata, receipt index, pending journal, audit outbox,
 and audit data live on the persistent `/var/lib/gonka/versiond-router` volume.
 Back up all control-plane files together. The audit may be rotated, but the
 receipt index must not be rotated or pruned: it is the durable idempotency
-record for completed operation IDs.
+record for completed operation IDs. The WAL is one replace-in-place snapshot;
+its size follows the desired state, receipt index, and rendered config.
 
 State schema 1 is migrated automatically to schema 2 under the router lock.
 Existing membership IDs are preserved; older per-host operation ownership is
-converted into one `active_transfer`. Pending schema-1 and schema-2 transaction
-journals are migrated before recovery. Legacy pre-reload transactions retain
-their rollback behavior; legacy transactions that already reloaded nginx become
-forward-only desired-state intents. The receipt index is committed with desired
+converted into one `active_transfer`. Pending schema-1, schema-2, and schema-3
+transaction journals are migrated before recovery. Legacy pre-reload
+transactions retain their rollback behavior; legacy transactions that already
+reloaded nginx become forward-only desired-state intents. Schema-3 config bytes
+are imported as the first projection revision and compared with the current
+render source before application. The receipt index is committed with desired
 state. If it does not exist during an upgrade, valid terminal audit entries are
 imported once; malformed audit lines are skipped and never block router
 mutation.
@@ -174,16 +178,21 @@ first state only. On restart, journal recovery and the persisted state run first
 bootstrap settings are not parsed when authoritative state already exists.
 
 `gonka-routerctl status` is read-only. It reports `pending_operation` plus
-desired/applied generations and a convergence flag. `gonka-routerctl recover`
-is the explicit mutating recovery command. Writing the current WAL is the
-desired-state commit point, so recovery always converges forward: it rewrites
-state and receipts, republishes the exact journaled config, validates it,
-reloads nginx idempotently, and updates applied metadata. An externally changed
-output config is repaired from the WAL instead of deadlocking recovery.
+desired/applied generations, render revision and source SHA, and a convergence
+flag. `gonka-routerctl recover` is the explicit mutating recovery command.
+Writing the current WAL is the desired-state commit point, so recovery always
+converges forward: it rewrites state and receipts, republishes the committed
+config projection, validates it, reloads nginx idempotently, and updates applied
+metadata. An externally changed output config is repaired from the WAL instead
+of deadlocking recovery. If an unapplied projection is rejected, an operator
+may fix the template and run `recover`; the reconciler atomically records and
+applies the next projection revision without changing the committed host state.
 
 Applied routing does not depend on audit availability. Audit events use a
 durable outbox and at-least-once delivery; a failed append leaves an event for a
-later retry without rolling back nginx or desired state.
+later retry without rolling back nginx or desired state. If neither the outbox
+nor the audit file can accept an event, routing still commits and the event may
+be lost; the controller logs this availability-over-observability failure.
 
 Each active transfer is owned by a stable operation ID and membership ID. The
 same ID and transfer parameters advance every edge to `offline`, `removed`, or
@@ -201,11 +210,12 @@ evacuation or decommission operation must resume.
 
 ```text
 routerctl host transfer --from active --to draining --target offline HOST
-  -> render exact config with HOST down
-  -> commit desired generation and exact config to WAL
+  -> render config revision 1 with HOST down
+  -> commit desired generation and revisioned projection to WAL
   -> persist desired state
-  -> atomically publish the WAL config
+  -> atomically publish the current WAL projection
   -> nginx -t
+     on rejection: retain desired state; fixed render source creates revision N+1
   -> nginx reload
   -> persist applied generation
   -> enqueue audit and retire WAL
@@ -268,12 +278,15 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
 ## Failure policy
 
 - nginx validation failure: restore the previous output projection, retain the
-  committed desired generation as pending, and do not signal the host.
+  committed desired generation as pending, and do not signal the host. After
+  the template, proxy policy, or renderer schema is fixed, `recover` commits the
+  next config-projection revision and retries.
 - nginx reload failure: keep the previous live nginx generation and valid new
   output projection, retain the committed desired generation as pending, and do
   not signal the host.
-- interrupted router transaction: show desired/applied divergence in read-only
-  status and reconcile the exact WAL config forward after the fault is fixed.
+- interrupted router transaction: show desired/applied divergence and projection
+  metadata in read-only status, then reconcile the current WAL revision forward
+  after the fault is fixed.
 - versiond shutdown budget expires with work: log the remaining internal proxy
   leases, force child/HTTP teardown, and continue process reap.
 - remote command timeout: retain the last durable hostctl phase and require an

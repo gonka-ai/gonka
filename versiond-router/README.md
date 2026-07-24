@@ -72,14 +72,19 @@ skipped. Back up state, receipts, applied metadata, audit outbox, and the
 pending journal together. Do not rotate or prune the receipt index: its entries
 are the durable idempotency records for completed operation IDs.
 
+The WAL is one replace-in-place snapshot, not an append-only history. Its size
+tracks the desired state, receipt index, and rendered config; the controller
+lock permits only one pending snapshot.
+
 Router state schema 1 is migrated under the controller lock to schema 2. The
 migration preserves existing membership IDs from intermediate builds, assigns
 deterministic IDs to older host records, reconstructs an in-progress
-`active_transfer`, and atomically persists the upgraded state. Pending schema-1
-and schema-2 transaction journals are upgraded before recovery. A legacy
-pre-reload transaction keeps its old rollback semantics. A legacy transaction
-that already reloaded nginx is converted into a forward-only desired-state
-intent.
+`active_transfer`, and atomically persists the upgraded state. Pending schema-1,
+schema-2, and schema-3 transaction journals are upgraded before recovery. A
+legacy pre-reload transaction keeps its old rollback semantics. A legacy
+transaction that already reloaded nginx is converted into a forward-only
+desired-state intent. Schema 3 fixed the rendered config at commit; schema 4
+adds a revision and render-source fingerprint.
 
 ## Host lifecycle
 
@@ -157,37 +162,52 @@ for a new membership.
 
 The controller holds a file lock and validates the transition before making a
 durable decision. It then writes a WAL record containing the complete desired
-state, completion receipts, and exact rendered nginx config. That write is the
+state, completion receipts, and a revisioned nginx config projection. The
+projection records its config SHA and a render-source SHA derived from the
+template, normalized proxy policy, and renderer schema. That WAL write is the
 commit point. A reconciler persists the desired generation, validates and
-atomically publishes the journaled config, gracefully reloads nginx, and writes
-`applied.json`. Recovery always repeats these idempotent steps forward; it never
-guesses whether a partially applied committed operation should be undone.
+atomically publishes the journaled projection, gracefully reloads nginx, and
+writes `applied.json`. Recovery always repeats these idempotent steps forward;
+it never guesses whether a partially applied committed operation should be
+undone.
 
 A handler or render failure before the WAL commit leaves state and nginx
 unchanged. A validation or reload failure after the commit leaves a visible
 pending operation: the desired generation is retained and `recover` retries
-application. Repeating an applied edge or a completed operation is a no-op. Use
-the same operation ID and parameters for every edge from the first transition
-to its final target. A different operation cannot take over
+application. Before the projection reaches `applied`, changing any render source
+creates the next projection revision in the same WAL. This lets an operator fix
+a bad template and rerun `recover` without deleting committed control-plane
+data. Once a projection is applied, later template changes run as a separate
+config-only reconciliation. Repeating an applied edge or a completed operation
+is a no-op. Use the same operation ID and parameters for every edge from the
+first transition to its final target. A different operation cannot take over
 `active_transfer`; `--force` bypasses topology and legacy-data guards, not
 operation ownership.
 
 `status` is read-only. When a journal is present, its operation ID, phase,
 membership ID, `from -> to` edge, final target, candidate generation, and config
-SHA are returned as `pending_operation`; the command never rewrites config or
-reloads nginx. The `application` object reports desired/applied generations and
-config SHAs plus a `converged` flag. If a crash happens immediately after WAL
-commit, `status` reports the journaled state as desired even before
-`state.json` is rewritten. `recover` resolves the journal under the controller
-lock. It republishes the exact config stored in the WAL, so an altered or
-partially restored output file cannot deadlock recovery.
+SHA are returned as `pending_operation`, together with the render revision and
+render-source SHA; the command never rewrites config or reloads nginx. The
+`application` object reports desired/applied generations and config SHAs plus a
+`converged` flag. If a crash happens immediately after WAL commit, `status`
+reports the journaled state as desired even before `state.json` is rewritten.
+`recover` resolves the journal under the controller lock. It republishes the
+current committed projection, so an altered or partially restored output file
+cannot deadlock recovery.
+
+`renderSchemaVersion` is part of the source fingerprint. Increment it whenever
+the Go renderer changes output independently of the template or proxy policy.
+Recovery rejects changed output with an unchanged fingerprint instead of
+silently applying a non-reproducible projection.
 
 Successful routing commits enqueue audit records before removing their journal.
 Audit delivery is at least once: an unavailable audit file leaves events in the
 durable outbox but does not roll back or block the applied routing generation.
 The next mutating or recovery command retries delivery. A crash after appending
 an event but before removing it from the outbox may produce a duplicate with
-the same `event_id`.
+the same `event_id`. If both durable outbox persistence and direct audit append
+fail, routing remains committed and that audit event may be lost. This is an
+explicit availability-over-observability tradeoff and is reported as a warning.
 
 Normal commands reject concurrent host operations, a mismatched membership ID,
 draining the last active HA host, draining the legacy host while it owns non-HA

@@ -15,10 +15,12 @@ import (
 )
 
 type fakeRunner struct {
-	mu             sync.Mutex
-	calls          []string
-	failTestOnce   bool
-	failReloadOnce bool
+	mu                   sync.Mutex
+	calls                []string
+	failTestOnce         bool
+	failReloadOnce       bool
+	outputPath           string
+	rejectConfigContains []byte
 }
 
 func (r *fakeRunner) Run(_ context.Context, name string, args ...string) error {
@@ -29,6 +31,16 @@ func (r *fakeRunner) Run(_ context.Context, name string, args ...string) error {
 	if r.failTestOnce && len(args) == 1 && args[0] == "-t" {
 		r.failTestOnce = false
 		return errors.New("injected config validation failure")
+	}
+	if len(r.rejectConfigContains) > 0 &&
+		len(args) == 1 && args[0] == "-t" {
+		config, err := os.ReadFile(r.outputPath)
+		if err != nil {
+			return fmt.Errorf("read config under validation: %w", err)
+		}
+		if bytes.Contains(config, r.rejectConfigContains) {
+			return errors.New("injected persistent config validation failure")
+		}
 	}
 	if r.failReloadOnce && len(args) == 2 && args[0] == "-s" && args[1] == "reload" {
 		r.failReloadOnce = false
@@ -124,6 +136,99 @@ func TestControllerValidationFailureRestoresOutputButKeepsDesiredState(
 	}
 	if !status.Application.Converged {
 		t.Fatalf("router did not converge after validation retry: %#v", status.Application)
+	}
+}
+
+func TestControllerRecoveryRefreshesRejectedConfigAfterTemplateFix(
+	t *testing.T,
+) {
+	controller, runner, paths := newTestController(t)
+	state := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(state),
+	); err != nil {
+		t.Fatal(err)
+	}
+	brokenMarker := []byte("broken_config_directive")
+	brokenTemplate := []byte(testTemplate + "\nbroken_config_directive;\n")
+	if err := os.WriteFile(paths.TemplatePath, brokenTemplate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.rejectConfigContains = brokenMarker
+	runner.mu.Unlock()
+
+	if _, err := controller.Transition(context.Background(), Transition{
+		OperationID: "repair-rendered-drain", Host: "versiond-2",
+		From: HostActive, To: HostDraining, Target: HostOffline,
+	}); err == nil {
+		t.Fatal("expected persistent nginx validation failure")
+	}
+	journal, err := controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal == nil || journal.RenderRevision != 1 ||
+		journal.RenderSourceSHA != renderSourceSHA(
+			brokenTemplate,
+			DefaultProxyPolicy(),
+		) {
+		t.Fatalf("initial config projection = %#v", journal)
+	}
+	firstEventID := journal.Audit.EventID
+
+	if _, err := controller.Recover(context.Background()); err == nil {
+		t.Fatal("unchanged broken template unexpectedly recovered")
+	}
+	journal, err = controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.RenderRevision != 1 || journal.Audit.EventID != firstEventID {
+		t.Fatalf("unchanged source created a new projection: %#v", journal)
+	}
+
+	fixedTemplate := []byte(testTemplate + "\n# corrected projection\n")
+	if err := os.WriteFile(paths.TemplatePath, fixedTemplate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	runner.failReloadOnce = true
+	runner.mu.Unlock()
+	if _, err := controller.Recover(context.Background()); err == nil {
+		t.Fatal("expected injected reload failure after projection refresh")
+	}
+	journal, err = controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if journal.RenderRevision != 2 {
+		t.Fatalf("refreshed render revision = %d, want 2", journal.RenderRevision)
+	}
+	if journal.RenderSourceSHA != renderSourceSHA(
+		fixedTemplate,
+		DefaultProxyPolicy(),
+	) {
+		t.Fatalf("refreshed render source = %s", journal.RenderSourceSHA)
+	}
+	if journal.Audit.EventID == firstEventID {
+		t.Fatal("refreshed projection retained the old audit event id")
+	}
+	if !bytes.Contains(journal.NewConfig, []byte("# corrected projection")) {
+		t.Fatalf("refreshed config does not use fixed template:\n%s", journal.NewConfig)
+	}
+
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	want, err := Render(fixedTemplate, journal.NewState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileEquals(t, paths.OutputPath, want)
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("recovered journal remains: %v", err)
 	}
 }
 
@@ -734,6 +839,57 @@ func TestControllerRecoveryDoesNotReloadAppliedGeneration(t *testing.T) {
 	}
 }
 
+func TestControllerTemplateChangeAfterAppliedUsesSeparateReconcile(
+	t *testing.T,
+) {
+	controller, runner, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	newState, _, _ := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseApplied,
+	)
+	fixedTemplate := []byte(testTemplate + "\n# post-apply template\n")
+	if err := os.WriteFile(paths.TemplatePath, fixedTemplate, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	reloadsBefore := countRunnerCalls(runner.calls, "nginx -s reload")
+	runner.mu.Unlock()
+
+	if _, err := controller.Recover(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	runner.mu.Lock()
+	reloadsAfter := countRunnerCalls(runner.calls, "nginx -s reload")
+	runner.mu.Unlock()
+	if reloadsAfter != reloadsBefore+1 {
+		t.Fatalf(
+			"template reconciliation reloaded %d time(s), want 1",
+			reloadsAfter-reloadsBefore,
+		)
+	}
+	applied, err := controller.loadAppliedState()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if applied == nil || applied.OperationID != "bootstrap-render" {
+		t.Fatalf("post-apply reconciliation metadata = %#v", applied)
+	}
+	want, err := Render(fixedTemplate, newState, DefaultProxyPolicy())
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertFileEquals(t, paths.OutputPath, want)
+}
+
 func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	state := newTestState(t)
@@ -814,6 +970,11 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 		NewReceipts:    newReceipts,
 		NewConfig:      newConfig,
 		NewConfigSHA:   hashBytes(newConfig),
+		RenderRevision: 1,
+		RenderSourceSHA: renderSourceSHA(
+			template,
+			DefaultProxyPolicy(),
+		),
 		Audit:          auditRecord(change, newState.Generation, hashBytes(newConfig)),
 		RecoveryPolicy: recoveryPolicyRollForward,
 		Reload:         true,
@@ -1122,6 +1283,95 @@ func TestControllerRecoveryMigratesSchemaV2ReloadedByConvergingForward(
 	}
 }
 
+func TestControllerRecoveryMigratesSchemaV3Projection(t *testing.T) {
+	controller, runner, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	newState, _, newConfig := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseIntentCommitted,
+	)
+	current, err := controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == nil {
+		t.Fatal("staged operation journal is missing")
+	}
+	legacy := operationJournalV3FromCurrent(*current)
+	if err := writeJSONAtomic(paths.JournalPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.PendingOperation == nil ||
+		status.PendingOperation.RenderRevision != 1 {
+		t.Fatalf("schema-3 pending status = %#v", status.PendingOperation)
+	}
+	var envelope operationJournalEnvelope
+	data, err := os.ReadFile(paths.JournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != fixedConfigOperationJournalSchemaVersion {
+		t.Fatalf("read-only status persisted schema %d", envelope.SchemaVersion)
+	}
+
+	runner.mu.Lock()
+	runner.failReloadOnce = true
+	runner.mu.Unlock()
+	if _, err := controller.Recover(context.Background()); err == nil {
+		t.Fatal("expected injected reload failure after schema-3 migration")
+	}
+	migrated, err := controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated == nil ||
+		migrated.SchemaVersion != operationJournalSchemaVersion ||
+		migrated.RenderRevision != 2 {
+		t.Fatalf("migrated config projection = %#v", migrated)
+	}
+	template, err := os.ReadFile(paths.TemplatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if migrated.RenderSourceSHA != renderSourceSHA(
+		template,
+		DefaultProxyPolicy(),
+	) {
+		t.Fatalf("migrated render source = %s", migrated.RenderSourceSHA)
+	}
+	if !bytes.Equal(migrated.NewConfig, newConfig) {
+		t.Fatalf("migrated config changed:\n%s", migrated.NewConfig)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != newState.Generation {
+		t.Fatalf(
+			"recovered generation = %d, want %d",
+			recovered.Generation,
+			newState.Generation,
+		)
+	}
+}
+
 func TestControllerRecoveryMigratesPendingJournalSchemaV1(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	oldState := newTestState(t)
@@ -1426,6 +1676,32 @@ func newLegacyV2DrainJournal(
 	}, newState, oldConfig, newConfig
 }
 
+func operationJournalV3FromCurrent(current operationJournal) operationJournalV3 {
+	return operationJournalV3{
+		SchemaVersion:  fixedConfigOperationJournalSchemaVersion,
+		OperationID:    current.OperationID,
+		Phase:          current.Phase,
+		Action:         current.Action,
+		Host:           current.Host,
+		MembershipID:   current.MembershipID,
+		From:           current.From,
+		To:             current.To,
+		Target:         current.Target,
+		Result:         current.Result,
+		OldState:       current.OldState,
+		NewState:       current.NewState,
+		OldReceipts:    current.OldReceipts,
+		NewReceipts:    current.NewReceipts,
+		OldConfig:      current.OldConfig,
+		NewConfig:      current.NewConfig,
+		NewConfigSHA:   current.NewConfigSHA,
+		Audit:          current.Audit,
+		RecoveryPolicy: current.RecoveryPolicy,
+		Reload:         current.Reload,
+		CreatedAt:      current.CreatedAt,
+	}
+}
+
 func stagePendingDrain(
 	t *testing.T,
 	paths Config,
@@ -1472,24 +1748,26 @@ func stagePendingDrain(
 		Result:       "advanced",
 	}
 	journal := operationJournal{
-		SchemaVersion:  operationJournalSchemaVersion,
-		OperationID:    change.OperationID,
-		Phase:          phase,
-		Action:         change.Action,
-		Host:           change.Host,
-		MembershipID:   change.MembershipID,
-		From:           change.From,
-		To:             change.To,
-		Target:         change.Target,
-		Result:         change.Result,
-		NewState:       newState,
-		NewReceipts:    receipts.Clone(),
-		NewConfig:      newConfig,
-		NewConfigSHA:   hashBytes(newConfig),
-		Audit:          auditRecord(change, newState.Generation, hashBytes(newConfig)),
-		RecoveryPolicy: recoveryPolicyRollForward,
-		Reload:         true,
-		CreatedAt:      time.Now().UTC(),
+		SchemaVersion:   operationJournalSchemaVersion,
+		OperationID:     change.OperationID,
+		Phase:           phase,
+		Action:          change.Action,
+		Host:            change.Host,
+		MembershipID:    change.MembershipID,
+		From:            change.From,
+		To:              change.To,
+		Target:          change.Target,
+		Result:          change.Result,
+		NewState:        newState,
+		NewReceipts:     receipts.Clone(),
+		NewConfig:       newConfig,
+		NewConfigSHA:    hashBytes(newConfig),
+		RenderRevision:  1,
+		RenderSourceSHA: renderSourceSHA(template, DefaultProxyPolicy()),
+		Audit:           auditRecord(change, newState.Generation, hashBytes(newConfig)),
+		RecoveryPolicy:  recoveryPolicyRollForward,
+		Reload:          true,
+		CreatedAt:       time.Now().UTC(),
 	}
 	if err := writeJSONAtomic(paths.JournalPath, journal, 0o600); err != nil {
 		t.Fatal(err)
@@ -1547,7 +1825,7 @@ func newTestController(t *testing.T) (*Controller, *fakeRunner, Config) {
 		OutputPath:      filepath.Join(dir, "default.conf"),
 		NginxBinary:     "nginx",
 	}
-	runner := &fakeRunner{}
+	runner := &fakeRunner{outputPath: config.OutputPath}
 	return NewController(config, runner), runner, config
 }
 
