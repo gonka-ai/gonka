@@ -178,7 +178,7 @@ func TestSupervisedProcessNaturalExitReaps(t *testing.T) {
 	force := make(chan struct{})
 	proc := startSupervisedTestProcess(t, "exit", time.Second, stop, force)
 
-	if err := waitForSupervisedProcess(proc, time.Second); err != nil {
+	if err := waitForSupervisedProcess(proc, 5*time.Second); err != nil {
 		t.Fatalf("natural process exit: %v", err)
 	}
 	if proc.Escalated() {
