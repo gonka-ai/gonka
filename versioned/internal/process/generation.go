@@ -15,34 +15,100 @@ const (
 	statusFailed    generationState = "failed"
 )
 
+const unorderedGenerationPhase = -1
+
+type generationStateSpec struct {
+	phase        int
+	healthStatus string
+	targets      []generationState
+}
+
+var generationStateTable = map[generationState]generationStateSpec{
+	statusPreparing: {
+		phase:        0,
+		healthStatus: "starting",
+		targets: []generationState{
+			statusStarting,
+			statusRetiring,
+			statusStopping,
+			statusFailed,
+			statusStopped,
+		},
+	},
+	statusStarting: {
+		phase:        1,
+		healthStatus: "starting",
+		targets: []generationState{
+			statusRunning,
+			statusRetiring,
+			statusStopping,
+			statusFailed,
+			statusStopped,
+		},
+	},
+	statusRunning: {
+		phase:        2,
+		healthStatus: "running",
+		targets: []generationState{
+			statusRetiring,
+			statusStopping,
+			statusFailed,
+			statusStopped,
+		},
+	},
+	statusRetiring: {
+		phase:        3,
+		healthStatus: "draining",
+		targets: []generationState{
+			statusDraining,
+			statusStopping,
+			statusStopped,
+		},
+	},
+	statusDraining: {
+		phase:        4,
+		healthStatus: "draining",
+		targets: []generationState{
+			statusStopping,
+			statusStopped,
+		},
+	},
+	statusStopping: {
+		phase:        5,
+		healthStatus: "draining",
+		targets:      []generationState{statusStopped},
+	},
+	statusStopped: {
+		phase:        6,
+		healthStatus: "stopped",
+	},
+	statusFailed: {
+		phase:        unorderedGenerationPhase,
+		healthStatus: "stopped",
+		targets: []generationState{
+			statusStarting,
+			statusRetiring,
+			statusStopping,
+			statusStopped,
+		},
+	},
+}
+
 func validGenerationTransition(from, to generationState) bool {
+	spec, fromKnown := generationStateTable[from]
+	_, toKnown := generationStateTable[to]
+	if !fromKnown || !toKnown {
+		return false
+	}
 	if from == to {
 		return true
 	}
-	switch from {
-	case statusPreparing:
-		return to == statusStarting || to == statusRetiring ||
-			to == statusStopping || to == statusFailed || to == statusStopped
-	case statusStarting:
-		return to == statusRunning || to == statusRetiring ||
-			to == statusStopping || to == statusFailed || to == statusStopped
-	case statusRunning:
-		return to == statusRetiring || to == statusStopping ||
-			to == statusFailed || to == statusStopped
-	case statusRetiring:
-		return to == statusDraining || to == statusStopping || to == statusStopped
-	case statusDraining:
-		return to == statusStopping || to == statusStopped
-	case statusStopping:
-		return to == statusStopped
-	case statusFailed:
-		return to == statusStarting || to == statusRetiring ||
-			to == statusStopping || to == statusStopped
-	case statusStopped:
-		return false
-	default:
-		return false
+	for _, target := range spec.targets {
+		if target == to {
+			return true
+		}
 	}
+	return false
 }
 
 // transitionGenerationLocked advances one child generation. Manager.mu must
@@ -71,24 +137,11 @@ func transitionGenerationLocked(c *child, next generationState) bool {
 }
 
 func generationPhase(state generationState) int {
-	switch state {
-	case statusPreparing:
-		return 0
-	case statusStarting:
-		return 1
-	case statusRunning:
-		return 2
-	case statusRetiring:
-		return 3
-	case statusDraining:
-		return 4
-	case statusStopping:
-		return 5
-	case statusStopped:
-		return 6
-	default:
-		return -1
+	spec, ok := generationStateTable[state]
+	if !ok {
+		return unorderedGenerationPhase
 	}
+	return spec.phase
 }
 
 func transitionGenerationFailureLocked(c *child) {
@@ -100,14 +153,9 @@ func transitionGenerationFailureLocked(c *child) {
 }
 
 func healthGenerationStatus(state generationState) string {
-	switch state {
-	case statusRunning:
-		return "running"
-	case statusRetiring, statusDraining, statusStopping:
-		return "draining"
-	case statusPreparing, statusStarting:
-		return "starting"
-	default:
+	spec, ok := generationStateTable[state]
+	if !ok {
 		return "stopped"
 	}
+	return spec.healthStatus
 }

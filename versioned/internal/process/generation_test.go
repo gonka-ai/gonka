@@ -31,6 +31,123 @@ func TestGenerationLifecycle(t *testing.T) {
 	}
 }
 
+func TestGenerationTransitionTable(t *testing.T) {
+	states := []generationState{
+		statusPreparing,
+		statusStarting,
+		statusRunning,
+		statusRetiring,
+		statusDraining,
+		statusStopping,
+		statusStopped,
+		statusFailed,
+	}
+	allowed := map[generationState]map[generationState]bool{
+		statusPreparing: {
+			statusPreparing: true,
+			statusStarting:  true,
+			statusRetiring:  true,
+			statusStopping:  true,
+			statusStopped:   true,
+			statusFailed:    true,
+		},
+		statusStarting: {
+			statusStarting: true,
+			statusRunning:  true,
+			statusRetiring: true,
+			statusStopping: true,
+			statusStopped:  true,
+			statusFailed:   true,
+		},
+		statusRunning: {
+			statusRunning:  true,
+			statusRetiring: true,
+			statusStopping: true,
+			statusStopped:  true,
+			statusFailed:   true,
+		},
+		statusRetiring: {
+			statusRetiring: true,
+			statusDraining: true,
+			statusStopping: true,
+			statusStopped:  true,
+		},
+		statusDraining: {
+			statusDraining: true,
+			statusStopping: true,
+			statusStopped:  true,
+		},
+		statusStopping: {
+			statusStopping: true,
+			statusStopped:  true,
+		},
+		statusStopped: {
+			statusStopped: true,
+		},
+		statusFailed: {
+			statusFailed:   true,
+			statusStarting: true,
+			statusRetiring: true,
+			statusStopping: true,
+			statusStopped:  true,
+		},
+	}
+
+	for _, from := range states {
+		for _, to := range states {
+			if got, want := validGenerationTransition(from, to), allowed[from][to]; got != want {
+				t.Errorf("validGenerationTransition(%s, %s) = %t, want %t", from, to, got, want)
+			}
+		}
+	}
+	if validGenerationTransition("unknown", "unknown") {
+		t.Fatal("unknown generation state accepted a self-transition")
+	}
+}
+
+func TestGenerationStateTableMetadata(t *testing.T) {
+	tests := []struct {
+		state        generationState
+		phase        int
+		healthStatus string
+	}{
+		{state: statusPreparing, phase: 0, healthStatus: "starting"},
+		{state: statusStarting, phase: 1, healthStatus: "starting"},
+		{state: statusRunning, phase: 2, healthStatus: "running"},
+		{state: statusRetiring, phase: 3, healthStatus: "draining"},
+		{state: statusDraining, phase: 4, healthStatus: "draining"},
+		{state: statusStopping, phase: 5, healthStatus: "draining"},
+		{state: statusStopped, phase: 6, healthStatus: "stopped"},
+		{state: statusFailed, phase: unorderedGenerationPhase, healthStatus: "stopped"},
+	}
+	if len(generationStateTable) != len(tests) {
+		t.Fatalf("generation state table has %d states, want %d", len(generationStateTable), len(tests))
+	}
+	for _, test := range tests {
+		if got := generationPhase(test.state); got != test.phase {
+			t.Errorf("generationPhase(%s) = %d, want %d", test.state, got, test.phase)
+		}
+		if got := healthGenerationStatus(test.state); got != test.healthStatus {
+			t.Errorf(
+				"healthGenerationStatus(%s) = %q, want %q",
+				test.state,
+				got,
+				test.healthStatus,
+			)
+		}
+	}
+}
+
+func TestGenerationTransitionTreatsLaterPhaseAsAlreadySatisfied(t *testing.T) {
+	c := &child{status: statusDraining}
+	if !transitionGenerationLocked(c, statusRetiring) {
+		t.Fatal("stale retirement transition was rejected")
+	}
+	if c.status != statusDraining {
+		t.Fatalf("stale transition moved generation back to %s", c.status)
+	}
+}
+
 func TestGenerationHealthStatusKeepsRetirementOutOfRoutes(t *testing.T) {
 	for _, state := range []generationState{statusRetiring, statusDraining, statusStopping} {
 		if got := healthGenerationStatus(state); got != "draining" {
