@@ -323,8 +323,10 @@ test network, set `stop_grace_period: 30m` for versiond and the nginx router.
   terminal receipt makes the completed operation a no-op.
 - abandoned pre-signal evacuation: `gonka-hostctl cancel` first persists a
   cancellation intent, then checkpoints restart-policy restoration and router
-  activation separately. If either action fails, rerun `cancel`; `evacuate`
-  cannot cross the unfinished compensation transaction.
+  activation separately. If either action fails while versiond remains
+  running, rerun `cancel`. If versiond has already stopped before router
+  reactivation, rerun the original stop command; it reasserts `restart=no`,
+  abandons the impossible compensation durably, and resumes forward.
 - evacuation at or after `term_requested`: cancellation is forbidden; that
   intent is durable before SSH sends `SIGTERM`, so resume to `offline` even when
   the remote command result is unknown.

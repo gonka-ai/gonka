@@ -169,7 +169,13 @@ func (o *Orchestrator) stopHost(ctx context.Context, mode string) error {
 		return fmt.Errorf("%s was canceled; start a new operation", mode)
 	}
 	if journal.CancellationPhase != "" {
-		return fmt.Errorf("%s cancellation is in progress; resume cancel", mode)
+		resumed, err := o.resumeStopAfterFailedCancellation(ctx, &journal)
+		if err != nil {
+			return err
+		}
+		if !resumed {
+			return fmt.Errorf("%s cancellation is in progress; resume cancel", mode)
+		}
 	}
 	return o.runWorkflow(ctx, &journal, workflow)
 }

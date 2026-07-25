@@ -347,12 +347,15 @@ without leaving the cluster blocked:
 The command checks that versiond is still running and first persists a
 cancellation intent. It then checkpoints Docker restart-policy restoration and
 the router transition to `active` as separate compensating phases. If either
-step fails, rerun `cancel` with the same operation ID. The forward `evacuate`
-command refuses to continue through an unfinished cancellation. Cancellation
-is rejected at and after the durable `term_requested` phase, which is written
-before the remote signal command. At that point rerun the original `evacuate`
-or `decommission` command; do not reactivate the host even if SSH lost the
-command result.
+step fails while versiond remains running, rerun `cancel` with the same
+operation ID. If versiond has already stopped before router reactivation,
+rollback is no longer possible: rerun the original `evacuate` or `decommission`
+command. It reasserts `restart=no`, atomically abandons the unfinished
+compensation, and resumes the forward workflow to `offline` or `removed`.
+Cancellation is rejected at and after the durable `term_requested` phase, which
+is written before the remote signal command. At that point always rerun the
+original stop command; do not reactivate the host even if SSH lost the command
+result.
 
 ## Permanent decommission
 
@@ -488,7 +491,9 @@ inside its container, not on the administration machine.
    cancel` with the same operation ID and scope. If the original `evacuate`
    process still owns the operation lock, interrupt it first; `cancel` reports
    the owner instead of waiting. If cancellation itself was interrupted, rerun
-   `cancel`, not `evacuate`.
+   `cancel` while versiond remains running. If it has already stopped before
+   router reactivation, rerun the original `evacuate` or `decommission`
+   command to abandon compensation and finish the safe forward path.
 4. If `term_requested` is durable, finish `evacuate` or `decommission`. Never
    reactivate an upstream whose process may already be stopping.
 

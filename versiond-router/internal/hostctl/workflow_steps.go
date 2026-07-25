@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"time"
 
 	"versiond-router/internal/router"
 )
@@ -253,7 +254,7 @@ func (o *Orchestrator) requestCancellationStep(
 		return err
 	}
 	if !running {
-		return errors.New("cannot reactivate a stopped versiond host")
+		return stoppedHostCancellationError(journal.Mode)
 	}
 	return nil
 }
@@ -267,7 +268,7 @@ func (o *Orchestrator) restoreRestartPolicyStep(
 		return err
 	}
 	if !running {
-		return errors.New("cannot reactivate a stopped versiond host")
+		return stoppedHostCancellationError(journal.Mode)
 	}
 	if o.config.VersiondRuntime != RuntimeDocker ||
 		journal.PreviousRestartPolicy == "" {
@@ -283,6 +284,13 @@ func (o *Orchestrator) reactivateRouterStep(
 	ctx context.Context,
 	journal *Journal,
 ) error {
+	running, err := o.versiondRunning(ctx)
+	if err != nil {
+		return err
+	}
+	if !running {
+		return stoppedHostCancellationError(journal.Mode)
+	}
 	return o.routerCancel(ctx, journal)
 }
 
@@ -292,4 +300,66 @@ func (o *Orchestrator) completeCancellationStep(
 ) error {
 	journal.Phase = phaseCanceled
 	return nil
+}
+
+func stoppedHostCancellationError(mode string) error {
+	return fmt.Errorf(
+		"cannot reactivate a stopped versiond host; resume %s with the same operation ID",
+		mode,
+	)
+}
+
+// resumeStopAfterFailedCancellation converts an impossible rollback into a
+// forward recovery. It is safe only before the router reactivation edge and
+// only after the process has already stopped.
+func (o *Orchestrator) resumeStopAfterFailedCancellation(
+	ctx context.Context,
+	journal *Journal,
+) (bool, error) {
+	if !cancellationWorkflow.before(
+		journal.CancellationPhase,
+		cancellationRouterActive,
+	) {
+		return false, nil
+	}
+	running, err := o.versiondRunning(ctx)
+	if err != nil {
+		return false, fmt.Errorf(
+			"check versiond before abandoning cancellation: %w",
+			err,
+		)
+	}
+	if running {
+		return false, nil
+	}
+	if o.config.VersiondRuntime == RuntimeDocker {
+		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
+			return false, fmt.Errorf(
+				"disable Docker restart policy before resuming %s: %w",
+				journal.Mode,
+				err,
+			)
+		}
+	}
+
+	previousPhase := journal.CancellationPhase
+	previousUpdatedAt := journal.UpdatedAt
+	journal.CancellationPhase = ""
+	journal.UpdatedAt = time.Now().UTC()
+	if err := o.writeJournal(*journal); err != nil {
+		journal.CancellationPhase = previousPhase
+		journal.UpdatedAt = previousUpdatedAt
+		return false, fmt.Errorf(
+			"checkpoint abandoned cancellation before resuming %s: %w",
+			journal.Mode,
+			err,
+		)
+	}
+	slog.Warn(
+		"cancellation cannot reactivate a stopped versiond; resuming stop workflow",
+		"operation_id", journal.OperationID,
+		"mode", journal.Mode,
+		"cancellation_phase", previousPhase,
+	)
+	return true, nil
 }

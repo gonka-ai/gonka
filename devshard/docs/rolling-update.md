@@ -580,11 +580,13 @@ Interrupt a still-running pre-signal `evacuate` process before invoking
 `cancel`.
 Cancellation is a durable compensation FSM: it records the intent, restores any
 disabled Docker restart policy, checkpoints that action, and then reactivates
-the upstream. A failed
-cancellation must be resumed with `cancel`; the forward evacuation FSM refuses
-to cross it. `term_requested` is persisted before the SSH signal command; at or
-after it, the original evacuation or decommission operation must be resumed
-because the remote outcome can be unknown.
+the upstream. A failed cancellation is resumed with `cancel` while versiond
+remains running. If the process has already stopped before router reactivation,
+the original evacuation or decommission command reasserts `restart=no`,
+atomically abandons the impossible compensation, and resumes forward to
+`offline` or `removed`. `term_requested` is persisted before the SSH signal
+command; at or after it, the original operation must be resumed because the
+remote outcome can be unknown.
 
 After preparing a replacement container or unit, keep it out of the pool until
 the replacement transaction completes:

@@ -589,6 +589,60 @@ func TestCancelEvacuationResumesItsDurableCompensation(t *testing.T) {
 	assertJournalPhase(t, orchestrator.config.JournalPath, "canceled")
 }
 
+func TestStoppedHostResumesForwardAfterInterruptedCancellation(t *testing.T) {
+	for _, cancellationPhase := range []string{
+		cancellationRequested,
+		cancellationRestartRestored,
+	} {
+		t.Run(cancellationPhase, func(t *testing.T) {
+			remote := &fakeRemote{}
+			orchestrator := newTestOrchestrator(
+				t,
+				remote,
+				"cancel-stopped-"+cancellationPhase,
+			)
+			journal := Journal{
+				SchemaVersion:         hostctlJournalSchemaVersion,
+				OperationID:           orchestrator.config.OperationID,
+				Mode:                  "evacuate",
+				Scope:                 orchestrator.operationScope(),
+				Phase:                 phaseRestartDisabled,
+				CancellationPhase:     cancellationPhase,
+				PreviousRestartPolicy: "always",
+				UpdatedAt:             time.Now().UTC(),
+			}
+			if err := orchestrator.writeJournal(journal); err != nil {
+				t.Fatal(err)
+			}
+
+			err := orchestrator.Cancel(context.Background())
+			if err == nil || !strings.Contains(err.Error(), "resume evacuate") {
+				t.Fatalf("cancel error = %v, want forward-recovery guidance", err)
+			}
+			if err := orchestrator.Evacuate(context.Background()); err != nil {
+				t.Fatal(err)
+			}
+
+			assertJournalPhase(t, orchestrator.config.JournalPath, phaseComplete)
+			assertJournalCancellationPhase(t, orchestrator.config.JournalPath, "")
+			calls := remote.callLog()
+			assertCallOrder(
+				t,
+				calls,
+				"docker update --restart=no",
+				"--from draining --to stopping --target offline",
+				"--from stopping --to offline --target offline",
+			)
+			if strings.Contains(calls, "gonka-routerctl host cancel") {
+				t.Fatalf("forward recovery reactivated the router:\n%s", calls)
+			}
+			if strings.Contains(calls, "docker kill --signal TERM") {
+				t.Fatalf("forward recovery signaled an already stopped host:\n%s", calls)
+			}
+		})
+	}
+}
+
 func TestEvacuationReassertsDisabledRestartPolicyBeforeSignal(t *testing.T) {
 	remote := &fakeRemote{
 		running:    true,
