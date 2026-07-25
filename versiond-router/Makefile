@@ -75,7 +75,10 @@ test-render:
 	VERSIOND_ROUTER_NGINX_BIN=true \
 	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
 		--from offline --to removed --target removed versiond2 >/dev/null; \
-	! grep -q 'versiond2:8080' "$$tmpdir/mixed.conf"; \
+	if grep -q 'versiond2:8080' "$$tmpdir/mixed.conf"; then \
+		echo "removed host is still rendered" >&2; \
+		exit 1; \
+	fi; \
 	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
 	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
@@ -103,7 +106,11 @@ test-render:
 	VERSIOND_ROUTER_NGINX_BIN=true \
 	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
 	grep -q 'default versiond_ha_pool' "$$tmpdir/allha.conf"; \
-	! grep -q 'versiond_legacy;' "$$tmpdir/allha.conf" || ! grep -q 'v1 versiond_legacy' "$$tmpdir/allha.conf"; \
+	if grep -q 'versiond_legacy;' "$$tmpdir/allha.conf" && \
+		grep -q 'v1 versiond_legacy' "$$tmpdir/allha.conf"; then \
+		echo "all-HA config still routes a version through the legacy pool" >&2; \
+		exit 1; \
+	fi; \
 	VERSIOND_HOSTS='versiond' \
 	VERSIOND_NON_HA_VERSIONS= \
 	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
@@ -113,7 +120,10 @@ test-render:
 	VERSIOND_ROUTER_LOCK="$$tmpdir/single.lock" \
 	VERSIOND_ROUTER_NGINX_BIN=true \
 	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
-	! grep -q 'versiond_ha_pool "true"' "$$tmpdir/single.conf"; \
+	if grep -q 'versiond_ha_pool "true"' "$$tmpdir/single.conf"; then \
+		echo "single-host config incorrectly enables the HA header" >&2; \
+		exit 1; \
+	fi; \
 	echo "test-render: ok"
 
 VERSION ?= $(shell git describe --always)
