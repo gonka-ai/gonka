@@ -177,6 +177,11 @@ func (o *Orchestrator) stopHost(ctx context.Context, mode string) error {
 			return fmt.Errorf("%s cancellation is in progress; resume cancel", mode)
 		}
 	}
+	if mode == "decommission" {
+		if err := o.prepareDecommission(ctx, &journal); err != nil {
+			return err
+		}
+	}
 	return o.runWorkflow(ctx, &journal, workflow)
 }
 
@@ -273,6 +278,90 @@ func (o *Orchestrator) loadRouterMembership(
 		return fmt.Errorf("read router membership: %w", err)
 	}
 	return o.captureMembership(journal, state, true)
+}
+
+func (o *Orchestrator) prepareDecommission(
+	ctx context.Context,
+	journal *Journal,
+) error {
+	if journal.Phase != phaseStarted {
+		return nil
+	}
+	state, err := o.runRouterMutation(ctx, []string{"gonka-routerctl", "status"})
+	if err != nil {
+		return fmt.Errorf("read router state before decommission: %w", err)
+	}
+	var target *router.Host
+	for i := range state.Hosts {
+		if state.Hosts[i].Name == o.config.Upstream {
+			target = &state.Hosts[i]
+			break
+		}
+	}
+	if target == nil {
+		return fmt.Errorf("router response has no membership for host %s", o.config.Upstream)
+	}
+	if journal.MembershipID != "" && journal.MembershipID != target.MembershipID {
+		return fmt.Errorf(
+			"router membership changed for %s: journal has %s, router has %s",
+			target.Name,
+			journal.MembershipID,
+			target.MembershipID,
+		)
+	}
+	journal.MembershipID = target.MembershipID
+
+	switch target.State {
+	case router.HostActive, router.HostDraining:
+		return o.writeJournal(*journal)
+	case router.HostOffline:
+		return o.adoptOfflineDecommission(ctx, journal)
+	default:
+		return fmt.Errorf(
+			"cannot decommission host %s from router state %s",
+			target.Name,
+			target.State,
+		)
+	}
+}
+
+func (o *Orchestrator) adoptOfflineDecommission(
+	ctx context.Context,
+	journal *Journal,
+) error {
+	running, err := o.versiondRunning(ctx)
+	if err != nil {
+		return fmt.Errorf("check offline versiond host: %w", err)
+	}
+	if running {
+		return errors.New(
+			"offline versiond host is still running; stop it before decommission",
+		)
+	}
+	if o.config.VersiondRuntime == RuntimeDocker {
+		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
+			return fmt.Errorf(
+				"disable Docker restart policy for offline host: %w",
+				err,
+			)
+		}
+		running, err = o.versiondRunning(ctx)
+		if err != nil {
+			return fmt.Errorf("recheck offline versiond host: %w", err)
+		}
+		if running {
+			return errors.New(
+				"offline versiond host restarted during decommission",
+			)
+		}
+	}
+	journal.Phase = phaseRouterOffline
+	journal.UpdatedAt = time.Now().UTC()
+	if err := o.writeJournal(*journal); err != nil {
+		journal.Phase = phaseStarted
+		return fmt.Errorf("checkpoint offline decommission entry: %w", err)
+	}
+	return nil
 }
 
 func (o *Orchestrator) routerAdd(ctx context.Context, journal *Journal) error {

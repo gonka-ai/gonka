@@ -631,6 +631,11 @@ activates it. Add or remove the host in the deployment's `VERSIOND_HOSTS`
 bootstrap source after the runtime transaction; persistent state remains the
 live authority, while that source remains necessary for disaster recovery.
 
+`decommission` may also adopt a membership already left `offline` by a
+completed evacuation. It verifies that versiond is stopped, reasserts Docker
+`restart=no`, checkpoints the observed `router_offline` state, and proceeds
+directly to `removed` without replaying drain or process shutdown.
+
 `gonka-routerctl status` never performs recovery or reload. It exposes an
 unfinished journal as `pending_operation` and reports desired/applied
 generations, render revision/source SHA, and `application.converged`;

@@ -265,6 +265,11 @@ routerctl host transfer --from offline --to removed --target removed HOST
 ```
 
 `gonka-hostctl decommission` owns the full stop-plus-remove sequence.
+It may also start from an already stable `offline` membership produced by a
+completed evacuation. In that case it verifies that versiond is stopped,
+reasserts Docker `restart=no`, durably adopts `router_offline`, and executes
+only the terminal removal edge.
+
 `gonka-hostctl add` performs the inverse admission sequence for a provisioned,
 stopped service: create a new membership in `joining`, start, wait for
 `/ready`, then activate.

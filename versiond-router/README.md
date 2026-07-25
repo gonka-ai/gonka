@@ -154,8 +154,12 @@ docker exec versiond-router gonka-routerctl host transfer \
   --from joining --to active --target active \
   --address replacement-versiond2 versiond2
 
+docker exec versiond-router gonka-routerctl host transfer \
+  --operation-id decommission-1784800000000000002-versiond2 \
+  --from offline --to removed --target removed versiond2
+
 docker exec versiond-router gonka-routerctl host add \
-  --operation-id add-1784800000000000002-versiond3 \
+  --operation-id add-1784800000000000003-versiond3 \
   --address versiond3.internal versiond3
 ```
 
@@ -374,6 +378,11 @@ same drain and stop transaction as `evacuate`, moves the stopped host to
   --versiond-runtime docker \
   --versiond-service versiond2
 ```
+
+The same command also accepts a host left `offline` by an earlier completed
+evacuation. It verifies that versiond is stopped, reasserts Docker
+`restart=no`, adopts `router_offline` as the first durable checkpoint of the new
+operation, and removes the membership without repeating drain or shutdown.
 
 The final edge deletes the membership from persistent router state and nginx.
 It cannot transition again. A retry is answered from the completed-operation

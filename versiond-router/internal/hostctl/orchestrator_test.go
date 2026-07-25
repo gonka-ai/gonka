@@ -26,6 +26,7 @@ type fakeRemote struct {
 	restartPolicyJSON  string
 	stopTimeout        string
 	activateErrors     int
+	routerHostState    router.HostState
 }
 
 func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) (string, error) {
@@ -42,6 +43,10 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 	case strings.Contains(joined, "gonka-routerctl"):
 		if strings.Contains(joined, "--to removed") {
 			return fakeRouterState(false), nil
+		}
+		if strings.Contains(joined, "gonka-routerctl status") &&
+			r.routerHostState != "" {
+			return fakeRouterStateWithTarget(true, r.routerHostState), nil
 		}
 		return fakeRouterState(true), nil
 	case strings.Contains(joined, "127.0.0.1:8080/ready"):
@@ -85,6 +90,10 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 }
 
 func fakeRouterState(includeTarget bool) string {
+	return fakeRouterStateWithTarget(includeTarget, router.HostActive)
+}
+
+func fakeRouterStateWithTarget(includeTarget bool, targetState router.HostState) string {
 	hosts := `[
 		{
 			"membership_id": "membership-versiond-1",
@@ -98,7 +107,7 @@ func fakeRouterState(includeTarget bool) string {
 			"membership_id": "membership-versiond-2",
 			"name": "versiond-2",
 			"address": "versiond-2",
-			"state": "active"
+			"state": "` + string(targetState) + `"
 		}`
 	}
 	hosts += "]"
@@ -185,6 +194,54 @@ func TestDecommissionResumesRemovalAfterOfflineCheckpoint(t *testing.T) {
 	if !strings.Contains(calls, "--from offline --to removed") {
 		t.Fatalf("resumed decommission did not remove the host:\n%s", calls)
 	}
+}
+
+func TestDecommissionAdoptsAlreadyEvacuatedHost(t *testing.T) {
+	remote := &fakeRemote{routerHostState: router.HostOffline}
+	orchestrator := newTestOrchestrator(t, remote, "decommission-offline")
+
+	if err := orchestrator.Decommission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"gonka-routerctl status",
+		"docker update --restart=no",
+		"--from offline --to removed --target removed",
+	)
+	if strings.Contains(calls, "--to draining") ||
+		strings.Contains(calls, "docker kill") {
+		t.Fatalf("offline decommission repeated evacuation:\n%s", calls)
+	}
+	assertJournal(t, orchestrator.config.JournalPath, "decommission", phaseComplete)
+}
+
+func TestDecommissionRejectsRunningOfflineHost(t *testing.T) {
+	remote := &fakeRemote{
+		running:         true,
+		routerHostState: router.HostOffline,
+	}
+	orchestrator := newTestOrchestrator(
+		t,
+		remote,
+		"decommission-offline-running",
+	)
+
+	err := orchestrator.Decommission(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "offline versiond host is still running") {
+		t.Fatalf("decommission error = %v, want running-host rejection", err)
+	}
+	calls := remote.callLog()
+	if strings.Contains(calls, "--to removed") {
+		t.Fatalf("running offline host was removed:\n%s", calls)
+	}
+	if strings.Contains(calls, "docker update --restart=no") {
+		t.Fatalf("running offline host restart policy was changed:\n%s", calls)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseStarted)
 }
 
 func TestCancelDecommissionUsesTheCompensationFSM(t *testing.T) {
