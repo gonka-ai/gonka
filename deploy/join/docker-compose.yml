@@ -182,7 +182,7 @@ services:
       - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
       - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-edge-api}
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
       - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
@@ -193,6 +193,7 @@ services:
         condition: service_started
       edge-api:
         condition: service_started
+        required: false
       versiond:
         condition: service_started
       explorer:
