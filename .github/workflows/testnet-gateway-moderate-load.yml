@@ -1,0 +1,66 @@
+# Moderate load against gonka-testnet .79 gateway (Bearer API key, reuse escrow).
+#
+# Required GitHub secrets:
+#   TESTNET_GATEWAY_API_KEY   — gateway user/admin bearer token
+#   TESTNET_ESCROW_ID         — funded registered escrow id on .79
+#
+# Optional repository variables (defaults below):
+#   TESTNET_GATEWAY_URL
+#   TESTNET_EPOCH_URL
+#   TESTNET_MODEL
+name: Testnet gateway moderate load
+
+on:
+  schedule:
+    # 6×/day UTC: 01,05,09,13,17,21
+    - cron: "0 1,5,9,13,17,21 * * *"
+  workflow_dispatch:
+
+concurrency:
+  group: testnet-gateway-moderate-load
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  moderate-load:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install jq
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq jq
+
+      - name: Run moderate load
+        id: load
+        env:
+          GATEWAY_URL: ${{ vars.TESTNET_GATEWAY_URL }}
+          EPOCH_URL: ${{ vars.TESTNET_EPOCH_URL }}
+          MODEL: ${{ vars.TESTNET_MODEL }}
+          API_KEY: ${{ secrets.TESTNET_GATEWAY_API_KEY }}
+          ESCROW_ID: ${{ secrets.TESTNET_ESCROW_ID }}
+          N: "10"
+          CONCURRENCY: "5"
+          MAX_TOKENS: "128"
+          TIMEOUT_S: "120"
+          SUCCESS_PCT: "90"
+          SKIP_ON_POC: "1"
+          STREAM: "0"
+        run: |
+          set -euo pipefail
+          export GATEWAY_URL="${GATEWAY_URL:-http://89.169.111.79:8000/devshard-gateway}"
+          export EPOCH_URL="${EPOCH_URL:-http://89.169.111.79:8000/v1/epochs/latest}"
+          export MODEL="${MODEL:-Qwen/Qwen3-4B-Instruct-2507}"
+          if [[ -z "${API_KEY:-}" ]]; then
+            echo "Missing secret TESTNET_GATEWAY_API_KEY" >&2
+            exit 1
+          fi
+          if [[ -z "${ESCROW_ID:-}" ]]; then
+            echo "Missing secret TESTNET_ESCROW_ID" >&2
+            exit 1
+          fi
+          chmod +x deploy/join/scripts/devshard-gateway-moderate-load.sh
+          deploy/join/scripts/devshard-gateway-moderate-load.sh
