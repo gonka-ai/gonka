@@ -423,7 +423,7 @@ shared database.
 
 Use `add` for a new logical host. The service or container must already be
 provisioned but stopped. The router first records it as `joining`/down, hostctl
-starts it, waits for `GET /ready`, and only then activates it:
+starts it, waits for the loopback-only `GET /ready`, and only then activates it:
 
 ```bash
 .bin/gonka-hostctl add \
@@ -465,10 +465,11 @@ still `offline`, then run:
 ```
 
 The replacement remains `joining` and therefore down in nginx while it starts.
-It becomes `active` only after `GET /ready` returns `200`. The readiness
-endpoint stays at `503` until versiond is serving, accepting traffic, has an
-available child, and is fully reconciled without a progressing or degraded
-condition.
+It becomes `active` only after `GET /ready` returns `200` on versiond's private
+`127.0.0.1:8081` listener. The readiness endpoint stays at `503` until
+versiond is serving, accepting traffic, has an available child, and is fully
+reconciled without a progressing or degraded condition. The public `:8080`
+listener returns `404` for `/ready`.
 Availability deliberately requires at least one approved version and one
 running child route. A fresh host with an empty desired-version set remains in
 `starting` and cannot be activated. Ensure governance exposes at least one
@@ -505,7 +506,7 @@ not retry an inference POST after it has been sent because replay can duplicate
 work.
 
 Use `--ready-url` when versiond does not expose readiness at
-`http://127.0.0.1:8080/ready`. This URL is evaluated on the versiond host or
+`http://127.0.0.1:8081/ready`. This URL is evaluated on the versiond host or
 inside its container, not on the administration machine.
 
 ## Interrupted operations

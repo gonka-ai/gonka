@@ -20,6 +20,9 @@ import (
 
 type Runtime string
 
+// DefaultReadinessURL is evaluated on the versiond host or in its container.
+const DefaultReadinessURL = "http://127.0.0.1:8081/ready"
+
 const (
 	RuntimeDocker                       Runtime = "docker"
 	RuntimeSystemd                      Runtime = "systemd"
@@ -112,7 +115,7 @@ func New(config Config, remote Remote) (*Orchestrator, error) {
 		config.CommandTimeout = 30 * time.Second
 	}
 	if config.ReadinessURL == "" {
-		config.ReadinessURL = "http://127.0.0.1:8080/ready"
+		config.ReadinessURL = DefaultReadinessURL
 	}
 	parsedReadinessURL, err := url.Parse(config.ReadinessURL)
 	if err != nil || parsedReadinessURL.Host == "" ||

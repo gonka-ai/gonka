@@ -88,6 +88,11 @@ func ListenAddr() string {
 	return ":8080"
 }
 
+// AdminListenAddr returns the loopback-only readiness address.
+func AdminListenAddr() string {
+	return "127.0.0.1:8081"
+}
+
 const overridePrefix = "VERSIOND_OVERRIDE_"
 
 // loadOverrides scans env vars for VERSIOND_OVERRIDE_<name>=<path>.

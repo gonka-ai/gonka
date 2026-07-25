@@ -166,8 +166,13 @@ func (m *Manager) assignPort() (int, error) {
 
 func reservedChildPorts() map[int]struct{} {
 	ports := make(map[int]struct{})
-	if port, ok := parseListenPort(config.ListenAddr()); ok {
-		ports[port] = struct{}{}
+	for _, addr := range []string{
+		config.ListenAddr(),
+		config.AdminListenAddr(),
+	} {
+		if port, ok := parseListenPort(addr); ok {
+			ports[port] = struct{}{}
+		}
 	}
 	return ports
 }

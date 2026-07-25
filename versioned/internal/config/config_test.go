@@ -94,6 +94,16 @@ func TestListenAddr(t *testing.T) {
 	}
 }
 
+func TestAdminListenAddr(t *testing.T) {
+	if got := AdminListenAddr(); got != "127.0.0.1:8081" {
+		t.Errorf(
+			"AdminListenAddr() = %q, want %q",
+			got,
+			"127.0.0.1:8081",
+		)
+	}
+}
+
 func TestLoad_ForceVersions(t *testing.T) {
 	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
 	t.Setenv("VERSIOND_FORCE", "v1,v2,v3")

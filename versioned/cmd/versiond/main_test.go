@@ -474,6 +474,60 @@ func TestVersiondReadyRequiresServingAndFullReconciliation(t *testing.T) {
 	}
 }
 
+func TestReadinessIsOnlyServedOnAdminListener(t *testing.T) {
+	hostLifecycle := host.NewController()
+	mgr := process.NewManager(config.Config{BasePort: 5000})
+
+	publicResponse := httptest.NewRecorder()
+	publicHandler(mgr, hostLifecycle).ServeHTTP(
+		publicResponse,
+		httptest.NewRequest(http.MethodGet, "/ready", nil),
+	)
+	if publicResponse.Code != http.StatusNotFound {
+		t.Fatalf(
+			"public /ready status = %d, want %d",
+			publicResponse.Code,
+			http.StatusNotFound,
+		)
+	}
+
+	adminResponse := httptest.NewRecorder()
+	adminHandler(hostLifecycle, mgr).ServeHTTP(
+		adminResponse,
+		httptest.NewRequest(http.MethodGet, "/ready", nil),
+	)
+	if adminResponse.Code != http.StatusServiceUnavailable {
+		t.Fatalf(
+			"admin /ready status = %d, want %d",
+			adminResponse.Code,
+			http.StatusServiceUnavailable,
+		)
+	}
+	if got := adminResponse.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("admin /ready Cache-Control = %q, want no-store", got)
+	}
+}
+
+func TestHTTPServerGroupShutsDownEveryListener(t *testing.T) {
+	first := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(first.Close)
+	second := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(second.Close)
+
+	servers := httpServerGroup{first.Config, second.Config}
+	if err := servers.Shutdown(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, server := range []*httptest.Server{first, second} {
+		response, err := server.Client().Get(server.URL)
+		if err == nil {
+			_ = response.Body.Close()
+			t.Fatalf("HTTP server %s still accepts requests", server.URL)
+		}
+	}
+}
+
 func TestCancelOnSignalCancelsContext(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	signal := make(chan struct{})

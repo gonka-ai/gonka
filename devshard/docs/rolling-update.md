@@ -489,7 +489,7 @@ until a host is activated.
 | `gonka-routerctl` | Local, locked table-driven router FSM with membership IDs, durable transfer ownership, desired/applied generations, forward-only reconciliation, receipt index, WAL, `nginx -t`, atomic publish, reload, and audit outbox |
 | `gonka-hostctl` | Table-driven, journaled SSH workflows for add, evacuation, decommission, replacement, and cancellation; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
-| `GET /ready` | Replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host |
+| `GET http://127.0.0.1:8081/ready` | Loopback-only replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host; public `:8080/ready` returns `404` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
 | `ROUTER_READY_TIMEOUT` | External maximum wait for replacement/addition readiness, default `15m` |
 | `ROUTER_DRAIN_POLL_INTERVAL` | External readiness/process polling interval, default `2s` |
@@ -614,9 +614,10 @@ the replacement transaction completes:
     ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
 ```
 
-The upstream remains `joining`/down until `GET /ready` returns `200`. That gate
-means versiond is serving, accepting, has an available child, and is fully
-reconciled without a progressing or degraded condition. Router desired state,
+The upstream remains `joining`/down until the loopback-only
+`GET http://127.0.0.1:8081/ready` returns `200`. That gate means versiond is
+serving, accepting, has an available child, and is fully reconciled without a
+progressing or degraded condition. Router desired state,
 applied-generation metadata, completion receipt index, pending WAL, audit
 outbox, and audit log are stored below `/var/lib/gonka/versiond-router` on a
 persistent volume. The audit may be rotated; state, applied metadata, receipts,

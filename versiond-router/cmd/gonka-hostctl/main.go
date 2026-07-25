@@ -56,7 +56,11 @@ func run(ctx context.Context, args []string) error {
 	pollInterval := flags.Duration("poll-interval", durationEnv("ROUTER_DRAIN_POLL_INTERVAL", 2*time.Second), "readiness/process poll interval")
 	killGrace := flags.Duration("kill-grace", durationEnv("ROUTER_DRAIN_KILL_GRACE", 30*time.Minute), "wait after SIGTERM before SIGKILL")
 	commandTimeout := flags.Duration("command-timeout", durationEnv("ROUTER_COMMAND_TIMEOUT", 30*time.Second), "timeout for one SSH or local command")
-	readinessURL := flags.String("ready-url", "http://127.0.0.1:8080/ready", "versiond readiness URL on its host")
+	readinessURL := flags.String(
+		"ready-url",
+		hostctl.DefaultReadinessURL,
+		"versiond readiness URL on its host",
+	)
 	dockerRestartPolicy := flags.String("docker-restart-policy", "", "explicit restart policy applied during replacement")
 	force := flags.Bool(
 		"force-router-guard",

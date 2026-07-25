@@ -103,7 +103,7 @@ func TryVersiondHealth(stack *Stack, service string) ([]VersiondHealthEntry, err
 func TryVersiondReady(stack *Stack, service string) error {
 	_, err := stack.ComposeExecOutput(
 		service,
-		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/ready",
+		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/ready",
 	)
 	return err
 }

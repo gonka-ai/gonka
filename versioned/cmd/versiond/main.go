@@ -64,32 +64,45 @@ func run(ctx context.Context) error {
 		defer lookup.Close()
 	}
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
-	mux.HandleFunc("/ready", readinessHandler(hostLifecycle, mgr))
 	var proxyOpts []proxy.HandlerOption
 	if lookup != nil {
 		proxyOpts = append(proxyOpts, proxy.WithSessionVersionLookup(lookup))
 	}
-	mux.Handle(
-		"/",
-		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
-	)
 
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
 		Addr:    listenAddr,
-		Handler: mux,
+		Handler: publicHandler(mgr, hostLifecycle, proxyOpts...),
+	}
+	adminListenAddr := config.AdminListenAddr()
+	adminSrv := &http.Server{
+		Addr:              adminListenAddr,
+		Handler:           adminHandler(hostLifecycle, mgr),
+		ReadHeaderTimeout: 5 * time.Second,
 	}
 
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", listenAddr, err)
 	}
+	adminLn, err := net.Listen("tcp", adminListenAddr)
+	if err != nil {
+		_ = ln.Close()
+		return fmt.Errorf("listen %s: %w", adminListenAddr, err)
+	}
+	servers := httpServerGroup{srv, adminSrv}
+	defer servers.Close()
 	go func() {
 		slog.Info("starting proxy server", "addr", listenAddr)
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
+		}
+	}()
+	go func() {
+		slog.Info("starting admin server", "addr", adminListenAddr)
+		if err := adminSrv.Serve(adminLn); err != nil &&
+			err != http.ErrServerClosed {
+			slog.Error("admin HTTP server error", "error", err)
 		}
 	}()
 
@@ -122,7 +135,7 @@ func run(ctx context.Context) error {
 	mgr.BeginHostDrain()
 	cancelPoll()
 
-	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone)
+	return shutdownHost(cfg, servers, mgr, hostLifecycle, force, pollDone)
 }
 
 func runPollLoop(
@@ -218,9 +231,42 @@ type hostShutdownManager interface {
 	ForceStopChildren()
 }
 
+type hostHTTPServer interface {
+	Shutdown(context.Context) error
+	Close() error
+}
+
+type httpServerGroup []*http.Server
+
+func (servers httpServerGroup) Shutdown(ctx context.Context) error {
+	results := make(chan error, len(servers))
+	for _, server := range servers {
+		go func() {
+			results <- server.Shutdown(ctx)
+		}()
+	}
+	var errs []error
+	for range servers {
+		if err := <-results; err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
+func (servers httpServerGroup) Close() error {
+	var errs []error
+	for _, server := range servers {
+		if err := server.Close(); err != nil {
+			errs = append(errs, err)
+		}
+	}
+	return errors.Join(errs...)
+}
+
 func shutdownHost(
 	cfg config.Config,
-	srv *http.Server,
+	srv hostHTTPServer,
 	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
 	force <-chan struct{},
@@ -307,9 +353,9 @@ func shutdownHost(
 	}
 	if httpErr != nil {
 		if !forced {
-			return fmt.Errorf("shutdown HTTP server: %w", httpErr)
+			return fmt.Errorf("shutdown HTTP servers: %w", httpErr)
 		}
-		slog.Warn("HTTP shutdown required forced close", "error", httpErr)
+		slog.Warn("HTTP server shutdown required forced close", "error", httpErr)
 	}
 	if err := hostLifecycle.Transition(host.StateStopped); err != nil {
 		return err
@@ -373,6 +419,30 @@ func readinessHandler(hostLifecycle *host.Controller, mgr *process.Manager) http
 	}
 }
 
+func publicHandler(
+	mgr *process.Manager,
+	hostLifecycle *host.Controller,
+	proxyOpts ...proxy.HandlerOption,
+) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
+	mux.Handle("/ready", http.NotFoundHandler())
+	mux.Handle(
+		"/",
+		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
+	)
+	return mux
+}
+
+func adminHandler(
+	hostLifecycle *host.Controller,
+	mgr *process.Manager,
+) http.Handler {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/ready", readinessHandler(hostLifecycle, mgr))
+	return mux
+}
+
 func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
 	return hostStatus.State == host.StateServing &&
 		hostStatus.Accepting &&
@@ -384,7 +454,7 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 
 func watchShutdownEscalation(
 	ctx context.Context,
-	srv *http.Server,
+	srv hostHTTPServer,
 	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
 ) func() {

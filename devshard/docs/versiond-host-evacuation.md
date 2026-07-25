@@ -140,7 +140,8 @@ and escalates when the single shutdown budget expires. Keeping that decision in
 the process that owns the counters avoids stale observations and avoids turning
 a compatibility health endpoint into an orchestration protocol.
 
-`GET /ready` is a separate, status-only replacement gate:
+`GET http://127.0.0.1:8081/ready` is a separate, status-only replacement
+gate served on versiond's loopback admin listener:
 
 - `200` when the host is serving and accepting, at least one child is
   available, reconciliation has converged, and the manager is not progressing
@@ -154,13 +155,17 @@ approved version before host addition or replacement.
 Host availability and router admission remain separate contracts. A
 replacement stays `joining`/down in nginx until `/ready` returns `200`. The
 endpoint contains no control command and exports no drain counters.
+The public `:8080` listener returns `404` for `/ready`, so nginx and direct
+data-plane clients cannot observe the host lifecycle state.
 
 ## Control plane and trust boundary
 
-There is no network admin API in this track. Router mutation is performed by a
-local `gonka-routerctl` command. Remote operation uses the deployment's existing
-SSH access to invoke local commands on the router and versiond hosts. Therefore
-this change adds no listener, credential format, mTLS PKI, or token lifecycle.
+There is no remotely reachable admin API in this track. Router mutation is
+performed by a local `gonka-routerctl` command. Remote operation uses the
+deployment's existing SSH access to invoke local commands on the router and
+versiond hosts. The status-only versiond readiness gate listens on loopback and
+is queried locally or through `docker exec`; it needs no credential format,
+mTLS PKI, or token lifecycle.
 
 The router command uses a file lock and validates state transitions before
 commit. It then writes a WAL entry containing the complete desired state,

@@ -57,7 +57,7 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 			), nil
 		}
 		return fakeRouterState(true), nil
-	case strings.Contains(joined, "127.0.0.1:8080/ready"):
+	case strings.Contains(joined, "127.0.0.1:8081/ready"):
 		if r.readinessErrors > 0 {
 			r.readinessErrors--
 			return "", errors.New("versiond is not ready")
@@ -524,7 +524,7 @@ func TestAddKeepsNewHostDownUntilReady(t *testing.T) {
 		"gonka-routerctl host add --operation-id add-order --address new-versiond-3 versiond-2",
 		"docker update --restart=unless-stopped",
 		"docker start",
-		"127.0.0.1:8080/ready",
+		"127.0.0.1:8081/ready",
 		"--from joining --to active --target active",
 	)
 	assertJournal(t, orchestrator.config.JournalPath, "add", "complete")
@@ -548,7 +548,7 @@ func TestReplaceRetriesDedicatedReadinessProbe(t *testing.T) {
 	if err := orchestrator.Replace(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if calls := remote.callLog(); strings.Count(calls, "127.0.0.1:8080/ready") < 2 {
+	if calls := remote.callLog(); strings.Count(calls, "127.0.0.1:8081/ready") < 2 {
 		t.Fatalf("replacement did not retry readiness:\n%s", calls)
 	}
 }
@@ -579,7 +579,7 @@ func TestReplaceKeepsJoiningHostDownUntilReady(t *testing.T) {
 		"--address replacement-2",
 		"docker update --restart=unless-stopped",
 		"docker start",
-		"127.0.0.1:8080/ready",
+		"127.0.0.1:8081/ready",
 		"--from joining --to active --target active",
 	)
 }
@@ -595,7 +595,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			required: []string{
 				"--from offline --to joining",
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 			forbidden: []string{"gonka-routerctl status"},
@@ -605,7 +605,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			required: []string{
 				"--from offline --to joining",
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 			forbidden: []string{"gonka-routerctl status"},
@@ -615,7 +615,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			required: []string{
 				"--from offline --to joining",
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 			forbidden: []string{"gonka-routerctl status"},
@@ -624,7 +624,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			phase: "router_joining",
 			required: []string{
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 			forbidden: []string{"--from offline --to joining"},
@@ -632,7 +632,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 		{
 			phase: "host_started",
 			required: []string{
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 			forbidden: []string{
@@ -646,7 +646,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			forbidden: []string{
 				"--from offline --to joining",
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 			},
 		},
 		{
@@ -654,7 +654,7 @@ func TestReplaceResumesFromEveryProvisionCheckpoint(t *testing.T) {
 			forbidden: []string{
 				"--from offline --to joining",
 				"docker start",
-				"127.0.0.1:8080/ready",
+				"127.0.0.1:8081/ready",
 				"--from joining --to active --target active",
 			},
 		},
