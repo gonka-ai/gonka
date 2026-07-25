@@ -1129,6 +1129,79 @@ func TestControllerBootstrapImportsReceiptsBeforeAuditRotation(t *testing.T) {
 	}
 }
 
+func TestControllerBootstrapRepairsTornAuditWithExistingReceipts(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(newTestState(t)),
+	); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := os.OpenFile(paths.AuditPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := audit.WriteString(`{"torn":`); err != nil {
+		audit.Close()
+		t.Fatal(err)
+	}
+	if err := audit.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := controller.Bootstrap(context.Background(), nil); err != nil {
+		t.Fatal(err)
+	}
+	repaired, err := os.ReadFile(paths.AuditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(repaired, []byte{'\n'}) ||
+		bytes.Contains(repaired, []byte(`{"torn":`)) {
+		t.Fatalf("bootstrap did not repair audit tail: %q", repaired)
+	}
+}
+
+func TestAppendAuditRepairsTornTailBeforeNextRecord(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	first := AuditRecord{
+		Time:        time.Now().UTC(),
+		OperationID: "first-operation",
+		Action:      "test",
+		Result:      "completed",
+	}
+	if err := controller.appendAudit(first); err != nil {
+		t.Fatal(err)
+	}
+	audit, err := os.OpenFile(paths.AuditPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := audit.WriteString(`{"torn":`); err != nil {
+		audit.Close()
+		t.Fatal(err)
+	}
+	if err := audit.Close(); err != nil {
+		t.Fatal(err)
+	}
+	second := first
+	second.OperationID = "second-operation"
+	if err := controller.appendAudit(second); err != nil {
+		t.Fatal(err)
+	}
+
+	repaired, err := os.ReadFile(paths.AuditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Count(repaired, []byte{'\n'}) != 2 ||
+		bytes.Contains(repaired, []byte(`{"torn":`)) ||
+		!bytes.Contains(repaired, []byte("first-operation")) ||
+		!bytes.Contains(repaired, []byte("second-operation")) {
+		t.Fatalf("audit records after tail repair: %q", repaired)
+	}
+}
+
 func TestControllerBootstrapMigratesLegacyRouterState(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	updatedAt := time.Now().Add(-time.Hour).UTC()

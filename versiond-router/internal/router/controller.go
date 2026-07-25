@@ -169,6 +169,9 @@ func (c *Controller) Bootstrap(
 ) (State, error) {
 	var result State
 	err := c.withLock(ctx, func() error {
+		if err := c.repairTornAuditTail(); err != nil {
+			return err
+		}
 		if err := c.recoverPending(ctx, false); err != nil {
 			return err
 		}
@@ -860,6 +863,9 @@ func (c *Controller) withLock(ctx context.Context, fn func() error) error {
 }
 
 func (c *Controller) appendAudit(record AuditRecord) error {
+	if err := c.repairTornAuditTail(); err != nil {
+		return err
+	}
 	if err := os.MkdirAll(filepath.Dir(c.config.AuditPath), 0o755); err != nil {
 		return err
 	}

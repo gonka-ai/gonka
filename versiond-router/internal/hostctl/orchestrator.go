@@ -371,6 +371,7 @@ func (o *Orchestrator) recoverCompletedStopWithoutMembership(
 		o.config.Upstream,
 		stopTarget(mode),
 		"",
+		"completed",
 	)
 	if err != nil {
 		return err
@@ -612,6 +613,7 @@ func matchingRouterCompletion(
 	host string,
 	target router.HostState,
 	action string,
+	result string,
 ) (*router.OperationCompletion, error) {
 	if !lookup.Completed {
 		return nil, nil
@@ -633,14 +635,15 @@ func matchingRouterCompletion(
 	if !actionMatches ||
 		completion.Host != host ||
 		completion.Target != target ||
-		completion.Result != "completed" {
+		completion.Result != result {
 		return nil, fmt.Errorf(
 			"router operation %s already completed as %s for %s with "+
-				"target %s",
+				"target %s and result %s",
 			lookup.OperationID,
 			completion.Action,
 			completion.Host,
 			completion.Target,
+			completion.Result,
 		)
 	}
 	return completion, nil

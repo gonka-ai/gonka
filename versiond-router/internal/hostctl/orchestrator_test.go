@@ -1075,7 +1075,7 @@ func TestStoppedHostRecognizesCancellationCommittedBeforeCheckpoint(
 				Host:         "versiond-2",
 				MembershipID: "membership-versiond-2",
 				Target:       router.HostActive,
-				Result:       "completed",
+				Result:       "canceled",
 				CompletedAt:  time.Now().UTC(),
 			},
 		},

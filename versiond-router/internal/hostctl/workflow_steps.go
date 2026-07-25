@@ -354,6 +354,7 @@ func (o *Orchestrator) resumeStopAfterFailedCancellation(
 		o.config.Upstream,
 		router.HostActive,
 		"cancel",
+		"canceled",
 	)
 	if err != nil {
 		return false, err

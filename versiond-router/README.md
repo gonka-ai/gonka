@@ -85,6 +85,10 @@ index: its entries are the durable idempotency records for completed operation
 IDs. Exact replay protection therefore grows linearly with the number of unique
 completed operation IDs.
 
+Bootstrap and the audit writer also discard an unterminated tail when a receipt
+index already exists. A later append therefore cannot turn a crash fragment
+into a malformed internal JSONL record.
+
 The WAL is one replace-in-place snapshot, not an append-only history. Its size
 tracks the desired state, the current operation receipt, and rendered config;
 it does not copy the complete receipt index. The controller lock permits only
