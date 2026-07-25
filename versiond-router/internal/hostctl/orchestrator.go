@@ -53,6 +53,10 @@ type Config struct {
 	ReadinessURL        string
 	DockerRestartPolicy string
 	ForceRouterGuard    bool
+	// AllowAbsentRuntime is an explicit phase-start recovery override. It is
+	// intentionally not part of OperationScope so a rejected started journal
+	// can be retried with the same operation ID.
+	AllowAbsentRuntime bool
 }
 
 type OperationScope struct {
@@ -324,7 +328,13 @@ func (o *Orchestrator) prepareStopWorkflow(
 	}
 
 	switch target.State {
-	case router.HostActive, router.HostDraining:
+	case router.HostActive:
+		if err := o.validateInitialStopRuntime(ctx, mode); err != nil {
+			return err
+		}
+		journal.MembershipID = target.MembershipID
+		return o.writeJournal(*journal)
+	case router.HostDraining:
 		journal.MembershipID = target.MembershipID
 		return o.writeJournal(*journal)
 	case router.HostOffline:
@@ -338,6 +348,39 @@ func (o *Orchestrator) prepareStopWorkflow(
 			target.State,
 		)
 	}
+}
+
+func (o *Orchestrator) validateInitialStopRuntime(
+	ctx context.Context,
+	mode string,
+) error {
+	state, err := o.versiondServiceState(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"inspect versiond runtime before %s: %w",
+			mode,
+			err,
+		)
+	}
+	if state != serviceAbsent {
+		return nil
+	}
+	if o.config.AllowAbsentRuntime {
+		slog.Warn(
+			"starting stop workflow without a local versiond service",
+			"operation_id", o.config.OperationID,
+			"mode", mode,
+			"service", o.config.VersiondService,
+			"override", "allow_absent_runtime",
+		)
+		return nil
+	}
+	return fmt.Errorf(
+		"versiond service %q is absent before router drain; "+
+			"check --versiond-service, or rerun with "+
+			"--allow-absent-runtime for an intentionally removed service",
+		o.config.VersiondService,
+	)
 }
 
 func validateStopTransfer(

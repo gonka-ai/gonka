@@ -39,6 +39,48 @@ func TestDockerRuntimeStateKeepsOtherInspectErrors(t *testing.T) {
 	}
 }
 
+func TestDockerRuntimeStateDoesNotMisclassifyAnotherMissingContainer(t *testing.T) {
+	for _, missing := range []string{"versiond-3", "versiond-20"} {
+		t.Run(missing, func(t *testing.T) {
+			runtime := dockerRuntime{
+				service: "versiond-2",
+				run: func(context.Context, ...string) (string, error) {
+					return "", errors.New(
+						"docker: Error response from daemon: " +
+							"No such container: " + missing,
+					)
+				},
+			}
+
+			if _, err := runtime.State(context.Background()); err == nil {
+				t.Fatal(
+					"another missing container was treated as target absence",
+				)
+			}
+		})
+	}
+}
+
+func TestDockerRuntimeStateClassifiesNoSuchContainer(t *testing.T) {
+	runtime := dockerRuntime{
+		service: "versiond-2",
+		run: func(context.Context, ...string) (string, error) {
+			return "", errors.New(
+				"docker: Error response from daemon: " +
+					"No such container: versiond-2",
+			)
+		},
+	}
+
+	state, err := runtime.State(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if state != serviceAbsent {
+		t.Fatalf("Docker service state = %s, want %s", state, serviceAbsent)
+	}
+}
+
 func TestSystemdRuntimeStateDistinguishesAbsentUnit(t *testing.T) {
 	runtime := systemdRuntime{
 		service: "versiond-2.service",

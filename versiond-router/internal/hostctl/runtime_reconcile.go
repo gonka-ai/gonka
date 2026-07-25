@@ -42,7 +42,7 @@ func (o *Orchestrator) validateRunningStopContract(
 			stateErr,
 		)
 	}
-	return serviceRunning, fmt.Errorf(
+	return "", fmt.Errorf(
 		"versiond runtime preflight: %w",
 		contractErr,
 	)
@@ -103,7 +103,7 @@ func (o *Orchestrator) reconcileDockerRestartDisabled(
 				stateErr,
 			)
 		}
-		return current, fmt.Errorf("disable Docker restart policy: %w", updateErr)
+		return "", fmt.Errorf("disable Docker restart policy: %w", updateErr)
 	}
 	if stateErr != nil {
 		return "", fmt.Errorf(

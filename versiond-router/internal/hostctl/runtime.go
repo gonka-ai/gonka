@@ -81,7 +81,7 @@ func (r dockerRuntime) State(ctx context.Context) (serviceState, error) {
 		"docker", "inspect", "--format", "{{.State.Running}}", r.service,
 	)
 	if err != nil {
-		if dockerServiceAbsent(err) {
+		if dockerServiceAbsent(err, r.service) {
 			return serviceAbsent, nil
 		}
 		return "", err
@@ -96,10 +96,36 @@ func (r dockerRuntime) State(ctx context.Context) (serviceState, error) {
 	}
 }
 
-func dockerServiceAbsent(err error) bool {
+func dockerServiceAbsent(err error, service string) bool {
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "no such object") ||
-		strings.Contains(message, "no such container")
+	service = strings.ToLower(strings.TrimSpace(service))
+	for _, prefix := range []string{
+		"no such object: ",
+		"no such container: ",
+	} {
+		rest := message
+		needle := prefix + service
+		for {
+			index := strings.Index(rest, needle)
+			if index < 0 {
+				break
+			}
+			end := index + len(needle)
+			if end == len(rest) || !dockerServiceNameByte(rest[end]) {
+				return true
+			}
+			rest = rest[end:]
+		}
+	}
+	return false
+}
+
+func dockerServiceNameByte(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= '0' && value <= '9' ||
+		value == '_' ||
+		value == '.' ||
+		value == '-'
 }
 
 func (r dockerRuntime) Signal(ctx context.Context, signal string) error {

@@ -553,10 +553,13 @@ The command captures the original container restart policy once and reasserts
 `restart=no` before every attempt to signal versiond. A durable phase is a
 checkpoint, not proof that mutable external runtime state still matches it.
 Every stop-side action therefore re-observes the runtime as `running`,
-`stopped`, or `absent`. A stopped or absent service needs no signal and the
-workflow continues toward the durable router target. Absence is accepted only
-from Docker's explicit missing-object response or systemd
-`LoadState=not-found`; other probe failures remain fail-closed.
+`stopped`, or `absent`. Before the first router drain, absence is rejected to
+catch an incorrect `--versiond-service`; an intentionally removed runtime
+requires `--allow-absent-runtime`. Once `draining` is durable, a stopped or
+absent service needs no signal and the workflow continues toward the router
+target. Docker absence must name the configured service in an explicit
+missing-object response; systemd absence requires `LoadState=not-found`.
+Other probe failures remain fail-closed.
 For systemd, use `--router-runtime systemd --versiond-runtime systemd`; the
 orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
 unit. Before changing router state for a running service, hostctl validates the

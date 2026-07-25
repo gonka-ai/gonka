@@ -67,6 +67,11 @@ func run(ctx context.Context, args []string) error {
 		false,
 		"override drain capacity and legacy data-migration guards",
 	)
+	allowAbsentRuntime := flags.Bool(
+		"allow-absent-runtime",
+		false,
+		"allow an active router membership whose runtime is already absent",
+	)
 	if err := flags.Parse(args[1:]); err != nil {
 		return err
 	}
@@ -81,6 +86,11 @@ func run(ctx context.Context, args []string) error {
 	}
 	if *evacuationJournal != "" && mode != "replace" {
 		return errors.New("--evacuation-journal is valid only for replace")
+	}
+	if *allowAbsentRuntime && mode != "evacuate" && mode != "decommission" {
+		return errors.New(
+			"--allow-absent-runtime is valid only for evacuate or decommission",
+		)
 	}
 	if *operationID == "" {
 		return errors.New("--operation-id is required so the operation can be resumed")
@@ -113,6 +123,7 @@ func run(ctx context.Context, args []string) error {
 		ReadinessURL:        *readinessURL,
 		DockerRestartPolicy: *dockerRestartPolicy,
 		ForceRouterGuard:    *force,
+		AllowAbsentRuntime:  *allowAbsentRuntime,
 	}, hostctl.SSHRemote{})
 	if err != nil {
 		return err

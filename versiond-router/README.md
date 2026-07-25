@@ -267,8 +267,8 @@ Docker example:
 
 The command performs these ordered steps:
 
-1. Start a transfer to `offline`: move `active -> draining`, validate the nginx
-   config, and reload.
+1. Verify that the configured runtime exists, then start a transfer to
+   `offline`: move `active -> draining`, validate the nginx config, and reload.
 2. Capture the Docker restart policy, set `restart=no`, and persist
    `term_requested`.
 3. Move `draining -> stopping`; that edge verifies the durable transfer owner
@@ -294,9 +294,14 @@ operation starts. Each stop-side runtime action first classifies the service as
 `running`, `stopped`, or `absent`. Only a running service requires the external
 stop contract and a signal; stopped or absent means the runtime side of the
 stop is already complete, so hostctl continues the durable router workflow.
-Docker absence is accepted only for an explicit `no such object/container`
-response, and systemd absence requires `LoadState=not-found`; all ambiguous
-runtime errors remain fail-closed.
+Before the first `active -> draining` edge, however, an absent runtime is
+rejected so a typo in `--versiond-service` cannot report a false success. If
+the runtime was intentionally removed before evacuation, rerun the same
+operation with `--allow-absent-runtime`. This explicit recovery override is
+valid only for `evacuate` and `decommission`. Docker absence must name the
+configured service in an explicit `no such object/container` response, and
+systemd absence requires `LoadState=not-found`; all ambiguous runtime errors
+remain fail-closed.
 
 Hostctl does not poll versiond in-flight counters. Those counters are internal
 to versiond and are consumed by its shutdown state machine. This avoids making

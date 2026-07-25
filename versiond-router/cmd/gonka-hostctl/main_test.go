@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"testing"
 )
@@ -43,5 +44,17 @@ func TestHostctlStateDirFallsBackToUserStateDirectory(t *testing.T) {
 	)
 	if got != want {
 		t.Fatalf("hostctl state dir = %q, want %q", got, want)
+	}
+}
+
+func TestAllowAbsentRuntimeIsLimitedToStopCommands(t *testing.T) {
+	err := run(context.Background(), []string{
+		"add",
+		"--allow-absent-runtime",
+	})
+	if err == nil ||
+		err.Error() !=
+			"--allow-absent-runtime is valid only for evacuate or decommission" {
+		t.Fatalf("run error = %v, want mode validation", err)
 	}
 }

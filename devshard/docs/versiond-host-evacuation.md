@@ -310,10 +310,15 @@ Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
 Before the first router mutation, hostctl observes the service runtime. A
-running service must pass the shutdown-contract validation. A stopped or absent
-service has already reached the runtime stop target, so hostctl skips signaling
-and continues the durable router workflow. Docker absence is accepted only for
-an explicit missing-object response; systemd absence requires
+running service must pass the shutdown-contract validation. A stopped service
+has already reached the runtime stop target. An absent service is rejected
+while its router membership is still `active`, because it may indicate a typo
+in `--versiond-service`. Disaster recovery for a runtime intentionally removed
+before drain requires the explicit `--allow-absent-runtime` flag. After the
+router has durably entered `draining`, or when adopting an `offline`
+membership, disappearance is treated as the achieved runtime target and the
+workflow continues. Docker absence must name the configured service in an
+explicit missing-object response; systemd absence requires
 `LoadState=not-found`. Other runtime failures remain fail-closed.
 
 systemd evacuation uses a managed stop job, so `TimeoutStopSec`, `KillMode`, and

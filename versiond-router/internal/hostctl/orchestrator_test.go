@@ -187,9 +187,68 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 	assertJournalPhase(t, orchestrator.config.JournalPath, "complete")
 }
 
-func TestEvacuateConvergesRouterWhenRuntimeIsAbsent(t *testing.T) {
+func TestStopWorkflowRejectsInitiallyAbsentRuntime(t *testing.T) {
+	tests := []struct {
+		mode string
+		run  func(*Orchestrator, context.Context) error
+	}{
+		{
+			mode: "evacuate",
+			run: func(o *Orchestrator, ctx context.Context) error {
+				return o.Evacuate(ctx)
+			},
+		},
+		{
+			mode: "decommission",
+			run: func(o *Orchestrator, ctx context.Context) error {
+				return o.Decommission(ctx)
+			},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.mode, func(t *testing.T) {
+			remote := &fakeRemote{runtimeAbsent: true}
+			orchestrator := newTestOrchestrator(
+				t,
+				remote,
+				tt.mode+"-absent",
+			)
+
+			err := tt.run(orchestrator, context.Background())
+			if err == nil ||
+				!strings.Contains(err.Error(), "--allow-absent-runtime") {
+				t.Fatalf(
+					"%s error = %v, want explicit absent-runtime rejection",
+					tt.mode,
+					err,
+				)
+			}
+			calls := remote.callLog()
+			if strings.Contains(calls, "--from active") ||
+				strings.Contains(calls, "docker update") ||
+				strings.Contains(calls, "docker kill") {
+				t.Fatalf(
+					"initially absent runtime caused a side effect:\n%s",
+					calls,
+				)
+			}
+			assertJournalPhase(
+				t,
+				orchestrator.config.JournalPath,
+				phaseStarted,
+			)
+		})
+	}
+}
+
+func TestEvacuateAllowsExplicitlyAbsentRuntimeRecovery(t *testing.T) {
 	remote := &fakeRemote{runtimeAbsent: true}
 	orchestrator := newTestOrchestrator(t, remote, "evacuate-absent")
+
+	if err := orchestrator.Evacuate(context.Background()); err == nil {
+		t.Fatal("initially absent runtime was accepted without an override")
+	}
+	orchestrator.config.AllowAbsentRuntime = true
 
 	if err := orchestrator.Evacuate(context.Background()); err != nil {
 		t.Fatal(err)
