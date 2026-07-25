@@ -330,21 +330,9 @@ func TestSQLite_ConcurrentReadWrite(t *testing.T) {
 	require.Len(t, diffs, totalDiffs)
 }
 
-func TestSQLite_DuplicateNonce(t *testing.T) {
-	db := newTestSQLite(t)
-	require.NoError(t, db.CreateSession(defaultParams()))
-
-	err := db.AppendDiff("escrow-1", makeDiffRecord(1))
-	require.NoError(t, err)
-
-	err = db.AppendDiff("escrow-1", makeDiffRecord(1))
-	require.Error(t, err, "duplicate nonce should fail")
-
-	// Verify first diff is intact.
-	diffs, err := db.GetDiffs("escrow-1", 1, 1)
-	require.NoError(t, err)
-	require.Len(t, diffs, 1)
-	require.Equal(t, uint64(1), diffs[0].Nonce)
+func TestSQLite_DuplicateNonce_IdenticalReplayOK(t *testing.T) {
+	// Identical same-nonce replay is idempotent (HA); conflicting bytes still fail.
+	runAppendDiff_IdempotentReplay(t, newTestSQLite(t))
 }
 
 func TestSQLite_LargeSession(t *testing.T) {

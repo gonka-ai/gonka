@@ -165,6 +165,34 @@ router), `deploy/join/docker-compose.versiond.yml` (2 versiond + router).
 
 > **Multi-instance requires a shared Postgres** — see §4.
 
+### Diff / persist consistency under HA
+
+Sticky routing keeps an escrow on one versiond while healthy, but failover can
+land catch-up on a **stale standby**: another replica already wrote higher
+nonces to shared Postgres while this process still holds an older in-memory
+session. Without extra care, re-applying an already-durable nonce as a bare
+`INSERT` produced SQLSTATE `23505` and HTTP 500 even though durable state was
+correct.
+
+Shipped behaviour on the host (`devshardd`) and gateway (`devshardctl`):
+
+| Mechanism | Behaviour |
+|-----------|-----------|
+| **Idempotent `AppendDiff`** | Same `(epoch, escrow, nonce)` with **identical** payload → success (HA replay). Conflicting bytes → typed fork error + `devshard_diff_fork_detected_total` (never overwrite). |
+| **Lazy reconcile** | Incoming `diff.Nonce > memNonce+1` → load the gap from Postgres (`GetDiffs`), apply durable rows in memory **without** re-inserting, then apply the tip. Emits `reconcile_fast_forward` log + `devshard_reconcile_fast_forward_total`. |
+| **Persist-first** | Validate / preview on a clone → `AppendDiff` (with bounded retry) → commit to the live state machine. Persist failure leaves memory **unchanged** (failure direction is store-ahead or no-op, not memory-ahead). |
+| **Gateway catch-up** | Still driven by per-slot `hostSyncNonce` toward group members; the gateway does **not** address individual versiond HA replicas. |
+
+Operator signals (versiond / host logs and Prometheus):
+
+- `reconcile_fast_forward` — expected on failover onto a lagging replica.
+- `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
+- `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+
+Gateway catch-up and sticky failover remain independent: router
+`proxy_next_upstream` moves the HTTP request; host reconcile heals RAM from
+shared Postgres when the request arrives.
+
 ---
 
 ## 4. Storage: per-instance SQLite vs shared Postgres

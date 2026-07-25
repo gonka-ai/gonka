@@ -70,20 +70,7 @@ func TestMemory_PruneEpoch_WriteAfter(t *testing.T) {
 	runPruneEpoch_WriteAfter(t, NewMemory())
 }
 
-func TestMemory_DuplicateNonce(t *testing.T) {
-	store := NewMemory()
-	err := store.CreateSession(defaultParams())
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = store.AppendDiff("escrow-1", makeDiffRecord(1))
-	if err != nil {
-		t.Fatal(err)
-	}
-
-	err = store.AppendDiff("escrow-1", makeDiffRecord(1))
-	if err == nil {
-		t.Fatal("expected error on duplicate nonce")
-	}
+func TestMemory_DuplicateNonce_IdenticalReplayOK(t *testing.T) {
+	// Identical same-nonce replay is idempotent (HA); see AppendDiff docs.
+	runAppendDiff_IdempotentReplay(t, NewMemory())
 }

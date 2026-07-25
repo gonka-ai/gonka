@@ -283,13 +283,28 @@ Why: A failed backend must remain retryable.
 Consequence: A failed prune leaves `prunedUpTo` unchanged so a later
 `PruneOnce` can retry.
 
+### Live Diff Append Is Idempotent for Identical Replay
+
+Decision: `AppendDiff` treats a second write of the **same**
+`(escrow_id, nonce)` payload as success (`INSERT … ON CONFLICT DO NOTHING`,
+then identity check). A **different** payload at the same nonce returns
+`ErrDiffFork` and increments `devshard_diff_fork_detected_total`.
+
+Why: Multi-instance HA + shared Postgres means at-least-once delivery of
+gateway-sequenced, byte-identical diffs is normal (stale standby catch-up).
+That is not a bug; failing with SQLSTATE 23505 turns a successful durable
+write into an HTTP 500. Conflicting bytes remain a hard error (real fork).
+
+See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consistency.md).
+
 ### Legacy Migration Is Resumable
 
-Decision: `MigrateLegacySQLite` is idempotent at the migration layer, not by
-weakening normal storage writes.
+Decision: `MigrateLegacySQLite` is idempotent at the migration layer; live
+`AppendDiff` is separately idempotent for identical replay (above). Migration
+still verifies already-copied rows against the source after a boot failure.
 
-Why: Live duplicate nonces should still fail. Migration is the only path that
-needs to tolerate partially copied rows after a boot failure.
+Why: Migration may resume after a partial copy; identity checks prevent silent
+forks when a destination row already exists.
 
 Consequence:
 

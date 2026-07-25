@@ -245,7 +245,15 @@ func (s *Stack) StartService(t *testing.T, service string) {
 
 // ComposeLogs returns tail logs for optional services (all services when empty).
 func (s *Stack) ComposeLogs(services ...string) (string, error) {
-	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color", "--tail", "120")
+	return s.ComposeLogsTail(120, services...)
+}
+
+// ComposeLogsTail is ComposeLogs with an explicit --tail line count.
+func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
+	if tail <= 0 {
+		tail = 120
+	}
+	args := append(append([]string{"compose"}, s.composeFileArgs()...), "logs", "--no-color", "--tail", strconv.Itoa(tail))
 	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir

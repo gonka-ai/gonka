@@ -329,6 +329,8 @@ func PostGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 }
 
 // WaitGatewayChatExpectFailure polls until gateway chat returns HTTP >= 400 or a transport error.
+// Each attempt uses a unique request body so a single early 200 cannot freeze the
+// wait on gateway chat-response cache hits (TTL is long).
 func WaitGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest, wait time.Duration) int {
 	t.Helper()
 	if client == nil {
@@ -336,9 +338,11 @@ func WaitGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 	}
 	var status int
 	var lastBody string
+	attempt := 0
 	ok := AssertEventually(t, wait, 2*time.Second, func() bool {
+		attempt++
 		var transportErr error
-		status, transportErr, lastBody = postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+		status, transportErr, lastBody = postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, uniquifyChatRequest(req, attempt))
 		if transportErr != nil {
 			lastBody = transportErr.Error()
 			return true
@@ -352,4 +356,20 @@ func WaitGatewayChatExpectFailure(t *testing.T, client *http.Client, gatewayURL,
 	}
 	require.NotEqual(t, http.StatusOK, status, "gateway chat should not succeed on stale settled escrow: %s", lastBody)
 	return status
+}
+
+// uniquifyChatRequest returns a shallow copy of req whose last user message
+// content is tagged with attempt, changing the gateway chat cache key.
+func uniquifyChatRequest(req ChatCompletionRequest, attempt int) ChatCompletionRequest {
+	out := req
+	if len(req.Messages) == 0 {
+		out.Messages = []ChatMessage{{Role: "user", Content: fmt.Sprintf("citest-unique-%d", attempt)}}
+		return out
+	}
+	msgs := make([]ChatMessage, len(req.Messages))
+	copy(msgs, req.Messages)
+	last := len(msgs) - 1
+	msgs[last].Content = fmt.Sprintf("%s [citest-attempt-%d]", msgs[last].Content, attempt)
+	out.Messages = msgs
+	return out
 }

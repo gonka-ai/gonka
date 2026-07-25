@@ -766,14 +766,35 @@ func (s *Postgres) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 	defer tx.Rollback(ctx)
 
-	_, err = tx.Exec(ctx,
+	tag, err := tx.Exec(ctx,
 		`INSERT INTO devshard_diffs
 		    (epoch_id, escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
-		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		 ON CONFLICT (epoch_id, escrow_id, nonce) DO NOTHING`,
 		epochID, escrowID, rec.Nonce, txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON, rec.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert diff: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		var haveTxs, haveUserSig, havePost, haveHash []byte
+		var haveWarm *string
+		scanErr := tx.QueryRow(ctx,
+			`SELECT txs_proto, user_sig, post_state_root, state_hash, warm_keys_json
+			 FROM devshard_diffs
+			 WHERE epoch_id = $1 AND escrow_id = $2 AND nonce = $3`,
+			epochID, escrowID, rec.Nonce,
+		).Scan(&haveTxs, &haveUserSig, &havePost, &haveHash, &haveWarm)
+		if scanErr != nil {
+			return fmt.Errorf("read existing diff after conflict: %w", scanErr)
+		}
+		if idErr := checkDiffReplayIdentityRaw(
+			escrowID, rec.Nonce,
+			txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON,
+			haveTxs, haveUserSig, havePost, haveHash, haveWarm,
+		); idErr != nil {
+			return idErr
+		}
 	}
 
 	for slotID, sig := range rec.Signatures {

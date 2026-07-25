@@ -98,6 +98,66 @@ func TestApplyDiff_UserSigVerification(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestValidateDiff_DoesNotCommit(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, user := newTestSM(t, hosts, 10000)
+
+	txs := []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})}
+	// Build a correctly signed diff via a throwaway SM so PostStateRoot matches.
+	probe, _ := newTestSM(t, hosts, 10000)
+	root, err := probe.ApplyLocal(1, txs)
+	require.NoError(t, err)
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", 1, txs, root)
+
+	vd, err := sm.ValidateDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, root, vd.Root)
+	require.Equal(t, uint64(0), sm.LatestNonce(), "ValidateDiff must not commit")
+
+	// CommitValidated installs the precomputed post-state without recompute.
+	require.True(t, sm.CommitValidated(vd))
+	require.Equal(t, uint64(1), sm.LatestNonce())
+	committedRoot, err := sm.ComputeStateRoot()
+	require.NoError(t, err)
+	require.Equal(t, root, committedRoot)
+
+	// A second commit of the same handle is a no-op (nonce already advanced).
+	require.False(t, sm.CommitValidated(vd))
+	require.Equal(t, uint64(1), sm.LatestNonce())
+}
+
+func TestPreviewLocalBestEffort_DoesNotCommit(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	sm, _ := newTestSM(t, hosts, 10000)
+
+	txs := []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  []byte("prompt"),
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	})}
+	vd, err := sm.PreviewLocalBestEffort(1, txs)
+	require.NoError(t, err)
+	require.Len(t, vd.Applied, 1)
+	require.NotEmpty(t, vd.Root)
+	require.Equal(t, uint64(0), sm.LatestNonce(), "PreviewLocalBestEffort must not commit")
+
+	root2, applied2, err := sm.ApplyLocalBestEffort(1, txs)
+	require.NoError(t, err)
+	require.Equal(t, vd.Root, root2)
+	require.Len(t, applied2, 1)
+	require.Equal(t, uint64(1), sm.LatestNonce())
+}
+
 func TestApplyDiff_StartInference(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)
@@ -3098,6 +3158,60 @@ type failingObsInsertStore struct {
 
 func (s *failingObsInsertStore) InsertSealedInference(escrowID string, row storage.InferenceRow) error {
 	return fmt.Errorf("injected obs insert failure")
+}
+
+type countingObsInsertStore struct {
+	*storage.Memory
+	inserts int
+}
+
+func (s *countingObsInsertStore) InsertSealedInference(escrowID string, row storage.InferenceRow) error {
+	s.inserts++
+	return s.Memory.InsertSealedInference(escrowID, row)
+}
+
+// TestPersistFirst_ObsDeferredUntilCommit pins the persist-first obs contract:
+// a trial apply (ValidateDiff) writes no observability rows, and CommitValidated
+// flushes them. Without deferral, obs would be written during validate (before
+// persist) and again on apply.
+func TestPersistFirst_ObsDeferredUntilCommit(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+
+	// User-side SM produces a correctly signed challenge diff (Valid:false vote
+	// drives StatusChallenged, which triggers an obs write).
+	userSM, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier,
+		testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	applyStartConfirmFinish(t, userSM, user, hosts, 1)
+	valMsg := &types.MsgValidation{InferenceId: 1, ValidatorSlot: 0, Valid: false, EscrowId: "escrow-1"}
+	valMsg.ProposerSig = testutil.SignProposerTx(t, hosts[0], valMsg)
+	nonce := userSM.SnapshotState().LatestNonce + 1
+	root, applied, err := userSM.ApplyLocalBestEffort(nonce, []*types.DevshardTx{txValidation(valMsg)})
+	require.NoError(t, err)
+	diff := testutil.SignDiffWithRoot(t, user, "escrow-1", nonce, applied, root)
+
+	// Host-side SM with a counting obs store.
+	countStore := &countingObsInsertStore{Memory: testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)}
+	hostSM, err := NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, countStore)
+	require.NoError(t, err)
+	applyStartConfirmFinish(t, hostSM, user, hosts, 1)
+
+	insertsAfterSetup := countStore.inserts
+	vd, err := hostSM.ValidateDiff(diff)
+	require.NoError(t, err)
+	require.Equal(t, nonce-1, hostSM.LatestNonce(), "ValidateDiff must not commit")
+	require.Equal(t, insertsAfterSetup, countStore.inserts, "ValidateDiff must not write obs (deferred)")
+
+	require.True(t, hostSM.CommitValidated(vd))
+	require.Equal(t, nonce, hostSM.LatestNonce())
+	require.Greater(t, countStore.inserts, insertsAfterSetup, "CommitValidated must flush the deferred obs write")
+	require.Equal(t, types.StatusChallenged, hostSM.SnapshotState().Inferences[1].Status)
 }
 
 func TestApplyLocalBestEffort_ChallengeObsInsertFailure_StillApplied(t *testing.T) {

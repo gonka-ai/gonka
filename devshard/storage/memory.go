@@ -145,8 +145,20 @@ func (m *Memory) AppendDiff(escrowID string, rec types.DiffRecord) error {
 		return fmt.Errorf("session %s not found", escrowID)
 	}
 
-	if _, exists := s.nonceToIndex[rec.Nonce]; exists {
-		return fmt.Errorf("duplicate nonce %d for session %s", rec.Nonce, escrowID)
+	if idx, exists := s.nonceToIndex[rec.Nonce]; exists {
+		existing := s.diffs[idx]
+		if err := checkDiffReplayIdentity(escrowID, rec, existing); err != nil {
+			return err
+		}
+		// Mirror Postgres/SQLite: upsert signatures on identical replay.
+		if existing.Signatures == nil {
+			existing.Signatures = make(map[uint32][]byte, len(rec.Signatures))
+		}
+		for slotID, sig := range rec.Signatures {
+			existing.Signatures[slotID] = append([]byte(nil), sig...)
+		}
+		s.diffs[idx] = existing
+		return nil
 	}
 
 	rec.Signatures = copySignatures(rec.Signatures)

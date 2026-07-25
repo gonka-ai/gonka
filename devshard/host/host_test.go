@@ -174,6 +174,48 @@ func TestHost_AppliesDiffs(t *testing.T) {
 	require.Equal(t, uint64(1), resp.Nonce)
 }
 
+// countingAppendStore wraps Storage and counts AppendDiff calls.
+type countingAppendStore struct {
+	storage.Storage
+	appends atomic.Int32
+}
+
+func (s *countingAppendStore) AppendDiff(escrowID string, rec types.DiffRecord) error {
+	s.appends.Add(1)
+	return s.Storage.AppendDiff(escrowID, rec)
+}
+
+func TestHost_HandleRequest_AppliesDiffOnce(t *testing.T) {
+	// Regression: HandleRequest used to call applyAndPersist twice per diff.
+	// With a store, each new nonce must AppendDiff exactly once.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+
+	mem := storage.NewMemory()
+	require.NoError(t, mem.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion,
+		Config: config, Group: group, InitialBalance: 10000, CreatorAddr: user.Address(),
+	}))
+	store := &countingAppendStore{Storage: mem}
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, store)
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithStorage(store), WithVerifier(verifier))
+	require.NoError(t, err)
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, nil)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1, diff2}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.Nonce)
+	require.Equal(t, uint64(2), h.LatestNonce())
+	require.Equal(t, int32(2), store.appends.Load(), "each diff must AppendDiff exactly once")
+}
+
 func TestHost_SignsState(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

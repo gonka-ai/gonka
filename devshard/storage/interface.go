@@ -9,6 +9,10 @@ import (
 // ErrSessionNotFound is returned when a session does not exist in storage.
 var ErrSessionNotFound = errors.New("session not found")
 
+// ErrSessionNotActive is returned when a session exists in storage but is not
+// status "active" (typically "settled"). Callers must not recover or serve it.
+var ErrSessionNotActive = errors.New("session not active")
+
 // ErrSessionEpochConflict is returned when local storage finds the same
 // escrow_id mapped to more than one epoch. Mainnet pins this mapping on the
 // DevshardEscrow, so local storage must not choose a different epoch silently.
@@ -45,6 +49,9 @@ var ErrEscrowCacheNotFound = errors.New("escrow cache not found")
 // so callers should surface it as "initializing" / 503 rather than a 500.
 var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is rebuilding")
 
+// ErrDiffFork is defined in diff_identity.go and returned by AppendDiff when
+// an existing durable row at the same nonce has a conflicting payload.
+
 // Storage persists devshard session state and diffs.
 //
 // The store is partitioned by EpochID. PruneEpoch drops everything that
@@ -57,6 +64,9 @@ type Storage interface {
 	CreateSession(params CreateSessionParams) error
 	MarkSettled(escrowID string) error
 	ListActiveSessions() ([]ActiveSession, error)
+	// AppendDiff persists one diff. Identical replay of the same
+	// (escrow, nonce) payload is idempotent success (HA at-least-once). A
+	// different payload at the same nonce returns ErrDiffFork.
 	AppendDiff(escrowID string, rec types.DiffRecord) error
 	GetDiffs(escrowID string, fromNonce, toNonce uint64) ([]types.DiffRecord, error)
 	AddSignature(escrowID string, nonce uint64, slotID uint32, sig []byte) error

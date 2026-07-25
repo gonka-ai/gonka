@@ -69,6 +69,28 @@ func TestIncValidationOrphanIncrementsCounter(t *testing.T) {
 	}
 }
 
+func TestHADiffPersistMetricsIncrement(t *testing.T) {
+	ensureMetrics()
+
+	beforeFork := testutil.ToFloat64(diffForkDetectedTotal.WithLabelValues("esc-metrics"))
+	IncDiffForkDetected("esc-metrics")
+	if testutil.ToFloat64(diffForkDetectedTotal.WithLabelValues("esc-metrics"))-beforeFork != 1 {
+		t.Fatalf("diff_fork_detected delta want 1")
+	}
+
+	beforeRetry := testutil.ToFloat64(diffPersistRetryTotal.WithLabelValues("success"))
+	IncDiffPersistRetry("success")
+	if testutil.ToFloat64(diffPersistRetryTotal.WithLabelValues("success"))-beforeRetry != 1 {
+		t.Fatalf("diff_persist_retry delta want 1")
+	}
+
+	beforeFF := testutil.ToFloat64(reconcileFastForwardTotal)
+	IncReconcileFastForward()
+	if testutil.ToFloat64(reconcileFastForwardTotal)-beforeFF != 1 {
+		t.Fatalf("reconcile_fast_forward delta want 1")
+	}
+}
+
 func TestDeleteEscrowMetricsRemovesPerEscrowGauges(t *testing.T) {
 	ensureMetrics()
 	const escrowID = "escrow-metrics-prune"

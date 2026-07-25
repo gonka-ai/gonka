@@ -48,6 +48,7 @@ unknown modes fall back to exclusive stop/start.
 | **Gateway transport** | Chain queries + escrow tx via gRPC; `--chain-rest` / `DEVSHARD_CHAIN_REST` removed |
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
+| **HA diff/persist** | Idempotent identical `AppendDiff` (fork on conflict); lazy RAM reconcile from PG on nonce gap; persist-first so a failed write cannot leave memory ahead of Postgres |
 | **Versionless obs** | Obs GETs never bind; owner chat binds; join rewrite + PG session lookup; `devshard_obs` rate limit |
 | **Status field** | Gateway `protocol_version` → `session_version` (bind / settlement tag) |
 | **Tier A `/v1` reads** | Served by **edge-api** on new proxies; same handlers still dual-served on **dapi** as deprecated |
@@ -218,6 +219,48 @@ prefer edge-api. Also still on dapi (deprecated): `/v1/bridge/block/latest` and
 | `DEVSHARD_POSTGRES_PASSWORD` / `PG*` | Shared DB |
 | `DEVSHARD_CHAIN_GRPC` | Gateway chain gRPC (no LCD) |
 | `KEY_NAME` (+ shared keyring) | **Same** on every HA replica of one participant |
+
+### HA failover and shared-Postgres diffs
+
+On multi-instance HA, sticky routing plus shared Postgres means a standby can
+have **stale in-memory** session state after the primary advanced durable
+nonces. Catch-up after `proxy_next_upstream` failover must not fail with
+Postgres unique violations (`23505`) for already-durable identical diffs.
+
+What operators should expect on v4:
+
+1. **Identical replay is OK** — re-persisting the same nonce/payload succeeds;
+   different bytes at the same nonce fail loudly (`diff_fork_detected` metric /
+   log). Alert if that counter is non-zero outside incident response.
+2. **Stale standby self-heals** — when catch-up skips ahead of RAM, the host
+   fast-forwards from Postgres (`reconcile_fast_forward`) then applies the tip.
+3. **Persist-first** — host and gateway validate/preview, write the diff, then
+   commit memory. A Postgres blip retries briefly (`diff_persist_retry`); hard
+   failure leaves in-memory nonce unchanged (no permanent “RAM ahead of PG”
+   hole). Retry the request after PG recovers.
+4. **Gateway catch-up API unchanged** — still `hostSyncNonce`-driven toward
+   group slots; no per-versiond-replica addressing from the gateway.
+
+Automated coverage: `TestHAStaleStandbyCatchupIdempotent` in testenv citest
+(see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)). Manual
+walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) **§3.6**.
+
+#### Crash recovery vs ML execution
+
+Persist-first and durable diff replay cover the **journal / state machine**
+only. After a crash (or failover onto a cold process), recovery **replays
+diffs**; it does **not** re-run ML automatically.
+
+| Recovered protocol state | What happens on a later client request |
+| --- | --- |
+| Inference still `Pending` in the SM, this host is the executor, client retries with payload | Host **can execute again** (same reconnect behaviour as before persist-first). Dedup of in-flight / cached bodies is **in-process** (`executing` / `completedResponses`), not durable across restart. |
+| Inference already `Finished` or timed out in later diffs | `signReceipt` will **not** start execution again. |
+
+In-flight payload, live ML job attachment, and on-disk `CachedResponseBody`
+across `devshardd` instances are **not** solved in this release. Work to
+restore interrupted inferences (decouple ML from the user stream, same-nonce
+gateway reconnect, durable executor state for HA) is tracked in
+[gonka-ai/gonka#1466](https://github.com/gonka-ai/gonka/issues/1466).
 
 ### Join docker-compose (must bump for v4)
 
@@ -412,15 +455,25 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 - [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path; Tier A `/v1/` via edge-api
 - [ ] Confirm old proxies (no `EDGE_API_SERVICE_NAME`) still reach Tier A via
       deprecated dapi dual-serve; new proxies should use edge-api
-- [ ] Optional: run §2 lease race, §3 kill/restart, §4 versionless obs, and
-      **§7 rolling update** (same-name SHA with a long stream) from the deploy
-      test plan
+- [ ] Optional: run §2 lease race, §3 kill/restart (incl. **§3.6** stale-standby
+      catch-up / persist hole), §4 versionless obs, and **§7 rolling update**
+      (same-name SHA with a long stream) from the deploy test plan
 - [ ] Confirm HA children report `postgres` via `devshardd --print-storage-mode`
       before expecting blue/green overlap on a governance SHA bump
 
 ---
 
 ## Known follow-ups
+
+### Interrupted inference resume across crash / HA
+
+Durable diffs make protocol status (`Pending` / `Finished` / timeout)
+recoverable, but executor proof path after drop, reboot, or failover still
+depends on process-local state. See
+[gonka-ai/gonka#1466](https://github.com/gonka-ai/gonka/issues/1466) for the
+intended fixes (shared accept/execute path, ML lifetime independent of the
+client stream, same-nonce gateway reconnect, durable payload / receipt /
+cached body for cross-instance resume).
 
 ### Escrow ID: `string` vs `uint64`
 
@@ -438,7 +491,7 @@ with larger protocol bumps rather than a standalone migration.
 
 | Doc | Use |
 | --- | --- |
-| [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) | Deploy + seven operator test plans (§1–§7) |
+| [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) | Deploy + operator test plans (§1–§7; HA diff/persist in §3.6) |
 | [pr-versionless-observability.md](./pr-versionless-observability.md) | Versionless obs design + unit/manual checklist |
 | [high-availability-architecture.md](./high-availability-architecture.md) | Current runtime topology |
 | [storage-design.md](./storage-design.md) | Storage mode selection |
