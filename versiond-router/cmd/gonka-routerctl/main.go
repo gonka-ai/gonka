@@ -26,7 +26,11 @@ func run(ctx context.Context, args []string) error {
 	if len(args) == 0 {
 		return usageError()
 	}
-	controller := router.NewController(loadConfig(), nil)
+	config, err := loadConfig()
+	if err != nil {
+		return err
+	}
+	controller := router.NewController(config, nil)
 	switch args[0] {
 	case "bootstrap":
 		return bootstrap(ctx, controller, args[1:])
@@ -192,8 +196,42 @@ func cancelHost(ctx context.Context, controller *router.Controller, args []strin
 	return printJSON(state)
 }
 
-func loadConfig() router.Config {
+func loadConfig() (router.Config, error) {
 	statePath := envOrDefault("VERSIOND_ROUTER_STATE", "/var/lib/gonka/versiond-router/state.json")
+	maxBodyBytes, err := parsePositiveInt64Env(
+		"VERSIOND_ROUTER_MAX_BODY_BYTES",
+		10*1024*1024,
+	)
+	if err != nil {
+		return router.Config{}, err
+	}
+	connectTimeout, err := parsePositiveDurationEnv(
+		"VERSIOND_ROUTER_CONNECT_TIMEOUT",
+		2*time.Second,
+	)
+	if err != nil {
+		return router.Config{}, err
+	}
+	streamIdleTimeout, err := parsePositiveDurationEnv(
+		"VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT",
+		20*time.Minute,
+	)
+	if err != nil {
+		return router.Config{}, err
+	}
+	upstreamKeepalive, err := parsePositiveInt64Env(
+		"VERSIOND_ROUTER_UPSTREAM_KEEPALIVE",
+		64,
+	)
+	if err != nil {
+		return router.Config{}, err
+	}
+	if upstreamKeepalive > int64(^uint(0)>>1) {
+		return router.Config{}, fmt.Errorf(
+			"VERSIOND_ROUTER_UPSTREAM_KEEPALIVE %d exceeds platform int range",
+			upstreamKeepalive,
+		)
+	}
 	return router.Config{
 		StatePath:    statePath,
 		AuditPath:    envOrDefault("VERSIOND_ROUTER_AUDIT", "/var/lib/gonka/versiond-router/audit.jsonl"),
@@ -203,36 +241,45 @@ func loadConfig() router.Config {
 		OutputPath:   envOrDefault("VERSIOND_ROUTER_OUT", "/etc/nginx/conf.d/default.conf"),
 		NginxBinary:  envOrDefault("VERSIOND_ROUTER_NGINX_BIN", "nginx"),
 		ProxyPolicy: router.ProxyPolicy{
-			MaxBodyBytes:      parsePositiveInt64Env("VERSIOND_ROUTER_MAX_BODY_BYTES", 10*1024*1024),
-			ConnectTimeout:    parsePositiveDurationEnv("VERSIOND_ROUTER_CONNECT_TIMEOUT", 2*time.Second),
-			StreamIdleTimeout: parsePositiveDurationEnv("VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT", 20*time.Minute),
-			UpstreamKeepalive: int(parsePositiveInt64Env("VERSIOND_ROUTER_UPSTREAM_KEEPALIVE", 64)),
+			MaxBodyBytes:      maxBodyBytes,
+			ConnectTimeout:    connectTimeout,
+			StreamIdleTimeout: streamIdleTimeout,
+			UpstreamKeepalive: int(upstreamKeepalive),
 		},
-	}
+	}, nil
 }
 
-func parsePositiveInt64Env(key string, fallback int64) int64 {
+func parsePositiveInt64Env(key string, fallback int64) (int64, error) {
 	raw := os.Getenv(key)
 	if raw == "" {
-		return fallback
+		return fallback, nil
 	}
 	value, err := strconv.ParseInt(raw, 10, 64)
-	if err != nil || value <= 0 {
-		return fallback
+	if err != nil {
+		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
-	return value
+	if value <= 0 {
+		return 0, fmt.Errorf("%s must be positive, got %q", key, raw)
+	}
+	return value, nil
 }
 
-func parsePositiveDurationEnv(key string, fallback time.Duration) time.Duration {
+func parsePositiveDurationEnv(
+	key string,
+	fallback time.Duration,
+) (time.Duration, error) {
 	raw := os.Getenv(key)
 	if raw == "" {
-		return fallback
+		return fallback, nil
 	}
 	value, err := time.ParseDuration(raw)
-	if err != nil || value < time.Second {
-		return fallback
+	if err != nil {
+		return 0, fmt.Errorf("parse %s=%q: %w", key, raw, err)
 	}
-	return value
+	if value < time.Second {
+		return 0, fmt.Errorf("%s must be at least 1s, got %q", key, raw)
+	}
+	return value, nil
 }
 
 func splitList(raw string) []string {

@@ -1131,12 +1131,6 @@ func (m *Manager) BeginHostDrain() {
 	m.cancelOperations()
 }
 
-func (m *Manager) HostDraining() bool {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.hostDraining
-}
-
 // RequestChildrenDrain removes every child route before issuing lifecycle
 // drain requests. Calls run concurrently and never hold m.mu during network I/O.
 func (m *Manager) RequestChildrenDrain(ctx context.Context) error {
@@ -1352,10 +1346,6 @@ func (m *Manager) clearStoppedChildren() {
 	m.children = make(map[*child]struct{})
 	m.downloading = make(map[string]struct{})
 	m.rebuildRoutes()
-}
-
-func (m *Manager) ShutdownTimeout() time.Duration {
-	return m.childStopTimeout()
 }
 
 func waitForChild(c *child) {
@@ -1591,10 +1581,6 @@ func parseDevshardShutdownGrace(raw string) time.Duration {
 	return d
 }
 
-func (m *Manager) rollingOverlapAllowed(versionName string, old *child, newBinPath string) bool {
-	return m.rollingOverlapAllowedContext(context.Background(), versionName, old, newBinPath)
-}
-
 func (m *Manager) rollingOverlapAllowedContext(
 	ctx context.Context,
 	versionName string,
@@ -1671,10 +1657,6 @@ func (c *child) lifecyclePort() int {
 	return c.port
 }
 
-func (c *child) setAdminPort(port int) {
-	c.adminPort.Store(int64(port))
-}
-
 func (c *child) adminAddr() string {
 	adminPort := int(c.adminPort.Load())
 	if adminPort == 0 {
@@ -1683,19 +1665,25 @@ func (c *child) adminAddr() string {
 	return fmt.Sprintf("%s:%d", childLoopbackHost, adminPort)
 }
 
-func waitForReady(ctx context.Context, port int, path string, timeout time.Duration) bool {
-	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
-		return readyEndpointReady(probeCtx, client, port, path, true)
-	})
-}
-
 // waitForChildServingReady gates the Starting -> Running transition. Modern
 // devshardd children must be logically ready on their admin listener and also
 // serve health checks on the public listener that receives proxied traffic.
 func waitForChildServingReady(ctx context.Context, c *child, path string, timeout time.Duration) bool {
 	adminPort := int(c.adminPort.Load())
 	if adminPort == 0 {
-		return waitForReady(ctx, c.port, path, timeout)
+		return waitForReadiness(
+			ctx,
+			timeout,
+			func(probeCtx context.Context, client *http.Client) bool {
+				return readyEndpointReady(
+					probeCtx,
+					client,
+					c.port,
+					path,
+					true,
+				)
+			},
+		)
 	}
 	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
 		return readyEndpointReady(probeCtx, client, adminPort, path, false) &&
@@ -1852,18 +1840,6 @@ func (m *Manager) drainAfterProxy(c *child, proxyDrained <-chan struct{}) {
 		slog.Warn("drain request failed", "version", c.version.Name, "port", c.port, "error", err)
 	}
 	m.drainAndStopBefore(c, deadline)
-}
-
-func (m *Manager) drainAndStop(c *child) {
-	m.mu.Lock()
-	if c.status == statusRunning {
-		transitionGenerationLocked(c, statusRetiring)
-	}
-	if c.status == statusRetiring {
-		transitionGenerationLocked(c, statusDraining)
-	}
-	m.mu.Unlock()
-	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 }
 
 func (m *Manager) drainAndStopBefore(c *child, deadline time.Time) {

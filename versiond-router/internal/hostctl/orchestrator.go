@@ -2,6 +2,7 @@ package hostctl
 
 import (
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -43,6 +44,7 @@ type Config struct {
 	VersiondService     string
 	OperationID         string
 	JournalPath         string
+	StateDir            string
 	EvacuationJournal   string
 	ReadyTimeout        time.Duration
 	PollInterval        time.Duration
@@ -85,6 +87,8 @@ var errOperationBusy = errors.New("host operation is already running")
 type operationLockOwner struct {
 	OperationID string    `json:"operation_id"`
 	Action      string    `json:"action"`
+	Upstream    string    `json:"upstream,omitempty"`
+	JournalPath string    `json:"journal_path,omitempty"`
 	PID         int       `json:"pid"`
 	StartedAt   time.Time `json:"started_at"`
 }
@@ -129,6 +133,9 @@ func New(config Config, remote Remote) (*Orchestrator, error) {
 	}
 	if config.JournalPath == "" {
 		return nil, errors.New("journal path is required")
+	}
+	if config.StateDir == "" {
+		config.StateDir = filepath.Dir(config.JournalPath)
 	}
 	if remote == nil {
 		remote = SSHRemote{}
@@ -574,24 +581,45 @@ func (o *Orchestrator) versiondRunning(ctx context.Context) (bool, error) {
 }
 
 func (o *Orchestrator) waitForStopped(ctx context.Context, timeout time.Duration) (bool, error) {
-	deadline := time.Now().Add(timeout)
+	if timeout <= 0 {
+		return false, nil
+	}
+	waitCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 	var lastErr error
 	for {
-		running, err := o.versiondRunning(ctx)
+		running, err := o.versiondRunning(waitCtx)
 		if err == nil && !running {
 			return true, nil
 		}
 		lastErr = err
-		if time.Now().After(deadline) {
+		if waitCtx.Err() != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
 			if lastErr != nil {
-				return false, fmt.Errorf(
-					"versiond status unavailable until stop timeout: %w",
-					lastErr,
+				slog.Warn(
+					"versiond stop wait expired without a current status",
+					"service", o.config.VersiondService,
+					"last_probe_error", lastErr,
 				)
 			}
 			return false, nil
 		}
-		if err := wait(ctx, o.config.PollInterval); err != nil {
+		if err := wait(waitCtx, o.config.PollInterval); err != nil {
+			if ctx.Err() != nil {
+				return false, ctx.Err()
+			}
+			if errors.Is(err, context.DeadlineExceeded) {
+				if lastErr != nil {
+					slog.Warn(
+						"versiond stop wait expired without a current status",
+						"service", o.config.VersiondService,
+						"last_probe_error", lastErr,
+					)
+				}
+				return false, nil
+			}
 			return false, err
 		}
 	}
@@ -872,7 +900,7 @@ func (o *Orchestrator) withOperationLock(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	lockPath := o.config.JournalPath + ".lock"
+	lockPath := o.operationLockPath()
 	if err := os.MkdirAll(filepath.Dir(lockPath), 0o700); err != nil {
 		return err
 	}
@@ -891,6 +919,8 @@ func (o *Orchestrator) withOperationLock(
 	if err := writeOperationLockOwner(lock, operationLockOwner{
 		OperationID: o.config.OperationID,
 		Action:      action,
+		Upstream:    o.config.Upstream,
+		JournalPath: o.config.JournalPath,
 		PID:         os.Getpid(),
 		StartedAt:   time.Now().UTC(),
 	}); err != nil {
@@ -900,16 +930,24 @@ func (o *Orchestrator) withOperationLock(
 }
 
 func (o *Orchestrator) operationBusyError(lockPath, requestedAction string) error {
-	details := []string{"operation_id=" + strconv.Quote(o.config.OperationID)}
+	details := []string{
+		"requested_operation_id=" + strconv.Quote(o.config.OperationID),
+	}
+	journalPath := o.config.JournalPath
 	if owner, err := readOperationLockOwner(lockPath); err == nil {
 		details = append(
 			details,
+			"owner_operation_id="+strconv.Quote(owner.OperationID),
 			"owner_action="+strconv.Quote(owner.Action),
+			"owner_upstream="+strconv.Quote(owner.Upstream),
 			"owner_pid="+strconv.Itoa(owner.PID),
 			"owner_since="+owner.StartedAt.Format(time.RFC3339),
 		)
+		if owner.JournalPath != "" {
+			journalPath = owner.JournalPath
+		}
 	}
-	mode, phase := readOperationStatus(o.config.JournalPath)
+	mode, phase := readOperationStatus(journalPath)
 	if phase != "" {
 		details = append(details, "journal_phase="+strconv.Quote(phase))
 	}
@@ -928,6 +966,20 @@ func (o *Orchestrator) operationBusyError(lockPath, requestedAction string) erro
 		errOperationBusy,
 		strings.Join(details, " "),
 		guidance,
+	)
+}
+
+func (o *Orchestrator) operationLockPath() string {
+	routerIdentity := strings.Join([]string{
+		o.config.RouterSSH,
+		string(o.config.RouterRuntime),
+		o.config.RouterService,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(routerIdentity))
+	return filepath.Join(
+		o.config.StateDir,
+		".locks",
+		fmt.Sprintf("%x.lock", sum[:16]),
 	)
 }
 
@@ -958,7 +1010,7 @@ func readOperationLockOwner(path string) (operationLockOwner, error) {
 	if err := json.Unmarshal(data, &owner); err != nil {
 		return operationLockOwner{}, err
 	}
-	if owner.Action == "" || owner.PID <= 0 {
+	if owner.OperationID == "" || owner.Action == "" || owner.PID <= 0 {
 		return operationLockOwner{}, errors.New("operation lock owner is incomplete")
 	}
 	return owner, nil

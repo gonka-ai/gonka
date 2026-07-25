@@ -1035,6 +1035,60 @@ func TestWaitForStoppedRetriesTransientProbeFailure(t *testing.T) {
 	}
 }
 
+func TestWaitForStoppedAcceptsRemovedContainer(t *testing.T) {
+	remote := &fakeRemote{runtimeAbsent: true}
+	orchestrator := newTestOrchestrator(t, remote, "probe-absent")
+
+	stopped, err := orchestrator.waitForStopped(
+		context.Background(),
+		20*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !stopped {
+		t.Fatal("removed container was not accepted as stopped")
+	}
+}
+
+func TestWaitForStoppedEscalatesAfterPersistentProbeFailure(t *testing.T) {
+	remote := &fakeRemote{runningProbeErrors: 1000}
+	orchestrator := newTestOrchestrator(t, remote, "probe-unavailable")
+
+	stopped, err := orchestrator.waitForStopped(
+		context.Background(),
+		10*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped {
+		t.Fatal("unobservable runtime was reported stopped")
+	}
+}
+
+func TestWaitForStoppedBoundsBlockingProbeByStopDeadline(t *testing.T) {
+	orchestrator := newTestOrchestrator(
+		t,
+		blockingRemote{},
+		"probe-blocked",
+	)
+	started := time.Now()
+	stopped, err := orchestrator.waitForStopped(
+		context.Background(),
+		20*time.Millisecond,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stopped {
+		t.Fatal("blocked runtime probe was reported stopped")
+	}
+	if elapsed := time.Since(started); elapsed > 500*time.Millisecond {
+		t.Fatalf("blocked stop probe took %s, want bounded wait", elapsed)
+	}
+}
+
 type blockingRemote struct{}
 
 func (blockingRemote) Run(ctx context.Context, _ string, _ ...string) (string, error) {
@@ -1409,6 +1463,7 @@ func TestOperationLockReportsOwnerWithoutWaiting(t *testing.T) {
 	}
 	message := err.Error()
 	for _, want := range []string{
+		`owner_operation_id="locked"`,
 		`owner_action="evacuate"`,
 		"owner_pid=" + strconv.Itoa(os.Getpid()),
 		`journal_phase="router_draining"`,
@@ -1418,6 +1473,84 @@ func TestOperationLockReportsOwnerWithoutWaiting(t *testing.T) {
 	} {
 		if !strings.Contains(message, want) {
 			t.Fatalf("busy error %q does not contain %q", message, want)
+		}
+	}
+
+	close(release)
+	if err := <-ownerDone; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestOperationLockSerializesDifferentIDsForSameRouter(t *testing.T) {
+	dir := t.TempDir()
+	owner := newTestOrchestrator(t, &fakeRemote{}, "owner-operation")
+	owner.config.StateDir = dir
+	owner.config.JournalPath = filepath.Join(
+		t.TempDir(),
+		"owner-operation.json",
+	)
+	if err := owner.writeJournal(Journal{
+		SchemaVersion: hostctlJournalSchemaVersion,
+		OperationID:   owner.config.OperationID,
+		Mode:          "evacuate",
+		Scope:         owner.operationScope(),
+		Phase:         phaseRouterDraining,
+		UpdatedAt:     time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	contenderConfig := owner.config
+	contenderConfig.OperationID = "contender-operation"
+	contenderConfig.JournalPath = filepath.Join(
+		t.TempDir(),
+		"contender-operation.json",
+	)
+	contender, err := New(contenderConfig, &fakeRemote{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	acquired := make(chan struct{})
+	release := make(chan struct{})
+	ownerDone := make(chan error, 1)
+	go func() {
+		ownerDone <- owner.withOperationLock(
+			context.Background(),
+			"evacuate",
+			func() error {
+				close(acquired)
+				<-release
+				return nil
+			},
+		)
+	}()
+	select {
+	case <-acquired:
+	case <-time.After(time.Second):
+		t.Fatal("operation owner did not acquire router-scoped lock")
+	}
+
+	err = contender.withOperationLock(
+		context.Background(),
+		"decommission",
+		func() error {
+			t.Fatal("different operation ID bypassed router-scoped lock")
+			return nil
+		},
+	)
+	if !errors.Is(err, errOperationBusy) {
+		t.Fatalf("lock error = %v, want operation busy", err)
+	}
+	for _, want := range []string{
+		`requested_operation_id="contender-operation"`,
+		`owner_operation_id="owner-operation"`,
+		`owner_upstream="versiond-2"`,
+		`journal_phase="router_draining"`,
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Fatalf("busy error %q does not contain %q", err, want)
 		}
 	}
 

@@ -1,23 +1,39 @@
 package router
 
 import (
+	"bytes"
 	"errors"
 	"os"
+	"strings"
 	"testing"
 	"time"
 )
 
-func TestReceiptIndexImportsValidAuditRecordsAndSkipsCorruption(t *testing.T) {
+func TestReceiptIndexImportFailsClosedUntilAuditIsRepaired(t *testing.T) {
 	controller, _, paths := newTestController(t)
-	audit := "{not json}\n" +
-		`{"time":"2026-07-24T00:00:00Z",` +
+	validRecord := `{"time":"2026-07-24T00:00:00Z",` +
 		`"operation_id":"evacuate-2","action":"transfer",` +
 		`"host":"versiond-2","membership_id":"membership-versiond-2",` +
 		`"target":"offline","result":"completed"}` + "\n"
-	if err := os.WriteFile(paths.AuditPath, []byte(audit), 0o600); err != nil {
+	if err := os.WriteFile(
+		paths.AuditPath,
+		[]byte("{not json}\n"+validRecord),
+		0o600,
+	); err != nil {
 		t.Fatal(err)
 	}
 
+	if _, err := controller.loadOrCreateReceiptIndex(); err == nil ||
+		!strings.Contains(err.Error(), "line 1") {
+		t.Fatalf("receipt import error = %v, want malformed line failure", err)
+	}
+	if _, err := os.Stat(paths.ReceiptsPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial receipt index was persisted: %v", err)
+	}
+
+	if err := os.WriteFile(paths.AuditPath, []byte(validRecord), 0o600); err != nil {
+		t.Fatal(err)
+	}
 	index, err := controller.loadOrCreateReceiptIndex()
 	if err != nil {
 		t.Fatal(err)
@@ -39,6 +55,22 @@ func TestReceiptIndexImportsValidAuditRecordsAndSkipsCorruption(t *testing.T) {
 	}
 	if _, ok := reloaded.Completed["evacuate-2"]; !ok {
 		t.Fatal("audit rotation removed a durable completion receipt")
+	}
+}
+
+func TestReceiptIndexImportFailsClosedOnOversizedAuditRecord(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	record := append(bytes.Repeat([]byte("x"), 1024*1024+1), '\n')
+	if err := os.WriteFile(paths.AuditPath, record, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := controller.loadOrCreateReceiptIndex(); err == nil ||
+		!strings.Contains(err.Error(), "scan router audit") {
+		t.Fatalf("receipt import error = %v, want scanner failure", err)
+	}
+	if _, err := os.Stat(paths.ReceiptsPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("partial receipt index was persisted: %v", err)
 	}
 }
 

@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"log/slog"
 	"os"
 	"time"
 )
@@ -91,6 +90,23 @@ func (c *Controller) loadOrCreateReceiptIndex() (receiptIndex, error) {
 	return index, nil
 }
 
+func (c *Controller) persistCompletionReceipt(
+	operationID string,
+	receipt operationReceipt,
+) error {
+	index, err := c.loadOrCreateReceiptIndex()
+	if err != nil {
+		return err
+	}
+	if err := index.Record(operationID, receipt); err != nil {
+		return err
+	}
+	if err := index.Validate(); err != nil {
+		return err
+	}
+	return writeJSONAtomic(c.config.ReceiptsPath, index, 0o600)
+}
+
 func (c *Controller) readReceiptIndex() (receiptIndex, bool, error) {
 	data, err := os.ReadFile(c.config.ReceiptsPath)
 	if err == nil {
@@ -111,18 +127,19 @@ func (c *Controller) readReceiptIndex() (receiptIndex, bool, error) {
 	}
 
 	index := newReceiptIndex()
-	c.importAuditReceipts(&index)
+	if err := c.importAuditReceipts(&index); err != nil {
+		return receiptIndex{}, false, err
+	}
 	return index, true, nil
 }
 
-func (c *Controller) importAuditReceipts(index *receiptIndex) {
+func (c *Controller) importAuditReceipts(index *receiptIndex) error {
 	f, err := os.Open(c.config.AuditPath)
 	if errors.Is(err, fs.ErrNotExist) {
-		return
+		return nil
 	}
 	if err != nil {
-		slog.Warn("cannot import router audit receipts", "error", err)
-		return
+		return fmt.Errorf("open router audit for receipt import: %w", err)
 	}
 	defer f.Close()
 
@@ -133,12 +150,11 @@ func (c *Controller) importAuditReceipts(index *receiptIndex) {
 		line++
 		var record AuditRecord
 		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			slog.Warn(
-				"skipping malformed router audit record",
-				"line", line,
-				"error", err,
+			return fmt.Errorf(
+				"decode router audit record at line %d: %w",
+				line,
+				err,
 			)
-			continue
 		}
 		if record.OperationID == "" ||
 			!terminalAuditRecord(record) ||
@@ -147,13 +163,12 @@ func (c *Controller) importAuditReceipts(index *receiptIndex) {
 		}
 		receipt := receiptFromAudit(record)
 		if err := validateOperationReceipt(record.OperationID, receipt); err != nil {
-			slog.Warn(
-				"skipping invalid router audit receipt",
-				"line", line,
-				"operation_id", record.OperationID,
-				"error", err,
+			return fmt.Errorf(
+				"validate router audit receipt at line %d for operation %s: %w",
+				line,
+				record.OperationID,
+				err,
 			)
-			continue
 		}
 		if existing, ok := index.Completed[record.OperationID]; ok {
 			if sameOperationReceipt(existing, receipt) {
@@ -169,8 +184,9 @@ func (c *Controller) importAuditReceipts(index *receiptIndex) {
 		index.Completed[record.OperationID] = receipt
 	}
 	if err := scanner.Err(); err != nil {
-		slog.Warn("router audit receipt import stopped early", "error", err)
+		return fmt.Errorf("scan router audit for receipt import: %w", err)
 	}
+	return nil
 }
 
 func receiptFromAudit(record AuditRecord) operationReceipt {

@@ -368,6 +368,16 @@ func TestControllerRemoveReloadFailureKeepsTerminalDesiredState(t *testing.T) {
 	}); err == nil {
 		t.Fatal("expected injected reload failure")
 	}
+	journalData, err := os.ReadFile(paths.JournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if bytes.Contains(journalData, []byte(`"new_receipts"`)) {
+		t.Fatalf("schema-5 WAL contains the full receipt index:\n%s", journalData)
+	}
+	if !bytes.Contains(journalData, []byte(`"completion_receipt"`)) {
+		t.Fatalf("schema-5 WAL has no operation receipt:\n%s", journalData)
+	}
 	desired, err := controller.loadState()
 	if err != nil {
 		t.Fatal(err)
@@ -934,11 +944,10 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 	if err := writeFileAtomic(paths.OutputPath, newConfig, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	oldReceipts, err := controller.loadOrCreateReceiptIndex()
+	_, err = controller.loadOrCreateReceiptIndex()
 	if err != nil {
 		t.Fatal(err)
 	}
-	newReceipts := oldReceipts.Clone()
 	change := mutation{
 		OperationID:  "decommission-2",
 		Action:       "transfer",
@@ -949,12 +958,7 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 		Target:       HostRemoved,
 		Result:       "completed",
 	}
-	if err := newReceipts.Record(
-		change.OperationID,
-		receiptFromMutation(change),
-	); err != nil {
-		t.Fatal(err)
-	}
+	completionReceipt := receiptFromMutation(change)
 	if err := writeJSONAtomic(paths.JournalPath, operationJournal{
 		SchemaVersion:  operationJournalSchemaVersion,
 		OperationID:    change.OperationID,
@@ -967,7 +971,7 @@ func TestControllerRecoveryRollsForwardTerminalStateAndReceipt(t *testing.T) {
 		Target:         change.Target,
 		Result:         change.Result,
 		NewState:       newState,
-		NewReceipts:    newReceipts,
+		Receipt:        &completionReceipt,
 		NewConfig:      newConfig,
 		NewConfigSHA:   hashBytes(newConfig),
 		RenderRevision: 1,
@@ -1175,6 +1179,54 @@ func TestControllerBootstrapMigratesLegacyRouterState(t *testing.T) {
 	}
 }
 
+func TestControllerStatusDoesNotPersistRouterStateMigration(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	legacy := stateV1{
+		SchemaVersion: legacySchemaVersion,
+		Generation:    7,
+		Port:          8080,
+		LegacyHost:    "versiond-1",
+		Hosts: []hostV1{
+			{
+				Name:    "versiond-1",
+				Address: "versiond-1",
+				State:   HostActive,
+			},
+		},
+		LastOperation: "legacy-bootstrap",
+		UpdatedAt:     time.Now().UTC(),
+	}
+	if err := writeJSONAtomic(paths.StatePath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.State.SchemaVersion != SchemaVersion {
+		t.Fatalf(
+			"status schema = %d, want migrated schema %d",
+			status.State.SchemaVersion,
+			SchemaVersion,
+		)
+	}
+	data, err := os.ReadFile(paths.StatePath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope stateEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != legacySchemaVersion {
+		t.Fatalf(
+			"read-only status persisted schema %d",
+			envelope.SchemaVersion,
+		)
+	}
+}
+
 func TestControllerBootstrapMigratesIntermediateMembershipState(t *testing.T) {
 	controller, _, paths := newTestController(t)
 	legacy := newTestState(t)
@@ -1369,6 +1421,68 @@ func TestControllerRecoveryMigratesSchemaV3Projection(t *testing.T) {
 			recovered.Generation,
 			newState.Generation,
 		)
+	}
+}
+
+func TestControllerRecoveryMigratesSchemaV4ReceiptSnapshot(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	oldState := newTestState(t)
+	if _, err := controller.Bootstrap(
+		context.Background(),
+		staticState(oldState),
+	); err != nil {
+		t.Fatal(err)
+	}
+	newState, _, _ := stagePendingDrain(
+		t,
+		paths,
+		oldState,
+		operationPhaseIntentCommitted,
+	)
+	current, err := controller.loadOperationJournal()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if current == nil {
+		t.Fatal("staged operation journal is missing")
+	}
+	legacy := operationJournalV4FromCurrent(*current)
+	if err := writeJSONAtomic(paths.JournalPath, legacy, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	status, err := controller.Status(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if status.PendingOperation == nil {
+		t.Fatal("schema-4 journal is not visible in status")
+	}
+	data, err := os.ReadFile(paths.JournalPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var envelope operationJournalEnvelope
+	if err := json.Unmarshal(data, &envelope); err != nil {
+		t.Fatal(err)
+	}
+	if envelope.SchemaVersion != receiptSnapshotJournalSchemaVersion {
+		t.Fatalf("read-only status persisted schema %d", envelope.SchemaVersion)
+	}
+
+	recovered, err := controller.Recover(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if recovered.Generation != newState.Generation {
+		t.Fatalf(
+			"recovered generation = %d, want %d",
+			recovered.Generation,
+			newState.Generation,
+		)
+	}
+	if _, err := os.Stat(paths.JournalPath); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("migrated schema-4 journal remains: %v", err)
 	}
 }
 
@@ -1677,6 +1791,13 @@ func newLegacyV2DrainJournal(
 }
 
 func operationJournalV3FromCurrent(current operationJournal) operationJournalV3 {
+	receipts := newReceiptIndex()
+	if current.NewReceipts != nil {
+		receipts = current.NewReceipts.Clone()
+	}
+	if current.Receipt != nil {
+		_ = receipts.Record(current.OperationID, *current.Receipt)
+	}
 	return operationJournalV3{
 		SchemaVersion:  fixedConfigOperationJournalSchemaVersion,
 		OperationID:    current.OperationID,
@@ -1691,7 +1812,7 @@ func operationJournalV3FromCurrent(current operationJournal) operationJournalV3 
 		OldState:       current.OldState,
 		NewState:       current.NewState,
 		OldReceipts:    current.OldReceipts,
-		NewReceipts:    current.NewReceipts,
+		NewReceipts:    receipts,
 		OldConfig:      current.OldConfig,
 		NewConfig:      current.NewConfig,
 		NewConfigSHA:   current.NewConfigSHA,
@@ -1699,6 +1820,41 @@ func operationJournalV3FromCurrent(current operationJournal) operationJournalV3 
 		RecoveryPolicy: current.RecoveryPolicy,
 		Reload:         current.Reload,
 		CreatedAt:      current.CreatedAt,
+	}
+}
+
+func operationJournalV4FromCurrent(current operationJournal) operationJournalV4 {
+	receipts := newReceiptIndex()
+	if current.NewReceipts != nil {
+		receipts = current.NewReceipts.Clone()
+	}
+	if current.Receipt != nil {
+		_ = receipts.Record(current.OperationID, *current.Receipt)
+	}
+	return operationJournalV4{
+		SchemaVersion:   receiptSnapshotJournalSchemaVersion,
+		OperationID:     current.OperationID,
+		Phase:           current.Phase,
+		Action:          current.Action,
+		Host:            current.Host,
+		MembershipID:    current.MembershipID,
+		From:            current.From,
+		To:              current.To,
+		Target:          current.Target,
+		Result:          current.Result,
+		OldState:        current.OldState,
+		NewState:        current.NewState,
+		OldReceipts:     current.OldReceipts,
+		NewReceipts:     receipts,
+		OldConfig:       current.OldConfig,
+		NewConfig:       current.NewConfig,
+		NewConfigSHA:    current.NewConfigSHA,
+		RenderRevision:  current.RenderRevision,
+		RenderSourceSHA: current.RenderSourceSHA,
+		Audit:           current.Audit,
+		RecoveryPolicy:  current.RecoveryPolicy,
+		Reload:          current.Reload,
+		CreatedAt:       current.CreatedAt,
 	}
 }
 
@@ -1759,7 +1915,6 @@ func stagePendingDrain(
 		Target:          change.Target,
 		Result:          change.Result,
 		NewState:        newState,
-		NewReceipts:     receipts.Clone(),
 		NewConfig:       newConfig,
 		NewConfigSHA:    hashBytes(newConfig),
 		RenderRevision:  1,

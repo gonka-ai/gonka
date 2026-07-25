@@ -611,7 +611,7 @@ the replacement transaction completes:
   --versiond-runtime docker \
   --versiond-service versiond2 \
   --evacuation-journal \
-    ~/.config/gonka/hostctl/maintenance-20260718-versiond2.json
+    ~/.local/state/gonka/hostctl/maintenance-20260718-versiond2.json
 ```
 
 The upstream remains `joining`/down until the loopback-only
@@ -624,6 +624,9 @@ persistent volume. The audit may be rotated; state, applied metadata, receipts,
 outbox, and journal are control-plane data and must remain together. See
 `versiond-router/README.md` and
 `versiond-host-evacuation.md` for the complete failure and recovery contract.
+The readiness gate is deliberately strict: failure to reconcile any approved
+version keeps the host out of the pool even if another version is already
+serving.
 
 Docker replacement restores the exact policy captured by evacuation, including
 an `on-failure` retry count. A newly provisioned service without that journal
@@ -704,10 +707,10 @@ Part 2 (K8s) maps the same host-evacuation semantics onto Service endpoints +
   resume/order without requiring SSH. Removal must drop the DNS name from the
   rendered pool after recovery from a reload failure and replay idempotently
   from the terminal operation receipt. Re-adding the same host name must create
-  a new membership ID. State and pending journal schema-1/schema-2/schema-3
-  fixtures must migrate without losing an in-progress transfer. A rejected
-  config must recover through a new projection revision after its render source
-  is fixed, while an already applied operation remains immutable.
+  a new membership ID. State and pending journal fixtures from schemas 1
+  through 4 must migrate without losing an in-progress transfer. A rejected
+  config must recover through a new projection revision after its render
+  source is fixed, while an already applied operation remains immutable.
 - **full stack (`devshard/testenv`):**
   `TestVersiondRollingUpdateSameVersionSHA` covers Postgres overlap and SSE
   continuity, and `TestVersiondRollingUpdateHybridFallback` covers the

@@ -85,12 +85,12 @@ func run(ctx context.Context, args []string) error {
 	if *operationID == "" {
 		return errors.New("--operation-id is required so the operation can be resumed")
 	}
+	stateDir, err := hostctlStateDir()
+	if err != nil {
+		return err
+	}
 	if *journalPath == "" {
-		stateDir, err := os.UserConfigDir()
-		if err != nil {
-			return err
-		}
-		*journalPath = filepath.Join(stateDir, "gonka", "hostctl", *operationID+".json")
+		*journalPath = filepath.Join(stateDir, *operationID+".json")
 	}
 	orchestrator, err := hostctl.New(hostctl.Config{
 		RouterSSH:           *routerSSH,
@@ -104,6 +104,7 @@ func run(ctx context.Context, args []string) error {
 		VersiondService:     *versiondService,
 		OperationID:         *operationID,
 		JournalPath:         *journalPath,
+		StateDir:            stateDir,
 		EvacuationJournal:   *evacuationJournal,
 		ReadyTimeout:        *readyTimeout,
 		PollInterval:        *pollInterval,
@@ -128,6 +129,20 @@ func run(ctx context.Context, args []string) error {
 	default:
 		return orchestrator.Replace(ctx)
 	}
+}
+
+func hostctlStateDir() (string, error) {
+	if stateHome := os.Getenv("XDG_STATE_HOME"); stateHome != "" {
+		if !filepath.IsAbs(stateHome) {
+			return "", errors.New("XDG_STATE_HOME must be an absolute path")
+		}
+		return filepath.Join(stateHome, "gonka", "hostctl"), nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", fmt.Errorf("resolve home directory for hostctl state: %w", err)
+	}
+	return filepath.Join(home, ".local", "state", "gonka", "hostctl"), nil
 }
 
 func durationEnv(key string, fallback time.Duration) time.Duration {

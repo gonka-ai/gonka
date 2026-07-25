@@ -78,6 +78,32 @@ type operationJournalV3 struct {
 	CreatedAt      time.Time     `json:"created_at"`
 }
 
+type operationJournalV4 struct {
+	SchemaVersion   int           `json:"schema_version"`
+	OperationID     string        `json:"operation_id"`
+	Phase           string        `json:"phase"`
+	Action          string        `json:"action,omitempty"`
+	Host            string        `json:"host,omitempty"`
+	MembershipID    string        `json:"membership_id,omitempty"`
+	From            HostState     `json:"from,omitempty"`
+	To              HostState     `json:"to,omitempty"`
+	Target          HostState     `json:"target,omitempty"`
+	Result          string        `json:"result,omitempty"`
+	OldState        *State        `json:"old_state,omitempty"`
+	NewState        State         `json:"new_state"`
+	OldReceipts     *receiptIndex `json:"old_receipts,omitempty"`
+	NewReceipts     receiptIndex  `json:"new_receipts"`
+	OldConfig       []byte        `json:"old_config,omitempty"`
+	NewConfig       []byte        `json:"new_config,omitempty"`
+	NewConfigSHA    string        `json:"new_config_sha256"`
+	RenderRevision  uint64        `json:"render_revision,omitempty"`
+	RenderSourceSHA string        `json:"render_source_sha256,omitempty"`
+	Audit           AuditRecord   `json:"audit"`
+	RecoveryPolicy  string        `json:"recovery_policy"`
+	Reload          bool          `json:"reload"`
+	CreatedAt       time.Time     `json:"created_at"`
+}
+
 func (c *Controller) decodeOperationJournal(
 	data []byte,
 ) (operationJournal, bool, error) {
@@ -98,6 +124,9 @@ func (c *Controller) decodeOperationJournal(
 			)
 		}
 		return journal, false, nil
+	case receiptSnapshotJournalSchemaVersion:
+		journal, err := c.migrateOperationJournalV4(data)
+		return journal, err == nil, err
 	case fixedConfigOperationJournalSchemaVersion:
 		journal, err := c.migrateOperationJournalV3(data)
 		return journal, err == nil, err
@@ -115,6 +144,44 @@ func (c *Controller) decodeOperationJournal(
 	}
 }
 
+func (c *Controller) migrateOperationJournalV4(
+	data []byte,
+) (operationJournal, error) {
+	var legacy operationJournalV4
+	if err := json.Unmarshal(data, &legacy); err != nil {
+		return operationJournal{}, fmt.Errorf(
+			"decode operation journal schema 4: %w",
+			err,
+		)
+	}
+	receipts := legacy.NewReceipts
+	return operationJournal{
+		SchemaVersion:   operationJournalSchemaVersion,
+		OperationID:     legacy.OperationID,
+		Phase:           legacy.Phase,
+		Action:          legacy.Action,
+		Host:            legacy.Host,
+		MembershipID:    legacy.MembershipID,
+		From:            legacy.From,
+		To:              legacy.To,
+		Target:          legacy.Target,
+		Result:          legacy.Result,
+		OldState:        legacy.OldState,
+		NewState:        legacy.NewState,
+		OldReceipts:     legacy.OldReceipts,
+		NewReceipts:     &receipts,
+		OldConfig:       legacy.OldConfig,
+		NewConfig:       legacy.NewConfig,
+		NewConfigSHA:    legacy.NewConfigSHA,
+		RenderRevision:  legacy.RenderRevision,
+		RenderSourceSHA: legacy.RenderSourceSHA,
+		Audit:           legacy.Audit,
+		RecoveryPolicy:  legacy.RecoveryPolicy,
+		Reload:          legacy.Reload,
+		CreatedAt:       legacy.CreatedAt,
+	}, nil
+}
+
 func (c *Controller) migrateOperationJournalV3(
 	data []byte,
 ) (operationJournal, error) {
@@ -125,6 +192,7 @@ func (c *Controller) migrateOperationJournalV3(
 			err,
 		)
 	}
+	receipts := legacy.NewReceipts
 	journal := operationJournal{
 		SchemaVersion:  operationJournalSchemaVersion,
 		OperationID:    legacy.OperationID,
@@ -139,7 +207,7 @@ func (c *Controller) migrateOperationJournalV3(
 		OldState:       legacy.OldState,
 		NewState:       legacy.NewState,
 		OldReceipts:    legacy.OldReceipts,
-		NewReceipts:    legacy.NewReceipts,
+		NewReceipts:    &receipts,
 		OldConfig:      legacy.OldConfig,
 		NewConfig:      legacy.NewConfig,
 		NewConfigSHA:   legacy.NewConfigSHA,
@@ -322,7 +390,7 @@ func (c *Controller) migrateOperationJournalV2Value(
 		OldState:        legacy.OldState,
 		NewState:        legacy.NewState,
 		OldReceipts:     legacy.OldReceipts,
-		NewReceipts:     legacy.NewReceipts,
+		NewReceipts:     &legacy.NewReceipts,
 		OldConfig:       legacy.OldConfig,
 		NewConfig:       newConfig,
 		NewConfigSHA:    configSHA,

@@ -41,6 +41,10 @@ survivor to a non-HA storage mode while both hosts still share PostgreSQL.
 | `VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT` | no | `20m` | Idle deadline in either direction for long HTTP/SSE requests |
 | `VERSIOND_ROUTER_UPSTREAM_KEEPALIVE` | no | `64` | Idle upstream connections retained per nginx worker |
 
+Configured numeric and duration values are validated before any command runs.
+Invalid values fail fast and name the offending variable; they never silently
+fall back to defaults.
+
 Debug response headers: `X-Upstream-Addr`, `X-Versiond-Backend`.
 
 ### Failover (HA pool)
@@ -70,24 +74,29 @@ in `<state>.audit-outbox.json`. These files and a pending operation journal must
 stay on the same persistent volume as `state.json`. The audit log may be
 rotated, truncated, or archived; it is not consulted during normal replay.
 When the receipt index is first created, valid terminal records are imported
-from an existing audit on a best-effort basis and malformed audit lines are
-skipped. Back up state, receipts, applied metadata, audit outbox, and the
-pending journal together. Do not rotate or prune the receipt index: its entries
-are the durable idempotency records for completed operation IDs.
+from an existing audit as one transaction. A malformed or oversized audit
+record fails the import without persisting a partial index; repair or restore
+the audit before retrying. Back up state, receipts, applied metadata, audit
+outbox, and the pending journal together. Do not rotate or prune the receipt
+index: its entries are the durable idempotency records for completed operation
+IDs. Exact replay protection therefore grows linearly with the number of unique
+completed operation IDs.
 
 The WAL is one replace-in-place snapshot, not an append-only history. Its size
-tracks the desired state, receipt index, and rendered config; the controller
-lock permits only one pending snapshot.
+tracks the desired state, the current operation receipt, and rendered config;
+it does not copy the complete receipt index. The controller lock permits only
+one pending snapshot.
 
 Router state schema 1 is migrated under the controller lock to schema 2. The
 migration preserves existing membership IDs from intermediate builds, assigns
 deterministic IDs to older host records, reconstructs an in-progress
 `active_transfer`, and atomically persists the upgraded state. Pending schema-1,
-schema-2, and schema-3 transaction journals are upgraded before recovery. A
-legacy pre-reload transaction keeps its old rollback semantics. A legacy
-transaction that already reloaded nginx is converted into a forward-only
+schema-2, schema-3, and schema-4 transaction journals are upgraded before
+recovery. A pre-reload legacy transaction keeps its old rollback semantics. A
+legacy transaction that already reloaded nginx is converted into a forward-only
 desired-state intent. Schema 3 fixed the rendered config at commit; schema 4
-adds a revision and render-source fingerprint.
+added a revision and render-source fingerprint; schema 5 stores only the
+current completion receipt in the WAL.
 
 ## Host lifecycle
 
@@ -169,7 +178,8 @@ for a new membership.
 
 The controller holds a file lock and validates the transition before making a
 durable decision. It then writes a WAL record containing the complete desired
-state, completion receipts, and a revisioned nginx config projection. The
+state, the current operation's completion receipt, and a revisioned nginx
+config projection. The
 projection records its config SHA and a render-source SHA derived from the
 template, normalized proxy policy, and renderer schema. That WAL write is the
 commit point. A reconciler persists the desired generation, validates and
@@ -317,11 +327,12 @@ SendSIGKILL=yes
 ```
 
 The operation journal defaults to
-`~/.config/gonka/hostctl/<operation-id>.json`. If SSH or the operator process is
-interrupted, rerun the same command with the same operation ID and journal. It
-resumes after the last durable phase. The journal records the router, upstream,
-SSH destination, runtime, and service scope; a retry with different targets is
-rejected.
+`$XDG_STATE_HOME/gonka/hostctl/<operation-id>.json`, or
+`~/.local/state/gonka/hostctl/<operation-id>.json` when `XDG_STATE_HOME` is
+unset. If SSH or the operator process is interrupted, rerun the same command
+with the same operation ID and journal. It resumes after the last durable
+phase. The journal records the router, upstream, SSH destination, runtime, and
+service scope; a retry with different targets is rejected.
 Hostctl journals use schema 3. Validated schema-1 and schema-2 journals are
 atomically migrated on first resume; a legacy terminal cancellation without
 explicit cancellation checkpoints is normalized to
@@ -344,12 +355,15 @@ them through the dependent replacement and the operational replay window. They
 may then be moved to an archive according to the operator's retention policy,
 but an archived operation ID must never be reused. A new maintenance action
 must always receive a new operation ID.
-An operation-wide local file lock prevents two processes from replaying the
-same checkpoint and duplicating lifecycle steps.
+One router-scoped local file lock prevents concurrent hostctl operations from
+mutating the same router, even when they use different operation IDs or custom
+journal paths.
 Commands do not queue behind that lock. A concurrent command exits immediately
-with the owner action, PID, start time, and current journal phase. To abandon an
-active pre-signal evacuation, interrupt its owning process and then run
-`cancel`. At or after `term_requested`, resume `evacuate` instead.
+with the owner operation ID, action, upstream, PID, start time, and current
+journal phase. The router's durable `active_transfer` remains the authoritative
+cross-machine guard when operators invoke hostctl from different workstations.
+To abandon an active pre-signal evacuation, interrupt its owning process and
+then run `cancel`. At or after `term_requested`, resume `evacuate` instead.
 
 If an operation cannot continue before `SIGTERM` was sent, it may be abandoned
 without leaving the cluster blocked:
@@ -461,7 +475,7 @@ still `offline`, then run:
   --versiond-runtime docker \
   --versiond-service versiond2 \
   --evacuation-journal \
-    ~/.config/gonka/hostctl/maintenance-1784800000000000000-versiond2.json
+    ~/.local/state/gonka/hostctl/maintenance-1784800000000000000-versiond2.json
 ```
 
 The replacement remains `joining` and therefore down in nginx while it starts.
@@ -470,6 +484,10 @@ It becomes `active` only after `GET /ready` returns `200` on versiond's private
 versiond is serving, accepting traffic, has an available child, and is fully
 reconciled without a progressing or degraded condition. The public `:8080`
 listener returns `404` for `/ready`.
+This gate is deliberately fail-closed: one approved version that cannot be
+downloaded or started blocks activation even when other versions are serving.
+Activating a partially reconciled host would let the router send it requests
+for a version it cannot serve.
 Availability deliberately requires at least one approved version and one
 running child route. A fresh host with an empty desired-version set remains in
 `starting` and cannot be activated. Ensure governance exposes at least one
