@@ -313,7 +313,11 @@ func (o *Orchestrator) prepareStopWorkflow(
 		}
 	}
 	if target == nil {
-		return fmt.Errorf("router response has no membership for host %s", o.config.Upstream)
+		return o.recoverCompletedStopWithoutMembership(
+			ctx,
+			mode,
+			journal,
+		)
 	}
 	if journal.MembershipID != "" && journal.MembershipID != target.MembershipID {
 		return fmt.Errorf(
@@ -348,6 +352,55 @@ func (o *Orchestrator) prepareStopWorkflow(
 			target.State,
 		)
 	}
+}
+
+func (o *Orchestrator) recoverCompletedStopWithoutMembership(
+	ctx context.Context,
+	mode string,
+	journal *Journal,
+) error {
+	lookup, err := o.lookupRouterOperation(ctx)
+	if err != nil {
+		return fmt.Errorf(
+			"look up operation after router membership disappeared: %w",
+			err,
+		)
+	}
+	completion, err := matchingRouterCompletion(
+		lookup,
+		o.config.Upstream,
+		stopTarget(mode),
+		"",
+	)
+	if err != nil {
+		return err
+	}
+	if completion == nil {
+		return fmt.Errorf(
+			"router response has no membership for host %s and operation %s "+
+				"has no completion receipt",
+			o.config.Upstream,
+			o.config.OperationID,
+		)
+	}
+	journal.MembershipID = completion.MembershipID
+	journal.Phase = phaseComplete
+	journal.UpdatedAt = time.Now().UTC()
+	if err := o.writeJournal(*journal); err != nil {
+		return fmt.Errorf(
+			"checkpoint recovered completed %s: %w",
+			mode,
+			err,
+		)
+	}
+	slog.Info(
+		"recovered completed host operation from router receipt",
+		"operation_id", o.config.OperationID,
+		"mode", mode,
+		"host", o.config.Upstream,
+		"membership_id", completion.MembershipID,
+	)
+	return nil
 }
 
 func (o *Orchestrator) validateInitialStopRuntime(
@@ -500,10 +553,7 @@ func (o *Orchestrator) runRouterMutation(
 	ctx context.Context,
 	args []string,
 ) (router.State, error) {
-	if o.config.RouterRuntime == RuntimeDocker {
-		args = append([]string{"docker", "exec", o.config.RouterService}, args...)
-	}
-	output, err := o.runRemote(ctx, o.config.RouterSSH, args...)
+	output, err := o.runRouterCommand(ctx, args)
 	if err != nil {
 		return router.State{}, err
 	}
@@ -515,6 +565,85 @@ func (o *Orchestrator) runRouterMutation(
 		return router.State{}, fmt.Errorf("validate router state after transition: %w", err)
 	}
 	return state, nil
+}
+
+func (o *Orchestrator) runRouterCommand(
+	ctx context.Context,
+	args []string,
+) (string, error) {
+	if o.config.RouterRuntime == RuntimeDocker {
+		args = append([]string{"docker", "exec", o.config.RouterService}, args...)
+	}
+	return o.runRemote(ctx, o.config.RouterSSH, args...)
+}
+
+func (o *Orchestrator) lookupRouterOperation(
+	ctx context.Context,
+) (router.OperationLookup, error) {
+	output, err := o.runRouterCommand(ctx, []string{
+		"gonka-routerctl",
+		"operation",
+		"status",
+		"--operation-id",
+		o.config.OperationID,
+	})
+	if err != nil {
+		return router.OperationLookup{}, err
+	}
+	var lookup router.OperationLookup
+	if err := json.Unmarshal([]byte(output), &lookup); err != nil {
+		return router.OperationLookup{}, fmt.Errorf(
+			"decode router operation status: %w",
+			err,
+		)
+	}
+	if lookup.OperationID != o.config.OperationID {
+		return router.OperationLookup{}, fmt.Errorf(
+			"router returned operation %q while %q was requested",
+			lookup.OperationID,
+			o.config.OperationID,
+		)
+	}
+	return lookup, nil
+}
+
+func matchingRouterCompletion(
+	lookup router.OperationLookup,
+	host string,
+	target router.HostState,
+	action string,
+) (*router.OperationCompletion, error) {
+	if !lookup.Completed {
+		return nil, nil
+	}
+	completion := lookup.Completion
+	if completion == nil {
+		return nil, fmt.Errorf(
+			"router operation %s is completed without a receipt",
+			lookup.OperationID,
+		)
+	}
+	if completion.Conflict {
+		return nil, fmt.Errorf(
+			"router operation %s has conflicting completion receipts",
+			lookup.OperationID,
+		)
+	}
+	actionMatches := action == "" || completion.Action == action
+	if !actionMatches ||
+		completion.Host != host ||
+		completion.Target != target ||
+		completion.Result != "completed" {
+		return nil, fmt.Errorf(
+			"router operation %s already completed as %s for %s with "+
+				"target %s",
+			lookup.OperationID,
+			completion.Action,
+			completion.Host,
+			completion.Target,
+		)
+	}
+	return completion, nil
 }
 
 func (o *Orchestrator) captureMembership(

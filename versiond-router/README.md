@@ -75,8 +75,11 @@ stay on the same persistent volume as `state.json`. The audit log may be
 rotated, truncated, or archived; it is not consulted during normal replay.
 When the receipt index is first created, valid terminal records are imported
 from an existing audit as one transaction. A malformed or oversized audit
-record fails the import without persisting a partial index; repair or restore
-the audit before retrying. Back up state, receipts, applied metadata, audit
+record fails the import without persisting a partial index. The only exception
+is an unterminated final JSONL record, which can only be a torn append and is
+discarded as an uncommitted tail when the receipt index is created; malformed
+terminated or internal records still fail closed. Repair or restore those
+records before retrying. Back up state, receipts, applied metadata, audit
 outbox, and the pending journal together. Do not rotate or prune the receipt
 index: its entries are the durable idempotency records for completed operation
 IDs. Exact replay protection therefore grows linearly with the number of unique
@@ -140,6 +143,9 @@ OPERATION_ID="maintenance-$(date +%s%N)-versiond2"
 docker exec versiond-router gonka-routerctl status
 
 docker exec versiond-router gonka-routerctl recover
+
+docker exec versiond-router gonka-routerctl operation status \
+  --operation-id "$OPERATION_ID"
 
 docker exec versiond-router gonka-routerctl host transfer \
   --operation-id "$OPERATION_ID" \
@@ -485,7 +491,8 @@ still `offline`, then run:
 
 The replacement remains `joining` and therefore down in nginx while it starts.
 It becomes `active` only after `GET /ready` returns `200` on versiond's private
-`127.0.0.1:8081` listener. The readiness endpoint stays at `503` until
+listener, which defaults to `127.0.0.1:8081`. The readiness endpoint stays at
+`503` until
 versiond is serving, accepting traffic, has an available child, and is fully
 reconciled without a progressing or degraded condition. The public `:8080`
 listener returns `404` for `/ready`.
@@ -530,7 +537,9 @@ work.
 
 Use `--ready-url` when versiond does not expose readiness at
 `http://127.0.0.1:8081/ready`. This URL is evaluated on the versiond host or
-inside its container, not on the administration machine.
+inside its container, not on the administration machine. Set the corresponding
+versiond listener with `VERSIOND_ADMIN_LISTEN_ADDR`; versiond accepts only
+loopback addresses.
 
 ## Interrupted operations
 
@@ -546,7 +555,9 @@ inside its container, not on the administration machine.
    the owner instead of waiting. If cancellation itself was interrupted, rerun
    `cancel` while versiond remains running. If it has already stopped before
    router reactivation, rerun the original `evacuate` or `decommission`
-   command to abandon compensation and finish the safe forward path.
+   command. Hostctl reads the router's completion receipt: it either abandons
+   compensation and finishes the safe forward path, or records a remotely
+   committed cancellation as terminal and requires a new operation ID.
 4. If `term_requested` is durable, finish `evacuate` or `decommission`. Never
    reactivate an upstream whose process may already be stopping.
 
@@ -554,6 +565,11 @@ A host intentionally left in `draining` or `joining` blocks another host
 transition. This is the cluster's one-host-at-a-time safety guard, not a lease
 that expires automatically. Recovery must finish or cancel the owning operation
 before starting maintenance on another host.
+
+`gonka-routerctl operation status --operation-id ID` reads the durable
+completion receipt without changing router state. Hostctl uses this lookup when
+a local checkpoint is missing but the router membership or cancellation may
+already have been committed.
 
 ## Local render check
 

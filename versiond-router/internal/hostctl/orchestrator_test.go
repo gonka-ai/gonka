@@ -28,6 +28,8 @@ type fakeRemote struct {
 	activateErrors     int
 	routerHostState    router.HostState
 	routerTransfer     *router.Transfer
+	routerHostMissing  bool
+	routerOperation    *router.OperationLookup
 	runtimeAbsent      bool
 	removeOnRestartPin bool
 	removeOnStopCheck  bool
@@ -44,8 +46,21 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 		strings.Contains(joined, "--to active")) && r.activateErrors > 0:
 		r.activateErrors--
 		return "", errors.New("transient router activation failure")
+	case strings.Contains(joined, "gonka-routerctl operation status"):
+		lookup := router.OperationLookup{
+			OperationID: argumentValue(args, "--operation-id"),
+		}
+		if r.routerOperation != nil {
+			lookup = *r.routerOperation
+		}
+		data, err := json.Marshal(lookup)
+		return string(data), err
 	case strings.Contains(joined, "gonka-routerctl"):
 		if strings.Contains(joined, "--to removed") {
+			return fakeRouterState(false), nil
+		}
+		if strings.Contains(joined, "gonka-routerctl status") &&
+			r.routerHostMissing {
 			return fakeRouterState(false), nil
 		}
 		if strings.Contains(joined, "gonka-routerctl status") &&
@@ -114,6 +129,15 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 		r.running = true
 	}
 	return "{}", nil
+}
+
+func argumentValue(args []string, name string) string {
+	for i := range args {
+		if args[i] == name && i+1 < len(args) {
+			return args[i+1]
+		}
+	}
+	return ""
 }
 
 func fakeRouterState(includeTarget bool) string {
@@ -462,6 +486,45 @@ func TestDecommissionRemovesOfflineHostAfterContainerRemoval(t *testing.T) {
 		t.Fatalf("absent container received a restart-policy update:\n%s", calls)
 	}
 	assertJournal(t, orchestrator.config.JournalPath, "decommission", phaseComplete)
+}
+
+func TestDecommissionRecoversCompletionWhenLocalJournalWasLost(t *testing.T) {
+	operationID := "decommission-with-lost-journal"
+	remote := &fakeRemote{
+		routerHostMissing: true,
+		routerOperation: &router.OperationLookup{
+			OperationID: operationID,
+			Completed:   true,
+			Completion: &router.OperationCompletion{
+				OperationID:  operationID,
+				Action:       "transfer",
+				Host:         "versiond-2",
+				MembershipID: "membership-versiond-2",
+				Target:       router.HostRemoved,
+				Result:       "completed",
+				CompletedAt:  time.Now().UTC(),
+			},
+		},
+	}
+	orchestrator := newTestOrchestrator(t, remote, operationID)
+
+	if err := orchestrator.Decommission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	assertJournal(t, orchestrator.config.JournalPath, "decommission", phaseComplete)
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"gonka-routerctl status",
+		"gonka-routerctl operation status",
+	)
+	if strings.Contains(calls, "docker inspect") ||
+		strings.Contains(calls, "docker update") ||
+		strings.Contains(calls, "docker kill") {
+		t.Fatalf("receipt recovery touched the removed runtime:\n%s", calls)
+	}
 }
 
 func TestDecommissionRejectsForeignOfflineTransferBeforeRuntimeMutation(t *testing.T) {
@@ -995,6 +1058,57 @@ func TestStoppedHostResumesForwardAfterInterruptedCancellation(t *testing.T) {
 				t.Fatalf("forward recovery signaled an already stopped host:\n%s", calls)
 			}
 		})
+	}
+}
+
+func TestStoppedHostRecognizesCancellationCommittedBeforeCheckpoint(
+	t *testing.T,
+) {
+	operationID := "cancel-committed-before-checkpoint"
+	remote := &fakeRemote{
+		routerOperation: &router.OperationLookup{
+			OperationID: operationID,
+			Completed:   true,
+			Completion: &router.OperationCompletion{
+				OperationID:  operationID,
+				Action:       "cancel",
+				Host:         "versiond-2",
+				MembershipID: "membership-versiond-2",
+				Target:       router.HostActive,
+				Result:       "completed",
+				CompletedAt:  time.Now().UTC(),
+			},
+		},
+	}
+	orchestrator := newTestOrchestrator(t, remote, operationID)
+	journal := Journal{
+		SchemaVersion:         hostctlJournalSchemaVersion,
+		OperationID:           operationID,
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 phaseRestartDisabled,
+		CancellationPhase:     cancellationRestartRestored,
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}
+	if err := orchestrator.writeJournal(journal); err != nil {
+		t.Fatal(err)
+	}
+
+	err := orchestrator.Evacuate(context.Background())
+	if err == nil ||
+		!strings.Contains(err.Error(), "start a new evacuate operation") {
+		t.Fatalf("evacuation error = %v, want terminal cancellation guidance", err)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseCanceled)
+	assertJournalCancellationPhase(
+		t,
+		orchestrator.config.JournalPath,
+		cancellationComplete,
+	)
+	calls := remote.callLog()
+	if strings.Contains(calls, "--from draining --to stopping") {
+		t.Fatalf("terminal canceled operation resumed its stop workflow:\n%s", calls)
 	}
 }
 

@@ -1093,9 +1093,29 @@ func TestControllerBootstrapImportsReceiptsBeforeAuditRotation(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	audit, err := os.OpenFile(paths.AuditPath, os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := audit.WriteString(`{"time":`); err != nil {
+		audit.Close()
+		t.Fatal(err)
+	}
+	if err := audit.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	if _, err := controller.Bootstrap(context.Background(), nil); err != nil {
 		t.Fatal(err)
+	}
+	repairedAudit, err := os.ReadFile(paths.AuditPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.HasSuffix(repairedAudit, []byte{'\n'}) ||
+		!bytes.Contains(repairedAudit, []byte("completed-before-upgrade")) ||
+		strings.HasSuffix(string(repairedAudit), `{"time":`) {
+		t.Fatalf("bootstrap left torn audit tail: %q", repairedAudit)
 	}
 	if err := os.WriteFile(paths.AuditPath, nil, 0o600); err != nil {
 		t.Fatal(err)

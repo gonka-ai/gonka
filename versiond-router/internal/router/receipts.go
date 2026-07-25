@@ -2,10 +2,13 @@ package router
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"os"
 	"time"
 )
@@ -26,6 +29,25 @@ type operationReceipt struct {
 type receiptIndex struct {
 	SchemaVersion int                         `json:"schema_version"`
 	Completed     map[string]operationReceipt `json:"completed"`
+}
+
+// OperationCompletion is the durable terminal result for one operation ID.
+type OperationCompletion struct {
+	OperationID  string    `json:"operation_id"`
+	Action       string    `json:"action"`
+	Host         string    `json:"host"`
+	MembershipID string    `json:"membership_id,omitempty"`
+	Target       HostState `json:"target"`
+	Result       string    `json:"result"`
+	CompletedAt  time.Time `json:"completed_at"`
+	Conflict     bool      `json:"conflict,omitempty"`
+}
+
+// OperationLookup reports whether one operation ID has a completion receipt.
+type OperationLookup struct {
+	OperationID string               `json:"operation_id"`
+	Completed   bool                 `json:"completed"`
+	Completion  *OperationCompletion `json:"completion,omitempty"`
 }
 
 func newReceiptIndex() receiptIndex {
@@ -84,6 +106,9 @@ func (c *Controller) loadOrCreateReceiptIndex() (receiptIndex, error) {
 	if !missing {
 		return index, nil
 	}
+	if err := c.repairTornAuditTail(); err != nil {
+		return receiptIndex{}, err
+	}
 	if err := writeJSONAtomic(c.config.ReceiptsPath, index, 0o600); err != nil {
 		return receiptIndex{}, err
 	}
@@ -105,6 +130,40 @@ func (c *Controller) persistCompletionReceipt(
 		return err
 	}
 	return writeJSONAtomic(c.config.ReceiptsPath, index, 0o600)
+}
+
+// LookupOperation reads one completion receipt without mutating router state.
+func (c *Controller) LookupOperation(
+	ctx context.Context,
+	operationID string,
+) (OperationLookup, error) {
+	result := OperationLookup{OperationID: operationID}
+	if err := validateIdentifier("operation id", operationID); err != nil {
+		return result, err
+	}
+	err := c.withLock(ctx, func() error {
+		index, _, err := c.readReceiptIndex()
+		if err != nil {
+			return err
+		}
+		receipt, ok := index.Completed[operationID]
+		if !ok {
+			return nil
+		}
+		result.Completed = true
+		result.Completion = &OperationCompletion{
+			OperationID:  operationID,
+			Action:       receipt.Action,
+			Host:         receipt.Host,
+			MembershipID: receipt.MembershipID,
+			Target:       receipt.Target,
+			Result:       receipt.Result,
+			CompletedAt:  receipt.CompletedAt,
+			Conflict:     receipt.Conflict,
+		}
+		return nil
+	})
+	return result, err
 }
 
 func (c *Controller) readReceiptIndex() (receiptIndex, bool, error) {
@@ -143,49 +202,154 @@ func (c *Controller) importAuditReceipts(index *receiptIndex) error {
 	}
 	defer f.Close()
 
+	endsWithNewline, err := fileEndsWithNewline(f)
+	if err != nil {
+		return fmt.Errorf("inspect router audit for receipt import: %w", err)
+	}
+
 	scanner := bufio.NewScanner(f)
 	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
 	line := 0
+	pendingLine := 0
+	var pending []byte
 	for scanner.Scan() {
 		line++
-		var record AuditRecord
-		if err := json.Unmarshal(scanner.Bytes(), &record); err != nil {
-			return fmt.Errorf(
-				"decode router audit record at line %d: %w",
-				line,
-				err,
-			)
-		}
-		if record.OperationID == "" ||
-			!terminalAuditRecord(record) ||
-			!replayableAuditAction(record.Action) {
-			continue
-		}
-		receipt := receiptFromAudit(record)
-		if err := validateOperationReceipt(record.OperationID, receipt); err != nil {
-			return fmt.Errorf(
-				"validate router audit receipt at line %d for operation %s: %w",
-				line,
-				record.OperationID,
-				err,
-			)
-		}
-		if existing, ok := index.Completed[record.OperationID]; ok {
-			if sameOperationReceipt(existing, receipt) {
-				if receipt.CompletedAt.After(existing.CompletedAt) {
-					index.Completed[record.OperationID] = receipt
-				}
-				continue
+		if pending != nil {
+			if err := importAuditReceiptLine(
+				index,
+				pendingLine,
+				pending,
+			); err != nil {
+				return err
 			}
-			existing.Conflict = true
-			index.Completed[record.OperationID] = existing
-			continue
 		}
-		index.Completed[record.OperationID] = receipt
+		pending = append(pending[:0], scanner.Bytes()...)
+		pendingLine = line
 	}
 	if err := scanner.Err(); err != nil {
 		return fmt.Errorf("scan router audit for receipt import: %w", err)
 	}
+	if pending == nil {
+		return nil
+	}
+	if !endsWithNewline {
+		slog.Warn(
+			"ignoring torn final router audit record during receipt import",
+			"path", c.config.AuditPath,
+			"line", pendingLine,
+		)
+		return nil
+	}
+	return importAuditReceiptLine(index, pendingLine, pending)
+}
+
+func (c *Controller) repairTornAuditTail() error {
+	f, err := os.OpenFile(c.config.AuditPath, os.O_RDWR, 0)
+	if errors.Is(err, fs.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("open router audit for tail repair: %w", err)
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return fmt.Errorf("inspect router audit for tail repair: %w", err)
+	}
+	if info.Size() == 0 {
+		return nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return fmt.Errorf("read router audit tail: %w", err)
+	}
+	if last[0] == '\n' {
+		return nil
+	}
+
+	const chunkSize int64 = 64 * 1024
+	truncateAt := int64(0)
+	for end := info.Size(); end > 0; {
+		start := max(int64(0), end-chunkSize)
+		chunk := make([]byte, end-start)
+		if _, err := f.ReadAt(chunk, start); err != nil {
+			return fmt.Errorf("scan router audit tail: %w", err)
+		}
+		if newline := bytes.LastIndexByte(chunk, '\n'); newline >= 0 {
+			truncateAt = start + int64(newline) + 1
+			break
+		}
+		end = start
+	}
+	if err := f.Truncate(truncateAt); err != nil {
+		return fmt.Errorf("truncate torn router audit tail: %w", err)
+	}
+	if err := f.Sync(); err != nil {
+		return fmt.Errorf("sync repaired router audit: %w", err)
+	}
+	slog.Warn(
+		"discarded uncommitted torn router audit tail",
+		"path", c.config.AuditPath,
+		"bytes", info.Size()-truncateAt,
+	)
+	return nil
+}
+
+func fileEndsWithNewline(f *os.File) (bool, error) {
+	info, err := f.Stat()
+	if err != nil {
+		return false, err
+	}
+	if info.Size() == 0 {
+		return true, nil
+	}
+	var last [1]byte
+	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
+		return false, err
+	}
+	return last[0] == '\n', nil
+}
+
+func importAuditReceiptLine(
+	index *receiptIndex,
+	line int,
+	data []byte,
+) error {
+	var record AuditRecord
+	if err := json.Unmarshal(data, &record); err != nil {
+		return fmt.Errorf(
+			"decode router audit record at line %d: %w",
+			line,
+			err,
+		)
+	}
+	if record.OperationID == "" ||
+		!terminalAuditRecord(record) ||
+		!replayableAuditAction(record.Action) {
+		return nil
+	}
+	receipt := receiptFromAudit(record)
+	if err := validateOperationReceipt(record.OperationID, receipt); err != nil {
+		return fmt.Errorf(
+			"validate router audit receipt at line %d for operation %s: %w",
+			line,
+			record.OperationID,
+			err,
+		)
+	}
+	if existing, ok := index.Completed[record.OperationID]; ok {
+		if sameOperationReceipt(existing, receipt) {
+			if receipt.CompletedAt.After(existing.CompletedAt) {
+				index.Completed[record.OperationID] = receipt
+			}
+			return nil
+		}
+		existing.Conflict = true
+		index.Completed[record.OperationID] = existing
+		return nil
+	}
+	index.Completed[record.OperationID] = receipt
 	return nil
 }
 

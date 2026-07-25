@@ -148,6 +148,10 @@ gate served on versiond's loopback admin listener:
   or degraded;
 - `503` for every other state.
 
+The address defaults to `127.0.0.1:8081` and can be changed with
+`VERSIOND_ADMIN_LISTEN_ADDR`; versiond rejects non-loopback values. When the
+port changes, pass the matching URL to `gonka-hostctl --ready-url`.
+
 A reconciled but empty desired-version set remains unavailable because there is
 no child route that can serve traffic. Governance must expose at least one
 approved version before host addition or replacement.

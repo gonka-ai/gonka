@@ -332,6 +332,7 @@ The implementation exposes these settings from
 | `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status cushion; exact non-devshard stop grace and lower bound for devshardd |
 | `DEVSHARD_SHUTDOWN_GRACE` | `10m` | `devshardd` HTTP shutdown budget after `SIGTERM` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | one absolute deadline for host admission drain, graceful child stop, and HTTP shutdown; expiry forces remaining work before reap |
+| `VERSIOND_ADMIN_LISTEN_ADDR` | `127.0.0.1:8081` | private versiond readiness listener; only loopback addresses are accepted |
 
 versiond sets `DEVSHARD_ADMIN_ADDR` per child when `--print-admin-api-version`
 is supported. Operators normally do not set it by hand.
@@ -490,6 +491,7 @@ until a host is activated.
 | `gonka-hostctl` | Table-driven, journaled SSH workflows for add, evacuation, decommission, replacement, and cancellation; no network listener |
 | `GET /healthz` | Compatibility health response; it is not an evacuation control-plane API |
 | `GET http://127.0.0.1:8081/ready` | Loopback-only replacement admission gate; `200` only for a serving, accepting, available, fully reconciled host; public `:8080/ready` returns `404` |
+| `VERSIOND_ADMIN_LISTEN_ADDR` | Loopback address for the replacement admission gate, default `127.0.0.1:8081` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
 | `ROUTER_READY_TIMEOUT` | External maximum wait for replacement/addition readiness, default `15m` |
 | `ROUTER_DRAIN_POLL_INTERVAL` | External readiness/process polling interval, default `2s` |
@@ -630,6 +632,11 @@ outbox, and journal are control-plane data and must remain together. See
 The readiness gate is deliberately strict: failure to reconcile any approved
 version keeps the host out of the pool even if another version is already
 serving.
+
+Custom deployments may move the readiness gate to another loopback port with
+`VERSIOND_ADMIN_LISTEN_ADDR`. Non-loopback addresses are rejected at startup.
+Pass the matching URL to `gonka-hostctl --ready-url` for add and replacement
+workflows.
 
 Docker replacement restores the exact policy captured by evacuation, including
 an `on-failure` retry count. A newly provisioned service without that journal

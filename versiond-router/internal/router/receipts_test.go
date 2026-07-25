@@ -2,6 +2,7 @@ package router
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"os"
 	"strings"
@@ -71,6 +72,47 @@ func TestReceiptIndexImportFailsClosedOnOversizedAuditRecord(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.ReceiptsPath); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("partial receipt index was persisted: %v", err)
+	}
+}
+
+func TestReceiptIndexImportIgnoresOnlyTornFinalAuditRecord(t *testing.T) {
+	controller, _, paths := newTestController(t)
+	validRecord := `{"time":"2026-07-24T00:00:00Z",` +
+		`"operation_id":"evacuate-2","action":"transfer",` +
+		`"host":"versiond-2","membership_id":"membership-versiond-2",` +
+		`"target":"offline","result":"completed"}` + "\n"
+	if err := os.WriteFile(
+		paths.AuditPath,
+		[]byte(validRecord+`{"time":`),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	index, err := controller.loadOrCreateReceiptIndex()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := index.Completed["evacuate-2"]; !ok {
+		t.Fatal("valid receipt before torn final record was not imported")
+	}
+
+	if err := os.Remove(paths.ReceiptsPath); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(
+		paths.AuditPath,
+		[]byte(validRecord+"{not json}\n"),
+		0o600,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := controller.loadOrCreateReceiptIndex(); err == nil ||
+		!strings.Contains(err.Error(), "line 2") {
+		t.Fatalf(
+			"receipt import error = %v, want terminated final line failure",
+			err,
+		)
 	}
 }
 
@@ -163,5 +205,50 @@ func TestImportedReceiptPreservesLegacyActionAgnosticReplay(t *testing.T) {
 		HostActive,
 	); !errors.Is(err, ErrOperationOwner) {
 		t.Fatalf("membership mismatch error = %v, want ErrOperationOwner", err)
+	}
+}
+
+func TestLookupOperationReturnsOneDurableCompletion(t *testing.T) {
+	controller, _, _ := newTestController(t)
+	completedAt := time.Now().UTC()
+	if err := controller.persistCompletionReceipt(
+		"decommission-versiond-2",
+		operationReceipt{
+			Action:       "transfer",
+			Host:         "versiond-2",
+			MembershipID: "membership-versiond-2",
+			Target:       HostRemoved,
+			Result:       "completed",
+			CompletedAt:  completedAt,
+		},
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	lookup, err := controller.LookupOperation(
+		context.Background(),
+		"decommission-versiond-2",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !lookup.Completed || lookup.Completion == nil {
+		t.Fatalf("operation lookup = %#v, want completed receipt", lookup)
+	}
+	if lookup.Completion.Host != "versiond-2" ||
+		lookup.Completion.Target != HostRemoved ||
+		!lookup.Completion.CompletedAt.Equal(completedAt) {
+		t.Fatalf("operation completion = %#v", lookup.Completion)
+	}
+
+	missing, err := controller.LookupOperation(
+		context.Background(),
+		"decommission-versiond-3",
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if missing.Completed || missing.Completion != nil {
+		t.Fatalf("missing operation lookup = %#v", missing)
 	}
 }

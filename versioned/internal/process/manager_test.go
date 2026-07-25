@@ -691,6 +691,21 @@ func TestAssignPort_SkipsVersiondListenPorts(t *testing.T) {
 	}
 }
 
+func TestAssignPort_SkipsConfiguredAdminListenPort(t *testing.T) {
+	m := NewManager(config.Config{
+		BasePort:        9000,
+		AdminListenAddr: "127.0.0.1:9000",
+	})
+
+	m.mu.Lock()
+	port := mustAssignPort(t, m)
+	m.mu.Unlock()
+
+	if port != 9001 {
+		t.Errorf("first port = %d, want 9001", port)
+	}
+}
+
 func TestAssignPort_NormalizesOutOfRangeBasePort(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 70000})
 

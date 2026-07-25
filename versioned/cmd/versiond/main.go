@@ -74,7 +74,7 @@ func run(ctx context.Context) error {
 		Addr:    listenAddr,
 		Handler: publicHandler(mgr, hostLifecycle, proxyOpts...),
 	}
-	adminListenAddr := config.AdminListenAddr()
+	adminListenAddr := cfg.AdminListenAddr
 	adminSrv := &http.Server{
 		Addr:              adminListenAddr,
 		Handler:           adminHandler(hostLifecycle, mgr),

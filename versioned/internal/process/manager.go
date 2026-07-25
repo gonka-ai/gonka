@@ -105,7 +105,7 @@ func NewManager(cfg config.Config) *Manager {
 		children:       make(map[*child]struct{}),
 		downloading:    make(map[string]struct{}),
 		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(),
+		reservedPorts:  reservedChildPorts(cfg.AdminListenAddr),
 		operations:     make(map[uint64]controlOperation),
 		childCtx:       childCtx,
 		cancelChildren: cancelChildren,
@@ -140,6 +140,9 @@ func normalizeConfig(cfg config.Config) config.Config {
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
 	}
+	if cfg.AdminListenAddr == "" {
+		cfg.AdminListenAddr = config.DefaultAdminListenAddr
+	}
 	return cfg
 }
 
@@ -164,11 +167,11 @@ func (m *Manager) assignPort() (int, error) {
 	)
 }
 
-func reservedChildPorts() map[int]struct{} {
+func reservedChildPorts(adminListenAddr string) map[int]struct{} {
 	ports := make(map[int]struct{})
 	for _, addr := range []string{
 		config.ListenAddr(),
-		config.AdminListenAddr(),
+		adminListenAddr,
 	} {
 		if port, ok := parseListenPort(addr); ok {
 			ports[port] = struct{}{}

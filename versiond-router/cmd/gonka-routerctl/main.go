@@ -36,6 +36,8 @@ func run(ctx context.Context, args []string) error {
 		return bootstrap(ctx, controller, args[1:])
 	case "host":
 		return mutateHost(ctx, controller, args[1:])
+	case "operation":
+		return inspectOperation(ctx, controller, args[1:])
 	case "status":
 		state, err := controller.Status(ctx)
 		if err != nil {
@@ -51,6 +53,37 @@ func run(ctx context.Context, args []string) error {
 	default:
 		return usageError()
 	}
+}
+
+func inspectOperation(
+	ctx context.Context,
+	controller *router.Controller,
+	args []string,
+) error {
+	if len(args) == 0 || args[0] != "status" {
+		return errors.New(
+			"usage: gonka-routerctl operation status --operation-id ID",
+		)
+	}
+	flags := flag.NewFlagSet("operation status", flag.ContinueOnError)
+	operationID := flags.String(
+		"operation-id",
+		"",
+		"completed operation identifier",
+	)
+	if err := flags.Parse(args[1:]); err != nil {
+		return err
+	}
+	if flags.NArg() != 0 || *operationID == "" {
+		return errors.New(
+			"operation status requires --operation-id and no positional arguments",
+		)
+	}
+	status, err := controller.LookupOperation(ctx, *operationID)
+	if err != nil {
+		return err
+	}
+	return printJSON(status)
 }
 
 func bootstrap(ctx context.Context, controller *router.Controller, args []string) error {
@@ -308,6 +341,7 @@ func envOrDefault(key, fallback string) string {
 func usageError() error {
 	return errors.New(
 		"usage: gonka-routerctl bootstrap | status | recover | " +
+			"operation status --operation-id ID | " +
 			"host <transfer|add|cancel> [flags] HOST",
 	)
 }

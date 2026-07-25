@@ -342,6 +342,44 @@ func (o *Orchestrator) resumeStopAfterFailedCancellation(
 	if state == serviceRunning {
 		return false, nil
 	}
+	lookup, err := o.lookupRouterOperation(ctx)
+	if err != nil {
+		return false, fmt.Errorf(
+			"look up interrupted cancellation in router: %w",
+			err,
+		)
+	}
+	completion, err := matchingRouterCompletion(
+		lookup,
+		o.config.Upstream,
+		router.HostActive,
+		"cancel",
+	)
+	if err != nil {
+		return false, err
+	}
+	if completion != nil {
+		previous := *journal
+		journal.MembershipID = completion.MembershipID
+		journal.Phase = phaseCanceled
+		journal.CancellationPhase = cancellationComplete
+		journal.UpdatedAt = time.Now().UTC()
+		if err := o.writeJournal(*journal); err != nil {
+			*journal = previous
+			return false, fmt.Errorf(
+				"checkpoint cancellation committed by router: %w",
+				err,
+			)
+		}
+		return false, fmt.Errorf(
+			"cancellation completed in the router after versiond stopped; "+
+				"operation %s is terminal, start a new %s operation with "+
+				"a new operation ID (add --allow-absent-runtime only if "+
+				"the service no longer exists)",
+			o.config.OperationID,
+			journal.Mode,
+		)
+	}
 	if _, err := o.reconcileDockerRestartDisabled(ctx, state); err != nil {
 		return false, fmt.Errorf(
 			"disable Docker restart policy before resuming %s: %w",
