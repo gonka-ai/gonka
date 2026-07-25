@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"log/slog"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -177,10 +178,8 @@ func (o *Orchestrator) stopHost(ctx context.Context, mode string) error {
 			return fmt.Errorf("%s cancellation is in progress; resume cancel", mode)
 		}
 	}
-	if mode == "decommission" {
-		if err := o.prepareDecommission(ctx, &journal); err != nil {
-			return err
-		}
+	if err := o.prepareStopWorkflow(ctx, mode, &journal); err != nil {
+		return err
 	}
 	return o.runWorkflow(ctx, &journal, workflow)
 }
@@ -280,8 +279,9 @@ func (o *Orchestrator) loadRouterMembership(
 	return o.captureMembership(journal, state, true)
 }
 
-func (o *Orchestrator) prepareDecommission(
+func (o *Orchestrator) prepareStopWorkflow(
 	ctx context.Context,
+	mode string,
 	journal *Journal,
 ) error {
 	if journal.Phase != phaseStarted {
@@ -289,7 +289,7 @@ func (o *Orchestrator) prepareDecommission(
 	}
 	state, err := o.runRouterMutation(ctx, []string{"gonka-routerctl", "status"})
 	if err != nil {
-		return fmt.Errorf("read router state before decommission: %w", err)
+		return fmt.Errorf("read router state before %s: %w", mode, err)
 	}
 	var target *router.Host
 	for i := range state.Hosts {
@@ -309,57 +309,109 @@ func (o *Orchestrator) prepareDecommission(
 			target.MembershipID,
 		)
 	}
-	journal.MembershipID = target.MembershipID
+	if err := validateStopTransfer(state, *target, o.config.OperationID, stopTarget(mode)); err != nil {
+		return err
+	}
 
 	switch target.State {
 	case router.HostActive, router.HostDraining:
+		journal.MembershipID = target.MembershipID
 		return o.writeJournal(*journal)
 	case router.HostOffline:
-		return o.adoptOfflineDecommission(ctx, journal)
+		journal.MembershipID = target.MembershipID
+		return o.adoptOfflineStop(ctx, mode, journal)
 	default:
 		return fmt.Errorf(
-			"cannot decommission host %s from router state %s",
+			"cannot %s host %s from router state %s",
+			mode,
 			target.Name,
 			target.State,
 		)
 	}
 }
 
-func (o *Orchestrator) adoptOfflineDecommission(
+func validateStopTransfer(
+	state router.State,
+	host router.Host,
+	operationID string,
+	target router.HostState,
+) error {
+	transfer := state.ActiveTransfer
+	if transfer == nil {
+		return nil
+	}
+	if transfer.ID != operationID {
+		return fmt.Errorf(
+			"%w: transfer %s owns membership %s (%s)",
+			router.ErrHostOperation,
+			transfer.ID,
+			transfer.MembershipID,
+			transfer.Host,
+		)
+	}
+	if transfer.Host != host.Name ||
+		transfer.MembershipID != host.MembershipID ||
+		transfer.From != router.HostActive ||
+		transfer.To != target {
+		return fmt.Errorf(
+			"%w: transfer %s does not match %s membership %s target %s",
+			router.ErrOperationOwner,
+			transfer.ID,
+			host.Name,
+			host.MembershipID,
+			target,
+		)
+	}
+	return nil
+}
+
+func (o *Orchestrator) adoptOfflineStop(
 	ctx context.Context,
+	mode string,
 	journal *Journal,
 ) error {
-	running, err := o.versiondRunning(ctx)
+	runtimeState, err := o.versiondServiceState(ctx)
 	if err != nil {
 		return fmt.Errorf("check offline versiond host: %w", err)
 	}
-	if running {
+	if runtimeState == serviceRunning {
 		return errors.New(
-			"offline versiond host is still running; stop it before decommission",
+			"offline versiond host is still running; stop it before continuing",
 		)
 	}
-	if o.config.VersiondRuntime == RuntimeDocker {
+	if runtimeState == serviceStopped && o.config.VersiondRuntime == RuntimeDocker {
 		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
-			return fmt.Errorf(
-				"disable Docker restart policy for offline host: %w",
-				err,
-			)
+			rechecked, stateErr := o.versiondServiceState(ctx)
+			if stateErr != nil || rechecked != serviceAbsent {
+				return fmt.Errorf(
+					"disable Docker restart policy for offline host: %w",
+					err,
+				)
+			}
 		}
-		running, err = o.versiondRunning(ctx)
+		runtimeState, err = o.versiondServiceState(ctx)
 		if err != nil {
 			return fmt.Errorf("recheck offline versiond host: %w", err)
 		}
-		if running {
+		if runtimeState == serviceRunning {
 			return errors.New(
-				"offline versiond host restarted during decommission",
+				"offline versiond host restarted while adopting stop state",
 			)
 		}
+	}
+	if runtimeState == serviceAbsent {
+		slog.Warn(
+			"adopting offline router state without a local versiond service",
+			"operation_id", journal.OperationID,
+			"mode", mode,
+			"service", o.config.VersiondService,
+		)
 	}
 	journal.Phase = phaseRouterOffline
 	journal.UpdatedAt = time.Now().UTC()
 	if err := o.writeJournal(*journal); err != nil {
 		journal.Phase = phaseStarted
-		return fmt.Errorf("checkpoint offline decommission entry: %w", err)
+		return fmt.Errorf("checkpoint offline %s entry: %w", mode, err)
 	}
 	return nil
 }
@@ -413,6 +465,9 @@ func (o *Orchestrator) runRouterMutation(
 	var state router.State
 	if err := json.Unmarshal([]byte(output), &state); err != nil {
 		return router.State{}, fmt.Errorf("decode router state after transition: %w", err)
+	}
+	if err := state.Validate(); err != nil {
+		return router.State{}, fmt.Errorf("validate router state after transition: %w", err)
 	}
 	return state, nil
 }
@@ -514,8 +569,13 @@ func (o *Orchestrator) setDockerRestartPolicy(ctx context.Context, policy string
 	return o.versiondRuntime.SetRestartPolicy(ctx, policy)
 }
 
+func (o *Orchestrator) versiondServiceState(ctx context.Context) (serviceState, error) {
+	return o.versiondRuntime.State(ctx)
+}
+
 func (o *Orchestrator) versiondRunning(ctx context.Context) (bool, error) {
-	return o.versiondRuntime.Running(ctx)
+	state, err := o.versiondServiceState(ctx)
+	return state == serviceRunning, err
 }
 
 func (o *Orchestrator) waitForStopped(ctx context.Context, timeout time.Duration) (bool, error) {

@@ -14,9 +14,17 @@ import (
 
 type runtimeCommand func(context.Context, ...string) (string, error)
 
+type serviceState string
+
+const (
+	serviceRunning serviceState = "running"
+	serviceStopped serviceState = "stopped"
+	serviceAbsent  serviceState = "absent"
+)
+
 type serviceRuntime interface {
 	ValidateStopContract(context.Context, time.Duration) error
-	Running(context.Context) (bool, error)
+	State(context.Context) (serviceState, error)
 	Signal(context.Context, string) error
 	Start(context.Context, string) error
 	RestartPolicy(context.Context) (string, error)
@@ -67,15 +75,31 @@ func (r dockerRuntime) ValidateStopContract(ctx context.Context, minimum time.Du
 	return nil
 }
 
-func (r dockerRuntime) Running(ctx context.Context) (bool, error) {
+func (r dockerRuntime) State(ctx context.Context) (serviceState, error) {
 	output, err := r.run(
 		ctx,
 		"docker", "inspect", "--format", "{{.State.Running}}", r.service,
 	)
 	if err != nil {
-		return false, err
+		if dockerServiceAbsent(err) {
+			return serviceAbsent, nil
+		}
+		return "", err
 	}
-	return strings.TrimSpace(output) == "true", nil
+	switch strings.TrimSpace(output) {
+	case "true":
+		return serviceRunning, nil
+	case "false":
+		return serviceStopped, nil
+	default:
+		return "", fmt.Errorf("unexpected Docker running state %q", strings.TrimSpace(output))
+	}
+}
+
+func dockerServiceAbsent(err error) bool {
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such object") ||
+		strings.Contains(message, "no such container")
 }
 
 func (r dockerRuntime) Signal(ctx context.Context, signal string) error {
@@ -175,16 +199,21 @@ func (r systemdRuntime) ValidateStopContract(ctx context.Context, minimum time.D
 	return nil
 }
 
-func (r systemdRuntime) Running(ctx context.Context) (bool, error) {
+func (r systemdRuntime) State(ctx context.Context) (serviceState, error) {
 	output, err := r.run(ctx, "systemctl", "is-active", r.service)
 	value := strings.TrimSpace(output)
-	if value == "inactive" || value == "failed" || value == "unknown" {
-		return false, nil
+	switch value {
+	case "unknown":
+		return serviceAbsent, nil
+	case "inactive", "failed":
+		return serviceStopped, nil
+	case "active", "activating", "deactivating":
+		return serviceRunning, nil
 	}
 	if err != nil {
-		return false, err
+		return "", err
 	}
-	return value == "active" || value == "activating" || value == "deactivating", nil
+	return "", fmt.Errorf("unexpected systemd service state %q", value)
 }
 
 func (r systemdRuntime) Signal(ctx context.Context, signal string) error {

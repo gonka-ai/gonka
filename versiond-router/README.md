@@ -271,6 +271,14 @@ The command performs these ordered steps:
    expires.
 6. Confirm `stopping -> offline` and complete the transfer.
 
+If a new `evacuate` operation finds the membership already in the stable
+`offline` state, it converges from that observed state instead of replaying
+`active -> draining`. Hostctl first rejects any transfer owned by another
+operation and confirms that the configured runtime is stopped or absent. A
+present Docker container is pinned to `restart=no`; an absent container or
+systemd unit is accepted with a warning. The operation then checkpoints
+`router_offline` and completes without signaling a process.
+
 Hostctl does not poll versiond in-flight counters. Those counters are internal
 to versiond and are consumed by its shutdown state machine. This avoids making
 the compatibility-oriented `/healthz` response part of the control-plane
@@ -380,7 +388,9 @@ same drain and stop transaction as `evacuate`, moves the stopped host to
 ```
 
 The same command also accepts a host left `offline` by an earlier completed
-evacuation. It verifies that versiond is stopped, reasserts Docker
+evacuation, including one whose container or systemd unit has already been
+removed. It rejects a transfer still owned by another operation before any
+runtime mutation, verifies that a present runtime is stopped, reasserts Docker
 `restart=no`, adopts `router_offline` as the first durable checkpoint of the new
 operation, and removes the membership without repeating drain or shutdown.
 

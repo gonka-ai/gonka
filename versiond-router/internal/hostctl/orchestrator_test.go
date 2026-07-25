@@ -27,6 +27,8 @@ type fakeRemote struct {
 	stopTimeout        string
 	activateErrors     int
 	routerHostState    router.HostState
+	routerTransfer     *router.Transfer
+	runtimeAbsent      bool
 }
 
 func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) (string, error) {
@@ -46,7 +48,11 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 		}
 		if strings.Contains(joined, "gonka-routerctl status") &&
 			r.routerHostState != "" {
-			return fakeRouterStateWithTarget(true, r.routerHostState), nil
+			return fakeRouterStateWithTransfer(
+				true,
+				r.routerHostState,
+				r.routerTransfer,
+			), nil
 		}
 		return fakeRouterState(true), nil
 	case strings.Contains(joined, "127.0.0.1:8080/ready"):
@@ -73,6 +79,11 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 			r.runningProbeErrors--
 			return "", errors.New("transient status failure")
 		}
+		if r.runtimeAbsent {
+			return "", errors.New(
+				"docker: Error response from daemon: No such container: versiond-2",
+			)
+		}
 		if r.running {
 			return "true\n", nil
 		}
@@ -94,31 +105,43 @@ func fakeRouterState(includeTarget bool) string {
 }
 
 func fakeRouterStateWithTarget(includeTarget bool, targetState router.HostState) string {
-	hosts := `[
-		{
-			"membership_id": "membership-versiond-1",
-			"name": "versiond-1",
-			"address": "versiond-1",
-			"state": "active"
-		}`
+	return fakeRouterStateWithTransfer(includeTarget, targetState, nil)
+}
+
+func fakeRouterStateWithTransfer(
+	includeTarget bool,
+	targetState router.HostState,
+	transfer *router.Transfer,
+) string {
+	hosts := []router.Host{{
+		MembershipID: "membership-versiond-1",
+		Name:         "versiond-1",
+		Address:      "versiond-1",
+		State:        router.HostActive,
+	}}
 	if includeTarget {
-		hosts += `,
-		{
-			"membership_id": "membership-versiond-2",
-			"name": "versiond-2",
-			"address": "versiond-2",
-			"state": "` + string(targetState) + `"
-		}`
+		hosts = append(hosts, router.Host{
+			MembershipID: "membership-versiond-2",
+			Name:         "versiond-2",
+			Address:      "versiond-2",
+			State:        targetState,
+		})
 	}
-	hosts += "]"
-	return `{
-			"schema_version": 2,
-		"generation": 1,
-		"port": 8080,
-		"legacy_host": "versiond-1",
-		"non_ha_versions": [],
-		"hosts": ` + hosts + `
-	}`
+	state := router.State{
+		SchemaVersion:  router.SchemaVersion,
+		Generation:     1,
+		Port:           8080,
+		LegacyHost:     "versiond-1",
+		NonHAVersions:  []string{},
+		Hosts:          hosts,
+		ActiveTransfer: transfer,
+		UpdatedAt:      time.Now().UTC(),
+	}
+	data, err := json.Marshal(state)
+	if err != nil {
+		panic(err)
+	}
+	return string(data)
 }
 
 func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
@@ -217,6 +240,88 @@ func TestDecommissionAdoptsAlreadyEvacuatedHost(t *testing.T) {
 		t.Fatalf("offline decommission repeated evacuation:\n%s", calls)
 	}
 	assertJournal(t, orchestrator.config.JournalPath, "decommission", phaseComplete)
+}
+
+func TestDecommissionRemovesOfflineHostAfterContainerRemoval(t *testing.T) {
+	remote := &fakeRemote{
+		routerHostState: router.HostOffline,
+		runtimeAbsent:   true,
+	}
+	orchestrator := newTestOrchestrator(
+		t,
+		remote,
+		"decommission-offline-absent",
+	)
+
+	if err := orchestrator.Decommission(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"gonka-routerctl status",
+		"docker inspect --format {{.State.Running}}",
+		"--from offline --to removed --target removed",
+	)
+	if strings.Contains(calls, "docker update --restart=no") {
+		t.Fatalf("absent container received a restart-policy update:\n%s", calls)
+	}
+	assertJournal(t, orchestrator.config.JournalPath, "decommission", phaseComplete)
+}
+
+func TestDecommissionRejectsForeignOfflineTransferBeforeRuntimeMutation(t *testing.T) {
+	remote := &fakeRemote{
+		routerHostState: router.HostOffline,
+		routerTransfer: &router.Transfer{
+			ID:           "previous-decommission",
+			MembershipID: "membership-versiond-2",
+			Host:         "versiond-2",
+			From:         router.HostActive,
+			To:           router.HostRemoved,
+			StartedAt:    time.Now().UTC(),
+		},
+	}
+	orchestrator := newTestOrchestrator(
+		t,
+		remote,
+		"new-decommission",
+	)
+
+	err := orchestrator.Decommission(context.Background())
+	if !errors.Is(err, router.ErrHostOperation) {
+		t.Fatalf("decommission error = %v, want ErrHostOperation", err)
+	}
+	calls := remote.callLog()
+	if strings.Contains(calls, ".State.Running") ||
+		strings.Contains(calls, "docker update") ||
+		strings.Contains(calls, "--to removed") {
+		t.Fatalf("foreign transfer caused a side effect:\n%s", calls)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseStarted)
+}
+
+func TestEvacuateAdoptsAlreadyOfflineHost(t *testing.T) {
+	remote := &fakeRemote{routerHostState: router.HostOffline}
+	orchestrator := newTestOrchestrator(t, remote, "evacuate-offline")
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"gonka-routerctl status",
+		"docker update --restart=no",
+	)
+	if strings.Contains(calls, "--to draining") ||
+		strings.Contains(calls, "docker kill") {
+		t.Fatalf("offline evacuation repeated process shutdown:\n%s", calls)
+	}
+	assertJournal(t, orchestrator.config.JournalPath, "evacuate", phaseComplete)
 }
 
 func TestDecommissionRejectsRunningOfflineHost(t *testing.T) {
