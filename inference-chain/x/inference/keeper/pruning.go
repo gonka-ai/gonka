@@ -20,6 +20,12 @@ const (
 	// Epoch-0 inference pass: removals and keys read per block.
 	EpochZeroInferencePruningMaxPerBlock = 1000
 	EpochZeroInferenceScanMaxPerBlock    = 4000
+	// InferenceValidationDetails are only read for the claim window (ClaimRewards
+	// rejects anything but the previous epoch, and the validation-params query
+	// only reads current/previous epoch), so epochs older than this threshold are
+	// safe to drop. Bled off gradually to avoid expensive bulk deletes.
+	InferenceValidationDetailsPruningThreshold   = uint64(5)
+	InferenceValidationDetailsPruningMaxPerBlock = int64(1000)
 )
 
 // Prune runs every pruner within one shared PruneWorkPerBlock budget. The first pruner
@@ -43,6 +49,7 @@ func (k Keeper) Prune(ctx context.Context, currentEpochIndex int64) error {
 		k.GetDevshardPruner(params),
 		k.GetClaimRecipientPruner(params),
 		k.GetEpochZeroInferencePruner(params),
+		k.GetInferenceValidationDetailsPruner(params),
 	}
 	budget := PruneWorkPerBlock
 	first := int(uint64(sdk.UnwrapSDKContext(ctx).BlockHeight()) % uint64(len(pruners)))
@@ -438,6 +445,31 @@ func (k Keeper) GetClaimRecipientPruner(params types.Params) Pruner[collections.
 		},
 		Remover: func(ctx context.Context, key collections.Pair[uint64, sdk.AccAddress]) error {
 			return k.RemoveClaimRecipientForEpoch(sdk.UnwrapSDKContext(ctx), key.K2(), key.K1())
+		},
+		Logger: k,
+	}
+}
+
+// GetInferenceValidationDetailsPruner prunes InferenceValidationDetails for epochs
+// older than the threshold. The map is keyed by (epochId, inferenceId), so it ranges
+// by the leading epoch prefix just like the InferencePruner. Only the claim window
+// reads these entries, so older epochs are safe to remove.
+func (k Keeper) GetInferenceValidationDetailsPruner(params types.Params) Pruner[collections.Pair[uint64, string], types.InferenceValidationDetails] {
+	return Pruner[collections.Pair[uint64, string], types.InferenceValidationDetails]{
+		Threshold:  InferenceValidationDetailsPruningThreshold,
+		PruningMax: InferenceValidationDetailsPruningMaxPerBlock,
+		List:       k.InferenceValidationDetailsMap,
+		Ranger: func(ctx context.Context, epoch int64) collections.Ranger[collections.Pair[uint64, string]] {
+			return collections.NewPrefixedPairRange[uint64, string](uint64(epoch))
+		},
+		GetLastPruned: func(state types.PruningState) int64 {
+			return state.InferenceValidationDetailsPrunedEpoch
+		},
+		SetLastPruned: func(state *types.PruningState, epoch int64) {
+			state.InferenceValidationDetailsPrunedEpoch = epoch
+		},
+		Remover: func(ctx context.Context, key collections.Pair[uint64, string]) error {
+			return k.InferenceValidationDetailsMap.Remove(ctx, key)
 		},
 		Logger: k,
 	}
