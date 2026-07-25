@@ -286,17 +286,41 @@ func TestPollWorkerUnwindBudgetReservesShutdownTime(t *testing.T) {
 func TestWaitForPollWorkerReportsWaitEndReason(t *testing.T) {
 	pollDone := make(chan struct{})
 
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	err := waitForPollWorker(ctx, pollDone, time.Second)
-	if !errors.Is(err, context.Canceled) {
-		t.Fatalf("canceled wait error = %v, want context.Canceled", err)
-	}
+	t.Run("forced cancellation", func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		err := waitForPollWorker(ctx, pollDone, time.Second)
+		if !errors.Is(err, context.Canceled) {
+			t.Fatalf("wait error = %v, want context.Canceled", err)
+		}
+	})
 
-	err = waitForPollWorker(context.Background(), pollDone, 0)
-	if !errors.Is(err, errPollWorkerUnwindTimeout) {
-		t.Fatalf("allowance wait error = %v, want poll worker timeout", err)
-	}
+	t.Run("shutdown deadline", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Millisecond)
+		defer cancel()
+		err := waitForPollWorker(ctx, pollDone, time.Second)
+		if !errors.Is(err, context.DeadlineExceeded) {
+			t.Fatalf("wait error = %v, want context.DeadlineExceeded", err)
+		}
+	})
+
+	t.Run("unwind allowance elapsed", func(t *testing.T) {
+		err := waitForPollWorker(
+			context.Background(),
+			pollDone,
+			10*time.Millisecond,
+		)
+		if !errors.Is(err, errPollWorkerUnwindTimeout) {
+			t.Fatalf("wait error = %v, want poll worker timeout", err)
+		}
+	})
+
+	t.Run("no unwind allowance", func(t *testing.T) {
+		err := waitForPollWorker(context.Background(), pollDone, 0)
+		if !errors.Is(err, errPollWorkerUnwindTimeout) {
+			t.Fatalf("wait error = %v, want poll worker timeout", err)
+		}
+	})
 }
 
 func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
