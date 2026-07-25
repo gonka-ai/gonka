@@ -11,7 +11,9 @@ test:
 	go test ./...
 
 test-render:
-	@tmpdir=$$(mktemp -d); \
+	@set -e; \
+	tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
 	VERSIOND_HOSTS='versiond versiond2' \
 	VERSIOND_LEGACY_HOST=versiond \
 	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
@@ -112,8 +114,7 @@ test-render:
 	VERSIOND_ROUTER_NGINX_BIN=true \
 	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
 	! grep -q 'versiond_ha_pool "true"' "$$tmpdir/single.conf"; \
-	echo "test-render: ok"; \
-	rm -rf "$$tmpdir"
+	echo "test-render: ok"
 
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
