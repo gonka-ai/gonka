@@ -12,8 +12,6 @@ on:
       - 'decentralized-api/nodemanager/**'
       - 'versioned/**'
       - 'versiond-router/**'
-      - 'devshard/docs/rolling-update.md'
-      - 'devshard/docs/versiond-host-evacuation.md'
       - '.github/workflows/devshard-testenv.yml'
   workflow_dispatch:
     inputs:
