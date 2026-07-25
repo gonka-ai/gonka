@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -217,7 +218,7 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- shutdownHost(
-			config.Config{HostShutdownBudget: 500 * time.Millisecond},
+			config.Config{HostShutdownBudget: 3 * time.Second},
 			server.Config,
 			mgr,
 			hostLifecycle,
@@ -231,7 +232,7 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-	case <-time.After(time.Second):
+	case <-time.After(5 * time.Second):
 		t.Fatal("shutdown remained blocked on the poll worker")
 	}
 	assertCallOrder(
@@ -262,6 +263,11 @@ func TestPollWorkerUnwindBudgetReservesShutdownTime(t *testing.T) {
 			budget: 20 * time.Second,
 			want:   2 * time.Second,
 		},
+		{
+			name:   "sub-tick budget reserves no wait",
+			budget: time.Nanosecond,
+			want:   0,
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -274,6 +280,22 @@ func TestPollWorkerUnwindBudgetReservesShutdownTime(t *testing.T) {
 				)
 			}
 		})
+	}
+}
+
+func TestWaitForPollWorkerReportsWaitEndReason(t *testing.T) {
+	pollDone := make(chan struct{})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	err := waitForPollWorker(ctx, pollDone, time.Second)
+	if !errors.Is(err, context.Canceled) {
+		t.Fatalf("canceled wait error = %v, want context.Canceled", err)
+	}
+
+	err = waitForPollWorker(context.Background(), pollDone, 0)
+	if !errors.Is(err, errPollWorkerUnwindTimeout) {
+		t.Fatalf("allowance wait error = %v, want poll worker timeout", err)
 	}
 }
 

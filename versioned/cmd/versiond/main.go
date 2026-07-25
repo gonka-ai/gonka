@@ -24,6 +24,8 @@ import (
 
 const maxPollWorkerUnwindWait = 5 * time.Second
 
+var errPollWorkerUnwindTimeout = errors.New("poll worker unwind timeout")
+
 func main() {
 	if err := run(context.Background()); err != nil {
 		slog.Error("fatal", "error", err)
@@ -248,10 +250,23 @@ func shutdownHost(
 		// BeginHostDrain already prevents new generation commits and disables
 		// child restart. Teardown can therefore continue without trusting a
 		// reconcile implementation to honor cancellation forever.
-		slog.Warn(
-			"poll worker did not unwind; continuing host shutdown",
-			"error", err,
-		)
+		switch {
+		case errors.Is(err, context.DeadlineExceeded):
+			slog.Warn(
+				"host shutdown budget exhausted before poll worker unwound; continuing teardown",
+				"error", err,
+			)
+		case errors.Is(err, context.Canceled):
+			slog.Warn(
+				"host shutdown was forced before poll worker unwound; continuing teardown",
+				"error", err,
+			)
+		default:
+			slog.Warn(
+				"poll worker did not unwind within its allowance; continuing teardown",
+				"error", err,
+			)
+		}
 	}
 
 	if err := hostLifecycle.WaitIdle(shutdownCtx); err != nil {
@@ -305,7 +320,7 @@ func shutdownHost(
 func pollWorkerUnwindBudget(hostBudget time.Duration) time.Duration {
 	wait := hostBudget / 10
 	if wait <= 0 {
-		return hostBudget
+		return 0
 	}
 	if wait > maxPollWorkerUnwindWait {
 		return maxPollWorkerUnwindWait
@@ -323,6 +338,12 @@ func waitForPollWorker(
 		return nil
 	default:
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if timeout <= 0 {
+		return fmt.Errorf("%w: no wait budget remains", errPollWorkerUnwindTimeout)
+	}
 	timer := time.NewTimer(timeout)
 	defer timer.Stop()
 	select {
@@ -331,7 +352,7 @@ func waitForPollWorker(
 	case <-ctx.Done():
 		return ctx.Err()
 	case <-timer.C:
-		return fmt.Errorf("poll worker did not unwind within %s", timeout)
+		return fmt.Errorf("%w after %s", errPollWorkerUnwindTimeout, timeout)
 	}
 }
 
