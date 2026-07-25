@@ -29,6 +29,8 @@ type fakeRemote struct {
 	routerHostState    router.HostState
 	routerTransfer     *router.Transfer
 	runtimeAbsent      bool
+	removeOnRestartPin bool
+	removeOnStopCheck  bool
 }
 
 func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) (string, error) {
@@ -70,6 +72,13 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 		}
 		return `{"Name":"unless-stopped","MaximumRetryCount":0}` + "\n", nil
 	case strings.Contains(joined, "Config.StopTimeout"):
+		if r.removeOnStopCheck {
+			r.runtimeAbsent = true
+			r.running = false
+			return "", errors.New(
+				"docker: Error response from daemon: No such container: versiond-2",
+			)
+		}
 		if r.stopTimeout != "" {
 			return r.stopTimeout + "\n", nil
 		}
@@ -88,6 +97,13 @@ func (r *fakeRemote) Run(_ context.Context, destination string, args ...string) 
 			return "true\n", nil
 		}
 		return "false\n", nil
+	case strings.Contains(joined, "docker update --restart=no") &&
+		r.removeOnRestartPin:
+		r.runtimeAbsent = true
+		r.running = false
+		return "", errors.New(
+			"docker: Error response from daemon: No such container: versiond-2",
+		)
 	case strings.Contains(joined, "docker kill --signal TERM"):
 		if r.stopOnTerm {
 			r.running = false
@@ -169,6 +185,124 @@ func TestEvacuateOrdersRouterDrainBeforeVersiondStop(t *testing.T) {
 		t.Fatalf("evacuation used health as a control-plane API:\n%s", calls)
 	}
 	assertJournalPhase(t, orchestrator.config.JournalPath, "complete")
+}
+
+func TestEvacuateConvergesRouterWhenRuntimeIsAbsent(t *testing.T) {
+	remote := &fakeRemote{runtimeAbsent: true}
+	orchestrator := newTestOrchestrator(t, remote, "evacuate-absent")
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"--from active --to draining --target offline",
+		"--from draining --to stopping --target offline",
+		"--from stopping --to offline --target offline",
+	)
+	for _, unexpected := range []string{
+		"Config.StopTimeout",
+		"HostConfig.RestartPolicy",
+		"docker update",
+		"docker kill",
+	} {
+		if strings.Contains(calls, unexpected) {
+			t.Fatalf(
+				"absent runtime used %q instead of converging router state:\n%s",
+				unexpected,
+				calls,
+			)
+		}
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseComplete)
+}
+
+func TestEvacuateResumesAfterRuntimeRemovalBeforeSignalIntent(t *testing.T) {
+	remote := &fakeRemote{runtimeAbsent: true}
+	orchestrator := newTestOrchestrator(t, remote, "resume-absent-runtime")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion:         hostctlJournalSchemaVersion,
+		OperationID:           orchestrator.config.OperationID,
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 phaseRestartDisabled,
+		PreviousRestartPolicy: "unless-stopped",
+		UpdatedAt:             time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"--from draining --to stopping --target offline",
+		"--from stopping --to offline --target offline",
+	)
+	if strings.Contains(calls, "Config.StopTimeout") ||
+		strings.Contains(calls, "docker update") ||
+		strings.Contains(calls, "docker kill") {
+		t.Fatalf("resumed evacuation acted on an absent runtime:\n%s", calls)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseComplete)
+}
+
+func TestEvacuateConvergesWhenContainerDisappearsDuringRestartPin(t *testing.T) {
+	remote := &fakeRemote{
+		running:            true,
+		removeOnRestartPin: true,
+	}
+	orchestrator := newTestOrchestrator(t, remote, "evacuate-restart-pin-race")
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"docker update --restart=no",
+		"--from draining --to stopping --target offline",
+		"--from stopping --to offline --target offline",
+	)
+	if strings.Contains(calls, "docker kill") {
+		t.Fatalf("evacuation signaled a removed container:\n%s", calls)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseComplete)
+}
+
+func TestEvacuateConvergesWhenContainerDisappearsDuringStopCheck(t *testing.T) {
+	remote := &fakeRemote{
+		running:           true,
+		removeOnStopCheck: true,
+	}
+	orchestrator := newTestOrchestrator(t, remote, "evacuate-stop-check-race")
+
+	if err := orchestrator.Evacuate(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+
+	calls := remote.callLog()
+	assertCallOrder(
+		t,
+		calls,
+		"Config.StopTimeout",
+		"--from active --to draining --target offline",
+		"--from stopping --to offline --target offline",
+	)
+	if strings.Contains(calls, "docker update") ||
+		strings.Contains(calls, "docker kill") {
+		t.Fatalf("evacuation acted on a container removed during preflight:\n%s", calls)
+	}
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseComplete)
 }
 
 func TestDecommissionRemovesHostAfterGracefulStop(t *testing.T) {
@@ -841,10 +975,21 @@ func TestProbeFailureBeforeSignalIntentCanBeCanceled(t *testing.T) {
 		runningProbeErrors: 1,
 	}
 	orchestrator := newTestOrchestrator(t, remote, "cancel-probe-failure")
+	if err := orchestrator.writeJournal(Journal{
+		SchemaVersion:         hostctlJournalSchemaVersion,
+		OperationID:           orchestrator.config.OperationID,
+		Mode:                  "evacuate",
+		Scope:                 orchestrator.operationScope(),
+		Phase:                 phaseRestartDisabled,
+		PreviousRestartPolicy: "always",
+		UpdatedAt:             time.Now().UTC(),
+	}); err != nil {
+		t.Fatal(err)
+	}
 	if err := orchestrator.Evacuate(context.Background()); err == nil {
 		t.Fatal("evacuation succeeded despite the injected process probe failure")
 	}
-	assertJournalPhase(t, orchestrator.config.JournalPath, "restart_disabled")
+	assertJournalPhase(t, orchestrator.config.JournalPath, phaseRestartDisabled)
 	if calls := remote.callLog(); strings.Contains(calls, "docker kill --signal TERM") {
 		t.Fatalf("evacuation sent SIGTERM after a failed process probe:\n%s", calls)
 	}
@@ -962,7 +1107,7 @@ func TestRemoteCommandAcceptsSuccessfulDeadlineResult(t *testing.T) {
 }
 
 func TestEvacuateRejectsShortRuntimeStopContractBeforeRouterMutation(t *testing.T) {
-	remote := &fakeRemote{stopTimeout: "10"}
+	remote := &fakeRemote{running: true, stopTimeout: "10"}
 	orchestrator := newTestOrchestrator(t, remote, "short-stop")
 	orchestrator.config.KillGrace = 30 * time.Minute
 	if err := orchestrator.Evacuate(context.Background()); err == nil {

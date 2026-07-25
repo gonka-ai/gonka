@@ -200,20 +200,30 @@ func (r systemdRuntime) ValidateStopContract(ctx context.Context, minimum time.D
 }
 
 func (r systemdRuntime) State(ctx context.Context) (serviceState, error) {
-	output, err := r.run(ctx, "systemctl", "is-active", r.service)
-	value := strings.TrimSpace(output)
-	switch value {
-	case "unknown":
+	output, err := r.run(
+		ctx,
+		"systemctl", "show", r.service,
+		"--property=LoadState", "--property=ActiveState",
+	)
+	properties := parseSystemdProperties(output)
+	if properties["LoadState"] == "not-found" {
 		return serviceAbsent, nil
-	case "inactive", "failed":
-		return serviceStopped, nil
-	case "active", "activating", "deactivating":
-		return serviceRunning, nil
 	}
 	if err != nil {
 		return "", err
 	}
-	return "", fmt.Errorf("unexpected systemd service state %q", value)
+	switch properties["ActiveState"] {
+	case "inactive", "failed":
+		return serviceStopped, nil
+	case "active", "activating", "deactivating", "reloading", "refreshing", "maintenance":
+		return serviceRunning, nil
+	default:
+		return "", fmt.Errorf(
+			"unexpected systemd active state %q with load state %q",
+			properties["ActiveState"],
+			properties["LoadState"],
+		)
+	}
 }
 
 func (r systemdRuntime) Signal(ctx context.Context, signal string) error {

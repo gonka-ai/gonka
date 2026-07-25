@@ -197,7 +197,7 @@ func newStopWorkflow(name string, remove bool) workflowDefinition {
 		phaseStarted: {
 			order:   0,
 			next:    phaseRuntimeValidated,
-			handler: (*Orchestrator).validateRuntimeStep,
+			handler: (*Orchestrator).validateStopRuntimeStep,
 		},
 		phaseRuntimeValidated: {
 			order:   1,

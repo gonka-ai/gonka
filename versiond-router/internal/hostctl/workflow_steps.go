@@ -27,6 +27,25 @@ func (o *Orchestrator) validateRuntimeStep(
 	return nil
 }
 
+func (o *Orchestrator) validateStopRuntimeStep(
+	ctx context.Context,
+	journal *Journal,
+) error {
+	state, err := o.validateStopRuntime(ctx)
+	if err != nil {
+		return err
+	}
+	if state == serviceAbsent {
+		slog.Warn(
+			"versiond service is absent; stop workflow will converge router state",
+			"operation_id", journal.OperationID,
+			"mode", journal.Mode,
+			"service", o.config.VersiondService,
+		)
+	}
+	return nil
+}
+
 func (o *Orchestrator) drainRouterStep(
 	ctx context.Context,
 	journal *Journal,
@@ -48,7 +67,7 @@ func (o *Orchestrator) captureRestartPolicyStep(
 		journal.PreviousRestartPolicy != "" {
 		return nil
 	}
-	policy, err := o.dockerRestartPolicy(ctx)
+	policy, err := o.captureDockerRestartPolicyIfPresent(ctx)
 	if err != nil {
 		return err
 	}
@@ -63,17 +82,19 @@ func (o *Orchestrator) disableRestartPolicyStep(
 	if o.config.VersiondRuntime != RuntimeDocker {
 		return nil
 	}
-	return o.setDockerRestartPolicy(ctx, "no")
+	state, err := o.versiondServiceState(ctx)
+	if err != nil {
+		return fmt.Errorf("inspect versiond before disabling restart policy: %w", err)
+	}
+	_, err = o.reconcileDockerRestartDisabled(ctx, state)
+	return err
 }
 
 func (o *Orchestrator) recordSignalIntentStep(
 	ctx context.Context,
-	journal *Journal,
+	_ *Journal,
 ) error {
-	if err := o.validateRuntimeStep(ctx, journal); err != nil {
-		return err
-	}
-	_, err := o.versiondRunning(ctx)
+	_, err := o.validateStopRuntime(ctx)
 	return err
 }
 
@@ -94,21 +115,10 @@ func (o *Orchestrator) sendTerminationStep(
 	ctx context.Context,
 	_ *Journal,
 ) error {
-	if o.config.VersiondRuntime == RuntimeDocker {
-		// Cancellation may restore this mutable setting before a failed stop
-		// workflow is resumed, so assert it immediately before every signal.
-		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
-			return err
-		}
-	}
-	running, err := o.versiondRunning(ctx)
-	if err != nil {
-		return err
-	}
-	if !running {
-		return nil
-	}
-	return o.signalVersiond(ctx, "TERM")
+	// Cancellation may restore Docker's mutable restart policy before a failed
+	// stop workflow is resumed, so the state-aware action reasserts restart=no
+	// immediately before every signal.
+	return o.terminateVersiondIfRunning(ctx)
 }
 
 func (o *Orchestrator) waitForHostStopStep(
@@ -322,24 +332,22 @@ func (o *Orchestrator) resumeStopAfterFailedCancellation(
 	) {
 		return false, nil
 	}
-	running, err := o.versiondRunning(ctx)
+	state, err := o.versiondServiceState(ctx)
 	if err != nil {
 		return false, fmt.Errorf(
 			"check versiond before abandoning cancellation: %w",
 			err,
 		)
 	}
-	if running {
+	if state == serviceRunning {
 		return false, nil
 	}
-	if o.config.VersiondRuntime == RuntimeDocker {
-		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
-			return false, fmt.Errorf(
-				"disable Docker restart policy before resuming %s: %w",
-				journal.Mode,
-				err,
-			)
-		}
+	if _, err := o.reconcileDockerRestartDisabled(ctx, state); err != nil {
+		return false, fmt.Errorf(
+			"disable Docker restart policy before resuming %s: %w",
+			journal.Mode,
+			err,
+		)
 	}
 
 	previousPhase := journal.CancellationPhase

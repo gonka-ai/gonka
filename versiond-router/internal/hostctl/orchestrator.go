@@ -379,25 +379,17 @@ func (o *Orchestrator) adoptOfflineStop(
 			"offline versiond host is still running; stop it before continuing",
 		)
 	}
-	if runtimeState == serviceStopped && o.config.VersiondRuntime == RuntimeDocker {
-		if err := o.setDockerRestartPolicy(ctx, "no"); err != nil {
-			rechecked, stateErr := o.versiondServiceState(ctx)
-			if stateErr != nil || rechecked != serviceAbsent {
-				return fmt.Errorf(
-					"disable Docker restart policy for offline host: %w",
-					err,
-				)
-			}
-		}
-		runtimeState, err = o.versiondServiceState(ctx)
-		if err != nil {
-			return fmt.Errorf("recheck offline versiond host: %w", err)
-		}
-		if runtimeState == serviceRunning {
-			return errors.New(
-				"offline versiond host restarted while adopting stop state",
-			)
-		}
+	runtimeState, err = o.reconcileDockerRestartDisabled(ctx, runtimeState)
+	if err != nil {
+		return fmt.Errorf(
+			"disable Docker restart policy for offline host: %w",
+			err,
+		)
+	}
+	if runtimeState == serviceRunning {
+		return errors.New(
+			"offline versiond host restarted while adopting stop state",
+		)
 	}
 	if runtimeState == serviceAbsent {
 		slog.Warn(

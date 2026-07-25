@@ -279,6 +279,15 @@ present Docker container is pinned to `restart=no`; an absent container or
 systemd unit is accepted with a warning. The operation then checkpoints
 `router_offline` and completes without signaling a process.
 
+The same observed-state rule applies if the service disappears after an
+operation starts. Each stop-side runtime action first classifies the service as
+`running`, `stopped`, or `absent`. Only a running service requires the external
+stop contract and a signal; stopped or absent means the runtime side of the
+stop is already complete, so hostctl continues the durable router workflow.
+Docker absence is accepted only for an explicit `no such object/container`
+response, and systemd absence requires `LoadState=not-found`; all ambiguous
+runtime errors remain fail-closed.
+
 Hostctl does not poll versiond in-flight counters. Those counters are internal
 to versiond and are consumed by its shutdown state machine. This avoids making
 the compatibility-oriented `/healthz` response part of the control-plane
@@ -286,8 +295,9 @@ protocol.
 
 For systemd, set both runtime flags to `systemd`. The stop step uses
 `systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
-evacuation. Before router drain, hostctl requires `TimeoutStopSec` to cover the
-configured kill grace, `KillMode=mixed`, and `SendSIGKILL=yes`.
+evacuation. Before router drain of a running unit, hostctl requires
+`TimeoutStopSec` to cover the configured kill grace, `KillMode=mixed`, and
+`SendSIGKILL=yes`.
 `KillMode=mixed` sends the initial `SIGTERM` only to versiond so it can drain
 its children, while systemd retains the whole control group for final timeout
 enforcement. Docker hostctl uses explicit `TERM`/`KILL` signals, so its

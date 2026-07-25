@@ -298,14 +298,21 @@ control-plane delays. SSH also uses bounded connect and keepalive settings.
 Exact Docker and systemd commands are documented in
 `versiond-router/README.md`.
 
-Before the first router mutation, hostctl validates the service runtime.
+Before the first router mutation, hostctl observes the service runtime. A
+running service must pass the shutdown-contract validation. A stopped or absent
+service has already reached the runtime stop target, so hostctl skips signaling
+and continues the durable router workflow. Docker absence is accepted only for
+an explicit missing-object response; systemd absence requires
+`LoadState=not-found`. Other runtime failures remain fail-closed.
+
 systemd evacuation uses a managed stop job, so `TimeoutStopSec`, `KillMode`, and
 `SendSIGKILL` directly govern that path. Docker evacuation uses explicit
 `TERM`/`KILL` signals and its own hostctl deadline; Docker `StopTimeout` instead
 guards external `docker stop`, Compose teardown, daemon shutdown, and redeploy.
-It remains a fail-closed deployment requirement so those paths cannot bypass
-the application drain budget. The standard compose files, including the local
-test network, set `stop_grace_period: 30m` for versiond and the nginx router.
+It remains a fail-closed deployment requirement for a running container so
+those paths cannot bypass the application drain budget. The standard compose
+files, including the local test network, set `stop_grace_period: 30m` for
+versiond and the nginx router.
 
 ## Failure policy
 

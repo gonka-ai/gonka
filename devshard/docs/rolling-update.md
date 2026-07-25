@@ -552,14 +552,19 @@ Evacuate a Docker-managed host:
 The command captures the original container restart policy once and reasserts
 `restart=no` before every attempt to signal versiond. A durable phase is a
 checkpoint, not proof that mutable external runtime state still matches it.
+Every stop-side action therefore re-observes the runtime as `running`,
+`stopped`, or `absent`. A stopped or absent service needs no signal and the
+workflow continues toward the durable router target. Absence is accepted only
+from Docker's explicit missing-object response or systemd
+`LoadState=not-found`; other probe failures remain fail-closed.
 For systemd, use `--router-runtime systemd --versiond-runtime systemd`; the
 orchestrator uses `systemctl stop --no-block` so `Restart=` cannot resurrect the
-unit. Before changing router state, hostctl validates the runtime shutdown
-contract. systemd's `TimeoutStopSec` directly bounds the managed stop job and
-must cover `ROUTER_DRAIN_KILL_GRACE`; it must use `KillMode=mixed` with
-`SendSIGKILL=yes`. The initial systemd `SIGTERM` then reaches versiond alone,
-while the final timeout still covers its complete cgroup. Hostctl signals
-Docker directly, while its
+unit. Before changing router state for a running service, hostctl validates the
+runtime shutdown contract. systemd's `TimeoutStopSec` directly bounds the
+managed stop job and must cover `ROUTER_DRAIN_KILL_GRACE`; it must use
+`KillMode=mixed` with `SendSIGKILL=yes`. The initial systemd `SIGTERM` then
+reaches versiond alone, while the final timeout still covers its complete
+cgroup. Hostctl signals Docker directly, while its
 required `StopTimeout` protects external `docker stop`, Compose teardown, and
 redeploy from undercutting the same budget. Compose deployments, including the
 local test network, set `stop_grace_period: 30m` for versiond and
