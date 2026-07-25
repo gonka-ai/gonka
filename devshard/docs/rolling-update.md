@@ -518,11 +518,14 @@ the host accidentally; a second `SIGINT` is the explicit interactive transition
 to `forcing`.
 
 Active reconcile work is registered as a cancellable control operation. Host
-drain cancels that registry before waiting for the poll worker. Child preflight,
-downloads, readiness, and stop/start waits inherit the operation context, so a
-non-overlap swap cannot make force handling unavailable. Child generations use
-the typed lifecycle `preparing -> starting -> running -> retiring -> draining
--> stopping -> stopped`, with `failed -> starting` for supervised retry.
+drain cancels that registry before waiting for the poll worker. Poll unwind may
+consume at most ten percent of the host shutdown budget and is capped at five
+seconds; if a worker ignores cancellation, versiond logs it and proceeds to
+child drain or forcing. Child preflight, downloads, readiness, and stop/start
+waits inherit the operation context, so a non-overlap swap cannot make force
+handling unavailable. Child generations use the typed lifecycle `preparing ->
+starting -> running -> retiring -> draining -> stopping -> stopped`, with
+`failed -> starting` for supervised retry.
 
 #### Operator commands
 

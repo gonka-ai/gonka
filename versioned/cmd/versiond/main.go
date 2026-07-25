@@ -22,6 +22,8 @@ import (
 	"versioned/internal/sessionversion"
 )
 
+const maxPollWorkerUnwindWait = 5 * time.Second
+
 func main() {
 	if err := run(context.Background()); err != nil {
 		slog.Error("fatal", "error", err)
@@ -238,13 +240,18 @@ func shutdownHost(
 		cancelShutdown()
 	}()
 
-	select {
-	case <-pollDone:
-	case <-shutdownCtx.Done():
-		// Reconcile work owns manager operations that must unwind before process
-		// teardown mutates the same children. Its context is already canceled;
-		// the external runtime reserve remains the final backstop.
-		<-pollDone
+	if err := waitForPollWorker(
+		shutdownCtx,
+		pollDone,
+		pollWorkerUnwindBudget(budget),
+	); err != nil {
+		// BeginHostDrain already prevents new generation commits and disables
+		// child restart. Teardown can therefore continue without trusting a
+		// reconcile implementation to honor cancellation forever.
+		slog.Warn(
+			"poll worker did not unwind; continuing host shutdown",
+			"error", err,
+		)
 	}
 
 	if err := hostLifecycle.WaitIdle(shutdownCtx); err != nil {
@@ -293,6 +300,39 @@ func shutdownHost(
 		return err
 	}
 	return nil
+}
+
+func pollWorkerUnwindBudget(hostBudget time.Duration) time.Duration {
+	wait := hostBudget / 10
+	if wait <= 0 {
+		return hostBudget
+	}
+	if wait > maxPollWorkerUnwindWait {
+		return maxPollWorkerUnwindWait
+	}
+	return wait
+}
+
+func waitForPollWorker(
+	ctx context.Context,
+	pollDone <-chan struct{},
+	timeout time.Duration,
+) error {
+	select {
+	case <-pollDone:
+		return nil
+	default:
+	}
+	timer := time.NewTimer(timeout)
+	defer timer.Stop()
+	select {
+	case <-pollDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return fmt.Errorf("poll worker did not unwind within %s", timeout)
+	}
 }
 
 func readinessHandler(hostLifecycle *host.Controller, mgr *process.Manager) http.HandlerFunc {

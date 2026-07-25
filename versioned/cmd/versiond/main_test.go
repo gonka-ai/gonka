@@ -202,6 +202,81 @@ func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
 	}
 }
 
+func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	mgr := newFakeHostShutdownManager()
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	t.Cleanup(func() { close(pollDone) })
+
+	result := make(chan error, 1)
+	go func() {
+		result <- shutdownHost(
+			config.Config{HostShutdownBudget: 500 * time.Millisecond},
+			server.Config,
+			mgr,
+			hostLifecycle,
+			force,
+			pollDone,
+		)
+	}()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("shutdown remained blocked on the poll worker")
+	}
+	assertCallOrder(
+		t,
+		mgr.callLog(),
+		"request_children_drain",
+		"wait_children_idle",
+		"shutdown",
+	)
+	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
+		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestPollWorkerUnwindBudgetReservesShutdownTime(t *testing.T) {
+	tests := []struct {
+		name   string
+		budget time.Duration
+		want   time.Duration
+	}{
+		{
+			name:   "production budget is capped",
+			budget: config.DefaultHostShutdownBudget,
+			want:   maxPollWorkerUnwindWait,
+		},
+		{
+			name:   "short budget keeps ninety percent",
+			budget: 20 * time.Second,
+			want:   2 * time.Second,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := pollWorkerUnwindBudget(tt.budget); got != tt.want {
+				t.Fatalf(
+					"pollWorkerUnwindBudget(%s) = %s, want %s",
+					tt.budget,
+					got,
+					tt.want,
+				)
+			}
+		})
+	}
+}
+
 func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 	hostLifecycle := host.NewController()
 	if err := hostLifecycle.Transition(host.StateServing); err != nil {

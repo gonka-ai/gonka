@@ -119,10 +119,14 @@ data and may be rotated without changing replay behavior.
 Cancelling the poll context must not signal a running child. This separation is
 required because host evacuation stops reconciliation before it drains work.
 The host supervisor listens for force signals while canceled reconcile work is
-unwinding. Child process grace may impose a shorter phase-local limit, but no
-phase receives a fresh deadline that can extend the host shutdown budget. On
-expiry, versiond forces remaining children and HTTP connections, then confirms
-child reap during the external runtime reserve.
+unwinding. Poll unwind receives at most ten percent of the host budget, capped
+at five seconds. If a worker ignores cancellation, versiond logs the failure
+and continues teardown; the manager drain barrier already rejects new
+reconcile operations and disables child restart. Child process grace may impose
+a shorter phase-local limit, but no phase receives a fresh deadline that can
+extend the host shutdown budget. On expiry, versiond forces remaining children
+and HTTP connections, then confirms child reap during the external runtime
+reserve.
 
 ## Health and readiness contracts
 
