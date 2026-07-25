@@ -200,21 +200,7 @@ func (k msgServer) checkParticipantPermission(ctx context.Context, signer sdk.Ac
 }
 
 func (k msgServer) checkActiveParticipantPermission(ctx context.Context, signer sdk.AccAddress, epochOffset uint64) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
-	if err != nil {
-		return err
-	}
-	if currentEpoch < epochOffset {
-		return types.ErrActiveParticipantNotFound
-	}
-	found, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpoch-epochOffset, signer))
-	if err != nil {
-		return err
-	}
-	if !found {
-		return types.ErrActiveParticipantNotFound
-	}
-	return nil
+	return k.RequireActiveParticipantAtOffset(sdk.UnwrapSDKContext(ctx), signer, epochOffset)
 }
 
 func (k msgServer) checkCurrentActiveParticipantPermission(ctx context.Context, signer sdk.AccAddress) error {

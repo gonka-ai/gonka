@@ -29,6 +29,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/app"
+	inferencemodule "github.com/productscience/inference/x/inference/module"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -191,6 +192,9 @@ func TestTallyBugReproduction(t *testing.T) {
 // and maxValidators=100 (standard setting).
 func createTestApp(t *testing.T) *app.App {
 	t.Helper()
+
+	// Allow multiple createTestApp calls in one `go test` process (global denom registry).
+	inferencemodule.IgnoreDuplicateDenomRegistration = true
 
 	// Configure SDK for gonka addresses
 	config := sdk.GetConfig()

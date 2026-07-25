@@ -6,8 +6,6 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"fmt"
-	"math/big"
-	"strconv"
 	"strings"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -37,109 +35,16 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"blockNumber", msg.BlockNumber,
 		"receiptIndex", msg.ReceiptIndex)
 
-	// Parse the amount to ensure it's valid
-	_, ok := new(big.Int).SetString(msg.Amount, 10)
-	if !ok {
-		k.LogError("Bridge exchange: Invalid amount", types.Messages, "amount", msg.Amount)
-		return nil, fmt.Errorf("invalid amount: %s", msg.Amount)
-	}
-
-	// Get the account address
-	addr, err := sdk.AccAddressFromBech32(msg.Validator)
+	validated, err := k.ValidateBridgeExchange(ctx, msg)
 	if err != nil {
-		k.LogError(
-			"Bridge exchange: failed to decode bech32 address",
-			types.Messages,
-			"error", err.Error())
-		return nil, fmt.Errorf("invalid validator address: %v", err)
+		return nil, err
 	}
 
-	// Create transaction object with all the content for secure validation
-	// ContractAddress is normalized to lowercase to ensure consistent dedup and comparison
-	// regardless of EIP-55 checksum casing used by individual validator nodes.
-	proposedTx := &types.BridgeTransaction{
-		ChainId:         msg.OriginChain,
-		ContractAddress: strings.ToLower(msg.ContractAddress),
-		OwnerAddress:    msg.OwnerAddress,
-		Amount:          msg.Amount,
-		BlockNumber:     msg.BlockNumber,
-		ReceiptIndex:    msg.ReceiptIndex,
-		ReceiptsRoot:    msg.ReceiptsRoot,
-		// Status and other fields will be set later
-	}
-
-	// Check if this exact transaction content has already been processed
-	existingTx, found := k.GetBridgeTransactionByContent(ctx, proposedTx)
-	if found {
-		// Validate that the existing transaction has identical content (double-check security)
-		if !bridgeTransactionsEqual(existingTx, proposedTx) {
-			k.LogError("Bridge exchange: Content mismatch for existing transaction", types.Messages,
-				"existingChainId", existingTx.ChainId,
-				"proposedChainId", proposedTx.ChainId,
-				"existingContract", existingTx.ContractAddress,
-				"proposedContract", proposedTx.ContractAddress,
-				"existingOwner", existingTx.OwnerAddress,
-				"proposedOwner", proposedTx.OwnerAddress,
-				"existingAmount", existingTx.Amount,
-				"proposedAmount", proposedTx.Amount)
-			return nil, fmt.Errorf("transaction content mismatch - potential attack detected")
-		}
-		// Get the epoch group for the existing transaction using epochIndex
-		epochGroup, err := k.GetEpochGroup(goCtx, existingTx.EpochIndex, "")
-		if err != nil {
-			k.LogError("Bridge exchange: unable to get epoch group for existing transaction", types.Messages,
-				"epochIndex", existingTx.EpochIndex, "error", err)
-			return nil, fmt.Errorf("unable to get epoch group for existing transaction: %v", err)
-		}
-
-		// Get epoch group members directly
-		epochGroupMembers, err := epochGroup.GetGroupMembers(ctx)
-		if err != nil {
-			k.LogError("Bridge exchange: unable to get epoch group members", types.Messages,
-				"epochIndex", existingTx.EpochIndex, "error", err)
-			return nil, fmt.Errorf("unable to get epoch group members: %v", err)
-		}
-
-		// Check if validator is in the epoch group
-		isInEpochGroup := false
-		var validatorPower int64
-		for _, member := range epochGroupMembers {
-			memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
-			if err != nil {
-				continue
-			}
-			if memberAddr.Equals(addr) {
-				isInEpochGroup = true
-				// Parse weight from string (group module stores weight as string)
-				weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
-				if err != nil {
-					k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
-						"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
-					continue
-				}
-				validatorPower = weight
-				break
-			}
-		}
-
-		if !isInEpochGroup {
-			k.LogError("Bridge exchange: Validator not in transaction's epoch group", types.Messages,
-				"validator", msg.Validator, "epochIndex", existingTx.EpochIndex)
-			return nil, fmt.Errorf("validator not in transaction's epoch group")
-		}
-
-		// Check if validator already validated. O(1) via the KeySet
-		// lookup; replaces the prior O(N) slice scan.
-		alreadyValidated, err := k.HasBridgeTransactionValidator(ctx, existingTx, addr.String())
-		if err != nil {
-			k.LogError("Bridge exchange: Failed to check validator confirmation", types.Messages,
-				"validator", msg.Validator, "error", err)
-			return nil, fmt.Errorf("failed to check validator confirmation: %v", err)
-		}
-		if alreadyValidated {
-			k.LogError("Bridge exchange: Validator has already validated this transaction", types.Messages, "validator", msg.Validator)
-			return nil, fmt.Errorf("validator has already validated this transaction")
-		}
+	if !validated.IsCreate {
+		existingTx := validated.ExistingTx
+		validatorPower := validated.ValidatorPower
+		totalEpochPower := validated.TotalEpochPower
+		addr := validated.ValidatorAddress
 
 		// Record this validator's confirmation in its own sub-key. Write
 		// cost is constant regardless of how many prior validators have
@@ -154,9 +59,6 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		// so the sync loop there doesn't redundantly re-Set every prior
 		// validator's sub-key on each confirmation.
 		existingTx.Validators = nil
-
-		// Use total epoch power from epoch group data
-		totalEpochPower := epochGroup.GroupData.TotalWeight
 
 		k.LogInfo("Bridge exchange: Additional validator added",
 			types.Messages,
@@ -178,7 +80,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 				existingTx.Status = types.BridgeTransactionStatus_BRIDGE_COMPLETED
 				k.SetBridgeTransaction(ctx, existingTx)
 
-				// Handle token minting for completed transaction
+				// Handle token minting / native release for completed transaction
 				if err := k.handleCompletedBridgeTransaction(ctx, existingTx); err != nil {
 					k.LogError("Bridge exchange: Failed to handle completed bridge transaction",
 						types.Messages,
@@ -220,52 +122,13 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 	}
 
 	// Transaction doesn't exist, create new one
-	// Get current epoch group
-	currentEpochGroup, err := k.GetCurrentEpochGroup(goCtx)
-	if err != nil {
-		k.LogError("Bridge exchange: unable to get current epoch group", types.Messages, "error", err)
-		return nil, fmt.Errorf("unable to get current epoch group: %v", err)
-	}
+	proposedTx := validated.ProposedTx
+	addr := validated.ValidatorAddress
+	validatorPower := validated.ValidatorPower
 
-	// Get current epoch group members directly
-	currentEpochMembers, err := currentEpochGroup.GetGroupMembers(ctx)
-	if err != nil {
-		k.LogError("Bridge exchange: unable to get current epoch group members", types.Messages,
-			"epochIndex", currentEpochGroup.GroupData.EpochIndex, "error", err)
-		return nil, fmt.Errorf("unable to get current epoch group members: %v", err)
-	}
-
-	// Check if validator is in current epoch group
-	isActive := false
-	var validatorPower int64
-	for _, member := range currentEpochMembers {
-		memberAddr, err := sdk.AccAddressFromBech32(member.Member.Address)
-		if err != nil {
-			continue
-		}
-		if memberAddr.Equals(addr) {
-			isActive = true
-			// Parse weight from string (group module stores weight as string)
-			weight, err := strconv.ParseInt(member.Member.Weight, 10, 64)
-			if err != nil {
-				k.LogError("Bridge exchange: unable to parse member weight", types.Messages,
-					"member", member.Member.Address, "weight", member.Member.Weight, "error", err)
-				continue
-			}
-			validatorPower = weight
-			break
-		}
-	}
-
-	if !isActive {
-		k.LogError("Bridge exchange: Validator not in active participants", types.Messages, "validator", msg.Validator)
-		return nil, fmt.Errorf("validator not in active participants")
-	}
-
-	// Complete the proposed transaction with epoch and validation data
 	proposedTx.Id = "" // Will be set by SetBridgeTransaction
 	proposedTx.Status = types.BridgeTransactionStatus_BRIDGE_PENDING
-	proposedTx.EpochIndex = currentEpochGroup.GroupData.EpochIndex
+	proposedTx.EpochIndex = validated.EpochIndex
 	proposedTx.TotalValidationPower = validatorPower
 	// Record the first validator's confirmation via the KeySet and leave
 	// the in-memory Validators slice empty so the base struct stays
@@ -287,7 +150,7 @@ func (k msgServer) BridgeExchange(goCtx context.Context, msg *types.MsgBridgeExc
 		"receiptIndex", msg.ReceiptIndex,
 		"validator", msg.Validator,
 		"validatorPower", validatorPower,
-		"epochIndex", currentEpochGroup.GroupData.EpochIndex,
+		"epochIndex", validated.EpochIndex,
 		"amount", msg.Amount,
 		"uniqueId", proposedTx.Id)
 
