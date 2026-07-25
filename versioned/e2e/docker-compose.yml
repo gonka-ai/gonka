@@ -1,5 +1,6 @@
 services:
   oracle:
+    image: versioned-e2e-oracle:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile.mockoracle
@@ -10,6 +11,7 @@ services:
       - oracle-data:/data
 
   versiond:
+    image: versioned-e2e-versiond:latest
     build:
       context: ..
       dockerfile: Dockerfile
@@ -19,17 +21,26 @@ services:
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: testapp
+      VERSIOND_DRAIN_POLL_INTERVAL: "200ms"
+      VERSIOND_DRAIN_TIMEOUT: "30s"
+      VERSIOND_DRAIN_KILL_GRACE: "2s"
     depends_on:
       - oracle
 
   tests:
+    image: versioned-e2e-tests:latest
     build:
       context: ..
       dockerfile: e2e/Dockerfile.tests
     environment:
       ORACLE_URL: http://oracle:8080
       VERSIOND_URL: http://versiond:8080
+      VERSIOND_POLL_INTERVAL: "5s"
       TESTAPP_PATH: /app/build/testapp
+      TESTAPP2_PATH: /app/build/testapp2
+      TESTAPP_ROLLOUT_PATH: /app/build/testapp-rollout
+    volumes:
+      - ../build/test-results:/app/test-results
     depends_on:
       - oracle
       - versiond

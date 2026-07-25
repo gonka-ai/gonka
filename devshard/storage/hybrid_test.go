@@ -76,6 +76,11 @@ func (r *recordingStorage) DeleteSealedInferences(escrowID string) error {
 	r.lastMethod = "DeleteSealedInferences"
 	return nil
 }
+func (r *recordingStorage) ClearValidationObs(escrowID string) error {
+	r.lastMethod = "ClearValidationObs"
+	return nil
+}
+
 func (r *recordingStorage) RecordValidationsAppliedOnce(escrowID string, entries []ValidationObsEntry) error {
 	r.lastMethod = "RecordValidationsAppliedOnce"
 	return nil
@@ -313,6 +318,46 @@ func TestHybridStorage_ReconnectPromotesDegradedRouter(t *testing.T) {
 
 	require.NoError(t, h.CreateSession(CreateSessionParams{EscrowID: "new-pg"}))
 	require.Equal(t, "CreateSession", pg.lastMethod, "new sessions must use PG after promotion")
+}
+
+type readyGateStorage struct {
+	recordingStorage
+	readyCh chan struct{}
+	err     error
+}
+
+func (r *readyGateStorage) WaitReady(ctx context.Context) error {
+	select {
+	case <-r.readyCh:
+		return r.err
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func TestHybridStorage_ReconnectWaitsForIndexReadyBeforePromote(t *testing.T) {
+	sqlite := &owningRecordingStorage{owned: map[string]struct{}{"sqlite-owned": {}}}
+	h := newDegradedSQLiteRouter(sqlite, t.TempDir(), ErrStoragePostgresUnavailable)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	pg := &readyGateStorage{readyCh: make(chan struct{})}
+	h.startPostgresReconnect(ctx, func(context.Context) (Storage, error) {
+		return pg, nil
+	}, 5*time.Millisecond)
+
+	time.Sleep(40 * time.Millisecond)
+	h.mu.RLock()
+	promotedEarly := h.pg == pg
+	h.mu.RUnlock()
+	require.False(t, promotedEarly, "must not promote before WaitReady")
+
+	close(pg.readyCh)
+	require.Eventually(t, func() bool {
+		h.mu.RLock()
+		defer h.mu.RUnlock()
+		return h.pg == pg && !h.degradedOwnerOnly
+	}, time.Second, 10*time.Millisecond)
 }
 
 func TestHybridStorage_PromoteClosesIncomingBackendWhenAlreadyPromoted(t *testing.T) {

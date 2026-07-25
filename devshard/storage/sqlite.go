@@ -249,6 +249,11 @@ func (s *SQLite) openOrLoadPool(epochID uint64) (*epochPool, error) {
 	return p, nil
 }
 
+// poolFor returns the pool for the epoch this escrow belongs to, opening it
+// lazily on first access. The escrow_id -> epoch_id lookup is in-memory
+// (rebuilt at boot from _meta.db); the pool itself is opened on demand so a
+// host that only touches a couple of escrows doesn't pay for opening every
+// epoch_*.db on disk.
 // HasEscrow reports whether escrowID is present in the in-memory routing index
 // (rebuilt at boot from _meta.db). It lets the hybrid router resolve which
 // backend owns an escrow without a disk round trip.
@@ -259,31 +264,6 @@ func (s *SQLite) HasEscrow(escrowID string) bool {
 	return ok
 }
 
-// HasAnySessions reports whether SQLite still holds any session after startup
-// reconciliation. HybridStorage uses it to decide whether SQLite must stay
-// attached while Postgres handles new escrows.
-func (s *SQLite) HasAnySessions() bool {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	return len(s.escrowIdx) > 0
-}
-
-// EscrowIDs returns a snapshot of escrows in the in-memory routing index.
-func (s *SQLite) EscrowIDs() []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	ids := make([]string, 0, len(s.escrowIdx))
-	for id := range s.escrowIdx {
-		ids = append(ids, id)
-	}
-	return ids
-}
-
-// poolFor returns the pool for the epoch this escrow belongs to, opening it
-// lazily on first access. The escrow_id -> epoch_id lookup is in-memory
-// (rebuilt at boot from _meta.db); the pool itself is opened on demand so a
-// host that only touches a couple of escrows doesn't pay for opening every
-// epoch_*.db on disk.
 func (s *SQLite) poolFor(escrowID string) (*epochPool, uint64, error) {
 	s.mu.RLock()
 	epochID, ok := s.escrowIdx[escrowID]
@@ -365,6 +345,26 @@ func (p *epochPool) close() error {
 
 // Close closes every per-epoch pool. Best-effort: returns the first error if
 // any pool fails to close, but always tries every pool.
+// HasAnySessions reports whether SQLite still holds any session after startup
+// reconciliation. HybridStorage uses it to decide whether SQLite must stay
+// attached while Postgres handles new escrows.
+func (s *SQLite) HasAnySessions() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return len(s.escrowIdx) > 0
+}
+
+// EscrowIDs returns a snapshot of escrows in the in-memory routing index.
+func (s *SQLite) EscrowIDs() []string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	ids := make([]string, 0, len(s.escrowIdx))
+	for id := range s.escrowIdx {
+		ids = append(ids, id)
+	}
+	return ids
+}
+
 func (s *SQLite) Close() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -625,13 +625,33 @@ func (s *SQLite) AppendDiff(escrowID string, rec types.DiffRecord) error {
 	}
 	defer tx.Rollback()
 
-	_, err = tx.Exec(
+	res, err := tx.Exec(
 		`INSERT INTO diffs (escrow_id, nonce, txs_proto, user_sig, post_state_root, state_hash, warm_keys_json, created_at)
-		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT (escrow_id, nonce) DO NOTHING`,
 		escrowID, rec.Nonce, txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON, rec.CreatedAt,
 	)
 	if err != nil {
 		return fmt.Errorf("insert diff: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		var haveTxs, haveUserSig, havePost, haveHash []byte
+		var haveWarm *string
+		scanErr := tx.QueryRow(
+			`SELECT txs_proto, user_sig, post_state_root, state_hash, warm_keys_json
+			 FROM diffs WHERE escrow_id = ? AND nonce = ?`,
+			escrowID, rec.Nonce,
+		).Scan(&haveTxs, &haveUserSig, &havePost, &haveHash, &haveWarm)
+		if scanErr != nil {
+			return fmt.Errorf("read existing diff after conflict: %w", scanErr)
+		}
+		if idErr := checkDiffReplayIdentityRaw(
+			escrowID, rec.Nonce,
+			txsProto, rec.UserSig, rec.PostStateRoot, rec.StateHash, warmJSON,
+			haveTxs, haveUserSig, havePost, haveHash, haveWarm,
+		); idErr != nil {
+			return idErr
+		}
 	}
 
 	for slotID, sig := range rec.Signatures {
@@ -989,8 +1009,19 @@ func (s *SQLite) DeleteSealedInferences(escrowID string) error {
 	if _, err := p.writeDB.Exec(`DELETE FROM sealed_inferences WHERE escrow_id = ?`, escrowID); err != nil {
 		return fmt.Errorf("delete sealed inferences: %w", err)
 	}
+	return nil
+}
+
+func (s *SQLite) ClearValidationObs(escrowID string) error {
+	p, _, err := s.poolFor(escrowID)
+	if err != nil {
+		return err
+	}
+	if _, err := p.writeDB.Exec(`DELETE FROM inference_validation_obs WHERE escrow_id = ?`, escrowID); err != nil {
+		return fmt.Errorf("clear inference validation obs: %w", err)
+	}
 	if _, err := p.writeDB.Exec(`DELETE FROM sealed_validation_obs WHERE escrow_id = ?`, escrowID); err != nil {
-		return fmt.Errorf("delete sealed validation obs: %w", err)
+		return fmt.Errorf("clear sealed validation obs: %w", err)
 	}
 	return nil
 }
@@ -1049,7 +1080,7 @@ func (s *SQLite) DrainInferenceValidationObs(escrowID string, inferenceID uint64
 		return fmt.Errorf("drain inference validation obs select: %w", err)
 	}
 	type row struct {
-		slotID              uint32
+		slotID               uint32
 		required, completed uint32
 	}
 	var live []row

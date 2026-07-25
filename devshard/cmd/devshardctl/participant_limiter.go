@@ -36,6 +36,7 @@ const (
 	// participantStrikesAfterQuarantine keeps recently recovered hosts one bad
 	// signal away from re-quarantine while they prove they can finish normally.
 	participantStrikesAfterQuarantine = participantFailureStrikeThreshold - 1
+	participantProbationSuccessesAfterQuarantine = participantStrikesAfterQuarantine
 	// participantStatusTransport is persisted in last_throttle_status when
 	// the last signal was a transport failure (not an HTTP 429/503).
 	participantStatusTransport = 0

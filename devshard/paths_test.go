@@ -1,6 +1,27 @@
 package devshard
 
-import "testing"
+import (
+	"testing"
+
+	"devshard/types"
+)
+
+func TestNormalizeRoutePrefixDefaultsToVersioned(t *testing.T) {
+	want := VersionedRoutePrefix(types.DevshardStateRootAndProtocolVersion)
+	if got := NormalizeRoutePrefix(""); got != want {
+		t.Fatalf("NormalizeRoutePrefix(\"\") = %q, want %q", got, want)
+	}
+}
+
+func TestResolveVersionedRoutePrefix(t *testing.T) {
+	if got := ResolveVersionedRoutePrefix("v2", ""); got != VersionedRoutePrefix("v2") {
+		t.Fatalf("ResolveVersionedRoutePrefix(\"v2\", \"\") = %q, want %q", got, VersionedRoutePrefix("v2"))
+	}
+	override := VersionedRoutePrefix("custom")
+	if got := ResolveVersionedRoutePrefix("v2", override); got != override {
+		t.Fatalf("ResolveVersionedRoutePrefix override = %q, want %q", got, override)
+	}
+}
 
 func TestVersionForRoutePrefix(t *testing.T) {
 	tests := []struct {
@@ -10,19 +31,24 @@ func TestVersionForRoutePrefix(t *testing.T) {
 		wantErr     bool
 	}{
 		{
-			name:        "empty route rejected",
+			name:        "default versioned",
 			routePrefix: "",
+			want:        types.DevshardStateRootAndProtocolVersion,
+		},
+		{
+			name:        "explicit versioned",
+			routePrefix: VersionedRoutePrefix("v2.1.0"),
+			want:        "v2.1.0",
+		},
+		{
+			name:        "legacy path rejected",
+			routePrefix: "/v1/devshard",
 			wantErr:     true,
 		},
 		{
 			name:        "old subnet host route rejected",
 			routePrefix: "/v1/subnet",
 			wantErr:     true,
-		},
-		{
-			name:        "versioned",
-			routePrefix: VersionedRoutePrefix("v2.1.0"),
-			want:        "v2.1.0",
 		},
 		{
 			name:        "invalid",
@@ -120,10 +146,16 @@ func TestSessionPayloadPath(t *testing.T) {
 		want        string
 	}{
 		{
-			name:        "versioned",
-			routePrefix: VersionedRoutePrefix("v1"),
+			name:        "default versioned",
+			routePrefix: "",
 			escrowID:    "1",
-			want:        "devshard/v1/sessions/1/payloads",
+			want:        "devshard/" + types.DevshardStateRootAndProtocolVersion + "/sessions/1/payloads",
+		},
+		{
+			name:        "explicit versioned",
+			routePrefix: VersionedRoutePrefix("v2"),
+			escrowID:    "1",
+			want:        "devshard/v2/sessions/1/payloads",
 		},
 	}
 
@@ -133,5 +165,29 @@ func TestSessionPayloadPath(t *testing.T) {
 				t.Fatalf("SessionPayloadPath(%q, %q) = %q, want %q", tt.routePrefix, tt.escrowID, got, tt.want)
 			}
 		})
+	}
+}
+
+func TestVersionlessObservabilityPaths(t *testing.T) {
+	if got := VersionlessSessionDiffsPath("42"); got != "/devshard/sessions/42/diffs" {
+		t.Fatalf("diffs = %q", got)
+	}
+	if got := VersionlessSessionMempoolPath("42"); got != "/devshard/sessions/42/mempool" {
+		t.Fatalf("mempool = %q", got)
+	}
+	if got := VersionlessSessionSignaturesPath("42"); got != "/devshard/sessions/42/signatures" {
+		t.Fatalf("signatures = %q", got)
+	}
+	if got := VersionlessStatsShardsPath(); got != "/devshard/stats/shards" {
+		t.Fatalf("stats = %q", got)
+	}
+	if got := VersionlessStatsShardDetailPath("42"); got != "/devshard/stats/shards/42" {
+		t.Fatalf("stats detail = %q", got)
+	}
+	if got := VersionlessMetricsPath(); got != "/devshard/metrics" {
+		t.Fatalf("metrics = %q", got)
+	}
+	if got := VersionlessHealthzPath(); got != "/devshard/healthz" {
+		t.Fatalf("healthz = %q", got)
 	}
 }

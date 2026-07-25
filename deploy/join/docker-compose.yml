@@ -87,9 +87,22 @@ services:
       - "127.0.0.1:9200:9200"
     restart: always
 
+  edge-api:
+    container_name: edge-api
+    image: ghcr.io/product-science/edge-api:0.2.14-devshard-v4
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=node:9090
+      - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+    depends_on:
+      - node
+    restart: always
+
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.14
+    image: ghcr.io/product-science/versiond:0.2.14-devshard-v4
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
@@ -141,7 +154,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.14
+    image: ghcr.io/product-science/proxy:0.2.14-devshard-v4
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -169,6 +182,8 @@ services:
       - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
       - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
     depends_on:
@@ -176,6 +191,9 @@ services:
         condition: service_started
       api:
         condition: service_started
+      edge-api:
+        condition: service_started
+        required: false
       versiond:
         condition: service_started
       explorer:
@@ -193,7 +211,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.14
+    image: ghcr.io/product-science/proxy-ssl:0.2.14-devshard-v4
     profiles:
       - ssl
     environment:

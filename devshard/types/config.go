@@ -11,8 +11,7 @@ const (
 	// Must match inference-chain DefaultDevshardAutoSealEveryNNonces.
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
-	// Used when the escrow row omits validation_rate (older chain / dapi).
-	DefaultValidationRate uint32 = 1000
+	DefaultValidationRate uint32 = 5000
 )
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
@@ -62,24 +61,14 @@ func DefaultSessionConfig(groupSize int) SessionConfig {
 // at create. Every field is "zero means use the compiled default" so callers can
 // populate only what the chain returned.
 type EscrowSessionFields struct {
-	TokenPrice                uint64
-	CreateDevshardFee         uint64
-	FeePerNonce               uint64
-	InferenceSealGraceNonces  uint32
-	InferenceSealGraceSeconds uint32
-	AutoSealEveryNNonces      uint32
-	ValidationRate            uint32
-}
-
-// LiveSessionBindParams carries governance fields read from the long-poll
-// snapshot once at session bind. Zero means "not provided" for that field.
-// ValidationRate is not applied here — it is lane A and comes only from the
-// escrow row via SessionConfigFromEscrow.
-type LiveSessionBindParams struct {
-	RefusalTimeout      int64
-	ExecutionTimeout    int64
-	ValidationRate      uint32 // retained for wire/cache observability; ignored at bind
-	VoteThresholdFactor uint32 // percent, e.g. 50 == 50%
+	TokenPrice                  uint64
+	CreateDevshardFee           uint64
+	FeePerNonce                 uint64
+	InferenceSealGraceNonces    uint32
+	InferenceSealGraceSeconds   uint32
+	AutoSealEveryNNonces        uint32
+	ValidationRate              uint32
+	VoteThresholdFactor         uint32 // percent; 0 == legacy groupSize/2
 }
 
 // ComputeVoteThreshold derives the slot-majority vote threshold from group
@@ -92,41 +81,8 @@ func ComputeVoteThreshold(groupSize int, factor uint32) uint32 {
 	return uint32(groupSize) * factor / 100
 }
 
-// ApplyLiveSessionParams overlays live governance fields onto cfg and applies
-// NormalizeSessionConfig. Call after SessionConfigFromEscrow at bind time.
-// ValidationRate is not overlaid — it is lane A and must already be set from
-// the escrow row (zero there means DefaultValidationRate).
-func ApplyLiveSessionParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
-	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
-	if live.RefusalTimeout > 0 {
-		cfg.RefusalTimeout = live.RefusalTimeout
-	}
-	if live.ExecutionTimeout > 0 {
-		cfg.ExecutionTimeout = live.ExecutionTimeout
-	}
-	return NormalizeSessionConfig(cfg, groupSize)
-}
-
-// ApplyChainSessionBindParams overlays lane-B fields from a chain Params query
-// at session bind. ValidationRate is not overlaid — it is lane A and must
-// already be set from the escrow row (zero there means DefaultValidationRate).
-// Older chain/dapi builds that omit validation_rate therefore keep the default
-// instead of disabling validation sampling.
-func ApplyChainSessionBindParams(cfg SessionConfig, groupSize int, live LiveSessionBindParams) SessionConfig {
-	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, live.VoteThresholdFactor)
-	if live.RefusalTimeout > 0 {
-		cfg.RefusalTimeout = live.RefusalTimeout
-	}
-	if live.ExecutionTimeout > 0 {
-		cfg.ExecutionTimeout = live.ExecutionTimeout
-	}
-	return NormalizeSessionConfig(cfg, groupSize)
-}
-
 // SessionConfigFromEscrow builds a SessionConfig by starting from the
 // compiled DefaultSessionConfig and overlaying any non-zero per-escrow values.
-// Live (long-poll) lane-B fields are layered on by the caller after this
-// returns, before NormalizeSessionConfig finalizes derived defaults.
 //
 // Zero fields fall through to defaults so legacy escrows (no snapshot)
 // keep today's behavior.
@@ -153,6 +109,7 @@ func SessionConfigFromEscrow(groupSize int, fields EscrowSessionFields) SessionC
 	if fields.ValidationRate > 0 {
 		cfg.ValidationRate = fields.ValidationRate
 	}
+	cfg.VoteThreshold = ComputeVoteThreshold(groupSize, fields.VoteThresholdFactor)
 	return NormalizeSessionConfig(cfg, groupSize)
 }
 

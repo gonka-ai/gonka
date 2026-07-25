@@ -2,8 +2,8 @@ package public
 
 import (
 	"bytes"
+	"common/logging"
 	"crypto/sha256"
-	"decentralized-api/logging"
 	"decentralized-api/poc"
 	"decentralized-api/poc/artifacts"
 	"encoding/base64"

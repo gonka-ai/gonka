@@ -135,44 +135,6 @@ func TestCanonicalPromptHash_StoredPayloadMatchesDirectHash(t *testing.T) {
 		"validator sha256(stored_canonical) must equal user CanonicalPromptHash(original)")
 }
 
-func TestJSONNumericFloat64(t *testing.T) {
-	cases := []struct {
-		name string
-		in   any
-		want float64
-		ok   bool
-	}{
-		{"float64_positive", 1.5, 1.5, true},
-		{"float64_zero", float64(0), 0, true},
-		{"float64_negative", -2.5, -2.5, true},
-		{"int_positive", 7, 7, true},
-		{"int_negative", -3, -3, true},
-		{"int64_positive", int64(42), 42, true},
-		{"uint64", uint64(99), 99, true},
-		{"json_Number_float", json.Number("3.14"), 3.14, true},
-		{"json_Number_integer", json.Number("42"), 42, true},
-		{"json_Number_negative", json.Number("-1.5"), -1.5, true},
-		{"json_Number_garbage", json.Number("abc"), 0, false},
-		{"string_float", "1.5", 1.5, true},
-		{"string_integer", "100", 100, true},
-		{"string_trimmed", "  2.5  ", 2.5, true},
-		{"string_negative", "-0.25", -0.25, true},
-		{"string_invalid", "abc", 0, false},
-		{"string_empty", "", 0, false},
-		{"bool", true, 0, false},
-		{"nil", nil, 0, false},
-		{"slice", []int{1, 2}, 0, false},
-		{"map", map[string]int{"x": 1}, 0, false},
-	}
-	for _, c := range cases {
-		t.Run(c.name, func(t *testing.T) {
-			got, ok := JSONNumericFloat64(c.in)
-			require.Equal(t, c.ok, ok, "ok mismatch")
-			require.Equal(t, c.want, got, "value mismatch")
-		})
-	}
-}
-
 func TestJSONNumericUint64(t *testing.T) {
 	cases := []struct {
 		name string

@@ -29,7 +29,7 @@ func newTestStateMachine(
 	opts ...state.SMOption,
 ) *state.StateMachine {
 	t.Helper()
-	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(types.EffectiveStateRootAndProtocolVersion)}, opts...)
+	opts = append([]state.SMOption{state.WithStateRootAndProtocolVersion(testutil.RuntimeTestVersion)}, opts...)
 	sm, err := state.NewStateMachine(escrowID, config, group, balance, userAddr, verifier, testutil.MustMemoryStore(t, escrowID, userAddr, config, group, balance), opts...)
 	require.NoError(t, err)
 	return sm
@@ -350,6 +350,58 @@ func TestRecoverSession_SignaturesRestored(t *testing.T) {
 	require.NoError(t, err)
 }
 
+// TestRecoverSession_SnapshotOnly_RestoresSignatures covers reboot after a
+// final-nonce snapshot flush: recovery skips diff replay, so signatures must
+// be reloaded from the store (otherwise settlement sees empty s.signatures).
+func TestRecoverSession_SnapshotOnly_RestoresSignatures(t *testing.T) {
+	store := newTestStore(t)
+	numHosts := 3
+	numInferences := 4
+
+	group, hosts, user := setupRecoverableSession(t, numHosts, numInferences, store)
+	finalNonce := uint64(numInferences)
+
+	// Ensure final-nonce signatures are in the store (Phase B / processResponse path).
+	stored, err := store.GetSignatures("escrow-1", finalNonce)
+	require.NoError(t, err)
+	if len(stored) == 0 {
+		for slot := uint32(0); slot < uint32(numHosts); slot++ {
+			require.NoError(t, store.AddSignature("escrow-1", finalNonce, slot, []byte{byte(slot + 1), 9, 9, 9}))
+		}
+		stored, err = store.GetSignatures("escrow-1", finalNonce)
+		require.NoError(t, err)
+	}
+	require.NotEmpty(t, stored, "precondition: store must have signatures at final nonce")
+
+	// Rebuild once to get a session at LatestNonce, mark every host caught up,
+	// then flush so the next recover takes the snapshot-only early-return path.
+	verifier := signing.NewSecp256k1Verifier()
+	live, _, err := RecoverSession(store, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, finalNonce, live.Nonce())
+	live.mu.Lock()
+	for i := 0; i < numHosts; i++ {
+		live.hostSyncNonce[i] = finalNonce
+	}
+	live.mu.Unlock()
+	require.NoError(t, live.FlushSnapshot())
+
+	spy := &replaySpyStore{Storage: store}
+	rec, _, err := RecoverSession(spy, user, verifier, "escrow-1", testutil.RuntimeTestVersion, group,
+		buildRecoveryClients(t, hosts, group, user))
+	require.NoError(t, err)
+	require.Equal(t, finalNonce, rec.Nonce())
+	require.Zero(t, spy.replayedRecords(finalNonce), "must use snapshot-only early return")
+	require.Empty(t, rec.Diffs(), "snapshot-only recovery keeps diffs empty when all hosts are caught up")
+
+	got := rec.Signatures()[finalNonce]
+	require.NotEmpty(t, got, "final-nonce signatures must be restored from store")
+	for slotID, want := range stored {
+		require.Equal(t, want, got[slotID], "slot %d", slotID)
+	}
+}
+
 // buildRecoveryClients creates a fresh set of in-process host clients for
 // recovery, mirroring setupRecoverableSession's client factory.
 func buildRecoveryClients(t *testing.T, hosts []*signing.Secp256k1Signer, group []types.SlotAssignment, user *signing.Secp256k1Signer) []HostClient {
@@ -531,19 +583,6 @@ func TestRecoverSession_LegacySnapshot_BackwardCompat(t *testing.T) {
 	require.NotNil(t, blob.State, "snapshot must be upgraded to wrapper format on legacy recovery")
 }
 
-func TestRecoveredProtocolVersion_ExplicitOnly(t *testing.T) {
-	pv, ok := recoveredProtocolVersion(string(types.ProtocolV1))
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	pv, ok = recoveredProtocolVersion(types.SessionVersionV1)
-	require.True(t, ok)
-	require.Equal(t, types.ProtocolV1, pv)
-
-	_, ok = recoveredProtocolVersion("")
-	require.False(t, ok)
-}
-
 // legacyMetaWrapper wraps a Storage and forces meta.Version to "" for a
 // specific escrow, simulating a corrupt or pre-versioning row. GetSessionMeta
 // on real backends rejects empty stored versions; this wrapper is only used
@@ -596,8 +635,8 @@ func TestRecoverSession_LegacyEmptyMetaVersion(t *testing.T) {
 
 	exported := recSM.ExportState()
 	require.NotNil(t, exported)
-	require.Equal(t, types.EffectiveStateRootAndProtocolVersion, exported.StateRootAndProtocolVersion,
-		"recovered state machine uses the binary's state-root protocol version")
+	require.Equal(t, testutil.RuntimeTestVersion, exported.StateRootAndProtocolVersion,
+		"recovered state machine uses the session protocol version")
 }
 
 // TestRecoverSession_EmptyVersionRejected requires a version from storage or caller.

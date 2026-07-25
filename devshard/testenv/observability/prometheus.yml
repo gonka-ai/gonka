@@ -1,0 +1,23 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: prometheus
+    static_configs:
+      - targets:
+          - prometheus:9090
+
+  - job_name: devshardctl
+    metrics_path: /metrics
+    static_configs:
+      - targets:
+          - devshardctl:8081
+
+  - job_name: devshardd
+    metrics_path: /v2/metrics
+    static_configs:
+      - targets:
+          - versiond-0:8080
+          - versiond-1:8080
+          - versiond-2:8080

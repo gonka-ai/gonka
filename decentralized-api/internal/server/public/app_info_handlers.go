@@ -1,7 +1,7 @@
 package public
 
 import (
-	"decentralized-api/logging"
+	"common/logging"
 	"net/http"
 	"sync"
 	"time"

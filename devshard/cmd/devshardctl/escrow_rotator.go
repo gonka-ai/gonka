@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"common/chain"
 	devshardpkg "devshard"
 	"devshard/types"
 )
@@ -24,12 +25,14 @@ const (
 
 	escrowWriteRetries      = 10
 	escrowWriteRetryBackoff = 200 * time.Millisecond
+
+	commitmentReconcileGrace = 9*time.Minute + 2*time.Minute
 )
 
 var (
 	errDevshardBusy                   = errors.New("devshard has active requests")
 	errDevshardAlreadyExists          = errors.New("devshard already exists")
-	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create suppressed (backoff)")
+	errEscrowRotationCreateSuppressed = errors.New("escrow rotation create already failed for this epoch")
 	gatewayCreateRotationEscrow       = (*Gateway).createRotationEscrow
 	gatewayCreateEscrowOnChain        = (*Gateway).createEscrowOnChain
 	gatewayCreateDepletionEscrow      func(*Gateway, context.Context, GatewaySettings, EscrowRotationModelSettings, string, uint64) (*CreateDevshardEscrowResult, error)
@@ -325,11 +328,15 @@ func (g *Gateway) createEscrowOnChain(ctx context.Context, settings GatewaySetti
 	if err != nil {
 		return nil, err
 	}
-	txClient, err := newGatewayRESTChainTxClient(settings, "", "", 0, 0)
+	txMgr, err := g.newChainTxManager(settings, "", "", 0, 0)
 	if err != nil {
 		return nil, err
 	}
-	return txClient.CreateDevshardEscrow(ctx, signer, model.Amount, model.ModelID, onPrepared)
+	result, err := txMgr.CreateDevshardEscrowWithIntent(ctx, signer, model.Amount, model.ModelID, onPrepared)
+	if err != nil {
+		return nil, err
+	}
+	return createEscrowResultFromTx(result), nil
 }
 
 func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySettings, model EscrowRotationModelSettings, role string, epoch uint64) (*CreateDevshardEscrowResult, error) {
@@ -342,7 +349,6 @@ func (g *Gateway) createRotationEscrow(ctx context.Context, settings GatewaySett
 		ProtocolVersion: protocolVersion,
 		BlockHeight:     g.currentBlockHeight(),
 	}
-	// Intent-first: persist the commitment (with the precomputed tx hash) before broadcast.
 	onPrepared := func(txHash string) error {
 		c := commitment
 		c.TxHash = txHash
@@ -411,6 +417,7 @@ func normalizedEscrowRotationModels(settings GatewaySettings) []EscrowRotationMo
 	models := make([]EscrowRotationModelSettings, 0, len(settings.EscrowRotation.Models))
 	for _, model := range settings.EscrowRotation.Models {
 		model.ModelID = strings.TrimSpace(model.ModelID)
+		model.PrivateKeyEnv = strings.TrimSpace(model.PrivateKeyEnv)
 		models = append(models, model)
 	}
 	return models
@@ -563,11 +570,6 @@ func (g *Gateway) clearCommitment(ctx context.Context, txHash string) {
 	}
 }
 
-// commitmentReconcileGrace is how long a not-found tx is given before the
-// commitment is cleared: the unordered-tx TTL plus margin for index lag. Until
-// it elapses, a 404 may be a pending/unindexed tx that still creates an escrow.
-const commitmentReconcileGrace = defaultUnorderedTxTTL + 2*time.Minute
-
 // reconcileCommitments recovers escrows from pending commitments via tx hash:
 // found → persist + clear; committed-failed → clear; not-found → clear only once
 // the tx can no longer land; chain error → keep for next pass.
@@ -581,7 +583,7 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 		return
 	}
 	for _, c := range commitments {
-		escrowID, found, err := gatewayQueryTxEscrowID(ctx, settings, c.TxHash)
+		escrowID, found, err := gatewayQueryTxEscrowID(ctx, g.chainClient, settings, c.TxHash)
 		if errors.Is(err, errTxNotFound) {
 			// Tx not on chain. An unordered tx can still land until its TTL
 			// elapses, so a fresh 404 is likely mempool/index lag — keep it.
@@ -607,7 +609,6 @@ func (g *Gateway) reconcileCommitments(ctx context.Context, settings GatewaySett
 			continue // keep commitment — retry next pass
 		}
 		g.clearCommitment(ctx, c.TxHash)
-		g.resetRotationBreaker(c.Model, c.Role)
 		log.Printf("escrow_commitment_recovered tx=%s escrow=%d model=%q role=%s", c.TxHash, escrowID, c.Model, c.Role)
 	}
 }
@@ -622,12 +623,15 @@ func commitmentTxMayStillLand(c GatewayEscrowCommitment) bool {
 	return time.Since(c.CreatedAt) <= commitmentReconcileGrace
 }
 
-func defaultQueryTxEscrowID(ctx context.Context, settings GatewaySettings, txHash string) (uint64, bool, error) {
-	txClient, err := newGatewayRESTChainTxClient(settings, "", "", 0, 0)
+func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings GatewaySettings, txHash string) (uint64, bool, error) {
+	if client == nil {
+		return 0, false, fmt.Errorf("chain gRPC client is not configured")
+	}
+	txMgr, err := newGatewayChainTxClient(client.Conn(), settings, "", "", 0, 0)
 	if err != nil {
 		return 0, false, err
 	}
-	return txClient.GetTxEscrowID(ctx, txHash)
+	return txMgr.GetTxEscrowID(ctx, txHash)
 }
 
 func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
@@ -636,7 +640,8 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	rt, ok := g.runtimes[id]
 	if ok && rt.escrowHasBackgroundWork() {
 		g.mu.Unlock()
-		log.Printf("devshard_settle_blocked escrow=%s reason=background_work active_requests=%d pending_race_cleanup=%d", id, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
+		log.Printf("devshard_settle_blocked escrow=%s reason=background_work active_requests=%d pending_race_cleanup=%d",
+			id, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil, errDevshardBusy
 	}
 	if ok {
@@ -664,7 +669,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		g.mu.Lock()
 		settings := g.settings
 		g.mu.Unlock()
-		built, buildErr := gatewayRuntimeBuilder(cfg, settings.ChainREST, settings.DefaultModel, g.perf)
+		built, buildErr := gatewayRuntimeBuilder(cfg, g.runtimeBuildDepsFromSettings(g.perf, settings))
 		if buildErr != nil {
 			log.Printf("devshard_settle_failed escrow=%s stage=rehydrate error=%q", id, buildErr.Error())
 			return nil, fmt.Errorf("rehydrate devshard %s for settlement: %w", id, buildErr)
@@ -697,9 +702,15 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_key_loaded escrow=%s settler=%s key_env=%q", id, signer.Address(), privateKeyEnv)
-	if rt.proxy.sm.Phase() != types.PhaseSettlement {
+	// Re-run Finalize when not yet in settlement, or when already settled but
+	// missing quorum (e.g. snapshot-only recovery left PhaseSettlement with
+	// empty in-memory signatures). Finalize's PhaseSettlement guard collects
+	// missing signatures and is a no-op when quorum is already present.
+	phase := rt.proxy.sm.Phase()
+	needFinalize := phase != types.PhaseSettlement || !rt.session.HasQuorumAt(rt.session.Nonce())
+	if needFinalize {
 		g.finalizeMu.Lock()
-		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle", id)
+		log.Printf("gateway_finalize_lock_acquired escrow=%s path=rotation_settle phase=%s", id, sessionPhaseLabel(phase))
 		if err := rt.session.Finalize(ctx); err != nil {
 			g.finalizeMu.Unlock()
 			log.Printf("devshard_settle_failed escrow=%s stage=finalize error=%q", id, err.Error())
@@ -708,7 +719,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		g.finalizeMu.Unlock()
 		log.Printf("devshard_settle_finalize_completed escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
 	} else {
-		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s", id, sessionPhaseLabel(rt.proxy.sm.Phase()))
+		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {
@@ -718,25 +729,30 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	g.mu.Lock()
 	settings := g.settings
 	g.mu.Unlock()
-	txClient, err := newGatewayRESTChainTxClient(settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
+	txMgr, err := g.newChainTxManager(settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
 	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=tx_client chain_rest=%q error=%q", id, settings.ChainREST, err.Error())
+		log.Printf("devshard_settle_failed escrow=%s stage=tx_client error=%q", id, err.Error())
 		return nil, err
 	}
-	log.Printf("devshard_settle_broadcast_start escrow=%s chain_rest=%q chain_id_override=%q gas_limit=%d fee_denom=%q fee_amount=%d",
-		id, settings.ChainREST, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
-	result, err := txClient.SettleDevshardEscrow(ctx, signer, settlement)
+	params, err := settleParamsFromJSON(settlement)
 	if err != nil {
-		log.Printf("devshard_settle_failed escrow=%s stage=broadcast chain_rest=%q error=%q", id, settings.ChainREST, err.Error())
+		log.Printf("devshard_settle_failed escrow=%s stage=settlement_encode error=%q", id, err.Error())
 		return nil, err
 	}
-	log.Printf("devshard_settle_submitted escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	log.Printf("devshard_settle_broadcast_start escrow=%s chain_id_override=%q gas_limit=%d fee_denom=%q fee_amount=%d",
+		id, req.ChainID, req.GasLimit, req.FeeDenom, req.FeeAmount)
+	result, err := txMgr.SettleDevshardEscrow(ctx, signer, params)
+	if err != nil {
+		log.Printf("devshard_settle_failed escrow=%s stage=broadcast_or_confirm error=%q", id, err.Error())
+		return nil, err
+	}
+	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
 	// A settled escrow is terminal: drop the resident runtime so its memory
-	// (state machine, inference map, SQLite handles) is released now rather
+	// (state machine, inference map, store handles) is released now rather
 	// than lingering until the next restart. Transient runtimes are closed by
 	// their own deferred cleanup above.
 	if wasResident {
 		g.retireRuntime(id, "settled")
 	}
-	return result, nil
+	return settleEscrowResultFromTx(result), nil
 }

@@ -18,7 +18,7 @@ The proposal registers a new entry in `DevshardEscrowParams.approved_versions`:
 
 The release publishes the `devshardd` binary as a Gonka release artifact. If the on-chain proposal is approved, `versiond` automatically downloads the binary, verifies the sha256 hash, and starts an additional `devshardd` process inside the existing `versiond` container.
 
-The new process is served under the `/devshard/v2` prefix. Existing v1 devshard traffic uses `/devshard/v1`. No mainnet restart or manual host steps are expected during this type of upgrade.
+The new process is served under the `/devshard/v2` prefix. Existing v1 devshard traffic continues on `/devshard/v1` and `/v1/devshard`. No mainnet restart or manual host steps are expected during this type of upgrade.
 
 ## Proposed Process
 

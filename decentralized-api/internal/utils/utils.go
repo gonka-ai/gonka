@@ -1,8 +1,8 @@
 package utils
 
 import (
-	"decentralized-api/completionapi"
-	"decentralized-api/utils"
+	"common/completionapi"
+	"common/utils"
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"

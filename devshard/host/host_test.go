@@ -174,6 +174,48 @@ func TestHost_AppliesDiffs(t *testing.T) {
 	require.Equal(t, uint64(1), resp.Nonce)
 }
 
+// countingAppendStore wraps Storage and counts AppendDiff calls.
+type countingAppendStore struct {
+	storage.Storage
+	appends atomic.Int32
+}
+
+func (s *countingAppendStore) AppendDiff(escrowID string, rec types.DiffRecord) error {
+	s.appends.Add(1)
+	return s.Storage.AppendDiff(escrowID, rec)
+}
+
+func TestHost_HandleRequest_AppliesDiffOnce(t *testing.T) {
+	// Regression: HandleRequest used to call applyAndPersist twice per diff.
+	// With a store, each new nonce must AppendDiff exactly once.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+
+	mem := storage.NewMemory()
+	require.NoError(t, mem.CreateSession(storage.CreateSessionParams{
+		EscrowID: "escrow-1", Version: testutil.RuntimeTestVersion,
+		Config: config, Group: group, InitialBalance: 10000, CreatorAddr: user.Address(),
+	}))
+	store := &countingAppendStore{Storage: mem}
+
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, store)
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithGrace(10), WithStorage(store), WithVerifier(verifier))
+	require.NoError(t, err)
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, nil)
+	resp, err := h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1, diff2}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(2), resp.Nonce)
+	require.Equal(t, uint64(2), h.LatestNonce())
+	require.Equal(t, int32(2), store.appends.Load(), "each diff must AppendDiff exactly once")
+}
+
 func TestHost_SignsState(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)
@@ -239,6 +281,49 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 	addr, err := verifier.RecoverAddress(data, resp.Receipt)
 	require.NoError(t, err)
 	require.Equal(t, hosts[1].Address(), addr)
+}
+
+func TestHost_StaleDiffDoesNotAuthorizeExecution(t *testing.T) {
+	// A skipped/stale diff must not authorize receipt or ML execution.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 1_000_000, 10)
+	ctx := context.Background()
+
+	balanceBefore := h.SnapshotState().Balance
+
+	// Advance to nonce 1 without creating inference 1.
+	advance := testutil.SignDiff(t, user, "escrow-1", 1, nil)
+	_, err := h.HandleRequest(ctx, HostRequest{Diffs: []types.Diff{advance}})
+	require.NoError(t, err)
+	require.Equal(t, uint64(1), h.SnapshotState().LatestNonce)
+	_, exists := h.SnapshotState().Inferences[1]
+	require.False(t, exists)
+
+	// Resend nonce 1 with an unapplied Start and nil UserSig.
+	stale := types.Diff{
+		Nonce: 1,
+		Txs: []*types.DevshardTx{
+			testutil.StartTx(1),
+		},
+		UserSig: nil,
+	}
+	resp, err := handleAndExecute(t, h, ctx, HostRequest{
+		Diffs:   []types.Diff{stale},
+		Nonce:   1,
+		Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp.Receipt, "stale unapplied start must not produce a receipt")
+	require.Nil(t, resp.ExecutionJob)
+	require.Nil(t, findMempoolFinish(resp.Mempool))
+	require.Nil(t, findMempoolConfirm(resp.Mempool))
+
+	after := h.SnapshotState()
+	require.Equal(t, uint64(1), after.LatestNonce)
+	_, exists = after.Inferences[1]
+	require.False(t, exists)
+	require.Equal(t, balanceBefore, after.Balance)
 }
 
 func TestHost_DisabledAvailabilityRejectsCompletionButAllowsFinalize(t *testing.T) {
@@ -602,6 +687,76 @@ func TestHost_PayloadMismatch_Params(t *testing.T) {
 		Diffs: []types.Diff{diff}, Nonce: 1, Payload: badPayload,
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+}
+
+func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	// Large prompt signed/reported with underreported input_length.
+	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":50}`)
+	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
+	require.NoError(t, err)
+	start := &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  promptHash,
+		Model:       "llama",
+		InputLength: 0,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &InferencePayload{
+			Prompt:      largePrompt,
+			Model:       "llama",
+			InputLength: 0,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	})
+	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+	require.Contains(t, err.Error(), "input_length")
+}
+
+func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	h := newTestHost(t, 1, hosts, user, 10000, 10)
+
+	// Body asks for 1000 tokens while signed reserve only covers 1.
+	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1000}`)
+	promptHash, err := devshard.CanonicalPromptHash(prompt)
+	require.NoError(t, err)
+	start := &types.MsgStartInference{
+		InferenceId: 1,
+		PromptHash:  promptHash,
+		Model:       "llama",
+		InputLength: uint64(len(prompt)),
+		MaxTokens:   1,
+		StartedAt:   1000,
+	}
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
+		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
+	})
+	_, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff},
+		Nonce: 1,
+		Payload: &InferencePayload{
+			Prompt:      prompt,
+			Model:       "llama",
+			InputLength: uint64(len(prompt)),
+			MaxTokens:   1,
+			StartedAt:   1000,
+		},
+	})
+	require.ErrorIs(t, err, types.ErrPayloadMismatch)
+	require.Contains(t, err.Error(), "max_tokens")
 }
 
 func TestHost_StoresOwnSignature(t *testing.T) {
@@ -1570,7 +1725,8 @@ func TestHost_SavesSnapshotOnSettlement(t *testing.T) {
 
 // newExecutorHostWithGossip wires host index 1 (executor for inference 1, since
 // 1 % 3 = 1) with a real *gossip.Gossip instance backed by recordingPeer so we
-// can observe the host's recovery-gossip dispatch.
+// can observe the host's recovery-gossip dispatch. Matches production HostManager:
+// no WithGrace (gossip recovery is not paired with signature withholding).
 func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer, *signing.Secp256k1Signer, *recordingPeer) {
 	t.Helper()
 	hosts := []*signing.Secp256k1Signer{
@@ -1586,9 +1742,7 @@ func newExecutorHostWithGossip(t *testing.T) (*Host, []*signing.Secp256k1Signer,
 	require.NoError(t, err)
 
 	engine := stub.NewInferenceEngine()
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil,
-		WithGrace(100),
-	)
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil)
 	require.NoError(t, err)
 
 	// Build gossip with the host's own mempool as MempoolSink; attach it
@@ -1710,4 +1864,58 @@ func TestHost_FinishGossipRecovery_PeerImportedFinishNotAmplified(t *testing.T) 
 	}
 
 	assertNoTxsCallFor(t, peer, 50*time.Millisecond)
+}
+
+// TestHost_FinishGossipRecovery_StillSignsWithoutWithGrace guards Step 4 of the
+// settlement auto-finish plan: stale-finish recovery gossip must not be paired
+// with WithGrace. The host still signs state even when its own Finish sits
+// stale in the mempool past the gossip grace window.
+func TestHost_FinishGossipRecovery_StillSignsWithoutWithGrace(t *testing.T) {
+	h, _, user, peer := newExecutorHostWithGossip(t)
+	require.Nil(t, h.checker, "production-like host must not install StalenessChecker")
+
+	groupSize := uint64(len(h.Group()))
+	grace := finishGossipGraceRotations * groupSize
+
+	diff1 := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff1}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+
+	for nonce := uint64(2); nonce <= 2+grace; nonce++ {
+		diff := testutil.SignDiff(t, user, "escrow-1", nonce, nil)
+		resp, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff}})
+		require.NoError(t, err)
+		require.NotNil(t, resp.StateSig, "nonce %d: host must sign without WithGrace", nonce)
+	}
+
+	calls := awaitTxsCall(t, peer, 2*time.Second)
+	require.NotEmpty(t, calls, "recovery gossip should still fire without WithGrace")
+}
+
+// TestHost_ProductionConfig_OmitsWithGrace mirrors HostManager.hostOpts: production
+// hosts omit WithGrace; settlement protection is in the state-machine drain.
+func TestHost_ProductionConfig_OmitsWithGrace(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	store := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 100_000)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100_000, user.Address(), verifier, store)
+	require.NoError(t, err)
+
+	h, err := NewHost(sm, hosts[0], stub.NewInferenceEngine(), "escrow-1", group, nil,
+		WithStorage(store),
+		WithEpochID(7),
+	)
+	require.NoError(t, err)
+	require.Nil(t, h.checker)
 }

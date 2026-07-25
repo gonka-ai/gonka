@@ -1,0 +1,30 @@
+{
+  "active_participants": {
+    "participants": [],
+    "created_at_block_height": "100",
+    "epoch_group_id": 1,
+    "poc_start_block_height": "90",
+    "effective_block_height": "100",
+    "created_at_epoch": 1
+  },
+  "addresses": [],
+  "active_participants_bytes": "0a000a0431323334",
+  "proof_ops": {
+    "ops": [
+      {
+        "type": "iavl:v",
+        "key": "a2V5",
+        "data": "dmFsdWU="
+      }
+    ]
+  },
+  "validators": [],
+  "block": {
+    "header": {
+      "height": "101",
+      "chain_id": "gonka-test",
+      "app_hash": "YXBwaGFzaA=="
+    }
+  },
+  "excluded_participants": []
+}

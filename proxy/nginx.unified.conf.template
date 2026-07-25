@@ -6,6 +6,7 @@ http {
     ${LIMIT_REQ_ZONE_GLOBAL}
     ${LIMIT_REQ_ZONE_EXEMPT}
     ${LIMIT_REQ_ZONE_GONKA_API}
+    ${LIMIT_REQ_ZONE_DEVSHARD_OBS}
     ${LIMIT_REQ_ZONE_METRICS}
     ${LIMIT_REQ_ZONE_CHAIN_RPC}
     ${LIMIT_REQ_ZONE_CHAIN_API}
@@ -100,9 +101,13 @@ http {
     # Grafana upstream - only included if GRAFANA_ENABLED is set
     ${GRAFANA_UPSTREAM}
 
+    ${EDGE_API_UPSTREAM}
+
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
     # Routes /devshard/<version>/* to versiond which forwards to the matching
-    # devshard binary.
+    # devshard binary. Observability paths under /devshard/<version>/… are
+    # rewritten internally to versionless /devshard/sessions|stats|metrics|healthz
+    # (see entrypoint); no client-visible redirect.
     ${VERSIOND_UPSTREAM}
 
     # Enable gzip compression

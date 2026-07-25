@@ -16,6 +16,7 @@ import (
 	"versioned/internal/oracle"
 	"versioned/internal/process"
 	"versioned/internal/proxy"
+	"versioned/internal/sessionversion"
 )
 
 func main() {
@@ -42,9 +43,22 @@ func run(ctx context.Context) error {
 	mgr := process.NewManager(cfg)
 	oracleClient := oracle.NewClient(cfg.OracleURL)
 
+	lookup, err := sessionversion.OpenFromEnv(ctx)
+	if err != nil {
+		slog.Warn("session version lookup unavailable; versionless obs will fan-out", "error", err)
+		lookup = nil
+	}
+	if lookup != nil {
+		defer lookup.Close()
+	}
+
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
-	mux.Handle("/", proxy.Handler(mgr.RouteTable()))
+	var proxyOpts []proxy.HandlerOption
+	if lookup != nil {
+		proxyOpts = append(proxyOpts, proxy.WithSessionVersionLookup(lookup))
+	}
+	mux.Handle("/", proxy.Handler(mgr.RouteTable(), proxyOpts...))
 
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{
@@ -101,11 +115,17 @@ func run(ctx context.Context) error {
 	<-ctx.Done()
 	slog.Info("shutting down")
 
-	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
-	defer shutdownCancel()
+	httpShutdownCtx, httpShutdownCancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer httpShutdownCancel()
+	if err := srv.Shutdown(httpShutdownCtx); err != nil {
+		slog.Warn("http server shutdown incomplete", "error", err)
+	}
 
-	srv.Shutdown(shutdownCtx)
-	mgr.Shutdown(shutdownCtx)
+	managerShutdownCtx, managerShutdownCancel := context.WithTimeout(context.Background(), mgr.ShutdownTimeout())
+	defer managerShutdownCancel()
+	if err := mgr.Shutdown(managerShutdownCtx); err != nil {
+		slog.Warn("manager shutdown incomplete", "error", err)
+	}
 
 	return nil
 }

@@ -16,12 +16,17 @@ gcp-prod-sim/
 decentralized-api/build/
 decentralized-api/dist/
 decentralized-api/responses/
+devshard/build/
 inference-chain/build/
 inference-chain/dist/
 /decentralized-api/decentralized-api
 /decentralized-api/devshardd
+/edge-api/build/edge-api
+devshard/build/
 /devshard/devshardctl
 /devshard/devshardd
+/devshard/cmd/devshardctl/devshardctl
+/devshard/cmd/devshardd/devshardd
 chain-venv/
 .inference/
 prod-genesis/
@@ -55,4 +60,4 @@ actionlint
 inference-chain/proto/github.com/
 inference-chain/proto/api/
 inference-chain/proto/**/module/*.pb.go
-/inference-chain/.docker-context/
+inference-chain/.docker-context

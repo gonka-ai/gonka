@@ -19,9 +19,8 @@ message DevshardEscrow {
   uint32 inference_seal_grace_nonces = 12;
   uint32 inference_seal_grace_seconds = 13;
   uint32 auto_seal_every_n_nonces = 14;
-  // Snapshotted from DevshardEscrowParams at create (lane A). Zero on legacy
-  // rows means "unset"; clients fall back to DefaultDevshardValidationRate.
   uint32 validation_rate = 15;
+  uint32 vote_threshold_factor = 16;
 }
 
 message DevshardHostEpochStats {

@@ -1,11 +1,11 @@
 package modelmanager
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"errors"
 	"fmt"

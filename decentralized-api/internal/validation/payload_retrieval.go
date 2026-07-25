@@ -2,166 +2,18 @@ package validation
 
 import (
 	"context"
-	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
-	"decentralized-api/observability"
-	"decentralized-api/payloadstorage"
-	apiutils "decentralized-api/utils"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"net/http"
-	"net/url"
-	"strconv"
 	"time"
 
-	devshardobservability "devshard/observability"
+	"common/logging"
+	commonvalidation "common/validation"
+	"decentralized-api/cosmosclient"
 
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
 )
-
-// ErrHashMismatch indicates executor served payload with valid signature but hash doesn't match on-chain commitment.
-// This should trigger immediate invalidation (no retry).
-var ErrHashMismatch = errors.New("hash mismatch: executor served wrong payload with valid signature")
-
-// ErrEpochStale indicates inference epoch is too old (currentEpoch >= inferenceEpoch + 2).
-// Validation is no longer useful - abort without invalidation.
-var ErrEpochStale = errors.New("inference epoch too old, validation no longer useful")
-
-// ErrPayloadGone indicates the executor returned 404 for a payload retrieval
-// request. The payload has been pruned (e.g. by per-inference Tier A pruning
-// after the inference reached a terminal status, or by epoch sweep). Callers
-// should propagate this sentinel so the validator skips silently rather than
-// surfacing the retrieval failure as a validation error.
-var ErrPayloadGone = errors.New("payload no longer available on executor")
-
-// HTTP client with timeout for payload retrieval
-var payloadRetrievalClient = &http.Client{
-	Timeout: 30 * time.Second,
-}
-
-// PayloadResponse matches the executor endpoint response.
-// Used by both chain validation and devshard validation paths.
-type PayloadResponse struct {
-	InferenceId       string `json:"inference_id"`
-	PromptPayload     []byte `json:"prompt_payload"`
-	ResponsePayload   []byte `json:"response_payload"`
-	ExecutorSignature string `json:"executor_signature"`
-}
-
-// FetchPayloadsHTTP makes a GET request to retrieve payloads from an executor.
-// This is a low-level helper that handles only the HTTP request/response.
-// Caller is responsible for URL construction, request signing, and response verification.
-func FetchPayloadsHTTP(
-	ctx context.Context,
-	client *http.Client,
-	requestUrl string,
-	validatorAddress string,
-	timestamp int64,
-	epochId uint64,
-	signature string,
-) (_ *PayloadResponse, retErr error) {
-	ctx, op := observability.Inference.StartPayloadFetch(ctx, requestUrl, validatorAddress, int64(epochId))
-	defer func() { op.FinishErr(&retErr) }()
-
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, requestUrl, nil)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create request: %w", err)
-	}
-
-	req.Header.Set(apiutils.XValidatorAddressHeader, validatorAddress)
-	req.Header.Set(apiutils.XTimestampHeader, strconv.FormatInt(timestamp, 10))
-	req.Header.Set(apiutils.XEpochIdHeader, strconv.FormatUint(epochId, 10))
-	req.Header.Set(apiutils.AuthorizationHeader, signature)
-	observability.Inference.InjectRequestContext(ctx, req.Header)
-	devshardobservability.AttachRequestID(req)
-
-	resp, err := client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound {
-		return nil, fmt.Errorf("payload not found on executor: %w", ErrPayloadGone)
-	}
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return nil, fmt.Errorf("executor returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var payloadResp PayloadResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payloadResp); err != nil {
-		return nil, fmt.Errorf("failed to decode response: %w", err)
-	}
-
-	return &payloadResp, nil
-}
-
-// VerifyPayloadHashes checks that the actual payloads match the expected hashes.
-// Returns ErrHashMismatch if any hash doesn't match.
-// Empty expected hashes are skipped (backward compatibility).
-func VerifyPayloadHashes(
-	promptPayload []byte,
-	responsePayload []byte,
-	expectedPromptHash string,
-	expectedResponseHash string,
-	inferenceId string,
-) error {
-	if expectedPromptHash != "" {
-		actualPromptHash, err := payloadstorage.ComputePromptHash(promptPayload)
-		if err != nil {
-			logging.Error("Failed to compute prompt hash, executor served malformed payload", types.Validation,
-				"inferenceId", inferenceId, "error", err)
-			return ErrHashMismatch
-		}
-		if actualPromptHash != expectedPromptHash {
-			logging.Error("Prompt hash mismatch, executor served wrong payload", types.Validation,
-				"inferenceId", inferenceId,
-				"expectedHash", expectedPromptHash,
-				"actualHash", actualPromptHash)
-			return ErrHashMismatch
-		}
-	}
-
-	if expectedResponseHash != "" {
-		actualResponseHash, err := payloadstorage.ComputeResponseHash(responsePayload)
-		if err != nil {
-			logging.Error("Failed to compute response hash, executor served malformed payload", types.Validation,
-				"inferenceId", inferenceId, "error", err)
-			return ErrHashMismatch
-		}
-		if actualResponseHash != expectedResponseHash {
-			logging.Error("Response hash mismatch, executor served wrong payload", types.Validation,
-				"inferenceId", inferenceId,
-				"expectedHash", expectedResponseHash,
-				"actualHash", actualResponseHash)
-			return ErrHashMismatch
-		}
-	}
-
-	return nil
-}
-
-// BuildPayloadRequestURL constructs the URL for payload retrieval.
-func BuildPayloadRequestURL(baseUrl string, path string, inferenceId string) (string, error) {
-	fullUrl, err := url.JoinPath(baseUrl, path)
-	if err != nil {
-		return "", fmt.Errorf("failed to build base URL: %w", err)
-	}
-	parsedUrl, err := url.Parse(fullUrl)
-	if err != nil {
-		return "", fmt.Errorf("failed to parse base URL: %w", err)
-	}
-	query := parsedUrl.Query()
-	query.Set("inference_id", inferenceId)
-	parsedUrl.RawQuery = query.Encode()
-	return parsedUrl.String(), nil
-}
 
 // RetrievePayloadsFromExecutor makes a single REST call to executor.
 // Returns payloads or error. No retry logic - handled by caller.
@@ -188,7 +40,7 @@ func RetrievePayloadsFromExecutor(
 	}
 
 	// Build request URL
-	requestUrl, err := BuildPayloadRequestURL(executorUrl, "v1/inference/payloads", inferenceId)
+	requestUrl, err := commonvalidation.BuildPayloadRequestURL(executorUrl, "v1/inference/payloads", inferenceId)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -202,7 +54,7 @@ func RetrievePayloadsFromExecutor(
 	}
 
 	// Fetch payloads
-	payloadResp, err := FetchPayloadsHTTP(ctx, payloadRetrievalClient, requestUrl, validatorAddress, timestamp, epochId, signature)
+	payloadResp, err := commonvalidation.FetchPayloadsHTTP(ctx, commonvalidation.PayloadRetrievalClient, requestUrl, validatorAddress, timestamp, epochId, signature)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -229,7 +81,7 @@ func RetrievePayloadsFromExecutor(
 	executorPubkeys = append(executorPubkeys, executorParticipant.Pubkey)
 
 	// Verify executor signature
-	if err := VerifyExecutorPayloadSignature(
+	if err := commonvalidation.VerifyExecutorPayloadSignature(
 		inferenceId,
 		payloadResp.PromptPayload,
 		payloadResp.ResponsePayload,
@@ -249,7 +101,7 @@ func RetrievePayloadsFromExecutor(
 	}
 
 	// Verify hashes
-	if err := VerifyPayloadHashes(
+	if err := commonvalidation.VerifyPayloadHashes(
 		payloadResp.PromptPayload,
 		payloadResp.ResponsePayload,
 		inference.Inference.PromptHash,
@@ -286,9 +138,7 @@ func retrievePayloadsFromChain(
 	return []byte(response.Inference.PromptPayload), []byte(response.Inference.ResponsePayload), nil
 }
 
-// signPayloadRequest signs the payload retrieval request with validator's key
-// Validator signs: inferenceId + epochId + timestamp + validatorAddress
-// EpochId binding prevents replay attacks within epoch windows
+// signPayloadRequest signs the payload retrieval request with validator's key.
 func signPayloadRequest(
 	inferenceId string,
 	timestamp int64,
@@ -315,33 +165,4 @@ func signPayloadRequest(
 	}
 
 	return calculations.Sign(accountSigner, components, calculations.Developer)
-}
-
-// VerifyExecutorPayloadSignature verifies the executor's signature on the payload response.
-// This provides non-repudiation: if executor serves wrong payload, validator has cryptographic proof.
-// Executor signs: inferenceId + promptHash + responseHash (with timestamp=0)
-func VerifyExecutorPayloadSignature(
-	inferenceId string,
-	promptPayload []byte,
-	responsePayload []byte,
-	signature string,
-	executorAddress string,
-	executorPubkeys []string,
-) error {
-	if signature == "" {
-		return fmt.Errorf("executor signature is empty")
-	}
-
-	promptHash := apiutils.GenerateSHA256HashBytes(promptPayload)
-	responseHash := apiutils.GenerateSHA256HashBytes(responsePayload)
-	payload := inferenceId + promptHash + responseHash
-
-	components := calculations.SignatureComponents{
-		Payload:         payload,
-		Timestamp:       0, // Executor uses timestamp=0 for non-repudiation signatures
-		TransferAddress: executorAddress,
-		ExecutorAddress: "",
-	}
-
-	return calculations.ValidateSignatureWithGrantees(components, calculations.Developer, executorPubkeys, signature)
 }

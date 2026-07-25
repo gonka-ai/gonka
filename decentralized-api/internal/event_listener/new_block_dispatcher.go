@@ -18,7 +18,7 @@ import (
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
+	"common/logging"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -80,6 +80,7 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	validator            *validation.InferenceValidator
 	epochGroupDataCache  *internal.EpochGroupDataCache
+	lastThresholdEpoch   uint64 // last epoch the per-model thresholds were refreshed for
 }
 
 // StatusResponse matches the structure expected by getStatus function
@@ -299,6 +300,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	d.offChainValidator.SyncArtifactStoreStage(*epochState)
 
 	if d.configManager != nil && !strings.HasPrefix(blockInfo.Hash, "hash-") {
+		d.refreshModelValidationThresholds(uint64(epochState.LatestEpoch.EpochIndex))
 		d.configManager.ApplyRuntimeConfigBlockIfChanged(
 			blockInfo.Height,
 			uint64(epochState.LatestEpoch.EpochIndex),
@@ -362,6 +364,32 @@ func (d *OnNewBlockDispatcher) queryNetworkInfo(ctx context.Context) (NetworkInf
 }
 
 // handlePhaseTransitions checks for and handles phase transitions and stage events
+// refreshModelValidationThresholds re-reads per-model validation thresholds from
+// EpochGroupData when the epoch advances and stores them in the ConfigManager so
+// they ride the runtime-config long-poll snapshot to devshardd. Skipped when
+// unchanged (same epoch) to avoid per-block chain queries.
+func (d *OnNewBlockDispatcher) refreshModelValidationThresholds(epoch uint64) {
+	if d.epochGroupDataCache == nil || epoch == d.lastThresholdEpoch {
+		return
+	}
+	thresholds, err := d.epochGroupDataCache.GetModelValidationThresholds(context.Background(), epoch)
+	if err != nil {
+		logging.Warn("Failed to refresh model validation thresholds; devshardd will fall back to chain", types.Config,
+			"epoch", epoch, "error", err)
+		return
+	}
+	mapped := make([]apiconfig.ModelValidationThreshold, len(thresholds))
+	for i, t := range thresholds {
+		mapped[i] = apiconfig.ModelValidationThreshold{
+			ModelID:  t.ModelID,
+			Value:    t.Value,
+			Exponent: t.Exponent,
+		}
+	}
+	d.configManager.SetModelValidationThresholds(mapped)
+	d.lastThresholdEpoch = epoch
+}
+
 func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
 	//To work for tests
 	if d.nodeBroker == nil {

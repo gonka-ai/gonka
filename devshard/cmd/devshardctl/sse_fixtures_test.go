@@ -419,15 +419,16 @@ func saveClassifyCaps() func() {
 
 func mkRaceWriterInflight(t testing.TB) *inflight {
 	t.Helper()
-	return &inflight{
+	inf := &inflight{
 		hostID:       "fixture-host",
 		escrowID:     "fixture-escrow",
 		nonce:        1,
 		done:         make(chan struct{}),
 		receiptCh:    make(chan struct{}),
 		firstTokenCh: make(chan struct{}),
-		receiptTime:  time.Now(),
 	}
+	inf.setReceiptAt(time.Now())
+	return inf
 }
 
 func mkRaceWriter(t testing.TB, inf *inflight) *raceWriter {

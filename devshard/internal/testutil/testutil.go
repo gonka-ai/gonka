@@ -13,7 +13,10 @@ import (
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
 
-var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"prompt"}]}`)
+// TestPrompt is exactly 100 bytes and includes max_tokens:50 so host workload
+// checks (input_length == len(prompt), body max_tokens <= declared) pass with
+// the StartTx defaults below.
+var TestPrompt = []byte(`{"model":"llama","messages":[{"role":"user","content":"xxxxxxxxxxxxxxxxxxxxxxxxx"}],"max_tokens":50}`)
 var TestPromptHash = mustCanonicalPromptHash(TestPrompt)
 
 func mustCanonicalPromptHash(prompt []byte) [32]byte {
@@ -61,13 +64,13 @@ const TestInferenceSealGraceSeconds uint32 = 1
 // and the production default ValidationRate.
 func DefaultConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:            60,
-		ExecutionTimeout:          1200,
-		TokenPrice:                1,
-		VoteThreshold:             uint32(numHosts) / 2,
-		ValidationRate:            types.DefaultValidationRate,
-		CreateDevshardFee:         0,
-		FeePerNonce:               0,
+		RefusalTimeout:             60,
+		ExecutionTimeout:           1200,
+		TokenPrice:                 1,
+		VoteThreshold:              uint32(numHosts) / 2,
+		ValidationRate:             5000,
+		CreateDevshardFee:          0,
+		FeePerNonce:                0,
 		InferenceSealGraceSeconds: TestInferenceSealGraceSeconds,
 	}, numHosts)
 }

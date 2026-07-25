@@ -6,7 +6,7 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/utils"
 	"errors"
 	"fmt"

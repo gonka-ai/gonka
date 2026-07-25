@@ -49,8 +49,8 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group(testRoutePrefix)
-	srv.Register(g)
+	g := e.Group("/devshard/v2")
+	registerServer(g, srv)
 
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
@@ -101,9 +101,7 @@ func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
 	}))
 	t.Cleanup(ts.Close)
 
-	cfg := DefaultClientConfig()
-	cfg.RoutePrefix = testRoutePrefix
-	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
 	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
 	require.Error(t, err)
 
@@ -123,7 +121,6 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cfg := DefaultClientConfig()
-	cfg.RoutePrefix = testRoutePrefix
 	cfg.InferenceTimeout = time.Second
 	cfg.QueryTimeout = 25 * time.Millisecond
 	client := NewHTTPClient(srv.URL, "escrow-1", signer, cfg)
@@ -321,7 +318,6 @@ func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
 		GossipTimeout:    DefaultClientConfig().GossipTimeout,
 		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
 		QueryTimeout:     DefaultClientConfig().QueryTimeout,
-		RoutePrefix:      testRoutePrefix,
 		ParticipantKey:   "shared-host",
 		Admission:        admission,
 	})

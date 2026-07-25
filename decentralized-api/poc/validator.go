@@ -13,10 +13,10 @@ import (
 	"sync"
 	"time"
 
+	"common/logging"
 	"decentralized-api/broker"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/poc/artifacts"
 

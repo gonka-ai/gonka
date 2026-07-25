@@ -7,7 +7,7 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"devshard/nodemanager/gen"
+	"common/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"

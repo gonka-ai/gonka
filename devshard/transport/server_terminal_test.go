@@ -19,7 +19,7 @@ func TestServer_Inference_OwnerErr_RecordsTerminal(t *testing.T) {
 	before := testutil.ToFloat64(counter)
 
 	body := []byte(`{}`)
-	rec := env.doPostAs(t, testSessionPath("/chat/completions"), body, env.hostSigner)
+	rec := env.doPostAs(t, "/devshard/v2/sessions/escrow-1/chat/completions", body, env.hostSigner)
 	if rec.Code != 403 {
 		t.Fatalf("status = %d, want 403", rec.Code)
 	}

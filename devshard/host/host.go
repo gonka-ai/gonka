@@ -13,6 +13,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/gossip"
 	"devshard/logging"
@@ -61,8 +63,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -96,11 +98,12 @@ type Host struct {
 	signer       signing.Signer
 	verifier     signing.Verifier
 	engine       devshard.InferenceEngine
-	validator    devshard.ValidationEngine // optional, nil = no validation
-	escrowID     string
-	epochID      uint64
-	slotIDs      map[uint32]bool
-	group        []types.SlotAssignment
+	validator          devshard.ValidationEngine // optional, nil = no validation
+	validationRecorder devshard.ValidationCompletionRecorder
+	escrowID           string
+	epochID            uint64
+	slotIDs            map[uint32]bool
+	group              []types.SlotAssignment
 	mempool      *Mempool
 	checker      AcceptanceChecker
 	store        storage.Storage // optional, nil = no persistence
@@ -126,13 +129,7 @@ type Host struct {
 	validationCloseOnce   sync.Once
 	validationClosed      bool
 
-	// Payload prune tracking. These fields are host-local off-state and must
-	// NOT participate in the state root or snapshot. The deterministic seal now
-	// lives in the state machine (autoSealLocked); the host only emits a
-	// payload-prune event for each inference that the applied diff sealed.
-	pruneSink   PruneEventSink
-	prunedFired map[uint64]struct{}       // inference IDs we've already emitted a prune for
-	maxNonce    devshard.MaxNonceProvider // nil = do not enforce
+	maxNonce devshard.MaxNonceProvider // nil = do not enforce
 }
 
 // SnapshotInterval controls how often hosts persist full state snapshots.
@@ -198,22 +195,21 @@ func NewHost(
 	}
 
 	h := &Host{
-		sm:                 sm,
-		signer:             signer,
-		engine:             engine,
-		escrowID:           escrowID,
-		slotIDs:            slotIDs,
-		group:              group,
-		mempool:            NewMempool(),
-		checker:            checker,
-		slotToAddr:         slotToAddr,
-		addrToSlots:        addrToSlots,
-		sortedSlots:        sortedSlots,
-		executing:          make(map[uint64]struct{}),
-		validating:         make(map[uint64]struct{}),
-		completedResponses: make(map[uint64][]byte),
-		ownSeed:            ownSeed,
-		prunedFired:        make(map[uint64]struct{}),
+		sm:                    sm,
+		signer:                signer,
+		engine:                engine,
+		escrowID:              escrowID,
+		slotIDs:               slotIDs,
+		group:                 group,
+		mempool:               NewMempool(),
+		checker:               checker,
+		slotToAddr:            slotToAddr,
+		addrToSlots:           addrToSlots,
+		sortedSlots:           sortedSlots,
+		executing:             make(map[uint64]struct{}),
+		validating:            make(map[uint64]struct{}),
+		completedResponses:    make(map[uint64][]byte),
+		ownSeed:               ownSeed,
 	}
 	for _, opt := range opts {
 		opt(h)
@@ -287,6 +283,12 @@ func WithValidator(v devshard.ValidationEngine) HostOption {
 	return func(h *Host) { h.validator = v }
 }
 
+// WithValidationCompletionRecorder sets the recorder called after MsgValidation
+// is successfully queued by the async validation path.
+func WithValidationCompletionRecorder(r devshard.ValidationCompletionRecorder) HostOption {
+	return func(h *Host) { h.validationRecorder = r }
+}
+
 func WithAvailabilityProvider(p devshard.AvailabilityProvider) HostOption {
 	return func(h *Host) { h.availability = p }
 }
@@ -300,6 +302,12 @@ func WithMaxNonceProvider(p devshard.MaxNonceProvider) HostOption {
 // WithGrace adds a StalenessChecker to the host's acceptance chain.
 // If a checker was already set via the constructor, both are composed
 // via CompositeChecker.
+//
+// Production HostManager intentionally does not use this option: settlement
+// protection comes from deterministic drain accounting (settleLiveRecordLocked),
+// not signature withholding. WithGrace must not be paired with finish-gossip
+// recovery — gossip is a best-effort convenience for the user to sequence a
+// real Finish at actual cost; withholding would freeze settlement instead.
 func WithGrace(grace uint64) HostOption {
 	return func(h *Host) {
 		sc := NewStalenessChecker(h.mempool, grace)
@@ -309,14 +317,6 @@ func WithGrace(grace uint64) HostOption {
 			h.checker = sc
 		}
 	}
-}
-
-// WithPruneSink installs a sink that receives InferencePruneEvent emissions
-// after each applied diff. Tier A (terminal-status) and Tier C (stale Finished)
-// events both flow through this hook. Default is nil, in which case the host
-// emits nothing and behaves exactly as before.
-func WithPruneSink(s PruneEventSink) HostOption {
-	return func(h *Host) { h.pruneSink = s }
 }
 
 func (h *Host) StateRoot() ([]byte, error) {
@@ -399,7 +399,7 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 			h.mu.Unlock()
 			return nil, err
 		}
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			h.mu.Unlock()
 			return nil, observability.Classify(observability.ReasonApplyErr, observability.WhereHostApplyDiff, err)
 		}
@@ -539,10 +539,16 @@ func (h *Host) chainMaxNonce() uint32 {
 	return h.maxNonce.MaxNonce()
 }
 
-// applyAndPersist applies a diff, removes included txs from mempool, and persists.
-// Captures WarmKeyDelta (new warm key bindings introduced by this diff) for replay.
-// Caller must hold h.mu.
-func (h *Host) applyAndPersist(diff types.Diff) error {
+// applyAndPersist persists then commits a contiguous next-nonce diff
+// (persist-first). Captures WarmKeyDelta from ValidateDiff for replay.
+//
+// Callers that may see HA catch-up gaps must use applyAndPersistReconciling.
+// AppendDiff is idempotent for identical already-durable rows (Phase 1), so a
+// stale standby that fast-forwarded then re-persists the tip does not fail.
+// Persist uses bounded retry; on exhaustion memory is unchanged (no eviction).
+//
+// Caller must hold h.mu. May unlock briefly during persist backoff.
+func (h *Host) applyAndPersist(ctx context.Context, diff types.Diff) error {
 	currentNonce := h.sm.LatestNonce()
 	if diff.Nonce <= currentNonce {
 		return nil
@@ -550,20 +556,27 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	if err := h.checkDiffNonceLimitLocked(diff); err != nil {
 		return err
 	}
+
 	phaseBefore := h.sm.Phase()
-	var warmBefore map[uint32]string
 	if h.store != nil {
-		warmBefore = h.sm.WarmKeys()
-	}
-	// Capture the live inference ids before applying so we can detect which
-	// ones the deterministic seal (state machine autoSeal) folds out of live
-	// state during this diff. Only needed when a prune sink is wired.
-	var liveBefore map[uint64]struct{}
-	if h.pruneSink != nil {
-		liveBefore = h.sm.LiveInferenceIDs()
-	}
-	root, err := h.sm.ApplyDiff(diff)
-	if err != nil {
+		warmBefore := h.sm.WarmKeys()
+		vd, err := h.sm.ValidateDiff(diff)
+		if err != nil {
+			return fmt.Errorf("validate diff nonce %d: %w", diff.Nonce, err)
+		}
+		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+		rec := types.DiffRecord{Diff: diff, StateHash: vd.Root, WarmKeyDelta: delta}
+		if err := h.persistDiffRetryLocked(ctx, rec); err != nil {
+			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
+		}
+		// CommitValidated installs the precomputed post-state (no second
+		// applyCore) and flushes the buffered obs writes. It returns false when
+		// another request committed this nonce while we unlocked for persist
+		// backoff, in which case the diff is already applied.
+		if !h.sm.CommitValidated(vd) {
+			return nil
+		}
+	} else if _, err := h.sm.ApplyDiff(diff); err != nil {
 		return fmt.Errorf("apply diff nonce %d: %w", diff.Nonce, err)
 	}
 	h.mempool.RemoveIncluded(diff.Txs)
@@ -578,25 +591,10 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 		}
 	}
 
-	// Emit one payload-prune event per inference this diff sealed. The seal is
-	// the deterministic state-machine fold; here we only react to it. Pruning
-	// is host-local off-state, carries no clock, and never mutates the root.
-	// Restricted to seals that happened in the Active phase (autoSeal); the
-	// settlement drain tears the whole session down and is handled elsewhere.
-	if h.pruneSink != nil && phaseBefore == types.PhaseActive {
-		h.emitSealPrunesLocked(liveBefore)
-	}
-
 	if h.store != nil {
-		warmAfter := h.sm.WarmKeys()
-		delta := types.ComputeWarmKeyDelta(warmBefore, warmAfter)
-		rec := types.DiffRecord{Diff: diff, StateHash: root, WarmKeyDelta: delta}
-		if err := h.store.AppendDiff(h.escrowID, rec); err != nil {
-			return observability.Classify(observability.ReasonPersistDiffErr, observability.WhereHostApplyDiff, fmt.Errorf("persist diff nonce %d: %w", diff.Nonce, err))
-		}
-		// Validation obs recording runs only after successful ApplyDiff. Correctness
-		// depends on ApplyDiff rejecting late/sealed validations before this runs;
-		// do not move recording before ApplyDiff.
+		// Validation obs recording runs only after the diff is committed.
+		// Correctness depends on the trial apply rejecting late/sealed
+		// validations before this runs; do not move recording before commit.
 		h.recordValidationObsFromAppliedDiff(diff.Txs)
 		phaseAfter := h.sm.Phase()
 		settledNow := phaseBefore != types.PhaseSettlement && phaseAfter == types.PhaseSettlement
@@ -606,40 +604,13 @@ func (h *Host) applyAndPersist(diff types.Diff) error {
 	return nil
 }
 
-// emitSealPrunesLocked dispatches one payload-prune event per inference that
-// the just-applied diff sealed: an id that was live before the apply and is no
-// longer live afterwards (the state machine's deterministic autoSeal folded it
-// into SealedAcc). Pruning is host-local off-state -- it carries no clock and
-// never mutates the root, so it cannot diverge state. The PayloadEpoch carries
-// h.epochID (the only epoch the executor stored under for this session, set via
-// WithEpochID). Dedupe via prunedFired tolerates the same id appearing twice.
-// Caller must hold h.mu and must have verified h.pruneSink is non-nil.
-func (h *Host) emitSealPrunesLocked(liveBefore map[uint64]struct{}) {
-	if len(liveBefore) == 0 {
-		return
-	}
-	for id := range liveBefore {
-		if _, stillLive := h.sm.GetInference(id); stillLive {
-			continue
-		}
-		if _, fired := h.prunedFired[id]; fired {
-			continue
-		}
-		// Label terminal vs stale-finished from the sealed snapshot (metrics
-		// only). Fall back to terminal if the obs lookup is unavailable.
-		reason := PruneReasonTerminal
-		if rec, ok := h.sm.LookupSealedInference(id); ok && !isTerminalStatus(rec.Status) {
-			reason = PruneReasonStaleFinished
-		}
-		h.prunedFired[id] = struct{}{}
-		h.pruneSink.OnInferencePrunable(InferencePruneEvent{
-			EscrowID:          h.escrowID,
-			InferenceID:       id,
-			Reason:            reason,
-			PayloadEpoch:      h.epochID,
-			PayloadEpochKnown: h.epochID != 0,
-		})
-	}
+// persistDiffRetryLocked retries AppendDiff with backoff, unlocking h.mu during
+// waits so other requests can proceed. On exhaustion returns ErrPersistExhausted
+// without mutating host memory (persist-first: ValidateDiff left the SM
+// unchanged, and the commit happens only after this returns nil). Caller must
+// hold h.mu; it is held again on return. See storage.AppendDiffWithRetry.
+func (h *Host) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
+	return storage.AppendDiffWithRetryUnlocked(ctx, h.store, h.escrowID, rec, h.mu.Lock, h.mu.Unlock)
 }
 
 // maybeSaveSnapshotLocked copies the current state when shouldSnapshot is true.
@@ -683,7 +654,7 @@ func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *
 func (h *Host) ApplyCatchUpDiffs(diffs []types.Diff) {
 	h.mu.Lock()
 	for _, diff := range diffs {
-		_ = h.applyAndPersist(diff)
+		_ = h.applyAndPersistReconciling(context.Background(), diff)
 	}
 	staleFinishes := h.collectStaleFinishesLocked()
 	h.mu.Unlock()
@@ -702,6 +673,10 @@ func (h *Host) broadcastTxsBestEffort(txs []*types.DevshardTx) {
 // collectStaleFinishesLocked returns locally proposed MsgFinishInference txs
 // that the user sequencer has not yet included in a diff after the grace
 // period. Caller must hold h.mu. See Mempool.StaleFinishes for the criterion.
+//
+// Recovery gossip (broadcastTxsBestEffort) is independent of WithGrace: it
+// gives the payer another path to pick up a Finish before settlement drain
+// auto-credits at reserved cost. It does not gate signing.
 func (h *Host) collectStaleFinishesLocked() []*types.DevshardTx {
 	if h.gsp == nil {
 		return nil
@@ -755,6 +730,10 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
 // Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
 // and cached response body if the inference already completed (reconnect case).
+//
+// Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
+// bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
+// skipped bytes must never authorize execution.
 // Caller must hold h.mu.
 func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
@@ -762,90 +741,101 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		outcome.reason = observability.ReasonPayloadAbsent
 		return nil, 0, nil, nil, outcome, nil
 	}
-	targetDiff := h.findDiff(req.Diffs, req.Nonce)
-	if targetDiff == nil {
+	if h.findDiff(req.Diffs, req.Nonce) == nil {
 		outcome.reason = observability.ReasonTargetDiffAbsent
 		return nil, 0, nil, nil, outcome, nil
 	}
 
-	for _, tx := range targetDiff.Txs {
-		start := tx.GetStartInference()
-		if start == nil {
-			continue
-		}
-		outcome.inferenceID = start.InferenceId
-		executorSlot := h.group[start.InferenceId%uint64(len(h.group))].SlotID
-		if !h.slotIDs[executorSlot] {
-			continue
-		}
-		outcome.receiptExpected = true
-
-		// Verify payload matches signed diff.
-		if err := VerifyPayload(req.Payload, start.PromptHash, start.Model, start.InputLength, start.MaxTokens, start.StartedAt); err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
-		}
-
-		// Sign executor receipt with wall-clock confirmed_at.
-		confirmedAt := time.Now().Unix()
-		receiptContent := &types.ExecutorReceiptContent{
-			InferenceId: start.InferenceId,
-			PromptHash:  start.PromptHash,
-			Model:       start.Model,
-			InputLength: start.InputLength,
-			MaxTokens:   start.MaxTokens,
-			StartedAt:   start.StartedAt,
-			EscrowId:    h.escrowID,
-			ConfirmedAt: confirmedAt,
-		}
-		receiptData, err := proto.Marshal(receiptContent)
-		if err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
-		}
-		sig, err := h.signer.Sign(receiptData)
-		if err != nil {
-			return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
-		}
-
-		// Add MsgConfirmStart to mempool so it survives HTTP failures.
-		// If the response is lost (e.g. 503), the next request delivers it via mempool.
-		h.mempool.Add(MempoolEntry{
-			Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-				InferenceId: start.InferenceId,
-				ExecutorSig: sig,
-				ConfirmedAt: confirmedAt,
-			}}},
-			ProposedAt: h.sm.LatestNonce(),
-		})
-
-		// Dedup: return receipt (proves executor alive) but skip execution.
-		if _, dup := h.executing[start.InferenceId]; dup {
-			outcome.reason = observability.ReasonAlreadyExecuting
-			return sig, confirmedAt, nil, nil, outcome, nil
-		}
-
-		// Already completed: execution finished, response cached.
-		if cached, ok := h.completedResponses[start.InferenceId]; ok {
-			outcome.reason = observability.ReasonCachedResponse
-			return sig, confirmedAt, nil, cached, outcome, nil
-		}
-
-		h.executing[start.InferenceId] = struct{}{}
-		outcome.executionExpected = true
-		outcome.reason = observability.ReasonOK
-
-		job := &devshard.ExecuteRequest{
-			InferenceID: start.InferenceId,
-			Model:       start.Model,
-			Prompt:      req.Payload.Prompt,
-			PromptHash:  start.PromptHash,
-			InputLength: start.InputLength,
-			MaxTokens:   start.MaxTokens,
-			EscrowID:    h.escrowID,
-			EpochID:     h.epochID,
-		}
-		return sig, confirmedAt, job, nil, outcome, nil
+	// Protocol: inference_id == nonce. Authorize only from applied state.
+	inferenceID := req.Nonce
+	outcome.inferenceID = inferenceID
+	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
+	if !h.slotIDs[executorSlot] {
+		// Here reason is default observability.ReasonNotExecutor
+		return nil, 0, nil, nil, outcome, nil
 	}
-	return nil, 0, nil, nil, outcome, nil
+	outcome.receiptExpected = true
+
+	// HandleRequest applies diffs before signReceipt. A newly applied
+	// MsgStartInference creates Inferences[id] in memory (and reserves cost).
+	// If the target diff was stale/skipped, ApplyDiff never ran and ok is false.
+	rec, ok := h.sm.GetInference(inferenceID)
+	if !ok {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil, 0, nil, nil, outcome, nil
+	}
+
+	// Verify payload against the applied record (not unverified request-diff fields).
+	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
+	}
+
+	_, alreadyExecuting := h.executing[inferenceID]
+	cached, hasCached := h.completedResponses[inferenceID]
+	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached {
+		outcome.reason = observability.ReasonInferenceDisappeared
+		return nil, 0, nil, nil, outcome, nil
+	}
+
+	// Sign executor receipt with wall-clock confirmed_at.
+	confirmedAt := time.Now().Unix()
+	receiptContent := &types.ExecutorReceiptContent{
+		InferenceId: inferenceID,
+		PromptHash:  rec.PromptHash,
+		Model:       rec.Model,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		StartedAt:   rec.StartedAt,
+		EscrowId:    h.escrowID,
+		ConfirmedAt: confirmedAt,
+	}
+	receiptData, err := proto.Marshal(receiptContent)
+	if err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptMarshalErr, observability.WhereHostSignReceipt, fmt.Errorf("marshal executor receipt: %w", err))
+	}
+	sig, err := h.signer.Sign(receiptData)
+	if err != nil {
+		return nil, 0, nil, nil, outcome, observability.Classify(observability.ReasonReceiptSignErr, observability.WhereHostSignReceipt, fmt.Errorf("sign executor receipt: %w", err))
+	}
+
+	// Add MsgConfirmStart to mempool so it survives HTTP failures.
+	// If the response is lost (e.g. 503), the next request delivers it via mempool.
+	h.mempool.Add(MempoolEntry{
+		Tx: &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: inferenceID,
+			ExecutorSig: sig,
+			ConfirmedAt: confirmedAt,
+		}}},
+		ProposedAt: h.sm.LatestNonce(),
+	})
+
+	// Dedup: return receipt (proves executor alive) but skip execution.
+	if alreadyExecuting {
+		outcome.reason = observability.ReasonAlreadyExecuting
+		return sig, confirmedAt, nil, nil, outcome, nil
+	}
+
+	// Already completed: execution finished, response cached.
+	if hasCached {
+		outcome.reason = observability.ReasonCachedResponse
+		return sig, confirmedAt, nil, cached, outcome, nil
+	}
+
+	h.executing[inferenceID] = struct{}{}
+	outcome.executionExpected = true
+	outcome.reason = observability.ReasonOK
+
+	job := &devshard.ExecuteRequest{
+		InferenceID: inferenceID,
+		Model:       rec.Model,
+		Prompt:      req.Payload.Prompt,
+		PromptHash:  rec.PromptHash,
+		InputLength: rec.InputLength,
+		MaxTokens:   rec.MaxTokens,
+		EscrowID:    h.escrowID,
+		EpochID:     h.epochID,
+	}
+	return sig, confirmedAt, job, nil, outcome, nil
 }
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
@@ -996,32 +986,10 @@ func (h *Host) collectValidationJobs() []validateJob {
 			mySlotCount := uint32(len(h.slotIDs))
 			executorSlotCount := h.sm.AddressSlotCount(executorAddr)
 			totalSlots := h.sm.TotalSlots()
-			rate := st.Config.ValidationRate
-			selected := state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, rate)
-			logging.Debug("validation_rate_sample",
-				"subsystem", "validation",
-				"escrow_id", h.escrowID,
-				"inference_id", infID,
-				"validation_rate", rate,
-				"validator_slot_count", mySlotCount,
-				"executor_slot_count", executorSlotCount,
-				"total_slots", totalSlots,
-				"selected", selected,
-			)
-			if !selected {
+			if !state.ShouldValidate(h.ownSeed, infID, mySlotCount, executorSlotCount, totalSlots, st.Config.ValidationRate) {
 				continue
 			}
 			flow = validationFlowShouldValidate
-		} else {
-			logging.Debug("validation_rate_sample",
-				"subsystem", "validation",
-				"escrow_id", h.escrowID,
-				"inference_id", infID,
-				"validation_rate", st.Config.ValidationRate,
-				"status", uint8(rec.Status),
-				"selected", true,
-				"flow", string(validationFlowChallenged),
-			)
 		}
 
 		validatorSlot := h.sortedSlots[0]
@@ -1068,31 +1036,14 @@ func (h *Host) enqueueValidation(job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		logging.Debug("validation_enqueued",
-			"subsystem", "validation",
-			"escrow_id", h.escrowID,
-			"inference_id", job.inferenceID,
-			"flow", string(job.flow),
-			"queued", false,
-			"reason", "no_queue",
-		)
 		return
 	}
 
 	select {
 	case q <- job:
-		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(q))
 		h.validationLifecycleMu.RUnlock()
-		logging.Debug("validation_enqueued",
-			"subsystem", "validation",
-			"escrow_id", h.escrowID,
-			"inference_id", job.inferenceID,
-			"validator_slot", job.validatorSlot,
-			"executor_address", job.executorAddress,
-			"flow", string(job.flow),
-			"queued", true,
-		)
+		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
+		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1100,14 +1051,6 @@ func (h *Host) enqueueValidation(job validateJob) {
 		h.mu.Unlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusError)
 		observability.IncValidationQueueDrop()
-		logging.Debug("validation_enqueued",
-			"subsystem", "validation",
-			"escrow_id", h.escrowID,
-			"inference_id", job.inferenceID,
-			"flow", string(job.flow),
-			"queued", false,
-			"reason", "queue_full",
-		)
 		observability.Log(context.Background(), observability.LevelWarn, "validation queue full; retry later", observability.StageValidationPicked, observability.WhereHostValidationQueue, h.escrowID, observability.ReasonQueueFull, nil, "inference_id", job.inferenceID)
 	}
 }
@@ -1138,32 +1081,18 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
-	st := h.sm.SnapshotState()
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
 		"inference_id", job.inferenceID,
 		"executor_address", job.executorAddress,
 		"validator_slot", job.validatorSlot,
-		"validation_flow", string(job.flow),
-		"validation_rate", st.Config.ValidationRate)
-	logging.Debug("validation_triggered",
-		"subsystem", "validation",
-		"escrow_id", h.escrowID,
-		"inference_id", job.inferenceID,
-		"validator_slot", job.validatorSlot,
-		"executor_address", job.executorAddress,
-		"flow", string(job.flow),
-		"validation_rate", st.Config.ValidationRate,
-	)
+		"validation_flow", string(job.flow))
 	defer func() {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		h.validationLifecycleMu.RLock()
-		q := h.validationQueue
-		if q != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(q))
+		if h.validationQueue != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
 		}
-		h.validationLifecycleMu.RUnlock()
 	}()
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{
@@ -1279,6 +1208,17 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		return
 	}
 
+	if h.validationRecorder != nil {
+		if err := h.validationRecorder.AllowValidationSubmit(ctx, h.escrowID, job.inferenceID); err != nil {
+			logging.Info("validation submit abandoned after lease check",
+				"subsystem", "host",
+				"inference_id", job.inferenceID,
+				"error", err,
+			)
+			return
+		}
+	}
+
 	h.mu.Lock()
 	h.mempool.Add(MempoolEntry{
 		Tx:         tx,
@@ -1299,6 +1239,16 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 	}
 	fields = append(fields, result.Details...)
 	observability.Log(ctx, observability.LevelInfo, "validation tx published", observability.StageVotePublished, observability.WhereHostPublishValidation, h.escrowID, observability.ReasonOK, nil, fields...)
+
+	if h.validationRecorder != nil {
+		if err := h.validationRecorder.MarkValidationSubmitted(ctx, h.escrowID, job.inferenceID); err != nil {
+			if errors.Is(err, devshard.ErrValidationLeaseAbandoned) {
+				logging.Info("mark validation submitted skipped: lease abandoned", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+			} else {
+				logging.Error("mark validation submitted failed", "subsystem", "host", "inference_id", job.inferenceID, "error", err)
+			}
+		}
+	}
 }
 
 func validationResultLabel(valid bool) string {
@@ -1377,7 +1327,7 @@ func (h *Host) ApplyRecoveredDiffs(ctx context.Context, diffs []types.Diff) ([]g
 	var sigs []gossip.GossipSig
 
 	for _, diff := range diffs {
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(ctx, diff); err != nil {
 			return sigs, fmt.Errorf("apply recovered diff nonce %d: %w", diff.Nonce, err)
 		}
 
@@ -1427,7 +1377,7 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 	defer h.mu.Unlock()
 
 	for _, diff := range diffs {
-		if err := h.applyAndPersist(diff); err != nil {
+		if err := h.applyAndPersistReconciling(context.Background(), diff); err != nil {
 			return nil, 0, nil, fmt.Errorf("apply challenge diff nonce %d: %w", diff.Nonce, err)
 		}
 	}
@@ -1558,7 +1508,8 @@ func (h *Host) signProposer(msg proto.Message) ([]byte, error) {
 	return h.signer.Sign(data)
 }
 
-// VerifyPayload checks that an InferencePayload matches the expected on-chain fields.
+// VerifyPayload checks that an InferencePayload matches the expected on-chain fields
+// and that those accounting fields cover the actual prompt workload.
 // Used by both executor (signReceipt) and verifier (VerifyRefusedTimeout) paths.
 func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLength, maxTokens uint64, startedAt int64) error {
 	hash, err := devshard.CanonicalPromptHash(p.Prompt)
@@ -1579,6 +1530,27 @@ func VerifyPayload(p *InferencePayload, promptHash []byte, model string, inputLe
 	}
 	if p.Model != model {
 		return fmt.Errorf("%w: model %s vs %s", types.ErrPayloadMismatch, p.Model, model)
+	}
+	if err := verifyPayloadWorkload(p); err != nil {
+		return err
+	}
+	return nil
+}
+
+// verifyPayloadWorkload binds signed accounting fields to the prompt body the
+// executor will run: input_length must equal prompt byte length (gateway
+// convention), and declared max_tokens must cover the effective body limit.
+func verifyPayloadWorkload(p *InferencePayload) error {
+	promptLen := uint64(len(p.Prompt))
+	if p.InputLength != promptLen {
+		return fmt.Errorf("%w: input_length %d != prompt bytes %d", types.ErrPayloadMismatch, p.InputLength, promptLen)
+	}
+	bodyMaxTokens, err := completionapi.EffectiveMaxTokens(p.Prompt)
+	if err != nil {
+		return fmt.Errorf("%w: prompt max_tokens: %v", types.ErrPayloadMismatch, err)
+	}
+	if bodyMaxTokens > p.MaxTokens {
+		return fmt.Errorf("%w: prompt max_tokens %d exceeds declared %d", types.ErrPayloadMismatch, bodyMaxTokens, p.MaxTokens)
 	}
 	return nil
 }

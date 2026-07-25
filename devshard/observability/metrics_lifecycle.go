@@ -11,8 +11,9 @@ import (
 )
 
 var (
-	registryOnce sync.Once
-	registry     *prometheus.Registry
+	registryOnce          sync.Once
+	runtimeCollectorsOnce sync.Once
+	registry              *prometheus.Registry
 
 	inflight               *prometheus.GaugeVec
 	requestTerminalTotal   *prometheus.CounterVec
@@ -31,7 +32,13 @@ var (
 	validationQueueDepth   *prometheus.GaugeVec
 	mempoolSize            *prometheus.GaugeVec
 	buildInfo              *prometheus.GaugeVec
+	lifecycleInflight      prometheus.Gauge
 	fallbackDivisor        *prometheus.GaugeVec
+
+	// HA diff/persist consistency (see docs/proposals/ha-diff-persist-consistency.md).
+	diffPersistRetryTotal     *prometheus.CounterVec
+	diffForkDetectedTotal     *prometheus.CounterVec
+	reconcileFastForwardTotal prometheus.Counter
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -125,10 +132,27 @@ func initRegistry() {
 		Name: "devshard_build_info",
 		Help: "Devshard build and runtime information.",
 	}, []string{"binary", "version", "commit"})
+	lifecycleInflight = prometheus.NewGauge(prometheus.GaugeOpts{
+		Name: "devshardd_lifecycle_inflight_requests",
+		Help: "In-flight HTTP requests counted by devshardd lifecycle drain state.",
+	})
 	fallbackDivisor = prometheus.NewGaugeVec(prometheus.GaugeOpts{
 		Name: "devshardd_fallback_divisor",
 		Help: "Fallback capacity divisor (max(active_escrows, 4)); source is load_map or floor4.",
 	}, []string{"source"})
+
+	diffPersistRetryTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_diff_persist_retry_total",
+		Help: "AppendDiff persist retries by result (success, exhausted, identical).",
+	}, []string{"result"})
+	diffForkDetectedTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_diff_fork_detected_total",
+		Help: "Conflicting diff payloads at the same (escrow, nonce).",
+	}, []string{"escrow_id"})
+	reconcileFastForwardTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "devshard_reconcile_fast_forward_total",
+		Help: "Times a host fast-forwarded in-memory state from durable diffs (HA stale standby).",
+	})
 
 	registry.MustRegister(
 		inflight,
@@ -148,7 +172,11 @@ func initRegistry() {
 		validationQueueDepth,
 		mempoolSize,
 		buildInfo,
+		lifecycleInflight,
 		fallbackDivisor,
+		diffPersistRetryTotal,
+		diffForkDetectedTotal,
+		reconcileFastForwardTotal,
 	)
 }
 
@@ -161,16 +189,23 @@ func initRegistry() {
 // source for /metrics.
 func RegisterRuntimeCollectors() {
 	ensureMetrics()
-	registry.MustRegister(
-		collectors.NewGoCollector(),
-		collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
-	)
+	runtimeCollectorsOnce.Do(func() {
+		registry.MustRegister(
+			collectors.NewGoCollector(),
+			collectors.NewProcessCollector(collectors.ProcessCollectorOpts{}),
+		)
+	})
 }
 
 func IncInflight(stage Stage) func() {
 	ensureMetrics()
 	inflight.WithLabelValues(string(stage)).Inc()
 	return func() { inflight.WithLabelValues(string(stage)).Dec() }
+}
+
+func SetLifecycleInflight(n int64) {
+	ensureMetrics()
+	lifecycleInflight.Set(float64(n))
 }
 
 func IncTerminal(terminal Terminal, reason Reason) {
@@ -262,8 +297,13 @@ func SetMempoolSize(escrowID string, size int) {
 	mempoolSize.WithLabelValues(escrowID).Set(float64(size))
 }
 
+// DeleteEscrowMetrics drops per-escrow gauge series so settled/evicted
+// sessions do not leave permanent labels in the /metrics registry.
 func DeleteEscrowMetrics(escrowID string) {
 	ensureMetrics()
+	if escrowID == "" {
+		return
+	}
 	validationQueueDepth.DeleteLabelValues(escrowID)
 	mempoolSize.DeleteLabelValues(escrowID)
 }
@@ -283,4 +323,30 @@ func SetFallbackDivisor(source string, divisor int) {
 	fallbackDivisor.Reset()
 	fallbackDivisor.WithLabelValues(source).Set(float64(divisor))
 }
+
+// IncDiffPersistRetry records one AppendDiff retry outcome (Phase 3).
+// result is typically "success", "exhausted", or "identical".
+func IncDiffPersistRetry(result string) {
+	ensureMetrics()
+	if result == "" {
+		result = "unknown"
+	}
+	diffPersistRetryTotal.WithLabelValues(result).Inc()
+}
+
+// IncDiffForkDetected records a same-nonce conflicting diff payload.
+func IncDiffForkDetected(escrowID string) {
+	ensureMetrics()
+	if escrowID == "" {
+		escrowID = "unknown"
+	}
+	diffForkDetectedTotal.WithLabelValues(escrowID).Inc()
+}
+
+// IncReconcileFastForward records a host RAM catch-up from durable diffs (Phase 2).
+func IncReconcileFastForward() {
+	ensureMetrics()
+	reconcileFastForwardTotal.Inc()
+}
+
 

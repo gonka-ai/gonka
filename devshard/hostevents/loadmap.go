@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"devshard/nodemanager/gen"
+	"common/nodemanager/gen"
 )
 
 // LoadMap stores the latest escrow_load snapshot from GetHostEvents.

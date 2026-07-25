@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"time"
 
-	"devshard/nodemanager/gen"
+	"common/nodemanager/gen"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"

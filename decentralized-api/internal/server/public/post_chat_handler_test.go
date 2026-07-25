@@ -61,14 +61,6 @@ func (m *mockPayloadStorage) PruneEpoch(ctx context.Context, epochId uint64) err
 	return nil
 }
 
-func (m *mockPayloadStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
-	if _, ok := m.stored[inferenceId]; !ok {
-		return payloadstorage.ErrNotFound
-	}
-	delete(m.stored, inferenceId)
-	return nil
-}
-
 func newTestPhaseTracker(epochIndex uint64) *chainphase.ChainPhaseTracker {
 	tracker := &chainphase.ChainPhaseTracker{}
 	epoch := types.Epoch{Index: epochIndex}

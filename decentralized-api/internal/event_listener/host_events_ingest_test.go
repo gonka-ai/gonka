@@ -4,26 +4,25 @@ import (
 	"errors"
 	"testing"
 
+	"common/nodemanager/gen"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/nodemanager"
-	"devshard/bridge"
-	"devshard/nodemanager/gen"
 
 	"github.com/stretchr/testify/require"
 )
 
 type stubEscrowQuerier struct {
-	info *bridge.EscrowInfo
+	info *EscrowSlotInfo
 	err  error
 }
 
-func (s *stubEscrowQuerier) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+func (s *stubEscrowQuerier) GetEscrow(escrowID string) (*EscrowSlotInfo, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
 	if s.info == nil {
-		return nil, bridge.ErrEscrowNotFound
+		return nil, ErrEscrowNotFound
 	}
 	out := *s.info
 	out.EscrowID = escrowID
@@ -80,7 +79,7 @@ func TestHostEvents_HasHandlerRecognizesNewEvents(t *testing.T) {
 }
 
 func TestHostEvents_EscrowCreated_AppendsWhenInSlots(t *testing.T) {
-	q := &stubEscrowQuerier{info: &bridge.EscrowInfo{Slots: []string{"host-a", "host-b"}}}
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"host-a", "host-b"}}}
 	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
 
 	err := (&DevshardEscrowCreatedEventHandler{}).Handle(txEvent(map[string][]string{
@@ -99,7 +98,7 @@ func TestHostEvents_EscrowCreated_AppendsWhenInSlots(t *testing.T) {
 }
 
 func TestHostEvents_EscrowCreated_SkipsWhenNotInSlots(t *testing.T) {
-	q := &stubEscrowQuerier{info: &bridge.EscrowInfo{Slots: []string{"other-host"}}}
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"other-host"}}}
 	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
 
 	err := (&DevshardEscrowCreatedEventHandler{}).Handle(txEvent(map[string][]string{
@@ -121,7 +120,7 @@ func TestHostEvents_EscrowCreated_AppendsOnQueryFailure(t *testing.T) {
 }
 
 func TestHostEvents_EscrowSettled_Appends(t *testing.T) {
-	q := &stubEscrowQuerier{info: &bridge.EscrowInfo{Slots: []string{"host-a"}}}
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"host-a"}}}
 	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
 
 	err := (&DevshardEscrowSettledEventHandler{}).Handle(txEvent(map[string][]string{
@@ -200,7 +199,7 @@ func TestHostEvents_UnhandledEventsStillDroppedByHasHandler(t *testing.T) {
 }
 
 func TestHostEvents_IngestVisibleViaGetHostEvents(t *testing.T) {
-	q := &stubEscrowQuerier{info: &bridge.EscrowInfo{Slots: []string{"host-a"}}}
+	q := &stubEscrowQuerier{info: &EscrowSlotInfo{Slots: []string{"host-a"}}}
 	el, ring := testListenerWithRing(t, WithEscrowQuerier(q), WithParticipantAddress("host-a"))
 	srv := nodemanager.NewServer(nil, nil, nil, nodemanager.WithHostEventRing(ring))
 

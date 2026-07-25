@@ -3,10 +3,9 @@
 BRANCH := $(shell git rev-parse --abbrev-ref HEAD)
 COMMIT := $(shell git log -1 --format='%H')
 
-include ../scripts/blst-portable.mk
-
 VERSION ?= $(shell git describe --always)
 DEVSHARD_VERSION ?= $(VERSION)
+BLST_PORTABLE ?= 0
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
 PLATFORM ?= linux/amd64
@@ -41,10 +40,8 @@ define DOCKER_BUILD
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
-		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg BLST_PORTABLE=$(BLST_PORTABLE) \
@@ -59,10 +56,8 @@ define DOCKER_BUILD_UPGRADE
 	@echo "    	platform: $(PLATFORM)"
 	@echo "    	GOOS: $(GOOS)"
 	@echo "    	GOARCH: $(GOARCH)"
-	@echo "    	BLST_PORTABLE: $(BLST_PORTABLE)"
 	@$(DOCKER_BUILD_UPGRADE_PREFIX) \
 		--platform $(PLATFORM) \
-		--build-arg LDFLAGS='$(ldflags)' \
 		--build-arg GOOS=$(GOOS) \
 		--build-arg GOARCH=$(GOARCH) \
 		--build-arg DEVSHARD_VERSION=$(DEVSHARD_VERSION) \
@@ -92,13 +87,11 @@ build: download-linux-deps
 		CGO_LDFLAGS="-L$(PWD)/build/deps -lwasmvm_muslc -lm" \
 		go build $(BUILD_FLAGS) -tags muslc -o ./build/dapi
 
-include ../scripts/blst-portable.mk
-
 build-docker:
 	rm -rf build/
-	$(eval PLATFORM=$(DOCKER_PLATFORM))
-	$(eval GOOS=$(DOCKER_GOOS))
-	$(eval GOARCH=$(DOCKER_GOARCH))
+	$(eval PLATFORM=linux/amd64)
+	$(eval GOOS=linux)
+	$(eval GOARCH=amd64)
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/api:$(VERSION))
 	$(DOCKER_BUILD)
@@ -152,6 +145,11 @@ download-linux-deps:
 generate:
 	@echo "--> running go generate"
 	@go generate ./...
+
+.PHONY: ci-testenv-nodemanager
+ci-testenv-nodemanager:
+	@echo "--> nodemanager + runtimeconfig delegation tests"
+	@go test ./nodemanager/... -count=1
 
 test:
 	@echo "--> running tests"

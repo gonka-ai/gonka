@@ -1,13 +1,13 @@
 package startup
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/seed"
 	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 	"math"
 	"math/bits"
 	"sync/atomic"

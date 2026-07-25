@@ -1,9 +1,9 @@
 package apiconfig
 
 import (
+	"common/logging"
 	"context"
 	"database/sql"
-	"decentralized-api/logging"
 	"encoding/base64"
 	"encoding/json"
 	"io"
@@ -26,19 +26,20 @@ import (
 )
 
 type ConfigManager struct {
-	currentConfig            Config
-	KoanProvider             koanf.Provider
-	WriterProvider           WriteCloserProvider
-	sqlDb                    SqlDatabase
-	mutex                    sync.RWMutex
-	runtimePublishMu         sync.RWMutex
-	runtimePublished         runtimePublishedMarker
-	runtimeParamsBlockHeight int64 // last published revision height; guarded by runtimePublishMu
-	runtimeConfigNotifier    *RuntimeConfigNotifier
-	epochOnChangeMu          sync.Mutex
-	epochOnChange            EpochChangeListener // optional; set once at process startup
-	configDumpPath           string
-	sqlitePath               string
+	currentConfig             Config
+	KoanProvider              koanf.Provider
+	WriterProvider            WriteCloserProvider
+	sqlDb                     SqlDatabase
+	modelValidationThresholds []ModelValidationThreshold
+	mutex                     sync.RWMutex
+	runtimePublishMu          sync.RWMutex
+	runtimePublished          runtimePublishedMarker
+	runtimeParamsBlockHeight  int64 // last published revision height; guarded by runtimePublishMu
+	runtimeConfigNotifier     *RuntimeConfigNotifier
+	epochOnChangeMu           sync.Mutex
+	epochOnChange             EpochChangeListener // optional; set once at process startup
+	configDumpPath            string
+	sqlitePath                string
 }
 
 type WriteCloserProvider interface {
@@ -340,15 +341,18 @@ func (cm *ConfigManager) liveRuntimeConfigContent() runtimeConfigContent {
 	dv := cm.currentConfig.DevshardVersionsCache
 	versions := make([]DevshardVersion, len(dv.Versions))
 	copy(versions, dv.Versions)
+	thresholds := make([]ModelValidationThreshold, len(cm.modelValidationThresholds))
+	copy(thresholds, cm.modelValidationThresholds)
 	return runtimeConfigContent{
-		LogprobsMode:            vp.LogprobsMode,
-		DevshardRequestsEnabled: dv.DevshardRequestsEnabled,
-		MaxNonce:                dv.MaxNonce,
-		ApprovedVersions:        versions,
-		RefusalTimeout:          dv.RefusalTimeout,
-		ExecutionTimeout:        dv.ExecutionTimeout,
-		ValidationRate:          dv.ValidationRate,
-		VoteThresholdFactor:     dv.VoteThresholdFactor,
+		LogprobsMode:              vp.LogprobsMode,
+		DevshardRequestsEnabled:   dv.DevshardRequestsEnabled,
+		MaxNonce:                  dv.MaxNonce,
+		ApprovedVersions:          versions,
+		RefusalTimeout:            dv.RefusalTimeout,
+		ExecutionTimeout:          dv.ExecutionTimeout,
+		ValidationRate:            dv.ValidationRate,
+		VoteThresholdFactor:       dv.VoteThresholdFactor,
+		ModelValidationThresholds: thresholds,
 	}
 }
 
@@ -446,6 +450,28 @@ func (cm *ConfigManager) GetDevshardVersions() DevshardVersionsCache {
 	cm.mutex.RLock()
 	defer cm.mutex.RUnlock()
 	return cm.currentConfig.DevshardVersionsCache
+}
+
+// SetModelValidationThresholds replaces the cached per-model validation
+// thresholds for the current epoch. Published on the next
+// ApplyRuntimeConfigBlockIfChanged when content changes.
+func (cm *ConfigManager) SetModelValidationThresholds(thresholds []ModelValidationThreshold) {
+	cm.mutex.Lock()
+	defer cm.mutex.Unlock()
+	cp := make([]ModelValidationThreshold, len(thresholds))
+	copy(cp, thresholds)
+	cm.modelValidationThresholds = cp
+	logging.Debug("runtime_config: model validation thresholds refreshed", types.Config,
+		"count", len(cp))
+}
+
+// GetModelValidationThresholds returns a copy of the cached per-model thresholds.
+func (cm *ConfigManager) GetModelValidationThresholds() []ModelValidationThreshold {
+	cm.mutex.RLock()
+	defer cm.mutex.RUnlock()
+	cp := make([]ModelValidationThreshold, len(cm.modelValidationThresholds))
+	copy(cp, cm.modelValidationThresholds)
+	return cp
 }
 
 func (cm *ConfigManager) GetHeight() int64 {

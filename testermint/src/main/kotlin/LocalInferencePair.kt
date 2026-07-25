@@ -14,6 +14,8 @@ import org.tinylog.kotlin.Logger
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
+import java.nio.file.Files
+import java.nio.file.Path
 import java.time.Duration
 import java.time.Instant
 import java.util.concurrent.ConcurrentHashMap
@@ -243,6 +245,9 @@ fun devshardProxyLogPath(escrowId: Long): String = "/tmp/devshardctl-proxy-$escr
 
 private val devshardctlLogFollowers = ConcurrentHashMap<Long, DevshardctlLogFollower>()
 
+/** Api container IDs that already have host-built `build/devshardctl` installed. */
+private val containersWithDevshardctl = ConcurrentHashMap.newKeySet<String>()
+
 /**
  * Tails devshardctl stdout/stderr from the api container into tinylog with source=devshardctl,
  * so per-test log files include user-side auto-seal diagnostics alongside dapi host logs.
@@ -299,6 +304,57 @@ private fun LocalInferencePair.apiContainerId(): String {
     val exec = api.executor
     require(exec is DockerExecutor) { "devshardctl log tail requires DockerExecutor-backed api" }
     return exec.containerId
+}
+
+/**
+ * Testermint runs `devshardctl` inside the api container (dynamic per-escrow processes).
+ * Production ships a separate gateway image; the api image no longer embeds the binary.
+ * Install the host-built Linux binary from `build/devshardctl` when missing.
+ */
+private fun LocalInferencePair.ensureDevshardctlInstalled() {
+    val containerId = apiContainerId()
+    if (containersWithDevshardctl.contains(containerId)) {
+        return
+    }
+    synchronized(containersWithDevshardctl) {
+        if (containersWithDevshardctl.contains(containerId)) {
+            return
+        }
+        val alreadyPresent = try {
+            api.executor.exec(
+                listOf("sh", "-c", "command -v devshardctl >/dev/null 2>&1 && echo OK"),
+                null,
+            ).any { it.trim() == "OK" }
+        } catch (_: Exception) {
+            false
+        }
+        if (alreadyPresent) {
+            containersWithDevshardctl.add(containerId)
+            return
+        }
+
+        val hostBinary = Path.of(getRepoRoot(), "build", "devshardctl")
+        check(Files.isRegularFile(hostBinary)) {
+            "devshardctl is not in the api container and missing at $hostBinary. " +
+                "Run: make devshardctl-build (produces a Linux binary for docker exec)"
+        }
+
+        val cp = ProcessBuilder(
+            "docker",
+            "cp",
+            hostBinary.toAbsolutePath().toString(),
+            "$containerId:/usr/local/bin/devshardctl",
+        )
+            .redirectErrorStream(true)
+            .start()
+        val cpOut = cp.inputStream.bufferedReader().use { it.readText() }
+        check(cp.waitFor() == 0) {
+            "docker cp build/devshardctl into $containerId failed: $cpOut"
+        }
+        api.executor.exec(listOf("chmod", "+x", "/usr/local/bin/devshardctl"), null)
+        containersWithDevshardctl.add(containerId)
+        Logger.info("Installed host build/devshardctl into api container {}", containerId)
+    }
 }
 
 private fun LocalInferencePair.attachDevshardctlLogs(escrowId: Long) {
@@ -396,31 +452,83 @@ data class LocalInferencePair(
         api.executor.exec(listOf("sh", "-c", "curl -sf '$url'"), null).joinToString("").trim()
     }
 
-    fun versiondBinaryPath(versionName: String, binaryName: String = "devshardd"): String =
-        "/opt/versiond/bin/$versionName/$binaryName"
+    private fun shQuote(value: String): String = "'" + value.replace("'", "'\"'\"'") + "'"
 
-    fun versiondInstallMetadataPath(versionName: String): String =
-        "/opt/versiond/bin/$versionName/install.json"
-
-    fun versiondBinaryExists(versionName: String, binaryName: String = "devshardd"): Boolean =
+    private fun versiondInstallDir(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String? =
         try {
-            execInVersiond(
-                listOf("sh", "-c", "test -x '${versiondBinaryPath(versionName, binaryName)}' && echo OK"),
-                null,
-            ).any { it.contains("OK") }
+            val base = "/opt/versiond/bin/$versionName"
+            val script = """
+                base=${shQuote(base)}
+                binary=${shQuote(binaryName)}
+                expected=${shQuote(archiveSha256 ?: "")}
+                if [ -n "${'$'}expected" ] && [ -x "${'$'}base/${'$'}expected/${'$'}binary" ]; then
+                  echo "${'$'}base/${'$'}expected"
+                  exit 0
+                fi
+                if [ -x "${'$'}base/${'$'}binary" ]; then
+                  echo "${'$'}base"
+                  exit 0
+                fi
+                best=""
+                best_mtime=-1
+                for dir in "${'$'}base"/*; do
+                  [ -d "${'$'}dir" ] || continue
+                  [ -x "${'$'}dir/${'$'}binary" ] || continue
+                  mtime=${'$'}(stat -c %Y "${'$'}dir/install.json" 2>/dev/null || echo 0)
+                  if [ "${'$'}mtime" -gt "${'$'}best_mtime" ]; then
+                    best="${'$'}dir"
+                    best_mtime="${'$'}mtime"
+                  fi
+                done
+                if [ -n "${'$'}best" ]; then
+                  echo "${'$'}best"
+                  exit 0
+                fi
+                exit 1
+            """.trimIndent()
+            execInVersiond(listOf("sh", "-c", script), null)
+                .firstOrNull()
+                ?.trim()
+                ?.takeIf { it.isNotBlank() }
         } catch (_: Exception) {
-            false
+            null
         }
 
-    fun readVersiondInstallMetadata(versionName: String): VersiondInstallMetadata? =
+    fun versiondBinaryPath(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): String =
+        "${versiondInstallDir(versionName, binaryName, archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}" +
+                "/$binaryName"
+
+    fun versiondInstallMetadataPath(versionName: String, archiveSha256: String? = null): String =
+        "${versiondInstallDir(versionName, archiveSha256 = archiveSha256) ?: "/opt/versiond/bin/$versionName/<sha>"}/install.json"
+
+    fun versiondBinaryExists(
+        versionName: String,
+        binaryName: String = "devshardd",
+        archiveSha256: String? = null,
+    ): Boolean =
+        versiondInstallDir(versionName, binaryName, archiveSha256) != null
+
+    fun readVersiondInstallMetadata(versionName: String, archiveSha256: String? = null): VersiondInstallMetadata? =
         try {
-            val installPath = versiondInstallMetadataPath(versionName)
-            val json = execInVersiond(
-                listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
-                null,
-            ).joinToString("").trim()
-            json.takeIf { it.isNotBlank() }?.let {
-                cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+            val installPath = versiondInstallMetadataPath(versionName, archiveSha256)
+            if (installPath.contains("<sha>")) {
+                null
+            } else {
+                val json = execInVersiond(
+                    listOf("sh", "-c", "test -f '$installPath' && cat '$installPath'"),
+                    null,
+                ).joinToString("").trim()
+                json.takeIf { it.isNotBlank() }?.let {
+                    cosmosJson.fromJson(it, VersiondInstallMetadata::class.java)
+                }
             }
         } catch (_: Exception) {
             null
@@ -987,14 +1095,20 @@ data class LocalInferencePair(
         escrowId: Long,
         keyName: String? = null,
         port: Int = 18080 + escrowId.toInt(),
-        routePrefix: String,
+        routePrefix: String? = null,
         debugLogging: Boolean = false,
         model: String = defaultModel,
     ): DevshardProxyHandle =
         wrapLog("startDevshardProxy", true) {
+            ensureDevshardctlInstalled()
             val privateKey = (if (keyName != null) node.getPrivateKey(keyName) else node.getColdPrivateKey()).trim()
             val stderrFile = devshardProxyLogPath(escrowId)
-            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$routePrefix'"
+            // Tests pin the route prefix explicitly so they are not coupled to
+            // devshardctl's release-default routing choice.
+            // FQN: IDE analysis of this large file sometimes fails to resolve the
+            // same-package top-level helper in DevshardVersiondTestConfig.kt.
+            val effectiveRoutePrefix = routePrefix ?: com.productscience.defaultDevshardRoutePrefix()
+            val routePrefixEnv = " DEVSHARD_ROUTE_PREFIX='$effectiveRoutePrefix'"
             val logLevelEnv = if (debugLogging) " DEVSHARD_LOG_LEVEL=debug" else ""
             val startCommand = listOf(
                 "sh", "-c",
@@ -1002,7 +1116,7 @@ data class LocalInferencePair(
                     " DEVSHARD_ESCROW_ID=$escrowId" +
                     " DEVSHARD_MODEL='$model'" +
                     " DEVSHARD_ADMIN_API_KEY='$devshardAdminApiKey'" +
-                    " DEVSHARD_CHAIN_REST=http://\$NODE_HOST:1317" +
+                    " DEVSHARD_CHAIN_GRPC=\$NODE_HOST:9090" +
                     " DEVSHARD_PORT=$port" +
                     // Lift gateway rate limits for tests. The dynamic cap is
                     // floor(weight * per10000 / 10000); tiny test PoC weight rounds it to 0.
@@ -1054,8 +1168,8 @@ data class LocalInferencePair(
     }
 
     // Returns every inference the gateway knows about, keyed by inference id.
-    // Uses /v1/debug/inferences (the full inference dump, split out of /v1/state)
-    // which carries status and votes per inference.
+    // Uses /v1/debug/inferences (full map including sealed records). /v1/state
+    // deliberately omits inferences so summary reads stay cheap.
     fun getDevshardProxyInferences(proxyUrl: String): Map<Long, DevshardInferencePayload> {
         val raw = api.executor.exec(listOf(
             "sh", "-c",
@@ -1064,7 +1178,7 @@ data class LocalInferencePair(
         val start = raw.indexOf('{')
         val end = raw.lastIndexOf('}')
         if (start < 0 || end < 0) {
-            error("state returned no JSON object. raw:\n$raw")
+            error("debug/inferences returned no JSON object. raw:\n$raw")
         }
         val root = JsonParser.parseString(raw.substring(start, end + 1)).asJsonObject
         val inferences = root.getAsJsonObject("inferences") ?: return emptyMap()

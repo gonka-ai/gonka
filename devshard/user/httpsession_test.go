@@ -26,12 +26,11 @@ func TestNewHTTPSessionOpenStorageFailureStaysFatal(t *testing.T) {
 	require.NoError(t, os.WriteFile(storagePath, []byte("occupied"), 0o600))
 
 	_, _, err := NewHTTPSession(HTTPSessionConfig{
-		PrivateKeyHex:   privateKeyHex,
-		EscrowID:        "escrow-1",
-		Bridge:          httpsessionTestBridge{},
-		StoragePath:     storagePath,
-		RoutePrefix:     "/devshard/dev",
-		ProtocolVersion: types.ProtocolV1,
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "escrow-1",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   "/devshard/dev",
 	})
 
 	// Open errors are environmental (permissions, disk), not proven history
@@ -59,12 +58,11 @@ func TestNewHTTPSessionClassifiesNonSequentialReplay(t *testing.T) {
 	require.NoError(t, store.Close())
 
 	_, _, err = NewHTTPSession(HTTPSessionConfig{
-		PrivateKeyHex:   privateKeyHex,
-		EscrowID:        "escrow-1",
-		Bridge:          httpsessionTestBridge{},
-		StoragePath:     storagePath,
-		RoutePrefix:     "/devshard/dev",
-		ProtocolVersion: types.ProtocolV1,
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "escrow-1",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   "/devshard/dev",
 	})
 
 	require.ErrorIs(t, err, ErrLocalStateUnrecoverable)
@@ -96,12 +94,11 @@ func TestNewHTTPSessionUsesRouteVersionForStorageBind(t *testing.T) {
 	storagePath := t.TempDir() + "/session.db"
 
 	session, _, err := NewHTTPSession(HTTPSessionConfig{
-		PrivateKeyHex:   privateKeyHex,
-		EscrowID:        "escrow-1",
-		Bridge:          httpsessionTestBridge{},
-		StoragePath:     storagePath,
-		RoutePrefix:     " /devshard/dev/ ",
-		ProtocolVersion: types.ProtocolV1,
+		PrivateKeyHex: privateKeyHex,
+		EscrowID:      "escrow-1",
+		Bridge:        httpsessionTestBridge{},
+		StoragePath:   storagePath,
+		RoutePrefix:   " /devshard/dev/ ",
 	})
 	require.NoError(t, err)
 	require.NoError(t, session.Close())

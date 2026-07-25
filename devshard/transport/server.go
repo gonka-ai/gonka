@@ -100,26 +100,6 @@ func (s *Server) Host() *host.Host { return s.host }
 // SetGossip attaches a gossip instance for nonce/tx propagation.
 func (s *Server) SetGossip(g *gossip.Gossip) { s.gossip = g }
 
-// Register mounts all devshard routes on the given echo group.
-// Public callers should mount this under a versioned /devshard/{version} prefix.
-func (s *Server) Register(g *echo.Group) {
-	g.Use(observability.EchoMiddleware())
-	g.Use(observability.RequestIDMiddleware)
-	g.Use(s.AuthMiddleware)
-	if s.rateLimit != nil {
-		g.Use(rateLimitMiddleware(s.rateLimit, true))
-	}
-	g.POST("/sessions/:id/chat/completions", s.HandleInference)
-	g.POST("/sessions/:id/verify-timeout", s.HandleVerifyTimeout)
-	g.POST("/sessions/:id/challenge-receipt", s.HandleChallengeReceipt)
-	g.POST("/sessions/:id/gossip/nonce", s.HandleGossipNonce)
-	g.POST("/sessions/:id/gossip/txs", s.HandleGossipTxs)
-	// TODO: GET endpoints are intentionally unauthenticated for now.
-	// Before production, restrict these to group members or add read-only auth.
-	g.GET("/sessions/:id/diffs", s.HandleGetDiffs)
-	g.GET("/sessions/:id/mempool", s.HandleGetMempool)
-	g.GET("/sessions/:id/signatures", s.HandleGetSignatures)
-}
 
 // writeJSON serializes v with goccy/go-json, bypassing Echo's default serializer.
 // TODO: set a custom echo.JSONSerializer using goccy/go-json on all Echo instances
@@ -135,11 +115,6 @@ func writeJSON(c echo.Context, code int, v interface{}) error {
 // startHandlerSpan opens an internal observability span for a handler and
 // updates the request context so downstream code inherits it. The returned
 // closure must be deferred to finalize the span with the handler's error.
-//
-// Auto-attached attributes: http.method, http.route, http.target, peer.address,
-// http.request_content_length, devshard.handler. The returned *Operation can
-// be used by the caller to attach handler-specific attributes (e.g. nonce,
-// inference id, sender) once they are parsed from the request.
 func startHandlerSpan(c echo.Context, handlerName string) (*observability.Operation, func(*error)) {
 	sessionID := c.Param("id")
 	req := c.Request()
@@ -199,6 +174,54 @@ func (s *Server) isOwner(addr string) bool {
 	return s.userAddr != "" && addr == s.userAddr
 }
 
+// IsOwner reports whether addr is the escrow creator for this session.
+func (s *Server) IsOwner(addr string) bool {
+	return s.isOwner(addr)
+}
+
+// InjectAuthContext stores a verified sender and request body for handlers
+// that run after auth (HandleInference, gossip, etc.).
+func InjectAuthContext(c echo.Context, sender string, body []byte) {
+	c.Set(contextKeySender, sender)
+	c.Set("body", body)
+}
+
+// VerifyPOSTAuth reads signature headers and body, verifies the signature, and
+// returns the recovered sender address and body. It does not check group
+// membership or ownership — callers enforce that.
+func VerifyPOSTAuth(c echo.Context, verifier signing.Verifier, escrowID string, maxBodySize int64) (string, []byte, error) {
+	sigHex := c.Request().Header.Get(HeaderSignature)
+	tsStr := c.Request().Header.Get(HeaderTimestamp)
+	if sigHex == "" || tsStr == "" {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "missing auth headers")
+	}
+
+	sig, err := hex.DecodeString(sigHex)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid signature hex")
+	}
+
+	ts, err := strconv.ParseInt(tsStr, 10, 64)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, "invalid timestamp")
+	}
+
+	if maxBodySize > 0 {
+		c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, maxBodySize)
+	}
+
+	body, err := io.ReadAll(c.Request().Body)
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusBadRequest, "read body")
+	}
+
+	addr, err := VerifyRequest(verifier, escrowID, body, sig, ts, time.Now().Unix())
+	if err != nil {
+		return "", nil, echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+	}
+	return addr, body, nil
+}
+
 // isGroupMember returns true if addr is a group member or a warm key for
 // a group member (excludes the user). Gossip is host-to-host; the user has
 // no business gossiping.
@@ -209,55 +232,25 @@ func (s *Server) isGroupMember(addr string) bool {
 	return s.isWarmKeySender(addr)
 }
 
-// authMiddleware reads the body, verifies the signature, checks group membership,
+// AuthMiddleware reads the body, verifies the signature, checks group membership,
 // and stores the sender address in the echo context.
-// GET requests skip auth intentionally for now.
+// GET requests skip auth intentionally (public observability).
 func (s *Server) AuthMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		if c.Request().Method == http.MethodGet {
-			// GET endpoints skip auth for now -- see Register comment.
 			return next(c)
 		}
 
-		sigHex := c.Request().Header.Get(HeaderSignature)
-		tsStr := c.Request().Header.Get(HeaderTimestamp)
-		if sigHex == "" || tsStr == "" {
-			return echo.NewHTTPError(http.StatusUnauthorized, "missing auth headers")
-		}
-
-		sig, err := hex.DecodeString(sigHex)
+		addr, body, err := VerifyPOSTAuth(c, s.verifier, s.host.EscrowID(), s.maxBodySize)
 		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid signature hex")
-		}
-
-		ts, err := strconv.ParseInt(tsStr, 10, 64)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, "invalid timestamp")
-		}
-
-		// Cap body size before reading.
-		if s.maxBodySize > 0 {
-			c.Request().Body = http.MaxBytesReader(c.Response(), c.Request().Body, s.maxBodySize)
-		}
-
-		body, err := io.ReadAll(c.Request().Body)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusBadRequest, "read body")
-		}
-
-		now := time.Now().Unix()
-		addr, err := VerifyRequest(s.verifier, s.host.EscrowID(), body, sig, ts, now)
-		if err != nil {
-			return echo.NewHTTPError(http.StatusUnauthorized, err.Error())
+			return err
 		}
 
 		if !s.isAllowedSender(addr) {
 			return echo.NewHTTPError(http.StatusForbidden, "sender not in group")
 		}
 
-		// Store sender and re-inject body for handler.
-		c.Set(contextKeySender, addr)
-		c.Set("body", body)
+		InjectAuthContext(c, addr, body)
 		return next(c)
 	}
 }
@@ -462,6 +455,16 @@ func writeSSEEvent(w http.ResponseWriter, data interface{}) error {
 		f.Flush()
 	}
 	return nil
+}
+
+// RateLimitMiddleware returns per-sender rate limiting for authenticated POST
+// routes. Install inside AuthMiddleware so contextKeySender is set first.
+// recordChatTerminal=true records throttled chat requests as terminal outcomes.
+func (s *Server) RateLimitMiddleware(recordChatTerminal bool) echo.MiddlewareFunc {
+	if s.rateLimit == nil {
+		return func(next echo.HandlerFunc) echo.HandlerFunc { return next }
+	}
+	return rateLimitMiddleware(s.rateLimit, recordChatTerminal)
 }
 
 // SetPeerClients sets the executor clients for timeout verification.

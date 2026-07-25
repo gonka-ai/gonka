@@ -2,13 +2,12 @@ package public
 
 import (
 	"bytes"
+	"common/completionapi"
+	"common/logging"
+	"common/utils"
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/completionapi"
-	"decentralized-api/logging"
-	"decentralized-api/observability"
-	"decentralized-api/utils"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -27,7 +26,6 @@ import (
 	"github.com/productscience/inference/cmd/inferenced/cmd"
 	"github.com/productscience/inference/x/inference/calculations"
 	"github.com/productscience/inference/x/inference/types"
-	"go.opentelemetry.io/otel/attribute"
 	"google.golang.org/grpc/codes"
 	grpcstatus "google.golang.org/grpc/status"
 )
@@ -212,24 +210,12 @@ func cleanupExpiredAuthKeys(currentBlockHeight int64) {
 }
 
 func (s *Server) postChat(ctx echo.Context) error {
-	req := ctx.Request()
-	traceCtx := observability.Inference.ExtractRequestContext(req.Context(), req.Header)
-	traceCtx, op := observability.Inference.StartRequest(traceCtx, req.Method)
-	ctx.SetRequest(req.WithContext(traceCtx))
-	var err error
-	defer func() {
-		observability.Inference.SetHTTPStatus(op, ctx.Response().Status)
-		op.FinishErr(&err)
-	}()
-
 	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
 		logging.Error("Unable to read request body", types.Server, "error", err)
-		err = mapRequestBodyReadError(err)
-		return err
+		return mapRequestBodyReadError(err)
 	}
-	err = s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)), chatCompletionsPath, body)
-	return err
+	return s.postChatWithBody(ctx, body, utils.GenerateSHA256Hash(string(body)), chatCompletionsPath, body)
 }
 
 func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash string, forwardPath string, forwardBody []byte) error {
@@ -266,16 +252,10 @@ func (s *Server) postChatWithBody(ctx echo.Context, body []byte, signBodyHash st
 		return echo.NewHTTPError(http.StatusBadRequest, err.Error())
 	}
 
-	rootOp := observability.OperationFromContext(ctx.Request().Context())
-	observability.Inference.SetRequestIdentity(rootOp, chatRequest.OpenAiRequest.Model, chatRequest.RequesterAddress)
-	observability.Inference.SetTransferAddress(rootOp, chatRequest.TransferAddress)
-
 	if chatRequest.InferenceId != "" && chatRequest.Seed != "" {
-		observability.Inference.MarkExecutorPath(rootOp, chatRequest.InferenceId)
 		logging.Info("Executor request", types.Inferences, "inferenceId", chatRequest.InferenceId, "seed", chatRequest.Seed)
 		return s.handleExecutorRequest(ctx, chatRequest, ctx.Response().Writer)
 	} else {
-		observability.Inference.MarkTransferPath(rootOp)
 		logging.Info("Transfer request", types.Inferences, "requesterAddress", chatRequest.RequesterAddress)
 		return s.handleTransferRequest(ctx, chatRequest)
 	}
@@ -324,12 +304,7 @@ func (s *Server) enforceTransferAgentAccess(taAddress string) error {
 	return echo.NewHTTPError(http.StatusForbidden, "Transfer Agent not allowed")
 }
 
-func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (err error) {
-	traceCtx, op := observability.Inference.StartTransfer(
-		ctx.Request().Context(), request.OpenAiRequest.Model, request.RequesterAddress)
-	ctx.SetRequest(ctx.Request().WithContext(traceCtx))
-	defer func() { op.FinishErr(&err) }()
-
+func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) error {
 	logging.Debug("GET inference requester for transfer", types.Inferences, "address", request.RequesterAddress)
 
 	queryClient := s.recorder.NewInferenceQueryClient()
@@ -459,19 +434,12 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (
 	req.Header.Set(utils.XPromptHashHeader, inferenceRequest.PromptHash)
 	req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
 
-	forwardCtx, forwardOp := observability.Inference.StartForwardExecutor(
-		ctx.Request().Context(), request.OpenAiRequest.Model, executor.Address, executor.Url)
-	req = req.WithContext(forwardCtx)
-	observability.Inference.InjectRequestContext(forwardCtx, req.Header)
-
 	resp, err := s.httpClient.Do(req)
 	if err != nil {
-		forwardOp.Finish(err)
 		logging.Error("Failed to make http request to executor", types.Inferences, "error", err, "url", executor.Url)
 		return err
 	}
 	defer resp.Body.Close()
-	forwardOp.Finish(nil, attributeStatus(resp.StatusCode))
 
 	if unsupportedErr := mapExecutorCompletionsUnsupportedError(forwardPath, resp.StatusCode); unsupportedErr != nil {
 		logging.Warn("Selected executor does not support completions endpoint", types.Inferences,
@@ -482,7 +450,7 @@ func (s *Server) handleTransferRequest(ctx echo.Context, request *ChatRequest) (
 	logging.Info("Proxying response from executor", types.Inferences,
 		"inferenceId", inferenceUUID,
 		"executor", executor.Address)
-	_ = ProxyResponse(resp, ctx.Response().Writer, false, nil, inferenceUUID)
+	ProxyResponse(resp, ctx.Response().Writer, false, nil, inferenceUUID)
 	return nil
 }
 
@@ -592,15 +560,9 @@ func (s *Server) extractPromptTextFromRequest(requestBytes []byte) (string, erro
 	return promptText, nil
 }
 
-func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w http.ResponseWriter) (err error) {
+func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w http.ResponseWriter) error {
 	inferenceId := request.InferenceId
-	traceCtx, op := observability.Inference.StartExecutor(
-		ctx.Request().Context(), inferenceId, request.OpenAiRequest.Model,
-		request.RequesterAddress, request.TransferAddress)
-	ctx.SetRequest(ctx.Request().WithContext(traceCtx))
-	defer func() { op.FinishErr(&err) }()
-
-	err = s.validateFullRequest(ctx, request)
+	err := s.validateFullRequest(ctx, request)
 	if err != nil {
 		return err
 	}
@@ -642,33 +604,25 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 	if inferencePath == "" {
 		inferencePath = chatCompletionsPath
 	}
-	mlCtx, mlOp := observability.Inference.StartMLNodeExecution(
-		ctx.Request().Context(), inferenceId, request.OpenAiRequest.Model)
 	resp, err := broker.DoWithLockedNodeHTTPRetry(s.nodeBroker, request.OpenAiRequest.Model, nil, 3, func(node *broker.Node) (*http.Response, *broker.ActionError) {
 		logging.Info("Successfully acquired node lock for inference", types.Inferences,
 			"inferenceId", inferenceId, "node", node.Id, "url", node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()))
 
-		nodeURL := node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion())
-		observability.Inference.SetMLNodeTarget(mlOp, node.Id, nodeURL)
-
-		completionsUrl, err := url.JoinPath(nodeURL, inferencePath)
+		completionsUrl, err := url.JoinPath(node.InferenceUrlWithVersion(s.configManager.GetCurrentNodeVersion()), inferencePath)
 		if err != nil {
 			return nil, broker.NewApplicationActionError(err)
 		}
-		req, reqErr := http.NewRequestWithContext(mlCtx, http.MethodPost, completionsUrl, bytes.NewReader(modifiedRequestBody.NewBody))
-		if reqErr != nil {
-			return nil, broker.NewApplicationActionError(reqErr)
-		}
-		req.Header.Set("Content-Type", request.Request.Header.Get("Content-Type"))
-		observability.Inference.InjectRequestContext(mlCtx, req.Header)
-		resp, postErr := s.httpClient.Do(req)
+		resp, postErr := s.httpClient.Post(
+			completionsUrl,
+			request.Request.Header.Get("Content-Type"),
+			bytes.NewReader(modifiedRequestBody.NewBody),
+		)
 		if postErr != nil {
 			return nil, broker.NewTransportActionError(postErr)
 		}
 		return resp, nil
 	})
 	if err != nil {
-		mlOp.Finish(err)
 		logging.Error("Failed to get response from inference node", types.Inferences,
 			"inferenceId", inferenceId, "error", err)
 		if errors.Is(err, broker.ErrNoNodesAvailable) {
@@ -676,7 +630,6 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 		}
 		return err
 	}
-	mlOp.Finish(nil, attributeStatus(resp.StatusCode))
 	defer resp.Body.Close()
 
 	logging.Info("Node lock released for inference", types.Inferences, "inferenceId", inferenceId)
@@ -696,7 +649,7 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 				logging.Error("Failed to create synthetic response payload", types.Inferences, "inferenceId", inferenceId)
 				return echo.NewHTTPError(http.StatusInternalServerError, "Failed to create synthetic response payload")
 			}
-			if txErr := s.sendInferenceTransaction(ctx.Request().Context(), request.InferenceId, synthetic, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
+			if txErr := s.sendInferenceTransaction(request.InferenceId, synthetic, request.Body, s.recorder.GetAccountAddress(), request, promptPayload); txErr != nil {
 				logging.Error("Failed to record FinishInference after inference node payload error", types.Inferences,
 					"inferenceId", inferenceId, "error", txErr)
 			}
@@ -707,29 +660,17 @@ func (s *Server) handleExecutorRequest(ctx echo.Context, request *ChatRequest, w
 
 	responseProcessor := completionapi.NewExecutorResponseProcessor(request.InferenceId)
 	logging.Debug("Proxying response from inference node", types.Inferences, "inferenceId", request.InferenceId)
-	proxyErr := ProxyResponse(resp, w, true, responseProcessor, inferenceId)
+	ProxyResponse(resp, w, true, responseProcessor, inferenceId)
 
 	logging.Debug("Processing response from inference node", types.Inferences, "inferenceId", request.InferenceId)
 	completionResponse, err := responseProcessor.GetResponse()
 
-	if completionResponse == nil && err == nil {
-		err = errors.New("completion response is nil")
-	}
-	if err != nil {
-		if proxyErr != nil {
-			logging.Error("Failed to proxy response before a parseable completion was available", types.Inferences,
-				"inferenceId", inferenceId, "proxyError", proxyErr, "parseError", err)
-			return fmt.Errorf("proxy response failed before parseable completion: %w", proxyErr)
-		}
+	if err != nil || completionResponse == nil {
 		logging.Error("Failed to parse response data into CompletionResponse", types.Inferences, "error", err)
-		return fmt.Errorf("parse completion response: %w", err)
-	}
-	if proxyErr != nil {
-		logging.Warn("Recording FinishInference from partial proxied response", types.Inferences,
-			"inferenceId", inferenceId, "error", proxyErr)
+		return err
 	}
 
-	err = s.sendInferenceTransaction(ctx.Request().Context(), request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload)
+	err = s.sendInferenceTransaction(request.InferenceId, completionResponse, request.Body, s.recorder.GetAccountAddress(), request, promptPayload)
 	if err != nil {
 		// Not http.Error, because we assume we already returned everything to the client during proxyResponse execution
 		logging.Error("Failed to send inference transaction", types.Inferences, "error", err)
@@ -870,10 +811,7 @@ func (s *Server) calculateSignature(payload string, timestamp int64, transferAdd
 	return signature, nil
 }
 
-func (s *Server) sendInferenceTransaction(ctx context.Context, inferenceId string, response completionapi.CompletionResponse, requestBody []byte, executorAddress string, request *ChatRequest, promptPayload []byte) (err error) {
-	_, op := observability.Inference.StartFinishSubmission(ctx, inferenceId, executorAddress, request.OpenAiRequest.Model)
-	defer func() { op.FinishErr(&err) }()
-
+func (s *Server) sendInferenceTransaction(inferenceId string, response completionapi.CompletionResponse, requestBody []byte, executorAddress string, request *ChatRequest, promptPayload []byte) error {
 	responseHash, err := response.GetHash()
 	if err != nil || responseHash == "" {
 		logging.Error("Failed to get responseHash from response", types.Inferences, "error", err)
@@ -920,10 +858,6 @@ func (s *Server) sendInferenceTransaction(ctx context.Context, inferenceId strin
 		return err
 	}
 
-	observability.Inference.SetModel(op, model)
-	observability.Inference.SetResponseHash(op, responseHash)
-	op.RecordTokens(usage.PromptTokens, usage.CompletionTokens)
-
 	if s.recorder != nil {
 		promptHash := utils.GenerateSHA256HashBytes(promptPayload)
 		originalPromptHash := utils.GenerateSHA256HashBytes(request.Body)
@@ -963,12 +897,6 @@ func (s *Server) sendInferenceTransaction(ctx context.Context, inferenceId strin
 		}
 	}
 	return nil
-}
-
-// attributeStatus formats an HTTP status code as the OTel `http.status_code`
-// attribute used on outbound HTTP client spans.
-func attributeStatus(code int) attribute.KeyValue {
-	return attribute.Int("http.status_code", code)
 }
 
 func (s *Server) storePayloadsToStorage(ctx context.Context, inferenceId string, promptPayload, responsePayload []byte) {

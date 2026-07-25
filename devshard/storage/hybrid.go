@@ -83,10 +83,23 @@ type PostgresPromotionWatcher interface {
 	OnPostgresPromoted(func())
 }
 
+// readinessReporter is implemented by backends whose serving readiness may lag
+// their construction (Postgres rebuilds its session index asynchronously).
+type readinessReporter interface {
+	Ready() bool
+}
+
 // newHybridRouter wires the per-session router. Either backend may be nil, but
 // at least one must be non-nil. preferPG selects the backend for brand-new
 // escrows when both backends are present. storeDir enables .pg-bound marker
 // maintenance for the Postgres backend.
+
+// NewHybridStorage wraps a single backend. Every call is forwarded to it. Used
+// by unit tests that need a HybridStorage without dual-backend routing.
+func NewHybridStorage(backend Storage) *HybridStorage {
+	return &HybridStorage{sqlite: backend, degradedOwnerOnly: false}
+}
+
 func newHybridRouter(sqlite, pg Storage, preferPG bool, storeDir string) *HybridStorage {
 	return &HybridStorage{
 		sqlite:   sqlite,
@@ -161,6 +174,20 @@ func (h *HybridStorage) postgresBackend() Storage {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return h.pg
+}
+
+// Ready reports whether the router can serve. A degraded / SQLite-only router
+// (no Postgres attached) is always ready for the escrows it owns. When Postgres
+// is attached, readiness tracks its async session-index rebuild.
+func (h *HybridStorage) Ready() bool {
+	pg := h.postgresBackend()
+	if pg == nil {
+		return true
+	}
+	if r, ok := pg.(readinessReporter); ok {
+		return r.Ready()
+	}
+	return true
 }
 
 func (h *HybridStorage) newSessionError() error {
@@ -322,6 +349,12 @@ func (h *HybridStorage) startPostgresReconnect(ctx context.Context, opener stora
 			pg, err := opener(ctx)
 			if err != nil {
 				slog.Warn("devshard storage: postgres reconnect failed; staying in degraded sqlite-owned-only mode",
+					"dir", h.storeDir, "error", err)
+				continue
+			}
+			if err := waitPostgresIndexReady(ctx, pg); err != nil {
+				_ = pg.Close()
+				slog.Warn("devshard storage: postgres reconnect index rebuild failed; staying in degraded sqlite-owned-only mode",
 					"dir", h.storeDir, "error", err)
 				continue
 			}
@@ -728,6 +761,63 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
+
+func (h *HybridStorage) ClearValidationObs(escrowID string) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.ClearValidationObs(escrowID)
+}
+
+func (h *HybridStorage) Acquire(ctx context.Context, escrowID string, inferenceID, epochID uint64, instanceAddr string) (bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return false, err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return false, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.Acquire(ctx, escrowID, inferenceID, epochID, instanceAddr)
+}
+
+func (h *HybridStorage) AcquireOneStale(ctx context.Context, escrowID, instanceAddr string, ttl time.Duration) (uint64, uint64, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return 0, 0, err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return 0, 0, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.AcquireOneStale(ctx, escrowID, instanceAddr, ttl)
+}
+
+func (h *HybridStorage) SetResult(ctx context.Context, escrowID string, inferenceID uint64, status LeaseStatus, instanceAddr string) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.SetResult(ctx, escrowID, inferenceID, status, instanceAddr)
+}
+
+func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, inferenceID uint64, instanceAddr string) (bool, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return false, err
+	}
+	ls, ok := b.(LeaseStore)
+	if !ok {
+		return false, fmt.Errorf("storage backend does not support validation leases")
+	}
+	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
+}
+
 func (h *HybridStorage) Close() error {
 	h.mu.Lock()
 	stop := h.reconnectStop
@@ -755,3 +845,4 @@ func (h *HybridStorage) Close() error {
 }
 
 var _ Storage = (*HybridStorage)(nil)
+var _ LeaseStore = (*HybridStorage)(nil)

@@ -11,17 +11,15 @@ import (
 )
 
 // TestNoOrphanReasonsAndWheres asserts that every declared Reason* and Where*
-// constant is referenced somewhere across the gonka-fork repo (devshard +
-// decentralized-api modules) outside its declaration. This protects against
-// the kind of dead-constant accumulation that Phase 0 item 1 had to clean up
-// (21 unused Reason*, 6 unused Where*).
+// constant is referenced somewhere under devshard/ outside its declaration.
+// This protects against dead-constant accumulation after observability wiring
+// moves fully into the devshard module.
 //
 // New constants must either be wired into a call site or removed; the test
 // fails fast so the maintainer notices at PR time.
 func TestNoOrphanReasonsAndWheres(t *testing.T) {
 	repoRoot := findRepoRootForOrphanScan(t)
 	devshardDir := filepath.Join(repoRoot, "devshard")
-	dapiDir := filepath.Join(repoRoot, "decentralized-api")
 
 	declared := collectReasonAndWhereDecls(t, devshardDir)
 	if len(declared) == 0 {
@@ -29,12 +27,6 @@ func TestNoOrphanReasonsAndWheres(t *testing.T) {
 	}
 
 	used := collectIdentifierReferences(t, devshardDir, declared)
-	if _, err := os.Stat(dapiDir); err == nil {
-		dapiUsed := collectIdentifierReferences(t, dapiDir, declared)
-		for name, n := range dapiUsed {
-			used[name] += n
-		}
-	}
 
 	// Anything declared but never referenced outside its own decl is orphan.
 	// (Each declaration counts as one occurrence of the identifier; we accept
@@ -51,7 +43,7 @@ func TestNoOrphanReasonsAndWheres(t *testing.T) {
 }
 
 // findRepoRootForOrphanScan walks up from cwd until it finds a directory that
-// contains both `devshard/` and `decentralized-api/`.
+// contains devshard/.
 func findRepoRootForOrphanScan(t *testing.T) string {
 	t.Helper()
 	dir, err := os.Getwd()
@@ -59,9 +51,7 @@ func findRepoRootForOrphanScan(t *testing.T) string {
 		t.Fatalf("getwd: %v", err)
 	}
 	for i := 0; i < 8; i++ {
-		_, e1 := os.Stat(filepath.Join(dir, "devshard"))
-		_, e2 := os.Stat(filepath.Join(dir, "decentralized-api"))
-		if e1 == nil && e2 == nil {
+		if _, err := os.Stat(filepath.Join(dir, "devshard")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)
@@ -70,7 +60,7 @@ func findRepoRootForOrphanScan(t *testing.T) string {
 		}
 		dir = parent
 	}
-	t.Fatalf("could not locate gonka-fork repo root")
+	t.Fatalf("could not locate devshard module root")
 	return ""
 }
 
@@ -148,8 +138,6 @@ func collectIdentifierReferences(t *testing.T, root string, names map[string]str
 		if rerr != nil {
 			return rerr
 		}
-		// Cheap word-boundary count via strings.Count + boundary check; we
-		// avoid go/parser here to also catch references in test files.
 		text := string(data)
 		for name := range names {
 			counts[name] += countWordOccurrences(text, name)

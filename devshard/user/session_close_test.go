@@ -51,6 +51,7 @@ func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error {
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }
+func (s *closeCountingStore) ClearValidationObs(string) error { return nil }
 func (s *closeCountingStore) PutEscrowCache(storage.EscrowCacheInfo) error { return nil }
 func (s *closeCountingStore) GetEscrowCache(string) (*storage.EscrowCacheInfo, error) {
 	return nil, storage.ErrEscrowCacheNotFound

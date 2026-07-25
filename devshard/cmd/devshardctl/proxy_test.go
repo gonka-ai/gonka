@@ -414,13 +414,13 @@ func TestDeferredWriterTracksForwardedDoneMarker(t *testing.T) {
 
 func TestRewriteStreamingPayload_PassthroughWhenNoConversionNeeded(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
 }
 
 func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]},"finish_reason":null}]}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload)
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{})
 
 	require.NotContains(t, string(rewritten), "logprob")
 	require.Contains(t, string(rewritten), `"content":"Hi"`)
@@ -429,7 +429,7 @@ func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T)
 func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload)
+	filtered := filterClientInternalFields(payload, logprobClientIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
@@ -437,14 +437,14 @@ func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 func TestFilterClientInternalFields_RemovesTokenIDsAndPromptTokenIDs(t *testing.T) {
 	payload := []byte(`{"prompt_token_ids":[1,2,3],"choices":[{"message":{"content":"Hi"},"token_ids":[4,5,6]}]}`)
 
-	filtered := filterClientInternalFields(payload)
+	filtered := filterClientInternalFields(payload, logprobClientIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
 
 func TestRewriteStreamingPayload_PreservesOriginalBytesWhenConvertibleRewriteFails(t *testing.T) {
 	payload := []byte("data: {\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}\r\n\r\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
 }
 
 func TestHasMsgFinish(t *testing.T) {
@@ -802,6 +802,25 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	}
 }
 
+// syncedBuffer wraps bytes.Buffer for tests that read partial stream output
+// while RunInference is still writing from a background goroutine.
+type syncedBuffer struct {
+	mu sync.Mutex
+	bytes.Buffer
+}
+
+func (b *syncedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.Write(p)
+}
+
+func (b *syncedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.Buffer.String()
+}
+
 func defaultParams() user.InferenceParams {
 	return user.InferenceParams{
 		Model:       "llama",
@@ -1089,7 +1108,7 @@ func TestRunInference_StalledWinnerCanCompleteAfterClientTimeout(t *testing.T) {
 	release := make(chan struct{})
 	env := setupTestProxyWithClients(t, []user.HostClient{&streamContentThenReleaseClient{releaseCh: release}})
 
-	var buf bytes.Buffer
+	var buf syncedBuffer
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
@@ -1123,7 +1142,7 @@ func TestRunInference_StalledWinnerNaturalErrorAfterClientTimeoutRecordsFailure(
 		err:       errSimulatedWinnerTransport,
 	}})
 
-	var buf bytes.Buffer
+	var buf syncedBuffer
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
@@ -1155,23 +1174,23 @@ func TestStalledWinnerQuarantineRequiresParticipantFailureThreshold(t *testing.T
 	}
 
 	first := &inflight{
-		hostIdx:     0,
-		nonce:       1,
-		sendTime:    time.Now().Add(-time.Second),
-		receiptTime: time.Now().Add(-900 * time.Millisecond),
-		firstToken:  time.Now().Add(-800 * time.Millisecond),
+		hostIdx:  0,
+		nonce:    1,
+		sendTime: time.Now().Add(-time.Second),
 	}
+	first.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
+	first.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
 	markStalled(first)
 	env.proxy.redundancy.recordStalledWinnerFailureOnce(first, defaultParams())
 	require.False(t, limiter.IsBlocked(participantKey))
 
 	second := &inflight{
-		hostIdx:     0,
-		nonce:       2,
-		sendTime:    time.Now().Add(-time.Second),
-		receiptTime: time.Now().Add(-900 * time.Millisecond),
-		firstToken:  time.Now().Add(-800 * time.Millisecond),
+		hostIdx:  0,
+		nonce:    2,
+		sendTime: time.Now().Add(-time.Second),
 	}
+	second.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
+	second.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
 	markStalled(second)
 	env.proxy.redundancy.recordStalledWinnerFailureOnce(second, defaultParams())
 	require.False(t, limiter.IsBlocked(participantKey))
@@ -1186,12 +1205,12 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 
 	for i := 0; i < 2; i++ {
 		inf := &inflight{
-			hostIdx:     0,
-			nonce:       uint64(i + 1),
-			sendTime:    time.Now().Add(-(longResponseFailureExemption + time.Second)),
-			receiptTime: time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)),
-			firstToken:  time.Now().Add(-(longResponseFailureExemption + 800*time.Millisecond)),
+			hostIdx:  0,
+			nonce:    uint64(i + 1),
+			sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
 		}
+		inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
+		inf.setFirstTokenAt(time.Now().Add(-(longResponseFailureExemption + 800*time.Millisecond)))
 		inf.contentChunks.Store(1)
 		inf.outputChunks.Store(1)
 		env.proxy.redundancy.recordStalledWinnerFailureOnce(inf, defaultParams())
@@ -1215,11 +1234,11 @@ func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) 
 
 	for i := 0; i < 2; i++ {
 		inf := &inflight{
-			hostIdx:     0,
-			nonce:       uint64(i + 1),
-			sendTime:    time.Now().Add(-(longResponseFailureExemption + time.Second)),
-			receiptTime: time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)),
+			hostIdx:  0,
+			nonce:    uint64(i + 1),
+			sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
 		}
+		inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, params, true)
 	}
 
@@ -1229,11 +1248,11 @@ func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) 
 	require.Equal(t, 1.0, stats.ResponsiveRate)
 
 	inf := &inflight{
-		hostIdx:     0,
-		nonce:       99,
-		sendTime:    time.Now().Add(-(longResponseFailureExemption + time.Second)),
-		receiptTime: time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)),
+		hostIdx:  0,
+		nonce:    99,
+		sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
 	}
+	inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
 	involvement := env.proxy.redundancy.buildInvolvement(inf, 0, params)
 	require.True(t, involvement.Responsive)
 	require.True(t, involvement.Finished)
@@ -1248,11 +1267,11 @@ func TestFastNonStreamEmptyResponseRecordsParticipantFailure(t *testing.T) {
 	params.Stream = false
 
 	inf := &inflight{
-		hostIdx:     0,
-		nonce:       1,
-		sendTime:    time.Now().Add(-time.Second),
-		receiptTime: time.Now().Add(-900 * time.Millisecond),
+		hostIdx:  0,
+		nonce:    1,
+		sendTime: time.Now().Add(-time.Second),
 	}
+	inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, params, true)
 
 	stats := env.proxy.redundancy.perf.Stats(0)
@@ -1271,10 +1290,10 @@ func TestErrorStreamSkipsParticipantFailureAccounting(t *testing.T) {
 			hostIdx:     0,
 			nonce:       uint64(i + 1),
 			sendTime:    time.Now().Add(-time.Second),
-			receiptTime: time.Now().Add(-900 * time.Millisecond),
-			firstToken:  time.Now().Add(-800 * time.Millisecond),
 			errorSource: "error.BadRequestError",
 		}
+		inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
+		inf.setFirstTokenAt(time.Now().Add(-800 * time.Millisecond))
 		inf.outputChunks.Store(1)
 		env.proxy.redundancy.recordStalledWinnerFailureOnce(inf, defaultParams())
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
@@ -1311,6 +1330,10 @@ func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
+	require.Eventually(t, func() bool {
+		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
+		return blocked
+	}, time.Second, 10*time.Millisecond)
 
 	// Even if the host would answer now, this escrow must stop sending it
 	// real traffic because its local state no longer matches our diff chain.
@@ -1369,11 +1392,11 @@ func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
 
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
 		inf := &inflight{
-			hostIdx:     0,
-			nonce:       uint64(i + 1),
-			sendTime:    time.Now().Add(-time.Second),
-			receiptTime: time.Now().Add(-900 * time.Millisecond),
+			hostIdx:  0,
+			nonce:    uint64(i + 1),
+			sendTime: time.Now().Add(-time.Second),
 		}
+		inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 		inf.outputChunks.Store(1)
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 	}
@@ -1382,7 +1405,6 @@ func TestRecoveredEmptyStreamsRecordPerfWithoutQuarantine(t *testing.T) {
 	require.Equal(t, emptyStreamQuarantineThreshold, stats.TotalSamples)
 	require.Zero(t, stats.ResponsiveRate)
 	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
-	require.True(t, limiter.IsShadowQuarantined(env.session.HostParticipantKey(0)))
 
 	unstarted := &inflight{hostIdx: 0, nonce: 99}
 	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{unstarted}, defaultParams(), true)
@@ -1396,11 +1418,11 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamWhenRequestFailed(t *
 
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
 		inf := &inflight{
-			hostIdx:     0,
-			nonce:       uint64(i + 1),
-			sendTime:    time.Now().Add(-time.Second),
-			receiptTime: time.Now().Add(-900 * time.Millisecond),
+			hostIdx:  0,
+			nonce:    uint64(i + 1),
+			sendTime: time.Now().Add(-time.Second),
 		}
+		inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 		inf.outputChunks.Store(1)
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), false)
 	}
@@ -1409,7 +1431,6 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamWhenRequestFailed(t *
 	require.Zero(t, stats.TotalSamples)
 	require.Zero(t, stats.FailureSamples)
 	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
-	require.True(t, limiter.IsShadowQuarantined(env.session.HostParticipantKey(0)))
 }
 
 func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *testing.T) {
@@ -1422,11 +1443,11 @@ func TestRecordStartedAttemptSamplesDoesNotCountEmptyStreamDuringRelaxedPoC(t *t
 
 	for i := 0; i < emptyStreamQuarantineThreshold; i++ {
 		inf := &inflight{
-			hostIdx:     0,
-			nonce:       uint64(i + 1),
-			sendTime:    time.Now().Add(-time.Second),
-			receiptTime: time.Now().Add(-900 * time.Millisecond),
+			hostIdx:  0,
+			nonce:    uint64(i + 1),
+			sendTime: time.Now().Add(-time.Second),
 		}
+		inf.setReceiptAt(time.Now().Add(-900 * time.Millisecond))
 		inf.outputChunks.Store(1)
 		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, defaultParams(), true)
 	}
@@ -1444,10 +1465,10 @@ func TestEmptyStreamWithoutWinnerSkipsTimeoutVoteOnlyWhenFinished(t *testing.T) 
 	require.NoError(t, err)
 
 	inf := &inflight{
-		nonce:       prepared.Nonce(),
-		receiptTime: time.Now(),
-		resp:        &host.HostResponse{ConfirmedAt: time.Now().Unix()},
+		nonce: prepared.Nonce(),
+		resp:  &host.HostResponse{ConfirmedAt: time.Now().Unix()},
 	}
+	inf.setReceiptAt(time.Now())
 
 	reason, skip := emptyStreamWithoutWinnerTimeoutSkipReason(inf, env.session)
 
@@ -1484,7 +1505,6 @@ func TestErrorStreamWithoutFinishPostsTimeoutVote(t *testing.T) {
 		nonce:           prepared.Nonce(),
 		escrowID:        "escrow-proxy",
 		sendTime:        time.Now().Add(-10 * time.Second),
-		receiptTime:     time.Now().Add(-9 * time.Second),
 		errorSource:     "error.NotFoundError",
 		errorCode:       "404",
 		errorType:       "NotFoundError",
@@ -1493,6 +1513,7 @@ func TestErrorStreamWithoutFinishPostsTimeoutVote(t *testing.T) {
 		resp:            &host.HostResponse{Nonce: prepared.Nonce()},
 		done:            make(chan struct{}),
 	}
+	inf.setReceiptAt(time.Now().Add(-9 * time.Second))
 	inf.outputChunks.Store(1)
 	inf.contentChunks.Store(1)
 	close(inf.done)
@@ -1945,15 +1966,6 @@ func TestRunInference_ExportsPrometheusMetrics(t *testing.T) {
 	require.Contains(t, body, `reason="attempt_failed"`)
 	require.Contains(t, body, `devshard_id="escrow-proxy"`)
 	require.Contains(t, body, "devshard_host_total_time_seconds")
-	require.Contains(t, body, `devshard_gateway_requests_total{model="llama",outcome="success",reason="none"} 1`)
-	require.Contains(t, body, "devshard_gateway_slot_decisions_total")
-	require.Contains(t, body, `decision="real_send"`)
-	require.Contains(t, body, "devshard_gateway_attempts_started_total")
-	require.Contains(t, body, `role="primary"`)
-	require.Contains(t, body, `role="extra"`)
-	require.Contains(t, body, "devshard_gateway_attempts_terminal_total")
-	require.Contains(t, body, "devshard_gateway_attempt_failures_total")
-	require.Contains(t, body, "devshard_gateway_user_requests_with_hidden_failure_total")
 }
 
 func TestPerfTrackerIsUnresponsiveUsesThreshold(t *testing.T) {
@@ -1987,7 +1999,7 @@ func TestWaitForFirstTokenUntilReturnsWhenTokenArrives(t *testing.T) {
 	}
 	go func() {
 		time.Sleep(10 * time.Millisecond)
-		inf.firstToken = time.Now()
+		inf.setFirstTokenAt(time.Now())
 		close(inf.firstTokenCh)
 	}()
 

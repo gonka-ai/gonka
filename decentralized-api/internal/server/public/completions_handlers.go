@@ -5,24 +5,14 @@ import (
 	"net/http"
 	"strings"
 
-	"decentralized-api/observability"
-	"decentralized-api/utils"
+	"common/utils"
 
 	"github.com/labstack/echo/v4"
 )
 
 const completionsPath = "/v1/completions"
 
-func (s *Server) postCompletions(ctx echo.Context) (err error) {
-	req := ctx.Request()
-	traceCtx := observability.Inference.ExtractRequestContext(req.Context(), req.Header)
-	traceCtx, op := observability.Inference.StartRequest(traceCtx, req.Method)
-	ctx.SetRequest(req.WithContext(traceCtx))
-	defer func() {
-		observability.Inference.SetHTTPStatus(op, ctx.Response().Status)
-		op.FinishErr(&err)
-	}()
-
+func (s *Server) postCompletions(ctx echo.Context) error {
 	body, err := readRequestBody(ctx.Request(), ctx.Response().Writer)
 	if err != nil {
 		return mapRequestBodyReadError(err)

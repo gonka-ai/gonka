@@ -35,25 +35,6 @@ func (s StringOrArray) First() string {
 	return s[0]
 }
 
-type ModelDescriptor struct {
-	Object           string   `json:"object,omitempty"`
-	ID               string   `json:"id"`
-	HuggingFaceID    string   `json:"hugging_face_id,omitempty"`
-	Name             string   `json:"name"`
-	Created          int64    `json:"created"`
-	Description      string   `json:"description,omitempty"`
-	InputModalities  []string `json:"input_modalities"`
-	OutputModalities []string `json:"output_modalities"`
-	Quantization     string   `json:"quantization,omitempty"`
-	ContextLength    uint64   `json:"context_length"`
-	MaxOutputLength  uint64   `json:"max_output_length"`
-}
-
-type ModelsListResponse struct {
-	Object string            `json:"object"`
-	Data   []ModelDescriptor `json:"data"`
-}
-
 type CompletionsRequest struct {
 	Model            string        `json:"model"`
 	Prompt           StringOrArray `json:"prompt"`

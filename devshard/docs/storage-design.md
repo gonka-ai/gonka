@@ -115,21 +115,95 @@ window; if old files accumulate, startup work grows until pruning catches up.
 
 ### Storage Mode Selection
 
-Decision: `NewStorage` returns a per-session router (`HybridStorage`). The
-backend for a **new** escrow is chosen at `CreateSession` time — Postgres when
-`PGHOST` is set, otherwise SQLite. An **existing** escrow is always served by
-whichever backend physically holds it, so a store can serve legacy SQLite
-escrows and new Postgres escrows at the same time.
+Decision: session storage (`NewStorage`) and payload storage
+(`common/storage/payloads.Open`) share one mode knob, resolved by
+`common/storage/mode`:
+
+```text
+DEVSHARD_STORAGE_MODE = sqlite | hybrid | postgres | auto   # default: auto
+```
+
+`PGHOST` / `PG*` are **connection** settings, not the mode bit (except under
+`auto`, where a non-empty `PGHOST` selects hybrid). Multi-versiond deployments
+behind `versiond-router` must use **`postgres`** (compose overlays / gencompose
+set `DEVSHARD_STORAGE_MODE=postgres`). `VERSIOND_FORCE` alone never selects
+postgres.
+
+| Mode | Meaning |
+| --- | --- |
+| `sqlite` | Local only (SQLite sessions / file payloads). `PGHOST` is ignored. |
+| `hybrid` | Requires `PGHOST`. Postgres primary with local fallback / reconnect. |
+| `postgres` | Requires `PGHOST`. Fail-closed Postgres-only (multi-instance / HA). |
+| `auto` (default) | Legacy-compatible derivation (below). |
+
+**Auto resolution** (also when the env is unset):
+
+1. if `PGHOST` is set → `hybrid`
+2. else → `sqlite`
+
+Fail-closed multi-instance deployments must set `DEVSHARD_STORAGE_MODE=postgres`
+explicitly (compose overlays / gencompose do).
+
+#### `sqlite` and `hybrid` (flexible)
+
+`NewStorage` returns a per-session router (`HybridStorage`). The backend for a
+**new** escrow is chosen at `CreateSession` time — Postgres in hybrid mode,
+SQLite in sqlite mode. An **existing** escrow is always served by whichever
+backend physically holds it, so a store can serve legacy SQLite escrows and new
+Postgres escrows at the same time (drain-in-place).
 
 | Condition | New escrows | Existing escrows |
 | --- | --- | --- |
-| `PGHOST` unset, no `.pg-bound` | SQLite | SQLite |
-| `PGHOST` unset, `.pg-bound` present, no SQLite sessions | Boot fails (would orphan PG sessions) | — |
-| `PGHOST` unset, `.pg-bound` present, SQLite sessions exist | Rejected (WARN: degraded mode) | SQLite-owned only |
-| `PGHOST` set, Postgres reachable, no local SQLite sessions | Postgres | Postgres |
-| `PGHOST` set, Postgres reachable, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
-| `PGHOST` set, Postgres unavailable, local SQLite sessions exist | Rejected while reconnecting (WARN: degraded mode) | SQLite-owned only until PG reconnects |
-| `PGHOST` set, Postgres unavailable, no local SQLite sessions | Rejected while reconnecting (WARN: degraded mode) | None until PG reconnects |
+| mode `sqlite`, no `.pg-bound` | SQLite | SQLite |
+| mode `sqlite`, `.pg-bound` present, no SQLite sessions | Boot fails (would orphan PG sessions) | — |
+| mode `sqlite`, `.pg-bound` present, SQLite sessions exist | Rejected (WARN: degraded mode) | SQLite-owned only |
+| mode `hybrid`, Postgres reachable, no local SQLite sessions | Postgres | Postgres |
+| mode `hybrid`, Postgres reachable, local SQLite sessions exist | Postgres | SQLite drains in place; Postgres for the rest |
+| mode `hybrid`, Postgres unavailable, local SQLite sessions exist | Rejected while reconnecting (WARN: degraded mode) | SQLite-owned only until PG reconnects |
+| mode `hybrid`, Postgres unavailable, no local SQLite sessions | Rejected while reconnecting (WARN: degraded mode) | None until PG reconnects |
+| mode `hybrid` or `postgres`, `PGHOST` unset | Boot fails (`ErrHAPostgresRequired` / payloads `ErrSharedPostgresRequired`) | — |
+
+#### `postgres` (fail-closed / HA)
+
+At boot, postgres mode:
+
+1. Requires `PGHOST` (otherwise fails immediately).
+2. Connects to Postgres; if unreachable, **boot fails** — no SQLite/file fallback.
+3. If local SQLite session artifacts exist, **fully migrates every escrow into
+   Postgres** (`MigrateSQLiteSessions`) before serving — partial multi-worker
+   progress is not accepted; boot fails until the copy completes — then
+   quarantines the SQLite files (`*.migrated.<ts>`).
+4. If local file payloads exist under `{data-dir}/payloads/`, copies them into
+   Postgres (`MigrateFilePayloadsToPostgres`) and quarantines epoch trees
+   (`*.migrated.<ts>`).
+5. Serves **Postgres-only** for the rest of the process lifetime.
+
+| Condition | Behavior |
+| --- | --- |
+| `PGHOST` unset | Boot fails (`ErrHAPostgresRequired` / payloads `ErrSharedPostgresRequired`) |
+| Postgres unreachable | Boot fails (`ErrStoragePostgresUnavailable`) — **no** degraded SQLite/file fallback |
+| Postgres reachable, local SQLite sessions exist | Full SQLite→PG migrate (journal + sealed/obs), quarantine SQLite artifacts, run Postgres-only |
+| Postgres reachable, local file payloads exist | Full file→PG migrate, quarantine epoch dirs, run Postgres-only |
+| Postgres reachable, no local SQLite/files | Postgres-only |
+
+Payload storage follows the same mode table: `postgres` is Postgres-only with
+no file fallback and migrates on-disk
+`payloads/{epoch}/{escrow}/{inference}.json` trees before serving. This
+prevents multi-instance split-brain and avoids orphaning payloads that were
+written before postgres mode was enabled.
+
+Import the shared resolver from `common/storage/mode` (e.g. in versiond rolling
+overlap checks) instead of re-parsing env flags.
+
+SQLite → Postgres migration uses `MigrateSQLiteSessions` (public Storage API)
+with a small worker pool (`DEVSHARD_MIGRATE_WORKERS`, default 4). Diffs are
+read/written in chunks (`DEVSHARD_MIGRATE_DIFF_CHUNK`, default 5000) and
+appended via `AppendDiffs` (Postgres `COPY`) so large sessions do not load the
+entire journal into memory. Each escrow copy includes session meta, diffs,
+signatures, finalized/settled, snapshot, **sealed inferences**, and
+**validation obs** (live + sealed). After a successful full migrate,
+`_meta.db` / `epoch_*.db` are renamed to `*.migrated.<ts>` so the next boot
+does not re-attach them.
 
 The `.pg-bound` marker tracks whether Postgres currently holds sessions for the
 store, not whether it ever did. Its invariant is: **`<storeDir>/.pg-bound`
@@ -163,8 +237,8 @@ The earlier design failed because it kept an ephemeral route table that was lost
 on reboot and let the same escrow land in both backends when Postgres was
 briefly down.
 
-Consequence: A Postgres outage while `PGHOST` is set fails new-escrow creation
-(and Postgres-owned operations); the router never silently creates a
+Consequence (non-HA): A Postgres outage while `PGHOST` is set fails new-escrow
+creation (and Postgres-owned operations); the router never silently creates a
 Postgres-destined escrow in SQLite. Boot still succeeds in WARN-logged degraded
 mode, with or without local SQLite sessions. It serves known SQLite escrows,
 rejects new/unknown escrows, and runs a background reconnect loop. Once Postgres
@@ -174,6 +248,10 @@ active sessions are eagerly restored. Legacy SQLite escrows no longer pin the
 whole process to SQLite - they drain in place as they settle and prune while new
 escrows go straight to Postgres, without waiting for `escrow_epoch` to empty or
 for a restart.
+
+Consequence (HA): Postgres is a hard dependency. An unreachable database aborts
+boot so sticky multi-versiond never serves divergent local state. Operators must
+bring Postgres back before the host rejoins the router pool.
 
 ### Managed Pruning Starts After Recovery
 
@@ -205,13 +283,28 @@ Why: A failed backend must remain retryable.
 Consequence: A failed prune leaves `prunedUpTo` unchanged so a later
 `PruneOnce` can retry.
 
+### Live Diff Append Is Idempotent for Identical Replay
+
+Decision: `AppendDiff` treats a second write of the **same**
+`(escrow_id, nonce)` payload as success (`INSERT … ON CONFLICT DO NOTHING`,
+then identity check). A **different** payload at the same nonce returns
+`ErrDiffFork` and increments `devshard_diff_fork_detected_total`.
+
+Why: Multi-instance HA + shared Postgres means at-least-once delivery of
+gateway-sequenced, byte-identical diffs is normal (stale standby catch-up).
+That is not a bug; failing with SQLSTATE 23505 turns a successful durable
+write into an HTTP 500. Conflicting bytes remain a hard error (real fork).
+
+See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consistency.md).
+
 ### Legacy Migration Is Resumable
 
-Decision: `MigrateLegacySQLite` is idempotent at the migration layer, not by
-weakening normal storage writes.
+Decision: `MigrateLegacySQLite` is idempotent at the migration layer; live
+`AppendDiff` is separately idempotent for identical replay (above). Migration
+still verifies already-copied rows against the source after a boot failure.
 
-Why: Live duplicate nonces should still fail. Migration is the only path that
-needs to tolerate partially copied rows after a boot failure.
+Why: Migration may resume after a partial copy; identity checks prevent silent
+forks when a destination row already exists.
 
 Consequence:
 

@@ -232,6 +232,9 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
+	// Carry the client's original logprobs intent to the response strip boundary.
+	r = r.WithContext(withLogprobClientIntent(r.Context(), logprobClientIntentFromRequest(req)))
+
 	if req.Stream {
 		p.handleStreaming(w, r, params)
 	} else {
@@ -264,6 +267,7 @@ type deferredWriter struct {
 	escrow         string
 	requestID      string
 	clientFlag     *cancelFlag
+	logprobIntent  logprobClientIntent
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -276,7 +280,7 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag}
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, logprobIntent: logprobClientIntentFromContext(ctx)}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -303,7 +307,7 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p)
+	rewritten := rewriteStreamingPayload(p, d.logprobIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -373,6 +377,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	started := time.Now()
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
+	defer stopClientWatch()
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
 	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
@@ -381,10 +386,6 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// upstream may run after the client is gone.
 	var doneWriteErr error
 	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
-	// The response is fully delivered; detach the disconnect watcher so the
-	// handler returning does not masquerade as a client disconnect and cut
-	// down speculative losers still draining in the background finalizer.
-	stopClientWatch()
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -543,13 +544,9 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	var buf bytes.Buffer
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
+	defer stopClientWatch()
 
 	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
-	// Winner settled and the response body is buffered; detach the disconnect
-	// watcher so the handler returning does not masquerade as a client
-	// disconnect and cut down speculative losers still draining in the
-	// background finalizer.
-	stopClientWatch()
 	if flag.Gone() {
 		return
 	}
@@ -565,7 +562,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	}
 
 	assembled := assembleSSEChunks(buf.String())
-	assembled = filterClientInternalFields(assembled)
+	assembled = filterClientInternalFields(assembled, logprobClientIntentFromContext(r.Context()))
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
