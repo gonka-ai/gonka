@@ -21,21 +21,30 @@ network participant pulls the metrics into their own storage
 
 ## For network-node operators
 
-- The dapi collector polls ML nodes from its inventory every 45 s (10 s
-  timeout per node), buffers snapshots in memory for ≤ 5 min and serves them
-  on the public `GET /v1/metrics` with a rate limit (1 req/s, burst 5,
-  per-IP ⇒ 429).
-- Kill switches without a release restart:
-  `DAPI_API__METRICS_COLLECTOR_ENABLED=false`,
-  `DAPI_API__METRICS_ENDPOINT_ENABLED=false`.
-- ML nodes on pre-metrics images (404) are silently absent from the output.
+- dapi federates the ML nodes of its inventory on the public
+  `GET /v1/mlnodes/metrics`. It scrapes them on demand rather than on a timer:
+  a merged snapshot is cached for 10 s and rebuilds are single-flighted, so any
+  number of external scrapers costs the ML nodes at most one fan-out per TTL.
+- Per-node ceilings: 2 MiB of body and 5000 series. A node over either is
+  rejected and reported down rather than allowed to inflate the output.
+- Rate limiting lives in the proxy's dedicated nginx `metrics_zone`, not in the
+  application, so scrapers never compete with inference clients for the same
+  budget. Defaults are per-IP and tunable via `METRICS_RATE_LIMIT_RPM` and
+  `METRICS_BURST`; over the limit is a 429.
+- Kill switch without a rebuild: `DAPI_API__MLNODE_METRICS_DISABLED=true`.
+- Three-state node semantics: `mlnode_up{node_id} 1` scraped fine,
+  `mlnode_up{node_id} 0` reachable but the scrape failed or was over a ceiling,
+  and a node answering 404 — metrics off, or an image predating the exporter —
+  is absent from the output entirely, with no zeros and no up-series. That is
+  what makes the dapi-first upgrade order safe.
 
 ## For consumers
 
-- `GET https://<network-node>/v1/metrics` — Prometheus text exposition, all
-  ML nodes of that network node, label `node_id`, per-sample timestamps
-  (collection time; an aging timestamp = the node went silent or its vLLM is
-  hung).
+- `GET https://<network-node>/v1/mlnodes/metrics` — Prometheus text exposition,
+  all ML nodes of that network node, label `node_id`. Staleness is visible two
+  ways: `mlnode_source_scrape_timestamp_seconds` stops advancing when a node's
+  vLLM hangs (the node keeps serving its last good copy), and `mlnode_up` drops
+  to 0 when the node itself stops answering.
 - Use `rate()`/`increase()` on counters: a vLLM restart (model switch)
   resets them.
 - Aggregate request-length histograms per model only (buckets depend on
