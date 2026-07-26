@@ -274,7 +274,7 @@ func (k Keeper) HasWarmKeyGrant(ctx context.Context, granter, grantee string) bo
 	resp, err := k.AuthzKeeper.Grants(ctx, &authztypes.QueryGrantsRequest{
 		Granter:    granter,
 		Grantee:    grantee,
-		MsgTypeUrl: sdk.MsgTypeURL(&types.MsgStartInference{}),
+		MsgTypeUrl: types.WarmKeyGrantMarkerTypeURL,
 	})
 	return err == nil && resp != nil && len(resp.Grants) > 0
 }

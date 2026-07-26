@@ -6,7 +6,6 @@ import (
 	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal/server/middleware"
 	pserver "decentralized-api/internal/server/public"
-	"decentralized-api/internal/validation"
 	"decentralized-api/payloadstorage"
 	"net/http"
 	_ "net/http/pprof"
@@ -32,7 +31,6 @@ type Server struct {
 	nodeBroker     *broker.Broker
 	configManager  *apiconfig.ConfigManager
 	recorder       cosmos_client.CosmosMessageClient
-	validator      *validation.InferenceValidator
 	cdc            *codec.ProtoCodec
 	blockQueue     *pserver.BridgeQueue
 	payloadStorage payloadstorage.PayloadStorage
@@ -42,7 +40,6 @@ func NewServer(
 	recorder cosmos_client.CosmosMessageClient,
 	nodeBroker *broker.Broker,
 	configManager *apiconfig.ConfigManager,
-	validator *validation.InferenceValidator,
 	blockQueue *pserver.BridgeQueue,
 	payloadStorage payloadstorage.PayloadStorage) *Server {
 	cdc := getCodec()
@@ -54,7 +51,6 @@ func NewServer(
 		nodeBroker:     nodeBroker,
 		configManager:  configManager,
 		recorder:       recorder,
-		validator:      validator,
 		cdc:            cdc,
 		blockQueue:     blockQueue,
 		payloadStorage: payloadStorage,

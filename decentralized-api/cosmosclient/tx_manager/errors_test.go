@@ -43,38 +43,11 @@ func TestClassifyBroadcastResponse(t *testing.T) {
 			expected: TxActionRetry,
 		},
 		{
-			name: "Code 1143 (ErrDuplicateValidation) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1143,
-				Codespace: "inference",
-				RawLog:    "participant has already validated this inference",
-			},
-			expected: TxActionFail,
-		},
-		{
 			name: "Code 1103 (ErrParticipantNotFound) should fail",
 			resp: &sdk.TxResponse{
 				Code:      1103,
 				Codespace: "inference",
 				RawLog:    "participant not found",
-			},
-			expected: TxActionFail,
-		},
-		{
-			name: "Code 1146 (ErrInferenceFinishProcessed) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1146,
-				Codespace: "inference",
-				RawLog:    "inference has already finished processed",
-			},
-			expected: TxActionFail,
-		},
-		{
-			name: "Code 1147 (ErrInferenceStartProcessed) should fail",
-			resp: &sdk.TxResponse{
-				Code:      1147,
-				Codespace: "inference",
-				RawLog:    "inference has already started processed",
 			},
 			expected: TxActionFail,
 		},
@@ -154,10 +127,7 @@ func TestIsRetryableRawLog(t *testing.T) {
 
 		// Business logic errors - should NOT be retryable
 		{name: "participant not found", rawLog: "participant not found", expected: false},
-		{name: "duplicate validation", rawLog: "participant has already validated this inference", expected: false},
 		{name: "inference not found", rawLog: "inference with id not found", expected: false},
-		{name: "inference already processed", rawLog: "inference has already finished processed", expected: false},
-		{name: "invalid signature", rawLog: "invalid keys provided for StartInference", expected: false},
 		{name: "empty string", rawLog: "", expected: false},
 		{name: "random error", rawLog: "something went wrong", expected: false},
 	}
@@ -277,4 +247,3 @@ func TestIsTxErrorCritical(t *testing.T) {
 		})
 	}
 }
-
