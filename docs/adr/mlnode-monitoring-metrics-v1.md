@@ -95,22 +95,40 @@ paths, hostnames, IPs and ports in label values.
 
 ### D5. dapi public endpoint format
 
-- **Aggregated** endpoint `GET /v1/metrics` on the public Echo server
-  (:9000, exposed through the existing nginx `/v1/*` location).
-- Response: Prometheus text exposition; all ML-node series of this network
-  node with an added `node_id` label and **per-sample timestamps** (ms) set
-  to the collection time — a silent node is served with its old timestamp.
-- A node answering 404/timeout/`off` is simply absent (no zero stubs).
+- **Aggregated** endpoint `GET /v1/mlnodes/metrics` on the public server,
+  exposed through dedicated exact-match nginx locations rather than the generic
+  `/v1/*` one (see D6).
+- Response: Prometheus text exposition; all ML-node series of this network node
+  with an added `node_id` label. Staleness is conveyed by the exporter's own
+  `mlnode_source_scrape_timestamp_seconds` plus `mlnode_up`, rather than by
+  per-sample timestamps — as built, dapi does not stamp samples.
+- Three states: `mlnode_up{node_id} 1` scraped fine; `0` reachable but the
+  scrape failed or exceeded a ceiling; a node answering 404 (metrics off, or an
+  image predating the exporter) is absent entirely, with no zero stubs and no
+  up-series. The last case is what makes a dapi-first rollout safe.
+
+**As-built deviation.** This ADR specified a background poller (45 s cadence,
+≤5 min buffer, per-sample timestamps). The implementation is a pull-through
+cache instead: a merged snapshot is cached 10 s and rebuilds are
+single-flighted, so N external scrapers still cost the ML nodes one fan-out per
+TTL, and there is no polling while nobody is looking. The staleness signals the
+poller design wanted are covered by the two metrics above.
 - Rejected alternative: per-node endpoints (consumers would need discovery;
   one scrape per network node is the point).
 
 ### D6. Rate limit
 
-Echo `RateLimiter` middleware (in-memory, per-IP — existing repo pattern):
-**rate 1 req/s, burst 5, expires 3 min** ⇒ 429. Rationale: the useful
-consumer frequency equals the buffer update cadence (45 s); 1 rps leaves
-headroom for retries and several consumers behind one NAT. An optional
-stricter nginx zone is a Phase 2 deliverable only if needed.
+A dedicated nginx zone (`metrics_zone`, per-IP) rather than application
+middleware ⇒ 429 over the limit. Defaults are set in the proxy entrypoint and
+tunable via `METRICS_RATE_LIMIT_RPM` and `METRICS_BURST`.
+
+**As-built deviation.** This ADR specified Echo `RateLimiter` middleware at
+1 req/s burst 5. Enforcing it in the proxy instead keeps scraping consumers out
+of the `api_zone` budget shared with inference and API clients, so exhausting
+one cannot affect the other — and leaves a single source of truth for limits.
+The in-app limiter was dropped accordingly. Residual risk: a deployment that
+strips the shipped proxy runs the endpoint unlimited; compute stays bounded
+regardless by the cached single-flight fan-out.
 
 ### D7. dapi buffer ceilings
 
@@ -146,10 +164,11 @@ stricter nginx zone is a Phase 2 deliverable only if needed.
   the dependency tree as indirect).
 - Exposition: `expfmt` encoder (no client_golang registry — dapi relays
   foreign metrics).
-- Rate limit: Echo middleware (already used in the repo).
-- Kill switches: `ApiConfig` fields (koanf) ⇒
-  `DAPI_API__METRICS_COLLECTOR_ENABLED`, `DAPI_API__METRICS_ENDPOINT_ENABLED`
-  (default `true` from the Phase 5 release); gated in `main.go`.
+- Rate limit: nginx `metrics_zone` in the proxy (see D6).
+- Kill switch: `ApiConfig` field (koanf) ⇒
+  `DAPI_API__MLNODE_METRICS_DISABLED=true`, evaluated per request so it takes
+  effect without a restart. One switch, not two: as built, the collector and
+  the endpoint are one component.
 
 ### D11. XID mechanism (closes Open-2)
 
