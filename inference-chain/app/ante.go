@@ -227,10 +227,9 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
 		// Cheap mempool filters before signature verification (avoid crypto work on
-		// obviously invalid PoC / validation txs). CheckTx ante failures discard
+		// obviously invalid PoC txs). CheckTx ante failures discard
 		// state (including fee deduction), so fee-first is not an economic throttle.
 		NewPocPeriodValidationDecorator(options.InferenceKeeper),
-		NewValidationEarlyRejectDecorator(options.InferenceKeeper),
 		ante.NewSetPubKeyDecorator(options.AccountKeeper),
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
