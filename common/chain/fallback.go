@@ -103,6 +103,15 @@ func (c *fallbackConn) probeFailed() {
 	c.nextProbeAt = c.now().Add(c.probeInterval)
 }
 
+// probeNoVerdict releases the probe as if it had never run: the attempt proved
+// nothing either way, so it must neither change transports nor push back a
+// probe window that has already come due.
+func (c *fallbackConn) probeNoVerdict() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.probing = false
+}
+
 func (c *fallbackConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
 	useRPC, probe := c.route()
 	if useRPC {
@@ -110,23 +119,72 @@ func (c *fallbackConn) Invoke(ctx context.Context, method string, args, reply an
 	}
 
 	err := c.direct.Invoke(ctx, method, args, reply, opts...)
-	if !isTransportDown(err) {
-		// Any other outcome, including application errors, proves gRPC is
-		// reachable — keep it primary.
-		if probe {
-			c.probeSucceeded()
-			slog.Info("chain: direct gRPC reachable again, queries back on gRPC", "method", method)
-		}
-		return err
-	}
 
 	if probe {
-		c.probeFailed()
-	} else if c.enterRPC() {
+		switch classifyProbe(ctx, err) {
+		case grpcAnswered:
+			c.probeSucceeded()
+			slog.Info("chain: direct gRPC reachable again, queries back on gRPC", "method", method)
+			return err
+
+		case noVerdict:
+			// The caller went away or ran out of time, so this attempt says
+			// nothing about gRPC. Reading it as reachable would move every
+			// query back onto an endpoint that was never shown to answer. The
+			// caller is already gone, so an RPC retry would only fail too.
+			c.probeNoVerdict()
+			slog.Debug("chain: gRPC probe ended without a verdict, staying on CometBFT RPC",
+				"method", method, "error", err)
+			return err
+
+		default: // grpcDown
+			c.probeFailed()
+			return c.rpc.Invoke(ctx, method, args, reply, opts...)
+		}
+	}
+
+	if !isTransportDown(err) {
+		return err
+	}
+	if c.enterRPC() {
 		slog.Warn("chain: direct gRPC unreachable, queries falling back to CometBFT RPC",
 			"method", method, "error", err, "retry_after", c.probeInterval)
 	}
 	return c.rpc.Invoke(ctx, method, args, reply, opts...)
+}
+
+// probeVerdict is what a probe attempt proved about the direct gRPC endpoint.
+type probeVerdict int
+
+const (
+	// grpcAnswered means the endpoint replied, even if the reply was an
+	// application error.
+	grpcAnswered probeVerdict = iota
+	// grpcDown means the transport itself failed.
+	grpcDown
+	// noVerdict means the attempt ended before either could be established,
+	// because the caller canceled it or its deadline expired.
+	noVerdict
+)
+
+func classifyProbe(ctx context.Context, err error) probeVerdict {
+	if isTransportDown(err) {
+		return grpcDown
+	}
+	if err == nil {
+		return grpcAnswered
+	}
+	switch status.Code(err) {
+	case codes.Canceled, codes.DeadlineExceeded:
+		return noVerdict
+	}
+	// A wrapper may surface a bare context error instead of a gRPC status, and
+	// a context that is already done means the attempt was cut short whatever
+	// the error says.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return noVerdict
+	}
+	return grpcAnswered
 }
 
 // NewStream always uses direct gRPC: the RPC/ABCI transport cannot serve

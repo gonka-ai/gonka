@@ -194,6 +194,73 @@ func TestFallback_ProbeSucceedsOnApplicationError(t *testing.T) {
 	assert.Equal(t, 1, rpc.calls())
 }
 
+// onRPC reports whether queries are currently served over CometBFT RPC. An
+// aborted probe re-probes immediately, so call counts alone cannot tell a
+// retried probe apart from a restored gRPC transport.
+func onRPC(c *fallbackConn) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usingRPC
+}
+
+func TestFallback_CanceledProbeDoesNotRestoreGRPC(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+	require.Equal(t, 1, direct.calls())
+	require.True(t, onRPC(fb))
+
+	// The probe is cut short by its caller, which says nothing about whether
+	// gRPC is reachable.
+	direct.setErr(status.Error(codes.Canceled, "context canceled"))
+	clock.advance(testProbeInterval)
+	require.Error(t, invoke(fb))
+
+	assert.Equal(t, 2, direct.calls())
+	assert.Equal(t, 1, rpc.calls(), "a probe with no verdict must not retry on RPC")
+	assert.True(t, onRPC(fb), "an aborted probe must not restore gRPC")
+}
+
+func TestFallback_ProbeWithDoneContextDoesNotRestoreGRPC(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	// A bare context error rather than a gRPC status must read the same way.
+	direct.setErr(context.Canceled)
+	clock.advance(testProbeInterval)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Error(t, fb.Invoke(ctx, "/test.Service/Query", &struct{}{}, &struct{}{}))
+
+	assert.Equal(t, 2, direct.calls())
+	assert.True(t, onRPC(fb), "an aborted probe must not restore gRPC")
+}
+
+func TestFallback_AbortedProbeDoesNotDelayTheNextProbe(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	direct.setErr(status.Error(codes.DeadlineExceeded, "timeout"))
+	clock.advance(testProbeInterval)
+	require.Error(t, invoke(fb))
+	require.Equal(t, 2, direct.calls())
+	require.True(t, onRPC(fb))
+
+	// The aborted attempt did not consume the probe window, so the next request
+	// probes again straight away rather than waiting another whole interval.
+	direct.setErr(nil)
+	require.NoError(t, invoke(fb))
+	assert.Equal(t, 3, direct.calls())
+	assert.False(t, onRPC(fb), "a probe that answered restores gRPC")
+	assert.Equal(t, 1, rpc.calls())
+}
+
 func TestFallback_OnlyOneRequestProbesGRPC(t *testing.T) {
 	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
 	fb, clock := newTestFallback(direct, rpc)
