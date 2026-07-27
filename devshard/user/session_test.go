@@ -240,6 +240,30 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 	require.Equal(t, uint64(2), session.Nonce())
 }
 
+func TestSession_SendPendingDiffRetriesReachableHost(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	ctx := context.Background()
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+
+	// Advance to nonce 3 so the next pending diff targets slot 1.
+	for range 3 {
+		_, err := session.SendInference(ctx, params)
+		require.NoError(t, err)
+	}
+	session.clients[1] = &ErrorClient{Err: fmt.Errorf("host unavailable")}
+
+	require.NoError(t, session.SendPendingDiff(ctx))
+	require.Equal(t, uint64(4), session.Nonce())
+
+	// Slot 1 is the deterministic target for nonce 4. The retry must deliver
+	// the diff, including its catch-up history, to the next reachable slot.
+	fallback := session.clients[2].(*InProcessClient)
+	require.Equal(t, uint64(4), fallback.Host.SnapshotState().LatestNonce)
+}
+
 func TestUser_Finalize(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 100)
 	ctx := context.Background()
