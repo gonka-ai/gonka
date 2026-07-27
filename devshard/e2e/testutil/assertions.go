@@ -155,6 +155,49 @@ func RequireSettlementHostStats(t *testing.T, settlement map[string]any, hostCou
 	}
 }
 
+func RequireSignatureCollectionQuorum(t *testing.T, collection map[string]any, nonce uint64, totalSlots int) {
+	t.Helper()
+	require.Equal(t, nonce, NumericField(t, collection, "nonce"))
+	require.Equal(t, uint64(totalSlots), NumericField(t, collection, "total_slots"))
+	threshold := NumericField(t, collection, "quorum_threshold")
+	weight := NumericField(t, collection, "sig_weight")
+	require.NotZero(t, threshold, "signature quorum threshold should be non-zero")
+	require.LessOrEqual(t, threshold, uint64(totalSlots), "signature quorum threshold should not exceed total slots")
+	require.GreaterOrEqual(t, weight, threshold, "latest nonce should reach signature quorum")
+	hasQuorum, ok := collection["has_quorum"].(bool)
+	require.True(t, ok, "signature collection has_quorum should be a boolean")
+	require.True(t, hasQuorum, "latest nonce should report signature quorum")
+}
+
+func RequireSignatureStatusQuorum(t *testing.T, status map[string]any, nonce uint64, totalSlots int) {
+	t.Helper()
+	require.Equal(t, nonce, NumericField(t, status, "current_nonce"))
+	require.Equal(t, uint64(totalSlots), NumericField(t, status, "total_slots"))
+	require.GreaterOrEqual(t, NumericField(t, status, "highest_quorum_nonce"), nonce,
+		"latest nonce should be the highest nonce with quorum")
+	hasQuorum, ok := status["has_quorum"].(bool)
+	require.True(t, ok, "signature status has_quorum should be a boolean")
+	require.True(t, hasQuorum, "signature status should report quorum")
+
+	nonces, ok := status["nonces"].([]any)
+	require.True(t, ok, "signature status nonces should be an array")
+	for _, raw := range nonces {
+		entry, ok := raw.(map[string]any)
+		require.True(t, ok, "signature status entries should be objects")
+		if NumericField(t, entry, "nonce") != nonce {
+			continue
+		}
+		require.Equal(t, uint64(totalSlots), NumericField(t, entry, "total_slots"))
+		require.GreaterOrEqual(t, NumericField(t, entry, "sig_weight"), NumericField(t, status, "quorum_threshold"),
+			"latest nonce status entry should reach quorum")
+		hasQuorum, ok := entry["has_quorum"].(bool)
+		require.True(t, ok, "latest nonce has_quorum should be a boolean")
+		require.True(t, hasQuorum, "latest nonce status entry should report quorum")
+		return
+	}
+	t.Fatalf("signature status should include latest nonce %d", nonce)
+}
+
 func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
 	t.Helper()
 	inferences, ok := state["inferences"].(map[string]any)

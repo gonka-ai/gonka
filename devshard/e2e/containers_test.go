@@ -194,14 +194,14 @@ func (e *e2eEnv) createPostgresHostDatabases(ctx context.Context, t *testing.T, 
 // e2e/mock-chain-config.yaml so devshardctl (chain-backed) and hosts agree.
 func e2eHostSessionEnv() map[string]string {
 	return map[string]string{
-		"DEVSHARD_TOKEN_PRICE":                  "1",
-		"DEVSHARD_CREATE_DEVSHARD_FEE":          "10000",
-		"DEVSHARD_FEE_PER_NONCE":                "1",
-		"DEVSHARD_VALIDATION_RATE":              "6000",
-		"DEVSHARD_VOTE_THRESHOLD_FACTOR":        "50",
-		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "3",
-		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "30",
-		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "100",
+		"DEVSHARD_TOKEN_PRICE":                  "7",
+		"DEVSHARD_CREATE_DEVSHARD_FEE":          "12345",
+		"DEVSHARD_FEE_PER_NONCE":                "19",
+		"DEVSHARD_VALIDATION_RATE":              "10000",
+		"DEVSHARD_VOTE_THRESHOLD_FACTOR":        "66",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "9",
+		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "77",
+		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "21",
 	}
 }
 
