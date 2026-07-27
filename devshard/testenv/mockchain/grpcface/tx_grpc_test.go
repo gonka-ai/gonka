@@ -21,6 +21,10 @@ import (
 
 func TestMockChainGRPC_CreateDevshardEscrowTx(t *testing.T) {
 	st := seed.Defaults()
+	st.PatchDevshardEscrowParams(func(params *inferencetypes.DevshardEscrowParams) {
+		params.RefusalTimeout = 5
+		params.ExecutionTimeout = 17
+	})
 	rpcSvc, err := rpcface.NewService(st, rpcface.Config{BlockInterval: time.Hour})
 	require.NoError(t, err)
 
@@ -61,4 +65,6 @@ func TestMockChainGRPC_CreateDevshardEscrowTx(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp.Found)
 	require.Equal(t, "test-model", resp.Escrow.ModelId)
+	require.Equal(t, int64(5), resp.Escrow.RefusalTimeout)
+	require.Equal(t, int64(17), resp.Escrow.ExecutionTimeout)
 }

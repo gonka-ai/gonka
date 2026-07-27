@@ -295,6 +295,8 @@ func sessionConfigFromEnv(groupSize int) types.SessionConfig {
 		AutoSealEveryNNonces:      uint32(uintEnv("DEVSHARD_AUTO_SEAL_EVERY_N_NONCES", 0)),
 		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
+		RefusalTimeout:            int64(uintEnv("DEVSHARD_REFUSAL_TIMEOUT", 0)),
+		ExecutionTimeout:          int64(uintEnv("DEVSHARD_EXECUTION_TIMEOUT", 0)),
 	})
 }
 

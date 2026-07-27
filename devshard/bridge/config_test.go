@@ -18,6 +18,8 @@ func TestSessionConfigAtBind_EscrowLaneA(t *testing.T) {
 		AutoSealEveryNNonces:      16,
 		ValidationRate:            6000,
 		VoteThresholdFactor:       50,
+		RefusalTimeout:            5,
+		ExecutionTimeout:          17,
 	}
 
 	cfg := SessionConfigAtBind(groupSize, escrow)
@@ -26,6 +28,8 @@ func TestSessionConfigAtBind_EscrowLaneA(t *testing.T) {
 	require.Equal(t, uint32(16), cfg.AutoSealEveryNNonces)
 	assert.Equal(t, uint32(6000), cfg.ValidationRate)
 	assert.Equal(t, uint32(8), cfg.VoteThreshold)
+	assert.Equal(t, int64(5), cfg.RefusalTimeout)
+	assert.Equal(t, int64(17), cfg.ExecutionTimeout)
 }
 
 func TestSessionConfigAtBind_ZeroValidationRateUsesDefault(t *testing.T) {

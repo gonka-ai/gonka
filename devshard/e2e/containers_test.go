@@ -200,6 +200,8 @@ func e2eHostSessionEnv() map[string]string {
 		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "9",
 		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "77",
 		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "21",
+		"DEVSHARD_REFUSAL_TIMEOUT":              "5",
+		"DEVSHARD_EXECUTION_TIMEOUT":            "17",
 	}
 }
 

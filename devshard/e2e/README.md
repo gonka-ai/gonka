@@ -75,6 +75,8 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
   streaming/non-streaming cache isolation.
 - `recovery_test.go`: SQLite volume restart and persistence scenarios.
 - `protocol_test.go`: signature quorum and signed-nonce gossip convergence.
+- `timeout_test.go`: refused-executor timeout votes, timeout transaction
+  application, recovery, and finalization.
 - `runtime_config_test.go`: chain-backed runtime configuration wiring.
 - `containers_test.go`: Docker network/container setup and restart helpers.
 - `testutil/`: HTTP clients, request helpers, assertions, and env defaults.

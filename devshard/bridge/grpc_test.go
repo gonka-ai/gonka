@@ -56,6 +56,8 @@ func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	escrow.AutoSealEveryNNonces = 21
 	escrow.ValidationRate = 7_777
 	escrow.VoteThresholdFactor = 67
+	escrow.RefusalTimeout = 5
+	escrow.ExecutionTimeout = 17
 	st.PutEscrow(escrow)
 
 	info, err := startGRPCBridgeWithStore(t, st).GetEscrow("1")
@@ -68,6 +70,8 @@ func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	require.Equal(t, uint32(21), info.AutoSealEveryNNonces)
 	require.Equal(t, uint32(7_777), info.ValidationRate)
 	require.Equal(t, uint32(67), info.VoteThresholdFactor)
+	require.Equal(t, int64(5), info.RefusalTimeout)
+	require.Equal(t, int64(17), info.ExecutionTimeout)
 }
 
 func TestGRPCBridge_GetEscrow_NotFound(t *testing.T) {

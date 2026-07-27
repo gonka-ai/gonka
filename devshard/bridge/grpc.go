@@ -91,6 +91,8 @@ func (b *GRPCBridge) GetEscrow(escrowID string) (*EscrowInfo, error) {
 		AutoSealEveryNNonces:      e.AutoSealEveryNNonces,
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
+		RefusalTimeout:            e.RefusalTimeout,
+		ExecutionTimeout:          e.ExecutionTimeout,
 		EpochID:                   e.EpochIndex,
 	}, nil
 }
