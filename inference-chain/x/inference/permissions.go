@@ -26,10 +26,7 @@ import (
 var DefaultMLOpsFeeAllowance = sdk.NewCoins(sdk.NewCoin("ngonka", sdkmath.NewInt(10_000_000_000))) // 10 GNK
 
 var InferenceOperationKeyPerms = []sdk.Msg{
-	&types.MsgStartInference{},
-	&types.MsgFinishInference{},
 	&types.MsgClaimRewards{},
-	&types.MsgValidation{},
 	&types.MsgSubmitPocBatch{},
 	&types.MsgSubmitPocValidationsV2{},   // PoC v2 validations
 	&types.MsgPoCV2StoreCommit{},         // PoC v2 off-chain store commits
@@ -38,8 +35,6 @@ var InferenceOperationKeyPerms = []sdk.Msg{
 	&types.MsgBridgeExchange{},
 	&types.MsgSubmitNewUnfundedParticipant{},
 	&types.MsgSubmitHardwareDiff{},
-	&types.MsgInvalidateInference{},
-	&types.MsgRevalidateInference{},
 	&blstypes.MsgSubmitDealerPart{},
 	&blstypes.MsgSubmitVerificationVector{},
 	&blstypes.MsgRespondDealerComplaints{},

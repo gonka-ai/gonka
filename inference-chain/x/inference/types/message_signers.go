@@ -30,10 +30,6 @@ func (msg *MsgRemoveParticipantsFromAllowList) GetSignersStrings() []string {
 }
 
 // Creator signed messages
-func (msg *MsgFinishInference) GetSignersStrings() []string      { return []string{msg.Creator} }
-func (msg *MsgInvalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
-func (msg *MsgRevalidateInference) GetSignersStrings() []string  { return []string{msg.Creator} }
-func (msg *MsgStartInference) GetSignersStrings() []string       { return []string{msg.Creator} }
 func (msg *MsgSubmitHardwareDiff) GetSignersStrings() []string   { return []string{msg.Creator} }
 func (msg *MsgSubmitNewParticipant) GetSignersStrings() []string { return []string{msg.Creator} }
 func (msg *MsgSubmitNewUnfundedParticipant) GetSignersStrings() []string {
@@ -47,7 +43,6 @@ func (msg *MsgSubmitSeed) GetSignersStrings() []string               { return []
 func (msg *MsgSubmitUnitOfComputePriceProposal) GetSignersStrings() []string {
 	return []string{msg.Creator}
 }
-func (msg *MsgValidation) GetSignersStrings() []string              { return []string{msg.Creator} }
 func (msg *MsgClaimRewards) GetSignersStrings() []string            { return []string{msg.Creator} }
 func (msg *MsgSetClaimRecipients) GetSignersStrings() []string      { return []string{msg.Creator} }
 func (msg *MsgRequestBridgeMint) GetSignersStrings() []string       { return []string{msg.Creator} }

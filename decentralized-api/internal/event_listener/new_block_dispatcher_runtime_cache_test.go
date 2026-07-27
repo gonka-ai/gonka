@@ -7,7 +7,6 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
-	"decentralized-api/internal/validation"
 
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	"github.com/productscience/inference/x/inference/types"
@@ -73,7 +72,6 @@ func newRuntimeCacheTestDispatcher(t *testing.T, qc *mockParamsQueryClient) (*On
 		mockSeedManager,
 		defaultReconciliationConfig,
 		cm,
-		&validation.InferenceValidator{},
 	)
 	return dispatcher, cm
 }
@@ -102,10 +100,10 @@ func devshardParamsResponseFull(
 			DevshardEscrowParams: &types.DevshardEscrowParams{
 				DevshardRequestsEnabled: enabled,
 				MaxNonce:                maxNonce,
-				RefusalTimeout:                    refusalTimeout,
-				ExecutionTimeout:                  executionTimeout,
-				ValidationRate:                    validationRate,
-				VoteThresholdFactor:               voteThresholdFactor,
+				RefusalTimeout:          refusalTimeout,
+				ExecutionTimeout:        executionTimeout,
+				ValidationRate:          validationRate,
+				VoteThresholdFactor:     voteThresholdFactor,
 				ApprovedVersions: []*types.DevshardApprovedVersion{
 					{Name: "v1", Binary: "https://example/v1", Sha256: "sha1"},
 				},

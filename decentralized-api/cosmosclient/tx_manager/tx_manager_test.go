@@ -9,7 +9,6 @@ import (
 
 	codectypes "github.com/cosmos/cosmos-sdk/codec/types"
 	sdk "github.com/cosmos/cosmos-sdk/types"
-	"github.com/google/uuid"
 	"github.com/ignite/cli/v28/ignite/pkg/cosmosclient/mocks"
 	natssrv "github.com/nats-io/nats-server/v2/server"
 	"github.com/nats-io/nats.go"
@@ -32,14 +31,10 @@ func TestPack_Unpack_Msg(t *testing.T) {
 	rpc := mocks.NewRPCClient(t)
 	client := testutil.NewMockClient(t, rpc, network, accountName, mnemonic, passphrase)
 
-	rawTx := &inference.MsgFinishInference{
-		Creator:              "some_address",
-		InferenceId:          uuid.New().String(),
-		ResponseHash:         "some_hash",
-		ResponsePayload:      "resp",
-		PromptTokenCount:     10,
-		CompletionTokenCount: 20,
-		ExecutedBy:           "executor",
+	rawTx := &inference.MsgClaimRewards{
+		Creator:    "some_address",
+		Seed:       123,
+		EpochIndex: 7,
 	}
 
 	bz, err := client.Context().Codec.MarshalInterfaceJSON(rawTx)
@@ -61,15 +56,11 @@ func TestPack_Unpack_Msg(t *testing.T) {
 	err = client.Context().Codec.UnpackAny(&unpackedAny, &unmarshalledRawTx)
 	assert.NoError(t, err)
 
-	result := unmarshalledRawTx.(*types.MsgFinishInference)
+	result := unmarshalledRawTx.(*types.MsgClaimRewards)
 
-	assert.Equal(t, rawTx.InferenceId, result.InferenceId)
 	assert.Equal(t, rawTx.Creator, result.Creator)
-	assert.Equal(t, rawTx.ResponseHash, result.ResponseHash)
-	assert.Equal(t, rawTx.ResponsePayload, result.ResponsePayload)
-	assert.Equal(t, rawTx.PromptTokenCount, result.PromptTokenCount)
-	assert.Equal(t, rawTx.CompletionTokenCount, result.CompletionTokenCount)
-	assert.Equal(t, rawTx.ExecutedBy, result.ExecutedBy)
+	assert.Equal(t, rawTx.Seed, result.Seed)
+	assert.Equal(t, rawTx.EpochIndex, result.EpochIndex)
 }
 
 func TestPack_Unpack_Batch(t *testing.T) {
@@ -84,10 +75,10 @@ func TestPack_Unpack_Batch(t *testing.T) {
 	client := testutil.NewMockClient(t, rpc, network, accountName, mnemonic, passphrase)
 	cdc := client.Context().Codec
 
-	msgs := []*inference.MsgStartInference{
-		{Creator: "addr1", InferenceId: uuid.New().String(), Model: "model-a"},
-		{Creator: "addr2", InferenceId: uuid.New().String(), Model: "model-b"},
-		{Creator: "addr3", InferenceId: uuid.New().String(), Model: "model-c"},
+	msgs := []*inference.MsgClaimRewards{
+		{Creator: "addr1", Seed: 1, EpochIndex: 10},
+		{Creator: "addr2", Seed: 2, EpochIndex: 11},
+		{Creator: "addr3", Seed: 3, EpochIndex: 12},
 	}
 
 	rawBatch := make([][]byte, len(msgs))
@@ -125,10 +116,10 @@ func TestPack_Unpack_Batch(t *testing.T) {
 		err = cdc.UnpackAny(&unpackedAny, &unmarshalledMsg)
 		assert.NoError(t, err)
 
-		result := unmarshalledMsg.(*types.MsgStartInference)
+		result := unmarshalledMsg.(*types.MsgClaimRewards)
 		assert.Equal(t, msgs[i].Creator, result.Creator)
-		assert.Equal(t, msgs[i].InferenceId, result.InferenceId)
-		assert.Equal(t, msgs[i].Model, result.Model)
+		assert.Equal(t, msgs[i].Seed, result.Seed)
+		assert.Equal(t, msgs[i].EpochIndex, result.EpochIndex)
 	}
 }
 
