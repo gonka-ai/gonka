@@ -401,3 +401,49 @@ jobs:
           name: Devshard E2E Tests
           path: devshard/build/test-results/e2e/junit.xml
           reporter: java-junit
+
+  # Join proxy: envsubst + nginx -t across major env-driven template branches.
+  # Only runs test-config when proxy changed.
+  test-proxy-configuration:
+    runs-on: ubuntu-latest
+    name: Test Proxy Configuration
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Detect proxy changes
+        id: proxy
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          BASE_REF: ${{ github.base_ref }}
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            git fetch --no-tags --depth=1 origin "$BASE_REF"
+            range="origin/${BASE_REF}...HEAD"
+          elif [ -n "${BEFORE:-}" ] && [ "$BEFORE" != "0000000000000000000000000000000000000000" ]; then
+            range="${BEFORE}..HEAD"
+          else
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if git diff --quiet "$range" -- proxy/; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+          else
+            diff_status=$?
+            if [ "$diff_status" -ne 1 ]; then
+              exit "$diff_status"
+            fi
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Render proxy template and nginx -t
+        if: steps.proxy.outputs.changed == 'true'
+        run: make -C proxy test-config
+
+      - name: Skip (no proxy changes)
+        if: steps.proxy.outputs.changed != 'true'
+        run: echo "No proxy/** changes; skipping test-config"

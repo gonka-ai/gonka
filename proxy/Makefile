@@ -1,6 +1,10 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-config
 
 include ../scripts/blst-portable.mk
+
+# Render nginx.unified.conf.template via entrypoint.sh and run nginx -t (Docker).
+test-config:
+	./test-config.sh
 
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
