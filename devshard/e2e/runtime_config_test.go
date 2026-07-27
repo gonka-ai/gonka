@@ -42,6 +42,8 @@ func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
 		"inference_seal_grace_nonces":  9,
 		"inference_seal_grace_seconds": 77,
 		"auto_seal_every_n_nonces":     21,
+		"refusal_timeout":              5,
+		"execution_timeout":            17,
 	} {
 		require.Equalf(t, want, testutil.NumericField(t, config, field),
 			"status config %s should match the configured mock-chain escrow value", field)

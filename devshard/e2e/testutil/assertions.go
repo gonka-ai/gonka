@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 func RequireOpenAIStream(t *testing.T, stream StreamResponse) {
@@ -213,6 +215,22 @@ func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, n
 		require.Equalf(t, want.StateHash, status.StateHash, "host %d should observe the same state hash", index+1)
 		require.Equalf(t, want.StateSig, status.StateSig, "host %d should observe the same state signature", index+1)
 		require.Equalf(t, want.SenderSlot, status.SenderSlot, "host %d should observe the same signature sender", index+1)
+	}
+}
+
+func RequireTimeoutInferenceTransaction(t *testing.T, timeout TimeoutInferenceTransaction, inferenceID uint64, voteThreshold uint64, unavailableSlot uint32) {
+	t.Helper()
+	require.Equal(t, inferenceID, timeout.InferenceID)
+	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_REFUSED, timeout.Reason)
+	require.Greater(t, uint64(len(timeout.VoterSlots)), voteThreshold, "timeout votes should exceed the threshold")
+	require.NotContains(t, timeout.VoterSlots, unavailableSlot, "unavailable executor must not vote for its own timeout")
+
+	seen := make(map[uint32]struct{}, len(timeout.VoterSlots))
+	for _, slot := range timeout.VoterSlots {
+		if _, exists := seen[slot]; exists {
+			t.Fatalf("duplicate timeout vote from slot %d", slot)
+		}
+		seen[slot] = struct{}{}
 	}
 }
 
