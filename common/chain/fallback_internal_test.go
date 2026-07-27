@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 	"syscall"
 	"testing"
@@ -296,6 +297,112 @@ func TestFallback_OnlyOneRequestProbesGRPC(t *testing.T) {
 	assert.Equal(t, concurrent+1, rpc.calls())
 }
 
+func TestFallback_BothTransportsDownReportsBothErrors(t *testing.T) {
+	rpcErr := status.Error(codes.Internal, "abci query failed")
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{err: rpcErr}
+	fb, _ := newTestFallback(direct, rpc)
+
+	err := invoke(fb)
+	require.Error(t, err)
+
+	// Reporting only the RPC failure hides why the fallback engaged at all, so
+	// both causes must stay reachable.
+	assert.ErrorIs(t, err, errUnavailable, "the original gRPC failure must survive")
+	assert.ErrorIs(t, err, rpcErr, "the RPC failure must survive")
+	assert.Contains(t, err.Error(), "/test.Service/Query")
+
+	// status.FromError unwraps to the first cause, so a node that answers on
+	// neither transport reports Unavailable rather than the RPC-side code.
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Contains(t, err.Error(), "abci query failed")
+}
+
+func TestFallback_FailedProbeWithDeadRPCReportsBothErrors(t *testing.T) {
+	rpcErr := status.Error(codes.Internal, "abci query failed")
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	rpc.setErr(rpcErr)
+	clock.advance(testProbeInterval)
+	err := invoke(fb)
+	require.Error(t, err)
+
+	assert.ErrorIs(t, err, errUnavailable)
+	assert.ErrorIs(t, err, rpcErr)
+}
+
+func TestFallback_SuccessfulRPCRetryHidesTheGRPCError(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	// Callers must not see an error for a request the fallback served.
+	require.NoError(t, invoke(fb))
+}
+
+// logCounter counts records emitted at a given level, to assert that a
+// transition is announced once rather than once per racing request.
+type logCounter struct {
+	mu    sync.Mutex
+	level slog.Level
+	count int
+}
+
+func (h *logCounter) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *logCounter) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r.Level == h.level {
+		h.count++
+	}
+	return nil
+}
+
+func (h *logCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *logCounter) WithGroup(string) slog.Handler      { return h }
+
+func (h *logCounter) total() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+func TestFallback_ConcurrentFailuresAnnounceFallbackOnce(t *testing.T) {
+	counter := &logCounter{level: slog.LevelWarn}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(counter))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	release := make(chan struct{})
+	direct := &stubConn{err: errUnavailable, block: release}
+	rpc := &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	const concurrent = 8
+	var wg sync.WaitGroup
+	wg.Add(concurrent)
+	for range concurrent {
+		go func() {
+			defer wg.Done()
+			_ = invoke(fb)
+		}()
+	}
+
+	// Hold every request inside the gRPC call so they all routed while
+	// usingRPC was still false, then let them fail together and race on the
+	// transition.
+	require.Eventually(t, func() bool { return direct.calls() == concurrent },
+		time.Second, time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	assert.Equal(t, concurrent, direct.calls(), "every request tries gRPC before the switch")
+	assert.Equal(t, concurrent, rpc.calls(), "and every request is then served over RPC")
+	assert.Equal(t, 1, counter.total(), "the transition must be logged once, not once per request")
+}
+
 func TestFallback_StreamsAlwaysUseDirectGRPC(t *testing.T) {
 	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
 	fb, _ := newTestFallback(direct, rpc)
@@ -345,7 +452,9 @@ func TestNewWithRPCFallback_QueriesUseFallbackTxUsesDirect(t *testing.T) {
 	require.True(t, isFallback, "queries must go through the fallback conn")
 	_, txIsFallback := c.Conn().(*fallbackConn)
 	assert.False(t, txIsFallback, "transactions must stay on direct gRPC")
-	assert.Equal(t, c.Conn(), fallback.direct)
+	// observability.ObservedConn is a struct value rather than a pointer, so
+	// equality is the identity check available here.
+	assert.Equal(t, c.Conn(), fallback.direct, "the fallback must probe the conn txs use")
 	assert.Equal(t, DefaultRPCProbeInterval, fallback.probeInterval)
 }
 

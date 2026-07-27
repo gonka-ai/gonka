@@ -11,13 +11,17 @@ import (
 	abci "github.com/cometbft/cometbft/abci/types"
 	coretypes "github.com/cometbft/cometbft/rpc/core/types"
 	rpctypes "github.com/cometbft/cometbft/rpc/jsonrpc/types"
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
 
-const inferenceParamsMethod = "/inference.inference.Query/Params"
+const (
+	inferenceParamsMethod = "/inference.inference.Query/Params"
+	cometNodeInfoMethod   = "/cosmos.base.tendermint.v1beta1.Service/GetNodeInfo"
+)
 
 // fakeCometRPC serves CometBFT JSON-RPC abci_query calls, recording the ABCI
 // path each request asked for.
@@ -91,6 +95,26 @@ func TestRPCQueryConn_SurfacesABCIErrorAsGRPCStatus(t *testing.T) {
 	require.True(t, ok)
 	require.NotEqual(t, codes.Unavailable, st.Code())
 	require.False(t, isTransportDown(err))
+}
+
+func TestRPCQueryConn_CometServiceGoesThroughTheABCIRouter(t *testing.T) {
+	// This pins the fallback's one known gap. CometBFT service queries are
+	// tunnelled as ABCI queries like any other, so they depend on the node
+	// having registered that service on its gRPC query router — which the SDK
+	// only does when app.toml sets grpc.enable or api.enable. A node with both
+	// off answers Unimplemented here while module queries keep working.
+	var paths []string
+	srv := fakeCometRPC(t, abci.ResponseQuery{Code: 0}, &paths)
+	defer srv.Close()
+
+	conn, err := newRPCQueryConn(srv.URL)
+	require.NoError(t, err)
+
+	var got cmtservice.GetNodeInfoResponse
+	_ = conn.Invoke(context.Background(), cometNodeInfoMethod, &cmtservice.GetNodeInfoRequest{}, &got)
+
+	// Not /status: the request is a store-router query addressed by method name.
+	require.Equal(t, []string{cometNodeInfoMethod}, paths)
 }
 
 func TestFallbackConn_ServesQueriesOverRPCAfterGRPCDies(t *testing.T) {

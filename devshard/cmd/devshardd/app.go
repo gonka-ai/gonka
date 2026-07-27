@@ -145,7 +145,7 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("api account: %w", err)
 	}
 
-	chainClient, err := chain.NewWithRPCFallback(nodeConfig.ChainGrpcUrl, nodeConfig.ChainRpcUrl)
+	chainClient, err := chain.NewWithQueryFallback(nodeConfig.ChainGrpcUrl, nodeConfig.ChainRpcUrl)
 	if err != nil {
 		return nil, fmt.Errorf("chain client: %w", err)
 	}

@@ -139,7 +139,7 @@ func (c *fallbackConn) Invoke(ctx context.Context, method string, args, reply an
 
 		default: // grpcDown
 			c.probeFailed()
-			return c.rpc.Invoke(ctx, method, args, reply, opts...)
+			return c.retryOnRPC(ctx, method, err, args, reply, opts)
 		}
 	}
 
@@ -150,7 +150,24 @@ func (c *fallbackConn) Invoke(ctx context.Context, method string, args, reply an
 		slog.Warn("chain: direct gRPC unreachable, queries falling back to CometBFT RPC",
 			"method", method, "error", err, "retry_after", c.probeInterval)
 	}
-	return c.rpc.Invoke(ctx, method, args, reply, opts...)
+	return c.retryOnRPC(ctx, method, err, args, reply, opts)
+}
+
+// retryOnRPC serves a request that direct gRPC could not, keeping the original
+// transport error attached. Without it a node that is unreachable on both ports
+// reports only the RPC-side failure, which hides why the fallback engaged.
+func (c *fallbackConn) retryOnRPC(
+	ctx context.Context,
+	method string,
+	grpcErr error,
+	args, reply any,
+	opts []grpc.CallOption,
+) error {
+	rpcErr := c.rpc.Invoke(ctx, method, args, reply, opts...)
+	if rpcErr == nil {
+		return nil
+	}
+	return fmt.Errorf("chain: %s failed on gRPC (%w) and on CometBFT RPC: %w", method, grpcErr, rpcErr)
 }
 
 // probeVerdict is what a probe attempt proved about the direct gRPC endpoint.
@@ -210,6 +227,16 @@ func isTransportDown(err error) bool {
 // newRPCQueryConn builds a Cosmos SDK client.Context that serves generated query
 // clients over CometBFT RPC. With no GRPCClient set, Context.Invoke wraps each
 // query as an ABCI query against the node's gRPC query router.
+//
+// Known limitation: module queries (inference, BLS, restrictions) are registered
+// on that router by every node, but the CometBFT service
+// (cosmos.base.tendermint.v1beta1) is registered only when app.toml sets
+// grpc.enable or api.enable, because the SDK gates RegisterTendermintService on
+// them. grpc.enable defaults to true and no deployment here turns it off, so in
+// practice those queries resolve; a node with both disabled would answer them
+// with Unimplemented while module queries kept working. Serving them from
+// CometBFT's own /status, /block and /validators endpoints would close that gap
+// if such a node ever needs supporting.
 func newRPCQueryConn(rpcURL string) (grpc.ClientConnInterface, error) {
 	if strings.TrimSpace(rpcURL) == "" {
 		return nil, fmt.Errorf("chain: comet rpc url is required for query fallback")
