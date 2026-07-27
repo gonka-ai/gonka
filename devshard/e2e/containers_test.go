@@ -62,6 +62,7 @@ type containerSpec struct {
 type e2eEnvOptions struct {
 	hostVolumeNames    []string
 	usePostgresStorage bool
+	hostEnvOverrides   map[int]map[string]string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -122,7 +123,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		tmpfs: map[string]string{
 			"/tmp/pgdata": "rw",
 		},
-		waitLog: "database system is ready to accept connections",
+		waitLog:           "database system is ready to accept connections",
 		waitLogOccurrence: 2,
 	})
 
@@ -135,7 +136,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.createPostgresHostDatabases(ctx, t, postgres)
 	}
 	for i := range env.hostURLs {
-		env.hostControlURLs[i] = containerURL(ctx, t, env.startHost(ctx, t, i), "8080/tcp")
+		env.hostControlURLs[i] = containerURL(ctx, t, env.startHostWithEnv(ctx, t, i, opts.hostEnvOverrides[i]), "8080/tcp")
 	}
 
 	devshardctl := env.startContainer(ctx, t, containerSpec{
@@ -144,15 +145,15 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		port:    "8080/tcp",
 		aliases: []string{devshardCtlName},
 		env: map[string]string{
-			"DEVSHARD_ESCROW_ID":       defaultEscrowID,
-			"DEVSHARD_CHAIN_GRPC":      mockChainAlias + ":9090",
-			"DEVSHARD_PUBLIC_API":      "http://" + mockChainAlias + ":9191",
-			"DEVSHARD_PARAMS_SOURCE":   "chain",
-			"DEVSHARD_PRIVATE_KEY":     testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY":   testutil.AdminAPIKey,
-			"DEVSHARD_STORAGE_PATH":    "/tmp/devshardctl",
-			"DEVSHARD_MODEL":           "stub-model",
-			"GATEWAY_MAX_TOKENS_CAP":   "4096",
+			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
+			"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
+			"DEVSHARD_PARAMS_SOURCE": "chain",
+			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
+			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
+			"DEVSHARD_MODEL":         "stub-model",
+			"GATEWAY_MAX_TOKENS_CAP": "4096",
 		},
 		waitPath: "/v1/status",
 	})
@@ -206,6 +207,10 @@ func e2eHostSessionEnv() map[string]string {
 }
 
 func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcontainers.Container {
+	return e.startHostWithEnv(ctx, t, index, nil)
+}
+
+func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, overrides map[string]string) testcontainers.Container {
 	t.Helper()
 	env := map[string]string{
 		"DEVSHARD_ESCROW_ID":         defaultEscrowID,
@@ -216,6 +221,9 @@ func (e *e2eEnv) startHost(ctx context.Context, t *testing.T, index int) testcon
 		"DEVSHARD_STUB_INFERENCE":    "1",
 	}
 	for k, v := range e2eHostSessionEnv() {
+		env[k] = v
+	}
+	for k, v := range overrides {
 		env[k] = v
 	}
 	var mounts []mount.Mount

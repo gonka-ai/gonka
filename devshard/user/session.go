@@ -1860,6 +1860,18 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	var reason types.TimeoutReason
 	var deadline time.Time
 	if confirmedAt > 0 {
+		// A receipt moves the inference to Started. Publish its pending
+		// ConfirmStart before asking peers to verify an execution timeout so
+		// they evaluate the same receipt-backed state.
+		st := s.sm.SnapshotState()
+		if rec, ok := st.Inferences[nonce]; !ok {
+			return TimeoutResult{}, fmt.Errorf("execution timeout inference %d not found", nonce)
+		} else if rec.Status == types.StatusPending {
+			if err := s.SendPendingDiff(ctx); err != nil {
+				return TimeoutResult{}, fmt.Errorf("publish receipt before execution timeout: %w", err)
+			}
+		}
+
 		deadline = time.Unix(confirmedAt, 0).Add(
 			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {

@@ -100,18 +100,19 @@ func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip) {
 }
 
 type hostConfig struct {
-	escrowID    string
-	hostIndex   int
-	signer      *signing.Secp256k1Signer
-	userSigner  *signing.Secp256k1Signer
-	userAddress string
-	group       []types.SlotAssignment
-	peerURLs    []string
-	dataDir     string
-	balance     uint64
-	epochID     uint64
-	tokenPrice  uint64
-	version     string
+	escrowID          string
+	hostIndex         int
+	signer            *signing.Secp256k1Signer
+	userSigner        *signing.Secp256k1Signer
+	userAddress       string
+	group             []types.SlotAssignment
+	peerURLs          []string
+	dataDir           string
+	balance           uint64
+	epochID           uint64
+	tokenPrice        uint64
+	version           string
+	stubExecutionHang bool
 }
 
 func loadConfig() (hostConfig, error) {
@@ -148,20 +149,25 @@ func loadConfig() (hostConfig, error) {
 	if len(peerURLs) != len(group) {
 		return hostConfig{}, fmt.Errorf("DEVSHARD_PEER_URLS count %d must match group size %d", len(peerURLs), len(group))
 	}
+	stubExecutionHang, err := boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	if err != nil {
+		return hostConfig{}, err
+	}
 
 	return hostConfig{
-		escrowID:    envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
-		hostIndex:   hostIndex,
-		signer:      hostSigner,
-		userSigner:  userSigner,
-		userAddress: userAddress,
-		group:       group,
-		peerURLs:    peerURLs,
-		dataDir:     envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
-		balance:     uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
-		epochID:     uintEnv("DEVSHARD_EPOCH_ID", 1),
-		tokenPrice:  uintEnv("DEVSHARD_TOKEN_PRICE", 1),
-		version:     envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		escrowID:          envDefault("DEVSHARD_ESCROW_ID", defaultEscrowID),
+		hostIndex:         hostIndex,
+		signer:            hostSigner,
+		userSigner:        userSigner,
+		userAddress:       userAddress,
+		group:             group,
+		peerURLs:          peerURLs,
+		dataDir:           envDefault("DEVSHARD_DATA_DIR", filepath.Join(os.TempDir(), "devshard-host")),
+		balance:           uintEnv("DEVSHARD_ESCROW_AMOUNT", 1_000_000),
+		epochID:           uintEnv("DEVSHARD_EPOCH_ID", 1),
+		tokenPrice:        uintEnv("DEVSHARD_TOKEN_PRICE", 1),
+		version:           envDefault("DEVSHARD_VERSION", types.EffectiveStateRootAndProtocolVersion),
+		stubExecutionHang: stubExecutionHang,
 	}, nil
 }
 
@@ -204,10 +210,15 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossi
 		return nil, nil, err
 	}
 
+	inferenceEngine := stub.NewInferenceEngine()
+	// This E2E-only switch simulates an executor that acknowledged the work
+	// with a receipt but never completes model execution.
+	inferenceEngine.BlockUntilContextDone = cfg.stubExecutionHang
+
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
-		stub.NewInferenceEngine(),
+		inferenceEngine,
 		cfg.escrowID,
 		cfg.group,
 		nil,
@@ -344,6 +355,18 @@ func uintEnv(key string, fallback uint64) uint64 {
 		log.Fatalf("invalid %s: %v", key, err)
 	}
 	return value
+}
+
+func boolEnv(key string, fallback bool) (bool, error) {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := strconv.ParseBool(raw)
+	if err != nil {
+		return false, fmt.Errorf("parse %s: %w", key, err)
+	}
+	return value, nil
 }
 
 func defaultHostPrivateKeys() []string {
