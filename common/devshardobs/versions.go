@@ -9,6 +9,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -32,10 +34,13 @@ type HealthzVersions struct {
 	client *http.Client
 	ttl    time.Duration
 
-	mu       sync.Mutex
-	cached   []string
-	cachedAt time.Time
-	haveCache bool // true after at least one successful fetch
+	sf            singleflight.Group
+	mu            sync.Mutex
+	cached        []string
+	cachedAt      time.Time
+	lastAttemptAt time.Time
+	lastErr       error
+	haveCache     bool // true after at least one successful fetch
 }
 
 // NewHealthzVersions polls versiond supervisor health for running children.
@@ -55,23 +60,63 @@ func NewHealthzVersions(base *url.URL, client *http.Client, ttl time.Duration) *
 // transient versiond /healthz blip does not 502 all versionless obs.
 func (h *HealthzVersions) ActiveVersions(ctx context.Context) ([]string, error) {
 	h.mu.Lock()
-	defer h.mu.Unlock()
-	if h.haveCache && time.Since(h.cachedAt) < h.ttl {
-		return append([]string(nil), h.cached...), nil
-	}
-
-	versions, err := h.fetch(ctx)
-	if err != nil {
+	if time.Since(h.lastAttemptAt) < h.ttl {
 		if h.haveCache {
-			// Keep last good cache and cachedAt so we retry after TTL.
-			return append([]string(nil), h.cached...), nil
+			cached := append([]string(nil), h.cached...)
+			h.mu.Unlock()
+			return cached, nil
 		}
+		if h.lastErr != nil {
+			err := h.lastErr
+			h.mu.Unlock()
+			return nil, err
+		}
+	}
+	h.mu.Unlock()
+
+	res, err, _ := h.sf.Do("active_versions", func() (any, error) {
+		h.mu.Lock()
+		if time.Since(h.lastAttemptAt) < h.ttl {
+			if h.haveCache {
+				cached := append([]string(nil), h.cached...)
+				h.mu.Unlock()
+				return cached, nil
+			}
+			if h.lastErr != nil {
+				err := h.lastErr
+				h.mu.Unlock()
+				return nil, err
+			}
+		}
+		h.mu.Unlock()
+
+		versions, fetchErr := h.fetch(ctx)
+
+		h.mu.Lock()
+		defer h.mu.Unlock()
+
+		now := time.Now()
+		h.lastAttemptAt = now
+		h.lastErr = fetchErr
+
+		if fetchErr != nil {
+			if h.haveCache {
+				// Return last known good cache (cachedAt retains actual data age).
+				return append([]string(nil), h.cached...), nil
+			}
+			return nil, fetchErr
+		}
+
+		h.cached = versions
+		h.cachedAt = now
+		h.haveCache = true
+		return append([]string(nil), versions...), nil
+	})
+
+	if err != nil {
 		return nil, err
 	}
-	h.cached = versions
-	h.cachedAt = time.Now()
-	h.haveCache = true
-	return append([]string(nil), versions...), nil
+	return res.([]string), nil
 }
 
 func (h *HealthzVersions) fetch(ctx context.Context) ([]string, error) {

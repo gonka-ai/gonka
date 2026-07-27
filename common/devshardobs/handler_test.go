@@ -365,7 +365,9 @@ func TestHealthzVersions_StaleIfError(t *testing.T) {
 }
 
 func TestHealthzVersions_ErrorWithoutCache(t *testing.T) {
+	var fetchCount atomic.Int32
 	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetchCount.Add(1)
 		http.Error(w, "boom", http.StatusBadGateway)
 	}))
 	defer backend.Close()
@@ -375,5 +377,131 @@ func TestHealthzVersions_ErrorWithoutCache(t *testing.T) {
 	_, err := src.ActiveVersions(context.Background())
 	if err == nil {
 		t.Fatal("expected error with empty cache")
+	}
+	if fetchCount.Load() != 1 {
+		t.Fatalf("fetchCount=%d, want 1", fetchCount.Load())
+	}
+
+	// Cold-start error must be throttled during TTL (no redundant fetch)
+	for i := 0; i < 5; i++ {
+		_, err := src.ActiveVersions(context.Background())
+		if err == nil {
+			t.Fatal("expected cached error during TTL")
+		}
+	}
+	if fetchCount.Load() != 1 {
+		t.Fatalf("cold-start fetchCount=%d, want 1 (throttled)", fetchCount.Load())
+	}
+}
+
+func TestHealthzVersions_StaleIfErrorRespectedDuringTTL(t *testing.T) {
+	var fetchCount atomic.Int32
+	var fail atomic.Bool
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetchCount.Add(1)
+		if fail.Load() {
+			http.Error(w, "boom", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"v1","status":"running"}]`))
+	}))
+	defer backend.Close()
+	u, _ := url.Parse(backend.URL)
+
+	src := NewHealthzVersions(u, backend.Client(), 100*time.Millisecond)
+	got, err := src.ActiveVersions(context.Background())
+	if err != nil || len(got) != 1 || got[0] != "v1" {
+		t.Fatalf("initial fetch failed: got %v err %v", got, err)
+	}
+	if fetchCount.Load() != 1 {
+		t.Fatalf("fetchCount=%d, want 1", fetchCount.Load())
+	}
+	initialCachedAt := src.cachedAt
+
+	// Trigger failure
+	fail.Store(true)
+	time.Sleep(110 * time.Millisecond) // expire TTL
+
+	// First fetch after TTL expiration detects failure
+	got, err = src.ActiveVersions(context.Background())
+	if err != nil || len(got) != 1 || got[0] != "v1" {
+		t.Fatalf("stale fetch failed: got %v err %v", got, err)
+	}
+	if fetchCount.Load() != 2 {
+		t.Fatalf("fetchCount=%d, want 2", fetchCount.Load())
+	}
+
+	// Verify cachedAt retains original data age (not updated to now on error)
+	if !src.cachedAt.Equal(initialCachedAt) {
+		t.Fatalf("cachedAt was mutated on error: got %v, want %v", src.cachedAt, initialCachedAt)
+	}
+	if src.lastAttemptAt.Equal(initialCachedAt) {
+		t.Fatalf("lastAttemptAt was not updated on error attempt: %v", src.lastAttemptAt)
+	}
+
+	// Submitting 10 immediate calls during TTL should NOT increment fetchCount
+	for i := 0; i < 10; i++ {
+		got, err = src.ActiveVersions(context.Background())
+		if err != nil || len(got) != 1 || got[0] != "v1" {
+			t.Fatalf("subsequent stale fetch failed: got %v err %v", got, err)
+		}
+	}
+	if fetchCount.Load() != 2 {
+		t.Fatalf("fetchCount=%d after TTL fast-path, want 2", fetchCount.Load())
+	}
+}
+
+func TestHealthzVersions_ConcurrentFetchDeduplicated(t *testing.T) {
+	var fetchCount atomic.Int32
+	blockCh := make(chan struct{})
+
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fetchCount.Add(1)
+		if fetchCount.Load() > 1 {
+			<-blockCh // block second fetch until unblocked
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"v1","status":"running"}]`))
+	}))
+	defer backend.Close()
+	u, _ := url.Parse(backend.URL)
+
+	src := NewHealthzVersions(u, backend.Client(), 50*time.Millisecond)
+
+	// Initial fetch
+	got, err := src.ActiveVersions(context.Background())
+	if err != nil || len(got) != 1 {
+		t.Fatalf("initial fetch failed: %v", err)
+	}
+
+	time.Sleep(60 * time.Millisecond) // expire TTL
+
+	// Launch 10 concurrent callers while backend is blocked
+	var wg sync.WaitGroup
+	errs := make(chan error, 10)
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			res, err := src.ActiveVersions(context.Background())
+			if err != nil || len(res) != 1 || res[0] != "v1" {
+				errs <- fmt.Errorf("got %v, err %v", res, err)
+			}
+		}()
+	}
+
+	time.Sleep(50 * time.Millisecond) // ensure callers are waiting in singleflight
+	close(blockCh)                   // unblock backend
+	wg.Wait()
+	close(errs)
+
+	for err := range errs {
+		t.Fatal(err)
+	}
+
+	if fetchCount.Load() != 2 {
+		t.Fatalf("fetchCount=%d, want 2 (1 initial + 1 deduplicated concurrent fetch)", fetchCount.Load())
 	}
 }
