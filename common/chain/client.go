@@ -178,6 +178,10 @@ func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
 // QueryConn returns the connection queries run on. It equals Conn() unless the
 // client was built with NewWithRPCFallback. Use it for query clients this
 // package does not expose directly.
+//
+// Queries only. Building a tx service client on this conn and broadcasting
+// through it is rejected rather than silently retried across transports; use
+// Conn() for transactions.
 func (c *Client) QueryConn() grpc.ClientConnInterface { return c.queryConn }
 
 // InferenceQueryClient returns a query client for the inference module.

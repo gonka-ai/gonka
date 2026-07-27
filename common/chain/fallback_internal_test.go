@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -401,6 +402,70 @@ func TestFallback_ConcurrentFailuresAnnounceFallbackOnce(t *testing.T) {
 	assert.Equal(t, concurrent, direct.calls(), "every request tries gRPC before the switch")
 	assert.Equal(t, concurrent, rpc.calls(), "and every request is then served over RPC")
 	assert.Equal(t, 1, counter.total(), "the transition must be logged once, not once per request")
+}
+
+func TestFallback_EveryProbeIntervalReannouncesTheDegradation(t *testing.T) {
+	counter := &logCounter{level: slog.LevelWarn}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(counter))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	// Announcing only the transition would leave a service that has been on
+	// RPC for a week looking exactly like one that never fell back at all.
+	for range 2 {
+		clock.advance(testProbeInterval)
+		require.NoError(t, invoke(fb))
+	}
+
+	assert.Equal(t, 3, counter.total(), "the transition plus one line per failed probe")
+}
+
+// txServiceClient is the client any caller would build on QueryConn if they
+// mistook it for a general-purpose conn. Driving the test through it rather than
+// the method string checks the guard against the name the SDK actually emits.
+func txServiceClient(conn grpc.ClientConnInterface) txtypes.ServiceClient {
+	return txtypes.NewServiceClient(conn)
+}
+
+func TestFallback_RejectsTxBroadcastOnBothTransports(t *testing.T) {
+	direct, rpc := &stubConn{}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	_, err := txServiceClient(fb).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{})
+	require.Error(t, err)
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, err.Error(), "Client.Conn()")
+	assert.Zero(t, direct.calls(), "a broadcast must not reach either transport")
+	assert.Zero(t, rpc.calls())
+}
+
+func TestFallback_TxServiceQueriesStillRoute(t *testing.T) {
+	direct, rpc := &stubConn{}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	// Only broadcasting is barred. GetTx and friends are ordinary queries and
+	// must keep working, fallback included.
+	_, err := txServiceClient(fb).GetTx(context.Background(), &txtypes.GetTxRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, direct.calls())
+}
+
+func TestQueryConn_RejectsBroadcastEvenWhenGRPCIsHealthy(t *testing.T) {
+	c, err := NewWithRPCFallback("localhost:9090", "http://localhost:26657")
+	require.NoError(t, err)
+
+	// Failing closed from the first call is the point: a broadcast that worked
+	// until the day gRPC dropped would submit the same signed transaction on
+	// both transports exactly when nobody is watching.
+	_, err = txServiceClient(c.QueryConn()).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestFallback_StreamsAlwaysUseDirectGRPC(t *testing.T) {
