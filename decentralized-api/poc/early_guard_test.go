@@ -2,6 +2,7 @@ package poc
 
 import (
 	"context"
+	"fmt"
 	"testing"
 
 	"decentralized-api/chainphase"
@@ -540,6 +541,31 @@ func TestDecide(t *testing.T) {
 		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
 		if outcome != earlyGuardRetry {
 			t.Fatalf("transient by-nonce error must retry, got %v: %s", outcome, reason)
+		}
+	})
+
+	// A local failure means the check never ran, so it must not reach a vote.
+	t.Run("local early-proof failure requests abstain", func(t *testing.T) {
+		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
+		localErr := fmt.Errorf("%w: failed to sign request: keyring locked", ErrLocalRequestFailure)
+		f := mkFetcher(art, art, localErr, nil)
+		dec := inclusionDec
+		dec.shareVoteNo = true
+		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
+		if outcome != earlyGuardAbstainRetry {
+			t.Fatalf("local early-proof failure must abstain, got %v: %s", outcome, reason)
+		}
+	})
+
+	t.Run("local final by-nonce failure requests abstain", func(t *testing.T) {
+		art := VerifiedArtifact{LeafIndex: 3, Nonce: 7, VectorB64: "vec"}
+		localErr := fmt.Errorf("%w: failed to marshal request", ErrLocalRequestFailure)
+		f := mkFetcher(art, art, nil, localErr)
+		dec := inclusionDec
+		dec.shareVoteNo = true
+		outcome, reason := guard.decide(ctx, f, stage, work, dec, "pub", "hash")
+		if outcome != earlyGuardAbstainRetry {
+			t.Fatalf("local by-nonce failure must abstain, got %v: %s", outcome, reason)
 		}
 	})
 }
