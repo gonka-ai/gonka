@@ -16,7 +16,7 @@ import (
 
 func setupDevshardEscrowTest(t testing.TB) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	return k, keeper.NewMsgServerImpl(k), ctx, &mock
 }
 

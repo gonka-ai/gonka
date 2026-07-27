@@ -6,7 +6,7 @@ import (
 	"slices"
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
+	"github.com/productscience/inference/testutil"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/utils"
 
@@ -527,12 +527,7 @@ func TestSamplePreservedForEpisode_ExcludesGuardians(t *testing.T) {
 	ctx := context.Background()
 	modelID := "model-guardian-test"
 
-	// Set bech32 prefixes so utils.OperatorAddressToAccAddress can decode the
-	// gonkavaloper... fixture below. Safe to call repeatedly across tests in
-	// this package (no Seal()).
-	cfg := sdk.GetConfig()
-	cfg.SetBech32PrefixForAccount("gonka", "gonkapub")
-	cfg.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
+	testutil.EnsureBech32Config()
 
 	// A pre-known valid gonkavaloper bech32 used in other tests in this package.
 	guardianOperator := "gonkavaloper1gcrlrhvw8kd7zr6pl92rxnc6j20chatkcx6w4t"

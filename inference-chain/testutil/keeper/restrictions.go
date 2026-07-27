@@ -64,8 +64,7 @@ func (m *SimpleBankKeeper) SendCoins(ctx context.Context, fromAddr, toAddr sdk.A
 }
 
 func RestrictionsKeeper(t testing.TB) (keeper.Keeper, sdk.Context) {
-	// Configure SDK with proper Bech32 prefix for gonka
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	EnsureBech32Config()
 
 	storeKey := storetypes.NewKVStoreKey(types.StoreKey)
 

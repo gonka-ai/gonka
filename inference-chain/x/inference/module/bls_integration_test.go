@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	"github.com/productscience/inference/testutil"
 	keepertest "github.com/productscience/inference/testutil/keeper"
 	blskeeper "github.com/productscience/inference/x/bls/keeper"
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -72,12 +73,7 @@ var (
 
 // setupSDKConfig configures the SDK for testing if not already configured
 func setupSDKConfig() {
-	config := sdk.GetConfig()
-	// Only configure if not already configured with gonka prefix
-	if config.GetBech32AccountAddrPrefix() != "gonka" {
-		config.SetBech32PrefixForAccount("gonka", "gonkapub")
-		config.SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
-	}
+	testutil.EnsureBech32Config()
 }
 
 // setupTestAddresses generates valid bech32 addresses for testing
@@ -476,8 +472,8 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 		authAny, err := codectypes.NewAnyWithValue(authztypes.NewGenericAuthorization("/inference.bls.MsgSubmitDealerPart"))
 		require.NoError(t, err)
 		grants[i] = &authztypes.GrantAuthorization{
-			Granter: aliceAccAddrStr,
-			Grantee: granteeAddr.String(),
+			Granter:       aliceAccAddrStr,
+			Grantee:       granteeAddr.String(),
 			Authorization: authAny,
 		}
 		baseAcc := authtypes.NewBaseAccount(granteeAddr, warmKey.PubKey(), 0, 0)
@@ -496,10 +492,10 @@ func TestBLSKeyGenerationPrunesExcessWarmKeys(t *testing.T) {
 
 	// Setup participant
 	storedParticipant := types.Participant{
-		Index:           aliceAccAddrStr,
-		Address:         aliceAccAddrStr,
-		Weight:          100,
-		Status:          types.ParticipantStatus_ACTIVE,
+		Index:   aliceAccAddrStr,
+		Address: aliceAccAddrStr,
+		Weight:  100,
+		Status:  types.ParticipantStatus_ACTIVE,
 	}
 	k.SetParticipant(ctx, storedParticipant)
 

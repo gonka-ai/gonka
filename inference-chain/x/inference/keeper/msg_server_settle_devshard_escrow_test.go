@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"go.uber.org/mock/gomock"
 
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -38,7 +39,7 @@ func setActiveParticipantsForDevshardTest(t *testing.T, k keeper.Keeper, ctx sdk
 
 func TestSettleDevshardEscrow_FeesSplitBySlotCount(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keyH1, err := dcrdsecp.GeneratePrivateKey()
 	require.NoError(t, err)
@@ -116,7 +117,7 @@ func TestSettleDevshardEscrow_FeesSplitBySlotCount(t *testing.T) {
 
 func TestSettleDevshardEscrow_HappyPath(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys := make([]*dcrdsecp.PrivateKey, keeper.DevshardGroupSize)
 	slots := make([]string, keeper.DevshardGroupSize)
@@ -180,7 +181,7 @@ func TestSettleDevshardEscrow_HappyPath(t *testing.T) {
 
 func TestSettleDevshardEscrow_AlreadySettled(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0xBB
@@ -203,7 +204,7 @@ func TestSettleDevshardEscrow_AlreadySettled(t *testing.T) {
 
 func TestSettleDevshardEscrow_WrongSettler(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0xCC
@@ -227,7 +228,7 @@ func TestSettleDevshardEscrow_WrongSettler(t *testing.T) {
 
 func TestSettleDevshardEscrow_ZeroCostSettlement(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys := make([]*dcrdsecp.PrivateKey, keeper.DevshardGroupSize)
 	slots := make([]string, keeper.DevshardGroupSize)
@@ -274,7 +275,7 @@ func TestSettleDevshardEscrow_ZeroCostSettlement(t *testing.T) {
 
 func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keyH1, err := dcrdsecp.GeneratePrivateKey()
 	require.NoError(t, err)
@@ -339,7 +340,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStats(t *testing.T) {
 
 func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keyH1, err := dcrdsecp.GeneratePrivateKey()
 	require.NoError(t, err)
@@ -402,7 +403,7 @@ func TestSettleDevshardEscrow_AggregatesParticipantStatsWithRemainderSlots(t *te
 
 func TestSettleDevshardEscrow_PreviousEpochSettlementAllowedWithoutParticipantStats(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	for _, addr := range slots {
@@ -458,7 +459,7 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementAllowedWithoutParticipantSt
 
 func TestSettleDevshardEscrow_PreviousEpochSettlementUsesClaimRecipient(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	key, err := dcrdsecp.GeneratePrivateKey()
 	require.NoError(t, err)
@@ -513,7 +514,7 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementUsesClaimRecipient(t *testi
 
 func TestSettleDevshardEscrow_PreviousEpochSettlementDoesNotRollIntoCurrentEpochActiveParticipants(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	for _, addr := range slots {
@@ -570,7 +571,7 @@ func TestSettleDevshardEscrow_PreviousEpochSettlementDoesNotRollIntoCurrentEpoch
 
 func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediatelyWithoutParticipantStateChange(t *testing.T) {
 	k, ms, ctx, mocks := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	for _, addr := range slots {
@@ -632,7 +633,7 @@ func TestSettleDevshardEscrow_CurrentEpochInactiveParticipantPaidImmediatelyWith
 
 func TestSettleDevshardEscrow_OlderThanPreviousEpochRejected(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	keys, slots := generateDevshardKeys(t, keeper.DevshardGroupSize)
 	for _, addr := range slots {
@@ -662,7 +663,7 @@ func TestSettleDevshardEscrow_OlderThanPreviousEpochRejected(t *testing.T) {
 
 func TestSettleDevshardEscrow_AllowlistBlocks(t *testing.T) {
 	k, ms, ctx, _ := setupDevshardEscrowTest(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	creator := sdk.AccAddress(make([]byte, 20))
 	creator[0] = 0xCC

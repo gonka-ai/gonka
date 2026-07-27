@@ -3,14 +3,14 @@ package keeper_test
 import (
 	"testing"
 
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/productscience/inference/testutil"
+	keepertest "github.com/productscience/inference/testutil/keeper"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
 
 func TestMsgSetPoCDelegation_ValidateBasic_RejectsSelfDelegation(t *testing.T) {
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 
 	msg := &types.MsgSetPoCDelegation{
 		Sender:     testutil.Creator,

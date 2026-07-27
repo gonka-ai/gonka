@@ -39,8 +39,7 @@ func (w testWasmKeeper) GetContractInfo(_ context.Context, _ sdk.AccAddress) *wa
 func setupPermissionsHarness(t *testing.T) (keeper.Keeper, types.MsgServer, sdk.Context, *keepertest.InferenceMocks) {
 	t.Helper()
 	k, ctx, mocks := keepertest.InferenceKeeperReturningMocks(t)
-	// bech32 config for tests
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	ms := keeper.NewMsgServerImpl(k)
 	return k, ms, ctx, &mocks
 }
@@ -216,7 +215,6 @@ func TestPermission_InvalidSignerAddress(t *testing.T) {
 
 func TestPermission_GuardianSkipsMalformedConfiguredAddress(t *testing.T) {
 	k, ms, ctx, _ := setupPermissionsHarness(t)
-	sdk.GetConfig().SetBech32PrefixForValidator("gonkavaloper", "gonkavaloperpub")
 
 	signer := sdk.MustAccAddressFromBech32(testutil.Validator)
 	guardianOperator := sdk.ValAddress(signer).String()

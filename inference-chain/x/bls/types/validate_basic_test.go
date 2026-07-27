@@ -4,16 +4,15 @@ import (
 	"testing"
 
 	errorsmod "cosmossdk.io/errors"
-	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkbech32 "github.com/cosmos/cosmos-sdk/types/bech32"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
+	"github.com/productscience/inference/testutil"
 	"github.com/stretchr/testify/require"
 )
 
 // setupBech32 configures the bech32 HRP used by sdk.AccAddressFromBech32
 func setupBech32() {
-	// Use the same prefix seen in other tests in this repo
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonkapub")
+	testutil.EnsureBech32Config()
 }
 
 func mkAddr(t *testing.T) string {

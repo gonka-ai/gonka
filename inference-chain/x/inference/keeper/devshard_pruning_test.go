@@ -24,7 +24,7 @@ func pruneDevshard(k keeper.Keeper, ctx sdk.Context, currentEpoch int64) error {
 
 func TestPruneDevshardData_DeletesOldEscrows(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	mock.BankKeeper.ExpectAny(ctx)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
@@ -56,7 +56,7 @@ func TestPruneDevshardData_DeletesOldEscrows(t *testing.T) {
 
 func TestPruneDevshardData_PreservesRecentEscrows(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	mock.BankKeeper.ExpectAny(ctx)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
@@ -81,7 +81,7 @@ func TestPruneDevshardData_PreservesRecentEscrows(t *testing.T) {
 
 func TestPruneDevshardData_HostStatsDeleted(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	mock.BankKeeper.ExpectAny(ctx)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
@@ -121,7 +121,7 @@ func TestPruneDevshardData_HostStatsDeleted(t *testing.T) {
 
 func TestPruneDevshardData_UnsettledEscrowDistributesFunds(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
 	// Create 4 unique validators in 16 slots
@@ -173,7 +173,7 @@ func TestPruneDevshardData_UnsettledEscrowDistributesFunds(t *testing.T) {
 
 func TestPruneDevshardData_UnsettledDistributionAmounts(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
 	// Create 4 unique validators in 16 slots (4 slots each)
@@ -222,7 +222,7 @@ func TestPruneDevshardData_UnsettledDistributionAmounts(t *testing.T) {
 
 func TestPruneDevshardData_UnsettledDistributionUsesClaimRecipient(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
 	participant := sdk.AccAddress(make([]byte, 20))
@@ -257,7 +257,7 @@ func TestPruneDevshardData_UnsettledDistributionUsesClaimRecipient(t *testing.T)
 
 func TestPruneDevshardData_TracksProgress(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	mock.BankKeeper.ExpectAny(ctx)
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
@@ -304,7 +304,7 @@ func TestPruneDevshardData_TracksProgress(t *testing.T) {
 // receives 4/16, rather than an equal split across the two unique addresses.
 func TestPruneDevshardData_UnequalSlotsPaidPerSlot(t *testing.T) {
 	k, ctx, mock := keepertest.InferenceKeeperReturningMocks(t)
-	sdk.GetConfig().SetBech32PrefixForAccount("gonka", "gonka")
+	keepertest.EnsureBech32Config()
 	require.NoError(t, k.PruningState.Set(ctx, types.PruningState{}))
 
 	addrA := sdk.AccAddress(make([]byte, 20))
