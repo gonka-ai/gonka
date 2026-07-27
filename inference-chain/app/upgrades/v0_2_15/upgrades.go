@@ -43,7 +43,7 @@ var bountyRewards = []BountyReward{
 	// Public name: @Ryanchen911
 	{Address: "gonka1zqss46r6jf6dhhyaa777kc2ppvjhn0ufkx4y57", Amount: USDT(1000)},
 
-	// PR #1308.
+	// PR #1308: devshard contribution.
 	// Public name: @redstartechno
 	{Address: "gonka105ce4495mj0mwkxqeasgdzqfq5jjrfq32eza5l", Amount: USDT(200)},
 
@@ -54,6 +54,18 @@ var bountyRewards = []BountyReward{
 	// PR #1311: report and fix of low severity vulnerability.
 	// Public name: @0xMayoor
 	{Address: "gonka1s8szs7n43jxgz4a4xaxmzm5emh7fmjxhach7w8", Amount: USDT(500)},
+
+	// PR #1144, #1152, #1126, #1154: devshard contribution.
+	// Public name: @pixelplex
+	{Address: "gonka1vu28c7w5zxqe28lakrrfdrkvscft326rxur3dv", Amount: USDT(7000)},
+
+	// PR #1332, #1295: testing proposal and implementation.
+	// Public name: @aikuznetsov
+	{Address: "gonka1frlfyz2wtltdy47dq3w9pwc8ruvjvlthp2lh53", Amount: USDT(3125)},
+
+	// PR #1437, #1490: devshard contribution.
+	// Public name: @snevolin
+	{Address: "gonka1vnupswg7qz2w5k5ax6zrp02mxmln6arnvjc87h", Amount: USDT(3000)},
 }
 
 func CreateUpgradeHandler(
