@@ -9,7 +9,9 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 type mapLookup map[string]string
@@ -326,5 +328,52 @@ func TestHealthzVersions_FiltersRunning(t *testing.T) {
 	}
 	if len(got) != 2 || got[0] != "v1" || got[1] != "v3" {
 		t.Fatalf("got %v, want [v1 v3]", got)
+	}
+}
+
+func TestHealthzVersions_StaleIfError(t *testing.T) {
+	var fail atomic.Bool
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		if fail.Load() {
+			http.Error(w, "boom", http.StatusBadGateway)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`[{"name":"v2","status":"running"}]`))
+	}))
+	defer backend.Close()
+	u, _ := url.Parse(backend.URL)
+
+	src := NewHealthzVersions(u, backend.Client(), time.Millisecond)
+	got, err := src.ActiveVersions(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 || got[0] != "v2" {
+		t.Fatalf("got %v", got)
+	}
+
+	fail.Store(true)
+	time.Sleep(2 * time.Millisecond) // expire TTL
+	got, err = src.ActiveVersions(context.Background())
+	if err != nil {
+		t.Fatalf("expected stale cache on refresh error, got err=%v", err)
+	}
+	if len(got) != 1 || got[0] != "v2" {
+		t.Fatalf("stale got %v, want [v2]", got)
+	}
+}
+
+func TestHealthzVersions_ErrorWithoutCache(t *testing.T) {
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	defer backend.Close()
+	u, _ := url.Parse(backend.URL)
+
+	src := NewHealthzVersions(u, backend.Client(), defaultVersionsCacheTTL)
+	_, err := src.ActiveVersions(context.Background())
+	if err == nil {
+		t.Fatal("expected error with empty cache")
 	}
 }

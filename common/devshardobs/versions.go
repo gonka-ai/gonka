@@ -32,10 +32,10 @@ type HealthzVersions struct {
 	client *http.Client
 	ttl    time.Duration
 
-	mu        sync.Mutex
-	cached    []string
-	cachedAt  time.Time
-	cacheErr  error
+	mu       sync.Mutex
+	cached   []string
+	cachedAt time.Time
+	haveCache bool // true after at least one successful fetch
 }
 
 // NewHealthzVersions polls versiond supervisor health for running children.
@@ -51,20 +51,27 @@ func NewHealthzVersions(base *url.URL, client *http.Client, ttl time.Duration) *
 }
 
 // ActiveVersions implements VersionsSource.
+// On refresh failure, returns the last known-good list (stale-if-error) so a
+// transient versiond /healthz blip does not 502 all versionless obs.
 func (h *HealthzVersions) ActiveVersions(ctx context.Context) ([]string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	if time.Since(h.cachedAt) < h.ttl && h.cached != nil {
-		out := append([]string(nil), h.cached...)
-		return out, h.cacheErr
+	if h.haveCache && time.Since(h.cachedAt) < h.ttl {
+		return append([]string(nil), h.cached...), nil
 	}
 
 	versions, err := h.fetch(ctx)
+	if err != nil {
+		if h.haveCache {
+			// Keep last good cache and cachedAt so we retry after TTL.
+			return append([]string(nil), h.cached...), nil
+		}
+		return nil, err
+	}
 	h.cached = versions
 	h.cachedAt = time.Now()
-	h.cacheErr = err
-	out := append([]string(nil), versions...)
-	return out, err
+	h.haveCache = true
+	return append([]string(nil), versions...), nil
 }
 
 func (h *HealthzVersions) fetch(ctx context.Context) ([]string, error) {
