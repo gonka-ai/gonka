@@ -218,12 +218,12 @@ func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, n
 	}
 }
 
-func RequireTimeoutInferenceTransaction(t *testing.T, timeout TimeoutInferenceTransaction, inferenceID uint64, voteThreshold uint64, unavailableSlot uint32) {
+func RequireTimeoutInferenceTransaction(t *testing.T, timeout TimeoutInferenceTransaction, inferenceID uint64, reason types.TimeoutReason, voteThreshold uint64, executorSlot uint32) {
 	t.Helper()
 	require.Equal(t, inferenceID, timeout.InferenceID)
-	require.Equal(t, types.TimeoutReason_TIMEOUT_REASON_REFUSED, timeout.Reason)
+	require.Equal(t, reason, timeout.Reason)
 	require.Greater(t, uint64(len(timeout.VoterSlots)), voteThreshold, "timeout votes should exceed the threshold")
-	require.NotContains(t, timeout.VoterSlots, unavailableSlot, "unavailable executor must not vote for its own timeout")
+	require.NotContains(t, timeout.VoterSlots, executorSlot, "executor must not vote for its own timeout")
 
 	seen := make(map[uint32]struct{}, len(timeout.VoterSlots))
 	for _, slot := range timeout.VoterSlots {

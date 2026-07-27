@@ -29,3 +29,15 @@ func TestSessionConfigFromEnv_MapsEscrowTimeouts(t *testing.T) {
 	require.Equal(t, int64(5), cfg.RefusalTimeout)
 	require.Equal(t, int64(17), cfg.ExecutionTimeout)
 }
+
+func TestBoolEnv(t *testing.T) {
+	t.Setenv("DEVSHARD_STUB_EXECUTION_HANG", "true")
+
+	value, err := boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	require.NoError(t, err)
+	require.True(t, value)
+
+	t.Setenv("DEVSHARD_STUB_EXECUTION_HANG", "invalid")
+	_, err = boolEnv("DEVSHARD_STUB_EXECUTION_HANG", false)
+	require.Error(t, err)
+}
