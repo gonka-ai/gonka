@@ -354,16 +354,8 @@ func (k Keeper) maybeAutoRetryThresholdSigningRequest(ctx sdk.Context, request *
 	retryReq := *request
 	retryReq.Attempt++
 	retryReq.Status = types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES
-	retryReq.PartialSignatures = nil
 	retryReq.FinalSignature = []byte{}
 	retryReq.DeadlineBlockHeight = cacheCtx.BlockHeight() + signingDeadlineBlocks
-
-	// Clear any partial-sig sub-keys from the previous attempt so the new
-	// attempt starts with an empty collection. Without this, prior-attempt
-	// signatures would leak into the new attempt's rehydrated view.
-	if err := k.DeleteThresholdPartialSignaturesForRequest(cacheCtx, retryReq.RequestId); err != nil {
-		return false, fmt.Errorf("failed to clear prior-attempt partial signatures for request %x: %w", retryReq.RequestId, err)
-	}
 
 	k.removeFromExpirationIndex(cacheCtx, previousDeadlineBlockHeight, retryReq.RequestId)
 	kvStore := k.storeService.OpenKVStore(cacheCtx)
@@ -410,6 +402,7 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 	if err != nil {
 		return err
 	}
+	postRetry := false
 
 	// Validate request state
 	if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES {
@@ -422,18 +415,45 @@ func (k Keeper) AddPartialSignature(ctx sdk.Context, requestID []byte, slotIndic
 		if retryErr != nil {
 			k.Logger().Error("Failed to auto-retry expired threshold signing request, falling back to EXPIRED",
 				"request_id", fmt.Sprintf("%x", requestID), "error", retryErr)
+			return k.finalizeFailedThresholdSigningRequest(
+				ctx,
+				request,
+				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+				"request expired",
+			)
 		} else if retried {
-			return nil
+			request, err = k.GetSigningStatus(ctx, requestID)
+			if err != nil {
+				return fmt.Errorf("failed to reload retried request %x: %w", requestID, err)
+			}
+			if request.Status != types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_COLLECTING_SIGNATURES {
+				return fmt.Errorf("retried request is not collecting signatures, current status: %s", request.Status.String())
+			}
+			postRetry = true
+		} else {
+			return k.finalizeFailedThresholdSigningRequest(
+				ctx,
+				request,
+				types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
+				"request expired",
+			)
 		}
-
-		return k.finalizeFailedThresholdSigningRequest(
-			ctx,
-			request,
-			types.ThresholdSigningStatus_THRESHOLD_SIGNING_STATUS_EXPIRED,
-			"request expired",
-		)
 	}
 
+	err = k.processPartialSignatureForRequest(ctx, request, slotIndices, partialSignature, submitter)
+	if err != nil {
+		if postRetry {
+			k.Logger().Info("Ignored post-retry partial signature error",
+				"request_id", fmt.Sprintf("%x", requestID), "submitter", submitter, "error", err)
+			return nil
+		}
+		return err
+	}
+
+	return nil
+}
+
+func (k Keeper) processPartialSignatureForRequest(ctx sdk.Context, request *types.ThresholdSigningRequest, slotIndices []uint32, partialSignature []byte, submitter string) error {
 	// Get current epoch BLS data for validation
 	epochBLSData, err := k.GetEpochBLSData(ctx, request.CurrentEpochId)
 	if err != nil {
