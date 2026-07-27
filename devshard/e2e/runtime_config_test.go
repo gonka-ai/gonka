@@ -7,14 +7,15 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/e2e/testutil"
+	"devshard/types"
 )
 
 // Test flow:
 //  1. Read runtime status from devshardctl.
 //  2. Wait for the mock-chain inference phase to be reported.
 //  3. Assert the status identifies the seeded escrow and its initial balance.
-//  4. Assert every escrow-bound session configuration field matches the
-//     deliberately non-default mock-chain escrow configuration.
+//  4. Assert every deliberately non-default escrow configuration field is
+//     applied from mock-chain.
 func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
 	env, client := startNonStreamingEnv(t)
 
@@ -42,10 +43,25 @@ func TestE2E_ChainBackedRuntimeConfigStatus(t *testing.T) {
 		"inference_seal_grace_nonces":  9,
 		"inference_seal_grace_seconds": 77,
 		"auto_seal_every_n_nonces":     21,
-		"refusal_timeout":              5,
-		"execution_timeout":            17,
 	} {
 		require.Equalf(t, want, testutil.NumericField(t, config, field),
 			"status config %s should match the configured mock-chain escrow value", field)
 	}
+}
+
+// Test flow:
+//  1. Start the normal E2E environment with mock-chain timeout fields omitted.
+//  2. Read the chain-backed runtime status from devshardctl.
+//  3. Assert refusal and execution timeouts equal the canonical protocol
+//     defaults rather than a test-specific override.
+func TestE2E_ChainBackedRuntimeConfigUsesDefaultTimeouts(t *testing.T) {
+	env, client := startNonStreamingEnv(t)
+
+	status := testutil.GetStatus(t, client, env.clientURL)
+	config, ok := status["config"].(map[string]any)
+	require.True(t, ok, "status config should be an object")
+
+	defaults := types.DefaultSessionConfig(len(testutil.HostPrivateKeys))
+	require.Equal(t, uint64(defaults.RefusalTimeout), testutil.NumericField(t, config, "refusal_timeout"))
+	require.Equal(t, uint64(defaults.ExecutionTimeout), testutil.NumericField(t, config, "execution_timeout"))
 }

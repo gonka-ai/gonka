@@ -38,6 +38,7 @@ type e2eEnv struct {
 	hostURLs        []string
 	hostControlURLs []string
 	hostVolumeNames []string
+	hostEnv         map[string]string
 	usePostgres     bool
 }
 
@@ -62,7 +63,9 @@ type containerSpec struct {
 type e2eEnvOptions struct {
 	hostVolumeNames    []string
 	usePostgresStorage bool
+	hostEnv            map[string]string
 	hostEnvOverrides   map[int]map[string]string
+	mockChainEnv       map[string]string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -94,6 +97,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		network:         network,
 		images:          images,
 		hostVolumeNames: opts.hostVolumeNames,
+		hostEnv:         opts.hostEnv,
 		usePostgres:     opts.usePostgresStorage,
 	}
 	if len(opts.hostVolumeNames) > 0 {
@@ -106,6 +110,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		image:   images.mockChain,
 		port:    "9090/tcp",
 		aliases: []string{mockChainAlias},
+		env:     opts.mockChainEnv,
 		waitLog: "mock-chain gRPC listening",
 	})
 
@@ -201,8 +206,6 @@ func e2eHostSessionEnv() map[string]string {
 		"DEVSHARD_INFERENCE_SEAL_GRACE_NONCES":  "9",
 		"DEVSHARD_INFERENCE_SEAL_GRACE_SECONDS": "77",
 		"DEVSHARD_AUTO_SEAL_EVERY_N_NONCES":     "21",
-		"DEVSHARD_REFUSAL_TIMEOUT":              "5",
-		"DEVSHARD_EXECUTION_TIMEOUT":            "17",
 	}
 }
 
@@ -221,6 +224,9 @@ func (e *e2eEnv) startHostWithEnv(ctx context.Context, t *testing.T, index int, 
 		"DEVSHARD_STUB_INFERENCE":    "1",
 	}
 	for k, v := range e2eHostSessionEnv() {
+		env[k] = v
+	}
+	for k, v := range e.hostEnv {
 		env[k] = v
 	}
 	for k, v := range overrides {
