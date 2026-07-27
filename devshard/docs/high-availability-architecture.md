@@ -70,9 +70,11 @@ helpers, versions).
   `node:9090`, required at startup); a few routes use CometBFT gRPC
   (`cmtservice`) and ABCI store queries. When gRPC is unreachable, queries fall
   back to CometBFT RPC (`CHAIN_RPC_URL`, default `http://<gRPC host>:26657`) and
-  probe gRPC again every 30 minutes. RPC-mode queries go over ABCI, so the
-  CometBFT service routes need the node to have `grpc.enable` or `api.enable`
-  set — true by default, but see the limitation in the v4 release notes.
+  probe gRPC again every 30 minutes. Which transport is live shows up on the
+  `chain.query.transport.active` gauge and the `chain.transport` span attribute.
+  RPC-mode queries go over ABCI, so the CometBFT service routes need the node to
+  have `grpc.enable` or `api.enable` set — true by default, but see the
+  limitation in the v4 release notes.
 - **Stateless:** no DB, no keyring, no ML nodes, no broker. Each request is
   served directly from the chain. Dependencies are `common/chain`,
   `common/logging`, `common/utils`, `edge-api/observability`.

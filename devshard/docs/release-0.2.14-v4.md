@@ -126,7 +126,29 @@ fully unreachable node does not look like a plain ABCI failure.
 
 Transactions are unaffected: devshardd's tx manager and the gateway keep using
 the direct gRPC connection, and gRPC streams have no RPC equivalent so they
-also stay direct.
+also stay direct. Broadcasting a transaction over the *query* connection is
+rejected outright rather than served: Cosmos's `client.Context` turns a
+`BroadcastTx` into a CometBFT broadcast instead of a query, and the fallback
+retries a failed request on the other transport — which for a broadcast means
+submitting the same signed transaction twice.
+
+#### Seeing that a service is on the fallback
+
+Both transports are instrumented the same way, so switching changes what the
+telemetry says rather than silencing it:
+
+| Signal | On gRPC | On CometBFT RPC |
+| --- | --- | --- |
+| `chain.grpc.query` spans | `chain.transport=grpc` | `chain.transport=comet-rpc` |
+| `chain.query.transport.active` gauge | `grpc`=1, `comet-rpc`=0 | `grpc`=0, `comet-rpc`=1 |
+| Logs | — | one warning on the switch, then one per failed 30-min probe |
+
+The gauge is the thing to alert on: `comet-rpc`=1 held for longer than a brief
+blip means the node's `:9090` has been unreachable that whole time. The
+per-probe warning is the same signal in the logs, so a service that has been
+degraded for a week no longer looks identical to one that never fell back. Both
+report from process start, so an absent `comet-rpc` series means healthy rather
+than unreported.
 
 #### Known limitation: CometBFT service queries
 
