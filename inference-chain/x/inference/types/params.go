@@ -91,17 +91,62 @@ const (
 	LogprobsModeProcessed = "processed_logprobs"
 	LogprobsModeRaw       = "raw_logprobs"
 	DefaultLogprobsMode   = LogprobsModeProcessed
+
+	DefaultPocValidationVoteThresholdBps uint32 = 5000
 )
 
 const (
-	DefaultDevshardEscrowMinAmount    uint64 = 5_000_000_000
-	DefaultDevshardEscrowMaxAmount    uint64 = 10_000_000_000
-	DefaultDevshardMaxEscrowsPerEpoch uint32 = 100
-	DefaultDevshardGroupSize          uint32 = 16
-	DefaultDevshardTokenPrice         uint64 = 1
-	DefaultDevshardMaxNonce           uint32 = 20_000
-	DefaultDevshardRequestsEnabled    bool   = true
+	DefaultDevshardEscrowMinAmount     uint64 = 5_000_000_000
+	DefaultDevshardEscrowMaxAmount     uint64 = 10_000_000_000
+	DefaultDevshardMaxEscrowsPerEpoch  uint32 = 100
+	DefaultDevshardGroupSize           uint32 = 16
+	DefaultDevshardTokenPrice          uint64 = 1
+	DefaultDevshardMaxNonce            uint32 = 20_000
+	DefaultDevshardRequestsEnabled     bool   = true
+	DefaultDevshardCreateDevshardFee   uint64 = 10_000
+	DefaultDevshardFeePerNonce         uint64 = 1_000
+	DefaultDevshardRefusalTimeout      int64  = 60
+	DefaultDevshardExecutionTimeout    int64  = 32 * 60
+	DefaultDevshardValidationRate      uint32 = 1000
+	DefaultDevshardVoteThresholdFactor uint32 = 50
+
+	DefaultMaintenanceEnabled                         = false
+	DefaultMaintenanceMinScheduleLeadBlocks    uint64 = 100
+	DefaultMaintenanceMaxWindowBlocks          uint64 = 200
+	DefaultMaintenanceMaxConcurrentValidators  uint32 = 3
+	DefaultMaintenanceMaxConcurrentPowerBps    uint32 = 1000 // 10% in basis points
+	DefaultMaintenanceCreditCapBlocks          uint64 = 400
+	DefaultMaintenanceCreditEarnPerEpochBlocks uint64 = 20
 )
+
+// DefaultSealGraceMultiplier is the multiplier used to compute the default seal grace nonces.
+const DefaultSealGraceMultiplier uint32 = 10
+
+// DevshardSealGraceFloor is the floor applied when computing the chain-wide
+// default seal grace. Mirrors devshard/types.minInferenceSealGraceNonces so the two
+// layers agree without an import dependency.
+const DevshardSealGraceFloor uint32 = 20
+
+// DefaultDevshardInferenceSealGraceSeconds is the default wall-clock grace
+// before sealing stale-finished or post-terminal inferences (1 hour). Mirrors
+// devshard/types.DefaultInferenceSealGraceSeconds.
+const DefaultDevshardInferenceSealGraceSeconds uint32 = 3600
+
+// DefaultDevshardAutoSealEveryNNonces is how often the gateway runs auto-seal
+// during Active phase. Mirrors devshard/types.DefaultAutoSealEveryNNonces.
+const DefaultDevshardAutoSealEveryNNonces uint32 = 150
+
+// DefaultDevshardInferenceSealGraceNonces returns the canonical default seal grace
+// nonces value derived from the configured group size. This mirrors
+// devshard/types.DefaultInferenceSealGraceNonces (10 * groupSize, floor 20). It is
+// used at genesis to seed DevshardEscrowParams.DefaultInferenceSealGraceNonces.
+func DefaultDevshardInferenceSealGraceNonces(groupSize uint32) uint32 {
+	grace := groupSize * DefaultSealGraceMultiplier
+	if grace < DevshardSealGraceFloor {
+		grace = DevshardSealGraceFloor
+	}
+	return grace
+}
 
 func DefaultGenesisOnlyParams() GenesisOnlyParams {
 	return GenesisOnlyParams{
@@ -161,6 +206,7 @@ func DefaultParams() Params {
 			AllowedTransferAddresses: nil, // nil = no restriction, all TAs allowed
 		},
 		DevshardEscrowParams: DefaultDevshardEscrowParams(),
+		MaintenanceParams:    DefaultMaintenanceParams(),
 		DelegationParams:     DefaultDelegationParams(),
 	}
 }
@@ -227,6 +273,7 @@ func DefaultPocParams() *PocParams {
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
+		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
 	}
 }
 
@@ -322,15 +369,84 @@ func DefaultDynamicPricingParams() *DynamicPricingParams {
 
 func DefaultDevshardEscrowParams() *DevshardEscrowParams {
 	return &DevshardEscrowParams{
-		MinAmount:               DefaultDevshardEscrowMinAmount,
-		MaxAmount:               DefaultDevshardEscrowMaxAmount,
-		MaxEscrowsPerEpoch:      DefaultDevshardMaxEscrowsPerEpoch,
-		GroupSize:               DefaultDevshardGroupSize,
-		AllowedCreatorAddresses: nil,
-		TokenPrice:              DefaultDevshardTokenPrice,
-		MaxNonce:                DefaultDevshardMaxNonce,
-		DevshardRequestsEnabled: DefaultDevshardRequestsEnabled,
+		MinAmount:                        DefaultDevshardEscrowMinAmount,
+		MaxAmount:                        DefaultDevshardEscrowMaxAmount,
+		MaxEscrowsPerEpoch:               DefaultDevshardMaxEscrowsPerEpoch,
+		GroupSize:                        DefaultDevshardGroupSize,
+		AllowedCreatorAddresses:          nil,
+		TokenPrice:                       DefaultDevshardTokenPrice,
+		MaxNonce:                         DefaultDevshardMaxNonce,
+		DevshardRequestsEnabled:          DefaultDevshardRequestsEnabled,
+		DefaultInferenceSealGraceNonces:  DefaultDevshardInferenceSealGraceNonces(DefaultDevshardGroupSize),
+		DefaultInferenceSealGraceSeconds: DefaultDevshardInferenceSealGraceSeconds,
+		DefaultAutoSealEveryNNonces:      DefaultDevshardAutoSealEveryNNonces,
+		CreateDevshardFee:                DefaultDevshardCreateDevshardFee,
+		FeePerNonce:                      DefaultDevshardFeePerNonce,
+		RefusalTimeout:                   DefaultDevshardRefusalTimeout,
+		ExecutionTimeout:                 DefaultDevshardExecutionTimeout,
+		ValidationRate:                   DefaultDevshardValidationRate,
+		VoteThresholdFactor:              DefaultDevshardVoteThresholdFactor,
 	}
+}
+
+func DefaultMaintenanceParams() *MaintenanceParams {
+	return &MaintenanceParams{
+		MaintenanceEnabled:                            DefaultMaintenanceEnabled,
+		MaintenanceMinScheduleLeadBlocks:              DefaultMaintenanceMinScheduleLeadBlocks,
+		MaintenanceMaxWindowBlocks:                    DefaultMaintenanceMaxWindowBlocks,
+		MaintenanceMaxConcurrentValidators:            DefaultMaintenanceMaxConcurrentValidators,
+		MaintenanceMaxConcurrentPowerBps:              DefaultMaintenanceMaxConcurrentPowerBps,
+		MaintenanceCreditCapBlocks:                    DefaultMaintenanceCreditCapBlocks,
+		MaintenanceCreditEarnPerSuccessfulEpochBlocks: DefaultMaintenanceCreditEarnPerEpochBlocks,
+	}
+}
+
+// maxMaintenanceBlocksParam bounds every governance-controlled *Blocks field.
+// Set well below math.MaxInt64 so any addition of two such values, or any
+// cast from uint64 to int64, cannot wrap. Concretely: at 5-second blocks,
+// 1e15 blocks is ~158 million years — far beyond any realistic governance
+// configuration, while still safe for arithmetic in callers like
+// msg_server_schedule_maintenance.go (blockHeight + lead) and
+// GrantMaintenanceCredit (CreditBlocks += earn).
+const maxMaintenanceBlocksParam = uint64(1e15)
+
+func (p *MaintenanceParams) Validate() error {
+	if p == nil {
+		return nil
+	}
+	if p.MaintenanceMaxWindowBlocks == 0 {
+		return fmt.Errorf("maintenance max window blocks must be positive")
+	}
+	if p.MaintenanceMaxWindowBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance max window blocks (%d) exceeds safe upper bound %d", p.MaintenanceMaxWindowBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceMinScheduleLeadBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance min schedule lead blocks (%d) exceeds safe upper bound %d", p.MaintenanceMinScheduleLeadBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceCreditCapBlocks == 0 {
+		return fmt.Errorf("maintenance credit cap blocks must be positive")
+	}
+	if p.MaintenanceCreditCapBlocks > maxMaintenanceBlocksParam {
+		return fmt.Errorf("maintenance credit cap blocks (%d) exceeds safe upper bound %d", p.MaintenanceCreditCapBlocks, maxMaintenanceBlocksParam)
+	}
+	if p.MaintenanceMaxConcurrentValidators == 0 {
+		return fmt.Errorf("maintenance max concurrent validators must be positive")
+	}
+	if p.MaintenanceMaxConcurrentPowerBps > 10000 {
+		return fmt.Errorf("maintenance max concurrent power bps cannot exceed 10000")
+	}
+	// Zero credit-earn silently disables credit accrual: maintenance can be
+	// scheduled exactly once (with whatever credit the participant was seeded
+	// with) and never replenishes. That is a valid governance state but a
+	// confusing one to land on by accident, so reject it here. To intentionally
+	// disable maintenance, set MaintenanceEnabled = false instead.
+	if p.MaintenanceCreditEarnPerSuccessfulEpochBlocks == 0 {
+		return fmt.Errorf("maintenance credit earn per successful epoch blocks must be positive (set maintenance_enabled=false to disable maintenance windows)")
+	}
+	if p.MaintenanceCreditEarnPerSuccessfulEpochBlocks > p.MaintenanceCreditCapBlocks {
+		return fmt.Errorf("maintenance credit earn per successful epoch blocks (%d) must not exceed credit cap (%d)", p.MaintenanceCreditEarnPerSuccessfulEpochBlocks, p.MaintenanceCreditCapBlocks)
+	}
+	return nil
 }
 
 func (p *DevshardEscrowParams) Validate() error {
@@ -367,6 +483,18 @@ func (p *DevshardEscrowParams) Validate() error {
 			return fmt.Errorf("devshard_escrow_params.approved_versions: duplicate name %q", v.Name)
 		}
 		seen[v.Name] = struct{}{}
+	}
+	if p.RefusalTimeout <= 0 {
+		return fmt.Errorf("devshard escrow refusal_timeout must be positive")
+	}
+	if p.ExecutionTimeout <= 0 {
+		return fmt.Errorf("devshard escrow execution_timeout must be positive")
+	}
+	if p.ValidationRate > 10000 {
+		return fmt.Errorf("devshard escrow validation_rate (%d) must be <= 10000 basis points", p.ValidationRate)
+	}
+	if p.VoteThresholdFactor == 0 || p.VoteThresholdFactor > 100 {
+		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
 	}
 	return nil
 }
@@ -621,12 +749,25 @@ func (p Params) Validate() error {
 		}
 	}
 
+	if p.MaintenanceParams != nil {
+		if err := p.MaintenanceParams.Validate(); err != nil {
+			return err
+		}
+	}
+
 	return nil
 }
 
 func (p *PocParams) Validate() error {
 	if p == nil {
 		return nil
+	}
+	// Non-zero thresholds below 50% would let both valid and invalid votes
+	// clear the threshold at once, making the accept/reject check order
+	// decide the outcome. Majority (>=5000) guarantees at most one side passes.
+	if p.ValidationVoteThresholdBps != 0 &&
+		(p.ValidationVoteThresholdBps < 5000 || p.ValidationVoteThresholdBps > 10000) {
+		return fmt.Errorf("poc_params.validation_vote_threshold_bps must be 0 (default) or in [5000, 10000]")
 	}
 	seen := make(map[string]bool)
 	for _, model := range p.GetModelConfigs() {

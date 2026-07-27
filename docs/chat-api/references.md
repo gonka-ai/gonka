@@ -8,10 +8,12 @@ Namespaces:
 - `[vLLM-N]` vLLM
 - `[Moonshot-N]` Moonshot (includes Kimi model line)
 - `[Qwen-N]` Qwen
+- `[MiniMax-N]` MiniMax AI (MiniMax-M2 line)
+- `[SGLang-N]` SGLang (cross-engine parser bug references)
 - `[OpenRouter-N]` OpenRouter
 - `[CVE-N]` security advisories
 
-Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id.
+Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) are inline links in `troubleshooting.md` and `agents.md`, not here. Captured-requests evidence is referenced inline by request-id. Chain governance changes (model registration, ModelArgs pins) are cited inline by PR number under the appropriate per-model doc, not in this file.
 
 ## OpenAI
 
@@ -25,6 +27,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 ## Anthropic
 
 - **[Anthropic-1]** [Extended thinking docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) — wire enum for `thinking.type` (`enabled`/`disabled`); basis for rejecting `adaptive`/`auto` as non-wire values.
+- **[Anthropic-2]** [Handling stop reasons](https://docs.anthropic.com/en/docs/build-with-claude/handling-stop-reasons) — documents `stop_reason="max_tokens"` with empty/truncated content as an expected outcome when extended thinking consumes the budget; advises continuation rather than retry.
 
 ## vLLM
 
@@ -48,6 +51,14 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-18]** [Structured outputs feature docs](https://docs.vllm.ai/en/latest/features/structured_outputs.html) — `structured_outputs` supersedes `guided_json`/`guided_regex`/`guided_grammar`/`guided_choice`.
 - **[vLLM-19]** [PR #29074 — kimi_k2 reasoning parser: emit DeltaMessage when return_token_ids=true](https://github.com/vllm-project/vllm/pull/29074) — changes `extract_reasoning_streaming` to emit an empty `DeltaMessage()` (with the token id attached) instead of `None` for single-token deltas carrying `<think>`/`</think>`. Without `return_token_ids=true`, those tokens are silently dropped from the SSE stream while still counted in `usage.completion_tokens`, producing a hidden-token gap that breaks stream-derived `enforced_tokens` reconstruction.
 - **[vLLM-20]** [kimi_k2_reasoning_parser.py source](https://github.com/vllm-project/vllm/blob/main/vllm/reasoning/kimi_k2_reasoning_parser.py) — the parser whose `extract_reasoning_streaming` returns `None` (= suppresses event) when a delta is exactly `<think>` or `</think>`. Tokens still counted in usage; vLLM-19 added the `return_token_ids` escape valve.
+- **[vLLM-21]** [vLLM Recipes — MiniMax-M2 Series Usage Guide](https://docs.vllm.ai/projects/recipes/en/latest/MiniMax/MiniMax-M2.html) — official vLLM recipe covering M2/M2.1/M2.5/M2.7 deployment (parsers, topology, compilation-config, AMD AITER env vars).
+- **[vLLM-22]** [Issue #39610 — MiniMax-M2.7/Qwen3.5 FP8 fail on A100/Ampere with nightly](https://github.com/vllm-project/vllm/issues/39610) — regression confirmed vs v0.19.0.
+- **[vLLM-23]** [Issue #38212 — MiniMaxM2ReasoningParser broken for M2.5](https://github.com/vllm-project/vllm/issues/38212) — `extract_reasoning_streaming` assumes no opening `<think>` tag; M2.5/.7 do emit it.
+- **[vLLM-24]** [Issue #34625 — Reasoning Parser not working with MiniMax M2.5](https://github.com/vllm-project/vllm/issues/34625) — same parser class affects M2.5+ reasoning extraction.
+- **[vLLM-25]** [Issue #36778 — Thinking cannot be disabled on M2.5 via chat_template_kwargs](https://github.com/vllm-project/vllm/issues/36778) — drives strip-`enable_thinking` policy on the M2.7 route.
+- **[vLLM-26]** [PR #35895 — minimax_m2 tool parser fix for stream_interval > 1](https://github.com/vllm-project/vllm/pull/35895) — covers one streaming malformation class.
+- **[vLLM-27]** [Issue #36632 — MiniMax-M2.5 reasoning missing in chat completions stream](https://github.com/vllm-project/vllm/issues/36632) — `--reasoning-parser minimax_m2_append_think` skips reasoning content in SSE deltas.
+- **[vLLM-28]** [Issue #28963 — MiniMax tool parsing errors](https://github.com/vllm-project/vllm/issues/28963) — error in `_convert_param_value`.
 
 ## Moonshot
 
@@ -61,6 +72,19 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[Qwen-1]** [Qwen3-235B-A22B-Instruct-2507 model card](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507) — confirms model is non-thinking-only; basis for stripping `reasoning_effort`.
 - **[Qwen-2]** [Qwen3-235B-A22B-Instruct-2507-FP8 model card](https://huggingface.co/Qwen/Qwen3-235B-A22B-Instruct-2507-FP8) — FP8 quantised variant model card; same non-thinking confirmation.
 - **[Qwen-3]** [Qwen vLLM deployment docs](https://qwen.readthedocs.io/en/latest/deployment/vllm.html) — canonical placement for `enable_thinking` inside `chat_template_kwargs`; notes it is not OpenAI API compatible at the top level.
+
+## MiniMax
+
+- **[MiniMax-1]** [MiniMax platform docs index](https://platform.minimax.io/docs) — overview of MiniMax-hosted API surface.
+- **[MiniMax-2]** [MiniMax-M2.7 model card](https://huggingface.co/MiniMaxAI/MiniMax-M2.7) — architecture (229B params, F32/BF16/F8_E4M3 tensor types), sampling recommendations, interleaved `<think>...</think>` constraint.
+- **[MiniMax-3]** [MiniMax-M2.7 vLLM deployment guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/vllm_deploy_guide.md) — exact CLI invocations, GPU sizing (220 GB weights + 240 GB/1M tokens), 196K max context per sequence, parser flags.
+- **[MiniMax-4]** [MiniMax-M2.7 tool calling guide](https://huggingface.co/MiniMaxAI/MiniMax-M2.7/blob/main/docs/tool_calling_guide.md) — `<minimax:tool_call><invoke><parameter>` output format; `role:"tool"` with `content:[{name,type,text}]` array (no `tool_call_id`).
+- **[MiniMax-5]** [MiniMax M2 Tool Use & Interleaved Thinking docs](https://platform.minimax.io/docs/guides/text-m2-function-call) — `extra_body.reasoning_split`, `reasoning_details[]` response field, multi-turn history rules.
+
+## SGLang
+
+- **[SGLang-1]** [Issue #23071 — MiniMax-M2 streaming tool_calls malformed](https://github.com/sgl-project/sglang/issues/23071) — under SSE streaming a single tool call sometimes splits into two entries (`name=null` + duplicated arguments).
+- **[SGLang-2]** [Issue #16057 — MiniMax M2 tool parser failure on `str | null` union param types](https://github.com/sgl-project/sglang/issues/16057) — parser crashes on union-with-null in tool parameter schema; potential DoS vector via crafted tool schema.
 
 ## OpenRouter
 
@@ -84,4 +108,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[CVE-9]** [CVE-2026-34756 / GHSA-3mwp-wvh9-7528 (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-3mwp-wvh9-7528) — unbounded `n` causes OOM; `CapUintParameterHandler` clamps `n ≤ 5`.
 - **[CVE-10]** [CVE-2026-44222 / GHSA-hpv8-x276-m59f (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-hpv8-x276-m59f) — special-token literals crash VL models; requires content sanitizer for Kimi-K2.6 multimodal path.
 - **[CVE-11]** [CVE-2026-44223 / GHSA-83vm-p52w-f9pw (vLLM)](https://github.com/vllm-project/vllm/security/advisories/GHSA-83vm-p52w-f9pw) — penalty fields crash EngineCore with `extract_hidden_states` spec decode; pin vLLM ≥ 0.20.0.
+- **[CVE-12]** [CVE-2026-27893 / RAXE-2026-044 (vLLM)](https://raxe.ai/labs/advisories/RAXE-2026-044) — vLLM hardcoded trust_remote_code bypass enables RCE via malicious model repositories; direct mitigation for the MiniMax-M2.7 route is the chain-pinned `HfCommit` SHA in the governance model config.
+- **[CVE-13]** [CVE-2026-22778 (vLLM)](https://www.ox.security/blog/cve-2026-22778-vllm-rce-vulnerability/) — RCE via crafted video link in multimodal content; gateway mitigates by rejecting non-text content parts on all text-only routes (M2.7 included).
+- **[CVE-14]** [CVE-2025-62164 / GHSA-mrw7-hf4f-83pf (vLLM)](https://github.com/advisories/GHSA-mrw7-hf4f-83pf) — tensor deserialization → DoS / potential RCE; pin vLLM ≥ patched release.
 

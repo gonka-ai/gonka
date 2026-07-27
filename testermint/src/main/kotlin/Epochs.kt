@@ -13,6 +13,14 @@ enum class EpochStage {
     CLAIM_REWARDS
 }
 
+const val INFERENCE_STAGE_SLACK_BLOCKS = 3L
+
+data class StageSafeInferenceBlock(
+    val block: Long,
+    val inferenceWindowStart: Long,
+    val nextPocStart: Long,
+)
+
 fun EpochResponse.getNextStage(stage: EpochStage): Long {
     return when (stage) {
         EpochStage.START_OF_POC -> resolveUpcomingStage(epochStages.pocStart, nextEpochStages.pocStart)
@@ -32,6 +40,36 @@ fun EpochResponse.resolveUpcomingStage(latestEpochStage: Long, nextEpochStage: L
     } else {
         nextEpochStage
     }
+}
+
+fun EpochResponse.findStageSafeInferenceBlock(
+    earliestBlock: Long,
+    minimumSlackBeforeNextPoc: Long = INFERENCE_STAGE_SLACK_BLOCKS,
+): StageSafeInferenceBlock? {
+    require(minimumSlackBeforeNextPoc >= 0) { "minimumSlackBeforeNextPoc must be non-negative" }
+
+    val epochLength = nextEpochStages.pocStart - epochStages.pocStart
+    require(epochLength > 0) { "epoch stages must advance across epochs" }
+
+    val firstInferenceWindowStart = epochStages.claimMoney + 1
+    val firstInferenceWindowNextPoc = epochStages.nextPocStart
+    val firstCandidateWindowIndex = maxOf(0L, (earliestBlock - firstInferenceWindowStart) / epochLength)
+
+    for (windowIndex in firstCandidateWindowIndex..firstCandidateWindowIndex + 1) {
+        val windowStart = firstInferenceWindowStart + windowIndex * epochLength
+        val nextPocStart = firstInferenceWindowNextPoc + windowIndex * epochLength
+        val candidateBlock = maxOf(blockHeight + 1, earliestBlock, windowStart)
+        val latestSafeBlock = nextPocStart - minimumSlackBeforeNextPoc - 1
+        if (candidateBlock <= latestSafeBlock) {
+            return StageSafeInferenceBlock(
+                block = candidateBlock,
+                inferenceWindowStart = windowStart,
+                nextPocStart = nextPocStart,
+            )
+        }
+    }
+
+    return null
 }
 
 @Deprecated("Use EpochResponse.getNextStage instead. We keep it only to get the block when the very 1st validators are active.")

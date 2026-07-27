@@ -158,6 +158,56 @@ func TestShouldAcceptValidatedArtifacts_NilOrNotSynced(t *testing.T) {
 	assert.False(t, ShouldAcceptValidatedArtifacts(notSynced))
 }
 
+func TestShouldStopValidationForStage(t *testing.T) {
+	tests := []struct {
+		name        string
+		state       *chainphase.EpochState
+		stageHeight int64
+		expect      bool
+	}{
+		{
+			name:        "nil state waits for next tracker update",
+			state:       nil,
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
+			name: "transient not-synced state waits instead of cancelling",
+			state: func() *chainphase.EpochState {
+				s := createTestEpochState(types.PoCValidatePhase, 200, 100)
+				s.IsSynced = false
+				return s
+			}(),
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
+			name:        "current validation stage continues",
+			state:       createTestEpochState(types.PoCValidatePhase, 200, 100),
+			stageHeight: 100,
+			expect:      false,
+		},
+		{
+			name:        "non-validation phase stops immediately",
+			state:       createTestEpochState(types.InferencePhase, 500, 100),
+			stageHeight: 100,
+			expect:      true,
+		},
+		{
+			name:        "different PoC stage stops immediately",
+			state:       createTestEpochState(types.PoCValidatePhase, 200, 120),
+			stageHeight: 100,
+			expect:      true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.expect, shouldStopValidationForStage(tt.state, tt.stageHeight))
+		})
+	}
+}
+
 func TestGetCurrentPocStageHeight_RegularPoC(t *testing.T) {
 	tests := []struct {
 		name           string
@@ -198,6 +248,20 @@ func TestGetCurrentPocStageHeight_NilOrNotSynced(t *testing.T) {
 	notSynced := createTestEpochState(types.PoCGeneratePhase, 110, 100)
 	notSynced.IsSynced = false
 	assert.Equal(t, int64(0), GetCurrentPocStageHeight(notSynced))
+}
+
+func TestGetCurrentPocStageHeight_ConfirmationPoCChangesActiveStageHeight(t *testing.T) {
+	st := createTestEpochState(types.InferencePhase, 500, 100)
+	assert.Equal(t, int64(100), GetCurrentPocStageHeight(st))
+
+	st.ActiveConfirmationPoCEvent = &types.ConfirmationPoCEvent{
+		TriggerHeight: 400,
+		Phase:         types.ConfirmationPoCPhase_CONFIRMATION_POC_GENERATION,
+	}
+	assert.Equal(t, int64(400), GetCurrentPocStageHeight(st))
+
+	st.ActiveConfirmationPoCEvent.Phase = types.ConfirmationPoCPhase_CONFIRMATION_POC_VALIDATION
+	assert.Equal(t, int64(400), GetCurrentPocStageHeight(st))
 }
 
 func TestShouldAcceptStoreCommit_RegularPoC(t *testing.T) {

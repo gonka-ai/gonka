@@ -1,6 +1,7 @@
 package poc
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -9,7 +10,11 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"decentralized-api/cosmosclient"
+	"decentralized-api/poc/artifacts"
+
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/require"
 )
 
@@ -92,6 +97,33 @@ func TestValidateLeafCoverage_EmptyRequestNonEmptyProofs(t *testing.T) {
 
 func TestValidateLeafCoverage_SingleLeaf(t *testing.T) {
 	assert.NoError(t, validateLeafCoverage([]uint32{42}, []ProofItem{{LeafIndex: 42}}))
+}
+
+func TestValidateNonceCoverage_ExactMatch(t *testing.T) {
+	requested := []int32{10, 20}
+	proofs := []ProofItem{
+		{NonceValue: 20},
+		{NonceValue: 10},
+	}
+	assert.NoError(t, validateNonceCoverage(requested, proofs))
+}
+
+func TestValidateNonceCoverage_MissingNonce(t *testing.T) {
+	err := validateNonceCoverage([]int32{10, 20}, []ProofItem{{NonceValue: 10}})
+	assert.True(t, errors.Is(err, ErrNonceAbsent))
+	assert.Contains(t, err.Error(), "missing nonce")
+}
+
+func TestValidateNonceCoverage_UnexpectedNonce(t *testing.T) {
+	err := validateNonceCoverage([]int32{10}, []ProofItem{{NonceValue: 11}})
+	assert.True(t, errors.Is(err, ErrIncompleteCoverage))
+	assert.Contains(t, err.Error(), "unexpected nonce")
+}
+
+func TestValidateNonceCoverage_DuplicateNonce(t *testing.T) {
+	err := validateNonceCoverage([]int32{10}, []ProofItem{{NonceValue: 10}, {NonceValue: 10}})
+	assert.True(t, errors.Is(err, ErrIncompleteCoverage))
+	assert.Contains(t, err.Error(), "duplicate nonce")
 }
 
 func TestCheckDuplicateNonces_NoDuplicates(t *testing.T) {
@@ -400,4 +432,95 @@ func TestFetchAndVerifyProofs_RejectsNaNVector(t *testing.T) {
 
 	// Ensure client is used to avoid unused variable warning
 	_ = client
+}
+
+func TestFetchAndVerifyProofsByNonce_Success(t *testing.T) {
+	store, err := artifacts.OpenSMST(t.TempDir())
+	require.NoError(t, err)
+	defer store.Close()
+
+	vector := make([]byte, DefaultKDim*2)
+	require.NoError(t, store.AddWithNode(42, vector, ""))
+	require.NoError(t, store.Flush())
+	count, rootHash := store.GetFlushedRoot()
+	denseIndex, vector, proof, err := store.GetArtifactAndProofByNonce(42, count)
+	require.NoError(t, err)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/v1/poc/proofs/by-nonce", r.URL.Path)
+
+		var req struct {
+			Nonces []int32 `json:"nonces"`
+		}
+		require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		assert.Equal(t, []int32{42}, req.Nonces)
+
+		resp := ProofResponse{
+			Proofs: []ProofItem{{
+				LeafIndex:   denseIndex,
+				NonceValue:  42,
+				VectorBytes: base64.StdEncoding.EncodeToString(vector),
+				Proof:       proofStrings(proof),
+			}},
+		}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+	defer server.Close()
+
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	recorder.On("GetAccountAddress").Return("validator-address")
+	recorder.On("GetSignerAddress").Return("validator-signer")
+	recorder.On("SignBytes", mock.MatchedBy(func(payload []byte) bool {
+		return len(payload) == 64
+	})).Return([]byte("signature"), nil)
+
+	client := &ProofClient{httpClient: server.Client(), recorder: recorder}
+	verified, err := client.FetchAndVerifyProofsByNonce(context.Background(), server.URL, ProofByNonceRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 rootHash,
+		Count:                    count,
+		Nonces:                   []int32{42},
+		ParticipantAddress:       "participant",
+	})
+	require.NoError(t, err)
+	require.Len(t, verified, 1)
+	assert.Equal(t, denseIndex, verified[0].LeafIndex)
+	assert.Equal(t, int32(42), verified[0].Nonce)
+	recorder.AssertExpectations(t)
+}
+
+func TestFetchAndVerifyProofsByNonce_MissingNonce(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		resp := ProofResponse{Proofs: []ProofItem{}}
+		w.Header().Set("Content-Type", "application/json")
+		require.NoError(t, json.NewEncoder(w).Encode(resp))
+	}))
+	defer server.Close()
+
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	recorder.On("GetAccountAddress").Return("validator-address")
+	recorder.On("GetSignerAddress").Return("validator-signer")
+	recorder.On("SignBytes", mock.Anything).Return([]byte("signature"), nil)
+
+	client := &ProofClient{httpClient: server.Client(), recorder: recorder}
+	_, err := client.FetchAndVerifyProofsByNonce(context.Background(), server.URL, ProofByNonceRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 make([]byte, 32),
+		Count:                    1,
+		Nonces:                   []int32{42},
+		ParticipantAddress:       "participant",
+	})
+	assert.True(t, errors.Is(err, ErrNonceAbsent))
+	recorder.AssertExpectations(t)
+}
+
+func proofStrings(proof [][]byte) []string {
+	out := make([]string, len(proof))
+	for i, hash := range proof {
+		out[i] = base64.StdEncoding.EncodeToString(hash)
+	}
+	return out
 }

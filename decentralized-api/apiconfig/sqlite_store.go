@@ -116,9 +116,73 @@ CREATE TABLE IF NOT EXISTS bls_dealer_openings (
   created_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now')),
   PRIMARY KEY(epoch_id, recipient_index, ciphertext_index)
 );
-CREATE INDEX IF NOT EXISTS idx_bls_dealer_openings_epoch_id ON bls_dealer_openings(epoch_id);`
+CREATE INDEX IF NOT EXISTS idx_bls_dealer_openings_epoch_id ON bls_dealer_openings(epoch_id);
+
+CREATE TABLE IF NOT EXISTS bridge_state (
+  chain_id TEXT PRIMARY KEY,
+  latest_block INTEGER NOT NULL,
+  updated_at DATETIME NOT NULL DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f','now'))
+);`
 	_, err := db.ExecContext(ctx, stmt)
 	return err
+}
+
+// GetBridgeLatestBlock retrieves the latest successfully processed block number for a chain.
+// If the chain has no row yet, it returns (0, false, nil) to indicate an uninitialized chain.
+func GetBridgeLatestBlock(ctx context.Context, db *sql.DB, chain string) (uint64, bool, error) {
+	if db == nil {
+		return 0, false, errors.New("db is nil")
+	}
+	var latest uint64
+	err := db.QueryRowContext(ctx, "SELECT latest_block FROM bridge_state WHERE chain_id = ?", chain).Scan(&latest)
+	if err == sql.ErrNoRows {
+		return 0, false, nil
+	}
+	if err != nil {
+		return 0, false, err
+	}
+	return latest, true, nil
+}
+
+// SetBridgeLatestBlock upserts the latest processed block number for a chain.
+func SetBridgeLatestBlock(ctx context.Context, db *sql.DB, chain string, blockNum uint64) error {
+	if db == nil {
+		return errors.New("db is nil")
+	}
+	_, err := db.ExecContext(ctx, `
+INSERT INTO bridge_state (chain_id, latest_block, updated_at)
+VALUES (?, ?, STRFTIME('%Y-%m-%d %H:%M:%f','now'))
+ON CONFLICT(chain_id) DO UPDATE SET
+  latest_block = excluded.latest_block,
+  updated_at = STRFTIME('%Y-%m-%d %H:%M:%f','now')
+`, chain, blockNum)
+	return err
+}
+
+// LoadAllBridgeLatestBlocks retrieves the latest block numbers for all chains as a map.
+func LoadAllBridgeLatestBlocks(ctx context.Context, db *sql.DB) (map[string]uint64, error) {
+	if db == nil {
+		return nil, errors.New("db is nil")
+	}
+	rows, err := db.QueryContext(ctx, "SELECT chain_id, latest_block FROM bridge_state")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	res := make(map[string]uint64)
+	for rows.Next() {
+		var chain string
+		var latest uint64
+		if err := rows.Scan(&chain, &latest); err != nil {
+			return nil, err
+		}
+		res[chain] = latest
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return res, nil
 }
 
 // UpsertInferenceNodes replaces or inserts the given nodes by id.

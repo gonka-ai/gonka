@@ -14,6 +14,33 @@ import (
 	"devshard/types"
 )
 
+// ErrLocalStateUnrecoverable marks a proven integrity failure in persisted
+// diff history: a nonce gap, a missing tail, or a state-root mismatch during
+// replay. Gateway startup deactivates and skips such escrows (like
+// bridge.ErrEscrowNotFound). Transient failures (I/O errors, full disk, chain
+// timeouts) are never classified and stay fatal, so escrow rotation cannot
+// mint replacements into a broken environment.
+var ErrLocalStateUnrecoverable = errors.New("local session state unrecoverable")
+
+// validateDiffRange verifies the stored diffs cover [from, to] contiguously.
+// A missing tail (diffs end before latest_nonce) would otherwise recover
+// silently behind the hosts.
+func validateDiffRange(records []types.DiffRecord, from, to uint64) error {
+	expected := from
+	for _, rec := range records {
+		if rec.Nonce != expected {
+			return fmt.Errorf("%w: missing nonce %d, next stored nonce is %d",
+				ErrLocalStateUnrecoverable, expected, rec.Nonce)
+		}
+		expected++
+	}
+	if expected <= to {
+		return fmt.Errorf("%w: missing trailing nonces %d..%d",
+			ErrLocalStateUnrecoverable, expected, to)
+	}
+	return nil
+}
+
 // snapshotInterval controls how often a state snapshot is saved -- both
 // during diff replay at recovery time AND during runtime via
 // Session.maybeSaveSnapshotLocked. After replay finishes, a final
@@ -116,18 +143,20 @@ func RecoverSession(
 	}
 	recoveredVersion := meta.Version
 	if recoveredVersion == "" {
-		recoveredVersion = types.NormalizeSessionVersion(boundVersion)
+		recoveredVersion = boundVersion
+	}
+	if recoveredVersion == "" {
+		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append([]state.SMOption{}, smOpts...)
-	stateOpts = append(stateOpts, state.WithVersion(recoveredVersion))
+	stateOpts := append(smOpts, state.WithVersion(types.EffectiveStateRootAndProtocolVersion))
 	if pv, ok := recoveredProtocolVersion(boundVersion); ok {
 		stateOpts = append(stateOpts, state.WithProtocolVersion(pv))
 	}
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
-		meta.CreatorAddr, verifier,
+		meta.CreatorAddr, verifier, store,
 		stateOpts...,
 	)
 	if err != nil {
@@ -140,7 +169,7 @@ func RecoverSession(
 	}
 
 	if meta.LatestNonce == 0 {
-		return sess, sm, nil
+		return finishRecover(sess, sm)
 	}
 
 	// Try to restore from a snapshot to skip replaying old diffs.
@@ -149,6 +178,7 @@ func RecoverSession(
 	// below so any stranded host can self-heal.
 	var snapshotCursor map[int]uint64
 	legacySnapshot := false
+	snapshotRestored := false
 	replayFrom := uint64(1)
 	snapNonce, snapData, snapErr := store.LoadSnapshot(escrowID)
 	if snapErr == nil && snapNonce > 0 && snapNonce <= meta.LatestNonce {
@@ -161,6 +191,7 @@ func RecoverSession(
 			sess.nonce = snapNonce
 			snapshotCursor = cursor
 			legacySnapshot = cursor == nil
+			snapshotRestored = true
 			log.Printf("recover_session escrow=%s snapshot_restored nonce=%d replay_from=%d total=%d skipped=%d host_cursors=%d legacy=%t",
 				escrowID, snapNonce, replayFrom, meta.LatestNonce, snapNonce, len(cursor), legacySnapshot)
 		}
@@ -184,12 +215,18 @@ func RecoverSession(
 	// small. For a legacy snapshot (cursor unknown) min returns 0 and we
 	// load the entire pre-snapshot history once -- a one-time slow
 	// recovery that self-heals stranded hosts.
-	if snapNonce > 0 {
+	//
+	// Gated on snapshotRestored, not snapNonce: an ignored snapshot (future
+	// nonce, decode failure) replays from 1, which already covers the range.
+	if snapshotRestored {
 		backfillFrom := minHostSyncNonce(sess.hostSyncNonce, len(group)) + 1
 		if backfillFrom <= snapNonce {
 			backfillRecords, berr := store.GetDiffs(escrowID, backfillFrom, snapNonce)
 			if berr != nil {
 				return nil, nil, fmt.Errorf("get backfill diffs %d..%d: %w", backfillFrom, snapNonce, berr)
+			}
+			if verr := validateDiffRange(backfillRecords, backfillFrom, snapNonce); verr != nil {
+				return nil, nil, fmt.Errorf("backfill diffs %d..%d: %w", backfillFrom, snapNonce, verr)
 			}
 			log.Printf("recover_session escrow=%s diff_backfill from=%d to=%d count=%d",
 				escrowID, backfillFrom, snapNonce, len(backfillRecords))
@@ -206,12 +243,15 @@ func RecoverSession(
 		if legacySnapshot || snapshotCursor == nil {
 			saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 		}
-		return sess, sm, nil
+		return finishRecover(sess, sm)
 	}
 
 	records, err := store.GetDiffs(escrowID, replayFrom, meta.LatestNonce)
 	if err != nil {
 		return nil, nil, fmt.Errorf("get diffs: %w", err)
+	}
+	if err := validateDiffRange(records, replayFrom, meta.LatestNonce); err != nil {
+		return nil, nil, fmt.Errorf("replay diffs %d..%d: %w", replayFrom, meta.LatestNonce, err)
 	}
 
 	log.Printf("recover_session escrow=%s replaying diffs %d..%d (%d records)", escrowID, replayFrom, meta.LatestNonce, len(records))
@@ -220,11 +260,16 @@ func RecoverSession(
 		sm.InjectWarmKeys(rec.WarmKeyDelta)
 		root, applyErr := sm.ApplyLocal(rec.Nonce, rec.Txs)
 		if applyErr != nil {
+			if errors.Is(applyErr, types.ErrInvalidNonce) {
+				return nil, nil, fmt.Errorf("%w: replay nonce %d: %w",
+					ErrLocalStateUnrecoverable, rec.Nonce, applyErr)
+			}
 			return nil, nil, fmt.Errorf("replay nonce %d: %w", rec.Nonce, applyErr)
 		}
 		if len(rec.StateHash) > 0 && len(root) > 0 {
 			if !bytes.Equal(root, rec.StateHash) {
-				return nil, nil, fmt.Errorf("state root mismatch at nonce %d", rec.Nonce)
+				return nil, nil, fmt.Errorf("%w: state root mismatch at nonce %d",
+					ErrLocalStateUnrecoverable, rec.Nonce)
 			}
 		}
 
@@ -248,6 +293,13 @@ func RecoverSession(
 		saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
 	}
 
+	return finishRecover(sess, sm)
+}
+
+func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.StateMachine, error) {
+	if err := sm.RebuildSealedInferenceIndex(); err != nil {
+		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
+	}
 	return sess, sm, nil
 }
 
@@ -284,16 +336,24 @@ func saveSnapshot(store storage.Storage, sm *state.StateMachine, escrowID string
 // or state-machine locks held -- this is what enables async background
 // snapshots from the runtime hot path).
 func writeSnapshot(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) {
+	_ = writeSnapshotErr(store, escrowID, nonce, state, cursor)
+}
+
+// writeSnapshotErr is writeSnapshot with an error return, for synchronous
+// callers (e.g. Session.FlushSnapshot on retire) that want to know whether the
+// snapshot landed. It logs on failure exactly like writeSnapshot.
+func writeSnapshotErr(store storage.Storage, escrowID string, nonce uint64, state *types.EscrowState, cursor map[int]uint64) error {
 	blob := sessionSnapshot{State: state, HostSyncNonce: cursor}
 	data, err := json.Marshal(blob)
 	if err != nil {
 		log.Printf("recover_session escrow=%s snapshot_marshal_failed=%v", escrowID, err)
-		return
+		return err
 	}
 	if err := store.SaveSnapshot(escrowID, nonce, data); err != nil {
 		log.Printf("recover_session escrow=%s snapshot_save_failed=%v", escrowID, err)
-		return
+		return err
 	}
 	log.Printf("recover_session escrow=%s snapshot_saved nonce=%d size_bytes=%d host_cursors=%d",
 		escrowID, nonce, len(data), len(cursor))
+	return nil
 }

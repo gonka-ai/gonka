@@ -1,0 +1,119 @@
+services:
+  # Extend the existing services with Jaeger environment variables
+  proxy:
+    environment:
+      # Optional Jaeger UI proxying (requires JAEGER_BASIC_AUTH_* when enabled)
+      - JAEGER_ENABLED=${JAEGER_ENABLED:-false}
+      - JAEGER_PORT=${JAEGER_PORT:-16686}
+      - JAEGER_BASE_PATH=${JAEGER_BASE_PATH:-/jaeger}
+      - JAEGER_BASIC_AUTH_USER=${JAEGER_BASIC_AUTH_USER:-}
+      - JAEGER_BASIC_AUTH_PASSWORD=${JAEGER_BASIC_AUTH_PASSWORD:-}
+      # Grafana UI proxying (requires GRAFANA_ADMIN_PASSWORD when enabled)
+      - GRAFANA_ENABLED=${GRAFANA_ENABLED:-false}
+      - GRAFANA_PORT=${GRAFANA_PORT:-3000}
+      - GRAFANA_BASE_PATH=${GRAFANA_BASE_PATH:-/grafana}
+      - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+
+  jaeger:
+    container_name: jaeger
+    image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0
+    user: "0:0"
+    command:
+      - --config
+      - /jaeger/config.yaml
+    expose:
+      - "16686"
+      - "4317"
+      - "4318"
+    volumes:
+      - ./observability/jaeger.config.yaml:/jaeger/config.yaml:ro
+      - jaeger_data:/var/lib/jaeger
+    restart: unless-stopped
+
+  prometheus:
+    container_name: prometheus
+    image: prom/prometheus:v3.11.3
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=30d
+      - --web.enable-lifecycle
+    volumes:
+      - ./observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    ports:
+      - "127.0.0.1:9099:9090"
+    restart: unless-stopped
+
+  loki:
+    container_name: loki
+    image: grafana/loki:3.6.10
+    command:
+      - -config.file=/etc/loki/config.yaml
+    volumes:
+      - ./observability/loki-config.yaml:/etc/loki/config.yaml:ro
+      - loki_data:/loki
+    ports:
+      - "127.0.0.1:3101:3100"
+    restart: unless-stopped
+
+  promtail:
+    container_name: promtail
+    image: grafana/promtail:3.6.10
+    command:
+      - -config.file=/etc/promtail/config.yaml
+    volumes:
+      - ./observability/promtail-config.yaml:/etc/promtail/config.yaml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      - promtail_data:/tmp
+    depends_on:
+      - loki
+    restart: unless-stopped
+
+  cadvisor:
+    container_name: cadvisor
+    image: gcr.io/cadvisor/cadvisor:v0.54.1
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+      - /dev/disk/:/dev/disk:ro
+    ports:
+      - "127.0.0.1:8088:8080"
+    restart: unless-stopped
+
+  grafana:
+    container_name: grafana
+    image: grafana/grafana:13.0.1
+    entrypoint: ["/bin/sh", "/entrypoint.sh"]
+    environment:
+      - GF_SECURITY_ADMIN_USER=${GRAFANA_ADMIN_USER:-admin}
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-admin1}
+      - GF_USERS_ALLOW_SIGN_UP=false
+      - GF_SERVER_ROOT_URL=%(protocol)s://%(domain)s${GRAFANA_BASE_PATH:-/grafana}/
+      - GF_SERVER_SERVE_FROM_SUB_PATH=true
+    volumes:
+      - ./observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./observability/grafana/dashboards:/var/lib/grafana/dashboards-src:ro
+      - ./observability/grafana/entrypoint.sh:/entrypoint.sh:ro
+      - grafana_data:/var/lib/grafana
+    ports:
+      - "127.0.0.1:3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped
+
+volumes:
+  jaeger_data:
+  prometheus_data:
+  loki_data:
+  promtail_data:
+  grafana_data:
+
+networks:
+  default:
+    name: join_default
+    external: true

@@ -21,6 +21,8 @@ import com.productscience.assertions.assertThat
  * 2. Load generation: realistic utilization with controlled growth (75 regular inferences × 85 tokens ≈ 5.3x utilization)
  * 3. Time decay: price decreases after utilization drops (with 2% growth caps)
  */
+// Classic inference flow was removed (PR #1386); these tests exercise the deprecated endpoints.
+@Tag("exclude")
 @Timeout(value = 15, unit = TimeUnit.MINUTES)
 class DynamicPricingTest : TestermintTest() {
 

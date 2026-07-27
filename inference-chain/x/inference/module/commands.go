@@ -106,14 +106,15 @@ Note: Chain ID will be auto-detected from the chain if not specified with --chai
 }
 
 type settlementFileJSON struct {
-	EscrowID   string                    `json:"escrow_id"`
-	Version    string                    `json:"version"`
-	StateRoot  string                    `json:"state_root"`
-	Nonce      uint64                    `json:"nonce"`
-	Fees       uint64                    `json:"fees"`
-	RestHash   string                    `json:"rest_hash"`
-	HostStats  []settlementHostStatsJSON `json:"host_stats"`
-	Signatures []slotSignatureJSON       `json:"signatures"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string                    `json:"version"`
+	StateRoot                   string                    `json:"state_root"`
+	Nonce                       uint64                    `json:"nonce"`
+	Fees                        uint64                    `json:"fees"`
+	RestHash                    string                    `json:"rest_hash"`
+	HostStats                   []settlementHostStatsJSON `json:"host_stats"`
+	Signatures                  []slotSignatureJSON       `json:"signatures"`
 }
 
 type settlementHostStatsJSON struct {
@@ -121,8 +122,8 @@ type settlementHostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
 }
 
 type slotSignatureJSON struct {
@@ -150,8 +151,8 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 			if err := json.Unmarshal(data, &sf); err != nil {
 				return fmt.Errorf("parse settlement JSON: %w", err)
 			}
-			if sf.Version == "" {
-				return fmt.Errorf("settlement JSON missing version")
+			if sf.StateRootAndProtocolVersion == "" {
+				return fmt.Errorf("settlement JSON missing state_root_and_protocol_version")
 			}
 
 			escrowID, err := strconv.ParseUint(sf.EscrowID, 10, 64)
@@ -194,15 +195,51 @@ func SettleDevshardEscrowCmd() *cobra.Command {
 			}
 
 			msg := &types.MsgSettleDevshardEscrow{
-				Settler:    clientCtx.GetFromAddress().String(),
-				EscrowId:   escrowID,
-				Version:    sf.Version,
-				StateRoot:  stateRoot,
-				Nonce:      sf.Nonce,
-				Fees:       sf.Fees,
-				RestHash:   restHash,
-				HostStats:  hostStats,
-				Signatures: sigs,
+				Settler:                     clientCtx.GetFromAddress().String(),
+				EscrowId:                    escrowID,
+				StateRootAndProtocolVersion: sf.StateRootAndProtocolVersion,
+				StateRoot:                   stateRoot,
+				Nonce:                       sf.Nonce,
+				Fees:                        sf.Fees,
+				RestHash:                    restHash,
+				HostStats:                   hostStats,
+				Signatures:                  sigs,
+			}
+
+			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)
+		},
+	}
+
+	flags.AddTxFlagsToCmd(cmd)
+	return cmd
+}
+
+func SetClaimRecipientsCmd() *cobra.Command {
+	cmd := &cobra.Command{
+		Use:   "set-claim-recipients <entries-json>",
+		Short: "Configure per-epoch claim recipient overrides (cold key only)",
+		Long: `Batch-configures recipient overrides for MsgClaimRewards on future epochs.
+
+Pass a JSON array of {epoch, recipient} entries. An empty recipient clears the
+override for that epoch.
+
+Example:
+  inferenced tx inference set-claim-recipients '[{"epoch":123,"recipient":"gonka1..."}]' --from cold-key`,
+		Args: cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			clientCtx, err := client.GetClientTxContext(cmd)
+			if err != nil {
+				return err
+			}
+
+			var entries []types.ClaimRecipientEntry
+			if err := json.Unmarshal([]byte(args[0]), &entries); err != nil {
+				return fmt.Errorf("parse entries JSON: %w", err)
+			}
+
+			msg := &types.MsgSetClaimRecipients{
+				Creator: clientCtx.GetFromAddress().String(),
+				Entries: entries,
 			}
 
 			return tx.GenerateOrBroadcastTxCLI(clientCtx, cmd.Flags(), msg)

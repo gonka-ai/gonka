@@ -11,15 +11,15 @@ The temporary implementation is tracked separately in
 Devshard binaries version independently of mainnet. Changing the devshard
 runtime should not require cosmovisor or a coordinated full-node upgrade.
 
-The stable client contract is path-based:
+The active client contract is path-based:
 
 ```
-/v1/devshard/*        -> legacy path, served directly by dapi
 /devshard/<version>/* -> versioned path, served by versiond-managed binaries
 ```
 
-The legacy path stays available for backward compatibility while the versioned
-path becomes the normal way to run newer devshard releases.
+Clients must choose a versioned route.
+
+The legacy `/v1/devshard/*` path is deprecated and returns `410 Gone`.
 
 ## Target flow
 
@@ -68,7 +68,6 @@ a version.
 The user chooses a version by selecting the HTTP path at session start:
 
 ```
-/v1/devshard/*        -> dapi, in-process
 /devshard/<version>/* -> versiond -> devshard binary for <version>
 ```
 
@@ -77,8 +76,8 @@ binary version off-chain. Every later diff must continue with that same
 version. A host running the wrong binary refuses to sign, so a version-mixing
 session cannot gather the threshold needed to settle.
 
-The bound version is recorded in shard state. Use `v1` for the legacy path and
-`<version>` for `/devshard/<version>/*`.
+The bound version is recorded in shard state. Use the `<version>` segment from
+`/devshard/<version>/*`.
 
 ## Deprecation
 
@@ -93,10 +92,12 @@ Because escrow creation carries no version, deprecation enforcement can only
 happen later in the flow. The intended enforcement point is settlement, not
 escrow creation.
 
-Settlement carries a cleartext `version` field and that same value is part of
-the signed state commitment. Mainnet can read the version directly from the
-settlement message and verify that hosts signed that exact version by
-recomputing the state root with `version_hash = sha256(version_utf8)`.
+Settlement carries a cleartext **state root and protocol version** tag
+(`state_root_and_protocol_version`) and that same value is part of the signed
+state commitment. Mainnet recomputes the root with
+`version_hash = sha256(tag_utf8)`. That tag is independent of versiond runtime
+names in `approved_versions`; bump it only when state-root or settlement protocol
+changes — see [protocol-version.md](./protocol-version.md).
 
 ## Operator overrides
 

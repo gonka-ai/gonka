@@ -16,6 +16,7 @@ import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.runBlocking
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.jupiter.api.Order
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.Timeout
 import org.tinylog.kotlin.Logger
@@ -26,6 +27,7 @@ import kotlin.test.assertNotNull
 
 class InvalidationTests : TestermintTest() {
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     @Timeout(15, unit = TimeUnit.MINUTES)
     @Order(Int.MAX_VALUE - 1)
     fun `test invalid gets removed and restored`() {
@@ -109,6 +111,7 @@ class InvalidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `test valid with invalid validator gets validated`() {
         val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate)
         genesis.waitForNextInferenceWindow()
@@ -144,6 +147,7 @@ class InvalidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `test invalid gets marked invalid`() {
         var tries = 4
         val (cluster, genesis) = initCluster(reboot = true)
@@ -166,6 +170,7 @@ class InvalidationTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `full inference with invalid response payload`() {
         val (cluster, genesis) = initCluster(mergeSpec = alwaysValidate)
         cluster.allPairs.forEach { pair ->
@@ -184,18 +189,8 @@ class InvalidationTests : TestermintTest() {
         assertThat(inferencePayload.inference.statusEnum).isEqualTo(InferenceStatus.INVALIDATED)
     }
 
-    @Test
-    fun `logprob manipulation produces different hash`() {
-        // Security test: payloads with same content but different logprobs must have different hashes
-        // This prevents attack where executor serves fake logprobs with valid content
-        val payloadWithRealLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.5,"top_logprobs":[{"token":"Hello","logprob":-0.5}]}]}}]}"""
-        val payloadWithFakeLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1,"top_logprobs":[{"token":"Hello","logprob":-0.1}]}]}}]}"""
-
-        val hash1 = computeResponseHash(payloadWithRealLogprobs)
-        val hash2 = computeResponseHash(payloadWithFakeLogprobs)
-
-        assertThat(hash1).isNotEqualTo(hash2)
-    }
+    // NOTE: `logprob manipulation produces different hash` moved to PromptHashingTests: it is a pure
+    // unit test and this class is excluded from the CI matrix.
 
     companion object {
         val alwaysValidate = spec {

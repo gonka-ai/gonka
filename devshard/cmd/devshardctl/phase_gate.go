@@ -1,10 +1,12 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"net/http"
 	"sort"
 	"strconv"
@@ -15,6 +17,10 @@ import (
 
 const (
 	defaultChainPhasePollInterval = 5 * time.Second
+	// versionsTTLPollMultiplier scales the poll interval into how long a
+	// /v1/versions fetch stays fresh, so entries survive a couple of missed polls
+	// but never outlive the poller's cadence.
+	versionsTTLPollMultiplier = 3
 
 	epochPhaseInference           = "Inference"
 	epochPhasePoCGenerate         = "PoCGenerate"
@@ -65,6 +71,9 @@ type ChainPhaseGate struct {
 	// scaleApplyHook's responsibility.
 	capacityState  *CapacityState
 	scaleApplyHook func(scale float64)
+
+	// versions polls each candidate miner's /v1/versions endpoint
+	versions *VersionsCache
 
 	stopCh chan struct{}
 	doneCh chan struct{}
@@ -241,12 +250,14 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 	if pollInterval <= 0 {
 		pollInterval = defaultChainPhasePollInterval
 	}
+	client := &http.Client{Timeout: 5 * time.Second}
 	return &ChainPhaseGate{
 		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
 		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
-		client:                        &http.Client{Timeout: 5 * time.Second},
+		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
+		versions:                      NewVersionsCache(client, versionsTTLPollMultiplier*pollInterval),
 		stopCh:                        make(chan struct{}),
 		doneCh:                        make(chan struct{}),
 	}
@@ -268,6 +279,16 @@ func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
 func (g *ChainPhaseGate) Start() {
 	if g == nil {
 		return
+	}
+	if g.versions != nil {
+		// Derive a context whose lifetime matches the gate's stopCh so the
+		// versions poller stops cleanly without introducing a second lifecycle.
+		ctx, cancel := context.WithCancel(context.Background())
+		go func() {
+			<-g.stopCh
+			cancel()
+		}()
+		go g.versions.Run(ctx, g.pollInterval)
 	}
 	go g.run()
 }
@@ -388,26 +409,44 @@ func (g *ChainPhaseGate) refresh() {
 			g.recordError(perr)
 			g.logPreservedParticipantFetchFailure(snapshot, perr)
 		} else {
-			if needPreservedFetch {
-				setPoCPreservedParticipantsByModel(state.preservedByModel)
-				g.logPreservedParticipantsLoaded(snapshot, state.preserved, state.excluded)
+			// Keep the versions poller pointed at the current candidate set.
+			if g.versions != nil {
+				g.versions.SetCandidates(state.inferenceURLs)
 			}
-			if capacityState != nil {
-				// pocActive routes the observation: outside PoC it
-				// updates both fullWeights (steady-state baseline) and
-				// currentWeights, inside PoC it only nudges
-				// currentWeights so the live W_tot reflects PoC's
-				// transient drop while W_ref keeps the pre-PoC baseline.
-				capacityState.SetHostWeights(state.weights, active)
-				capacityState.SetHostWeightsByModel(state.weightsByModel, active)
-				if active && relaxedPoCModeEnabled() {
-					capacityState.SetPoCPreserved(state.preserved)
-				} else {
-					// Outside relaxed PoC every host is "preserved"
-					// from the limiter's perspective; nil tells the
-					// state to treat the preserved set as not-yet-loaded
-					// and therefore not block anyone on PoC grounds.
-					capacityState.SetPoCPreserved(nil)
+
+			isValidation := rawPoCValidationState(snapshot.EpochPhase, snapshot.ConfirmationPoCPhase)
+			if active && relaxedPoCModeEnabled() && isValidation && g.versions != nil {
+				preserved, preservedByModel, curWeights, curWeightsByModel :=
+					mergePreservedWithValidationCapable(state, g.versions.IsNodeValidationCapable)
+				if capacityState != nil {
+					capacityState.SetHostWeightViews(curWeights, state.fullWeights, curWeightsByModel, state.fullWeightsByModel)
+					capacityState.SetPoCPreserved(preserved)
+				}
+				if needPreservedFetch {
+					setPoCPreservedParticipantsByModel(preservedByModel)
+					g.logPreservedParticipantsLoaded(snapshot, preserved, state.excluded)
+				}
+			} else {
+				if needPreservedFetch {
+					setPoCPreservedParticipantsByModel(state.preservedByModel)
+					g.logPreservedParticipantsLoaded(snapshot, state.preserved, state.excluded)
+				}
+				if capacityState != nil {
+					// The participants response has enough ML-node data to compute
+					// both views on every poll: current is PoC/CPoC-filtered,
+					// full is the all-node steady-state baseline. Updating both
+					// prevents cold starts during PoC from falling back to unknown
+					// baseline capacity.
+					capacityState.SetHostWeightViews(state.weights, state.fullWeights, state.weightsByModel, state.fullWeightsByModel)
+					if active && relaxedPoCModeEnabled() {
+						capacityState.SetPoCPreserved(state.preserved)
+					} else {
+						// Outside relaxed PoC every host is "preserved"
+						// from the limiter's perspective; nil tells the
+						// state to treat the preserved set as not-yet-loaded
+						// and therefore not block anyone on PoC grounds.
+						capacityState.SetPoCPreserved(nil)
+					}
 				}
 			}
 		}
@@ -444,6 +483,13 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 	return &payload, nil
 }
 
+// participantNode holds the per-node data for one ML node belonging to a participant
+type participantNode struct {
+	model  string
+	nodeID string
+	weight float64
+}
+
 // participantsState is the parsed form of the chain participants
 // endpoint used by both the relaxed-PoC preserved-set logic and the
 // CapacityState weight ingestion. We collect everything in one fetch
@@ -457,11 +503,15 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 // outside PoC every ML node contributes, while during active PoC only
 // preserved ML nodes contribute.
 type participantsState struct {
-	preserved        []string
-	preservedByModel map[string][]string
-	excluded         []string
-	weights          map[string]float64
-	weightsByModel   map[string]map[string]float64
+	preserved          []string
+	preservedByModel   map[string][]string
+	excluded           []string
+	weights            map[string]float64
+	weightsByModel     map[string]map[string]float64
+	fullWeights        map[string]float64
+	fullWeightsByModel map[string]map[string]float64
+	inferenceURLs      map[string]string
+	nodesByParticipant map[string][]participantNode
 }
 
 func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, error) {
@@ -504,9 +554,13 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 	}
 
 	state := &participantsState{
-		preservedByModel: make(map[string][]string),
-		weights:          make(map[string]float64, len(payload.ActiveParticipants.Participants)),
-		weightsByModel:   make(map[string]map[string]float64),
+		preservedByModel:   make(map[string][]string),
+		weights:            make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		weightsByModel:     make(map[string]map[string]float64),
+		fullWeights:        make(map[string]float64, len(payload.ActiveParticipants.Participants)),
+		fullWeightsByModel: make(map[string]map[string]float64),
+		inferenceURLs:      make(map[string]string, len(payload.ActiveParticipants.Participants)),
+		nodesByParticipant: make(map[string][]participantNode, len(payload.ActiveParticipants.Participants)),
 	}
 	seenPreserved := make(map[string]struct{}, len(payload.ActiveParticipants.Participants))
 	seenPreservedByModel := make(map[string]map[string]struct{})
@@ -521,12 +575,27 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 			// receive PoC weight, or be matched against group slots.
 			continue
 		}
+		if inferenceURL := strings.TrimSpace(participant.InferenceURL); inferenceURL != "" {
+			state.inferenceURLs[key] = inferenceURL
+		}
+		if nodes := participantNodes(participant); len(nodes) > 0 {
+			state.nodesByParticipant[key] = nodes
+		}
 		state.weights[key] = participantWeight(participant, pocActive, preservedSnapshot, preservation)
+		state.fullWeights[key] = participantWeight(participant, false, nil, preservationModeAll)
 		for model, weight := range participantWeightsByModel(participant, pocActive, preservedSnapshot, preservation) {
 			modelWeights := state.weightsByModel[model]
 			if modelWeights == nil {
 				modelWeights = map[string]float64{}
 				state.weightsByModel[model] = modelWeights
+			}
+			modelWeights[key] = weight
+		}
+		for model, weight := range participantWeightsByModel(participant, false, nil, preservationModeAll) {
+			modelWeights := state.fullWeightsByModel[model]
+			if modelWeights == nil {
+				modelWeights = map[string]float64{}
+				state.fullWeightsByModel[model] = modelWeights
 			}
 			modelWeights[key] = weight
 		}
@@ -896,6 +965,26 @@ func rawPoCBlockingState(epochPhase, confirmationPhase string) (bool, string) {
 	return false, ""
 }
 
+func rawPoCGenerationState(epochPhase, confirmationPhase string) bool {
+	switch epochPhase {
+	case epochPhasePoCGenerate, epochPhasePoCGenerateWindDown:
+		return true
+	}
+	switch confirmationPhase {
+	case confirmationPoCGracePeriod, confirmationPoCGeneration:
+		return true
+	}
+	return false
+}
+
+func rawPoCValidationState(epochPhase, confirmationPhase string) bool {
+	switch epochPhase {
+	case epochPhasePoCValidate, epochPhasePoCValidateWindDown:
+		return true
+	}
+	return confirmationPhase == confirmationPoCValidation
+}
+
 func shouldRefreshPoCPreservedParticipants(previous, next ChainPhaseSnapshot) bool {
 	previousActive, _ := rawPoCBlockingState(previous.EpochPhase, previous.ConfirmationPoCPhase)
 	nextActive, _ := rawPoCBlockingState(next.EpochPhase, next.ConfirmationPoCPhase)
@@ -1021,6 +1110,29 @@ func effectivePreservationMode(pocActive bool, preservation preservationMode) pr
 		return preservationModeAll
 	}
 	return preservation
+}
+
+// participantNodes extracts the flat list of (model, nodeID, weight)
+func participantNodes(participant chainActiveParticipant) []participantNode {
+	var nodes []participantNode
+	for i, rawModel := range participant.Models {
+		model := strings.TrimSpace(rawModel)
+		if model == "" || i >= len(participant.MLNodes) {
+			continue
+		}
+		for _, node := range participant.MLNodes[i].MLNodes {
+			nodeID := strings.TrimSpace(node.NodeID)
+			if nodeID == "" {
+				continue
+			}
+			nodes = append(nodes, participantNode{
+				model:  model,
+				nodeID: nodeID,
+				weight: float64(node.PoCWeight),
+			})
+		}
+	}
+	return nodes
 }
 
 func participantModelAt(participant chainActiveParticipant, index int) string {
@@ -1149,4 +1261,60 @@ func parseFlexibleUint64(data []byte) (uint64, error) {
 	}
 
 	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
+}
+
+// Returns per model chain weight of the participant's PoC-validation-inference-capable nodes.
+func participantValidationInferenceWeights(nodes []participantNode, miner string, capable func(miner, nodeID string) bool) (map[string]float64, float64) {
+	weights := map[string]float64{}
+	if capable == nil {
+		return weights, 0
+	}
+	var total float64
+	for _, node := range nodes {
+		if capable(miner, node.nodeID) {
+			weights[node.model] += node.weight
+			total += node.weight
+		}
+	}
+	return weights, total
+}
+
+// Returns the validation-phase availability and weight views:
+// preserved miners keep their PoC-filtered current weight, and each non-preserved ("excluded") miner
+// that has a validation-inference-capable node is added with the summed weight of those capable nodes (per model).
+func mergePreservedWithValidationCapable(
+	state *participantsState,
+	capable func(miner, nodeID string) bool,
+) (preserved []string, preservedByModel map[string][]string, currentWeights map[string]float64, currentWeightsByModel map[string]map[string]float64) {
+	preserved = append(preserved, state.preserved...)
+
+	preservedByModel = make(map[string][]string, len(state.preservedByModel))
+	for model, miners := range state.preservedByModel {
+		preservedByModel[model] = append([]string(nil), miners...)
+	}
+
+	currentWeights = make(map[string]float64, len(state.weights))
+	maps.Copy(currentWeights, state.weights)
+	currentWeightsByModel = cloneModelWeights(state.weightsByModel)
+
+	for _, miner := range state.excluded {
+		nodes := state.nodesByParticipant[miner]
+		weightsByModel, total := participantValidationInferenceWeights(nodes, miner, capable)
+		if total <= 0 {
+			continue
+		}
+		preserved = append(preserved, miner)
+		currentWeights[miner] = total
+		for model, weight := range weightsByModel {
+			if currentWeightsByModel[model] == nil {
+				currentWeightsByModel[model] = map[string]float64{}
+			}
+			currentWeightsByModel[model][miner] = weight
+			preservedByModel[model] = append(preservedByModel[model], miner)
+		}
+	}
+	for model := range preservedByModel {
+		sort.Strings(preservedByModel[model])
+	}
+	return preserved, preservedByModel, currentWeights, currentWeightsByModel
 }

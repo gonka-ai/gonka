@@ -30,6 +30,7 @@ class MultiModelTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `simple multi model`() {
         val (cluster, genesis) = initCluster(3, mergeSpec = secondModelSpec)
         val (newModelName, secondModelPairs) = setSecondModel(cluster, genesis)
@@ -103,6 +104,11 @@ class MultiModelTests : TestermintTest() {
 
 
     @Test
+    // Classic inference flow removed (PR #1386). This test "passed" on the deprecation branch only
+    // because runParallelInferencesWithResults swallows request failures: every request 410s, the
+    // helper returns an empty list, and all verification loops run over nothing (vacuous green).
+    // Needs a devshard-based rewrite before it provides real coverage again.
+    @Tag("exclude")
     fun `multi model inferences get validated and claimed`() {
         val (cluster, genesis) = initCluster(3, reboot = true, mergeSpec = secondModelSpec)
         logSection("Setting up second model")

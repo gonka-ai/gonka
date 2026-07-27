@@ -2,9 +2,11 @@ package transport
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -28,11 +30,17 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	config := testutil.DefaultConfig(1)
 	verifier := signing.NewSecp256k1Verifier()
 
-	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine := stub.NewInferenceEngine()
 	store := storage.NewMemory()
-	require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: 100000}))
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "escrow-1",
+		Version:        testutil.RuntimeTestVersion,
+		Config:         config,
+		Group:          group,
+		InitialBalance: 100000,
+	}))
 
 	h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil, host.WithGrace(100), host.WithStorage(store))
 	require.NoError(t, err)
@@ -41,13 +49,15 @@ func setupClientTestEnv(t *testing.T) (*HTTPClient, *httptest.Server, *signing.S
 	require.NoError(t, err)
 
 	e := echo.New()
-	g := e.Group("/v1/devshard")
+	g := e.Group(testRoutePrefix)
 	srv.Register(g)
 
 	ts := httptest.NewServer(e)
 	t.Cleanup(ts.Close)
 
-	client := NewHTTPClient(ts.URL, "escrow-1", userSigner)
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = testRoutePrefix
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
 	return client, ts, userSigner, group
 }
 
@@ -84,6 +94,26 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 	require.True(t, hasFinish, "mempool should contain MsgFinishInference")
 }
 
+func TestHTTPClient_Send_ReturnsUpstreamStatusError(t *testing.T) {
+	userSigner := testutil.MustGenerateKey(t)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "bad signature", http.StatusForbidden)
+	}))
+	t.Cleanup(ts.Close)
+
+	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = testRoutePrefix
+	client := NewHTTPClient(ts.URL, "escrow-1", userSigner, cfg)
+	_, err := client.Send(context.Background(), host.HostRequest{Nonce: 1}, nil, nil)
+	require.Error(t, err)
+
+	var statusErr *UpstreamStatusError
+	require.True(t, errors.As(err, &statusErr))
+	require.Equal(t, http.StatusForbidden, statusErr.StatusCode)
+	require.Contains(t, statusErr.Path, "/sessions/escrow-1/chat/completions")
+	require.Contains(t, statusErr.Body, "bad signature")
+}
+
 func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	signer := testutil.MustGenerateKey(t)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -93,6 +123,7 @@ func TestHTTPClient_Send_NoPayloadUsesQueryTimeout(t *testing.T) {
 	t.Cleanup(srv.Close)
 
 	cfg := DefaultClientConfig()
+	cfg.RoutePrefix = testRoutePrefix
 	cfg.InferenceTimeout = time.Second
 	cfg.QueryTimeout = 25 * time.Millisecond
 	client := NewHTTPClient(srv.URL, "escrow-1", signer, cfg)
@@ -164,7 +195,7 @@ func TestParseSSE_PartialResult(t *testing.T) {
 	// Use a reader that returns the data then an error (simulating connection drop).
 	r := &truncatedReader{data: []byte(sseData)}
 
-	result, err := client.parseSSEResponse(r, nil, nil)
+	result, err := client.parseSSEResponse(context.Background(), r, nil, nil)
 	require.Error(t, err, "should return error from broken stream")
 	require.NotNil(t, result, "should return partial result")
 	require.Equal(t, uint64(1), result.Nonce)
@@ -290,6 +321,7 @@ func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
 		GossipTimeout:    DefaultClientConfig().GossipTimeout,
 		VerifyTimeout:    DefaultClientConfig().VerifyTimeout,
 		QueryTimeout:     DefaultClientConfig().QueryTimeout,
+		RoutePrefix:      testRoutePrefix,
 		ParticipantKey:   "shared-host",
 		Admission:        admission,
 	})
@@ -318,4 +350,58 @@ type lineCollector func(line string)
 func (c lineCollector) Write(p []byte) (int, error) {
 	c(string(p))
 	return len(p), nil
+}
+
+const receiptOnlySSE = "data: {\"devshard_receipt\":{\"state_sig\":\"c2ln\",\"state_hash\":\"aGFzaA==\",\"nonce\":1,\"receipt\":\"cmVjZWlwdA==\",\"confirmed_at\":1000}}\n\n"
+
+func TestParseSSE_CancelledContextReportsCancellation(t *testing.T) {
+	// A cancelled attempt (client disconnect, race resolved, drain) can see the
+	// peer close with a clean EOF after the receipt already arrived. The receipt
+	// sets the terminator, so without a context check this would read as a
+	// successful empty response and be scored against the host. It must instead
+	// surface as the cancellation it is.
+	client := &HTTPClient{config: DefaultClientConfig()}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	result, err := client.parseSSEResponse(ctx, strings.NewReader(receiptOnlySSE), nil, nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, context.Canceled)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt, "receipt should still be extracted from the partial stream")
+}
+
+func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
+	// Without cancellation, a receipt-terminated stream that closes cleanly is a
+	// successful completion, even when it carried no content. This guards against
+	// the context check regressing the normal empty-but-complete path.
+	client := &HTTPClient{config: DefaultClientConfig()}
+
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(receiptOnlySSE), nil, nil)
+	require.NoError(t, err)
+	require.NotNil(t, result)
+	require.Equal(t, uint64(1), result.Nonce)
+	require.NotNil(t, result.Receipt)
+}
+
+func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {
+	admission := &stubAdmissionController{}
+	client := &HTTPClient{config: DefaultClientConfig()}
+	client.config.ParticipantKey = "shared-host"
+	client.config.Admission = admission
+
+	const path = "/sessions/escrow-1/chat/completions"
+
+	// Our own cancellation must never quarantine the host, whether it arrives
+	// bare or wrapped.
+	client.observeTransportFailure(path, context.Canceled)
+	client.observeTransportFailure(path, fmt.Errorf("POST %s: %w", path, context.Canceled))
+	require.Empty(t, admission.observed, "cancellation must not be reported as a transport failure")
+
+	// A genuine transport error is still reported.
+	client.observeTransportFailure(path, errors.New("connection refused"))
+	require.Len(t, admission.observed, 1)
+	require.Contains(t, admission.observed[0], "shared-host")
+	require.Contains(t, admission.observed[0], "transport")
 }

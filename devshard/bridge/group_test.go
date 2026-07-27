@@ -44,6 +44,58 @@ func (m *mockBridge) SubmitDisputeState(_ string, _ []byte, _ uint64, _ map[uint
 	return ErrNotImplemented
 }
 
+func TestBuildGroupFromEscrow_HappyPath(t *testing.T) {
+	escrow := &EscrowInfo{
+		EscrowID: "1",
+		Slots:    []string{"valA", "valB", "valC"},
+	}
+	group, err := BuildGroupFromEscrow(escrow)
+	require.NoError(t, err)
+	require.Len(t, group, 3)
+	for i, slot := range group {
+		assert.Equal(t, uint32(i), slot.SlotID)
+	}
+	assert.Equal(t, "valA", group[0].ValidatorAddress)
+}
+
+func TestBuildGroupFromEscrow_NilEscrow(t *testing.T) {
+	_, err := BuildGroupFromEscrow(nil)
+	require.Error(t, err)
+}
+
+type countingBridge struct {
+	mockBridge
+	getEscrowCalls int
+}
+
+func (m *countingBridge) GetEscrow(id string) (*EscrowInfo, error) {
+	m.getEscrowCalls++
+	return m.mockBridge.GetEscrow(id)
+}
+
+func TestBuildGroup_SingleGetEscrowCall(t *testing.T) {
+	b := &countingBridge{
+		mockBridge: mockBridge{
+			escrow: &EscrowInfo{EscrowID: "1", Slots: []string{"valA", "valB"}},
+		},
+	}
+	group, err := BuildGroup("1", b)
+	require.NoError(t, err)
+	require.Len(t, group, 2)
+	assert.Equal(t, 1, b.getEscrowCalls)
+}
+
+func TestBuildGroupFromEscrow_NoGetEscrowCall(t *testing.T) {
+	b := &countingBridge{
+		mockBridge: mockBridge{
+			escrow: &EscrowInfo{EscrowID: "1", Slots: []string{"valA"}},
+		},
+	}
+	_, err := BuildGroupFromEscrow(&EscrowInfo{EscrowID: "1", Slots: []string{"valA", "valB", "valC"}})
+	require.NoError(t, err)
+	assert.Equal(t, 0, b.getEscrowCalls)
+}
+
 func TestBuildGroup_HappyPath(t *testing.T) {
 	b := &mockBridge{
 		escrow: &EscrowInfo{

@@ -6,9 +6,12 @@ import com.productscience.data.InferenceState
 import com.productscience.data.InferenceStatus
 import com.productscience.data.spec
 import org.assertj.core.api.Assertions.assertThat
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import org.tinylog.kotlin.Logger
 
+// Classic inference flow was removed (PR #1386); this test exercises the deprecated endpoints.
+@Tag("exclude")
 class InferenceFailureAccountingTests : TestermintTest() {
 
     @Test

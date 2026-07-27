@@ -27,7 +27,38 @@ message Params {
   DevshardEscrowParams devshard_escrow_params = 14;
   reserved "subnet_escrow_params";
   FeeParams fee_params = 15;
+  // Field numbers 16 and 17 are wire-format-locked to match the upstream
+  // multi-model branch (which shipped delegation_params=16 first). Renumbering
+  // would silently lose DelegationParams from any chain that already stored
+  // params under field 16.
   DelegationParams delegation_params = 16;
+  MaintenanceParams maintenance_params = 17;
+}
+
+// MaintenanceParams defines the governance-controlled parameters for participant maintenance windows.
+message MaintenanceParams {
+  option (gogoproto.equal) = true;
+
+  // maintenance_enabled enables or disables scheduling and activation of maintenance windows.
+  bool maintenance_enabled = 1;
+
+  // maintenance_min_schedule_lead_blocks is the minimum number of blocks between scheduling and start.
+  uint64 maintenance_min_schedule_lead_blocks = 2;
+
+  // maintenance_max_window_blocks is the maximum duration of a single maintenance window.
+  uint64 maintenance_max_window_blocks = 3;
+
+  // maintenance_max_concurrent_validators is the maximum number of participants concurrently in maintenance.
+  uint32 maintenance_max_concurrent_validators = 4;
+
+  // maintenance_max_concurrent_power_bps is the maximum consensus power concurrently in maintenance (basis points).
+  uint32 maintenance_max_concurrent_power_bps = 5;
+
+  // maintenance_credit_cap_blocks is the maximum maintenance credit a participant may accumulate.
+  uint64 maintenance_credit_cap_blocks = 6;
+
+  // maintenance_credit_earn_per_successful_epoch_blocks is the number of credit blocks earned per successful epoch.
+  uint64 maintenance_credit_earn_per_successful_epoch_blocks = 7;
 }
 
 message GenesisOnlyParams {
@@ -160,6 +191,7 @@ message PocParams {
   bool poc_normalization_enabled = 12;  // Enables time-based weight normalization for PoC
   bool poc_stronger_rng_enabled = 13;  // Switches input generation to concatenated murmur3 with full 256-bit SHA256 seed (prevents 32-bit seed-collision attacks)
   repeated PoCModelConfig models = 14;
+  uint32 validation_vote_threshold_bps = 15;  // Strict vote threshold in basis points, 0 = default 5000; valid range [5000, 10000] so at most one side can pass
 }
 
 message Decimal {
@@ -365,8 +397,11 @@ message DelegationParams {
 // DevshardApprovedVersion describes a single approved devshard binary.
 message DevshardApprovedVersion {
   option (gogoproto.equal) = true;
+  // State root and devshard protocol version
   string name = 1;
+  // Binary version
   string binary = 2;
+  // Hash of binary to check if update is already installed
   string sha256 = 3;
 }
 
@@ -382,6 +417,15 @@ message DevshardEscrowParams {
   repeated DevshardApprovedVersion approved_versions = 7;
   uint32 max_nonce = 8;
   bool devshard_requests_enabled = 9;
+  uint32 default_inference_seal_grace_nonces = 10;
+  uint32 default_inference_seal_grace_seconds = 11;
+  uint64 create_devshard_fee = 12;
+  uint64 fee_per_nonce = 13;
+  int64 refusal_timeout = 14;
+  int64 execution_timeout = 15;
+  uint32 validation_rate = 16;
+  uint32 vote_threshold_factor = 17; // percent, e.g. 50 == 50%
+  uint32 default_auto_seal_every_n_nonces = 18;
 }
 
 // FeeParams defines governance-controlled parameters for consensus-level

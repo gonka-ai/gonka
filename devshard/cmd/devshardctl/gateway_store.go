@@ -95,7 +95,7 @@ type EscrowRotationModelSettings struct {
 	TempCount     int    `json:"temp_count"`
 	TargetCount   int    `json:"target_count"`
 	Amount        uint64 `json:"amount"`
-	PrivateKeyEnv string `json:"private_key_env"`
+	PrivateKeyEnv string `json:"private_key_env"` // trimmed by WithTuningDefaults on settings load
 }
 
 const (
@@ -285,16 +285,24 @@ func normalizeGatewayModelAccess(access []GatewayModelAccessSettings) []GatewayM
 
 type GatewayDevshardState struct {
 	RuntimeConfig
-	Active        bool   `json:"active"`
-	RotationRole  string `json:"rotation_role,omitempty"`
-	RotationEpoch uint64 `json:"rotation_epoch,omitempty"`
-	CreatedAt     string `json:"created_at,omitempty"`
-	UpdatedAt     string `json:"updated_at,omitempty"`
+	Active            bool   `json:"active"`
+	SettlementPending bool   `json:"settlement_pending,omitempty"`
+	RotationRole      string `json:"rotation_role,omitempty"`
+	RotationEpoch     uint64 `json:"rotation_epoch,omitempty"`
+	CreatedAt         string `json:"created_at,omitempty"`
+	UpdatedAt         string `json:"updated_at,omitempty"`
+}
+
+type GatewaySuspiciousHost struct {
+	ParticipantKey string `json:"participant_key"`
+	Note           string `json:"note,omitempty"`
+	CreatedAt      string `json:"created_at,omitempty"`
 }
 
 type GatewayState struct {
-	Settings  GatewaySettings        `json:"settings"`
-	Devshards []GatewayDevshardState `json:"devshards"`
+	Settings        GatewaySettings         `json:"settings"`
+	Devshards       []GatewayDevshardState  `json:"devshards"`
+	SuspiciousHosts []GatewaySuspiciousHost `json:"suspicious_hosts,omitempty"`
 }
 
 type GatewayStore struct {
@@ -305,6 +313,19 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	db, err := sql.Open("sqlite", path)
 	if err != nil {
 		return nil, fmt.Errorf("open gateway store: %w", err)
+	}
+	// Serialize access and wait on contention instead of failing with "database is
+	// locked". Mirrors storage/sqlite.go.
+	db.SetMaxOpenConns(1)
+	for _, pragma := range []string{
+		"PRAGMA journal_mode=WAL",
+		"PRAGMA synchronous=NORMAL",
+		"PRAGMA busy_timeout=5000",
+	} {
+		if _, err := db.Exec(pragma); err != nil {
+			db.Close()
+			return nil, fmt.Errorf("apply gateway store pragma %q: %w", pragma, err)
+		}
 	}
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS gateway_settings (
@@ -333,9 +354,9 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			redundancy_first_token_timeout_floor_ms INTEGER NOT NULL DEFAULT 1000,
 			redundancy_per_input_token_first_token_lag_ms INTEGER NOT NULL DEFAULT 10,
 			redundancy_inter_chunk_stall_timeout_ms INTEGER NOT NULL DEFAULT 60000,
-			redundancy_streaming_attempt_hard_timeout_ms INTEGER NOT NULL DEFAULT 1200000,
+			redundancy_streaming_attempt_hard_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
 			redundancy_non_stream_response_floor_ms INTEGER NOT NULL DEFAULT 20000,
-			redundancy_non_stream_no_content_timeout_ms INTEGER NOT NULL DEFAULT 1200000,
+			redundancy_non_stream_no_content_timeout_ms INTEGER NOT NULL DEFAULT 1800000,
 			redundancy_non_stream_max_attempt_wait_ms INTEGER NOT NULL DEFAULT 1800000,
 			redundancy_per_input_token_response_lag_ms INTEGER NOT NULL DEFAULT 20,
 			redundancy_secondary_wait_after_winner_ms INTEGER NOT NULL DEFAULT 600000,
@@ -368,6 +389,7 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			active INTEGER NOT NULL DEFAULT 1,
 			rotation_role TEXT NOT NULL DEFAULT '',
 			rotation_epoch INTEGER NOT NULL DEFAULT 0,
+			settlement_pending INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
 		)`,
@@ -430,6 +452,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway devshard epoch: %w", err)
 	}
+	if err := ensureGatewayDevshardsColumn(db, "settlement_pending", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard settlement_pending: %w", err)
+	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
 		tokens REAL NOT NULL DEFAULT 0,
@@ -459,6 +485,31 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("init gateway rotation status table: %w", err)
 	}
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS gateway_suspicious_hosts (
+		participant_key TEXT PRIMARY KEY,
+		note TEXT NOT NULL DEFAULT '',
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init gateway suspicious hosts table: %w", err)
+	}
+	// Write-ahead intent for an escrow create (written before the on-chain tx).
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS escrow_rotation_commitments (
+		tx_hash TEXT PRIMARY KEY,
+		model TEXT NOT NULL,
+		role TEXT NOT NULL DEFAULT '',
+		epoch INTEGER NOT NULL DEFAULT 0,
+		private_key_env TEXT NOT NULL DEFAULT '',
+		block_height INTEGER NOT NULL DEFAULT 0,
+		created_at TEXT NOT NULL
+	)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("init escrow rotation commitments table: %w", err)
+	}
+	if err := ensureColumn(db, "escrow_rotation_commitments", "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate escrow rotation commitments protocol version: %w", err)
+	}
 	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate participant throttle: %w", err)
@@ -470,6 +521,22 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err := ensureColumn(db, "participant_throttle_state", "eof_transport_failure_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate participant throttle eof streak: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "model_ids", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle models: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "failure_strikes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle strikes: %w", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE participant_throttle_state
+		SET failure_strikes = MAX(IFNULL(empty_stream_streak, 0), IFNULL(eof_transport_failure_streak, 0))
+		WHERE IFNULL(failure_strikes, 0) = 0
+		  AND (IFNULL(empty_stream_streak, 0) > 0 OR IFNULL(eof_transport_failure_streak, 0) > 0)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle strike values: %w", err)
 	}
 
 	return &GatewayStore{db: db}, nil
@@ -595,7 +662,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 
 	rows, err := s.db.Query(`
 		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-		       rotation_role, rotation_epoch
+		       rotation_role, rotation_epoch, settlement_pending
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -605,6 +672,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	for rows.Next() {
 		var devshard GatewayDevshardState
 		var active int
+		var settlementPending int
 		if err := rows.Scan(
 			&devshard.ID,
 			&devshard.PrivateKeyHex,
@@ -617,15 +685,22 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 			&devshard.ProtocolVersion,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
+			&settlementPending,
 		); err != nil {
 			return GatewayState{}, false, fmt.Errorf("scan gateway devshard: %w", err)
 		}
 		devshard.Active = active != 0
+		devshard.SettlementPending = settlementPending != 0
 		state.Devshards = append(state.Devshards, devshard)
 	}
 	if err := rows.Err(); err != nil {
 		return GatewayState{}, false, fmt.Errorf("iterate gateway devshards: %w", err)
 	}
+	suspiciousHosts, err := s.LoadSuspiciousHosts()
+	if err != nil {
+		return GatewayState{}, false, err
+	}
+	state.SuspiciousHosts = suspiciousHosts
 	return state, true, nil
 }
 
@@ -948,6 +1023,180 @@ func (s *GatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus,
 	return statuses, nil
 }
 
+// GatewayEscrowCommitment is the write-ahead intent for one escrow create, keyed by tx hash.
+type GatewayEscrowCommitment struct {
+	TxHash          string
+	Model           string
+	Role            string
+	Epoch           uint64
+	PrivateKeyEnv   string
+	ProtocolVersion string
+	BlockHeight     uint64
+	CreatedAt       time.Time
+}
+
+// SaveCommitment records a create intent, keyed by tx hash.
+func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("gateway store unavailable")
+	}
+	createdAt := c.CreatedAt
+	if createdAt.IsZero() {
+		createdAt = time.Now().UTC()
+	} else {
+		createdAt = createdAt.UTC()
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO escrow_rotation_commitments (
+			tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		strings.TrimSpace(c.TxHash),
+		strings.TrimSpace(c.Model),
+		strings.TrimSpace(c.Role),
+		c.Epoch,
+		c.PrivateKeyEnv,
+		strings.TrimSpace(c.ProtocolVersion),
+		c.BlockHeight,
+		createdAt,
+	)
+	if err != nil {
+		return fmt.Errorf("save escrow commitment tx=%s: %w", c.TxHash, err)
+	}
+	return nil
+}
+
+func scanGatewayDBTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
+	}
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.UTC()
+	}
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", raw); err == nil {
+		return t.UTC()
+	}
+	return time.Time{}
+}
+
+// LoadCommitments returns all pending commitments (oldest first).
+func (s *GatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
+		FROM escrow_rotation_commitments
+		ORDER BY created_at ASC`)
+	if err != nil {
+		return nil, fmt.Errorf("load escrow commitments: %w", err)
+	}
+	defer rows.Close()
+	var commitments []GatewayEscrowCommitment
+	for rows.Next() {
+		var c GatewayEscrowCommitment
+		var createdAt string
+		if err := rows.Scan(&c.TxHash, &c.Model, &c.Role, &c.Epoch, &c.PrivateKeyEnv, &c.ProtocolVersion, &c.BlockHeight, &createdAt); err != nil {
+			return nil, fmt.Errorf("scan escrow commitment: %w", err)
+		}
+		c.CreatedAt = scanGatewayDBTime(createdAt)
+		commitments = append(commitments, c)
+	}
+	return commitments, rows.Err()
+}
+
+// DeleteCommitment clears a commitment once its escrow is persisted (or proven absent).
+func (s *GatewayStore) DeleteCommitment(txHash string) error {
+	if s == nil || s.db == nil {
+		return fmt.Errorf("gateway store unavailable")
+	}
+	if _, err := s.db.Exec(`DELETE FROM escrow_rotation_commitments WHERE tx_hash = ?`, strings.TrimSpace(txHash)); err != nil {
+		return fmt.Errorf("delete escrow commitment tx=%s: %w", txHash, err)
+	}
+	return nil
+}
+
+func (s *GatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT participant_key, note, created_at
+		FROM gateway_suspicious_hosts
+		ORDER BY participant_key`)
+	if err != nil {
+		return nil, fmt.Errorf("load gateway suspicious hosts: %w", err)
+	}
+	defer rows.Close()
+
+	var hosts []GatewaySuspiciousHost
+	for rows.Next() {
+		var host GatewaySuspiciousHost
+		if err := rows.Scan(&host.ParticipantKey, &host.Note, &host.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan gateway suspicious host: %w", err)
+		}
+		hosts = append(hosts, host)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return hosts, nil
+}
+
+func (s *GatewayStore) UpsertSuspiciousHosts(participantKeys []string, note string) ([]GatewaySuspiciousHost, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	participantKeys = normalizeParticipantKeys(participantKeys)
+	if len(participantKeys) == 0 {
+		return nil, fmt.Errorf("participant_keys must contain at least one key")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin suspicious host upsert: %w", err)
+	}
+	defer tx.Rollback()
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	note = strings.TrimSpace(note)
+	for _, key := range participantKeys {
+		if _, err := tx.Exec(`
+			INSERT INTO gateway_suspicious_hosts (participant_key, note, created_at)
+			VALUES (?, ?, ?)
+			ON CONFLICT(participant_key) DO UPDATE SET note = excluded.note`,
+			key, note, now); err != nil {
+			return nil, fmt.Errorf("upsert suspicious host %s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit suspicious host upsert: %w", err)
+	}
+	return s.LoadSuspiciousHosts()
+}
+
+func (s *GatewayStore) DeleteSuspiciousHosts(participantKeys []string) ([]GatewaySuspiciousHost, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	participantKeys = normalizeParticipantKeys(participantKeys)
+	if len(participantKeys) == 0 {
+		return nil, fmt.Errorf("participant_keys must contain at least one key")
+	}
+	tx, err := s.db.Begin()
+	if err != nil {
+		return nil, fmt.Errorf("begin suspicious host delete: %w", err)
+	}
+	defer tx.Rollback()
+	for _, key := range participantKeys {
+		if _, err := tx.Exec(`DELETE FROM gateway_suspicious_hosts WHERE participant_key = ?`, key); err != nil {
+			return nil, fmt.Errorf("delete suspicious host %s: %w", key, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit suspicious host delete: %w", err)
+	}
+	return s.LoadSuspiciousHosts()
+}
+
 func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
@@ -964,11 +1213,16 @@ func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
 func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
 	createdAt := now
 	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
+	// Preserve the existing settlement_pending marker so an unrelated upsert
+	// never silently clears a queued settlement; a brand-new row falls back
+	// to the value carried on devshard.
+	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
+	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
 	if _, err := tx.Exec(`
 		INSERT OR REPLACE INTO gateway_devshards (
 			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-			rotation_role, rotation_epoch
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			rotation_role, rotation_epoch, settlement_pending
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(devshard.ID),
 		strings.TrimSpace(devshard.PrivateKeyHex),
 		strings.TrimSpace(devshard.PrivateKeyEnv),
@@ -980,10 +1234,49 @@ func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardStat
 		strings.TrimSpace(devshard.ProtocolVersion),
 		strings.TrimSpace(devshard.RotationRole),
 		devshard.RotationEpoch,
+		settlementPending,
 	); err != nil {
 		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
 	}
 	return nil
+}
+
+// GetDevshard returns the registry record for a single devshard. The second
+// return value is false when no row exists for the id. It is used by lazy
+// hydration to look up the config of a non-resident devshard without loading
+// the entire registry.
+func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+	id = strings.TrimSpace(id)
+	var devshard GatewayDevshardState
+	var active int
+	var settlementPending int
+	err := s.db.QueryRow(`
+		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
+		       rotation_role, rotation_epoch, settlement_pending
+		FROM gateway_devshards
+		WHERE id = ?`, id).Scan(
+		&devshard.ID,
+		&devshard.PrivateKeyHex,
+		&devshard.PrivateKeyEnv,
+		&devshard.Model,
+		&devshard.StoragePath,
+		&active,
+		&devshard.CreatedAt,
+		&devshard.UpdatedAt,
+		&devshard.ProtocolVersion,
+		&devshard.RotationRole,
+		&devshard.RotationEpoch,
+		&settlementPending,
+	)
+	if err == sql.ErrNoRows {
+		return GatewayDevshardState{}, false, nil
+	}
+	if err != nil {
+		return GatewayDevshardState{}, false, fmt.Errorf("get devshard %s: %w", id, err)
+	}
+	devshard.Active = active != 0
+	devshard.SettlementPending = settlementPending != 0
+	return devshard, true, nil
 }
 
 func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
@@ -997,6 +1290,28 @@ func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
 	)
 	if err != nil {
 		return fmt.Errorf("update devshard %s active=%t: %w", id, active, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("devshard %s not found", id)
+	}
+	return nil
+}
+
+func (s *GatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
+	res, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET settlement_pending = ?, updated_at = ?
+		WHERE id = ?`,
+		gatewayBoolToInt(pending),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("update devshard %s settlement_pending=%t: %w", id, pending, err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
@@ -1023,18 +1338,38 @@ func (s *GatewayStore) DeleteDevshard(id string) error {
 	return nil
 }
 
-// ParticipantThrottleRow represents a persisted reactive throttle state for one host.
-type ParticipantThrottleRow struct {
-	Key                       string
-	Tokens                    float64
-	LastRefillAt              time.Time
-	Status                    int
-	QuarantineUntil           time.Time // wall-clock end of unified quarantine; zero if unset
-	EmptyStreamStreak         int
-	EOFTransportFailureStreak int
+func normalizeParticipantKeys(keys []string) []string {
+	if len(keys) == 0 {
+		return nil
+	}
+	normalized := make([]string, 0, len(keys))
+	seen := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if _, ok := seen[key]; ok {
+			continue
+		}
+		seen[key] = struct{}{}
+		normalized = append(normalized, key)
+	}
+	return normalized
 }
 
-func (s *GatewayStore) SaveParticipantThrottle(key string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, emptyStreamStreak int, eofTransportFailureStreak int) error {
+// ParticipantThrottleRow represents a persisted reactive throttle state for one host.
+type ParticipantThrottleRow struct {
+	Key             string
+	ModelIDs        []string
+	Tokens          float64
+	LastRefillAt    time.Time
+	Status          int
+	QuarantineUntil time.Time // wall-clock end of unified quarantine; zero if unset
+	FailureStrikes  int
+}
+
+func (s *GatewayStore) SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -1044,9 +1379,9 @@ func (s *GatewayStore) SaveParticipantThrottle(key string, tokens float64, lastR
 	}
 	_, err := s.db.Exec(`
 		INSERT OR REPLACE INTO participant_throttle_state
-			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, empty_stream_streak, eof_transport_failure_streak)
+			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, failure_strikes, model_ids)
 		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, emptyStreamStreak, eofTransportFailureStreak)
+		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, failureStrikes, strings.Join(normalizeModelIDs(modelIDs), ","))
 	if err != nil {
 		return fmt.Errorf("save participant throttle %s: %w", key, err)
 	}
@@ -1070,9 +1405,9 @@ func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, err
 	}
 	rows, err := s.db.Query(`
 		SELECT participant_key, tokens, last_refill_at, last_throttle_status,
-		       IFNULL(empty_stream_streak, 0) AS empty_stream_streak,
-		       IFNULL(eof_transport_failure_streak, 0) AS eof_transport_failure_streak,
-		       IFNULL(quarantine_until_utc, '') AS quarantine_until_utc
+		       IFNULL(quarantine_until_utc, '') AS quarantine_until_utc,
+		       IFNULL(failure_strikes, 0) AS failure_strikes,
+		       IFNULL(model_ids, '') AS model_ids
 		FROM participant_throttle_state`)
 	if err != nil {
 		return nil, fmt.Errorf("load participant throttles: %w", err)
@@ -1082,10 +1417,11 @@ func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, err
 	var result []ParticipantThrottleRow
 	for rows.Next() {
 		var row ParticipantThrottleRow
-		var lastRefillStr, quarantineStr string
-		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status, &row.EmptyStreamStreak, &row.EOFTransportFailureStreak, &quarantineStr); err != nil {
+		var lastRefillStr, quarantineStr, modelIDsStr string
+		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status, &quarantineStr, &row.FailureStrikes, &modelIDsStr); err != nil {
 			return nil, fmt.Errorf("scan participant throttle: %w", err)
 		}
+		row.ModelIDs = splitModelIDs(modelIDsStr)
 		row.LastRefillAt, err = time.Parse(time.RFC3339Nano, lastRefillStr)
 		if err != nil {
 			return nil, fmt.Errorf("parse last_refill_at for %s: %w", row.Key, err)
@@ -1155,9 +1491,9 @@ func ensureGatewaySettingsTuningColumns(db *sql.DB) error {
 		{"redundancy_first_token_timeout_floor_ms", "INTEGER NOT NULL DEFAULT 1000"},
 		{"redundancy_per_input_token_first_token_lag_ms", "INTEGER NOT NULL DEFAULT 10"},
 		{"redundancy_inter_chunk_stall_timeout_ms", "INTEGER NOT NULL DEFAULT 60000"},
-		{"redundancy_streaming_attempt_hard_timeout_ms", "INTEGER NOT NULL DEFAULT 1200000"},
+		{"redundancy_streaming_attempt_hard_timeout_ms", "INTEGER NOT NULL DEFAULT 1800000"},
 		{"redundancy_non_stream_response_floor_ms", "INTEGER NOT NULL DEFAULT 20000"},
-		{"redundancy_non_stream_no_content_timeout_ms", "INTEGER NOT NULL DEFAULT 1200000"},
+		{"redundancy_non_stream_no_content_timeout_ms", "INTEGER NOT NULL DEFAULT 1800000"},
 		{"redundancy_non_stream_max_attempt_wait_ms", "INTEGER NOT NULL DEFAULT 1800000"},
 		{"redundancy_per_input_token_response_lag_ms", "INTEGER NOT NULL DEFAULT 20"},
 		{"redundancy_secondary_wait_after_winner_ms", "INTEGER NOT NULL DEFAULT 600000"},

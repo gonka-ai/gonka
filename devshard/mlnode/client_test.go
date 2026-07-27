@@ -2,10 +2,12 @@ package mlnode
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"net"
 	"testing"
 
-	"devshard/mlnode/gen"
+	"devshard/nodemanager/gen"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -52,12 +54,13 @@ func TestClient_Acquire_Success(t *testing.T) {
 		acquireFunc: func(_ context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 			assert.Equal(t, "model-a", req.Model)
 			assert.Equal(t, []string{"bad-node"}, req.ExcludedNodes)
+			assert.Equal(t, "99", req.EscrowId)
 			return &gen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: "http://node1:8080", NodeId: "node-1"}, nil
 		},
 	}
 
 	c := startMockServer(t, srv)
-	resp, err := c.Acquire(context.Background(), "model-a", []string{"bad-node"})
+	resp, err := c.Acquire(context.Background(), "model-a", []string{"bad-node"}, "99")
 
 	require.NoError(t, err)
 	assert.Equal(t, "http://node1:8080", resp.Endpoint)
@@ -73,13 +76,17 @@ func TestClient_Acquire_NoNodesAvailable(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	_, err := c.Acquire(context.Background(), "model-a", nil)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "no nodes available")
+	assert.True(t, errors.Is(err, ErrNoNodesAvailable))
+	assert.True(t, IsNoNodesAvailable(err))
+	assert.False(t, IsUnavailable(err))
+	assert.Equal(t, codes.ResourceExhausted, status.Code(err))
+	assert.Contains(t, err.Error(), "model-a")
 }
 
-func TestClient_Acquire_ServerError(t *testing.T) {
+func TestClient_Acquire_Unavailable(t *testing.T) {
 	srv := &mockServer{
 		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 			return nil, status.Error(codes.Unavailable, "queue full")
@@ -87,9 +94,53 @@ func TestClient_Acquire_ServerError(t *testing.T) {
 	}
 
 	c := startMockServer(t, srv)
-	_, err := c.Acquire(context.Background(), "model-a", nil)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
 
 	require.Error(t, err)
+	assert.True(t, errors.Is(err, ErrUnavailable))
+	assert.True(t, IsUnavailable(err))
+	assert.False(t, IsNoNodesAvailable(err))
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+}
+
+func TestClient_Acquire_OtherStatusPreserved(t *testing.T) {
+	srv := &mockServer{
+		acquireFunc: func(_ context.Context, _ *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+			return nil, status.Error(codes.Internal, "boom")
+		},
+	}
+
+	c := startMockServer(t, srv)
+	_, err := c.Acquire(context.Background(), "model-a", nil, "")
+
+	require.Error(t, err)
+	assert.False(t, IsNoNodesAvailable(err))
+	assert.False(t, IsUnavailable(err))
+	assert.Equal(t, codes.Internal, status.Code(err))
+	assert.Contains(t, err.Error(), "nodemanager: acquire")
+}
+
+func TestClassifyAcquireError_NonStatusIsUnavailable(t *testing.T) {
+	err := classifyAcquireError("model-a", errors.New("connection refused"))
+	assert.True(t, errors.Is(err, ErrUnavailable))
+	assert.True(t, IsUnavailable(err))
+	assert.False(t, IsNoNodesAvailable(err))
+}
+
+func TestIsNoNodesAvailable_And_IsUnavailable(t *testing.T) {
+	assert.False(t, IsNoNodesAvailable(nil))
+	assert.False(t, IsUnavailable(nil))
+
+	assert.True(t, IsNoNodesAvailable(ErrNoNodesAvailable))
+	assert.True(t, IsNoNodesAvailable(status.Error(codes.ResourceExhausted, "x")))
+	assert.True(t, IsNoNodesAvailable(fmt.Errorf("wrap: %w", ErrNoNodesAvailable)))
+
+	assert.True(t, IsUnavailable(ErrUnavailable))
+	assert.True(t, IsUnavailable(status.Error(codes.Unavailable, "x")))
+	assert.True(t, IsUnavailable(fmt.Errorf("wrap: %w", ErrUnavailable)))
+
+	assert.False(t, IsNoNodesAvailable(ErrUnavailable))
+	assert.False(t, IsUnavailable(ErrNoNodesAvailable))
 }
 
 func TestClient_Release_AllOutcomes(t *testing.T) {

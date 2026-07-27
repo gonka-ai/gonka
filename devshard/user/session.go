@@ -672,6 +672,61 @@ func (s *Session) maybeSaveSnapshotLocked() {
 	}()
 }
 
+// FlushSnapshot synchronously persists a state snapshot at the current nonce.
+// It is called when a runtime is retired from memory (deactivate, settle,
+// rotation) so the now-frozen escrow can later be rebuilt -- for a read-only
+// debug/state request or a reactivation -- without replaying the diff tail
+// accumulated since the last periodic (every snapshotInterval) snapshot.
+//
+// Periodic snapshots are only taken on snapshotInterval boundaries, so a
+// retired escrow otherwise carries up to snapshotInterval-1 un-snapshotted
+// diffs that every rebuild would replay. This flush captures the final nonce
+// once, at the lifecycle transition, making all later rebuilds replay-free.
+//
+// It serializes against the async periodic writer via snapshotInFlight so a
+// slow in-flight periodic save cannot land after (and overwrite) this final
+// snapshot with a staler nonce. Safe to call once, at retire; a no-op when
+// no diffs have been applied (nonce == 0) or no store is configured.
+func (s *Session) FlushSnapshot() error {
+	if s.store == nil {
+		return nil
+	}
+	// Acquire the snapshot slot, waiting briefly for any in-flight async
+	// save to finish. Bounded so retire never blocks indefinitely; if the
+	// async writer is still busy after the wait we proceed anyway (SQLite
+	// serializes the writes, and retire runs after drain so this is rare).
+	acquired := false
+	for i := 0; i < 200; i++ {
+		if s.snapshotInFlight.CompareAndSwap(false, true) {
+			acquired = true
+			break
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if acquired {
+		defer s.snapshotInFlight.Store(false)
+	}
+
+	s.mu.Lock()
+	if s.nonce == 0 {
+		s.mu.Unlock()
+		return nil
+	}
+	// Deep-copy state and cursor under the session lock, mirroring
+	// maybeSaveSnapshotLocked, then release before the disk write.
+	stateCopy := s.sm.ExportState()
+	cursor := make(map[int]uint64, len(s.hostSyncNonce))
+	for k, v := range s.hostSyncNonce {
+		cursor[k] = v
+	}
+	nonce := s.nonce
+	store := s.store
+	escrowID := s.escrowID
+	s.mu.Unlock()
+
+	return writeSnapshotErr(store, escrowID, nonce, stateCopy, cursor)
+}
+
 // PrepareInference composes a diff, applies it locally, advances nonce,
 // and returns everything needed for the HTTP send. Thread-safe.
 //
@@ -770,7 +825,7 @@ func (p *PreparedInference) IsProbe() bool { return p.isProbe }
 // without processing it. Use ProcessResponse separately to apply the response
 // to session state. This split allows parallel network I/O with ordered processing.
 func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	return s.clients[p.hostIdx].Send(ctx, host.HostRequest{
+	resp, err := s.clients[p.hostIdx].Send(ctx, host.HostRequest{
 		Diffs: p.catchUp,
 		Nonce: p.diff.Nonce,
 		Payload: &host.InferencePayload{
@@ -781,6 +836,24 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			StartedAt:   p.params.StartedAt,
 		},
 	}, stream, receiptHandler)
+	if err != nil && state.IsPostStateRootMismatchError(err) {
+		s.logStateRootMismatchUserDiagnostic(p)
+	}
+	return resp, err
+}
+
+func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
+	if p == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sm.LogStateRootMismatchDiagnostic(state.StateRootMismatchOpts{
+		Side:          "devshardctl",
+		Nonce:         p.diff.Nonce,
+		DiffPostState: p.diff.PostStateRoot,
+		SealClock:     s.sm.AutoSealStateClock(),
+	})
 }
 
 // SendInference composes diff, sends to correct host, processes response.
@@ -944,6 +1017,71 @@ func (s *Session) sendCatchUpWith(ctx context.Context, hostIdx int, client HostC
 		chunkIdx = nextChunkIdx
 	}
 
+	return nil
+}
+
+type physicalHost struct {
+	idx  int
+	addr string
+}
+
+func (s *Session) uniquePhysicalHosts() []physicalHost {
+	n := len(s.group)
+	seen := make(map[string]bool)
+	hosts := make([]physicalHost, 0, n)
+	for i := 0; i < n; i++ {
+		addr := s.group[i].ValidatorAddress
+		if seen[addr] {
+			continue
+		}
+		seen[addr] = true
+		hosts = append(hosts, physicalHost{idx: i, addr: addr})
+	}
+	return hosts
+}
+
+// SyncHosts propagates signed diffs to every unique physical host and drains
+// host-proposed mempool txs (validations, finishes) into new diffs. This is
+// finalize Phase B-style catch-up without entering PhaseFinalizing — use before
+// observability checks when validators on join nodes may be ahead of genesis.
+func (s *Session) SyncHosts(ctx context.Context) error {
+	if s.sm.Phase() != types.PhaseActive {
+		return fmt.Errorf("sync hosts: session phase %d, want active", s.sm.Phase())
+	}
+
+	hosts := s.uniquePhysicalHosts()
+	startNonce := s.Nonce()
+	logging.Info("sync hosts started", "subsystem", "sync", "escrow", s.escrowID,
+		"nonce", startNonce, "unique_hosts", len(hosts))
+
+	const syncCycles = 2
+	for cycle := 0; cycle < syncCycles; cycle++ {
+		for _, h := range hosts {
+			if err := s.sendCatchUp(ctx, h.idx); err != nil {
+				return fmt.Errorf("sync hosts cycle %d catch-up host %d: %w", cycle+1, h.idx, err)
+			}
+		}
+		for i := 0; i < len(s.group); i++ {
+			s.mu.Lock()
+			hasPending := len(s.pendingTxs) > 0
+			s.mu.Unlock()
+			if !hasPending {
+				break
+			}
+			if err := s.sendDiffRound(ctx, nil); err != nil {
+				return fmt.Errorf("sync hosts cycle %d diff round: %w", cycle+1, err)
+			}
+		}
+	}
+
+	for _, h := range hosts {
+		if err := s.sendCatchUp(ctx, h.idx); err != nil {
+			return fmt.Errorf("sync hosts final catch-up host %d: %w", h.idx, err)
+		}
+	}
+
+	logging.Info("sync hosts complete", "subsystem", "sync", "escrow", s.escrowID,
+		"start_nonce", startNonce, "end_nonce", s.Nonce())
 	return nil
 }
 
@@ -1609,7 +1747,7 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // sendTime is when the nonce's network call started.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
 	s.mu.Lock()
-	cfg := s.sm.SnapshotState().Config
+	cfg := s.sm.Config()
 	confirmedAt := int64(0)
 	if o, ok := s.nonceStates[nonce]; ok {
 		confirmedAt = o.confirmedAt
