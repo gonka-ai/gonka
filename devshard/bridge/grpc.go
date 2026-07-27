@@ -31,8 +31,13 @@ func NewGRPCBridge(client *chain.Client) *GRPCBridge {
 	return &GRPCBridge{client: client}
 }
 
-// NewGRPCBridgeFromURL dials grpcURL and returns a bridge. Caller must not close
-// the underlying connection while the bridge is in use.
+// NewGRPCBridgeFromURL dials grpcURL and returns a bridge on direct gRPC only.
+// Caller must not close the underlying connection while the bridge is in use.
+//
+// Production wiring builds the bridge from the gateway's chain client
+// (NewGRPCBridge), so it inherits that client's CometBFT RPC query fallback.
+// This constructor exists for tests that want to exercise gRPC itself, where a
+// silent fallback would hide the failure under test.
 func NewGRPCBridgeFromURL(grpcURL string) (*GRPCBridge, error) {
 	client, err := chain.New(grpcURL)
 	if err != nil {

@@ -23,11 +23,21 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
+
+	"common/observability"
 )
 
 // DefaultRPCProbeInterval is how long queries stay on CometBFT RPC before a
 // single request is allowed to probe direct gRPC again.
 const DefaultRPCProbeInterval = 30 * time.Minute
+
+// broadcastTxMethod is the one method on the tx service that is not a query.
+// The fallback rejects it outright because both of its transports would get it
+// wrong: client.Context.Invoke special-cases the request type and broadcasts it
+// over CometBFT instead of querying, and a transport failure here is retried on
+// the other transport, which for a broadcast means submitting the same signed
+// transaction twice. Transactions belong on Client.Conn().
+const broadcastTxMethod = "/cosmos.tx.v1beta1.Service/BroadcastTx"
 
 // fallbackConn routes unary query invocations over direct chain gRPC while that
 // endpoint is reachable, and over CometBFT RPC/ABCI while it is not.
@@ -50,6 +60,10 @@ type fallbackConn struct {
 }
 
 func newFallbackConn(direct, rpc grpc.ClientConnInterface, probeInterval time.Duration, now func() time.Time) *fallbackConn {
+	// Publish the starting transport so the gauge exists from process start.
+	// Without it "no comet-rpc series" is ambiguous between healthy and
+	// never-reported.
+	observability.Chain.SetQueryTransport(observability.TransportGRPC)
 	return &fallbackConn{
 		direct:        direct,
 		rpc:           rpc,
@@ -103,30 +117,117 @@ func (c *fallbackConn) probeFailed() {
 	c.nextProbeAt = c.now().Add(c.probeInterval)
 }
 
+// probeNoVerdict releases the probe as if it had never run: the attempt proved
+// nothing either way, so it must neither change transports nor push back a
+// probe window that has already come due.
+func (c *fallbackConn) probeNoVerdict() {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.probing = false
+}
+
 func (c *fallbackConn) Invoke(ctx context.Context, method string, args, reply any, opts ...grpc.CallOption) error {
+	if method == broadcastTxMethod {
+		return status.Errorf(codes.InvalidArgument,
+			"chain: %s must not run on the query fallback; broadcast transactions on Client.Conn()", method)
+	}
+
 	useRPC, probe := c.route()
 	if useRPC {
 		return c.rpc.Invoke(ctx, method, args, reply, opts...)
 	}
 
 	err := c.direct.Invoke(ctx, method, args, reply, opts...)
-	if !isTransportDown(err) {
-		// Any other outcome, including application errors, proves gRPC is
-		// reachable — keep it primary.
-		if probe {
-			c.probeSucceeded()
-			slog.Info("chain: direct gRPC reachable again, queries back on gRPC", "method", method)
-		}
-		return err
-	}
 
 	if probe {
-		c.probeFailed()
-	} else if c.enterRPC() {
+		switch classifyProbe(ctx, err) {
+		case grpcAnswered:
+			c.probeSucceeded()
+			observability.Chain.SetQueryTransport(observability.TransportGRPC)
+			slog.Info("chain: direct gRPC reachable again, queries back on gRPC", "method", method)
+			return err
+
+		case noVerdict:
+			// The caller went away or ran out of time, so this attempt says
+			// nothing about gRPC. Reading it as reachable would move every
+			// query back onto an endpoint that was never shown to answer. The
+			// caller is already gone, so an RPC retry would only fail too.
+			c.probeNoVerdict()
+			slog.Debug("chain: gRPC probe ended without a verdict, staying on CometBFT RPC",
+				"method", method, "error", err)
+			return err
+
+		default: // grpcDown
+			c.probeFailed()
+			// One line per probe interval is the heartbeat that keeps a
+			// long-running fallback visible: without it the only trace of a
+			// week on RPC is a single warning from the day it started.
+			slog.Warn("chain: direct gRPC still unreachable, queries staying on CometBFT RPC",
+				"method", method, "error", err, "retry_after", c.probeInterval)
+			return c.retryOnRPC(ctx, method, err, args, reply, opts)
+		}
+	}
+
+	if !isTransportDown(err) {
+		return err
+	}
+	if c.enterRPC() {
+		observability.Chain.SetQueryTransport(observability.TransportCometRPC)
 		slog.Warn("chain: direct gRPC unreachable, queries falling back to CometBFT RPC",
 			"method", method, "error", err, "retry_after", c.probeInterval)
 	}
-	return c.rpc.Invoke(ctx, method, args, reply, opts...)
+	return c.retryOnRPC(ctx, method, err, args, reply, opts)
+}
+
+// retryOnRPC serves a request that direct gRPC could not, keeping the original
+// transport error attached. Without it a node that is unreachable on both ports
+// reports only the RPC-side failure, which hides why the fallback engaged.
+func (c *fallbackConn) retryOnRPC(
+	ctx context.Context,
+	method string,
+	grpcErr error,
+	args, reply any,
+	opts []grpc.CallOption,
+) error {
+	rpcErr := c.rpc.Invoke(ctx, method, args, reply, opts...)
+	if rpcErr == nil {
+		return nil
+	}
+	return fmt.Errorf("chain: %s failed on gRPC (%w) and on CometBFT RPC: %w", method, grpcErr, rpcErr)
+}
+
+// probeVerdict is what a probe attempt proved about the direct gRPC endpoint.
+type probeVerdict int
+
+const (
+	// grpcAnswered means the endpoint replied, even if the reply was an
+	// application error.
+	grpcAnswered probeVerdict = iota
+	// grpcDown means the transport itself failed.
+	grpcDown
+	// noVerdict means the attempt ended before either could be established,
+	// because the caller canceled it or its deadline expired.
+	noVerdict
+)
+
+func classifyProbe(ctx context.Context, err error) probeVerdict {
+	if isTransportDown(err) {
+		return grpcDown
+	}
+	if err == nil {
+		return grpcAnswered
+	}
+	switch status.Code(err) {
+	case codes.Canceled, codes.DeadlineExceeded:
+		return noVerdict
+	}
+	// A wrapper may surface a bare context error instead of a gRPC status, and
+	// a context that is already done means the attempt was cut short whatever
+	// the error says.
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || ctx.Err() != nil {
+		return noVerdict
+	}
+	return grpcAnswered
 }
 
 // NewStream always uses direct gRPC: the RPC/ABCI transport cannot serve
@@ -151,7 +252,20 @@ func isTransportDown(err error) bool {
 
 // newRPCQueryConn builds a Cosmos SDK client.Context that serves generated query
 // clients over CometBFT RPC. With no GRPCClient set, Context.Invoke wraps each
-// query as an ABCI query against the node's gRPC query router.
+// query as an ABCI query against the node's gRPC query router. It is wrapped in
+// the same span recorder as the direct conn, tagged with its own transport, so
+// switching to the fallback changes which transport spans report rather than
+// making them stop.
+//
+// Known limitation: module queries (inference, BLS, restrictions) are registered
+// on that router by every node, but the CometBFT service
+// (cosmos.base.tendermint.v1beta1) is registered only when app.toml sets
+// grpc.enable or api.enable, because the SDK gates RegisterTendermintService on
+// them. grpc.enable defaults to true and no deployment here turns it off, so in
+// practice those queries resolve; a node with both disabled would answer them
+// with Unimplemented while module queries kept working. Serving them from
+// CometBFT's own /status, /block and /validators endpoints would close that gap
+// if such a node ever needs supporting.
 func newRPCQueryConn(rpcURL string) (grpc.ClientConnInterface, error) {
 	if strings.TrimSpace(rpcURL) == "" {
 		return nil, fmt.Errorf("chain: comet rpc url is required for query fallback")
@@ -168,9 +282,11 @@ func newRPCQueryConn(rpcURL string) (grpc.ClientConnInterface, error) {
 	blstypes.RegisterInterfaces(registry)
 	restrictionstypes.RegisterInterfaces(registry)
 
-	return client.Context{}.
+	rpcCtx := client.Context{}.
 		WithClient(node).
 		WithNodeURI(rpcURL).
 		WithCodec(codec.NewProtoCodec(registry)).
-		WithInterfaceRegistry(registry), nil
+		WithInterfaceRegistry(registry)
+
+	return observability.NewObservedConnWithTransport(rpcCtx, observability.TransportCometRPC), nil
 }

@@ -4,6 +4,8 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"log/slog"
+	"net"
 	"os"
 	"strings"
 	"time"
@@ -69,6 +71,29 @@ func TLSEnabled() bool {
 	}
 }
 
+// DefaultCometRPCPort is the port CometBFT serves JSON-RPC on by default.
+const DefaultCometRPCPort = "26657"
+
+// RPCURLFromGRPCURL derives a CometBFT RPC endpoint from a chain gRPC endpoint
+// by keeping the host and swapping in the standard RPC port. Every deployment we
+// ship co-locates the two, so this lets the query fallback work without a second
+// mandatory setting. Returns "" when no host can be extracted.
+func RPCURLFromGRPCURL(grpcURL string) string {
+	host := strings.TrimSpace(grpcURL)
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+len("://"):]
+	}
+	// gRPC targets may carry a resolver prefix such as "dns:///node:9090".
+	host = strings.Trim(host, "/")
+	if h, _, err := net.SplitHostPort(host); err == nil {
+		host = h
+	}
+	if host == "" {
+		return ""
+	}
+	return "http://" + net.JoinHostPort(host, DefaultCometRPCPort)
+}
+
 // DialOption returns the transport credential DialOption for chain gRPC.
 // Default is insecure; set CHAIN_GRPC_TLS=true for system-root TLS.
 func DialOption() grpc.DialOption {
@@ -111,6 +136,27 @@ func NewWithRPCFallback(grpcURL, rpcURL string) (*Client, error) {
 	return &Client{conn: conn, queryConn: fallback}, nil
 }
 
+// NewWithQueryFallback is NewWithRPCFallback with the endpoint policy every
+// service shares: rpcURL may be empty, in which case it is derived from the gRPC
+// host, and a client that cannot determine an RPC endpoint at all still runs on
+// gRPC alone. Callers pass whatever their own env vars gave them and get the
+// same behaviour everywhere.
+//
+// Degrading rather than failing is deliberate: a fallback meant to keep queries
+// working must not be the reason a deployment stops booting.
+func NewWithQueryFallback(grpcURL, rpcURL string) (*Client, error) {
+	resolved := strings.TrimSpace(rpcURL)
+	if resolved == "" {
+		resolved = RPCURLFromGRPCURL(grpcURL)
+	}
+	if resolved == "" {
+		slog.Warn("chain: no CometBFT RPC endpoint, queries run on direct gRPC only",
+			"grpc_url", grpcURL)
+		return New(grpcURL)
+	}
+	return NewWithRPCFallback(grpcURL, resolved)
+}
+
 func dialDirect(grpcURL string) (grpc.ClientConnInterface, error) {
 	conn, err := grpc.NewClient(grpcURL, DialOption())
 	if err != nil {
@@ -132,6 +178,10 @@ func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
 // QueryConn returns the connection queries run on. It equals Conn() unless the
 // client was built with NewWithRPCFallback. Use it for query clients this
 // package does not expose directly.
+//
+// Queries only. When this is a fallback conn, broadcasting a transaction
+// through it is rejected rather than silently retried across transports. Use
+// Conn() for transactions either way.
 func (c *Client) QueryConn() grpc.ClientConnInterface { return c.queryConn }
 
 // InferenceQueryClient returns a query client for the inference module.

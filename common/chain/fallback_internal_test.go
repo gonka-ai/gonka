@@ -4,11 +4,13 @@ import (
 	"context"
 	"errors"
 	"io"
+	"log/slog"
 	"sync"
 	"syscall"
 	"testing"
 	"time"
 
+	txtypes "github.com/cosmos/cosmos-sdk/types/tx"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
@@ -194,6 +196,73 @@ func TestFallback_ProbeSucceedsOnApplicationError(t *testing.T) {
 	assert.Equal(t, 1, rpc.calls())
 }
 
+// onRPC reports whether queries are currently served over CometBFT RPC. An
+// aborted probe re-probes immediately, so call counts alone cannot tell a
+// retried probe apart from a restored gRPC transport.
+func onRPC(c *fallbackConn) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.usingRPC
+}
+
+func TestFallback_CanceledProbeDoesNotRestoreGRPC(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+	require.Equal(t, 1, direct.calls())
+	require.True(t, onRPC(fb))
+
+	// The probe is cut short by its caller, which says nothing about whether
+	// gRPC is reachable.
+	direct.setErr(status.Error(codes.Canceled, "context canceled"))
+	clock.advance(testProbeInterval)
+	require.Error(t, invoke(fb))
+
+	assert.Equal(t, 2, direct.calls())
+	assert.Equal(t, 1, rpc.calls(), "a probe with no verdict must not retry on RPC")
+	assert.True(t, onRPC(fb), "an aborted probe must not restore gRPC")
+}
+
+func TestFallback_ProbeWithDoneContextDoesNotRestoreGRPC(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	// A bare context error rather than a gRPC status must read the same way.
+	direct.setErr(context.Canceled)
+	clock.advance(testProbeInterval)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.Error(t, fb.Invoke(ctx, "/test.Service/Query", &struct{}{}, &struct{}{}))
+
+	assert.Equal(t, 2, direct.calls())
+	assert.True(t, onRPC(fb), "an aborted probe must not restore gRPC")
+}
+
+func TestFallback_AbortedProbeDoesNotDelayTheNextProbe(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	direct.setErr(status.Error(codes.DeadlineExceeded, "timeout"))
+	clock.advance(testProbeInterval)
+	require.Error(t, invoke(fb))
+	require.Equal(t, 2, direct.calls())
+	require.True(t, onRPC(fb))
+
+	// The aborted attempt did not consume the probe window, so the next request
+	// probes again straight away rather than waiting another whole interval.
+	direct.setErr(nil)
+	require.NoError(t, invoke(fb))
+	assert.Equal(t, 3, direct.calls())
+	assert.False(t, onRPC(fb), "a probe that answered restores gRPC")
+	assert.Equal(t, 1, rpc.calls())
+}
+
 func TestFallback_OnlyOneRequestProbesGRPC(t *testing.T) {
 	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
 	fb, clock := newTestFallback(direct, rpc)
@@ -227,6 +296,176 @@ func TestFallback_OnlyOneRequestProbesGRPC(t *testing.T) {
 	// back, so every request still hit RPC once.
 	assert.Equal(t, 2, direct.calls())
 	assert.Equal(t, concurrent+1, rpc.calls())
+}
+
+func TestFallback_BothTransportsDownReportsBothErrors(t *testing.T) {
+	rpcErr := status.Error(codes.Internal, "abci query failed")
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{err: rpcErr}
+	fb, _ := newTestFallback(direct, rpc)
+
+	err := invoke(fb)
+	require.Error(t, err)
+
+	// Reporting only the RPC failure hides why the fallback engaged at all, so
+	// both causes must stay reachable.
+	assert.ErrorIs(t, err, errUnavailable, "the original gRPC failure must survive")
+	assert.ErrorIs(t, err, rpcErr, "the RPC failure must survive")
+	assert.Contains(t, err.Error(), "/test.Service/Query")
+
+	// status.FromError unwraps to the first cause, so a node that answers on
+	// neither transport reports Unavailable rather than the RPC-side code.
+	assert.Equal(t, codes.Unavailable, status.Code(err))
+	assert.Contains(t, err.Error(), "abci query failed")
+}
+
+func TestFallback_FailedProbeWithDeadRPCReportsBothErrors(t *testing.T) {
+	rpcErr := status.Error(codes.Internal, "abci query failed")
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	rpc.setErr(rpcErr)
+	clock.advance(testProbeInterval)
+	err := invoke(fb)
+	require.Error(t, err)
+
+	assert.ErrorIs(t, err, errUnavailable)
+	assert.ErrorIs(t, err, rpcErr)
+}
+
+func TestFallback_SuccessfulRPCRetryHidesTheGRPCError(t *testing.T) {
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	// Callers must not see an error for a request the fallback served.
+	require.NoError(t, invoke(fb))
+}
+
+// logCounter counts records emitted at a given level, to assert that a
+// transition is announced once rather than once per racing request.
+type logCounter struct {
+	mu    sync.Mutex
+	level slog.Level
+	count int
+}
+
+func (h *logCounter) Enabled(context.Context, slog.Level) bool { return true }
+
+func (h *logCounter) Handle(_ context.Context, r slog.Record) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if r.Level == h.level {
+		h.count++
+	}
+	return nil
+}
+
+func (h *logCounter) WithAttrs([]slog.Attr) slog.Handler { return h }
+func (h *logCounter) WithGroup(string) slog.Handler      { return h }
+
+func (h *logCounter) total() int {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.count
+}
+
+func TestFallback_ConcurrentFailuresAnnounceFallbackOnce(t *testing.T) {
+	counter := &logCounter{level: slog.LevelWarn}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(counter))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	release := make(chan struct{})
+	direct := &stubConn{err: errUnavailable, block: release}
+	rpc := &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	const concurrent = 8
+	var wg sync.WaitGroup
+	wg.Add(concurrent)
+	for range concurrent {
+		go func() {
+			defer wg.Done()
+			_ = invoke(fb)
+		}()
+	}
+
+	// Hold every request inside the gRPC call so they all routed while
+	// usingRPC was still false, then let them fail together and race on the
+	// transition.
+	require.Eventually(t, func() bool { return direct.calls() == concurrent },
+		time.Second, time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	assert.Equal(t, concurrent, direct.calls(), "every request tries gRPC before the switch")
+	assert.Equal(t, concurrent, rpc.calls(), "and every request is then served over RPC")
+	assert.Equal(t, 1, counter.total(), "the transition must be logged once, not once per request")
+}
+
+func TestFallback_EveryProbeIntervalReannouncesTheDegradation(t *testing.T) {
+	counter := &logCounter{level: slog.LevelWarn}
+	previous := slog.Default()
+	slog.SetDefault(slog.New(counter))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	direct, rpc := &stubConn{err: errUnavailable}, &stubConn{}
+	fb, clock := newTestFallback(direct, rpc)
+
+	require.NoError(t, invoke(fb))
+
+	// Announcing only the transition would leave a service that has been on
+	// RPC for a week looking exactly like one that never fell back at all.
+	for range 2 {
+		clock.advance(testProbeInterval)
+		require.NoError(t, invoke(fb))
+	}
+
+	assert.Equal(t, 3, counter.total(), "the transition plus one line per failed probe")
+}
+
+// txServiceClient is the client any caller would build on QueryConn if they
+// mistook it for a general-purpose conn. Driving the test through it rather than
+// the method string checks the guard against the name the SDK actually emits.
+func txServiceClient(conn grpc.ClientConnInterface) txtypes.ServiceClient {
+	return txtypes.NewServiceClient(conn)
+}
+
+func TestFallback_RejectsTxBroadcastOnBothTransports(t *testing.T) {
+	direct, rpc := &stubConn{}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	_, err := txServiceClient(fb).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{})
+	require.Error(t, err)
+
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
+	assert.Contains(t, err.Error(), "Client.Conn()")
+	assert.Zero(t, direct.calls(), "a broadcast must not reach either transport")
+	assert.Zero(t, rpc.calls())
+}
+
+func TestFallback_TxServiceQueriesStillRoute(t *testing.T) {
+	direct, rpc := &stubConn{}, &stubConn{}
+	fb, _ := newTestFallback(direct, rpc)
+
+	// Only broadcasting is barred. GetTx and friends are ordinary queries and
+	// must keep working, fallback included.
+	_, err := txServiceClient(fb).GetTx(context.Background(), &txtypes.GetTxRequest{})
+	require.NoError(t, err)
+	assert.Equal(t, 1, direct.calls())
+}
+
+func TestQueryConn_RejectsBroadcastEvenWhenGRPCIsHealthy(t *testing.T) {
+	c, err := NewWithRPCFallback("localhost:9090", "http://localhost:26657")
+	require.NoError(t, err)
+
+	// Failing closed from the first call is the point: a broadcast that worked
+	// until the day gRPC dropped would submit the same signed transaction on
+	// both transports exactly when nobody is watching.
+	_, err = txServiceClient(c.QueryConn()).BroadcastTx(context.Background(), &txtypes.BroadcastTxRequest{})
+	require.Error(t, err)
+	assert.Equal(t, codes.InvalidArgument, status.Code(err))
 }
 
 func TestFallback_StreamsAlwaysUseDirectGRPC(t *testing.T) {
@@ -278,7 +517,9 @@ func TestNewWithRPCFallback_QueriesUseFallbackTxUsesDirect(t *testing.T) {
 	require.True(t, isFallback, "queries must go through the fallback conn")
 	_, txIsFallback := c.Conn().(*fallbackConn)
 	assert.False(t, txIsFallback, "transactions must stay on direct gRPC")
-	assert.Equal(t, c.Conn(), fallback.direct)
+	// observability.ObservedConn is a struct value rather than a pointer, so
+	// equality is the identity check available here.
+	assert.Equal(t, c.Conn(), fallback.direct, "the fallback must probe the conn txs use")
 	assert.Equal(t, DefaultRPCProbeInterval, fallback.probeInterval)
 }
 
