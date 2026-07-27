@@ -42,7 +42,7 @@ func main() {
 		log.Fatalf("load config: %v", err)
 	}
 
-	srv, err := buildServer(ctx, cfg)
+	srv, gsp, err := buildServer(ctx, cfg)
 	if err != nil {
 		log.Fatalf("build server: %v", err)
 	}
@@ -52,7 +52,7 @@ func main() {
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, gsp)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -64,7 +64,7 @@ func main() {
 
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server) {
+func registerServer(g *echo.Group, srv *transport.Server, gsp *gossip.Gossip) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -83,6 +83,20 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 	g.GET("/sessions/:id/diffs", srv.HandleGetDiffs)
 	g.GET("/sessions/:id/mempool", srv.HandleGetMempool)
 	g.GET("/sessions/:id/signatures", srv.HandleGetSignatures)
+	g.GET("/debug/gossip", func(c echo.Context) error {
+		nonce, err := strconv.ParseUint(c.QueryParam("nonce"), 10, 64)
+		if err != nil {
+			return echo.NewHTTPError(http.StatusBadRequest, "invalid 'nonce' parameter")
+		}
+		status, seen := gsp.NonceStatus(nonce)
+		return c.JSON(http.StatusOK, map[string]any{
+			"nonce":       nonce,
+			"seen":        seen,
+			"state_hash":  status.StateHash,
+			"state_sig":   status.StateSig,
+			"sender_slot": status.SlotID,
+		})
+	})
 }
 
 type hostConfig struct {
@@ -151,13 +165,13 @@ func loadConfig() (hostConfig, error) {
 	}, nil
 }
 
-func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
+func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, *gossip.Gossip, error) {
 	verifier := signing.NewSecp256k1Verifier()
 	sessionConfig := sessionConfigFromEnv(len(cfg.group))
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	sm, err := state.NewStateMachine(
@@ -172,7 +186,7 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	)
 	if err != nil {
 		_ = store.Close()
-		return nil, err
+		return nil, nil, err
 	}
 
 	if err := store.CreateSession(storage.CreateSessionParams{
@@ -184,10 +198,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		Group:          cfg.group,
 		InitialBalance: cfg.balance,
 	}); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := recoverHostState(store, sm, cfg.escrowID); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	h, err := host.NewHost(
@@ -203,13 +217,13 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		host.WithValidator(stub.NewValidationEngine()),
 	)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	h.Start()
 
 	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	userPeers := make(map[int]*transport.HTTPClient, len(cfg.peerURLs))
@@ -221,9 +235,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		}
 	}
 	srv.SetPeerClients(userPeers)
-	srv.SetGossip(gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h)))
+	gsp := gossip.NewGossip(cfg.escrowID, uint32(cfg.hostIndex), gossipPeers, h.HostMempool(), gossip.WithSigAccumulator(h))
+	srv.SetGossip(gsp)
 
-	return srv, nil
+	return srv, gsp, nil
 }
 
 func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID string) error {

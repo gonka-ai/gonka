@@ -36,6 +36,7 @@ type e2eEnv struct {
 
 	images          e2eImages
 	hostURLs        []string
+	hostControlURLs []string
 	hostVolumeNames []string
 	usePostgres     bool
 }
@@ -126,6 +127,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 	})
 
 	env.hostURLs = make([]string, 3)
+	env.hostControlURLs = make([]string, len(env.hostURLs))
 	for i := range env.hostURLs {
 		env.hostURLs[i] = fmt.Sprintf("http://devshard-host-%d:8080", i)
 	}
@@ -133,7 +135,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.createPostgresHostDatabases(ctx, t, postgres)
 	}
 	for i := range env.hostURLs {
-		env.startHost(ctx, t, i)
+		env.hostControlURLs[i] = containerURL(ctx, t, env.startHost(ctx, t, i), "8080/tcp")
 	}
 
 	devshardctl := env.startContainer(ctx, t, containerSpec{
@@ -155,11 +157,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		waitPath: "/v1/status",
 	})
 
-	host, err := devshardctl.Host(ctx)
-	require.NoError(t, err)
-	port, err := devshardctl.MappedPort(ctx, "8080/tcp")
-	require.NoError(t, err)
-	env.clientURL = "http://" + host + ":" + port.Port()
+	env.clientURL = containerURL(ctx, t, devshardctl, "8080/tcp")
 	testutil.DebugLogf(t, "devshardctl client URL: %s", env.clientURL)
 
 	require.NotNil(t, mockChain)
@@ -251,7 +249,16 @@ func (e *e2eEnv) restartHost(ctx context.Context, t *testing.T, index int) {
 	name := hostName(index)
 	testutil.DebugLogf(t, "restarting %s", name)
 	e.stopHost(ctx, t, index)
-	e.startHost(ctx, t, index)
+	e.hostControlURLs[index] = containerURL(ctx, t, e.startHost(ctx, t, index), "8080/tcp")
+}
+
+func containerURL(ctx context.Context, t *testing.T, container testcontainers.Container, portName string) string {
+	t.Helper()
+	host, err := container.Host(ctx)
+	require.NoError(t, err)
+	port, err := container.MappedPort(ctx, nat.Port(portName))
+	require.NoError(t, err)
+	return "http://" + host + ":" + port.Port()
 }
 
 func (e *e2eEnv) stopHost(ctx context.Context, t *testing.T, index int) {

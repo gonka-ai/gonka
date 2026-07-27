@@ -67,11 +67,15 @@ CI uploads this report as `devshard-e2e-junit-report` and publishes it as the
 
 ## Test Files
 
-- `happy_path_test.go`: non-streaming OpenAI-style completions and settlement
-  contract validation.
+- `non_streaming_test.go`: non-streaming OpenAI-style completions, cache
+  behavior, and settlement-contract validation.
+- `non_streaming_corner_cases_test.go`: non-streaming error and degraded-host
+  behavior.
 - `streaming_test.go`: SSE streaming shape, cache-hit streaming shape, and
   streaming/non-streaming cache isolation.
 - `recovery_test.go`: SQLite volume restart and persistence scenarios.
+- `protocol_test.go`: signature quorum and signed-nonce gossip convergence.
+- `runtime_config_test.go`: chain-backed runtime configuration wiring.
 - `containers_test.go`: Docker network/container setup and restart helpers.
 - `testutil/`: HTTP clients, request helpers, assertions, and env defaults.
 

@@ -141,6 +141,28 @@ func CollectSignatures(t *testing.T, client *http.Client, clientURL string, nonc
 	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", clientURL, nonce), map[string]any{})
 }
 
+type GossipNonceStatus struct {
+	Nonce      uint64
+	Seen       bool
+	StateHash  string
+	StateSig   string
+	SenderSlot uint64
+}
+
+func GetGossipNonceStatus(t *testing.T, client *http.Client, hostURL, routePrefix string, nonce uint64) GossipNonceStatus {
+	t.Helper()
+	status := GetJSON(t, client, fmt.Sprintf("%s%s/debug/gossip?nonce=%d", hostURL, routePrefix, nonce))
+	seen, ok := status["seen"].(bool)
+	require.True(t, ok, "gossip status seen should be a boolean")
+	return GossipNonceStatus{
+		Nonce:      NumericField(t, status, "nonce"),
+		Seen:       seen,
+		StateHash:  fmt.Sprint(status["state_hash"]),
+		StateSig:   fmt.Sprint(status["state_sig"]),
+		SenderSlot: NumericField(t, status, "sender_slot"),
+	}
+}
+
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "finalizing devshard session")
