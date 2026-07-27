@@ -24,10 +24,12 @@ import (
 //     applied with threshold-sufficient votes from the other slots.
 //  5. Restart slot 1, continue the session, and finalize successfully.
 func TestE2E_TimeoutProtocolEndToEnd(t *testing.T) {
-	env, client := startNonStreamingEnv(t)
+	requireE2EEnabled(t)
 
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	t.Cleanup(cancel)
+	env := startE2EEnv(ctx, t, requiredImages(t), timeoutProtocolEnvOptions())
+	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
 	const unavailableSlot = 1
 	const timedOutInferenceID = uint64(1)
 	status := testutil.GetStatus(t, client, env.clientURL)
@@ -119,12 +121,12 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	t.Cleanup(cancel)
 	const executorSlot = 1
 	const timedOutInferenceID = uint64(1)
-	env := startE2EEnv(ctx, t, requiredImages(t), e2eEnvOptions{
-		hostVolumeNames: sqliteHostVolumeNames(t),
-		hostEnvOverrides: map[int]map[string]string{
-			executorSlot: {"DEVSHARD_STUB_EXECUTION_HANG": "true"},
-		},
-	})
+	opts := timeoutProtocolEnvOptions()
+	opts.hostVolumeNames = sqliteHostVolumeNames(t)
+	opts.hostEnvOverrides = map[int]map[string]string{
+		executorSlot: {"DEVSHARD_STUB_EXECUTION_HANG": "true"},
+	}
+	env := startE2EEnv(ctx, t, requiredImages(t), opts)
 	client := &http.Client{Timeout: testutil.DefaultRequestTimeout}
 
 	status := testutil.GetStatus(t, client, env.clientURL)
@@ -202,4 +204,16 @@ func TestE2E_ExecutionTimeoutProtocolEndToEnd(t *testing.T) {
 	settlement := testutil.FinalizeSession(t, client, env.clientURL)
 	testutil.RequireSettlementContract(t, settlement)
 	testutil.RequireSettlementHostStats(t, settlement, len(testutil.HostPrivateKeys))
+}
+
+func timeoutProtocolEnvOptions() e2eEnvOptions {
+	return e2eEnvOptions{
+		hostEnv: map[string]string{
+			"DEVSHARD_REFUSAL_TIMEOUT":   "5",
+			"DEVSHARD_EXECUTION_TIMEOUT": "17",
+		},
+		mockChainEnv: map[string]string{
+			"MOCK_CHAIN_CONFIG": "/app/mock-chain-timeout-config.yaml",
+		},
+	}
 }
