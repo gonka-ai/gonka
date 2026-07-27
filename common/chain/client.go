@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	blstypes "github.com/productscience/inference/x/bls/types"
@@ -49,8 +50,13 @@ type InferenceClient interface {
 // Client provides blockchain queries via gRPC.
 // Consumers that need mocking define their own narrow interfaces
 // with only the methods they call.
+//
+// queryConn serves the module query clients and may be a fallback connection;
+// conn is always the direct gRPC connection and is what Conn() exposes for
+// transaction signing and broadcasting.
 type Client struct {
-	conn grpc.ClientConnInterface
+	conn      grpc.ClientConnInterface
+	queryConn grpc.ClientConnInterface
 }
 
 // TLSEnabled reports whether CHAIN_GRPC_TLS requests TLS for chain gRPC dials.
@@ -78,39 +84,73 @@ func DialOption() grpc.DialOption {
 // cfg is assumed valid — config.Load guarantees this.
 // Transport is plaintext unless CHAIN_GRPC_TLS is truthy.
 func New(grpcURL string) (*Client, error) {
+	conn, err := dialDirect(grpcURL)
+	if err != nil {
+		return nil, err
+	}
+	return &Client{conn: conn, queryConn: conn}, nil
+}
+
+// NewWithRPCFallback dials the chain gRPC endpoint and prepares a CometBFT RPC
+// connection used for queries whenever gRPC is unreachable. Queries start on
+// gRPC, move to RPC on transport failure, and move back once a probe every
+// DefaultRPCProbeInterval finds gRPC reachable again — no restart needed.
+//
+// Conn() still returns the direct gRPC connection, so transactions never run
+// over the fallback.
+func NewWithRPCFallback(grpcURL, rpcURL string) (*Client, error) {
+	conn, err := dialDirect(grpcURL)
+	if err != nil {
+		return nil, err
+	}
+	rpcConn, err := newRPCQueryConn(rpcURL)
+	if err != nil {
+		return nil, err
+	}
+	fallback := newFallbackConn(conn, rpcConn, DefaultRPCProbeInterval, time.Now)
+	return &Client{conn: conn, queryConn: fallback}, nil
+}
+
+func dialDirect(grpcURL string) (grpc.ClientConnInterface, error) {
 	conn, err := grpc.NewClient(grpcURL, DialOption())
 	if err != nil {
 		return nil, fmt.Errorf("chain: dial %s: %w", grpcURL, err)
 	}
-	return &Client{conn: observability.NewObservedConn(conn)}, nil
+	return observability.NewObservedConn(conn), nil
 }
 
 // NewFromConn creates a Client from an existing connection.
 // Intended for tests that use in-process gRPC servers.
 func NewFromConn(conn grpc.ClientConnInterface) *Client {
-	return &Client{conn: conn}
+	return &Client{conn: conn, queryConn: conn}
 }
 
-// Conn returns the underlying gRPC connection.
+// Conn returns the direct gRPC connection. Transaction signing and broadcasting
+// use this so they never silently run over the query fallback.
 func (c *Client) Conn() grpc.ClientConnInterface { return c.conn }
+
+// QueryConn returns the connection queries run on. It equals Conn() unless the
+// client was built with NewWithRPCFallback. Use it for query clients this
+// package does not expose directly.
+func (c *Client) QueryConn() grpc.ClientConnInterface { return c.queryConn }
 
 // InferenceQueryClient returns a query client for the inference module.
 func (c *Client) InferenceQueryClient() InferenceClient {
-	return inferencetypes.NewQueryClient(c.conn)
+	return inferencetypes.NewQueryClient(c.queryConn)
 }
 
 // BLSQueryClient returns a query client for the BLS module.
 func (c *Client) BLSQueryClient() blstypes.QueryClient {
-	return blstypes.NewQueryClient(c.conn)
+	return blstypes.NewQueryClient(c.queryConn)
 }
 
 // RestrictionsQueryClient returns a query client for the restrictions module.
 func (c *Client) RestrictionsQueryClient() restrictionstypes.QueryClient {
-	return restrictionstypes.NewQueryClient(c.conn)
+	return restrictionstypes.NewQueryClient(c.queryConn)
 }
 
 // CometServiceClient returns a client for CometBFT node services
 // (node info, block queries, ABCI queries).
 func (c *Client) CometServiceClient() cmtservice.ServiceClient {
-	return cmtservice.NewServiceClient(c.conn)
+	return cmtservice.NewServiceClient(c.queryConn)
 }

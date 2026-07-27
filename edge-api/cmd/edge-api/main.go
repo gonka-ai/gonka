@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"strings"
 	"syscall"
 	"time"
 
@@ -17,11 +18,11 @@ import (
 )
 
 const (
-	defaultPort        = 18080
-	defaultChainGRPC   = "localhost:9090"
-	envPort            = "EDGE_API_PORT"
-	envChainGRPCURL    = "CHAIN_GRPC_URL"
-	shutdownTimeout    = 10 * time.Second
+	defaultPort     = 18080
+	envPort         = "EDGE_API_PORT"
+	envChainGRPCURL = "CHAIN_GRPC_URL"
+	envChainRPCURL  = "CHAIN_RPC_URL"
+	shutdownTimeout = 10 * time.Second
 )
 
 func main() {
@@ -29,6 +30,7 @@ func main() {
 	slog.Info("edge-api starting",
 		"port", cfg.Port,
 		"chain_grpc", cfg.ChainGRPCURL,
+		"chain_rpc", cfg.ChainRPCURL,
 	)
 
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -44,7 +46,7 @@ func main() {
 		_ = shutdownObs(ctx)
 	}()
 
-	chainClient, err := chain.New(cfg.ChainGRPCURL)
+	chainClient, err := chain.NewWithRPCFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
 	if err != nil {
 		slog.Error("chain client", "error", err)
 		os.Exit(1)
@@ -82,8 +84,11 @@ func main() {
 type config struct {
 	Port         int
 	ChainGRPCURL string
+	ChainRPCURL  string
 }
 
+// loadConfig requires both chain endpoints explicitly. Defaulting to localhost
+// used to hide misconfiguration behind connection errors at query time.
 func loadConfig() config {
 	port := defaultPort
 	if v := os.Getenv(envPort); v != "" {
@@ -95,13 +100,21 @@ func loadConfig() config {
 		port = p
 	}
 
-	grpcURL := os.Getenv(envChainGRPCURL)
+	grpcURL := strings.TrimSpace(os.Getenv(envChainGRPCURL))
 	if grpcURL == "" {
-		grpcURL = defaultChainGRPC
+		slog.Error("missing required env", "env", envChainGRPCURL, "example", "node:9090")
+		os.Exit(1)
+	}
+
+	rpcURL := strings.TrimSpace(os.Getenv(envChainRPCURL))
+	if rpcURL == "" {
+		slog.Error("missing required env", "env", envChainRPCURL, "example", "http://node:26657")
+		os.Exit(1)
 	}
 
 	return config{
 		Port:         port,
 		ChainGRPCURL: grpcURL,
+		ChainRPCURL:  rpcURL,
 	}
 }

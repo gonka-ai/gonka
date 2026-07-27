@@ -46,6 +46,7 @@ unknown modes fall back to exclusive stop/start.
 | **Rolling updates** | Same-name SHA swap: blue/green overlap + drain when both children report `postgres`; else stop/start. Private admin `/ready`, `/drain`, `/drain/status` |
 | **Validation** | Shared Postgres leases (`devshard_validation_leases`); SQLite leases are no-ops |
 | **Gateway transport** | Chain queries + escrow tx via gRPC; `--chain-rest` / `DEVSHARD_CHAIN_REST` removed |
+| **Query fallback** | edge-api / devshardd chain queries fall back to CometBFT RPC when gRPC is down, and probe back every 30 min; txs stay gRPC-only |
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
 | **HA diff/persist** | Idempotent identical `AppendDiff` (fork on conflict); lazy RAM reconcile from PG on nonce gap; persist-first so a failed write cannot leave memory ahead of Postgres |
@@ -79,6 +80,49 @@ unknown modes fall back to exclusive stop/start.
    `gonka-mainnet`).
 
 Join / testenv compose already seeds `DEVSHARD_CHAIN_GRPC` only.
+
+### edge-api / devshardd: chain query fallback to CometBFT RPC
+
+edge-api and devshardd still prefer direct chain gRPC (`:9090`), but their
+chain **queries** now fall back to CometBFT RPC (`:26657`) when gRPC is
+unreachable. This covers nodes that run with gRPC disabled or with `:9090` not
+published, which previously made every query fail.
+
+Both endpoints are required configuration:
+
+| Service | gRPC | CometBFT RPC |
+| --- | --- | --- |
+| edge-api | `CHAIN_GRPC_URL=node:9090` | `CHAIN_RPC_URL=http://node:26657` |
+| devshardd | `NODE_GRPC_URL` (default `<NODE_HOST>:9090`) | `NODE_RPC_URL` (default `http://<NODE_HOST>:26657`) |
+
+edge-api now **exits at startup** if `CHAIN_GRPC_URL` or `CHAIN_RPC_URL` is
+missing. It used to default the gRPC endpoint to `localhost:9090`, which turned
+a misconfigured stack into a stream of connection errors at query time.
+
+How the switch works:
+
+1. Queries start on gRPC.
+2. A transport failure (gRPC `Unavailable`, closed connection) moves queries to
+   RPC and retries that same request there, so the caller sees no error.
+3. Queries stay on RPC for 30 minutes. Application errors never trigger a
+   switch, so a `NotFound` response does not cost a probe.
+4. After 30 minutes exactly one request is routed over gRPC as a probe. If gRPC
+   answers, it becomes primary again; if not, that request retries on RPC and
+   another 30 minutes starts.
+
+The recovery probe means a node that enables gRPC later is picked up without
+restarting edge-api or devshardd.
+
+Transactions are unaffected: devshardd's tx manager and the gateway keep using
+the direct gRPC connection, and gRPC streams have no RPC equivalent so they
+also stay direct.
+
+RPC-mode queries run as ABCI queries against the node's gRPC query router.
+Module queries (inference, BLS, restrictions) are always registered there. The
+CometBFT service queries (node info, blocks, validator sets) are registered
+only when the node has `grpc.enable` or `api.enable` set in `app.toml`; both
+default to enabled, but a node with both off serves neither transport for those
+routes.
 
 ### Gateway status: `protocol_version` → `session_version`
 
@@ -297,6 +341,7 @@ docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
+      - CHAIN_RPC_URL=http://node:26657
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
