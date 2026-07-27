@@ -11,6 +11,7 @@ package v0_2_15
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strconv"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
@@ -32,6 +33,10 @@ func USDT(amount int64) int64 {
 type BountyReward struct {
 	Address string
 	Amount  int64
+}
+
+type UpgradeInfo struct {
+	ApprovedVersions []*types.DevshardApprovedVersion `json:"approved_versions"`
 }
 
 var bountyRewards = []BountyReward{
@@ -73,7 +78,7 @@ func CreateUpgradeHandler(
 	configurator module.Configurator,
 	k keeper.Keeper,
 ) upgradetypes.UpgradeHandler {
-	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
+	return func(ctx context.Context, plan upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
 
 		// Capability state can already exist even when the version map entry is
@@ -83,6 +88,10 @@ func CreateUpgradeHandler(
 		}
 
 		// Future v0.2.15 migration steps land below this line.
+
+		if err := applyDevshardApprovedVersions(ctx, k, plan.Info); err != nil {
+			return nil, err
+		}
 
 		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
@@ -96,6 +105,63 @@ func CreateUpgradeHandler(
 		k.LogInfo("successfully upgraded", types.Upgrades, "version", UpgradeName)
 		return toVM, nil
 	}
+}
+
+func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSON string) error {
+	if infoJSON == "" {
+		k.LogInfo("no upgrade info, skipping devshard approved versions", types.Upgrades)
+		return nil
+	}
+
+	var info UpgradeInfo
+	if err := json.Unmarshal([]byte(infoJSON), &info); err != nil {
+		return fmt.Errorf("unmarshal upgrade info: %w", err)
+	}
+	if len(info.ApprovedVersions) == 0 {
+		k.LogInfo("no devshard approved versions in upgrade info, skipping", types.Upgrades)
+		return nil
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("get inference params: %w", err)
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
+	}
+
+	replacedCount := 0
+	for i, version := range info.ApprovedVersions {
+		if version == nil {
+			return fmt.Errorf("approved_versions[%d] cannot be null", i)
+		}
+
+		replaced := false
+		for j, existing := range params.DevshardEscrowParams.ApprovedVersions {
+			if existing != nil && existing.Name == version.Name {
+				params.DevshardEscrowParams.ApprovedVersions[j] = version
+				replaced = true
+				break
+			}
+		}
+		if !replaced {
+			params.DevshardEscrowParams.ApprovedVersions = append(
+				params.DevshardEscrowParams.ApprovedVersions,
+				version,
+			)
+		} else {
+			replacedCount++
+		}
+	}
+
+	if err := k.SetParams(ctx, params); err != nil {
+		return fmt.Errorf("set inference params: %w", err)
+	}
+	k.LogInfo("set devshard approved versions from upgrade info", types.Upgrades,
+		"provided", len(info.ApprovedVersions),
+		"appended", len(info.ApprovedVersions)-replacedCount,
+		"replaced", replacedCount)
+	return nil
 }
 
 func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
