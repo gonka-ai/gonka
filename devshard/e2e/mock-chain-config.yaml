@@ -10,8 +10,8 @@ params:
   max_nonce: 500
   refusal_timeout: 60
   execution_timeout: 1200
-  validation_rate: 6000
-  vote_threshold_factor: 50
+  validation_rate: 10000
+  vote_threshold_factor: 66
 participants:
   - address: gonka1f7vmha6hqljyhs405efn0hkwj98gz74vp40vu9
     inference_url: http://devshard-host-0:8080
@@ -30,14 +30,14 @@ escrows:
     epoch_index: 1
     app_hash: 0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20
     model_id: stub-model
-    token_price: 1
-    create_devshard_fee: 10000
-    fee_per_nonce: 1
-    inference_seal_grace_nonces: 3
-    inference_seal_grace_seconds: 30
-    auto_seal_every_n_nonces: 100
-    validation_rate: 6000
-    vote_threshold_factor: 50
+    token_price: 7
+    create_devshard_fee: 12345
+    fee_per_nonce: 19
+    inference_seal_grace_nonces: 9
+    inference_seal_grace_seconds: 77
+    auto_seal_every_n_nonces: 21
+    validation_rate: 10000
+    vote_threshold_factor: 66
 epoch_groups:
   - epoch_index: 1
     model_id: stub-model

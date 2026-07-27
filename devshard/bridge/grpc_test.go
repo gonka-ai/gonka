@@ -7,6 +7,7 @@ import (
 	"devshard/bridge"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
+	"devshard/testenv/mockchain/store"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,7 +17,11 @@ import (
 
 func startGRPCBridge(t *testing.T) *bridge.GRPCBridge {
 	t.Helper()
-	st := seed.Defaults()
+	return startGRPCBridgeWithStore(t, seed.Defaults())
+}
+
+func startGRPCBridgeWithStore(t *testing.T, st *store.Store) *bridge.GRPCBridge {
+	t.Helper()
 	srv, lis, err := grpcface.NewInProcessServer(grpcface.Deps{Store: st})
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -37,6 +42,32 @@ func TestGRPCBridge_GetEscrow_HappyPath(t *testing.T) {
 	assert.NotEmpty(t, info.CreatorAddress)
 	assert.NotEmpty(t, info.Slots)
 	assert.NotEmpty(t, info.AppHash)
+}
+
+func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
+	st := seed.Defaults()
+	escrow := st.GetEscrow(1)
+	require.NotNil(t, escrow)
+	escrow.TokenPrice = 7
+	escrow.CreateDevshardFee = 12_345
+	escrow.FeePerNonce = 19
+	escrow.InferenceSealGraceNonces = 9
+	escrow.InferenceSealGraceSeconds = 77
+	escrow.AutoSealEveryNNonces = 21
+	escrow.ValidationRate = 7_777
+	escrow.VoteThresholdFactor = 67
+	st.PutEscrow(escrow)
+
+	info, err := startGRPCBridgeWithStore(t, st).GetEscrow("1")
+	require.NoError(t, err)
+	require.Equal(t, uint64(7), info.TokenPrice)
+	require.Equal(t, uint64(12_345), info.CreateDevshardFee)
+	require.Equal(t, uint64(19), info.FeePerNonce)
+	require.Equal(t, uint32(9), info.InferenceSealGraceNonces)
+	require.Equal(t, uint32(77), info.InferenceSealGraceSeconds)
+	require.Equal(t, uint32(21), info.AutoSealEveryNNonces)
+	require.Equal(t, uint32(7_777), info.ValidationRate)
+	require.Equal(t, uint32(67), info.VoteThresholdFactor)
 }
 
 func TestGRPCBridge_GetEscrow_NotFound(t *testing.T) {

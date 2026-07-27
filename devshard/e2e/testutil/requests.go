@@ -126,6 +126,21 @@ func LatestSessionNonce(t *testing.T, client *http.Client, clientURL string) uin
 	return NumericField(t, session, "latest_nonce")
 }
 
+func GetSignatureStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/debug/signatures")
+}
+
+func GetStatus(t *testing.T, client *http.Client, clientURL string) map[string]any {
+	t.Helper()
+	return GetJSON(t, client, clientURL+"/v1/status")
+}
+
+func CollectSignatures(t *testing.T, client *http.Client, clientURL string, nonce uint64) map[string]any {
+	t.Helper()
+	return PostJSON(t, client, fmt.Sprintf("%s/v1/debug/signatures/collect?nonce=%d", clientURL, nonce), map[string]any{})
+}
+
 func FinalizeSession(t *testing.T, client *http.Client, clientURL string) map[string]any {
 	t.Helper()
 	DebugLogf(t, "finalizing devshard session")
