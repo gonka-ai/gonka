@@ -2,7 +2,6 @@ package proxy
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -164,7 +163,6 @@ func TestProxy_BasicForwarding(t *testing.T) {
 	}))
 	defer backend.Close()
 
-	// Extract host:port from backend URL
 	addr := strings.TrimPrefix(backend.URL, "http://")
 	routes := newRoutes(map[string]string{"v1": addr})
 
@@ -267,207 +265,28 @@ func TestProxy_NoVersionPrefix(t *testing.T) {
 	}
 }
 
-func TestProxy_VersionlessObs_Primary(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "path=%s", r.URL.Path)
-	}))
-	defer backend.Close()
-
-	addr := strings.TrimPrefix(backend.URL, "http://")
-	// Numeric primary is v10 (not lexicographic "v2").
-	routes := newRoutes(map[string]string{"v2": "127.0.0.1:1", "v10": addr})
-	handler := Handler(routes)
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/metrics")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "path=/metrics" {
-		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
-	}
-}
-
-func TestProxy_VersionlessObs_PrimarySemverIsh(t *testing.T) {
-	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "ok")
-	}))
-	defer backend.Close()
-
-	addr := strings.TrimPrefix(backend.URL, "http://")
-	// Lexicographic max would be v0.2.9; numeric primary must be v0.2.11.
-	routes := newRoutes(map[string]string{"v0.2.9": "127.0.0.1:1", "v0.2.11": addr})
-	handler := Handler(routes)
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/stats/shards")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "ok" {
-		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
-	}
-}
-
-func TestProxy_VersionlessObs_SessionFanout(t *testing.T) {
-	miss := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.NotFound(w, nil)
-	}))
-	defer miss.Close()
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "path=%s", r.URL.Path)
-	}))
-	defer hit.Close()
-
-	routes := newRoutes(map[string]string{
-		"v1": strings.TrimPrefix(miss.URL, "http://"),
-		"v2": strings.TrimPrefix(hit.URL, "http://"),
-	})
-	handler := Handler(routes)
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/sessions/42/diffs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "path=/sessions/42/diffs" {
-		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
-	}
-}
-
-type mapLookup map[string]string
-
-func (m mapLookup) LookupSessionVersion(_ context.Context, escrowID string) (string, bool, error) {
-	v, ok := m[escrowID]
-	return v, ok, nil
-}
-
-type errLookup struct{ err error }
-
-func (e errLookup) LookupSessionVersion(context.Context, string) (string, bool, error) {
-	return "", false, e.err
-}
-
-func TestProxy_VersionlessObs_BoundVersionLookup(t *testing.T) {
-	v1 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "v1:%s", r.URL.Path)
-	}))
-	defer v1.Close()
-	v2 := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "v2:%s", r.URL.Path)
-	}))
-	defer v2.Close()
-
-	routes := newRoutes(map[string]string{
-		"v1": strings.TrimPrefix(v1.URL, "http://"),
-		"v2": strings.TrimPrefix(v2.URL, "http://"),
-	})
-	handler := Handler(routes, WithSessionVersionLookup(mapLookup{"42": "v2"}))
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/sessions/42/diffs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "v2:/sessions/42/diffs" {
-		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
-	}
-
-	// stats detail also uses bound-version lookup
-	resp2, err := http.Get(srv.URL + "/stats/shards/42")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp2.Body.Close()
-	body2, _ := io.ReadAll(resp2.Body)
-	if resp2.StatusCode != http.StatusOK || string(body2) != "v2:/stats/shards/42" {
-		t.Fatalf("stats detail status=%d body=%q", resp2.StatusCode, body2)
-	}
-}
-
-func TestProxy_VersionlessObs_LookupUnbound404(t *testing.T) {
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		t.Fatal("backend must not be contacted for unbound escrow")
-	}))
-	defer hit.Close()
-
-	routes := newRoutes(map[string]string{"v2": strings.TrimPrefix(hit.URL, "http://")})
-	handler := Handler(routes, WithSessionVersionLookup(mapLookup{}))
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/sessions/missing/diffs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404", resp.StatusCode)
-	}
-}
-
-func TestProxy_VersionlessObs_LookupErrorFallsBackToFanout(t *testing.T) {
-	resetLookupFanoutTelemetryForTest()
-	hit := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprintf(w, "ok:%s", r.URL.Path)
-	}))
-	defer hit.Close()
-
-	routes := newRoutes(map[string]string{"v2": strings.TrimPrefix(hit.URL, "http://")})
-	handler := Handler(routes, WithSessionVersionLookup(errLookup{err: fmt.Errorf("pg down")}))
-	srv := httptest.NewServer(handler)
-	defer srv.Close()
-
-	resp, err := http.Get(srv.URL + "/sessions/42/diffs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	body, _ := io.ReadAll(resp.Body)
-	if resp.StatusCode != http.StatusOK || string(body) != "ok:/sessions/42/diffs" {
-		t.Fatalf("status=%d body=%q", resp.StatusCode, body)
-	}
-	if got := LookupFanoutErrors(); got != 1 {
-		t.Fatalf("LookupFanoutErrors()=%d, want 1", got)
-	}
-
-	// Second miss increments counter; warn is rate-limited (not asserted here).
-	resp2, err := http.Get(srv.URL + "/sessions/42/diffs")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp2.Body.Close()
-	if got := LookupFanoutErrors(); got != 2 {
-		t.Fatalf("LookupFanoutErrors()=%d, want 2", got)
-	}
-}
-
-func TestProxy_VersionlessObs_PayloadsStillVersioned(t *testing.T) {
+func TestProxy_ObsWithoutVersionPrefixNotFound(t *testing.T) {
+	// Versionless obs is served by dapi/edge-api, not versiond. A bare
+	// /sessions/… path is treated as version name "sessions" → 404.
 	routes := newRoutes(map[string]string{"v2": "127.0.0.1:1"})
 	handler := Handler(routes)
 	srv := httptest.NewServer(handler)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/sessions/42/payloads")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	// Treated as version name "sessions" → not found in route map.
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status=%d, want 404 (payloads must stay versioned)", resp.StatusCode)
+	for _, path := range []string{
+		"/sessions/42/diffs",
+		"/sessions/42/payloads",
+		"/metrics",
+		"/stats/shards",
+	} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusNotFound {
+			t.Fatalf("%s status=%d, want 404", path, resp.StatusCode)
+		}
 	}
 }
 

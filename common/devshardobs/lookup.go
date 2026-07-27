@@ -1,4 +1,4 @@
-package sessionversion
+package devshardobs
 
 import (
 	"context"
@@ -6,11 +6,18 @@ import (
 	"fmt"
 	"log/slog"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+// SessionVersionLookup resolves which protocol version owns a bound escrow.
+// ok=false means no active session row in Postgres (may still exist on SQLite).
+type SessionVersionLookup interface {
+	LookupSessionVersion(ctx context.Context, escrowID string) (version string, ok bool, err error)
+}
 
 // Lookup resolves escrow → bound protocol version from shared Postgres session
 // metadata (devshard_session_index + devshard_sessions).
@@ -18,15 +25,15 @@ type Lookup struct {
 	pool *pgxpool.Pool
 }
 
-// OpenFromEnv connects using libpq env (PGHOST/PGUSER/… or DATABASE_URL).
-// Returns (nil, nil) when Postgres is not configured or explicitly disabled.
-func OpenFromEnv(ctx context.Context) (*Lookup, error) {
-	if os.Getenv("VERSIOND_DISABLE_SESSION_LOOKUP") == "true" {
-		slog.Info("session version lookup disabled by VERSIOND_DISABLE_SESSION_LOOKUP")
+// OpenLookupFromEnv connects using libpq env (PGHOST/PGUSER/… or DATABASE_URL).
+// Returns (nil, nil) when Postgres is not configured or lookup is disabled.
+func OpenLookupFromEnv(ctx context.Context) (*Lookup, error) {
+	if lookupDisabled() {
+		slog.Info("devshardobs: session version lookup disabled")
 		return nil, nil
 	}
 	if !postgresConfigured() {
-		slog.Info("session version lookup disabled (no PGHOST/DATABASE_URL); versionless obs uses fan-out")
+		slog.Info("devshardobs: session version lookup disabled (no PGHOST/DATABASE_URL); fan-out only")
 		return nil, nil
 	}
 
@@ -49,8 +56,16 @@ func OpenFromEnv(ctx context.Context) (*Lookup, error) {
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
-	slog.Info("session version lookup enabled (postgres)")
+	slog.Info("devshardobs: session version lookup enabled (postgres)")
 	return &Lookup{pool: pool}, nil
+}
+
+func lookupDisabled() bool {
+	v := os.Getenv("DEVSHARD_OBS_DISABLE_SESSION_LOOKUP")
+	if v == "" {
+		v = os.Getenv("VERSIOND_DISABLE_SESSION_LOOKUP")
+	}
+	return strings.EqualFold(v, "true") || v == "1"
 }
 
 func postgresConfigured() bool {
@@ -67,7 +82,7 @@ func (l *Lookup) Close() {
 	}
 }
 
-// LookupSessionVersion implements proxy.SessionVersionLookup.
+// LookupSessionVersion implements SessionVersionLookup.
 func (l *Lookup) LookupSessionVersion(ctx context.Context, escrowID string) (string, bool, error) {
 	if l == nil || l.pool == nil {
 		return "", false, nil

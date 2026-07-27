@@ -114,23 +114,26 @@ Key runtime environment variables:
 | `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
 | `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
-| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for public observability GETs (`/devshard/sessions|stats|metrics|healthz` and rewritten legacy obs URLs). Protocol chat/gossip/payloads stay on the exempt zone. |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for versionless observability GETs (`/devshard/sessions|stats/shards|metrics|healthz`). Protocol chat/gossip/payloads stay on the exempt zone. |
 | `DEVSHARD_OBS_RATE_UNIT` | s | Unit for obs rate (`s` or `m`). |
 | `DEVSHARD_OBS_BURST` | 20 | Burst for obs rate limit. |
 
-Versiond-side (on the versiond container, not the join proxy):
+Versionless obs lookup env (on **dapi** / **edge-api**, not versiond):
 
 | Env | Default | Description |
 |-----|---------|-------------|
-| `PGHOST` / `DATABASE_URL` | unset | When set, versiond looks up `sessions.version` for versionless session obs. |
-| `VERSIOND_DISABLE_SESSION_LOOKUP` | false | Force fan-out even if Postgres is configured. |
+| `DEVSHARD_VERSIOND_URL` / `VERSIOND_URL` | `http://versiond:8080` | versiond base for fan-out / proxy |
+| `PGHOST` / `DATABASE_URL` | unset | Enable escrow→version PG lookup |
+| `DEVSHARD_OBS_DISABLE_SESSION_LOOKUP` | false | Force fan-out even if Postgres is configured |
+| `DEVSHARD_OBS_VERSIONS_CACHE_TTL` | `2s` | Cache TTL for versiond `/healthz` active versions |
 
 ### Devshard observability routing
 
-Public observability paths that still include a version segment are **rewritten
-internally** to versionless canonical URIs (no client-visible redirect). Clients
-keep calling the old URLs; nginx drops the version segment before versiond so
-scrapers need not follow redirects and cannot bind protocol version via the path.
+**Versioned** obs URLs are proxied to versiond **as-is** (no strip rewrite), so
+`/devshard/{version}/…` pins that child. **Versionless** obs is dual-served by
+**edge-api** (when `EDGE_API_SERVICE_NAME` is set) or **dapi**, which use
+`common/devshardobs` (PG lookup + fan-out via versiond). See
+[versionless-obs-refactor-plan.md](../devshard/docs/versionless-obs-refactor-plan.md).
 
 **Prefer these URLs in new monitors / runbooks:**
 
@@ -143,32 +146,41 @@ GET /devshard/stats/shards/{escrow_id}
 GET /devshard/metrics
 GET /devshard/healthz                 # versiond supervisor (not a child)
 GET /devshard/{version}/healthz       # that child's healthz
+GET /devshard/{version}/sessions/{id}/mempool   # pin that protocol version
 ```
 
-| Client URL (legacy, still works) | Internal route to versiond |
-|----------------------------------|----------------------------|
-| `GET /devshard/{version}/sessions/{id}/diffs` | `/devshard/sessions/{id}/diffs` |
-| `GET /devshard/{version}/sessions/{id}/mempool` | `/devshard/sessions/{id}/mempool` |
-| `GET /devshard/{version}/sessions/{id}/signatures` | `/devshard/sessions/{id}/signatures` |
-| `GET /devshard/{version}/stats/shards…` | `/devshard/stats/shards…` |
-| `GET /devshard/{version}/metrics` | `/devshard/metrics` |
-| `GET /devshard/{version}/healthz` | **not rewritten** — proxied as `/{version}/healthz` to that child |
+| Path | Upstream |
+|------|----------|
+| `GET /devshard/{version}/sessions/{id}/diffs\|mempool\|signatures` | versiond → that child |
+| `GET /devshard/{version}/stats/shards…` | versiond → that child |
+| `GET /devshard/{version}/metrics` | versiond → that child |
+| `GET /devshard/{version}/healthz` | versiond → that child |
+| `GET /devshard/sessions/…`, `/stats/shards…`, `/metrics` | edge-api if `EDGE_API_SERVICE_NAME` set, else dapi |
+| `GET /devshard/healthz` | versiond supervisor |
 
-Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads` are **not** rewritten.
+Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads`.
 
-Public obs paths (versionless and rewritten legacy) use a dedicated nginx zone (`devshard_obs`, default `10r/s` burst `20`) so scrapers cannot amplify polling under the exempt chat limits. Chat / gossip / payloads remain on the exempt catch-all.
+Public versionless obs paths use a dedicated nginx zone (`devshard_obs`, default
+`10r/s` burst `20`). Chat / gossip / payloads remain on the exempt catch-all.
 
-versiond serves the versionless obs paths:
+dapi / edge-api versionless routing (`common/devshardobs`):
 
-- **Session-scoped** (`/sessions/{id}/diffs|mempool|signatures`, `/stats/shards/{id}`): when Postgres is configured (`PGHOST` / `DATABASE_URL`), route by `sessions.version`; unbound → 404. If lookup is disabled or PG errors, fan-out across children. Lookup errors emit a rate-limited warn (`session version lookup failed; falling back to fan-out`) and increment an in-process counter (`proxy.LookupFanoutErrors`) — they are not silent.
-- **Process-level** (`/metrics`, `/stats/shards` list): pin to newest running version by numeric/dotted comparison (`v10` > `v2`, `v0.2.11` > `v0.2.9`), not lexicographic order.
-- **Health:** `GET /healthz` on versiond is **supervisor** status (mux, ahead of the proxy). Join proxy `GET /devshard/healthz` hits that. Per-child health is `GET /devshard/{version}/healthz` (not rewritten). Do not use versionless `/healthz` to probe a specific child.
-
-Disable lookup: `VERSIOND_DISABLE_SESSION_LOOKUP=true`.
+- **Session-scoped**: PG lookup of `sessions.version` when configured; else
+  fan-out newest→oldest over versiond running children. PG miss fans out
+  (SQLite-only estates). Lookup errors warn + counter, then fan-out.
+- **`/stats/shards` list**: merge active escrows/shards from all running
+  versions; protocol/binary metadata prefer newest (primary).
+- **`/metrics`**: pin to newest running version (numeric/dotted compare).
+- **Health:** join proxy `GET /devshard/healthz` → versiond supervisor. Per-child
+  health is `GET /devshard/{version}/healthz`.
+- **Metrics:** `devshardobs_lookup_errors_total`, `devshardobs_fanouts_total`,
+  `devshardobs_primary_pins_total`, `devshardobs_stats_shards_aggregates_total`,
+  `devshardobs_lookup_hits_total` (Prometheus default registry on dapi/edge-api).
 
 Grafana dashboards in `deploy/join/observability/` scrape Prometheus metrics from
 devshardd `/metrics` via service discovery — they do not call HTTP diffs URLs.
-For ad-hoc HTTP debugging of a shard, use the versionless paths above.
+For ad-hoc HTTP debugging of a shard, use the versionless paths above (or pin
+`/devshard/{version}/…`).
 
 When `VERSIOND_SERVICE_NAME=versiond-router`, this proxy still has a **single**
 upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"common/chain"
+	"common/devshardobs"
 	"edge-api/internal/server"
 	"edge-api/observability"
 )
@@ -50,7 +51,16 @@ func main() {
 		os.Exit(1)
 	}
 
-	e := server.New(chainClient)
+	var obsHandler http.Handler
+	obsRouter, obsErr := devshardobs.OpenFromEnv(context.Background())
+	if obsErr != nil {
+		slog.Warn("devshardobs: versionless obs router unavailable", "error", obsErr)
+	} else if obsRouter != nil {
+		defer obsRouter.Close()
+		obsHandler = obsRouter.Handler
+	}
+
+	e := server.New(chainClient, obsHandler)
 	addr := fmt.Sprintf(":%d", cfg.Port)
 
 	errCh := make(chan error, 1)

@@ -7,7 +7,7 @@ mixed pre-v4 / v4 estates.
 
 Detailed deploy verification: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
-Observability: [pr-versionless-observability.md](./pr-versionless-observability.md).
+Observability: [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).
 Rolling updates: [rolling-update.md](./rolling-update.md).
 
 ---
@@ -22,10 +22,10 @@ and validation-lease exclusivity. Pre-v4 approved versions stay **single-host**
 The gateway (`devshardctl`) talks to the chain over **gRPC only** — LCD REST
 create/settle paths are gone.
 
-Public observability is **versionless**: dashboards scrape
-`/devshard/sessions|stats|metrics` without binding protocol version. Only the
-escrow owner binds via signed chat. Legacy `/devshard/{version}/…` obs URLs keep
-working via join-proxy internal rewrite.
+Public observability is **versionless** for dashboards
+(`/devshard/sessions|stats|metrics` → dapi/edge-api) and **version-pinnable**
+via `/devshard/{version}/…` to versiond. Only the escrow owner binds via signed
+chat. See [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).
 
 When governance publishes a **new binary under the same version name** (name
 unchanged, only `sha256` changes), `versiond` performs a **blue/green child
@@ -49,7 +49,7 @@ unknown modes fall back to exclusive stop/start.
 | **Settle confirm** | Settle waits for DeliverTx (`GetTx`) after SYNC CheckTx — same pattern as create |
 | **Failover** | Router retries another HA peer on first upstream 502 / connect failure |
 | **HA diff/persist** | Idempotent identical `AppendDiff` (fork on conflict); lazy RAM reconcile from PG on nonce gap; persist-first so a failed write cannot leave memory ahead of Postgres |
-| **Versionless obs** | Obs GETs never bind; owner chat binds; join rewrite + PG session lookup; `devshard_obs` rate limit |
+| **Versionless obs** | Obs GETs never bind; owner chat binds; versionless → dapi/edge-api (`common/devshardobs`); versioned obs pins child |
 | **Status field** | Gateway `protocol_version` → `session_version` (bind / settlement tag) |
 | **Tier A `/v1` reads** | Served by **edge-api** on new proxies; same handlers still dual-served on **dapi** as deprecated |
 | **testenv** | Named stack behavior tests plus G1–G4, A1–A4, and versiond rolling-update citest (see [testenv/docs/scenarios.md](../testenv/docs/scenarios.md)) |
@@ -154,18 +154,18 @@ Observability GETs no longer call `CreateSession`. Unbound escrow obs returns
 **404**; the first signed owner `POST …/chat/completions` binds the chosen
 version. Prefer canonical monitor paths:
 
-| Preferred | Legacy (still works) |
+| Preferred (versionless → dapi/edge-api) | Version-pinned (→ versiond child) |
 | --- | --- |
-| `/devshard/sessions/{id}/diffs` | `/devshard/{version}/sessions/{id}/diffs` (join proxy rewrite, no `Location`) |
+| `/devshard/sessions/{id}/diffs` | `/devshard/{version}/sessions/{id}/diffs` |
 | `/devshard/stats/shards/{id}` | `/devshard/{version}/stats/shards/{id}` |
 | `/devshard/metrics` | `/devshard/{version}/metrics` |
 
 | Path | Meaning |
 | --- | --- |
 | `/devshard/healthz` | versiond supervisor |
-| `/devshard/{version}/healthz` | that child (not rewritten) |
+| `/devshard/{version}/healthz` | that child |
 
-With Postgres, versiond routes versionless session obs via `sessions.version`
+With Postgres, dapi/edge-api route versionless session obs via `sessions.version`
 (fan-out fallback if lookup disabled / SQLite). Join proxy rate-limits obs GETs
 separately from chat:
 
@@ -173,10 +173,10 @@ separately from chat:
 | --- | --- | --- |
 | `DEVSHARD_OBS_RATE_LIMIT_RPS` | join proxy | 10 |
 | `DEVSHARD_OBS_BURST` | join proxy | 20 |
-| `VERSIOND_DISABLE_SESSION_LOOKUP` | versiond | unset (lookup on when `PGHOST` set) |
+| `DEVSHARD_OBS_DISABLE_SESSION_LOOKUP` | dapi / edge-api | unset (lookup on when `PGHOST` set) |
 
 Manual walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §4.
-Design note: [pr-versionless-observability.md](./pr-versionless-observability.md).
+Design: [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).
 
 ---
 
@@ -427,7 +427,7 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 | §1 Test deployment | NON_HA pin, sqlite→HA-fail→migrate→HA, mixed binding |
 | §2 Validation race | Same-key HA: one lease row per inference |
 | §3 High availability | Kill versiond → survivors serve (first-502); restart rejoins |
-| §4 Versionless observability | Unbound obs 404; owner chat binds; rewrite; PG route; rate limit |
+| §4 Versionless observability | Unbound obs → fan-out/404; owner chat binds; versionless → dapi/edge-api; versioned pins child; rate limit |
 | §5 Edge-api / deprecated dapi | New proxy → edge-api; old proxy → dapi dual-serve |
 | §6 Escrow long-poll warm | Host-events cache; inference with inference-node down |
 | §7 Rolling update | Same-name SHA: in-flight SSE survives; Postgres overlap; hybrid stop/start |
@@ -492,7 +492,7 @@ with larger protocol bumps rather than a standalone migration.
 | Doc | Use |
 | --- | --- |
 | [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) | Deploy + operator test plans (§1–§7; HA diff/persist in §3.6) |
-| [pr-versionless-observability.md](./pr-versionless-observability.md) | Versionless obs design + unit/manual checklist |
+| [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md) | Versionless obs → dapi/edge-api; versiond versioned-only |
 | [high-availability-architecture.md](./high-availability-architecture.md) | Current runtime topology |
 | [storage-design.md](./storage-design.md) | Storage mode selection |
 | [rolling-update.md](./rolling-update.md) | Same-name SHA blue/green + drain (Track A) |

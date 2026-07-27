@@ -22,6 +22,7 @@ import (
 	"net"
 
 	nmgen "common/nodemanager/gen"
+	"common/devshardobs"
 	"decentralized-api/nodemanager"
 
 	"google.golang.org/grpc"
@@ -264,6 +265,18 @@ func main() {
 	commitWorker := poc.NewCommitWorker(artifactStore, recorder, chainPhaseTracker, participantInfo.GetAddress(), commitInterval)
 	defer commitWorker.Close()
 
+	publicOpts := []pserver.ServerOption{
+		pserver.WithArtifactStore(artifactStore),
+		pserver.WithStatsStorage(statsStore),
+	}
+	obsRouter, obsErr := devshardobs.OpenFromEnv(ctx)
+	if obsErr != nil {
+		logging.Warn("devshardobs: versionless obs router unavailable", types.Server, "error", obsErr)
+	} else if obsRouter != nil {
+		defer obsRouter.Close()
+		publicOpts = append(publicOpts, pserver.WithDevshardObs(obsRouter.Handler))
+	}
+
 	publicServer := pserver.NewServer(
 		nodeBroker,
 		configManager,
@@ -271,8 +284,7 @@ func main() {
 		blockQueue,
 		chainPhaseTracker,
 		payloadStore,
-		pserver.WithArtifactStore(artifactStore),
-		pserver.WithStatsStorage(statsStore),
+		publicOpts...,
 	)
 
 	publicServer.Start(addr)
