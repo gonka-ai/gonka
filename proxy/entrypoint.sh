@@ -631,10 +631,10 @@ fi
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     export DEVSHARD_VERSIOND_LOCATION="# Versioned obs → versionless (internal rewrite); protocol stays versioned
         location ~ ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ {
-            rewrite ^ /devshard/sessions/\$\$1/\$\$2 last;
+            rewrite ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ /devshard/sessions/\$\$1/\$\$2 last;
         }
         location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
-            rewrite ^ /devshard/stats/shards\$\$1 last;
+            rewrite ^/devshard/[^/]+/stats/shards(/.*)?\$ /devshard/stats/shards\$\$1 last;
         }
         location ~ ^/devshard/[^/]+/metrics\$ {
             rewrite ^ /devshard/metrics last;
