@@ -1209,6 +1209,84 @@ func TestHost_ChallengeReceipt_AlreadyFinished(t *testing.T) {
 	require.Equal(t, 1, engine.calls, "engine should not be called again")
 }
 
+// blockingInferenceEngine holds Execute open until released, so tests can observe
+// whether the caller waits for the inference to finish.
+type blockingInferenceEngine struct {
+	inner   *stub.InferenceEngine
+	started chan struct{}
+	release chan struct{}
+}
+
+func newBlockingInferenceEngine() *blockingInferenceEngine {
+	return &blockingInferenceEngine{
+		inner:   stub.NewInferenceEngine(),
+		started: make(chan struct{}, 1),
+		release: make(chan struct{}),
+	}
+}
+
+func (e *blockingInferenceEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.started <- struct{}{}
+	select {
+	case <-e.release:
+		return e.inner.Execute(ctx, req)
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func TestHost_ChallengeReceipt_DoesNotBlockOnExecution(t *testing.T) {
+	// Regression: ChallengeReceipt used to run the inference synchronously, so a
+	// slow execution held the receipt past the verifier's timeout and a live
+	// executor was voted refused-timeout.
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	engine := newBlockingInferenceEngine()
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+
+	type challengeResult struct {
+		receipt     []byte
+		confirmedAt int64
+		err         error
+	}
+	resultCh := make(chan challengeResult, 1)
+	go func() {
+		receipt, confirmedAt, err := h.ChallengeReceipt(context.Background(), 1, defaultPayload(), []types.Diff{diff})
+		resultCh <- challengeResult{receipt: receipt, confirmedAt: confirmedAt, err: err}
+	}()
+
+	select {
+	case <-engine.started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("execution never started")
+	}
+
+	// Execution is still in flight here, so the receipt can only arrive if
+	// ChallengeReceipt does not wait for it.
+	select {
+	case res := <-resultCh:
+		require.NoError(t, res.err)
+		require.NotNil(t, res.receipt, "receipt must return while execution is still running")
+		require.NotZero(t, res.confirmedAt, "receipt must carry confirmed_at")
+	case <-time.After(5 * time.Second):
+		t.Fatal("ChallengeReceipt blocked on execution instead of returning the receipt")
+	}
+
+	// The execution started by the challenge must still complete in the background.
+	close(engine.release)
+	require.Eventually(t, func() bool {
+		return findMempoolFinish(h.MempoolTxs()) != nil
+	}, 5*time.Second, 10*time.Millisecond, "background execution must queue MsgFinishInference")
+}
+
 func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	warmSigner := testutil.MustGenerateKey(t)

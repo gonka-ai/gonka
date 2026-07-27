@@ -840,8 +840,14 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
 // Delegates to RunExecution which also caches the response body for reconnection.
+// The caller must not wait for the inference: it holds a request context whose
+// deadline is far shorter than a long generation, and the executor receipt is
+// already signed. Detaching from cancellation keeps MsgFinishInference on track
+// even after the challenging host hangs up.
 func (h *Host) executeAsync(ctx context.Context, job *devshard.ExecuteRequest) {
-	_, _ = h.RunExecution(ctx, job)
+	go func() {
+		_, _ = h.RunExecution(context.WithoutCancel(ctx), job)
+	}()
 }
 
 func (h *Host) ReleaseExecution(inferenceID uint64) {
