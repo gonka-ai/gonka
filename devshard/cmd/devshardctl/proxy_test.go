@@ -1329,6 +1329,9 @@ func TestRunInference_StateRootDivergenceBlocksParticipantForEscrow(t *testing.T
 
 	var first bytes.Buffer
 	require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &first, nil))
+	require.Eventually(t, func() bool {
+		return divergent.LastRequest() != nil
+	}, time.Second, 10*time.Millisecond, "divergent host was never sent the request")
 	require.EqualValues(t, 1, divergent.LastRequest().Nonce)
 	require.Eventually(t, func() bool {
 		_, blocked := env.proxy.redundancy.escrowStateBlockReason(env.session.HostParticipantKey(1))
