@@ -198,6 +198,24 @@ func RequireSignatureStatusQuorum(t *testing.T, status map[string]any, nonce uin
 	t.Fatalf("signature status should include latest nonce %d", nonce)
 }
 
+func RequireGossipNonceConvergence(t *testing.T, statuses []GossipNonceStatus, nonce uint64) {
+	t.Helper()
+	require.NotEmpty(t, statuses, "gossip status should be collected from every host")
+	want := statuses[0]
+	require.True(t, want.Seen, "host 0 should observe the gossiped nonce")
+	require.Equal(t, nonce, want.Nonce)
+	require.NotEmpty(t, want.StateHash, "gossip status should include a state hash")
+	require.NotEmpty(t, want.StateSig, "gossip status should include a state signature")
+
+	for index, status := range statuses[1:] {
+		require.Truef(t, status.Seen, "host %d should observe the gossiped nonce", index+1)
+		require.Equalf(t, nonce, status.Nonce, "host %d should report the expected nonce", index+1)
+		require.Equalf(t, want.StateHash, status.StateHash, "host %d should observe the same state hash", index+1)
+		require.Equalf(t, want.StateSig, status.StateSig, "host %d should observe the same state signature", index+1)
+		require.Equalf(t, want.SenderSlot, status.SenderSlot, "host %d should observe the same signature sender", index+1)
+	}
+}
+
 func HasInferenceValidationTarget(t *testing.T, state map[string]any, target uint64) (bool, string) {
 	t.Helper()
 	inferences, ok := state["inferences"].(map[string]any)
