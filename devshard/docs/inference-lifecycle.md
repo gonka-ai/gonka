@@ -62,7 +62,7 @@ zero, keeping the wire format bit-identical with
   returning `RequiredValidations` / `CompletedValidations` constantly
   at zero.
 - Host-local **validation observability** (outside the state root, exposed
-  on `GET /devshard/stats/shards/{escrow_id}` — prefer the versionless path
+  on `GET /v1/devshard/stats/shards/{escrow_id}` — prefer the versionless path
   (dapi/edge-api); `/devshard/{version}/stats/shards/...` pins that child) is
   populated when signed diffs are applied; see
   [validation-observability-diff-apply.md](./validation-observability-diff-apply.md).

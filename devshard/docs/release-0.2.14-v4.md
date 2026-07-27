@@ -23,7 +23,7 @@ The gateway (`devshardctl`) talks to the chain over **gRPC only** — LCD REST
 create/settle paths are gone.
 
 Public observability is **versionless** for dashboards
-(`/devshard/sessions|stats|metrics` → dapi/edge-api) and **version-pinnable**
+(`/v1/devshard/sessions|stats|metrics` → dapi/edge-api) and **version-pinnable**
 via `/devshard/{version}/…` to versiond. Only the escrow owner binds via signed
 chat. See [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).
 
@@ -156,9 +156,9 @@ version. Prefer canonical monitor paths:
 
 | Preferred (versionless → dapi/edge-api) | Version-pinned (→ versiond child) |
 | --- | --- |
-| `/devshard/sessions/{id}/diffs` | `/devshard/{version}/sessions/{id}/diffs` |
-| `/devshard/stats/shards/{id}` | `/devshard/{version}/stats/shards/{id}` |
-| `/devshard/metrics` | `/devshard/{version}/metrics` |
+| `/v1/devshard/sessions/{id}/diffs` | `/devshard/{version}/sessions/{id}/diffs` |
+| `/v1/devshard/stats/shards/{id}` | `/devshard/{version}/stats/shards/{id}` |
+| `/v1/devshard/metrics` | `/devshard/{version}/metrics` |
 
 | Path | Meaning |
 | --- | --- |
@@ -449,7 +449,7 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
 - [ ] HA replicas share one `KEY_NAME` / keyring for the participant
 - [ ] Per-versiond SQLite volumes remain **distinct**; Postgres is shared
 - [ ] Monitors read `session_version`, not `protocol_version`
-- [ ] Prefer versionless obs URLs (`/devshard/sessions|stats|metrics`); confirm
+- [ ] Prefer versionless obs URLs (`/v1/devshard/sessions|stats|metrics`); confirm
       legacy `/devshard/{v}/…` still 200 with no public redirect
 - [ ] Join proxy: set/tune `DEVSHARD_OBS_RATE_LIMIT_RPS` / `DEVSHARD_OBS_BURST` if needed
 - [ ] Smoke: chat/settle on a NON_HA path and on v4 HA path; Tier A `/v1/` via edge-api

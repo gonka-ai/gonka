@@ -52,7 +52,7 @@ func TestHandler_PrimaryForMetrics(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/metrics")
+	resp, err := http.Get(srv.URL + "/v1/devshard/metrics")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestHandler_StatsShardsAggregatesVersions(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/stats/shards")
+	resp, err := http.Get(srv.URL + "/v1/devshard/stats/shards")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -143,7 +143,7 @@ func TestHandler_BoundVersionLookup(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/42/diffs")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/42/diffs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestHandler_BoundVersionLookup(t *testing.T) {
 		t.Fatalf("status=%d body=%q path=%q", resp.StatusCode, body, sawPath)
 	}
 
-	resp2, err := http.Get(srv.URL + "/devshard/stats/shards/42")
+	resp2, err := http.Get(srv.URL + "/v1/devshard/stats/shards/42")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -180,7 +180,7 @@ func TestHandler_PGMissFansOut(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/42/mempool")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/42/mempool")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -203,7 +203,7 @@ func TestHandler_LookupErrorFansOut(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/42/diffs")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/42/diffs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -228,7 +228,7 @@ func TestHandler_BoundVersionNotRunning(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/42/diffs")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/42/diffs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestHandler_FanoutAllMiss404(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/missing/diffs")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/missing/diffs")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -277,7 +277,7 @@ func TestHandler_FanoutSkips404(t *testing.T) {
 	srv := httptest.NewServer(h)
 	defer srv.Close()
 
-	resp, err := http.Get(srv.URL + "/devshard/sessions/x/signatures")
+	resp, err := http.Get(srv.URL + "/v1/devshard/sessions/x/signatures")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -290,14 +290,14 @@ func TestHandler_FanoutSkips404(t *testing.T) {
 
 func TestIsVersionlessObsPath(t *testing.T) {
 	cases := map[string]bool{
-		"/devshard/metrics":                 true,
-		"/devshard/stats/shards":            true,
-		"/devshard/stats/shards/42":         true,
-		"/devshard/sessions/1/diffs":        true,
-		"/devshard/sessions/1/mempool":      true,
-		"/devshard/sessions/1/signatures":   true,
+		"/v1/devshard/metrics":                 true,
+		"/v1/devshard/stats/shards":            true,
+		"/v1/devshard/stats/shards/42":         true,
+		"/v1/devshard/sessions/1/diffs":        true,
+		"/v1/devshard/sessions/1/mempool":      true,
+		"/v1/devshard/sessions/1/signatures":   true,
 		"/devshard/v4/sessions/1/mempool":   false,
-		"/devshard/sessions/1/chat/completions": false,
+		"/v1/devshard/sessions/1/chat/completions": false,
 		"/v1/debug/state":                   false,
 	}
 	for path, want := range cases {

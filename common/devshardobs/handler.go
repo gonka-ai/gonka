@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-// Handler routes versionless /devshard obs to versiond /devshard/{version}/….
+// Handler routes versionless /v1/devshard obs to versiond /devshard/{version}/….
 type Handler struct {
 	versiond  *url.URL
 	lookup    SessionVersionLookup // optional

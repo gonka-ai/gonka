@@ -2,8 +2,8 @@ package devshardobs
 
 import "strings"
 
-// IsVersionlessObsPath reports whether path (with or without a leading
-// /devshard/ prefix) is a public versionless observability path.
+// IsVersionlessObsPath reports whether path is a public versionless
+// observability path under /v1/devshard/… (or the /devshard/… synonym).
 // Gateway /v1/debug/* is intentionally excluded.
 func IsVersionlessObsPath(path string) bool {
 	path = normalizeObsPath(path)
@@ -44,13 +44,26 @@ func EscrowIDFromObsPath(path string) (string, bool) {
 	return "", false
 }
 
-// normalizeObsPath strips a leading slash and optional "devshard/" prefix.
+// normalizeObsPath strips a leading slash and optional v1/devshard/ or
+// devshard/ prefix, leaving e.g. "sessions/42/diffs".
 func normalizeObsPath(path string) string {
 	path = strings.TrimPrefix(path, "/")
-	return strings.TrimPrefix(path, "devshard/")
+	switch {
+	case strings.HasPrefix(path, "v1/devshard/"):
+		return strings.TrimPrefix(path, "v1/devshard/")
+	case path == "v1/devshard":
+		return ""
+	case strings.HasPrefix(path, "devshard/"):
+		return strings.TrimPrefix(path, "devshard/")
+	case path == "devshard":
+		return ""
+	default:
+		return path
+	}
 }
 
-// obsRestPath returns the path after /devshard (e.g. "/sessions/42/diffs").
+// obsRestPath returns the path after the versionless prefix
+// (e.g. "/sessions/42/diffs").
 func obsRestPath(path string) string {
 	return "/" + normalizeObsPath(path)
 }

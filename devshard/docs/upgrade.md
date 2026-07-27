@@ -75,7 +75,7 @@ with a valid owner signature. Bind is the first successful owner
 
 ```
 /devshard/<version>/sessions/.../chat/completions  → versiond → bind + protocol
-/devshard/sessions/.../diffs|mempool|signatures      → dapi/edge-api versionless obs (no bind)
+/v1/devshard/sessions/.../diffs|mempool|signatures → dapi/edge-api versionless obs (no bind)
 /devshard/<version>/sessions/.../diffs|mempool|…     → versiond → that child (pin; still no bind)
 ```
 

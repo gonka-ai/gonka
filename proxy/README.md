@@ -114,7 +114,7 @@ Key runtime environment variables:
 | `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
 | `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
-| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for versionless observability GETs (`/devshard/sessions|stats/shards|metrics|healthz`). Protocol chat/gossip/payloads stay on the exempt zone. |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for versionless observability GETs (`/v1/devshard/sessions|stats/shards|metrics` and `/devshard/healthz`). Protocol chat/gossip/payloads stay on the exempt zone. |
 | `DEVSHARD_OBS_RATE_UNIT` | s | Unit for obs rate (`s` or `m`). |
 | `DEVSHARD_OBS_BURST` | 20 | Burst for obs rate limit. |
 
@@ -130,20 +130,21 @@ Versionless obs lookup env (on **dapi** / **edge-api**, not versiond):
 ### Devshard observability routing
 
 **Versioned** obs URLs are proxied to versiond **as-is** (no strip rewrite), so
-`/devshard/{version}/…` pins that child. **Versionless** obs is dual-served by
-**edge-api** (when `EDGE_API_SERVICE_NAME` is set) or **dapi**, which use
-`common/devshardobs` (PG lookup + fan-out via versiond). See
-[versionless-obs-refactor-plan.md](../devshard/docs/versionless-obs-refactor-plan.md).
+`/devshard/{version}/…` pins that child. **Versionless** obs is under
+`/v1/devshard/…`, dual-served by **edge-api** (when `EDGE_API_SERVICE_NAME` is
+set) or **dapi**, via `common/devshardobs` (PG lookup + fan-out via versiond).
+Other `/v1/devshard/*` paths still rewrite to `/devshard/v1/*` → versiond.
+See [versionless-obs-refactor-plan.md](../devshard/docs/versionless-obs-refactor-plan.md).
 
 **Prefer these URLs in new monitors / runbooks:**
 
 ```text
-GET /devshard/sessions/{escrow_id}/diffs
-GET /devshard/sessions/{escrow_id}/mempool
-GET /devshard/sessions/{escrow_id}/signatures
-GET /devshard/stats/shards
-GET /devshard/stats/shards/{escrow_id}
-GET /devshard/metrics
+GET /v1/devshard/sessions/{escrow_id}/diffs
+GET /v1/devshard/sessions/{escrow_id}/mempool
+GET /v1/devshard/sessions/{escrow_id}/signatures
+GET /v1/devshard/stats/shards
+GET /v1/devshard/stats/shards/{escrow_id}
+GET /v1/devshard/metrics
 GET /devshard/healthz                 # versiond supervisor (not a child)
 GET /devshard/{version}/healthz       # that child's healthz
 GET /devshard/{version}/sessions/{id}/mempool   # pin that protocol version
@@ -155,7 +156,8 @@ GET /devshard/{version}/sessions/{id}/mempool   # pin that protocol version
 | `GET /devshard/{version}/stats/shards…` | versiond → that child |
 | `GET /devshard/{version}/metrics` | versiond → that child |
 | `GET /devshard/{version}/healthz` | versiond → that child |
-| `GET /devshard/sessions/…`, `/stats/shards…`, `/metrics` | edge-api if `EDGE_API_SERVICE_NAME` set, else dapi |
+| `GET /v1/devshard/sessions/…`, `/stats/shards…`, `/metrics` | edge-api if `EDGE_API_SERVICE_NAME` set, else dapi |
+| `GET /v1/devshard/*` (non-obs) | rewrite → `/devshard/v1/*` → versiond |
 | `GET /devshard/healthz` | versiond supervisor |
 
 Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads`.
@@ -203,7 +205,7 @@ Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
 - **edge-api (public Tier A)** — status, models, pricing, participants (GET), epochs, restrictions, BLS, bridge addresses, poc-batches
 - **edge-api (optional)** — `verify-proof` / `verify-block` / `debug/*`; private by default (`EDGE_API_EXPOSE_OPTIONAL_ROUTES=false` → 403). Opt in when needed; auth can be enforced in nginx before this proxy.
 - **dapi (`api`)** — inference and node operations: chat/completions, inference payloads, PoC proofs, stats, bridge queue, participant registration (`POST /v1/participants`)
-- **versiond** — devshard sessions: `/v1/devshard/*` is rewritten internally to `/devshard/v1/*`, then proxied like other `/devshard/` traffic
+- **versiond** — non-obs `/v1/devshard/*` rewrites to `/devshard/v1/*`, then proxied like other `/devshard/` traffic; versionless obs under `/v1/devshard/sessions|stats|metrics` goes to dapi/edge-api instead
 
 `/v1/participants` is method-split: GET/HEAD/OPTIONS → edge-api; other methods (notably POST registration) → dapi via an internal named location. Without that split, nginx would send POST to edge-api and return 405.
 

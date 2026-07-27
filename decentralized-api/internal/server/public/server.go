@@ -64,8 +64,8 @@ func WithStatsStorage(store statsstorage.StatsStorage) ServerOption {
 	}
 }
 
-// WithDevshardObs mounts versionless /devshard sessions|stats|metrics handlers
-// (Phase 1 dual-serve; join proxy still routes versionless to versiond until Phase 2).
+// WithDevshardObs mounts versionless /v1/devshard sessions|stats|metrics handlers
+// (common/devshardobs). Registered before the /v1/devshard deprecation catch-all.
 func WithDevshardObs(h http.Handler) ServerOption {
 	return func(s *Server) {
 		s.devshardObs = h
@@ -170,12 +170,15 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
-	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
-	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
-
+	// Versionless obs must register before the /v1/devshard/* deprecation
+	// catch-all so specific GET routes win.
 	if s.devshardObs != nil {
 		devshardobs.Mount(e, s.devshardObs)
 	}
+
+	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
+	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
+
 	return s
 }
 

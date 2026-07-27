@@ -45,7 +45,7 @@ out to three independently-deployable backends:
 | 22 Tier A `/v1/*` query routes | `edge-api` (or `edge-api-router`) | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
 | `/devshard/<version>/sessions/...` (protocol + versioned obs) | `versiond` (or `versiond-router`) → `devshardd` | Chat, gossip, payloads — version binds on owner chat; versioned obs pins that child |
-| `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `edge-api` if `EDGE_API_SERVICE_NAME` set, else `dapi` | Versionless public observability (`common/devshardobs`) |
+| `/v1/devshard/sessions/...`, `/v1/devshard/stats/...`, `/v1/devshard/metrics` | `edge-api` if `EDGE_API_SERVICE_NAME` set, else `dapi` | Versionless public observability (`common/devshardobs`) |
 | `/devshard/healthz` | `versiond` supervisor | Not a child health probe |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
 | `/chain-rpc`, `/chain-api`, `/chain-grpc` | `chain-node` | Direct chain access |
