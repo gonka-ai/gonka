@@ -12,11 +12,13 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"time"
 
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	wasmkeeper "github.com/CosmWasm/wasmd/x/wasm/keeper"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
+	authz "github.com/cosmos/cosmos-sdk/x/authz"
 
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
@@ -68,10 +70,17 @@ var bountyRewards = []BountyReward{
 	{Address: "gonka1vnupswg7qz2w5k5ax6zrp02mxmln6arnvjc87h", Amount: USDT(3000)},
 }
 
+type AuthzMigrationKeeper interface {
+	IterateGrants(ctx context.Context, handler func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool)
+	GetAuthorization(ctx context.Context, grantee, granter sdk.AccAddress, msgType string) (authz.Authorization, *time.Time)
+	SaveGrant(ctx context.Context, grantee, granter sdk.AccAddress, authorization authz.Authorization, expiration *time.Time) error
+}
+
 func CreateUpgradeHandler(
 	mm *module.Manager,
 	configurator module.Configurator,
 	k keeper.Keeper,
+	authzKeeper AuthzMigrationKeeper,
 ) upgradetypes.UpgradeHandler {
 	return func(ctx context.Context, _ upgradetypes.Plan, fromVM module.VersionMap) (module.VersionMap, error) {
 		k.LogInfo("starting upgrade", types.Upgrades, "version", UpgradeName)
@@ -82,7 +91,9 @@ func CreateUpgradeHandler(
 			fromVM["capability"] = mm.Modules["capability"].(module.HasConsensusVersion).ConsensusVersion()
 		}
 
-		// Future v0.2.15 migration steps land below this line.
+		if err := migrateWarmKeyGrantMarker(ctx, authzKeeper, k); err != nil {
+			return fromVM, err
+		}
 
 		if err := distributeBountyRewards(ctx, k); err != nil {
 			return nil, err
@@ -161,5 +172,46 @@ func distributeBountyRewards(ctx context.Context, k keeper.Keeper) error {
 			"address", bounty.Address, "amount", bounty.Amount, "denom", BountyIbcUsdtDenom)
 	}
 
+	return nil
+}
+
+func migrateWarmKeyGrantMarker(ctx context.Context, authzKeeper AuthzMigrationKeeper, k keeper.Keeper) error {
+	type grantPair struct {
+		granter    sdk.AccAddress
+		grantee    sdk.AccAddress
+		expiration *time.Time
+	}
+
+	seen := make(map[string]bool)
+	var pairs []grantPair
+	authzKeeper.IterateGrants(ctx, func(granter, grantee sdk.AccAddress, grant authz.Grant) bool {
+		if grant.Authorization.GetTypeUrl() != "/cosmos.authz.v1beta1.GenericAuthorization" {
+			return false
+		}
+		var authorization authz.GenericAuthorization
+		if err := k.Codec().Unmarshal(grant.Authorization.Value, &authorization); err != nil {
+			return false
+		}
+		if authorization.Msg != types.LegacyMsgStartInferenceTypeURL {
+			return false
+		}
+		key := granter.String() + "->" + grantee.String()
+		if !seen[key] {
+			seen[key] = true
+			pairs = append(pairs, grantPair{granter: granter, grantee: grantee, expiration: grant.Expiration})
+		}
+		return false
+	})
+
+	for _, pair := range pairs {
+		existing, _ := authzKeeper.GetAuthorization(ctx, pair.grantee, pair.granter, types.WarmKeyGrantMarkerTypeURL)
+		if existing != nil {
+			continue
+		}
+		authorization := authz.NewGenericAuthorization(types.WarmKeyGrantMarkerTypeURL)
+		if err := authzKeeper.SaveGrant(ctx, pair.grantee, pair.granter, authorization, pair.expiration); err != nil {
+			return err
+		}
+	}
 	return nil
 }

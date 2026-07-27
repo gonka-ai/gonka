@@ -2,7 +2,6 @@ package event_listener
 
 import (
 	"context"
-	"decentralized-api/internal/validation"
 	"decentralized-api/mlnodeclient"
 	"decentralized-api/participant"
 	"fmt"
@@ -331,9 +330,6 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	} else {
 		finalReconciliationConfig = *reconcilialtionConfig
 	}
-	// Create dispatcher with mocked dependencies
-	mockValidator := &validation.InferenceValidator{}
-
 	mockOffChainValidator := &MockOffChainValidator{}
 
 	dispatcher := NewOnNewBlockDispatcher(
@@ -346,7 +342,6 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 		mockSeedManager,
 		finalReconciliationConfig,
 		mockConfigManager,
-		mockValidator,
 	)
 
 	return &IntegrationTestSetup{

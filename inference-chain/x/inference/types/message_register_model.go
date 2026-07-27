@@ -26,5 +26,8 @@ func (msg *MsgRegisterModel) ValidateBasic() error {
 	if err != nil {
 		return errorsmod.Wrapf(sdkerrors.ErrInvalidAddress, "invalid proposedBy address (%s)", err)
 	}
+	if err := msg.ValidationThreshold.Validate(); err != nil {
+		return err
+	}
 	return nil
 }

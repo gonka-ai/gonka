@@ -96,4 +96,5 @@ var (
 	ErrBridgeAlreadyValidated                = sdkerrors.Register(ModuleName, 1194, "validator has already validated this transaction")
 	ErrBridgeValidatorNotInActiveGroup       = sdkerrors.Register(ModuleName, 1195, "validator not in active participants")
 	ErrBridgeContentMismatch                 = sdkerrors.Register(ModuleName, 1196, "validator posted a transaction with content mismatch")
+	ErrInvalidDecimalExponent                = sdkerrors.Register(ModuleName, 1197, "decimal exponent must be between -18 and 18")
 )

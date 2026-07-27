@@ -1,8 +1,8 @@
 package tx_manager
 
 import (
-	"decentralized-api/internal/nats/server"
 	"common/logging"
+	"decentralized-api/internal/nats/server"
 	"sync"
 	"time"
 
@@ -13,15 +13,11 @@ import (
 )
 
 const (
-	batchStartConsumer        = "batch-start-consumer"
-	batchFinishConsumer       = "batch-finish-consumer"
 	batchValidationV2Consumer = "batch-validation-v2-consumer"
 	batchAckWait              = time.Minute // must exceed FlushTimeout to prevent redelivery
 )
 
 type BatchConfig struct {
-	FlushSize                int
-	FlushTimeout             time.Duration
 	ValidationV2FlushSize    int
 	ValidationV2FlushTimeout time.Duration
 }
@@ -37,16 +33,10 @@ type BatchConsumer struct {
 	txManager TxManager
 	config    BatchConfig
 
-	startBatch        []pendingMsg
-	finishBatch       []pendingMsg
 	validationV2Batch []pendingMsg
 
-	startMu        sync.Mutex
-	finishMu       sync.Mutex
 	validationV2Mu sync.Mutex
 
-	startCreatedAt        time.Time
-	finishCreatedAt       time.Time
 	validationV2CreatedAt time.Time
 }
 
@@ -61,27 +51,19 @@ func NewBatchConsumer(
 		codec:             cdc,
 		txManager:         txManager,
 		config:            config,
-		startBatch:        make([]pendingMsg, 0, config.FlushSize),
-		finishBatch:       make([]pendingMsg, 0, config.FlushSize),
 		validationV2Batch: make([]pendingMsg, 0, config.ValidationV2FlushSize),
 	}
 }
 
 func (c *BatchConsumer) Start() error {
-	if err := c.subscribeStream(server.TxsBatchStartStream, batchStartConsumer, c.handleStartMsg); err != nil {
-		return err
-	}
-	if err := c.subscribeStream(server.TxsBatchFinishStream, batchFinishConsumer, c.handleFinishMsg); err != nil {
-		return err
-	}
 	if err := c.subscribeStream(server.TxsBatchValidationV2Stream, batchValidationV2Consumer, c.handleValidationV2Msg); err != nil {
 		return err
 	}
 
 	go c.flushLoop()
 	logging.Info("Batch consumer started", types.Messages,
-		"flushSize", c.config.FlushSize,
-		"flushTimeout", c.config.FlushTimeout)
+		"validationV2FlushSize", c.config.ValidationV2FlushSize,
+		"validationV2FlushTimeout", c.config.ValidationV2FlushTimeout)
 	return nil
 }
 
@@ -92,56 +74,6 @@ func (c *BatchConsumer) subscribeStream(stream, consumer string, handler func(*n
 		nats.AckWait(batchAckWait),
 	)
 	return err
-}
-
-func (c *BatchConsumer) handleStartMsg(msg *nats.Msg) {
-	if err := msg.InProgress(); err != nil {
-		logging.Error("Failed to mark start msg in progress", types.Messages, "error", err)
-	}
-	sdkMsg, err := c.unmarshalMsg(msg.Data)
-	if err != nil {
-		logging.Error("Failed to unmarshal start msg", types.Messages, "error", err)
-		msg.Term()
-		return
-	}
-
-	var shouldFlush bool
-	c.startMu.Lock()
-	if len(c.startBatch) == 0 {
-		c.startCreatedAt = time.Now()
-	}
-	c.startBatch = append(c.startBatch, pendingMsg{msg: sdkMsg, natsMsg: msg})
-	shouldFlush = len(c.startBatch) >= c.config.FlushSize
-	c.startMu.Unlock()
-
-	if shouldFlush {
-		c.flushStart()
-	}
-}
-
-func (c *BatchConsumer) handleFinishMsg(msg *nats.Msg) {
-	if err := msg.InProgress(); err != nil {
-		logging.Error("Failed to mark finish msg in progress", types.Messages, "error", err)
-	}
-	sdkMsg, err := c.unmarshalMsg(msg.Data)
-	if err != nil {
-		logging.Error("Failed to unmarshal finish msg", types.Messages, "error", err)
-		msg.Term()
-		return
-	}
-
-	var shouldFlush bool
-	c.finishMu.Lock()
-	if len(c.finishBatch) == 0 {
-		c.finishCreatedAt = time.Now()
-	}
-	c.finishBatch = append(c.finishBatch, pendingMsg{msg: sdkMsg, natsMsg: msg})
-	shouldFlush = len(c.finishBatch) >= c.config.FlushSize
-	c.finishMu.Unlock()
-
-	if shouldFlush {
-		c.flushFinish()
-	}
 }
 
 func (c *BatchConsumer) handleValidationV2Msg(msg *nats.Msg) {
@@ -175,50 +107,16 @@ func (c *BatchConsumer) flushLoop() {
 
 	for range ticker.C {
 		c.extendAckDeadlines()
-		c.checkAndFlushStart()
-		c.checkAndFlushFinish()
 		c.checkAndFlushValidationV2()
 	}
 }
 
 func (c *BatchConsumer) extendAckDeadlines() {
-	c.startMu.Lock()
-	for _, p := range c.startBatch {
-		_ = p.natsMsg.InProgress()
-	}
-	c.startMu.Unlock()
-
-	c.finishMu.Lock()
-	for _, p := range c.finishBatch {
-		_ = p.natsMsg.InProgress()
-	}
-	c.finishMu.Unlock()
-
 	c.validationV2Mu.Lock()
 	for _, p := range c.validationV2Batch {
 		_ = p.natsMsg.InProgress()
 	}
 	c.validationV2Mu.Unlock()
-}
-
-func (c *BatchConsumer) checkAndFlushStart() {
-	c.startMu.Lock()
-	shouldFlush := len(c.startBatch) > 0 && time.Since(c.startCreatedAt) >= c.config.FlushTimeout
-	c.startMu.Unlock()
-
-	if shouldFlush {
-		c.flushStart()
-	}
-}
-
-func (c *BatchConsumer) checkAndFlushFinish() {
-	c.finishMu.Lock()
-	shouldFlush := len(c.finishBatch) > 0 && time.Since(c.finishCreatedAt) >= c.config.FlushTimeout
-	c.finishMu.Unlock()
-
-	if shouldFlush {
-		c.flushFinish()
-	}
 }
 
 func (c *BatchConsumer) checkAndFlushValidationV2() {
@@ -229,34 +127,6 @@ func (c *BatchConsumer) checkAndFlushValidationV2() {
 	if shouldFlush {
 		c.flushValidationV2()
 	}
-}
-
-func (c *BatchConsumer) flushStart() {
-	c.startMu.Lock()
-	batch := c.startBatch
-	if len(batch) == 0 {
-		c.startMu.Unlock()
-		return
-	}
-	c.startBatch = make([]pendingMsg, 0, c.config.FlushSize)
-	c.startCreatedAt = time.Time{} // reset timer
-	c.startMu.Unlock()
-
-	c.broadcastBatch("start", batch)
-}
-
-func (c *BatchConsumer) flushFinish() {
-	c.finishMu.Lock()
-	batch := c.finishBatch
-	if len(batch) == 0 {
-		c.finishMu.Unlock()
-		return
-	}
-	c.finishBatch = make([]pendingMsg, 0, c.config.FlushSize)
-	c.finishCreatedAt = time.Time{} // reset timer
-	c.finishMu.Unlock()
-
-	c.broadcastBatch("finish", batch)
 }
 
 func (c *BatchConsumer) flushValidationV2() {
@@ -338,37 +208,12 @@ func (c *BatchConsumer) broadcastAggregatedValidationV2(aggregated []sdk.Msg, or
 	}
 }
 
-func (c *BatchConsumer) broadcastBatch(batchType string, batch []pendingMsg) {
-	msgs := make([]sdk.Msg, len(batch))
-	for i, p := range batch {
-		msgs[i] = p.msg
-	}
-
-	logging.Info("Broadcasting batch", types.Messages, "type", batchType, "count", len(msgs))
-
-	if err := c.txManager.SendBatchAsyncWithRetry(msgs); err != nil {
-		logging.Error("Failed to hand off batch to TxManager", types.Messages, "type", batchType, "error", err)
-	}
-
-	for _, p := range batch {
-		p.natsMsg.Ack()
-	}
-}
-
 func (c *BatchConsumer) unmarshalMsg(data []byte) (sdk.Msg, error) {
 	var msg sdk.Msg
 	if err := c.codec.UnmarshalInterfaceJSON(data, &msg); err != nil {
 		return nil, err
 	}
 	return msg, nil
-}
-
-func (c *BatchConsumer) PublishStartInference(msg sdk.Msg) error {
-	return c.publishMsg(server.TxsBatchStartStream, msg)
-}
-
-func (c *BatchConsumer) PublishFinishInference(msg sdk.Msg) error {
-	return c.publishMsg(server.TxsBatchFinishStream, msg)
 }
 
 func (c *BatchConsumer) PublishPocValidationV2(msg sdk.Msg) error {
