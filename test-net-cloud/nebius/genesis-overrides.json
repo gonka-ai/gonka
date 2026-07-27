@@ -235,9 +235,9 @@
           "token_price": "1",
           "approved_versions": [
             {
-              "name": "v1",
-              "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.12/devshardd.zip",
-              "sha256": "15f722444e6545bc787f1ef6d1011557d25a8b05cb9f6aaf1a514349d36d4715"
+              "name": "v3",
+              "binary": "https://github.com/gonka-ai/gonka/releases/download/release%2Fv0.2.13-devshard-v3.0.0/devshardd.zip",
+              "sha256": "ca1294fc8db3f0907a01f362eb4b13665f66d0fd12cfc6f01468b1e27f0bab63"
             }
           ]
         },
