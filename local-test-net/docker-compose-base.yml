@@ -77,6 +77,7 @@ services:
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=${KEY_NAME}-node:9090
+      - CHAIN_RPC_URL=http://${KEY_NAME}-node:26657
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
