@@ -107,10 +107,6 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgSubmitNewParticipant)(nil)):         {OpenRegistrationPermission},
 	reflect.TypeOf((*types.MsgSubmitNewUnfundedParticipant)(nil)): {OpenRegistrationPermission},
 
-	// These are special cases authorized by GroupPolicy
-	reflect.TypeOf((*types.MsgInvalidateInference)(nil)): {NoPermission},
-	reflect.TypeOf((*types.MsgRevalidateInference)(nil)): {NoPermission},
-
 	reflect.TypeOf((*types.MsgClaimRewards)(nil)):                     {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgSetClaimRecipients)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitHardwareDiff)(nil)):               {ParticipantPermission},
@@ -120,11 +116,6 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {NoPermission},
 	reflect.TypeOf((*types.MsgSubmitSeed)(nil)):                       {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitUnitOfComputePriceProposal)(nil)): {ActiveParticipantPermission},
-
-	reflect.TypeOf((*types.MsgStartInference)(nil)): {ActiveParticipantPermission},
-	// Finish could happen after a new epoch has started
-	reflect.TypeOf((*types.MsgFinishInference)(nil)): {ActiveParticipantPermission, PreviousActiveParticipantPermission},
-	reflect.TypeOf((*types.MsgValidation)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 
 	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)):       {EscrowAllowListPermission},
 	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)):       {EscrowAllowListPermission},

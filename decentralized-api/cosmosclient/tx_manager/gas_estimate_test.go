@@ -11,9 +11,9 @@ import (
 	"github.com/cosmos/cosmos-sdk/x/auth/tx"
 	"github.com/stretchr/testify/require"
 
-	inferencepkg "github.com/productscience/inference/x/inference"
 	blstypes "github.com/productscience/inference/x/bls/types"
 	collateraltypes "github.com/productscience/inference/x/collateral/types"
+	inferencepkg "github.com/productscience/inference/x/inference"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
@@ -27,13 +27,6 @@ func TestEstimateMsgGas_KnownTypes(t *testing.T) {
 		msg  sdk.Msg
 		want uint64
 	}{
-		// Inference lifecycle (all bypass-exempt, but still sized).
-		{"MsgStartInference", &inferencetypes.MsgStartInference{}, gasStartInference},
-		{"MsgFinishInference", &inferencetypes.MsgFinishInference{}, gasFinishInference},
-		{"MsgValidation", &inferencetypes.MsgValidation{}, gasValidation},
-		{"MsgInvalidateInference", &inferencetypes.MsgInvalidateInference{}, gasInvalidateInference},
-		{"MsgRevalidateInference", &inferencetypes.MsgRevalidateInference{}, gasRevalidateInference},
-
 		// PoC duty.
 		{"MsgSubmitPocBatch", &inferencetypes.MsgSubmitPocBatch{}, gasSubmitPocBatch},
 		{"MsgSubmitPocValidationsV2", &inferencetypes.MsgSubmitPocValidationsV2{}, gasSubmitPocValidationsV2},
@@ -125,11 +118,11 @@ func TestEstimateMsgGas_MLNodeDistribution_LinearInNodes(t *testing.T) {
 // adds the tx-level overhead and sums per-msg estimates.
 func TestEstimateBatchGas_SumsPlusOverhead(t *testing.T) {
 	msgs := []sdk.Msg{
-		&inferencetypes.MsgFinishInference{}, // gasFinishInference
-		&inferencetypes.MsgFinishInference{}, // gasFinishInference
-		&inferencetypes.MsgSubmitSeed{},      // gasSubmitSeed
+		&inferencetypes.MsgClaimRewards{},
+		&inferencetypes.MsgClaimRewards{},
+		&inferencetypes.MsgSubmitSeed{},
 	}
-	want := txOverheadGas + 2*gasFinishInference + gasSubmitSeed
+	want := txOverheadGas + 2*gasClaimRewards + gasSubmitSeed
 	require.Equal(t, want, estimateBatchGas(msgs, 0))
 }
 

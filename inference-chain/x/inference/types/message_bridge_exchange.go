@@ -26,6 +26,8 @@ func NewMsgBridgeExchange(validator string, originChain string, contractAddress 
 
 var reDigits = regexp.MustCompile(`^[0-9]+$`) //nolint:forbidigo // init code
 
+const MaxBridgeAmountDigits = 78
+
 func (msg *MsgBridgeExchange) ValidateBasic() error {
 	// validator bech32 signer
 	if _, err := sdk.AccAddressFromBech32(msg.Validator); err != nil {
@@ -46,6 +48,9 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	}
 	if len(msg.Amount) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "amount is required")
+	}
+	if len(msg.Amount) > MaxBridgeAmountDigits {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "amount exceeds %d digits", MaxBridgeAmountDigits)
 	}
 	if len(msg.BlockNumber) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber is required")
