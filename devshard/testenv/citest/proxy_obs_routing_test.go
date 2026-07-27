@@ -10,11 +10,11 @@ import (
 )
 
 // TestProxyObsRouting_VersionedAndVersionlessStats asserts join-proxy entrypoint
-// routing for /v1/devshard:
-//   - versionless obs (/sessions|stats/shards|metrics) → dapi when
-//     EDGE_API_SERVICE_NAME empty, edge-api (or edge-api-router) otherwise
+// routing for /v1/devshard and /devshard:
+//   - versionless obs (/v1/devshard/sessions|stats|metrics) → dapi / edge-api
 //   - other /v1/devshard/* → rewrite to /devshard/v1/* → versiond
-//   - versioned /devshard/{v}/… → versiond catch-all (no versionless /devshard/ obs)
+//   - version-pinned obs (/devshard/{v}/…) → versiond under devshard_obs zone
+//   - protocol /devshard/{v}/… → versiond exempt catch-all
 func TestProxyObsRouting_VersionedAndVersionlessStats(t *testing.T) {
 	t.Run("EDGE_API empty routes versionless obs to dapi", func(t *testing.T) {
 		dump := harness.DumpProxyRouting(t, "")
@@ -24,6 +24,7 @@ func TestProxyObsRouting_VersionedAndVersionlessStats(t *testing.T) {
 		require.Contains(t, dump.VersiondUpstream, "server versiond:8080")
 
 		assertAllVersionlessObsProxyPass(t, dump.DevshardLocations, "http://api_backend")
+		assertVersionedObsUsesDevshardObsZone(t, dump.DevshardLocations)
 		assertVersionedDevshardToVersiond(t, dump.DevshardLocations)
 		assertNonObsV1DevshardRewritesToVersiond(t, dump.DevshardLocations)
 	})
@@ -36,6 +37,7 @@ func TestProxyObsRouting_VersionedAndVersionlessStats(t *testing.T) {
 		require.Contains(t, dump.EdgeAPIUpstream, "server edge-api:18080")
 
 		assertAllVersionlessObsProxyPass(t, dump.DevshardLocations, "http://edge_api_backend")
+		assertVersionedObsUsesDevshardObsZone(t, dump.DevshardLocations)
 		assertVersionedDevshardToVersiond(t, dump.DevshardLocations)
 		assertNonObsV1DevshardRewritesToVersiond(t, dump.DevshardLocations)
 	})
@@ -50,6 +52,7 @@ func TestProxyObsRouting_VersionedAndVersionlessStats(t *testing.T) {
 		require.NotContains(t, dump.EdgeAPIUpstream, "server edge-api:18080")
 
 		assertAllVersionlessObsProxyPass(t, dump.DevshardLocations, "http://edge_api_backend")
+		assertVersionedObsUsesDevshardObsZone(t, dump.DevshardLocations)
 		assertVersionedDevshardToVersiond(t, dump.DevshardLocations)
 		assertNonObsV1DevshardRewritesToVersiond(t, dump.DevshardLocations)
 	})
@@ -70,6 +73,22 @@ func assertAllVersionlessObsProxyPass(t *testing.T, locations, wantPass string) 
 	}
 }
 
+func assertVersionedObsUsesDevshardObsZone(t *testing.T, locations string) {
+	t.Helper()
+	for _, needle := range []string{
+		"^/devshard/[^/]+/sessions/[^/]+/(diffs|mempool|signatures)",
+		"^/devshard/[^/]+/stats/shards",
+		"^/devshard/[^/]+/metrics",
+	} {
+		block := harness.LocationBlock(locations, needle)
+		require.NotEmpty(t, block, "missing version-pinned obs location matching %s", needle)
+		require.Contains(t, block, "limit_req zone=devshard_obs", needle)
+		require.Contains(t, block, "proxy_pass http://versiond_backend", needle)
+		require.NotContains(t, block, "exempt_zone", needle)
+		require.NotContains(t, block, "rewrite", needle)
+	}
+}
+
 func assertVersionedDevshardToVersiond(t *testing.T, locations string) {
 	t.Helper()
 	block := harness.LocationBlock(locations, "location /devshard/ {")
@@ -78,10 +97,11 @@ func assertVersionedDevshardToVersiond(t *testing.T, locations string) {
 	}
 	require.NotEmpty(t, block, "missing catch-all location /devshard/")
 	require.Contains(t, block, "proxy_pass http://versiond_backend/")
-	// Versionless obs must not live under bare /devshard/ (only /v1/devshard/…).
-	require.NotContains(t, locations, "^/devshard/stats/shards")
-	require.NotContains(t, locations, "^/devshard/sessions/")
-	require.NotContains(t, locations, "^/devshard/metrics")
+	require.Contains(t, block, "exempt_zone")
+	// Versionless (no version segment) obs must not live under bare /devshard/.
+	require.NotContains(t, locations, "location ~ ^/devshard/stats/shards")
+	require.NotContains(t, locations, "location ~ ^/devshard/sessions/")
+	require.NotContains(t, locations, "location ~ ^/devshard/metrics$")
 }
 
 func assertNonObsV1DevshardRewritesToVersiond(t *testing.T, locations string) {

@@ -618,12 +618,13 @@ else
 fi
 
 # /devshard/ routing:
-#   /devshard/{version}/…     → versiond as-is (protocol + versioned obs)
-#   /devshard/healthz         → versiond supervisor
-# Versionless public obs lives under /v1/devshard/… (see API_VERSION_LOCATIONS):
+#   /devshard/{version}/… protocol (chat/gossip/payloads) → versiond, exempt zone
+#   /devshard/{version}/… obs (sessions diffs|mempool|signatures, stats, metrics)
+#       → versiond as-is, but under the tighter devshard_obs rate zone
+#   /devshard/healthz → versiond supervisor (devshard_obs zone)
+# Versionless public obs under /v1/devshard/…:
 #   sessions|stats/shards|metrics → edge-api if EDGE_API_SERVICE_NAME set, else dapi
 #   other /v1/devshard/*          → rewrite → /devshard/v1/* → versiond
-# Protocol POSTs/payloads stay on the exempt catch-all (chat/SSE need high limits).
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
         export DEVSHARD_OBS_PROXY_PASS="http://edge_api_backend"
@@ -686,6 +687,56 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
         # Obs regex locations above take precedence over this prefix.
         location /v1/devshard/ {
             rewrite ^/v1/devshard/(.*)\$ /devshard/v1/\$\$1 last;
+        }
+        # Version-pinned obs: same tighter rate zone as versionless; still
+        # proxy to versiond with the version segment intact (no strip rewrite).
+        location ~ ^/devshard/[^/]+/sessions/[^/]+/(diffs|mempool|signatures)\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/devshard/[^/]+/metrics\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
         # Versionless /devshard/healthz is versiond's own supervisor health (mux).
         # /devshard/{version}/healthz reaches that child via the catch-all below.

@@ -8,7 +8,6 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
-	"strings"
 	"syscall"
 	"time"
 
@@ -19,27 +18,18 @@ import (
 )
 
 const (
-	defaultPort     = 18080
-	envPort         = "EDGE_API_PORT"
-	envChainGRPCURL = "CHAIN_GRPC_URL"
-	envChainRPCURL  = "CHAIN_RPC_URL"
-	shutdownTimeout = 10 * time.Second
+	defaultPort      = 18080
+	defaultChainGRPC = "localhost:9090"
+	envPort          = "EDGE_API_PORT"
+	envChainGRPCURL  = "CHAIN_GRPC_URL"
+	shutdownTimeout  = 10 * time.Second
 )
 
 func main() {
-	cfg, err := loadConfig()
-	if err != nil {
-		slog.Error("config", "error", err)
-		os.Exit(1)
-	}
-	if cfg.ChainRPCDerived {
-		slog.Warn("chain rpc endpoint derived from gRPC host; set it explicitly to override",
-			"env", envChainRPCURL, "chain_rpc", cfg.ChainRPCURL)
-	}
+	cfg := loadConfig()
 	slog.Info("edge-api starting",
 		"port", cfg.Port,
 		"chain_grpc", cfg.ChainGRPCURL,
-		"chain_rpc", cfg.ChainRPCURL,
 	)
 
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -55,7 +45,7 @@ func main() {
 		_ = shutdownObs(ctx)
 	}()
 
-	chainClient, err := chain.NewWithQueryFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
+	chainClient, err := chain.New(cfg.ChainGRPCURL)
 	if err != nil {
 		slog.Error("chain client", "error", err)
 		os.Exit(1)
@@ -102,46 +92,26 @@ func main() {
 type config struct {
 	Port         int
 	ChainGRPCURL string
-	ChainRPCURL  string
-	// ChainRPCDerived records that ChainRPCURL was guessed from the gRPC host
-	// rather than configured, so main can say so once at startup.
-	ChainRPCDerived bool
 }
 
-// loadConfig requires CHAIN_GRPC_URL explicitly: defaulting it to localhost used
-// to hide misconfiguration behind connection errors at query time. The CometBFT
-// RPC endpoint is derived from that host when unset, so adding the query
-// fallback does not break a deployment that only sets the gRPC endpoint.
-func loadConfig() (config, error) {
+func loadConfig() config {
 	port := defaultPort
 	if v := os.Getenv(envPort); v != "" {
 		p, err := strconv.Atoi(v)
 		if err != nil {
-			return config{}, fmt.Errorf("%s=%q: %w", envPort, v, err)
+			slog.Error("invalid port", "env", envPort, "value", v, "error", err)
+			os.Exit(1)
 		}
 		port = p
 	}
 
-	grpcURL := strings.TrimSpace(os.Getenv(envChainGRPCURL))
+	grpcURL := os.Getenv(envChainGRPCURL)
 	if grpcURL == "" {
-		return config{}, fmt.Errorf("%s is required (example: node:9090)", envChainGRPCURL)
-	}
-
-	rpcURL := strings.TrimSpace(os.Getenv(envChainRPCURL))
-	derived := false
-	if rpcURL == "" {
-		rpcURL = chain.RPCURLFromGRPCURL(grpcURL)
-		if rpcURL == "" {
-			return config{}, fmt.Errorf("%s is unset and cannot be derived from %s=%q",
-				envChainRPCURL, envChainGRPCURL, grpcURL)
-		}
-		derived = true
+		grpcURL = defaultChainGRPC
 	}
 
 	return config{
-		Port:            port,
-		ChainGRPCURL:    grpcURL,
-		ChainRPCURL:     rpcURL,
-		ChainRPCDerived: derived,
-	}, nil
+		Port:         port,
+		ChainGRPCURL: grpcURL,
+	}
 }

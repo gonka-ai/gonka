@@ -114,7 +114,7 @@ Key runtime environment variables:
 | `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
 | `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
-| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for versionless observability GETs (`/v1/devshard/sessions|stats/shards|metrics` and `/devshard/healthz`). Protocol chat/gossip/payloads stay on the exempt zone. |
+| `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for observability GETs: versionless `/v1/devshard/sessions|stats/shards|metrics`, version-pinned `/devshard/{v}/…` obs, and `/devshard/healthz`. Protocol chat/gossip/payloads stay on the exempt zone. |
 | `DEVSHARD_OBS_RATE_UNIT` | s | Unit for obs rate (`s` or `m`). |
 | `DEVSHARD_OBS_BURST` | 20 | Burst for obs rate limit. |
 
@@ -162,8 +162,9 @@ GET /devshard/{version}/sessions/{id}/mempool   # pin that protocol version
 
 Protocol traffic stays versioned: `POST …/chat/completions`, gossip, challenge-receipt, and `GET …/payloads`.
 
-Public versionless obs paths use a dedicated nginx zone (`devshard_obs`, default
-`10r/s` burst `20`). Chat / gossip / payloads remain on the exempt catch-all.
+Public versionless and version-pinned obs paths use a dedicated nginx zone
+(`devshard_obs`, default `10r/s` burst `20`). Chat / gossip / payloads remain
+on the exempt catch-all.
 
 dapi / edge-api versionless routing (`common/devshardobs`):
 
