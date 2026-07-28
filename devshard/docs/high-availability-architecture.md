@@ -44,9 +44,9 @@ out to three independently-deployable backends:
 |---------------|---------|---------|
 | 22 Tier A `/v1/*` query routes | `edge-api` (or `edge-api-router`) | Read-only chain queries |
 | Other `/v1/*`, `/api/v1/*` | `dapi` (`api:9000`) | Chat/inference, PoC, payloads, bridge, identity |
-| `/devshard/<version>/sessions/...` (protocol + versioned obs) | `versiond` (or `versiond-router`) → `devshardd` | Chat, gossip, payloads — version binds on owner chat; versioned obs pins that child |
-| `/v1/devshard/sessions/...`, `/v1/devshard/stats/...`, `/v1/devshard/metrics` | `edge-api` if `EDGE_API_SERVICE_NAME` set, else `dapi` | Versionless public observability (`common/devshardobs`) |
-| `/devshard/healthz` | `versiond` supervisor | Not a child health probe |
+| `/devshard/<version>/sessions/...` (protocol) | `versiond` (or `versiond-router`) → `devshardd` | Chat, gossip, payloads — version binds on owner chat |
+| `/devshard/sessions/...`, `/devshard/stats/...`, `/devshard/metrics` | `versiond` → bound/`primary` child | Versionless public observability (no bind) |
+| `/devshard/<version>/sessions/.../diffs\|mempool\|signatures` (legacy) | join proxy **internal rewrite** → versionless | Backward-compat for scrapers |
 | `/v1/devshard/*` (legacy) | rewritten → `/devshard/v1/*` → versiond | Backward-compat |
 | `/chain-rpc`, `/chain-api`, `/chain-grpc` | `chain-node` | Direct chain access |
 
@@ -66,11 +66,17 @@ name when running multi-instance overlays).
 poc-batches, restrictions, BLS, bridge addresses, verify-proof/block, debug
 helpers, versions).
 
-- **Transport:** chain **gRPC only** via `common/chain.Client`
-  (`CHAIN_GRPC_URL`, default `:9090`); a few routes use CometBFT gRPC
-  (`cmtservice`) and ABCI store queries. No Tendermint HTTP RPC.
+- **Transport:** chain gRPC via `common/chain.Client` (`CHAIN_GRPC_URL`, e.g.
+  `node:9090`, required at startup); a few routes use CometBFT gRPC
+  (`cmtservice`) and ABCI store queries. When gRPC is unreachable, queries fall
+  back to CometBFT RPC (`CHAIN_RPC_URL`, default `http://<gRPC host>:26657`) and
+  probe gRPC again every 30 minutes. Which transport is live shows up on the
+  `chain.query.transport.active` gauge and the `chain.transport` span attribute.
+  RPC-mode queries go over ABCI, so the CometBFT service routes need the node to
+  have `grpc.enable` or `api.enable` set — true by default, but see the
+  limitation in the v4 release notes.
 - **Stateless:** no DB, no keyring, no ML nodes, no broker. Each request is
-  served directly from chain gRPC. Dependencies are `common/chain`,
+  served directly from the chain. Dependencies are `common/chain`,
   `common/logging`, `common/utils`, `edge-api/observability`.
 - **Entry / wiring:** `edge-api/cmd/edge-api/main.go`,
   `edge-api/internal/server/server.go`, handlers under `edge-api/queryapi/`.
@@ -109,10 +115,15 @@ A supervisor + version-prefix reverse proxy:
 - **Routing:** in-process reverse proxy keyed by the first path segment
   (`/<version>/...`), backed by an `atomic.Value` route table of
   `version → localhost:port` for **running** children only
-  (`internal/proxy/proxy.go`, `rebuildRoutes`). Versionless obs is **not**
-  handled here — join proxy sends it to dapi/edge-api (`common/devshardobs`).
-  See [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).
-- **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix proxy.
+  (`internal/proxy/proxy.go`, `rebuildRoutes`).
+- **Versionless observability:** also serves `/sessions/…/diffs|mempool|signatures`,
+  `/stats/…`, `/metrics` without a version prefix. With shared Postgres
+  (`PGHOST` / `DATABASE_URL`), session-scoped routes look up
+  `sessions.version` and forward to that child; unbound → 404. Without PG
+  (SQLite-only), fan-out across children. See
+  [versionless-observability-plan.md](./versionless-observability-plan.md).
+- **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix /
+  versionless obs proxy.
 - **Overrides:** `VERSIOND_OVERRIDE_<name>` (local binary), `VERSIOND_FORCE`
   (force-run a version).
 
@@ -127,8 +138,8 @@ compose service). It runs the per-escrow session protocol:
   `GET /sessions/:id/{diffs,mempool,signatures}` (observability — never binds),
   `GET /sessions/:id/payloads` (validator protocol)
   (`devshard/cmd/devshardd/server.go`, `devshard/server/routes.go`).
-  Public versionless observability is dual-served by dapi/edge-api
-  (see [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md)).
+  Public observability is also reachable versionless via the join proxy /
+  versiond (see [versionless-observability-plan.md](./versionless-observability-plan.md)).
 - **Chain:** gRPC client (`common/chain`) + CometBFT WebSocket for
   `NewBlock`, `devshard_escrow_created`, `devshard_escrow_settled`; tracks a
   `chain.Phase` (epoch/height). Bridge queries + dispute submission via
