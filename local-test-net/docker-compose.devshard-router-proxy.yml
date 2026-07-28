@@ -8,6 +8,18 @@
 #     -f docker-compose.versiond.yml \
 #     -f docker-compose.devshard-router-proxy.yml up -d
 services:
+  # Sticky router for versioned /devshard/* and for versionless obs fan-out
+  # from dapi/edge-api (DEVSHARD_VERSIOND_URL). When docker-compose.edge-api.yml
+  # is layered, add docker-compose.devshard-obs-ha.yml last so edge-api-2/3 also
+  # point at the router instead of a single versiond.
+  api:
+    environment:
+      DEVSHARD_VERSIOND_URL: http://${KEY_NAME}-versiond-router:8080
+
+  edge-api:
+    environment:
+      DEVSHARD_VERSIOND_URL: http://${KEY_NAME}-versiond-router:8080
+
   proxy:
     environment:
       VERSIOND_SERVICE_NAME: versiond-router

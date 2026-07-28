@@ -21,6 +21,13 @@ x-edge-api: &edge-api
     EDGE_API_OTEL_ENABLED: ${EDGE_API_OTEL_ENABLED:-false}
     OTEL_ENDPOINT: ${OTEL_ENDPOINT:-}
     OTEL_HEADERS: ${OTEL_HEADERS:-}
+    DEVSHARD_VERSIOND_URL: ${DEVSHARD_VERSIOND_URL:-http://${KEY_NAME}-versiond:8080}
+    # Session DB is env-only: setting the host requires port, database and user.
+    DEVSHARD_OBS_PGHOST: ${DEVSHARD_OBS_PGHOST:-}
+    DEVSHARD_OBS_PGPORT: ${DEVSHARD_OBS_PGPORT:-5432}
+    DEVSHARD_OBS_PGDATABASE: ${DEVSHARD_OBS_PGDATABASE:-devshardd}
+    DEVSHARD_OBS_PGUSER: ${DEVSHARD_OBS_PGUSER:-devshardd}
+    DEVSHARD_OBS_PGPASSWORD: ${DEVSHARD_OBS_PGPASSWORD:-}
   depends_on:
     - chain-node
   networks:

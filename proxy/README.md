@@ -122,10 +122,12 @@ Versionless obs lookup env (on **dapi** / **edge-api**, not versiond):
 
 | Env | Default | Description |
 |-----|---------|-------------|
-| `DEVSHARD_VERSIOND_URL` / `VERSIOND_URL` | `http://versiond:8080` | versiond base for fan-out / proxy |
-| `PGHOST` / `DATABASE_URL` | unset | Enable escrow→version PG lookup |
-| `DEVSHARD_OBS_DISABLE_SESSION_LOOKUP` | false | Force fan-out even if Postgres is configured |
+| `DEVSHARD_VERSIOND_URL` / `VERSIOND_URL` | `http://versiond:8080` | versiond base for fan-out / proxy; set to `http://versiond-router:8080` with the multi-versiond overlay |
+| `DEVSHARD_OBS_PGHOST` (+ `DEVSHARD_OBS_PG*`) / `DEVSHARD_OBS_DATABASE_URL` | unset | Session-DB connection for escrow→version lookup. **Not** dapi payload `PG*` / `DATABASE_URL` |
+| `DEVSHARD_OBS_DISABLE_SESSION_LOOKUP` | false | Force fan-out even if session DB is configured |
 | `DEVSHARD_OBS_VERSIONS_CACHE_TTL` | `2s` | Cache TTL for versiond `/healthz` active versions |
+
+Lookup init failure (bad host, ping error) **degrades to fan-out-only**; it must not disable the versionless handler.
 
 ### Devshard observability routing
 

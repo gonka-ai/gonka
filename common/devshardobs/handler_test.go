@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -292,15 +293,15 @@ func TestHandler_FanoutSkips404(t *testing.T) {
 
 func TestIsVersionlessObsPath(t *testing.T) {
 	cases := map[string]bool{
-		"/v1/devshard/metrics":                 true,
-		"/v1/devshard/stats/shards":            true,
-		"/v1/devshard/stats/shards/42":         true,
-		"/v1/devshard/sessions/1/diffs":        true,
-		"/v1/devshard/sessions/1/mempool":      true,
-		"/v1/devshard/sessions/1/signatures":   true,
-		"/devshard/v4/sessions/1/mempool":   false,
+		"/v1/devshard/metrics":                     true,
+		"/v1/devshard/stats/shards":                true,
+		"/v1/devshard/stats/shards/42":             true,
+		"/v1/devshard/sessions/1/diffs":            true,
+		"/v1/devshard/sessions/1/mempool":          true,
+		"/v1/devshard/sessions/1/signatures":       true,
+		"/devshard/v4/sessions/1/mempool":          false,
 		"/v1/devshard/sessions/1/chat/completions": false,
-		"/v1/debug/state":                   false,
+		"/v1/debug/state":                          false,
 	}
 	for path, want := range cases {
 		if got := IsVersionlessObsPath(path); got != want {
@@ -493,7 +494,7 @@ func TestHealthzVersions_ConcurrentFetchDeduplicated(t *testing.T) {
 	}
 
 	time.Sleep(50 * time.Millisecond) // ensure callers are waiting in singleflight
-	close(blockCh)                   // unblock backend
+	close(blockCh)                    // unblock backend
 	wg.Wait()
 	close(errs)
 

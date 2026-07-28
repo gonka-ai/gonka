@@ -20,14 +20,43 @@ type ProxyRoutingDump struct {
 	DevshardLocations   string
 }
 
+// ProxyRoutingEnv selects the backends the join proxy is pointed at. Zero
+// values mean the canonical single-instance services.
+type ProxyRoutingEnv struct {
+	EdgeAPIService  string // EDGE_API_SERVICE_NAME; "" = edge-api not configured
+	EdgeAPIPort     string // default 18080
+	VersiondService string // default versiond; "versiond-router" in HA
+	VersiondPort    string // default 8080
+}
+
 // DumpProxyRouting runs proxy/entrypoint.sh with PROXY_ROUTING_DUMP_DIR and the
 // given EDGE_API_SERVICE_NAME (empty string clears it).
 func DumpProxyRouting(t *testing.T, edgeAPIServiceName string) ProxyRoutingDump {
+	t.Helper()
+	return DumpProxyRoutingEnv(t, ProxyRoutingEnv{EdgeAPIService: edgeAPIServiceName})
+}
+
+// DumpProxyRoutingEnv is DumpProxyRouting with the versiond backend selectable,
+// so HA topologies (versiond-router, edge-api-router) can be asserted too.
+func DumpProxyRoutingEnv(t *testing.T, env ProxyRoutingEnv) ProxyRoutingDump {
 	t.Helper()
 
 	repoRoot := RepoRoot(t)
 	entrypoint := filepath.Join(repoRoot, "proxy", "entrypoint.sh")
 	require.FileExists(t, entrypoint)
+
+	edgeAPIPort := env.EdgeAPIPort
+	if edgeAPIPort == "" {
+		edgeAPIPort = "18080"
+	}
+	versiondService := env.VersiondService
+	if versiondService == "" {
+		versiondService = "versiond"
+	}
+	versiondPort := env.VersiondPort
+	if versiondPort == "" {
+		versiondPort = "8080"
+	}
 
 	dumpDir := t.TempDir()
 	cmd := exec.Command("/bin/sh", entrypoint)
@@ -38,11 +67,11 @@ func DumpProxyRouting(t *testing.T, edgeAPIServiceName string) ProxyRoutingDump 
 		"JAEGER_ENABLED=false",
 		"GRAFANA_ENABLED=false",
 		"KEY_NAME=",
-		"EDGE_API_SERVICE_NAME="+edgeAPIServiceName,
-		"EDGE_API_PORT=18080",
+		"EDGE_API_SERVICE_NAME="+env.EdgeAPIService,
+		"EDGE_API_PORT="+edgeAPIPort,
 		"API_SERVICE_NAME=api",
-		"VERSIOND_SERVICE_NAME=versiond",
-		"VERSIOND_PORT=8080",
+		"VERSIOND_SERVICE_NAME="+versiondService,
+		"VERSIOND_PORT="+versiondPort,
 		"GONKA_API_PORT=9000",
 	)
 	out, err := cmd.CombinedOutput()

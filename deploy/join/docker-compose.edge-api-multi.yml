@@ -4,6 +4,14 @@
 # edge-api3, and edge-api-router in front of all three. Sets proxy
 # EDGE_API_SERVICE_NAME=edge-api-router.
 #
+# Versionless obs (common/devshardobs) needs the versiond base URL and, for
+# bound-session PG lookup, the *session* DB (DEVSHARD_OBS_PG*), not dapi's
+# payload PG*. Defaults target single-versiond.
+#
+# With docker-compose.versiond.yml (HA), also layer
+# docker-compose.edge-api-obs-ha.yml so edge-api2/3 use versiond-router +
+# session DB (or export those DEVSHARD_* vars in .env).
+#
 #   docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
 #
 # x-edge-api anchor holds everything shared between instances.
@@ -17,6 +25,18 @@ x-edge-api: &edge-api
     - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+    # Versionless obs → versiond (set DEVSHARD_VERSIOND_URL=http://versiond-router:8080
+    # in .env when docker-compose.versiond.yml is also applied).
+    - DEVSHARD_VERSIOND_URL=${DEVSHARD_VERSIOND_URL:-http://versiond:8080}
+    # Session DB for escrow→version lookup (optional; fan-out when host is unset
+    # or unreachable). Keep separate from dapi payload PG*; mirror
+    # DEVSHARD_POSTGRES_* when HA is on. Setting the host requires port, database
+    # and user too — the binary has no built-in session DB values.
+    - DEVSHARD_OBS_PGHOST=${DEVSHARD_OBS_PGHOST:-}
+    - DEVSHARD_OBS_PGPORT=${DEVSHARD_OBS_PGPORT:-5432}
+    - DEVSHARD_OBS_PGDATABASE=${DEVSHARD_OBS_PGDATABASE:-devshardd}
+    - DEVSHARD_OBS_PGUSER=${DEVSHARD_OBS_PGUSER:-devshardd}
+    - DEVSHARD_OBS_PGPASSWORD=${DEVSHARD_OBS_PGPASSWORD:-}
   depends_on:
     - node
   restart: always

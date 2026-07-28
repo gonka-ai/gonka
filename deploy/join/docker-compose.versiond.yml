@@ -5,6 +5,13 @@
 # hash on escrow/session ID) in front of both. Sets proxy
 # VERSIOND_SERVICE_NAME=versiond-router.
 #
+# Also wires dapi/edge-api versionless obs to the router and the *session*
+# database (DEVSHARD_OBS_PG*), separate from dapi payload PG* (payloads).
+# When combining with docker-compose.edge-api-multi.yml, also layer
+# docker-compose.edge-api-obs-ha.yml (or set the same DEVSHARD_* in .env) so
+# edge-api2/3 get versiond-router + session DB — the multi overlay alone
+# defaults them to http://versiond:8080 with no lookup.
+#
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 #
 # x-versiond anchor holds everything shared between versiond and versiond2;
@@ -90,6 +97,26 @@ services:
       - versiond
       - versiond2
     restart: always
+
+  # Versionless obs dual-serve: point at the sticky router (not versiond:8080)
+  # and use the session DB, not dapi's payload database.
+  api:
+    environment:
+      - DEVSHARD_VERSIOND_URL=http://versiond-router:8080
+      - DEVSHARD_OBS_PGHOST=devshard-postgres
+      - DEVSHARD_OBS_PGPORT=${DEVSHARD_POSTGRES_PORT:-5432}
+      - DEVSHARD_OBS_PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
+      - DEVSHARD_OBS_PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
+      - DEVSHARD_OBS_PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+
+  edge-api:
+    environment:
+      - DEVSHARD_VERSIOND_URL=http://versiond-router:8080
+      - DEVSHARD_OBS_PGHOST=devshard-postgres
+      - DEVSHARD_OBS_PGPORT=${DEVSHARD_POSTGRES_PORT:-5432}
+      - DEVSHARD_OBS_PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
+      - DEVSHARD_OBS_PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
+      - DEVSHARD_OBS_PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
 
   proxy:
     environment:

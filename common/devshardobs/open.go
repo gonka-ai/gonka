@@ -2,7 +2,6 @@ package devshardobs
 
 import (
 	"context"
-	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
@@ -24,16 +23,20 @@ func (r *Router) Close() {
 }
 
 // OpenFromEnv builds a versionless obs router for dapi/edge-api.
-// Always returns a Handler that talks to versiond (default URL); lookup may be nil.
+// Always returns a Handler that talks to versiond (default URL). Session lookup
+// may be nil (disabled, unconfigured, or init failure → fan-out only).
 func OpenFromEnv(ctx context.Context) (*Router, error) {
 	base, err := VersiondBaseFromEnv()
 	if err != nil {
 		return nil, err
 	}
 
+	// Lookup init failures must not disable versionless obs: degrade to
+	// fan-out-only (same behavior versiond had when PG was unreachable).
 	lookup, err := OpenLookupFromEnv(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("session lookup: %w", err)
+		slog.Warn("devshardobs: session lookup unavailable; continuing fan-out only", "error", err)
+		lookup = nil
 	}
 
 	ttl := defaultVersionsCacheTTL
