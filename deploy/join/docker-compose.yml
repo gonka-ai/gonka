@@ -1,6 +1,6 @@
 services:
   tmkms:
-    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.14
+    image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15
     container_name: tmkms
     restart: unless-stopped
     environment:
@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.14
+    image: ghcr.io/product-science/inferenced:0.2.15
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -49,7 +49,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.14
+    image: ghcr.io/product-science/api:0.2.15
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -89,7 +89,7 @@ services:
 
   edge-api:
     container_name: edge-api
-    image: ghcr.io/product-science/edge-api:0.2.14-devshard-v4
+    image: ghcr.io/product-science/edge-api:0.2.15
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
@@ -103,7 +103,7 @@ services:
 
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.14-devshard-v4
+    image: ghcr.io/product-science/versiond:0.2.15
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
@@ -155,7 +155,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.14-devshard-v4
+    image: ghcr.io/product-science/proxy:0.2.15
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -212,7 +212,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.14-devshard-v4
+    image: ghcr.io/product-science/proxy-ssl:0.2.15
     profiles:
       - ssl
     environment:
