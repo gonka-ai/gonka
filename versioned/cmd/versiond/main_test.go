@@ -247,6 +247,60 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 	}
 }
 
+func TestShutdownHostForceDoesNotWaitForPollWorker(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	mgr := newFakeHostShutdownManager()
+	mgr.shutdown = func(ctx context.Context) error {
+		select {
+		case <-mgr.forceCalled:
+			return ctx.Err()
+		case <-time.After(time.Second):
+			return errors.New("shutdown escalation did not force child stop")
+		}
+	}
+	force := make(chan struct{})
+	close(force)
+	pollDone := make(chan struct{})
+	t.Cleanup(func() { close(pollDone) })
+
+	result := make(chan error, 1)
+	go func() {
+		result <- shutdownHost(
+			config.Config{HostShutdownBudget: time.Hour},
+			server.Config,
+			mgr,
+			hostLifecycle,
+			force,
+			pollDone,
+		)
+	}()
+
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("forced shutdown remained blocked on the poll worker")
+	}
+	calls := mgr.callLog()
+	if strings.Contains(calls, "request_children_drain") ||
+		strings.Contains(calls, "wait_children_idle") {
+		t.Fatalf("forced shutdown attempted graceful child drain:\n%s", calls)
+	}
+	if !strings.Contains(calls, "force_stop_children") {
+		t.Fatalf("forced shutdown did not force child stop:\n%s", calls)
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
+		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
 func TestPollWorkerUnwindBudgetReservesShutdownTime(t *testing.T) {
 	tests := []struct {
 		name   string
