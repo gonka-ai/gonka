@@ -41,7 +41,7 @@ func (r SSHRemote) Run(ctx context.Context, destination string, args ...string) 
 	}
 	sshArgs := append([]string(nil), r.Options...)
 	sshArgs = append(sshArgs, defaultSSHOptions...)
-	sshArgs = append(sshArgs, destination, "--", strings.Join(remoteCommand, " "))
+	sshArgs = append(sshArgs, "--", destination, strings.Join(remoteCommand, " "))
 	return runCommand(ctx, binary, sshArgs...)
 }
 

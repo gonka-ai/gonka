@@ -103,8 +103,8 @@ printf 'ok'
 	}
 	gotTail := args[len(args)-3:]
 	wantTail := []string{
-		"operator@example.test",
 		"--",
+		"operator@example.test",
 		`'gonka-routerctl' 'host add' 'value'"'"'with quote' '$HOME; touch /tmp/nope' ''`,
 	}
 	for i := range wantTail {
