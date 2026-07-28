@@ -57,6 +57,34 @@ func TestMsgBridgeExchange_ValidateBasic(t *testing.T) {
 			},
 			err: sdkerrors.ErrInvalidRequest,
 		}, {
+			name: "blockNumber over digit limit",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "100",
+				BlockNumber:     strings.Repeat("1", MaxBridgeAmountDigits+1),
+				ReceiptIndex:    "0",
+				ReceiptsRoot:    "0xroot",
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		}, {
+			name: "receiptIndex over digit limit",
+			msg: MsgBridgeExchange{
+				Validator:       sample.AccAddress(),
+				OriginChain:     "ethereum",
+				ContractAddress: "0xabc",
+				OwnerAddress:    "0xowner",
+				OwnerPubKey:     "pk",
+				Amount:          "100",
+				BlockNumber:     "1",
+				ReceiptIndex:    strings.Repeat("1", MaxBridgeAmountDigits+1),
+				ReceiptsRoot:    "0xroot",
+			},
+			err: sdkerrors.ErrInvalidRequest,
+		}, {
 			name: "valid minimal",
 			msg: MsgBridgeExchange{
 				Validator:       sample.AccAddress(),

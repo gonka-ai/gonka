@@ -26,6 +26,10 @@ func NewMsgBridgeExchange(validator string, originChain string, contractAddress 
 
 var reDigits = regexp.MustCompile(`^[0-9]+$`) //nolint:forbidigo // init code
 
+// MaxBridgeAmountDigits caps numeric string fields before regex and big.Int
+// parsing in ValidateBasic, which runs pre-ante (unmetered). 78 digits covers
+// the full uint256 range (2^256-1 has 78 digits), so no legitimate Ethereum
+// value is rejected.
 const MaxBridgeAmountDigits = 78
 
 func (msg *MsgBridgeExchange) ValidateBasic() error {
@@ -61,7 +65,13 @@ func (msg *MsgBridgeExchange) ValidateBasic() error {
 	if len(msg.ReceiptsRoot) == 0 {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "receiptsRoot is required")
 	}
-	// numeric strings: blockNumber and receiptIndex must be unsigned integers
+	// Length-cap before regex: ValidateBasic runs pre-ante (unmetered).
+	if len(msg.BlockNumber) > MaxBridgeAmountDigits {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "blockNumber exceeds %d digits", MaxBridgeAmountDigits)
+	}
+	if len(msg.ReceiptIndex) > MaxBridgeAmountDigits {
+		return errorsmod.Wrapf(sdkerrors.ErrInvalidRequest, "receiptIndex exceeds %d digits", MaxBridgeAmountDigits)
+	}
 	if !reDigits.MatchString(msg.BlockNumber) {
 		return errorsmod.Wrap(sdkerrors.ErrInvalidRequest, "blockNumber must be a base-10 unsigned integer string")
 	}
