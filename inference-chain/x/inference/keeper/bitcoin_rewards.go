@@ -450,6 +450,56 @@ func ApplyPowerCappingForWeights(participants []*types.ActiveParticipant) ([]*ty
 	return cappedParticipants, wasCapped
 }
 
+func ApplyRewardPowerCapping(participants []*types.ActiveParticipant, totalFullWeight uint64) ([]*types.ActiveParticipant, bool) {
+	if len(participants) <= 1 || totalFullWeight == 0 {
+		return participants, false
+	}
+
+	positiveCount := 0
+	for _, p := range participants {
+		if p.Weight > 0 {
+			positiveCount++
+		}
+	}
+	if positiveCount <= 1 {
+		return participants, false
+	}
+
+	maxPercentageDecimal := types.DecimalFromFloat(0.30)
+	if positiveCount < 4 {
+		adjustedLimit := getSmallNetworkLimit(positiveCount)
+		if adjustedLimit.ToDecimal().GreaterThan(maxPercentageDecimal.ToDecimal()) {
+			maxPercentageDecimal = adjustedLimit
+		}
+	}
+
+	cap := maxPercentageDecimal.ToDecimal().Mul(decimal.NewFromUint64(totalFullWeight)).IntPart()
+	if cap <= 0 {
+		return participants, false
+	}
+
+	wasCapped := false
+	cappedParticipants := make([]*types.ActiveParticipant, len(participants))
+	for i, participant := range participants {
+		capped := &types.ActiveParticipant{
+			Index:        participant.Index,
+			ValidatorKey: participant.ValidatorKey,
+			Weight:       participant.Weight,
+			InferenceUrl: participant.InferenceUrl,
+			Seed:         participant.Seed,
+			Models:       participant.Models,
+			MlNodes:      participant.MlNodes,
+		}
+		if capped.Weight > cap {
+			capped.Weight = cap
+			wasCapped = true
+		}
+		cappedParticipants[i] = capped
+	}
+
+	return cappedParticipants, wasCapped
+}
+
 // CalculateOptimalCap implements the power capping algorithm
 // Returns capped participants, new total power, and whether capping was applied
 func CalculateOptimalCap(participants []*types.ActiveParticipant, totalPower int64, maxPercentage *types.Decimal) ([]*types.ActiveParticipant, int64, bool) {
@@ -850,8 +900,14 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 		})
 	}
 
-	// 3. Apply power capping to effective weights
-	cappedParticipants, wasCapped := ApplyPowerCappingForWeights(effectiveWeights)
+
+	totalFullWeight := uint64(0)
+	for _, weight := range participantFullWeights {
+		totalFullWeight += weight
+	}
+
+
+	cappedParticipants, wasCapped := ApplyRewardPowerCapping(effectiveWeights, totalFullWeight)
 
 	// Map capped weights back to participants
 	for _, cappedParticipant := range cappedParticipants {
@@ -864,14 +920,8 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 
 	logger.Info("Bitcoin Rewards: Applied power capping to effective weights",
 		"participantCount", len(effectiveWeights),
+		"totalFullWeight", totalFullWeight,
 		"wasCapped", wasCapped)
-
-	// Calculate total weight using FULL weights (for denominator)
-	// This includes invalidated participants and pre-CPoC-capping weights
-	totalFullWeight := uint64(0)
-	for _, weight := range participantFullWeights {
-		totalFullWeight += weight
-	}
 
 	// Calculate actual distributed weight (for logging/comparison)
 	totalPoCWeight := uint64(0)

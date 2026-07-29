@@ -587,19 +587,19 @@ func TestCalculateParticipantBitcoinRewards(t *testing.T) {
 		require.Equal(t, uint64(100), bitcoinResult.EpochNumber)
 		require.True(t, bitcoinResult.DecayApplied) // Since epoch > genesis
 
-		// Calculate expected rewards with power capping
-		// Apply power capping to verify the algorithm works correctly
+		// Calculate expected rewards with power capping.
+		// The reward cap is measured against the SAME full-weight base used as the
+		// reward denominator (totalFullWeight), so the ceiling is a flat
+		// maxPercentage × totalFullWeight and participant2 (50% of weight) is
+		// capped to it. All weight is confirmed here, so effective == full.
+		totalFullWeight := uint64(1000 + 2000 + 1000) // 4000
 		uncappedWeights := []*types.ActiveParticipant{
 			{Index: "participant1", Weight: 1000},
 			{Index: "participant2", Weight: 2000}, // 50% - should be capped
 			{Index: "participant3", Weight: 1000},
 		}
-		cappedWeights, wasCapped := ApplyPowerCappingForWeights(uncappedWeights)
-		require.True(t, wasCapped, "Power capping should be applied when participant2 has 50%")
-
-		// Denominator uses totalFullWeight (sum of vw.Weight), not post-capping total.
-		// This ensures power-capped shares go to governance instead of being redistributed.
-		totalFullWeight := uint64(1000 + 2000 + 1000) // 4000
+		cappedWeights, wasCapped := ApplyRewardPowerCapping(uncappedWeights, totalFullWeight)
+		require.True(t, wasCapped, "Power capping should be applied when participant2 exceeds the cap")
 
 		expectedEpochReward, err := CalculateFixedEpochReward(99, 285000000000000, bitcoinParams.DecayRate)
 		require.NoError(t, err)
@@ -1750,13 +1750,14 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, 2, len(results))
 
-		// Effective: P1=250, P2=150. Power capping: P1 at 250/400 = 62.5% > 50%,
-		// capped to 150. After capping: P1=150, P2=150.
-		// Denominator = totalFullWeight = 300 + 150 = 450.
-		// P1: 150/450 * 600 = 200. P2: 150/450 * 600 = 200.
-		// Remainder to governance: 600 - 400 = 200.
-		require.Equal(t, uint64(200), results[0].Settle.RewardCoins, "participant1 capped reward")
-		require.Equal(t, uint64(200), results[1].Settle.RewardCoins, "participant2 reward")
+		// Effective: P1=250, P2=150. totalFullWeight = 300 + 150 = 450.
+		// The reward cap is measured against the full-weight base: 50%
+		// (2-participant small-network limit) × 450 = 225.
+		// P1 effective 250 > 225 → capped to 225. P2 150 ≤ 225 → uncapped.
+		// P1: 225/450 * 600 = 300. P2: 150/450 * 600 = 200.
+		// Remainder to governance: 600 - 500 = 100.
+		require.Equal(t, uint64(300), results[0].Settle.RewardCoins, "participant1 capped to the 50% ceiling of the full-weight base")
+		require.Equal(t, uint64(200), results[1].Settle.RewardCoins, "participant2 uncapped reward")
 		require.Equal(t, int64(600), bitcoinResult.Amount)
 	})
 
@@ -1794,12 +1795,12 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationCapping(t *testing.T) {
 		results, _, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
 		require.NoError(t, err)
 
-		// Effective: P1=100, P2=200. Power capping: P2 at 200/300 = 66.7% > 50%,
-		// capped to 100. After capping: P1=100, P2=100.
-		// Denominator = totalFullWeight = 300 + 200 = 500.
-		// P1: 100/500 * 300 = 60. P2: 100/500 * 300 = 60.
+		// Effective: P1=100, P2=200. totalFullWeight = 300 + 200 = 500.
+		// Reward cap = 50% × 500 = 250. Neither effective weight exceeds it, so
+		// no capping applies.
+		// P1: 100/500 * 300 = 60. P2: 200/500 * 300 = 120.
 		require.Equal(t, uint64(60), results[0].Settle.RewardCoins, "participant1 reading-based reward")
-		require.Equal(t, uint64(60), results[1].Settle.RewardCoins, "participant2 capped reward")
+		require.Equal(t, uint64(120), results[1].Settle.RewardCoins, "participant2 uncapped reading-based reward")
 	})
 }
 
@@ -1859,22 +1860,83 @@ func TestCalculateParticipantBitcoinRewards_ConfirmationAndPowerCapping(t *testi
 		// Effective weights (no collateral scaling, Weight == sum(PocWeights)):
 		// participant1: preserved(100) + confirmed(600) = 700
 		// participant2: preserved(0) + confirmed(100) = 100
-		// Power capping: P1 has 700/800 = 87.5% > 50%, capped to 100
-		// After capping: P1=100, P2=100
-		// Denominator = totalFullWeight = 700 + 100 = 800
-		// P1: 100/800 * 1000 = 125
-		// P2: 100/800 * 1000 = 125
-		// Governance gets 750
+		// totalFullWeight = 700 + 100 = 800.
+		// The reward cap is measured against the full-weight base: 50%
+		// (2-participant limit) × 800 = 400.
+		// P1 effective 700 > 400 → capped to 400. P2 100 uncapped.
+		// P1: 400/800 * 1000 = 500. P2: 100/800 * 1000 = 125. Governance: 375.
 		totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins
 		require.LessOrEqual(t, totalDistributed, uint64(1000), "total distributed should not exceed epoch reward")
 
-		// P1 was capped (should get far less than 87.5%)
+		// P1 is capped to exactly the 50% ceiling of the full-weight base (down
+		// from its uncapped 87.5% share), not below it as the old effective-base
+		// cap did.
+		require.Equal(t, uint64(500), results[0].Settle.RewardCoins, "participant1 capped to the 50% ceiling")
+		require.Equal(t, uint64(125), results[1].Settle.RewardCoins, "participant2 uncapped reward")
 		participant1Percentage := float64(results[0].Settle.RewardCoins) / 1000.0
-		require.LessOrEqual(t, participant1Percentage, 0.20, "participant1 should be power-capped well below 87.5%")
-
-		// Both should get equal rewards after capping
-		require.Equal(t, results[0].Settle.RewardCoins, results[1].Settle.RewardCoins, "equal capped weights yield equal rewards")
+		require.LessOrEqual(t, participant1Percentage, 0.50, "participant1 reward share cannot exceed the 50% ceiling")
+		require.Greater(t, results[0].Settle.RewardCoins, results[1].Settle.RewardCoins, "dominant P1 still earns more than P2, just capped")
 	})
+}
+
+// Regression for the reward power-cap base mismatch (cPoC-confirmed-weight cap
+// drift): an honest participant whose FULL-weight share is below 30% must not be
+// power-capped just because other participants failed their Confirmation-PoC and
+// shrank the network's effective-weight total. The cap is now measured against
+// the same full-weight base used as the reward denominator, so the participant
+// keeps its full sub-cap share instead of having it clawed back to governance.
+func TestCalculateParticipantBitcoinRewards_SubCapHonestParticipantNotCappedByOthersCPoCFailure(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		GenesisEpoch:       1,
+		InitialEpochReward: 1000,
+		DecayRate:          types.DecimalFromFloat(0.0),
+	}
+
+	// 4 participants (positiveCount >= 4 → standard 30% cap).
+	// "honest" confirms 100% of its cPoC; the other three confirm only a
+	// fraction, collapsing the effective-weight total.
+	//   full weights:      270 + 300 + 230 + 200 = 1000  (honest full share 27%)
+	//   effective weights: 270 + 100 +  80 +  50 =  500  (honest effective share 54%)
+	// Old (buggy) cap = 30% × 500 = 150 → honest clawed back from 270 to 150.
+	// New cap        = 30% × 1000 = 300 → honest (270) is under the cap, untouched.
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "honest", Weight: 270, ConfirmationWeight: 270},
+			{MemberAddress: "failerB", Weight: 300, ConfirmationWeight: 100},
+			{MemberAddress: "failerC", Weight: 230, ConfirmationWeight: 80},
+			{MemberAddress: "failerD", Weight: 200, ConfirmationWeight: 50},
+		},
+	}
+
+	participants := []types.Participant{
+		{Address: "honest", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		{Address: "failerB", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		{Address: "failerC", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+		{Address: "failerD", Status: types.ParticipantStatus_ACTIVE, CurrentEpochStats: &types.CurrentEpochStats{InferenceCount: 100, MissedRequests: 0}},
+	}
+
+	logger := createTestLogger(t)
+	results, bitcoinResult, err := CalculateParticipantBitcoinRewards(participants, epochGroupData, bitcoinParams, nil, modelNodesAndScales(epochGroupData), logger)
+	require.NoError(t, err)
+	require.Equal(t, 4, len(results))
+	require.Equal(t, int64(1000), bitcoinResult.Amount)
+
+	// Honest participant is NOT capped: reward = 270/1000 × 1000 = 270, exactly its
+	// full-weight share. Under the old effective-base cap it would have been 150.
+	require.Equal(t, uint64(270), results[0].Settle.RewardCoins, "sub-30%% honest participant keeps its full-weight share")
+	require.Greater(t, results[0].Settle.RewardCoins, uint64(150), "not clawed back to the old effective-base cap")
+
+	// The other participants earn only their confirmed (effective) share; their
+	// unconfirmed weight is the only thing routed to governance.
+	require.Equal(t, uint64(100), results[1].Settle.RewardCoins, "failerB earns its confirmed share")
+	require.Equal(t, uint64(80), results[2].Settle.RewardCoins, "failerC earns its confirmed share")
+	require.Equal(t, uint64(50), results[3].Settle.RewardCoins, "failerD earns its confirmed share")
+
+	// Conservation: distributed + governance == epoch reward.
+	totalDistributed := results[0].Settle.RewardCoins + results[1].Settle.RewardCoins + results[2].Settle.RewardCoins + results[3].Settle.RewardCoins
+	require.Equal(t, uint64(500), totalDistributed)
+	require.Equal(t, int64(1000), int64(totalDistributed)+bitcoinResult.GovernanceAmount, "epoch reward conserved (participants + governance)")
 }
 
 // Test edge cases
@@ -2000,11 +2062,12 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 
 		// P1: effectiveWeight = 1000 * 200/1000 = 200
 		// P2: effectiveWeight = 1000 (Weight == rawTotal, no scaling)
-		// Power capping: P2 at 1000/1200 = 83% > 50%, capped to 200.
-		// Denominator = totalFullWeight = 200 + 1000 = 1200.
-		// Both: 200/1200 * 1200 = 200.
+		// totalFullWeight = 200 + 1000 = 1200. Reward cap = 50% × 1200 = 600.
+		// P1 200 uncapped. P2 1000 > 600 → capped to 600.
+		// P1: 200/1200 * 1200 = 200. P2: 600/1200 * 1200 = 600. Governance: 400.
 		require.Equal(t, uint64(200), results[0].Settle.RewardCoins, "P1 reward matches collateral-adjusted weight")
-		require.Equal(t, uint64(200), results[1].Settle.RewardCoins, "P2 power-capped to same level")
+		require.Equal(t, uint64(600), results[1].Settle.RewardCoins, "P2 capped to the 50% ceiling of the full-weight base")
+		require.Less(t, results[0].Settle.RewardCoins, results[1].Settle.RewardCoins, "undercollateralized P1 earns proportionally less than P2")
 	})
 
 	t.Run("Full collateral participants are unaffected", func(t *testing.T) {

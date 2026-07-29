@@ -131,4 +131,6 @@ func (app *App) registerMigrations() {
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 13, func(ctx sdk.Context) error { return nil })
 
 	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 14, func(ctx sdk.Context) error { return nil })
+
+	app.Configurator().RegisterMigration(inferencetypes.ModuleName, 15, func(ctx sdk.Context) error { return nil })
 }
