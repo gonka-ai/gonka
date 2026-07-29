@@ -110,6 +110,8 @@ func GetBitcoinSettleAmountsWithTransfers(
 		originalAmount := bitcoinResult.Amount
 		bitcoinResult.Amount = settleParams.TotalSubsidySupply - settleParams.TotalSubsidyPaid
 
+		bitcoinResult.GovernanceAmount = 0
+
 		// Proportionally reduce all participant rewards with proper remainder handling
 		if originalAmount > 0 {
 			var totalDistributed uint64 = 0

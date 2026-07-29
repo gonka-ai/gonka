@@ -1260,6 +1260,50 @@ func TestGetBitcoinSettleAmounts(t *testing.T) {
 			}
 		}
 	})
+
+	t.Run("Approaching cap with governance remainder conserves minted amount", func(t *testing.T) {
+		capParticipants := []types.Participant{
+			{
+				Address:     "participant1",
+				CoinBalance: 500,
+				Status:      types.ParticipantStatus_INVALID,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+			{
+				Address:     "participant2",
+				CoinBalance: 1000,
+				Status:      types.ParticipantStatus_ACTIVE,
+				CurrentEpochStats: &types.CurrentEpochStats{
+					InferenceCount: 100,
+					MissedRequests: 0,
+				},
+			},
+		}
+
+		supplyCappedParams := &SettleParameters{
+			TotalSubsidyPaid:   600000000000000000 - 100000,
+			TotalSubsidySupply: 600000000000000000,
+		}
+
+		logger := createTestLogger(t)
+		results, bitcoinResult, err := GetBitcoinSettleAmounts(capParticipants, epochGroupData, bitcoinParams, nil, supplyCappedParams, modelNodesAndScales(epochGroupData), logger)
+		require.NoError(t, err)
+
+		require.Equal(t, int64(100000), bitcoinResult.Amount, "Should mint only remaining supply")
+
+		var totalDistributed uint64 = 0
+		for _, result := range results {
+			if result.Error == nil && result.Settle != nil {
+				totalDistributed += result.Settle.RewardCoins
+			}
+		}
+
+		require.Equal(t, uint64(bitcoinResult.Amount), totalDistributed+uint64(bitcoinResult.GovernanceAmount),
+			"Cap path must conserve MINTED amount (participants + governance)")
+	})
 }
 
 // TestPhase2BonusFunctions tests the Phase 2 enhancement stub functions
