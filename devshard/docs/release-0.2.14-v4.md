@@ -243,30 +243,6 @@ and `binary_version` during a swap. Whole-`versiond` host evacuation is a
 
 Manual walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) **§7**.
 
-### Graceful versiond shutdown (single-instance and HA)
-
-`versiond` now owns one graceful shutdown budget across proxy admission,
-accepted requests (including complete SSE streams), child drain, child stop,
-and HTTP shutdown. This applies to the base single-instance join stack as well
-as the HA overlay. HA evacuation first removes the host from router admission;
-single-instance `docker compose down`, `stop`, or `restart` has no alternate
-host, but still lets work accepted before `SIGTERM` finish.
-
-The join Compose defaults are:
-
-| Setting | Default | Role |
-| --- | --- | --- |
-| `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
-| `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
-
-These are maximum waits, not fixed delays: an idle versiond exits immediately.
-A busy or stuck node may now make a routine Compose stop wait longer than the
-old Docker default of roughly 10 seconds. Keep
-`VERSIOND_STOP_GRACE_PERIOD > VERSIOND_HOST_SHUTDOWN_BUDGET` so versiond can
-finish its own escalation and child reap. Operators may override both values
-for a deliberately shorter maintenance window, but doing so can terminate
-accepted inference streams; do not shorten only the outer Docker grace.
-
 ### Versionless observability (bind safety + canonical URLs)
 
 Observability GETs no longer call `CreateSession`. Unbound escrow obs returns
@@ -580,9 +556,6 @@ Full checklists and negative proofs (multi-host + sqlite → 503, migrate invent
       (same-name SHA with a long stream) from the deploy test plan
 - [ ] Confirm HA children report `postgres` via `devshardd --print-storage-mode`
       before expecting blue/green overlap on a governance SHA bump
-- [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
-      `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
-      wait; short values can terminate accepted inference streams
 
 ---
 
