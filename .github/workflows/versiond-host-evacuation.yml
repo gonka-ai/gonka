@@ -10,7 +10,6 @@ on:
       - 'devshard/Dockerfile'
       - 'devshard/go.mod'
       - 'devshard/go.sum'
-      - 'Makefile'
       - '.github/workflows/versiond-host-evacuation.yml'
   workflow_dispatch:
 
