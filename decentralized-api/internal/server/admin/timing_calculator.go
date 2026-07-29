@@ -15,6 +15,14 @@ type TimingInfo struct {
 	BlocksUntilNextPoC  int64  `json:"blocks_until_next_poc"`
 	SecondsUntilNextPoC int64  `json:"seconds_until_next_poc"`
 	ShouldBeOnline      bool   `json:"should_be_online"`
+	// InPoCWindow is true whenever PoC work is happening right now — either a
+	// regular PoC phase or an active confirmation PoC event. Unlike
+	// ShouldBeOnline (which also covers the pre-PoC lead time), this is the
+	// "work in progress" signal the test-safety gates key off.
+	InPoCWindow bool `json:"in_poc_window"`
+	// ConfirmationPoCActive reports whether the countdown/online guidance is
+	// driven by a confirmation PoC event rather than the epoch schedule.
+	ConfirmationPoCActive bool `json:"confirmation_poc_active,omitempty"`
 }
 
 // ComputeTiming derives TimingInfo from the current epoch state.
@@ -34,26 +42,56 @@ func ComputeTiming(es *chainphase.EpochState) *TimingInfo {
 	if currentHeight >= nextPoC {
 		nextPoC = es.LatestEpoch.NextPoCStart()
 	}
+
+	// A confirmation PoC is an out-of-band PoC round: its generation window can
+	// start long before the epoch's own PoC. Ignoring it (the previous behavior)
+	// would report hours of slack while the node is in — or minutes from — real
+	// PoC work, which is exactly when a multi-minute test must not start.
+	confirmationActive := false
+	if ev := es.ActiveConfirmationPoCEvent; ev != nil {
+		params := es.LatestEpoch.EpochParams
+		if confirmationEnd := ev.GetValidationEnd(&params); currentHeight <= confirmationEnd {
+			confirmationActive = true
+			if ev.GenerationStartHeight > currentHeight && ev.GenerationStartHeight < nextPoC {
+				nextPoC = ev.GenerationStartHeight
+			}
+		}
+	}
+
 	blocks := nextPoC - currentHeight
 	if blocks < 0 {
 		blocks = 0
 	}
 	seconds := int64(float64(blocks) * apiconfig.DefaultBlockTimeSeconds)
+	inWindow := inPoCWindow(es, currentHeight)
 	return &TimingInfo{
-		CurrentPhase:        string(es.CurrentPhase),
-		BlocksUntilNextPoC:  blocks,
-		SecondsUntilNextPoC: seconds,
-		ShouldBeOnline:      shouldBeOnline(es.CurrentPhase, seconds),
+		CurrentPhase:          string(es.CurrentPhase),
+		BlocksUntilNextPoC:    blocks,
+		SecondsUntilNextPoC:   seconds,
+		ShouldBeOnline:        inWindow || seconds <= apiconfig.OnlineAlertLeadSeconds,
+		InPoCWindow:           inWindow,
+		ConfirmationPoCActive: confirmationActive,
 	}
 }
 
-func shouldBeOnline(phase types.EpochPhase, secondsUntilNextPoC int64) bool {
-	switch phase {
+// inPoCWindow reports whether PoC work is happening at currentHeight: either a
+// regular PoC phase, or a confirmation PoC event inside its generation,
+// exchange, or validation window.
+func inPoCWindow(es *chainphase.EpochState, currentHeight int64) bool {
+	switch es.CurrentPhase {
 	case types.PoCGeneratePhase, types.PoCGenerateWindDownPhase,
 		types.PoCValidatePhase, types.PoCValidateWindDownPhase:
 		return true
 	}
-	return secondsUntilNextPoC <= apiconfig.OnlineAlertLeadSeconds
+	if ev := es.ActiveConfirmationPoCEvent; ev != nil {
+		params := es.LatestEpoch.EpochParams
+		if ev.IsInGenerationWindow(currentHeight, &params) ||
+			ev.IsInExchangeWindow(currentHeight, &params) ||
+			ev.IsInValidationWindow(currentHeight, &params) {
+			return true
+		}
+	}
+	return false
 }
 
 // formatShortDuration renders a non-negative seconds count as a compact

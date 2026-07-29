@@ -22,12 +22,15 @@ import (
 // known-good node shape used by TestPostVersionStatus.
 func registerTestNode(t *testing.T, s *Server, cm *apiconfig.ConfigManager, id string) apiconfig.InferenceNodeConfig {
 	t.Helper()
+	// The broker rejects duplicate host+port, so give each node its own ports.
+	// The first node keeps 8080/8081 so testNodePoCURL stays valid.
+	offset := len(cm.GetNodes()) * 10
 	nodeConfig := apiconfig.InferenceNodeConfig{
 		Id:               id,
 		Host:             "localhost",
-		InferencePort:    8080,
+		InferencePort:    8080 + offset,
 		InferenceSegment: "/api/v1",
-		PoCPort:          8081,
+		PoCPort:          8081 + offset,
 		PoCSegment:       "/api/v1",
 		MaxConcurrent:    3,
 		Models: map[string]apiconfig.ModelConfig{
@@ -132,6 +135,59 @@ func TestPostNodeTest(t *testing.T) {
 		assert.Equal(t, http.StatusConflict, rec.Code)
 	})
 
+	// The boundary the old gate let through: outside the 600s must-be-online
+	// window, but close enough that a full-length test would still be running
+	// when the node has to be online.
+	t.Run("just outside the online window still returns 409", func(t *testing.T) {
+		// 601s before PoC at 6s/block ≈ 100 blocks.
+		s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 10000 - 100, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+		defer func() {
+			s.phaseTracker.Update(
+				chainphase.BlockInfo{Height: 1, Hash: "h"},
+				&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+				&types.EpochParams{},
+				true,
+				nil,
+			)
+		}()
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
+		rec := httptest.NewRecorder()
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+
+	// Fail-closed: an unknown schedule must not allow a multi-minute test.
+	t.Run("unsynced chain returns 409", func(t *testing.T) {
+		s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 1, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			false,
+			nil,
+		)
+		defer s.phaseTracker.Update(
+			chainphase.BlockInfo{Height: 1, Hash: "h"},
+			&types.Epoch{Index: 100, PocStartBlockHeight: 10000},
+			&types.EpochParams{},
+			true,
+			nil,
+		)
+
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
+		rec := httptest.NewRecorder()
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusConflict, rec.Code)
+	})
+
 	// An unknown node must 404 even when PoC is imminent (existence is checked
 	// before the timing gate).
 	t.Run("unknown node returns 404 even near PoC", func(t *testing.T) {
@@ -156,6 +212,35 @@ func TestPostNodeTest(t *testing.T) {
 
 		assert.Equal(t, http.StatusNotFound, rec.Code)
 	})
+}
+
+// TestPostNodeTest_RefusesRoutableNode is the HTTP-layer form of the central
+// safety fix: a node the router can pick — up in INFERENCE with an epoch model,
+// even with no lock held and no epoch assignment — must not be testable. Before
+// the fix such a node passed the idle check and the test stopped it outside the
+// broker's state machine, failing in-flight inference requests.
+func TestPostNodeTest_RefusesRoutableNode(t *testing.T) {
+	s, cm, _ := setupTestServer(t)
+	registerTestNode(t, s, cm, "node-1")
+	farFromPoC(t, s)
+
+	// Drive the node into the state the router accepts. RegisterNode already
+	// populated EpochModels from the configured model.
+	setNodeStatuses(t, s, "node-1", types.HardwareNodeStatus_INFERENCE, types.HardwareNodeStatus_INFERENCE)
+
+	req := httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
+	rec := httptest.NewRecorder()
+	s.e.ServeHTTP(rec, req)
+
+	assert.Equal(t, http.StatusConflict, rec.Code)
+	assert.Contains(t, rec.Body.String(), "can receive requests at any time")
+
+	// Same node before it is up: the onboarding case must stay testable.
+	setNodeStatuses(t, s, "node-1", types.HardwareNodeStatus_INFERENCE, types.HardwareNodeStatus_STOPPED)
+	req = httptest.NewRequest(http.MethodPost, "/admin/v1/nodes/node-1/test", nil)
+	rec = httptest.NewRecorder()
+	s.e.ServeHTTP(rec, req)
+	assert.Equal(t, http.StatusOK, rec.Code)
 }
 
 // nodeView is a lightweight projection of the GET /nodes response used
@@ -189,20 +274,18 @@ func getNodeViews(t *testing.T, s *Server) []nodeView {
 	return nodes
 }
 
-// TestShouldAutoTest covers the auto-test gate: only fire when the next
-// PoC is strictly more than the configured lead time away.
-func TestShouldAutoTest(t *testing.T) {
-	assert.False(t, shouldAutoTest(apiconfig.AutoTestMinSecondsBeforePoC), "exactly the threshold is not > threshold")
-	assert.True(t, shouldAutoTest(apiconfig.AutoTestMinSecondsBeforePoC+1))
-	assert.False(t, shouldAutoTest(0))
-	assert.False(t, shouldAutoTest(SecondsUntilPoCUnknown), "unknown schedule must not auto-test")
-}
-
 func TestNodeStateTestBlockReason(t *testing.T) {
+	// An enabled node in the inference phase of a later epoch: ShouldBeOperational
+	// is true, so admin state does not affect the outcome of these cases.
+	enabled := epochPhase{epoch: 9, phase: types.InferencePhase, known: true}
 	tests := []struct {
 		name  string
 		state broker.NodeState
-		want  string
+		ep    epochPhase
+		// epUnknown drives the fail-closed path: leave ep zero and assert the
+		// behavior when the chain phase is not available.
+		epUnknown bool
+		want      string
 	}{
 		{name: "idle node is testable", state: broker.NodeState{}, want: ""},
 		{
@@ -230,13 +313,149 @@ func TestNodeStateTestBlockReason(t *testing.T) {
 			state: broker.NodeState{IntendedStatus: types.HardwareNodeStatus_POC},
 			want:  "node is participating in PoC",
 		},
+		{
+			// The bug this guards: an unassigned node still gets EpochModels
+			// populated from its configured model (broker
+			// populateNodeWithConfiguredModel), so once it is up in INFERENCE the
+			// router can hand it a request even with LockCount == 0 and no epoch
+			// assignment. Testing it would stop it outside the state machine.
+			name: "routable inference node with no lock is busy",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+				// RegisterNode sets {Enabled: true, Epoch: currentEpoch}, so this
+				// is what a real registered node carries — not the zero value,
+				// which would mean "disabled since epoch 0".
+				AdminState: broker.AdminState{Enabled: true, Epoch: 5},
+			},
+			want: "node is serving inference and can receive requests at any time",
+		},
+		{
+			// The onboarding case must stay testable: intended INFERENCE but not
+			// yet up, so the router cannot pick it.
+			name: "node not yet up is testable",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_STOPPED,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+			},
+			want: "",
+		},
+		{
+			// Up, but nothing to serve: the router rejects it on the epoch-model
+			// check, so it is genuinely idle.
+			name: "inference node without epoch models is testable",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+			},
+			want: "",
+		},
+		{
+			name: "failed node is testable",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_FAILED,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+			},
+			want: "",
+		},
+		{
+			// An admin-disabled node is not routable, so it must stay testable —
+			// this is the operator's remediation when a serving node is refused.
+			// Without the ShouldBeOperational term it was refused anyway, leaving
+			// no way to test it until the reconciler drove it out of INFERENCE.
+			name: "admin-disabled node is testable",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+				AdminState:     broker.AdminState{Enabled: false, Epoch: 5},
+			},
+			ep:   enabled, // epoch 9 > disabled-at epoch 5 → not operational
+			want: "",
+		},
+		{
+			// Explicitly enabled and past its epoch: routable, so refused.
+			name: "admin-enabled node is busy",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+				AdminState:     broker.AdminState{Enabled: true, Epoch: 5},
+			},
+			ep:   enabled,
+			want: "node is serving inference and can receive requests at any time",
+		},
+		{
+			// Fail-closed: with an unknown phase we cannot evaluate admin state, so
+			// an otherwise-routable node is refused rather than assumed disabled.
+			name: "unknown phase refuses an otherwise routable node",
+			state: broker.NodeState{
+				IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+				CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+				EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+				AdminState:     broker.AdminState{Enabled: false, Epoch: 5},
+			},
+			epUnknown: true,
+			want:      "node is serving inference and can receive requests at any time",
+		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			assert.Equal(t, tt.want, nodeStateTestBlockReason(tt.state))
+			ep := tt.ep
+			if !tt.epUnknown && !ep.known {
+				ep = enabled // default: a known phase where admin state is a no-op
+			}
+			assert.Equal(t, tt.want, nodeStateTestBlockReason(tt.state, ep))
 		})
 	}
+}
+
+// TestIsRoutableForInference_MirrorsNodeAvailable pins the invariant the safety
+// check depends on: isRoutableForInference must never be weaker than the
+// router's own predicate. A false positive (refusing a node the router would
+// skip) is safe; a false negative would let a test stop a node mid-request.
+func TestIsRoutableForInference_MirrorsNodeAvailable(t *testing.T) {
+	ep := epochPhase{epoch: 9, phase: types.InferencePhase, known: true}
+	routable := broker.NodeState{
+		IntendedStatus: types.HardwareNodeStatus_INFERENCE,
+		CurrentStatus:  types.HardwareNodeStatus_INFERENCE,
+		EpochModels:    map[string]types.Model{"m": {Id: "m"}},
+		AdminState:     broker.AdminState{Enabled: true, Epoch: 5},
+	}
+	assert.True(t, isRoutableForInference(routable, ep))
+
+	// Each condition the router requires, removed one at a time.
+	t.Run("intended not inference", func(t *testing.T) {
+		s := routable
+		s.IntendedStatus = types.HardwareNodeStatus_STOPPED
+		assert.False(t, isRoutableForInference(s, ep))
+	})
+	t.Run("current not inference", func(t *testing.T) {
+		s := routable
+		s.CurrentStatus = types.HardwareNodeStatus_STOPPED
+		assert.False(t, isRoutableForInference(s, ep))
+	})
+	t.Run("reconciling", func(t *testing.T) {
+		s := routable
+		s.ReconcileInfo = &broker.ReconcileInfo{Status: types.HardwareNodeStatus_INFERENCE}
+		assert.False(t, isRoutableForInference(s, ep))
+	})
+	t.Run("no epoch models", func(t *testing.T) {
+		s := routable
+		s.EpochModels = nil
+		assert.False(t, isRoutableForInference(s, ep))
+	})
+	t.Run("not operational", func(t *testing.T) {
+		s := routable
+		s.AdminState = broker.AdminState{Enabled: false, Epoch: 5}
+		assert.False(t, isRoutableForInference(s, ep),
+			"must agree with ShouldBeOperational, which the router also consults")
+		assert.False(t, s.ShouldBeOperational(ep.epoch, ep.phase))
+	})
 }
 
 // TestMaybeAutoTest verifies the auto-trigger fires a background test
@@ -326,6 +545,187 @@ func TestMaybeAutoTest_RetriesRetryableFailureAfterBackoff(t *testing.T) {
 		}
 		t.Fatalf("old retryable failure was not retried; last result: %+v", s.tester.LastResult("node-1"))
 	})
+}
+
+// setNodeStatuses forces a registered node's intended/current status so a test
+// can place it in the state the router accepts (or rejects). It first waits for
+// the broker's startup status scan to land, otherwise that scan's queued
+// STOPPED update would overwrite what we just set.
+func setNodeStatuses(t *testing.T, s *Server, nodeId string, intended, current types.HardwareNodeStatus) {
+	t.Helper()
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		nodes, err := s.nodeBroker.GetNodes()
+		if err == nil {
+			for _, n := range nodes {
+				if n.Node.Id == nodeId && n.State.CurrentStatus != types.HardwareNodeStatus_UNKNOWN {
+					goto settled
+				}
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+settled:
+	if !s.nodeBroker.SetNodeStatusesForTest(nodeId, intended, current) {
+		t.Fatalf("node %s not registered with the broker", nodeId)
+	}
+}
+
+// stubActivity is a participantActivity whose answers the test controls.
+type stubActivity struct {
+	active bool
+	known  bool
+}
+
+func (s stubActivity) IsActive() bool { return s.active }
+func (s stubActivity) IsKnown() bool  { return s.known }
+
+// farFromPoC pushes the phase tracker to a state with hours of slack, so the
+// schedule gate is open.
+func farFromPoC(t *testing.T, s *Server) {
+	t.Helper()
+	s.phaseTracker.Update(
+		chainphase.BlockInfo{Height: 1, Hash: "h"},
+		&types.Epoch{Index: 100, PocStartBlockHeight: 1000000},
+		&types.EpochParams{},
+		true,
+		nil,
+	)
+}
+
+// TestAutoTestSkippedForActiveParticipant guards the gate that keeps auto-test
+// an onboarding-only aid. A participant already in the active set has nodes
+// doing (or about to do) real work; self-initiated stops outside the broker's
+// state machine must never happen there, no matter how much slack there is
+// before PoC. Operators can still test explicitly.
+func TestAutoTestSkippedForActiveParticipant(t *testing.T) {
+	s, cm, _ := setupTestServer(t)
+	registerTestNode(t, s, cm, "node-1")
+	farFromPoC(t, s)
+	s.activityTracker = stubActivity{active: true, known: true}
+
+	s.OnEpochState(s.phaseTracker.GetCurrentEpochState())
+	s.maybeAutoTest("node-1")
+	time.Sleep(200 * time.Millisecond)
+
+	assert.Nil(t, s.tester.LastResult("node-1"),
+		"an active participant's node must never be auto-tested")
+
+	// Same node, same schedule, inactive participant: now it is tested.
+	s.activityTracker = stubActivity{active: false, known: true}
+	s.OnEpochState(s.phaseTracker.GetCurrentEpochState())
+
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if s.tester.LastResult("node-1") != nil {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatal("inactive participant's node was not auto-tested")
+}
+
+// TestOnEpochStateTestsOneNodeAtATime covers the global concurrency limit on the
+// per-block sweep: a test takes its node out of service, so with several idle
+// nodes one block must not stop them all. The governance query is made to block
+// so the started test stays in flight while we observe.
+func TestOnEpochStateTestsOneNodeAtATime(t *testing.T) {
+	s, cm, factory := setupTestServer(t)
+	ids := []string{"node-1", "node-2", "node-3"}
+	for _, id := range ids {
+		registerTestNode(t, s, cm, id)
+	}
+	farFromPoC(t, s)
+
+	release := make(chan struct{})
+	s.tester = NewMLNodeTester(cm, factory, stubGovModels{
+		resp:  &types.QueryModelsAllResponse{Model: []types.Model{{Id: "test-model"}}},
+		block: release,
+	})
+
+	countRunning := func() int {
+		n := 0
+		for _, id := range ids {
+			if s.tester.IsRunning(id) {
+				n++
+			}
+		}
+		return n
+	}
+
+	s.OnEpochState(s.phaseTracker.GetCurrentEpochState())
+	deadline := time.Now().Add(2 * time.Second)
+	for countRunning() == 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+	assert.Equal(t, 1, countRunning(), "one block must start exactly one node test")
+
+	// More blocks while that test is still in flight must not start another.
+	for i := 0; i < 3; i++ {
+		s.OnEpochState(s.phaseTracker.GetCurrentEpochState())
+	}
+	assert.Equal(t, 1, countRunning(), "no second test may start while one is in flight")
+
+	close(release)
+	deadline = time.Now().Add(3 * time.Second)
+	for countRunning() > 0 && time.Now().Before(deadline) {
+		time.Sleep(5 * time.Millisecond)
+	}
+
+	tested := 0
+	for _, id := range ids {
+		if s.tester.LastResult(id) != nil {
+			tested++
+		}
+	}
+	assert.Equal(t, 1, tested, "only the one node that was tested has a result")
+
+	// Later blocks pick up the remaining nodes, one per block.
+	for i := 0; i < 10 && tested < len(ids); i++ {
+		s.OnEpochState(s.phaseTracker.GetCurrentEpochState())
+		deadline = time.Now().Add(2 * time.Second)
+		for time.Now().Before(deadline) {
+			n := 0
+			for _, id := range ids {
+				if s.tester.LastResult(id) != nil {
+					n++
+				}
+			}
+			if n > tested && countRunning() == 0 {
+				tested = n
+				break
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	assert.Equal(t, len(ids), tested, "later blocks should cover the remaining nodes")
+}
+
+// TestMaybeAutoTest_BackoffMeasuredFromCompletion guards that a long-running
+// failed test does not become instantly eligible for a retry: the backoff runs
+// from when the attempt ended, not when it started.
+func TestMaybeAutoTest_BackoffMeasuredFromCompletion(t *testing.T) {
+	s, cm, _ := setupTestServer(t)
+	registerTestNode(t, s, cm, "node-1")
+	farFromPoC(t, s)
+
+	backoff := time.Duration(apiconfig.AutoTestRetryBackoffSeconds) * time.Second
+	// Started long ago (older than the backoff) but only just finished — a test
+	// can itself run for minutes.
+	longRun := &TestResult{
+		NodeId:     "node-1",
+		Status:     TestFailed,
+		Retryable:  true,
+		StartedAt:  time.Now().Add(-2 * backoff),
+		FinishedAt: time.Now(),
+	}
+	s.tester.recordResult("node-1", 0, longRun)
+
+	s.maybeAutoTest("node-1")
+	time.Sleep(150 * time.Millisecond)
+
+	assert.Same(t, longRun, s.tester.LastResult("node-1"),
+		"backoff must be measured from FinishedAt, not StartedAt")
 }
 
 func TestOnEpochStateTestsRegisteredNode(t *testing.T) {

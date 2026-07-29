@@ -114,27 +114,49 @@ func TestNodeWorker_QueueFull(t *testing.T) {
 	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
 	defer worker.Shutdown()
 
-	// Fill the queue with slow commands
-	slowCmdSubmitted := 0
-	slowCmdFailed := 0
-	for i := 0; i < 25; i++ { // Queue size is 10, but we submit 10
+	// Block the worker inside the first command so nothing drains the queue
+	// while we fill it. Without this the counts race: the worker may already
+	// have taken one or two commands off the channel, so "exactly 10 accepted"
+	// intermittently observed 11 or 12.
+	release := make(chan struct{})
+	started := make(chan struct{})
+	blocking := &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			close(started)
+			<-release
+			return NodeResult{Succeeded: true}
+		},
+	}
+	assert.True(t, worker.Submit(context.Background(), blocking), "first command should be accepted")
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("worker never started the blocking command")
+	}
+
+	// The worker is now parked in the blocking command, so the queue's full
+	// capacity is available and every accept/reject is deterministic.
+	const queueCapacity = 10
+	const attempts = 25
+	submitted := 0
+	failed := 0
+	for i := 0; i < attempts; i++ {
 		cmd := &TestCommand{
 			ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
-				time.Sleep(100 * time.Millisecond)
 				return NodeResult{Succeeded: true}
 			},
 		}
-		success := worker.Submit(context.Background(), cmd)
-		if success {
-			slowCmdSubmitted++
+		if worker.Submit(context.Background(), cmd) {
+			submitted++
 		} else {
-			slowCmdFailed++
+			failed++
 		}
 	}
 
-	// Only 10 should succeed
-	assert.Equal(t, 10, slowCmdSubmitted, "Should submit exactly 10 commands (queue size)")
-	assert.Equal(t, 15, slowCmdFailed, "Should fail exactly 15 commands (beyond queue size)")
+	assert.Equal(t, queueCapacity, submitted, "Should submit exactly the queue size")
+	assert.Equal(t, attempts-queueCapacity, failed, "Should reject everything beyond the queue size")
+
+	close(release)
 }
 
 func TestNodeWorker_GracefulShutdown(t *testing.T) {

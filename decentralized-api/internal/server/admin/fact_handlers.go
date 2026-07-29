@@ -8,11 +8,16 @@ package admin
 // right now, and PoC timing — and write nothing back to the broker.
 
 import (
+	"context"
 	"errors"
 	"net/http"
+	"time"
 
 	"github.com/labstack/echo/v4"
 )
+
+// governanceQueryTimeout bounds a read-only handler's chain query.
+const governanceQueryTimeout = 15 * time.Second
 
 // getNodeTestResult handles GET /admin/v1/nodes/:id/test: the raw result of
 // the most recent MLnode test for this node (POST runs a test, this reads it
@@ -55,7 +60,11 @@ func (s *Server) getNodeLaunchPlan(c echo.Context) error {
 	if s.tester == nil {
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": "tester not initialized"})
 	}
-	report, err := s.tester.LaunchPlans(nodeId)
+	// Bound the governance query by the request context so a hung chain RPC
+	// cannot hold the handler (and its connection) open indefinitely.
+	ctx, cancel := context.WithTimeout(c.Request().Context(), governanceQueryTimeout)
+	defer cancel()
+	report, err := s.tester.LaunchPlans(ctx, nodeId)
 	switch {
 	case errors.Is(err, ErrNodeNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error(), "node_id": nodeId})

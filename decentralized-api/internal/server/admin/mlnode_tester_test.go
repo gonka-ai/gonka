@@ -8,7 +8,9 @@ import (
 	"os"
 	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/knadh/koanf/providers/file"
 	"github.com/productscience/inference/x/inference/types"
@@ -17,9 +19,24 @@ import (
 type stubGovModels struct {
 	resp *types.QueryModelsAllResponse
 	err  error
+	// block, when non-nil, makes the governance query wait until it is closed
+	// or the context is cancelled — used to assert the query is cancellable.
+	block chan struct{}
+	// calls counts invocations; only read after the test has synchronized.
+	calls *atomic.Int32
 }
 
-func (s stubGovModels) GetGovernanceModels() (*types.QueryModelsAllResponse, error) {
+func (s stubGovModels) GetGovernanceModels(ctx context.Context) (*types.QueryModelsAllResponse, error) {
+	if s.calls != nil {
+		s.calls.Add(1)
+	}
+	if s.block != nil {
+		select {
+		case <-s.block:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
 	return s.resp, s.err
 }
 
@@ -463,11 +480,417 @@ func TestMLNodeTester_RejectsConcurrent(t *testing.T) {
 
 	// Simulate an ongoing test, then verify a concurrent Run rejects.
 	tester.mu.Lock()
-	tester.inFlight["node1"] = true
+	tester.inFlight["node1"] = &runningTest{cancel: func() {}}
 	tester.mu.Unlock()
 
 	_, err := tester.Run(context.Background(), "node1")
 	if !errors.Is(err, ErrTestInProgress) {
 		t.Fatalf("got %v, want ErrTestInProgress", err)
+	}
+}
+
+// TestMLNodeTester_RejectsSecondNodeWhileBusy covers the global limit: a test
+// takes its node out of service, so two nodes must never be under test at once
+// (a batch registration would otherwise stop several MLnodes simultaneously).
+func TestMLNodeTester_RejectsSecondNodeWhileBusy(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{
+		{Id: "node1", Host: "test-host", PoCPort: 8080, InferencePort: 5000,
+			Models: map[string]apiconfig.ModelConfig{"m": {}}},
+		{Id: "node2", Host: "test-host-2", PoCPort: 8080, InferencePort: 5000,
+			Models: map[string]apiconfig.ModelConfig{"m": {}}},
+	})
+	tester := NewMLNodeTester(cm, mlnodeclient.NewMockClientFactory(), stubGovModelsForConfig(cm))
+
+	tester.mu.Lock()
+	tester.inFlight["node1"] = &runningTest{cancel: func() {}}
+	tester.mu.Unlock()
+
+	if _, err := tester.Run(context.Background(), "node2"); !errors.Is(err, ErrTestBusy) {
+		t.Fatalf("got %v, want ErrTestBusy", err)
+	}
+	if !tester.IsAnyRunning() {
+		t.Fatal("IsAnyRunning should report the in-flight test")
+	}
+}
+
+// TestMLNodeTester_GovernanceQueryIsCancellable guards against the in-flight
+// slot leaking: the governance RPC must observe the caller's context, so a hung
+// chain query ends with the test instead of pinning the node as "testing"
+// forever.
+func TestMLNodeTester_GovernanceQueryIsCancellable(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {}},
+	}})
+	gov := stubGovModels{block: make(chan struct{})} // never closed
+	tester := NewMLNodeTester(cm, mlnodeclient.NewMockClientFactory(), gov)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	done := make(chan *TestResult, 1)
+	go func() {
+		result, err := tester.Run(ctx, "node1")
+		if err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+		done <- result
+	}()
+
+	select {
+	case result := <-done:
+		if result.Status != TestFailed {
+			t.Fatalf("status=%q, want %q", result.Status, TestFailed)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("governance query did not observe context cancellation")
+	}
+	if tester.IsAnyRunning() {
+		t.Fatal("in-flight slot leaked after a cancelled test")
+	}
+	// A cancelled run says nothing about the node, so nothing is recorded.
+	if got := tester.LastResult("node1"); got != nil {
+		t.Fatalf("cancelled run recorded a result: %+v", got)
+	}
+}
+
+// TestMLNodeTester_InvalidateCancelsRunningTest covers the PUT/DELETE race: a
+// test running against the old deployment must be aborted when the node is
+// reconfigured, so its teardown cannot stop the new one.
+func TestMLNodeTester_InvalidateCancelsRunningTest(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {}},
+	}})
+	release := make(chan struct{})
+	gov := stubGovModels{
+		resp:  &types.QueryModelsAllResponse{Model: []types.Model{{Id: "m"}}},
+		block: release,
+	}
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	tester := NewMLNodeTester(cm, factory, gov)
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		if _, err := tester.Run(context.Background(), "node1"); err != nil {
+			t.Errorf("unexpected error: %v", err)
+		}
+	}()
+
+	// Wait until the test is registered as in flight, then invalidate it.
+	deadline := time.Now().Add(2 * time.Second)
+	for !tester.IsRunning("node1") {
+		if time.Now().After(deadline) {
+			t.Fatal("test never became in-flight")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	tester.Invalidate("node1")
+
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("Invalidate did not cancel the running test")
+	}
+	if got := tester.LastResult("node1"); got != nil {
+		t.Fatalf("cancelled run recorded a result: %+v", got)
+	}
+	// The cancelled test must not have issued a teardown Stop against what may
+	// already be a new deployment.
+	mockClient.Mu.Lock()
+	stops := mockClient.StopCalled
+	mockClient.Mu.Unlock()
+	if stops != 0 {
+		t.Fatalf("cancelled test issued %d Stop calls, want 0", stops)
+	}
+}
+
+// TestMLNodeTester_TeardownOnlySkippedForInvalidation separates the two reasons a
+// test's context can be cancelled. Keying the teardown skip off ctx.Err() lumped
+// them together: an operator closing the tab mid-test produces the same
+// context.Canceled as Invalidate, and the MLnode was then left with the test's
+// model loaded and no Stop issued — worse than the base, which always tore down.
+//
+// Stop is called twice on a normal path (once before the launch, once in
+// teardown) and once when teardown is skipped.
+func TestMLNodeTester_TeardownOnlySkippedForInvalidation(t *testing.T) {
+	newTester := func(t *testing.T) (*MLNodeTester, *mlnodeclient.MockClient, chan struct{}) {
+		t.Helper()
+		cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+			Id:            "node1",
+			Host:          "test-host",
+			PoCPort:       8080,
+			InferencePort: 5000,
+			Models:        map[string]apiconfig.ModelConfig{"m": {}},
+		}})
+		factory := mlnodeclient.NewMockClientFactory()
+		mc := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+		mc.InferenceIsHealthy = true
+		release := make(chan struct{})
+		mc.InferenceUpBlock = release
+		tester := NewMLNodeTester(cm, factory, stubGovModels{
+			resp: &types.QueryModelsAllResponse{Model: []types.Model{{Id: "m"}}},
+		})
+		return tester, mc, release
+	}
+
+	stopCount := func(mc *mlnodeclient.MockClient) int {
+		mc.Mu.Lock()
+		defer mc.Mu.Unlock()
+		return mc.StopCalled
+	}
+
+	waitInFlight := func(t *testing.T, tester *MLNodeTester) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for !tester.IsRunning("node1") {
+			if time.Now().After(deadline) {
+				t.Fatal("test never became in-flight")
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	t.Run("client disconnect still tears down", func(t *testing.T) {
+		tester, mc, _ := newTester(t)
+		ctx, cancel := context.WithCancel(context.Background())
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if _, err := tester.Run(ctx, "node1"); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+		waitInFlight(t, tester)
+
+		cancel() // the operator closed the tab
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("run did not finish after the caller went away")
+		}
+
+		if got := stopCount(mc); got != 2 {
+			t.Fatalf("Stop called %d times, want 2 (pre-launch + teardown): a caller "+
+				"going away must not leave the node with the test's model loaded", got)
+		}
+	})
+
+	t.Run("invalidation skips teardown", func(t *testing.T) {
+		tester, mc, _ := newTester(t)
+
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			if _, err := tester.Run(context.Background(), "node1"); err != nil {
+				t.Errorf("unexpected error: %v", err)
+			}
+		}()
+		waitInFlight(t, tester)
+
+		tester.Invalidate("node1") // node reconfigured under the test
+		select {
+		case <-done:
+		case <-time.After(3 * time.Second):
+			t.Fatal("Invalidate did not cancel the running test")
+		}
+
+		if got := stopCount(mc); got != 1 {
+			t.Fatalf("Stop called %d times, want 1 (pre-launch only): teardown must be "+
+				"skipped so it cannot stop a new deployment", got)
+		}
+	})
+
+	t.Run("deadline still tears down", func(t *testing.T) {
+		tester, mc, _ := newTester(t)
+		ctx, cancel := context.WithTimeout(context.Background(), 150*time.Millisecond)
+		defer cancel()
+
+		if _, err := tester.Run(ctx, "node1"); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if got := stopCount(mc); got != 2 {
+			t.Fatalf("Stop called %d times, want 2 (pre-launch + teardown)", got)
+		}
+	})
+}
+
+// TestMLNodeTester_ResultInvalidatedByConfigChange covers results being bound to
+// the inputs they were produced from: changing the node's model args must make
+// the recorded pass stop counting, without anyone having to call Invalidate.
+func TestMLNodeTester_ResultInvalidatedByConfigChange(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {Args: []string{"--old"}}},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	tester := NewMLNodeTester(cm, factory, stubGovModels{
+		resp: &types.QueryModelsAllResponse{Model: []types.Model{{Id: "m"}}},
+	})
+
+	if _, err := tester.Run(context.Background(), "node1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := tester.LastResult("node1"); got == nil || got.Status != TestSuccess {
+		t.Fatalf("LastResult not recorded: %+v", got)
+	}
+
+	// Same node id, different args: the recorded pass no longer describes the
+	// configuration that would be launched now.
+	if err := cm.SetNodes([]apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {Args: []string{"--new"}}},
+	}}); err != nil {
+		t.Fatalf("SetNodes: %v", err)
+	}
+	if got := tester.LastResult("node1"); got != nil {
+		t.Fatalf("stale result survived a config change: %+v", got)
+	}
+}
+
+// TestMLNodeTester_ResultInvalidatedByPoCParamChange is the same guard for
+// process state the test derives its launch plan from, not just node config.
+func TestMLNodeTester_ResultInvalidatedByPoCParamChange(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {}},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	tester := NewMLNodeTester(cm, factory, stubGovModels{
+		resp: &types.QueryModelsAllResponse{Model: []types.Model{{Id: "m"}}},
+	})
+
+	if _, err := tester.Run(context.Background(), "node1"); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := tester.LastResult("node1"); got == nil {
+		t.Fatal("LastResult not recorded")
+	}
+
+	if err := cm.SetPoCParams(apiconfig.PoCParamsCache{
+		Models: []apiconfig.PoCModelConfigCache{{ModelId: "m", SeqLen: 2048}},
+	}); err != nil {
+		t.Fatalf("SetPoCParams: %v", err)
+	}
+	if got := tester.LastResult("node1"); got != nil {
+		t.Fatalf("stale result survived a PoC param change: %+v", got)
+	}
+}
+
+// TestMLNodeTester_RetryableClassification pins the retry classification the
+// auto-test backoff depends on: an MLnode that answered "busy" (409) or failed
+// server-side (5xx) is transient; a request the node rejected as invalid (422)
+// is not, and must not be retried every backoff window forever.
+func TestMLNodeTester_RetryableClassification(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want bool
+	}{
+		{name: "already running (409)", err: &mlnodeclient.StatusError{Op: "inference/up", StatusCode: 409}, want: true},
+		{name: "server error (500)", err: &mlnodeclient.StatusError{Op: "inference/up", StatusCode: 500}, want: true},
+		{name: "validation error (422)", err: &mlnodeclient.StatusError{Op: "inference/up", StatusCode: 422}, want: false},
+		{name: "not found (404)", err: &mlnodeclient.StatusError{Op: "stop", StatusCode: 404}, want: false},
+		{name: "transport error", err: errors.New("connection refused"), want: true},
+		{name: "deadline exceeded", err: context.DeadlineExceeded, want: true},
+		{name: "nil", err: nil, want: false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := isRetryableMLNodeError(tc.err); got != tc.want {
+				t.Fatalf("isRetryableMLNodeError(%v) = %v, want %v", tc.err, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestMLNodeTester_BusyNodeIsRetryable is the end-to-end form of the above: a
+// node that answers 409 to /inference/up (vLLM already running) must produce a
+// retryable failure, not a latched TEST_FAILED.
+func TestMLNodeTester_BusyNodeIsRetryable(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"m": {}},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceUpError = &mlnodeclient.StatusError{
+		Op: "inference/up", StatusCode: 409, Body: "VLLM is already running.",
+	}
+	tester := NewMLNodeTester(cm, factory, stubGovModels{
+		resp: &types.QueryModelsAllResponse{Model: []types.Model{{Id: "m"}}},
+	})
+
+	result, err := tester.Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestFailed {
+		t.Fatalf("status=%q, want %q", result.Status, TestFailed)
+	}
+	if !result.Retryable {
+		t.Fatalf("a 409 (node busy) must be retryable: %+v", result)
+	}
+}
+
+// TestMLNodeTester_PerModelTimings guards that a multi-model node reports one
+// health/response time per model instead of only the last model's (the scalar
+// fields were overwritten each iteration).
+func TestMLNodeTester_PerModelTimings(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models:        map[string]apiconfig.ModelConfig{"model-a": {}, "model-b": {}},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	mockClient.InferenceIsHealthy = true
+	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
+
+	result, err := tester.Run(context.Background(), "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestSuccess {
+		t.Fatalf("status=%q error=%q", result.Status, result.Error)
+	}
+	for _, modelID := range []string{"model-a", "model-b"} {
+		if _, ok := result.HealthMs[modelID]; !ok {
+			t.Errorf("HealthMs missing %s: %+v", modelID, result.HealthMs)
+		}
+		if _, ok := result.RespMs[modelID]; !ok {
+			t.Errorf("RespMs missing %s: %+v", modelID, result.RespMs)
+		}
+	}
+	if result.FinishedAt.IsZero() || result.FinishedAt.Before(result.StartedAt) {
+		t.Errorf("FinishedAt=%v not after StartedAt=%v", result.FinishedAt, result.StartedAt)
 	}
 }

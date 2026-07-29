@@ -48,7 +48,10 @@ func (s *Server) deleteNode(ctx echo.Context) error {
 	node := <-response
 	syncNodesWithConfig(s.nodeBroker, s.configManager)
 	if s.tester != nil {
-		s.tester.Invalidate(nodeId)
+		// Forget rather than Invalidate: the node is gone, so its bookkeeping
+		// should not be retained. This also cancels a test running against it,
+		// so a stale teardown cannot hit whatever takes its place.
+		s.tester.Forget(nodeId)
 	}
 
 	return ctx.JSON(http.StatusOK, node)
@@ -249,11 +252,12 @@ func (s *Server) postNodeTest(c echo.Context) error {
 		})
 	}
 
-	// Refuse when the node should already be online for an imminent/active PoC.
-	// Unlike auto-test, the manual endpoint has no timing gate of its own, so
-	// an operator could trigger a multi-minute test right as PoC starts; the
-	// point-in-time idle check above cannot protect a node assigned while the
-	// test is still running. An unknown schedule is left to operator discretion.
+	// Refuse when the chain schedule leaves too little room for a full-length
+	// test. Unlike auto-test (gated a full hour out), the manual endpoint lets an
+	// operator test much closer in — but not so close that a test running to its
+	// deadline would still be holding the node down when PoC needs it. An unknown
+	// schedule refuses too: the point-in-time idle check above cannot protect a
+	// node assigned while the test is still running.
 	if reason := s.pocImminentTestBlockReason(); reason != "" {
 		return c.JSON(http.StatusConflict, map[string]string{
 			"error":   reason,
@@ -261,16 +265,19 @@ func (s *Server) postNodeTest(c echo.Context) error {
 		})
 	}
 
-	// Per-call timeout: model load + health probe is expected to
-	// complete well under this. Clients can retry on timeout.
-	ctx, cancel := context.WithTimeout(c.Request().Context(), 5*time.Minute)
+	// Per-call timeout: model load + health probe is expected to complete well
+	// under this. Clients can retry on timeout. The same budget backs the
+	// pre-PoC safety margins (see apiconfig.ManualTestMinSecondsBeforePoC), so
+	// changing it in one place keeps the gates consistent.
+	ctx, cancel := context.WithTimeout(c.Request().Context(),
+		time.Duration(apiconfig.NodeTestTimeoutSeconds)*time.Second)
 	defer cancel()
 
 	result, err := s.tester.Run(ctx, nodeId)
 	switch {
 	case errors.Is(err, ErrNodeNotFound):
 		return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error(), "node_id": nodeId})
-	case errors.Is(err, ErrTestInProgress):
+	case errors.Is(err, ErrTestInProgress), errors.Is(err, ErrTestBusy):
 		return c.JSON(http.StatusConflict, map[string]string{"error": err.Error(), "node_id": nodeId})
 	case err != nil:
 		return c.JSON(http.StatusInternalServerError, map[string]string{"error": err.Error()})

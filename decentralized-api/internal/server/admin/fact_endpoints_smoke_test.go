@@ -13,8 +13,10 @@ import (
 	"decentralized-api/apiconfig"
 	"decentralized-api/chainphase"
 	"fmt"
+	"io"
 	"net"
-	"os/exec"
+	"net/http"
+	"net/http/httputil"
 	"testing"
 	"time"
 
@@ -79,19 +81,34 @@ func TestFactEndpointsCurlSmoke(t *testing.T) {
 	}
 
 	base := "http://" + addr
-	curl := func(label, method, url string) {
-		out, err := exec.Command("curl", "-s", "-i", "-X", method, url).CombinedOutput()
+	// net/http rather than shelling out to curl: same wire traffic, but no
+	// dependency on a system binary being installed (and no silent pass when
+	// curl is missing — exec would error while the transcript stayed empty).
+	client := &http.Client{Timeout: 30 * time.Second}
+	call := func(label, method, url string) {
+		req, err := http.NewRequest(method, url, nil)
+		if !assert.NoError(t, err) {
+			return
+		}
+		resp, err := client.Do(req)
+		if !assert.NoError(t, err) {
+			return
+		}
+		defer resp.Body.Close()
+		dump, err := httputil.DumpResponse(resp, false)
 		assert.NoError(t, err)
-		fmt.Printf("\n===== %s =====\n$ curl -s -i -X %s %s\n%s\n", label, method, url, out)
+		body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+		assert.NoError(t, err)
+		fmt.Printf("\n===== %s =====\n$ %s %s\n%s%s\n", label, method, url, dump, body)
 	}
 
-	curl("A. PoC timing (chain synced)", "GET", base+"/admin/v1/poc/timing")
-	curl("B. Launch plan (plan + skipped + unsupported)", "GET", base+"/admin/v1/nodes/mlnode-1/launch-plan")
-	curl("C. Last test result (no test recorded yet)", "GET", base+"/admin/v1/nodes/mlnode-1/test")
-	curl("D. Run a test (POST, against the mock MLnode)", "POST", base+"/admin/v1/nodes/mlnode-1/test")
-	curl("E. Last test result (raw result read back)", "GET", base+"/admin/v1/nodes/mlnode-1/test")
-	curl("F. Unknown node launch-plan (404)", "GET", base+"/admin/v1/nodes/no-such-node/launch-plan")
-	curl("G. Unknown node test result (404)", "GET", base+"/admin/v1/nodes/no-such-node/test")
+	call("A. PoC timing (chain synced)", "GET", base+"/admin/v1/poc/timing")
+	call("B. Launch plan (plan + skipped + unsupported)", "GET", base+"/admin/v1/nodes/mlnode-1/launch-plan")
+	call("C. Last test result (no test recorded yet)", "GET", base+"/admin/v1/nodes/mlnode-1/test")
+	call("D. Run a test (POST, against the mock MLnode)", "POST", base+"/admin/v1/nodes/mlnode-1/test")
+	call("E. Last test result (raw result read back)", "GET", base+"/admin/v1/nodes/mlnode-1/test")
+	call("F. Unknown node launch-plan (404)", "GET", base+"/admin/v1/nodes/no-such-node/launch-plan")
+	call("G. Unknown node test result (404)", "GET", base+"/admin/v1/nodes/no-such-node/test")
 
 	// Flip the tracker to not-synced: timing must report available=false
 	// instead of zeros that would look like an imminent PoC.
@@ -102,5 +119,5 @@ func TestFactEndpointsCurlSmoke(t *testing.T) {
 		false,
 		nil,
 	)
-	curl("H. PoC timing (chain NOT synced)", "GET", base+"/admin/v1/poc/timing")
+	call("H. PoC timing (chain NOT synced)", "GET", base+"/admin/v1/poc/timing")
 }

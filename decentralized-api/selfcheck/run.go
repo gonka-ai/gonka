@@ -98,6 +98,10 @@ func Run(ctx context.Context) (Report, error) {
 		mockFactory,
 		cm,
 	)
+	// Selfcheck constructs a throwaway broker; stop its workers on return so a
+	// programmatic caller (or `go test`) does not accumulate goroutines that keep
+	// polling MLnodes and the mock chain after the run is over.
+	defer nodeBroker.Stop()
 
 	// Load the configured node into the broker.
 	for _, n := range cm.GetNodes() {

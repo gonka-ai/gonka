@@ -29,6 +29,15 @@ import (
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
 )
 
+// participantActivity is the cached "is this participant in the active set?"
+// signal the onboarding handlers read. Narrow interface (rather than the
+// concrete *participant.ActivityTracker) so tests can drive the active and
+// unknown states directly — the auto-test gate depends on it.
+type participantActivity interface {
+	IsActive() bool
+	IsKnown() bool
+}
+
 type Server struct {
 	e               *echo.Echo
 	nodeBroker      *broker.Broker
@@ -38,7 +47,7 @@ type Server struct {
 	blockQueue      *pserver.BridgeQueue
 	payloadStorage  payloadstorage.PayloadStorage
 	phaseTracker    *chainphase.ChainPhaseTracker
-	activityTracker *participant.ActivityTracker
+	activityTracker participantActivity
 	tester          *MLNodeTester
 }
 
@@ -53,6 +62,13 @@ func NewServer(
 	mlnodeFactory mlnodeclient.ClientFactory) *Server {
 	cdc := getCodec()
 
+	// Assign through a nil check: storing a typed nil pointer in the interface
+	// field would make `s.activityTracker != nil` true and panic on first use.
+	var activity participantActivity
+	if activityTracker != nil {
+		activity = activityTracker
+	}
+
 	e := echo.New()
 	e.HTTPErrorHandler = middleware.TransparentErrorHandler
 	s := &Server{
@@ -64,8 +80,12 @@ func NewServer(
 		blockQueue:      blockQueue,
 		payloadStorage:  payloadStorage,
 		phaseTracker:    phaseTracker,
-		activityTracker: activityTracker,
-		tester:          NewMLNodeTester(configManager, mlnodeFactory, nodeBroker.GetChainBridge()),
+		activityTracker: activity,
+		// Governance models are read through the admin server's own cosmos
+		// client rather than the broker's chain bridge, because the bridge binds
+		// every query to the process-lifetime context — a hung RPC there would
+		// hold a node's test slot forever.
+		tester: NewMLNodeTester(configManager, mlnodeFactory, chainGovernanceModels{client: recorder}),
 	}
 
 	e.Use(middleware.LoggingMiddleware)

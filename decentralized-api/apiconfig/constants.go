@@ -26,4 +26,19 @@ const (
 	// retry-storm while still letting a transient MLnode hiccup self-heal
 	// without an operator manually re-testing or editing config.
 	AutoTestRetryBackoffSeconds int64 = 300
+
+	// NodeTestTimeoutSeconds bounds a single one-shot MLnode validation
+	// (model load + health probe + inference probe, per model). It is the
+	// same budget for the manual endpoint and for auto-test, so the
+	// pre-PoC safety windows below can be derived from one number.
+	NodeTestTimeoutSeconds int64 = 300
+
+	// ManualTestMinSecondsBeforePoC is the minimum slack before the next
+	// PoC for the manual test endpoint. A test stops the MLnode and can
+	// run for up to NodeTestTimeoutSeconds, so allowing it any later than
+	// OnlineAlertLeadSeconds + NodeTestTimeoutSeconds could leave the node
+	// stopped inside the "must be online" window. Auto-test uses the much
+	// larger AutoTestMinSecondsBeforePoC; this is the operator-discretion
+	// floor, not a second opinion on the same question.
+	ManualTestMinSecondsBeforePoC = OnlineAlertLeadSeconds + NodeTestTimeoutSeconds
 )
