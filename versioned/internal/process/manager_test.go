@@ -87,7 +87,12 @@ func TestChildEnvDoesNotLeakParentAdminAddr(t *testing.T) {
 }
 
 func TestPreflightChild_MissingBinary(t *testing.T) {
-	_, err := preflightChild(filepath.Join(t.TempDir(), "missing"), "v2")
+	_, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		filepath.Join(t.TempDir(), "missing"),
+		"v2",
+		false,
+	)
 	if err == nil {
 		t.Fatal("expected error for missing binary")
 	}
@@ -104,7 +109,12 @@ exit 2
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChild(binPath, "v2")
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +136,12 @@ esac
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChild(binPath, "v2")
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +163,12 @@ esac
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChild(binPath, "v2")
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -171,7 +191,12 @@ esac
 		t.Fatal(err)
 	}
 
-	_, err := preflightChild(binPath, "v2")
+	_, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	)
 	if err == nil {
 		t.Fatal("expected protocol mismatch error")
 	}
@@ -191,7 +216,12 @@ esac
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChild(binPath, "v2")
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -214,7 +244,12 @@ esac
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChildWithAdminProbe(binPath, "v2", true)
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		true,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -242,7 +277,12 @@ esac
 		t.Fatal(err)
 	}
 
-	preflight, err := preflightChildWithAdminProbe(binPath, "v2", true)
+	preflight, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		true,
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -270,7 +310,12 @@ esac
 		t.Fatal(err)
 	}
 
-	if _, err := preflightChildWithAdminProbe(binPath, "v2", true); err == nil {
+	if _, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		true,
+	); err == nil {
 		t.Fatal("expected storage mode probe error to fail preflight")
 	}
 }
@@ -293,7 +338,12 @@ esac
 		t.Fatal(err)
 	}
 
-	if _, err := preflightChild(binPath, "v2"); err == nil {
+	if _, err := preflightChildWithAdminProbeContext(
+		context.Background(),
+		binPath,
+		"v2",
+		false,
+	); err == nil {
 		t.Fatal("expected timeout probing protocol version to fail closed")
 	}
 }
@@ -463,12 +513,116 @@ func TestStatusIncludesDrainingChildrenButRoutesDoNot(t *testing.T) {
 	}
 	var sawDraining bool
 	for _, status := range statuses {
-		if status.Status == statusDraining && status.Port == 9001 && status.SHA256 == "old-sha" {
+		if status.Status == "draining" && status.Port == 9001 && status.SHA256 == "old-sha" {
 			sawDraining = true
 		}
 	}
 	if !sawDraining {
 		t.Fatalf("draining child not reported in status: %+v", statuses)
+	}
+}
+
+func TestChildLifetimeIsIndependentFromReconcileContext(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	reconcileCtx, cancelReconcile := context.WithCancel(context.Background())
+	m.mu.Lock()
+	start, err := m.newChild(
+		reconcileCtx,
+		oracle.Version{Name: "v1"},
+		"sha",
+		"/tmp/testapp",
+		true,
+	)
+	m.mu.Unlock()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	cancelReconcile()
+	select {
+	case <-start.ctx.Done():
+		t.Fatal("cancelling reconcile context stopped the child lifetime")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	start.child.Stop()
+	select {
+	case <-start.ctx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("child stop did not cancel its lifetime context")
+	}
+}
+
+func TestBeginHostDrainRejectsReconcileAndDisablesRestart(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+		status:  statusRunning,
+		restart: true,
+	}
+	m.mu.Lock()
+	m.processes[c.version.Name] = c
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	m.BeginHostDrain()
+	m.mu.Lock()
+	hostDraining := m.hostDraining
+	m.mu.Unlock()
+	if !hostDraining {
+		t.Fatal("manager should report host draining")
+	}
+	if c.restart {
+		t.Fatal("host drain should disable child restart")
+	}
+	if err := m.Reconcile(context.Background(), nil); !errors.Is(err, ErrHostDraining) {
+		t.Fatalf("Reconcile error = %v, want ErrHostDraining", err)
+	}
+}
+
+func TestRequestChildrenDrainRemovesRouteBeforeLifecycleRequest(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	var drainCalled atomic.Bool
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/drain" {
+			http.NotFound(w, r)
+			return
+		}
+		if _, ok := m.RouteTable().Load().(proxy.RouteTable)["v1"]; ok {
+			t.Error("child route was still published during lifecycle drain request")
+		}
+		drainCalled.Store(true)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer shutdown()
+
+	c := &child{
+		version:     oracle.Version{Name: "v1"},
+		port:        9001,
+		done:        make(chan struct{}),
+		status:      statusRunning,
+		restart:     true,
+		proxyTarget: proxy.NewTarget("localhost:9001"),
+	}
+	setTestAdminPort(c, adminPort)
+	m.mu.Lock()
+	m.processes[c.version.Name] = c
+	m.children[c] = struct{}{}
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if err := m.RequestChildrenDrain(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !drainCalled.Load() {
+		t.Fatal("child drain endpoint was not called")
+	}
+	if c.status != statusRetiring {
+		t.Fatalf("child status = %q, want retiring", c.status)
+	}
+	if c.restart {
+		t.Fatal("draining child should not restart")
 	}
 }
 
@@ -521,7 +675,7 @@ func TestAssignPort_ReusesReleasedPorts(t *testing.T) {
 	}
 }
 
-func TestAssignPort_SkipsVersiondListenPort(t *testing.T) {
+func TestAssignPort_SkipsVersiondListenPorts(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 8079})
 
 	m.mu.Lock()
@@ -532,8 +686,23 @@ func TestAssignPort_SkipsVersiondListenPort(t *testing.T) {
 	if p1 != 8079 {
 		t.Errorf("first port = %d, want 8079", p1)
 	}
-	if p2 != 8081 {
-		t.Errorf("second port = %d, want 8081", p2)
+	if p2 != 8082 {
+		t.Errorf("second port = %d, want 8082", p2)
+	}
+}
+
+func TestAssignPort_SkipsConfiguredAdminListenPort(t *testing.T) {
+	m := NewManager(config.Config{
+		BasePort:        9000,
+		AdminListenAddr: "127.0.0.1:9000",
+	})
+
+	m.mu.Lock()
+	port := mustAssignPort(t, m)
+	m.mu.Unlock()
+
+	if port != 9001 {
+		t.Errorf("first port = %d, want 9001", port)
 	}
 }
 
@@ -691,27 +860,62 @@ func TestRollingOverlapAllowedRequiresPostgresForDevshard(t *testing.T) {
 	legacyBin := writeStorageModeLegacyBinary(t, dir, "legacy-bin")
 
 	devshardMgr := NewManager(config.Config{BinaryName: "devshard", BasePort: 5000})
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: ""}, postgresBin) {
+	if devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: ""},
+		postgresBin,
+	) {
 		t.Fatal("devshard overlap should be disabled when running child storage mode is unknown")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "hybrid"}, postgresBin) {
+	if devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: "hybrid"},
+		postgresBin,
+	) {
 		t.Fatal("devshard overlap should be disabled when running child is not postgres-only")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, legacyBin) {
+	if devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: "postgres"},
+		legacyBin,
+	) {
 		t.Fatal("devshard overlap should be disabled when new binary does not expose storage mode")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, hybridBin) {
+	if devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: "postgres"},
+		hybridBin,
+	) {
 		t.Fatal("devshard overlap should be disabled when new binary is not postgres-only")
 	}
-	if devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, errorBin) {
+	if devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: "postgres"},
+		errorBin,
+	) {
 		t.Fatal("devshard overlap should be disabled when new binary storage probe fails")
 	}
-	if !devshardMgr.rollingOverlapAllowed("v1", &child{storageMode: "postgres"}, postgresBin) {
+	if !devshardMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{storageMode: "postgres"},
+		postgresBin,
+	) {
 		t.Fatal("devshard overlap should be allowed when both children are postgres-only")
 	}
 
 	testappMgr := NewManager(config.Config{BinaryName: "testapp", BasePort: 5000})
-	if !testappMgr.rollingOverlapAllowed("v1", &child{}, legacyBin) {
+	if !testappMgr.rollingOverlapAllowedContext(
+		context.Background(),
+		"v1",
+		&child{},
+		legacyBin,
+	) {
 		t.Fatal("non-devshard test binary should allow overlap without storage mode probing")
 	}
 }
@@ -728,10 +932,6 @@ func TestChildStopTimeoutHonorsDevshardShutdownGrace(t *testing.T) {
 	if got := devshardMgr.childStopTimeout(); got != 2*time.Minute {
 		t.Fatalf("childStopTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
 	}
-	if got := devshardMgr.ShutdownTimeout(); got != 2*time.Minute {
-		t.Fatalf("ShutdownTimeout = %s, want DEVSHARD_SHUTDOWN_GRACE", got)
-	}
-
 	t.Setenv("DEVSHARD_SHUTDOWN_GRACE", "5s")
 	devshardMgr = NewManager(config.Config{BinaryName: "devshardd", DrainKillGrace: 30 * time.Second})
 	if got := devshardMgr.childStopTimeout(); got != 30*time.Second {
@@ -1571,7 +1771,9 @@ func TestInstalledVersionMatches_DetectsBinaryHashMismatch(t *testing.T) {
 	}
 }
 
-func TestWaitForReadyFallsBackToHealthzWhenDefaultReadyMissing(t *testing.T) {
+func TestWaitForChildServingReadyFallsBackToHealthzWhenDefaultReadyMissing(
+	t *testing.T,
+) {
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/healthz" {
 			w.WriteHeader(http.StatusOK)
@@ -1581,18 +1783,30 @@ func TestWaitForReadyFallsBackToHealthzWhenDefaultReadyMissing(t *testing.T) {
 	}))
 	defer shutdown()
 
-	if !waitForReady(context.Background(), port, "/ready", time.Second) {
+	if !waitForChildServingReady(
+		context.Background(),
+		&child{port: port},
+		"/ready",
+		time.Second,
+	) {
 		t.Fatal("expected /ready 404 to fall back to /healthz")
 	}
 }
 
-func TestWaitForReadyDoesNotFallbackForCustomReadyPath(t *testing.T) {
+func TestWaitForChildServingReadyDoesNotFallbackForCustomReadyPath(
+	t *testing.T,
+) {
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	}))
 	defer shutdown()
 
-	if waitForReady(context.Background(), port, "/custom-ready", 200*time.Millisecond) {
+	if waitForChildServingReady(
+		context.Background(),
+		&child{port: port},
+		"/custom-ready",
+		200*time.Millisecond,
+	) {
 		t.Fatal("custom ready path should not use legacy fallback")
 	}
 }
@@ -1619,7 +1833,8 @@ func TestWaitForChildServingReadyRequiresPublicHealth(t *testing.T) {
 	}))
 	defer publicShutdown()
 
-	c := &child{port: publicPort, adminPort: adminPort}
+	c := &child{port: publicPort}
+	setTestAdminPort(c, adminPort)
 	if waitForChildServingReady(context.Background(), c, "/ready", 200*time.Millisecond) {
 		t.Fatal("admin readiness must not hide an unavailable public listener")
 	}
@@ -1654,7 +1869,8 @@ func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
 	}))
 	defer publicShutdown()
 
-	c := &child{port: publicPort, adminPort: adminPort}
+	c := &child{port: publicPort}
+	setTestAdminPort(c, adminPort)
 	if waitForChildServingReady(context.Background(), c, "/ready", 250*time.Millisecond) {
 		t.Fatal("child became ready without admin and public health at the same time")
 	}
@@ -1663,7 +1879,7 @@ func TestWaitForChildServingReadyRechecksAdminAndPublicTogether(t *testing.T) {
 	}
 }
 
-func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
+func TestDrainAndStopBefore_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.NotFound(w, r)
 	}))
@@ -1688,7 +1904,7 @@ func TestDrainAndStop_LegacyDrainStatusUsesShortGrace(t *testing.T) {
 	}
 
 	start := time.Now()
-	m.drainAndStop(c)
+	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 	if !cancelled {
 		t.Fatal("legacy child should be cancelled after short drain grace")
 	}
@@ -1727,13 +1943,15 @@ func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
 		DrainStatusPath: "/drain/status",
 	})
 	c := &child{
-		version:   oracle.Version{Name: "v1"},
-		port:      publicPort,
-		adminPort: adminPort,
+		version: oracle.Version{Name: "v1"},
+		port:    publicPort,
 	}
+	setTestAdminPort(c, adminPort)
 
-	m.requestDrain(c)
-	inflight, err := m.fetchInflight(c)
+	if err := m.requestDrain(context.Background(), c); err != nil {
+		t.Fatal(err)
+	}
+	inflight, err := m.fetchInflight(context.Background(), c)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1751,7 +1969,7 @@ func TestLifecycleRequestsUseAdminPortWhenAvailable(t *testing.T) {
 	}
 }
 
-func TestDrainAndStop_WaitsForIdleBeforeCancel(t *testing.T) {
+func TestDrainAndStopBefore_WaitsForIdleBeforeCancel(t *testing.T) {
 	var statusRequests int32
 	var cancelled atomic.Bool
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1784,7 +2002,7 @@ func TestDrainAndStop_WaitsForIdleBeforeCancel(t *testing.T) {
 		},
 	}
 
-	m.drainAndStop(c)
+	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 	if !cancelled.Load() {
 		t.Fatal("idle child should be cancelled after drain")
 	}
@@ -1793,7 +2011,7 @@ func TestDrainAndStop_WaitsForIdleBeforeCancel(t *testing.T) {
 	}
 }
 
-func TestDrainAndStop_TimesOutWithInflightWork(t *testing.T) {
+func TestDrainAndStopBefore_TimesOutWithInflightWork(t *testing.T) {
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
 	}))
@@ -1818,12 +2036,94 @@ func TestDrainAndStop_TimesOutWithInflightWork(t *testing.T) {
 	}
 
 	start := time.Now()
-	m.drainAndStop(c)
+	m.drainAndStopBefore(c, time.Now().Add(m.cfg.DrainTimeout))
 	if !cancelled {
 		t.Fatal("child should be cancelled after drain timeout")
 	}
 	if elapsed := time.Since(start); elapsed > time.Second {
 		t.Fatalf("drain timeout path took %s", elapsed)
+	}
+}
+
+func TestWaitChildrenIdlePollsUntilInflightReachesZero(t *testing.T) {
+	var idle atomic.Bool
+	var firstStatus sync.Once
+	firstStatusSeen := make(chan struct{})
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		firstStatus.Do(func() {
+			close(firstStatusSeen)
+		})
+		inflight := int64(1)
+		if idle.Load() {
+			inflight = 0
+		}
+		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": inflight})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainPollInterval: 5 * time.Millisecond,
+	})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+	}
+	setTestAdminPort(c, adminPort)
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	result := make(chan error, 1)
+	go func() {
+		result <- m.WaitChildrenIdle(context.Background())
+	}()
+	select {
+	case <-firstStatusSeen:
+	case <-time.After(time.Second):
+		t.Fatal("child drain status was not polled")
+	}
+	select {
+	case err := <-result:
+		t.Fatalf("WaitChildrenIdle returned while work was in flight: %v", err)
+	default:
+	}
+
+	idle.Store(true)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("WaitChildrenIdle did not return after the child became idle")
+	}
+}
+
+func TestWaitChildrenIdleReturnsDeadlineWhileWorkRemainsInflight(t *testing.T) {
+	adminPort, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]int64{"inflight": 1})
+	}))
+	defer shutdown()
+
+	m := NewManager(config.Config{
+		BasePort:          5000,
+		DrainPollInterval: 5 * time.Millisecond,
+	})
+	c := &child{
+		version: oracle.Version{Name: "v1"},
+		done:    make(chan struct{}),
+	}
+	setTestAdminPort(c, adminPort)
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Millisecond)
+	defer cancel()
+	err := m.WaitChildrenIdle(ctx)
+	if !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("WaitChildrenIdle error = %v, want context deadline exceeded", err)
 	}
 }
 
@@ -2172,6 +2472,10 @@ func startLocalHTTPServer(t *testing.T, handler http.Handler) (int, func()) {
 		_ = srv.Shutdown(ctx)
 	}
 	return ln.Addr().(*net.TCPAddr).Port, shutdown
+}
+
+func setTestAdminPort(c *child, port int) {
+	c.adminPort.Store(int64(port))
 }
 
 func writeStorageModeProbeBinary(t *testing.T, dir, name, storageMode string) string {

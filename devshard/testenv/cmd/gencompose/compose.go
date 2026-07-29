@@ -121,6 +121,7 @@ services:
     environment:
       VERSIOND_ORACLE_URL: http://{{ $.MockDapi.Host }}:{{ $.MockDapi.HTTPPort }}/versions
       VERSIOND_POLL_INTERVAL: "{{ $.Versiond.PollInterval }}"
+      VERSIOND_HOST_SHUTDOWN_BUDGET: "25m"
       VERSIOND_BIN_DIR: /opt/versiond/bin
       VERSIOND_DATA_DIR: /opt/versiond/data
       VERSIOND_BINARY_NAME: devshardd
@@ -181,6 +182,7 @@ services:
       - mock-dapi
       - mock-openai
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 {{ end }}
 
@@ -198,6 +200,8 @@ services:
       VERSIOND_NON_HA_VERSIONS: "v1"
     ports:
       - "{{ .VersiondRouter.Port }}:8080"
+    volumes:
+      - versiond-router-state:/var/lib/gonka/versiond-router
     networks:
       testenv:
         ipv4_address: {{ .VersiondRouter.IP }}
@@ -205,6 +209,7 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    stop_grace_period: 30m
     restart: unless-stopped
 
   devshardctl:
@@ -249,6 +254,9 @@ services:
       retries: 12
       start_period: 30s
     restart: unless-stopped
+
+volumes:
+  versiond-router-state:
 `
 
 func writeCompose(cfg *config.File, outPath string) error {

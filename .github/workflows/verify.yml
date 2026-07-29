@@ -251,6 +251,28 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
+  build-and-test-versiond-router:
+    runs-on: ubuntu-latest
+    name: Build and Test versiond-router
+    defaults:
+      run:
+        working-directory: ./versiond-router
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+      - name: Build
+        run: go build ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Test with race detector
+        run: go test -race ./...
+      - name: Test nginx rendering
+        run: make test-render
+
   build-and-test-edge-api:
     runs-on: ubuntu-latest
     name: Build and Test edge-api (validation)

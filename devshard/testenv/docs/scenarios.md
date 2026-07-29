@@ -36,6 +36,7 @@ make build-devshardd
 make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
+make citest-versiond-host-evacuation
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
 ```
 
@@ -76,6 +77,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **SQLite to Postgres HA migration** | SQLite single-host, multi-host rejection, migration, HA recovery | `TestSQLiteToPostgresHAMigration` |
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
+| **Versiond host evacuation** | Router drain, resumable stop, SSE completion, replacement activation | `TestVersiondHostEvacuation` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
@@ -223,6 +225,39 @@ converge to the new sha without ever reporting an old draining child.
 
 Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 `TestVersiondRollingUpdateHybridFallback`.
+
+---
+
+## Versiond host evacuation
+
+**What we test:** Router-controlled evacuation removes a versiond host from new
+traffic without terminating its established SSE stream. The operation remains
+recoverable across an interrupted CLI process, stops versiond after idle, keeps
+a replacement out of admission until full convergence, and supports permanent
+decommission followed by a guarded add.
+
+**How:**
+
+1. Boot the downloadable-binary stack with both versiond hosts in the router
+   pool and pin an escrow to one host.
+2. Start and pause an SSE response on that host.
+3. Interrupt a checkpointed evacuation, cancel it, and require router admission
+   to return to the original host.
+4. Start another evacuation, interrupt it after router drain, and resume it from
+   the durable hostctl journal.
+5. Require new requests to use the survivor while the old host reports proxy
+   inflight and remains alive.
+6. Release the SSE stream, require `[DONE]`, and require graceful versiond exit.
+7. Replace the host and require it to become active only after `/ready`
+   reports complete convergence.
+8. Decommission the host and require its DNS name to disappear from nginx.
+9. Add the stopped service back through `joining`, `/ready`, and `active`.
+
+**Pass criteria:** Established work completes, new work avoids the draining
+host, interrupted operations resume safely, removed hosts disappear from the
+pool, and replacement/addition serves the same escrow only after it is ready.
+
+Test: `TestVersiondHostEvacuation`.
 
 ---
 

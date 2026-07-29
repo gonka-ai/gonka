@@ -16,6 +16,12 @@ type Target struct {
 	closed   bool
 }
 
+type TargetSnapshot struct {
+	Address  string
+	Retired  bool
+	Inflight int64
+}
+
 func NewTarget(address string) *Target {
 	return &Target{
 		address: address,
@@ -25,6 +31,16 @@ func NewTarget(address string) *Target {
 
 func (t *Target) Address() string {
 	return t.address
+}
+
+func (t *Target) Snapshot() TargetSnapshot {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return TargetSnapshot{
+		Address:  t.address,
+		Retired:  t.retired,
+		Inflight: int64(t.inflight),
+	}
 }
 
 func (t *Target) acquire() bool {

@@ -1,4 +1,13 @@
-FROM nginx:1.27-alpine
+FROM golang:1.25.9-alpine3.23 AS routerctl-builder
+
+WORKDIR /src
+COPY go.mod ./
+COPY cmd ./cmd
+COPY internal ./internal
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
+    -o /out/gonka-routerctl ./cmd/gonka-routerctl
+
+FROM nginx:1.27.5-alpine
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond. Plays
@@ -6,4 +15,6 @@ FROM nginx:1.27-alpine
 
 COPY nginx.conf.template /etc/nginx/template/nginx.conf.template
 COPY entrypoint.sh /docker-entrypoint.d/40-render-versiond-upstream.sh
-RUN chmod +x /docker-entrypoint.d/40-render-versiond-upstream.sh
+COPY --from=routerctl-builder /out/gonka-routerctl /usr/local/bin/gonka-routerctl
+RUN chmod +x /docker-entrypoint.d/40-render-versiond-upstream.sh \
+    && mkdir -p /var/lib/gonka/versiond-router /run/gonka

@@ -107,6 +107,8 @@ services:
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
+      - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+      - VERSIOND_ADMIN_LISTEN_ADDR=${VERSIOND_ADMIN_LISTEN_ADDR:-127.0.0.1:8081}
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
       - NODE_HOST=node
       - KEY_NAME=${KEY_NAME}
@@ -124,6 +126,8 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
+    # Outer Docker backstop; keep it greater than the internal host budget.
+    stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always
 
   bridge:

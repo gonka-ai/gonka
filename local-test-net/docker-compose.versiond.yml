@@ -13,6 +13,7 @@
 x-versiond: &versiond
   image: versiond:latest
   platform: ${DOCKER_PLATFORM:-linux/amd64}
+  stop_grace_period: 30m
   build:
     context: ./versioned
     dockerfile: Dockerfile
@@ -71,6 +72,7 @@ services:
 
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
+    stop_grace_period: 30m
     build:
       context: ./versiond-router
       dockerfile: Dockerfile
@@ -81,6 +83,8 @@ services:
       VERSIOND_LEGACY_HOST: ${VERSIOND_LEGACY_HOST:-${KEY_NAME}-versiond}
       # Empty = all versions HA. Set e.g. "v1 v2 v3" for mixed SQLite/Postgres rollouts.
       VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS:-}
+    volumes:
+      - versiond-router-state:/var/lib/gonka/versiond-router
     networks:
       - chain-public
 
@@ -109,3 +113,6 @@ networks:
   chain-public:
     name: chain-public
     external: true
+
+volumes:
+  versiond-router-state:

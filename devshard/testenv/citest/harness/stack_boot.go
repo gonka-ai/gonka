@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"testing"
@@ -97,13 +98,30 @@ func RouterSessionURL(routerHTTP, version, sessionID, suffix string) string {
 
 // GetResponseHeader performs GET and returns the named response header (body discarded).
 func GetResponseHeader(client *http.Client, url, header string) (string, error) {
-	resp, err := client.Get(url)
+	value, _, err := getResponseHeader(client, url, header)
+	return value, err
+}
+
+// GetSuccessfulResponseHeader also requires a successful HTTP response.
+func GetSuccessfulResponseHeader(client *http.Client, url, header string) (string, error) {
+	value, status, err := getResponseHeader(client, url, header)
 	if err != nil {
 		return "", err
 	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		return "", fmt.Errorf("GET %s returned status %d", url, status)
+	}
+	return value, nil
+}
+
+func getResponseHeader(client *http.Client, url, header string) (string, int, error) {
+	resp, err := client.Get(url)
+	if err != nil {
+		return "", 0, err
+	}
 	defer resp.Body.Close()
 	_, _ = io.Copy(io.Discard, resp.Body)
-	return resp.Header.Get(header), nil
+	return resp.Header.Get(header), resp.StatusCode, nil
 }
 
 // RequireResponseHeader GETs url and requires a non-empty header value.
@@ -112,5 +130,19 @@ func RequireResponseHeader(t *testing.T, client *http.Client, url, header string
 	value, err := GetResponseHeader(client, url, header)
 	require.NoError(t, err)
 	require.NotEmpty(t, value, "missing response header %q from %s (rebuild versiond-router?)", header, url)
+	return value
+}
+
+// RequireSuccessfulResponseHeader requires both 2xx and a non-empty header.
+func RequireSuccessfulResponseHeader(
+	t *testing.T,
+	client *http.Client,
+	url string,
+	header string,
+) string {
+	t.Helper()
+	value, err := GetSuccessfulResponseHeader(client, url, header)
+	require.NoError(t, err)
+	require.NotEmpty(t, value, "missing response header %q from %s", header, url)
 	return value
 }

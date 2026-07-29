@@ -19,6 +19,7 @@ on:
       - 'local-test-net/**'
       - 'testermint/**'
       - 'versioned/**'
+      - 'versiond-router/**'
       - 'devshard/**'
 
   issue_comment:

@@ -15,6 +15,8 @@ x-versiond: &versiond
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
+    - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
+    - VERSIOND_ADMIN_LISTEN_ADDR=${VERSIOND_ADMIN_LISTEN_ADDR:-127.0.0.1:8081}
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}
@@ -37,6 +39,8 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
+  # Outer Docker backstop; keep it greater than the internal host budget.
+  stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
   restart: always
 
 services:
@@ -89,9 +93,15 @@ services:
     depends_on:
       - versiond
       - versiond2
+    volumes:
+      - versiond-router-state:/var/lib/gonka/versiond-router
+    stop_grace_period: 30m
     restart: always
 
   proxy:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+
+volumes:
+  versiond-router-state:

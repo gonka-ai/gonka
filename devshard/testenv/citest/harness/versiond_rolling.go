@@ -100,6 +100,14 @@ func TryVersiondHealth(stack *Stack, service string) ([]VersiondHealthEntry, err
 	return entries, nil
 }
 
+func TryVersiondReady(stack *Stack, service string) error {
+	_, err := stack.ComposeExecOutput(
+		service,
+		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/ready",
+	)
+	return err
+}
+
 // HasVersiondHealthEntry reports whether health contains the wanted version state.
 func HasVersiondHealthEntry(entries []VersiondHealthEntry, name, status, sha string) bool {
 	for _, e := range entries {
