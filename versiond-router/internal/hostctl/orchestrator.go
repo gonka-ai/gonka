@@ -25,11 +25,9 @@ type Runtime string
 const DefaultReadinessURL = "http://127.0.0.1:8081/ready"
 
 const (
-	RuntimeDocker                       Runtime = "docker"
-	RuntimeSystemd                      Runtime = "systemd"
-	legacyHostctlJournalSchemaVersion           = 1
-	previousHostctlJournalSchemaVersion         = 2
-	hostctlJournalSchemaVersion                 = 3
+	RuntimeDocker               Runtime = "docker"
+	RuntimeSystemd              Runtime = "systemd"
+	hostctlJournalSchemaVersion         = 1
 )
 
 type Config struct {
@@ -625,12 +623,6 @@ func matchingRouterCompletion(
 			lookup.OperationID,
 		)
 	}
-	if completion.Conflict {
-		return nil, fmt.Errorf(
-			"router operation %s has conflicting completion receipts",
-			lookup.OperationID,
-		)
-	}
 	actionMatches := action == "" || completion.Action == action
 	if !actionMatches ||
 		completion.Host != host ||
@@ -862,8 +854,8 @@ func (o *Orchestrator) replacementRestartPolicy(membershipID string) (string, er
 	if err := json.Unmarshal(data, &journal); err != nil {
 		return "", fmt.Errorf("decode evacuation journal: %w", err)
 	}
-	journal, _, err = migrateJournal(journal)
-	if err != nil || journal.Mode != "evacuate" {
+	if journal.SchemaVersion != hostctlJournalSchemaVersion ||
+		journal.Mode != "evacuate" {
 		return "", errors.New("restart-policy source is not an evacuation journal")
 	}
 	validEvacuationPhase := evacuationWorkflow.hasState(journal.Phase) ||
@@ -927,9 +919,11 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 	if err := json.Unmarshal(data, &journal); err != nil {
 		return Journal{}, err
 	}
-	journal, migrated, err := migrateJournal(journal)
-	if err != nil {
-		return Journal{}, err
+	if journal.SchemaVersion != hostctlJournalSchemaVersion {
+		return Journal{}, fmt.Errorf(
+			"unsupported hostctl journal schema %d",
+			journal.SchemaVersion,
+		)
 	}
 	if journal.OperationID != o.config.OperationID || journal.Mode != mode {
 		return Journal{}, fmt.Errorf("journal belongs to operation %s/%s", journal.OperationID, journal.Mode)
@@ -946,11 +940,6 @@ func (o *Orchestrator) loadExistingJournal(mode string) (Journal, error) {
 			journal.CancellationPhase,
 			journal.Phase,
 		)
-	}
-	if migrated {
-		if err := o.writeJournal(journal); err != nil {
-			return Journal{}, fmt.Errorf("persist migrated hostctl journal: %w", err)
-		}
 	}
 	return journal, nil
 }
@@ -989,27 +978,6 @@ func (o *Orchestrator) loadOrCreateJournal(mode string) (Journal, error) {
 		UpdatedAt:     time.Now().UTC(),
 	}
 	return journal, o.writeJournal(journal)
-}
-
-func migrateJournal(journal Journal) (Journal, bool, error) {
-	switch journal.SchemaVersion {
-	case hostctlJournalSchemaVersion:
-		return journal, false, nil
-	case legacyHostctlJournalSchemaVersion,
-		previousHostctlJournalSchemaVersion:
-		if stopWorkflow(journal.Mode) != nil &&
-			journal.Phase == phaseCanceled &&
-			journal.CancellationPhase == "" {
-			journal.CancellationPhase = cancellationComplete
-		}
-		journal.SchemaVersion = hostctlJournalSchemaVersion
-		return journal, true, nil
-	default:
-		return Journal{}, false, fmt.Errorf(
-			"unsupported hostctl journal schema %d",
-			journal.SchemaVersion,
-		)
-	}
 }
 
 func validJournalPhase(mode, phase string) bool {

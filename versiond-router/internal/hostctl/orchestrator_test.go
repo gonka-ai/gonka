@@ -830,7 +830,7 @@ func TestReplaceRestoresPolicyFromEvacuationJournal(t *testing.T) {
 	evacuationScope := orchestrator.operationScope()
 	evacuationScope.VersiondSSH = "retired-versiond-host"
 	evacuation := Journal{
-		SchemaVersion:         legacyHostctlJournalSchemaVersion,
+		SchemaVersion:         hostctlJournalSchemaVersion,
 		OperationID:           "evacuated-policy",
 		Mode:                  "evacuate",
 		Scope:                 evacuationScope,
@@ -1447,37 +1447,6 @@ func TestEvacuateReplaysRouterStoppingWithoutRepeatingDrain(t *testing.T) {
 	}
 }
 
-func TestEvacuateResumesLegacyHostIdleCheckpoint(t *testing.T) {
-	remote := &fakeRemote{running: true, stopOnTerm: true}
-	orchestrator := newTestOrchestrator(t, remote, "resume-host-idle")
-	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion: previousHostctlJournalSchemaVersion,
-		OperationID:   "resume-host-idle",
-		Mode:          "evacuate",
-		Scope:         orchestrator.operationScope(),
-		Phase:         phaseLegacyHostIdle,
-		UpdatedAt:     time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	if err := orchestrator.Evacuate(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	calls := remote.callLog()
-	if strings.Contains(calls, "--from active --to draining") {
-		t.Fatalf("legacy resume repeated the completed drain edge:\n%s", calls)
-	}
-	assertCallOrder(
-		t,
-		calls,
-		"HostConfig.RestartPolicy",
-		"docker update --restart=no",
-		"--from draining --to stopping",
-		"docker kill --signal TERM",
-	)
-}
-
 func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	remote := &fakeRemote{}
 	orchestrator := newTestOrchestrator(t, remote, "scope")
@@ -1495,80 +1464,6 @@ func TestResumeRejectsChangedOperationScope(t *testing.T) {
 	orchestrator.config.VersiondService = "another-versiond"
 	if err := orchestrator.Evacuate(context.Background()); err == nil {
 		t.Fatal("resume with a changed operation scope was accepted")
-	}
-}
-
-func TestLoadExistingJournalMigratesSchemaTwoWorkflow(t *testing.T) {
-	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "schema-two")
-	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion: previousHostctlJournalSchemaVersion,
-		OperationID:   "schema-two",
-		Mode:          "evacuate",
-		Scope:         orchestrator.operationScope(),
-		Phase:         phaseRouterDraining,
-		UpdatedAt:     time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	journal, err := orchestrator.loadExistingJournal("evacuate")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if journal.SchemaVersion != hostctlJournalSchemaVersion {
-		t.Fatalf(
-			"migrated journal schema = %d, want %d",
-			journal.SchemaVersion,
-			hostctlJournalSchemaVersion,
-		)
-	}
-	if journal.Phase != phaseRouterDraining {
-		t.Fatalf("migrated journal phase = %q, want router_draining", journal.Phase)
-	}
-}
-
-func TestLoadExistingJournalMigratesLegacyCanceledState(t *testing.T) {
-	orchestrator := newTestOrchestrator(t, &fakeRemote{}, "legacy-canceled")
-	if err := orchestrator.writeJournal(Journal{
-		SchemaVersion: legacyHostctlJournalSchemaVersion,
-		OperationID:   "legacy-canceled",
-		Mode:          "evacuate",
-		Scope:         orchestrator.operationScope(),
-		Phase:         "canceled",
-		UpdatedAt:     time.Now().UTC(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-
-	journal, err := orchestrator.loadExistingJournal("evacuate")
-	if err != nil {
-		t.Fatal(err)
-	}
-	if journal.SchemaVersion != hostctlJournalSchemaVersion {
-		t.Fatalf(
-			"migrated journal schema = %d, want %d",
-			journal.SchemaVersion,
-			hostctlJournalSchemaVersion,
-		)
-	}
-	if journal.CancellationPhase != "complete" {
-		t.Fatalf(
-			"migrated cancellation phase = %q, want complete",
-			journal.CancellationPhase,
-		)
-	}
-
-	data, err := os.ReadFile(orchestrator.config.JournalPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	var persisted Journal
-	if err := json.Unmarshal(data, &persisted); err != nil {
-		t.Fatal(err)
-	}
-	if persisted.SchemaVersion != hostctlJournalSchemaVersion ||
-		persisted.CancellationPhase != "complete" {
-		t.Fatalf("persisted migrated journal = %#v", persisted)
 	}
 }
 

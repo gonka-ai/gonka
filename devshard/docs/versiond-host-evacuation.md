@@ -189,18 +189,11 @@ linearly with completed operation IDs. The WAL is one replace-in-place
 snapshot; its size follows the desired state, one operation receipt, and
 rendered config rather than the complete receipt index.
 
-State schema 1 is migrated automatically to schema 2 under the router lock.
-Existing membership IDs are preserved; older per-host operation ownership is
-converted into one `active_transfer`. Pending schema-1 through schema-4
-transaction journals are migrated before recovery. Legacy pre-reload
-transactions retain their rollback behavior; legacy transactions that already
-reloaded nginx become forward-only desired-state intents. Schema-3 config bytes
-are imported as the first projection revision and compared with the current
-render source before application. Schema 5 stores only the current receipt in
-the WAL and merges it into the durable index during reconciliation. If the
-index does not exist during an upgrade, terminal audit entries are imported as
-one transaction. Malformed or oversized audit input fails closed without
-persisting a partial index and must be repaired before router mutation resumes.
+Router state, the pending transaction journal, and the hostctl journal are all
+at schema 1. This is the first release that persists any of them, so there is no
+earlier on-disk format: a file carrying a different schema version is rejected
+rather than migrated. The WAL stores only the current completion receipt and
+merges it into the durable index during reconciliation.
 
 Bootstrap settings such as `VERSIOND_HOSTS` are fallback input for creating the
 first state only. On restart, journal recovery and the persisted state run first;
@@ -208,9 +201,7 @@ bootstrap settings are not parsed when authoritative state already exists.
 
 `gonka-routerctl status` is read-only. It reports `pending_operation` plus
 desired/applied generations, render revision and source SHA, and a convergence
-flag. Legacy state and journal schemas are migrated in memory for this output
-but are not persisted. `gonka-routerctl recover` is the explicit mutating
-recovery command.
+flag. `gonka-routerctl recover` is the explicit mutating recovery command.
 Writing the current WAL is the desired-state commit point, so recovery always
 converges forward: it rewrites state and receipts, republishes the committed
 config projection, validates it, reloads nginx idempotently, and updates applied

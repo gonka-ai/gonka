@@ -12,7 +12,6 @@ const (
 	phaseMembershipLoaded      = "membership_loaded"
 	phaseRestartPolicyResolved = "restart_policy_resolved"
 	phaseRouterDraining        = "router_draining"
-	phaseLegacyHostIdle        = "host_idle"
 	phaseRestartPolicyCaptured = "restart_policy_captured"
 	phaseRestartDisabled       = "restart_disabled"
 	phaseTermRequested         = "term_requested"
@@ -205,13 +204,6 @@ func newStopWorkflow(name string, remove bool) workflowDefinition {
 			handler: (*Orchestrator).drainRouterStep,
 		},
 		phaseRouterDraining: {
-			order:   2,
-			next:    phaseRestartPolicyCaptured,
-			handler: (*Orchestrator).captureRestartPolicyStep,
-		},
-		// host_idle was emitted by the former external-health polling flow.
-		// It remains a resume alias but no new workflow transitions into it.
-		phaseLegacyHostIdle: {
 			order:   2,
 			next:    phaseRestartPolicyCaptured,
 			handler: (*Orchestrator).captureRestartPolicyStep,

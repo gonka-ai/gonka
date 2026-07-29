@@ -94,16 +94,10 @@ tracks the desired state, the current operation receipt, and rendered config;
 it does not copy the complete receipt index. The controller lock permits only
 one pending snapshot.
 
-Router state schema 1 is migrated under the controller lock to schema 2. The
-migration preserves existing membership IDs from intermediate builds, assigns
-deterministic IDs to older host records, reconstructs an in-progress
-`active_transfer`, and atomically persists the upgraded state. Pending schema-1,
-schema-2, schema-3, and schema-4 transaction journals are upgraded before
-recovery. A pre-reload legacy transaction keeps its old rollback semantics. A
-legacy transaction that already reloaded nginx is converted into a forward-only
-desired-state intent. Schema 3 fixed the rendered config at commit; schema 4
-added a revision and render-source fingerprint; schema 5 stores only the
-current completion receipt in the WAL.
+Router state and the pending transaction journal are both at schema 1. A state
+or journal file carrying any other schema version is rejected rather than
+migrated: this is the first release that persists router state, so no earlier
+on-disk format exists.
 
 ## Host lifecycle
 
@@ -348,10 +342,8 @@ unset. If SSH or the operator process is interrupted, rerun the same command
 with the same operation ID and journal. It resumes after the last durable
 phase. The journal records the router, upstream, SSH destination, runtime, and
 service scope; a retry with different targets is rejected.
-Hostctl journals use schema 3. Validated schema-1 and schema-2 journals are
-atomically migrated on first resume; a legacy terminal cancellation without
-explicit cancellation checkpoints is normalized to
-`cancellation_phase=complete`.
+Hostctl journals use schema 1. A journal carrying any other schema version is
+rejected rather than migrated.
 
 Hostctl orchestration is a table-driven durable workflow. Each persisted phase
 selects exactly one outgoing edge and named handler. The handler must succeed
@@ -360,8 +352,7 @@ the failed edge without repeating earlier lifecycle work. Evacuation,
 decommission, add, replace, and cancellation have separate transition tables.
 Runtime validation and restart-policy capture have their own checkpoints;
 mutable safety settings are still revalidated or reasserted immediately before
-starting or signaling versiond. The legacy `host_idle` phase remains a
-resume-only alias for schema-1 and schema-2 journals.
+starting or signaling versiond.
 
 Completed journals are retained intentionally and are never deleted
 automatically. They remain the local replay record, and a completed evacuation

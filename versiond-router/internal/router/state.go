@@ -11,10 +11,7 @@ import (
 	"time"
 )
 
-const (
-	legacySchemaVersion = 1
-	SchemaVersion       = 2
-)
+const SchemaVersion = 1
 
 type HostState string
 

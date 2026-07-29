@@ -51,13 +51,6 @@ func renderSourceSHA(template []byte, policy ProxyPolicy) string {
 	return hashBytes(source.Bytes())
 }
 
-// Schema-3 journals did not identify their render inputs. A domain-separated
-// placeholder makes recovery compare them with the current source before
-// application instead of assuming that old bytes are still canonical.
-func legacyRenderSourceSHA(config []byte) string {
-	return hashBytes(append([]byte("gonka-router-legacy-projection\x00"), config...))
-}
-
 func validateCommittedProjection(journal operationJournal) error {
 	if len(journal.NewConfig) == 0 {
 		return errors.New("desired config is empty")

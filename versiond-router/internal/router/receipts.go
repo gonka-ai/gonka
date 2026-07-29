@@ -1,7 +1,6 @@
 package router
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -16,14 +15,12 @@ import (
 const receiptIndexSchemaVersion = 1
 
 type operationReceipt struct {
-	Action         string    `json:"action"`
-	Host           string    `json:"host"`
-	MembershipID   string    `json:"membership_id,omitempty"`
-	Target         HostState `json:"target"`
-	Result         string    `json:"result"`
-	CompletedAt    time.Time `json:"completed_at"`
-	ActionAgnostic bool      `json:"action_agnostic,omitempty"`
-	Conflict       bool      `json:"conflict,omitempty"`
+	Action       string    `json:"action"`
+	Host         string    `json:"host"`
+	MembershipID string    `json:"membership_id,omitempty"`
+	Target       HostState `json:"target"`
+	Result       string    `json:"result"`
+	CompletedAt  time.Time `json:"completed_at"`
 }
 
 type receiptIndex struct {
@@ -40,7 +37,6 @@ type OperationCompletion struct {
 	Target       HostState `json:"target"`
 	Result       string    `json:"result"`
 	CompletedAt  time.Time `json:"completed_at"`
-	Conflict     bool      `json:"conflict,omitempty"`
 }
 
 // OperationLookup reports whether one operation ID has a completion receipt.
@@ -106,9 +102,6 @@ func (c *Controller) loadOrCreateReceiptIndex() (receiptIndex, error) {
 	if !missing {
 		return index, nil
 	}
-	if err := c.repairTornAuditTail(); err != nil {
-		return receiptIndex{}, err
-	}
 	if err := writeJSONAtomic(c.config.ReceiptsPath, index, 0o600); err != nil {
 		return receiptIndex{}, err
 	}
@@ -159,7 +152,6 @@ func (c *Controller) LookupOperation(
 			Target:       receipt.Target,
 			Result:       receipt.Result,
 			CompletedAt:  receipt.CompletedAt,
-			Conflict:     receipt.Conflict,
 		}
 		return nil
 	})
@@ -185,62 +177,7 @@ func (c *Controller) readReceiptIndex() (receiptIndex, bool, error) {
 		return receiptIndex{}, false, err
 	}
 
-	index := newReceiptIndex()
-	if err := c.importAuditReceipts(&index); err != nil {
-		return receiptIndex{}, false, err
-	}
-	return index, true, nil
-}
-
-func (c *Controller) importAuditReceipts(index *receiptIndex) error {
-	f, err := os.Open(c.config.AuditPath)
-	if errors.Is(err, fs.ErrNotExist) {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("open router audit for receipt import: %w", err)
-	}
-	defer f.Close()
-
-	endsWithNewline, err := fileEndsWithNewline(f)
-	if err != nil {
-		return fmt.Errorf("inspect router audit for receipt import: %w", err)
-	}
-
-	scanner := bufio.NewScanner(f)
-	scanner.Buffer(make([]byte, 64*1024), 1024*1024)
-	line := 0
-	pendingLine := 0
-	var pending []byte
-	for scanner.Scan() {
-		line++
-		if pending != nil {
-			if err := importAuditReceiptLine(
-				index,
-				pendingLine,
-				pending,
-			); err != nil {
-				return err
-			}
-		}
-		pending = append(pending[:0], scanner.Bytes()...)
-		pendingLine = line
-	}
-	if err := scanner.Err(); err != nil {
-		return fmt.Errorf("scan router audit for receipt import: %w", err)
-	}
-	if pending == nil {
-		return nil
-	}
-	if !endsWithNewline {
-		slog.Warn(
-			"ignoring torn final router audit record during receipt import",
-			"path", c.config.AuditPath,
-			"line", pendingLine,
-		)
-		return nil
-	}
-	return importAuditReceiptLine(index, pendingLine, pending)
+	return newReceiptIndex(), true, nil
 }
 
 func (c *Controller) repairTornAuditTail() error {
@@ -294,87 +231,6 @@ func (c *Controller) repairTornAuditTail() error {
 		"bytes", info.Size()-truncateAt,
 	)
 	return nil
-}
-
-func fileEndsWithNewline(f *os.File) (bool, error) {
-	info, err := f.Stat()
-	if err != nil {
-		return false, err
-	}
-	if info.Size() == 0 {
-		return true, nil
-	}
-	var last [1]byte
-	if _, err := f.ReadAt(last[:], info.Size()-1); err != nil {
-		return false, err
-	}
-	return last[0] == '\n', nil
-}
-
-func importAuditReceiptLine(
-	index *receiptIndex,
-	line int,
-	data []byte,
-) error {
-	var record AuditRecord
-	if err := json.Unmarshal(data, &record); err != nil {
-		return fmt.Errorf(
-			"decode router audit record at line %d: %w",
-			line,
-			err,
-		)
-	}
-	if record.OperationID == "" ||
-		!terminalAuditRecord(record) ||
-		!replayableAuditAction(record.Action) {
-		return nil
-	}
-	receipt := receiptFromAudit(record)
-	if err := validateOperationReceipt(record.OperationID, receipt); err != nil {
-		return fmt.Errorf(
-			"validate router audit receipt at line %d for operation %s: %w",
-			line,
-			record.OperationID,
-			err,
-		)
-	}
-	if existing, ok := index.Completed[record.OperationID]; ok {
-		if sameOperationReceipt(existing, receipt) {
-			if receipt.CompletedAt.After(existing.CompletedAt) {
-				index.Completed[record.OperationID] = receipt
-			}
-			return nil
-		}
-		existing.Conflict = true
-		index.Completed[record.OperationID] = existing
-		return nil
-	}
-	index.Completed[record.OperationID] = receipt
-	return nil
-}
-
-func receiptFromAudit(record AuditRecord) operationReceipt {
-	target := record.Target
-	if target == "" && transitionTarget(record.To) {
-		target = record.To
-	}
-	result := record.Result
-	if result == "success" {
-		result = "completed"
-	}
-	completedAt := record.Time
-	if completedAt.IsZero() {
-		completedAt = time.Now().UTC()
-	}
-	return operationReceipt{
-		Action:         record.Action,
-		Host:           record.Host,
-		MembershipID:   record.MembershipID,
-		Target:         target,
-		Result:         result,
-		CompletedAt:    completedAt,
-		ActionAgnostic: true,
-	}
 }
 
 func receiptFromMutation(change mutation) operationReceipt {
@@ -436,32 +292,10 @@ func validateOperationReceipt(
 	return nil
 }
 
-func replayableAuditAction(action string) bool {
-	switch action {
-	case "transfer", "add", "cancel",
-		"drain", "offline", "join", "activate":
-		return true
-	default:
-		return false
-	}
-}
-
-func terminalAuditRecord(record AuditRecord) bool {
-	if terminalResult(record.Result) {
-		return true
-	}
-	if record.Result != "success" {
-		return false
-	}
-	return record.Action == "offline" || record.Action == "activate"
-}
-
 func sameOperationReceipt(left, right operationReceipt) bool {
 	return left.Action == right.Action &&
 		left.Host == right.Host &&
 		left.MembershipID == right.MembershipID &&
 		left.Target == right.Target &&
-		left.Result == right.Result &&
-		left.ActionAgnostic == right.ActionAgnostic &&
-		left.Conflict == right.Conflict
+		left.Result == right.Result
 }
