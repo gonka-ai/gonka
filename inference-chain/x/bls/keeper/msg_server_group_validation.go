@@ -253,7 +253,7 @@ func (ms msgServer) SubmitGroupKeyValidationSignature(goCtx context.Context, msg
 }
 
 // computeValidationMessageHash computes the message hash for group key validation.
-// Uses Ethereum-compatible abi.encodePacked(previous_epoch_id [8], chain_id [32], new_group_key_uncompressed [256]).
+// Uses Ethereum-compatible abi.encodePacked(previous_epoch_id [8], chain_id [32], TRANSITION_OPERATION [32], new_group_key_uncompressed [256]).
 func (ms msgServer) computeValidationMessageHash(ctx sdk.Context, groupPublicKey []byte, previousEpochId, newEpochId uint64) ([]byte, error) {
 	// Decompress and format group key using helper (blst optimized)
 	g2Uncompressed256, err := ms.Keeper.DecompressG2To256Blst(groupPublicKey)
@@ -274,6 +274,10 @@ func (ms msgServer) computeValidationMessageHash(ctx sdk.Context, groupPublicKey
 
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
+
+	// Add TRANSITION_OPERATION domain tag (32 bytes) at offset 40, mirroring the
+	// MINT_OPERATION / WITHDRAW_OPERATION tags on the other two signed messages.
+	encodedData = append(encodedData, types.TransitionOperationTag()...)
 
 	// Add the 256-byte uncompressed G2 key
 	encodedData = append(encodedData, g2Uncompressed256...)

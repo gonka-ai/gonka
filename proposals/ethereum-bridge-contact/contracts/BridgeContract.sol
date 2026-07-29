@@ -146,12 +146,17 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // Operation type identifiers for message hash domain separation
     bytes32 constant WITHDRAW_OPERATION = keccak256("WITHDRAW_OPERATION");
     bytes32 constant MINT_OPERATION = keccak256("MINT_OPERATION");
+    bytes32 constant TRANSITION_OPERATION = keccak256("TRANSITION_OPERATION");
     
     // Field modulus p for BLS12-381 (64-byte big-endian, padded)
     bytes constant FP_MODULUS = hex"000000000000000000000000000000001a0111ea397fe69a4b1ba7b6434bacd764774b84f38512bf6730d2a0f6b0f6241eabfffeb153ffffb9feffffffffaaab";
     
     // Uncompressed G2 generator (X.c0, X.c1, Y.c0, Y.c1), each 64-byte big-endian (padded)
     bytes constant G2_GENERATOR = hex"00000000000000000000000000000000024aa2b2f08f0a91260805272dc51051c6e47ad4fa403b02b4510b647ae3d1770bac0326a805bbefd48056c8c121bdb80000000000000000000000000000000013e02b6052719f607dacd3a088274f65596bd0d09920b61ab5da61bbdc7f5049334cf11213945d57e5ac7d055d042b7e000000000000000000000000000000000ce5d527727d6e118cc9cdc6da2e351aadfd9baa8cbdd3a76d429a695160d12c923ac9cc3baca289e193548608b82801000000000000000000000000000000000606c4a02ea734cc32acd2b02bc28b99cb3e287e85a763af267492ab572e99ab3f370d275cec1da1aaa9075ff05f79be";
+
+    // Uncompressed G1 generator (x, y), each 64-byte big-endian (48-byte value, 16-byte left-pad).
+    // Used only as a fixed pairing input for the G2 point-validity check below.
+    bytes constant G1_GENERATOR = hex"0000000000000000000000000000000017f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb0000000000000000000000000000000008b3f481e3aaa0f1a09e30ed741d8ae4fcf5e095d5d00af600db18cb2c04b3edd03cc744a2888ae40caa232946c5e7e1";
 
     // =============================================================================
     // EVENTS
@@ -302,6 +307,8 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
 
         // Verify group public key is 256 bytes (G2 point uncompressed)
         require(groupPublicKey.length == 256, "Invalid group key length");
+
+        require(_isValidG2Point(groupPublicKey), "Invalid G2 group key");
 
         // Verify validation signature against previous epoch
         GroupKey memory newGroupKeyStruct = _bytesToGroupKey(groupPublicKey);
@@ -642,6 +649,28 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     }
 
     /**
+     * @dev verify `g2Point` is a valid, in-subgroup G2 point.
+
+     * Implementation leverages the EIP-2537 pairing precompile's mandatory on-curve
+     * and subgroup checks on every input point. The pairing
+     *   e(G1, key) * e(-G1, key)
+     * equals 1 for any valid subgroup `key`, so a well-formed point returns true;
+     * an invalid or non-subgroup `key` makes the precompile fail, returning false.
+     */
+    function _isValidG2Point(bytes memory g2Point) internal view returns (bool) {
+        require(g2Point.length == 256, "Invalid group key length");
+
+        bytes memory negG1 = _negateG1(G1_GENERATOR);
+        bytes memory pairingInput = abi.encodePacked(
+            G1_GENERATOR, g2Point,   // e(G1, key)
+            negG1,        g2Point     // e(-G1, key)
+        );
+
+        (bool success, bytes memory result) = BLS12_PAIRING.staticcall(pairingInput);
+        return success && result.length == 32 && abi.decode(result, (bool));
+    }
+
+    /**
      * @dev Map a 32-byte message hash (as field element) to a G1 point using EIP-2537 MAP_FP_TO_G1
      *      Input must be a 64-byte big-endian field element; we left-pad the 32-byte hash.
      *      Returns 128-byte uncompressed G1 point (x||y), big-endian coords (64-bytes each).
@@ -703,16 +732,23 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         require(validationSignature.length == 128, "Invalid validation signature length");
 
         // Compute validation message hash following the format:
-        // abi.encodePacked(previous_epoch_id, chain_id, data[0], data[1], data[2])
-        // where data[0], data[1], data[2] are the 3 parts of the new group public key
-        
+        // abi.encodePacked(previous_epoch_id, chain_id, TRANSITION_OPERATION, part0..part7)
+        // where part0..part7 are the 8 parts of the new group public key.
+        //
+        // TRANSITION_OPERATION is a fixed domain tag at offset 40 (right after the
+        // 8-byte epoch and 32-byte chain id), mirroring the MINT_OPERATION /
+        // WITHDRAW_OPERATION tags on the other two signed messages. Without it, any
+        // group signature over (epoch || GONKA_CHAIN_ID || 256 arbitrary bytes) would
+        // be byte-identical to a rotation authorizing those bytes as the next key.
+
         // Use GONKA chain id (source chain) for transition binding
         bytes32 chainId = GONKA_CHAIN_ID;
-        
-        // Encode message: abi.encodePacked(previousEpochId, chainId, part0..part7)
+
+        // Encode message: abi.encodePacked(previousEpochId, chainId, TRANSITION_OPERATION, part0..part7)
         bytes memory encodedMessage = abi.encodePacked(
             previousEpochId,        // 8 bytes
             chainId,                // 32 bytes
+            TRANSITION_OPERATION,   // 32 bytes - domain separation tag (offset 40)
             newGroupKey.part0,      // 32 bytes - direct access, no intermediate variables
             newGroupKey.part1,      // 32 bytes
             newGroupKey.part2,      // 32 bytes

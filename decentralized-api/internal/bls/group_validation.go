@@ -137,7 +137,7 @@ func (bm *BlsManager) ProcessGroupPublicKeyGeneratedToSign(event *chainevents.JS
 }
 
 // computeValidationMessageHash computes the validation message hash using the same format as the chain
-// Format: abi.encodePacked(previous_epoch_id (8 BE), sha256(chain_id) (32), new_group_key_uncompressed_256 (X.c0||X.c1||Y.c0||Y.c1; each 64-byte BE limb))
+// Format: abi.encodePacked(previous_epoch_id (8 BE), sha256(chain_id) (32), keccak256("TRANSITION_OPERATION") (32), new_group_key_uncompressed_256 (X.c0||X.c1||Y.c0||Y.c1; each 64-byte BE limb))
 func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previousEpochID, newEpochID uint64, chainID string) ([]byte, error) {
 	if len(groupPublicKey) != 96 {
 		return nil, fmt.Errorf("invalid group public key length: expected 96 bytes, got %d", len(groupPublicKey))
@@ -163,6 +163,8 @@ func (bm *BlsManager) computeValidationMessageHash(groupPublicKey []byte, previo
 
 	// Add chain_id (32 bytes)
 	encodedData = append(encodedData, chainIdBytes...)
+
+	encodedData = append(encodedData, blstypes.TransitionOperationTag()...)
 
 	// Append uncompressed G2 (256 bytes): X.c0||X.c1||Y.c0||Y.c1, each 64-byte big-endian (48-byte left-padded)
 	appendFp64 := func(e fp.Element) {
