@@ -303,11 +303,11 @@
           "hf_repo": "Qwen/Qwen2.5-7B-Instruct",
           "hf_commit": "a09a35458c702b33eeacc393d103063234e8bc28",
           "model_args": [
-            "--quantization",
-            "fp8",
             "--enable-auto-tool-choice",
             "--tool-call-parser",
-            "hermes"
+            "hermes",
+            "--max-model-len",
+            "4096"
           ],
           "v_ram": "24",
           "throughput_per_nonce": "10000",
