@@ -52,6 +52,7 @@ type Gateway struct {
 	store                 *GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
+	accounting            *gatewayAccountingRecorder
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
 	suspiciousHosts       map[string]struct{}
@@ -102,6 +103,7 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+	accountingFlush  func()
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -560,6 +562,9 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 			log.Printf("runtime_retire_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
 		}
 	}
+	if rt.accountingFlush != nil {
+		rt.accountingFlush()
+	}
 	return rt.close()
 }
 
@@ -713,7 +718,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, perfArgs ...*PerfTracker) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, perf *PerfTracker, accounting *gatewayAccountingRecorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -727,12 +732,22 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 			g.replaceSuspiciousHosts(hosts)
 		}
 	}
-	if len(perfArgs) > 0 && perfArgs[0] != nil {
-		g.perf = perfArgs[0]
+	if perf != nil {
+		g.perf = perf
+	}
+	if accounting != nil {
+		g.accounting = accounting
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil {
 		g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
+		if g.accounting != nil {
+			g.phaseGate.SetEpochTransitionHook(func(_, _ uint64) {
+				if err := g.accounting.flush(context.Background()); err != nil {
+					log.Printf("gateway accounting epoch flush: %v", err)
+				}
+			})
+		}
 	}
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
@@ -740,6 +755,10 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		}
 		g.attachCapacityStateToPhaseGate()
 		g.phaseGate.Start()
+	} else if g.accounting != nil {
+		for _, rt := range g.runtimeOrder {
+			g.accounting.attachRuntime(rt)
+		}
 	}
 	g.escrowChecker = NewEscrowChecker(func() string {
 		g.mu.Lock()
@@ -773,6 +792,9 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		}
 	}
 	g.attachMetrics(rt)
+	if g.accounting != nil {
+		g.accounting.attachRuntime(rt)
+	}
 	g.attachEscrowChecker(rt)
 	g.attachRaceCleanupBarrier(rt)
 	if g.capacity != nil {
@@ -1285,6 +1307,11 @@ func (g *Gateway) Close() error {
 			firstErr = err
 		}
 	}
+	if g.accounting != nil {
+		if err := g.accounting.close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -1751,6 +1778,12 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
+	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
+		g.accounting.recordEscrowPhase(id, rt.proxy.sm.Phase())
+		if err := g.accounting.flush(context.Background()); err != nil {
+			log.Printf("finalize: flush accounting for devshard %s: %v", id, err)
+		}
+	}
 	if g.store == nil {
 		return
 	}

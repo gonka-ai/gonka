@@ -101,7 +101,7 @@ services:
       - ./observability/grafana/entrypoint.sh:/entrypoint.sh:ro
       - grafana_data:/var/lib/grafana
     ports:
-      - "127.0.0.1:3000:3000"
+      - "127.0.0.1:${GRAFANA_HOST_PORT:-9093}:3000"
     depends_on:
       - prometheus
     restart: unless-stopped

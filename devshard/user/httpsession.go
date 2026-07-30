@@ -103,6 +103,7 @@ func NewLocalSession(cfg LocalSessionConfig) (*Session, *state.StateMachine, err
 		store.Close()
 		return nil, nil, fmt.Errorf("recover session: %w", err)
 	}
+	session.SetEpochID(meta.EpochID)
 	return session, sm, nil
 }
 
@@ -197,6 +198,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		}
 		enableWarmKeyResolver()
 		session.SetParticipantKeys(participantKeys)
+		session.SetEpochID(escrow.EpochID)
 		return session, recSM, nil
 	}
 	if !errors.Is(metaErr, storage.ErrSessionNotFound) {
@@ -233,6 +235,7 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 		return nil, nil, fmt.Errorf("create session: %w", err)
 	}
 	session.SetParticipantKeys(participantKeys)
+	session.SetEpochID(escrow.EpochID)
 
 	return session, sm, nil
 }

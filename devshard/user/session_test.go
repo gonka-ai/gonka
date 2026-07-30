@@ -160,6 +160,38 @@ func TestUser_PipelinesReceipt(t *testing.T) {
 	require.True(t, hasConfirm, "diff 2 should pipeline MsgConfirmStart for inference 1")
 }
 
+func TestSessionObserversSeeAppliedDiffsAndProtocolTransitions(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 100000, 10)
+	var diffs []bool
+	session.SetDiffObserver(func(_ uint64, hasStartInference bool) {
+		diffs = append(diffs, hasStartInference)
+	})
+	var transitions []state.TransitionEvent
+	session.StateMachine().SetTransitionObserver(func(event state.TransitionEvent) {
+		transitions = append(transitions, event)
+	})
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	_, err := session.SendInference(context.Background(), params)
+	require.NoError(t, err)
+	_, err = session.SendInference(context.Background(), params)
+	require.NoError(t, err)
+
+	require.Equal(t, []bool{true, true}, diffs)
+	var kinds []state.TransitionKind
+	for _, event := range transitions {
+		if event.InferenceID == 1 {
+			kinds = append(kinds, event.Kind)
+		}
+	}
+	require.ElementsMatch(t, []state.TransitionKind{
+		state.TransitionReceipt,
+		state.TransitionFinish,
+	}, kinds)
+}
+
 func TestUser_CollectsSignatures(t *testing.T) {
 	session, _, _ := setupSession(t, 3, 100000, 10)
 	ctx := context.Background()
@@ -429,8 +461,112 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		"accumulated weight %d should exceed threshold %d", totalWeight, config.VoteThreshold)
 }
 
+func TestHandleTimeoutReturnsAppliedWithoutError(t *testing.T) {
+	session, hosts, _ := setupSession(t, 3, 100000, 10)
+	for i, client := range session.clients {
+		session.clients[i] = &timeoutCapableClient{
+			HostClient: client,
+			verifier: &mockTimeoutVerifier{
+				accept:  true,
+				signer:  hosts[i],
+				group:   session.group,
+				slotIdx: i,
+			},
+		}
+	}
+	prepared, err := session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+
+	result, err := session.HandleTimeout(
+		context.Background(),
+		prepared.Nonce(),
+		time.Now().Add(-time.Hour),
+		&host.InferencePayload{
+			Prompt:      testutil.TestPrompt,
+			Model:       "llama",
+			InputLength: 100,
+			MaxTokens:   50,
+			StartedAt:   1000,
+		},
+	)
+	require.NoError(t, err)
+	require.Equal(t, "refused", result.Reason)
+	require.Equal(t, "applied", result.Outcome)
+	require.True(t, result.Applied)
+	require.True(t, result.Delivered)
+	require.Greater(t, result.AcceptWeight, uint32(0))
+	record, found := session.StateMachine().GetInference(prepared.Nonce())
+	require.True(t, found)
+	require.Equal(t, types.StatusTimedOut, record.Status)
+}
+
+func TestHandleTimeoutClassifiesCancellationAndVerifierFailures(t *testing.T) {
+	t.Run("canceled before deadline", func(t *testing.T) {
+		session, _, _ := setupSession(t, 3, 100000, 10)
+		prepared, err := session.PrepareInference(InferenceParams{
+			Model: "llama", Prompt: testutil.TestPrompt,
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		result, err := session.HandleTimeout(ctx, prepared.Nonce(), time.Now(), &host.InferencePayload{})
+		require.ErrorIs(t, err, context.Canceled)
+		require.Equal(t, "skipped", result.Outcome)
+		require.Equal(t, "context_canceled", result.DetailReason)
+	})
+
+	t.Run("verifier failures", func(t *testing.T) {
+		session, hosts, _ := setupSession(t, 3, 100000, 10)
+		for i, client := range session.clients {
+			session.clients[i] = &timeoutCapableClient{
+				HostClient: client,
+				verifier: &mockTimeoutVerifier{
+					err:     fmt.Errorf("verifier unavailable"),
+					signer:  hosts[i],
+					group:   session.group,
+					slotIdx: i,
+				},
+			}
+		}
+		prepared, err := session.PrepareInference(InferenceParams{
+			Model: "llama", Prompt: testutil.TestPrompt,
+			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		})
+		require.NoError(t, err)
+		result, err := session.HandleTimeout(
+			context.Background(),
+			prepared.Nonce(),
+			time.Now().Add(-time.Hour),
+			&host.InferencePayload{},
+		)
+		require.Error(t, err)
+		require.Equal(t, "vote_collection_failed", result.Outcome)
+		require.Greater(t, result.ErrorWeight, uint32(0))
+	})
+}
+
+type timeoutCapableClient struct {
+	HostClient
+	verifier TimeoutVerifier
+}
+
+func (c *timeoutCapableClient) VerifyTimeout(
+	ctx context.Context,
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	payload *host.InferencePayload,
+	diffs []types.Diff,
+) (bool, []byte, uint32, error) {
+	return c.verifier.VerifyTimeout(ctx, inferenceID, reason, payload, diffs)
+}
+
 type mockTimeoutVerifier struct {
 	accept   bool
+	err      error
 	signer   *signing.Secp256k1Signer
 	group    []types.SlotAssignment
 	slotIdx  int
@@ -438,6 +574,9 @@ type mockTimeoutVerifier struct {
 }
 
 func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+	if m.err != nil {
+		return false, nil, 0, m.err
+	}
 	if !m.accept {
 		return false, nil, 0, nil
 	}
