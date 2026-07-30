@@ -84,7 +84,6 @@ type OnNewBlockDispatcher struct {
 	lastThresholdEpoch   uint64 // last epoch the per-model thresholds were refreshed for
 
 	seedSubmissionMu   sync.Mutex
-	seedAttemptEpoch   uint64
 	seedAttemptHeight  int64
 	seedConfirmedEpoch uint64
 }
@@ -417,8 +416,6 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 		d.ensureSeedSubmitted(ctx, epochContext, blockHeight, d.nodeBroker.GetParticipantAddress())
 	}
 
-	// Keep the start block dedicated to PoC startup. Seed repair on later blocks
-	// must not return early because stage transitions can share those heights.
 	if epochContext.IsStartOfPocStage(blockHeight) {
 		return
 	}
@@ -591,8 +588,8 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 	if d.seedConfirmedEpoch >= epochIndex {
 		return
 	}
-	// Skip chain queries during retry cooldown; confirmation can wait a block.
-	if d.seedAttemptEpoch == epochIndex && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
+	// Avoid resubmitting while the previous async SubmitSeed may still be in flight.
+	if d.seedAttemptHeight > 0 && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
 		return
 	}
 
@@ -614,10 +611,8 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 		"epochIndex", epochIndex,
 		"participant", participantAddress,
 		"blockHeight", blockHeight,
-		"retry", d.seedAttemptEpoch == epochIndex)
-	d.seedAttemptEpoch = epochIndex
+		"retry", d.seedAttemptHeight > 0)
 	d.seedAttemptHeight = blockHeight
-	// Sign + NATS enqueue only; durability comes from later chain confirmation.
 	d.randomSeedManager.GenerateSeedInfo(epochIndex)
 }
 
@@ -641,9 +636,8 @@ func (d *OnNewBlockDispatcher) getParticipantSeed(
 	return nil, false, nil
 }
 
-// confirmSeedLocally returns true when we should stop further seed work for this
-// epoch: local state matches/restored, or an intentional signature mismatch.
-// Transient restore failures return false so a later block can retry restore.
+// confirmSeedLocally syncs local upcoming seed with an on-chain seed.
+// Returns false only on transient restore failure so the next block can retry.
 func (d *OnNewBlockDispatcher) confirmSeedLocally(
 	epochIndex uint64,
 	participantAddress string,
