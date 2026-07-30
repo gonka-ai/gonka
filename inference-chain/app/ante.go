@@ -226,13 +226,17 @@ func NewAnteHandler(options HandlerOptions) (sdk.AnteHandler, error) {
 			Priority: 10_000_000,
 		},
 		ante.NewDeductFeeDecorator(options.AccountKeeper, options.BankKeeper, options.FeegrantKeeper, GonkaFeeChecker(options.InferenceKeeper)),
-		// Run mempool filters AFTER fee deduction (so invalid txs pay fees), but BEFORE signature verification (to avoid crypto work).
-		NewPocPeriodValidationDecorator(options.InferenceKeeper),   // Reject PoC submissions outside allowed windows
-		NewValidationEarlyRejectDecorator(options.InferenceKeeper), // Reject invalid MsgValidation txs early (duplicate / not-in-epoch)
-		ante.NewSetPubKeyDecorator(options.AccountKeeper),          // SetPubKeyDecorator must be called before all signature verification decorators
+		// Cheap mempool filters before signature verification (avoid crypto work on
+		// obviously invalid PoC txs). CheckTx ante failures discard
+		// state (including fee deduction), so fee-first is not an economic throttle.
+		NewPocPeriodValidationDecorator(options.InferenceKeeper),
+		ante.NewSetPubKeyDecorator(options.AccountKeeper),
 		ante.NewValidateSigCountDecorator(options.AccountKeeper),
 		ante.NewSigGasConsumeDecorator(options.AccountKeeper, options.SigGasConsumer),
 		ante.NewSigVerificationDecorator(options.AccountKeeper, options.SignModeHandler),
+		// Bridge early-reject after sig verification: group membership / bridge-state
+		// reads must not run on unauthenticated txs.
+		NewBridgeExchangeEarlyRejectDecorator(options.InferenceKeeper),
 		ante.NewIncrementSequenceDecorator(options.AccountKeeper),
 		ibcante.NewRedundantRelayDecorator(options.IBCKeeper),
 	}

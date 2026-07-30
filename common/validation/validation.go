@@ -13,9 +13,7 @@ import (
 
 	"common/completionapi"
 	"common/logging"
-	"common/utils"
 
-	"github.com/google/uuid"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/shopspring/decimal"
@@ -281,59 +279,6 @@ func positionDistance(
 	}
 
 	return distance, nil
-}
-
-// getResponseHash hashes the response bytes after unmarshalling.
-// Inlined from decentralized-api/internal/utils.GetResponseHash.
-func getResponseHash(bodyBytes []byte) (string, error) {
-	if len(bodyBytes) == 0 {
-		return "", nil
-	}
-	var response completionapi.Response
-	if err := json.Unmarshal(bodyBytes, &response); err != nil {
-		return "", err
-	}
-	// Hash full bytes to include logprobs, preventing manipulation attacks
-	hash := utils.GenerateSHA256Hash(string(bodyBytes))
-	return hash, nil
-}
-
-// ToMsgValidation converts a ValidationResult to a chain message.
-func ToMsgValidation(result ValidationResult) (*inference.MsgValidation, error) {
-	// Match type of result from implementations of ValidationResult
-	var simVal float64
-	switch r := result.(type) {
-	case *DifferentLengthValidationResult:
-		logging.Warn("Different length validation result", types.Validation)
-		simVal = 0
-	case *DifferentTokensValidationResult:
-		logging.Warn("Different tokens validation result", types.Validation)
-		simVal = 0
-	case *SimilarityValidationResult:
-		simVal = r.Value
-		logging.Info("Cosine similarity validation result", types.Validation, "cosineSimValue", simVal)
-	case *InvalidInferenceResult:
-		simVal = 0
-		logging.Warn("Invalid inference result", types.Validation, "reason", r.Reason, "inferenceId", r.GetInferenceId(), "error", r.Error)
-	default:
-		logging.Error("Unknown validation result type", types.Validation, "type", fmt.Sprintf("%T", result), "result", result)
-		return nil, errors.New("unknown validation result type")
-	}
-
-	responseHash, err := getResponseHash(result.GetValidationResponseBytes())
-	if err != nil {
-		logging.Error("Failed to get response hash", types.Validation, "error", err)
-		return nil, err
-	}
-
-	return &inference.MsgValidation{
-		Id:           uuid.New().String(),
-		InferenceId:  result.GetInferenceId(),
-		ResponseHash: responseHash,
-		// The conversion may not be deterministic here, but that doesn't matter as the message
-		// itself is what counts, and it WILL be deterministic
-		ValueDecimal: DecimalFromFloat(simVal),
-	}, nil
 }
 
 var zero = inference.Decimal{Value: 0, Exponent: 0}

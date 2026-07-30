@@ -328,7 +328,7 @@ func migrateAuthzGrantsForPocV2(ctx context.Context, authzKeeper AuthzMigrationK
 	var pairsToMigrate []grantPair
 
 	// Iterate all grants, find those with MsgStartInference
-	startInferenceMsgType := sdk.MsgTypeURL(&types.MsgStartInference{})
+	startInferenceMsgType := types.LegacyMsgStartInferenceTypeURL
 	authzKeeper.IterateGrants(ctx, func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool {
 		if grant.Authorization.GetTypeUrl() == "/cosmos.authz.v1beta1.GenericAuthorization" {
 			var genAuth authz.GenericAuthorization

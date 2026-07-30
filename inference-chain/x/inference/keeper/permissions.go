@@ -107,10 +107,6 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgSubmitNewParticipant)(nil)):         {OpenRegistrationPermission},
 	reflect.TypeOf((*types.MsgSubmitNewUnfundedParticipant)(nil)): {OpenRegistrationPermission},
 
-	// These are special cases authorized by GroupPolicy
-	reflect.TypeOf((*types.MsgInvalidateInference)(nil)): {NoPermission},
-	reflect.TypeOf((*types.MsgRevalidateInference)(nil)): {NoPermission},
-
 	reflect.TypeOf((*types.MsgClaimRewards)(nil)):                     {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 	reflect.TypeOf((*types.MsgSetClaimRecipients)(nil)):               {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitHardwareDiff)(nil)):               {ParticipantPermission},
@@ -120,11 +116,6 @@ var MessagePermissions = map[reflect.Type][]Permission{
 	reflect.TypeOf((*types.MsgMLNodeWeightDistribution)(nil)):         {NoPermission},
 	reflect.TypeOf((*types.MsgSubmitSeed)(nil)):                       {ParticipantPermission},
 	reflect.TypeOf((*types.MsgSubmitUnitOfComputePriceProposal)(nil)): {ActiveParticipantPermission},
-
-	reflect.TypeOf((*types.MsgStartInference)(nil)): {ActiveParticipantPermission},
-	// Finish could happen after a new epoch has started
-	reflect.TypeOf((*types.MsgFinishInference)(nil)): {ActiveParticipantPermission, PreviousActiveParticipantPermission},
-	reflect.TypeOf((*types.MsgValidation)(nil)):      {ActiveParticipantPermission, PreviousActiveParticipantPermission},
 
 	reflect.TypeOf((*types.MsgCreateDevshardEscrow)(nil)):       {EscrowAllowListPermission},
 	reflect.TypeOf((*types.MsgSettleDevshardEscrow)(nil)):       {EscrowAllowListPermission},
@@ -200,21 +191,7 @@ func (k msgServer) checkParticipantPermission(ctx context.Context, signer sdk.Ac
 }
 
 func (k msgServer) checkActiveParticipantPermission(ctx context.Context, signer sdk.AccAddress, epochOffset uint64) error {
-	currentEpoch, err := k.EffectiveEpochIndex.Get(ctx)
-	if err != nil {
-		return err
-	}
-	if currentEpoch < epochOffset {
-		return types.ErrActiveParticipantNotFound
-	}
-	found, err := k.ActiveParticipantsSet.Has(ctx, collections.Join(currentEpoch-epochOffset, signer))
-	if err != nil {
-		return err
-	}
-	if !found {
-		return types.ErrActiveParticipantNotFound
-	}
-	return nil
+	return k.RequireActiveParticipantAtOffset(sdk.UnwrapSDKContext(ctx), signer, epochOffset)
 }
 
 func (k msgServer) checkCurrentActiveParticipantPermission(ctx context.Context, signer sdk.AccAddress) error {

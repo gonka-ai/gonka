@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"common/logging"
-	"decentralized-api/internal/validation"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -209,7 +208,6 @@ func main() {
 		defer statsStore.Close()
 	}
 
-	validator := validation.NewInferenceValidator(nodeBroker, configManager, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
 	if db := configManager.SqlDb().GetDb(); db != nil {
 		if err := blsManager.SetDealerOpeningsDB(db); err != nil {
@@ -222,7 +220,6 @@ func main() {
 		configManager,
 		offChainValidator,
 		nodeBroker,
-		validator,
 		*recorder,
 		chainPhaseTracker,
 		cancel,
@@ -284,7 +281,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort

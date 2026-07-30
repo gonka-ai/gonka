@@ -45,7 +45,7 @@ func newChainIdentity(
 }
 
 func (c *chainIdentity) NewInferenceQueryClient() inferencetypes.QueryClient {
-	return inferencetypes.NewQueryClient(c.client.Conn())
+	return inferencetypes.NewQueryClient(c.client.QueryConn())
 }
 
 func (c *chainIdentity) GetAccountAddress() string {

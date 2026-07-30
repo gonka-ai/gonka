@@ -93,21 +93,6 @@ func (m *MockCosmosMessageClient) EncryptBytes(plaintext []byte) ([]byte, error)
 	return args.Get(0).([]byte), args.Error(1)
 }
 
-func (m *MockCosmosMessageClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
-func (m *MockCosmosMessageClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
-	args := m.Called(transaction)
-	return args.Error(0)
-}
-
 func (m *MockCosmosMessageClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {
 	args := m.Called(transaction)
 	return args.Error(0)

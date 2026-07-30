@@ -541,7 +541,7 @@ func grantRespondDealerComplaintsAuthz(ctx context.Context, authzKeeper authzkee
 	seen := make(map[string]bool)
 	var pairs []grantPair
 
-	startInferenceMsgType := sdk.MsgTypeURL(&types.MsgStartInference{})
+	startInferenceMsgType := types.LegacyMsgStartInferenceTypeURL
 	respondMsgType := sdk.MsgTypeURL(&blstypes.MsgRespondDealerComplaints{})
 
 	authzKeeper.IterateGrants(ctx, func(granterAddr, granteeAddr sdk.AccAddress, grant authz.Grant) bool {

@@ -131,6 +131,18 @@ data class MsgSetTrainingAllowList(
     }
 }
 
+/** Registers Ethereum (etc.) bridge contract addresses for WGNK unwrap releases. */
+data class MsgRegisterBridgeAddresses(
+    val authority: String = "",
+    val chainName: String,
+    val addresses: List<String>,
+) : GovernanceMessage {
+    override val type: String = "/inference.inference.MsgRegisterBridgeAddresses"
+    override fun withAuthority(authority: String): GovernanceMessage {
+        return this.copy(authority = authority)
+    }
+}
+
 data class DepositorAmount(
     val denom: String,
     val amount: BigInteger

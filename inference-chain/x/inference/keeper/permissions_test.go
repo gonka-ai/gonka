@@ -119,8 +119,7 @@ func TestPermission_ActiveParticipant_CurrentAndPrevious(t *testing.T) {
 	err = keeper.CheckPermission(ms, ctx, msgActive, keeper.ActiveParticipantPermission)
 	require.NoError(t, err)
 
-	// previous active permission: map uses MsgValidation with OR [Active, PreviousActive]
-	msgVal := &types.MsgValidation{Creator: signer}
+	msgVal := &testActiveMsg{testMsgSingleSigner{signer: signer}}
 	// still OK because active in current epoch
 	err = keeper.CheckPermission(ms, ctx, msgVal, keeper.ActiveParticipantPermission, keeper.PreviousActiveParticipantPermission)
 	require.NoError(t, err)
@@ -179,7 +178,7 @@ func TestPermission_CurrentActiveParticipant(t *testing.T) {
 
 func TestPermission_NoPermissionAlwaysPasses(t *testing.T) {
 	_, ms, ctx, _ := setupPermissionsHarness(t)
-	msg := &types.MsgInvalidateInference{Creator: testutil.Requester, InferenceId: "id"}
+	msg := &testMsgSingleSigner{signer: testutil.Requester}
 	err := keeper.CheckPermission(ms, ctx, msg, keeper.NoPermission)
 	require.NoError(t, err)
 }
@@ -195,7 +194,7 @@ func TestPermission_OR_Semantics(t *testing.T) {
 	prev := types.ActiveParticipants{EpochId: 99, Participants: []*types.ActiveParticipant{{Index: signer}}}
 	require.NoError(t, k.SetActiveParticipants(ctx, prev))
 
-	msg := &types.MsgValidation{Creator: signer}
+	msg := &testMsgSingleSigner{signer: signer}
 	// Should pass because PreviousActive satisfies OR
 	err := keeper.CheckPermission(ms, ctx, msg, keeper.ActiveParticipantPermission, keeper.PreviousActiveParticipantPermission)
 	require.NoError(t, err)

@@ -152,6 +152,7 @@ Relevant excerpts (tags shown are current compose pins — bump for v4):
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
+      - CHAIN_RPC_URL=http://node:26657
     depends_on:
       - node
     restart: always

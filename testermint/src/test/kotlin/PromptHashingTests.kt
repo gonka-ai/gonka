@@ -49,8 +49,8 @@ class PromptHashingTests {
         val payloadWithRealLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.5,"top_logprobs":[{"token":"Hello","logprob":-0.5}]}]}}]}"""
         val payloadWithFakeLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1,"top_logprobs":[{"token":"Hello","logprob":-0.1}]}]}}]}"""
 
-        val hash1 = computeResponseHash(payloadWithRealLogprobs)
-        val hash2 = computeResponseHash(payloadWithFakeLogprobs)
+        val hash1 = PromptHashing.sha256Hex(payloadWithRealLogprobs)
+        val hash2 = PromptHashing.sha256Hex(payloadWithFakeLogprobs)
 
         assertThat(hash1).isNotEqualTo(hash2)
     }
