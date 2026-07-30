@@ -222,6 +222,25 @@ func TestEnsureSeedSubmittedDoesNotOverwriteSignatureMismatch(t *testing.T) {
 	require.Equal(t, uint64(2), dispatcher.seedConfirmedEpoch)
 }
 
+func TestEnsureSeedSubmittedRetriesLocalRestoreAfterFailure(t *testing.T) {
+	dispatcher, manager, config := newSeedTestDispatcher(
+		chainSeed("deterministic-signature"),
+		chainSeed("deterministic-signature"),
+	)
+	manager.createErr = errors.New("signer unavailable")
+
+	dispatcher.ensureSeedSubmitted(context.Background(), seedTestEpoch(), 100, seedTestParticipant)
+	require.Equal(t, uint64(0), dispatcher.seedConfirmedEpoch)
+	require.Equal(t, uint64(0), config.GetUpcomingSeed().EpochIndex)
+
+	manager.createErr = nil
+	dispatcher.ensureSeedSubmitted(context.Background(), seedTestEpoch(), 102, seedTestParticipant)
+
+	require.Equal(t, uint64(2), dispatcher.seedConfirmedEpoch)
+	require.Equal(t, "deterministic-signature", config.GetUpcomingSeed().Signature)
+	require.Equal(t, 0, manager.generatedCount())
+}
+
 func TestEnsureSeedSubmittedFailsOpenOnQueryError(t *testing.T) {
 	dispatcher, manager, _ := newSeedTestDispatcher(seedQueryResult{err: errors.New("query unavailable")})
 
