@@ -32,3 +32,23 @@ func TestDeprecatedLegacyDapiOnlyRoutes_BridgeLatestMarksDeprecation(t *testing.
 	require.Equal(t, "true", rec.Header().Get("Deprecation"))
 	require.Contains(t, rec.Header().Get("Link"), "edge-api")
 }
+
+func TestVersionsRoute_FirstClassNotDeprecated(t *testing.T) {
+	s := NewServer(nil, newTestConfigManager(t), nil, nil, nil, nil)
+
+	// First-class dapi handler (not dual-serve). Nil recorder panics inside
+	// getVersions without setting Deprecation.
+	req := httptest.NewRequest(http.MethodGet, "/v1/versions", nil)
+	rec := httptest.NewRecorder()
+	panicked := false
+	func() {
+		defer func() {
+			if recover() != nil {
+				panicked = true
+			}
+		}()
+		s.e.ServeHTTP(rec, req)
+	}()
+	require.True(t, panicked, "nil recorder should panic inside getVersions")
+	require.Empty(t, rec.Header().Get("Deprecation"))
+}

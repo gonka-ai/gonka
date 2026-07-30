@@ -194,11 +194,14 @@ paths:
               schema: 
                 $ref: '#/components/schemas/RawProtoJson'
 
-  # ── Versions ──────────────────────────────────────────────────────────────
+  # ── Versions (edge-api only; proxy keeps /v1/versions on dapi for mlnodes) ─
   /v1/versions:
     get:
       operationId: GetVersions
       summary: API and chain node version information
+      description: |
+        Thin version info for edge-api. Public proxy never routes this path here;
+        dapi serves a broker-enriched response including mlnodes.
       responses:
         "200":
           description: Version info
@@ -603,7 +606,7 @@ components:
         utilization:                { type: number,  nullable: true }
         capacity:                   { type: integer, nullable: true }
 
-    # ── Versions ─────────────────────────────────────────────────────────────
+    # ── Versions (edge-api thin response; dapi adds mlnodes separately) ──────
     VersionsResponse:
       type: object
       required: [timestamp, api_version, node_version]
@@ -623,8 +626,8 @@ components:
         application_name: { type: string }
         version:          { type: string }
         commit:           { type: string }
-    NodeVersion:
 
+    NodeVersion:
       type: object
       required: [application_name, version, commit]
       properties:

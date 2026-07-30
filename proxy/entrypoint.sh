@@ -45,13 +45,14 @@ EDGE_API_ROUTE_PATHS_DEFAULT='
 /v1/restrictions/status
 /v1/restrictions/exemptions
 /v1/restrictions/exemptions/{id}/usage/{account}
-/v1/versions
 /v1/bls/epoch/{id}
 /v1/bls/epochs/{id}
 /v1/bls/signatures/{request_id}
 /v1/bridge/addresses
 /v1/poc-batches/{epoch}
 '
+# /v1/versions stays on dapi: broker-enriched mlnodes / poc_validation_inference
+# (gateway PoC validation capacity). Never steer to edge-api.
 # CPU-heavy verify/debug helpers: private by default. Opt in with
 # EDGE_API_EXPOSE_OPTIONAL_ROUTES=true (auth can sit on nginx in front).
 EDGE_API_OPTIONAL_ROUTE_PATHS_DEFAULT='
@@ -943,6 +944,10 @@ append_edge_api_route_locations() {
     fi
 
     for route in $routes; do
+        # Broker-enriched; always dapi. Skip even if an old override still lists it.
+        if [ "$route" = "/v1/versions" ]; then
+            continue
+        fi
         # Optional verify/debug group stays private unless explicitly exposed.
         # Skip even if an old EDGE_API_ROUTE_PATHS override still lists them.
         if [ "${EDGE_API_EXPOSE_OPTIONAL_ROUTES}" != "true" ] && edge_api_is_optional_route "$route"; then

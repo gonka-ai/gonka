@@ -108,7 +108,7 @@ Key runtime environment variables:
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
 | `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes (status, models, epochs, participants, BLS, bridge addresses, etc.) served by **edge-api**. Empty (default) sends all `/v1/` traffic to dapi. Set to `edge-api` to enable, or `edge-api-router` when using the multi-instance overlay. |
 | `EDGE_API_PORT` | 18080 | Port on the edge-api (or edge-api-router) upstream. |
-| `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
+| `EDGE_API_ROUTE_PATHS` | (17 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. `/v1/versions` is never steered to edge-api (dapi broker `mlnodes`). |
 | `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
 | `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
 | `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
@@ -190,7 +190,7 @@ Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
 
 - **edge-api (public Tier A)** — status, models, pricing, participants (GET), epochs, restrictions, BLS, bridge addresses, poc-batches
 - **edge-api (optional)** — `verify-proof` / `verify-block` / `debug/*`; private by default (`EDGE_API_EXPOSE_OPTIONAL_ROUTES=false` → 403). Opt in when needed; auth can be enforced in nginx before this proxy.
-- **dapi (`api`)** — inference and node operations: chat/completions, inference payloads, PoC proofs, stats, bridge queue, participant registration (`POST /v1/participants`)
+- **dapi (`api`)** — inference and node operations: chat/completions, inference payloads, PoC proofs, stats, bridge queue, participant registration (`POST /v1/participants`), and **`GET /v1/versions`** (broker `mlnodes` / `poc_validation_inference` for gateway PoC validation capacity; not Tier A)
 - **versiond** — devshard sessions: `/v1/devshard/*` is rewritten internally to `/devshard/v1/*`, then proxied like other `/devshard/` traffic
 
 `/v1/participants` is method-split: GET/HEAD/OPTIONS → edge-api; other methods (notably POST registration) → dapi via an internal named location. Without that split, nginx would send POST to edge-api and return 405.

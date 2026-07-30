@@ -157,8 +157,9 @@ func (d deprecatedQueryAPI) PostVerifyProof(ctx echo.Context) error {
 }
 
 func (d deprecatedQueryAPI) GetVersions(ctx echo.Context) error {
-	markQueryAPIDeprecated(ctx)
-	return d.inner.GetVersions(ctx)
+	// Satisfies ServerInterface for RegisterHandlers only. /v1/versions is not
+	// dual-served: NewServer remounts the broker-enriched first-class handler.
+	return echo.ErrNotFound
 }
 
 var _ gen.ServerInterface = deprecatedQueryAPI{}
@@ -166,6 +167,9 @@ var _ gen.ServerInterface = deprecatedQueryAPI{}
 // mountDeprecatedQueryAPIRoutes re-publishes Tier A (and optional verify/debug)
 // read routes on dapi for old proxies that still forward /v1/* here. Responses
 // are served by common/queryapi and marked Deprecation: true.
+//
+// GET /v1/versions is registered by RegisterHandlers but immediately replaced
+// by NewServer with the broker-enriched first-class handler (not deprecated).
 func (s *Server) mountDeprecatedQueryAPIRoutes(e *echo.Echo) {
 	handlers := deprecatedQueryAPI{inner: queryapi.NewHandlers(recorderChainClient{recorder: s.recorder})}
 	gen.RegisterHandlers(e, handlers)

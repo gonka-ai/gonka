@@ -18,7 +18,9 @@ func (h *Handlers) GetStatus(ctx echo.Context) error {
 	return ctx.JSON(http.StatusOK, gen.StatusResponse{Status: "ok"})
 }
 
-// Ported from decentralized-api/internal/server/public/app_info_handlers.go:13
+// GetVersions serves thin api/node version info for edge-api.
+// Dapi serves a broker-enriched /v1/versions (with mlnodes) as a first-class
+// route; the public proxy never steers /v1/versions to edge-api.
 func (h *Handlers) GetVersions(ctx echo.Context) error {
 	resp, err := h.chain.CometServiceClient().GetNodeInfo(ctx.Request().Context(), &cmtservice.GetNodeInfoRequest{})
 	if err != nil {

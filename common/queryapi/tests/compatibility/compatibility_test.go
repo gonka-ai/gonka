@@ -67,28 +67,6 @@ func resolveChainParams(ctx context.Context, c *ClientWithResponses) chainParams
 	return p
 }
 
-func TestVersion(t *testing.T) {
-	if *endpoint1 == "" || *endpoint2 == "" {
-		t.Skip("skipping: both -endpoint1 and -endpoint2 are required")
-	}
-
-	c1, err := NewClientWithResponses(*endpoint1)
-	if err != nil {
-		t.Fatalf("client1: %v", err)
-	}
-	c2, err := NewClientWithResponses(*endpoint2)
-	if err != nil {
-		t.Fatalf("client2: %v", err)
-	}
-
-	ctx := context.Background()
-
-	runCompatibilityTest(t, c1, c2, "versions", func(c *ClientWithResponses) (int, string, error) {
-		r, err := c.GetVersionsWithResponse(ctx)
-		return statusOf(r, err), bodyOf(r), err
-	})
-}
-
 func TestCompatibility(t *testing.T) {
 	if *endpoint1 == "" || *endpoint2 == "" {
 		t.Skip("skipping: both -endpoint1 and -endpoint2 are required")
@@ -110,10 +88,6 @@ func TestCompatibility(t *testing.T) {
 
 	runCompatibilityTest(t, c1, c2, "status", func(c *ClientWithResponses) (int, string, error) {
 		r, err := c.GetStatusWithResponse(ctx)
-		return statusOf(r, err), bodyOf(r), err
-	})
-	runCompatibilityTest(t, c1, c2, "versions", func(c *ClientWithResponses) (int, string, error) {
-		r, err := c.GetVersionsWithResponse(ctx)
 		return statusOf(r, err), bodyOf(r), err
 	})
 	runCompatibilityTest(t, c1, c2, "models", func(c *ClientWithResponses) (int, string, error) {
