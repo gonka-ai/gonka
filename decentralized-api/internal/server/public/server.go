@@ -119,11 +119,6 @@ func NewServer(
 
 	g.GET("bridge/status", s.getBridgeStatus)
 
-	// Broker-enriched mlnodes / poc_validation_inference (gateway PoC capacity).
-	// First-class dapi route — not Tier A / edge-api. Remounted again after
-	// mountDeprecatedQueryAPIRoutes so RegisterHandlers cannot replace it.
-	g.GET("versions", s.getVersions)
-
 	// PoC proofs endpoint with IP rate limiting (300 req/min per IP)
 	pocProofsRateLimiter := echomw.RateLimiter(echomw.NewRateLimiterMemoryStoreWithConfig(
 		echomw.RateLimiterMemoryStoreConfig{
@@ -161,8 +156,11 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
-	// First-class enriched /v1/versions (mlnodes). Overwrites thin/404 mount
-	// from RegisterHandlers — queryapi GetVersions is edge-api only.
+	// First-class /v1/versions: broker-enriched mlnodes / poc_validation_inference
+	// (gateway PoC validation capacity). Registered after
+	// mountDeprecatedQueryAPIRoutes so it overwrites the thin/404 mount from
+	// RegisterHandlers — queryapi GetVersions is edge-api only, and the proxy
+	// never steers /v1/versions there.
 	e.GET("/v1/versions", s.getVersions)
 
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)

@@ -656,8 +656,12 @@ components:
       type: object
       properties:
         # TODO: ThresholdSigningRequest
+        # Explicitly null (not omitted) when the signing request is not found —
+        # clients poll this endpoint and treat null as "not ready yet".
         signing_request:
-          $ref: '#/components/schemas/RawProtoJson'
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/RawProtoJson'
         uncompressed_signature_128:
           type: string
           format: byte

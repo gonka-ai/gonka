@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
@@ -36,19 +37,22 @@ func TestDeprecatedLegacyDapiOnlyRoutes_BridgeLatestMarksDeprecation(t *testing.
 func TestVersionsRoute_FirstClassNotDeprecated(t *testing.T) {
 	s := NewServer(nil, newTestConfigManager(t), nil, nil, nil, nil)
 
-	// First-class dapi handler (not dual-serve). Nil recorder panics inside
-	// getVersions without setting Deprecation.
+	// Pre-fill the versions cache so getVersions serves from cache without
+	// touching the nil recorder. If the deprecated queryapi mount were serving
+	// /v1/versions instead, it would return 404 (and no mlnodes).
+	s.versionsCache.response = &versionsResponse{
+		Timestamp:   "2026-01-01T00:00:00Z",
+		APIVersion:  map[string]string{"version": "test"},
+		NodeVersion: map[string]string{"version": "test"},
+		MLNodes:     []mlnodeVersionResponse{},
+	}
+	s.versionsCache.expiresAt = time.Now().Add(time.Hour)
+
 	req := httptest.NewRequest(http.MethodGet, "/v1/versions", nil)
 	rec := httptest.NewRecorder()
-	panicked := false
-	func() {
-		defer func() {
-			if recover() != nil {
-				panicked = true
-			}
-		}()
-		s.e.ServeHTTP(rec, req)
-	}()
-	require.True(t, panicked, "nil recorder should panic inside getVersions")
+	s.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), `"mlnodes"`)
 	require.Empty(t, rec.Header().Get("Deprecation"))
 }
