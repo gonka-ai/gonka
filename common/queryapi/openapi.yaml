@@ -525,7 +525,9 @@ components:
 
     EpochResponse:
       type: object
-      required: [block_height, latest_epoch, is_confirmation_poc_active, epoch_params, active_confirmation_poc_event, epoch_stages, next_epoch_stages, phase]
+      # active_confirmation_poc_event is absent when no confirmation PoC event
+      # is active.
+      required: [block_height, latest_epoch, is_confirmation_poc_active, epoch_params, epoch_stages, next_epoch_stages, phase]
       properties:
         block_height:
           $ref: "#/components/schemas/Int64"

@@ -62,6 +62,9 @@ func TestGetEpoch_EpochParamsLegacyShape(t *testing.T) {
 	_, nested := ep["epoch_params"]
 	require.False(t, nested, "must encode EpochParams only, not full Params")
 	require.Equal(t, float64(50), ep["epoch_length"], "epoch_length must be a JSON number")
+
+	// Omitted (not null) when there is no active confirmation PoC event.
+	require.NotContains(t, body, "active_confirmation_poc_event")
 }
 
 type errEpochServer struct{ inferencetypes.UnimplementedQueryServer }
