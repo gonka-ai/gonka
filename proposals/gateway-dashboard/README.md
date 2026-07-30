@@ -363,9 +363,12 @@ The private API exposes:
 - `GET /api/v1/epochs/{epoch_index}/participants`
 - `GET /api/v1/epochs/{epoch_index}/participants/{participant}`
 
-`epoch_index` accepts `current`. Collection responses contain one row per
-`participant` and `model`. Both endpoints accept optional `model` and
-`escrow_id` filters. Without `model`, participant detail returns separate
+`epoch_index` accepts `current` and selects escrows created in that epoch.
+Collection responses contain one row per `participant` and `model`.
+Both endpoints accept an optional `model` and an optional list of
+`escrow_id` values. Repeated and comma-separated `escrow_id` values are
+accepted. Without `escrow_id`, the response aggregates all escrows from
+the selected epoch. Without `model`, participant detail returns separate
 model records and never merges model-specific rates.
 
 Each participant-model record contains:
@@ -417,8 +420,12 @@ event history: the first classification increments one key; a later
 reclassify atomically moves the count to the new key. The request path
 performs no accounting writes.
 
+Non-applied timeouts are the only per-nonce rows. They remain mutable
+because a retry or late finish can change their outcome after restart.
+The row is removed once the timeout applies or the inference finishes.
+
 A snapshot writer atomically upserts every counter, together with each
-escrow's `latest_nonce`, into dedicated `perf.db` tables every five
+escrow's `latest_nonce`, into `accounting.db` every five
 minutes and at escrow finalization, settlement, rotation, epoch
 transition, and shutdown. A failed snapshot keeps the previous one and is
 reported as a writer error. The tables hold one row per key, not history.

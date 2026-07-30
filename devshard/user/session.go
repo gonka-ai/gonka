@@ -120,13 +120,37 @@ type nonceOutcome struct {
 
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
-	Reason string // "execution", "refused", or "" if deadline not reached
+	Reason       string // "execution", "refused", or "" if deadline not reached
+	Outcome      string // "applied", "vote_collection_failed", "insufficient_votes", or "diff_send_failed"
+	DetailReason string
+	Applied      bool
+	Delivered    bool
+	AcceptWeight uint32
+	RejectWeight uint32
+	ErrorWeight  uint32
 }
+
+type TimeoutVoteTally struct {
+	AcceptWeight uint32
+	RejectWeight uint32
+	ErrorWeight  uint32
+}
+
+type DiffObserver func(nonce uint64, hasStartInference bool)
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 	for _, tx := range txs {
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			return true
+		}
+	}
+	return false
+}
+
+func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
+	for _, tx := range txs {
+		if timeout := tx.GetTimeoutInference(); timeout != nil && timeout.InferenceId == nonce {
 			return true
 		}
 	}
@@ -245,6 +269,8 @@ type Session struct {
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
+	epochID         uint64
+	diffObserver    DiffObserver
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -294,6 +320,30 @@ func WithVerifierQueue(q *verifierHostQueue) SessionOption {
 			sess.verifierQueue = q
 		}
 	}
+}
+
+func (s *Session) SetDiffObserver(observer DiffObserver) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.diffObserver = observer
+}
+
+func (s *Session) SetEpochID(epochID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.epochID = epochID
+}
+
+func (s *Session) EpochID() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epochID
+}
+
+func (s *Session) Group() []types.SlotAssignment {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return append([]types.SlotAssignment(nil), s.group...)
 }
 
 // NewSession creates a user session. clients must match group length.
@@ -606,50 +656,50 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	candidates = append(candidates, s.pendingTxs...)
 	candidates = append(candidates, extraTxs...)
 
+	var warmBefore map[uint32]string
 	if s.store != nil {
-		warmBefore := s.sm.WarmKeys()
-		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
-		if err != nil {
-			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
-		}
-		diff, err := s.signDiff(nonce, vd.Applied, vd.Root)
-		if err != nil {
-			return types.Diff{}, 0, err
-		}
-		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		rec := types.DiffRecord{
-			Diff:         diff,
-			StateHash:    vd.Root,
-			WarmKeyDelta: delta,
-		}
-		if err := s.persistDiffRetryLocked(rec); err != nil {
-			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
-		}
-		// Install the previewed post-state without a second apply (no re-sign,
-		// so a retried compose cannot fork on a new UserSig after a durable
-		// write). The gateway is the single sequencer and holds s.mu across
-		// persist, so the nonce cannot have advanced concurrently.
-		if !s.sm.CommitValidated(vd) {
-			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
-		}
-		s.diffs = append(s.diffs, diff)
-		s.nonce = nonce
-		s.clearPendingTxs()
-		s.maybeSaveSnapshotLocked()
-		return diff, hostIdx, nil
+		warmBefore = s.sm.WarmKeys()
 	}
-
-	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
+	vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 	if err != nil {
 		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 	}
-	diff, err := s.signDiff(nonce, applied, postStateRoot)
+	diff, err := s.signDiff(nonce, vd.Applied, vd.Root)
 	if err != nil {
 		return types.Diff{}, 0, err
+	}
+
+	if s.store != nil {
+		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
+		if err := s.persistDiffRetryLocked(types.DiffRecord{
+			Diff:         diff,
+			StateHash:    vd.Root,
+			WarmKeyDelta: delta,
+		}); err != nil {
+			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
+		}
+	}
+
+	if !s.sm.CommitValidated(vd) {
+		return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
 	}
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+	if s.diffObserver != nil {
+		hasStartInference := false
+		for _, tx := range vd.Applied {
+			if tx.GetStartInference() != nil {
+				hasStartInference = true
+				break
+			}
+		}
+		s.diffObserver(nonce, hasStartInference)
+	}
+	if s.store != nil {
+		s.maybeSaveSnapshotLocked()
+	}
+
 	return diff, hostIdx, nil
 }
 
@@ -1704,23 +1754,31 @@ func (s *Session) AddPendingTimeoutTx(inferenceID uint64, reason types.TimeoutRe
 // SendPendingDiff creates a diff from pending txs (no new MsgStartInference),
 // applies it locally, and sends it to the next host. Used for timeout submission.
 func (s *Session) SendPendingDiff(ctx context.Context) error {
+	_, err := s.sendPendingDiff(ctx)
+	return err
+}
+
+func (s *Session) sendPendingDiff(ctx context.Context) (types.Diff, error) {
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(nil)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return types.Diff{}, err
 	}
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
 	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
 	if err != nil {
-		return fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
+		return diff, fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, diff.Nonce)
+	if err := s.processResponse(hostIdx, resp, diff.Nonce); err != nil {
+		return diff, err
+	}
+	return diff, nil
 }
 
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
@@ -1842,12 +1900,8 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // MsgTimeoutInference if sufficient votes are gathered.
 // sendTime is when the nonce's network call started.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
+	reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime)
 	s.mu.Lock()
-	cfg := s.sm.SnapshotState().Config
-	confirmedAt := int64(0)
-	if o, ok := s.nonceStates[nonce]; ok {
-		confirmedAt = o.confirmedAt
-	}
 	hostIdx := int(nonce % uint64(len(s.group)))
 	hostID := s.HostLabel(hostIdx)
 	s.mu.Unlock()
@@ -1858,23 +1912,18 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	}
 
 	var reason types.TimeoutReason
-	var deadline time.Time
-	if confirmedAt > 0 {
-		deadline = time.Unix(confirmedAt, 0).Add(
-			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
+	if reasonLabel == "execution" {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{}, ctx.Err()
+			return TimeoutResult{Reason: "execution", Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
-		deadline = sendTime.Add(
-			time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer)
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{}, ctx.Err()
+			return TimeoutResult{Reason: "refused", Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
@@ -1886,23 +1935,72 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 
-	votes, err := s.CollectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
+	votes, tally, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
+	result.AcceptWeight = tally.AcceptWeight
+	result.RejectWeight = tally.RejectWeight
+	result.ErrorWeight = tally.ErrorWeight
 	if err != nil {
+		result.Outcome = "vote_collection_failed"
+		if ctx.Err() != nil {
+			result.DetailReason = "context_canceled"
+		}
 		return result, fmt.Errorf("collect timeout votes: %w", err)
 	}
 
 	if s.HasSufficientTimeoutVotes(votes) {
 		s.AddPendingTimeoutTx(nonce, reason, votes)
-		if err := s.SendPendingDiff(ctx); err != nil {
+		diff, err := s.sendPendingDiff(ctx)
+		result.Applied = HasMsgTimeout(diff.Txs, nonce)
+		if !result.Applied {
+			if record, found := s.sm.GetInference(nonce); found && record.Status == types.StatusTimedOut {
+				result.Applied = true
+			}
+		}
+		if err != nil {
+			result.DetailReason = "timeout_diff_delivery_failed"
+			if result.Applied {
+				result.Outcome = "applied"
+			} else {
+				result.Outcome = "diff_send_failed"
+			}
 			logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("send timeout diff: %w", err)
 		}
+		if !result.Applied {
+			result.Outcome = "diff_send_failed"
+			result.DetailReason = "timeout_not_applied"
+			return result, fmt.Errorf("timeout transaction was not applied")
+		}
+		result.Delivered = true
+		result.Outcome = "applied"
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
-		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
+		return result, nil
 	}
 
+	if result.ErrorWeight > 0 {
+		result.Outcome = "vote_collection_failed"
+		if ctx.Err() != nil {
+			result.DetailReason = "context_canceled"
+		}
+	} else {
+		result.Outcome = "insufficient_votes"
+	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := s.sm.Config()
+	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
+		return "execution", time.Unix(outcome.confirmedAt, 0).Add(
+			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer,
+		)
+	}
+	return "refused", sendTime.Add(
+		time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer,
+	)
 }
 
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
@@ -1977,6 +2075,18 @@ func (s *Session) CollectTimeoutVotes(
 	verifiers map[int]TimeoutVerifier, // hostIdx -> verifier
 	diffs []types.Diff,
 ) ([]*types.TimeoutVote, error) {
+	votes, _, err := s.collectTimeoutVotes(ctx, inferenceID, reason, payload, verifiers, diffs)
+	return votes, err
+}
+
+func (s *Session) collectTimeoutVotes(
+	ctx context.Context,
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	payload *host.InferencePayload,
+	verifiers map[int]TimeoutVerifier,
+	diffs []types.Diff,
+) ([]*types.TimeoutVote, TimeoutVoteTally, error) {
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2098,17 +2208,19 @@ func (s *Session) CollectTimeoutVotes(
 	expected := len(deduped)
 
 	voteThreshold := s.sm.VoteThreshold()
-	var accWeight uint32
+	var tally TimeoutVoteTally
 	var errors, rejects int
 	for i := 0; i < expected; i++ {
 		res := <-results
+		resultWeight := s.sm.AddressSlotCount(res.verifierAddr)
 		if res.err != nil {
 			errors++
+			tally.ErrorWeight += resultWeight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "error",
-					"running_weight", accWeight,
+					"running_weight", tally.AcceptWeight,
 					"threshold", voteThreshold,
 					"error", res.err,
 				)...,
@@ -2121,7 +2233,7 @@ func (s *Session) CollectTimeoutVotes(
 			votes = append(votes, res.vote)
 			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
 			weight := s.sm.AddressSlotCount(voterAddr)
-			accWeight += weight
+			tally.AcceptWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
@@ -2129,22 +2241,23 @@ func (s *Session) CollectTimeoutVotes(
 					"voter_slot", res.vote.VoterSlot,
 					"voter", shortAddress(voterAddr),
 					"weight", weight,
-					"running_weight", accWeight,
+					"running_weight", tally.AcceptWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
 		} else {
 			rejects++
+			tally.RejectWeight += resultWeight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "reject",
-					"running_weight", accWeight,
+					"running_weight", tally.AcceptWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
 		}
-		if accWeight > voteThreshold {
+		if tally.AcceptWeight > voteThreshold {
 			break
 		}
 	}
@@ -2152,21 +2265,21 @@ func (s *Session) CollectTimeoutVotes(
 		logFields(
 			"",
 			"accept", len(votes),
-			"weight", accWeight,
+			"weight", tally.AcceptWeight,
 			"reject", rejects,
 			"errors", errors,
 			"threshold", voteThreshold,
 			"verifiers", expected,
-			"sufficient", accWeight > voteThreshold,
+			"sufficient", tally.AcceptWeight > voteThreshold,
 		)...,
 	)
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
-		"accept", len(votes), "weight", accWeight,
+		"accept", len(votes), "weight", tally.AcceptWeight,
 		"reject", rejects, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
-	return votes, nil
+	return votes, tally, nil
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.

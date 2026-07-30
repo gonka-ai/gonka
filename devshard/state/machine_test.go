@@ -227,6 +227,34 @@ func TestApplyDiff_ConfirmStart_InvalidReceipt(t *testing.T) {
 	require.ErrorIs(t, err, types.ErrInvalidExecutorSig)
 }
 
+func TestTransitionObserverRunsOnlyAfterDiffCommit(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	sm, user := newTestSM(t, hosts, 10000)
+	start := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{txStart(&types.MsgStartInference{
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama",
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})})
+	_, err := sm.ApplyDiff(start)
+	require.NoError(t, err)
+
+	var events []TransitionEvent
+	sm.SetTransitionObserver(func(event TransitionEvent) {
+		events = append(events, event)
+	})
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, []byte("prompt"), "llama", 100, 50, 1000, 1000)
+	confirm := testutil.SignDiffWithRoot(t, user, "escrow-1", 2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+	})}, []byte("wrong-root"))
+	_, err = sm.ApplyDiff(confirm)
+	require.ErrorIs(t, err, types.ErrPostStateRootMismatch)
+	require.Empty(t, events)
+	require.Equal(t, types.StatusPending, sm.SnapshotState().Inferences[1].Status)
+}
+
 func TestApplyDiff_FinishInference(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	sm, user := newTestSM(t, hosts, 10000)

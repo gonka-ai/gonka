@@ -564,23 +564,22 @@ type Decision struct {
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
 type Redundancy struct {
-	session              *user.Session
-	perf                 *PerfTracker
-	groupSize            int
-	devshardID           string
-	model                string // escrow's registered model; used for ghost probes when no real request is around
-	metrics              *DevshardMetrics
-	onEscrowMissing      func() // called (at most once per request) when a host reports escrow not found
-	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
-	balanceExhaustedOnce sync.Once
-	picker               *sessionPicker
-	participantLimiter   *ParticipantRequestLimiter
-	stateBlockMu         sync.RWMutex
-	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
-
-	onRaceCleanupStart func()
-	onRaceCleanupDone  func()
-
+	session               *user.Session
+	perf                  *PerfTracker
+	groupSize             int
+	devshardID            string
+	model                 string // escrow's registered model; used for ghost probes when no real request is around
+	metrics               *DevshardMetrics
+	accounting            *gatewayAccountingRecorder
+	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
+	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
+	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
+	onRaceCleanupDone     func() // fires when a race cleanup goroutine finishes
+	balanceExhaustedOnce  sync.Once
+	picker                *sessionPicker
+	participantLimiter    *ParticipantRequestLimiter
+	stateBlockMu          sync.RWMutex
+	stateBlockedHosts     map[string]string // escrow-local participant blocks for non-recoverable state divergence
 	suspiciousParticipant func(participantKey string) bool
 }
 
@@ -861,9 +860,9 @@ type inflight struct {
 	role        string
 	startReason string
 
-	receiptOnce      sync.Once
-	receiptTimeNano  atomic.Int64 // unix nano; 0 means not received
-	receiptCh        chan struct{} // closed when receipt arrives
+	receiptOnce     sync.Once
+	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	receiptCh       chan struct{} // closed when receipt arrives
 
 	tokenOnce       sync.Once
 	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
@@ -1195,7 +1194,6 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	return nil
 }
 
-
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1517,7 +1515,6 @@ func (inf *inflight) releaseClassifyPartial() {
 	}
 	inf.classifyPartial = nil
 }
-
 
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
@@ -2861,6 +2858,16 @@ func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
 	}
 }
 
+func gatewayTimeoutFailureAction(result user.TimeoutResult) (string, string) {
+	if result.Applied {
+		return "completed", firstNonEmpty(result.DetailReason, "delivery_failed")
+	}
+	if result.Outcome == "skipped" {
+		return "skipped", firstNonEmpty(result.DetailReason, "unknown")
+	}
+	return "failed", firstNonEmpty(result.Outcome, "vote_collection_failed")
+}
+
 func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
 	if e == nil || e.metrics == nil {
 		return
@@ -2872,7 +2879,7 @@ func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) 
 }
 
 func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
-	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+	if e == nil || inf == nil || inf.probe {
 		return
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
@@ -2880,6 +2887,12 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
+	if e.accounting != nil {
+		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode)
+	}
+	if e.metrics == nil {
+		return
+	}
 	e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
 		ParticipantKey: participantKey,
 		Model:          model,
@@ -2901,7 +2914,13 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 }
 
 func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
-	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+	if e == nil || inf == nil || inf.probe {
+		return
+	}
+	if e.accounting != nil {
+		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
+	}
+	if e.metrics == nil {
 		return
 	}
 	outcome := "success"
@@ -2952,8 +2971,46 @@ func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight
 	}
 }
 
-func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string) {
-	if e == nil || e.metrics == nil || inf == nil || inf.probe {
+func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string, detailReasons ...string) {
+	if e == nil || inf == nil || inf.probe {
+		return
+	}
+	if e.accounting != nil {
+		detailReason := gatewayAttemptFailureReason(inf, e.session)
+		timeoutReason := reason
+		if len(detailReasons) > 0 && detailReasons[0] != "" {
+			timeoutReason = detailReasons[0]
+		}
+		escrowID := inf.escrowID
+		nonce := inf.nonce
+		deadlineKind, deadline := e.session.TimeoutDeadline(nonce, inf.sendTime)
+		accountingKind := kind
+		if deadlineKind != "" {
+			accountingKind = deadlineKind
+		}
+		record := func() {
+			e.accounting.recordTimeout(
+				escrowID,
+				nonce,
+				accountingKind,
+				action,
+				reason,
+				detailReason,
+				timeoutReason,
+			)
+		}
+		if (action == "started" || action == "skipped") && deadline.After(time.Now()) {
+			session := e.session
+			e.accounting.schedule(deadline, func() {
+				if !session.IsNonceFinished(nonce) {
+					record()
+				}
+			})
+		} else {
+			record()
+		}
+	}
+	if e.metrics == nil {
 		return
 	}
 	e.metrics.RecordGatewayTimeoutAction(GatewayTimeoutActionMetric{
@@ -3381,7 +3438,6 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	return inf.contentChunks.Load() == 0
 }
 
-
 // isModelBurnEmpty: empty stream where the model generated tokens that vLLM
 // stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
 // not a host fault — must not penalize. Scoped to the reasoning route: the
@@ -3808,7 +3864,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.metrics.RecordInferenceTimeout(result.Reason)
 			}
 			if err != nil {
-				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
+				action, reason := gatewayTimeoutFailureAction(result)
+				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), action, reason, result.DetailReason)
 				logInferenceStage(ctx, inf.escrowID, inf.nonce, "timeout_failed", "host", inf.hostID, "error", err)
 			} else {
 				e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
@@ -3914,7 +3971,8 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 						e.metrics.RecordInferenceTimeout(result.Reason)
 					}
 					if err != nil {
-						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "failed", "timeout_collection_error")
+						action, reason := gatewayTimeoutFailureAction(result)
+						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), action, reason, result.DetailReason)
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "background_timeout_failed", "host", inf.hostID, "error", err)
 					} else {
 						e.recordGatewayTimeoutAction(inf, params, timeoutResultKind(result, inf), "completed", "none")
@@ -4162,6 +4220,21 @@ func ghostProbeParams(model string) user.InferenceParams {
 func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostKind, reason string) {
 	if prepared == nil || e.session == nil {
 		return
+	}
+	participantKey := e.participantKeyForHost(prepared.HostIdx())
+	quarantineMode := e.quarantineModeForParticipant(participantKey)
+	if e.accounting != nil {
+		e.accounting.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	}
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: quarantineMode,
+		})
 	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",

@@ -69,6 +69,26 @@ func copyInferences(src map[uint64]*types.InferenceRecord) map[uint64]*types.Inf
 // once per slot. Set to nil when warm keys are not used.
 type WarmKeyResolver func(warmAddr, coldAddr string) (bool, error)
 
+type TransitionKind string
+
+const (
+	TransitionReceipt     TransitionKind = "receipt"
+	TransitionFinish      TransitionKind = "finish"
+	TransitionChallenged  TransitionKind = "challenged"
+	TransitionValidated   TransitionKind = "validated"
+	TransitionInvalidated TransitionKind = "invalidated"
+	TransitionTimeout     TransitionKind = "timeout"
+)
+
+type TransitionEvent struct {
+	InferenceID  uint64
+	ExecutorSlot uint32
+	Kind         TransitionKind
+	HostStats    types.HostStats
+}
+
+type TransitionObserver func(TransitionEvent)
+
 // StateMachine applies diffs and tracks session state.
 // The embedded RWMutex protects mutable fields in state (Inferences,
 // HostStats, WarmKeys, Balance, Phase, nonces).
@@ -96,7 +116,7 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
+	warmResolver WarmKeyResolver // optional, nil = no warm key support
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -104,7 +124,10 @@ type StateMachine struct {
 	// diff is durably persisted, so persist-first neither double-writes obs
 	// (validate + apply) nor leaves obs rows for a diff that never committed.
 	// Set only while sm.mu is held during a trial apply.
-	obsDeferred *[]deferredObsWrite
+	obsDeferred     *[]deferredObsWrite
+	protocolVersion types.ProtocolVersion // surfaced for gateway status/config compatibility
+	observer        TransitionObserver
+	pendingEvents   []TransitionEvent
 }
 
 // deferredObsWrite is a single observability-store write captured during a
@@ -129,6 +152,7 @@ type ValidatedDiff struct {
 	nonce     uint64
 	post      mutableSnapshot
 	obs       []deferredObsWrite
+	events    []TransitionEvent
 }
 
 // Nonce reports the nonce this validated diff will commit.
@@ -140,6 +164,43 @@ type SMOption func(*StateMachine)
 // WithWarmKeyResolver sets a callback for warm key verification.
 func WithWarmKeyResolver(r WarmKeyResolver) SMOption {
 	return func(sm *StateMachine) { sm.warmResolver = r }
+}
+
+func (sm *StateMachine) SetTransitionObserver(observer TransitionObserver) {
+	sm.mu.Lock()
+	defer sm.mu.Unlock()
+	sm.observer = observer
+}
+
+func (sm *StateMachine) notifyTransition(inferenceID uint64, rec *types.InferenceRecord, kind TransitionKind) {
+	if rec == nil {
+		return
+	}
+	var stats types.HostStats
+	if current := sm.state.HostStats[rec.ExecutorSlot]; current != nil {
+		stats = *current
+	}
+	sm.pendingEvents = append(sm.pendingEvents, TransitionEvent{
+		InferenceID:  inferenceID,
+		ExecutorSlot: rec.ExecutorSlot,
+		Kind:         kind,
+		HostStats:    stats,
+	})
+}
+
+func (sm *StateMachine) emitPendingTransitions() {
+	events := sm.pendingEvents
+	sm.pendingEvents = nil
+	sm.emitTransitionEvents(events)
+}
+
+func (sm *StateMachine) emitTransitionEvents(events []TransitionEvent) {
+	if sm.observer == nil {
+		return
+	}
+	for _, event := range events {
+		sm.observer(event)
+	}
 }
 
 // WithStateRootAndProtocolVersion binds the state-root and settlement protocol
@@ -318,7 +379,14 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byt
 func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
-	return sm.localBestEffortLocked(nonce, txs)
+	sm.pendingEvents = nil
+	root, applied, err := sm.localBestEffortLocked(nonce, txs)
+	if err != nil {
+		sm.pendingEvents = nil
+		return nil, nil, err
+	}
+	sm.emitPendingTransitions()
+	return root, applied, nil
 }
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
@@ -330,19 +398,23 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 	sm.mu.Lock()
 	defer sm.mu.Unlock()
 
+	sm.pendingEvents = nil
 	pre := sm.snapshotMutable()
 	var obs []deferredObsWrite
 	sm.obsDeferred = &obs
 	root, applied, err := sm.localBestEffortLocked(nonce, txs)
 	sm.obsDeferred = nil
 	if err != nil {
+		sm.pendingEvents = nil
 		// localBestEffortLocked self-restores mutable state on every error path.
 		return nil, err
 	}
 	warmAfter := copyStringMap(sm.state.WarmKeys)
 	post := sm.snapshotMutable()
+	events := append([]TransitionEvent(nil), sm.pendingEvents...)
+	sm.pendingEvents = nil
 	sm.restoreMutable(pre)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs}, nil
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs, events: events}, nil
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -363,6 +435,7 @@ func (sm *StateMachine) CommitValidated(vd *ValidatedDiff) bool {
 	}
 	sm.restoreMutable(vd.post)
 	sm.flushDeferredObsLocked(vd.obs)
+	sm.emitTransitionEvents(vd.events)
 	return true
 }
 
@@ -508,6 +581,13 @@ func copyStringMap(m map[uint32]string) map[uint32]string {
 // If postStateRoot is non-nil, the computed root must match; on mismatch the entire
 // operation is rolled back (including nonce) and an error is returned.
 func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postStateRoot []byte, side string) ([]byte, error) {
+	sm.pendingEvents = nil
+	success := false
+	defer func() {
+		if !success {
+			sm.pendingEvents = nil
+		}
+	}()
 	// 1. Validate nonce.
 	expectedNonce := sm.state.LatestNonce + 1
 	if nonce != expectedNonce {
@@ -609,6 +689,8 @@ func (sm *StateMachine) applyCore(nonce uint64, txs []*types.DevshardTx, postSta
 	}
 
 	logging.Debug("applied diff", "subsystem", "state", "nonce", nonce, "txs", len(txs))
+	sm.emitPendingTransitions()
+	success = true
 	return root, nil
 }
 
@@ -978,7 +1060,11 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		"executor_slot", rec.ExecutorSlot,
 		"confirmed_at", msg.ConfirmedAt,
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
+	sm.notifyTransition(msg.InferenceId, rec, TransitionReceipt)
+	return nil
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
@@ -1039,7 +1125,11 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		"output_tokens", msg.OutputTokens,
 		"actual_cost", actualCost,
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
+	sm.notifyTransition(msg.InferenceId, rec, TransitionFinish)
+	return nil
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
@@ -1050,6 +1140,8 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
+
+	previousStatus := rec.Status
 
 	// Common pre-checks.
 	if _, ok := sm.slotToAddress[msg.ValidatorSlot]; !ok {
@@ -1112,7 +1204,13 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 	}
 
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
+	if previousStatus != rec.Status && rec.Status == types.StatusChallenged {
+		sm.notifyTransition(msg.InferenceId, rec, TransitionChallenged)
+	}
+	return nil
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1209,7 +1307,16 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
 	}
 
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
+	switch rec.Status {
+	case types.StatusValidated:
+		sm.notifyTransition(msg.InferenceId, rec, TransitionValidated)
+	case types.StatusInvalidated:
+		sm.notifyTransition(msg.InferenceId, rec, TransitionInvalidated)
+	}
+	return nil
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
@@ -1297,7 +1404,11 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		"executor_slot", rec.ExecutorSlot,
 		"reason", msg.Reason.String(),
 	)
-	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
+	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
+		return err
+	}
+	sm.notifyTransition(msg.InferenceId, rec, TransitionTimeout)
+	return nil
 }
 
 func (sm *StateMachine) applyRevealSeed(msg *types.MsgRevealSeed) error {

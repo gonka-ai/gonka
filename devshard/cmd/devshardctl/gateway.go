@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -56,6 +56,7 @@ type Gateway struct {
 	store                 *GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
+	accounting            *gatewayAccountingRecorder
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
 	baseStorageDir        string
@@ -110,6 +111,7 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+	accountingFlush  func()
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -566,6 +568,9 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
 		}
 	}
+	if rt.accountingFlush != nil {
+		rt.accountingFlush()
+	}
 	return rt.close()
 }
 
@@ -719,7 +724,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perfArgs ...*PerfTracker) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *gatewayAccountingRecorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -727,19 +732,24 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
-	if len(perfArgs) > 0 && perfArgs[0] != nil {
-		g.perf = perfArgs[0]
+	if perf != nil {
+		g.perf = perf
+	}
+	if accounting != nil {
+		g.accounting = accounting
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-	if g.phaseGate != nil && chainClient != nil {
-		g.phaseGate.SetChainQueryClient(chainClient.InferenceQueryClient())
-	}
+	g.configurePhaseGate(settings)
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)
 		}
 		g.attachCapacityStateToPhaseGate()
 		g.phaseGate.Start()
+	} else if g.accounting != nil {
+		for _, rt := range g.runtimeOrder {
+			g.accounting.attachRuntime(rt)
+		}
 	}
 	g.escrowChecker = NewEscrowChecker(g.chainBridge)
 	for _, rt := range g.runtimeOrder {
@@ -758,6 +768,23 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	return g
 }
 
+func (g *Gateway) configurePhaseGate(settings GatewaySettings) {
+	if g == nil || g.phaseGate == nil {
+		return
+	}
+	g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
+	if g.chainClient != nil {
+		g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
+	}
+	if g.accounting != nil {
+		g.phaseGate.SetEpochTransitionHook(func(_, _ uint64) {
+			if err := g.accounting.flush(context.Background()); err != nil {
+				log.Printf("gateway accounting epoch flush: %v", err)
+			}
+		})
+	}
+}
+
 func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 	if g == nil || rt == nil {
 		return
@@ -769,6 +796,9 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
 	}
 	g.attachMetrics(rt)
+	if g.accounting != nil {
+		g.accounting.attachRuntime(rt)
+	}
 	g.attachEscrowChecker(rt)
 	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
@@ -1252,6 +1282,11 @@ func (g *Gateway) Close() error {
 			firstErr = err
 		}
 	}
+	if g.accounting != nil {
+		if err := g.accounting.close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -1711,6 +1746,12 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
+	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
+		g.accounting.recordEscrowPhase(id, rt.proxy.sm.Phase())
+		if err := g.accounting.flush(context.Background()); err != nil {
+			log.Printf("finalize: flush accounting for devshard %s: %v", id, err)
+		}
+	}
 	if g.store == nil {
 		return
 	}
@@ -2387,11 +2428,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2402,17 +2443,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2632,9 +2673,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			g.phaseGate.Stop()
 		}
 		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-		if g.phaseGate != nil && g.chainClient != nil {
-			g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
-		}
+		g.configurePhaseGate(settings)
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)
 		}
@@ -3063,10 +3102,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3376,11 +3415,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,

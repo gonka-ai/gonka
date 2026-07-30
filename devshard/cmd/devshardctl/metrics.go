@@ -353,6 +353,13 @@ func NewDevshardMetrics() *DevshardMetrics {
 	return m
 }
 
+func (m *DevshardMetrics) RegisterCollector(collector prometheus.Collector) error {
+	if m == nil || m.registry == nil || collector == nil {
+		return nil
+	}
+	return m.registry.Register(collector)
+}
+
 func (m *DevshardMetrics) AttachGateway(g *Gateway) {
 	if m == nil || g == nil {
 		return

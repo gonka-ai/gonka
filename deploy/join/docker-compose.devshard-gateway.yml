@@ -9,7 +9,7 @@ services:
     expose:
       - "8080"
     ports:
-      - "127.0.0.1:18080:8080"
+      - "127.0.0.1:${DEVSHARD_GATEWAY_HOST_PORT:-9092}:8080"
     networks:
       join_default:
         aliases:

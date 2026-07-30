@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"common/chain"
+	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
@@ -152,6 +153,10 @@ func main() {
 
 	gateway := mustBuildGateway(gatewayStore, gatewayState, runtimeOpts.baseStorageDir, flags)
 	defer gateway.Close()
+	statsServer := startAccountingServer(gateway, strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR")))
+	if statsServer != nil {
+		defer statsServer.Close()
+	}
 
 	handler := buildGatewayHandler(gateway, runtimeOpts)
 	serveGateway(handler, runtimeOpts.port, len(gateway.runtimeOrder))
@@ -403,6 +408,16 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
+	accountingService, err := accounting.OpenService(
+		filepath.Join(baseStorageDir, "accounting.db"),
+		accountingRetentionEpochs(),
+		accounting.DefaultSnapshotInterval,
+	)
+	if err != nil {
+		runtimeParamsClose()
+		perfStore.Close()
+		log.Fatalf("open accounting store: %v", err)
+	}
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
 		gatewayState.Settings.MaxInputTokensInFlight,
@@ -412,7 +427,14 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.MaxInputTokensInFlight,
 		gatewayState.Settings.ModelLimits,
 	)
-	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf)
+	recorder := newGatewayAccountingRecorder(accountingService)
+	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
+	if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingService.Book, accountingCurrentEpoch(gateway))); err != nil {
+		accountingService.Close()
+		runtimeParamsClose()
+		perfStore.Close()
+		log.Fatalf("register accounting metrics: %v", err)
+	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
 	gateway.runtimeParams = runtimeParams
