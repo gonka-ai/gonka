@@ -1,4 +1,4 @@
-package proxy
+package devshardobs
 
 import (
 	"sort"
@@ -6,41 +6,37 @@ import (
 	"strings"
 )
 
-// sortedVersions returns route map keys ordered from oldest to newest using
-// compareVersionNames (numeric / dotted-numeric aware, not lexicographic).
-func sortedVersions(routeMap RouteTable) []string {
-	versions := make([]string, 0, len(routeMap))
-	for v := range routeMap {
-		versions = append(versions, v)
-	}
-	sort.SliceStable(versions, func(i, j int) bool {
-		return compareVersionNames(versions[i], versions[j]) < 0
+// SortVersions orders version names from oldest to newest using
+// CompareVersionNames (numeric / dotted-numeric aware, not lexicographic).
+func SortVersions(versions []string) []string {
+	out := append([]string(nil), versions...)
+	sort.SliceStable(out, func(i, j int) bool {
+		return CompareVersionNames(out[i], out[j]) < 0
 	})
-	return versions
+	return out
 }
 
-// primaryVersion picks the newest version name for process-level obs pinning.
-func primaryVersion(versions []string) string {
+// PrimaryVersion picks the newest version name for process-level obs pinning.
+func PrimaryVersion(versions []string) string {
 	if len(versions) == 0 {
 		return ""
 	}
 	best := versions[0]
 	for _, v := range versions[1:] {
-		if compareVersionNames(v, best) > 0 {
+		if CompareVersionNames(v, best) > 0 {
 			best = v
 		}
 	}
 	return best
 }
 
-// compareVersionNames returns <0 if a is older than b, >0 if newer, 0 if equal.
+// CompareVersionNames returns <0 if a is older than b, >0 if newer, 0 if equal.
 //
 // Names with a leading dotted-numeric prefix (optional leading "v"), such as
-// "v2", "v10", "v0.2.11", compare by those numeric segments. That avoids
-// lexicographic traps ("v10" < "v2", "v0.2.11" < "v0.2.9"). Non-numeric names
+// "v2", "v10", "v0.2.11", compare by those numeric segments. Non-numeric names
 // (e.g. "dev") sort below any numeric name; among themselves they use
 // strings.Compare.
-func compareVersionNames(a, b string) int {
+func CompareVersionNames(a, b string) int {
 	an, aok := versionNumericParts(a)
 	bn, bok := versionNumericParts(b)
 	switch {
@@ -89,11 +85,11 @@ func versionNumericParts(name string) ([]int, bool) {
 		if i < len(s) && s[i] == '.' {
 			i++
 			if i >= len(s) || s[i] < '0' || s[i] > '9' {
-				return nil, false // trailing or double dot
+				return nil, false
 			}
 			continue
 		}
-		break // suffix (e.g. -r2) or end
+		break
 	}
 	if len(parts) == 0 {
 		return nil, false

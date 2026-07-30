@@ -268,7 +268,21 @@ separately from chat:
 | --- | --- | --- |
 | `DEVSHARD_OBS_RATE_LIMIT_RPS` | join proxy | 10 |
 | `DEVSHARD_OBS_BURST` | join proxy | 20 |
-| `VERSIOND_DISABLE_SESSION_LOOKUP` | versiond | unset (lookup on when `PGHOST` set) |
+| `DEVSHARD_VERSIOND_URL` | dapi / edge-api | `http://versiond:8080` (use `http://versiond-router:8080` with multi-versiond) |
+| `DEVSHARD_OBS_PGHOST` / `DEVSHARD_OBS_PG*` | dapi / edge-api | unset (session DB for versionless lookup; separate from payload `PG*`) |
+| `DEVSHARD_OBS_DISABLE_SESSION_LOOKUP` | dapi / edge-api | unset (lookup on when session DB host/URL set; init failure → fan-out) |
+
+The session DB is configured by environment only — the binary has no built-in
+host/port/database/user, and never falls back to libpq `PG*` (dapi's `payloads`).
+With `DEVSHARD_OBS_PGHOST` set, `DEVSHARD_OBS_PGPORT`, `DEVSHARD_OBS_PGDATABASE`
+and `DEVSHARD_OBS_PGUSER` are required as well; anything missing is logged and
+versionless obs serves fan-out instead of connecting to a guessed database.
+
+Versionless obs never depends on the session DB being up. No `DEVSHARD_OBS_PGHOST`
+means fan-out; an unreachable session DB (at startup or later) also means fan-out,
+counted by `devshardobs_lookup_errors_total`. In that state obs skips Postgres for
+15s at a time instead of dialing per request, and resumes precise routing on its
+own once the database answers again — no dapi/edge-api restart needed.
 
 Manual walkthrough: [v4-deploy-test-plan.md](./v4-deploy-test-plan.md) §4.
 Design note: [pr-versionless-observability.md](./pr-versionless-observability.md).
@@ -367,8 +381,9 @@ the HA overlays.
 | File | Role |
 | --- | --- |
 | [`deploy/join/docker-compose.yml`](../../deploy/join/docker-compose.yml) | Base: node, api (dapi), **edge-api**, versiond, **proxy** (edge), explorer, … |
-| [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | HA: postgres + versiond2 + versiond-router; proxy → router |
+| [`deploy/join/docker-compose.versiond.yml`](../../deploy/join/docker-compose.versiond.yml) | HA: postgres + versiond2 + versiond-router; proxy → router; wires `DEVSHARD_VERSIOND_URL` + `DEVSHARD_OBS_PG*` on api/edge-api |
 | [`deploy/join/docker-compose.edge-api-multi.yml`](../../deploy/join/docker-compose.edge-api-multi.yml) | Optional: edge-api2/3 + edge-api-router; proxy → router |
+| [`deploy/join/docker-compose.edge-api-obs-ha.yml`](../../deploy/join/docker-compose.edge-api-obs-ha.yml) | When HA + multi-edge: mirror obs HA env onto edge-api2/3 |
 | [`deploy/join/docker-compose.devshard-gateway.yml`](../../deploy/join/docker-compose.devshard-gateway.yml) | Optional gateway |
 
 ```bash
@@ -381,6 +396,12 @@ docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 
 # Optional multi edge-api
 docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+
+# HA versiond + multi edge-api (versionless obs on all edge instances)
+docker compose -f docker-compose.yml \
+  -f docker-compose.versiond.yml \
+  -f docker-compose.edge-api-multi.yml \
+  -f docker-compose.edge-api-obs-ha.yml up -d
 ```
 
 **Base `edge-api` + edge `proxy` (from `docker-compose.yml`):**

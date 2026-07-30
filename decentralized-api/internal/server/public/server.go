@@ -16,6 +16,8 @@ import (
 	"net/url"
 	"time"
 
+	"common/devshardobs"
+
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
 
 	"github.com/labstack/echo/v4"
@@ -43,6 +45,7 @@ type Server struct {
 	authzCache          *authzcache.AuthzCache
 	httpClient          *http.Client
 	statsStorage        statsstorage.StatsStorage
+	devshardObs         http.Handler
 }
 
 // ServerOption configures optional Server dependencies.
@@ -58,6 +61,14 @@ func WithArtifactStore(store *artifacts.ManagedArtifactStore) ServerOption {
 func WithStatsStorage(store statsstorage.StatsStorage) ServerOption {
 	return func(s *Server) {
 		s.statsStorage = store
+	}
+}
+
+// WithDevshardObs mounts versionless /v1/devshard sessions|stats|metrics handlers
+// (common/devshardobs). Registered before the /v1/devshard deprecation catch-all.
+func WithDevshardObs(h http.Handler) ServerOption {
+	return func(s *Server) {
+		s.devshardObs = h
 	}
 }
 
@@ -156,8 +167,15 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
+	// Versionless obs must register before the /v1/devshard/* deprecation
+	// catch-all so specific GET routes win.
+	if s.devshardObs != nil {
+		devshardobs.Mount(e, s.devshardObs)
+	}
+
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
+
 	return s
 }
 

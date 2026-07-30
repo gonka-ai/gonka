@@ -1,0 +1,29 @@
+# Wire versionless-obs HA targets onto edge-api2/3.
+#
+# Use when BOTH overlays are layered:
+#   docker compose \
+#     -f docker-compose.yml \
+#     -f docker-compose.versiond.yml \
+#     -f docker-compose.edge-api-multi.yml \
+#     -f docker-compose.edge-api-obs-ha.yml \
+#     up -d
+#
+# docker-compose.versiond.yml already sets DEVSHARD_VERSIOND_URL + DEVSHARD_OBS_PG*
+# on api and the canonical edge-api. This file mirrors those onto edge-api2/3
+# (the multi overlay cannot see versiond.yml's service env when substituting
+# ${DEVSHARD_VERSIOND_URL:-…} from the host/.env alone).
+#
+# Requires edge-api2/3 from docker-compose.edge-api-multi.yml (provides image).
+
+services:
+  edge-api2: &obs-ha
+    environment:
+      - DEVSHARD_VERSIOND_URL=http://versiond-router:8080
+      - DEVSHARD_OBS_PGHOST=devshard-postgres
+      - DEVSHARD_OBS_PGPORT=${DEVSHARD_POSTGRES_PORT:-5432}
+      - DEVSHARD_OBS_PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
+      - DEVSHARD_OBS_PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
+      - DEVSHARD_OBS_PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+
+  edge-api3:
+    <<: *obs-ha

@@ -16,7 +16,6 @@ import (
 	"versioned/internal/oracle"
 	"versioned/internal/process"
 	"versioned/internal/proxy"
-	"versioned/internal/sessionversion"
 )
 
 func main() {
@@ -43,22 +42,9 @@ func run(ctx context.Context) error {
 	mgr := process.NewManager(cfg)
 	oracleClient := oracle.NewClient(cfg.OracleURL)
 
-	lookup, err := sessionversion.OpenFromEnv(ctx)
-	if err != nil {
-		slog.Warn("session version lookup unavailable; versionless obs will fan-out", "error", err)
-		lookup = nil
-	}
-	if lookup != nil {
-		defer lookup.Close()
-	}
-
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
-	var proxyOpts []proxy.HandlerOption
-	if lookup != nil {
-		proxyOpts = append(proxyOpts, proxy.WithSessionVersionLookup(lookup))
-	}
-	mux.Handle("/", proxy.Handler(mgr.RouteTable(), proxyOpts...))
+	mux.Handle("/", proxy.Handler(mgr.RouteTable()))
 
 	listenAddr := config.ListenAddr()
 	srv := &http.Server{

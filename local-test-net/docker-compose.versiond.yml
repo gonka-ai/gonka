@@ -56,6 +56,13 @@ services:
     environment:
       - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY:-}
       - KEYRING_BACKEND=${KEYRING_BACKEND:-test}
+      # Single-versiond default; docker-compose.devshard-router-proxy.yml overrides
+      # to ${KEY_NAME}-versiond-router when the sticky LB is in use.
+      - DEVSHARD_VERSIOND_URL=${DEVSHARD_VERSIOND_URL:-http://${KEY_NAME}-versiond:8080}
+
+  edge-api:
+    environment:
+      - DEVSHARD_VERSIOND_URL=${DEVSHARD_VERSIOND_URL:-http://${KEY_NAME}-versiond:8080}
 
   versiond:
     <<: *versiond

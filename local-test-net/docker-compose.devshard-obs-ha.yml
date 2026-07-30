@@ -1,0 +1,31 @@
+# Genesis overlay: versionless-obs HA targets for the extra edge-api replicas.
+#
+# docker-compose.devshard-router-proxy.yml and docker-compose.devshard-postgres.yml
+# wire api + edge-api. docker-compose.edge-api.yml adds edge-api-2/3 from its own
+# anchor, whose ${DEVSHARD_*:-…} defaults cannot see those service overrides, so
+# layer this file LAST to give every replica the router and the session DB:
+#
+#   docker compose -p genesis \
+#     -f local-test-net/docker-compose-base.yml \
+#     -f local-test-net/docker-compose.genesis.yml \
+#     -f local-test-net/docker-compose.versiond.yml \
+#     -f local-test-net/docker-compose.devshard-postgres.yml \
+#     -f local-test-net/docker-compose.devshard-router-proxy.yml \
+#     -f local-test-net/docker-compose.edge-api.yml \
+#     -f local-test-net/docker-compose.devshard-obs-ha.yml up -d
+#
+# The session DB (devshardd) stays separate from dapi payload PG* (payloads).
+x-devshard-obs: &devshard-obs
+  environment:
+    DEVSHARD_VERSIOND_URL: http://${KEY_NAME}-versiond-router:8080
+    DEVSHARD_OBS_PGHOST: devshard-postgres
+    DEVSHARD_OBS_PGPORT: "5432"
+    DEVSHARD_OBS_PGDATABASE: devshardd
+    DEVSHARD_OBS_PGUSER: devshardd
+    DEVSHARD_OBS_PGPASSWORD: devshardd
+
+services:
+  api: *devshard-obs
+  edge-api: *devshard-obs
+  edge-api-2: *devshard-obs
+  edge-api-3: *devshard-obs

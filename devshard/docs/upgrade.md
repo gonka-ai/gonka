@@ -71,15 +71,16 @@ a version.
 The **escrow creator** chooses a version by calling a versioned protocol path
 with a valid owner signature. Bind is the first successful owner
 `POST /devshard/<version>/sessions/{id}/chat/completions` (see
-[versionless-observability-plan.md](./versionless-observability-plan.md)).
+[versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md)).
 
 ```
 /devshard/<version>/sessions/.../chat/completions  → versiond → bind + protocol
-/devshard/sessions/.../diffs|mempool|signatures      → versionless observability (no bind)
+/v1/devshard/sessions/.../diffs|mempool|signatures → dapi/edge-api versionless obs (no bind)
+/devshard/<version>/sessions/.../diffs|mempool|…     → versiond → that child (pin; still no bind)
 ```
 
-Legacy versioned observability URLs are rewritten internally by the join proxy
-to the versionless forms; the version segment in those URLs does not bind.
+Versioned observability URLs pin the named child; they do not bind protocol
+version. Versionless URLs are resolved by dapi/edge-api (`common/devshardobs`).
 
 The target safety model is that the first **owner** request binds the session to
 one **protocol** version off-chain. Every later diff must continue with that same

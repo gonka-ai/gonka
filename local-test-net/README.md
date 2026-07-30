@@ -14,6 +14,7 @@ local-test-net/
 ├── docker-compose.versiond.yml       # Optional: 3× versiond + versiond-router + test fixtures
 ├── docker-compose.devshard-postgres.yml      # Optional: shared Postgres for devshardd (genesis)
 ├── docker-compose.devshard-router-proxy.yml  # Genesis: proxy → versiond-router
+├── docker-compose.devshard-obs-ha.yml        # Genesis: versionless obs → router + session DB on every edge-api
 ├── docker-compose.explorer.yml       # Adds blockchain explorer
 ├── docker-compose.proxy.yml          # Adds reverse proxy
 ├── docker-compose.bridge.yml         # Adds Ethereum bridge service
@@ -87,6 +88,12 @@ KEY_NAME=genesis docker compose \
 | `docker-compose.versiond.yml` | 3× versiond + `versiond-router` (sticky hash on escrow ID) + test fixtures |
 | `docker-compose.devshard-postgres.yml` | Shared `devshard-postgres` for devshardd children (genesis) |
 | `docker-compose.devshard-router-proxy.yml` | Sets `VERSIOND_SERVICE_NAME=versiond-router` on genesis proxy |
+| `docker-compose.devshard-obs-ha.yml` | Points versionless obs on api + every edge-api at `versiond-router` and the session DB (layer last, after `docker-compose.edge-api.yml`) |
+
+Versionless obs (`/v1/devshard/sessions|stats|metrics`) reads session→version bindings from the
+**session** database via `DEVSHARD_OBS_PG*`, which is separate from dapi's payload `PG*`
+(`payloads`). Without `DEVSHARD_OBS_PGHOST` the lookup stays off and obs fans out across running
+versions; it never falls back to the payload database.
 
 Legacy clients calling `/v1/devshard/*` are rewritten by the proxy to `/devshard/v1/*` before reaching versiond.
 

@@ -104,10 +104,9 @@ http {
     ${EDGE_API_UPSTREAM}
 
     # Versiond upstream - only included if VERSIOND_SERVICE_NAME is set.
-    # Routes /devshard/<version>/* to versiond which forwards to the matching
-    # devshard binary. Observability paths under /devshard/<version>/… are
-    # rewritten internally to versionless /devshard/sessions|stats|metrics|healthz
-    # (see entrypoint); no client-visible redirect.
+    # Routes /devshard/<version>/* to versiond. Versionless obs under
+    # /v1/devshard/sessions|stats/shards|metrics goes to edge-api or dapi
+    # (see DEVSHARD_VERSIOND_LOCATION in entrypoint.sh).
     ${VERSIOND_UPSTREAM}
 
     # Enable gzip compression

@@ -95,8 +95,8 @@ func Handler(routes *atomic.Value, opts ...HandlerOption) http.Handler {
 }
 ```
 
-(Versionless observability paths in the same handler are orthogonal to rolling
-swap; see `isVersionlessObsPath` / `WithSessionVersionLookup`.)
+(Versionless observability is handled by dapi/edge-api via `common/devshardobs`,
+not this versiond handler — see [versionless-obs-refactor-plan.md](./versionless-obs-refactor-plan.md).)
 
 ### 1.2 Storage prerequisite
 

@@ -39,6 +39,25 @@ DEVSHARD_POSTGRES_PASSWORD=validate-only docker compose \
   -f "${REPO_ROOT}/deploy/join/docker-compose.versiond.yml" \
   config --quiet
 
+echo "==> docker compose render (deploy/join + multi versiond + multi edge-api + obs HA)"
+DEVSHARD_POSTGRES_PASSWORD=validate-only docker compose \
+  -f "${REPO_ROOT}/deploy/join/docker-compose.yml" \
+  -f "${REPO_ROOT}/deploy/join/docker-compose.versiond.yml" \
+  -f "${REPO_ROOT}/deploy/join/docker-compose.edge-api-multi.yml" \
+  -f "${REPO_ROOT}/deploy/join/docker-compose.edge-api-obs-ha.yml" \
+  config --quiet
+
+echo "==> docker compose render (local-test-net multi edge-api + versiond router + obs HA)"
+KEY_NAME=genesis EDGE_API_BUILD_CONTEXT=. docker compose --project-directory "${REPO_ROOT}" \
+  -f local-test-net/docker-compose-base.yml \
+  -f local-test-net/docker-compose.genesis.yml \
+  -f local-test-net/docker-compose.versiond.yml \
+  -f local-test-net/docker-compose.devshard-postgres.yml \
+  -f local-test-net/docker-compose.devshard-router-proxy.yml \
+  -f local-test-net/docker-compose.edge-api.yml \
+  -f local-test-net/docker-compose.devshard-obs-ha.yml \
+  config --quiet
+
 if [[ -n "${PROXY_URL:-}" ]]; then
   echo "==> live proxy smoke (${PROXY_URL})"
   curl -fsS "${PROXY_URL}/v1/status" | grep -q '"ok"'

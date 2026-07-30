@@ -617,66 +617,130 @@ else
     echo "Concurrency Limits: Disabled"
 fi
 
-# /devshard/ location -- forwards to versiond which dispatches to the matching
-# child binary.
-#
-# Phase 1: versioned observability paths are rewritten internally to versionless
-# canonical URLs (no client-visible redirect). Dashboards that hardcode
-# /devshard/{version}/sessions/.../diffs keep working; the version segment is
-# dropped before versiond so it cannot participate in protocol bind.
-#
-# Public obs (versionless + rewritten legacy) uses a tighter rate-limit zone.
-# Protocol POSTs and payloads stay on /devshard/{version}/... via the exempt
-# catch-all below (chat/SSE need high limits).
+# /devshard/ routing:
+#   /devshard/{version}/… protocol (chat/gossip/payloads) → versiond, exempt zone
+#   /devshard/{version}/… obs (sessions diffs|mempool|signatures, stats, metrics)
+#       → versiond as-is, but under the tighter devshard_obs rate zone
+#   /devshard/healthz → versiond supervisor (devshard_obs zone)
+# Versionless public obs under /v1/devshard/…:
+#   sessions|stats/shards|metrics → edge-api if EDGE_API_SERVICE_NAME set, else dapi
+#   other /v1/devshard/*          → rewrite → /devshard/v1/* → versiond
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
-    export DEVSHARD_VERSIOND_LOCATION="# Versioned obs → versionless (internal rewrite); protocol stays versioned
-        location ~ ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ {
-            rewrite ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ /devshard/sessions/\$\$1/\$\$2 last;
+    if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
+        export DEVSHARD_OBS_PROXY_PASS="http://edge_api_backend"
+        echo "   Devshard versionless obs (/v1/devshard/…) -> Edge API ($FINAL_EDGE_API_SERVICE:$EDGE_API_PORT)"
+    else
+        export DEVSHARD_OBS_PROXY_PASS="http://api_backend"
+        echo "   Devshard versionless obs (/v1/devshard/…) -> API / dapi ($FINAL_API_SERVICE:$GONKA_API_PORT)"
+    fi
+    # Regex locations beat the prefix rewrite location /v1/devshard/ below.
+    export DEVSHARD_VERSIOND_LOCATION="# Versionless obs under /v1/devshard → dapi/edge-api; versioned /devshard/{v}/ → versiond
+        location ~ ^/v1/devshard/sessions/[^/]+/(diffs|mempool|signatures)\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass ${DEVSHARD_OBS_PROXY_PASS};
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/v1/devshard/stats/shards(/.*)?\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass ${DEVSHARD_OBS_PROXY_PASS};
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        location ~ ^/v1/devshard/metrics\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass ${DEVSHARD_OBS_PROXY_PASS};
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+        }
+        # Non-obs /v1/devshard/* → protocol version \"v1\" on versiond.
+        # Obs regex locations above take precedence over this prefix.
+        location /v1/devshard/ {
+            rewrite ^/v1/devshard/(.*)\$ /devshard/v1/\$\$1 last;
+        }
+        # Version-pinned obs: same tighter rate zone as versionless; still
+        # proxy to versiond with the version segment intact (no strip rewrite).
+        location ~ ^/devshard/[^/]+/sessions/[^/]+/(diffs|mempool|signatures)\$ {
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
         location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
-            rewrite ^/devshard/[^/]+/stats/shards(/.*)?\$ /devshard/stats/shards\$\$1 last;
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
         location ~ ^/devshard/[^/]+/metrics\$ {
-            rewrite ^ /devshard/metrics last;
+            set \$limit_zone_name \"DEVSHARD_OBS\";
+            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
+            ${LIMIT_CONN_RULE_EXEMPT}
+            proxy_pass http://versiond_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+            proxy_set_header Authorization \$\$http_authorization;
+            ${CORS_CONFIG}
+            ${STREAMING_CONFIG}
+            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
+            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
+            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
         }
-        # /devshard/{version}/healthz is NOT rewritten — it must reach that child.
         # Versionless /devshard/healthz is versiond's own supervisor health (mux).
-        # Versionless public observability — tighter than exempt protocol limits
-        location ~ ^/devshard/sessions/[^/]+/(diffs|mempool|signatures)\$ {
-            set \$limit_zone_name \"DEVSHARD_OBS\";
-            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
-            ${LIMIT_CONN_RULE_EXEMPT}
-            rewrite ^/devshard/(.*)\$ /\$\$1 break;
-            proxy_pass http://versiond_backend;
-            proxy_set_header Host \$\$host;
-            proxy_set_header X-Real-IP \$\$remote_addr;
-            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$\$scheme;
-            proxy_set_header Authorization \$\$http_authorization;
-            ${CORS_CONFIG}
-            ${STREAMING_CONFIG}
-            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
-            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
-            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
-        }
-        location ~ ^/devshard/stats/ {
-            set \$limit_zone_name \"DEVSHARD_OBS\";
-            limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
-            ${LIMIT_CONN_RULE_EXEMPT}
-            rewrite ^/devshard/(.*)\$ /\$\$1 break;
-            proxy_pass http://versiond_backend;
-            proxy_set_header Host \$\$host;
-            proxy_set_header X-Real-IP \$\$remote_addr;
-            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
-            proxy_set_header X-Forwarded-Proto \$\$scheme;
-            proxy_set_header Authorization \$\$http_authorization;
-            ${CORS_CONFIG}
-            ${STREAMING_CONFIG}
-            proxy_connect_timeout ${GONKA_API_CONNECT_TIMEOUT}s;
-            proxy_send_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
-            proxy_read_timeout ${GONKA_API_TRANSFER_TIMEOUT}s;
-        }
-        location ~ ^/devshard/(metrics|healthz)\$ {
+        # /devshard/{version}/healthz reaches that child via the catch-all below.
+        location ~ ^/devshard/healthz\$ {
             set \$limit_zone_name \"DEVSHARD_OBS\";
             limit_req zone=devshard_obs burst=${DEVSHARD_OBS_BURST} nodelay;
             ${LIMIT_CONN_RULE_EXEMPT}
@@ -714,7 +778,20 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
         }"
 else
     export DEVSHARD_VERSIOND_LOCATION="# devshard proxy disabled"
+    export DEVSHARD_OBS_PROXY_PASS=""
     export LIMIT_REQ_ZONE_DEVSHARD_OBS=""
+fi
+
+# Unit-test / CI hook: dump resolved routing fragments and exit before writing
+# /etc/nginx (see devshard/testenv/citest/proxy_obs_routing_test.go).
+if [ -n "${PROXY_ROUTING_DUMP_DIR:-}" ]; then
+    mkdir -p "${PROXY_ROUTING_DUMP_DIR}"
+    printf '%s' "${FINAL_EDGE_API_SERVICE:-}" > "${PROXY_ROUTING_DUMP_DIR}/final_edge_api_service"
+    printf '%s' "${EDGE_API_UPSTREAM:-}" > "${PROXY_ROUTING_DUMP_DIR}/edge_api_upstream"
+    printf '%s' "${VERSIOND_UPSTREAM:-}" > "${PROXY_ROUTING_DUMP_DIR}/versiond_upstream"
+    printf '%s' "${DEVSHARD_OBS_PROXY_PASS:-}" > "${PROXY_ROUTING_DUMP_DIR}/obs_proxy_pass"
+    printf '%s' "${DEVSHARD_VERSIOND_LOCATION:-}" > "${PROXY_ROUTING_DUMP_DIR}/devshard_locations"
+    exit 0
 fi
 
 # --------------------------------------------------------------------------------
@@ -1093,15 +1170,6 @@ else
     echo "Edge API optional routes PRIVATE (verify/debug blocked on proxy). Set EDGE_API_EXPOSE_OPTIONAL_ROUTES=true to publish."
 fi
 
-# Legacy /v1/devshard/* clients → canonical /devshard/v1/* (re-search → /devshard/ → versiond).
-if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
-    API_VERSION_LOCATIONS="${API_VERSION_LOCATIONS}
-        location /v1/devshard/ {
-            rewrite ^/v1/devshard/(.*)$ /devshard/v1/\$1 last;
-        }
-    "
-fi
-
 # 1. Gonka API dynamic generation
 APP_BLOCKED_PREFIXES=""
 APP_EXEMPT_PREFIXES=""
@@ -1294,12 +1362,15 @@ if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
     fi
 fi
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
-    echo "   /devshard/*    -> Versiond (devshard binaries)"
-    echo "   /devshard/{v}/sessions/*/diffs|mempool|signatures -> rewrite /devshard/sessions/..."
-    echo "   /devshard/{v}/stats/* /metrics -> rewrite versionless (internal)"
-    echo "   /devshard/{v}/healthz -> child (not rewritten); /devshard/healthz -> versiond"
-    echo "   /devshard/sessions|stats|metrics|healthz -> obs rate limit ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT}"
-    echo "   /v1/devshard/* -> /devshard/v1/* (legacy rewrite)"
+    echo "   /devshard/{version}/* -> Versiond (protocol + versioned obs as-is)"
+    if [ -n "${EDGE_API_SERVICE_NAME}" ]; then
+        echo "   /v1/devshard/sessions|stats/shards|metrics -> Edge API ($FINAL_EDGE_API_SERVICE:$EDGE_API_PORT)"
+    else
+        echo "   /v1/devshard/sessions|stats/shards|metrics -> API / dapi ($FINAL_API_SERVICE:$GONKA_API_PORT)"
+    fi
+    echo "   /devshard/healthz -> versiond supervisor; /devshard/{v}/healthz -> child"
+    echo "   versionless obs rate limit ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT}"
+    echo "   other /v1/devshard/* -> /devshard/v1/* (versiond)"
 fi
 echo "   /health        -> Health check"
 
