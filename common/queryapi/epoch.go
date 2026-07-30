@@ -34,18 +34,14 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 		return grpcErrorToHTTP(err)
 	}
 
+	if epochInfo.Params.EpochParams == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "epoch params missing")
+	}
 	epochContext := inferencetypes.NewEpochContext(epochInfo.LatestEpoch, *epochInfo.Params.EpochParams)
 	nextEpochContext := epochContext.NextEpochContext()
-	epochParams, err := protoToRawJSON(&epochInfo.Params)
-	if err != nil {
-		logging.Error("Failed to encode epoch params", inferencetypes.Server, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode epoch params")
-	}
-	activeConfirmationPoc, err := protoToRawJSON(epochInfo.ActiveConfirmationPocEvent)
-	if err != nil {
-		logging.Error("Failed to encode confirmation PoC event", inferencetypes.Server, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode confirmation PoC event")
-	}
+	// Match legacy dapi: encode EpochParams (not full Params) via encoding/json
+	// so int64 fields stay numbers. ProtoMarshalJSON would nest Params and
+	// stringify int64s (epoch_length etc.).
 	return ctx.JSON(http.StatusOK, gen.EpochResponse{
 		BlockHeight: gen.Int64(epochInfo.BlockHeight),
 		LatestEpoch: gen.LatestEpoch{
@@ -55,9 +51,9 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 		Phase:                      string(epochContext.GetCurrentPhase(epochInfo.BlockHeight)),
 		EpochStages:                epochContext.GetEpochStages(),
 		NextEpochStages:            nextEpochContext.GetEpochStages(),
-		EpochParams:                epochParams,
+		EpochParams:                *epochInfo.Params.EpochParams,
 		IsConfirmationPocActive:    epochInfo.IsConfirmationPocActive,
-		ActiveConfirmationPocEvent: activeConfirmationPoc,
+		ActiveConfirmationPocEvent: epochInfo.ActiveConfirmationPocEvent,
 	})
 }
 
@@ -208,11 +204,9 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		addresses[i] = addr
 	}
 
-	activeParticipantsJSON, err := protoToRawJSON(&activeParticipants)
-	if err != nil {
-		logging.Error("Failed to encode active participants", inferencetypes.Participants, "error", err)
-		return nil, err
-	}
+	// Legacy dapi used encoding/json on ActiveParticipants (numeric int64s).
+	// ProtoMarshalJSON would stringify key int64 fields.
+	activeParticipantsJSON := activeParticipants
 
 	validators, err := validatorsToRawJSON(valsResp.Validators)
 	if err != nil {

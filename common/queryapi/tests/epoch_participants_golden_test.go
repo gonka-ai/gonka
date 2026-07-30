@@ -40,6 +40,11 @@ func TestEpochParticipantsJSONMatchesDapiGolden(t *testing.T) {
 	assert.NotNil(t, got["proof_ops"])
 	assert.Contains(t, got, "validators")
 	assert.Contains(t, got, "excluded_participants")
+
+	ap, ok := got["active_participants"].(map[string]any)
+	require.True(t, ok)
+	require.Equal(t, float64(100), ap["created_at_block_height"], "int64 fields must stay JSON numbers")
+	require.Equal(t, float64(1), ap["epoch_group_id"])
 }
 
 func TestEpochParticipantsJSONEncodesValidatorsWithPubKeyAny(t *testing.T) {

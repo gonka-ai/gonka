@@ -1,11 +1,11 @@
 {
   "active_participants": {
     "participants": [],
-    "created_at_block_height": "100",
+    "created_at_block_height": 100,
     "epoch_group_id": 1,
-    "poc_start_block_height": "90",
-    "effective_block_height": "100",
-    "created_at_epoch": 1
+    "poc_start_block_height": 0,
+    "effective_block_height": 0,
+    "epoch_id": 0
   },
   "addresses": [],
   "active_participants_bytes": "0a000a0431323334",
