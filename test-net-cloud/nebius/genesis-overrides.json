@@ -307,7 +307,9 @@
             "--tool-call-parser",
             "hermes",
             "--max-model-len",
-            "4096"
+            "4096",
+            "--gpu-memory-utilization", 
+            "0.92"
           ],
           "v_ram": "24",
           "throughput_per_nonce": "10000",

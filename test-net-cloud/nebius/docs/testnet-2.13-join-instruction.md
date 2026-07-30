@@ -148,10 +148,13 @@ Edit `node-config.json` for the models you will serve. Example (single GPU node 
     "models": {
       "Qwen/Qwen2.5-7B-Instruct": {
         "args": [
-          "--quantization",
-          "fp8",
-          "--gpu-memory-utilization",
-          "0.8"
+          "--enable-auto-tool-choice",
+          "--tool-call-parser",
+          "hermes",
+          "--max-model-len",
+          "4096",
+          "--gpu-memory-utilization", 
+          "0.92"
         ]
       }
     }
