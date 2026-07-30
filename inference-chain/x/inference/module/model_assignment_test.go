@@ -984,8 +984,12 @@ func TestSetModelsForParticipants_ManyNodesManyModels(t *testing.T) {
 					MlNodes: []*types.MLNodeInfo{
 						{NodeId: "mlnode1", PocWeight: 30},
 						{NodeId: "mlnode2", PocWeight: 25},
-						{NodeId: "mlnode3", PocWeight: 20},
 						{NodeId: "mlnode4", PocWeight: 25},
+					},
+				},
+				{
+					MlNodes: []*types.MLNodeInfo{
+						{NodeId: "mlnode3", PocWeight: 20},
 					},
 				},
 			},
