@@ -604,8 +604,9 @@ func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
 			"blockHeight", blockHeight,
 			"error", err)
 	} else if found {
-		d.confirmSeedLocally(epochIndex, participantAddress, onChainSeed)
-		d.seedConfirmedEpoch = epochIndex
+		if d.confirmSeedLocally(epochIndex, participantAddress, onChainSeed) {
+			d.seedConfirmedEpoch = epochIndex
+		}
 		return
 	}
 
@@ -640,17 +641,20 @@ func (d *OnNewBlockDispatcher) getParticipantSeed(
 	return nil, false, nil
 }
 
+// confirmSeedLocally returns true when we should stop further seed work for this
+// epoch: local state matches/restored, or an intentional signature mismatch.
+// Transient restore failures return false so a later block can retry restore.
 func (d *OnNewBlockDispatcher) confirmSeedLocally(
 	epochIndex uint64,
 	participantAddress string,
 	onChainSeed *types.RandomSeed,
-) {
+) bool {
 	localSeed := d.configManager.GetUpcomingSeed()
 	if localSeed.EpochIndex == epochIndex && localSeed.Signature == onChainSeed.Signature {
 		logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
 			"epochIndex", epochIndex,
 			"participant", participantAddress)
-		return
+		return true
 	}
 
 	generatedSeed, err := d.randomSeedManager.CreateNewSeed(epochIndex)
@@ -659,24 +663,25 @@ func (d *OnNewBlockDispatcher) confirmSeedLocally(
 			"epochIndex", epochIndex,
 			"participant", participantAddress,
 			"error", err)
-		return
+		return false
 	}
 	if generatedSeed.Signature != onChainSeed.Signature {
 		logging.Error("On-chain seed signature does not match local deterministic seed; refusing to overwrite", types.Claims,
 			"epochIndex", epochIndex,
 			"participant", participantAddress)
-		return
+		return true
 	}
 	if err := d.configManager.SetUpcomingSeed(*generatedSeed); err != nil {
 		logging.Error("Failed to restore confirmed upcoming seed locally", types.Claims,
 			"epochIndex", epochIndex,
 			"participant", participantAddress,
 			"error", err)
-		return
+		return false
 	}
 	logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
 		"epochIndex", epochIndex,
 		"participant", participantAddress)
+	return true
 }
 
 // shouldTriggerReconciliation determines if reconciliation should be triggered
