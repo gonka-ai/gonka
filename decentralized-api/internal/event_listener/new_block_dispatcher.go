@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"decentralized-api/apiconfig"
@@ -29,6 +30,7 @@ import (
 type ChainStateClient interface {
 	EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error)
 	Params(ctx context.Context, req *types.QueryParamsRequest, opts ...grpc.CallOption) (*types.QueryParamsResponse, error)
+	ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error)
 }
 
 // StatusFunc defines the function signature for getting node sync status
@@ -80,7 +82,14 @@ type OnNewBlockDispatcher struct {
 	configManager        *apiconfig.ConfigManager
 	epochGroupDataCache  *internal.EpochGroupDataCache
 	lastThresholdEpoch   uint64 // last epoch the per-model thresholds were refreshed for
+
+	seedSubmissionMu   sync.Mutex
+	seedAttemptEpoch   uint64
+	seedAttemptHeight  int64
+	seedConfirmedEpoch uint64
 }
+
+const seedRetryCooldownBlocks int64 = 2
 
 // StatusResponse matches the structure expected by getStatus function
 type StatusResponse struct {
@@ -303,7 +312,7 @@ func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo ch
 	}
 
 	// 3. Check for phase transitions and stage events
-	d.handlePhaseTransitions(*epochState)
+	d.handlePhaseTransitions(ctx, *epochState)
 
 	// 4. Check if reconciliation should be triggered
 	if d.shouldTriggerReconciliation(*epochState) {
@@ -385,7 +394,7 @@ func (d *OnNewBlockDispatcher) refreshModelValidationThresholds(epoch uint64) {
 	d.lastThresholdEpoch = epoch
 }
 
-func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.EpochState) {
+func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epochState chainphase.EpochState) {
 	//To work for tests
 	if d.nodeBroker == nil {
 		return
@@ -404,10 +413,13 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 		logging.Warn("Failed to refresh preserved membership cache; continuing with cached snapshot", types.Stages, "error", err)
 	}
 
-	// Check for PoC start for the next epoch. This is the most important transition.
+	if d.isSeedSubmissionWindow(epochContext, blockHeight) {
+		d.ensureSeedSubmitted(ctx, epochContext, blockHeight, d.nodeBroker.GetParticipantAddress())
+	}
+
+	// Keep the start block dedicated to PoC startup. Seed repair on later blocks
+	// must not return early because stage transitions can share those heights.
 	if epochContext.IsStartOfPocStage(blockHeight) {
-		logging.Info("DapiStage:IsStartOfPocStage: generating and submitting PoC seed for upcoming epoch", types.Stages, "blockHeight", blockHeight, "blockHash", blockHash, "epochIndex", epochContext.EpochIndex)
-		d.randomSeedManager.GenerateSeedInfo(epochContext.EpochIndex)
 		return
 	}
 
@@ -553,6 +565,118 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(epochState chainphase.Epoc
 			}
 		}
 	}
+}
+
+func (d *OnNewBlockDispatcher) isSeedSubmissionWindow(epochContext types.EpochContext, blockHeight int64) bool {
+	return epochContext.EpochIndex > 0 &&
+		blockHeight >= epochContext.StartOfPoC() &&
+		blockHeight < epochContext.EndOfPoCValidation()
+}
+
+func (d *OnNewBlockDispatcher) ensureSeedSubmitted(
+	ctx context.Context,
+	epochContext types.EpochContext,
+	blockHeight int64,
+	participantAddress string,
+) {
+	if d.queryClient == nil || d.randomSeedManager == nil || d.configManager == nil || participantAddress == "" {
+		return
+	}
+
+	epochIndex := epochContext.EpochIndex
+
+	d.seedSubmissionMu.Lock()
+	defer d.seedSubmissionMu.Unlock()
+
+	if d.seedConfirmedEpoch >= epochIndex {
+		return
+	}
+	// Skip chain queries during retry cooldown; confirmation can wait a block.
+	if d.seedAttemptEpoch == epochIndex && blockHeight-d.seedAttemptHeight < seedRetryCooldownBlocks {
+		return
+	}
+
+	onChainSeed, found, err := d.getParticipantSeed(ctx, epochIndex, participantAddress)
+	if err != nil {
+		logging.Warn("Failed to verify upcoming epoch seed on chain", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"blockHeight", blockHeight,
+			"error", err)
+	} else if found {
+		d.confirmSeedLocally(epochIndex, participantAddress, onChainSeed)
+		d.seedConfirmedEpoch = epochIndex
+		return
+	}
+
+	logging.Info("Ensuring PoC seed is submitted for upcoming epoch", types.Claims,
+		"epochIndex", epochIndex,
+		"participant", participantAddress,
+		"blockHeight", blockHeight,
+		"retry", d.seedAttemptEpoch == epochIndex)
+	d.seedAttemptEpoch = epochIndex
+	d.seedAttemptHeight = blockHeight
+	// Sign + NATS enqueue only; durability comes from later chain confirmation.
+	d.randomSeedManager.GenerateSeedInfo(epochIndex)
+}
+
+func (d *OnNewBlockDispatcher) getParticipantSeed(
+	ctx context.Context,
+	epochIndex uint64,
+	participantAddress string,
+) (*types.RandomSeed, bool, error) {
+	response, err := d.queryClient.ListRandomSeeds(ctx, &types.QueryRandomSeedsRequest{EpochIndex: epochIndex})
+	if err != nil {
+		return nil, false, err
+	}
+	if response == nil {
+		return nil, false, errors.New("random seeds response is nil")
+	}
+	for _, randomSeed := range response.Seeds {
+		if randomSeed != nil && randomSeed.Participant == participantAddress {
+			return randomSeed, true, nil
+		}
+	}
+	return nil, false, nil
+}
+
+func (d *OnNewBlockDispatcher) confirmSeedLocally(
+	epochIndex uint64,
+	participantAddress string,
+	onChainSeed *types.RandomSeed,
+) {
+	localSeed := d.configManager.GetUpcomingSeed()
+	if localSeed.EpochIndex == epochIndex && localSeed.Signature == onChainSeed.Signature {
+		logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress)
+		return
+	}
+
+	generatedSeed, err := d.randomSeedManager.CreateNewSeed(epochIndex)
+	if err != nil || generatedSeed == nil {
+		logging.Error("On-chain seed exists but local seed could not be restored", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"error", err)
+		return
+	}
+	if generatedSeed.Signature != onChainSeed.Signature {
+		logging.Error("On-chain seed signature does not match local deterministic seed; refusing to overwrite", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress)
+		return
+	}
+	if err := d.configManager.SetUpcomingSeed(*generatedSeed); err != nil {
+		logging.Error("Failed to restore confirmed upcoming seed locally", types.Claims,
+			"epochIndex", epochIndex,
+			"participant", participantAddress,
+			"error", err)
+		return
+	}
+	logging.Info("Confirmed upcoming epoch seed on chain", types.Claims,
+		"epochIndex", epochIndex,
+		"participant", participantAddress)
 }
 
 // shouldTriggerReconciliation determines if reconciliation should be triggered

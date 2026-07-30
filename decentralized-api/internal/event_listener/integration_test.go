@@ -201,6 +201,14 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+func (m *MockQueryClient) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
+	args := m.Called(ctx, req)
+	if args.Get(0) == nil {
+		return nil, args.Error(1)
+	}
+	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
+}
+
 // Test setup helpers
 
 type IntegrationTestSetup struct {
@@ -316,6 +324,7 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			ValidationParams: validationParams,
 		},
 	}, nil)
+	mockQueryClient.On("ListRandomSeeds", mock.Anything, mock.Anything).Return(&types.QueryRandomSeedsResponse{}, nil)
 
 	// Setup mock expectations for RandomSeedManager
 	mockSeedManager.On("ChangeCurrentSeed").Return()
@@ -409,6 +418,7 @@ func (setup *IntegrationTestSetup) setLatestEpoch(blockHeight int64, epoch types
 			},
 		},
 	}, nil)
+	setup.MockQueryClient.On("ListRandomSeeds", mock.Anything, mock.Anything).Return(&types.QueryRandomSeedsResponse{}, nil)
 }
 
 func (setup *IntegrationTestSetup) transitionChainStateToNextEpoch(blockHeight int64) {
