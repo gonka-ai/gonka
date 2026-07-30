@@ -90,10 +90,10 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err := p.parameters.Apply(RequestFilterStagePreValidation, ctx); err != nil {
 		return nil, chatRequest{}, err
 	}
-	if err := p.messages.NormalizeDocument(&ctx.Document); err != nil {
+	if err := p.messages.NormalizeDocument(&ctx.Document, ctx.RoutedModel); err != nil {
 		return nil, chatRequest{}, err
 	}
-	if err := p.messages.ValidateDocument(&ctx.Document); err != nil {
+	if err := p.messages.ValidateDocument(&ctx.Document, ctx.RoutedModel); err != nil {
 		return nil, chatRequest{}, err
 	}
 	if err := ctx.DecodeRequest(); err != nil {
@@ -139,6 +139,7 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 	case hasMaxCompletionTokens:
 		maxCompletionTokens := capOutputTokens(ctx.Request.MaxCompletionTokens, true, ctx.AdminAuthenticated, limits)
 		ctx.Document.Set("max_completion_tokens", maxCompletionTokens)
+		ctx.Document.Set("max_tokens", maxCompletionTokens)
 		ctx.Request.MaxCompletionTokens = maxCompletionTokens
 		ctx.Request.MaxTokens = maxCompletionTokens
 	default:

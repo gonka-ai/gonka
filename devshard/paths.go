@@ -3,82 +3,38 @@ package devshard
 import (
 	"fmt"
 	"strings"
-
-	"devshard/types"
-)
-
-const (
-	LegacyRoutePrefix = "/v1/devshard"
 )
 
 func VersionedRoutePrefix(version string) string {
 	return "/devshard/" + version
 }
 
-func NormalizeRoutePrefix(routePrefix string) string {
-	if routePrefix == "" {
-		return LegacyRoutePrefix
+// VersionForRoutePrefix maps a versioned HTTP route prefix to the runtime tag
+// used when creating a user-side session.
+func ResolveRoutePrefix(routePrefix string) (string, string, error) {
+	normalized := strings.TrimRight(strings.TrimSpace(routePrefix), "/")
+	if !strings.HasPrefix(normalized, "/") {
+		return "", "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
 	}
-	return routePrefix
-}
+	parts := strings.Split(strings.TrimPrefix(normalized, "/"), "/")
+	if len(parts) == 2 && parts[0] == "devshard" && parts[1] != "" {
+		return normalized, parts[1], nil
+	}
 
-func ResolveVersionedRoutePrefix(version, routePrefix string) string {
-	if routePrefix != "" {
-		return routePrefix
-	}
-	return VersionedRoutePrefix(version)
-}
-
-func ProtocolRouteVersion(protocol types.ProtocolVersion) string {
-	if protocol == "" {
-		protocol = types.ProtocolV1
-	}
-	version := string(protocol)
-	if strings.HasPrefix(version, "v") {
-		return version
-	}
-	return "v" + version
-}
-
-func ProtocolSessionVersion(protocol types.ProtocolVersion) string {
-	if protocol == "" {
-		protocol = types.ProtocolV1
-	}
-	return ProtocolRouteVersion(protocol)
-}
-
-func ResolveHostRoutePrefix(protocol types.ProtocolVersion, routePrefix string) string {
-	if routePrefix != "" {
-		return routePrefix
-	}
-	if protocol == types.ProtocolV1 {
-		return LegacyRoutePrefix
-	}
-	return VersionedRoutePrefix(ProtocolRouteVersion(protocol))
+	return "", "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
 }
 
 func VersionForRoutePrefix(routePrefix string) (string, error) {
-	normalized := NormalizeRoutePrefix(routePrefix)
-	if normalized == LegacyRoutePrefix {
-		return types.LegacySessionVersion, nil
+	_, version, err := ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		return "", err
 	}
-
-	trimmed := strings.Trim(normalized, "/")
-	parts := strings.Split(trimmed, "/")
-	if len(parts) == 2 && parts[0] == "devshard" && parts[1] != "" {
-		return parts[1], nil
-	}
-
-	return "", fmt.Errorf("unsupported devshard route prefix %q", routePrefix)
+	return version, nil
 }
 
 func SessionPayloadPath(routePrefix, escrowID string) string {
-	normalized := strings.TrimPrefix(NormalizeRoutePrefix(routePrefix), "/")
+	normalized := strings.TrimPrefix(routePrefix, "/")
 	return fmt.Sprintf("%s/sessions/%s/payloads", normalized, escrowID)
-}
-
-func LegacySessionPayloadPath(escrowID string) string {
-	return SessionPayloadPath(LegacyRoutePrefix, escrowID)
 }
 
 func VersionedSessionPayloadPath(version, escrowID string) string {

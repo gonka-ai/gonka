@@ -1,30 +1,30 @@
 # Devshard Upgrade -- Implementation Notes
 
-Scope: the first versioned release only.
+Scope: the first versioned release and the follow-up legacy route deprecation.
 
 This document is about the temporary implementation we actually ship now. The
 long-term architecture stays in `devshard/docs/upgrade.md`.
 
 ## Current implementation contract
 
-The first versioned release is intentionally small:
+The first versioned release used a dual-route transition:
 
-- `/v1/devshard/*` remains the legacy path served directly by dapi
+- one route was served directly by dapi during the transition
 - `/devshard/<version>/*` is the new path served through
   `proxy -> versiond -> devshardd`
 - `devshardd` is a temporary standalone host binary built out of the
   `decentralized-api/` module
-- `devshardctl` defaults to its release version path and can still override the
-  route prefix for tests or local debugging
+- `devshardctl` defaults to `/devshard/<build-version>` and accepts
+  `DEVSHARD_ROUTE_PREFIX` only as an override for tests or local debugging
 
-The main goal of this release is to prove that the standalone host process can
-run behind versiond while the legacy dapi path continues to work unchanged.
+The main goal was to prove that the standalone host process can run behind
+versiond. Current binaries require clients to use `/devshard/<version>/*`.
 
 Version isolation is strict:
 
 - `/devshard/<version>/*` hosts must talk to other `/devshard/<version>/*`
   hosts
-- `/v1/devshard/*` hosts must talk only to `/v1/devshard/*` hosts
+- transition-era dapi hosts talked only to other dapi hosts
 - the temporary release should not add cross-prefix fallback between those two
   families
 
@@ -32,15 +32,13 @@ Version isolation is strict:
 
 ### Proxy and routing
 
-The proxy exposes two parallel routes:
+The proxy exposes the versioned route:
 
 ```text
-/v1/devshard/*        -> dapi legacy HostManager
 /devshard/<version>/* -> versiond-managed devshardd
 ```
 
-Location ordering matters. `/v1/devshard/*` must continue to hit dapi
-directly. `/devshard/*` is reserved for versiond-routed standalone binaries.
+`/devshard/*` is reserved for versiond-routed standalone binaries.
 
 ### Temporary standalone binary
 
@@ -79,7 +77,7 @@ stamp `devshardd` and `devshardctl` with the same version string.
 
 That same route/binary token is now bound into session state:
 
-- `v1` for the legacy `/v1/devshard/*` path
+- `v1` for sessions created by the transition-era dapi path
 - `<version>` for `/devshard/<version>/*`
 
 Settlement sends the cleartext version to mainnet and also includes it in the
@@ -113,11 +111,8 @@ Versiond-managed runtime state is persisted on the host under `./devshards`:
 
 ### Test shape
 
-Both flows are covered on purpose:
-
-- `DevshardTests.kt` verifies the legacy `/v1/devshard` path
-- `DevshardStandaloneTests.kt` verifies the standalone
-  `/devshard/<version>` path through proxy and versiond in two different modes
+`DevshardStandaloneTests.kt` verifies the standalone `/devshard/<version>` path
+through proxy and versiond in two different modes.
 
 The override-driven tests use `VERSIOND_FORCE=<version>` together with
 `VERSIOND_OVERRIDE_<version>` to run the locally built binary and exercise full

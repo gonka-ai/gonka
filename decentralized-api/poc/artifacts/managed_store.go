@@ -2,6 +2,7 @@ package artifacts
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -17,15 +18,61 @@ import (
 	"github.com/productscience/inference/x/inference/types"
 )
 
+// ErrStageNotActive is returned when opening a store for a PoC stage that is
+// not the currently activated stage (or when no stage is active).
+var ErrStageNotActive = errors.New("poc artifact stage is not active")
+
 // ManagedArtifactStore wraps per-(stage, model) ArtifactStores with stage-based pruning.
 // The large retention buffer ensures pruned stores are "cold" with no active use.
+//
+// Only one PoC stage height may be open in RAM at a time. Sync pins
+// GetCurrentPocStageHeight while the node is synced; the pin switches (and the
+// previous stage is unloaded) when the next PoC or confirmation PoC changes
+// that height. GetStore/GetOrCreateStore refuse any other height so attackers
+// cannot force old trees into memory.
 type ManagedArtifactStore struct {
 	mu          sync.RWMutex
 	baseDir     string
-	stores      map[storeKey]*ArtifactStore
+	stores      map[storeKey]ArtifactStore
 	retainCount int
+	// activeStage is the only stage height allowed in RAM. 0 means inactive:
+	// no store may be opened until ActivateStage.
+	activeStage int64
 	cancel      context.CancelFunc
 	flushCancel context.CancelFunc
+	// pruneHooks are invoked (best-effort) with the stage height whenever a
+	// stage is pruned. Used to ride other DAPI-local stage data (e.g. the
+	// early-share guard's checkpoints) on the same retention cadence.
+	pruneHooks []func(stageHeight int64)
+}
+
+// AddPruneHook registers a callback invoked with the stage height each time a
+// stage is pruned. Hooks must be added before pruning begins (i.e. at wiring
+// time) and should not block.
+func (m *ManagedArtifactStore) AddPruneHook(fn func(stageHeight int64)) {
+	if fn == nil {
+		return
+	}
+	m.withWriteLock(func() {
+		m.pruneHooks = append(m.pruneHooks, fn)
+	})
+}
+
+func (m *ManagedArtifactStore) runPruneHooks(stageHeight int64) {
+	var hooks []func(stageHeight int64)
+	m.withReadLock(func() {
+		hooks = append(hooks, m.pruneHooks...)
+	})
+	for _, fn := range hooks {
+		func() {
+			defer func() {
+				if r := recover(); r != nil {
+					logging.Warn("ManagedArtifactStore: prune hook panicked", types.PoC, "stage", stageHeight, "panic", r)
+				}
+			}()
+			fn(stageHeight)
+		}()
+	}
 }
 
 type storeKey struct {
@@ -35,7 +82,7 @@ type storeKey struct {
 
 type StageModelStore struct {
 	ModelID string
-	Store   *ArtifactStore
+	Store   ArtifactStore
 }
 
 func (m *ManagedArtifactStore) withReadLock(fn func()) {
@@ -50,9 +97,9 @@ func (m *ManagedArtifactStore) withWriteLock(fn func()) {
 	fn()
 }
 
-func (m *ManagedArtifactStore) getCachedStore(key storeKey) (*ArtifactStore, bool) {
+func (m *ManagedArtifactStore) getCachedStore(key storeKey) (ArtifactStore, bool) {
 	var (
-		store *ArtifactStore
+		store ArtifactStore
 		ok    bool
 	)
 	m.withReadLock(func() {
@@ -61,25 +108,111 @@ func (m *ManagedArtifactStore) getCachedStore(key storeKey) (*ArtifactStore, boo
 	return store, ok
 }
 
-func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store *ArtifactStore) (*ArtifactStore, bool) {
+func (m *ManagedArtifactStore) requireActiveStage(stage int64) error {
+	var active int64
+	m.withReadLock(func() {
+		active = m.activeStage
+	})
+	if active == 0 || active != stage {
+		return fmt.Errorf("%w: requested %d active %d", ErrStageNotActive, stage, active)
+	}
+	return nil
+}
+
+// ActiveStage returns the currently activated PoC stage height, or 0 if none.
+func (m *ManagedArtifactStore) ActiveStage() int64 {
+	var active int64
+	m.withReadLock(func() {
+		active = m.activeStage
+	})
+	return active
+}
+
+// ActivateStage pins stage as the only PoC height allowed in RAM and closes any
+// open stores for other heights. Disk data is kept. Safe to call every block.
+func (m *ManagedArtifactStore) ActivateStage(stage int64) {
+	if stage <= 0 {
+		m.DeactivateStage()
+		return
+	}
+
+	// Already pinned: skip write lock + unload scan (called every block).
+	if m.ActiveStage() == stage {
+		return
+	}
+
+	var prev int64
+	m.withWriteLock(func() {
+		prev = m.activeStage
+		m.activeStage = stage
+	})
+	m.unloadRAMExcept(stage)
+	if prev != stage {
+		logging.Info("Activated PoC artifact stage", types.PoC, "stage", stage, "previous", prev)
+	}
+}
+
+// DeactivateStage clears the active stage and unloads every open store from RAM.
+// Disk data is kept. Safe to call every block outside PoC/CPoC windows.
+func (m *ManagedArtifactStore) DeactivateStage() {
+	var prev int64
+	m.withWriteLock(func() {
+		prev = m.activeStage
+		m.activeStage = 0
+	})
+	m.unloadRAMExcept(0)
+	if prev != 0 {
+		logging.Info("Deactivated PoC artifact stage", types.PoC, "previous", prev)
+	}
+}
+
+// unloadRAMExcept closes and drops in-memory stores whose stage != keep.
+// keep == 0 closes everything. Does not delete disk directories.
+func (m *ManagedArtifactStore) unloadRAMExcept(keep int64) {
+	var toClose []ArtifactStore
+	m.withWriteLock(func() {
+		for key, store := range m.stores {
+			if keep != 0 && key.stage == keep {
+				continue
+			}
+			toClose = append(toClose, store)
+			delete(m.stores, key)
+		}
+	})
+	for _, store := range toClose {
+		if store == nil {
+			continue
+		}
+		if err := store.Close(); err != nil {
+			logging.Warn("Failed to close artifact store on unload", types.PoC, "error", err)
+		}
+	}
+}
+
+func (m *ManagedArtifactStore) putStoreIfAbsent(key storeKey, store ArtifactStore) (ArtifactStore, bool, error) {
 	var (
-		existing *ArtifactStore
+		existing ArtifactStore
 		loaded   bool
+		err      error
 	)
 	m.withWriteLock(func() {
+		if m.activeStage == 0 || m.activeStage != key.stage {
+			err = fmt.Errorf("%w: requested %d active %d", ErrStageNotActive, key.stage, m.activeStage)
+			return
+		}
 		existing, loaded = m.stores[key]
 		if !loaded {
 			m.stores[key] = store
 			existing = store
 		}
 	})
-	return existing, loaded
+	return existing, loaded, err
 }
 
-func (m *ManagedArtifactStore) snapshotStores() []*ArtifactStore {
-	var stores []*ArtifactStore
+func (m *ManagedArtifactStore) snapshotStores() []ArtifactStore {
+	var stores []ArtifactStore
 	m.withReadLock(func() {
-		stores = make([]*ArtifactStore, 0, len(m.stores))
+		stores = make([]ArtifactStore, 0, len(m.stores))
 		for _, store := range m.stores {
 			stores = append(stores, store)
 		}
@@ -104,8 +237,8 @@ func (m *ManagedArtifactStore) snapshotStageModelIDs(pocStageStartHeight int64) 
 	return modelIDs
 }
 
-func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []*ArtifactStore {
-	var stores []*ArtifactStore
+func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []ArtifactStore {
+	var stores []ArtifactStore
 	m.withWriteLock(func() {
 		for key, store := range m.stores {
 			if key.stage != pocStageStartHeight {
@@ -120,24 +253,24 @@ func (m *ManagedArtifactStore) removeStageStores(pocStageStartHeight int64) []*A
 
 func (m *ManagedArtifactStore) drainStores() []struct {
 	key   storeKey
-	store *ArtifactStore
+	store ArtifactStore
 } {
 	var stores []struct {
 		key   storeKey
-		store *ArtifactStore
+		store ArtifactStore
 	}
 	m.withWriteLock(func() {
 		stores = make([]struct {
 			key   storeKey
-			store *ArtifactStore
+			store ArtifactStore
 		}, 0, len(m.stores))
 		for key, store := range m.stores {
 			stores = append(stores, struct {
 				key   storeKey
-				store *ArtifactStore
+				store ArtifactStore
 			}{key: key, store: store})
 		}
-		m.stores = make(map[storeKey]*ArtifactStore)
+		m.stores = make(map[storeKey]ArtifactStore)
 	})
 	return stores
 }
@@ -148,7 +281,7 @@ func NewManagedArtifactStore(baseDir string, retainCount int) *ManagedArtifactSt
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &ManagedArtifactStore{
 		baseDir:     baseDir,
-		stores:      make(map[storeKey]*ArtifactStore),
+		stores:      make(map[storeKey]ArtifactStore),
 		retainCount: retainCount,
 		cancel:      cancel,
 	}
@@ -187,9 +320,12 @@ func decodeModelID(encoded string) (string, error) {
 }
 
 // GetOrCreateStore returns the store for the given PoC stage/model, creating it if needed.
-func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, modelID string) (ArtifactStore, error) {
 	key, err := m.storeKey(pocStageStartHeight, modelID)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.requireActiveStage(pocStageStartHeight); err != nil {
 		return nil, err
 	}
 
@@ -198,12 +334,16 @@ func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, model
 	}
 
 	storeDir := m.modelDir(pocStageStartHeight, modelID)
-	store, err := Open(storeDir)
+	store, err := OpenSMST(storeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}
 
-	existing, loaded := m.putStoreIfAbsent(key, store)
+	existing, loaded, err := m.putStoreIfAbsent(key, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	if loaded {
 		_ = store.Close()
 		return existing, nil
@@ -214,9 +354,12 @@ func (m *ManagedArtifactStore) GetOrCreateStore(pocStageStartHeight int64, model
 
 // GetStore returns the store for the given PoC stage/model, or an error if it doesn't exist.
 // Does not create new stores (for proof requests).
-func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID string) (*ArtifactStore, error) {
+func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID string) (ArtifactStore, error) {
 	key, err := m.storeKey(pocStageStartHeight, modelID)
 	if err != nil {
+		return nil, err
+	}
+	if err := m.requireActiveStage(pocStageStartHeight); err != nil {
 		return nil, err
 	}
 
@@ -231,12 +374,16 @@ func (m *ManagedArtifactStore) GetStore(pocStageStartHeight int64, modelID strin
 		return nil, fmt.Errorf("store for stage %d model %q not found", pocStageStartHeight, modelID)
 	}
 
-	store, err = Open(storeDir)
+	store, err = OpenSMST(storeDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store for stage %d model %q: %w", pocStageStartHeight, modelID, err)
 	}
 
-	existing, loaded := m.putStoreIfAbsent(key, store)
+	existing, loaded, err := m.putStoreIfAbsent(key, store)
+	if err != nil {
+		_ = store.Close()
+		return nil, err
+	}
 	if loaded {
 		_ = store.Close()
 		return existing, nil
@@ -310,6 +457,8 @@ func (m *ManagedArtifactStore) PruneStore(pocStageStartHeight int64) error {
 	if err := os.RemoveAll(storeDir); err != nil {
 		errs = append(errs, fmt.Errorf("remove store dir: %w", err))
 	}
+
+	m.runPruneHooks(pocStageStartHeight)
 
 	logging.Info("Pruned artifact store", types.PoC, "height", pocStageStartHeight)
 	if len(errs) > 0 {

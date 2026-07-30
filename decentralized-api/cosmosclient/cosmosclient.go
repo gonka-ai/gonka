@@ -271,6 +271,7 @@ type CosmosMessageClient interface {
 	SubmitUnitOfComputePriceProposal(transaction *inferenceapi.MsgSubmitUnitOfComputePriceProposal) error
 	BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error
 	GetBridgeAddresses(ctx context.Context, chainId string) ([]inferencetypes.BridgeContractAddress, error)
+	BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error)
 	NewInferenceQueryClient() inferencetypes.QueryClient
 	NewCometQueryClient() cmtservice.ServiceClient
 	BankBalances(ctx context.Context, address string) ([]sdk.Coin, error)
@@ -466,8 +467,17 @@ func (icc *InferenceCosmosClient) SubmitUnitOfComputePriceProposal(transaction *
 
 func (icc *InferenceCosmosClient) BridgeExchange(transaction *inferencetypes.MsgBridgeExchange) error {
 	transaction.Validator = icc.Address
-	_, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
-	return err
+	resp, err := icc.manager.SendTransactionAsyncNoRetry(transaction)
+	if err != nil {
+		return err
+	}
+	// BroadcastTxSync returns nil error even when CheckTx/DeliverTx fails
+	// (Code != 0). Surface RawLog so bridge drain can skip permanent rejects
+	// (out-of-epoch-group) instead of waiting on confirm timeout.
+	if resp != nil && resp.Code != 0 {
+		return fmt.Errorf("bridge exchange failed: code=%d rawLog=%s", resp.Code, resp.RawLog)
+	}
+	return nil
 }
 
 // GetBridgeAddresses retrieves all bridge addresses for a specific chain
@@ -482,6 +492,18 @@ func (icc *InferenceCosmosClient) GetBridgeAddresses(ctx context.Context, chainI
 	}
 
 	return resp.Addresses, nil
+}
+
+func (icc *InferenceCosmosClient) BridgeTransactionsByReceipt(ctx context.Context, originChain, blockNumber, receiptIndex string) ([]inferencetypes.BridgeTransaction, error) {
+	resp, err := icc.NewInferenceQueryClient().BridgeTransaction(ctx, &inferencetypes.QueryGetBridgeTransactionRequest{
+		OriginChain:  originChain,
+		BlockNumber:  blockNumber,
+		ReceiptIndex: receiptIndex,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return resp.BridgeTransactions, nil
 }
 
 func (icc *InferenceCosmosClient) SendTransactionAsyncWithRetry(msg sdk.Msg, deadlineBlock ...int64) (*sdk.TxResponse, error) {
@@ -518,15 +540,15 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*inferencetypes.QueryAll
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
-	return upgradetypes.NewQueryClient(icc.manager.GetClientContext())
+	return upgradetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() inferencetypes.QueryClient {
-	return inferencetypes.NewQueryClient(icc.manager.GetClientContext())
+	return inferencetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
-	return cmtservice.NewServiceClient(icc.manager.GetClientContext())
+	return cmtservice.NewServiceClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {
@@ -583,9 +605,9 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
-	return blstypes.NewQueryClient(icc.manager.GetClientContext())
+	return blstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }
 
 func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
-	return restrictionstypes.NewQueryClient(icc.manager.GetClientContext())
+	return restrictionstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
 }

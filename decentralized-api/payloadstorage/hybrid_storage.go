@@ -147,6 +147,40 @@ func (h *HybridStorage) Retrieve(ctx context.Context, inferenceId string, epochI
 	return nil, nil, fileErr
 }
 
+func (h *HybridStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
+	// Best-effort across both backends: an inference may exist in either or
+	// both. Return ErrNotFound only when both backends agree it is missing.
+	var pgErr error
+	pgFound := false
+	if pg := h.currentPg(); pg != nil {
+		pgErr = pg.DeleteInference(ctx, inferenceId, epochId)
+		if pgErr == nil {
+			pgFound = true
+		} else if !errors.Is(pgErr, ErrNotFound) {
+			logging.Warn("PostgreSQL delete inference failed", types.PayloadStorage,
+				"inferenceId", inferenceId, "epochId", epochId, "error", pgErr)
+		}
+	}
+
+	fileErr := h.file.DeleteInference(ctx, inferenceId, epochId)
+	fileFound := fileErr == nil
+	if fileErr != nil && !errors.Is(fileErr, ErrNotFound) {
+		logging.Warn("File delete inference failed", types.PayloadStorage,
+			"inferenceId", inferenceId, "epochId", epochId, "error", fileErr)
+	}
+
+	if pgFound || fileFound {
+		return nil
+	}
+	if pgErr != nil && !errors.Is(pgErr, ErrNotFound) {
+		return pgErr
+	}
+	if fileErr != nil && !errors.Is(fileErr, ErrNotFound) {
+		return fileErr
+	}
+	return ErrNotFound
+}
+
 func (h *HybridStorage) PruneEpoch(ctx context.Context, epochId uint64) error {
 	// Best effort: prune both storages (no reconnection delay for prune)
 	var pgErr error

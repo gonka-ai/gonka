@@ -7,6 +7,7 @@ import (
 
 	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	govtypes "github.com/cosmos/cosmos-sdk/x/gov/types"
 	"go.uber.org/mock/gomock"
 )
 
@@ -60,4 +61,56 @@ func (s *KeeperTestSuite) TestEpochProcessing_ProcessUnbondingQueue() {
 	// Verify the future-dated entry is still there
 	_, found = s.k.GetUnbondingCollateral(s.ctx, futureParticipant, futureEpoch)
 	s.Require().True(found, "future-dated unbonding entry should not be processed")
+}
+
+func (s *KeeperTestSuite) TestEpochProcessing_SlashBeforeUnbondingRelease() {
+	participantStr := sample.AccAddress()
+	participant, err := sdk.AccAddressFromBech32(participantStr)
+	s.Require().NoError(err)
+
+	activeAmount := int64(20)
+	unbondingAmount := int64(80)
+	activeCoin := sdk.NewInt64Coin(inftypes.BaseCoin, activeAmount)
+	unbondingCoin := sdk.NewInt64Coin(inftypes.BaseCoin, unbondingAmount)
+	completedEpoch := uint64(7)
+	slashFraction := math.LegacyNewDecWithPrec(50, 2)
+
+	s.Require().NoError(s.k.SetCollateral(s.ctx, participant, activeCoin))
+	s.Require().NoError(s.k.AddUnbondingCollateral(s.ctx, participant, completedEpoch, unbondingCoin))
+
+	expectedSlashed := math.NewInt(50)
+	s.bankKeeper.EXPECT().
+		SendCoinsFromModuleToModule(s.ctx, types.ModuleName, govtypes.ModuleName, gomock.Any(), gomock.Any()).
+		DoAndReturn(func(ctx sdk.Context, senderModule, recipientModule string, amt sdk.Coins, memo string) error {
+			s.Require().Equal(expectedSlashed, amt.AmountOf(inftypes.BaseCoin))
+			return nil
+		}).
+		Times(1)
+
+	slashed, err := s.k.Slash(s.ctx, participant, slashFraction, inftypes.SlashReasonInvalidation, math.ZeroInt())
+	s.Require().NoError(err)
+	s.Require().Equal(expectedSlashed, slashed.Amount)
+
+	postSlashUnbondingAmount := math.NewInt(unbondingAmount / 2)
+	postSlashUnbonding, found := s.k.GetUnbondingCollateral(s.ctx, participant, completedEpoch)
+	s.Require().True(found)
+	s.Require().Equal(postSlashUnbondingAmount, postSlashUnbonding.Amount.Amount)
+
+	expectedReleasedCoin := sdk.NewCoin(inftypes.BaseCoin, postSlashUnbondingAmount)
+	s.bankKeeper.EXPECT().
+		SendCoinsFromModuleToAccount(s.ctx, types.ModuleName, participant, gomock.Eq(sdk.NewCoins(expectedReleasedCoin)), gomock.Any()).
+		Return(nil).
+		Times(1)
+	s.bankKeeper.EXPECT().
+		LogSubAccountTransaction(s.ctx, participantStr, types.ModuleName, types.SubAccountUnbonding, gomock.Eq(expectedReleasedCoin), gomock.Any()).
+		Times(1)
+
+	s.Require().NoError(s.k.AdvanceEpoch(s.ctx, completedEpoch))
+
+	_, found = s.k.GetUnbondingCollateral(s.ctx, participant, completedEpoch)
+	s.Require().False(found)
+
+	postSlashActive, found := s.k.GetCollateral(s.ctx, participant)
+	s.Require().True(found)
+	s.Require().Equal(math.NewInt(activeAmount/2), postSlashActive.Amount)
 }

@@ -19,7 +19,9 @@ class NodeAdminStateTests : TestermintTest() {
             ),
         )
         val (_, genesis) = initCluster(config = config, reboot = true)
-        genesis.waitForNextInferenceWindow()
+        // Past set_new_validators so GetRandomExecutor uses all participants, not the
+        // preserved-node PoC filter (which is empty right at that boundary).
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
 
         val genesisValidatorBeforeDisabled = genesis.node.getStakeValidator()
         assertThat(genesisValidatorBeforeDisabled.tokens).isEqualTo(10)
@@ -53,10 +55,8 @@ class NodeAdminStateTests : TestermintTest() {
         val disableEpoch = disabledNode.state.adminState?.epoch ?: 0UL
         Logger.info("Node disabled at epoch: $disableEpoch")
         
-        logSection("Making inference request to verify disabled node still serves")
-        val inferenceResult = getInferenceResult(genesis)
-        assertThat(inferenceResult).isNotNull
-        
+        // Classic-inference "disabled node still serves" check removed with the
+        // dapi deprecation; the state assertions below still cover disable/enable.
         logSection("Waiting for PoC phase to verify node stops")
         genesis.waitForStage(EpochStage.START_OF_POC)
         genesis.node.waitForNextBlock(2)
@@ -79,8 +79,8 @@ class NodeAdminStateTests : TestermintTest() {
             .isTrue()
             .`as`("Node should be enabled again")
 
-        logSection("Waiting for next inference window after re-enable")
-        genesis.waitForNextInferenceWindow()
+        logSection("Waiting past set_new_validators after re-enable")
+        genesis.waitForStage(EpochStage.SET_NEW_VALIDATORS, offset = 2)
         genesis.waitForBlock(10) { pair ->
             pair.api.getNodes()
                 .first { it.node.id == nodeId }

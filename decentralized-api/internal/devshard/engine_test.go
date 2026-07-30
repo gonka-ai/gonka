@@ -185,17 +185,3 @@ func TestModifyRequestBody(t *testing.T) {
 	assert.Equal(t, float64(42), result["seed"])
 	assert.Equal(t, false, result["skip_special_tokens"])
 }
-
-func TestDevshardPayloadKey(t *testing.T) {
-	key := DevshardPayloadKey("escrow-123", 456)
-	assert.Equal(t, "devshard:escrow-123:456", key)
-}
-
-func TestDevshardPayloadKey_DifferentEscrows(t *testing.T) {
-	key1 := DevshardPayloadKey("escrow-1", 100)
-	key2 := DevshardPayloadKey("escrow-2", 100)
-
-	assert.NotEqual(t, key1, key2, "same inference ID in different escrows should have different keys")
-	assert.Equal(t, "devshard:escrow-1:100", key1)
-	assert.Equal(t, "devshard:escrow-2:100", key2)
-}

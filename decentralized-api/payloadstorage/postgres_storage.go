@@ -65,6 +65,9 @@ func (s *PostgresStorage) ensureSchema(ctx context.Context) error {
 	return nil
 }
 
+// ensurePartition creates the per-epoch partition on first touch for this process.
+// This is the only site that may issue CREATE TABLE ... PARTITION OF for payload
+// storage; Store/Retrieve must not run partition DDL directly.
 func (s *PostgresStorage) ensurePartition(ctx context.Context, epochId uint64) error {
 	if _, ok := s.knownEpochs.Load(epochId); ok {
 		return nil
@@ -72,8 +75,8 @@ func (s *PostgresStorage) ensurePartition(ctx context.Context, epochId uint64) e
 
 	tableName := fmt.Sprintf("inferences_epoch_%d", epochId)
 	query := fmt.Sprintf(`
-		CREATE TABLE IF NOT EXISTS %s 
-		PARTITION OF inferences 
+		CREATE TABLE IF NOT EXISTS %s
+		PARTITION OF inferences
 		FOR VALUES FROM (%d) TO (%d)
 	`, tableName, epochId, epochId+1)
 
@@ -155,6 +158,19 @@ func (s *PostgresStorage) PruneEpoch(ctx context.Context, epochId uint64) error 
 
 	s.knownEpochs.Delete(epochId)
 	logging.Info("Pruned epoch partition", types.PayloadStorage, "epochId", epochId)
+	return nil
+}
+
+func (s *PostgresStorage) DeleteInference(ctx context.Context, inferenceId string, epochId uint64) error {
+	const query = `DELETE FROM inferences WHERE epoch_id = $1 AND inference_id = $2`
+	tag, err := s.pool.Exec(ctx, query, epochId, inferenceId)
+	if err != nil {
+		return fmt.Errorf("delete payload: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	logging.Debug("Deleted payload row", types.PayloadStorage, "inferenceId", inferenceId, "epochId", epochId)
 	return nil
 }
 

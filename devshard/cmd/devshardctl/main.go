@@ -17,24 +17,33 @@ import (
 	"devshard/bridge"
 	"devshard/state"
 	"devshard/types"
+	"devshard/user"
 )
 
 type adminAuthContextKey struct{}
 type adminAPIKeySuffixContextKey struct{}
 
 const (
-	defaultChainRESTURL          = "http://localhost:1317"
-	defaultPublicAPIURL          = "http://localhost:9000"
-	defaultModelName             = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
-	defaultListenPort            = "8080"
-	defaultMaxConcurrentRequests = 512
+	defaultChainRESTURL            = "http://localhost:1317"
+	defaultPublicAPIURL            = "http://localhost:9000"
+	defaultModelName               = "Qwen/Qwen3-235B-A22B-Instruct-2507-FP8"
+	defaultListenPort              = "8080"
+	defaultMaxConcurrentRequests   = 512
+	startupSkipReasonLocalRecovery = "local_recovery_failed"
 )
 
+type startupSkippedEscrow struct {
+	EscrowID string
+	Model    string
+	Reason   string
+}
+
 type SettlementJSON struct {
-	EscrowID  string `json:"escrow_id"`
-	Version   string `json:"version"`
-	StateRoot string `json:"state_root"`
-	Nonce     uint64 `json:"nonce"`
+	EscrowID string `json:"escrow_id"`
+	// "version" name is used for compatibility with devshardctl v1
+	StateRootAndProtocolVersion string `json:"version"`
+	StateRoot                   string `json:"state_root"`
+	Nonce                       uint64 `json:"nonce"`
 	// Fees is the total fee amount deducted during session execution.
 	Fees       uint64              `json:"fees"`
 	RestHash   string              `json:"rest_hash"`
@@ -47,8 +56,24 @@ type HostStatsJSON struct {
 	Missed               uint32 `json:"missed"`
 	Invalid              uint32 `json:"invalid"`
 	Cost                 uint64 `json:"cost"`
-	RequiredValidations  uint32 `json:"required_validations"`
-	CompletedValidations uint32 `json:"completed_validations"`
+	RequiredValidations  uint32 `json:"required_validations,omitempty"`
+	CompletedValidations uint32 `json:"completed_validations,omitempty"`
+}
+
+func hostStatsJSONFromDomain(slot uint32, hs *types.HostStats) HostStatsJSON {
+	entry := HostStatsJSON{
+		SlotID:  slot,
+		Missed:  hs.Missed,
+		Invalid: hs.Invalid,
+		Cost:    hs.Cost,
+	}
+	if hs.RequiredValidations != 0 {
+		entry.RequiredValidations = hs.RequiredValidations
+	}
+	if hs.CompletedValidations != 0 {
+		entry.CompletedValidations = hs.CompletedValidations
+	}
+	return entry
 }
 
 type SlotSignatureJSON struct {
@@ -103,6 +128,7 @@ var gatewayRuntimeBuilder = buildRuntime
 func main() {
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
+	configureClassifyCapsFromEnv()
 	flags := parseCLIFlags()
 	runtimeOpts := mustLoadRuntimeOptions(flags)
 	gatewayStore := mustOpenGatewayStore(runtimeOpts.baseStorageDir)
@@ -251,7 +277,7 @@ func mustLoadParticipantThrottleState(store *GatewayStore) {
 		return
 	}
 	for _, t := range throttles {
-		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.EmptyStreamStreak, t.EOFTransportFailureStreak)
+		sharedParticipantRequestLimiter.LoadStateWithQuarantine(t.Key, t.ModelIDs, t.Tokens, t.LastRefillAt, t.Status, t.QuarantineUntil, t.FailureStrikes)
 	}
 	if len(throttles) > 0 {
 		log.Printf("loaded %d persisted participant throttle state(s)", len(throttles))
@@ -342,7 +368,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	}
 	perf := NewPerfTracker(perfStore)
 
-	runtimes, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
+	runtimes, startupSkipped, err := buildGatewayRuntimes(gatewayStore, &gatewayState, baseStorageDir, perf)
 	if err != nil {
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
@@ -357,21 +383,37 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, perf)
+	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore
 	return gateway
 }
 
-func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, error) {
-	// Load ALL devshards (active and inactive) so that inactive ones
-	// remain accessible for finalization, debug, and settlement retrieval.
-	// Inactive runtimes are loaded with active=false and excluded from
-	// the inference routing pool.
+func recordStartupSkippedEscrows(metrics *DevshardMetrics, skipped []startupSkippedEscrow) {
+	for _, escrow := range skipped {
+		metrics.RecordStartupSkippedEscrow(escrow.EscrowID, escrow.Model, escrow.Reason)
+	}
+}
+
+func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState, baseStorageDir string, perf *PerfTracker) ([]*devshardRuntime, []startupSkippedEscrow, error) {
+	// Load only ACTIVE devshards at boot. Inactive devshards (deactivated,
+	// finalized, or settled) stay in the registry but are not built into
+	// memory-resident runtimes: keeping hundreds of dormant escrows resident
+	// wastes RAM, and probing each one against the chain at startup causes a
+	// boot-time request storm. Inactive devshards are rehydrated on demand:
+	// read-only from local storage for debug/state endpoints, or fully (with
+	// chain access) for manual settlement. See hydrateReadOnlyRuntime and the
+	// lazy settle path.
 	type cfgEntry struct {
 		cfg    RuntimeConfig
 		active bool
 	}
 	allEntries := make([]cfgEntry, 0, len(gatewayState.Devshards))
+	skippedInactive := 0
 	for _, devshard := range gatewayState.Devshards {
+		if !devshard.Active {
+			skippedInactive++
+			continue
+		}
 		allEntries = append(allEntries, cfgEntry{cfg: devshard.RuntimeConfig, active: devshard.Active})
 	}
 	allCfgs := make([]RuntimeConfig, len(allEntries))
@@ -380,7 +422,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	allCfgs, err := finalizeRuntimeConfigs(allCfgs, gatewayState.Settings.DefaultModel, baseStorageDir)
 	if err != nil {
-		return nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
+		return nil, nil, fmt.Errorf("finalize gateway runtime configs: %w", err)
 	}
 
 	type buildResult struct {
@@ -390,8 +432,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 	}
 	t0 := time.Now()
 	ch := make(chan buildResult, len(allCfgs))
+	// Cap concurrent builders (see maxConcurrentRuntimeBuilds); results are still
+	// collected per-index below, so ordering and error handling are unchanged.
+	buildSem := make(chan struct{}, resolveMaxConcurrentRuntimeBuilds())
 	for i, cfg := range allCfgs {
 		go func(idx int, cfg RuntimeConfig) {
+			buildSem <- struct{}{}
+			defer func() { <-buildSem }()
 			rt, err := gatewayRuntimeBuilder(cfg, gatewayState.Settings.ChainREST, gatewayState.Settings.DefaultModel, perf)
 			ch <- buildResult{idx, rt, err}
 		}(i, cfg)
@@ -399,6 +446,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 
 	runtimes := make([]*devshardRuntime, len(allCfgs))
 	var skipped []int
+	var startupSkipped []startupSkippedEscrow
 	var firstFatal error
 	for range allCfgs {
 		res := <-ch
@@ -409,9 +457,12 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				skipped = append(skipped, res.idx)
 				continue
 			}
-			if errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
+			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
-				if errors.Is(res.err, bridge.ErrEscrowNotFound) {
+				if brokenLocalState {
+					reason = "local state unrecoverable"
+				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
 					reason = "escrow missing on chain"
 				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
 					reason = "private key missing"
@@ -426,6 +477,13 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				}
 				markDevshardInactive(gatewayState, cfg.ID)
 				skipped = append(skipped, res.idx)
+				if brokenLocalState {
+					startupSkipped = append(startupSkipped, startupSkippedEscrow{
+						EscrowID: cfg.ID,
+						Model:    firstNonEmpty(cfg.Model, gatewayState.Settings.DefaultModel),
+						Reason:   startupSkipReasonLocalRecovery,
+					})
+				}
 				continue
 			}
 			if firstFatal == nil {
@@ -441,7 +499,7 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				rt.close()
 			}
 		}
-		return nil, firstFatal
+		return nil, nil, firstFatal
 	}
 
 	// Mark inactive runtimes so they're excluded from inference routing
@@ -469,9 +527,17 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 			out = append(out, rt)
 		}
 	}
-	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d total_elapsed_ms=%d",
-		len(out), activeCount, inactiveCount, len(skipped), time.Since(t0).Milliseconds())
-	return out, nil
+	log.Printf("build_runtimes_parallel count=%d active=%d inactive=%d skipped=%d skipped_inactive=%d total_elapsed_ms=%d",
+		len(out), activeCount, inactiveCount, len(skipped), skippedInactive, time.Since(t0).Milliseconds())
+	if len(startupSkipped) > 0 {
+		escrowIDs := make([]string, 0, len(startupSkipped))
+		for _, skippedEscrow := range startupSkipped {
+			escrowIDs = append(escrowIDs, skippedEscrow.EscrowID)
+		}
+		log.Printf("devshard_gateway_startup_degraded deactivated_escrows=%d reason=%s escrow_ids=%q",
+			len(startupSkipped), startupSkipReasonLocalRecovery, strings.Join(escrowIDs, ","))
+	}
+	return out, startupSkipped, nil
 }
 
 func markDevshardInactive(gatewayState *GatewayState, id string) {
@@ -561,6 +627,7 @@ func isAuthExemptPath(path string) bool {
 func isAdminPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/admin/") ||
 		strings.HasPrefix(path, "/v1/debug/") ||
+		strings.HasPrefix(path, "/debug/pprof/") ||
 		path == "/v1/finalize" ||
 		path == "/v1/state" {
 		return true
@@ -662,15 +729,11 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 	if err != nil {
 		return SettlementJSON{}, err
 	}
-	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.Version)
+	root := state.ComputeStateRootFromRestHash(hsHash, p.RestHash, p.Fees, types.PhaseSettlement, p.StateRootAndProtocolVersion)
 
 	stats := make([]HostStatsJSON, 0, len(p.HostStats))
 	for slot, hs := range p.HostStats {
-		stats = append(stats, HostStatsJSON{
-			SlotID: slot, Missed: hs.Missed, Invalid: hs.Invalid,
-			Cost: hs.Cost, RequiredValidations: hs.RequiredValidations,
-			CompletedValidations: hs.CompletedValidations,
-		})
+		stats = append(stats, hostStatsJSONFromDomain(slot, hs))
 	}
 
 	sigs := make([]SlotSignatureJSON, 0, len(p.Signatures))
@@ -679,7 +742,7 @@ func buildSettlementJSON(p *state.SettlementPayload) (SettlementJSON, error) {
 	}
 
 	return SettlementJSON{
-		EscrowID: p.EscrowID, Version: p.Version, StateRoot: base64.StdEncoding.EncodeToString(root),
+		EscrowID: p.EscrowID, StateRootAndProtocolVersion: p.StateRootAndProtocolVersion, StateRoot: base64.StdEncoding.EncodeToString(root),
 		Nonce: p.Nonce, Fees: p.Fees, RestHash: base64.StdEncoding.EncodeToString(p.RestHash),
 		HostStats: stats, Signatures: sigs,
 	}, nil

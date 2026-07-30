@@ -28,6 +28,7 @@ const (
 	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
 	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
+	Msg_SetClaimRecipients_FullMethodName               = "/inference.inference.Msg/SetClaimRecipients"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
 	Msg_SubmitPocValidationsV2_FullMethodName           = "/inference.inference.Msg/SubmitPocValidationsV2"
 	Msg_PoCV2StoreCommit_FullMethodName                 = "/inference.inference.Msg/PoCV2StoreCommit"
@@ -56,6 +57,8 @@ const (
 	Msg_CreateDevshardEscrow_FullMethodName             = "/inference.inference.Msg/CreateDevshardEscrow"
 	Msg_SettleDevshardEscrow_FullMethodName             = "/inference.inference.Msg/SettleDevshardEscrow"
 	Msg_SetDevshardRequestsEnabled_FullMethodName       = "/inference.inference.Msg/SetDevshardRequestsEnabled"
+	Msg_ScheduleMaintenance_FullMethodName              = "/inference.inference.Msg/ScheduleMaintenance"
+	Msg_CancelMaintenance_FullMethodName                = "/inference.inference.Msg/CancelMaintenance"
 	Msg_SetPoCDelegation_FullMethodName                 = "/inference.inference.Msg/SetPoCDelegation"
 	Msg_RefusePoCDelegation_FullMethodName              = "/inference.inference.Msg/RefusePoCDelegation"
 	Msg_DeclarePoCIntent_FullMethodName                 = "/inference.inference.Msg/DeclarePoCIntent"
@@ -68,14 +71,20 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
+	// Deprecated: Do not use.
 	StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error)
+	// Deprecated: Do not use.
 	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
+	// Deprecated: Do not use.
 	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
+	// Deprecated: Do not use.
 	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
+	// Deprecated: Do not use.
 	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
+	SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(ctx context.Context, in *MsgSubmitPocValidationsV2, opts ...grpc.CallOption) (*MsgSubmitPocValidationsV2Response, error)
@@ -106,6 +115,8 @@ type MsgClient interface {
 	CreateDevshardEscrow(ctx context.Context, in *MsgCreateDevshardEscrow, opts ...grpc.CallOption) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(ctx context.Context, in *MsgSettleDevshardEscrow, opts ...grpc.CallOption) (*MsgSettleDevshardEscrowResponse, error)
 	SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDevshardRequestsEnabled, opts ...grpc.CallOption) (*MsgSetDevshardRequestsEnabledResponse, error)
+	ScheduleMaintenance(ctx context.Context, in *MsgScheduleMaintenance, opts ...grpc.CallOption) (*MsgScheduleMaintenanceResponse, error)
+	CancelMaintenance(ctx context.Context, in *MsgCancelMaintenance, opts ...grpc.CallOption) (*MsgCancelMaintenanceResponse, error)
 	SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(ctx context.Context, in *MsgRefusePoCDelegation, opts ...grpc.CallOption) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(ctx context.Context, in *MsgDeclarePoCIntent, opts ...grpc.CallOption) (*MsgDeclarePoCIntentResponse, error)
@@ -128,6 +139,7 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error) {
 	out := new(MsgStartInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_StartInference_FullMethodName, in, out, opts...)
@@ -137,6 +149,7 @@ func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, o
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error) {
 	out := new(MsgFinishInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_FinishInference_FullMethodName, in, out, opts...)
@@ -155,6 +168,7 @@ func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewPa
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error) {
 	out := new(MsgValidationResponse)
 	err := c.cc.Invoke(ctx, Msg_Validation_FullMethodName, in, out, opts...)
@@ -173,6 +187,7 @@ func (c *msgClient) SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSub
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error) {
 	out := new(MsgInvalidateInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_InvalidateInference_FullMethodName, in, out, opts...)
@@ -182,6 +197,7 @@ func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateIn
 	return out, nil
 }
 
+// Deprecated: Do not use.
 func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error) {
 	out := new(MsgRevalidateInferenceResponse)
 	err := c.cc.Invoke(ctx, Msg_RevalidateInference_FullMethodName, in, out, opts...)
@@ -194,6 +210,15 @@ func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateIn
 func (c *msgClient) ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error) {
 	out := new(MsgClaimRewardsResponse)
 	err := c.cc.Invoke(ctx, Msg_ClaimRewards_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error) {
+	out := new(MsgSetClaimRecipientsResponse)
+	err := c.cc.Invoke(ctx, Msg_SetClaimRecipients_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -452,6 +477,24 @@ func (c *msgClient) SetDevshardRequestsEnabled(ctx context.Context, in *MsgSetDe
 	return out, nil
 }
 
+func (c *msgClient) ScheduleMaintenance(ctx context.Context, in *MsgScheduleMaintenance, opts ...grpc.CallOption) (*MsgScheduleMaintenanceResponse, error) {
+	out := new(MsgScheduleMaintenanceResponse)
+	err := c.cc.Invoke(ctx, Msg_ScheduleMaintenance_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *msgClient) CancelMaintenance(ctx context.Context, in *MsgCancelMaintenance, opts ...grpc.CallOption) (*MsgCancelMaintenanceResponse, error) {
+	out := new(MsgCancelMaintenanceResponse)
+	err := c.cc.Invoke(ctx, Msg_CancelMaintenance_FullMethodName, in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *msgClient) SetPoCDelegation(ctx context.Context, in *MsgSetPoCDelegation, opts ...grpc.CallOption) (*MsgSetPoCDelegationResponse, error) {
 	out := new(MsgSetPoCDelegationResponse)
 	err := c.cc.Invoke(ctx, Msg_SetPoCDelegation_FullMethodName, in, out, opts...)
@@ -486,14 +529,20 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
+	// Deprecated: Do not use.
 	StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error)
+	// Deprecated: Do not use.
 	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
+	// Deprecated: Do not use.
 	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
+	// Deprecated: Do not use.
 	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
+	// Deprecated: Do not use.
 	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
+	SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
 	// PoC v2 validation messages
 	SubmitPocValidationsV2(context.Context, *MsgSubmitPocValidationsV2) (*MsgSubmitPocValidationsV2Response, error)
@@ -524,6 +573,8 @@ type MsgServer interface {
 	CreateDevshardEscrow(context.Context, *MsgCreateDevshardEscrow) (*MsgCreateDevshardEscrowResponse, error)
 	SettleDevshardEscrow(context.Context, *MsgSettleDevshardEscrow) (*MsgSettleDevshardEscrowResponse, error)
 	SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error)
+	ScheduleMaintenance(context.Context, *MsgScheduleMaintenance) (*MsgScheduleMaintenanceResponse, error)
+	CancelMaintenance(context.Context, *MsgCancelMaintenance) (*MsgCancelMaintenanceResponse, error)
 	SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error)
 	RefusePoCDelegation(context.Context, *MsgRefusePoCDelegation) (*MsgRefusePoCDelegationResponse, error)
 	DeclarePoCIntent(context.Context, *MsgDeclarePoCIntent) (*MsgDeclarePoCIntentResponse, error)
@@ -560,6 +611,9 @@ func (UnimplementedMsgServer) RevalidateInference(context.Context, *MsgRevalidat
 }
 func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimRewards not implemented")
+}
+func (UnimplementedMsgServer) SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SetClaimRecipients not implemented")
 }
 func (UnimplementedMsgServer) SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitPocBatch not implemented")
@@ -644,6 +698,12 @@ func (UnimplementedMsgServer) SettleDevshardEscrow(context.Context, *MsgSettleDe
 }
 func (UnimplementedMsgServer) SetDevshardRequestsEnabled(context.Context, *MsgSetDevshardRequestsEnabled) (*MsgSetDevshardRequestsEnabledResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetDevshardRequestsEnabled not implemented")
+}
+func (UnimplementedMsgServer) ScheduleMaintenance(context.Context, *MsgScheduleMaintenance) (*MsgScheduleMaintenanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ScheduleMaintenance not implemented")
+}
+func (UnimplementedMsgServer) CancelMaintenance(context.Context, *MsgCancelMaintenance) (*MsgCancelMaintenanceResponse, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method CancelMaintenance not implemented")
 }
 func (UnimplementedMsgServer) SetPoCDelegation(context.Context, *MsgSetPoCDelegation) (*MsgSetPoCDelegationResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SetPoCDelegation not implemented")
@@ -825,6 +885,24 @@ func _Msg_ClaimRewards_Handler(srv interface{}, ctx context.Context, dec func(in
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).ClaimRewards(ctx, req.(*MsgClaimRewards))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_SetClaimRecipients_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgSetClaimRecipients)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).SetClaimRecipients(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_SetClaimRecipients_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).SetClaimRecipients(ctx, req.(*MsgSetClaimRecipients))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1333,6 +1411,42 @@ func _Msg_SetDevshardRequestsEnabled_Handler(srv interface{}, ctx context.Contex
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Msg_ScheduleMaintenance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgScheduleMaintenance)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).ScheduleMaintenance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_ScheduleMaintenance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).ScheduleMaintenance(ctx, req.(*MsgScheduleMaintenance))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Msg_CancelMaintenance_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(MsgCancelMaintenance)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(MsgServer).CancelMaintenance(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: Msg_CancelMaintenance_FullMethodName,
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(MsgServer).CancelMaintenance(ctx, req.(*MsgCancelMaintenance))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Msg_SetPoCDelegation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSetPoCDelegation)
 	if err := dec(in); err != nil {
@@ -1429,6 +1543,10 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "ClaimRewards",
 			Handler:    _Msg_ClaimRewards_Handler,
+		},
+		{
+			MethodName: "SetClaimRecipients",
+			Handler:    _Msg_SetClaimRecipients_Handler,
 		},
 		{
 			MethodName: "SubmitPocBatch",
@@ -1541,6 +1659,14 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "SetDevshardRequestsEnabled",
 			Handler:    _Msg_SetDevshardRequestsEnabled_Handler,
+		},
+		{
+			MethodName: "ScheduleMaintenance",
+			Handler:    _Msg_ScheduleMaintenance_Handler,
+		},
+		{
+			MethodName: "CancelMaintenance",
+			Handler:    _Msg_CancelMaintenance_Handler,
 		},
 		{
 			MethodName: "SetPoCDelegation",

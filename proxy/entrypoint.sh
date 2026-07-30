@@ -13,6 +13,17 @@ export NODE_SERVICE_NAME=${NODE_SERVICE_NAME:-node}
 export EXPLORER_SERVICE_NAME=${EXPLORER_SERVICE_NAME:-explorer}
 export PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
 export PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+export JAEGER_ENABLED=${JAEGER_ENABLED:-false}
+export JAEGER_SERVICE_NAME=${JAEGER_SERVICE_NAME:-jaeger}
+export JAEGER_PORT=${JAEGER_PORT:-16686}
+export JAEGER_BASE_PATH=${JAEGER_BASE_PATH:-/jaeger}
+export JAEGER_BASIC_AUTH_USER=${JAEGER_BASIC_AUTH_USER:-}
+export JAEGER_BASIC_AUTH_PASSWORD=${JAEGER_BASIC_AUTH_PASSWORD:-}
+export GRAFANA_ENABLED=${GRAFANA_ENABLED:-false}
+export GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+export GRAFANA_SERVICE_NAME=${GRAFANA_SERVICE_NAME:-grafana}
+export GRAFANA_PORT=${GRAFANA_PORT:-3000}
+export GRAFANA_BASE_PATH=${GRAFANA_BASE_PATH:-/grafana}
 
 export VERSIOND_SERVICE_NAME=${VERSIOND_SERVICE_NAME:-versiond}
 export VERSIOND_PORT=${VERSIOND_PORT:-8080}
@@ -51,6 +62,12 @@ if [ -n "$PROXY_REAL_IP_FROM" ]; then
         real_ip_recursive ${PROXY_REAL_IP_RECURSIVE};"
 else
     REAL_IP_CONFIG="# real_ip disabled (PROXY_REAL_IP_FROM is empty)"
+fi
+if [ "${JAEGER_ENABLED}" = "true" ]; then
+    export FINAL_JAEGER_SERVICE="${KEY_NAME_PREFIX}${JAEGER_SERVICE_NAME}"
+fi
+if [ "${GRAFANA_ENABLED}" = "true" ]; then
+    export FINAL_GRAFANA_SERVICE="${KEY_NAME_PREFIX}${GRAFANA_SERVICE_NAME}"
 fi
 
 export REAL_IP_CONFIG
@@ -130,6 +147,81 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     }"
 else
     export VERSIOND_UPSTREAM="# devshard proxy disabled"
+fi
+
+is_placeholder_password() {
+    case "$1" in
+        ""|admin1|changeme|'<FILLIN>')
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+if [ "${JAEGER_ENABLED}" = "true" ]; then
+    if [ -z "${JAEGER_BASIC_AUTH_USER}" ] || is_placeholder_password "${JAEGER_BASIC_AUTH_PASSWORD}"; then
+        echo "ERROR: JAEGER_ENABLED=true requires JAEGER_BASIC_AUTH_USER and a non-default JAEGER_BASIC_AUTH_PASSWORD."
+        echo "       Set credentials in config.env before enabling Jaeger UI proxying."
+        exit 1
+    fi
+
+    htpasswd -bc /etc/nginx/jaeger.htpasswd "${JAEGER_BASIC_AUTH_USER}" "${JAEGER_BASIC_AUTH_PASSWORD}"
+
+    echo "   Jaeger Service: $FINAL_JAEGER_SERVICE:$JAEGER_PORT (base path: $JAEGER_BASE_PATH, basic auth enabled)"
+    export JAEGER_UPSTREAM="upstream jaeger_backend {
+        zone jaeger_backend 64k;
+        server ${FINAL_JAEGER_SERVICE}:${JAEGER_PORT} resolve;
+    }"
+
+    export JAEGER_LOCATION="location = ${JAEGER_BASE_PATH} {
+            auth_basic \"Jaeger\";
+            auth_basic_user_file /etc/nginx/jaeger.htpasswd;
+            return 301 ${JAEGER_BASE_PATH}/;
+        }
+
+        location ${JAEGER_BASE_PATH}/ {
+            auth_basic \"Jaeger\";
+            auth_basic_user_file /etc/nginx/jaeger.htpasswd;
+            proxy_pass http://jaeger_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+        }"
+else
+    export JAEGER_UPSTREAM="# jaeger not configured"
+    export JAEGER_LOCATION="# jaeger not configured"
+fi
+
+if [ "${GRAFANA_ENABLED}" = "true" ]; then
+    if is_placeholder_password "${GRAFANA_ADMIN_PASSWORD}"; then
+        echo "ERROR: GRAFANA_ENABLED=true requires a non-default GRAFANA_ADMIN_PASSWORD."
+        echo "       Set GRAFANA_ADMIN_PASSWORD in config.env before enabling Grafana UI proxying."
+        exit 1
+    fi
+
+    echo "   Grafana Service: $FINAL_GRAFANA_SERVICE:$GRAFANA_PORT (base path: $GRAFANA_BASE_PATH)"
+    export GRAFANA_UPSTREAM="upstream grafana_backend {
+        zone grafana_backend 64k;
+        server ${FINAL_GRAFANA_SERVICE}:${GRAFANA_PORT} resolve;
+    }"
+
+    export GRAFANA_LOCATION="location = ${GRAFANA_BASE_PATH} {
+            return 301 ${GRAFANA_BASE_PATH}/;
+        }
+
+        location ${GRAFANA_BASE_PATH}/ {
+            proxy_pass http://grafana_backend;
+            proxy_set_header Host \$\$host;
+            proxy_set_header X-Real-IP \$\$remote_addr;
+            proxy_set_header X-Forwarded-For \$\$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto \$\$scheme;
+        }"
+else
+    export GRAFANA_UPSTREAM="# grafana not configured"
+    export GRAFANA_LOCATION="# grafana not configured"
 fi
 
 if [ "$DASHBOARD_ENABLED" = "true" ]; then
@@ -353,6 +445,13 @@ GLOBAL_BURST=${GLOBAL_BURST:-5000}
 # Gonka API (Standard/Punisher)
 # Default: 10r/m + 600 burst = 1 hr recovery
 GONKA_API_RATE_LIMIT_VAL=${GONKA_API_RATE_LIMIT_RPS:-10}
+# Dedicated budget for the public mlnode metrics federation endpoint:
+# separated from api_zone so scraping consumers (Prometheus/Grafana) do not
+# compete with inference/API clients for the same bucket.
+METRICS_RATE_LIMIT_VAL=${METRICS_RATE_LIMIT_RPM:-10}
+METRICS_RATE_UNIT=${METRICS_RATE_UNIT:-m}
+METRICS_BURST=${METRICS_BURST:-30}
+METRICS_CONN_LIMIT=${METRICS_CONN_LIMIT:-20}
 GONKA_API_RATE_UNIT=${GONKA_API_RATE_UNIT:-m}
 GONKA_API_BURST=${GONKA_API_BURST:-600}
 
@@ -411,6 +510,7 @@ echo "   Chain gRPC: [${CHAIN_GRPC_BLOCKED_ROUTES}]"
 # Use $$whitelist_limit_key so it persists after first envsubst
 export LIMIT_REQ_ZONE_GLOBAL="limit_req_zone \$\$whitelist_limit_key zone=global_zone:10m rate=${GLOBAL_RATE_LIMIT_VAL}r/${GLOBAL_RATE_UNIT};"
 export LIMIT_REQ_ZONE_GONKA_API="limit_req_zone \$\$whitelist_limit_key zone=api_zone:10m rate=${GONKA_API_RATE_LIMIT_VAL}r/${GONKA_API_RATE_UNIT};"
+export LIMIT_REQ_ZONE_METRICS="limit_req_zone \$\$whitelist_limit_key zone=metrics_zone:10m rate=${METRICS_RATE_LIMIT_VAL}r/${METRICS_RATE_UNIT};"
 export LIMIT_REQ_ZONE_EXEMPT="limit_req_zone \$\$whitelist_limit_key zone=exempt_zone:10m rate=${EXEMPT_RATE_LIMIT_VAL}r/${EXEMPT_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_API="limit_req_zone \$\$whitelist_limit_key zone=chain_api_zone:10m rate=${CHAIN_API_RATE_LIMIT_VAL}r/${CHAIN_API_RATE_UNIT};"
 export LIMIT_REQ_ZONE_CHAIN_RPC="limit_req_zone \$\$whitelist_limit_key zone=rpc_zone:10m rate=${CHAIN_RPC_RATE_LIMIT_VAL}r/${CHAIN_RPC_RATE_UNIT};"
@@ -430,6 +530,7 @@ CHAIN_GRPC_CONN_LIMIT=${CHAIN_GRPC_CONN_LIMIT:-20}
 # Define Zones (Always available to prevent template errors)
 export LIMIT_CONN_ZONE_GLOBAL="limit_conn_zone \$\$whitelist_limit_key zone=conn_global:10m;"
 export LIMIT_CONN_ZONE_GONKA_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_api:10m;"
+export LIMIT_CONN_ZONE_METRICS="limit_conn_zone \$\$whitelist_limit_key zone=conn_metrics:10m;"
 export LIMIT_CONN_ZONE_EXEMPT="limit_conn_zone \$\$whitelist_limit_key zone=conn_exempt:10m;"
 export LIMIT_CONN_ZONE_CHAIN_RPC="limit_conn_zone \$\$whitelist_limit_key zone=conn_rpc:10m;"
 export LIMIT_CONN_ZONE_CHAIN_API="limit_conn_zone \$\$whitelist_limit_key zone=conn_chain_api:10m;"
@@ -553,6 +654,8 @@ fi
 # Define Rules
 export LIMIT_REQ_RULE_GLOBAL="limit_req zone=global_zone burst=${GLOBAL_BURST} nodelay;"
 export LIMIT_REQ_RULE_GONKA_API="limit_req zone=api_zone burst=${GONKA_API_BURST} nodelay;"
+export LIMIT_REQ_RULE_METRICS="limit_req zone=metrics_zone burst=${METRICS_BURST} nodelay;"
+export LIMIT_CONN_RULE_METRICS="limit_conn conn_metrics ${METRICS_CONN_LIMIT};"
 export LIMIT_REQ_RULE_CHAIN_API="limit_req zone=chain_api_zone burst=${CHAIN_API_BURST} nodelay;"
 export LIMIT_REQ_RULE_CHAIN_RPC="limit_req zone=rpc_zone burst=${CHAIN_RPC_BURST} nodelay;"
 export LIMIT_REQ_RULE_CHAIN_GRPC="limit_req zone=grpc_zone burst=${CHAIN_GRPC_BURST} nodelay;"
@@ -756,14 +859,17 @@ ENVSUBST_VARS='$KEY_NAME,$KEY_NAME_PREFIX,$SERVER_NAME,$DOMAIN_NAME,$RESOLVER_DI
 
 # Group 2: Ports & Services
 ENVSUBST_VARS="${ENVSUBST_VARS},\$GONKA_API_PORT,\$CHAIN_RPC_PORT,\$CHAIN_API_PORT,\$CHAIN_GRPC_PORT"
-ENVSUBST_VARS="${ENVSUBST_VARS},\$FINAL_API_SERVICE,\$FINAL_NODE_SERVICE,\$FINAL_EXPLORER_SERVICE"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$FINAL_API_SERVICE,\$FINAL_NODE_SERVICE,\$FINAL_EXPLORER_SERVICE,\$FINAL_JAEGER_SERVICE,\$FINAL_GRAFANA_SERVICE"
 
 # Group 3: HTTP/SSL & Status
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LISTEN_HTTP,\$LISTEN_HTTPS,\$SSL_CONFIG"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_METRICS,\$LIMIT_CONN_ZONE_METRICS,\$LIMIT_REQ_RULE_METRICS,\$LIMIT_CONN_RULE_METRICS"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$API_STATUS,\$CHAIN_RPC_STATUS,\$CHAIN_API_STATUS,\$CHAIN_GRPC_STATUS"
 
 # Group 4: Dashboard
 ENVSUBST_VARS="${ENVSUBST_VARS},\$DASHBOARD_PORT,\$DASHBOARD_UPSTREAM,\$ROOT_LOCATION"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$JAEGER_PORT,\$JAEGER_BASE_PATH,\$JAEGER_UPSTREAM,\$JAEGER_LOCATION"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$GRAFANA_PORT,\$GRAFANA_BASE_PATH,\$GRAFANA_UPSTREAM,\$GRAFANA_LOCATION"
 
 # Group 5: Rate Limiting Zones
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_GLOBAL,\$LIMIT_REQ_ZONE_GONKA_API,\$LIMIT_REQ_ZONE_EXEMPT"

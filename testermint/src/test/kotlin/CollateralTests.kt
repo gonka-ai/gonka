@@ -10,6 +10,7 @@ import com.productscience.data.ValidationParams
 import com.productscience.data.getParticipant
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.data.Offset
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Duration
 
@@ -42,11 +43,23 @@ class CollateralTests : TestermintTest() {
         }
     }
 
+    /** Stream vesting credits [initial_epoch_reward] at CLAIM_REWARDS; settle through epoch 2 before balance checks. */
+    private fun LocalInferencePair.waitThroughEpochRewardClaim(targetEpoch: Long) {
+        logSection("Waiting through CLAIM_REWARDS until epoch $targetEpoch rewards are settled")
+        while (getEpochData().latestEpoch.index < targetEpoch) {
+            waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        }
+        waitForStage(EpochStage.CLAIM_REWARDS, offset = 2)
+        node.waitForNextBlock(2)
+    }
+
     @Test
     fun `a participant can deposit collateral and withdraw it`() {
         val (cluster, genesis) = initCluster(reboot = true)
         val participant = cluster.genesis
         val participantAddress = participant.node.getColdAddress()
+
+        participant.waitThroughEpochRewardClaim(targetEpoch = 2)
 
         logSection("Despositing collateral")
 
@@ -73,12 +86,12 @@ class CollateralTests : TestermintTest() {
         assertThat(balanceAfterDeposit).isEqualTo(initialBalance - depositAmount)
 
         logSection("Withdrawing $depositAmount nicoin from ${participant.name}")
-        val epochBeforeWithdraw = participant.api.getLatestEpoch().latestEpoch.index-1
+        val currentEpoch = participant.api.getLatestEpoch().latestEpoch.index
         val startLastRewardedEpoch = getRewardCalculationEpochIndex(participant)
         val params = participant.node.queryCollateralParams()
         val unbondingPeriod = params.params.unbondingPeriodEpochs.toLong()
-        val expectedCompletionEpoch = epochBeforeWithdraw + unbondingPeriod
-        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $epochBeforeWithdraw + $unbondingPeriod)")
+        val expectedCompletionEpoch = currentEpoch + unbondingPeriod
+        logHighlight("Expected completion epoch: $expectedCompletionEpoch (epoch $currentEpoch + $unbondingPeriod)")
         Thread.sleep(10000)
 
         participant.withdrawCollateral(depositAmount)
@@ -123,7 +136,15 @@ class CollateralTests : TestermintTest() {
         assertThat(finalUnbondingQueue.unbondings).isNullOrEmpty()
     }
 
+    // Classic inference flow removed (PR #1386). This test triggered downtime slashing
+    // via classic bad-inference timeouts (StartInference -> expiration -> MissedRequests).
+    // The downtime-slash mechanism itself is still live: devshard settlement aggregates
+    // per-slot `missed` stats into CurrentEpochStats.MissedRequests
+    // (AggregateDevshardHostStatsIntoCurrentEpochStats -> UpdateParticipantStatus ->
+    // SlashForDowntime), but producing signed settlements with missed>0 needs new
+    // devshard test machinery. TODO(devshard): rewrite via devshard escrow settlement.
     @Test
+    @Tag("exclude")
     fun `a participant is slashed for downtime with unbonding slashed`() {
         // Configure genesis with fast expiration for downtime testing
         val fastExpirationSpec = createSpec(

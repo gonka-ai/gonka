@@ -36,6 +36,14 @@ type httpTestEnv struct {
 	gossips     []*gossip.Gossip
 }
 
+const httpTestRoutePrefix = "/devshard/test"
+
+func httpTestClient(baseURL string, escrowID string, signer signing.Signer) *transport.HTTPClient {
+	cfg := transport.DefaultClientConfig()
+	cfg.RoutePrefix = httpTestRoutePrefix
+	return transport.NewHTTPClient(baseURL, escrowID, signer, cfg)
+}
+
 // setupHTTPEnv creates a full HTTP test environment with storage, gossip,
 // sig accumulation, and mempool sink wired together.
 // Optional cfgs override the default SessionConfig.
@@ -59,11 +67,17 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 	stores := make([]*storage.Memory, numHosts)
 
 	for i := range hostSigners {
-		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+		sm, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 		require.NoError(t, err)
 		engine := stub.NewInferenceEngine()
 		store := storage.NewMemory()
-		require.NoError(t, store.CreateSession(storage.CreateSessionParams{EscrowID: "escrow-1", Config: config, Group: group, InitialBalance: balance}))
+		require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+			EscrowID:       "escrow-1",
+			Version:        testutil.RuntimeTestVersion,
+			Config:         config,
+			Group:          group,
+			InitialBalance: balance,
+		}))
 		stores[i] = store
 
 		h, err := host.NewHost(sm, hostSigners[i], engine, "escrow-1", group, nil,
@@ -76,7 +90,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		servers[i] = srv
 
 		e := echo.New()
-		g := e.Group("/v1/devshard")
+		g := e.Group(httpTestRoutePrefix)
 		srv.Register(g)
 		ts := httptest.NewServer(e)
 		t.Cleanup(ts.Close)
@@ -88,10 +102,10 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 	hostClients := make([]*transport.HTTPClient, numHosts)
 	userClients := make([]user.HostClient, numHosts)
 	for i := range httpServers {
-		c := transport.NewHTTPClient(httpServers[i].URL, "escrow-1", userSigner)
+		c := httpTestClient(httpServers[i].URL, "escrow-1", userSigner)
 		clients[i] = c
 		userClients[i] = c
-		hostClients[i] = transport.NewHTTPClient(httpServers[i].URL, "escrow-1", hostSigners[i])
+		hostClients[i] = httpTestClient(httpServers[i].URL, "escrow-1", hostSigners[i])
 	}
 
 	// Wire peer clients for timeout verification.
@@ -118,7 +132,7 @@ func setupHTTPEnv(t *testing.T, numHosts int, balance, grace uint64, cfgs ...typ
 		srv.SetGossip(g)
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, balance, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, balance))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, userClients, verifier)
 	require.NoError(t, err)
@@ -150,16 +164,20 @@ func TestHTTP_HappyPath(t *testing.T) {
 		require.NotNil(t, result)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	require.Equal(t, 15, len(preFinalize.Inferences))
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	require.Equal(t, 15, len(st.Inferences))
-
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d should be finished", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences, "v2 drains live inferences at settlement")
+	require.Equal(t, 15, len(env.session.StateMachine().ExportSealedNonces()))
 
 	// After finalize, check signatures for the settlement nonce
 	// (last Phase A nonce -- all hosts have seen it via Phase B catch-up).
@@ -186,7 +204,7 @@ func TestHTTP_Auth_Rejected(t *testing.T) {
 
 	// Create a client with a different signer (not the user).
 	badSigner := testutil.MustGenerateKey(t)
-	badClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", badSigner)
+	badClient := httpTestClient(env.httpServers[0].URL, "escrow-1", badSigner)
 
 	diff := testutil.SignDiff(t, env.userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
 	_, err := badClient.Send(context.Background(), host.HostRequest{
@@ -503,14 +521,18 @@ func TestHTTP_Finalize(t *testing.T) {
 		require.NoError(t, err)
 	}
 
+	drainSessionPending(t, ctx, env.session)
+	preFinalize := env.session.StateMachine().SnapshotState()
+	for id, rec := range preFinalize.Inferences {
+		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
+	}
+
 	err := env.session.Finalize(ctx)
 	require.NoError(t, err)
 
 	st := env.session.StateMachine().SnapshotState()
-	require.True(t, st.Phase >= types.PhaseFinalizing)
-	for id, rec := range st.Inferences {
-		require.Equal(t, types.StatusFinished, rec.Status, "inference %d", id)
-	}
+	require.Equal(t, types.PhaseSettlement, st.Phase)
+	require.Empty(t, st.Inferences)
 
 	// Verify signatures collected from all hosts.
 	sigs := env.session.Signatures()
@@ -772,7 +794,7 @@ func TestHTTP_LazyTxGossipHTTP(t *testing.T) {
 
 	// Gossip those txs to host 0 via HTTP.
 	// Use a host signer (gossip is host-to-host, user is forbidden).
-	hostClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", env.signers[1])
+	hostClient := httpTestClient(env.httpServers[0].URL, "escrow-1", env.signers[1])
 	err = hostClient.GossipTxs(ctx, resp.Mempool)
 	require.NoError(t, err)
 
@@ -797,21 +819,21 @@ func TestHTTP_StateHashVerification(t *testing.T) {
 	verifier := signing.NewSecp256k1Verifier()
 
 	// Build a normal host for slot 0.
-	sm0, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm0, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine0 := stub.NewInferenceEngine()
 	h0, err := host.NewHost(sm0, hostSigners[0], engine0, "escrow-1", group, nil, host.WithGrace(100))
 	require.NoError(t, err)
 
 	// Build a tampered host for slot 1 with different initial balance -> different state hash.
-	sm1, err := state.NewStateMachine("escrow-1", config, group, 99999, userSigner.Address(), verifier)
+	sm1, err := state.NewStateMachine("escrow-1", config, group, 99999, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 99999))
 	require.NoError(t, err)
 	engine1 := stub.NewInferenceEngine()
 	h1, err := host.NewHost(sm1, hostSigners[1], engine1, "escrow-1", group, nil, host.WithGrace(100))
 	require.NoError(t, err)
 
 	// Build a normal host for slot 2.
-	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	sm2, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	engine2 := stub.NewInferenceEngine()
 	h2, err := host.NewHost(sm2, hostSigners[2], engine2, "escrow-1", group, nil, host.WithGrace(100))
@@ -823,7 +845,7 @@ func TestHTTP_StateHashVerification(t *testing.T) {
 		&user.InProcessClient{Host: h2},
 	}
 
-	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier)
+	userSM, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000))
 	require.NoError(t, err)
 	session, err := user.NewSession(userSM, userSigner, "escrow-1", group, clients, verifier)
 	require.NoError(t, err)
@@ -858,7 +880,7 @@ func TestAttack_UserCannotGossip(t *testing.T) {
 	ctx := context.Background()
 
 	// Create a client authenticated as the user (not a group member).
-	userClient := transport.NewHTTPClient(env.httpServers[0].URL, "escrow-1", env.userSigner)
+	userClient := httpTestClient(env.httpServers[0].URL, "escrow-1", env.userSigner)
 
 	// User attempts to gossip nonce -> must be rejected.
 	err := userClient.GossipNonce(ctx, 1, []byte("fake-hash"), []byte("fake-sig"), 0)
@@ -893,12 +915,12 @@ func TestAttack_GossipUnverifiedNonce(t *testing.T) {
 
 	// Attacker (group member host 2) sends a gossip nonce with a fake stateHash
 	// and garbage stateSig. Should be rejected because sig doesn't verify.
-	hostClient := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
+	hostClient := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
 	err = hostClient.GossipNonce(ctx, 1, []byte("fake-hash"), []byte("garbage-sig"), 2)
 	require.Error(t, err, "gossip with invalid sig should be rejected")
 
 	// Now send the real gossip from a legitimate host. Must NOT be rejected as equivocation.
-	hostClient1 := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
+	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must not be rejected after fake was blocked")
 }
@@ -925,7 +947,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 
 	// Attacker (group member host 2) sends gossip with empty StateSig to bypass
 	// signature verification. Must be rejected.
-	hostClient := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
+	hostClient := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[2])
 	err = hostClient.GossipNonce(ctx, 1, []byte("fake-hash"), nil, 2)
 	require.Error(t, err, "gossip with empty sig must be rejected")
 
@@ -934,7 +956,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 	require.Error(t, err, "gossip with invalid slot id must be rejected")
 
 	// Real gossip must still work after the rejected attempts.
-	hostClient1 := transport.NewHTTPClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
+	hostClient1 := httpTestClient(env.httpServers[1].URL, "escrow-1", env.signers[0])
 	err = hostClient1.GossipNonce(ctx, 1, resp.StateHash, resp.StateSig, 0)
 	require.NoError(t, err, "real gossip must succeed after rejected bypass attempts")
 }

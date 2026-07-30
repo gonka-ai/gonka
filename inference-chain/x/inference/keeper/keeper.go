@@ -78,7 +78,7 @@ type (
 		// Confirmation PoC collections
 		ConfirmationPoCEvents          collections.Map[collections.Pair[uint64, uint64], types.ConfirmationPoCEvent]
 		ActiveConfirmationPoCEventItem collections.Item[types.ConfirmationPoCEvent]
-		LastUpgradeHeight              collections.Item[int64]
+		LastUpgradeHeightItem          collections.Item[int64]
 		PocV2EnabledEpoch              collections.Item[uint64]
 		// Bridge & Wrapped Token collections
 		BridgeContractAddresses collections.Map[collections.Pair[string, string], types.BridgeContractAddress]
@@ -113,12 +113,35 @@ type (
 		DevshardEscrowEpochCount  collections.Map[uint64, uint64]
 		DevshardHostEpochStatsMap collections.Map[collections.Pair[uint64, sdk.AccAddress], types.DevshardHostEpochStats]
 		DevshardEscrowsByEpoch    collections.Map[collections.Pair[uint64, uint64], collections.NoValue]
+		// Maintenance window collections
+		MaintenanceReservations       collections.Map[uint64, types.MaintenanceReservation]
+		MaintenanceReservationCounter collections.Item[uint64]
+		MaintenanceStates             collections.Map[sdk.AccAddress, types.MaintenanceState]
+		MaintenanceTransitions        collections.Map[collections.Pair[int64, uint64], uint32]
+		// MaintenanceActiveIndex is a KeySet of reservation IDs that are
+		// currently in the ACTIVE state. Lets MaintenanceActive query iterate
+		// only the active set instead of scanning every participant's state.
+		MaintenanceActiveIndex collections.KeySet[uint64]
+		// MaintenanceScheduledIndex is a KeySet of reservation IDs that are
+		// currently in the SCHEDULED state. Lets concurrency/schedulability
+		// queries iterate only the bounded set of scheduled reservations
+		// instead of every participant's MaintenanceState (DoS protection).
+		MaintenanceScheduledIndex collections.KeySet[uint64]
 		// PoC delegation collections
-		PoCDelegations              collections.Map[collections.Pair[string, string], types.PoCDelegation]
-		PoCRefusals                 collections.KeySet[collections.Pair[string, string]]
-		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
-		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
-		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		PoCDelegations                   collections.Map[collections.Pair[string, string], types.PoCDelegation]
+		PoCRefusals                      collections.KeySet[collections.Pair[string, string]]
+		PoCDirectIntents                 collections.KeySet[collections.Pair[string, string]]
+		DelegationSnapshot               collections.Item[types.DelegationSnapshot]
+		BootstrapDelegationSnapshot      collections.Item[types.BootstrapDelegationSnapshot]
+		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
+		// Per-participant, per-epoch recipient overrides for MsgClaimRewards.
+		// Set by cold key via MsgSetClaimRecipients; retained after claim so
+		// late same-epoch payouts can resolve the same recipient, then pruned
+		// once the epoch is safely stale.
+		ClaimRecipients collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
+		// Secondary index for pruning stale recipient overrides by epoch.
+		// Must be updated atomically with ClaimRecipients.
+		ClaimRecipientsByEpoch collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 	}
 )
 
@@ -408,7 +431,7 @@ func NewKeeper(
 			"active_confirmation_poc_event",
 			codec.CollValue[types.ConfirmationPoCEvent](cdc),
 		),
-		LastUpgradeHeight: collections.NewItem(
+		LastUpgradeHeightItem: collections.NewItem(
 			sb,
 			types.LastUpgradeHeightPrefix,
 			"last_upgrade_height",
@@ -562,6 +585,46 @@ func NewKeeper(
 			collections.PairKeyCodec(collections.Uint64Key, collections.Uint64Key),
 			collections.NoValue{},
 		),
+		// Maintenance window collections
+		MaintenanceReservations: collections.NewMap(
+			sb,
+			types.MaintenanceReservationsPrefix,
+			"maintenance_reservations",
+			collections.Uint64Key,
+			codec.CollValue[types.MaintenanceReservation](cdc),
+		),
+		MaintenanceReservationCounter: collections.NewItem(
+			sb,
+			types.MaintenanceReservationCounterPrefix,
+			"maintenance_reservation_counter",
+			collections.Uint64Value,
+		),
+		MaintenanceStates: collections.NewMap(
+			sb,
+			types.MaintenanceStatesPrefix,
+			"maintenance_states",
+			sdk.AccAddressKey,
+			codec.CollValue[types.MaintenanceState](cdc),
+		),
+		MaintenanceTransitions: collections.NewMap(
+			sb,
+			types.MaintenanceTransitionsPrefix,
+			"maintenance_transitions",
+			collections.PairKeyCodec(collections.Int64Key, collections.Uint64Key),
+			collections.Uint32Value,
+		),
+		MaintenanceActiveIndex: collections.NewKeySet(
+			sb,
+			types.MaintenanceActiveIndexPrefix,
+			"maintenance_active_index",
+			collections.Uint64Key,
+		),
+		MaintenanceScheduledIndex: collections.NewKeySet(
+			sb,
+			types.MaintenanceScheduledIndexPrefix,
+			"maintenance_scheduled_index",
+			collections.Uint64Key,
+		),
 		// PoC delegation collections
 		PoCDelegations: collections.NewMap(
 			sb,
@@ -593,6 +656,25 @@ func NewKeeper(
 			types.BootstrapDelegationSnapshotPrefix,
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
+		),
+		DelegationRewardTransferSnapshot: collections.NewItem(
+			sb,
+			types.DelegationRewardTransferSnapshotPrefix,
+			"delegation_reward_transfer_snapshot",
+			codec.CollValue[types.DelegationRewardTransferSnapshot](cdc),
+		),
+		ClaimRecipients: collections.NewMap(
+			sb,
+			types.ClaimRecipientsPrefix,
+			"claim_recipients",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			collections.StringValue,
+		),
+		ClaimRecipientsByEpoch: collections.NewKeySet(
+			sb,
+			types.ClaimRecipientsByEpochPrefix,
+			"claim_recipients_by_epoch",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
 	}
 	// Build the collections schema

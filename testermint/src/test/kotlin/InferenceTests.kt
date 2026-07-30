@@ -6,6 +6,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.assertj.core.api.SoftAssertions
 import org.junit.jupiter.api.BeforeAll
+import org.junit.jupiter.api.Tag
 import org.junit.jupiter.api.Test
 import java.time.Instant
 import kotlin.experimental.xor
@@ -33,6 +34,7 @@ fun computeResponseHash(responsePayload: String): String {
 
 class InferenceTests : TestermintTest() {
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `valid inference`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -53,6 +55,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `valid inference with multipart content`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -73,6 +76,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `wrong TA address`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -94,6 +98,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `submit raw transaction`() {
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
@@ -225,6 +230,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `old timestamp`() {
         val params = genesis.getParams()
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
@@ -241,6 +247,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `repeated request rejected`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -264,6 +271,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `valid direct executor request`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -308,6 +316,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `executor validates dev signature`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()
@@ -334,6 +343,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `executor validates TA signature`() {
         val timestamp = Instant.now().toEpochNanos()
         val genesisAddress = genesis.node.getColdAddress()
@@ -358,6 +368,7 @@ class InferenceTests : TestermintTest() {
 
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `executor rejects old timestamp`() {
         val params = genesis.getParams()
         val timestamp = Instant.now().minusSeconds(params.validationParams.timestampExpiration + 10).toEpochNanos()
@@ -382,6 +393,7 @@ class InferenceTests : TestermintTest() {
     }
 
     @Test
+    @Tag("exclude") // Classic inference flow removed (PR #1386)
     fun `executor rejects duplicate requests`() {
         cluster.allPairs.forEach { it.waitForMlNodesToLoad() }
         genesis.waitForNextInferenceWindow()

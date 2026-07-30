@@ -41,4 +41,17 @@ class PromptHashingTests {
         val streamOptions = modifiedMap["stream_options"] as Map<String, Any?>
         assertThat(streamOptions["include_usage"]).isEqualTo(true)
     }
+
+    @Test
+    fun `logprob manipulation produces different hash`() {
+        // Security test: payloads with same content but different logprobs must have different hashes
+        // This prevents attack where executor serves fake logprobs with valid content
+        val payloadWithRealLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.5,"top_logprobs":[{"token":"Hello","logprob":-0.5}]}]}}]}"""
+        val payloadWithFakeLogprobs = """{"id":"inf-1","choices":[{"index":0,"message":{"role":"assistant","content":"Hello"},"logprobs":{"content":[{"token":"Hello","logprob":-0.1,"top_logprobs":[{"token":"Hello","logprob":-0.1}]}]}}]}"""
+
+        val hash1 = computeResponseHash(payloadWithRealLogprobs)
+        val hash2 = computeResponseHash(payloadWithFakeLogprobs)
+
+        assertThat(hash1).isNotEqualTo(hash2)
+    }
 }

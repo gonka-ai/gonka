@@ -268,20 +268,27 @@ func TestStructuredOutputsValidatorJSONObject(t *testing.T) {
 func TestStructuredOutputsValidatorStructuralTag(t *testing.T) {
 	v := defaultStructuredOutputsValidator()
 
-	t.Run("accepts a normal tag", func(t *testing.T) {
-		body := `{"structured_outputs":{"structural_tag":"<tool>...</tool>"}}`
+	t.Run("accepts the object form", func(t *testing.T) {
+		body := `{"structured_outputs":{"structural_tag":{"type":"structural_tag","structures":[],"triggers":[]}}}`
 		require.NoError(t, v.Validate(ValidatorContext{Document: parseDocument(t, body)}))
 	})
 
-	t.Run("rejects non-string", func(t *testing.T) {
+	t.Run("rejects the engine-crashing string form", func(t *testing.T) {
+		// A JSON-encoded string structural_tag returns HTTP 500 from vLLM; reject it here.
+		body := `{"structured_outputs":{"structural_tag":"<tool>...</tool>"}}`
+		err := v.Validate(ValidatorContext{Document: parseDocument(t, body)})
+		require.ErrorIs(t, err, ErrStructuredOutputsStructuralTagShape)
+	})
+
+	t.Run("rejects a non-object scalar", func(t *testing.T) {
 		body := `{"structured_outputs":{"structural_tag":42}}`
 		err := v.Validate(ValidatorContext{Document: parseDocument(t, body)})
 		require.ErrorIs(t, err, ErrStructuredOutputsStructuralTagShape)
 	})
 
-	t.Run("rejects oversize", func(t *testing.T) {
+	t.Run("rejects oversize object", func(t *testing.T) {
 		long := strings.Repeat("a", 4*1024+1)
-		body := `{"structured_outputs":{"structural_tag":"` + long + `"}}`
+		body := `{"structured_outputs":{"structural_tag":{"type":"structural_tag","blob":"` + long + `"}}}`
 		err := v.Validate(ValidatorContext{Document: parseDocument(t, body)})
 		require.ErrorIs(t, err, ErrStructuredOutputsStructuralTagLength)
 	})

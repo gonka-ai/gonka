@@ -149,6 +149,8 @@ func (c *EpochGroupDataCache) IsActiveParticipant(ctx context.Context, epochInde
 	return false, nil
 }
 
+
+
 // pruneOldest removes epochs older than currentEpoch - 1
 func (c *EpochGroupDataCache) pruneOldest(currentEpoch uint64) {
 	for epochId := range c.epochCache {

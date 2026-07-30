@@ -1,0 +1,57 @@
+syntax = "proto3";
+
+package inference.inference;
+
+option go_package = "github.com/productscience/inference/x/inference/types";
+
+// MaintenanceReservationStatus represents the lifecycle status of a maintenance reservation.
+enum MaintenanceReservationStatus {
+  MAINTENANCE_RESERVATION_STATUS_UNSPECIFIED = 0;
+  MAINTENANCE_RESERVATION_STATUS_SCHEDULED   = 1;
+  MAINTENANCE_RESERVATION_STATUS_ACTIVE      = 2;
+  MAINTENANCE_RESERVATION_STATUS_COMPLETED   = 3;
+  MAINTENANCE_RESERVATION_STATUS_CANCELED    = 4;
+}
+
+// MaintenanceTransitionType represents the type of lifecycle transition at a given block height.
+enum MaintenanceTransitionType {
+  MAINTENANCE_TRANSITION_TYPE_UNSPECIFIED = 0;
+  MAINTENANCE_TRANSITION_TYPE_ACTIVATE   = 1;
+  MAINTENANCE_TRANSITION_TYPE_COMPLETE   = 2;
+}
+
+// MaintenanceReservation represents a scheduled maintenance window for a participant.
+message MaintenanceReservation {
+  uint64 reservation_id = 1;
+  string participant     = 2;
+  int64  start_height    = 3;
+  uint64 duration_blocks = 4;
+  string created_by      = 5;
+  MaintenanceReservationStatus status = 6;
+  string activation_warning = 7;
+}
+
+// MaintenanceState holds per-participant maintenance metadata, keyed by participant address.
+message MaintenanceState {
+  string participant                = 1;
+  uint64 credit_blocks              = 2;
+  // Earliest epoch covered by the most recent maintenance window (set on
+  // activation). Combined with last_maintenance_end_epoch, defines the
+  // [start, end] range of epochs in which credit accrual is suppressed
+  // for the participant's most recent window.
+  uint64 last_maintenance_epoch     = 3;
+  uint64 active_reservation_id      = 4;
+  uint64 scheduled_reservation_id   = 5;
+  // Latest epoch covered by the most recent maintenance window. Set on
+  // completion (BeginBlock) to the epoch in which the window's last block
+  // fell. While the window is still active, this stays at the activation
+  // epoch and the active_reservation_id check covers the in-progress epochs.
+  uint64 last_maintenance_end_epoch = 6;
+}
+
+// MaintenanceTransition is an entry in the exact-height transition schedule for BeginBlock processing.
+message MaintenanceTransition {
+  int64  block_height               = 1;
+  uint64 reservation_id             = 2;
+  MaintenanceTransitionType type    = 3;
+}

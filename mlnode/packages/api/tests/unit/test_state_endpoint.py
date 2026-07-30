@@ -1,17 +1,27 @@
 """Tests for GET /api/v1/state — state endpoint."""
 
-from unittest.mock import Mock, AsyncMock, patch
+from unittest.mock import Mock, AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+import api.routes as api_routes
 from api.app import app
 from api.service_management import ServiceState
+
+
+def make_mock_response(status_code: int, json_data: dict):
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = json_data
+    return response
 
 
 @pytest.fixture(autouse=True)
 def reset_app_state():
     """Each test starts with a clean slate: no services running, no vLLM backends."""
+    api_routes._vllm_versions_cache = None
+
     pow_manager = Mock()
     pow_manager.is_running.return_value = False
 
@@ -29,6 +39,7 @@ def reset_app_state():
     app.state.service_state = ServiceState.STOPPED
 
     yield
+    api_routes._vllm_versions_cache = None
 
 
 @pytest.fixture
@@ -57,6 +68,7 @@ def test_stopped_node_returns_only_state_field(client):
     assert data["poc_status"] is None
     assert data["inference_healthy"] is None
     assert data["loaded_model"] is None
+    assert data["poc_validation_inference"] is False
 
 
 def test_pow_mode_returns_only_state_field(client):
@@ -109,6 +121,7 @@ def test_inference_started_but_vllm_not_healthy_yet(client):
     assert data["inference_healthy"] is False
     assert data["poc_status"] == "NO_BACKENDS"
     assert data["loaded_model"] is None
+    assert data["poc_validation_inference"] is False
 
 
 def test_inference_healthy_poc_idle(client):
@@ -135,6 +148,47 @@ def test_inference_healthy_poc_idle(client):
     assert data["inference_healthy"] is True
     assert data["poc_status"] == "IDLE"
     assert data["loaded_model"] == "Qwen/Qwen3-0.6B"
+    assert data["poc_validation_inference"] is False
+
+
+def test_inference_state_includes_poc_validation_capability(client):
+    """The broker gets the validation-inference capability in the /state poll."""
+    app.state.inference_manager.is_running.return_value = True
+    backend_response = make_mock_response(200, {
+        "vllm_version": "0.0.1",
+        "poc_validation_inference": True,
+    })
+
+    with patch.dict("api.proxy.vllm_healthy", {8000: True}, clear=True), \
+         patch.dict("api.proxy.poc_status_by_port", {8000: "IDLE"}, clear=True), \
+         patch("api.proxy.call_backend", new=AsyncMock(return_value=backend_response)) as call_backend:
+        response = client.get("/api/v1/state")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["state"] == "INFERENCE"
+    assert data["poc_validation_inference"] is True
+    call_backend.assert_awaited_once_with(8000, "GET", "/api/v1/pow/versions")
+
+
+def test_inference_state_uses_cached_poc_validation_capability(client):
+    """Capability is static per vLLM build, so /state should not query every time."""
+    app.state.inference_manager.is_running.return_value = True
+    backend_response = make_mock_response(200, {
+        "vllm_version": "0.0.1",
+        "poc_validation_inference": True,
+    })
+
+    with patch.dict("api.proxy.vllm_healthy", {8000: True}, clear=True), \
+         patch.dict("api.proxy.poc_status_by_port", {8000: "IDLE"}, clear=True), \
+         patch("api.proxy.call_backend", new=AsyncMock(return_value=backend_response)) as call_backend:
+        first_response = client.get("/api/v1/state")
+        second_response = client.get("/api/v1/state")
+
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
+    assert second_response.json()["poc_validation_inference"] is True
+    call_backend.assert_awaited_once_with(8000, "GET", "/api/v1/pow/versions")
 
 
 def test_inference_healthy_poc_generating(client):

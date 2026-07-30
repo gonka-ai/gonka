@@ -11,6 +11,7 @@ import (
 	"decentralized-api/internal/startup"
 	"decentralized-api/internal/validation"
 	"decentralized-api/logging"
+	"decentralized-api/observability"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -20,8 +21,6 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
-
-	devshardpkg "devshard"
 
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
@@ -54,6 +53,9 @@ type EventListener struct {
 	cancelFunc            context.CancelFunc
 	rewardRecoveryChecker *startup.RewardRecoveryChecker
 	statsStorage          statsstorage.StatsStorage
+	hostEvents            *apiconfig.HostEventRing
+	escrowQuery           escrowQuerier
+	participantAddress    string
 
 	eventHandlers []EventHandler
 
@@ -66,6 +68,27 @@ type EventListenerOption func(*EventListener)
 func WithStatsStorage(storage statsstorage.StatsStorage) EventListenerOption {
 	return func(el *EventListener) {
 		el.statsStorage = storage
+	}
+}
+
+// WithHostEventRing enables escrow/maintenance ingest into the GetHostEvents ring.
+func WithHostEventRing(ring *apiconfig.HostEventRing) EventListenerOption {
+	return func(el *EventListener) {
+		el.hostEvents = ring
+	}
+}
+
+// WithEscrowQuerier supplies GetEscrow for slot-membership filtering on escrow events.
+func WithEscrowQuerier(q escrowQuerier) EventListenerOption {
+	return func(el *EventListener) {
+		el.escrowQuery = q
+	}
+}
+
+// WithParticipantAddress overrides broker/recorder address lookup (tests and optional inject).
+func WithParticipantAddress(addr string) EventListenerOption {
+	return func(el *EventListener) {
+		el.participantAddress = addr
 	}
 }
 
@@ -97,6 +120,10 @@ func NewEventListener(
 		&InferenceStatusUpdatedEventHandler{},
 		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
+		&DevshardEscrowCreatedEventHandler{},
+		&DevshardEscrowSettledEventHandler{},
+		&MaintenanceScheduledEventHandler{},
+		&MaintenanceCanceledEventHandler{},
 	}
 
 	bo := NewBlockObserver(configManager)
@@ -117,11 +144,15 @@ func NewEventListener(
 	for _, opt := range opts {
 		opt(el)
 	}
-	return el
-}
 
-func (el *EventListener) SetAvailabilityTracker(tracker *devshardpkg.AvailabilityTracker) {
-	el.dispatcher.SetAvailabilityTracker(tracker)
+	// Filter out tx events the DAPI has no handler for at the producer, before
+	// they take a slot in the bounded tx queue. This uses the exact same gate
+	// (hasHandler) the consumer applies after dequeue, so it never drops an
+	// event that would have been handled. Barrier events bypass this filter in
+	// processBlock, so per-block progress still advances.
+	bo.SetRelevanceFilter(el.hasHandler)
+
+	return el
 }
 
 func (el *EventListener) openWsConnAndSubscribe() {
@@ -312,6 +343,8 @@ func (el *EventListener) processEvent(event *chainevents.JSONRPCResponse, worker
 		if el.isNodeSynced() {
 			// Check for BLS events in NewBlock events (emitted from EndBlocker)
 			el.handleBLSEvents(event, workerName)
+			// BeginBlock maintenance_canceled (e.g. maintenance_disabled) is not in TxsResults.
+			el.handleMaintenanceLifecycleEvents(event, workerName)
 		}
 
 		// Parse the event into NewBlockInfo
@@ -470,14 +503,19 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 	return len(event.Result.Events["inference_finished.inference_id"]) > 0
 }
 
-func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_finished.inference_id"]
+	_, op := observability.Inference.StartValidationEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.isNodeSynced() {
-		el.validator.SampleInferenceToValidate(event.Result.Events["inference_finished.inference_id"], el.transactionRecorder)
+		el.validator.SampleInferenceToValidate(ids, el.transactionRecorder)
 	}
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceFinishedRecords(event.Result.Events)
+	records, recErr := parseInferenceFinishedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -620,11 +658,16 @@ func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRP
 	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
 }
 
-func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
+	ids := event.Result.Events["inference_status_updated.inference_id"]
+	_, op := observability.Inference.StartStatusUpdateEvent(context.Background(), len(ids))
+	defer func() { op.FinishErr(&err) }()
+
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	records, recErr := parseInferenceStatusUpdatedRecords(event.Result.Events)
+	err = recErr
 	if err != nil {
 		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
 		return nil

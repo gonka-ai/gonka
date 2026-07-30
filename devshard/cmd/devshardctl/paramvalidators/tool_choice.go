@@ -3,6 +3,7 @@ package paramvalidators
 import (
 	"errors"
 	"fmt"
+	"strings"
 )
 
 var (
@@ -37,7 +38,7 @@ func (v ToolChoiceValidator) Validate(vctx ValidatorContext) error {
 			return fmt.Errorf("%w: function must be an object", ErrToolChoiceFunctionShape)
 		}
 		name, ok := fn["name"].(string)
-		if !ok || name == "" {
+		if !ok || strings.TrimSpace(name) == "" {
 			return fmt.Errorf("%w: function.name must be a non-empty string", ErrToolChoiceFunctionShape)
 		}
 		if v.MaxNameLen > 0 && len(name) > v.MaxNameLen {

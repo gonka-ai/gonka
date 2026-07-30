@@ -174,6 +174,21 @@ data class MsgClaimRewards(
     val epochIndex: Long = 0
 ) : TxMessage
 
+data class ClaimRecipientEntry(
+    val epoch: Long,
+    val recipient: String
+)
+
+data class ClaimRecipientsResponse(
+    val entries: List<ClaimRecipientEntry> = emptyList()
+)
+
+data class MsgSetClaimRecipients(
+    override val type: String = "/inference.inference.MsgSetClaimRecipients",
+    val creator: String = "",
+    val entries: List<ClaimRecipientEntry> = emptyList()
+) : TxMessage
+
 // Admin endpoint request/response for storing payloads directly
 data class StorePayloadRequest(
     @com.google.gson.annotations.SerializedName("prompt_payload")
