@@ -1,7 +1,13 @@
 services:
   mlnode-308:
     # ghcr.io/product-science/mlnode:3.0.12-post6-blackwell
-    image: ghcr.io/gonka-ai/mlnode:3.0.14-post2
+    # Release-candidate for the vLLM 0.25.1 stack (B300 + DeepSeek-V4-Flash):
+    # every layer from upstream sources — gonka-ai/vllm release/v0.25.1
+    # @04a165c0 (#78 port + #79/#80/#82) + gonka-ai/gonka-vllm-plugins v0.1.1
+    # + this repo's mlnode with the metrics exporter and heartbeat liveness
+    # (the two commits carried by this branch). Swap for the gonka-ai-built
+    # tag when the release image is cut.
+    image: ghcr.io/kaitakuai/mlnode-b300-deepseek-v4-flash:0.2.14-vllm0.25.1-overlay-k9@sha256:ef5260aefa5cc46fbbdee6783d3492d399ae0a8fb649c03a12f731707edcc11b
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache
