@@ -182,7 +182,7 @@ func TestRetryForEscrow_LeaseFromPreviousEpochIsSkipped(t *testing.T) {
 		},
 	}
 	phase := new(chain.Phase)
-	phase.Update(11, 0)
+	phase.SetEpoch(11)
 	rl := &RetryLoop{
 		leases:       leases,
 		manager:      &stubSessionManager{},

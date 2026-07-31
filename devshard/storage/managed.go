@@ -76,6 +76,12 @@ func (m *ManagedStorage) observe(epochID uint64) {
 	}
 }
 
+// ObserveEpoch advances the prune horizon from an external epoch clock
+// (devshardd wires this to runtime-config OnEpochChange).
+func (m *ManagedStorage) ObserveEpoch(epochID uint64) {
+	m.observe(epochID)
+}
+
 // CurrentEpochID returns the epoch observed by the managed pruner. It is used
 // only for temporary payload fallback during epoch-0 migration.
 func (m *ManagedStorage) CurrentEpochID() uint64 {
@@ -83,6 +89,20 @@ func (m *ManagedStorage) CurrentEpochID() uint64 {
 		m.observe(m.epochs.CurrentEpochID())
 	}
 	return m.maxObservedEpoch.Load()
+}
+
+// PruneCutoff returns the exclusive epoch lower bound for retention: every
+// epoch < cutoff is pruneable. Returns 0 when not enough epochs have been
+// observed yet. HostManager uses the same value to EvictBefore in-memory sessions.
+func (m *ManagedStorage) PruneCutoff() uint64 {
+	if m.epochs != nil {
+		m.observe(m.epochs.CurrentEpochID())
+	}
+	maxE := m.maxObservedEpoch.Load()
+	if maxE+1 <= m.retain {
+		return 0
+	}
+	return maxE + 1 - m.retain
 }
 
 // Start runs a single catch-up prune after recovery. Epoch transitions must
@@ -107,14 +127,11 @@ func (m *ManagedStorage) PruneOnceAsync(ctx context.Context) {
 // PruneOnce runs a single retention pass. Exported so tests and epoch hooks can
 // drive pruning without a background loop.
 func (m *ManagedStorage) PruneOnce(_ context.Context) {
-	if m.epochs != nil {
-		m.observe(m.epochs.CurrentEpochID())
-	}
-	maxE := m.maxObservedEpoch.Load()
-	if maxE+1 <= m.retain {
+	cutoff := m.PruneCutoff()
+	if cutoff == 0 {
 		return // not enough epochs yet
 	}
-	cutoff := maxE + 1 - m.retain // every epoch < cutoff is pruneable
+	maxE := m.maxObservedEpoch.Load()
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
