@@ -1,28 +1,24 @@
-"""Unit tests for VLLMRunner.is_available() scheduler-heartbeat liveness.
+"""Unit tests for vLLM scheduler-heartbeat liveness."""
 
-The check replaces vLLM's /health probe (wrong in both directions: false-positive
-under load, false-negative on a silent deadlock) with a read of the Prometheus
-counter vllm:iteration_tokens_total_count, which advances on every engine step
-and freezes only when the engine loop stalls.
-
-These tests drive is_available() over a controlled clock and mocked /metrics
-responses, covering the steady state, the hardened race conditions
-(counter-reset on engine restart, multi-process /metrics, blind scrapes,
-ConnectTimeout-vs-refused classification), multi-instance aggregation, and the
-config edge cases (grace disabled, malformed env).
-"""
-import re
+import asyncio
+import threading
+import time
+from contextlib import suppress
 
 import pytest
 import requests as real_requests
-
 from api.inference.vllm import runner as runner_mod
 from api.inference.vllm.runner import VLLMRunner
 
 
 class _FakeResp:
-    def __init__(self, text):
+    def __init__(self, text, status_code=200):
         self.text = text
+        self.status_code = status_code
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise real_requests.HTTPError(response=self)
 
 
 class _Clock:
@@ -37,8 +33,6 @@ class _Clock:
 
 
 def _metrics(iters=None, running=None, waiting=None, series=1):
-    """Render a minimal /metrics body. `series` repeats the counter/gauge lines
-    to emulate more than one engine registry exposed on the same port."""
     lines = []
     for k in range(series):
         if iters is not None:
@@ -51,17 +45,16 @@ def _metrics(iters=None, running=None, waiting=None, series=1):
 
 
 def _make_runner(monkeypatch, n_instances=1):
-    """A VLLMRunner with __init__ bypassed, `n_instances` live processes, a
-    controllable clock, and a per-port mockable /metrics endpoint."""
     r = object.__new__(VLLMRunner)
     r.VLLM_HOST = "127.0.0.1"
     r.VLLM_PORT = 5000
     r._hb = {}  # __init__ is bypassed; mirror its heartbeat-state init
+    r._hb_lock = threading.Lock()
     proc = type("P", (), {"poll": staticmethod(lambda: None)})()
     r.processes = [proc] * n_instances
 
     clock = _Clock()
-    monkeypatch.setattr(runner_mod.time, "time", clock)
+    monkeypatch.setattr(runner_mod.time, "monotonic", clock)
 
     # per-port response/exception; "*" is the default for unlisted ports
     state = {"*": {"resp": _metrics(iters=100, running=40, waiting=0), "exc": None}}
@@ -93,6 +86,11 @@ def _fail(runner, exc, port="*"):
     runner._state[port] = {"resp": "", "exc": exc}
 
 
+def _assert_unhealthy_after_damping(runner):
+    for expected in (True, True, False):
+        assert runner.is_available() is expected
+
+
 def test_process_dead_is_unavailable(runner):
     runner.processes = []  # is_running() -> False
     assert runner.is_available() is False
@@ -106,9 +104,22 @@ def test_advancing_counter_is_alive(runner):
     assert runner.is_available() is True
 
 
+@pytest.mark.parametrize(
+    "response",
+    [_FakeResp(""), _FakeResp("not metrics", status_code=503)],
+    ids=["missing-series", "http-error"],
+)
+def test_first_scrape_must_be_complete(runner, monkeypatch, response):
+    monkeypatch.setattr(
+        runner_mod.requests,
+        "get",
+        lambda *args, **kwargs: response,
+    )
+    assert runner.is_available() is False
+    assert runner._hb[5001]["seen"] is False
+
+
 def test_counter_regression_rebaselines(runner):
-    """Engine subprocess restarts and its counter resets to ~0 while work is
-    present. A '>' test would false-HUNG; '!=' must re-baseline and stay alive."""
     _serve(runner, iters=90000, running=40, waiting=0)
     assert runner.is_available() is True
     runner._clock.advance(2)
@@ -118,8 +129,6 @@ def test_counter_regression_rebaselines(runner):
 
 
 def test_multiprocess_metrics_sum_advances(runner):
-    """Two registries on one port: the summed counter advances while either
-    engine steps, so the node is not read as frozen."""
     _serve(runner, iters=100, running=40, waiting=0, series=2)  # sum=200
     assert runner.is_available() is True
     assert runner._hb[5001]["iter"] == 200
@@ -129,8 +138,6 @@ def test_multiprocess_metrics_sum_advances(runner):
 
 
 def test_idle_engine_is_alive(runner):
-    """No work (running==0 and waiting==0) with a frozen counter is a legitimate
-    idle-wait, not a hang."""
     _serve(runner, iters=100, running=40, waiting=0)
     assert runner.is_available() is True
     runner._clock.advance(500)  # way past grace
@@ -139,17 +146,11 @@ def test_idle_engine_is_alive(runner):
 
 
 def test_real_hang_reports_unhealthy_after_consecutive(runner, monkeypatch):
-    """Work present, counter frozen past grace: unhealthy only after
-    HANG_CONSECUTIVE (3) verdicts, so a single confused scrape cannot escalate."""
     monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "120")
     _serve(runner, iters=100, running=40, waiting=0)
     assert runner.is_available() is True  # baseline @ t=1000
     runner._clock.advance(200)  # past 120s grace, counter still 100, work present
-    assert runner.is_available() is True   # hung count 1/3
-    runner._clock.advance(2)
-    assert runner.is_available() is True   # hung count 2/3
-    runner._clock.advance(2)
-    assert runner.is_available() is False  # hung count 3/3 -> unhealthy
+    _assert_unhealthy_after_damping(runner)
 
 
 def test_grace_recovers_before_escalation(runner, monkeypatch):
@@ -157,61 +158,39 @@ def test_grace_recovers_before_escalation(runner, monkeypatch):
     _serve(runner, iters=100, running=40, waiting=0)
     assert runner.is_available() is True
     runner._clock.advance(200)
-    assert runner.is_available() is True   # 1/3
+    assert runner.is_available() is True  # 1/3
     runner._clock.advance(2)
     _serve(runner, iters=300, running=40, waiting=0)  # engine steps again
-    assert runner.is_available() is True   # re-baselined, hung count reset
+    assert runner.is_available() is True  # re-baselined, hung count reset
     assert runner._hb[5001]["hung"] == 0
 
 
-def test_partial_scrape_missing_counter_uses_grace(runner, monkeypatch):
-    """Counter series absent but gauges present (work ongoing): alive within
-    grace, dead once grace is exceeded with no counter to prove liveness."""
+@pytest.mark.parametrize(
+    ("metrics", "error"),
+    [
+        ({"iters": None, "running": 40, "waiting": 0}, None),
+        ({"iters": None, "running": 0, "waiting": 0}, None),
+        ({"iters": None, "running": None, "waiting": None}, None),
+        (None, real_requests.exceptions.ConnectTimeout()),
+    ],
+    ids=["missing-counter", "partial-idle", "blind", "connect-timeout"],
+)
+def test_unproven_progress_uses_grace(runner, monkeypatch, metrics, error):
     monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "120")
     _serve(runner, iters=100, running=40, waiting=0)
     assert runner.is_available() is True
+    baseline = runner._hb[5001]["ts"]
+
+    if error is not None:
+        _fail(runner, error)
+    else:
+        _serve(runner, **metrics)
     runner._clock.advance(60)
-    _serve(runner, iters=None, running=40, waiting=0)  # counter gone
-    assert runner.is_available() is True   # within grace (60s <= 120s)
-    runner._clock.advance(100)             # now 160s since baseline
-    _serve(runner, iters=None, running=40, waiting=0)
-    assert runner.is_available() is False
+    assert runner.is_available() is True
+    assert runner._hb[5001]["ts"] == baseline
 
-
-def test_full_scrape_failure_is_not_masked_as_idle(runner, monkeypatch):
-    """Regression guard for the idle-shortcut hole: a total /metrics failure
-    (every value None) must NOT refresh the baseline and report healthy, which
-    would silently disable hang detection. It must fall through to grace."""
-    monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "120")
-    _serve(runner, iters=100, running=40, waiting=0)
-    assert runner.is_available() is True   # baseline @ t=1000
-    base_ts = runner._hb[5001]["ts"]
-    runner._clock.advance(30)
-    _serve(runner, iters=None, running=None, waiting=None)  # blind scrape
-    assert runner.is_available() is True   # within grace
-    assert runner._hb[5001]["ts"] == base_ts  # baseline NOT refreshed blindly
-    runner._clock.advance(200)             # 230s since baseline, still blind
-    _serve(runner, iters=None, running=None, waiting=None)
-    assert runner.is_available() is False  # grace exceeded -> unhealthy
-
-
-def test_connection_refused_is_dead(runner):
-    _fail(runner, real_requests.ConnectionError())
-    assert runner.is_available() is False
-
-
-def test_connect_timeout_uses_grace_not_dead(runner, monkeypatch):
-    """ConnectTimeout subclasses ConnectionError in requests, but a full SYN
-    backlog on a saturated server is not death: it must take the grace path,
-    not the immediate-dead path."""
-    monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "120")
-    _serve(runner, iters=100, running=40, waiting=0)
-    assert runner.is_available() is True   # baseline
-    runner._clock.advance(2)
-    _fail(runner, real_requests.exceptions.ConnectTimeout())
-    assert runner.is_available() is True   # within grace -> alive
-    runner._clock.advance(200)             # past grace, still timing out
-    assert runner.is_available() is False  # grace exceeded -> unhealthy
+    runner._clock.advance(100)
+    _assert_unhealthy_after_damping(runner)
 
 
 def test_hang_detection_disabled_when_grace_zero(runner, monkeypatch):
@@ -224,35 +203,68 @@ def test_hang_detection_disabled_when_grace_zero(runner, monkeypatch):
 
 
 def test_grace_zero_tolerates_blind_scrapes(runner, monkeypatch):
-    """grace=0 must disable ALL hang escalation, including the blind-scrape
-    path: a slow /metrics must not mark the node dead when detection is off."""
     monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "0")
     _serve(runner, iters=100, running=40, waiting=0)
     assert runner.is_available() is True
     runner._clock.advance(500)
     _fail(runner, TimeoutError())  # scrape fails entirely
-    assert runner.is_available() is True   # still alive: detection disabled
+    assert runner.is_available() is True  # still alive: detection disabled
     # but a refused connection still means dead even with detection off
     _fail(runner, real_requests.ConnectionError())
     assert runner.is_available() is False
 
 
+def test_first_blind_scrape_allowed_when_grace_zero(runner, monkeypatch):
+    monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "0")
+    _fail(runner, TimeoutError())
+    assert runner.is_available() is True
+    assert runner._hb[5001]["seen"] is False
+
+
 def test_malformed_grace_env_does_not_raise(runner, monkeypatch):
-    """An empty or garbage MLNODE_HANG_GRACE_SEC must not raise out of
-    is_available (a fleet-wide env templating mistake would otherwise turn
-    every health poll into an exception -> watcher kill-loop)."""
     for bad in ("", "  ", "abc", "12.5"):
         monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", bad)
         _serve(runner, iters=100, running=40, waiting=0)
         assert runner.is_available() is True  # falls back to default 120
 
 
+def test_runner_startup_timeout_uses_environment(monkeypatch):
+    runner = object.__new__(VLLMRunner)
+    runner.is_running = lambda: True
+    runner.is_available = lambda: False
+    clock = iter([0, 6, 7])
+    monkeypatch.setenv("VLLM_RUNNER_TIMEOUT", "7")
+    monkeypatch.setattr(runner_mod.time, "time", lambda: next(clock))
+    monkeypatch.setattr(runner_mod.time, "sleep", lambda _: None)
+    monkeypatch.setattr(runner_mod.logger, "error", lambda *args: None)
+
+    assert runner._wait_for_server() is False
+
+
+def test_runner_uses_image_vllm_module(monkeypatch):
+    runner = VLLMRunner(model="dummy-model")
+    commands = []
+    process = type("P", (), {"poll": staticmethod(lambda: None)})()
+    monkeypatch.setenv("MLNODE_VLLM_MODULE", "gonka_poc.entrypoint.api_router")
+    monkeypatch.setattr(runner_mod.torch.cuda, "device_count", lambda: 1)
+    monkeypatch.setattr(runner, "_verify_and_fix_env", lambda: None)
+    monkeypatch.setattr(runner, "_wait_for_server", lambda: True)
+    monkeypatch.setattr(runner_mod, "setup_vllm_proxy", lambda ports: None)
+    monkeypatch.setattr(
+        runner_mod.subprocess,
+        "Popen",
+        lambda command, **kwargs: commands.append(command) or process,
+    )
+
+    runner.start()
+
+    assert "-m gonka_poc.entrypoint.api_router" in commands[0][2]
+
+
 def test_multi_instance_hang_in_one_instance_reported(monkeypatch):
-    """Instance 3 freezes with work while instances 1/2/4 keep stepping: the
-    node must go unhealthy after grace + consecutive verdicts."""
     monkeypatch.setenv("MLNODE_HANG_GRACE_SEC", "120")
     r = _make_runner(monkeypatch, n_instances=4)
-    _serve(r, iters=100, running=40, waiting=0)          # default: advancing...
+    _serve(r, iters=100, running=40, waiting=0)  # default: advancing...
     _serve(r, port=5003, iters=777, running=20, waiting=0)  # ...incl. 5003
     assert r.is_available() is True  # baseline for all ports
 
@@ -260,16 +272,78 @@ def test_multi_instance_hang_in_one_instance_reported(monkeypatch):
     for tick in range(1, 4):
         r._clock.advance(200 if tick == 1 else 2)
         step += 85
-        _serve(r, iters=step, running=40, waiting=0)     # others advance
+        _serve(r, iters=step, running=40, waiting=0)  # others advance
         _serve(r, port=5003, iters=777, running=20, waiting=0)  # 5003 frozen
         expected = tick < 3  # unhealthy on the 3rd consecutive frozen verdict
         assert r.is_available() is expected, f"tick {tick}"
 
 
 def test_multi_instance_refused_port_is_dead(monkeypatch):
-    """A refused connection on ANY instance means that engine's API server is
-    gone: the node reports dead even if other instances are healthy."""
     r = _make_runner(monkeypatch, n_instances=4)
     _serve(r, iters=100, running=40, waiting=0)
     _fail(r, real_requests.ConnectionError(), port=5002)
     assert r.is_available() is False
+
+
+def test_multi_instance_scrapes_run_concurrently(monkeypatch):
+    r = _make_runner(monkeypatch, n_instances=4)
+    barrier = threading.Barrier(4)
+
+    def synchronized_get(url, timeout=None):
+        barrier.wait(timeout=1)
+        return _FakeResp(_metrics(iters=100, running=0, waiting=0))
+
+    monkeypatch.setattr(runner_mod.requests, "get", synchronized_get)
+    assert r.is_available() is True
+
+
+def test_concurrent_health_checks_are_serialized(runner, monkeypatch):
+    first_started = threading.Event()
+    release_first = threading.Event()
+    calls = 0
+    calls_lock = threading.Lock()
+
+    def blocking_get(url, timeout=None):
+        nonlocal calls
+        with calls_lock:
+            calls += 1
+            call = calls
+        if call == 1:
+            first_started.set()
+            release_first.wait(timeout=1)
+        return _FakeResp(_metrics(iters=call, running=0, waiting=0))
+
+    monkeypatch.setattr(runner_mod.requests, "get", blocking_get)
+    first = threading.Thread(target=runner.is_available)
+    second = threading.Thread(target=runner.is_available)
+    first.start()
+    assert first_started.wait(timeout=1)
+    second.start()
+    time.sleep(0.05)
+    assert calls == 1
+    release_first.set()
+    first.join(timeout=1)
+    second.join(timeout=1)
+    assert calls == 2
+
+
+@pytest.mark.asyncio
+async def test_manager_watcher_does_not_block_event_loop():
+    from api.watcher import watch_managers
+
+    release = threading.Event()
+
+    class BlockingManager:
+        def is_healthy(self):
+            release.wait(timeout=1)
+            return True
+
+    task = asyncio.create_task(watch_managers(None, [BlockingManager()], interval=0))
+    started = time.monotonic()
+    await asyncio.sleep(0.05)
+    assert time.monotonic() - started < 0.5
+
+    release.set()
+    task.cancel()
+    with suppress(asyncio.CancelledError):
+        await task

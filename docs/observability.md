@@ -41,10 +41,10 @@ network participant pulls the metrics into their own storage
 ## For consumers
 
 - `GET https://<network-node>/v1/mlnodes/metrics` — Prometheus text exposition,
-  all ML nodes of that network node, label `node_id`. Staleness is visible two
-  ways: `mlnode_source_scrape_timestamp_seconds` stops advancing when a node's
-  vLLM hangs (the node keeps serving its last good copy), and `mlnode_up` drops
-  to 0 when the node itself stops answering.
+  all ML nodes of that network node, label `node_id`. A source timestamp stops
+  when that source can no longer be scraped; `mlnode_up` drops to 0 when the
+  node exporter itself stops answering. Scheduler progress is represented by
+  `vllm:iteration_tokens_total` together with the running/waiting gauges.
 - Use `rate()`/`increase()` on counters: a vLLM restart (model switch)
   resets them.
 - Aggregate request-length histograms per model only (buckets depend on
@@ -102,8 +102,7 @@ Note: `utilization.gpu` is deliberately NOT exported as a saturation metric
 - `mlnode_version_info{version}`.
 - `mlnode_source_scrape_timestamp_seconds{source}` with
   `source="vllm"|"nvml"|"host"`; the vLLM source additionally carries a
-  `replica` label so a single hung replica is detectable by its aging
-  timestamp.
+  `replica` label so a failed replica scrape is individually visible.
 - `gonka_metrics_schema_info{version}`.
 
 ## Changelog

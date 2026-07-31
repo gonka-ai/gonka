@@ -1,11 +1,7 @@
-"""GET /api/v1/metrics — the node metrics exporter (schema v1).
+"""Schema-v1 node metrics exporter.
 
-Gated by GONKA_METRICS=full|off (default: full). `off` returns 404 so a
-disabled node is indistinguishable from a node running a pre-metrics image;
-the dapi collector treats both as "not present in the output".
-
-Exports exactly the schema v1 allowlist and never any placement details
-(hostname/IP/ports/provider/local paths) — enforced by unit tests.
+GONKA_METRICS=off returns 404. Output is restricted to the schema allowlist
+and excludes placement details.
 """
 
 import asyncio
@@ -30,34 +26,18 @@ router = APIRouter()
 
 CONTENT_TYPE = "text/plain; version=0.0.4; charset=utf-8"
 
-# Budgets for the local (thread-pool) stages. They bound two things: the
-# handler's worst-case response time (which must stay inside the dapi
-# collector's 5 s per-node budget together with the vLLM stage), and the
-# damage of a stalled syscall — a statvfs on a dead HF-cache mount parks a
-# worker forever, so it must cost one leaked worker per stall episode, not
-# one per scrape.
+# Keep the sequential stages within dapi's 5 s per-node budget.
 NVML_TIMEOUT_SECONDS = 1.0
 HOST_TIMEOUT_SECONDS = 1.0
 
 
-# Abandoned-but-still-pending stage tasks, keyed by source name. While a
-# source's previous task is parked on a stalled syscall, new scrapes skip
-# that source instead of parking another worker — the leak is bounded to
-# one worker per source per stall episode.
+# A pending task prevents repeated workers for the same stalled source.
 _pending_stages: dict = {}
 _warned_stalled: set = set()
 
 
 async def _bounded(coro, timeout: float, source: str):
-    """Await coro for at most timeout seconds, abandoning it on expiry.
-
-    wait_for is useless here: an executor future cannot be cancelled once
-    its thread is running, so wait_for would block until the stalled
-    syscall returns. asyncio.wait lets us walk away instead. The abandoned
-    task is deliberately NOT cancelled: its still-pending state is the very
-    signal the re-entry guard checks (cancelling would mark it done while
-    the worker thread stays parked, and the guard would never engage).
-    """
+    """Bound a stage without cancelling its possibly stalled worker."""
     previous = _pending_stages.get(source)
     if previous is not None:
         if not previous.done():
@@ -70,14 +50,13 @@ async def _bounded(coro, timeout: float, source: str):
         _warned_stalled.discard(source)
 
     task = asyncio.ensure_future(coro)
-    # register before any await so a concurrent scraper sees this attempt
     _pending_stages[source] = task
-    # a late result must not log "Task exception was never retrieved"
     task.add_done_callback(lambda t: t.exception() if not t.cancelled() else None)
     done, _ = await asyncio.wait({task}, timeout=timeout)
     if not done:
         raise TimeoutError(f"{source} collection exceeded {timeout}s")
-    _pending_stages.pop(source, None)
+    if _pending_stages.get(source) is task:
+        _pending_stages.pop(source, None)
     return task.result()
 
 
