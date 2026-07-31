@@ -108,3 +108,23 @@ func TestReadyReflectsStorageReadiness(t *testing.T) {
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Contains(t, rec.Body.String(), "\"storage_ready\":true")
 }
+
+func TestAdminExposesPprofNotPublic(t *testing.T) {
+	lifecycle := newLifecycleState()
+	e := buildServer(lifecycle)
+	admin := buildAdminServer(lifecycle, func() bool { return true })
+
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	require.Equal(t, http.StatusNotFound, rec.Code)
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Contains(t, rec.Body.String(), "goroutine")
+
+	rec = httptest.NewRecorder()
+	admin.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotEmpty(t, rec.Body.Bytes())
+}
