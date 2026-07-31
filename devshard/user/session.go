@@ -120,8 +120,8 @@ type nonceOutcome struct {
 
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
-	Reason       string // "execution", "refused", or "" if deadline not reached
-	Outcome      string // "applied", "vote_collection_failed", "insufficient_votes", or "diff_send_failed"
+	Reason       string
+	Outcome      string
 	DetailReason string
 	Applied      bool
 	Delivered    bool
@@ -135,8 +135,6 @@ type TimeoutVoteTally struct {
 	RejectWeight uint32
 	ErrorWeight  uint32
 }
-
-type DiffObserver func(nonce uint64, hasStartInference bool)
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
@@ -270,7 +268,6 @@ type Session struct {
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
 	epochID         uint64
-	diffObserver    DiffObserver
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -320,30 +317,6 @@ func WithVerifierQueue(q *verifierHostQueue) SessionOption {
 			sess.verifierQueue = q
 		}
 	}
-}
-
-func (s *Session) SetDiffObserver(observer DiffObserver) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.diffObserver = observer
-}
-
-func (s *Session) SetEpochID(epochID uint64) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.epochID = epochID
-}
-
-func (s *Session) EpochID() uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.epochID
-}
-
-func (s *Session) Group() []types.SlotAssignment {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]types.SlotAssignment(nil), s.group...)
 }
 
 // NewSession creates a user session. clients must match group length.
@@ -686,16 +659,6 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
-	if s.diffObserver != nil {
-		hasStartInference := false
-		for _, tx := range vd.Applied {
-			if tx.GetStartInference() != nil {
-				hasStartInference = true
-				break
-			}
-		}
-		s.diffObserver(nonce, hasStartInference)
-	}
 	if s.store != nil {
 		s.maybeSaveSnapshotLocked()
 	}
@@ -1329,6 +1292,18 @@ func (s *Session) Diffs() []types.Diff {
 	return s.diffs
 }
 
+func (s *Session) DiffsAfter(nonce uint64) []types.Diff {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	var result []types.Diff
+	for _, diff := range s.diffs {
+		if diff.Nonce > nonce {
+			result = append(result, diff)
+		}
+	}
+	return result
+}
+
 func (s *Session) PendingTxs() []*types.DevshardTx {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -1869,6 +1844,18 @@ func (s *Session) HostParticipantKeyList() []string {
 		out[i] = s.hostParticipantKeyLocked(i)
 	}
 	return out
+}
+
+func (s *Session) SetEpochID(epochID uint64) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.epochID = epochID
+}
+
+func (s *Session) EpochID() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.epochID
 }
 
 // hostParticipantKeyLocked is the lock-free body of HostParticipantKey.

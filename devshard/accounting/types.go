@@ -114,6 +114,7 @@ type EscrowPhase string
 const (
 	EscrowActive     EscrowPhase = "active"
 	EscrowFinalizing EscrowPhase = "finalizing"
+	EscrowFinalized  EscrowPhase = "finalized"
 	EscrowSettled    EscrowPhase = "settled"
 )
 
@@ -266,18 +267,20 @@ type EscrowNonce struct {
 }
 
 type SlotRecord struct {
-	EscrowID             string                    `json:"escrow_id"`
-	SlotID               uint32                    `json:"slot_id"`
-	AssignedNonces       uint64                    `json:"assigned_nonces"`
-	Dispositions         map[Disposition]uint64    `json:"dispositions"`
-	TimeoutOutcomes      map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
-	ProtocolMisses       uint64                    `json:"protocol_misses"`
-	ProtocolInvalid      uint64                    `json:"protocol_invalid"`
-	UnresolvedChallenges uint64                    `json:"unresolved_challenges"`
-	RecordedInvalid      uint64                    `json:"recorded_invalid_transitions"`
-	InFlight             uint64                    `json:"in_flight"`
-	Unclassified         uint64                    `json:"unclassified"`
-	UnknownReasonTotal   uint64                    `json:"unknown_reason_total"`
+	EscrowID              string                    `json:"escrow_id"`
+	SlotID                uint32                    `json:"slot_id"`
+	AssignedNonces        uint64                    `json:"assigned_nonces"`
+	Dispositions          map[Disposition]uint64    `json:"dispositions"`
+	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
+	ProtocolMisses        uint64                    `json:"protocol_misses"`
+	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
+	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
+	InFlight              uint64                    `json:"in_flight"`
+	PendingClassification uint64                    `json:"pending_classification"`
+	Unclassified          uint64                    `json:"unclassified"`
+	Overclassified        uint64                    `json:"overclassified"`
+	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
 }
 
 type CrossChecks struct {
@@ -289,44 +292,48 @@ type CrossChecks struct {
 }
 
 type ParticipantRecord struct {
-	SchemaVersion        int                       `json:"schema_version"`
-	UpdatedAt            time.Time                 `json:"updated_at"`
-	EpochIndex           uint64                    `json:"epoch_index"`
-	Participant          string                    `json:"participant"`
-	Model                string                    `json:"model"`
-	LatestNonces         []EscrowNonce             `json:"latest_nonces"`
-	AssignedNonces       uint64                    `json:"assigned_nonces"`
-	Dispositions         map[Disposition]uint64    `json:"dispositions"`
-	TimeoutOutcomes      map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
-	ProtocolMisses       uint64                    `json:"protocol_misses"`
-	ProtocolInvalid      uint64                    `json:"protocol_invalid"`
-	UnresolvedChallenges uint64                    `json:"unresolved_challenges"`
-	InFlight             uint64                    `json:"in_flight"`
-	Unclassified         uint64                    `json:"unclassified"`
-	UnknownReasonTotal   uint64                    `json:"unknown_reason_total"`
-	RecordingErrors      uint64                    `json:"recording_errors"`
-	WriterErrors         uint64                    `json:"writer_errors"`
-	CrossChecks          CrossChecks               `json:"cross_checks"`
-	Counters             []CounterRecord           `json:"counters"`
-	Slots                []SlotRecord              `json:"slots"`
+	SchemaVersion         int                       `json:"schema_version"`
+	UpdatedAt             time.Time                 `json:"updated_at"`
+	EpochIndex            uint64                    `json:"epoch_index"`
+	Participant           string                    `json:"participant"`
+	Model                 string                    `json:"model"`
+	LatestNonces          []EscrowNonce             `json:"latest_nonces"`
+	AssignedNonces        uint64                    `json:"assigned_nonces"`
+	Dispositions          map[Disposition]uint64    `json:"dispositions"`
+	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
+	ProtocolMisses        uint64                    `json:"protocol_misses"`
+	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
+	InFlight              uint64                    `json:"in_flight"`
+	PendingClassification uint64                    `json:"pending_classification"`
+	Unclassified          uint64                    `json:"unclassified"`
+	Overclassified        uint64                    `json:"overclassified"`
+	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
+	RecordingErrors       uint64                    `json:"recording_errors"`
+	WriterErrors          uint64                    `json:"writer_errors"`
+	CrossChecks           CrossChecks               `json:"cross_checks"`
+	Counters              []CounterRecord           `json:"counters"`
+	Slots                 []SlotRecord              `json:"slots"`
 }
 
 type EpochSummary struct {
-	SchemaVersion        int                       `json:"schema_version"`
-	UpdatedAt            time.Time                 `json:"updated_at"`
-	EpochIndex           uint64                    `json:"epoch_index"`
-	AssignedNonces       uint64                    `json:"assigned_nonces"`
-	Dispositions         map[Disposition]uint64    `json:"dispositions"`
-	TimeoutOutcomes      map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
-	ProtocolMisses       uint64                    `json:"protocol_misses"`
-	ProtocolInvalid      uint64                    `json:"protocol_invalid"`
-	UnresolvedChallenges uint64                    `json:"unresolved_challenges"`
-	InFlight             uint64                    `json:"in_flight"`
-	Unclassified         uint64                    `json:"unclassified"`
-	UnknownReasonTotal   uint64                    `json:"unknown_reason_total"`
-	RecordingErrors      uint64                    `json:"recording_errors"`
-	WriterErrors         uint64                    `json:"writer_errors"`
-	CrossCheckErrors     uint64                    `json:"cross_check_errors"`
+	SchemaVersion         int                       `json:"schema_version"`
+	UpdatedAt             time.Time                 `json:"updated_at"`
+	EpochIndex            uint64                    `json:"epoch_index"`
+	AssignedNonces        uint64                    `json:"assigned_nonces"`
+	Dispositions          map[Disposition]uint64    `json:"dispositions"`
+	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
+	ProtocolMisses        uint64                    `json:"protocol_misses"`
+	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
+	InFlight              uint64                    `json:"in_flight"`
+	PendingClassification uint64                    `json:"pending_classification"`
+	Unclassified          uint64                    `json:"unclassified"`
+	Overclassified        uint64                    `json:"overclassified"`
+	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
+	RecordingErrors       uint64                    `json:"recording_errors"`
+	WriterErrors          uint64                    `json:"writer_errors"`
+	CrossCheckErrors      uint64                    `json:"cross_check_errors"`
 }
 
 type QueryFilter struct {

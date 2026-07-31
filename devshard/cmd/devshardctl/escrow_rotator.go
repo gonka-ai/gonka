@@ -676,6 +676,9 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		}
 		built.active.Store(false)
 		rt = built
+		if g.accounting != nil {
+			g.accounting.attachRuntime(rt)
+		}
 		log.Printf("devshard_settle_rehydrated escrow=%s (transient, non-resident)", id)
 		defer func() {
 			// Flush a final snapshot: Finalize advances the nonce, so a later
@@ -721,6 +724,13 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	} else {
 		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
+	if g.accounting != nil {
+		g.accounting.reconcileEscrow(id)
+		g.accounting.recordEscrowPhase(id, rt.proxy.sm.Phase())
+		if flushErr := g.accounting.flush(context.Background()); flushErr != nil {
+			log.Printf("devshard_finalize_accounting_flush_error escrow=%s error=%v", id, flushErr)
+		}
+	}
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=settlement_json error=%q", id, err.Error())
@@ -747,6 +757,13 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	if g.accounting != nil {
+		g.accounting.reconcileEscrow(id)
+		g.accounting.recordSettled(id)
+		if flushErr := g.accounting.flush(context.Background()); flushErr != nil {
+			log.Printf("devshard_settle_accounting_flush_error escrow=%s error=%v", id, flushErr)
+		}
+	}
 	// A settled escrow is terminal: drop the resident runtime so its memory
 	// (state machine, inference map, store handles) is released now rather
 	// than lingering until the next restart. Transient runtimes are closed by

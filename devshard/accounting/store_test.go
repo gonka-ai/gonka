@@ -92,6 +92,18 @@ func TestStorePersistsRetryableTimeoutState(t *testing.T) {
 	require.Equal(t, uint64(1), record.Dispositions[DispositionFinishedUnused])
 }
 
+func TestRetentionDoesNotPruneFinalizedEscrow(t *testing.T) {
+	store, err := OpenStore(filepath.Join(t.TempDir(), "accounting.db"), 1)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	book := NewBook()
+	registerTestEscrow(t, book, "finalized", 1, "model-a", EscrowFinalized)
+	registerTestEscrow(t, book, "current", 3, "model-a", EscrowActive)
+
+	require.NoError(t, store.Snapshot(context.Background(), book))
+	require.NotEmpty(t, book.Query(QueryFilter{EpochIndex: 1}))
+}
+
 // TestStorePersistsChallengeState checks that an open challenge survives a
 // restart as the challenge itself rather than as a bare count. The unresolved
 // total is derived from the restored nonces, so a replayed challenge is

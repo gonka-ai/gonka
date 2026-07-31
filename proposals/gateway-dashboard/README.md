@@ -141,22 +141,26 @@ Non-terminal values:
 - `in_flight`: a `real_send` without `protocol_finish` before its
   protocol deadline. Counted directly from live session state: these are
   the attempts the gateway currently tracks;
+- `pending_classification`: a live nonce between protocol and gateway
+  callbacks, such as a prepared send or a finish waiting for winner
+  selection;
 - `unclassified`: leftover. A `consumed_nonce` with no terminal
   disposition and no live attempt, per escrow:
 
 ```text
-unclassified = latest_nonce - terminal_dispositions - in_flight
+unclassified = latest_nonce - terminal_dispositions
+             - in_flight - pending_classification
 ```
 
-The leftover must never be negative. It grows only across restart
-windows, where live attempt state was lost; growth anywhere else is an
-accounting error. `in_flight` must drain to zero once the escrow has no
+If classifications exceed assignments, the excess is reported as
+`overclassified` and as a cross-check error instead of being hidden by a
+zero residual. `in_flight` must drain to zero once the escrow has no
 active work.
 
-The leftover buckets do not overlap: `in_flight` is live work,
-`unclassified` is a nonce with no classification at all, and `unknown` is
-not a disposition but the fallback value of a context or reason dimension
-on an otherwise classified nonce.
+The leftover buckets do not overlap: `in_flight` is sent work,
+`pending_classification` is a live callback gap, `unclassified` has no
+live record, and `unknown` is not a disposition but the fallback value of
+a context or reason dimension on an otherwise classified nonce.
 
 Two rules:
 
@@ -272,6 +276,9 @@ executes at nonce `k`.
 Settlement happens after finalization and signature quorum. Until then
 every value is a projection of current state.
 
+`finalized` means the local session is ready to settle. `settled` is
+recorded only after the chain accepts the settlement transaction.
+
 The two diagrams above define the complete raw dataset: disposition
 counts with their policy context, plus timeout outcomes, alongside the
 values read from devshard state (`latest_nonce`, `HostStats.Missed`,
@@ -301,7 +308,8 @@ non_execution_credit = protocol_only
 
 timeout_accounting_failure: unfinished with a non-applied timeout_outcome
 timeout_pending:            unfinished with unset timeout_outcome
-unresolved:                 in_flight + timeout_pending + unclassified
+unresolved:                 in_flight + pending_classification
+                            + timeout_pending + unclassified
 ```
 
 The identity holds exactly when `timeout_outcome.applied` equals
@@ -379,8 +387,9 @@ Each participant-model record contains:
 - per-slot `assigned_nonces` and dispositions;
 - timeout requirements, outcomes, and reasons;
 - `protocol_misses`, `protocol_invalid`, and unresolved challenges;
-- accounting health: `in_flight`, the `unclassified` leftover,
-  `cross_check_error`, `unknown_reason_total`, and writer errors.
+- accounting health: `in_flight`, `pending_classification`,
+  `unclassified`, `overclassified`, `cross_check_error`,
+  `unknown_reason_total`, and writer errors.
 
 The API returns counts, not rates. Diagnostic nonce records can be
 returned from a recent window. Prompts, responses, payload hashes, raw
@@ -423,6 +432,8 @@ performs no accounting writes.
 Non-applied timeouts are the only per-nonce rows. They remain mutable
 because a retry or late finish can change their outcome after restart.
 The row is removed once the timeout applies or the inference finishes.
+Each escrow keeps at most 10,000 mutable timeout rows, and finalization
+compacts any remaining rows into counters.
 
 A snapshot writer atomically upserts every counter, together with each
 escrow's `latest_nonce`, into `accounting.db` every five
@@ -430,25 +441,24 @@ minutes and at escrow finalization, settlement, rotation, epoch
 transition, and shutdown. A failed snapshot keeps the previous one and is
 reported as a writer error. The tables hold one row per key, not history.
 Every dimension is a small enum and only observed combinations create
-counters, so an escrow produces at most a few hundred rows. RAM, CPU, and
-disk use do not grow with request volume.
+counters, so an escrow produces at most a few hundred counter rows plus
+the bounded mutable timeout rows.
 
 An escrow registry stores the chain `epoch_index`, model, ordered slots,
 and participant addresses. Aggregation happens at query time: epoch,
 model, participant, slot, and optional escrow totals join counters
-through the registry. Aggregates are never stored. `in_flight` is read
-from live session state at query time; `unclassified` is computed from
-`latest_nonce`. Neither is stored.
+through the registry. Aggregates are never stored. `in_flight`,
+`pending_classification`, and `unclassified` are computed from current
+memory and `latest_nonce`. None is stored.
 
 `DEVSHARD_STATS_RETENTION_EPOCHS=0` disables automatic deletion. A
 positive value removes only complete epochs older than the configured
 count.
 
-On restart, counters resume from the last snapshot and live attempt state
-starts empty, so nonces from the lost window have no disposition and no
-live attempt and fall into the `unclassified` leftover. Restart never
-invents a terminal outcome; every remaining gap shows up in accounting
-health.
+On restart, counters resume from the last snapshot. The gateway replays
+the committed diff tail and checks persisted mutable timeouts against
+recovered protocol state. Any remaining gap falls into `unclassified`;
+recovery never invents a terminal outcome.
 
 A small in-memory ring of recent nonce records, including block heights,
 supports debugging. Ring records are never stored.
@@ -470,9 +480,7 @@ Record at:
 A repeated or replayed callback that changes no session state changes no
 counter.
 
-`HandleTimeout` currently uses its error return for both successful
-timeout submission and operational failure. It must instead return a
-structured result:
+`HandleTimeout` returns a structured result:
 
 - `timeout_kind`: `refused` or `execution`;
 - `timeout_outcome`;

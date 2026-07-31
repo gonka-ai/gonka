@@ -1,12 +1,10 @@
 package user
 
 import (
-	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
-	"devshard/internal/testutil"
 	"devshard/storage"
 	"devshard/types"
 )
@@ -76,22 +74,4 @@ func TestSession_Close_ClosesUnderlyingStore(t *testing.T) {
 
 	require.NoError(t, session.Close())
 	require.Equal(t, 1, store.closeCalls, "Session.Close must close the injected storage exactly once")
-}
-
-func TestComposeDiffRollsBackWhenPersistenceFails(t *testing.T) {
-	store := &closeCountingStore{appendErr: fmt.Errorf("disk unavailable")}
-	session, _, _ := setupSessionWithOptions(t, 3, 1_000_000, 0, WithStorage(store))
-	var observed int
-	session.SetDiffObserver(func(uint64, bool) { observed++ })
-	prepared, err := session.PrepareInference(InferenceParams{
-		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 1, MaxTokens: 1, StartedAt: 1,
-	})
-	require.ErrorContains(t, err, "persist diff")
-	require.Nil(t, prepared)
-	require.Zero(t, session.Nonce())
-	require.Zero(t, session.StateMachine().LatestNonce())
-	require.Zero(t, observed)
-	_, found := session.StateMachine().GetInference(1)
-	require.False(t, found)
 }

@@ -83,6 +83,26 @@ func TestBookTransitionsAndIdempotency(t *testing.T) {
 	require.Zero(t, book.LiveNonceCount())
 }
 
+func TestTimeoutEligibilityContextIsFirstWriteOnce(t *testing.T) {
+	book := NewBook()
+	registerTestEscrow(t, book, "escrow-1", 7, "model-a", EscrowActive)
+	require.NoError(t, book.Apply(DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true}))
+	require.NoError(t, book.Apply(RealSend{EscrowID: "escrow-1", Nonce: 1}))
+	require.NoError(t, book.Apply(TimeoutRequired{
+		EscrowID: "escrow-1", Nonce: 1, Kind: TimeoutRefused,
+		EvaluationPhase: PhaseNormal,
+	}))
+	require.NoError(t, book.Apply(TimeoutRequired{
+		EscrowID: "escrow-1", Nonce: 1, Kind: TimeoutExecution,
+		EvaluationPhase: PhasePoC,
+	}))
+
+	record := participantRecord(t, book.Query(QueryFilter{EpochIndex: 7}), "participant-1")
+	require.Len(t, record.Counters, 1)
+	require.Equal(t, TimeoutRefused, record.Counters[0].TimeoutKind)
+	require.Equal(t, PhaseNormal, record.Counters[0].TimeoutEvaluationPhase)
+}
+
 func TestBookCountsRejectedEvents(t *testing.T) {
 	book := NewBook()
 	registerTestEscrow(t, book, "escrow-1", 7, "model-a", EscrowActive)
@@ -277,6 +297,23 @@ func TestAssignedNoncesForSlotMatchesChainFormula(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestQueryReportsOverclassification(t *testing.T) {
+	book := NewBook()
+	registerTestEscrow(t, book, "escrow-1", 7, "model-a", EscrowActive)
+	book.mu.Lock()
+	escrow := book.escrows["escrow-1"]
+	escrow.latest = 1
+	escrow.counters[CounterKey{
+		SlotID:      1,
+		Disposition: DispositionProtocolOnly,
+	}] = 2
+	book.mu.Unlock()
+
+	record := participantRecord(t, book.Query(QueryFilter{EpochIndex: 7}), "participant-1")
+	require.Equal(t, uint64(1), record.Overclassified)
+	require.Equal(t, uint64(1), record.CrossChecks.ErrorCount)
+}
+
 func TestBookConcurrentApplyAndQuery(t *testing.T) {
 	book := NewBook()
 	registerTestEscrow(t, book, "escrow-1", 11, "model-a", EscrowActive)
@@ -302,6 +339,19 @@ func TestBookConcurrentApplyAndQuery(t *testing.T) {
 		protocolOnly += record.Dispositions[DispositionProtocolOnly]
 	}
 	require.Equal(t, uint64(100), protocolOnly)
+}
+
+func TestMutableTimeoutStateIsBounded(t *testing.T) {
+	escrow := &escrowBook{live: make(map[uint64]*nonceState)}
+	for nonce := uint64(1); nonce <= maxMutableTimeoutsPerEscrow+1; nonce++ {
+		escrow.live[nonce] = &nonceState{
+			timeoutRequired: true,
+			timeoutOutcome:  TimeoutInsufficientVotes,
+		}
+		escrow.rememberMutableTimeout(nonce)
+	}
+	require.Len(t, escrow.live, maxMutableTimeoutsPerEscrow)
+	require.Nil(t, escrow.live[1])
 }
 
 // The book deduplicates replayed callbacks by using events as map keys, so

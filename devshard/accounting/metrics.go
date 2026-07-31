@@ -20,7 +20,9 @@ type Collector struct {
 	recordedInvalid *prometheus.Desc
 	challenges      *prometheus.Desc
 	inFlight        *prometheus.Desc
+	pending         *prometheus.Desc
 	unclassified    *prometheus.Desc
+	overclassified  *prometheus.Desc
 	unknown         *prometheus.Desc
 	recordingErrors *prometheus.Desc
 	writerErrors    *prometheus.Desc
@@ -79,9 +81,19 @@ func NewCollector(book *Book, currentEpoch CurrentEpochFunc) *Collector {
 			"Live sent nonces before their protocol deadline in the current epoch.",
 			[]string{"participant", "model"}, nil,
 		),
+		pending: prometheus.NewDesc(
+			"devshard_accounting_pending_classification",
+			"Live nonces waiting for their gateway disposition.",
+			[]string{"participant", "model"}, nil,
+		),
 		unclassified: prometheus.NewDesc(
 			"devshard_accounting_unclassified",
 			"Consumed nonces without a disposition or live attempt in the current epoch.",
+			[]string{"participant", "model"}, nil,
+		),
+		overclassified: prometheus.NewDesc(
+			"devshard_accounting_overclassified",
+			"Nonce classifications exceeding settlement assignments.",
 			[]string{"participant", "model"}, nil,
 		),
 		unknown: prometheus.NewDesc(
@@ -119,7 +131,9 @@ func NewCollector(book *Book, currentEpoch CurrentEpochFunc) *Collector {
 		c.recordedInvalid,
 		c.challenges,
 		c.inFlight,
+		c.pending,
 		c.unclassified,
+		c.overclassified,
 		c.unknown,
 		c.recordingErrors,
 		c.writerErrors,
@@ -155,7 +169,9 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		emitGauge(ch, c.recordedInvalid, record.CrossChecks.RecordedInvalid, base...)
 		emitGauge(ch, c.challenges, record.UnresolvedChallenges, base...)
 		emitGauge(ch, c.inFlight, record.InFlight, base...)
+		emitGauge(ch, c.pending, record.PendingClassification, base...)
 		emitGauge(ch, c.unclassified, record.Unclassified, base...)
+		emitGauge(ch, c.overclassified, record.Overclassified, base...)
 		emitGauge(ch, c.unknown, record.UnknownReasonTotal, base...)
 		emitGauge(ch, c.crossCheck, record.CrossChecks.ErrorCount, base...)
 

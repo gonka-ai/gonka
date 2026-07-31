@@ -8,6 +8,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"devshard/types"
@@ -18,6 +19,7 @@ import (
 type Store struct {
 	db              *sql.DB
 	retentionEpochs uint64
+	snapshotMu      sync.Mutex
 }
 
 func OpenStore(path string, retentionEpochs uint64) (*Store, error) {
@@ -51,6 +53,8 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
 	return s.db.Close()
 }
 
@@ -61,6 +65,8 @@ func (s *Store) Snapshot(ctx context.Context, book *Book) (err error) {
 	if book == nil {
 		return errors.New("accounting book is nil")
 	}
+	s.snapshotMu.Lock()
+	defer s.snapshotMu.Unlock()
 	defer func() {
 		if err != nil {
 			book.RecordWriterError()

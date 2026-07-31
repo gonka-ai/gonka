@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
 	"time"
 
 	"devshard/accounting"
-	"devshard/state"
 	"devshard/types"
+	"devshard/user"
 )
 
 type gatewayAccountingRecorder struct {
@@ -20,6 +21,15 @@ type gatewayAccountingRecorder struct {
 	ctx     context.Context
 	cancel  context.CancelFunc
 	wg      sync.WaitGroup
+
+	mu       sync.RWMutex
+	runtimes map[string]*accountingRuntime
+}
+
+type accountingRuntime struct {
+	rt        *devshardRuntime
+	mu        sync.Mutex
+	lastNonce uint64
 }
 
 func newGatewayAccountingRecorder(service *accounting.Service) *gatewayAccountingRecorder {
@@ -27,7 +37,17 @@ func newGatewayAccountingRecorder(service *accounting.Service) *gatewayAccountin
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	return &gatewayAccountingRecorder{service: service, ctx: ctx, cancel: cancel}
+	recorder := &gatewayAccountingRecorder{
+		service:  service,
+		ctx:      ctx,
+		cancel:   cancel,
+		runtimes: make(map[string]*accountingRuntime),
+	}
+	if service.Store != nil {
+		recorder.wg.Add(1)
+		go recorder.reconcileLoop()
+	}
+	return recorder
 }
 
 func (r *gatewayAccountingRecorder) apply(event accounting.Event) {
@@ -39,33 +59,42 @@ func (r *gatewayAccountingRecorder) apply(event accounting.Event) {
 	}
 }
 
+func (r *gatewayAccountingRecorder) applyBatch(events []accounting.Event) bool {
+	if r == nil || r.service == nil || r.service.Book == nil {
+		return false
+	}
+	if err := r.service.Book.ApplyBatch(events); err != nil {
+		log.Printf("gateway accounting batch: %v", err)
+		return false
+	}
+	return true
+}
+
 func (r *gatewayAccountingRecorder) attachRuntime(rt *devshardRuntime) {
 	if r == nil || rt == nil || rt.session == nil || rt.proxy == nil || rt.proxy.sm == nil {
 		return
 	}
+	stateSnapshot := rt.proxy.sm.SnapshotStateNoInferences()
 	r.apply(accounting.EscrowRegistered{Metadata: accounting.EscrowMetadata{
 		EscrowID:      rt.id,
 		CreationEpoch: rt.session.EpochID(),
 		Model:         rt.model,
-		Slots:         rt.session.Group(),
+		Slots:         stateSnapshot.Group,
 		Phase:         accountingEscrowPhase(rt.proxy.sm.Phase()),
 	}})
-	r.apply(accounting.LatestNonceObserved{EscrowID: rt.id, LatestNonce: rt.session.Nonce()})
-	for slotID, stats := range rt.proxy.sm.SnapshotStateNoInferences().HostStats {
-		if stats != nil {
-			r.apply(accounting.HostStatsObserved{EscrowID: rt.id, SlotID: slotID, Stats: *stats})
-		}
+	tracked := &accountingRuntime{
+		rt:        rt,
+		lastNonce: r.service.Book.LatestNonce(rt.id),
 	}
-	rt.session.SetDiffObserver(func(nonce uint64, hasStartInference bool) {
-		r.apply(accounting.DiffApplied{EscrowID: rt.id, Nonce: nonce, Inference: hasStartInference})
-	})
-	rt.proxy.sm.SetTransitionObserver(func(event state.TransitionEvent) {
-		r.recordProtocolTransition(rt.id, event)
-	})
+	r.mu.Lock()
+	r.runtimes[rt.id] = tracked
+	r.mu.Unlock()
+	r.reconcileRuntime(tracked)
 	if rt.proxy.redundancy != nil {
 		rt.proxy.redundancy.accounting = r
 	}
 	rt.accountingFlush = func() {
+		r.reconcileRuntime(tracked)
 		r.apply(accounting.EscrowPhaseChanged{
 			EscrowID: rt.id,
 			Phase:    accountingEscrowPhase(rt.proxy.sm.Phase()),
@@ -73,32 +102,175 @@ func (r *gatewayAccountingRecorder) attachRuntime(rt *devshardRuntime) {
 		if err := r.flush(context.Background()); err != nil {
 			log.Printf("gateway accounting flush escrow=%s: %v", rt.id, err)
 		}
+		r.detachRuntime(rt.id, tracked)
 	}
 }
 
-func (r *gatewayAccountingRecorder) recordProtocolTransition(escrowID string, event state.TransitionEvent) {
-	kind := accounting.ProtocolTransitionKind("")
-	switch event.Kind {
-	case state.TransitionReceipt:
-		kind = accounting.ProtocolReceiptApplied
-	case state.TransitionFinish:
-		kind = accounting.ProtocolFinishApplied
-	case state.TransitionChallenged:
-		kind = accounting.ProtocolChallenged
-	case state.TransitionValidated:
-		kind = accounting.ProtocolValidated
-	case state.TransitionInvalidated:
-		kind = accounting.ProtocolInvalidated
-	case state.TransitionTimeout:
-		// HandleTimeout records the gateway outcome. HostStats below remains
-		// the independent protocol fact used by the cross-check.
-	default:
+func (r *gatewayAccountingRecorder) reconcileLoop() {
+	defer r.wg.Done()
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			r.reconcileAll()
+		case <-r.ctx.Done():
+			return
+		}
+	}
+}
+
+func (r *gatewayAccountingRecorder) reconcileAll() {
+	r.mu.RLock()
+	runtimes := make([]*accountingRuntime, 0, len(r.runtimes))
+	for _, tracked := range r.runtimes {
+		runtimes = append(runtimes, tracked)
+	}
+	r.mu.RUnlock()
+	for _, tracked := range runtimes {
+		r.reconcileRuntime(tracked)
+	}
+}
+
+func (r *gatewayAccountingRecorder) detachRuntime(escrowID string, tracked *accountingRuntime) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.runtimes[escrowID] == tracked {
+		delete(r.runtimes, escrowID)
+	}
+}
+
+func (r *gatewayAccountingRecorder) runtime(escrowID string) *accountingRuntime {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	return r.runtimes[escrowID]
+}
+
+func (r *gatewayAccountingRecorder) reconcileEscrow(escrowID string) {
+	if tracked := r.runtime(escrowID); tracked != nil {
+		r.reconcileRuntime(tracked)
+	}
+}
+
+func (r *gatewayAccountingRecorder) reconcileRuntime(tracked *accountingRuntime) {
+	if tracked == nil || tracked.rt == nil || tracked.rt.session == nil ||
+		tracked.rt.proxy == nil || tracked.rt.proxy.sm == nil {
 		return
 	}
-	if kind != "" {
-		r.apply(accounting.ProtocolTransition{EscrowID: escrowID, Nonce: event.InferenceID, Kind: kind})
+	tracked.mu.Lock()
+	defer tracked.mu.Unlock()
+
+	rt := tracked.rt
+	for _, diff := range rt.session.DiffsAfter(tracked.lastNonce) {
+		if !r.recordDiff(rt, diff) {
+			break
+		}
+		tracked.lastNonce = diff.Nonce
 	}
-	r.apply(accounting.HostStatsObserved{EscrowID: escrowID, SlotID: event.ExecutorSlot, Stats: event.HostStats})
+	r.reconcilePending(rt)
+	for slotID, stats := range rt.proxy.sm.SnapshotStateNoInferences().HostStats {
+		if stats != nil {
+			r.apply(accounting.HostStatsObserved{EscrowID: rt.id, SlotID: slotID, Stats: *stats})
+		}
+	}
+}
+
+func (r *gatewayAccountingRecorder) recordDiff(rt *devshardRuntime, diff types.Diff) bool {
+	hasStart := false
+	events := make([]accounting.Event, 0, len(diff.Txs)+2)
+	for _, tx := range diff.Txs {
+		if tx.GetStartInference() != nil {
+			hasStart = true
+			break
+		}
+	}
+	for _, tx := range diff.Txs {
+		switch {
+		case tx.GetConfirmStart() != nil:
+			events = append(events, accounting.ProtocolTransition{
+				EscrowID: rt.id,
+				Nonce:    tx.GetConfirmStart().InferenceId,
+				Kind:     accounting.ProtocolReceiptApplied,
+			})
+		case tx.GetFinishInference() != nil:
+			events = append(events, accounting.ProtocolTransition{
+				EscrowID: rt.id,
+				Nonce:    tx.GetFinishInference().InferenceId,
+				Kind:     accounting.ProtocolFinishApplied,
+			})
+		case tx.GetValidation() != nil:
+			if event := r.validationStatusEvent(rt, tx.GetValidation().InferenceId); event != nil {
+				events = append(events, event)
+			}
+		case tx.GetValidationVote() != nil:
+			if event := r.validationStatusEvent(rt, tx.GetValidationVote().InferenceId); event != nil {
+				events = append(events, event)
+			}
+		}
+	}
+	for slotID, stats := range rt.proxy.sm.SnapshotStateNoInferences().HostStats {
+		if stats != nil {
+			events = append(events, accounting.HostStatsObserved{
+				EscrowID: rt.id, SlotID: slotID, Stats: *stats,
+			})
+		}
+	}
+	events = append(events, accounting.DiffApplied{
+		EscrowID: rt.id, Nonce: diff.Nonce, Inference: hasStart,
+	})
+	return r.applyBatch(events)
+}
+
+func (r *gatewayAccountingRecorder) validationStatusEvent(rt *devshardRuntime, nonce uint64) accounting.Event {
+	record, found := rt.proxy.sm.GetCommittedRecord(nonce)
+	if !found {
+		return nil
+	}
+	var kind accounting.ProtocolTransitionKind
+	switch record.Status {
+	case types.StatusChallenged:
+		kind = accounting.ProtocolChallenged
+	case types.StatusValidated:
+		kind = accounting.ProtocolValidated
+	case types.StatusInvalidated:
+		kind = accounting.ProtocolInvalidated
+	default:
+		return nil
+	}
+	return accounting.ProtocolTransition{EscrowID: rt.id, Nonce: nonce, Kind: kind}
+}
+
+func (r *gatewayAccountingRecorder) reconcilePending(rt *devshardRuntime) {
+	for _, pending := range r.service.Book.PendingTimeouts(rt.id) {
+		record, found := rt.proxy.sm.GetCommittedRecord(pending.Nonce)
+		if !found {
+			continue
+		}
+		switch record.Status {
+		case types.StatusTimedOut:
+			r.apply(accounting.TimeoutOutcomeRecorded{
+				EscrowID: rt.id,
+				Nonce:    pending.Nonce,
+				Outcome:  accounting.TimeoutApplied,
+			})
+		case types.StatusFinished, types.StatusChallenged, types.StatusValidated, types.StatusInvalidated:
+			if pending.Usage == "" {
+				r.apply(accounting.UsageUnknown{EscrowID: rt.id, Nonce: pending.Nonce})
+			}
+			r.apply(accounting.ProtocolTransition{
+				EscrowID: rt.id,
+				Nonce:    pending.Nonce,
+				Kind:     accounting.ProtocolFinishApplied,
+			})
+			if record.Status == types.StatusInvalidated {
+				r.apply(accounting.ProtocolTransition{
+					EscrowID: rt.id,
+					Nonce:    pending.Nonce,
+					Kind:     accounting.ProtocolInvalidated,
+				})
+			}
+		}
+	}
 }
 
 func (r *gatewayAccountingRecorder) recordEscrowPhase(escrowID string, phase types.SessionPhase) {
@@ -108,7 +280,15 @@ func (r *gatewayAccountingRecorder) recordEscrowPhase(escrowID string, phase typ
 	})
 }
 
+func (r *gatewayAccountingRecorder) recordSettled(escrowID string) {
+	r.apply(accounting.EscrowPhaseChanged{
+		EscrowID: escrowID,
+		Phase:    accounting.EscrowSettled,
+	})
+}
+
 func (r *gatewayAccountingRecorder) recordGhost(escrowID string, nonce uint64, reason, quarantine string) {
+	r.reconcileEscrow(escrowID)
 	noSend := accountingNoSendReason(reason)
 	// A recognized no_send_reason already carries the whole story.
 	detailReason := ""
@@ -135,16 +315,63 @@ func accountingNoSendReason(reason string) accounting.NoSendReason {
 	}
 }
 
-func (r *gatewayAccountingRecorder) recordRealSend(escrowID string, nonce uint64, quarantine string) {
+func (r *gatewayAccountingRecorder) recordRealSend(
+	escrowID string,
+	nonce uint64,
+	quarantine string,
+	session *user.Session,
+	sendTime time.Time,
+) {
+	r.reconcileEscrow(escrowID)
 	r.apply(accounting.RealSend{
 		EscrowID:      escrowID,
 		Nonce:         nonce,
 		DispatchPhase: currentAccountingPhase(),
 		Quarantine:    accountingQuarantine(quarantine),
 	})
+	r.scheduleTimeoutEligibility(escrowID, nonce, session, sendTime)
+}
+
+func (r *gatewayAccountingRecorder) scheduleTimeoutEligibility(
+	escrowID string,
+	nonce uint64,
+	session *user.Session,
+	sendTime time.Time,
+) {
+	if session == nil {
+		return
+	}
+	_, deadline := session.TimeoutDeadline(nonce, sendTime)
+	r.schedule(deadline, func() {
+		tracked := r.runtime(escrowID)
+		if tracked == nil || tracked.rt == nil || tracked.rt.proxy == nil ||
+			tracked.rt.proxy.sm == nil {
+			return
+		}
+		if record, found := tracked.rt.proxy.sm.GetCommittedRecord(nonce); found {
+			switch record.Status {
+			case types.StatusFinished, types.StatusChallenged, types.StatusValidated,
+				types.StatusInvalidated, types.StatusTimedOut:
+				return
+			}
+		}
+		kind, currentDeadline := session.TimeoutDeadline(nonce, sendTime)
+		if currentDeadline.After(time.Now()) {
+			r.scheduleTimeoutEligibility(escrowID, nonce, session, sendTime)
+			return
+		}
+		r.apply(accounting.TimeoutRequired{
+			EscrowID:        escrowID,
+			Nonce:           nonce,
+			Kind:            accounting.TimeoutKind(kind),
+			EvaluationPhase: currentAccountingPhase(),
+			FailureOrigin:   accounting.FailureTransportUnknown,
+		})
+	})
 }
 
 func (r *gatewayAccountingRecorder) recordUsage(escrowID string, nonce, winnerNonce uint64) {
+	r.reconcileEscrow(escrowID)
 	switch {
 	case winnerNonce == 0:
 		r.apply(accounting.UsageUnknown{EscrowID: escrowID, Nonce: nonce})
@@ -159,13 +386,85 @@ func (r *gatewayAccountingRecorder) recordTimeout(
 	escrowID string,
 	nonce uint64,
 	kind, action, reason, detailReason, timeoutReason string,
+	session *user.Session,
+	sendTime time.Time,
 ) {
-	if action == "started" || action == "completed" || action == "failed" ||
-		(action == "skipped" && timeoutSkipRequiresAccounting(reason)) {
+	r.reconcileEscrow(escrowID)
+	if action == "started" {
+		if session == nil {
+			r.recordTimeoutNow(
+				escrowID, nonce, accounting.TimeoutKind(kind), action,
+				reason, detailReason, timeoutReason,
+			)
+		}
+		return
+	}
+	if action == "skipped" {
+		if timeoutSkipRequiresAccounting(reason) {
+			r.recordTimeoutAtDeadline(
+				escrowID, nonce, accounting.TimeoutKind(kind), reason,
+				detailReason, timeoutReason, session, sendTime,
+			)
+		}
+		return
+	}
+	r.recordTimeoutNow(
+		escrowID, nonce, accounting.TimeoutKind(kind), action, reason, detailReason, timeoutReason,
+	)
+}
+
+func (r *gatewayAccountingRecorder) recordTimeoutAtDeadline(
+	escrowID string,
+	nonce uint64,
+	fallbackKind accounting.TimeoutKind,
+	reason, detailReason, timeoutReason string,
+	session *user.Session,
+	sendTime time.Time,
+) {
+	if session == nil {
+		r.recordTimeoutNow(
+			escrowID, nonce, fallbackKind, "skipped",
+			reason, detailReason, timeoutReason,
+		)
+		return
+	}
+	kind, deadline := session.TimeoutDeadline(nonce, sendTime)
+	if deadline.After(time.Now()) {
+		r.schedule(deadline, func() {
+			r.recordTimeoutAtDeadline(
+				escrowID, nonce, fallbackKind, reason,
+				detailReason, timeoutReason, session, sendTime,
+			)
+		})
+		return
+	}
+	if tracked := r.runtime(escrowID); tracked != nil && tracked.rt != nil &&
+		tracked.rt.proxy != nil && tracked.rt.proxy.sm != nil {
+		if record, found := tracked.rt.proxy.sm.GetCommittedRecord(nonce); found {
+			switch record.Status {
+			case types.StatusFinished, types.StatusChallenged, types.StatusValidated,
+				types.StatusInvalidated, types.StatusTimedOut:
+				return
+			}
+		}
+	}
+	r.recordTimeoutNow(
+		escrowID, nonce, accounting.TimeoutKind(kind), "skipped",
+		reason, detailReason, timeoutReason,
+	)
+}
+
+func (r *gatewayAccountingRecorder) recordTimeoutNow(
+	escrowID string,
+	nonce uint64,
+	kind accounting.TimeoutKind,
+	action, reason, detailReason, timeoutReason string,
+) {
+	if action == "started" || action == "completed" || action == "failed" || action == "skipped" {
 		r.apply(accounting.TimeoutRequired{
 			EscrowID:        escrowID,
 			Nonce:           nonce,
-			Kind:            accounting.TimeoutKind(kind),
+			Kind:            kind,
 			EvaluationPhase: currentAccountingPhase(),
 			FailureOrigin:   accountingFailureOrigin(detailReason),
 			DetailReason:    detailReason,
@@ -175,7 +474,7 @@ func (r *gatewayAccountingRecorder) recordTimeout(
 	switch {
 	case action == "completed":
 		outcome = accounting.TimeoutApplied
-	case action == "skipped" && timeoutSkipRequiresAccounting(reason):
+	case action == "skipped":
 		outcome = accounting.TimeoutSkipped
 	case action == "failed":
 		outcome = accounting.TimeoutOutcome(reason)
@@ -282,7 +581,7 @@ func accountingEscrowPhase(phase types.SessionPhase) accounting.EscrowPhase {
 	case types.PhaseFinalizing:
 		return accounting.EscrowFinalizing
 	case types.PhaseSettlement:
-		return accounting.EscrowSettled
+		return accounting.EscrowFinalized
 	default:
 		return accounting.EscrowActive
 	}
@@ -335,19 +634,27 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
-func startAccountingServer(g *Gateway, address string) *http.Server {
+func startAccountingServer(g *Gateway, address string) (*http.Server, error) {
 	if g == nil || g.accounting == nil || strings.TrimSpace(address) == "" {
-		return nil
+		return nil, nil
 	}
 	server := &http.Server{
-		Addr:    address,
-		Handler: g.accounting.handler(accountingCurrentEpoch(g)),
+		Addr:              address,
+		Handler:           g.accounting.handler(accountingCurrentEpoch(g)),
+		ReadHeaderTimeout: 5 * time.Second,
+		ReadTimeout:       15 * time.Second,
+		WriteTimeout:      30 * time.Second,
+		IdleTimeout:       time.Minute,
+	}
+	listener, err := net.Listen("tcp", address)
+	if err != nil {
+		return nil, fmt.Errorf("listen on accounting address %s: %w", address, err)
 	}
 	go func() {
 		log.Printf("devshard accounting API listening on %s", address)
-		if err := server.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("devshard accounting API stopped: %v", err)
 		}
 	}()
-	return server
+	return server, nil
 }

@@ -57,7 +57,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	filter := QueryFilter{
 		EpochIndex: epoch,
 		Model:      strings.TrimSpace(r.URL.Query().Get("model")),
-		EscrowIDs:  escrowIDValues(r),
+		EscrowIDs:  r.URL.Query()["escrow_id"],
 	}
 	switch len(parts) {
 	case 2:
@@ -102,7 +102,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 func (h *Handler) serveEpochs(w http.ResponseWriter, r *http.Request) {
 	epochs := h.book.Epochs(QueryFilter{
 		Model:     strings.TrimSpace(r.URL.Query().Get("model")),
-		EscrowIDs: escrowIDValues(r),
+		EscrowIDs: r.URL.Query()["escrow_id"],
 	})
 	writeJSON(w, http.StatusOK, struct {
 		SchemaVersion int            `json:"schema_version"`
@@ -125,20 +125,6 @@ func (h *Handler) resolveEpoch(r *http.Request, value string) (uint64, error) {
 		return 0, errors.New("invalid epoch")
 	}
 	return epoch, nil
-}
-
-func escrowIDValues(r *http.Request) []string {
-	values := r.URL.Query()["escrow_id"]
-	result := make([]string, 0, len(values))
-	for _, value := range values {
-		for _, escrowID := range strings.Split(value, ",") {
-			escrowID = strings.TrimSpace(escrowID)
-			if escrowID != "" {
-				result = append(result, escrowID)
-			}
-		}
-	}
-	return result
 }
 
 func writeJSON(w http.ResponseWriter, status int, value any) {

@@ -2,6 +2,7 @@ package main
 
 import (
 	"testing"
+	"time"
 
 	"devshard/accounting"
 	"devshard/types"
@@ -27,8 +28,8 @@ func TestGatewayAccountingRecorderMapsGatewayEvents(t *testing.T) {
 	recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true})
 	recorder.recordGhost("escrow-1", 1, "participant_throttled_no_send", "probe")
 	recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 2, Inference: true})
-	recorder.recordRealSend("escrow-1", 2, "shadow")
-	recorder.recordTimeout("escrow-1", 2, "refused", "started", "none", "no_receipt", "none")
+	recorder.recordRealSend("escrow-1", 2, "shadow", nil, time.Time{})
+	recorder.recordTimeout("escrow-1", 2, "refused", "started", "none", "no_receipt", "none", nil, time.Time{})
 	pending := book.Query(accounting.QueryFilter{EpochIndex: 7})
 	var pendingTimeouts uint64
 	for _, record := range pending {
@@ -40,7 +41,7 @@ func TestGatewayAccountingRecorderMapsGatewayEvents(t *testing.T) {
 		}
 	}
 	require.Equal(t, uint64(1), pendingTimeouts)
-	recorder.recordTimeout("escrow-1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "unknown")
+	recorder.recordTimeout("escrow-1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "unknown", nil, time.Time{})
 
 	records := book.Query(accounting.QueryFilter{EpochIndex: 7})
 	require.Len(t, records, 2)
@@ -79,14 +80,14 @@ func TestGatewayAccountingRecorderIgnoresFinishedTimeoutRace(t *testing.T) {
 		},
 	}}))
 	recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true})
-	recorder.recordRealSend("escrow-1", 1, "none")
+	recorder.recordRealSend("escrow-1", 1, "none", nil, time.Time{})
 	recorder.apply(accounting.ProtocolTransition{
 		EscrowID: "escrow-1",
 		Nonce:    1,
 		Kind:     accounting.ProtocolFinishApplied,
 	})
 	recorder.recordUsage("escrow-1", 1, 1)
-	recorder.recordTimeout("escrow-1", 1, "execution", "skipped", "nonce_already_finished", "", "nonce_already_finished")
+	recorder.recordTimeout("escrow-1", 1, "execution", "skipped", "nonce_already_finished", "", "nonce_already_finished", nil, time.Time{})
 
 	record := book.Query(accounting.QueryFilter{EpochIndex: 7})[0]
 	require.Equal(t, uint64(1), record.Dispositions[accounting.DispositionFinishedUsed])
@@ -123,16 +124,16 @@ func TestGatewayAccountingUnknownReasonMarksOnlyRealGaps(t *testing.T) {
 	t.Run("applied timeout without a receipt", func(t *testing.T) {
 		book, recorder := newBook(t)
 		recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true})
-		recorder.recordRealSend("escrow-1", 1, "none")
-		recorder.recordTimeout("escrow-1", 1, "refused", "completed", "none", "no_receipt", "none")
+		recorder.recordRealSend("escrow-1", 1, "none", nil, time.Time{})
+		recorder.recordTimeout("escrow-1", 1, "refused", "completed", "none", "no_receipt", "none", nil, time.Time{})
 		require.Zero(t, unknownTotal(book))
 	})
 
 	t.Run("insufficient votes", func(t *testing.T) {
 		book, recorder := newBook(t)
 		recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true})
-		recorder.recordRealSend("escrow-1", 1, "none")
-		recorder.recordTimeout("escrow-1", 1, "refused", "failed", "insufficient_votes", "not_finished", "")
+		recorder.recordRealSend("escrow-1", 1, "none", nil, time.Time{})
+		recorder.recordTimeout("escrow-1", 1, "refused", "failed", "insufficient_votes", "not_finished", "", nil, time.Time{})
 		require.Zero(t, unknownTotal(book))
 	})
 
@@ -146,8 +147,8 @@ func TestGatewayAccountingUnknownReasonMarksOnlyRealGaps(t *testing.T) {
 	t.Run("skip with an unlisted reason", func(t *testing.T) {
 		book, recorder := newBook(t)
 		recorder.apply(accounting.DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true})
-		recorder.recordRealSend("escrow-1", 1, "none")
-		recorder.recordTimeout("escrow-1", 1, "refused", "skipped", "brand_new_skip", "", "brand_new_skip")
+		recorder.recordRealSend("escrow-1", 1, "none", nil, time.Time{})
+		recorder.recordTimeout("escrow-1", 1, "refused", "skipped", "brand_new_skip", "", "brand_new_skip", nil, time.Time{})
 		require.Equal(t, uint64(1), unknownTotal(book))
 	})
 }
@@ -160,4 +161,8 @@ func TestGatewayTimeoutFailureActionPreservesLocalApplication(t *testing.T) {
 	})
 	require.Equal(t, "completed", action)
 	require.Equal(t, "timeout_diff_delivery_failed", reason)
+}
+
+func TestProtocolSettlementPhaseIsOnlyFinalized(t *testing.T) {
+	require.Equal(t, accounting.EscrowFinalized, accountingEscrowPhase(types.PhaseSettlement))
 }

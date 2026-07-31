@@ -137,6 +137,35 @@ func TestGatewayAccountingRecordsGhostDispatch(t *testing.T) {
 	require.Equal(t, accounting.PhaseNormal, ghosts[0].DispatchPhase)
 }
 
+func TestGatewayAccountingRecordsTimeoutAtProtocolDeadline(t *testing.T) {
+	shrinkTimeoutBuffer(t)
+	env := setupTestProxy(t, 3, nil, true)
+	service, err := accounting.OpenService(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	require.NoError(t, err)
+	recorder := newGatewayAccountingRecorder(service)
+	t.Cleanup(func() { require.NoError(t, recorder.close()) })
+
+	env.proxy.redundancy.devshardID = "escrow-proxy"
+	env.session.SetEpochID(lifecycleEpoch)
+	recorder.attachRuntime(&devshardRuntime{
+		id: "escrow-proxy", model: "llama", proxy: env.proxy, session: env.session,
+	})
+	prepared, err := env.session.PrepareInference(defaultParams())
+	require.NoError(t, err)
+	recorder.recordRealSend(
+		"escrow-proxy", prepared.Nonce(), "none", env.session, time.Now().Add(-time.Hour),
+	)
+
+	require.Eventually(t, func() bool {
+		for _, record := range service.Book.Query(accounting.QueryFilter{EpochIndex: lifecycleEpoch}) {
+			if record.Dispositions[accounting.DispositionUnfinishedRefused] == 1 {
+				return true
+			}
+		}
+		return false
+	}, time.Second, 10*time.Millisecond)
+}
+
 func protocolMissedTotal(env *testProxyEnv) uint64 {
 	var total uint64
 	for _, stats := range env.sm.SnapshotStateNoInferences().HostStats {

@@ -43,7 +43,7 @@ func deriveCredit(record ParticipantRecord) credit {
 	}
 	c.protocolCompleted = c.assigned - c.protocolMisses
 	c.nonExecutionCredit = c.protocolCompleted - c.executed
-	c.unresolved = record.InFlight + c.timeoutPending + record.Unclassified
+	c.unresolved = record.InFlight + record.PendingClassification + c.timeoutPending + record.Unclassified
 	return c
 }
 
@@ -209,4 +209,26 @@ func TestNonExecutionCreditIdentityBreaksOnCrossCheckError(t *testing.T) {
 	require.NotEqual(t,
 		total.nonExecutionCredit,
 		total.protocolOnly+total.ghost+total.timeoutAccountingFailure+total.unresolved)
+}
+
+func TestCrossCheckErrorsCannotCancelAcrossEscrows(t *testing.T) {
+	book := NewBook()
+	registerTestEscrow(t, book, "escrow-a", 7, "model-a", EscrowActive)
+	registerTestEscrow(t, book, "escrow-b", 7, "model-a", EscrowActive)
+
+	require.NoError(t, book.Apply(DiffApplied{EscrowID: "escrow-a", Nonce: 1, Inference: true}))
+	require.NoError(t, book.Apply(RealSend{EscrowID: "escrow-a", Nonce: 1}))
+	require.NoError(t, book.Apply(TimeoutRequired{
+		EscrowID: "escrow-a", Nonce: 1, Kind: TimeoutRefused,
+	}))
+	require.NoError(t, book.Apply(TimeoutOutcomeRecorded{
+		EscrowID: "escrow-a", Nonce: 1, Outcome: TimeoutApplied,
+	}))
+
+	require.NoError(t, book.Apply(HostStatsObserved{
+		EscrowID: "escrow-b", SlotID: 1, Stats: types.HostStats{Missed: 1},
+	}))
+
+	record := participantRecord(t, book.Query(QueryFilter{EpochIndex: 7}), "participant-1")
+	require.Equal(t, uint64(2), record.CrossChecks.ErrorCount)
 }

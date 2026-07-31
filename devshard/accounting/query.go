@@ -13,7 +13,10 @@ type participantKey struct {
 func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
+	return b.queryLocked(filter)
+}
 
+func (b *Book) queryLocked(filter QueryFilter) []ParticipantRecord {
 	escrowFilter := makeStringSet(filter.EscrowIDs)
 	records := make(map[participantKey]*ParticipantRecord)
 	nonceAdded := make(map[participantKey]map[string]struct{})
@@ -66,12 +69,18 @@ func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
 			record.ProtocolInvalid += slot.ProtocolInvalid
 			record.UnresolvedChallenges += slot.UnresolvedChallenges
 			record.InFlight += slot.InFlight
+			record.PendingClassification += slot.PendingClassification
 			record.Unclassified += slot.Unclassified
+			record.Overclassified += slot.Overclassified
 			record.UnknownReasonTotal += slot.UnknownReasonTotal
 			record.CrossChecks.TimeoutApplied += slot.TimeoutOutcomes[TimeoutApplied]
 			record.CrossChecks.HostMissed += slot.ProtocolMisses
 			record.CrossChecks.RecordedInvalid += slot.RecordedInvalid
 			record.CrossChecks.HostInvalid += slot.ProtocolInvalid
+			record.CrossChecks.ErrorCount +=
+				absoluteDifference(slot.TimeoutOutcomes[TimeoutApplied], slot.ProtocolMisses) +
+					absoluteDifference(slot.RecordedInvalid, slot.ProtocolInvalid) +
+					slot.Overclassified
 			for disposition, count := range slot.Dispositions {
 				record.Dispositions[disposition] += count
 			}
@@ -93,9 +102,6 @@ func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
 
 	result := make([]ParticipantRecord, 0, len(records))
 	for _, record := range records {
-		record.CrossChecks.ErrorCount =
-			absoluteDifference(record.CrossChecks.TimeoutApplied, record.CrossChecks.HostMissed) +
-				absoluteDifference(record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid)
 		sort.Slice(record.LatestNonces, func(i, j int) bool {
 			return record.LatestNonces[i].EscrowID < record.LatestNonces[j].EscrowID
 		})
@@ -149,12 +155,20 @@ func buildSlotRecord(escrowID string, escrow *escrowBook, slotID uint32) SlotRec
 	}
 	slot.RecordedInvalid = escrow.invalidBySlot[slotID]
 	for _, state := range escrow.live {
-		if state.slotID == slotID && state.sent && !state.finish && !state.timeoutRequired {
+		if state.slotID != slotID {
+			continue
+		}
+		if state.sent && !state.finish && !state.timeoutRequired {
 			slot.InFlight++
+		} else if state.counted == nil {
+			slot.PendingClassification++
 		}
 	}
-	if classified+slot.InFlight < slot.AssignedNonces {
-		slot.Unclassified = slot.AssignedNonces - classified - slot.InFlight
+	accounted := classified + slot.InFlight + slot.PendingClassification
+	if accounted < slot.AssignedNonces {
+		slot.Unclassified = slot.AssignedNonces - accounted
+	} else if accounted > slot.AssignedNonces {
+		slot.Overclassified = accounted - slot.AssignedNonces
 	}
 	if stats, ok := escrow.hostStats[slotID]; ok {
 		slot.ProtocolMisses = uint64(stats.Missed)
@@ -175,6 +189,7 @@ func counterHasUnknownReason(key CounterKey) bool {
 
 func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 	b.mu.RLock()
+	defer b.mu.RUnlock()
 	recordingErrors := b.eventErrors
 	writerErrors := b.writerErrors
 	epochSet := make(map[uint64]struct{})
@@ -190,8 +205,6 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 		}
 		epochSet[escrow.metadata.CreationEpoch] = struct{}{}
 	}
-	b.mu.RUnlock()
-
 	epochs := make([]uint64, 0, len(epochSet))
 	for epoch := range epochSet {
 		epochs = append(epochs, epoch)
@@ -200,7 +213,7 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 
 	result := make([]EpochSummary, 0, len(epochs))
 	for _, epoch := range epochs {
-		records := b.Query(QueryFilter{
+		records := b.queryLocked(QueryFilter{
 			EpochIndex: epoch,
 			Model:      filter.Model,
 			EscrowIDs:  filter.EscrowIDs,
@@ -222,7 +235,9 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 			summary.ProtocolInvalid += record.ProtocolInvalid
 			summary.UnresolvedChallenges += record.UnresolvedChallenges
 			summary.InFlight += record.InFlight
+			summary.PendingClassification += record.PendingClassification
 			summary.Unclassified += record.Unclassified
+			summary.Overclassified += record.Overclassified
 			summary.UnknownReasonTotal += record.UnknownReasonTotal
 			summary.CrossCheckErrors += record.CrossChecks.ErrorCount
 			for disposition, count := range record.Dispositions {

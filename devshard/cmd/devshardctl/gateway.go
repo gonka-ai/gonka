@@ -71,6 +71,10 @@ type Gateway struct {
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
 	replenishmentInFlight map[string]struct{}
+	workerCtx             context.Context
+	workerCancel          context.CancelFunc
+	workerMu              sync.Mutex
+	workerWG              sync.WaitGroup
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
 
@@ -692,6 +696,7 @@ func (rt *devshardRuntime) load(weight float64) float64 {
 }
 
 func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultModel string) *Gateway {
+	workerCtx, workerCancel := context.WithCancel(context.Background())
 	byID := make(map[string]*devshardRuntime, len(runtimes))
 	for _, rt := range runtimes {
 		if !rt.activeConfigured {
@@ -714,6 +719,8 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		rotationBreakers:   make(map[string]*rotationBreaker),
 		settlementInFlight: make(map[string]struct{}),
 		suspiciousHosts:    make(map[string]struct{}),
+		workerCtx:          workerCtx,
+		workerCancel:       workerCancel,
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
 	g.metrics.AttachGateway(g)
@@ -762,9 +769,13 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 			g.replaceSuspiciousHosts(hosts)
 		}
 	}
-	g.reconcilePendingSettlements()
+	g.goWorker(func(ctx context.Context) { g.reconcileCommitments(ctx, settings) })
 	g.startEscrowRotatorIfEnabled()
-	go g.balanceCheckLoop()
+	// Settle escrows left pending by a pre-restart drain. Runs synchronously
+	// so the store read completes before the gateway serves traffic; the
+	// settlements it schedules run in their own goroutines.
+	g.reconcilePendingSettlements()
+	g.goWorker(g.balanceCheckLoop)
 	return g
 }
 
@@ -874,12 +885,31 @@ func (g *Gateway) checkBalances() {
 }
 
 // balanceCheckLoop periodically checks each active runtime's escrow limits.
-func (g *Gateway) balanceCheckLoop() {
+func (g *Gateway) goWorker(run func(context.Context)) {
+	g.workerMu.Lock()
+	if g.workerCtx.Err() != nil {
+		g.workerMu.Unlock()
+		return
+	}
+	g.workerWG.Add(1)
+	g.workerMu.Unlock()
+	go func() {
+		defer g.workerWG.Done()
+		run(g.workerCtx)
+	}()
+}
+
+func (g *Gateway) balanceCheckLoop(ctx context.Context) {
 	g.checkBalances()
 	ticker := time.NewTicker(balanceCheckInterval)
 	defer ticker.Stop()
-	for range ticker.C {
-		g.checkBalances()
+	for {
+		select {
+		case <-ticker.C:
+			g.checkBalances()
+		case <-ctx.Done():
+			return
+		}
 	}
 }
 
@@ -1272,9 +1302,37 @@ func (g *Gateway) Close() error {
 		g.phaseGate.Stop()
 	}
 	g.stopEscrowRotator()
-	for _, rt := range g.runtimeOrder {
-		if err := rt.close(); err != nil && firstErr == nil {
-			firstErr = err
+	g.workerMu.Lock()
+	if g.workerCancel != nil {
+		g.workerCancel()
+	}
+	g.workerMu.Unlock()
+	g.workerWG.Wait()
+	g.mu.Lock()
+	runtimes := append([]*devshardRuntime(nil), g.runtimeOrder...)
+	g.mu.Unlock()
+	deadline := time.Now().Add(30 * time.Second)
+	pending := false
+	for time.Now().Before(deadline) {
+		pending = false
+		for _, rt := range runtimes {
+			pending = pending || rt.escrowHasBackgroundWork()
+		}
+		if !pending {
+			break
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if g.accounting != nil {
+		g.accounting.reconcileAll()
+	}
+	if pending {
+		firstErr = fmt.Errorf("gateway shutdown timed out with background work")
+	} else {
+		for _, rt := range runtimes {
+			if err := rt.close(); err != nil && firstErr == nil {
+				firstErr = err
+			}
 		}
 	}
 	if g.perfStore != nil {
@@ -1403,6 +1461,12 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 			g.finalizeMu.Lock()
 			defer g.finalizeMu.Unlock()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
+			capture := &gatewayStatusResponseWriter{ResponseWriter: w}
+			runtimes[0].handler.ServeHTTP(capture, r)
+			if status := capture.statusCode(); status >= 200 && status < 300 {
+				g.markDevshardInactiveAfterFinalize(runtimes[0].id, runtimes[0])
+			}
+			return
 		}
 		runtimes[0].handler.ServeHTTP(w, r)
 		return
@@ -3979,10 +4043,12 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	modelID := rt.model
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
-			go g.escrowChecker.TriggerCheck(escrowID, func() {
-				g.deactivateDevshardByID(escrowID)
-				// Escrow no longer exists on chain -- nothing to settle.
-				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+			g.goWorker(func(context.Context) {
+				g.escrowChecker.TriggerCheck(escrowID, func() {
+					g.deactivateDevshardByID(escrowID)
+					// Escrow no longer exists on chain -- nothing to settle.
+					g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+				})
 			})
 		}
 	}
@@ -4167,19 +4233,19 @@ func (g *Gateway) scheduleDepletedEscrowReplacement(id, modelID, reason string) 
 	g.replenishmentInFlight[id] = struct{}{}
 	g.replenishmentMu.Unlock()
 
-	go func() {
+	g.goWorker(func(workerCtx context.Context) {
 		defer func() {
 			g.replenishmentMu.Lock()
 			delete(g.replenishmentInFlight, id)
 			g.replenishmentMu.Unlock()
 		}()
 
-		ctx, cancel := context.WithTimeout(context.Background(), autoSettlementAttemptTimeout)
+		ctx, cancel := context.WithTimeout(workerCtx, autoSettlementAttemptTimeout)
 		defer cancel()
 		if err := g.replaceDepletedEscrow(ctx, id, modelID, reason); err != nil {
 			log.Printf("escrow_depletion_replacement_failed escrow=%s model=%q reason=%q error=%v", id, modelID, reason, err)
 		}
-	}()
+	})
 }
 
 func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason string) error {
@@ -4246,7 +4312,7 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 	g.settlementInFlight[id] = struct{}{}
 	g.settlementMu.Unlock()
 
-	go func() {
+	g.goWorker(func(workerCtx context.Context) {
 		defer func() {
 			g.settlementMu.Lock()
 			delete(g.settlementInFlight, id)
@@ -4254,7 +4320,7 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 		}()
 
 		for attempt := 1; attempt <= autoSettlementMaxAttempts; attempt++ {
-			ctx, cancel := context.WithTimeout(context.Background(), autoSettlementAttemptTimeout)
+			ctx, cancel := context.WithTimeout(workerCtx, autoSettlementAttemptTimeout)
 			result, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{})
 			cancel()
 			if err == nil {
@@ -4281,9 +4347,13 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 				g.retireRuntime(id, reason)
 				return
 			}
-			time.Sleep(autoSettlementRetryInterval)
+			select {
+			case <-time.After(autoSettlementRetryInterval):
+			case <-workerCtx.Done():
+				return
+			}
 		}
-	}()
+	})
 }
 
 func removeDevshardStorage(storagePath, baseStorageDir string) error {

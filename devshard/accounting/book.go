@@ -11,7 +11,10 @@ import (
 	"devshard/types"
 )
 
-const dedupeWindow = 4096
+const (
+	dedupeWindow                = 4096
+	maxMutableTimeoutsPerEscrow = 10_000
+)
 
 type Book struct {
 	mu           sync.RWMutex
@@ -34,8 +37,9 @@ type escrowBook struct {
 	// seen deduplicates replayed callbacks. Events are used as their own keys,
 	// which requires every event type routed through withEscrowEvent to be a
 	// comparable struct (TestEventTypesAreComparable enforces this).
-	seen      map[Event]struct{}
-	seenOrder []Event
+	seen         map[Event]struct{}
+	seenOrder    []Event
+	pendingOrder []uint64
 }
 
 type nonceState struct {
@@ -119,7 +123,33 @@ func (b *Book) Apply(event Event) error {
 	}
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	return b.applyLocked(event)
+}
 
+func (b *Book) ApplyBatch(events []Event) error {
+	normalized := make([]Event, 0, len(events))
+	for _, event := range events {
+		if event == nil {
+			return errors.New("accounting event is nil")
+		}
+		value, err := eventValue(event)
+		if err != nil {
+			return err
+		}
+		normalized = append(normalized, value)
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	for _, event := range normalized {
+		if err := b.applyLocked(event); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (b *Book) applyLocked(event Event) error {
+	var err error
 	switch e := event.(type) {
 	case EscrowRegistered:
 		err = b.registerEscrow(e.Metadata)
@@ -128,7 +158,12 @@ func (b *Book) Apply(event Event) error {
 			if !validEscrowPhase(e.Phase) {
 				return fmt.Errorf("invalid escrow phase %q", e.Phase)
 			}
-			escrow.metadata.Phase = e.Phase
+			if escrowPhaseRank(e.Phase) > escrowPhaseRank(escrow.metadata.Phase) {
+				escrow.metadata.Phase = e.Phase
+			}
+			if e.Phase == EscrowFinalized || e.Phase == EscrowSettled {
+				escrow.compactAllTimeouts()
+			}
 			return nil
 		})
 	case DiffApplied:
@@ -237,7 +272,9 @@ func (b *Book) registerEscrow(metadata EscrowMetadata) error {
 		if !sameMetadata(existing.metadata, normalized) {
 			return fmt.Errorf("escrow %q already registered with different metadata", normalized.EscrowID)
 		}
-		existing.metadata.Phase = normalized.Phase
+		if escrowPhaseRank(normalized.Phase) > escrowPhaseRank(existing.metadata.Phase) {
+			existing.metadata.Phase = normalized.Phase
+		}
 		return nil
 	}
 	b.escrows[normalized.EscrowID] = &escrowBook{
@@ -257,13 +294,18 @@ func (b *Book) withEscrowEvent(escrowID string, event Event, apply func(*escrowB
 	if err != nil {
 		return err
 	}
-	if escrow.wasSeen(event) {
+	if _, seen := escrow.seen[event]; seen {
 		return nil
 	}
 	if err := apply(escrow); err != nil {
 		return err
 	}
-	escrow.markSeen(event)
+	escrow.seen[event] = struct{}{}
+	escrow.seenOrder = append(escrow.seenOrder, event)
+	if len(escrow.seenOrder) > dedupeWindow {
+		delete(escrow.seen, escrow.seenOrder[0])
+		escrow.seenOrder = escrow.seenOrder[1:]
+	}
 	return nil
 }
 
@@ -333,6 +375,12 @@ func (b *Book) applyProtocolTransition(event ProtocolTransition) error {
 
 		state, err := escrow.mutableNonce(event.Nonce)
 		if err != nil {
+			if event.Kind == ProtocolReceiptApplied || event.Kind == ProtocolFinishApplied {
+				// Live attempt state is intentionally not persisted. A committed
+				// diff tail may therefore reference a nonce that recovery can
+				// only leave visible as unclassified.
+				return nil
+			}
 			return err
 		}
 		switch event.Kind {
@@ -433,12 +481,23 @@ func (b *Book) applyTimeoutRequired(event TimeoutRequired) error {
 		if err != nil {
 			return err
 		}
+		if state.timeoutRequired {
+			if state.failureOrigin == FailureTransportUnknown && origin != FailureTransportUnknown {
+				state.failureOrigin = origin
+			}
+			if state.detailReason == "" || state.detailReason == "unknown" {
+				state.detailReason = normalizeDetailReason(event.DetailReason)
+			}
+			escrow.reclassify(event.Nonce, state)
+			return nil
+		}
 		state.timeoutRequired = true
 		state.timeoutKind = event.Kind
 		state.timeoutPhase = phase
 		state.failureOrigin = origin
 		state.detailReason = normalizeDetailReason(event.DetailReason)
 		escrow.reclassify(event.Nonce, state)
+		escrow.rememberMutableTimeout(event.Nonce)
 		return nil
 	})
 }
@@ -583,25 +642,29 @@ func (e *escrowBook) decrement(key CounterKey) {
 	e.counters[key]--
 }
 
-func (e *escrowBook) wasSeen(event Event) bool {
-	_, ok := e.seen[event]
-	return ok
+func (e *escrowBook) rememberMutableTimeout(nonce uint64) {
+	e.pendingOrder = append(e.pendingOrder, nonce)
+	e.trimMutableTimeouts()
 }
 
-func (e *escrowBook) markSeen(event Event) {
-	if event == nil {
-		return
+func (e *escrowBook) trimMutableTimeouts() {
+	for len(e.pendingOrder) > maxMutableTimeoutsPerEscrow {
+		oldest := e.pendingOrder[0]
+		e.pendingOrder = e.pendingOrder[1:]
+		state := e.live[oldest]
+		if state != nil && state.timeoutRequired && state.timeoutOutcome != TimeoutApplied {
+			delete(e.live, oldest)
+		}
 	}
-	if _, exists := e.seen[event]; exists {
-		return
+}
+
+func (e *escrowBook) compactAllTimeouts() {
+	for nonce, state := range e.live {
+		if state.timeoutRequired && state.timeoutOutcome != TimeoutApplied {
+			delete(e.live, nonce)
+		}
 	}
-	e.seen[event] = struct{}{}
-	e.seenOrder = append(e.seenOrder, event)
-	if len(e.seenOrder) <= dedupeWindow {
-		return
-	}
-	delete(e.seen, e.seenOrder[0])
-	e.seenOrder = e.seenOrder[1:]
+	e.pendingOrder = nil
 }
 
 func normalizeMetadata(metadata EscrowMetadata) (EscrowMetadata, error) {
@@ -745,7 +808,22 @@ func validTimeoutOutcome(outcome TimeoutOutcome) bool {
 }
 
 func validEscrowPhase(phase EscrowPhase) bool {
-	return phase == EscrowActive || phase == EscrowFinalizing || phase == EscrowSettled
+	return escrowPhaseRank(phase) > 0
+}
+
+func escrowPhaseRank(phase EscrowPhase) int {
+	switch phase {
+	case EscrowActive:
+		return 1
+	case EscrowFinalizing:
+		return 2
+	case EscrowFinalized:
+		return 3
+	case EscrowSettled:
+		return 4
+	default:
+		return 0
+	}
 }
 
 func AssignedNonceSlot(nonce, slotCount uint64) uint32 {
@@ -931,7 +1009,9 @@ func (b *Book) Restore(snapshot Snapshot) error {
 				timeoutReason:   pending.TimeoutReason,
 				counted:         &counted,
 			}
+			escrow.pendingOrder = append(escrow.pendingOrder, pending.Nonce)
 		}
+		escrow.trimMutableTimeouts()
 		restored[metadata.EscrowID] = escrow
 	}
 
@@ -964,6 +1044,35 @@ func (b *Book) EventErrors() uint64 {
 	b.mu.RLock()
 	defer b.mu.RUnlock()
 	return b.eventErrors
+}
+
+func (b *Book) LatestNonce(escrowID string) uint64 {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	if escrow := b.escrows[escrowID]; escrow != nil {
+		return escrow.latest
+	}
+	return 0
+}
+
+func (b *Book) PendingTimeouts(escrowID string) []PendingNonceSnapshot {
+	b.mu.RLock()
+	defer b.mu.RUnlock()
+	escrow := b.escrows[escrowID]
+	if escrow == nil {
+		return nil
+	}
+	pending := make([]PendingNonceSnapshot, 0, len(escrow.live))
+	for nonce, state := range escrow.live {
+		if state.timeoutRequired {
+			pending = append(pending, PendingNonceSnapshot{
+				Nonce: nonce,
+				Usage: state.usage,
+			})
+		}
+	}
+	sort.Slice(pending, func(i, j int) bool { return pending[i].Nonce < pending[j].Nonce })
+	return pending
 }
 
 func (b *Book) Prune(retentionEpochs uint64) {

@@ -152,10 +152,25 @@ func main() {
 	mustLoadParticipantThrottleState(gatewayStore)
 
 	gateway := mustBuildGateway(gatewayStore, gatewayState, runtimeOpts.baseStorageDir, flags)
-	defer gateway.Close()
-	statsServer := startAccountingServer(gateway, strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR")))
+	defer func() {
+		if err := gateway.Close(); err != nil {
+			log.Printf("close gateway: %v", err)
+		}
+	}()
+	if gateway.phaseGate != nil {
+		gateway.phaseGate.refresh()
+	}
+	statsServer, err := startAccountingServer(gateway, strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR")))
+	if err != nil {
+		log.Printf("start accounting server: %v", err)
+		return
+	}
 	if statsServer != nil {
-		defer statsServer.Close()
+		defer func() {
+			if err := statsServer.Close(); err != nil {
+				log.Printf("close accounting server: %v", err)
+			}
+		}()
 	}
 
 	handler := buildGatewayHandler(gateway, runtimeOpts)
@@ -644,14 +659,6 @@ func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
 	handler = adminAuthMiddleware(opts.adminAPIKey, handler)
 	handler = gateway.disabledMiddleware(handler)
 	return gateway.metrics.Wrap(handler)
-}
-
-func serveGateway(handler http.Handler, port string, runtimeCount int) {
-	addr := ":" + port
-	log.Printf("devshardctl gateway listening on %s (devshards=%d default_max_tokens=%d max_tokens_cap=%d)", addr, runtimeCount, DefaultRequestMaxTokens, RequestMaxTokensCap)
-	if err := http.ListenAndServe(addr, handler); err != nil {
-		log.Fatalf("server: %v", err)
-	}
 }
 
 func firstNonEmpty(values ...string) string {
