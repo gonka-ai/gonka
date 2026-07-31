@@ -156,6 +156,13 @@ func NewServer(
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
 
+	// First-class /v1/versions: broker-enriched mlnodes / poc_validation_inference
+	// (gateway PoC validation capacity). Registered after
+	// mountDeprecatedQueryAPIRoutes so it overwrites the thin/404 mount from
+	// RegisterHandlers — queryapi GetVersions is edge-api only, and the proxy
+	// never steers /v1/versions there.
+	e.GET("/v1/versions", s.getVersions)
+
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)
 	return s

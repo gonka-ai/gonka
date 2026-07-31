@@ -194,11 +194,14 @@ paths:
               schema: 
                 $ref: '#/components/schemas/RawProtoJson'
 
-  # ── Versions ──────────────────────────────────────────────────────────────
+  # ── Versions (edge-api only; proxy keeps /v1/versions on dapi for mlnodes) ─
   /v1/versions:
     get:
       operationId: GetVersions
       summary: API and chain node version information
+      description: |
+        Thin version info for edge-api. Public proxy never routes this path here;
+        dapi serves a broker-enriched response including mlnodes.
       responses:
         "200":
           description: Version info
@@ -522,7 +525,9 @@ components:
 
     EpochResponse:
       type: object
-      required: [block_height, latest_epoch, is_confirmation_poc_active, epoch_params, active_confirmation_poc_event, epoch_stages, next_epoch_stages, phase]
+      # active_confirmation_poc_event is absent when no confirmation PoC event
+      # is active.
+      required: [block_height, latest_epoch, is_confirmation_poc_active, epoch_params, epoch_stages, next_epoch_stages, phase]
       properties:
         block_height:
           $ref: "#/components/schemas/Int64"
@@ -603,7 +608,7 @@ components:
         utilization:                { type: number,  nullable: true }
         capacity:                   { type: integer, nullable: true }
 
-    # ── Versions ─────────────────────────────────────────────────────────────
+    # ── Versions (edge-api thin response; dapi adds mlnodes separately) ──────
     VersionsResponse:
       type: object
       required: [timestamp, api_version, node_version]
@@ -623,8 +628,8 @@ components:
         application_name: { type: string }
         version:          { type: string }
         commit:           { type: string }
-    NodeVersion:
 
+    NodeVersion:
       type: object
       required: [application_name, version, commit]
       properties:
@@ -651,8 +656,12 @@ components:
       type: object
       properties:
         # TODO: ThresholdSigningRequest
+        # Explicitly null (not omitted) when the signing request is not found —
+        # clients poll this endpoint and treat null as "not ready yet".
         signing_request:
-          $ref: '#/components/schemas/RawProtoJson'
+          nullable: true
+          allOf:
+            - $ref: '#/components/schemas/RawProtoJson'
         uncompressed_signature_128:
           type: string
           format: byte

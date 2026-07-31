@@ -146,6 +146,11 @@ func (h *Handlers) GetPricing(ctx echo.Context) error {
 // Change: Utilization per model is not populated — original derived it from a stats-storage
 // service (statsStorage.GetModelStatsByTime) that is not available in this package.
 // Capacity is populated via GetAllModelCapacities when dynamic pricing is enabled.
+//
+// NOT ROUTED: this handler is not in openapi.yaml and is not registered by
+// gen.RegisterHandlers. Dapi still serves /v1/governance/pricing with its own
+// handler (which does populate utilization). Do NOT expose this via edge-api
+// until utilization parity is resolved or the pricing system is redesigned.
 func (h *Handlers) GetGovernancePricing(ctx echo.Context) error {
 	qc := h.chain.InferenceQueryClient()
 	reqCtx := ctx.Request().Context()

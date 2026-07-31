@@ -9,6 +9,7 @@ import (
 	"strconv"
 
 	cryptotypes "github.com/cometbft/cometbft/proto/tendermint/crypto"
+	comettypes "github.com/cometbft/cometbft/types"
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
 	"github.com/golang/protobuf/proto"
 	"github.com/labstack/echo/v4"
@@ -34,17 +35,20 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 		return grpcErrorToHTTP(err)
 	}
 
+	if epochInfo.Params.EpochParams == nil {
+		return echo.NewHTTPError(http.StatusInternalServerError, "epoch params missing")
+	}
 	epochContext := inferencetypes.NewEpochContext(epochInfo.LatestEpoch, *epochInfo.Params.EpochParams)
 	nextEpochContext := epochContext.NextEpochContext()
-	epochParams, err := protoToRawJSON(&epochInfo.Params)
-	if err != nil {
-		logging.Error("Failed to encode epoch params", inferencetypes.Server, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode epoch params")
-	}
-	activeConfirmationPoc, err := protoToRawJSON(epochInfo.ActiveConfirmationPocEvent)
-	if err != nil {
-		logging.Error("Failed to encode confirmation PoC event", inferencetypes.Server, "error", err)
-		return echo.NewHTTPError(http.StatusInternalServerError, "failed to encode confirmation PoC event")
+	// Match legacy dapi: encode EpochParams (not full Params) via encoding/json
+	// so int64 fields stay numbers. ProtoMarshalJSON would nest Params and
+	// stringify int64s (epoch_length etc.).
+	//
+	// active_confirmation_poc_event is omitted when there is no active event.
+	var activeConfirmationPoc *gen.RawProtoJson
+	if epochInfo.ActiveConfirmationPocEvent != nil {
+		var raw gen.RawProtoJson = epochInfo.ActiveConfirmationPocEvent
+		activeConfirmationPoc = &raw
 	}
 	return ctx.JSON(http.StatusOK, gen.EpochResponse{
 		BlockHeight: gen.Int64(epochInfo.BlockHeight),
@@ -55,7 +59,7 @@ func (h *Handlers) GetEpoch(ctx echo.Context, epoch string) error {
 		Phase:                      string(epochContext.GetCurrentPhase(epochInfo.BlockHeight)),
 		EpochStages:                epochContext.GetEpochStages(),
 		NextEpochStages:            nextEpochContext.GetEpochStages(),
-		EpochParams:                epochParams,
+		EpochParams:                *epochInfo.Params.EpochParams,
 		IsConfirmationPocActive:    epochInfo.IsConfirmationPocActive,
 		ActiveConfirmationPocEvent: activeConfirmationPoc,
 	})
@@ -169,22 +173,30 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		logging.Error("Failed to get block+1", inferencetypes.Participants, "error", err)
 	}
 
+	// Convert gRPC proof ops to the comet crypto type once: it is both what
+	// proof verification needs and the exact type legacy dapi returned in the
+	// response (encoding/json shape).
+	var cryptoProofOps *cryptotypes.ProofOps
+	if result.ProofOps != nil {
+		if bz, err := json.Marshal(result.ProofOps); err == nil {
+			var converted cryptotypes.ProofOps
+			if err := json.Unmarshal(bz, &converted); err == nil {
+				cryptoProofOps = &converted
+			}
+		}
+	}
+
 	// Non-fatal server-side proof verification: confirms the returned value is
 	// anchored to the committed app hash at CreatedAtBlockHeight+1.
-	if result.ProofOps != nil && blockP1Resp != nil {
-		if bz, err := json.Marshal(result.ProofOps); err == nil {
-			var cryptoProofOps cryptotypes.ProofOps
-			if err := json.Unmarshal(bz, &cryptoProofOps); err == nil {
-				dataKey := inferencetypes.ActiveParticipantsFullKey(epoch)
-				verKey := "/inference/" + url.PathEscape(string(dataKey))
-				appHash := blockP1Resp.SdkBlock.Header.AppHash
-				if err := utils.VerifyUsingProofRt(&cryptoProofOps, appHash, verKey, result.Value); err != nil {
-					logging.Error("VerifyUsingProofRt failed", inferencetypes.Participants, "error", err)
-				}
-				if err := utils.VerifyUsingMerkleProof(&cryptoProofOps, appHash, "inference", string(dataKey), result.Value); err != nil {
-					logging.Error("VerifyUsingMerkleProof failed", inferencetypes.Participants, "error", err)
-				}
-			}
+	if cryptoProofOps != nil && blockP1Resp != nil {
+		dataKey := inferencetypes.ActiveParticipantsFullKey(epoch)
+		verKey := "/inference/" + url.PathEscape(string(dataKey))
+		appHash := blockP1Resp.SdkBlock.Header.AppHash
+		if err := utils.VerifyUsingProofRt(cryptoProofOps, appHash, verKey, result.Value); err != nil {
+			logging.Error("VerifyUsingProofRt failed", inferencetypes.Participants, "error", err)
+		}
+		if err := utils.VerifyUsingMerkleProof(cryptoProofOps, appHash, "inference", string(dataKey), result.Value); err != nil {
+			logging.Error("VerifyUsingMerkleProof failed", inferencetypes.Participants, "error", err)
 		}
 	}
 
@@ -208,11 +220,9 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		addresses[i] = addr
 	}
 
-	activeParticipantsJSON, err := protoToRawJSON(&activeParticipants)
-	if err != nil {
-		logging.Error("Failed to encode active participants", inferencetypes.Participants, "error", err)
-		return nil, err
-	}
+	// Legacy dapi used encoding/json on ActiveParticipants (numeric int64s).
+	// ProtoMarshalJSON would stringify key int64 fields.
+	activeParticipantsJSON := activeParticipants
 
 	validators, err := validatorsToRawJSON(valsResp.Validators)
 	if err != nil {
@@ -220,19 +230,26 @@ func (h *Handlers) getEpochParticipants(ctx context.Context, epoch uint64) (*gen
 		return nil, err
 	}
 
+	// Legacy dapi returned the native comet types.Block via encoding/json
+	// (numeric heights, hex-string hashes). ProtoMarshalJSON on SdkBlock would
+	// stringify int64s and change the header shape.
 	var block *gen.RawProtoJson
-	if blockP1Resp != nil {
-		block, err = protoToRawJSONPtr(blockP1Resp.SdkBlock)
-		if err != nil {
-			logging.Error("Failed to encode block", inferencetypes.Participants, "error", err)
-			return nil, err
+	if blockP1Resp != nil && blockP1Resp.Block != nil {
+		// ValidateBasic errors (e.g. missing LastCommit) are ignored on purpose:
+		// legacy dapi returned the RPC block without validating it.
+		cometBlock, convErr := comettypes.BlockFromProto(blockP1Resp.Block)
+		if cometBlock != nil {
+			var raw gen.RawProtoJson = cometBlock
+			block = &raw
+		} else {
+			logging.Error("Failed to convert block to comet type", inferencetypes.Participants, "error", convErr)
 		}
 	}
 
-	proofOps, err := protoToRawJSONPtr(result.ProofOps)
-	if err != nil {
-		logging.Error("Failed to encode proof ops", inferencetypes.Participants, "error", err)
-		return nil, err
+	var proofOps *gen.RawProtoJson
+	if cryptoProofOps != nil {
+		var raw gen.RawProtoJson = cryptoProofOps
+		proofOps = &raw
 	}
 
 	return &gen.ActiveParticipantWithProof{

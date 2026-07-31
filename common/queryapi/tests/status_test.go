@@ -20,7 +20,7 @@ func TestGetStatus_Returns200(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"ok"`)
 }
 
-// -- GetVersions --
+// -- GetVersions (edge-api thin handler) --
 
 type stubNodeInfoServer struct{ cmtservice.UnimplementedServiceServer }
 
@@ -46,6 +46,7 @@ func TestGetVersions_Returns200(t *testing.T) {
 	assert.Contains(t, body, `"api_version"`)
 	assert.Contains(t, body, `"node_version"`)
 	assert.Contains(t, body, `"timestamp"`)
+	assert.NotContains(t, body, `"mlnodes"`)
 }
 
 type errNodeInfoServer struct{ cmtservice.UnimplementedServiceServer }

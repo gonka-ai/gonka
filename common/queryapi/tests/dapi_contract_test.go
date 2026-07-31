@@ -20,7 +20,6 @@ var dapiTopLevelKeys = map[string][]string{
 	"GET /v1/governance/models":               {"models"},
 	"GET /v1/governance/models-legacy":        {"model"},
 	"GET /v1/pricing":                         {"unit_of_compute_price", "models"},
-	"GET /v1/versions":                          {"api_version", "node_version", "timestamp"},
 	"GET /v1/epochs/{epoch}/participants":     {"active_participants", "addresses", "active_participants_bytes", "proof_ops", "validators", "block", "excluded_participants"},
 }
 
@@ -100,16 +99,6 @@ func TestResponseTopLevelKeysMatchDapiContract(t *testing.T) {
 				h := handlersWithInference(t, srv)
 				ctx, rec := echoContext(t, http.MethodGet, "/v1/pricing")
 				require.NoError(t, h.GetPricing(ctx))
-				return rec.Code, rec.Body.Bytes()
-			},
-		},
-		{
-			name: "GET /v1/versions",
-			keys: dapiTopLevelKeys["GET /v1/versions"],
-			run: func(t *testing.T) (int, []byte) {
-				h := handlersWithComet(t, &stubNodeInfoServer{})
-				ctx, rec := echoContext(t, http.MethodGet, "/v1/versions")
-				require.NoError(t, h.GetVersions(ctx))
 				return rec.Code, rec.Body.Bytes()
 			},
 		},

@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"reflect"
-	"strconv"
 
 	"common/utils"
 
@@ -48,8 +47,10 @@ func protoToRawJSONPtr(msg gogoproto.Message) (*gen.RawProtoJson, error) {
 	return &raw, nil
 }
 
-// validatorToDapiJSON encodes a Comet validator in the legacy dapi/testermint shape:
-// hex-uppercase address, base64 pub_key string, and string-encoded int64 fields.
+// validatorToDapiJSON encodes a Comet validator in the legacy dapi shape:
+// hex-uppercase address, base64 pub_key string, and numeric int64 fields.
+// Legacy dapi marshaled native comet types.Validator with encoding/json, so
+// voting_power / proposer_priority were JSON numbers, not strings.
 func validatorToDapiJSON(v *cmtservice.Validator) (gen.RawProtoJson, error) {
 	if v == nil {
 		return nil, fmt.Errorf("nil validator")
@@ -72,8 +73,8 @@ func validatorToDapiJSON(v *cmtservice.Validator) (gen.RawProtoJson, error) {
 	return gen.RawProtoJson(map[string]any{
 		"address":           address,
 		"pub_key":           pubKeyStr,
-		"voting_power":      strconv.FormatInt(v.VotingPower, 10),
-		"proposer_priority": strconv.FormatInt(v.ProposerPriority, 10),
+		"voting_power":      v.VotingPower,
+		"proposer_priority": v.ProposerPriority,
 	}), nil
 }
 

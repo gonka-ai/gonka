@@ -41,8 +41,9 @@ func TestValidatorsToRawJSON_FlattensPubKeyToBase64String(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, expectedAddr, address)
 
-	require.Equal(t, "100", m["voting_power"])
-	require.Equal(t, "-7", m["proposer_priority"])
+	// Legacy dapi (encoding/json on comet types.Validator) emitted numbers.
+	require.Equal(t, int64(100), m["voting_power"])
+	require.Equal(t, int64(-7), m["proposer_priority"])
 
 	b, err := json.Marshal(out[0])
 	require.NoError(t, err)
