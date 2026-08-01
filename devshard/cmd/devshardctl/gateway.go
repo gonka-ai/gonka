@@ -788,6 +788,9 @@ func (g *Gateway) configurePhaseGate(settings GatewaySettings) {
 		g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
 	}
 	if g.accounting != nil {
+		g.accounting.setBlockHeightProvider(func() int64 {
+			return g.phaseGate.Snapshot().BlockHeight
+		})
 		g.phaseGate.SetEpochTransitionHook(func(_, _ uint64) {
 			if err := g.accounting.flush(context.Background()); err != nil {
 				log.Printf("gateway accounting epoch flush: %v", err)
@@ -1322,9 +1325,6 @@ func (g *Gateway) Close() error {
 			break
 		}
 		time.Sleep(50 * time.Millisecond)
-	}
-	if g.accounting != nil {
-		g.accounting.reconcileAll()
 	}
 	if pending {
 		firstErr = fmt.Errorf("gateway shutdown timed out with background work")

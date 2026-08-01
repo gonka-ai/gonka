@@ -85,9 +85,11 @@ func (s *Store) Snapshot(ctx context.Context, book *Book) (err error) {
 
 	for _, table := range []string{
 		"accounting_pending_timeouts",
+		"accounting_validation_verdicts",
 		"accounting_challenges",
 		"accounting_counters",
 		"accounting_host_stats",
+		"accounting_watermarks",
 		"accounting_latest_nonce",
 		"accounting_slots",
 		"accounting_escrows",
@@ -141,12 +143,30 @@ func (s *Store) Snapshot(ctx context.Context, book *Book) (err error) {
 				return fmt.Errorf("write escrow %q challenge %d: %w", escrow.Metadata.EscrowID, nonce, err)
 			}
 		}
+		for nonce, verdict := range escrow.ValidationVerdicts {
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO accounting_validation_verdicts
+				 (escrow_id, nonce, verdict) VALUES (?, ?, ?)`,
+				escrow.Metadata.EscrowID,
+				nonce,
+				verdict,
+			); err != nil {
+				return fmt.Errorf("write escrow %q validation verdict %d: %w", escrow.Metadata.EscrowID, nonce, err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx,
 			`INSERT INTO accounting_latest_nonce (escrow_id, latest_nonce) VALUES (?, ?)`,
 			escrow.Metadata.EscrowID,
 			escrow.LatestNonce,
 		); err != nil {
 			return fmt.Errorf("write escrow %q latest nonce: %w", escrow.Metadata.EscrowID, err)
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO accounting_watermarks (escrow_id, reduced_through) VALUES (?, ?)`,
+			escrow.Metadata.EscrowID,
+			escrow.ReducedThrough,
+		); err != nil {
+			return fmt.Errorf("write escrow %q watermark: %w", escrow.Metadata.EscrowID, err)
 		}
 		for slotID, stats := range escrow.HostStats {
 			if _, err := tx.ExecContext(ctx,
@@ -326,6 +346,7 @@ func (s *Store) loadSnapshot(ctx context.Context) (Snapshot, error) {
 		item.HostStats = make(map[uint32]types.HostStats)
 		item.Counters = make(map[CounterKey]uint64)
 		item.Challenges = make(map[uint64]uint32)
+		item.ValidationVerdicts = make(map[uint64]ProtocolTransitionKind)
 		item.InvalidTransitions = make(map[uint32]uint64)
 		snapshot.Escrows = append(snapshot.Escrows, item)
 		escrows[item.Metadata.EscrowID] = len(snapshot.Escrows) - 1
@@ -390,6 +411,30 @@ func (s *Store) loadSnapshot(ctx context.Context) (Snapshot, error) {
 	}
 
 	rows, err = s.db.QueryContext(ctx,
+		`SELECT escrow_id, nonce, verdict FROM accounting_validation_verdicts`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read accounting validation verdicts: %w", err)
+	}
+	for rows.Next() {
+		var escrowID string
+		var nonce uint64
+		var verdict ProtocolTransitionKind
+		if err := rows.Scan(&escrowID, &nonce, &verdict); err != nil {
+			rows.Close()
+			return Snapshot{}, err
+		}
+		index, ok := escrows[escrowID]
+		if !ok {
+			rows.Close()
+			return Snapshot{}, fmt.Errorf("validation verdict references unknown escrow %q", escrowID)
+		}
+		snapshot.Escrows[index].ValidationVerdicts[nonce] = verdict
+	}
+	if err := rows.Close(); err != nil {
+		return Snapshot{}, err
+	}
+
+	rows, err = s.db.QueryContext(ctx,
 		`SELECT escrow_id, latest_nonce FROM accounting_latest_nonce`)
 	if err != nil {
 		return Snapshot{}, fmt.Errorf("read accounting latest nonces: %w", err)
@@ -403,6 +448,29 @@ func (s *Store) loadSnapshot(ctx context.Context) (Snapshot, error) {
 		}
 		if index, ok := escrows[escrowID]; ok {
 			snapshot.Escrows[index].LatestNonce = latest
+			// Databases created before the watermark table had only a latest
+			// nonce and therefore represented a fully reduced snapshot.
+			snapshot.Escrows[index].ReducedThrough = latest
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return Snapshot{}, err
+	}
+
+	rows, err = s.db.QueryContext(ctx,
+		`SELECT escrow_id, reduced_through FROM accounting_watermarks`)
+	if err != nil {
+		return Snapshot{}, fmt.Errorf("read accounting watermarks: %w", err)
+	}
+	for rows.Next() {
+		var escrowID string
+		var reducedThrough uint64
+		if err := rows.Scan(&escrowID, &reducedThrough); err != nil {
+			rows.Close()
+			return Snapshot{}, err
+		}
+		if index, ok := escrows[escrowID]; ok {
+			snapshot.Escrows[index].ReducedThrough = reducedThrough
 		}
 	}
 	if err := rows.Close(); err != nil {
@@ -537,7 +605,9 @@ func (s *Store) loadSnapshot(ctx context.Context) (Snapshot, error) {
 
 func validateSnapshotIntegers(snapshot Snapshot) error {
 	for _, escrow := range snapshot.Escrows {
-		if escrow.Metadata.CreationEpoch > math.MaxInt64 || escrow.LatestNonce > math.MaxInt64 {
+		if escrow.Metadata.CreationEpoch > math.MaxInt64 ||
+			escrow.LatestNonce > math.MaxInt64 ||
+			escrow.ReducedThrough > math.MaxInt64 {
 			return fmt.Errorf("escrow %q has an integer too large for SQLite", escrow.Metadata.EscrowID)
 		}
 		for _, stats := range escrow.HostStats {
@@ -553,6 +623,11 @@ func validateSnapshotIntegers(snapshot Snapshot) error {
 		for nonce := range escrow.Challenges {
 			if nonce > math.MaxInt64 {
 				return fmt.Errorf("escrow %q challenged nonce is too large for SQLite", escrow.Metadata.EscrowID)
+			}
+		}
+		for nonce := range escrow.ValidationVerdicts {
+			if nonce > math.MaxInt64 {
+				return fmt.Errorf("escrow %q validation verdict nonce is too large for SQLite", escrow.Metadata.EscrowID)
 			}
 		}
 		for _, count := range escrow.InvalidTransitions {
@@ -588,9 +663,19 @@ CREATE TABLE IF NOT EXISTS accounting_challenges (
 	slot_id   INTEGER NOT NULL,
 	PRIMARY KEY (escrow_id, nonce)
 );
+CREATE TABLE IF NOT EXISTS accounting_validation_verdicts (
+	escrow_id TEXT NOT NULL REFERENCES accounting_escrows(escrow_id) ON DELETE CASCADE,
+	nonce     INTEGER NOT NULL,
+	verdict   TEXT NOT NULL,
+	PRIMARY KEY (escrow_id, nonce)
+);
 CREATE TABLE IF NOT EXISTS accounting_latest_nonce (
 	escrow_id    TEXT PRIMARY KEY REFERENCES accounting_escrows(escrow_id) ON DELETE CASCADE,
 	latest_nonce INTEGER NOT NULL
+);
+CREATE TABLE IF NOT EXISTS accounting_watermarks (
+	escrow_id       TEXT PRIMARY KEY REFERENCES accounting_escrows(escrow_id) ON DELETE CASCADE,
+	reduced_through INTEGER NOT NULL
 );
 CREATE TABLE IF NOT EXISTS accounting_host_stats (
 	escrow_id             TEXT NOT NULL REFERENCES accounting_escrows(escrow_id) ON DELETE CASCADE,

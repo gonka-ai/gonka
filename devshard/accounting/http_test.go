@@ -45,6 +45,7 @@ func TestHandlerFiltersCurrentEpochAndRoutes(t *testing.T) {
 		require.Equal(t, "model-a", record.Model)
 		require.Len(t, record.LatestNonces, 1)
 		require.Equal(t, "escrow-a", record.LatestNonces[0].EscrowID)
+		require.Equal(t, EscrowActive, record.LatestNonces[0].Phase)
 	}
 
 	request = httptest.NewRequest(
@@ -72,6 +73,12 @@ func TestHandlerFiltersCurrentEpochAndRoutes(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(response.Body.Bytes(), &epochList))
 	require.Len(t, epochList.Epochs, 2)
+
+	request = httptest.NewRequest(http.MethodGet, "/api/v1/diagnostics", nil)
+	response = httptest.NewRecorder()
+	handler.ServeHTTP(response, request)
+	require.Equal(t, http.StatusOK, response.Code)
+	require.Contains(t, response.Body.String(), `"kind":"diff_applied"`)
 
 	request = httptest.NewRequest(http.MethodPost, "/api/v1/epochs", strings.NewReader("{}"))
 	response = httptest.NewRecorder()

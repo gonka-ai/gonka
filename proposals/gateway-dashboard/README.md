@@ -370,6 +370,7 @@ The private API exposes:
 - `GET /api/v1/epochs`
 - `GET /api/v1/epochs/{epoch_index}/participants`
 - `GET /api/v1/epochs/{epoch_index}/participants/{participant}`
+- `GET /api/v1/diagnostics`
 
 `epoch_index` accepts `current` and selects escrows created in that epoch.
 Collection responses contain one row per `participant` and `model`.
@@ -381,8 +382,8 @@ model records and never merges model-specific rates.
 
 Each participant-model record contains:
 
-- `schema_version`, `updated_at`, and the `latest_nonce` values the
-  totals were computed from;
+- `schema_version`, `updated_at`, and the per-escrow `latest_nonce` and
+  phase values the totals were computed from;
 - raw disposition and context counts;
 - per-slot `assigned_nonces` and dispositions;
 - timeout requirements, outcomes, and reasons;
@@ -391,9 +392,9 @@ Each participant-model record contains:
   `unclassified`, `overclassified`, `cross_check_error`,
   `unknown_reason_total`, and writer errors.
 
-The API returns counts, not rates. Diagnostic nonce records can be
-returned from a recent window. Prompts, responses, payload hashes, raw
-errors, and private material are never stored or served.
+The API returns counts, not rates. `/api/v1/diagnostics` returns the
+bounded in-memory diagnostic window. Prompts, responses, payload hashes,
+raw errors, and private material are never stored or served.
 
 The dashboard reads only this API and stores no accounting state. The
 JSON schema is the contract.
@@ -462,6 +463,11 @@ recovery never invents a terminal outcome.
 
 A small in-memory ring of recent nonce records, including block heights,
 supports debugging. Ring records are never stored.
+
+The sequencer records each diff through one direct function call after
+the diff is durably committed. There is no accounting poller. One
+deadline heap and one timer track all active refusal and execution
+deadlines.
 
 ### Lifecycle integration
 

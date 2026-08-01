@@ -560,6 +560,13 @@ type Decision struct {
 	ImmediateAttempts int
 }
 
+type gatewayAccounting interface {
+	recordRealSend(string, uint64, string, time.Time)
+	recordGhost(string, uint64, string, string)
+	recordUsage(string, uint64, uint64)
+	recordTimeout(string, uint64, string, string, string, string, string)
+}
+
 // Redundancy runs one request reliably, using extra attempts when needed.
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
@@ -570,7 +577,8 @@ type Redundancy struct {
 	devshardID            string
 	model                 string // escrow's registered model; used for ghost probes when no real request is around
 	metrics               *DevshardMetrics
-	accounting            *gatewayAccountingRecorder
+	accounting            atomic.Value
+	accountingOnce        sync.Once
 	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
 	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
 	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
@@ -581,6 +589,26 @@ type Redundancy struct {
 	stateBlockMu          sync.RWMutex
 	stateBlockedHosts     map[string]string // escrow-local participant blocks for non-recoverable state divergence
 	suspiciousParticipant func(participantKey string) bool
+}
+
+func (e *Redundancy) setAccounting(recorder gatewayAccounting) {
+	if e == nil || recorder == nil {
+		return
+	}
+	e.accountingOnce.Do(func() {
+		e.accounting.Store(recorder)
+	})
+}
+
+func (e *Redundancy) accountingRecorder() gatewayAccounting {
+	if e == nil {
+		return nil
+	}
+	value := e.accounting.Load()
+	if value == nil {
+		return nil
+	}
+	return value.(gatewayAccounting)
 }
 
 // ErrAllHostsExcluded is returned by prepareInflight when the request
@@ -3866,8 +3894,8 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if e.accounting != nil {
-		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode, e.session, inf.sendTime)
+	if recorder := e.accountingRecorder(); recorder != nil {
+		recorder.recordRealSend(inf.escrowID, inf.nonce, quarantineMode, inf.sendTime)
 	}
 	if e.metrics == nil {
 		return
@@ -3896,8 +3924,8 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if e.accounting != nil {
-		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
+	if recorder := e.accountingRecorder(); recorder != nil {
+		recorder.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
 	}
 	if e.metrics == nil {
 		return
@@ -3954,15 +3982,15 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if e.accounting != nil {
+	if recorder := e.accountingRecorder(); recorder != nil {
 		detailReason := gatewayAttemptFailureReason(inf, e.session)
 		timeoutReason := reason
 		if len(detailReasons) > 0 && detailReasons[0] != "" {
 			timeoutReason = detailReasons[0]
 		}
-		e.accounting.recordTimeout(
+		recorder.recordTimeout(
 			inf.escrowID, inf.nonce, kind, action, reason, detailReason,
-			timeoutReason, e.session, inf.sendTime,
+			timeoutReason,
 		)
 	}
 	if e.metrics == nil {
@@ -4199,8 +4227,8 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if e.accounting != nil {
-		e.accounting.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	if recorder := e.accountingRecorder(); recorder != nil {
+		recorder.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
 	}
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{

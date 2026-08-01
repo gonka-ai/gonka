@@ -58,6 +58,7 @@ func (b *Book) queryLocked(filter QueryFilter) []ParticipantRecord {
 				record.LatestNonces = append(record.LatestNonces, EscrowNonce{
 					EscrowID:    escrowID,
 					LatestNonce: escrow.latest,
+					Phase:       escrow.metadata.Phase,
 				})
 				nonceAdded[key][escrowID] = struct{}{}
 			}

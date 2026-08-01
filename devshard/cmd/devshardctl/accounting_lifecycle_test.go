@@ -153,7 +153,7 @@ func TestGatewayAccountingRecordsTimeoutAtProtocolDeadline(t *testing.T) {
 	prepared, err := env.session.PrepareInference(defaultParams())
 	require.NoError(t, err)
 	recorder.recordRealSend(
-		"escrow-proxy", prepared.Nonce(), "none", env.session, time.Now().Add(-time.Hour),
+		"escrow-proxy", prepared.Nonce(), "none", time.Now().Add(-time.Hour),
 	)
 
 	require.Eventually(t, func() bool {

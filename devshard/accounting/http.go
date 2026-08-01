@@ -31,6 +31,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	path := strings.TrimSuffix(r.URL.Path, "/")
+	if path == "/api/v1/diagnostics" {
+		writeJSON(w, http.StatusOK, struct {
+			SchemaVersion int               `json:"schema_version"`
+			Records       []DiagnosticEntry `json:"records"`
+		}{
+			SchemaVersion: SchemaVersion,
+			Records:       h.book.Diagnostics(),
+		})
+		return
+	}
 	if path == "/api/v1/epochs" {
 		h.serveEpochs(w, r)
 		return

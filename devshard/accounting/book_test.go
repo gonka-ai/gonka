@@ -1,7 +1,6 @@
 package accounting
 
 import (
-	"reflect"
 	"sync"
 	"testing"
 
@@ -83,7 +82,7 @@ func TestBookTransitionsAndIdempotency(t *testing.T) {
 	require.Zero(t, book.LiveNonceCount())
 }
 
-func TestTimeoutEligibilityContextIsFirstWriteOnce(t *testing.T) {
+func TestTimeoutEligibilityMovesFromRefusalToExecution(t *testing.T) {
 	book := NewBook()
 	registerTestEscrow(t, book, "escrow-1", 7, "model-a", EscrowActive)
 	require.NoError(t, book.Apply(DiffApplied{EscrowID: "escrow-1", Nonce: 1, Inference: true}))
@@ -99,8 +98,8 @@ func TestTimeoutEligibilityContextIsFirstWriteOnce(t *testing.T) {
 
 	record := participantRecord(t, book.Query(QueryFilter{EpochIndex: 7}), "participant-1")
 	require.Len(t, record.Counters, 1)
-	require.Equal(t, TimeoutRefused, record.Counters[0].TimeoutKind)
-	require.Equal(t, PhaseNormal, record.Counters[0].TimeoutEvaluationPhase)
+	require.Equal(t, TimeoutExecution, record.Counters[0].TimeoutKind)
+	require.Equal(t, PhasePoC, record.Counters[0].TimeoutEvaluationPhase)
 }
 
 func TestBookCountsRejectedEvents(t *testing.T) {
@@ -341,42 +340,30 @@ func TestBookConcurrentApplyAndQuery(t *testing.T) {
 	require.Equal(t, uint64(100), protocolOnly)
 }
 
-func TestMutableTimeoutStateIsBounded(t *testing.T) {
-	escrow := &escrowBook{live: make(map[uint64]*nonceState)}
-	for nonce := uint64(1); nonce <= maxMutableTimeoutsPerEscrow+1; nonce++ {
-		escrow.live[nonce] = &nonceState{
-			timeoutRequired: true,
-			timeoutOutcome:  TimeoutInsufficientVotes,
-		}
-		escrow.rememberMutableTimeout(nonce)
+func TestDiffAndInvalidationReplayRemainIdempotentPast4096Events(t *testing.T) {
+	book := NewBook()
+	registerTestEscrow(t, book, "escrow-1", 12, "model-a", EscrowActive)
+	for nonce := uint64(1); nonce <= 5000; nonce++ {
+		require.NoError(t, book.Apply(DiffApplied{EscrowID: "escrow-1", Nonce: nonce}))
 	}
-	require.Len(t, escrow.live, maxMutableTimeoutsPerEscrow)
-	require.Nil(t, escrow.live[1])
-}
+	require.NoError(t, book.Apply(DiffApplied{EscrowID: "escrow-1", Nonce: 1}))
 
-// The book deduplicates replayed callbacks by using events as map keys, so
-// every event except EscrowRegistered (which carries the slot slice and is
-// deduplicated by escrow identity instead) must stay comparable.
-func TestEventTypesAreComparable(t *testing.T) {
-	events := []Event{
-		EscrowPhaseChanged{},
-		DiffApplied{},
-		LatestNonceObserved{},
-		ProtocolTransition{},
-		Ghost{},
-		RealSend{},
-		Winner{},
-		Loser{},
-		UsageUnknown{},
-		TimeoutRequired{},
-		TimeoutOutcomeRecorded{},
-		HostStatsObserved{},
+	record := participantRecord(t, book.Query(QueryFilter{EpochIndex: 12}), "participant-1")
+	require.Equal(t, uint64(2500), record.Dispositions[DispositionProtocolOnly])
+
+	require.NoError(t, book.Apply(ProtocolTransition{
+		EscrowID: "escrow-1", Nonce: 1, Kind: ProtocolChallenged,
+	}))
+	require.NoError(t, book.Apply(ProtocolTransition{
+		EscrowID: "escrow-1", Nonce: 1, Kind: ProtocolInvalidated,
+	}))
+	for range 5000 {
+		require.NoError(t, book.Apply(ProtocolTransition{
+			EscrowID: "escrow-1", Nonce: 1, Kind: ProtocolInvalidated,
+		}))
 	}
-	for _, event := range events {
-		require.Truef(t, reflect.TypeOf(event).Comparable(),
-			"%T must be comparable to serve as a dedupe key", event)
-	}
-	require.False(t, reflect.TypeOf(EscrowRegistered{}).Comparable())
+	record = participantRecord(t, book.Query(QueryFilter{EpochIndex: 12}), "participant-1")
+	require.Equal(t, uint64(1), record.CrossChecks.RecordedInvalid)
 }
 
 func registerTestEscrow(t *testing.T, book *Book, id string, epoch uint64, model string, phase EscrowPhase) {

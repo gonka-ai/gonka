@@ -16,6 +16,9 @@ import (
 func TestComposeDiffRollsBackWhenPersistenceFails(t *testing.T) {
 	store := &closeCountingStore{appendErr: fmt.Errorf("disk unavailable")}
 	session, _, _ := setupSessionWithOptions(t, 3, 1_000_000, 0, WithStorage(store))
+	var committed []types.Diff
+	_, err := session.SetCommittedDiffHook(0, func(diff types.Diff) { committed = append(committed, diff) })
+	require.NoError(t, err)
 	prepared, err := session.PrepareInference(InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
 		InputLength: 1, MaxTokens: 1, StartedAt: 1,
@@ -26,6 +29,47 @@ func TestComposeDiffRollsBackWhenPersistenceFails(t *testing.T) {
 	require.Zero(t, session.StateMachine().LatestNonce())
 	_, found := session.StateMachine().GetInference(1)
 	require.False(t, found)
+	require.Empty(t, committed)
+}
+
+func TestCommittedDiffHookAndStartupTail(t *testing.T) {
+	session, _, _ := setupSession(t, 3, 1_000_000, 0)
+	var committed []uint64
+	tail, err := session.SetCommittedDiffHook(0, func(diff types.Diff) {
+		committed = append(committed, diff.Nonce)
+	})
+	require.NoError(t, err)
+	require.Empty(t, tail)
+	_, err = session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 1, MaxTokens: 1, StartedAt: 1,
+	})
+	require.NoError(t, err)
+	require.Equal(t, []uint64{1}, committed)
+
+	tail, err = session.SetCommittedDiffHook(0, nil)
+	require.NoError(t, err)
+	require.Len(t, tail, 1)
+	require.Equal(t, uint64(1), tail[0].Nonce)
+}
+
+func TestCommittedDiffHookLoadsDurableTail(t *testing.T) {
+	store := &closeCountingStore{}
+	session, _, _ := setupSessionWithOptions(t, 3, 1_000_000, 0, WithStorage(store))
+	_, err := session.PrepareInference(InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 1, MaxTokens: 1, StartedAt: 1,
+	})
+	require.NoError(t, err)
+	require.Len(t, store.diffs, 1)
+
+	// Recovery may retain only a post-snapshot in-memory suffix. Accounting
+	// must read its tail from the durable diff journal instead.
+	session.diffs = nil
+	tail, err := session.SetCommittedDiffHook(0, nil)
+	require.NoError(t, err)
+	require.Len(t, tail, 1)
+	require.Equal(t, uint64(1), tail[0].Nonce)
 }
 
 func TestHandleTimeoutReturnsStructuredAppliedResult(t *testing.T) {

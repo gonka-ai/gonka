@@ -41,6 +41,7 @@ func TestStoreRecoveryRetentionAndAtomicSnapshot(t *testing.T) {
 	recovered, err := store.Load(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), recovered.EventErrors())
+	require.Equal(t, uint64(1), recovered.ReducedThrough("old-incomplete"))
 	epochs := recovered.Epochs(QueryFilter{})
 	require.Len(t, epochs, 2)
 	require.Equal(t, uint64(2), epochs[0].EpochIndex)
@@ -128,6 +129,11 @@ func TestStorePersistsChallengeState(t *testing.T) {
 	invalidated := participantRecord(t, recovered.Query(QueryFilter{EpochIndex: 4}), "participant-0")
 	require.Zero(t, invalidated.UnresolvedChallenges)
 	require.Equal(t, uint64(1), invalidated.CrossChecks.RecordedInvalid)
+	require.NoError(t, recovered.Apply(ProtocolTransition{EscrowID: "escrow-1", Nonce: 2, Kind: ProtocolChallenged}))
+	require.NoError(t, recovered.Apply(ProtocolTransition{EscrowID: "escrow-1", Nonce: 2, Kind: ProtocolInvalidated}))
+	invalidated = participantRecord(t, recovered.Query(QueryFilter{EpochIndex: 4}), "participant-0")
+	require.Equal(t, uint64(1), invalidated.CrossChecks.RecordedInvalid,
+		"replayed terminal verdict must not count twice")
 
 	require.NoError(t, recovered.Apply(ProtocolTransition{EscrowID: "escrow-1", Nonce: 1, Kind: ProtocolChallenged}))
 	challenged = participantRecord(t, recovered.Query(QueryFilter{EpochIndex: 4}), "participant-1")

@@ -136,6 +136,8 @@ type TimeoutVoteTally struct {
 	ErrorWeight  uint32
 }
 
+type CommittedDiffHook func(types.Diff)
+
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 	for _, tx := range txs {
@@ -268,6 +270,7 @@ type Session struct {
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
 	epochID         uint64
+	committedDiff   CommittedDiffHook
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -317,6 +320,38 @@ func WithVerifierQueue(q *verifierHostQueue) SessionOption {
 			sess.verifierQueue = q
 		}
 	}
+}
+
+// SetCommittedDiffHook installs the post-commit observer and returns the
+// already-committed tail after nonce. The hook is installed under the same
+// lock as diff composition, so startup recovery cannot miss a commit.
+func (s *Session) SetCommittedDiffHook(nonce uint64, hook CommittedDiffHook) ([]types.Diff, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if nonce >= s.nonce {
+		s.committedDiff = hook
+		return nil, nil
+	}
+	if s.store != nil {
+		records, err := s.store.GetDiffs(s.escrowID, nonce+1, s.nonce)
+		if err != nil {
+			return nil, fmt.Errorf("load committed accounting tail: %w", err)
+		}
+		tail := make([]types.Diff, 0, len(records))
+		for _, record := range records {
+			tail = append(tail, record.Diff)
+		}
+		s.committedDiff = hook
+		return tail, nil
+	}
+	var tail []types.Diff
+	for _, diff := range s.diffs {
+		if diff.Nonce > nonce {
+			tail = append(tail, diff)
+		}
+	}
+	s.committedDiff = hook
+	return tail, nil
 }
 
 // NewSession creates a user session. clients must match group length.
@@ -659,6 +694,9 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+	if s.committedDiff != nil {
+		s.committedDiff(diff)
+	}
 	if s.store != nil {
 		s.maybeSaveSnapshotLocked()
 	}
@@ -1290,18 +1328,6 @@ func (s *Session) Diffs() []types.Diff {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.diffs
-}
-
-func (s *Session) DiffsAfter(nonce uint64) []types.Diff {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	var result []types.Diff
-	for _, diff := range s.diffs {
-		if diff.Nonce > nonce {
-			result = append(result, diff)
-		}
-	}
-	return result
 }
 
 func (s *Session) PendingTxs() []*types.DevshardTx {

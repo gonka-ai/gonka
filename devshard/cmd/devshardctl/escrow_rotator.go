@@ -725,7 +725,6 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
 	if g.accounting != nil {
-		g.accounting.reconcileEscrow(id)
 		g.accounting.recordEscrowPhase(id, rt.proxy.sm.Phase())
 		if flushErr := g.accounting.flush(context.Background()); flushErr != nil {
 			log.Printf("devshard_finalize_accounting_flush_error escrow=%s error=%v", id, flushErr)
@@ -758,7 +757,6 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	}
 	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
 	if g.accounting != nil {
-		g.accounting.reconcileEscrow(id)
 		g.accounting.recordSettled(id)
 		if flushErr := g.accounting.flush(context.Background()); flushErr != nil {
 			log.Printf("devshard_settle_accounting_flush_error escrow=%s error=%v", id, flushErr)

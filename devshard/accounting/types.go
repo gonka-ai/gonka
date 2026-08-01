@@ -126,6 +126,67 @@ type EscrowMetadata struct {
 	Phase         EscrowPhase            `json:"phase"`
 }
 
+type TimeoutRecord struct {
+	EscrowID      string
+	Nonce         uint64
+	Kind          TimeoutKind
+	Phase         Phase
+	Outcome       TimeoutOutcome
+	Reason        TimeoutReason
+	FailureOrigin FailureOrigin
+	DetailReason  string
+}
+
+// ProtocolView is the read-only protocol state needed after a committed diff.
+// state.StateMachine satisfies this interface without an accounting adapter.
+type ProtocolView interface {
+	GetCommittedRecord(uint64) (types.InferenceRecord, bool)
+	SnapshotStateNoInferences() types.EscrowState
+}
+
+// Recorder is the gateway-facing accounting API. It accepts protocol identities
+// directly instead of exposing the lower-level compatibility events.
+type Recorder interface {
+	RegisterEscrow(EscrowMetadata, types.SessionConfig, ...time.Duration) error
+	RecordCommittedDiff(string, types.Diff, ProtocolView) error
+	ReconcilePending(string, ProtocolView) error
+	RecordRealSend(string, uint64, Phase, QuarantineMode, ...time.Time) error
+	RecordGhost(string, uint64, Phase, QuarantineMode, NoSendReason, string) error
+	RecordUsage(string, uint64, Usage) error
+	RecordTimeoutOutcome(TimeoutRecord) error
+	RecordPhase(string, EscrowPhase) error
+	Diagnostics() []DiagnosticEntry
+	Flush(context.Context) error
+	Close() error
+}
+
+type DiagnosticKind string
+
+const (
+	DiagnosticEscrowRegistered DiagnosticKind = "escrow_registered"
+	DiagnosticPhaseChanged     DiagnosticKind = "phase_changed"
+	DiagnosticDiffApplied      DiagnosticKind = "diff_applied"
+	DiagnosticRealSend         DiagnosticKind = "real_send"
+	DiagnosticGhost            DiagnosticKind = "ghost"
+	DiagnosticUsage            DiagnosticKind = "usage"
+	DiagnosticDeadline         DiagnosticKind = "deadline"
+	DiagnosticTimeoutOutcome   DiagnosticKind = "timeout_outcome"
+	DiagnosticProtocol         DiagnosticKind = "protocol_transition"
+	DiagnosticHostStats        DiagnosticKind = "host_stats"
+)
+
+// DiagnosticEntry intentionally contains no prompt, output, hash, signature,
+// or raw error data. Entries are process-local and never included in snapshots.
+type DiagnosticEntry struct {
+	Kind        DiagnosticKind `json:"kind"`
+	EscrowID    string         `json:"escrow_id,omitempty"`
+	Nonce       uint64         `json:"nonce,omitempty"`
+	SlotID      uint32         `json:"slot_id,omitempty"`
+	BlockHeight int64          `json:"block_height,omitempty"`
+	Phase       string         `json:"phase,omitempty"`
+	Reason      string         `json:"reason,omitempty"`
+}
+
 type Event interface {
 	accountingEvent()
 }
@@ -262,8 +323,9 @@ type CounterRecord struct {
 }
 
 type EscrowNonce struct {
-	EscrowID    string `json:"escrow_id"`
-	LatestNonce uint64 `json:"latest_nonce"`
+	EscrowID    string      `json:"escrow_id"`
+	LatestNonce uint64      `json:"latest_nonce"`
+	Phase       EscrowPhase `json:"phase"`
 }
 
 type SlotRecord struct {
