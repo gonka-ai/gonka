@@ -101,9 +101,12 @@ any query still running. It now follows the same contract as versiond:
 | `EDGE_API_SHUTDOWN_BUDGET` | `2m` | How long accepted queries then have to finish; matches the router's default read timeout |
 | `EDGE_API_STOP_GRACE_PERIOD` | `3m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
 
-A second `SIGTERM`/`SIGINT` cuts the announce window short. If the budget expires
-with queries still running, edge-api closes them and logs why, rather than being
-`SIGKILL`ed mid-write.
+A second `SIGTERM`/`SIGINT` cuts the announce window short, and a further one
+during the drain itself closes remaining connections immediately — the process
+handles the signals itself, so without that an operator watching a stuck drain
+would have nothing left but `SIGKILL`. If the budget expires with queries still
+running, edge-api closes them and logs why, rather than being `SIGKILL`ed
+mid-write.
 
 The shipped Compose files set `stop_grace_period` on every edge-api service,
 including the single-instance one: without it Docker's 10-second default would

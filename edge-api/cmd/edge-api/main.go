@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
@@ -96,24 +97,59 @@ func main() {
 		slog.Info("shutdown", "signal", sig.String())
 	}
 
-	// Report unready while still serving, so the balancer sees the failing check
-	// and stops routing here before anything is refused. A second signal is the
-	// explicit "do not wait" from the operator.
-	srv.BeginDrain()
-	awaitDrainAnnouncement(cfg.DrainAnnounce, stop)
-
-	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownBudget)
-	defer cancel()
-	if err := srv.Shutdown(ctx); err != nil {
-		// The budget expired with requests still running. Close cuts them rather
-		// than leaving the process for the runtime to SIGKILL mid-write.
-		slog.Error("graceful shutdown did not finish; closing remaining connections",
+	if err := drainAndShutdown(srv, cfg, stop); err != nil {
+		slog.Error("graceful shutdown did not finish; closed remaining connections",
 			"error", err, "budget", cfg.ShutdownBudget)
-		if closeErr := srv.Close(); closeErr != nil {
-			slog.Error("close", "error", closeErr)
-		}
 		os.Exit(1)
 	}
+}
+
+// drainableServer is the part of the server the shutdown sequence needs.
+type drainableServer interface {
+	BeginDrain()
+	Shutdown(ctx context.Context) error
+	ForceClose() error
+}
+
+// drainAndShutdown is the whole shutdown sequence, and the order is the point:
+// report unready first so the balancer stops routing here, keep serving for the
+// announce window so it has time to notice, and only then wait for the requests
+// already accepted. It returns nil when every one of them finished.
+func drainAndShutdown(srv drainableServer, cfg config, force <-chan os.Signal) error {
+	srv.BeginDrain()
+	awaitDrainAnnouncement(cfg.DrainAnnounce, force)
+	return gracefulShutdown(srv, cfg.ShutdownBudget, force)
+}
+
+// gracefulShutdown waits for accepted requests, but never becomes something an
+// operator cannot interrupt: signal.Notify took SIGTERM away from the runtime,
+// so a further signal has to be handled here or the only way out of a stuck
+// drain would be SIGKILL. Either that signal or the budget expiring closes the
+// remaining connections instead of leaving them to be cut mid-write.
+func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os.Signal) error {
+	ctx, cancel := context.WithTimeout(context.Background(), budget)
+	defer cancel()
+
+	done := make(chan error, 1)
+	go func() { done <- srv.Shutdown(ctx) }()
+
+	var reason error
+	select {
+	case err := <-done:
+		if err == nil {
+			return nil
+		}
+		reason = fmt.Errorf("shutdown budget %s expired: %w", budget, err)
+	case sig := <-force:
+		reason = fmt.Errorf("operator sent %s during shutdown", sig)
+		// Stop the still-running Shutdown from holding the budget open.
+		cancel()
+	}
+	slog.Warn("closing remaining connections", "reason", reason)
+	if err := srv.ForceClose(); err != nil {
+		return errors.Join(reason, err)
+	}
+	return reason
 }
 
 // awaitDrainAnnouncement keeps serving for the announce window so the balancer

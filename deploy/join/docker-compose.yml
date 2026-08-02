@@ -97,6 +97,10 @@ services:
       - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
       - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
       - OTEL_HEADERS=${OTEL_HEADERS:-}
+      # Compose passes only what is listed here, so these must be declared for
+      # the values in config.env to reach the process at all.
+      - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
+      - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
     # Outer Docker backstop; keep it above the internal shutdown budget so a

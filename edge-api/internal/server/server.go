@@ -44,3 +44,12 @@ func New(chainClient *chain.Client) *Server {
 // serving. Call it before waiting out the announce window, so the balancer stops
 // routing here before anything stops being served.
 func (s *Server) BeginDrain() { s.readiness.beginDrain() }
+
+// ForceClose cuts remaining connections without waiting for them.
+//
+// It goes to the http.Server directly rather than through echo.Close, which
+// takes the same startupMutex that echo.Shutdown holds for its whole run: an
+// escalation through Echo would block until the drain it is meant to interrupt
+// has already finished. net/http supports exactly this pairing — Close closes
+// live connections while a concurrent Shutdown is still waiting on them.
+func (s *Server) ForceClose() error { return s.Server.Close() }
