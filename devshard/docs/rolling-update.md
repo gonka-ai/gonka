@@ -464,7 +464,7 @@ an unsafe non-HA storage mode.
 | `docker compose stop` / `start` | The whole host lifecycle. Membership is DNS; health is measured |
 | `gonka-drain out\|in\|status` | Quiesce a host without stopping it, or inspect the router's live view |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
-| `GET :8080/readyz` | The router's health check: `200` only for a serving, accepting, available, converged host |
+| `GET :8080/readyz` | The router's health check: `200` for a serving, accepting host that has an available child and has converged at least once |
 | `VERSIOND_DRAIN_ANNOUNCE` | How long the host stays accepting after it starts failing `/readyz`, default `5s` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
 | `VERSIOND_STOP_GRACE_PERIOD` | Compose `stop_grace_period`; the outer `SIGKILL` backstop, default `30m` |
@@ -502,15 +502,21 @@ unavailable. Child generations use the typed lifecycle `preparing -> starting ->
 running -> retiring -> draining -> stopping -> stopped`, with `failed ->
 starting` for supervised retry.
 
-#### Readiness is deliberately not strict about convergence history
+#### Readiness answers "can I serve", not "did the last poll succeed"
 
 `/readyz` requires that the manager has reconciled every desired version at least
 once, and this latches. A host that has served, then starts downloading a new
 archive for a routine same-name SHA bump, stays ready throughout. Retracting
-readiness there would evict every host in the pool at the same moment — governance
-publishes to all of them at once — which is precisely the outage readiness exists
-to prevent. Failure to *ever* reconcile an approved version, or a degraded
-version, does keep the host out of the pool.
+readiness there would evict every host in the pool at the same moment —
+governance publishes to all of them at once — which is precisely the outage
+readiness exists to prevent. Failure to *ever* reconcile an approved version does
+keep the host out of the pool.
+
+For the same reason a **failed reconcile does not** clear readiness. Every
+versiond reads the same oracle, so an unreachable oracle or a bad archive fails
+on all of them simultaneously; gating on it would turn a control-plane hiccup
+into an empty pool while every child is still serving. That failure is reported
+as the `Degraded` condition and in the logs, not through the balancer.
 
 #### Operator commands
 

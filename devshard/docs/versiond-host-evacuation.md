@@ -150,13 +150,25 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
 
 - the host FSM advertises readiness (`serving`), and is accepting;
 - at least one child is available to serve traffic;
-- the manager has run every desired version at least once (`Converged`);
-- no version is in a degraded state.
+- the manager has run every desired version at least once (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later
 download or child restart does not retract it. Without the latch, a routine
 same-name SHA bump would briefly un-converge every host at once and evict the
 entire pool — the failure mode readiness exists to prevent.
+
+**A failed reconcile is not a readiness failure.** Every versiond reads the same
+oracle, so anything gated on the outcome of that read fails everywhere at once:
+one unreachable oracle, or one bad archive, would empty the pool while every
+child is still running and able to serve. Reconcile failures surface as the
+`Degraded` condition, in `/healthz` and in the logs, where they belong.
+
+The cost of that choice is bounded and worth naming: a host that has served
+before and then fails to install a *newly approved* version keeps taking traffic,
+and requests for that one version fail on it. Expressing that correctly needs
+per-version readiness, which a single balancer health check cannot carry. If a
+condition is ever found under which accepting traffic is genuinely unsafe, it
+belongs in its own typed condition rather than in the generic reconcile error.
 
 `GET /healthz` keeps the exact legacy JSON array for existing clients. Query
 parameters do not select a second schema.

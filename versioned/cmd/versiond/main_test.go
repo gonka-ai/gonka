@@ -525,9 +525,13 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	}
 	conditions.Converged = true
 
+	// Every versiond reads the same oracle, so a failed reconcile is almost
+	// always failing everywhere at once. Gating on it would turn an oracle blip
+	// into an empty pool while every child is still serving.
 	conditions.Degraded = true
-	if versiondReady(status, conditions) {
-		t.Fatal("degraded host is ready")
+	if !versiondReady(status, conditions) {
+		t.Fatal("a reconcile failure took a serving host out of rotation; " +
+			"one oracle hiccup would empty the pool")
 	}
 	conditions.Degraded = false
 

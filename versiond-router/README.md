@@ -74,10 +74,15 @@ server slots at startup.
 
 Every second HAProxy asks each host `GET /readyz` and expects `200`.
 
-`versiond` answers `200` only when it is accepting traffic **and** has a healthy
-child serving the versions it is supposed to run. It answers `503` when it is
+`versiond` answers `200` when it is accepting traffic **and** has a healthy child,
+having run its full desired set at least once. It answers `503` when it is
 starting, when it has no usable child, and — importantly — for a few seconds
-*before* it stops accepting work at shutdown. That window
+*before* it stops accepting work at shutdown.
+
+It does **not** answer `503` merely because its last reconcile failed. Every host
+reads the same oracle, so that failure arrives everywhere at once; treating it as
+unreadiness would empty the pool over a control-plane hiccup while every child is
+still serving. That window
 (`VERSIOND_DRAIN_ANNOUNCE`, default `5s`) is what makes a graceful stop
 invisible to clients: the router sees the failing check and stops sending new
 requests while the host is still serving everything it already accepted.

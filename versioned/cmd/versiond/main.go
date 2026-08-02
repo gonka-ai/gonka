@@ -392,18 +392,34 @@ func publicHandler(
 }
 
 // versiondReady answers the load balancer's question — may this host take new
-// traffic right now — and deliberately not "has it fully converged".
+// traffic right now — and deliberately not "did the last control-plane poll
+// succeed".
 //
-// Requiring convergence would evict every host at once on a routine same-name
-// SHA bump, because each one starts downloading at the same time. Converged is
-// therefore a latch: a host that has never run its desired set stays out of
-// rotation, but a later download does not retract readiness.
+// The difference matters because every versiond reads the same oracle. Anything
+// that gates readiness on the outcome of that read is a fleet-wide correlated
+// failure: one unreachable oracle, or one bad archive, and every host leaves the
+// pool at the same instant while their children are still running and perfectly
+// able to serve. Reconciliation failures are therefore reported through
+// Conditions.Degraded and the logs, and are not a readiness gate.
+//
+// For the same reason Converged is a latch rather than a live check: requiring
+// convergence would evict the whole pool on a routine same-name SHA bump,
+// because every host starts downloading at once. A host that has never run its
+// desired set stays out of rotation; a later download does not retract
+// readiness.
+//
+// What this deliberately does not cover: a host that has served before and then
+// fails to install a newly approved version keeps taking traffic, and requests
+// for that one version fail on it. Expressing that needs per-version readiness,
+// which a single balancer health check cannot carry. If a condition ever appears
+// under which accepting traffic is genuinely unsafe, it belongs in its own typed
+// condition here — not in the generic reconcile error, which mostly means the
+// control plane hiccuped.
 func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
 	return hostStatus.Ready &&
 		hostStatus.Accepting &&
 		conditions.Available &&
-		conditions.Converged &&
-		!conditions.Degraded
+		conditions.Converged
 }
 
 // awaitDrainAnnouncement keeps serving while the balancer observes the failing

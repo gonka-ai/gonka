@@ -117,6 +117,21 @@ The shipped Compose files set `stop_grace_period` on every edge-api service,
 including the single-instance one: without it Docker's 10-second default would
 `SIGKILL` the process during its own drain.
 
+### A failed version poll no longer takes hosts out of rotation
+
+`/readyz` reports whether a host can serve, not whether its last reconcile
+succeeded. Previously any reconcile error — an unreachable oracle, an archive
+that fails to download — made the host report unready. Because every versiond
+reads the same oracle, that failure arrives on all of them at once, so a
+control-plane hiccup could empty the pool while every child was still running and
+serving normally.
+
+Reconcile failures are still reported, through the `Degraded` condition, in
+`/healthz` and in the logs; they are simply not a routing decision. One
+consequence to be aware of: a host that fails to install a newly approved version
+stays in the pool, so requests for that version fail on it rather than being sent
+to a host that installed it successfully.
+
 ### HA storage is enforced at boot as well as per request
 
 The HA overlay sets `GONKA_HA=true`. A `devshardd` child then refuses to start

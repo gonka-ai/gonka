@@ -223,6 +223,12 @@ func TestConditionsKeepServingWhenReconcileSourceFails(t *testing.T) {
 	if conditions.ReconcileError != "oracle unavailable" {
 		t.Fatalf("reconcile error = %q", conditions.ReconcileError)
 	}
+	// The child is still running, so the host can still serve. Every versiond
+	// reads the same oracle, so retracting convergence here would take the whole
+	// pool out of rotation over one unreachable control plane.
+	if !conditions.Converged {
+		t.Fatalf("a failed oracle read retracted convergence: %+v", conditions)
+	}
 }
 
 func TestConditionsReportBinaryReplacementAsProgressing(t *testing.T) {
