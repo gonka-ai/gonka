@@ -35,14 +35,23 @@ services:
 	require.NotContains(t, text, `GONKA_HA: "true"`)
 }
 
+// The same host is a separate server in every backend, with its own state, so
+// the parse has to keep them apart or a wait would settle on whichever backend
+// happened to be printed last.
 func TestParseRouterPool(t *testing.T) {
-	slots := parseRouterPool("SLOT\tADDRESS\t\tSTATE\n" +
-		"versiond1\t172.30.0.10\tUP\n" +
-		"versiond2\t172.30.0.11\tDRAIN\n" +
-		"2 server(s) taking traffic in versiond_ha_pool\n")
+	slots := parseRouterPool("versiond_ha_pool\n" +
+		"  versiond1\t172.30.0.10\tUP\n" +
+		"  versiond2\t172.30.0.11\tUP\n" +
+		"  2 server(s) taking traffic\n" +
+		"versiond_pool_v2\n" +
+		"  versiond1\t172.30.0.10\tDOWN\n" +
+		"  versiond2\t172.30.0.11\tDRAIN\n" +
+		"  1 server(s) taking traffic\n")
 	require.Equal(t, []RouterSlot{
-		{Name: "versiond1", Address: "172.30.0.10", State: RouterSlotUp},
-		{Name: "versiond2", Address: "172.30.0.11", State: RouterSlotDrain},
+		{Backend: "versiond_ha_pool", Name: "versiond1", Address: "172.30.0.10", State: RouterSlotUp},
+		{Backend: "versiond_ha_pool", Name: "versiond2", Address: "172.30.0.11", State: RouterSlotUp},
+		{Backend: "versiond_pool_v2", Name: "versiond1", Address: "172.30.0.10", State: RouterSlotDown},
+		{Backend: "versiond_pool_v2", Name: "versiond2", Address: "172.30.0.11", State: RouterSlotDrain},
 	}, slots)
 }
 

@@ -43,6 +43,10 @@ func TestVersiondHostEvacuation(t *testing.T) {
 			`"`+hostEvacuationShutdownBudget.String()+`"`)
 	})
 	client := harness.GatewayChatClient()
+	// Declared versions are routed and health-checked through their own pool, so
+	// that is the pool whose view of a host the test has to read.
+	version := env.cfg.Versiond.VersionName
+	pool := harness.VersionPoolBackend(version)
 	escrowID := harness.GetGatewayEscrowID(t, client, env.eps.GatewayHTTP)
 	sessionURL := harness.RouterSessionURL(
 		env.eps.RouterHTTP,
@@ -66,7 +70,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	})
 
 	harness.Step(t, "both hosts are in the router pool before evacuation")
-	require.ElementsMatch(t, env.hosts, harness.RouterServingHosts(t, env.stack, env.cfg),
+	require.ElementsMatch(t, env.hosts, harness.RouterServingHosts(t, env.stack, env.cfg, pool),
 		"pool: %s", harness.DescribeRouterPool(t, env.stack, env.cfg))
 
 	// A restarted router rebuilds the pool from a fresh DNS answer, and nothing
@@ -83,7 +87,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// The harness publishes random host ports, and Docker picks a new one when
 	// the container comes back, so every endpoint has to be re-resolved.
 	env.eps = env.stack.Endpoints(t, env.cfg)
-	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotUp, hostEvacuationObservationTimeout)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
 
@@ -121,7 +125,7 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	}()
 
 	harness.Step(t, "the router stops routing to %s while it is still serving", targetHost)
-	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotDown, hostEvacuationObservationTimeout)
 	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 
@@ -161,8 +165,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	}
 
 	harness.Step(t, "a decommissioned host simply stops resolving; no router change")
-	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost, "", hostEvacuationObservationTimeout)
-	require.Equal(t, []string{survivorHost}, harness.RouterServingHosts(t, env.stack, env.cfg))
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost, "", hostEvacuationObservationTimeout)
+	require.Equal(t, []string{survivorHost}, harness.RouterServingHosts(t, env.stack, env.cfg, pool))
 	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
 
 	harness.Step(t, "the last serving host cannot be drained away")
@@ -184,9 +188,9 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		"VERSIOND_ORACLE_URL", unreachableOracleURL)
 	env.stack.RecreateServices(t, targetHost)
 
-	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotDown, hostEvacuationObservationTimeout)
-	require.Error(t, harness.TryVersiondReady(env.stack, targetHost),
+	require.Error(t, harness.TryVersiondReady(env.stack, targetHost, version),
 		"%s should report unready while it cannot reach its oracle", targetHost)
 	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
 	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
@@ -196,9 +200,9 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		"VERSIOND_ORACLE_URL", oracleURL)
 	env.stack.RecreateServices(t, targetHost)
 
-	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotUp, hostReplacementReadyTimeout)
-	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost))
+	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost, version))
 
 	harness.Step(t, "consistent hashing returns the escrow to %s", targetHost)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)

@@ -1,0 +1,50 @@
+#!/bin/sh
+# gonka-reload — apply a config change without dropping traffic.
+#
+# Usage:
+#   gonka-reload                     # re-render from the current environment
+#   gonka-reload <version>...        # and declare exactly these versions
+#
+# Replacing the container is the wrong tool for adding a version. Compose will
+# not start the replacement until the old container has exited, and the old
+# HAProxy closes its listener the moment it is told to stop — so every new
+# request is refused for as long as the longest stream it is still carrying,
+# which is minutes, not the blink an operator expects.
+#
+# HAProxy in master-worker mode reloads on SIGUSR2: the master re-reads the
+# config and starts a new worker, while the old worker keeps its established
+# streams until they finish. The listener never closes.
+#
+# The new config is rendered and checked before anything is signalled, so a bad
+# render fails here and leaves the running config alone.
+#
+# A version declared this way lives until the container is replaced. Update
+# VERSIOND_VERSIONS in the deployment too, or the next replacement will forget it
+# — the same caveat as a runtime `add map`.
+set -eu
+
+ENTRYPOINT="${VERSIOND_ROUTER_ENTRYPOINT:-/usr/local/bin/entrypoint.sh}"
+OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
+MASTER_PID="${VERSIOND_ROUTER_MASTER_PID:-1}"
+
+if [ "$#" -gt 0 ]; then
+    VERSIOND_VERSIONS="$*"
+    export VERSIOND_VERSIONS
+fi
+
+# Hand the current server states to the next worker. Without this it starts every
+# server from scratch and answers 503 until its checks rise, and it would forget
+# which hosts an operator had drained.
+STATE_FILE="${VERSIOND_ROUTER_SERVER_STATE:-/var/lib/haproxy/server-state}"
+SOCK="${HAPROXY_SOCKET:-/var/run/haproxy.sock}"
+printf 'show servers state\n' | socat stdio "$SOCK" > "$STATE_FILE.new"
+mv "$STATE_FILE.new" "$STATE_FILE"
+
+# Render beside the live config and check it there: a failed render must not be
+# able to leave a file that the next restart would refuse to start from.
+staged="$OUT.staged"
+VERSIOND_ROUTER_OUT="$staged" VERSIOND_ROUTER_RENDER_ONLY=1 "$ENTRYPOINT"
+mv "$staged" "$OUT"
+
+kill -USR2 "$MASTER_PID"
+echo "reloaded; declared versions: ${VERSIOND_VERSIONS:-<none>}"

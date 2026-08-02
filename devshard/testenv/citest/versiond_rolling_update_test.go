@@ -53,7 +53,8 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 			otherHost := env.hosts[1-targetHostIndex]
 			harness.Step(t, "draining %s so every new session lands on %s", otherHost, targetHost)
 			harness.RouterDrain(t, env.stack, otherHost)
-			harness.WaitRouterPoolState(t, env.stack, env.cfg, otherHost,
+			harness.WaitRouterPoolState(t, env.stack, env.cfg,
+				harness.VersionPoolBackend(env.cfg.Versiond.VersionName), otherHost,
 				harness.RouterSlotDrain, 30*time.Second)
 			exerciseVersiondRollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
 		})

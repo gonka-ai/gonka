@@ -11,10 +11,11 @@
 #   gonka-drain out <host|ip|slot>   # stop new traffic, keep serving established
 #   gonka-drain in  <host|ip|slot>
 #
-# A host is addressed the way an operator knows it — the container name or IP —
-# and resolved here to the HAProxy slot currently holding that address, because
-# server-template slots (versiond1..versiondN) are assigned in DNS answer order
-# and mean nothing outside the router.
+# A host is addressed the way an operator knows it — the container name or IP.
+# It is resolved to one address first, and every backend is then matched on that
+# address: server-template slots (versiond1..versiondN) are filled in DNS answer
+# order and are local to a backend, so the same slot name is a different host
+# from one backend to the next.
 #
 # HAProxy server state is per backend/server pair, and one host appears in every
 # backend it belongs to: the host-level pool, one pool per declared version, and
@@ -50,10 +51,16 @@ NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 
 # Backends that can actually receive a request. versiond_legacy exists even when
 # no version is pinned to it, and then it can be reached by nothing — counting
-# its single server would pin one host as undrainable for no reason.
+# its single server would pin one host as undrainable for no reason. The map is
+# read from HAProxy rather than from disk, because `add map` at runtime is a
+# supported way to pin a version and never touches the file.
+legacy_is_reachable() {
+    [ -n "$(runtime "show map $NON_HA_MAP" | grep -v '^#' | grep -v '^$' || true)" ]
+}
+
 backends() {
     runtime "show backend" | grep -v '^#' | grep -v '^$' | while read -r backend; do
-        if [ "$backend" = versiond_legacy ] && [ ! -s "$NON_HA_MAP" ]; then
+        if [ "$backend" = versiond_legacy ] && ! legacy_is_reachable; then
             continue
         fi
         printf '%s\n' "$backend"
@@ -71,10 +78,29 @@ serving_count() {
     servers "$1" | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
 }
 
-# Prints "<slot> <op_state> <admin_state>" for the matching server, if any.
+# Prints "<slot> <op_state> <admin_state>" for the server at this address.
 find_server() {
-    servers "$1" | awk -v t="$2" -v ip="$3" \
-        '$4 == t || $5 == t || (ip != "" && $5 == ip) { print $4, $6, $7; exit }'
+    servers "$1" | awk -v addr="$2" '$5 == addr { print $4, $6, $7; exit }'
+}
+
+# The one address a target names. Slot names are local to a backend — versiond1
+# is a different host in each — so a slot is resolved to its address once here
+# and every backend is then matched on that address alone.
+address_of() {
+    target="$1"
+    resolved="$(getent hosts "$target" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+    if [ -n "$resolved" ]; then
+        printf '%s' "$resolved"
+        return 0
+    fi
+    for backend in $(backends); do
+        addr="$(servers "$backend" | awk -v t="$target" '$4 == t || $5 == t { print $5; exit }')"
+        if [ -n "$addr" ]; then
+            printf '%s' "$addr"
+            return 0
+        fi
+    done
+    return 1
 }
 
 # The admin state to restore this server to. HAProxy reports a bitfield;
@@ -87,10 +113,6 @@ state_for_admin() {
     else
         echo ready
     fi
-}
-
-resolve_ip() {
-    getent hosts "$1" 2>/dev/null | awk 'NR == 1 { print $1 }'
 }
 
 case "${1:-}" in
@@ -119,7 +141,12 @@ out | in)
         exec flock "$LOCK" "$0" "$@"
     fi
 
-    ip="$(resolve_ip "$target")"
+    if ! addr="$(address_of "$target")"; then
+        echo "gonka-drain: '$target' does not resolve and matches no server" >&2
+        echo "known backends:" >&2
+        backends | sed 's/^/  /' >&2
+        exit 1
+    fi
     want=drain
     [ "$action" = out ] || want=ready
 
@@ -127,7 +154,7 @@ out | in)
     # put back if an apply fails part way through.
     plan=""
     for backend in $(backends); do
-        found="$(find_server "$backend" "$target" "$ip")"
+        found="$(find_server "$backend" "$addr")"
         [ -n "$found" ] || continue
         # shellcheck disable=SC2086
         set -- $found
@@ -148,14 +175,8 @@ out | in)
     done
 
     if [ -z "$plan" ]; then
-        if [ -n "$(backends | while read -r b; do find_server "$b" "$target" "$ip"; done)" ]; then
-            echo "$target is already $want everywhere it appears"
-            exit 0
-        fi
-        echo "gonka-drain: no server matches '$target' in any backend" >&2
-        echo "known backends:" >&2
-        backends | sed 's/^/  /' >&2
-        exit 1
+        echo "$target ($addr) is already $want everywhere it appears"
+        exit 0
     fi
 
     applied=""

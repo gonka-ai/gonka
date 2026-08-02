@@ -103,11 +103,17 @@ func TryVersiondHealth(stack *Stack, service string) ([]VersiondHealthEntry, err
 // TryVersiondReady probes the readiness endpoint the router health-checks.
 // It is on the traffic listener on purpose: a versiond that answers /readyz
 // with 200 is exactly a versiond the router may send work to.
-func TryVersiondReady(stack *Stack, service string) error {
-	_, err := stack.ComposeExecOutput(
-		service,
-		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz",
-	)
+//
+// version selects which question to ask. Empty asks the host-level one; a name
+// asks the per-version one, which is what the router uses for a declared
+// version — and the two do not turn 200 at the same moment, so a test that waits
+// on the router's view has to probe the same endpoint the router does.
+func TryVersiondReady(stack *Stack, service, version string) error {
+	url := "http://127.0.0.1:8080/readyz"
+	if version != "" {
+		url += "?version=" + version
+	}
+	_, err := stack.ComposeExecOutput(service, "wget", "-q", "-O", "/dev/null", url)
 	return err
 }
 

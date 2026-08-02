@@ -133,15 +133,16 @@ declared, a request for one that is not gets `503` from the router naming the
 setting to fix, instead of being sent to a host that may not run it. Approving a
 new version is therefore two-phase:
 
-1. add it to `VERSIOND_VERSIONS` and replace the router container
-   (`docker compose up -d --force-recreate versiond-router`; a plain `restart`
-   keeps the old environment) — it gains an empty pool, which changes nothing for
-   the versions already running;
+1. declare it — `docker compose exec versiond-router gonka-reload <versions...>`
+   reloads HAProxy in place, so the new pool appears without closing the listener
+   or disturbing the versions already running. Add it to `VERSIOND_VERSIONS` in
+   the deployment too, or the next container replacement forgets it;
 2. approve it in governance; each host joins that pool as it installs it.
 
-The router now stops on `SIGUSR1`, HAProxy's soft stop, so that replacement
-finishes the streams it is carrying instead of cutting them. Declared version
-names must match `[A-Za-z0-9][A-Za-z0-9._-]*`.
+Replacing the router container is the wrong tool here: it refuses new connections
+from the moment the old container is told to stop until it finishes its longest
+stream. The Compose files now set `stop_signal: SIGUSR1` so a replacement drains
+rather than cuts, but `gonka-reload` is what a config change wants.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
 previous host-level behaviour. The join overlay declares `v4` by default, so a
@@ -224,9 +225,11 @@ Day-to-day operations:
 - Kubernetes: the readiness contract is on the traffic listener specifically so a
   `readinessProbe` and `preStop` can replace the router's role unchanged. Not in
   this release.
-- Version names have two grammars: the chain accepts any non-empty string, while
-  the router can only route `[A-Za-z0-9][A-Za-z0-9._-]*`. Narrowing it in the
-  chain's parameter validation is the proper fix.
+- Version names: the router now routes any name that can appear literally in a
+  path segment, but one containing `/`, `?`, `#`, `%` or whitespace cannot be
+  routed at all, because the request path would no longer match the name.
+  Narrowing the chain's parameter validation to a routable grammar is the proper
+  fix.
 - Reconcile failures have no machine-readable exposure. They belong in a metric,
   not bolted onto the `/healthz` array that existing clients parse; versiond has
   no metrics endpoint of its own yet.

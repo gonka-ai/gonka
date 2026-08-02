@@ -18,8 +18,11 @@ const (
 	RouterSlotDrain = "DRAIN"
 )
 
-// RouterSlot is one server slot in the router's HA backend.
+// RouterSlot is one server slot in one of the router's backends. Backend matters:
+// the same host is a separate server in each, with its own health and therefore
+// its own state.
 type RouterSlot struct {
+	Backend string
 	Name    string
 	Address string
 	State   string
@@ -43,24 +46,45 @@ func routerPool(stack *Stack) ([]RouterSlot, error) {
 	return parseRouterPool(out), nil
 }
 
+// parseRouterPool reads `gonka-drain status`, which prints each backend followed
+// by its indented servers.
 func parseRouterPool(out string) []RouterSlot {
 	var slots []RouterSlot
+	backend := ""
 	for _, line := range strings.Split(out, "\n") {
-		fields := strings.Fields(line)
-		if len(fields) != 3 || fields[0] == "SLOT" {
+		if line == "" {
 			continue
 		}
-		slots = append(slots, RouterSlot{Name: fields[0], Address: fields[1], State: fields[2]})
+		if !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
+			backend = strings.TrimSpace(line)
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) != 3 {
+			continue
+		}
+		slots = append(slots, RouterSlot{
+			Backend: backend,
+			Name:    fields[0],
+			Address: fields[1],
+			State:   fields[2],
+		})
 	}
 	return slots
 }
 
-// RouterPoolHostState maps each versiond host to the state the router sees.
-// Hosts the router cannot resolve at all are simply absent.
-func RouterPoolHostState(t *testing.T, stack *Stack, cfg *config.File) map[string]string {
+// VersionPoolBackend is the backend a declared version is routed through.
+func VersionPoolBackend(version string) string { return "versiond_pool_" + version }
+
+// RouterPoolHostState maps each versiond host to the state the router sees in
+// one backend. Hosts the router cannot resolve at all are simply absent.
+func RouterPoolHostState(t *testing.T, stack *Stack, cfg *config.File, backend string) map[string]string {
 	t.Helper()
 	byHost := make(map[string]string)
 	for _, slot := range RouterPool(t, stack) {
+		if slot.Backend != backend {
+			continue
+		}
 		if host := HostIDForUpstream(cfg, slot.Address); host != "" {
 			byHost[host] = slot.State
 		}
@@ -76,7 +100,7 @@ func WaitRouterPoolState(
 	t *testing.T,
 	stack *Stack,
 	cfg *config.File,
-	host, wantState string,
+	backend, host, wantState string,
 	timeout time.Duration,
 ) {
 	t.Helper()
@@ -89,13 +113,13 @@ func WaitRouterPoolState(
 		}
 		last = ""
 		for _, slot := range slots {
-			if HostIDForUpstream(cfg, slot.Address) == host {
+			if slot.Backend == backend && HostIDForUpstream(cfg, slot.Address) == host {
 				last = slot.State
 			}
 		}
 		return last == wantState
 	})
-	require.True(t, ok, "router never saw %s as %q (last %q)", host, wantState, last)
+	require.True(t, ok, "router never saw %s as %q in %s (last %q)", host, wantState, backend, last)
 }
 
 // RouterDrain takes a host out of rotation without stopping it, addressing it by
@@ -123,11 +147,11 @@ func RequireRouterRefusesToEmptyPool(t *testing.T, stack *Stack, host string) {
 	require.Contains(t, out, "last server taking traffic")
 }
 
-// RouterServingHosts lists the hosts currently taking new traffic.
-func RouterServingHosts(t *testing.T, stack *Stack, cfg *config.File) []string {
+// RouterServingHosts lists the hosts currently taking new traffic in a backend.
+func RouterServingHosts(t *testing.T, stack *Stack, cfg *config.File, backend string) []string {
 	t.Helper()
 	var serving []string
-	for host, state := range RouterPoolHostState(t, stack, cfg) {
+	for host, state := range RouterPoolHostState(t, stack, cfg, backend) {
 		if state == RouterSlotUp {
 			serving = append(serving, host)
 		}
@@ -144,7 +168,7 @@ func DescribeRouterPool(t *testing.T, stack *Stack, cfg *config.File) string {
 		if host == "" {
 			host = "?"
 		}
-		fmt.Fprintf(&b, "%s(%s)=%s ", host, slot.Address, slot.State)
+		fmt.Fprintf(&b, "%s/%s(%s)=%s ", slot.Backend, host, slot.Address, slot.State)
 	}
 	return strings.TrimSpace(b.String())
 }

@@ -125,15 +125,26 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
 
 ```console
-$ docker compose up -d --force-recreate versiond-router
+$ docker compose exec versiond-router gonka-reload v1 v2 v3 v4 v5 v6
+reloaded; declared versions: v1 v2 v3 v4 v5 v6
 ```
 
-`docker compose restart` will not do: it restarts the process with the
-environment the container was created with, so the new version would not be
-picked up. Replacement is required, and it is a short gap for *new* connections —
-the shipped Compose sets `stop_signal: SIGUSR1`, HAProxy's soft stop, so the
-outgoing container finishes the streams it is carrying rather than cutting them.
-Declaring the versions you expect ahead of time avoids the exercise entirely.
+`gonka-reload` re-renders the config, checks it, and signals HAProxy's
+master-worker reload. The listener is never closed and established streams stay
+on the old worker until they finish. Measured over 1200 requests at 92/s, a
+reload cost a single `503` — a window under about 10ms.
+
+Do **not** reach for the container instead. `docker compose restart` restarts the
+process with the environment the container was created with, so it would not see
+the new version at all; and `--force-recreate` refuses every new connection from
+the moment the old container is told to stop until it has finished its longest
+stream, which is minutes, up to `stop_grace_period`. The Compose files set
+`stop_signal: SIGUSR1` so that a replacement at least drains rather than cuts,
+but reloading in place is the tool for a config change.
+
+A version declared through `gonka-reload` lives until the container is replaced,
+so update `VERSIOND_VERSIONS` in the deployment as well — the same caveat as a
+runtime `add map`.
 
 Doing it the other way round means `v6` requests are refused until step 1 lands.
 
@@ -301,6 +312,15 @@ producing a subtly wrong config.
 Version pinning can also be changed at runtime through the Runtime API
 (`add map` / `del map` on `non_ha.map`); such edits live in memory only, so
 change `VERSIOND_NON_HA_VERSIONS` too if the change must survive a restart.
+
+Declared names are used three ways, and each is derived to suit itself: the map
+key is the name exactly as governance wrote it, because it is matched against the
+path segment; the health-check query is percent-encoded, because `+` in a query
+decodes to a space and the check would ask about a version that does not exist;
+and the backend identifier gets a hash appended when the name is not already a
+valid one. A name that cannot appear literally in a path segment — one containing
+`/`, `?`, `#`, `%` or whitespace — is refused at startup, because the request path
+would then not match the name at all.
 
 ## Observability
 

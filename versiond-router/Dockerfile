@@ -12,6 +12,8 @@ COPY haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY pool-backend.cfg.template /etc/haproxy/pool-backend.cfg.template
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY gonka-drain /usr/local/bin/gonka-drain
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain
+COPY gonka-reload /usr/local/bin/gonka-reload
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain /usr/local/bin/gonka-reload \
+    && mkdir -p /var/lib/haproxy
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

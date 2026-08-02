@@ -26,6 +26,7 @@ TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
+SERVER_STATE_FILE="${VERSIOND_ROUTER_SERVER_STATE:-/var/lib/haproxy/server-state}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
 # Overridable so `make test-render` can render without a local HAProxy.
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
@@ -72,6 +73,28 @@ else
     HA_HEADER='http-request del-header Devshard-Ha'
 fi
 
+# Percent-encode everything that is not unreserved, so the check asks about the
+# name governance approved rather than about whatever the query parser made of it.
+urlencode() {
+    printf '%s' "$1" | awk '
+        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            n = split($0, c, "")
+            for (i = 1; i <= n; i++) {
+                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
+                else printf "%%%02X", ord[c[i]]
+            }
+        }'
+}
+
+# An HAProxy identifier for a name that is not one. The hash keeps names that
+# sanitise to the same string apart; the readable part keeps it diagnosable.
+safe_id() {
+    printf '%s_%s' \
+        "$(printf '%s' "$1" | tr -c 'A-Za-z0-9_' '_')" \
+        "$(printf '%s' "$1" | sha256sum | cut -c1-8)"
+}
+
 # One backend per version the router was told about, plus the host-level pool
 # every unlisted version falls back to. All of them are the same fragment, so the
 # routing policy cannot drift between them; only the name and the readiness
@@ -93,35 +116,43 @@ trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
 render_pool_backend versiond_ha_pool /readyz > "$POOL_BACKENDS_FILE"
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
     [ -n "$version" ] || continue
-    # One grammar, used verbatim in three places that would each mangle a name
-    # differently: the HAProxy backend identifier, the query string of the health
-    # check, and the map key matched against the path segment. Deriving a safe
-    # identifier instead would be lossy — 'v5+cuda' and 'v5-cuda' collapse to the
-    # same thing — and '+' in a query string decodes to a space on the versiond
-    # side, so the check would ask about a version that does not exist and the
-    # host would stay down forever. Refuse instead of guessing.
+    # A version name is whatever governance approved. Three things are derived
+    # from it and each has its own rules:
+    #
+    #   the map key       must equal the path segment HAProxy sees, so it is the
+    #                     name exactly as written;
+    #   the check query   is percent-encoded, because '+' in a query decodes to a
+    #                     space on the versiond side and the check would ask
+    #                     about a version that does not exist;
+    #   the backend name  is an HAProxy identifier, so a name that is not already
+    #                     one gets a hash appended to keep it unique.
+    #
+    # What cannot be handled is a name that cannot appear literally in a path
+    # segment: those characters would have to be encoded by the client, and then
+    # the segment no longer equals the name. Refuse rather than route on a guess.
     case "$version" in
-        [A-Za-z0-9]*) ;;
-        *)
-            echo "versiond-router: version '$version' must start with a letter or digit" >&2
+        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            echo "versiond-router: version '$version' cannot be routed: a path segment" >&2
+            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
+            echo "  would not match the name governance approved" >&2
             exit 1
             ;;
     esac
-    case "$version" in
-        *[!A-Za-z0-9._-]*)
-            echo "versiond-router: version '$version' may only contain A-Za-z0-9._-" >&2
-            echo "  a name outside that grammar cannot be carried unambiguously in a" >&2
-            echo "  backend name and a health-check query at the same time" >&2
-            exit 1
-            ;;
-    esac
-    backend="versiond_pool_$version"
-    if grep -q " $backend\$" "$VERSIONS_MAP" 2>/dev/null; then
+    if awk -v v="$version" '$1 == v { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
         echo "versiond-router: version '$version' is declared twice" >&2
         exit 1
     fi
+    case "$version" in
+        [A-Za-z0-9]*)
+            case "$version" in
+                *[!A-Za-z0-9._-]*) backend="versiond_pool_$(safe_id "$version")" ;;
+                *) backend="versiond_pool_$version" ;;
+            esac
+            ;;
+        *) backend="versiond_pool_$(safe_id "$version")" ;;
+    esac
     echo "$version $backend" >> "$VERSIONS_MAP"
-    render_pool_backend "$backend" "/readyz?version=$version" >> "$POOL_BACKENDS_FILE"
+    render_pool_backend "$backend" "/readyz?version=$(urlencode "$version")" >> "$POOL_BACKENDS_FILE"
 done
 
 # Once any version is declared, a version that is not declared must not quietly
@@ -142,6 +173,7 @@ sed \
     }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
+    -e "s|\${SERVER_STATE_FILE}|$SERVER_STATE_FILE|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
     -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
     -e "s|\${VERSIOND_PORT}|$PORT|g" \
@@ -154,6 +186,8 @@ sed \
     -e "s|\${DEVSHARD_HA_HEADER}|$HA_HEADER|g" \
     "$TEMPLATE" > "$OUT"
 
+# The state file is written by gonka-reload just before it signals a reload. On a
+# cold start there is none, and HAProxy simply starts from health checks.
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null
 
 if [ -n "${VERSIOND_ROUTER_RENDER_ONLY:-}" ]; then
