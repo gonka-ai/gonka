@@ -2,12 +2,13 @@ package accounting
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"devshard/types"
 )
 
-const SchemaVersion = 1
+const SchemaVersion = 2
 
 type Disposition string
 
@@ -84,9 +85,6 @@ const (
 
 type TimeoutReason string
 
-// A timeout reason qualifies a non-applied outcome. Outcomes that explain
-// themselves, such as insufficient_votes, carry no reason at all; only a
-// missing qualifier where one is expected becomes unknown.
 const (
 	TimeoutPhaseTransitionAborted   TimeoutReason = "phase_transition_aborted"
 	TimeoutLongResponseAfterContent TimeoutReason = "long_response_after_content"
@@ -97,16 +95,15 @@ const (
 	TimeoutReasonUnknown            TimeoutReason = "unknown"
 )
 
-type ProtocolTransitionKind string
+type ProtocolKind string
 
-// An applied timeout is not a protocol transition event: HandleTimeout owns
-// the timeout outcome, and HostStats is the independent protocol fact.
 const (
-	ProtocolReceiptApplied ProtocolTransitionKind = "receipt_applied"
-	ProtocolFinishApplied  ProtocolTransitionKind = "finish_applied"
-	ProtocolChallenged     ProtocolTransitionKind = "challenged"
-	ProtocolValidated      ProtocolTransitionKind = "validated"
-	ProtocolInvalidated    ProtocolTransitionKind = "invalidated"
+	ProtocolReceiptApplied ProtocolKind = "receipt_applied"
+	ProtocolFinishApplied  ProtocolKind = "finish_applied"
+	ProtocolTimeoutApplied ProtocolKind = "timeout_applied"
+	ProtocolChallenged     ProtocolKind = "challenged"
+	ProtocolValidated      ProtocolKind = "validated"
+	ProtocolInvalidated    ProtocolKind = "invalidated"
 )
 
 type EscrowPhase string
@@ -137,174 +134,9 @@ type TimeoutRecord struct {
 	DetailReason  string
 }
 
-// ProtocolView is the read-only protocol state needed after a committed diff.
-// state.StateMachine satisfies this interface without an accounting adapter.
-type ProtocolView interface {
-	GetCommittedRecord(uint64) (types.InferenceRecord, bool)
-	SnapshotStateNoInferences() types.EscrowState
-}
-
-// Recorder is the gateway-facing accounting API. It accepts protocol identities
-// directly instead of exposing the lower-level compatibility events.
-type Recorder interface {
-	RegisterEscrow(EscrowMetadata, types.SessionConfig, ...time.Duration) error
-	RecordCommittedDiff(string, types.Diff, ProtocolView) error
-	ReconcilePending(string, ProtocolView) error
-	RecordRealSend(string, uint64, Phase, QuarantineMode, ...time.Time) error
-	RecordGhost(string, uint64, Phase, QuarantineMode, NoSendReason, string) error
-	RecordUsage(string, uint64, Usage) error
-	RecordTimeoutOutcome(TimeoutRecord) error
-	RecordPhase(string, EscrowPhase) error
-	Diagnostics() []DiagnosticEntry
-	Flush(context.Context) error
-	Close() error
-}
-
-type DiagnosticKind string
-
-const (
-	DiagnosticEscrowRegistered DiagnosticKind = "escrow_registered"
-	DiagnosticPhaseChanged     DiagnosticKind = "phase_changed"
-	DiagnosticDiffApplied      DiagnosticKind = "diff_applied"
-	DiagnosticRealSend         DiagnosticKind = "real_send"
-	DiagnosticGhost            DiagnosticKind = "ghost"
-	DiagnosticUsage            DiagnosticKind = "usage"
-	DiagnosticDeadline         DiagnosticKind = "deadline"
-	DiagnosticTimeoutOutcome   DiagnosticKind = "timeout_outcome"
-	DiagnosticProtocol         DiagnosticKind = "protocol_transition"
-	DiagnosticHostStats        DiagnosticKind = "host_stats"
-)
-
-// DiagnosticEntry intentionally contains no prompt, output, hash, signature,
-// or raw error data. Entries are process-local and never included in snapshots.
-type DiagnosticEntry struct {
-	Kind        DiagnosticKind `json:"kind"`
-	EscrowID    string         `json:"escrow_id,omitempty"`
-	Nonce       uint64         `json:"nonce,omitempty"`
-	SlotID      uint32         `json:"slot_id,omitempty"`
-	BlockHeight int64          `json:"block_height,omitempty"`
-	Phase       string         `json:"phase,omitempty"`
-	Reason      string         `json:"reason,omitempty"`
-}
-
-type Event interface {
-	accountingEvent()
-}
-
-type EscrowRegistered struct {
-	Metadata EscrowMetadata
-}
-
-func (EscrowRegistered) accountingEvent() {}
-
-type EscrowPhaseChanged struct {
-	EscrowID string
-	Phase    EscrowPhase
-}
-
-func (EscrowPhaseChanged) accountingEvent() {}
-
-// DiffApplied records the protocol fact that a diff consumed Nonce. Inference
-// is true only when the diff carries MsgStartInference with inference_id=Nonce.
-type DiffApplied struct {
-	EscrowID  string
-	Nonce     uint64
-	Inference bool
-}
-
-func (DiffApplied) accountingEvent() {}
-
-type LatestNonceObserved struct {
-	EscrowID    string
-	LatestNonce uint64
-}
-
-func (LatestNonceObserved) accountingEvent() {}
-
-type ProtocolTransition struct {
-	EscrowID string
-	Nonce    uint64
-	Kind     ProtocolTransitionKind
-}
-
-func (ProtocolTransition) accountingEvent() {}
-
-type Ghost struct {
-	EscrowID      string
-	Nonce         uint64
-	DispatchPhase Phase
-	Quarantine    QuarantineMode
-	Reason        NoSendReason
-	DetailReason  string
-}
-
-func (Ghost) accountingEvent() {}
-
-type RealSend struct {
-	EscrowID      string
-	Nonce         uint64
-	DispatchPhase Phase
-	Quarantine    QuarantineMode
-}
-
-func (RealSend) accountingEvent() {}
-
-type Winner struct {
-	EscrowID string
-	Nonce    uint64
-}
-
-func (Winner) accountingEvent() {}
-
-type Loser struct {
-	EscrowID string
-	Nonce    uint64
-}
-
-func (Loser) accountingEvent() {}
-
-type UsageUnknown struct {
-	EscrowID string
-	Nonce    uint64
-}
-
-func (UsageUnknown) accountingEvent() {}
-
-type TimeoutRequired struct {
-	EscrowID        string
-	Nonce           uint64
-	Kind            TimeoutKind
-	EvaluationPhase Phase
-	FailureOrigin   FailureOrigin
-	DetailReason    string
-}
-
-func (TimeoutRequired) accountingEvent() {}
-
-type TimeoutOutcomeRecorded struct {
-	EscrowID string
-	Nonce    uint64
-	Outcome  TimeoutOutcome
-	Reason   TimeoutReason
-}
-
-func (TimeoutOutcomeRecorded) accountingEvent() {}
-
-// HostStatsObserved replaces the protocol HostStats facts for one slot.
-type HostStatsObserved struct {
-	EscrowID string
-	SlotID   uint32
-	Stats    types.HostStats
-}
-
-func (HostStatsObserved) accountingEvent() {}
-
-// CounterKey identifies one bucket of classified nonces. Unresolved challenges
-// and recorded invalid transitions are plain per-slot tallies and are kept
-// outside this map rather than as key variants with every dimension empty.
 type CounterKey struct {
 	SlotID                 uint32         `json:"slot_id"`
-	Disposition            Disposition    `json:"disposition,omitempty"`
+	Disposition            Disposition    `json:"disposition"`
 	DispatchPhase          Phase          `json:"dispatch_phase,omitempty"`
 	TimeoutEvaluationPhase Phase          `json:"timeout_evaluation_phase,omitempty"`
 	QuarantineMode         QuarantineMode `json:"quarantine_mode,omitempty"`
@@ -317,15 +149,14 @@ type CounterKey struct {
 }
 
 type CounterRecord struct {
-	EscrowID string `json:"escrow_id"`
-	CounterKey
-	Count uint64 `json:"count"`
+	EscrowID string     `json:"escrow_id"`
+	Key      CounterKey `json:"key"`
+	Count    uint64     `json:"count"`
 }
 
 type EscrowNonce struct {
-	EscrowID    string      `json:"escrow_id"`
-	LatestNonce uint64      `json:"latest_nonce"`
-	Phase       EscrowPhase `json:"phase"`
+	EscrowID    string `json:"escrow_id"`
+	LatestNonce uint64 `json:"latest_nonce"`
 }
 
 type SlotRecord struct {
@@ -406,3 +237,71 @@ type QueryFilter struct {
 }
 
 type CurrentEpochFunc func(context.Context) (uint64, error)
+
+func NoSendReasonFromString(reason string) NoSendReason {
+	switch value := NoSendReason(reason); value {
+	case NoSendPoCUnavailable, NoSendParticipantThrottled, NoSendParticipantCapability, NoSendNoCompatibleAfterStale:
+		return value
+	default:
+		return NoSendUnknown
+	}
+}
+
+func QuarantineFromString(value string) QuarantineMode {
+	switch value {
+	case "probe":
+		return QuarantineProbe
+	case "shadow":
+		return QuarantineShadow
+	case "probation":
+		return QuarantineProbation
+	default:
+		return QuarantineNone
+	}
+}
+
+func TimeoutOutcomeFromAction(action, reason string) TimeoutOutcome {
+	switch action {
+	case "completed":
+		return TimeoutApplied
+	case "skipped":
+		return TimeoutSkipped
+	case "failed":
+		return TimeoutOutcome(reason)
+	default:
+		return ""
+	}
+}
+
+func TimeoutReasonFromString(outcome TimeoutOutcome, reason string) TimeoutReason {
+	switch value := TimeoutReason(reason); value {
+	case TimeoutPhaseTransitionAborted, TimeoutLongResponseAfterContent, TimeoutStateRootDiverged,
+		TimeoutContextCanceled, TimeoutDiffDeliveryFailed, TimeoutNotApplied:
+		return value
+	}
+	if outcome == TimeoutSkipped {
+		return TimeoutReasonUnknown
+	}
+	return ""
+}
+
+func FailureOriginFromDetail(detail string) FailureOrigin {
+	switch {
+	case detail == "context_canceled" || strings.Contains(detail, "client"):
+		return FailureClient
+	case detail == "phase_transition_aborted",
+		detail == "long_response_after_content",
+		detail == "timeout_not_applied",
+		detail == "nonce_already_finished",
+		strings.Contains(detail, "policy"):
+		return FailureGatewayPolicy
+	case detail == "not_finished",
+		detail == "escrow_state_root_diverged",
+		strings.Contains(detail, "http_"),
+		strings.Contains(detail, "stream"),
+		strings.Contains(detail, "response"):
+		return FailureHostResponse
+	default:
+		return FailureTransportUnknown
+	}
+}

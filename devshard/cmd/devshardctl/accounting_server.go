@@ -14,10 +14,10 @@ import (
 )
 
 func (r *gatewayAccountingRecorder) handler(current accounting.CurrentEpochFunc) http.Handler {
-	if r == nil || r.service == nil {
+	if r == nil || r.tracker == nil {
 		return http.NotFoundHandler()
 	}
-	return accounting.NewHandler(r.service.Book, current)
+	return accounting.NewHandler(r.tracker, current)
 }
 
 func accountingRetentionEpochs() uint64 {

@@ -10,22 +10,18 @@ type participantKey struct {
 	model       string
 }
 
-func (b *Book) Query(filter QueryFilter) []ParticipantRecord {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	return b.queryLocked(filter)
-}
-
-func (b *Book) queryLocked(filter QueryFilter) []ParticipantRecord {
-	escrowFilter := makeStringSet(filter.EscrowIDs)
+func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	escrowFilter := stringSet(filter.EscrowIDs)
 	records := make(map[participantKey]*ParticipantRecord)
-	nonceAdded := make(map[participantKey]map[string]struct{})
+	nonceSeen := make(map[participantKey]map[string]struct{})
 
-	for escrowID, escrow := range b.escrows {
-		if escrow.metadata.CreationEpoch != filter.EpochIndex {
+	for escrowID, escrow := range t.escrows {
+		if escrow.Meta.CreationEpoch != filter.EpochIndex {
 			continue
 		}
-		if filter.Model != "" && escrow.metadata.Model != filter.Model {
+		if filter.Model != "" && escrow.Meta.Model != filter.Model {
 			continue
 		}
 		if len(escrowFilter) > 0 {
@@ -33,76 +29,70 @@ func (b *Book) queryLocked(filter QueryFilter) []ParticipantRecord {
 				continue
 			}
 		}
-		for _, assignment := range escrow.metadata.Slots {
-			if filter.Participant != "" && assignment.ValidatorAddress != filter.Participant {
+		for _, slot := range escrow.Meta.Slots {
+			if filter.Participant != "" && slot.ValidatorAddress != filter.Participant {
 				continue
 			}
-			key := participantKey{participant: assignment.ValidatorAddress, model: escrow.metadata.Model}
+			key := participantKey{participant: slot.ValidatorAddress, model: escrow.Meta.Model}
 			record := records[key]
 			if record == nil {
 				record = &ParticipantRecord{
 					SchemaVersion:   SchemaVersion,
-					UpdatedAt:       b.updatedAt,
+					UpdatedAt:       t.updated,
 					EpochIndex:      filter.EpochIndex,
-					Participant:     assignment.ValidatorAddress,
-					Model:           escrow.metadata.Model,
+					Participant:     key.participant,
+					Model:           key.model,
 					Dispositions:    make(map[Disposition]uint64),
 					TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
-					RecordingErrors: b.eventErrors,
-					WriterErrors:    b.writerErrors,
+					RecordingErrors: t.errCount,
+					WriterErrors:    t.wrCount,
 				}
 				records[key] = record
-				nonceAdded[key] = make(map[string]struct{})
+				nonceSeen[key] = make(map[string]struct{})
 			}
-			if _, exists := nonceAdded[key][escrowID]; !exists {
-				record.LatestNonces = append(record.LatestNonces, EscrowNonce{
-					EscrowID:    escrowID,
-					LatestNonce: escrow.latest,
-					Phase:       escrow.metadata.Phase,
-				})
-				nonceAdded[key][escrowID] = struct{}{}
+			if _, ok := nonceSeen[key][escrowID]; !ok {
+				record.LatestNonces = append(record.LatestNonces, EscrowNonce{EscrowID: escrowID, LatestNonce: escrow.Latest})
+				nonceSeen[key][escrowID] = struct{}{}
 			}
-
-			slot := buildSlotRecord(escrowID, escrow, assignment.SlotID)
-			record.Slots = append(record.Slots, slot)
-			record.AssignedNonces += slot.AssignedNonces
-			record.ProtocolMisses += slot.ProtocolMisses
-			record.ProtocolInvalid += slot.ProtocolInvalid
-			record.UnresolvedChallenges += slot.UnresolvedChallenges
-			record.InFlight += slot.InFlight
-			record.PendingClassification += slot.PendingClassification
-			record.Unclassified += slot.Unclassified
-			record.Overclassified += slot.Overclassified
-			record.UnknownReasonTotal += slot.UnknownReasonTotal
-			record.CrossChecks.TimeoutApplied += slot.TimeoutOutcomes[TimeoutApplied]
-			record.CrossChecks.HostMissed += slot.ProtocolMisses
-			record.CrossChecks.RecordedInvalid += slot.RecordedInvalid
-			record.CrossChecks.HostInvalid += slot.ProtocolInvalid
-			record.CrossChecks.ErrorCount +=
-				absoluteDifference(slot.TimeoutOutcomes[TimeoutApplied], slot.ProtocolMisses) +
-					absoluteDifference(slot.RecordedInvalid, slot.ProtocolInvalid) +
-					slot.Overclassified
-			for disposition, count := range slot.Dispositions {
-				record.Dispositions[disposition] += count
+			slotRecord := buildSlotRecord(escrowID, escrow, slot.SlotID)
+			record.Slots = append(record.Slots, slotRecord)
+			record.AssignedNonces += slotRecord.AssignedNonces
+			record.ProtocolMisses += slotRecord.ProtocolMisses
+			record.ProtocolInvalid += slotRecord.ProtocolInvalid
+			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
+			record.InFlight += slotRecord.InFlight
+			record.PendingClassification += slotRecord.PendingClassification
+			record.Unclassified += slotRecord.Unclassified
+			record.Overclassified += slotRecord.Overclassified
+			record.UnknownReasonTotal += slotRecord.UnknownReasonTotal
+			record.CrossChecks.TimeoutApplied += slotRecord.TimeoutOutcomes[TimeoutApplied]
+			record.CrossChecks.HostMissed += slotRecord.ProtocolMisses
+			record.CrossChecks.RecordedInvalid += slotRecord.RecordedInvalid
+			record.CrossChecks.HostInvalid += slotRecord.ProtocolInvalid
+			for d, count := range slotRecord.Dispositions {
+				record.Dispositions[d] += count
 			}
-			for outcome, count := range slot.TimeoutOutcomes {
+			for outcome, count := range slotRecord.TimeoutOutcomes {
 				record.TimeoutOutcomes[outcome] += count
 			}
-			for counterKey, count := range escrow.counters {
-				if counterKey.SlotID != assignment.SlotID || count == 0 {
+			for _, counterKey := range sortedCounterKeys(escrow.Counters) {
+				if counterKey.SlotID != slot.SlotID {
 					continue
 				}
 				record.Counters = append(record.Counters, CounterRecord{
-					EscrowID:   escrowID,
-					CounterKey: counterKey,
-					Count:      count,
+					EscrowID: escrowID,
+					Key:      counterKey,
+					Count:    escrow.Counters[counterKey],
 				})
 			}
 		}
 	}
 
-	result := make([]ParticipantRecord, 0, len(records))
+	out := make([]ParticipantRecord, 0, len(records))
 	for _, record := range records {
+		record.CrossChecks.ErrorCount =
+			absDiff(record.CrossChecks.TimeoutApplied, record.CrossChecks.HostMissed) +
+				absDiff(record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid)
 		sort.Slice(record.LatestNonces, func(i, j int) bool {
 			return record.LatestNonces[i].EscrowID < record.LatestNonces[j].EscrowID
 		})
@@ -113,90 +103,78 @@ func (b *Book) queryLocked(filter QueryFilter) []ParticipantRecord {
 			return record.Slots[i].EscrowID < record.Slots[j].EscrowID
 		})
 		sort.Slice(record.Counters, func(i, j int) bool {
-			return counterRecordLess(record.Counters[i], record.Counters[j])
+			if record.Counters[i].EscrowID == record.Counters[j].EscrowID {
+				return counterSortKey(record.Counters[i].Key) < counterSortKey(record.Counters[j].Key)
+			}
+			return record.Counters[i].EscrowID < record.Counters[j].EscrowID
 		})
-		result = append(result, *record)
+		out = append(out, *record)
 	}
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Participant == result[j].Participant {
-			return result[i].Model < result[j].Model
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].Participant == out[j].Participant {
+			return out[i].Model < out[j].Model
 		}
-		return result[i].Participant < result[j].Participant
+		return out[i].Participant < out[j].Participant
 	})
-	return result
+	return out
 }
 
-func buildSlotRecord(escrowID string, escrow *escrowBook, slotID uint32) SlotRecord {
-	assigned, _ := AssignedNoncesForSlot(escrow.latest, uint64(len(escrow.metadata.Slots)), slotID)
-	slot := SlotRecord{
+func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32) SlotRecord {
+	assigned, _ := AssignedNoncesForSlot(escrow.Latest, uint64(len(escrow.Meta.Slots)), slot)
+	record := SlotRecord{
 		EscrowID:        escrowID,
-		SlotID:          slotID,
+		SlotID:          slot,
 		AssignedNonces:  assigned,
 		Dispositions:    make(map[Disposition]uint64),
 		TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
 	}
-	var classified uint64
-	for key, count := range escrow.counters {
-		if key.SlotID != slotID || count == 0 {
+	var accounted uint64
+	for key, count := range escrow.Counters {
+		if key.SlotID != slot || count == 0 {
 			continue
 		}
-		slot.Dispositions[key.Disposition] += count
-		classified += count
+		record.Dispositions[key.Disposition] += count
+		accounted += count
 		if key.TimeoutOutcome != "" {
-			slot.TimeoutOutcomes[key.TimeoutOutcome] += count
+			record.TimeoutOutcomes[key.TimeoutOutcome] += count
 		}
-		if counterHasUnknownReason(key) {
-			slot.UnknownReasonTotal += count
-		}
-	}
-	for _, challengedSlot := range escrow.challenges {
-		if challengedSlot == slotID {
-			slot.UnresolvedChallenges++
+		if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
+			record.UnknownReasonTotal += count
 		}
 	}
-	slot.RecordedInvalid = escrow.invalidBySlot[slotID]
-	for _, state := range escrow.live {
-		if state.slotID != slotID {
+	for _, live := range escrow.Live {
+		if live.SlotID != slot {
 			continue
 		}
-		if state.sent && !state.finish && !state.timeoutRequired {
-			slot.InFlight++
-		} else if state.counted == nil {
-			slot.PendingClassification++
+		switch {
+		case live.Sent && !live.Finished && live.TimeoutOutcome == "":
+			record.InFlight++
+			accounted++
+		case live.Counted == nil:
+			record.PendingClassification++
+			accounted++
 		}
 	}
-	accounted := classified + slot.InFlight + slot.PendingClassification
-	if accounted < slot.AssignedNonces {
-		slot.Unclassified = slot.AssignedNonces - accounted
-	} else if accounted > slot.AssignedNonces {
-		slot.Overclassified = accounted - slot.AssignedNonces
+	record.UnresolvedChallenges = escrow.ChallengeBySlot[slot]
+	record.RecordedInvalid = escrow.InvalidBySlot[slot]
+	if stats, ok := escrow.HostStats[slot]; ok {
+		record.ProtocolMisses = uint64(stats.Missed)
+		record.ProtocolInvalid = uint64(stats.Invalid)
 	}
-	if stats, ok := escrow.hostStats[slotID]; ok {
-		slot.ProtocolMisses = uint64(stats.Missed)
-		slot.ProtocolInvalid = uint64(stats.Invalid)
+	if accounted < assigned {
+		record.Unclassified = assigned - accounted
+	} else if accounted > assigned {
+		record.Overclassified = accounted - assigned
 	}
-	return slot
+	return record
 }
 
-// counterHasUnknownReason reports whether a classified nonce fell back to an
-// unknown value on a dimension that is expected to name a cause.
-// failure_origin=transport_unknown is not such a fallback: it is one of the
-// four fixed origins and stays visible as its own dimension.
-func counterHasUnknownReason(key CounterKey) bool {
-	return key.NoSendReason == NoSendUnknown ||
-		key.DetailReason == "unknown" ||
-		key.TimeoutReason == TimeoutReasonUnknown
-}
-
-func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
-	b.mu.RLock()
-	defer b.mu.RUnlock()
-	recordingErrors := b.eventErrors
-	writerErrors := b.writerErrors
-	epochSet := make(map[uint64]struct{})
-	escrowFilter := makeStringSet(filter.EscrowIDs)
-	for escrowID, escrow := range b.escrows {
-		if filter.Model != "" && escrow.metadata.Model != filter.Model {
+func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
+	t.mu.RLock()
+	epochs := make(map[uint64]struct{})
+	escrowFilter := stringSet(filter.EscrowIDs)
+	for escrowID, escrow := range t.escrows {
+		if filter.Model != "" && escrow.Meta.Model != filter.Model {
 			continue
 		}
 		if len(escrowFilter) > 0 {
@@ -204,17 +182,18 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 				continue
 			}
 		}
-		epochSet[escrow.metadata.CreationEpoch] = struct{}{}
+		epochs[escrow.Meta.CreationEpoch] = struct{}{}
 	}
-	epochs := make([]uint64, 0, len(epochSet))
-	for epoch := range epochSet {
-		epochs = append(epochs, epoch)
-	}
-	sort.Slice(epochs, func(i, j int) bool { return epochs[i] < epochs[j] })
+	t.mu.RUnlock()
 
-	result := make([]EpochSummary, 0, len(epochs))
-	for _, epoch := range epochs {
-		records := b.queryLocked(QueryFilter{
+	ids := make([]uint64, 0, len(epochs))
+	for epoch := range epochs {
+		ids = append(ids, epoch)
+	}
+	sort.Slice(ids, func(i, j int) bool { return ids[i] < ids[j] })
+	out := make([]EpochSummary, 0, len(ids))
+	for _, epoch := range ids {
+		records := t.Query(QueryFilter{
 			EpochIndex: epoch,
 			Model:      filter.Model,
 			EscrowIDs:  filter.EscrowIDs,
@@ -224,8 +203,6 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 			EpochIndex:      epoch,
 			Dispositions:    make(map[Disposition]uint64),
 			TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
-			RecordingErrors: recordingErrors,
-			WriterErrors:    writerErrors,
 		}
 		for _, record := range records {
 			if record.UpdatedAt.After(summary.UpdatedAt) {
@@ -240,6 +217,8 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 			summary.Unclassified += record.Unclassified
 			summary.Overclassified += record.Overclassified
 			summary.UnknownReasonTotal += record.UnknownReasonTotal
+			summary.RecordingErrors = record.RecordingErrors
+			summary.WriterErrors = record.WriterErrors
 			summary.CrossCheckErrors += record.CrossChecks.ErrorCount
 			for disposition, count := range record.Dispositions {
 				summary.Dispositions[disposition] += count
@@ -248,52 +227,27 @@ func (b *Book) Epochs(filter QueryFilter) []EpochSummary {
 				summary.TimeoutOutcomes[outcome] += count
 			}
 		}
-		result = append(result, summary)
+		out = append(out, summary)
 	}
-	return result
+	return out
 }
 
-func makeStringSet(values []string) map[string]struct{} {
-	result := make(map[string]struct{}, len(values))
+func stringSet(values []string) map[string]struct{} {
+	out := make(map[string]struct{})
 	for _, value := range values {
 		for _, item := range strings.Split(value, ",") {
 			item = strings.TrimSpace(item)
 			if item != "" {
-				result[item] = struct{}{}
+				out[item] = struct{}{}
 			}
 		}
 	}
-	return result
+	return out
 }
 
-func absoluteDifference(left, right uint64) uint64 {
-	if left > right {
-		return left - right
+func absDiff(a, b uint64) uint64 {
+	if a > b {
+		return a - b
 	}
-	return right - left
-}
-
-func counterRecordLess(left, right CounterRecord) bool {
-	if left.EscrowID != right.EscrowID {
-		return left.EscrowID < right.EscrowID
-	}
-	if left.SlotID != right.SlotID {
-		return left.SlotID < right.SlotID
-	}
-	return counterSortKey(left.CounterKey) < counterSortKey(right.CounterKey)
-}
-
-func counterSortKey(key CounterKey) string {
-	return strings.Join([]string{
-		string(key.Disposition),
-		string(key.DispatchPhase),
-		string(key.TimeoutEvaluationPhase),
-		string(key.QuarantineMode),
-		string(key.NoSendReason),
-		string(key.FailureOrigin),
-		key.DetailReason,
-		string(key.TimeoutKind),
-		string(key.TimeoutOutcome),
-		string(key.TimeoutReason),
-	}, "\x00")
+	return b - a
 }

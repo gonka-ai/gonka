@@ -561,7 +561,7 @@ type Decision struct {
 }
 
 type gatewayAccounting interface {
-	recordRealSend(string, uint64, string, time.Time)
+	recordRealSend(string, uint64, string)
 	recordGhost(string, uint64, string, string)
 	recordUsage(string, uint64, uint64)
 	recordTimeout(string, uint64, string, string, string, string, string)
@@ -577,8 +577,7 @@ type Redundancy struct {
 	devshardID            string
 	model                 string // escrow's registered model; used for ghost probes when no real request is around
 	metrics               *DevshardMetrics
-	accounting            atomic.Value
-	accountingOnce        sync.Once
+	accounting            gatewayAccounting
 	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
 	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
 	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
@@ -589,26 +588,6 @@ type Redundancy struct {
 	stateBlockMu          sync.RWMutex
 	stateBlockedHosts     map[string]string // escrow-local participant blocks for non-recoverable state divergence
 	suspiciousParticipant func(participantKey string) bool
-}
-
-func (e *Redundancy) setAccounting(recorder gatewayAccounting) {
-	if e == nil || recorder == nil {
-		return
-	}
-	e.accountingOnce.Do(func() {
-		e.accounting.Store(recorder)
-	})
-}
-
-func (e *Redundancy) accountingRecorder() gatewayAccounting {
-	if e == nil {
-		return nil
-	}
-	value := e.accounting.Load()
-	if value == nil {
-		return nil
-	}
-	return value.(gatewayAccounting)
 }
 
 // ErrAllHostsExcluded is returned by prepareInflight when the request
@@ -3894,8 +3873,8 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if recorder := e.accountingRecorder(); recorder != nil {
-		recorder.recordRealSend(inf.escrowID, inf.nonce, quarantineMode, inf.sendTime)
+	if e.accounting != nil {
+		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode)
 	}
 	if e.metrics == nil {
 		return
@@ -3924,8 +3903,8 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if recorder := e.accountingRecorder(); recorder != nil {
-		recorder.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
+	if e.accounting != nil {
+		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
 	}
 	if e.metrics == nil {
 		return
@@ -3982,13 +3961,13 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if recorder := e.accountingRecorder(); recorder != nil {
+	if e.accounting != nil {
 		detailReason := gatewayAttemptFailureReason(inf, e.session)
 		timeoutReason := reason
 		if len(detailReasons) > 0 && detailReasons[0] != "" {
 			timeoutReason = detailReasons[0]
 		}
-		recorder.recordTimeout(
+		e.accounting.recordTimeout(
 			inf.escrowID, inf.nonce, kind, action, reason, detailReason,
 			timeoutReason,
 		)
@@ -4227,8 +4206,8 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if recorder := e.accountingRecorder(); recorder != nil {
-		recorder.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	if e.accounting != nil {
+		e.accounting.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
 	}
 	if e.metrics != nil {
 		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{

@@ -370,7 +370,6 @@ The private API exposes:
 - `GET /api/v1/epochs`
 - `GET /api/v1/epochs/{epoch_index}/participants`
 - `GET /api/v1/epochs/{epoch_index}/participants/{participant}`
-- `GET /api/v1/diagnostics`
 
 `epoch_index` accepts `current` and selects escrows created in that epoch.
 Collection responses contain one row per `participant` and `model`.
@@ -392,8 +391,7 @@ Each participant-model record contains:
   `unclassified`, `overclassified`, `cross_check_error`,
   `unknown_reason_total`, and writer errors.
 
-The API returns counts, not rates. `/api/v1/diagnostics` returns the
-bounded in-memory diagnostic window. Prompts, responses, payload hashes,
+The API returns counts, not rates. Prompts, responses, payload hashes,
 raw errors, and private material are never stored or served.
 
 The dashboard reads only this API and stores no accounting state. The
@@ -430,20 +428,19 @@ event history: the first classification increments one key; a later
 reclassify atomically moves the count to the new key. The request path
 performs no accounting writes.
 
-Non-applied timeouts are the only per-nonce rows. They remain mutable
-because a retry or late finish can change their outcome after restart.
-The row is removed once the timeout applies or the inference finishes.
-Each escrow keeps at most 10,000 mutable timeout rows, and finalization
-compacts any remaining rows into counters.
+There are no per-nonce database rows. Live nonce state exists only in
+memory while the nonce can still change. A restart drops that live state:
+unfinished live sends become `unclassified`, and non-applied timeout
+failures remain frozen in the counters they already reached.
 
-A snapshot writer atomically upserts every counter, together with each
-escrow's `latest_nonce`, into `accounting.db` every five
-minutes and at escrow finalization, settlement, rotation, epoch
-transition, and shutdown. A failed snapshot keeps the previous one and is
-reported as a writer error. The tables hold one row per key, not history.
-Every dimension is a small enum and only observed combinations create
-counters, so an escrow produces at most a few hundred counter rows plus
-the bounded mutable timeout rows.
+A snapshot writer stores each escrow's metadata, `latest_nonce`,
+`HostStats`, per-slot challenge and invalid counts, and counter map into
+`accounting.db` every five minutes and at escrow finalization,
+settlement, rotation, epoch transition, and shutdown. A failed snapshot
+keeps the previous one and is reported as a writer error. The database
+uses one JSON payload per escrow, not per-nonce history. Every dimension
+is a small enum and only observed combinations create counters, so an
+escrow produces at most a few hundred counter entries.
 
 An escrow registry stores the chain `epoch_index`, model, ordered slots,
 and participant addresses. Aggregation happens at query time: epoch,
@@ -456,18 +453,19 @@ memory and `latest_nonce`. None is stored.
 positive value removes only complete epochs older than the configured
 count.
 
-On restart, counters resume from the last snapshot. The gateway replays
-the committed diff tail and checks persisted mutable timeouts against
-recovered protocol state. Any remaining gap falls into `unclassified`;
-recovery never invents a terminal outcome.
+On restart, counters resume from the last snapshot. The gateway does not
+replay diffs for accounting. Instead, it reads recovered `HostStats` and,
+if `HostStats.Missed` exceeds counted `timeout_outcome=applied`, records
+the difference as applied protocol misses with empty gateway context.
+`HostStats.Missed` is the protocol ground truth, so this only restores a
+settlement fact already present in state.
 
-A small in-memory ring of recent nonce records, including block heights,
-supports debugging. Ring records are never stored.
-
-The sequencer records each diff through one direct function call after
-the diff is durably committed. There is no accounting poller. One
-deadline heap and one timer track all active refusal and execution
-deadlines.
+The state machine is the source for protocol facts. After a diff commits,
+it emits small observer events for diff nonce, receipt, finish, timeout,
+challenge, validation, invalidation, and current `HostStats`. The gateway
+is still the source for gateway facts: ghost, real send, winner, timeout
+attempt, policy reason, and lifecycle phase. There is no accounting
+poller and no accounting-owned deadline heap.
 
 ### Lifecycle integration
 
@@ -522,8 +520,8 @@ Tests cover:
   windows;
 - `in_flight` draining to zero on inactive escrows;
 - reclassify moving counts atomically between keys;
-- replayed callbacks changing no counter;
-- the `non_execution_credit` identity, including `timeout_pending`;
+- repeated callbacks changing no counter;
+- the `non_execution_credit` identity, including restart gaps;
 - settlement assignment matching, including slot `0` and
   `protocol_only_nonce`;
 - every refused and execution `timeout_outcome`;

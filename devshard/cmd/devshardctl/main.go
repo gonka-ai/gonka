@@ -423,15 +423,13 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		perfStore.Close()
 		log.Fatalf("create runtimes: %v", err)
 	}
-	accountingService, err := accounting.OpenService(
+	accountingTracker, err := accounting.OpenTracker(
 		filepath.Join(baseStorageDir, "accounting.db"),
 		accountingRetentionEpochs(),
 		accounting.DefaultSnapshotInterval,
 	)
 	if err != nil {
-		runtimeParamsClose()
-		perfStore.Close()
-		log.Fatalf("open accounting store: %v", err)
+		log.Printf("open accounting store: %v (accounting disabled)", err)
 	}
 	limiter := NewGatewayLimiter(
 		gatewayState.Settings.MaxConcurrentRequests,
@@ -442,13 +440,12 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.MaxInputTokensInFlight,
 		gatewayState.Settings.ModelLimits,
 	)
-	recorder := newGatewayAccountingRecorder(accountingService)
+	recorder := newGatewayAccountingRecorder(accountingTracker)
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
-	if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingService.Book, accountingCurrentEpoch(gateway))); err != nil {
-		accountingService.Close()
-		runtimeParamsClose()
-		perfStore.Close()
-		log.Fatalf("register accounting metrics: %v", err)
+	if accountingTracker != nil {
+		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {
+			log.Printf("register accounting metrics: %v (accounting metrics disabled)", err)
+		}
 	}
 	recordStartupSkippedEscrows(gateway.metrics, startupSkipped)
 	gateway.perfStore = perfStore

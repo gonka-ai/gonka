@@ -3,25 +3,21 @@ package main
 import (
 	"context"
 	"log"
-	"strings"
-	"sync"
-	"time"
 
 	"devshard/accounting"
+	"devshard/state"
 	"devshard/types"
-	"devshard/user"
 )
 
 type gatewayAccountingRecorder struct {
-	service *accounting.Service
+	tracker *accounting.Tracker
 }
 
-func newGatewayAccountingRecorder(service *accounting.Service) *gatewayAccountingRecorder {
-	if service == nil || service.Book == nil {
+func newGatewayAccountingRecorder(tracker *accounting.Tracker) *gatewayAccountingRecorder {
+	if tracker == nil {
 		return nil
 	}
-	service.SetPhaseProvider(currentAccountingPhase)
-	return &gatewayAccountingRecorder{service: service}
+	return &gatewayAccountingRecorder{tracker: tracker}
 }
 
 func (r *gatewayAccountingRecorder) attachRuntime(rt *devshardRuntime) {
@@ -29,61 +25,30 @@ func (r *gatewayAccountingRecorder) attachRuntime(rt *devshardRuntime) {
 		return
 	}
 	stateSnapshot := rt.proxy.sm.SnapshotStateNoInferences()
-	if err := r.service.RegisterEscrow(accounting.EscrowMetadata{
+	if err := r.tracker.RegisterEscrow(accounting.EscrowMetadata{
 		EscrowID:      rt.id,
 		CreationEpoch: rt.session.EpochID(),
 		Model:         rt.model,
 		Slots:         stateSnapshot.Group,
 		Phase:         accountingEscrowPhase(rt.proxy.sm.Phase()),
-	}, stateSnapshot.Config, user.TimeoutBuffer); err != nil {
+	}); err != nil {
 		log.Printf("gateway accounting register escrow=%s: %v", rt.id, err)
 		return
 	}
-	var commitMu sync.Mutex
-	enabled := true
-	recordDiff := func(diff types.Diff) {
-		commitMu.Lock()
-		defer commitMu.Unlock()
-		if !enabled {
-			return
-		}
-		if err := r.service.RecordCommittedDiff(rt.id, diff, rt.proxy.sm); err != nil {
-			log.Printf("gateway accounting committed diff escrow=%s nonce=%d: %v", rt.id, diff.Nonce, err)
+	for slot, stats := range stateSnapshot.HostStats {
+		if stats != nil {
+			_ = r.tracker.RecordHostStats(rt.id, slot, *stats)
 		}
 	}
-	commitMu.Lock()
-	tail, err := rt.session.SetCommittedDiffHook(r.service.Book.ReducedThrough(rt.id), recordDiff)
-	if err != nil {
-		commitMu.Unlock()
-		log.Printf("gateway accounting recovery tail escrow=%s: %v", rt.id, err)
-		return
-	}
-	for _, diff := range tail {
-		if err := r.service.RecordRecoveredDiff(rt.id, diff, rt.proxy.sm); err != nil {
-			log.Printf("gateway accounting recovery diff escrow=%s nonce=%d: %v", rt.id, diff.Nonce, err)
-			enabled = false
-			commitMu.Unlock()
-			return
-		}
-	}
-	if err := r.service.ReconcilePending(rt.id, rt.proxy.sm); err != nil {
-		log.Printf("gateway accounting reconcile pending escrow=%s: %v", rt.id, err)
-		enabled = false
-		commitMu.Unlock()
-		return
-	}
-	if err := r.service.RecordPhase(rt.id, accountingEscrowPhase(rt.proxy.sm.Phase())); err != nil {
-		log.Printf("gateway accounting recovered phase escrow=%s: %v", rt.id, err)
-		enabled = false
-		commitMu.Unlock()
-		return
-	}
-	commitMu.Unlock()
+	_ = r.tracker.ReconcileAppliedMisses(rt.id)
+	rt.proxy.sm.SetAccountingObserver(func(event state.AccountingEvent) {
+		r.recordStateEvent(rt.id, event)
+	})
 	if rt.proxy.redundancy != nil {
-		rt.proxy.redundancy.setAccounting(r)
+		rt.proxy.redundancy.accounting = r
 	}
 	rt.accountingFlush = func() {
-		if err := r.service.RecordPhase(rt.id, accountingEscrowPhase(rt.proxy.sm.Phase())); err != nil {
+		if err := r.tracker.RecordPhase(rt.id, accountingEscrowPhase(rt.proxy.sm.Phase())); err != nil {
 			log.Printf("gateway accounting phase escrow=%s: %v", rt.id, err)
 		}
 		if err := r.flush(context.Background()); err != nil {
@@ -92,36 +57,50 @@ func (r *gatewayAccountingRecorder) attachRuntime(rt *devshardRuntime) {
 	}
 }
 
+func (r *gatewayAccountingRecorder) recordStateEvent(escrowID string, event state.AccountingEvent) {
+	if event.DiffNonce != 0 {
+		if err := r.tracker.RecordDiff(escrowID, event.DiffNonce, event.HasStartInference); err != nil {
+			log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, event.DiffNonce, err)
+		}
+		return
+	}
+	if event.Kind != "" {
+		if err := r.tracker.RecordProtocol(
+			escrowID,
+			event.InferenceID,
+			event.ExecutorSlot,
+			accounting.ProtocolKind(event.Kind),
+			event.HostStats,
+		); err != nil {
+			log.Printf("gateway accounting protocol escrow=%s nonce=%d: %v", escrowID, event.InferenceID, err)
+		}
+	}
+}
+
 func (r *gatewayAccountingRecorder) recordEscrowPhase(escrowID string, phase types.SessionPhase) {
-	if err := r.service.RecordPhase(escrowID, accountingEscrowPhase(phase)); err != nil {
+	if err := r.tracker.RecordPhase(escrowID, accountingEscrowPhase(phase)); err != nil {
 		log.Printf("gateway accounting phase escrow=%s: %v", escrowID, err)
 	}
 }
 
 func (r *gatewayAccountingRecorder) recordSettled(escrowID string) {
-	if err := r.service.RecordPhase(escrowID, accounting.EscrowSettled); err != nil {
+	if err := r.tracker.RecordPhase(escrowID, accounting.EscrowSettled); err != nil {
 		log.Printf("gateway accounting settled escrow=%s: %v", escrowID, err)
 	}
 }
 
-func (r *gatewayAccountingRecorder) setBlockHeightProvider(provider func() int64) {
-	if r != nil && r.service != nil && r.service.Book != nil {
-		r.service.Book.SetBlockHeightProvider(provider)
-	}
-}
-
 func (r *gatewayAccountingRecorder) recordGhost(escrowID string, nonce uint64, reason, quarantine string) {
-	noSend := accountingNoSendReason(reason)
+	noSend := accounting.NoSendReasonFromString(reason)
 	// A recognized no_send_reason already carries the whole story.
 	detailReason := ""
 	if noSend == accounting.NoSendUnknown {
 		detailReason = reason
 	}
-	if err := r.service.RecordGhost(
+	if err := r.tracker.RecordGhost(
 		escrowID,
 		nonce,
 		currentAccountingPhase(),
-		accountingQuarantine(quarantine),
+		accounting.QuarantineFromString(quarantine),
 		noSend,
 		detailReason,
 	); err != nil {
@@ -129,31 +108,16 @@ func (r *gatewayAccountingRecorder) recordGhost(escrowID string, nonce uint64, r
 	}
 }
 
-func accountingNoSendReason(reason string) accounting.NoSendReason {
-	switch value := accounting.NoSendReason(reason); value {
-	case accounting.NoSendPoCUnavailable, accounting.NoSendParticipantThrottled,
-		accounting.NoSendParticipantCapability, accounting.NoSendNoCompatibleAfterStale:
-		return value
-	default:
-		return accounting.NoSendUnknown
-	}
-}
-
 func (r *gatewayAccountingRecorder) recordRealSend(
 	escrowID string,
 	nonce uint64,
 	quarantine string,
-	sendTime time.Time,
 ) {
-	if sendTime.IsZero() {
-		sendTime = time.Now()
-	}
-	if err := r.service.RecordRealSend(
+	if err := r.tracker.RecordRealSend(
 		escrowID,
 		nonce,
 		currentAccountingPhase(),
-		accountingQuarantine(quarantine),
-		sendTime,
+		accounting.QuarantineFromString(quarantine),
 	); err != nil {
 		log.Printf("gateway accounting real send escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
@@ -167,7 +131,7 @@ func (r *gatewayAccountingRecorder) recordUsage(escrowID string, nonce, winnerNo
 	case nonce == winnerNonce:
 		usage = accounting.UsageWinner
 	}
-	if err := r.service.RecordUsage(escrowID, nonce, usage); err != nil {
+	if err := r.tracker.RecordUsage(escrowID, nonce, usage); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
@@ -183,46 +147,22 @@ func (r *gatewayAccountingRecorder) recordTimeout(
 	if action == "skipped" && !timeoutSkipRequiresAccounting(reason) {
 		return
 	}
-	var outcome accounting.TimeoutOutcome
-	switch {
-	case action == "completed":
-		outcome = accounting.TimeoutApplied
-	case action == "skipped":
-		outcome = accounting.TimeoutSkipped
-	case action == "failed":
-		outcome = accounting.TimeoutOutcome(reason)
-	}
+	outcome := accounting.TimeoutOutcomeFromAction(action, reason)
 	if outcome == "" {
 		return
 	}
-	if err := r.service.RecordTimeoutOutcome(accounting.TimeoutRecord{
+	if err := r.tracker.RecordTimeout(accounting.TimeoutRecord{
 		EscrowID:      escrowID,
 		Nonce:         nonce,
 		Kind:          accounting.TimeoutKind(kind),
 		Phase:         currentAccountingPhase(),
 		Outcome:       outcome,
-		Reason:        accountingTimeoutReason(outcome, timeoutReason),
-		FailureOrigin: accountingFailureOrigin(detailReason),
+		Reason:        accounting.TimeoutReasonFromString(outcome, timeoutReason),
+		FailureOrigin: accounting.FailureOriginFromDetail(detailReason),
 		DetailReason:  detailReason,
 	}); err != nil {
 		log.Printf("gateway accounting timeout escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
-}
-
-// accountingTimeoutReason keeps the outcome out of the reason dimension. A skip
-// must always name its cause, so an unlisted one stays visible as unknown;
-// every other outcome is its own explanation and may carry no reason.
-func accountingTimeoutReason(outcome accounting.TimeoutOutcome, reason string) accounting.TimeoutReason {
-	switch value := accounting.TimeoutReason(reason); value {
-	case accounting.TimeoutPhaseTransitionAborted, accounting.TimeoutLongResponseAfterContent,
-		accounting.TimeoutStateRootDiverged, accounting.TimeoutContextCanceled,
-		accounting.TimeoutDiffDeliveryFailed, accounting.TimeoutNotApplied:
-		return value
-	}
-	if outcome == accounting.TimeoutSkipped {
-		return accounting.TimeoutReasonUnknown
-	}
-	return ""
 }
 
 func timeoutSkipRequiresAccounting(reason string) bool {
@@ -234,39 +174,18 @@ func timeoutSkipRequiresAccounting(reason string) bool {
 	}
 }
 
-func accountingFailureOrigin(reason string) accounting.FailureOrigin {
-	switch {
-	case reason == "context_canceled" || strings.Contains(reason, "client"):
-		return accounting.FailureClient
-	case reason == "phase_transition_aborted",
-		reason == "long_response_after_content",
-		reason == "timeout_not_applied",
-		reason == "nonce_already_finished",
-		strings.Contains(reason, "policy"):
-		return accounting.FailureGatewayPolicy
-	case reason == "not_finished",
-		reason == "escrow_state_root_diverged",
-		strings.Contains(reason, "http_"),
-		strings.Contains(reason, "stream"),
-		strings.Contains(reason, "response"):
-		return accounting.FailureHostResponse
-	default:
-		return accounting.FailureTransportUnknown
-	}
-}
-
 func (r *gatewayAccountingRecorder) flush(ctx context.Context) error {
-	if r == nil || r.service == nil {
+	if r == nil || r.tracker == nil {
 		return nil
 	}
-	return r.service.Flush(ctx)
+	return r.tracker.Flush(ctx)
 }
 
 func (r *gatewayAccountingRecorder) close() error {
-	if r == nil || r.service == nil {
+	if r == nil || r.tracker == nil {
 		return nil
 	}
-	return r.service.Close()
+	return r.tracker.Close()
 }
 
 func accountingEscrowPhase(phase types.SessionPhase) accounting.EscrowPhase {
@@ -289,18 +208,5 @@ func currentAccountingPhase() accounting.Phase {
 		return accounting.PhasePoC
 	default:
 		return accounting.PhaseNormal
-	}
-}
-
-func accountingQuarantine(value string) accounting.QuarantineMode {
-	switch value {
-	case "probe":
-		return accounting.QuarantineProbe
-	case "shadow":
-		return accounting.QuarantineShadow
-	case "probation":
-		return accounting.QuarantineProbation
-	default:
-		return accounting.QuarantineNone
 	}
 }
