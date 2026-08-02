@@ -17,19 +17,21 @@
 # and mean nothing outside the router.
 #
 # HAProxy server state is per backend/server pair, and one host appears in every
-# pool: the host-level one and one per declared version. Draining a host means
-# draining it everywhere, or it would keep taking traffic for the versions that
-# were missed. Every pool is checked first and only then changed, so a refusal
-# leaves nothing half-drained.
+# backend it belongs to: the host-level pool, one pool per declared version, and
+# versiond_legacy if it owns the pre-HA data. Draining means draining everywhere,
+# or the host keeps taking the traffic that was missed. Every backend is
+# inspected and snapshotted first; if one change fails, the ones already made are
+# put back exactly as they were.
 #
-# The last host taking traffic in a pool cannot be drained: it would empty that
-# pool. This is advisory — `docker stop` still bypasses it — and exists so that
-# draining hosts one by one cannot take the deployment down by accident.
+# A backend whose last server still taking traffic is the target refuses the
+# drain — that includes versiond_legacy, which has exactly one server, so the
+# legacy owner cannot be quiesced this way at all. Emptying it would fail every
+# request for the versions pinned to it. This is advisory: `docker stop` still
+# bypasses it.
 set -eu
 
 SOCK="${HAPROXY_SOCKET:-/var/run/haproxy.sock}"
-# The legacy backend is a single pinned host, not part of the shared pool.
-POOL_PATTERN="${VERSIOND_POOL_BACKENDS:-^versiond_ha_pool$|^versiond_pool_}"
+LOCK="${GONKA_DRAIN_LOCK:-/var/run/gonka-drain.lock}"
 
 runtime() {
     printf '%s\n' "$1" | socat stdio "$SOCK"
@@ -44,8 +46,18 @@ apply() {
     fi
 }
 
-pools() {
-    runtime "show backend" | grep -E "$POOL_PATTERN" || true
+NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
+
+# Backends that can actually receive a request. versiond_legacy exists even when
+# no version is pinned to it, and then it can be reached by nothing — counting
+# its single server would pin one host as undrainable for no reason.
+backends() {
+    runtime "show backend" | grep -v '^#' | grep -v '^$' | while read -r backend; do
+        if [ "$backend" = versiond_legacy ] && [ ! -s "$NON_HA_MAP" ]; then
+            continue
+        fi
+        printf '%s\n' "$backend"
+    done
 }
 
 # `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
@@ -59,9 +71,22 @@ serving_count() {
     servers "$1" | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
 }
 
-slot_in() {
+# Prints "<slot> <op_state> <admin_state>" for the matching server, if any.
+find_server() {
     servers "$1" | awk -v t="$2" -v ip="$3" \
-        '$4 == t || $5 == t || (ip != "" && $5 == ip) { print $4; exit }'
+        '$4 == t || $5 == t || (ip != "" && $5 == ip) { print $4, $6, $7; exit }'
+}
+
+# The admin state to restore this server to. HAProxy reports a bitfield;
+# 0x1 is forced maintenance and 0x8 forced drain.
+state_for_admin() {
+    if [ $(($1 & 1)) -ne 0 ]; then
+        echo maint
+    elif [ $(($1 & 8)) -ne 0 ]; then
+        echo drain
+    else
+        echo ready
+    fi
 }
 
 resolve_ip() {
@@ -70,7 +95,7 @@ resolve_ip() {
 
 case "${1:-}" in
 status)
-    for backend in $(pools); do
+    for backend in $(backends); do
         printf '%s\n' "$backend"
         servers "$backend" | awk '{
             if ($7 != 0)      state = "DRAIN"
@@ -84,49 +109,76 @@ status)
 out | in)
     action="$1"
     target="${2:?usage: gonka-drain $1 <host|ip|slot>}"
-    ip="$(resolve_ip "$target")"
 
-    # Plan across every pool before touching any of them.
-    planned=""
-    for backend in $(pools); do
-        slot="$(slot_in "$backend" "$target" "$ip")"
-        [ -n "$slot" ] || continue
-        if [ "$action" = out ] && [ "$(serving_count "$backend")" -le 1 ]; then
-            echo "refusing: $backend has 1 server taking traffic; draining would empty it" >&2
+    # Two concurrent drains could each see two live servers and then leave none.
+    # The lock is held for the whole plan-and-apply, so the second one sees the
+    # first one's result.
+    if [ -z "${GONKA_DRAIN_LOCKED:-}" ]; then
+        GONKA_DRAIN_LOCKED=1
+        export GONKA_DRAIN_LOCKED
+        exec flock "$LOCK" "$0" "$@"
+    fi
+
+    ip="$(resolve_ip "$target")"
+    want=drain
+    [ "$action" = out ] || want=ready
+
+    # Plan across every backend before touching any of them, remembering what to
+    # put back if an apply fails part way through.
+    plan=""
+    for backend in $(backends); do
+        found="$(find_server "$backend" "$target" "$ip")"
+        [ -n "$found" ] || continue
+        # shellcheck disable=SC2086
+        set -- $found
+        slot="$1"; op="$2"; admin="$3"
+        was="$(state_for_admin "$admin")"
+        if [ "$was" = "$want" ]; then
+            continue
+        fi
+        # Only the traffic this host is actually taking can be taken away. A
+        # host that is already DOWN here — it does not run this version — is not
+        # what keeps the backend alive, so draining it empties nothing.
+        if [ "$action" = out ] && [ "$op" = 2 ] && [ "$admin" = 0 ] &&
+            [ "$(serving_count "$backend")" -le 1 ]; then
+            echo "refusing: $target is the last server taking traffic in $backend" >&2
             exit 1
         fi
-        planned="$planned $backend/$slot"
+        plan="$plan $backend/$slot=$was"
     done
-    if [ -z "$planned" ]; then
-        echo "gonka-drain: no server matches '$target' in any pool" >&2
-        echo "known pools:" >&2
-        pools | sed 's/^/  /' >&2
+
+    if [ -z "$plan" ]; then
+        if [ -n "$(backends | while read -r b; do find_server "$b" "$target" "$ip"; done)" ]; then
+            echo "$target is already $want everywhere it appears"
+            exit 0
+        fi
+        echo "gonka-drain: no server matches '$target' in any backend" >&2
+        echo "known backends:" >&2
+        backends | sed 's/^/  /' >&2
         exit 1
     fi
 
-    state=drain
-    undo=ready
-    if [ "$action" = in ]; then
-        state=ready
-        undo=drain
-    fi
-
-    done_so_far=""
-    for entry in $planned; do
-        if ! apply "set server $entry state $state"; then
-            echo "gonka-drain: rolling back after failing on $entry" >&2
-            for revert in $done_so_far; do
-                apply "set server $revert state $undo" || true
+    applied=""
+    for entry in $plan; do
+        server="${entry%=*}"
+        if ! apply "set server $server state $want"; then
+            echo "gonka-drain: rolling back after failing on $server" >&2
+            for undo in $applied; do
+                apply "set server ${undo%=*} state ${undo#*=}" || true
             done
             exit 1
         fi
-        done_so_far="$done_so_far $entry"
+        applied="$applied $entry"
     done
 
+    changed=""
+    for entry in $plan; do
+        changed="$changed ${entry%=*}"
+    done
     if [ "$action" = out ]; then
-        echo "drained $target from:$planned"
+        echo "drained $target from:$changed"
     else
-        echo "returned $target to:$planned"
+        echo "returned $target to:$changed"
     fi
     ;;
 *)

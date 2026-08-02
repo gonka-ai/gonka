@@ -120,7 +120,7 @@ func RequireRouterRefusesToEmptyPool(t *testing.T, stack *Stack, host string) {
 	t.Helper()
 	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "out", host)
 	require.Error(t, err, "draining the last serving host should be refused: %s", out)
-	require.Contains(t, out, "would empty the pool")
+	require.Contains(t, out, "last server taking traffic")
 }
 
 // RouterServingHosts lists the hosts currently taking new traffic.

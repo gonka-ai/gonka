@@ -133,9 +133,15 @@ declared, a request for one that is not gets `503` from the router naming the
 setting to fix, instead of being sent to a host that may not run it. Approving a
 new version is therefore two-phase:
 
-1. add it to `VERSIOND_VERSIONS` and restart the router — it gains an empty pool,
-   which changes nothing for the versions already running;
+1. add it to `VERSIOND_VERSIONS` and replace the router container
+   (`docker compose up -d --force-recreate versiond-router`; a plain `restart`
+   keeps the old environment) — it gains an empty pool, which changes nothing for
+   the versions already running;
 2. approve it in governance; each host joins that pool as it installs it.
+
+The router now stops on `SIGUSR1`, HAProxy's soft stop, so that replacement
+finishes the streams it is carrying instead of cutting them. Declared version
+names must match `[A-Za-z0-9][A-Za-z0-9._-]*`.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
 previous host-level behaviour. The join overlay declares `v4` by default, so a
@@ -218,6 +224,9 @@ Day-to-day operations:
 - Kubernetes: the readiness contract is on the traffic listener specifically so a
   `readinessProbe` and `preStop` can replace the router's role unchanged. Not in
   this release.
+- Version names have two grammars: the chain accepts any non-empty string, while
+  the router can only route `[A-Za-z0-9][A-Za-z0-9._-]*`. Narrowing it in the
+  chain's parameter validation is the proper fix.
 - Reconcile failures have no machine-readable exposure. They belong in a metric,
   not bolted onto the `/healthz` array that existing clients parse; versiond has
   no metrics endpoint of its own yet.

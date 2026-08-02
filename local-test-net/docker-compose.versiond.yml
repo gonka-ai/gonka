@@ -79,6 +79,8 @@ services:
 
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
+    # HAProxy's soft stop: finish carried streams instead of cutting them.
+    stop_signal: SIGUSR1
     stop_grace_period: 30m
     build:
       context: ./versiond-router

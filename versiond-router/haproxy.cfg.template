@@ -80,6 +80,12 @@ frontend versiond_in
 
     http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
 
+    # versiond's own route grammar has versionless endpoints, and their first
+    # path segment is not a version. Classifying by "field 2 is non-empty" would
+    # refuse /metrics, /stats and the session observability routes.
+    #   versioned/internal/proxy/proxy.go: isVersionlessObsPath
+    acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics|stats(/|$)|sessions/[^/]+/(diffs|mempool|signatures)$)
+
     ${UNDECLARED_VERSION_GUARD}
 
     # Legacy pinning wins: those versions own SQLite data on one host.

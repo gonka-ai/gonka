@@ -220,6 +220,8 @@ services:
 {{ range .Hosts }}
       - {{ .ID }}
 {{ end }}
+    # HAProxy's soft stop: finish carried streams instead of cutting them.
+    stop_signal: SIGUSR1
     stop_grace_period: 30m
     restart: unless-stopped
 

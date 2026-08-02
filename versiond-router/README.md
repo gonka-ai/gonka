@@ -119,15 +119,36 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
 
 **Approving a new version is therefore two-phase**, in this order:
 
-1. add the version to `VERSIOND_VERSIONS` and restart the router — it gains a
-   pool for `v6` with no healthy members, which changes nothing for `v4`;
+1. add the version to `VERSIOND_VERSIONS` and **replace** the router container —
+   it gains a pool for `v6` with no healthy members, which changes nothing for
+   `v4`;
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
+
+```console
+$ docker compose up -d --force-recreate versiond-router
+```
+
+`docker compose restart` will not do: it restarts the process with the
+environment the container was created with, so the new version would not be
+picked up. Replacement is required, and it is a short gap for *new* connections —
+the shipped Compose sets `stop_signal: SIGUSR1`, HAProxy's soft stop, so the
+outgoing container finishes the streams it is carrying rather than cutting them.
+Declaring the versions you expect ahead of time avoids the exercise entirely.
 
 Doing it the other way round means `v6` requests are refused until step 1 lands.
 
 Leaving `VERSIOND_VERSIONS` empty disables the whole mechanism: every version
-uses the host-level pool, exactly as before per-version pools existed. Non-version
-paths such as `/healthz` always use it and are never refused.
+uses the host-level pool, exactly as before per-version pools existed. Versionless
+endpoints — `/healthz`, `/readyz`, `/metrics`, `/stats`, and the session
+observability routes — always use it and are never refused.
+
+Declared names must match `[A-Za-z0-9][A-Za-z0-9._-]*`. The same string is a
+HAProxy backend name, a health-check query value and a map key matched against a
+path segment, and a name outside that grammar cannot be all three
+unambiguously — `+` alone decodes to a space in the query and would leave the
+host permanently down. The router refuses such a name at startup rather than
+route on a guess. The chain accepts a wider set today; narrowing it there is the
+proper fix and is listed as a follow-up.
 
 For `/readyz?version=<v>`, `versiond` answers `200` when it is accepting traffic
 and has a running child serving exactly that version — it reads the same route
@@ -233,12 +254,22 @@ Hosts are addressed by container name or IP; slot names are an HAProxy
 implementation detail and are resolved for you.
 
 Server state in HAProxy belongs to a backend/server pair, and one host sits in
-every pool — the host-level one and one per declared version. `gonka-drain`
-therefore drains a host from all of them, checking every pool before changing any
-and rolling back if one of the changes fails, so a host is never left half out.
+every backend it belongs to — the host-level pool, one per declared version, and
+`versiond_legacy` if it owns the pre-HA data. `gonka-drain` therefore drains a
+host from all of them. It snapshots each server's admin state before changing
+anything and restores those exact states if one of the changes fails, so a host
+is never left half out, and it holds a lock for the whole plan-and-apply so two
+concurrent drains cannot each see a live peer and then leave none.
 
-`gonka-drain out` refuses to drain the last host still taking traffic in any
-pool. The guard
+`gonka-drain out` refuses when the target is the last server *taking traffic* in
+some backend, naming it. A host that is already down in a version's pool — it
+does not run that version — does not keep that pool alive, so it can still be
+drained from the pools where it does serve.
+
+The legacy owner is one server in `versiond_legacy` by definition, so it cannot
+be drained while any version is pinned there: emptying it would fail every
+request for those versions. Stop that host only when it is genuinely being
+evacuated. The guard
 is advisory — `docker stop` bypasses it — and exists so that draining hosts one
 by one cannot empty the pool by accident.
 

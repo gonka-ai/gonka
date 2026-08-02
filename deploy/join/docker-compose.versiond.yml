@@ -119,6 +119,9 @@ services:
       - versiond2
     # Nothing durable to keep: membership is DNS and health is measured, so a
     # restarted router rebuilds its whole view within one check interval.
+    # SIGUSR1 is HAProxy's soft stop: replacing the router to pick up a config
+    # change finishes the streams it is carrying instead of cutting them.
+    stop_signal: SIGUSR1
     stop_grace_period: 30m
     restart: always
 
