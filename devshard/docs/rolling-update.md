@@ -464,7 +464,8 @@ an unsafe non-HA storage mode.
 | `docker compose stop` / `start` | The whole host lifecycle. Membership is DNS; health is measured |
 | `gonka-drain out\|in\|status` | Quiesce a host without stopping it, or inspect the router's live view |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
-| `GET :8080/readyz` | The router's health check: `200` for a serving, accepting host that has an available child and has converged at least once |
+| `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here |
+| `GET :8080/readyz` | Fallback check for versions the router was not told about: `200` for a serving, accepting host with an available child that has converged at least once |
 | `VERSIOND_DRAIN_ANNOUNCE` | How long the host stays accepting after it starts failing `/readyz`, default `5s` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
 | `VERSIOND_STOP_GRACE_PERIOD` | Compose `stop_grace_period`; the outer `SIGKILL` backstop, default `30m` |
@@ -511,6 +512,9 @@ readiness there would evict every host in the pool at the same moment —
 governance publishes to all of them at once — which is precisely the outage
 readiness exists to prevent. Failure to *ever* reconcile an approved version does
 keep the host out of the pool.
+
+A host that fails to install one particular version drops out of *that version's*
+pool through the per-version check, and keeps serving the others.
 
 For the same reason a **failed reconcile does not** clear readiness. Every
 versiond reads the same oracle, so an unreachable oracle or a bad archive fails

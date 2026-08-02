@@ -22,8 +22,13 @@ request → normalise path → pick backend by version → pick server by escrow
 
 | Backend | Servers | Used for |
 | --- | --- | --- |
-| `versiond_ha_pool` | every host `VERSIOND_POOL_HOST` resolves to, that passes `/readyz` | every version **not** listed in `VERSIOND_NON_HA_VERSIONS` (the default) |
+| `versiond_pool_<v>` | every host that answers `/readyz?version=<v>` with 200 | each version listed in `VERSIOND_VERSIONS` |
+| `versiond_ha_pool` | every host that answers `/readyz` with 200 | any other version the router has not been told about |
 | `versiond_legacy` | the single `VERSIOND_LEGACY_HOST` | versions listed in `VERSIOND_NON_HA_VERSIONS`, which own pre-HA SQLite data dirs on one host |
+
+All three are the same pool of hosts; what differs is the question their health
+check asks. Every one of them is rendered from `pool-backend.cfg.template`, so
+the routing policy cannot drift between them.
 
 Within `versiond_ha_pool` the server is chosen by **consistent hash** of the
 escrow id taken from the path (`/{version}/sessions/{escrow}/...`); other paths
@@ -70,12 +75,36 @@ seconds; stop one and its slot empties.
 pool at once. Unused slots cost nothing; they exist because HAProxy allocates
 server slots at startup.
 
-## Health: active checks on `/readyz`
+## Health: one question per version
 
-Every second HAProxy asks each host `GET /readyz` and expects `200`.
+A pool-wide "are you healthy" cannot say that a host is missing *one* of several
+versions. So the router asks about the version it is about to route to: each
+version in `VERSIOND_VERSIONS` gets its own backend over the same hosts, health
+-checked with `GET /readyz?version=<v>`.
 
-`versiond` answers `200` when it is accepting traffic **and** has a healthy child,
-having run its full desired set at least once. It answers `503` when it is
+A host that cannot run `v5` — its download failed, its child will not start —
+answers `503` for `?version=v5` and `200` for `?version=v4`. It leaves `v5`'s
+ring and keeps serving `v4`. Nothing else changes: no eviction, no reload.
+
+That also makes rolling out a *new* version safe. Until a host has `v6` running
+it is not in `v6`'s pool, so `v6` traffic goes only to hosts that can serve it,
+while `v4` and `v5` carry on untouched. Compare the alternative of one host-wide
+readiness flag: the moment governance approves `v6`, *every* host would be
+missing it at once, and gating on that would empty the whole pool.
+
+A version not listed in `VERSIOND_VERSIONS` still routes — it falls through to
+`versiond_ha_pool` and the coarse host-level check, which is exactly the previous
+behaviour. Listing a version is therefore an upgrade in precision, never a
+prerequisite for serving it.
+
+Every second HAProxy asks each host its backend's question and expects `200`.
+
+For `/readyz?version=<v>`, `versiond` answers `200` when it is accepting traffic
+and has a running child serving exactly that version — it reads the same route
+table the proxy uses, so the answer cannot disagree with what a request would
+actually get. For the unqualified `/readyz`, it answers `200` when it is
+accepting traffic **and** has a healthy child, having run its full desired set at
+least once. It answers `503` when it is
 starting, when it has no usable child, and — importantly — for a few seconds
 *before* it stops accepting work at shutdown.
 
@@ -189,6 +218,7 @@ couple of seconds.
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | `VERSIOND_POOL_HOST` | single host owning pre-HA SQLite data dirs |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
+| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check |
 | `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
@@ -228,6 +258,10 @@ test-render: ok
 `test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
 the result, checks that invalid settings are rejected, and validates each
 rendered config with the real HAProxy from the image the router ships.
+
+`test-version-routing` proves the headline property against the real image: two
+upstreams that disagree about which versions they serve, and a host that lacks
+one version must receive none of its traffic while still receiving the rest.
 
 `test-hash-ring` proves the property that cannot be seen by reading the config:
 it takes the hashing directives out of the rendered file, puts the same four

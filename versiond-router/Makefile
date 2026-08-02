@@ -1,4 +1,4 @@
-.PHONY: all build-docker release test-render test-hash-ring
+.PHONY: all build-docker release test-render test-hash-ring test-version-routing
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -22,8 +22,10 @@ test-hash-ring:
 	HAPROXY_BIN=true \
 	VERSIOND_ROUTER_RENDER_ONLY=1 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/rendered.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/rendered.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/rendered.versions.map" \
 	./entrypoint.sh; \
 	hashvars=$$(grep 'set-var(txn\.' "$$tmpdir/rendered.cfg"); \
 	balance=$$(grep -m1 '^ *balance ' "$$tmpdir/rendered.cfg"); \
@@ -85,7 +87,78 @@ test-hash-ring:
 		|| fail "shuffling the slot order moved sessions: the ring follows the slot, not the host"; \
 	echo "test-hash-ring: ok"
 
-test-render: test-hash-ring
+# The point of per-version pools is that one host missing one version keeps
+# serving the others. That is a property of the running router, not of the text
+# of its config, so it is checked by routing real requests through the real
+# image at two upstreams that disagree about which versions they serve.
+test-version-routing:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	net=gonka-version-probe; \
+	cleanup() { \
+		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b >/dev/null 2>&1 || true; \
+		docker network rm $$net >/dev/null 2>&1 || true; \
+		rm -rf "$$tmpdir"; \
+	}; \
+	trap cleanup EXIT; \
+	fail() { echo "test-version-routing: $$1" >&2; exit 1; }; \
+	printf '%s\n' \
+		'import os, http.server, urllib.parse' \
+		'NAME = os.environ["NAME"]' \
+		'SERVES = set(os.environ["SERVES"].split())' \
+		'class H(http.server.BaseHTTPRequestHandler):' \
+		'    protocol_version = "HTTP/1.1"' \
+		'    def _r(self, code, body):' \
+		'        b = body.encode()' \
+		'        self.send_response(code)' \
+		'        self.send_header("Content-Length", str(len(b)))' \
+		'        self.end_headers()' \
+		'        self.wfile.write(b)' \
+		'    def do_GET(self):' \
+		'        u = urllib.parse.urlparse(self.path)' \
+		'        if u.path == "/readyz":' \
+		'            v = urllib.parse.parse_qs(u.query).get("version", [""])[0]' \
+		'            return self._r(503 if v and v not in SERVES else 200, "x")' \
+		'        self._r(200, NAME)' \
+		'    def log_message(self, *a): pass' \
+		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
+		> "$$tmpdir/upstream.py"; \
+	docker network create $$net >/dev/null; \
+	docker build -q -t gonka-versiond-router-probe . >/dev/null; \
+	for spec in "a:v4" "b:v4 v5"; do \
+		name=$${spec%%:*}; serves=$${spec#*:}; \
+		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
+			-e NAME=$$name -e SERVES="$$serves" -v "$$tmpdir/upstream.py:/app.py:ro" \
+			python:3.12-alpine python /app.py >/dev/null; \
+	done; \
+	docker run -d --name gonka-vp-router --network $$net -p 127.0.0.1:18132:8080 \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 60); do \
+		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \
+		sleep 0.5; \
+	done; \
+	sleep 4; \
+	hosts_for() { \
+		for escrow in a b c d e f g h i j k l; do \
+			curl -s -m 3 "http://127.0.0.1:18132/$$1/sessions/esc-$$escrow/chat"; \
+			echo; \
+		done | sort -u | tr '\n' ' '; \
+	}; \
+	v4=$$(hosts_for v4); v5=$$(hosts_for v5); \
+	echo "  v4 -> $$v4"; \
+	echo "  v5 -> $$v5"; \
+	case "$$v4" in *a*) ;; *) fail "host a serves v4 but got none of its traffic" ;; esac; \
+	case "$$v4" in *b*) ;; *) fail "host b serves v4 but got none of its traffic" ;; esac; \
+	case "$$v5" in *a*) fail "host a does not serve v5 but received v5 traffic" ;; esac; \
+	case "$$v5" in *b*) ;; *) fail "host b serves v5 but got none of its traffic" ;; esac; \
+	backend=$$(curl -s -D- -o /dev/null -m 3 http://127.0.0.1:18132/v9/sessions/a/chat \
+		| tr -d '\r' | awk 'tolower($$1) == "x-versiond-backend:" { print $$2 }'); \
+	[ "$$backend" = versiond_ha_pool ] \
+		|| fail "an undeclared version went to '$$backend' instead of the host-level pool"; \
+	echo "test-version-routing: ok"
+
+test-render: test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
@@ -96,9 +169,12 @@ test-render: test-hash-ring
 	VERSIOND_LEGACY_HOST=versiond \
 	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
 	GONKA_HA=true \
+	VERSIOND_VERSIONS='v4,v5' \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/mixed.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/mixed.versions.map" \
 	./entrypoint.sh; \
 	grep -q 'server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool is not a DNS-resolved server-template"; \
@@ -118,15 +194,36 @@ test-render: test-hash-ring
 		|| fail "non-idempotent requests could be replayed"; \
 	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
 		|| fail "metrics are not bound to loopback"; \
+	grep -q 'http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
+		|| fail "declared versions must be health-checked individually"; \
+	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
+		|| fail "no backend for declared version v5"; \
+	grep -q 'use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
+		|| fail "requests are not routed to their version's pool"; \
+	printf 'v4 versiond_pool_v4\nv5 versiond_pool_v5\n' > "$$tmpdir/want.versions.map"; \
+	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
+		|| fail "declared versions rendered incorrectly"; \
+	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5; do \
+		count=$$(awk -v b="backend $$backend" '$$0 == b {inside=1; next} /^backend /{inside=0} \
+			inside && $$0 !~ /^[[:space:]]*#/ && \
+			/hash-key addr|http-reuse safe|disable-l7-retry|retry-on|hash-type consistent/ {n++} \
+			END {print n + 0}' "$$tmpdir/mixed.cfg"); \
+		[ "$$count" -eq 5 ] \
+			|| fail "$$backend has $$count of 5 policy lines; the pools have drifted apart"; \
+	done; \
 	printf 'v1 legacy\nv2 legacy\nv3 legacy\n' > "$$tmpdir/want.map"; \
 	diff -u "$$tmpdir/want.map" "$$tmpdir/mixed.map" \
 		|| fail "pinned versions rendered incorrectly"; \
 	HAPROXY_BIN=true \
 	VERSIOND_ROUTER_RENDER_ONLY=1 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/allha.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/allha.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/allha.versions.map" \
 	./entrypoint.sh; \
+	[ ! -s "$$tmpdir/allha.versions.map" ] \
+		|| fail "no versions were declared but per-version pools were rendered"; \
 	[ ! -s "$$tmpdir/allha.map" ] \
 		|| fail "no pinned versions were requested but the map is not empty"; \
 	grep -q 'http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
@@ -136,8 +233,10 @@ test-render: test-hash-ring
 	fi; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
 		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
 		VERSIOND_ROUTER_STREAM_IDLE_SECONDS=1200 \
 		VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS=60 \
 		./entrypoint.sh 2>/dev/null; then \
@@ -145,8 +244,10 @@ test-render: test-hash-ring
 	fi; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
 		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
 		VERSIOND_PORT=invalid \
 		./entrypoint.sh 2>/dev/null; then \
 		fail "a non-numeric port was accepted"; \

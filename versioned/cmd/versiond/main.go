@@ -367,7 +367,20 @@ func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
-		if !versiondReady(hostLifecycle.Snapshot(), mgr.Conditions()) {
+		hostStatus := hostLifecycle.Snapshot()
+		// ?version=<name> asks the precise question the router wants answered
+		// before it sends a request: can you serve *this* version. Without it the
+		// answer is the coarse host-level one.
+		if version := r.URL.Query().Get("version"); version != "" {
+			if !versiondReadyForVersion(hostStatus, mgr, version) {
+				http.Error(w, "no route for version "+version, http.StatusServiceUnavailable)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte("ready\n"))
+			return
+		}
+		if !versiondReady(hostStatus, mgr.Conditions()) {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
@@ -408,18 +421,33 @@ func publicHandler(
 // desired set stays out of rotation; a later download does not retract
 // readiness.
 //
-// What this deliberately does not cover: a host that has served before and then
-// fails to install a newly approved version keeps taking traffic, and requests
-// for that one version fail on it. Expressing that needs per-version readiness,
-// which a single balancer health check cannot carry. If a condition ever appears
-// under which accepting traffic is genuinely unsafe, it belongs in its own typed
-// condition here — not in the generic reconcile error, which mostly means the
-// control plane hiccuped.
+// This host-level answer is necessarily coarse: it cannot say that one version
+// out of several is missing here. versiondReadyForVersion answers that precisely
+// and the router asks it per version, so this is the fallback for a version the
+// router has not been told about.
 func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
 	return hostStatus.Ready &&
 		hostStatus.Accepting &&
 		conditions.Available &&
 		conditions.Converged
+}
+
+// versiondReadyForVersion answers "may this host take traffic for this one
+// version", which is the question a balancer actually has when it is about to
+// route a request. It needs no convergence latch and no view of the desired set:
+// either a running child serves that version here or it does not, and a host
+// missing one version keeps serving every other.
+//
+// The host-level gates still apply. Draining has to make every version unready
+// at once, or the announce window would not empty the host.
+func versiondReadyForVersion(
+	hostStatus host.Snapshot,
+	mgr interface{ ServesVersion(string) bool },
+	version string,
+) bool {
+	return hostStatus.Ready &&
+		hostStatus.Accepting &&
+		mgr.ServesVersion(version)
 }
 
 // awaitDrainAnnouncement keeps serving while the balancer observes the failing

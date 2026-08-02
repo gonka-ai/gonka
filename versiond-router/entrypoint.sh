@@ -10,6 +10,10 @@
 #   VERSIOND_NON_HA_VERSIONS  version path segments pinned to the legacy host
 #                             (whitespace and/or comma separated). Empty = every
 #                             version uses the HA pool.
+#   VERSIOND_VERSIONS         versions to health-check individually, so a host
+#                             missing one of them leaves that version's pool and
+#                             keeps serving the rest. Empty = every version uses
+#                             the coarse host-level check.
 #   GONKA_HA                  set by the HA compose overlay; adds the
 #                             Devshard-Ha request header on the HA backend
 #   VERSIOND_ROUTER_*         proxy policy, see README
@@ -21,6 +25,8 @@ set -eu
 TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
+VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
+POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
 # Overridable so `make test-render` can render without a local HAProxy.
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
@@ -66,8 +72,44 @@ else
     HA_HEADER='http-request del-header Devshard-Ha'
 fi
 
+# One backend per version the router was told about, plus the host-level pool
+# every unlisted version falls back to. All of them are the same fragment, so the
+# routing policy cannot drift between them; only the name and the readiness
+# question differ.
+render_pool_backend() {
+    sed \
+        -e "s|\${BACKEND_NAME}|$1|g" \
+        -e "s|\${READYZ_URI}|$2|g" \
+        -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
+        -e "s|\${VERSIOND_PORT}|$PORT|g" \
+        -e "s|\${POOL_SLOTS}|$SLOTS|g" \
+        -e "s|\${DEVSHARD_HA_HEADER}|$HA_HEADER|g" \
+        "$POOL_TEMPLATE"
+}
+
+: > "$VERSIONS_MAP"
+POOL_BACKENDS_FILE="$(mktemp)"
+trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
+render_pool_backend versiond_ha_pool /readyz > "$POOL_BACKENDS_FILE"
+printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
+    [ -n "$version" ] || continue
+    case "$version" in
+        *[!A-Za-z0-9._-]*)
+            echo "versiond-router: invalid version name '$version'" >&2
+            exit 1
+            ;;
+    esac
+    echo "$version versiond_pool_$version" >> "$VERSIONS_MAP"
+    render_pool_backend "versiond_pool_$version" "/readyz?version=$version" >> "$POOL_BACKENDS_FILE"
+done
+
 sed \
+    -e "/\${POOL_BACKENDS}/{
+        r $POOL_BACKENDS_FILE
+        d
+    }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
+    -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
     -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
     -e "s|\${VERSIOND_PORT}|$PORT|g" \
     -e "s|\${VERSIOND_LEGACY_HOST}|$LEGACY_HOST|g" \

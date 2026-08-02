@@ -207,6 +207,19 @@ func (m *Manager) RouteTable() *atomic.Value {
 	return &m.routes
 }
 
+// ServesVersion reports whether this host currently has a running child for the
+// named version — that is, whether a request for it would be routed rather than
+// answered "no such version". It reads the same route table the proxy uses, so
+// the answer cannot disagree with what actually happens to a request.
+func (m *Manager) ServesVersion(name string) bool {
+	routes, ok := m.routes.Load().(proxy.RouteTable)
+	if !ok {
+		return false
+	}
+	_, served := routes[name]
+	return served
+}
+
 func (m *Manager) Available() <-chan struct{} {
 	return m.available
 }

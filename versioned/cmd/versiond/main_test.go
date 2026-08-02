@@ -549,6 +549,61 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	}
 }
 
+type fakeVersionServer map[string]bool
+
+func (f fakeVersionServer) ServesVersion(name string) bool { return f[name] }
+
+// The question a balancer actually has is about the version it is about to
+// route, and a host missing one version must keep serving the others.
+func TestVersiondReadyForVersionAnswersPerVersion(t *testing.T) {
+	status := host.Snapshot{State: host.StateServing, Accepting: true, Ready: true}
+	serves := fakeVersionServer{"v4": true}
+
+	if !versiondReadyForVersion(status, serves, "v4") {
+		t.Fatal("host with a running v4 route is not ready for v4")
+	}
+	if versiondReadyForVersion(status, serves, "v5") {
+		t.Fatal("host without a v5 route is ready for v5")
+	}
+
+	// No convergence latch and no view of the desired set: a host that has never
+	// run its full set still serves what it does have.
+	if !versiondReadyForVersion(status, serves, "v4") {
+		t.Fatal("per-version readiness should not depend on overall convergence")
+	}
+
+	// Draining has to take every version out at once, or the announce window
+	// would never empty the host.
+	status.State = host.StateAnnouncing
+	status.Ready = false
+	if versiondReadyForVersion(status, serves, "v4") {
+		t.Fatal("announcing host is still ready for v4")
+	}
+}
+
+func TestReadinessAnswersTheVersionItWasAskedAbout(t *testing.T) {
+	hostLifecycle := host.NewController()
+	mgr := process.NewManager(config.Config{BasePort: 5000})
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatalf("transition to serving: %v", err)
+	}
+	srv := httptest.NewServer(readinessHandler(mgr, hostLifecycle))
+	defer srv.Close()
+
+	// No child runs, so every version is unserved — including the unqualified
+	// host-level question.
+	for _, path := range []string{"/readyz", "/readyz?version=v4"} {
+		resp, err := http.Get(srv.URL + path)
+		if err != nil {
+			t.Fatalf("GET %s: %v", path, err)
+		}
+		_ = resp.Body.Close()
+		if resp.StatusCode != http.StatusServiceUnavailable {
+			t.Fatalf("GET %s = %d, want 503", path, resp.StatusCode)
+		}
+	}
+}
+
 func TestReadinessIsServedOnTheTrafficListener(t *testing.T) {
 	hostLifecycle := host.NewController()
 	mgr := process.NewManager(config.Config{BasePort: 5000})

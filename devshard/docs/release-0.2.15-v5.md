@@ -117,6 +117,22 @@ The shipped Compose files set `stop_grace_period` on every edge-api service,
 including the single-instance one: without it Docker's 10-second default would
 `SIGKILL` the process during its own drain.
 
+### Routing is per version, not per host
+
+The router asks each host about the version it is about to route to
+(`/readyz?version=<v>`), and keeps one pool per version listed in
+`VERSIOND_VERSIONS`. A host that cannot run one version leaves that version's
+pool and keeps serving every other — no eviction, no reload, no config change.
+
+This also makes approving a new version safe: until a host has it running it is
+not in that version's pool, so the new version's traffic goes only where it can
+be served while everything else carries on.
+
+A version left out of `VERSIOND_VERSIONS` still routes, using the coarser
+host-level check — the previous behaviour. Listing a version buys precision; it
+is never a prerequisite for serving it. The join overlay declares `v4` by
+default.
+
 ### A failed version poll no longer takes hosts out of rotation
 
 `/readyz` reports whether a host can serve, not whether its last reconcile
@@ -167,6 +183,8 @@ Day-to-day operations:
 
 ## Upgrade / rollout checklist
 
+- [ ] Set `VERSIOND_VERSIONS` to the versions this deployment serves, so each is
+      health-checked per host
 - [ ] Replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` overrides with
       `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`, or drop them and take the
       shipped defaults

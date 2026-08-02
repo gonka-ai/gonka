@@ -5,6 +5,7 @@ package citest
 import (
 	"fmt"
 	"net/http"
+	"strings"
 	"testing"
 	"time"
 
@@ -17,8 +18,9 @@ import (
 const (
 	migrationBackendHeader = "X-Versiond-Backend"
 	migrationLegacyBackend = "versiond_legacy"
-	migrationHABackend     = "versiond_ha_pool"
-	nonHAVersion           = "v1"
+	// The HA version is health-checked per version, so it has its own pool.
+	migrationHAPrefix = "versiond_pool_"
+	nonHAVersion      = "v1"
 )
 
 // TestSQLiteToPostgresHAMigration walks pr-1366-deploy-test-plan.md §3.3 Phases 0–4:
@@ -53,7 +55,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 		require.Equal(t, legacyHost, harness.HostIDForUpstream(cfg, upstream))
 	}
 	haURL := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "sqlite-migration-phase0-ha", "/healthz")
-	require.Equal(t, migrationHABackend, harness.RequireResponseHeader(t, client, haURL, migrationBackendHeader))
+	requireHAPoolBackend(t, client, haURL)
 
 	harness.Step(t, "phase 1: create HA-version sessions under sqlite on %s", legacyHost)
 	harness.WaitGatewayChatReady(t, client, eps.GatewayHTTP, 3*time.Minute, stack)
@@ -94,7 +96,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	// Confirm router still HA-pools the version and NON_HA stays pinned.
 	// (Probe via GET that may be 503 — devshardd answers, so routing headers
 	// are still set on the response.)
-	require.Equal(t, migrationHABackend, harness.RequireResponseHeader(t, client, haHealth, migrationBackendHeader))
+	requireHAPoolBackend(t, client, haHealth)
 	nonHAURL := harness.RouterSessionURL(eps.RouterHTTP, nonHAVersion, "sqlite-migration-phase2-nonha", "/healthz")
 	require.Equal(t, migrationLegacyBackend, harness.RequireResponseHeader(t, client, nonHAURL, migrationBackendHeader))
 
@@ -135,7 +137,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 
 	_, upstreamA, _, upstreamB := harness.FindDistinctStickySessions(t, client, eps.RouterHTTP, haVersion)
 	require.NotEqual(t, upstreamA, upstreamB)
-	require.Equal(t, migrationHABackend, harness.RequireResponseHeader(t, client, haURL, migrationBackendHeader))
+	requireHAPoolBackend(t, client, haURL)
 
 	// Migrated escrow remains readable via gateway after HA is healthy.
 	after := harness.GetGatewaySessionSnapshot(t, client, eps.GatewayHTTP, adminKey)
@@ -148,4 +150,13 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 		upstream := harness.RequireResponseHeader(t, client, url, harness.StickyUpstreamHeader)
 		require.Equal(t, legacyHost, harness.HostIDForUpstream(cfg, upstream))
 	}
+}
+
+// requireHAPoolBackend asserts the router sent the request to the version's own
+// pool rather than to the legacy host.
+func requireHAPoolBackend(t *testing.T, client *http.Client, url string) {
+	t.Helper()
+	backend := harness.RequireResponseHeader(t, client, url, migrationBackendHeader)
+	require.True(t, strings.HasPrefix(backend, migrationHAPrefix),
+		"X-Versiond-Backend = %q, want a per-version pool", backend)
 }

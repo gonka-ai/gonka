@@ -135,12 +135,13 @@ runtime reserve.
 
 ## Health and readiness contracts
 
-Two endpoints, both on the traffic listener (`:8080`):
+Endpoints, all on the traffic listener (`:8080`):
 
 | Endpoint | Answers | Used by |
 | --- | --- | --- |
 | `GET /healthz` | the legacy JSON array of per-version child state | operators, dashboards, existing clients |
-| `GET /readyz` | `200` when this host should receive new work, `503` otherwise | the router's active health check |
+| `GET /readyz?version=<v>` | `200` when this host has a running child serving `<v>` | the router's per-version health check |
+| `GET /readyz` | `200` when this host should receive new work at all | the router's fallback check for undeclared versions |
 
 `/readyz` is on the public listener on purpose. It is not a private admin
 control: it is the contract the load balancer reads, and there is nothing in it a
@@ -157,6 +158,12 @@ download or child restart does not retract it. Without the latch, a routine
 same-name SHA bump would briefly un-converge every host at once and evict the
 entire pool — the failure mode readiness exists to prevent.
 
+`/readyz?version=<v>` is the question the balancer actually has, and it needs no
+convergence latch and no view of the desired set: either a running child serves
+that version here or it does not. It reads the same route table the proxy uses,
+so the answer cannot disagree with what a request would get. Draining still takes
+every version out at once, or the announce window would not empty the host.
+
 **A failed reconcile is not a readiness failure.** Every versiond reads the same
 oracle, so anything gated on the outcome of that read fails everywhere at once:
 one unreachable oracle, or one bad archive, would empty the pool while every
@@ -168,12 +175,14 @@ not a routing one.
 contract existing clients parse. Reconcile failures currently have no
 machine-readable exposure; a metric is where that belongs.
 
-The cost of that choice is bounded and worth naming: a host that has served
-before and then fails to install a *newly approved* version keeps taking traffic,
-and requests for that one version fail on it. Expressing that correctly needs
-per-version readiness, which a single balancer health check cannot carry. If a
-condition is ever found under which accepting traffic is genuinely unsafe, it
-belongs in its own typed condition rather than in the generic reconcile error.
+A host that fails to install one version is handled by the per-version check
+above rather than by the host-level one: it drops out of that version's pool and
+keeps serving the rest. Gating the *host* on it instead would be the correlated
+failure again — the same archive fails on every host, so the whole pool would
+leave at once over a version most traffic does not even use.
+
+If a condition is ever found under which accepting traffic is genuinely unsafe,
+it belongs in its own typed condition rather than in the generic reconcile error.
 
 `GET /healthz` keeps the exact legacy JSON array for existing clients. Query
 parameters do not select a second schema.

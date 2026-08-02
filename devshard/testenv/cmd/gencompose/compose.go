@@ -204,6 +204,9 @@ services:
       # future versions sticky-hash across the pool (Devshard-Ha header).
       VERSIOND_LEGACY_HOST: "{{ legacyVersiondHost . }}"
       VERSIOND_NON_HA_VERSIONS: "v1"
+      # Health-check this version on each host individually, so a host that
+      # cannot run it leaves that version's pool and keeps serving the rest.
+      VERSIOND_VERSIONS: "{{ $.Versiond.VersionName }}"
       # Only the router is told this deployment is HA. The versiond containers
       # are not, so scenarios that deliberately run the pool on sqlite still
       # boot and fail at request time on the storage guard instead.

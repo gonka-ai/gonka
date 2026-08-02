@@ -1,8 +1,12 @@
 # Sticky router for N versiond instances.
 #
-# Two backends:
-#   versiond_ha_pool — consistent-hash on the escrow id; every host that DNS
-#                      resolves for VERSIOND_POOL_HOST and passes /readyz
+# Backends:
+#   versiond_pool_<v> — one per version in VERSIOND_VERSIONS. Membership is the
+#                      whole pool; health is "can you serve <v>", asked of each
+#                      host. A host missing one version leaves that version's
+#                      ring and keeps serving the rest.
+#   versiond_ha_pool — the same pool asked the coarse "can you serve at all",
+#                      used for versions the router has not been told about
 #   versiond_legacy  — the single VERSIOND_LEGACY_HOST that owns pre-HA SQLite
 #                      session data for the versions listed in non_ha.map
 #
@@ -76,44 +80,15 @@ frontend versiond_in
 
     http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
 
+    # Legacy pinning wins: those versions own SQLite data on one host.
     use_backend versiond_legacy if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    # Then the version's own pool, if the router was told about that version.
+    # The map yields a backend name; no entry means no match, and the request
+    # falls through to the host-level pool below.
+    use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
     default_backend versiond_ha_pool
 
-backend versiond_ha_pool
-    balance hash var(txn.hashkey)
-    hash-type consistent
-    # hash-key addr on the servers below is what makes this ring stable. By
-    # default a server's position is its numeric slot id, and DNS hands the
-    # answers to server-template in whatever order it likes — so a router
-    # restart could reshuffle which host sits where and re-home every session at
-    # once. Keying on the address makes the ring depend on who is in the pool,
-    # not on the order they were discovered in.
-
-    option httpchk
-    http-check send meth GET uri /readyz
-    http-check expect status 200
-
-    # safe never reuses a pooled connection for a request that could not be
-    # replayed if the reuse failed. never/aggressive would reopen the window
-    # where a POST is written into a connection the peer is already closing.
-    http-reuse safe
-
-    option redispatch
-    retry-on conn-failure empty-response 502
-    retries 2
-    # Mirrors nginx's absent non_idempotent: connection-level redispatch for
-    # everything, request replay only for idempotent methods.
-    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
-
-    # Strip the optional /devshard/ prefix before forwarding.
-    http-request replace-path ^/devshard/(.*)$ /\1
-
-    ${DEVSHARD_HA_HEADER}
-
-    http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
-    http-response set-header X-Versiond-Backend versiond_ha_pool
-
-    server-template versiond ${POOL_SLOTS} ${VERSIOND_POOL_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none hash-key addr
+${POOL_BACKENDS}
 
 backend versiond_legacy
     # Single instance by definition: no sibling can serve the same escrow, so

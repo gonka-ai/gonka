@@ -4,6 +4,7 @@ package citest
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,7 +16,8 @@ import (
 const (
 	versiondBackendHeader = "X-Versiond-Backend"
 	backendLegacy         = "versiond_legacy"
-	backendHA             = "versiond_ha_pool"
+	// The HA version is health-checked per version, so it has its own pool.
+	backendHAPrefix = "versiond_pool_"
 	// legacyVersionPath is listed in VERSIOND_NON_HA_VERSIONS (gencompose: "v1").
 	legacyVersionPath = "v1"
 )
@@ -72,7 +74,8 @@ func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 
 	urlHA := harness.RouterSessionURL(eps.RouterHTTP, haVersion, "citest-legacy-version-pin-ha-check", "/healthz")
 	haBackend := harness.RequireResponseHeader(t, client, urlHA, versiondBackendHeader)
-	require.Equal(t, backendHA, haBackend, "HA path X-Versiond-Backend")
+	require.True(t, strings.HasPrefix(haBackend, backendHAPrefix),
+		"HA path X-Versiond-Backend = %q, want a per-version pool", haBackend)
 
 	nonLegacyHost := ""
 	for _, h := range cfg.Hosts {
