@@ -19,6 +19,9 @@ const (
 	hostEvacuationShutdownBudget     = 90 * time.Second
 	hostEvacuationObservationTimeout = 60 * time.Second
 	hostReplacementReadyTimeout      = 3 * time.Minute
+	// Refused instantly inside the container, so the host under barrier fails
+	// its reconcile immediately and keeps failing it.
+	unreachableOracleURL = "http://127.0.0.1:1/versions"
 )
 
 // TestVersiondHostEvacuation verifies the whole Track B host lifecycle with no
@@ -166,13 +169,32 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	harness.RequireRouterRefusesToEmptyPool(t, env.stack, survivorHost)
 	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
 
-	harness.Step(t, "restarting %s: it rejoins the pool only after it reports ready", targetHost)
-	env.stack.StartService(t, targetHost)
-	// A host that is up but still converging must not be routed to: it appears
-	// in DNS immediately and in the pool as DOWN until /readyz turns 200.
+	harness.Step(t, "%s comes back up but cannot converge: it must stay out of the pool", targetHost)
+	// A host that is up but not yet able to serve must not be routed to. Racing
+	// a normal start is no way to check that — a fast child wins and the window
+	// never gets observed — so the host is brought back behind a barrier it
+	// cannot pass: an oracle that refuses connections. It boots, appears in DNS
+	// and stays there, but never learns what to run, so /readyz keeps failing
+	// for exactly as long as the test holds the barrier up.
+	//
+	// Only this host is repointed. The survivor keeps its oracle and keeps
+	// serving, which also pins that one host's trouble does not become the
+	// pool's.
+	oracleURL := harness.PatchComposeServiceEnv(t, env.stack.ComposePath, targetHost,
+		"VERSIOND_ORACLE_URL", unreachableOracleURL)
+	env.stack.RecreateServices(t, targetHost)
+
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
 		harness.RouterSlotDown, hostEvacuationObservationTimeout)
+	require.Error(t, harness.TryVersiondReady(env.stack, targetHost),
+		"%s should report unready while it cannot reach its oracle", targetHost)
 	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
+	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
+
+	harness.Step(t, "lifting the barrier: %s rejoins once it reports ready", targetHost)
+	harness.PatchComposeServiceEnv(t, env.stack.ComposePath, targetHost,
+		"VERSIOND_ORACLE_URL", oracleURL)
+	env.stack.RecreateServices(t, targetHost)
 
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
 		harness.RouterSlotUp, hostReplacementReadyTimeout)
