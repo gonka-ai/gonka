@@ -23,8 +23,12 @@ request → normalise path → pick backend by version → pick server by escrow
 | Backend | Servers | Used for |
 | --- | --- | --- |
 | `versiond_pool_<v>` | every host that answers `/readyz?version=<v>` with 200 | each version listed in `VERSIOND_VERSIONS` |
-| `versiond_ha_pool` | every host that answers `/readyz` with 200 | any other version the router has not been told about |
 | `versiond_legacy` | the single `VERSIOND_LEGACY_HOST` | versions listed in `VERSIOND_NON_HA_VERSIONS`, which own pre-HA SQLite data dirs on one host |
+| `versiond_ha_pool` | every host that answers `/readyz` with 200 | non-version paths such as `/healthz`, and every version when no version is declared at all |
+
+A version that is declared nowhere is **refused** with `503` naming the setting
+that fixes it, rather than being routed to a host that may not run it. See
+[Declaring versions](#declaring-versions).
 
 All three are the same pool of hosts; what differs is the question their health
 check asks. Every one of them is rendered from `pool-backend.cfg.template`, so
@@ -86,18 +90,44 @@ A host that cannot run `v5` — its download failed, its child will not start �
 answers `503` for `?version=v5` and `200` for `?version=v4`. It leaves `v5`'s
 ring and keeps serving `v4`. Nothing else changes: no eviction, no reload.
 
-That also makes rolling out a *new* version safe. Until a host has `v6` running
-it is not in `v6`'s pool, so `v6` traffic goes only to hosts that can serve it,
-while `v4` and `v5` carry on untouched. Compare the alternative of one host-wide
-readiness flag: the moment governance approves `v6`, *every* host would be
-missing it at once, and gating on that would empty the whole pool.
-
-A version not listed in `VERSIOND_VERSIONS` still routes — it falls through to
-`versiond_ha_pool` and the coarse host-level check, which is exactly the previous
-behaviour. Listing a version is therefore an upgrade in precision, never a
-prerequisite for serving it.
+That also makes rolling out a version safe once it is declared. Until a host has
+`v6` running it is not in `v6`'s pool, so `v6` traffic goes only to hosts that can
+serve it, while `v4` and `v5` carry on untouched. Compare the alternative of one
+host-wide readiness flag: the moment governance approves `v6`, *every* host would
+be missing it at once, and gating on that would empty the whole pool.
 
 Every second HAProxy asks each host its backend's question and expects `200`.
+
+## Declaring versions
+
+`VERSIOND_VERSIONS` is the list of versions this router can route. It is a real
+operational duty, and the router will not paper over a gap in it: while any
+version is declared, a request for an *undeclared* version is answered `503` here
+rather than sent to a host that may not run it.
+
+Refusing looks harsher than falling back, and it is deliberate. The fallback is
+the coarse host-level check — the thing per-version pools exist to replace — so a
+request would reach whichever host the hash picked and fail there with `404` if
+that host does not have the version. That failure is partial, hash-dependent and
+easy to mistake for flakiness. The refusal names its own cause:
+
+```console
+$ curl -i https://…/v6/sessions/abc/chat
+HTTP/1.1 503 Service Unavailable
+version v6 is not declared in VERSIOND_VERSIONS on this router
+```
+
+**Approving a new version is therefore two-phase**, in this order:
+
+1. add the version to `VERSIOND_VERSIONS` and restart the router — it gains a
+   pool for `v6` with no healthy members, which changes nothing for `v4`;
+2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
+
+Doing it the other way round means `v6` requests are refused until step 1 lands.
+
+Leaving `VERSIOND_VERSIONS` empty disables the whole mechanism: every version
+uses the host-level pool, exactly as before per-version pools existed. Non-version
+paths such as `/healthz` always use it and are never refused.
 
 For `/readyz?version=<v>`, `versiond` answers `200` when it is accepting traffic
 and has a running child serving exactly that version — it reads the same route
@@ -202,7 +232,13 @@ A drained host keeps serving what it already accepted and receives no new work.
 Hosts are addressed by container name or IP; slot names are an HAProxy
 implementation detail and are resolved for you.
 
-`gonka-drain out` refuses to drain the last host still taking traffic. The guard
+Server state in HAProxy belongs to a backend/server pair, and one host sits in
+every pool — the host-level one and one per declared version. `gonka-drain`
+therefore drains a host from all of them, checking every pool before changing any
+and rolling back if one of the changes fails, so a host is never left half out.
+
+`gonka-drain out` refuses to drain the last host still taking traffic in any
+pool. The guard
 is advisory — `docker stop` bypasses it — and exists so that draining hosts one
 by one cannot empty the pool by accident.
 
@@ -218,7 +254,7 @@ couple of seconds.
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | `VERSIOND_POOL_HOST` | single host owning pre-HA SQLite data dirs |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
-| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check |
+| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check; non-empty = undeclared versions are refused |
 | `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |

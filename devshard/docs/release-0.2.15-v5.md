@@ -124,14 +124,22 @@ The router asks each host about the version it is about to route to
 `VERSIOND_VERSIONS`. A host that cannot run one version leaves that version's
 pool and keeps serving every other — no eviction, no reload, no config change.
 
-This also makes approving a new version safe: until a host has it running it is
-not in that version's pool, so the new version's traffic goes only where it can
-be served while everything else carries on.
+Once a version is declared this also makes its rollout safe: until a host has it
+running it is not in that version's pool, so the new version's traffic goes only
+where it can be served while everything else carries on.
 
-A version left out of `VERSIOND_VERSIONS` still routes, using the coarser
-host-level check — the previous behaviour. Listing a version buys precision; it
-is never a prerequisite for serving it. The join overlay declares `v4` by
-default.
+**Declaring a version is a prerequisite for routing it.** While any version is
+declared, a request for one that is not gets `503` from the router naming the
+setting to fix, instead of being sent to a host that may not run it. Approving a
+new version is therefore two-phase:
+
+1. add it to `VERSIOND_VERSIONS` and restart the router — it gains an empty pool,
+   which changes nothing for the versions already running;
+2. approve it in governance; each host joins that pool as it installs it.
+
+Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
+previous host-level behaviour. The join overlay declares `v4` by default, so a
+deployment that later serves `v5` must add it before governance approves it.
 
 ### A failed version poll no longer takes hosts out of rotation
 
@@ -183,8 +191,9 @@ Day-to-day operations:
 
 ## Upgrade / rollout checklist
 
-- [ ] Set `VERSIOND_VERSIONS` to the versions this deployment serves, so each is
-      health-checked per host
+- [ ] Set `VERSIOND_VERSIONS` to every version this deployment serves — an
+      undeclared version is refused, and the list must be updated *before*
+      governance approves a new one
 - [ ] Replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` overrides with
       `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`, or drop them and take the
       shipped defaults

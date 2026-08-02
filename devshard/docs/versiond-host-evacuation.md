@@ -141,7 +141,7 @@ Endpoints, all on the traffic listener (`:8080`):
 | --- | --- | --- |
 | `GET /healthz` | the legacy JSON array of per-version child state | operators, dashboards, existing clients |
 | `GET /readyz?version=<v>` | `200` when this host has a running child serving `<v>` | the router's per-version health check |
-| `GET /readyz` | `200` when this host should receive new work at all | the router's fallback check for undeclared versions |
+| `GET /readyz` | `200` when this host should receive new work at all | the router's check for non-version paths, and for every version when none is declared |
 
 `/readyz` is on the public listener on purpose. It is not a private admin
 control: it is the contract the load balancer reads, and there is nothing in it a

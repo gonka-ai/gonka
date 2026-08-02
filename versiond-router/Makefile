@@ -152,10 +152,15 @@ test-version-routing:
 	case "$$v4" in *b*) ;; *) fail "host b serves v4 but got none of its traffic" ;; esac; \
 	case "$$v5" in *a*) fail "host a does not serve v5 but received v5 traffic" ;; esac; \
 	case "$$v5" in *b*) ;; *) fail "host b serves v5 but got none of its traffic" ;; esac; \
-	backend=$$(curl -s -D- -o /dev/null -m 3 http://127.0.0.1:18132/v9/sessions/a/chat \
-		| tr -d '\r' | awk 'tolower($$1) == "x-versiond-backend:" { print $$2 }'); \
-	[ "$$backend" = versiond_ha_pool ] \
-		|| fail "an undeclared version went to '$$backend' instead of the host-level pool"; \
+	undeclared=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v9/sessions/a/chat); \
+	[ "$$undeclared" = 503 ] \
+		|| fail "an undeclared version answered $$undeclared; it must be refused, not routed by luck"; \
+	curl -s -m 3 http://127.0.0.1:18132/v9/sessions/a/chat | grep -q VERSIOND_VERSIONS \
+		|| fail "the refusal does not name the setting that fixes it"; \
+	health=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:18132/healthz); \
+	[ "$$health" = 200 ] \
+		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	echo "test-version-routing: ok"
 
 test-render: test-hash-ring test-version-routing

@@ -93,15 +93,36 @@ trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
 render_pool_backend versiond_ha_pool /readyz > "$POOL_BACKENDS_FILE"
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
     [ -n "$version" ] || continue
+    # A version name is whatever governance approved; versiond only forbids path
+    # separators. Anything the chain accepts must be routable here, so the name
+    # is taken as it is and only the HAProxy identifier derived from it is
+    # restricted — a backend name cannot carry arbitrary characters.
     case "$version" in
-        *[!A-Za-z0-9._-]*)
-            echo "versiond-router: invalid version name '$version'" >&2
+        */* | *\\* | *\#* | *\"* | *\'*)
+            echo "versiond-router: version name '$version' contains a character versiond would reject" >&2
             exit 1
             ;;
     esac
-    echo "$version versiond_pool_$version" >> "$VERSIONS_MAP"
-    render_pool_backend "versiond_pool_$version" "/readyz?version=$version" >> "$POOL_BACKENDS_FILE"
+    backend="versiond_pool_$(printf '%s' "$version" | tr -c 'A-Za-z0-9_' '_')"
+    if grep -q " $backend\$" "$VERSIONS_MAP" 2>/dev/null; then
+        echo "versiond-router: versions '$version' and an earlier one both map to $backend;" >&2
+        echo "  rename one of them, or the router cannot tell their pools apart" >&2
+        exit 1
+    fi
+    echo "$version $backend" >> "$VERSIONS_MAP"
+    render_pool_backend "$backend" "/readyz?version=$version" >> "$POOL_BACKENDS_FILE"
 done
+
+# Once any version is declared, a version that is not declared must not quietly
+# fall back to the host-level pool: that is the coarse check again, and it would
+# route to a host that may not run this version at all. Fail it here, where the
+# answer can name the fix, rather than as a 404 from whichever host the hash
+# happened to pick.
+if [ -s "$VERSIONS_MAP" ]; then
+    UNDECLARED_GUARD="http-request return status 503 content-type \"text/plain\" lf-string \"version %[var(txn.ver)] is not declared in VERSIOND_VERSIONS on this router\" if { var(txn.ver) -m reg . } !{ path -m beg /healthz } !{ path -m beg /readyz } !{ var(txn.ver),map_str($MAP) -m found } !{ var(txn.ver),map_str($VERSIONS_MAP) -m found }"
+else
+    UNDECLARED_GUARD="# No versions declared: every version uses the host-level pool."
+fi
 
 sed \
     -e "/\${POOL_BACKENDS}/{
@@ -110,6 +131,7 @@ sed \
     }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
+    -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
     -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
     -e "s|\${VERSIOND_PORT}|$PORT|g" \
     -e "s|\${VERSIOND_LEGACY_HOST}|$LEGACY_HOST|g" \

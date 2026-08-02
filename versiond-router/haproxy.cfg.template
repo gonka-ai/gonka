@@ -80,11 +80,14 @@ frontend versiond_in
 
     http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
 
+    ${UNDECLARED_VERSION_GUARD}
+
     # Legacy pinning wins: those versions own SQLite data on one host.
     use_backend versiond_legacy if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
-    # Then the version's own pool, if the router was told about that version.
-    # The map yields a backend name; no entry means no match, and the request
-    # falls through to the host-level pool below.
+    # Then the version's own pool. The map yields a backend name; with no entry
+    # there is no match and the request falls through to the host-level pool,
+    # which the guard above has already restricted to non-version paths whenever
+    # any version is declared.
     use_backend %[var(txn.ver),map_str(${VERSIONS_MAP})]
     default_backend versiond_ha_pool
 
