@@ -231,6 +231,35 @@ func TestConditionsKeepServingWhenReconcileSourceFails(t *testing.T) {
 	}
 }
 
+// A new SHA that will not download reaches Degraded by a different route than an
+// unreachable oracle: through the reconcile result rather than ReportReconcileError.
+// The old child is deliberately kept running (see downloadAndSwap), so the host
+// can still serve, and the conditions a balancer consumes must say so — this
+// failure arrives on every host at once, since they all read the same archive.
+func TestConditionsKeepServingWhenAnUpdateFailsToInstall(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	m.mu.Lock()
+	m.conditions = Conditions{Desired: 1, Reconciled: true}
+	m.processes["v1"] = &child{status: statusRunning}
+	m.mu.Unlock()
+	if !m.Conditions().Converged {
+		t.Fatal("host should have converged on its running child")
+	}
+
+	m.recordReconcileResult(1, errors.New("download or start v2: archive sha mismatch"))
+
+	conditions := m.Conditions()
+	if !conditions.Available {
+		t.Fatalf("the old child is still running but the host reports unavailable: %+v", conditions)
+	}
+	if !conditions.Converged {
+		t.Fatalf("a failed install retracted convergence: %+v", conditions)
+	}
+	if !conditions.Degraded || conditions.ReconcileError == "" {
+		t.Fatalf("the failure must still be reported as degraded: %+v", conditions)
+	}
+}
+
 func TestConditionsReportBinaryReplacementAsProgressing(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 5000})
 	m.mu.Lock()
