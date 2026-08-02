@@ -216,12 +216,21 @@ container. Scrape metrics with a sidecar or `docker compose exec`.
 
 ```console
 $ make test-render
+test-hash-ring: ok
 test-render: ok
 ```
 
-Renders the mixed (legacy pinning) and all-HA shapes, asserts on the result,
-checks that invalid settings are rejected, and validates each rendered config
-with the real HAProxy from the image the router ships. Requires Docker.
+`test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
+the result, checks that invalid settings are rejected, and validates each
+rendered config with the real HAProxy from the image the router ships.
+
+`test-hash-ring` proves the property that cannot be seen by reading the config:
+it takes the hashing directives out of the rendered file, puts the same four
+addresses into the server slots in three different orders, and requires every
+escrow to reach the same address each time. Remove `hash-key addr` from the
+template and it fails, naming the sessions that moved.
+
+Both require Docker.
 
 End-to-end routing, draining and host evacuation are covered by
 `devshard/testenv`: `make -C devshard/testenv citest-versiond-host-evacuation`.

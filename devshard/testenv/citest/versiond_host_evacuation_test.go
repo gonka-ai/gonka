@@ -70,9 +70,16 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	// guarantees the addresses come back in the same order. If ring position
 	// followed the slot they landed in rather than the host itself, every
 	// session would silently re-home on a routine router restart.
+	//
+	// This exercises a real restart but cannot force the adverse ordering, so it
+	// is a smoke test rather than the proof; the proof is deterministic and
+	// lives in `make -C versiond-router test-hash-ring`.
 	harness.Step(t, "restarting the router must not re-home %s", escrowID)
 	env.stack.StopService(t, "versiond-router")
 	env.stack.StartService(t, "versiond-router")
+	// The harness publishes random host ports, and Docker picks a new one when
+	// the container comes back, so every endpoint has to be re-resolved.
+	env.eps = env.stack.Endpoints(t, env.cfg)
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
 		harness.RouterSlotUp, hostEvacuationObservationTimeout)
 	requireSessionAvailableOnHost(t, env, escrowID, targetHost)

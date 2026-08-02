@@ -1,11 +1,91 @@
-.PHONY: all build-docker release test-render
+.PHONY: all build-docker release test-render test-hash-ring
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
 # Rendering needs no HAProxy locally; the syntax check needs Docker.
 HAPROXY_IMAGE ?= haproxy:3.0-alpine
 
-test-render:
+# Which versiond serves an escrow must depend on who is in the pool, not on the
+# order DNS happened to hand the addresses to server-template. That is invisible
+# in the config and catastrophic when wrong — a router restart would re-home
+# every session — so it is checked by running the real thing.
+#
+# The probe reuses the hashing directives from the rendered config, so dropping
+# `hash-key addr` from the template makes this fail rather than silently pass.
+# It needs no upstreams: HAProxy logs which server it picked even when the
+# connection is refused, and that choice is the only thing under test.
+test-hash-ring:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"; docker rm -f gonka-hash-probe >/dev/null 2>&1 || true' EXIT; \
+	fail() { echo "test-hash-ring: $$1" >&2; exit 1; }; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/rendered.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/rendered.map" \
+	./entrypoint.sh; \
+	hashvars=$$(grep 'set-var(txn\.' "$$tmpdir/rendered.cfg"); \
+	balance=$$(grep -m1 '^ *balance ' "$$tmpdir/rendered.cfg"); \
+	hashtype=$$(grep -m1 '^ *hash-type ' "$$tmpdir/rendered.cfg"); \
+	hashkey=$$(grep '^ *server-template ' "$$tmpdir/rendered.cfg" \
+		| grep -m1 -o 'hash-key [a-z-]*' || true); \
+	if [ -z "$$balance" ] || [ -z "$$hashtype" ] || [ -z "$$hashvars" ]; then \
+		fail "could not find the pool's hashing directives in the rendered config"; \
+	fi; \
+	probe() { \
+		{ \
+			echo "global"; \
+			echo "    log stdout format raw local0 info"; \
+			echo "defaults"; \
+			echo "    mode http"; \
+			echo "    timeout connect 200ms"; \
+			echo "    timeout client 5s"; \
+			echo "    timeout server 5s"; \
+			echo "frontend probe_in"; \
+			echo "    bind :8080"; \
+			echo "    log global"; \
+			echo '    log-format "PICK %HU %si"'; \
+			echo "$$hashvars"; \
+			echo "    default_backend probe_pool"; \
+			echo "backend probe_pool"; \
+			echo "$$balance"; \
+			echo "$$hashtype"; \
+			echo "    retries 0"; \
+			i=1; \
+			for ip in $$1; do \
+				echo "    server versiond$$i $$ip:9 $$hashkey"; \
+				i=$$((i + 1)); \
+			done; \
+		} > "$$tmpdir/probe.cfg"; \
+		docker rm -f gonka-hash-probe >/dev/null 2>&1 || true; \
+		docker run -d --name gonka-hash-probe -p 127.0.0.1:18131:8080 \
+			--user "$$(id -u):$$(id -g)" -v "$$tmpdir:$$tmpdir:ro" \
+			$(HAPROXY_IMAGE) haproxy -W -db -f "$$tmpdir/probe.cfg" >/dev/null; \
+		for i in $$(seq 40); do \
+			curl -s -o /dev/null -m 2 http://127.0.0.1:18131/probe-ready && break; \
+			sleep 0.25; \
+		done; \
+		for escrow in a b c d e f g h; do \
+			curl -s -o /dev/null -m 3 \
+				"http://127.0.0.1:18131/v4/sessions/esc-$$escrow/chat" || true; \
+		done; \
+		docker logs gonka-hash-probe 2>&1 \
+			| awk '/^PICK .*sessions/ { print $$2, $$3 }' | sort; \
+		docker rm -f gonka-hash-probe >/dev/null 2>&1 || true; \
+	}; \
+	probe "127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5" > "$$tmpdir/forward"; \
+	probe "127.0.0.5 127.0.0.4 127.0.0.3 127.0.0.2" > "$$tmpdir/reversed"; \
+	probe "127.0.0.4 127.0.0.2 127.0.0.5 127.0.0.3" > "$$tmpdir/shuffled"; \
+	[ "$$(wc -l < "$$tmpdir/forward")" -eq 8 ] \
+		|| fail "expected one routing decision per escrow, got: $$(cat "$$tmpdir/forward")"; \
+	diff -u "$$tmpdir/forward" "$$tmpdir/reversed" \
+		|| fail "reversing the slot order moved sessions: the ring follows the slot, not the host"; \
+	diff -u "$$tmpdir/forward" "$$tmpdir/shuffled" \
+		|| fail "shuffling the slot order moved sessions: the ring follows the slot, not the host"; \
+	echo "test-hash-ring: ok"
+
+test-render: test-hash-ring
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
