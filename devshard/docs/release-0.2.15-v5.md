@@ -127,7 +127,7 @@ control-plane hiccup could empty the pool while every child was still running an
 serving normally.
 
 A reconcile failure is still recorded — versiond keeps it in its internal
-`Degraded` condition and logs it at `ERROR` — it is simply not a routing
+`Degraded` condition and logs it — it is simply not a routing
 decision. Note that `/healthz` is unchanged and does **not** carry it: its JSON
 array of per-version child state is the same contract as before, so alerting on
 reconcile failures means reading the logs today. One consequence of the change to
