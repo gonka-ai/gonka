@@ -30,9 +30,17 @@ type RouterSlot struct {
 // active /readyz checks, so the router's own view is the only authority.
 func RouterPool(t *testing.T, stack *Stack) []RouterSlot {
 	t.Helper()
+	slots, err := routerPool(stack)
+	require.NoError(t, err)
+	return slots
+}
+
+func routerPool(stack *Stack) ([]RouterSlot, error) {
 	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "status")
-	require.NoError(t, err, "gonka-drain status: %s", out)
-	return parseRouterPool(out)
+	if err != nil {
+		return nil, fmt.Errorf("gonka-drain status: %w: %s", err, out)
+	}
+	return parseRouterPool(out), nil
 }
 
 func parseRouterPool(out string) []RouterSlot {
@@ -61,7 +69,9 @@ func RouterPoolHostState(t *testing.T, stack *Stack, cfg *config.File) map[strin
 }
 
 // WaitRouterPoolState blocks until the router reports the host in wantState,
-// where the empty string means "not in the pool at all".
+// where the empty string means "not in the pool at all". A router that is itself
+// restarting is a normal transient here, so an unreachable router is retried
+// rather than failed.
 func WaitRouterPoolState(
 	t *testing.T,
 	stack *Stack,
@@ -72,7 +82,17 @@ func WaitRouterPoolState(
 	t.Helper()
 	var last string
 	ok := AssertEventually(t, timeout, 250*time.Millisecond, func() bool {
-		last = RouterPoolHostState(t, stack, cfg)[host]
+		slots, err := routerPool(stack)
+		if err != nil {
+			last = "unreachable"
+			return false
+		}
+		last = ""
+		for _, slot := range slots {
+			if HostIDForUpstream(cfg, slot.Address) == host {
+				last = slot.State
+			}
+		}
 		return last == wantState
 	})
 	require.True(t, ok, "router never saw %s as %q (last %q)", host, wantState, last)

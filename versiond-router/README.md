@@ -31,6 +31,15 @@ hash by the path itself so non-session traffic still spreads. Consistent hashing
 means adding or removing one host re-homes roughly `1/N` of sessions instead of
 reshuffling all of them.
 
+The ring is keyed on each server's **address** (`hash-key addr`), not on the
+`server-template` slot it happens to occupy. That distinction is load-bearing:
+DNS hands the router its answers in no particular order, so with the default
+slot-id key a plain router restart could put the same hosts in different slots
+and re-home every session at once. Keyed on the address, the ring depends on who
+is in the pool rather than on the order they were discovered in. A host that is
+recreated with a new IP does move on the ring — that is an ordinary membership
+change, bounded to its own share of sessions.
+
 The hash key is always derived from the URL and never taken from a request
 header. It selects the upstream, so a client-supplied key would let a caller pin
 itself to a host of its choosing.

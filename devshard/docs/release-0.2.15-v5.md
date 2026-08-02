@@ -54,6 +54,11 @@ Removed with the old model:
 | `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
 | `VERSIOND_ADMIN_LISTEN_ADDR` (loopback readiness listener) | `GET :8080/readyz` on the traffic listener |
 
+Sticky routing keys its hash ring on each versiond's address, so the mapping
+survives a router restart. Moving onto the new router does re-home sessions once,
+because the ring is not the one nginx computed; HA sessions recover from shared
+Postgres, so this costs a lookup rather than a session.
+
 **Upgrade order matters.** The new router expects hosts that serve `/readyz` and
 a pool alias in DNS, so bring the whole stack down and up rather than swapping the
 router under a running pool:

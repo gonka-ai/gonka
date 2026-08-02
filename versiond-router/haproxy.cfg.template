@@ -82,6 +82,12 @@ frontend versiond_in
 backend versiond_ha_pool
     balance hash var(txn.hashkey)
     hash-type consistent
+    # hash-key addr on the servers below is what makes this ring stable. By
+    # default a server's position is its numeric slot id, and DNS hands the
+    # answers to server-template in whatever order it likes — so a router
+    # restart could reshuffle which host sits where and re-home every session at
+    # once. Keying on the address makes the ring depend on who is in the pool,
+    # not on the order they were discovered in.
 
     option httpchk
     http-check send meth GET uri /readyz
@@ -107,7 +113,7 @@ backend versiond_ha_pool
     http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
     http-response set-header X-Versiond-Backend versiond_ha_pool
 
-    server-template versiond ${POOL_SLOTS} ${VERSIOND_POOL_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none
+    server-template versiond ${POOL_SLOTS} ${VERSIOND_POOL_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none hash-key addr
 
 backend versiond_legacy
     # Single instance by definition: no sibling can serve the same escrow, so

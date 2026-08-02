@@ -24,6 +24,8 @@ test-render:
 		|| fail "HA pool is not a DNS-resolved server-template"; \
 	grep -q 'hash-type consistent' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool lost consistent hashing"; \
+	grep -q 'server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
+		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
 	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
 		|| fail "active health checks are not configured"; \
 	grep -q 'http-request set-header Devshard-Ha true' "$$tmpdir/mixed.cfg" \

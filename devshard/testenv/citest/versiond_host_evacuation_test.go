@@ -66,6 +66,17 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	require.ElementsMatch(t, env.hosts, harness.RouterServingHosts(t, env.stack, env.cfg),
 		"pool: %s", harness.DescribeRouterPool(t, env.stack, env.cfg))
 
+	// A restarted router rebuilds the pool from a fresh DNS answer, and nothing
+	// guarantees the addresses come back in the same order. If ring position
+	// followed the slot they landed in rather than the host itself, every
+	// session would silently re-home on a routine router restart.
+	harness.Step(t, "restarting the router must not re-home %s", escrowID)
+	env.stack.StopService(t, "versiond-router")
+	env.stack.StartService(t, "versiond-router")
+	harness.WaitRouterPoolState(t, env.stack, env.cfg, targetHost,
+		harness.RouterSlotUp, hostEvacuationObservationTimeout)
+	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
+
 	pauseStream := true
 	harness.PatchMockOpenAIFault(t, client, env.eps.MockOpenAIHTTP, mockopenai.FaultPatch{
 		PauseStream: &pauseStream,
