@@ -1,4 +1,39 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-render
+
+HAPROXY_IMAGE ?= haproxy:3.0-alpine
+
+test-render:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmpdir"' EXIT; \
+	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	HAPROXY_BIN=true \
+	EDGE_API_ROUTER_RENDER_ONLY=1 \
+	EDGE_API_POOL_HOST=edge-api-pool \
+	EDGE_API_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	EDGE_API_ROUTER_OUT="$$tmpdir/edge.cfg" \
+	./entrypoint.sh; \
+	grep -q 'server-template edgeapi 64 edge-api-pool:18080' "$$tmpdir/edge.cfg" \
+		|| fail "pool is not a DNS-resolved server-template"; \
+	grep -q 'balance roundrobin' "$$tmpdir/edge.cfg" \
+		|| fail "stateless pool should round-robin"; \
+	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/edge.cfg" \
+		|| fail "active health checks are not configured"; \
+	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \
+		|| fail "failover no longer excludes 503"; \
+	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/edge.cfg" \
+		|| fail "metrics are not bound to loopback"; \
+	if HAPROXY_BIN=true EDGE_API_ROUTER_RENDER_ONLY=1 \
+		EDGE_API_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		EDGE_API_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		EDGE_API_PORT=invalid \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "a non-numeric port was accepted"; \
+	fi; \
+	docker run --rm --user "$$(id -u):$$(id -g)" -v "$$tmpdir:/cfg:ro" $(HAPROXY_IMAGE) \
+		haproxy -c -f /cfg/edge.cfg >/dev/null \
+		|| fail "edge.cfg is not valid HAProxy configuration"; \
+	echo "test-render: ok"
 
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0

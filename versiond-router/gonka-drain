@@ -1,0 +1,97 @@
+#!/bin/sh
+# gonka-drain — take one versiond out of rotation, or put it back.
+#
+# Draining is not required for a graceful stop: versiond fails /readyz for
+# VERSIOND_DRAIN_ANNOUNCE before it stops accepting, and the router notices.
+# This is for the other direction — quiescing a host from the outside, e.g.
+# before maintenance that is not a versiond shutdown at all.
+#
+# Usage:
+#   gonka-drain status
+#   gonka-drain out <host|ip|slot>   # stop new traffic, keep serving established
+#   gonka-drain in  <host|ip|slot>
+#
+# A host is addressed the way an operator knows it — the container name or IP —
+# and resolved here to the HAProxy slot currently holding that address, because
+# server-template slots (versiond1..versiondN) are assigned in DNS answer order
+# and mean nothing outside the router.
+#
+# The last host taking traffic cannot be drained: it would empty the pool. This
+# is advisory — `docker stop` still bypasses it — and exists so that draining
+# hosts one by one cannot take the deployment down by accident.
+set -eu
+
+SOCK="${HAPROXY_SOCKET:-/var/run/haproxy.sock}"
+BACKEND="${VERSIOND_HA_BACKEND:-versiond_ha_pool}"
+
+runtime() {
+    printf '%s\n' "$1" | socat stdio "$SOCK"
+}
+
+# A command that changed nothing answers with an error line; success is silent.
+apply() {
+    reply="$(runtime "$1" | tr -d '\n')"
+    if [ -n "$reply" ]; then
+        echo "gonka-drain: $reply" >&2
+        exit 1
+    fi
+}
+
+# `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
+# (2 means UP), 7 = srv_admin_state (0 means no drain/maintenance bit). Slots a
+# DNS answer has never filled carry no address and are skipped.
+servers() {
+    runtime "show servers state $BACKEND" | awk 'NR > 2 && NF > 7 && $5 != "-"'
+}
+
+serving_count() {
+    servers | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
+}
+
+slot_for() {
+    target="$1"
+    ip="$(getent hosts "$target" 2>/dev/null | awk 'NR == 1 { print $1 }')"
+    slot="$(servers | awk -v t="$target" -v ip="$ip" \
+        '$4 == t || $5 == t || (ip != "" && $5 == ip) { print $4; exit }')"
+    if [ -z "$slot" ]; then
+        echo "gonka-drain: no server in $BACKEND matches '$target'" >&2
+        echo "known servers:" >&2
+        servers | awk '{ print "  " $4 "\t" $5 }' >&2
+        exit 1
+    fi
+    printf '%s' "$slot"
+}
+
+case "${1:-}" in
+status)
+    printf 'SLOT\tADDRESS\t\tSTATE\n'
+    servers | awk '{
+        if ($7 != 0)      state = "DRAIN"
+        else if ($6 == 2) state = "UP"
+        else              state = "DOWN"
+        print $4 "\t" $5 "\t" state
+    }'
+    printf '%s server(s) taking traffic in %s\n' "$(serving_count)" "$BACKEND"
+    ;;
+out)
+    target="${2:?usage: gonka-drain out <host|ip|slot>}"
+    slot="$(slot_for "$target")"
+    serving="$(serving_count)"
+    if [ "$serving" -le 1 ]; then
+        echo "refusing: $BACKEND has $serving server(s) taking traffic; draining would empty the pool" >&2
+        exit 1
+    fi
+    apply "set server $BACKEND/$slot state drain"
+    echo "drained $BACKEND/$slot ($target); $((serving - 1)) of $serving left serving"
+    ;;
+in)
+    target="${2:?usage: gonka-drain in <host|ip|slot>}"
+    slot="$(slot_for "$target")"
+    apply "set server $BACKEND/$slot state ready"
+    echo "returned $BACKEND/$slot ($target) to rotation"
+    ;;
+*)
+    echo "usage: gonka-drain <status|out|in> [host|ip|slot]" >&2
+    exit 2
+    ;;
+esac

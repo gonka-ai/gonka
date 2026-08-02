@@ -40,7 +40,7 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	haVersion := cfg.Versiond.VersionName
 	require.NotEqual(t, nonHAVersion, haVersion)
 
-	harness.Step(t, "phase 0: single VERSIOND_HOSTS=%s, storage=sqlite", legacyHost)
+	harness.Step(t, "phase 0: single-host pool on %s, storage=sqlite, not declared HA", legacyHost)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/healthz", 5*time.Minute, "versiond-router healthz", stack)
 	harness.WaitGETOK(t, client, eps.GatewayHTTP+"/v1/status", 5*time.Minute, "gateway status", stack)
 	harness.WaitGETOK(t, client, eps.RouterHTTP+"/"+haVersion+"/healthz", 5*time.Minute, "devshardd health (no Devshard-Ha)", stack)
@@ -79,9 +79,8 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	require.Contains(t, inv.EscrowIDs, snap.EscrowID)
 	harness.Step(t, "phase 1 inventory: %d sqlite escrow(s) under %s", len(inv.EscrowIDs), storeDir)
 
-	harness.Step(t, "phase 2: expand VERSIOND_HOSTS; keep sqlite → Devshard-Ha must 503")
-	hostsBoth := legacyHost + " " + secondHost
-	harness.PatchRouterVersiondHosts(t, stack.ComposePath, hostsBoth)
+	harness.Step(t, "phase 2: declare the stack HA and start %s; sqlite → Devshard-Ha must 503", secondHost)
+	harness.PatchRouterHADeployment(t, stack.ComposePath, true)
 	stack.RecreateServices(t, "versiond-router")
 	stack.StartService(t, secondHost)
 	// Force-recreate remaps Docker host ports; refresh probes before waiting.
@@ -93,7 +92,8 @@ func TestSQLiteToPostgresHAMigration(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, status)
 
 	// Confirm router still HA-pools the version and NON_HA stays pinned.
-	// (Probe via GET that may be 503 — nginx still emits routing headers.)
+	// (Probe via GET that may be 503 — devshardd answers, so routing headers
+	// are still set on the response.)
 	require.Equal(t, migrationHABackend, harness.RequireResponseHeader(t, client, haHealth, migrationBackendHeader))
 	nonHAURL := harness.RouterSessionURL(eps.RouterHTTP, nonHAVersion, "sqlite-migration-phase2-nonha", "/healthz")
 	require.Equal(t, migrationLegacyBackend, harness.RequireResponseHeader(t, client, nonHAURL, migrationBackendHeader))

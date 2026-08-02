@@ -47,11 +47,11 @@ func TestLoad_Defaults(t *testing.T) {
 			DefaultHostShutdownBudget,
 		)
 	}
-	if cfg.AdminListenAddr != DefaultAdminListenAddr {
+	if cfg.DrainAnnounce != DefaultDrainAnnounce {
 		t.Errorf(
-			"AdminListenAddr = %q, want %q",
-			cfg.AdminListenAddr,
-			DefaultAdminListenAddr,
+			"DrainAnnounce = %v, want %v",
+			cfg.DrainAnnounce,
+			DefaultDrainAnnounce,
 		)
 	}
 }
@@ -63,7 +63,7 @@ func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_DATA_DIR", "/tmp/data")
 	t.Setenv("VERSIOND_BINARY_NAME", "myapp")
 	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "12m")
-	t.Setenv("VERSIOND_ADMIN_LISTEN_ADDR", "127.0.0.1:18081")
+	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "9s")
 
 	cfg, err := Load()
 	if err != nil {
@@ -81,21 +81,8 @@ func TestLoad_CustomValues(t *testing.T) {
 	if cfg.HostShutdownBudget != 12*time.Minute {
 		t.Errorf("HostShutdownBudget = %v, want %v", cfg.HostShutdownBudget, 12*time.Minute)
 	}
-	if cfg.AdminListenAddr != "127.0.0.1:18081" {
-		t.Errorf(
-			"AdminListenAddr = %q, want %q",
-			cfg.AdminListenAddr,
-			"127.0.0.1:18081",
-		)
-	}
-}
-
-func TestLoadRejectsNonLoopbackAdminListenAddr(t *testing.T) {
-	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
-	t.Setenv("VERSIOND_ADMIN_LISTEN_ADDR", "0.0.0.0:8081")
-
-	if _, err := Load(); err == nil {
-		t.Fatal("Load() accepted a non-loopback admin listener")
+	if cfg.DrainAnnounce != 9*time.Second {
+		t.Errorf("DrainAnnounce = %v, want %v", cfg.DrainAnnounce, 9*time.Second)
 	}
 }
 

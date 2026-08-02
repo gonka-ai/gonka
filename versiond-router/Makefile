@@ -1,129 +1,79 @@
-.PHONY: all build-docker build-tools release test test-render
+.PHONY: all build-docker release test-render
 
-TOOLS_DIR ?= $(CURDIR)/.bin
-
-build-tools:
-	mkdir -p $(TOOLS_DIR)
-	go build -o $(TOOLS_DIR)/gonka-routerctl ./cmd/gonka-routerctl
-	go build -o $(TOOLS_DIR)/gonka-hostctl ./cmd/gonka-hostctl
-
-test:
-	go test ./...
+# Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
+# result, then runs the real HAProxy from the production image over each one.
+# Rendering needs no HAProxy locally; the syntax check needs Docker.
+HAPROXY_IMAGE ?= haproxy:3.0-alpine
 
 test-render:
-	@set -e; \
+	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
-	VERSIOND_HOSTS='versiond versiond2' \
+	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_POOL_HOST=versiond-pool \
 	VERSIOND_LEGACY_HOST=versiond \
 	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
-	grep -q 'default versiond_ha_pool' "$$tmpdir/mixed.conf"; \
-	grep -q 'v1 versiond_legacy' "$$tmpdir/mixed.conf"; \
-	grep -q 'v2 versiond_legacy' "$$tmpdir/mixed.conf"; \
-	grep -q 'v3 versiond_legacy' "$$tmpdir/mixed.conf"; \
-	grep -q 'versiond_ha_pool "true"' "$$tmpdir/mixed.conf"; \
-	grep -q 'proxy_set_header Devshard-Ha' "$$tmpdir/mixed.conf"; \
-	grep -q 'proxy_next_upstream error timeout http_502' "$$tmpdir/mixed.conf"; \
-	grep -q 'max_fails=1 fail_timeout=10s' "$$tmpdir/mixed.conf"; \
-	grep -q 'proxy_connect_timeout 2s' "$$tmpdir/mixed.conf"; \
-	VERSIOND_HOSTS= \
-	VERSIOND_PORT=invalid \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
-		--from active --to draining --target removed versiond2 >/dev/null; \
-	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s down;' "$$tmpdir/mixed.conf"; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
-		--from draining --to stopping --target removed versiond2 >/dev/null; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
-		--from stopping --to offline --target removed versiond2 >/dev/null; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host transfer --operation-id test-remove \
-		--from offline --to removed --target removed versiond2 >/dev/null; \
-	if grep -q 'versiond2:8080' "$$tmpdir/mixed.conf"; then \
-		echo "removed host is still rendered" >&2; \
-		exit 1; \
+	GONKA_HA=true \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/mixed.map" \
+	./entrypoint.sh; \
+	grep -q 'server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
+		|| fail "HA pool is not a DNS-resolved server-template"; \
+	grep -q 'hash-type consistent' "$$tmpdir/mixed.cfg" \
+		|| fail "HA pool lost consistent hashing"; \
+	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
+		|| fail "active health checks are not configured"; \
+	grep -q 'http-request set-header Devshard-Ha true' "$$tmpdir/mixed.cfg" \
+		|| fail "GONKA_HA did not enable the Devshard-Ha header"; \
+	grep -q 'server legacy versiond:8080' "$$tmpdir/mixed.cfg" \
+		|| fail "legacy backend does not point at VERSIOND_LEGACY_HOST"; \
+	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/mixed.cfg" \
+		|| fail "failover no longer excludes 503"; \
+	grep -q 'disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
+		|| fail "non-idempotent requests could be replayed"; \
+	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
+		|| fail "metrics are not bound to loopback"; \
+	printf 'v1 legacy\nv2 legacy\nv3 legacy\n' > "$$tmpdir/want.map"; \
+	diff -u "$$tmpdir/want.map" "$$tmpdir/mixed.map" \
+		|| fail "pinned versions rendered incorrectly"; \
+	HAPROXY_BIN=true \
+	VERSIOND_ROUTER_RENDER_ONLY=1 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/allha.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/allha.map" \
+	./entrypoint.sh; \
+	[ ! -s "$$tmpdir/allha.map" ] \
+		|| fail "no pinned versions were requested but the map is not empty"; \
+	grep -q 'http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
+		|| fail "unset GONKA_HA must strip a client-supplied Devshard-Ha"; \
+	if grep -q 'set-header Devshard-Ha' "$$tmpdir/allha.cfg"; then \
+		fail "unset GONKA_HA still advertises an HA deployment"; \
 	fi; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host add --operation-id test-add versiond2 >/dev/null; \
-	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s down;' "$$tmpdir/mixed.conf"; \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/mixed-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/mixed-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/mixed.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl host transfer --operation-id test-add \
-		--from joining --to active --target active versiond2 >/dev/null; \
-	grep -q 'server versiond2:8080 resolve max_fails=1 fail_timeout=10s;' "$$tmpdir/mixed.conf"; \
-	VERSIOND_HOSTS='versiond versiond2' \
-	VERSIOND_NON_HA_VERSIONS= \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/allha.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/allha-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/allha-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/allha.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
-	grep -q 'default versiond_ha_pool' "$$tmpdir/allha.conf"; \
-	if grep -q 'versiond_legacy;' "$$tmpdir/allha.conf" && \
-		grep -q 'v1 versiond_legacy' "$$tmpdir/allha.conf"; then \
-		echo "all-HA config still routes a version through the legacy pool" >&2; \
-		exit 1; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_STREAM_IDLE_SECONDS=1200 \
+		VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS=60 \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "a tunnel timeout below the idle timeout was accepted"; \
 	fi; \
-	VERSIOND_HOSTS='versiond' \
-	VERSIOND_NON_HA_VERSIONS= \
-	VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-	VERSIOND_ROUTER_OUT="$$tmpdir/single.conf" \
-	VERSIOND_ROUTER_STATE="$$tmpdir/single-state.json" \
-	VERSIOND_ROUTER_AUDIT="$$tmpdir/single-audit.jsonl" \
-	VERSIOND_ROUTER_LOCK="$$tmpdir/single.lock" \
-	VERSIOND_ROUTER_NGINX_BIN=true \
-	go run ./cmd/gonka-routerctl bootstrap >/dev/null; \
-	if grep -q 'versiond_ha_pool "true"' "$$tmpdir/single.conf"; then \
-		echo "single-host config incorrectly enables the HA header" >&2; \
-		exit 1; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_PORT=invalid \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "a non-numeric port was accepted"; \
 	fi; \
+	for cfg in mixed allha; do \
+		docker run --rm --user "$$(id -u):$$(id -g)" -v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \
+			haproxy -c -f "$$tmpdir/$$cfg.cfg" >/dev/null \
+			|| fail "$$cfg.cfg is not valid HAProxy configuration"; \
+	done; \
 	echo "test-render: ok"
 
 VERSION ?= $(shell git describe --always)

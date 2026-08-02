@@ -74,35 +74,15 @@ func run(ctx context.Context) error {
 		Addr:    listenAddr,
 		Handler: publicHandler(mgr, hostLifecycle, proxyOpts...),
 	}
-	adminListenAddr := cfg.AdminListenAddr
-	adminSrv := &http.Server{
-		Addr:              adminListenAddr,
-		Handler:           adminHandler(hostLifecycle, mgr),
-		ReadHeaderTimeout: 5 * time.Second,
-	}
-
 	ln, err := net.Listen("tcp", listenAddr)
 	if err != nil {
 		return fmt.Errorf("listen %s: %w", listenAddr, err)
 	}
-	adminLn, err := net.Listen("tcp", adminListenAddr)
-	if err != nil {
-		_ = ln.Close()
-		return fmt.Errorf("listen %s: %w", adminListenAddr, err)
-	}
-	servers := httpServerGroup{srv, adminSrv}
-	defer servers.Close()
+	defer srv.Close()
 	go func() {
 		slog.Info("starting proxy server", "addr", listenAddr)
 		if err := srv.Serve(ln); err != nil && err != http.ErrServerClosed {
 			slog.Error("http server error", "error", err)
-		}
-	}()
-	go func() {
-		slog.Info("starting admin server", "addr", adminListenAddr)
-		if err := adminSrv.Serve(adminLn); err != nil &&
-			err != http.ErrServerClosed {
-			slog.Error("admin HTTP server error", "error", err)
 		}
 	}()
 
@@ -126,16 +106,21 @@ func run(ctx context.Context) error {
 	go watchForceSignals(signals, shutdownDone, force)
 	defer close(shutdownDone)
 
+	// Announce first: /readyz starts failing while the host keeps serving, so the
+	// load balancer can withdraw this upstream before admission ever closes.
+	if err := hostLifecycle.Transition(host.StateAnnouncing); err != nil {
+		return err
+	}
+	// Freeze desired-state changes and cancel every active generation operation.
+	// Child process contexts stay alive until the drain phase stops or forces them.
+	mgr.BeginHostDrain()
+	cancelPoll()
+	awaitDrainAnnouncement(cfg.DrainAnnounce, force)
 	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
 		return err
 	}
-	// Close admission, freeze desired-state changes, and cancel every active
-	// generation operation as one host transition. Child process contexts stay
-	// alive until the drain phase decides to stop or force them.
-	mgr.BeginHostDrain()
-	cancelPoll()
 
-	return shutdownHost(cfg, servers, mgr, hostLifecycle, force, pollDone)
+	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone)
 }
 
 func runPollLoop(
@@ -234,34 +219,6 @@ type hostShutdownManager interface {
 type hostHTTPServer interface {
 	Shutdown(context.Context) error
 	Close() error
-}
-
-type httpServerGroup []*http.Server
-
-func (servers httpServerGroup) Shutdown(ctx context.Context) error {
-	results := make(chan error, len(servers))
-	for _, server := range servers {
-		go func() {
-			results <- server.Shutdown(ctx)
-		}()
-	}
-	var errs []error
-	for range servers {
-		if err := <-results; err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
-}
-
-func (servers httpServerGroup) Close() error {
-	var errs []error
-	for _, server := range servers {
-		if err := server.Close(); err != nil {
-			errs = append(errs, err)
-		}
-	}
-	return errors.Join(errs...)
 }
 
 func shutdownHost(
@@ -402,7 +359,7 @@ func waitForPollWorker(
 	}
 }
 
-func readinessHandler(hostLifecycle *host.Controller, mgr *process.Manager) http.HandlerFunc {
+func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
 		if r.Method != http.MethodGet {
@@ -426,7 +383,7 @@ func publicHandler(
 ) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("/healthz", health.Handler(mgr.Status))
-	mux.Handle("/ready", http.NotFoundHandler())
+	mux.HandleFunc("/readyz", readinessHandler(mgr, hostLifecycle))
 	mux.Handle(
 		"/",
 		hostLifecycle.Admission(proxy.Handler(mgr.RouteTable(), proxyOpts...)),
@@ -434,22 +391,34 @@ func publicHandler(
 	return mux
 }
 
-func adminHandler(
-	hostLifecycle *host.Controller,
-	mgr *process.Manager,
-) http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("/ready", readinessHandler(hostLifecycle, mgr))
-	return mux
-}
-
+// versiondReady answers the load balancer's question — may this host take new
+// traffic right now — and deliberately not "has it fully converged".
+//
+// Requiring convergence would evict every host at once on a routine same-name
+// SHA bump, because each one starts downloading at the same time. Converged is
+// therefore a latch: a host that has never run its desired set stays out of
+// rotation, but a later download does not retract readiness.
 func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
-	return hostStatus.State == host.StateServing &&
+	return hostStatus.Ready &&
 		hostStatus.Accepting &&
 		conditions.Available &&
-		conditions.Reconciled &&
-		!conditions.Progressing &&
+		conditions.Converged &&
 		!conditions.Degraded
+}
+
+// awaitDrainAnnouncement keeps serving while the balancer observes the failing
+// health check. An explicit force signal cuts it short.
+func awaitDrainAnnouncement(window time.Duration, force <-chan struct{}) {
+	if window <= 0 {
+		return
+	}
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	slog.Info("announcing drain; still serving accepted traffic", "window", window)
+	select {
+	case <-force:
+	case <-timer.C:
+	}
 }
 
 func watchShutdownEscalation(

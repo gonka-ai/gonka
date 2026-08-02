@@ -66,7 +66,7 @@ func TestLegacyVersionPinnedToSingleHost(t *testing.T) {
 		}
 	}
 
-	harness.Step(t, "HA version %q still sticky-hashes across VERSIOND_HOSTS", haVersion)
+	harness.Step(t, "HA version %q still sticky-hashes across the router pool", haVersion)
 	_, upstreamA, _, upstreamB := harness.FindDistinctStickySessions(t, client, eps.RouterHTTP, haVersion)
 	require.NotEqual(t, upstreamA, upstreamB)
 

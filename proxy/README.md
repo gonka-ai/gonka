@@ -176,13 +176,14 @@ upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
 
 | Router env | Role |
 | --- | --- |
-| `VERSIOND_HOSTS` | HA pool (space-separated) |
-| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: first of `VERSIOND_HOSTS`) |
+| `VERSIOND_POOL_HOST` | DNS name resolving to every host in the HA pool (a Compose network alias) |
+| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: `VERSIOND_POOL_HOST`) |
 | `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (whitespace and/or comma). Empty = all versions HA. Future versions are HA by default |
+| `GONKA_HA` | Set by the HA overlay; stamps `Devshard-Ha: true` on pool traffic |
 
-Multi-host HA requests get `Devshard-Ha: true`; `devshardd` requires
-`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See `versiond-router/` and
-`devshard/docs/pr-1366-deploy-test-plan.md`.
+HA requests get `Devshard-Ha: true`; `devshardd` then requires
+`DEVSHARD_STORAGE_MODE=postgres` + `PGHOST`. See
+[versiond-router/README.md](../versiond-router/README.md).
 
 ### edge-api vs dapi routing
 

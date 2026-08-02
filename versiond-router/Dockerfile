@@ -1,20 +1,16 @@
-FROM golang:1.25.9-alpine3.23 AS routerctl-builder
-
-WORKDIR /src
-COPY go.mod ./
-COPY cmd ./cmd
-COPY internal ./internal
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" \
-    -o /out/gonka-routerctl ./cmd/gonka-routerctl
-
-FROM nginx:1.27.5-alpine
+FROM haproxy:3.0-alpine
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
-# from the URL so the same session always lands on the same versiond. Plays
-# along with nginx:alpine's stock /docker-entrypoint.d/ pipeline.
+# from the URL so the same session always lands on the same versiond, and takes
+# a host out of rotation from active /readyz checks rather than from router-side
+# state. Plays nice with SSE (generous tunnel timeout, no response buffering).
 
-COPY nginx.conf.template /etc/nginx/template/nginx.conf.template
-COPY entrypoint.sh /docker-entrypoint.d/40-render-versiond-upstream.sh
-COPY --from=routerctl-builder /out/gonka-routerctl /usr/local/bin/gonka-routerctl
-RUN chmod +x /docker-entrypoint.d/40-render-versiond-upstream.sh \
-    && mkdir -p /var/lib/gonka/versiond-router /run/gonka
+USER root
+RUN apk add --no-cache socat
+
+COPY haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
+COPY entrypoint.sh /usr/local/bin/entrypoint.sh
+COPY gonka-drain /usr/local/bin/gonka-drain
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain
+
+ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

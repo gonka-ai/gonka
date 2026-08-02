@@ -13,7 +13,8 @@ import (
 )
 
 // New creates the Echo instance with Tier A read-only routes mounted:
-//   - GET /healthz
+//   - GET /healthz — liveness, 200 while the process is up
+//   - GET /readyz  — readiness, probed by edge-api-router
 //   - /v1/... (queryapi: status, participants, models, epochs, BLS, etc.)
 func New(chainClient *chain.Client) *echo.Echo {
 	e := echo.New()
@@ -23,6 +24,7 @@ func New(chainClient *chain.Client) *echo.Echo {
 	e.Use(observability.EchoMiddleware())
 
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	e.GET("/readyz", newReadiness(chainClient).handler)
 
 	gen.RegisterHandlers(e, queryapi.NewHandlers(chainClient))
 

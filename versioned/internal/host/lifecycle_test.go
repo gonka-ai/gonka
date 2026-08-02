@@ -74,10 +74,11 @@ func TestStateTableTransitionMatrix(t *testing.T) {
 	}
 }
 
-func TestStateTableTargetsKnownStatesAndServingOwnsAdmission(t *testing.T) {
+func TestStateTableSeparatesAdmissionFromReadiness(t *testing.T) {
 	states := []State{
 		StateStarting,
 		StateServing,
+		StateAnnouncing,
 		StateDraining,
 		StateStopping,
 		StateForcing,
@@ -87,13 +88,17 @@ func TestStateTableTargetsKnownStatesAndServingOwnsAdmission(t *testing.T) {
 		t.Fatalf("host state table has %d states, want %d", len(stateTable), len(states))
 	}
 
-	acceptingStates := 0
+	accepting := map[State]bool{}
+	ready := map[State]bool{}
 	for state, spec := range stateTable {
 		if spec.accepting {
-			acceptingStates++
-			if state != StateServing {
-				t.Errorf("unexpected accepting state %s", state)
-			}
+			accepting[state] = true
+		}
+		if spec.ready {
+			ready[state] = true
+		}
+		if spec.ready && !spec.accepting {
+			t.Errorf("%s advertises ready without accepting work", state)
 		}
 		for _, target := range spec.targets {
 			if _, ok := stateTable[target]; !ok {
@@ -101,8 +106,13 @@ func TestStateTableTargetsKnownStatesAndServingOwnsAdmission(t *testing.T) {
 			}
 		}
 	}
-	if acceptingStates != 1 {
-		t.Fatalf("host state table has %d accepting states, want 1", acceptingStates)
+
+	// announcing is the drain window: still serving, already unready.
+	if !accepting[StateServing] || !accepting[StateAnnouncing] || len(accepting) != 2 {
+		t.Fatalf("accepting states = %v, want serving and announcing", accepting)
+	}
+	if !ready[StateServing] || len(ready) != 1 {
+		t.Fatalf("ready states = %v, want serving only", ready)
 	}
 	if len(stateTable[StateStopped].targets) != 0 {
 		t.Fatal("stopped host state has outgoing targets")

@@ -1,10 +1,13 @@
 package process
 
 type Conditions struct {
-	Available      bool
-	Progressing    bool
-	Reconciled     bool
-	Degraded       bool
+	Available   bool
+	Progressing bool
+	Reconciled  bool
+	Degraded    bool
+	// Converged latches once the manager has run every desired version at least
+	// once. It never clears, so a later download or restart does not retract it.
+	Converged      bool
 	Desired        int
 	Running        int
 	ReconcileError string
@@ -17,10 +20,14 @@ func (m *Manager) Conditions() Conditions {
 	conditions.Running = runningChildrenLocked(m.processes)
 	conditions.Available = conditions.Running > 0
 	converged := conditions.Running == conditions.Desired
+	if converged && conditions.Desired > 0 {
+		m.everConverged = true
+	}
 	progressing := !converged || len(m.downloading) > 0
 	conditions.Reconciled = conditions.Reconciled && !progressing
 	conditions.Progressing = progressing && conditions.ReconcileError == ""
 	conditions.Degraded = conditions.ReconcileError != ""
+	conditions.Converged = m.everConverged
 	return conditions
 }
 

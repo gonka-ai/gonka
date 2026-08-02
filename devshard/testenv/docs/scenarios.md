@@ -143,7 +143,7 @@ Validates deploy/join-style sticky routing before chat or long-poll scenarios de
 
 **What we test:** versiond-router sends version prefixes listed in
 `VERSIOND_NON_HA_VERSIONS` only to `VERSIOND_LEGACY_HOST` (`versiond_legacy`),
-while other versions sticky-hash across `VERSIOND_HOSTS` (and get
+while other versions sticky-hash across the `versiond-pool` members (and get
 `Devshard-Ha: true` for multi-host HA).
 
 **How:**
@@ -171,12 +171,13 @@ See `devshard/docs/pr-1366-deploy-test-plan.md` §3.2.
 **How:**
 
 1. Boot 2×versiond + Postgres compose patched to `DEVSHARD_STORAGE_MODE=sqlite`
-   and `VERSIOND_HOSTS=versiond-0` only; stop `versiond-1`.
+   and `GONKA_HA=""` (not declared HA); stop `versiond-1` so only the legacy
+   host resolves in the pool.
 2. **Phase 0:** NON_HA `v1` → `versiond_legacy`; HA `VersionName` →
    `versiond_ha_pool` without multi-host `Devshard-Ha` (healthz 200 on sqlite).
 3. **Phase 1:** Gateway chat ×3; inventory `{data}/versiond-0/<version>/_meta.db`
    (`escrow_epoch`).
-4. **Phase 2:** Expand `VERSIOND_HOSTS` to both hosts; recreate router; start
+4. **Phase 2:** Set `GONKA_HA=true`; recreate router; start
    `versiond-1`. HA `/<version>/healthz` → **503**; gateway chat fails; NON_HA
    still legacy-pinned.
 5. **Phase 3:** Patch `DEVSHARD_STORAGE_MODE=postgres`; recreate both versiond.

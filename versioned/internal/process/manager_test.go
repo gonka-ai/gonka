@@ -675,7 +675,7 @@ func TestAssignPort_ReusesReleasedPorts(t *testing.T) {
 	}
 }
 
-func TestAssignPort_SkipsVersiondListenPorts(t *testing.T) {
+func TestAssignPort_SkipsVersiondListenPort(t *testing.T) {
 	m := NewManager(config.Config{BasePort: 8079})
 
 	m.mu.Lock()
@@ -686,23 +686,8 @@ func TestAssignPort_SkipsVersiondListenPorts(t *testing.T) {
 	if p1 != 8079 {
 		t.Errorf("first port = %d, want 8079", p1)
 	}
-	if p2 != 8082 {
-		t.Errorf("second port = %d, want 8082", p2)
-	}
-}
-
-func TestAssignPort_SkipsConfiguredAdminListenPort(t *testing.T) {
-	m := NewManager(config.Config{
-		BasePort:        9000,
-		AdminListenAddr: "127.0.0.1:9000",
-	})
-
-	m.mu.Lock()
-	port := mustAssignPort(t, m)
-	m.mu.Unlock()
-
-	if port != 9001 {
-		t.Errorf("first port = %d, want 9001", port)
+	if p2 != 8081 {
+		t.Errorf("second port = %d, want 8081", p2)
 	}
 }
 

@@ -58,3 +58,25 @@ func TestConfiguredForHA(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "PGHOST")
 }
+
+func TestRequireHADeploymentStorage(t *testing.T) {
+	t.Setenv(EnvHADeployment, "")
+	t.Setenv(EnvStorageMode, "sqlite")
+	require.NoError(t, RequireHADeploymentStorage(),
+		"single-instance deployment must not require postgres")
+
+	t.Setenv(EnvHADeployment, "true")
+	require.Error(t, RequireHADeploymentStorage(),
+		"HA deployment on sqlite must refuse to start")
+
+	t.Setenv(EnvStorageMode, "hybrid")
+	t.Setenv("PGHOST", "pg")
+	require.Error(t, RequireHADeploymentStorage(),
+		"hybrid keeps a local fallback and is not fail-closed")
+
+	t.Setenv(EnvStorageMode, "postgres")
+	require.NoError(t, RequireHADeploymentStorage())
+
+	t.Setenv("PGHOST", "")
+	require.Error(t, RequireHADeploymentStorage(), "postgres without PGHOST")
+}

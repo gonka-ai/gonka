@@ -38,9 +38,7 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 
 	for targetHostIndex := 0; targetHostIndex < 2; targetHostIndex++ {
 		t.Run(fmt.Sprintf("host_%d", targetHostIndex), func(t *testing.T) {
-			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true, func(stack *harness.Stack, cfg *config.File) {
-				harness.PatchRouterVersiondHosts(t, stack.ComposePath, cfg.Hosts[targetHostIndex].ID)
-			})
+			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true, nil)
 			client := harness.GatewayChatClient()
 
 			delayMs := 750
@@ -49,6 +47,14 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 			})
 
 			targetHost := env.hosts[targetHostIndex]
+			// Pin new work to the host under test so sticky hashing cannot hide
+			// the drain on the other replica. Draining keeps it running and
+			// serving what it already accepted, which is the point.
+			otherHost := env.hosts[1-targetHostIndex]
+			harness.Step(t, "draining %s so every new session lands on %s", otherHost, targetHost)
+			harness.RouterDrain(t, env.stack, otherHost)
+			harness.WaitRouterPoolState(t, env.stack, env.cfg, otherHost,
+				harness.RouterSlotDrain, 30*time.Second)
 			exerciseVersiondRollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
 		})
 	}

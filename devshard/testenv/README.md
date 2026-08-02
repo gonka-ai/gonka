@@ -88,13 +88,16 @@ sessions are batch-migrated into Postgres once at startup.
 ### Three versiond instances (multi mode)
 
 The default skeleton defines **three** hosts (`versiond-0`, `versiond-1`, `versiond-2`).
-`gencompose` emits one compose service per host and sets:
+`gencompose` emits one compose service per host and puts `versiond-0` and
+`versiond-1` behind the `versiond-pool` network alias:
 
 ```text
-VERSIOND_HOSTS="versiond-0 versiond-1"
+VERSIOND_POOL_HOST="versiond-pool"     # on versiond-router
 ```
 
-on **versiond-router** (sticky HA pool). `versiond-2` is a **solo** participant reached via
+The router resolves that name to whichever pool members are running and
+health-checks `/readyz` on each, so starting or stopping a host is the whole
+operation. `versiond-2` is a **solo** participant reached via
 direct `inference_url` (`http://versiond-2:8080`), not the HA pool. Escrow slots round-robin
 across the HA identity (`hosts[0]`) and solo hosts (`hosts[2+]`). Solo uses **sqlite**
 storage so it does not multi-write the HA pair’s shared Postgres diffs; the HA pair keeps

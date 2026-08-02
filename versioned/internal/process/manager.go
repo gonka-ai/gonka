@@ -87,6 +87,7 @@ type Manager struct {
 	operations      map[uint64]controlOperation
 	nextOperationID uint64
 	conditions      Conditions
+	everConverged   bool
 	available       chan struct{}
 	childCtx        context.Context
 	cancelChildren  context.CancelFunc
@@ -105,7 +106,7 @@ func NewManager(cfg config.Config) *Manager {
 		children:       make(map[*child]struct{}),
 		downloading:    make(map[string]struct{}),
 		allocatedPorts: make(map[int]struct{}),
-		reservedPorts:  reservedChildPorts(cfg.AdminListenAddr),
+		reservedPorts:  reservedChildPorts(),
 		operations:     make(map[uint64]controlOperation),
 		childCtx:       childCtx,
 		cancelChildren: cancelChildren,
@@ -140,9 +141,6 @@ func normalizeConfig(cfg config.Config) config.Config {
 	if cfg.DrainKillGrace <= 0 {
 		cfg.DrainKillGrace = config.DefaultDrainKillGrace
 	}
-	if cfg.AdminListenAddr == "" {
-		cfg.AdminListenAddr = config.DefaultAdminListenAddr
-	}
 	return cfg
 }
 
@@ -167,15 +165,10 @@ func (m *Manager) assignPort() (int, error) {
 	)
 }
 
-func reservedChildPorts(adminListenAddr string) map[int]struct{} {
+func reservedChildPorts() map[int]struct{} {
 	ports := make(map[int]struct{})
-	for _, addr := range []string{
-		config.ListenAddr(),
-		adminListenAddr,
-	} {
-		if port, ok := parseListenPort(addr); ok {
-			ports[port] = struct{}{}
-		}
+	if port, ok := parseListenPort(config.ListenAddr()); ok {
+		ports[port] = struct{}{}
 	}
 	return ports
 }

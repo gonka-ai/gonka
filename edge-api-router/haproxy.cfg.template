@@ -1,0 +1,63 @@
+# Round-robin reverse-proxy in front of N edge-api instances (stateless
+# read-only Tier A queries).
+#
+# Pool membership comes from DNS (EDGE_API_POOL_HOST resolves to every replica)
+# and health from active /readyz checks. edge-api reports unready when it cannot
+# reach the chain, so an instance that is up but cut off leaves the rotation
+# without being restarted, and rejoins on its own.
+
+global
+    log stdout format raw local0 info
+    stats socket /var/run/haproxy.sock mode 660 level admin
+    stats timeout 30s
+
+defaults
+    log     global
+    mode    http
+    option  httplog
+    option  dontlognull
+    timeout connect ${CONNECT_TIMEOUT_SECONDS}s
+    timeout client  ${READ_TIMEOUT_SECONDS}s
+    timeout server  ${READ_TIMEOUT_SECONDS}s
+    timeout http-request ${CONNECT_TIMEOUT_SECONDS}s
+    timeout http-keep-alive 10s
+
+resolvers docker
+    nameserver dns 127.0.0.11:53
+    resolve_retries 3
+    timeout resolve 1s
+    timeout retry   1s
+    hold valid 5s
+    hold other 5s
+    hold refused 5s
+    hold nx 5s
+    hold timeout 5s
+
+frontend edge_api_in
+    bind :${EDGE_API_ROUTER_PORT}
+    maxconn ${MAX_CONNECTIONS}
+    default_backend edge_api_pool
+
+backend edge_api_pool
+    balance roundrobin
+
+    option httpchk
+    http-check send meth GET uri /readyz
+    http-check expect status 200
+
+    http-reuse safe
+    option redispatch
+    retry-on conn-failure empty-response 502
+    retries 2
+    # Tier A is read-only, but keep the same rule as versiond-router so the two
+    # configs cannot drift on the one property that costs money if it does.
+    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
+
+    http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
+
+    server-template edgeapi ${POOL_SLOTS} ${EDGE_API_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none
+
+frontend metrics
+    bind 127.0.0.1:8405
+    http-request use-service prometheus-exporter if { path /metrics }
+    http-request deny

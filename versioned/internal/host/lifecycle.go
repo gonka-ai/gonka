@@ -11,18 +11,27 @@ import (
 type State string
 
 const (
-	StateStarting State = "starting"
-	StateServing  State = "serving"
-	StateDraining State = "draining"
-	StateStopping State = "stopping"
-	StateForcing  State = "forcing"
-	StateStopped  State = "stopped"
+	StateStarting   State = "starting"
+	StateServing    State = "serving"
+	StateAnnouncing State = "announcing"
+	StateDraining   State = "draining"
+	StateStopping   State = "stopping"
+	StateForcing    State = "forcing"
+	StateStopped    State = "stopped"
 )
 
 var ErrInvalidTransition = errors.New("invalid versiond host state transition")
 
+// stateSpec.accepting decides whether new proxy work may acquire a lease.
+// stateSpec.ready decides what GET /readyz reports to the load balancer.
+//
+// announcing accepts work but is already unready: the balancer needs a moment
+// to observe the failing health check and stop routing here. Serving through
+// that window is what makes it safe to signal the process before the balancer
+// has reacted; refusing immediately would surface as client errors instead.
 type stateSpec struct {
 	accepting bool
+	ready     bool
 	targets   []State
 }
 
@@ -30,11 +39,21 @@ var stateTable = map[State]stateSpec{
 	StateStarting: {
 		targets: []State{
 			StateServing,
+			StateAnnouncing,
 			StateDraining,
 			StateForcing,
 		},
 	},
 	StateServing: {
+		accepting: true,
+		ready:     true,
+		targets: []State{
+			StateAnnouncing,
+			StateDraining,
+			StateForcing,
+		},
+	},
+	StateAnnouncing: {
 		accepting: true,
 		targets: []State{
 			StateDraining,
@@ -62,6 +81,7 @@ var stateTable = map[State]stateSpec{
 type Snapshot struct {
 	State     State
 	Accepting bool
+	Ready     bool
 	Inflight  int64
 	Idle      bool
 }
@@ -116,6 +136,11 @@ func acceptsWork(state State) bool {
 	return ok && spec.accepting
 }
 
+func advertisesReady(state State) bool {
+	spec, ok := stateTable[state]
+	return ok && spec.ready
+}
+
 func (c *Controller) Snapshot() Snapshot {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -126,6 +151,7 @@ func (c *Controller) snapshotLocked() Snapshot {
 	return Snapshot{
 		State:     c.state,
 		Accepting: acceptsWork(c.state),
+		Ready:     advertisesReady(c.state),
 		Inflight:  c.inflight,
 		Idle:      c.inflight == 0,
 	}

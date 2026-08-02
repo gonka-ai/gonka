@@ -504,81 +504,65 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 	}
 }
 
-func TestVersiondReadyRequiresServingAndFullReconciliation(t *testing.T) {
-	status := host.Snapshot{State: host.StateServing, Accepting: true}
-	conditions := process.Conditions{Available: true, Reconciled: true}
+func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
+	status := host.Snapshot{State: host.StateServing, Accepting: true, Ready: true}
+	conditions := process.Conditions{Available: true, Converged: true}
 	if !versiondReady(status, conditions) {
-		t.Fatal("fully reconciled serving host is not ready")
+		t.Fatal("serving host with a running child is not ready")
 	}
 
+	// A routine same-name SHA bump makes every host progress at once. Evicting
+	// them all would take the pool down, so progressing must stay ready.
 	conditions.Progressing = true
-	if versiondReady(status, conditions) {
-		t.Fatal("progressing host is ready")
+	if !versiondReady(status, conditions) {
+		t.Fatal("progressing host lost readiness; the whole pool would drop out")
 	}
 	conditions.Progressing = false
+
+	conditions.Converged = false
+	if versiondReady(status, conditions) {
+		t.Fatal("host that never converged is ready")
+	}
+	conditions.Converged = true
+
 	conditions.Degraded = true
 	if versiondReady(status, conditions) {
 		t.Fatal("degraded host is ready")
 	}
 	conditions.Degraded = false
-	status.State = host.StateDraining
-	status.Accepting = false
+
+	conditions.Available = false
 	if versiondReady(status, conditions) {
-		t.Fatal("draining host is ready")
+		t.Fatal("host without a running child is ready")
+	}
+	conditions.Available = true
+
+	// announcing still accepts work but must already report unready.
+	status.State = host.StateAnnouncing
+	status.Ready = false
+	if versiondReady(status, conditions) {
+		t.Fatal("announcing host is ready")
 	}
 }
 
-func TestReadinessIsOnlyServedOnAdminListener(t *testing.T) {
+func TestReadinessIsServedOnTheTrafficListener(t *testing.T) {
 	hostLifecycle := host.NewController()
 	mgr := process.NewManager(config.Config{BasePort: 5000})
 
-	publicResponse := httptest.NewRecorder()
+	response := httptest.NewRecorder()
 	publicHandler(mgr, hostLifecycle).ServeHTTP(
-		publicResponse,
-		httptest.NewRequest(http.MethodGet, "/ready", nil),
+		response,
+		httptest.NewRequest(http.MethodGet, "/readyz", nil),
 	)
-	if publicResponse.Code != http.StatusNotFound {
+	if response.Code != http.StatusServiceUnavailable {
 		t.Fatalf(
-			"public /ready status = %d, want %d",
-			publicResponse.Code,
-			http.StatusNotFound,
-		)
-	}
-
-	adminResponse := httptest.NewRecorder()
-	adminHandler(hostLifecycle, mgr).ServeHTTP(
-		adminResponse,
-		httptest.NewRequest(http.MethodGet, "/ready", nil),
-	)
-	if adminResponse.Code != http.StatusServiceUnavailable {
-		t.Fatalf(
-			"admin /ready status = %d, want %d",
-			adminResponse.Code,
+			"/readyz status = %d, want %d",
+			response.Code,
 			http.StatusServiceUnavailable,
 		)
 	}
-	if got := adminResponse.Header().Get("Cache-Control"); got != "no-store" {
-		t.Fatalf("admin /ready Cache-Control = %q, want no-store", got)
-	}
-}
-
-func TestHTTPServerGroupShutsDownEveryListener(t *testing.T) {
-	first := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(first.Close)
-	second := httptest.NewServer(http.NotFoundHandler())
-	t.Cleanup(second.Close)
-
-	servers := httpServerGroup{first.Config, second.Config}
-	if err := servers.Shutdown(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-
-	for _, server := range []*httptest.Server{first, second} {
-		response, err := server.Client().Get(server.URL)
-		if err == nil {
-			_ = response.Body.Close()
-			t.Fatalf("HTTP server %s still accepts requests", server.URL)
-		}
+	if got := response.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("/readyz Cache-Control = %q, want no-store", got)
 	}
 }
 

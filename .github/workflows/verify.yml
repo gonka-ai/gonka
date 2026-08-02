@@ -251,27 +251,20 @@ jobs:
           path: versioned/junit-report.xml
           reporter: java-junit
 
-  build-and-test-versiond-router:
+  # The routers are HAProxy config plus a render script. test-render renders every
+  # supported shape, asserts on the result, and validates each rendered file with
+  # the real HAProxy from the image the routers ship.
+  test-router-config:
     runs-on: ubuntu-latest
-    name: Build and Test versiond-router
-    defaults:
-      run:
-        working-directory: ./versiond-router
+    name: Test router config rendering
+    strategy:
+      matrix:
+        router: [versiond-router, edge-api-router]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: '1.25.9'
-      - name: Build
-        run: go build ./...
-      - name: Vet
-        run: go vet ./...
-      - name: Test with race detector
-        run: go test -race ./...
-      - name: Test nginx rendering
-        run: make test-render
+      - name: Render and validate ${{ matrix.router }} config
+        run: make -C ${{ matrix.router }} test-render
 
   build-and-test-edge-api:
     runs-on: ubuntu-latest

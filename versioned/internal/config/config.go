@@ -3,10 +3,8 @@ package config
 import (
 	"fmt"
 	"log/slog"
-	"net"
 	"os"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 )
@@ -14,7 +12,10 @@ import (
 const (
 	DefaultDrainKillGrace     = 10 * time.Minute
 	DefaultHostShutdownBudget = 25 * time.Minute
-	DefaultAdminListenAddr    = "127.0.0.1:8081"
+	// DefaultDrainAnnounce must exceed the load balancer's health-check
+	// detection time (interval x fall) so no request is refused before the
+	// balancer has withdrawn this upstream.
+	DefaultDrainAnnounce = 5 * time.Second
 )
 
 type Config struct {
@@ -32,7 +33,7 @@ type Config struct {
 	DrainPollInterval  time.Duration
 	DrainKillGrace     time.Duration
 	HostShutdownBudget time.Duration
-	AdminListenAddr    string
+	DrainAnnounce      time.Duration
 	Overrides          map[string]string // version name -> local binary path
 	ForceVersions      []string          // version names that must run regardless of oracle
 }
@@ -61,22 +62,19 @@ func Load() (Config, error) {
 			"VERSIOND_HOST_SHUTDOWN_BUDGET",
 			DefaultHostShutdownBudget,
 		),
-		AdminListenAddr: envOrDefault(
-			"VERSIOND_ADMIN_LISTEN_ADDR",
-			DefaultAdminListenAddr,
+		DrainAnnounce: parseDuration(
+			"VERSIOND_DRAIN_ANNOUNCE",
+			DefaultDrainAnnounce,
 		),
 		Overrides:     loadOverrides(),
 		ForceVersions: loadForceVersions(),
-	}
-	if err := validateAdminListenAddr(cfg.AdminListenAddr); err != nil {
-		return Config{}, err
 	}
 
 	slog.Info(
 		"versiond config loaded",
 		"oracle_url", cfg.OracleURL,
 		"binary_name", cfg.BinaryName,
-		"admin_listen_addr", cfg.AdminListenAddr,
+		"drain_announce", cfg.DrainAnnounce,
 		"host_shutdown_budget", cfg.HostShutdownBudget,
 		"force_versions", cfg.ForceVersions,
 		"override_versions", sortedOverrideKeys(cfg.Overrides),
@@ -98,31 +96,6 @@ func Load() (Config, error) {
 // ListenAddr returns the hardcoded listen address.
 func ListenAddr() string {
 	return ":8080"
-}
-
-func validateAdminListenAddr(addr string) error {
-	host, portText, err := net.SplitHostPort(addr)
-	if err != nil {
-		return fmt.Errorf(
-			"VERSIOND_ADMIN_LISTEN_ADDR must be a host:port address: %w",
-			err,
-		)
-	}
-	port, err := strconv.Atoi(portText)
-	if err != nil || port <= 0 || port > 65535 {
-		return fmt.Errorf(
-			"VERSIOND_ADMIN_LISTEN_ADDR has invalid port %q",
-			portText,
-		)
-	}
-	ip := net.ParseIP(host)
-	if host != "localhost" && (ip == nil || !ip.IsLoopback()) {
-		return fmt.Errorf(
-			"VERSIOND_ADMIN_LISTEN_ADDR must use a loopback host, got %q",
-			host,
-		)
-	}
-	return nil
 }
 
 const overridePrefix = "VERSIOND_OVERRIDE_"

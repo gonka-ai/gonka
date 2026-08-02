@@ -1,5 +1,9 @@
 # Versiond overlay: canonical versiond + 2 sticky-routable extras (3 total),
-# nginx versiond-router, and test fixtures (testapp-server, devshardd-artifact-server).
+# HAProxy versiond-router, and test fixtures (testapp-server, devshardd-artifact-server).
+#
+# The router resolves ${KEY_NAME}-versiond-pool to every running instance and
+# health-checks /readyz on each, so starting, stopping or draining a versiond
+# needs no router config change and no reload.
 #
 # Paths are relative to --project-directory (repo root). Typical Testermint stack:
 #   base + genesis + versiond [+ devshard-postgres on genesis] [+ devshard-router-proxy on genesis]
@@ -46,8 +50,11 @@ x-versiond: &versiond
   volumes:
     - ./build/devshardd:/opt/overrides/devshardd:ro
     - ./prod-local/${KEY_NAME}:/root/.inference:ro
+  # One DNS name, one A record per running instance: this is the pool.
   networks:
-    - chain-public
+    chain-public:
+      aliases:
+        - ${KEY_NAME}-versiond-pool
   dns:
     - 172.25.0.10
     - 127.0.0.11
@@ -78,13 +85,12 @@ services:
       dockerfile: Dockerfile
     container_name: ${KEY_NAME}-versiond-router
     environment:
-      VERSIOND_HOSTS: ${VERSIOND_HOSTS:-${KEY_NAME}-versiond ${KEY_NAME}-versiond-2 ${KEY_NAME}-versiond-3}
+      VERSIOND_POOL_HOST: ${VERSIOND_POOL_HOST:-${KEY_NAME}-versiond-pool}
       VERSIOND_PORT: ${VERSIOND_PORT:-8080}
       VERSIOND_LEGACY_HOST: ${VERSIOND_LEGACY_HOST:-${KEY_NAME}-versiond}
       # Empty = all versions HA. Set e.g. "v1 v2 v3" for mixed SQLite/Postgres rollouts.
       VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS:-}
-    volumes:
-      - versiond-router-state:/var/lib/gonka/versiond-router
+      GONKA_HA: ${GONKA_HA:-true}
     networks:
       - chain-public
 
@@ -113,6 +119,3 @@ networks:
   chain-public:
     name: chain-public
     external: true
-
-volumes:
-  versiond-router-state:

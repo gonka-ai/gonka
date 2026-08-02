@@ -100,10 +100,13 @@ func TryVersiondHealth(stack *Stack, service string) ([]VersiondHealthEntry, err
 	return entries, nil
 }
 
+// TryVersiondReady probes the readiness endpoint the router health-checks.
+// It is on the traffic listener on purpose: a versiond that answers /readyz
+// with 200 is exactly a versiond the router may send work to.
 func TryVersiondReady(stack *Stack, service string) error {
 	_, err := stack.ComposeExecOutput(
 		service,
-		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8081/ready",
+		"wget", "-q", "-O", "/dev/null", "http://127.0.0.1:8080/readyz",
 	)
 	return err
 }

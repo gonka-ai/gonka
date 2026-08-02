@@ -1,22 +1,34 @@
 # Multi-versiond + sticky router overlay for deploy/join.
 #
 # Requires base docker-compose.yml (single versiond). Adds devshard-postgres,
-# a second versiond instance (versiond2), and versiond-router (nginx sticky
-# hash on escrow/session ID) in front of both. Sets proxy
+# a second versiond instance (versiond2), and versiond-router (HAProxy,
+# consistent hash on escrow/session ID) in front of both. Sets proxy
 # VERSIOND_SERVICE_NAME=versiond-router.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+#
+# The router discovers the pool from DNS: both versiond containers answer to the
+# versiond-pool alias, so adding or removing an instance needs no router config
+# and no reload. Health comes from active /readyz checks against each host, so a
+# versiond that is draining, still converging on a new version, or simply
+# stopped leaves the rotation on its own.
 #
 # x-versiond anchor holds everything shared between versiond and versiond2;
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: ghcr.io/product-science/versiond:0.2.14-devshard-v4
+  image: ghcr.io/product-science/versiond:0.2.15-devshard-v5
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
     - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
-    - VERSIOND_ADMIN_LISTEN_ADDR=${VERSIOND_ADMIN_LISTEN_ADDR:-127.0.0.1:8081}
+    # Keep serving after /readyz starts failing, so the router observes the
+    # failure before this host stops accepting work.
+    - VERSIOND_DRAIN_ANNOUNCE=${VERSIOND_DRAIN_ANNOUNCE:-5s}
+    # Marks the deployment as HA for every devshardd child: the child refuses to
+    # boot on storage a sibling cannot see, and the router stamps the matching
+    # Devshard-Ha header. Not overridable — it describes this overlay.
+    - GONKA_HA=true
     - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}
     - NODE_HOST=node
     - KEY_NAME=${KEY_NAME}
@@ -34,6 +46,11 @@ x-versiond: &versiond
     # Postgres-only payloads/sessions. Fail boot if PG is down; migrate local
     # SQLite sessions into Postgres once at startup (no file/sqlite fallback).
     - DEVSHARD_STORAGE_MODE=postgres
+  # One DNS name, one A record per running instance: this is the pool.
+  networks:
+    default:
+      aliases:
+        - versiond-pool
   depends_on:
     api:
       condition: service_started
@@ -80,21 +97,24 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.14-devshard-v4
+    image: ghcr.io/product-science/versiond-router:0.2.15-devshard-v5
     environment:
-      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      # A DNS name, not a host list: adding or removing an instance changes only
+      # which containers answer to this alias.
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_PORT=8080
+      - GONKA_HA=true
       # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
       # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
-      # All other versions sticky-hash across VERSIOND_HOSTS and get Devshard-Ha: true.
+      # All other versions sticky-hash across the pool and get Devshard-Ha: true.
       # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
     depends_on:
       - versiond
       - versiond2
-    volumes:
-      - versiond-router-state:/var/lib/gonka/versiond-router
+    # Nothing durable to keep: membership is DNS and health is measured, so a
+    # restarted router rebuilds its whole view within one check interval.
     stop_grace_period: 30m
     restart: always
 
@@ -102,6 +122,3 @@ services:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
-
-volumes:
-  versiond-router-state:

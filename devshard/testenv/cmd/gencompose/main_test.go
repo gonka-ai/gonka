@@ -270,7 +270,8 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, `VERSIOND_PORT: "8080"`)
 	require.Contains(t, text, `VERSIOND_LEGACY_HOST: "versiond-0"`)
 	require.Contains(t, text, `VERSIOND_NON_HA_VERSIONS: "v1"`)
-	require.Contains(t, text, "versiond-router-state:/var/lib/gonka/versiond-router")
+	require.NotContains(t, text, "versiond-router-state",
+		"the router keeps no durable state: membership is DNS, health is measured")
 	require.GreaterOrEqual(t, strings.Count(text, "stop_grace_period: 30m"), 4)
 	require.Contains(t, text, "VERSIOND_ORACLE_URL")
 	require.Contains(t, text, "VERSIOND_OVERRIDE_v2")
@@ -282,7 +283,10 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Equal(t, 2, strings.Count(text, "KEY_NAME: versiond-0"))
 	require.NotContains(t, text, "KEY_NAME: versiond-1")
 	require.Contains(t, text, "KEY_NAME: versiond-2")
-	require.Contains(t, text, `VERSIOND_HOSTS: "versiond-0 versiond-1"`)
+	require.Contains(t, text, `VERSIOND_POOL_HOST: "versiond-pool"`)
+	// Only the sticky pair answers to the pool alias; solo versiond-2 must not,
+	// or the router would hash sessions onto a host with its own sqlite.
+	require.Equal(t, 2, strings.Count(text, "- versiond-pool"))
 	require.Equal(t, 2, strings.Count(text, "DEVSHARD_STORAGE_MODE: postgres"))
 	require.Contains(t, text, "DEVSHARD_STORAGE_MODE: sqlite")
 	require.Contains(t, text, "DEVSHARD_VALIDATION_LEASE_TTL")

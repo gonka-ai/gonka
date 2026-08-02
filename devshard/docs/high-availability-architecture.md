@@ -86,8 +86,9 @@ helpers, versions).
 
 Because edge-api holds no state, it scales horizontally already:
 
-- `edge-api-router/` is an nginx **round-robin** (not sticky) load balancer over
-  `EDGE_API_HOSTS`.
+- `edge-api-router/` is an HAProxy **round-robin** (not sticky) load balancer
+  over the `edge-api-pool` DNS alias, with active `/readyz` checks: an instance
+  that cannot reach the chain leaves the rotation and rejoins on its own.
 - Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
   (`local-test-net/docker-compose.edge-api.yml`,
   `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the
@@ -152,10 +153,11 @@ compose service). It runs the per-escrow session protocol:
 
 ### versiond-router (`versiond-router/`)
 
-nginx with **consistent hashing on escrow/session ID** (`hash $sticky_key
-consistent`), so all requests for one escrow stick to the same versiond host.
-Renders upstreams from `VERSIOND_HOSTS`. Streaming-friendly (no buffering, 600s
-timeouts). Request path:
+HAProxy with **consistent hashing on escrow/session ID**, so all requests for one
+escrow stick to the same versiond host. Pool membership comes from the
+`versiond-pool` DNS alias and health from active `/readyz` checks, so hosts can
+be added, drained or removed with no router config change and no reload.
+Streaming-friendly (no buffering, generous tunnel timeout). Request path:
 
 ```text
 client → proxy (/devshard/) → versiond-router:8080 → versiond-N:8080 → devshardd :500x

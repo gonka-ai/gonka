@@ -1,588 +1,226 @@
 # versiond-router
 
-Nginx sticky reverse-proxy in front of N `versiond` instances.
+HAProxy in front of N `versiond` instances. It has two jobs:
 
-## Routing model
+1. **Stickiness** — every request for one session lands on the same `versiond`,
+   so the instance holding that session's hot state keeps serving it.
+2. **Membership and health** — a `versiond` that is starting, draining, or gone
+   must not receive new work, and must start receiving it again on its own once
+   it is healthy.
 
-| Backend | Upstream | When |
-| --- | --- | --- |
-| `versiond_ha_pool` | All `VERSIOND_HOSTS`, `hash $sticky_key consistent` | Version **not** listed in `VERSIOND_NON_HA_VERSIONS` (default) |
-| `versiond_legacy` | Only `VERSIOND_LEGACY_HOST` | Version listed in `VERSIOND_NON_HA_VERSIONS` |
+There is no router-side state and no control plane. Membership comes from DNS
+and health from active health checks, so **adding, removing, or replacing a
+`versiond` requires no router config change and no reload.**
 
-Future versions are HA by default. Only pin known pre-HA (SQLite) path segments
-in `VERSIOND_NON_HA_VERSIONS`.
+---
 
-When `VERSIOND_HOSTS` has **more than one** host and the request uses
-`versiond_ha_pool`, nginx sets request header **`Devshard-Ha: true`**.
-`devshardd` rejects that header unless `DEVSHARD_STORAGE_MODE=postgres` and
-`PGHOST` are set (`common/storage/mode.RequireConfiguredForHA`).
-
-The header reflects the configured HA topology, not the number of hosts that
-are currently `active`. Draining one host must not switch requests on the
-survivor to a non-HA storage mode while both hosts still share PostgreSQL.
-
-## Environment
-
-| Variable | Required | Default | Meaning |
-| --- | --- | --- | --- |
-| `VERSIOND_HOSTS` | first boot | - | Space-separated HA pool hostnames, used to bootstrap persistent state |
-| `VERSIOND_PORT` | no | `8080` | Upstream listen port |
-| `VERSIOND_LEGACY_HOST` | no | first of `VERSIOND_HOSTS` | Host that owns SQLite data dirs for non-HA versions |
-| `VERSIOND_NON_HA_VERSIONS` | no | empty | Whitespace and/or comma-separated version path segments pinned to legacy. Empty = all versions use the HA pool |
-| `VERSIOND_ROUTER_STATE` | no | `/var/lib/gonka/versiond-router/state.json` | Persistent router FSM state |
-| `VERSIOND_ROUTER_AUDIT` | no | `/var/lib/gonka/versiond-router/audit.jsonl` | Rotatable transition audit log |
-| `VERSIOND_ROUTER_JOURNAL` | no | `<state>.operation.json` | Committed desired-state intent awaiting reconciliation |
-| `VERSIOND_ROUTER_LOCK` | no | `/run/gonka/versiond-router.lock` | Local mutation lock |
-| `VERSIOND_ROUTER_TEMPLATE` | no | `/etc/nginx/template/nginx.conf.template` | Nginx configuration template rendered from router state |
-| `VERSIOND_ROUTER_OUT` | no | `/etc/nginx/conf.d/default.conf` | Published nginx configuration |
-| `VERSIOND_ROUTER_NGINX_BIN` | no | `nginx` | Nginx executable used for validation and reload |
-| `VERSIOND_ROUTER_MAX_BODY_BYTES` | no | `10485760` | Maximum request body; keep aligned with the outer API proxy |
-| `VERSIOND_ROUTER_CONNECT_TIMEOUT` | no | `2s` | Upstream connection deadline before HA failover |
-| `VERSIOND_ROUTER_STREAM_IDLE_TIMEOUT` | no | `20m` | Idle deadline in either direction for long HTTP/SSE requests |
-| `VERSIOND_ROUTER_UPSTREAM_KEEPALIVE` | no | `64` | Idle upstream connections retained per nginx worker |
-
-Configured numeric and duration values are validated before any command runs.
-Invalid values fail fast and name the offending variable; they never silently
-fall back to defaults.
-
-Debug response headers: `X-Upstream-Addr`, `X-Versiond-Backend`.
-
-### Failover (HA pool)
-
-On the first upstream connect error, timeout, or **502**, nginx retries another
-peer in `versiond_ha_pool` (`proxy_next_upstream`; `max_fails=1`). Sticky hash
-is unchanged while peers are healthy. **503** is not retried because drain and
-HA-guard responses must stay sticky. A mid-stream SSE response is not replayed;
-the client must reconnect with a new request.
-
-Proxy stream timeouts are inactivity deadlines, not limits on total inference
-duration. Streaming responses may run longer while data continues to flow. If
-the outer Gonka API proxy is customized, keep its body limit and transfer idle
-timeout at least as large as the versiond-router policy.
-
-After the first bootstrap, the persistent state is authoritative. Changing
-`VERSIOND_HOSTS` alone does not overwrite runtime host states. Use
-`gonka-routerctl` for every pool mutation. The router state directory must be
-stored on a persistent volume. On later starts, bootstrap recovers any pending
-transaction and loads that state before reading bootstrap environment variables.
-Missing or malformed bootstrap variables therefore do not block a restart when
-valid persistent state exists.
-
-The controller stores completion receipts in `<state>.receipts.json`, the last
-nginx-applied generation in `<state>.applied.json`, and undelivered audit events
-in `<state>.audit-outbox.json`. These files and a pending operation journal must
-stay on the same persistent volume as `state.json`. The audit log may be
-rotated, truncated, or archived; it is not consulted during normal replay.
-When the receipt index is first created, valid terminal records are imported
-from an existing audit as one transaction. A malformed or oversized audit
-record fails the import without persisting a partial index. The only exception
-is an unterminated final JSONL record, which can only be a torn append and is
-discarded as an uncommitted tail when the receipt index is created; malformed
-terminated or internal records still fail closed. Repair or restore those
-records before retrying. Back up state, receipts, applied metadata, audit
-outbox, and the pending journal together. Do not rotate or prune the receipt
-index: its entries are the durable idempotency records for completed operation
-IDs. Exact replay protection therefore grows linearly with the number of unique
-completed operation IDs.
-
-Bootstrap and the audit writer also discard an unterminated tail when a receipt
-index already exists. A later append therefore cannot turn a crash fragment
-into a malformed internal JSONL record.
-
-The WAL is one replace-in-place snapshot, not an append-only history. Its size
-tracks the desired state, the current operation receipt, and rendered config;
-it does not copy the complete receipt index. The controller lock permits only
-one pending snapshot.
-
-Router state and the pending transaction journal are both at schema 1. A state
-or journal file carrying any other schema version is rejected rather than
-migrated: this is the first release that persists router state, so no earlier
-on-disk format exists.
-
-## Host lifecycle
-
-The local controller persists this state machine:
+## How it decides where to send a request
 
 ```text
-add -> joining -> active -> draining -> stopping -> offline
-                 ^          |
-                 +-- cancel-+
-
-offline -> joining -> active     replace
-offline -> removed               terminal decommission
+request → normalise path → pick backend by version → pick server by escrow id
 ```
 
-The FSM is table-driven. Every command states the expected `from` state, the
-immediate `to` state, and the final transfer target. The `(from, to)` pair must
-have a registered handler, and the persisted host state must equal `from`.
-Handler failure leaves both state and rendered config unchanged.
+| Backend | Servers | Used for |
+| --- | --- | --- |
+| `versiond_ha_pool` | every host `VERSIOND_POOL_HOST` resolves to, that passes `/readyz` | every version **not** listed in `VERSIOND_NON_HA_VERSIONS` (the default) |
+| `versiond_legacy` | the single `VERSIOND_LEGACY_HOST` | versions listed in `VERSIOND_NON_HA_VERSIONS`, which own pre-HA SQLite data dirs on one host |
 
-Each entry has an immutable, generated `membership_id`. A durable
-`active_transfer` binds all intermediate steps to one operation ID, membership
-ID, and host. It also blocks a second host transition. Reaching the final target
-or canceling the drain releases that lease. This is operation ownership and
-recovery metadata, not a second state machine.
+Within `versiond_ha_pool` the server is chosen by **consistent hash** of the
+escrow id taken from the path (`/{version}/sessions/{escrow}/...`); other paths
+hash by the path itself so non-session traffic still spreads. Consistent hashing
+means adding or removing one host re-homes roughly `1/N` of sessions instead of
+reshuffling all of them.
 
-Only `active` memberships receive new assignments. Nginx renders every other
-stored state with the `down` parameter. `nginx -s reload` starts workers with
-the new pool; old workers keep established HTTP and SSE connections until those
-connections finish. `removed` is terminal for one membership and is not stored:
-the host disappears from state and nginx. A later `add` with the same host name
-creates a new membership ID and has no transition from the removed membership.
-The receipt index makes retries of a completed operation ID idempotent without
-keeping a routing tombstone.
+The hash key is always derived from the URL and never taken from a request
+header. It selects the upstream, so a client-supplied key would let a caller pin
+itself to a host of its choosing.
 
-`gonka-routerctl` runs inside the router container and exposes no network
-listener:
+An optional `/devshard/` prefix (present when genesis-proxy is not in front) is
+normalised away before routing and stripped before forwarding.
 
-```bash
-OPERATION_ID="maintenance-$(date +%s%N)-versiond2"
+## Membership: DNS
 
-docker exec versiond-router gonka-routerctl status
+`VERSIOND_POOL_HOST` is one DNS name that resolves to **every** instance in the
+pool. Under Docker Compose that is a network alias:
 
-docker exec versiond-router gonka-routerctl recover
-
-docker exec versiond-router gonka-routerctl operation status \
-  --operation-id "$OPERATION_ID"
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id "$OPERATION_ID" \
-  --from active --to draining --target offline versiond2
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id "$OPERATION_ID" \
-  --from draining --to stopping --target offline versiond2
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id "$OPERATION_ID" \
-  --from stopping --to offline --target offline versiond2
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id replacement-1784800000000000001-versiond2 \
-  --from offline --to joining --target active \
-  --address replacement-versiond2 versiond2
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id replacement-1784800000000000001-versiond2 \
-  --from joining --to active --target active \
-  --address replacement-versiond2 versiond2
-
-docker exec versiond-router gonka-routerctl host transfer \
-  --operation-id decommission-1784800000000000002-versiond2 \
-  --from offline --to removed --target removed versiond2
-
-docker exec versiond-router gonka-routerctl host add \
-  --operation-id add-1784800000000000003-versiond3 \
-  --address versiond3.internal versiond3
+```yaml
+x-versiond: &versiond
+  networks:
+    default:
+      aliases:
+        - versiond-pool
 ```
 
-Use a new operation ID for every lifecycle transaction. Unix epoch nanoseconds
-plus the host name provide a practical operator-generated ID; never reuse an ID
-for a new membership.
+Both `versiond` containers answer to `versiond-pool`, so the name has one A
+record per running instance. HAProxy re-resolves it every second
+(`resolvers docker`) and fills a fixed set of `server-template` slots. Start a
+third instance with the same alias and it appears in the pool within a couple of
+seconds; stop one and its slot empties.
 
-The controller holds a file lock and validates the transition before making a
-durable decision. It then writes a WAL record containing the complete desired
-state, the current operation's completion receipt, and a revisioned nginx
-config projection. The
-projection records its config SHA and a render-source SHA derived from the
-template, normalized proxy policy, and renderer schema. That WAL write is the
-commit point. A reconciler persists the desired generation, validates and
-atomically publishes the journaled projection, gracefully reloads nginx, and
-writes `applied.json`. Recovery always repeats these idempotent steps forward;
-it never guesses whether a partially applied committed operation should be
-undone.
+`VERSIOND_ROUTER_POOL_SLOTS` (default 64) caps how many instances can be in the
+pool at once. Unused slots cost nothing; they exist because HAProxy allocates
+server slots at startup.
 
-A handler or render failure before the WAL commit leaves state and nginx
-unchanged. A validation or reload failure after the commit leaves a visible
-pending operation: the desired generation is retained and `recover` retries
-application. Before the projection reaches `applied`, changing any render source
-creates the next projection revision in the same WAL. This lets an operator fix
-a bad template and rerun `recover` without deleting committed control-plane
-data. Once a projection is applied, later template changes run as a separate
-config-only reconciliation. Repeating an applied edge or a completed operation
-is a no-op. Use the same operation ID and parameters for every edge from the
-first transition to its final target. A different operation cannot take over
-`active_transfer`; `--force` bypasses topology and legacy-data guards, not
-operation ownership.
+## Health: active checks on `/readyz`
 
-`status` is read-only. When a journal is present, its operation ID, phase,
-membership ID, `from -> to` edge, final target, candidate generation, and config
-SHA are returned as `pending_operation`, together with the render revision and
-render-source SHA; the command never rewrites config or reloads nginx. The
-`application` object reports desired/applied generations and config SHAs plus a
-`converged` flag. If a crash happens immediately after WAL commit, `status`
-reports the journaled state as desired even before `state.json` is rewritten.
-`recover` resolves the journal under the controller lock. It republishes the
-current committed projection, so an altered or partially restored output file
-cannot deadlock recovery.
+Every second HAProxy asks each host `GET /readyz` and expects `200`.
 
-`renderSchemaVersion` is part of the source fingerprint. Increment it whenever
-the Go renderer changes output independently of the template or proxy policy.
-Recovery rejects changed output with an unchanged fingerprint instead of
-silently applying a non-reproducible projection.
+`versiond` answers `200` only when it is accepting traffic **and** has a healthy
+child serving the versions it is supposed to run. It answers `503` when it is
+starting, when it has no usable child, and — importantly — for a few seconds
+*before* it stops accepting work at shutdown. That window
+(`VERSIOND_DRAIN_ANNOUNCE`, default `5s`) is what makes a graceful stop
+invisible to clients: the router sees the failing check and stops sending new
+requests while the host is still serving everything it already accepted.
 
-Successful routing commits enqueue audit records before removing their journal.
-Audit delivery is at least once: an unavailable audit file leaves events in the
-durable outbox but does not roll back or block the applied routing generation.
-The next mutating or recovery command retries delivery. A crash after appending
-an event but before removing it from the outbox may produce a duplicate with
-the same `event_id`. If both durable outbox persistence and direct audit append
-fail, routing remains committed and that audit event may be lost. This is an
-explicit availability-over-observability tradeoff and is reported as a warning.
+| Setting | Value | Why |
+| --- | --- | --- |
+| `inter 1s` | check every second | the announce window is 5s, so several checks fit inside it |
+| `fall 1` | one failed check removes the host | it announced its own drain; do not wait for a second opinion |
+| `rise 2` | two passing checks restore it | do not flap a host back in on one lucky probe |
 
-Normal commands reject concurrent host operations, a mismatched membership ID,
-draining the last active HA host, draining the legacy host while it owns non-HA
-versions, skipping an FSM edge, and removing the last configured host. A
-decommission of the legacy host requires an active replacement via
-`--legacy-host`; when non-HA versions exist, migrate their local data first and
-acknowledge that operation with `--force`. These terminal guards run before the
-host starts draining and again before removal. `--force` does not permit two
-hosts to transition at once or an empty router pool. Forcing the last active
-drain creates an all-down upstream and nginx returns `502` until a host is
-activated.
+A host that is up but still converging (downloading a new archive, restarting a
+child) reports `503` and simply does not receive traffic until it is ready.
 
-## Host evacuation
+## Failure handling
 
-Build the operator tools on a trusted administration machine:
-
-```bash
-make build-tools
+```haproxy
+retry-on conn-failure empty-response 502
+retries 2
+option redispatch
+http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
 ```
 
-`gonka-hostctl` connects through SSH in batch mode with bounded connect and
-keepalive settings. Every local or SSH command also has a configurable deadline.
-It has no admin HTTP API and adds no credentials of its own. The SSH account
-needs narrowly scoped rights to run `gonka-routerctl` and to manage the selected
-versiond service.
+Retries cover the cases where the request provably did not run: the connection
+failed, the peer closed without answering, or an upstream proxy answered `502`.
 
-Docker example:
+**`503` is never retried.** It is the answer a draining host and the HA storage
+guard give, and retrying it would hit the same condition on the next host.
 
-```bash
-.bin/gonka-hostctl evacuate \
-  --operation-id maintenance-1784800000000000000-versiond2 \
-  --router-ssh router.example.net \
-  --router-runtime docker \
-  --router-service versiond-router \
-  --upstream versiond2 \
-  --versiond-ssh worker-2.example.net \
-  --versiond-runtime docker \
-  --versiond-service versiond2
+**Non-idempotent requests are never replayed.** `disable-l7-retry` leaves
+connection-level redispatch in place for `POST`, but forbids re-sending a
+request that may already have been executed — an inference must not run twice.
+
+`http-reuse safe` never reuses a pooled connection for a request that could not
+be replayed if the reuse raced with the peer closing it.
+
+## Streaming
+
+Inference responses are long-lived SSE streams. HAProxy does not buffer
+responses, and the timeouts are set so the innermost hop is never the one that
+cuts a stream:
+
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | `timeout client` / `timeout server`: idle time allowed on a stream |
+| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | `timeout tunnel`: total life of an established stream |
+| `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect to an upstream, and header read timeout |
+
+The tunnel timeout is deliberately far above the idle timeout: the outer Gonka
+API proxy owns the client-facing limit, because it has the context to report a
+useful error. The entrypoint refuses to start if the tunnel timeout is below the
+idle timeout.
+
+## The `Devshard-Ha` header
+
+When `GONKA_HA` is set, the router stamps `Devshard-Ha: true` on requests going
+to `versiond_ha_pool`, and strips any client-supplied value. `devshardd` uses it
+to refuse work it cannot safely serve: if the deployment is HA but this child's
+storage is local (SQLite), a sibling could be serving the same escrow, so it
+answers `503` rather than fork the session's state.
+
+`versiond_legacy` always strips the header: that backend has exactly one server
+by definition, so no sibling can exist.
+
+`GONKA_HA` describes the deployment, so it is set by the HA overlay itself, not
+per host.
+
+## Taking a host out by hand: `gonka-drain`
+
+A graceful `versiond` stop needs nothing from the router. `gonka-drain` is for
+the other direction — quiescing a host from outside, for maintenance that is not
+a `versiond` shutdown:
+
+```console
+$ docker compose exec versiond-router gonka-drain status
+SLOT       ADDRESS         STATE
+versiond1  172.30.0.10     UP
+versiond2  172.30.0.11     UP
+2 server(s) taking traffic in versiond_ha_pool
+
+$ docker compose exec versiond-router gonka-drain out versiond2
+drained versiond_ha_pool/versiond2 (versiond2); 1 of 2 left serving
+
+$ docker compose exec versiond-router gonka-drain in versiond2
+returned versiond_ha_pool/versiond2 (versiond2) to rotation
 ```
 
-The command performs these ordered steps:
+A drained host keeps serving what it already accepted and receives no new work.
+Hosts are addressed by container name or IP; slot names are an HAProxy
+implementation detail and are resolved for you.
 
-1. Verify that the configured runtime exists, then start a transfer to
-   `offline`: move `active -> draining`, validate the nginx config, and reload.
-2. Capture the Docker restart policy, set `restart=no`, and persist
-   `term_requested`.
-3. Move `draining -> stopping`; that edge verifies the durable transfer owner
-   and traffic barrier. Reassert `restart=no` and start a managed stop with
-   `SIGTERM`.
-4. Let versiond close its own admission and drain accepted requests, children,
-   and HTTP within `VERSIOND_HOST_SHUTDOWN_BUDGET`; on expiry it forces
-   remaining work and confirms child reap.
-5. Wait for versiond to exit; send `SIGKILL` only if the outer kill grace
-   expires.
-6. Confirm `stopping -> offline` and complete the transfer.
+`gonka-drain out` refuses to drain the last host still taking traffic. The guard
+is advisory — `docker stop` bypasses it — and exists so that draining hosts one
+by one cannot empty the pool by accident.
 
-If a new `evacuate` operation finds the membership already in the stable
-`offline` state, it converges from that observed state instead of replaying
-`active -> draining`. Hostctl first rejects any transfer owned by another
-operation and confirms that the configured runtime is stopped or absent. A
-present Docker container is pinned to `restart=no`; an absent container or
-systemd unit is accepted with a warning. The operation then checkpoints
-`router_offline` and completes without signaling a process.
+Drain state lives in HAProxy's memory only: a restarted router starts from a
+clean pool and rebuilds its whole view from DNS and health checks within a
+couple of seconds.
 
-The same observed-state rule applies if the service disappears after an
-operation starts. Each stop-side runtime action first classifies the service as
-`running`, `stopped`, or `absent`. Only a running service requires the external
-stop contract and a signal; stopped or absent means the runtime side of the
-stop is already complete, so hostctl continues the durable router workflow.
-Before the first `active -> draining` edge, however, an absent runtime is
-rejected so a typo in `--versiond-service` cannot report a false success. If
-the runtime was intentionally removed before evacuation, rerun the same
-operation with `--allow-absent-runtime`. This explicit recovery override is
-valid only for `evacuate` and `decommission`. Docker absence must name the
-configured service in an explicit `no such object/container` response, and
-systemd absence requires `LoadState=not-found`; all ambiguous runtime errors
-remain fail-closed.
-
-Hostctl does not poll versiond in-flight counters. Those counters are internal
-to versiond and are consumed by its shutdown state machine. This avoids making
-the compatibility-oriented `/healthz` response part of the control-plane
-protocol.
-
-For systemd, set both runtime flags to `systemd`. The stop step uses
-`systemctl stop --no-block`, so a unit with `Restart=` cannot resurrect during
-evacuation. Before router drain of a running unit, hostctl requires
-`TimeoutStopSec` to cover the configured kill grace, `KillMode=mixed`, and
-`SendSIGKILL=yes`.
-`KillMode=mixed` sends the initial `SIGTERM` only to versiond so it can drain
-its children, while systemd retains the whole control group for final timeout
-enforcement. Docker hostctl uses explicit `TERM`/`KILL` signals, so its
-kill grace is owned by hostctl. The separate preflight for an explicit
-`StopTimeout` protects external `docker stop`, Compose teardown, daemon
-shutdown, and redeploy from using Docker's short default. The supplied compose
-files set `stop_grace_period: 30m`; custom deployments must provide the same
-runtime contract.
-
-For example, the systemd unit should include:
-
-```ini
-[Service]
-TimeoutStopSec=30min
-KillMode=mixed
-SendSIGKILL=yes
-```
-
-The operation journal defaults to
-`$XDG_STATE_HOME/gonka/hostctl/<operation-id>.json`, or
-`~/.local/state/gonka/hostctl/<operation-id>.json` when `XDG_STATE_HOME` is
-unset. If SSH or the operator process is interrupted, rerun the same command
-with the same operation ID and journal. It resumes after the last durable
-phase. The journal records the router, upstream, SSH destination, runtime, and
-service scope; a retry with different targets is rejected.
-Hostctl journals use schema 1. A journal carrying any other schema version is
-rejected rather than migrated.
-
-Hostctl orchestration is a table-driven durable workflow. Each persisted phase
-selects exactly one outgoing edge and named handler. The handler must succeed
-before hostctl atomically checkpoints the target phase, so a retry resumes at
-the failed edge without repeating earlier lifecycle work. Evacuation,
-decommission, add, replace, and cancellation have separate transition tables.
-Runtime validation and restart-policy capture have their own checkpoints;
-mutable safety settings are still revalidated or reasserted immediately before
-starting or signaling versiond.
-
-Completed journals are retained intentionally and are never deleted
-automatically. They remain the local replay record, and a completed evacuation
-journal can also supply the original Docker restart policy to `replace`. Keep
-them through the dependent replacement and the operational replay window. They
-may then be moved to an archive according to the operator's retention policy,
-but an archived operation ID must never be reused. A new maintenance action
-must always receive a new operation ID.
-One router-scoped local file lock prevents concurrent hostctl operations from
-mutating the same router, even when they use different operation IDs or custom
-journal paths.
-Commands do not queue behind that lock. A concurrent command exits immediately
-with the owner operation ID, action, upstream, PID, start time, and current
-journal phase. The router's durable `active_transfer` remains the authoritative
-cross-machine guard when operators invoke hostctl from different workstations.
-To abandon an active pre-signal evacuation, interrupt its owning process and
-then run `cancel`. At or after `term_requested`, resume `evacuate` instead.
-
-If an operation cannot continue before `SIGTERM` was sent, it may be abandoned
-without leaving the cluster blocked:
-
-```bash
-.bin/gonka-hostctl cancel \
-  --operation-id maintenance-1784800000000000000-versiond2 \
-  --router-ssh router.example.net \
-  --router-runtime docker \
-  --router-service versiond-router \
-  --upstream versiond2 \
-  --versiond-ssh worker-2.example.net \
-  --versiond-runtime docker \
-  --versiond-service versiond2
-```
-
-The command checks that versiond is still running and first persists a
-cancellation intent. It then checkpoints Docker restart-policy restoration and
-the router transition to `active` as separate compensating phases. If either
-step fails while versiond remains running, rerun `cancel` with the same
-operation ID. If versiond has already stopped before router reactivation,
-rollback is no longer possible: rerun the original `evacuate` or `decommission`
-command. It reasserts `restart=no`, atomically abandons the unfinished
-compensation, and resumes the forward workflow to `offline` or `removed`.
-Cancellation is rejected at and after the durable `term_requested` phase, which
-is written before the remote signal command. At that point always rerun the
-original stop command; do not reactivate the host even if SSH lost the command
-result.
-
-## Permanent decommission
-
-Use `decommission` for scale-down or permanent host removal. It executes the
-same drain and stop transaction as `evacuate`, moves the stopped host to
-`offline`, and then commits the terminal `offline -> removed` edge:
-
-```bash
-.bin/gonka-hostctl decommission \
-  --operation-id decommission-1784800000000000000-versiond2 \
-  --router-ssh router.example.net \
-  --router-runtime docker \
-  --router-service versiond-router \
-  --upstream versiond2 \
-  --versiond-ssh worker-2.example.net \
-  --versiond-runtime docker \
-  --versiond-service versiond2
-```
-
-The same command also accepts a host left `offline` by an earlier completed
-evacuation, including one whose container or systemd unit has already been
-removed. It rejects a transfer still owned by another operation before any
-runtime mutation, verifies that a present runtime is stopped, reasserts Docker
-`restart=no`, adopts `router_offline` as the first durable checkpoint of the new
-operation, and removes the membership without repeating drain or shutdown.
-
-The final edge deletes the membership from persistent router state and nginx.
-It cannot transition again. A retry is answered from the completed-operation
-receipt index, not by a `removed -> removed` FSM edge. If the target is
-`VERSIOND_LEGACY_HOST`, pass an active survivor with `--legacy-host`. With
-non-HA versions, migrate their local data before retrying with
-`--force-router-guard`.
-
-After a successful decommission, also remove the host from the deployment's
-bootstrap `VERSIOND_HOSTS` value. Persistent router state remains authoritative
-at runtime, but the bootstrap manifest is the disaster-recovery source if that
-volume is ever lost. Reducing a two-host pool to one also removes the
-`Devshard-Ha` request guard; it does not change the remaining process's
-`DEVSHARD_STORAGE_MODE`. Keep that process in `postgres` mode while it uses the
-shared database.
-
-## Host addition
-
-Use `add` for a new logical host. The service or container must already be
-provisioned but stopped. The router first records it as `joining`/down, hostctl
-starts it, waits for the loopback-only `GET /ready`, and only then activates it:
-
-```bash
-.bin/gonka-hostctl add \
-  --operation-id scale-up-1784800000000000000-versiond3 \
-  --router-ssh router.example.net \
-  --router-runtime docker \
-  --router-service versiond-router \
-  --upstream versiond3 \
-  --upstream-address versiond3.internal \
-  --versiond-ssh worker-3.example.net \
-  --versiond-runtime docker \
-  --versiond-service versiond3 \
-  --docker-restart-policy unless-stopped
-```
-
-A new Docker service requires an explicit restart policy; hostctl does not
-guess one. `add` creates a fresh membership ID even when the same host name was
-previously decommissioned. Add the host to the deployment's bootstrap
-`VERSIOND_HOSTS` value after the runtime transaction succeeds.
-
-## Host replacement
-
-Prepare the replacement container or systemd unit while its router state is
-still `offline`, then run:
-
-```bash
-.bin/gonka-hostctl replace \
-  --operation-id replacement-1784800000000000000-versiond2 \
-  --router-ssh router.example.net \
-  --router-runtime docker \
-  --router-service versiond-router \
-  --upstream versiond2 \
-  --upstream-address replacement-versiond2 \
-  --versiond-ssh replacement-2.example.net \
-  --versiond-runtime docker \
-  --versiond-service versiond2 \
-  --evacuation-journal \
-    ~/.local/state/gonka/hostctl/maintenance-1784800000000000000-versiond2.json
-```
-
-The replacement remains `joining` and therefore down in nginx while it starts.
-It becomes `active` only after `GET /ready` returns `200` on versiond's private
-listener, which defaults to `127.0.0.1:8081`. The readiness endpoint stays at
-`503` until
-versiond is serving, accepting traffic, has an available child, and is fully
-reconciled without a progressing or degraded condition. The public `:8080`
-listener returns `404` for `/ready`.
-This gate is deliberately fail-closed: one approved version that cannot be
-downloaded or started blocks activation even when other versions are serving.
-Activating a partially reconciled host would let the router send it requests
-for a version it cannot serve.
-Availability deliberately requires at least one approved version and one
-running child route. A fresh host with an empty desired-version set remains in
-`starting` and cannot be activated. Ensure governance exposes at least one
-approved version before running `add` or `replace`.
-
-For Docker, replacement has no implicit restart-policy default. When reusing a
-service, pass its completed evacuation journal as above; the exact original
-policy, including an `on-failure` retry count, is restored. The journal must
-match the same router upstream and logical versiond runtime/service; the SSH
-destination and upstream address may change for a replacement machine. For a
-new service, set the intended policy explicitly, for example
-`--docker-restart-policy unless-stopped`. Policy validation happens before the
-router moves the host to `joining`.
-
-The orchestration flags default from these environment variables:
+## Configuration
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `ROUTER_READY_TIMEOUT` | `15m` | Maximum wait for replacement/addition readiness |
-| `ROUTER_DRAIN_POLL_INTERVAL` | `2s` | Readiness and process polling interval |
-| `ROUTER_DRAIN_KILL_GRACE` | `30m` | Maximum wait after `SIGTERM` before the kill backstop |
-| `ROUTER_COMMAND_TIMEOUT` | `30s` | Maximum duration of one local or SSH command |
+| `VERSIOND_POOL_HOST` | `versiond-pool` | DNS name resolving to every pool member |
+| `VERSIOND_PORT` | `8080` | upstream port |
+| `VERSIOND_LEGACY_HOST` | `VERSIOND_POOL_HOST` | single host owning pre-HA SQLite data dirs |
+| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
+| `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic |
+| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
+| `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
+| `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
+| `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
+| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | established stream lifetime |
 
-Keep `ROUTER_DRAIN_KILL_GRACE` greater than the versiond shutdown budget. With
-the defaults it covers the single `VERSIOND_HOST_SHUTDOWN_BUDGET` (`25m`) and
-leaves five minutes for process reap and control-plane delays. Admission drain,
-child drain, graceful child stop, and HTTP shutdown all share that one versiond
-deadline; their timeouts are not added together. Forced reap uses the outer
-reserve rather than receiving another application timeout.
+The entrypoint validates every numeric setting and the tunnel/idle relationship,
+renders `haproxy.cfg` and `non_ha.map`, runs `haproxy -c` on the result, and only
+then execs HAProxy. A bad value fails the container immediately instead of
+producing a subtly wrong config.
 
-Planned stops must use `gonka-hostctl`. A direct signal can close versiond
-admission after nginx has selected that upstream, producing `503`. Nginx does
-not retry an inference POST after it has been sent because replay can duplicate
-work.
+Version pinning can also be changed at runtime through the Runtime API
+(`add map` / `del map` on `non_ha.map`); such edits live in memory only, so
+change `VERSIOND_NON_HA_VERSIONS` too if the change must survive a restart.
 
-Use `--ready-url` when versiond does not expose readiness at
-`http://127.0.0.1:8081/ready`. This URL is evaluated on the versiond host or
-inside its container, not on the administration machine. Set the corresponding
-versiond listener with `VERSIOND_ADMIN_LISTEN_ADDR`; versiond accepts only
-loopback addresses.
+## Observability
 
-## Interrupted operations
+| Endpoint | Where | Notes |
+| --- | --- | --- |
+| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
+| Runtime API | `/var/run/haproxy.sock` | admin socket, no TCP bind |
+| `X-Upstream-Addr` | response header | which instance served the request |
+| `X-Versiond-Backend` | response header | `versiond_ha_pool` or `versiond_legacy` |
 
-1. Run `gonka-routerctl status`. If it reports `pending_operation`, run
-   `gonka-routerctl recover` locally in the router container. Continue only
-   when `application.converged` is `true`.
-2. Rerun the original `gonka-hostctl add`, `evacuate`, `decommission`, or
-   `replace` command with its operation ID, flags, and journal path. Completed
-   phases are not repeated.
-3. If evacuation must be abandoned before `term_requested`, run `gonka-hostctl
-   cancel` with the same operation ID and scope. If the original `evacuate`
-   process still owns the operation lock, interrupt it first; `cancel` reports
-   the owner instead of waiting. If cancellation itself was interrupted, rerun
-   `cancel` while versiond remains running. If it has already stopped before
-   router reactivation, rerun the original `evacuate` or `decommission`
-   command. Hostctl reads the router's completion receipt: it either abandons
-   compensation and finishes the safe forward path, or records a remotely
-   committed cancellation as terminal and requires a new operation ID.
-4. If `term_requested` is durable, finish `evacuate` or `decommission`. Never
-   reactivate an upstream whose process may already be stopping.
+Neither the metrics endpoint nor the admin socket is reachable from outside the
+container. Scrape metrics with a sidecar or `docker compose exec`.
 
-A host intentionally left in `draining` or `joining` blocks another host
-transition. This is the cluster's one-host-at-a-time safety guard, not a lease
-that expires automatically. Recovery must finish or cancel the owning operation
-before starting maintenance on another host.
+## Tests
 
-`gonka-routerctl operation status --operation-id ID` reads the durable
-completion receipt without changing router state. Hostctl uses this lookup when
-a local checkpoint is missing but the router membership or cancellation may
-already have been committed.
-
-## Local render check
-
-```bash
-make test-render
-
-VERSIOND_HOSTS='versiond versiond2' \
-VERSIOND_LEGACY_HOST=versiond \
-VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
-VERSIOND_ROUTER_TEMPLATE=./nginx.conf.template \
-VERSIOND_ROUTER_OUT=/tmp/versiond-router.conf \
-VERSIOND_ROUTER_STATE=/tmp/versiond-router-state.json \
-VERSIOND_ROUTER_AUDIT=/tmp/versiond-router-audit.jsonl \
-VERSIOND_ROUTER_LOCK=/tmp/versiond-router.lock \
-VERSIOND_ROUTER_NGINX_BIN=true \
-go run ./cmd/gonka-routerctl bootstrap
+```console
+$ make test-render
+test-render: ok
 ```
 
-## Deploy notes
+Renders the mixed (legacy pinning) and all-HA shapes, asserts on the result,
+checks that invalid settings are rejected, and validates each rendered config
+with the real HAProxy from the image the router ships. Requires Docker.
 
-See `devshard/docs/v4-deploy-test-plan.md` §1.2 (routing) and §3 (HA kill / first-502).
+End-to-end routing, draining and host evacuation are covered by
+`devshard/testenv`: `make -C devshard/testenv citest-versiond-host-evacuation`.
+
+## Related docs
+
+| Doc | Use |
+| --- | --- |
+| [versiond-host-evacuation.md](../devshard/docs/versiond-host-evacuation.md) | Whole-host evacuation, replacement, addition, decommission |
+| [rolling-update.md](../devshard/docs/rolling-update.md) | Same-name SHA blue/green inside one versiond |
+| [high-availability-architecture.md](../devshard/docs/high-availability-architecture.md) | Where the router sits in the stack |

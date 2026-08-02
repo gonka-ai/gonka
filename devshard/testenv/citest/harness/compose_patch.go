@@ -20,14 +20,16 @@ func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
 
-// PatchRouterVersiondHosts replaces the router pool and keeps its legacy owner
-// inside that pool.
-func PatchRouterVersiondHosts(t *testing.T, composePath, hosts string) {
+// PatchRouterHADeployment declares (or un-declares) the stack as HA, which is
+// what makes the router stamp Devshard-Ha on sticky-pool traffic. Recreate the
+// router afterwards for it to take effect.
+func PatchRouterHADeployment(t *testing.T, composePath string, ha bool) {
 	t.Helper()
-	hostNames := strings.Fields(hosts)
-	require.NotEmpty(t, hostNames, "VERSIOND_HOSTS must not be empty")
-	PatchComposeEnvKey(t, composePath, "VERSIOND_HOSTS", `"`+hosts+`"`)
-	PatchComposeEnvKey(t, composePath, "VERSIOND_LEGACY_HOST", `"`+hostNames[0]+`"`)
+	value := `""`
+	if ha {
+		value = `"true"`
+	}
+	PatchComposeEnvKey(t, composePath, "GONKA_HA", value)
 }
 
 // PatchVersiondStorageMode sets DEVSHARD_STORAGE_MODE on all versiond services.
