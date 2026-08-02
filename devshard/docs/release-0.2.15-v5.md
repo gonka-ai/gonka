@@ -24,8 +24,9 @@ _TBD as v5 scope settles._
   DNS-based membership (below).
 - **Graceful `versiond` shutdown budgets** for both the single-instance join
   stack and the HA overlay (below).
-- **`edge-api` readiness** — an instance that cannot reach the chain leaves the
-  round-robin rotation instead of answering with stale or failing queries.
+- **`edge-api` readiness and graceful shutdown** — an instance that cannot reach
+  the chain leaves the round-robin rotation instead of answering with failing
+  queries, and a stopping instance drains the same way versiond does (below).
 
 ## Breaking / operator-facing changes
 
@@ -89,6 +90,25 @@ finish its own escalation and child reap. Operators may override these for a
 deliberately shorter maintenance window, but doing so can terminate accepted
 inference streams; do not shorten only the outer Docker grace.
 
+### edge-api drains instead of cutting queries at 10 seconds
+
+`edge-api` used to answer `SIGTERM` with a fixed 10-second `Shutdown`, which cut
+any query still running. It now follows the same contract as versiond:
+
+| Setting | Default | Role |
+| --- | --- | --- |
+| `EDGE_API_DRAIN_ANNOUNCE` | `5s` | `/readyz` answers 503 while the instance keeps serving, so the router drops it before it stops accepting |
+| `EDGE_API_SHUTDOWN_BUDGET` | `2m` | How long accepted queries then have to finish; matches the router's default read timeout |
+| `EDGE_API_STOP_GRACE_PERIOD` | `3m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
+
+A second `SIGTERM`/`SIGINT` cuts the announce window short. If the budget expires
+with queries still running, edge-api closes them and logs why, rather than being
+`SIGKILL`ed mid-write.
+
+The shipped Compose files set `stop_grace_period` on every edge-api service,
+including the single-instance one: without it Docker's 10-second default would
+`SIGKILL` the process during its own drain.
+
 ### HA storage is enforced at boot as well as per request
 
 The HA overlay sets `GONKA_HA=true`. A `devshardd` child then refuses to start
@@ -132,6 +152,9 @@ Day-to-day operations:
 - [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
       `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
       wait; short values can terminate accepted inference streams
+- [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
+      `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
+      overridden
 - [ ] Bring the stack down and up as a whole for the router change, rather than
       recreating only the router
 - [ ] After the stack is up, check `gonka-drain status` lists every versiond as

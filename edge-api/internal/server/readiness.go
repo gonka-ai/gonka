@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -26,6 +27,10 @@ const (
 type readiness struct {
 	chain *chain.Client
 
+	// draining latches at shutdown. It is checked before the chain probe, so a
+	// leaving instance reports unready at once instead of waiting out the cache.
+	draining atomic.Bool
+
 	mu        sync.Mutex
 	checkedAt time.Time
 	lastErr   error
@@ -34,6 +39,11 @@ type readiness struct {
 func newReadiness(chainClient *chain.Client) *readiness {
 	return &readiness{chain: chainClient}
 }
+
+// beginDrain makes this instance report unready while it keeps serving. The
+// balancer needs a moment to observe the failing check and stop routing here;
+// that window is owned by the caller (see the announce window in cmd/edge-api).
+func (r *readiness) beginDrain() { r.draining.Store(true) }
 
 func (r *readiness) check(ctx context.Context) error {
 	r.mu.Lock()
@@ -60,6 +70,12 @@ func (r *readiness) check(ctx context.Context) error {
 
 func (r *readiness) handler(c echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
+	if r.draining.Load() {
+		return c.JSON(http.StatusServiceUnavailable, map[string]string{
+			"status": "not ready",
+			"reason": "draining",
+		})
+	}
 	if err := r.check(c.Request().Context()); err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{
 			"status": "not ready",

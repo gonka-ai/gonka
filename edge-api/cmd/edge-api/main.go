@@ -22,7 +22,20 @@ const (
 	envPort         = "EDGE_API_PORT"
 	envChainGRPCURL = "CHAIN_GRPC_URL"
 	envChainRPCURL  = "CHAIN_RPC_URL"
-	shutdownTimeout = 10 * time.Second
+
+	envDrainAnnounce  = "EDGE_API_DRAIN_ANNOUNCE"
+	envShutdownBudget = "EDGE_API_SHUTDOWN_BUDGET"
+
+	// defaultDrainAnnounce must exceed the balancer's health-check interval
+	// (edge-api-router probes /readyz every second) so the instance is out of
+	// rotation before it stops accepting.
+	defaultDrainAnnounce = 5 * time.Second
+	// defaultShutdownBudget matches the router's default read timeout: the
+	// process should wait for exactly as long as the hop in front is still
+	// willing to wait for the answer, and no longer.
+	defaultShutdownBudget = 2 * time.Minute
+	// observabilityShutdownTimeout flushes traces after serving has stopped.
+	observabilityShutdownTimeout = 10 * time.Second
 )
 
 func main() {
@@ -39,6 +52,8 @@ func main() {
 		"port", cfg.Port,
 		"chain_grpc", cfg.ChainGRPCURL,
 		"chain_rpc", cfg.ChainRPCURL,
+		"drain_announce", cfg.DrainAnnounce,
+		"shutdown_budget", cfg.ShutdownBudget,
 	)
 
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
@@ -49,7 +64,7 @@ func main() {
 		os.Exit(1)
 	}
 	defer func() {
-		ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		ctx, cancel := context.WithTimeout(context.Background(), observabilityShutdownTimeout)
 		defer cancel()
 		_ = shutdownObs(ctx)
 	}()
@@ -60,12 +75,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	e := server.New(chainClient)
+	srv := server.New(chainClient)
 	addr := fmt.Sprintf(":%d", cfg.Port)
 
 	errCh := make(chan error, 1)
 	go func() {
-		if err := e.Start(addr); err != nil && err != http.ErrServerClosed {
+		if err := srv.Start(addr); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
 	}()
@@ -81,11 +96,39 @@ func main() {
 		slog.Info("shutdown", "signal", sig.String())
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	// Report unready while still serving, so the balancer sees the failing check
+	// and stops routing here before anything is refused. A second signal is the
+	// explicit "do not wait" from the operator.
+	srv.BeginDrain()
+	awaitDrainAnnouncement(cfg.DrainAnnounce, stop)
+
+	ctx, cancel := context.WithTimeout(context.Background(), cfg.ShutdownBudget)
 	defer cancel()
-	if err := e.Shutdown(ctx); err != nil {
-		slog.Error("shutdown", "error", err)
+	if err := srv.Shutdown(ctx); err != nil {
+		// The budget expired with requests still running. Close cuts them rather
+		// than leaving the process for the runtime to SIGKILL mid-write.
+		slog.Error("graceful shutdown did not finish; closing remaining connections",
+			"error", err, "budget", cfg.ShutdownBudget)
+		if closeErr := srv.Close(); closeErr != nil {
+			slog.Error("close", "error", closeErr)
+		}
 		os.Exit(1)
+	}
+}
+
+// awaitDrainAnnouncement keeps serving for the announce window so the balancer
+// can observe the failing readiness check. A second signal cuts it short.
+func awaitDrainAnnouncement(window time.Duration, force <-chan os.Signal) {
+	if window <= 0 {
+		return
+	}
+	timer := time.NewTimer(window)
+	defer timer.Stop()
+	slog.Info("announcing drain; still serving accepted traffic", "window", window)
+	select {
+	case sig := <-force:
+		slog.Info("drain announcement cut short", "signal", sig.String())
+	case <-timer.C:
 	}
 }
 
@@ -93,6 +136,10 @@ type config struct {
 	Port         int
 	ChainGRPCURL string
 	ChainRPCURL  string
+	// DrainAnnounce is how long the process keeps serving after /readyz starts
+	// failing; ShutdownBudget is how long it then waits for accepted requests.
+	DrainAnnounce  time.Duration
+	ShutdownBudget time.Duration
 	// ChainRPCDerived records that ChainRPCURL was guessed from the gRPC host
 	// rather than configured, so main can say so once at startup.
 	ChainRPCDerived bool
@@ -128,10 +175,42 @@ func loadConfig() (config, error) {
 		derived = true
 	}
 
+	drainAnnounce, err := durationFromEnv(envDrainAnnounce, defaultDrainAnnounce)
+	if err != nil {
+		return config{}, err
+	}
+	shutdownBudget, err := durationFromEnv(envShutdownBudget, defaultShutdownBudget)
+	if err != nil {
+		return config{}, err
+	}
+	if shutdownBudget <= 0 {
+		return config{}, fmt.Errorf("%s must be positive", envShutdownBudget)
+	}
+
 	return config{
 		Port:            port,
 		ChainGRPCURL:    grpcURL,
 		ChainRPCURL:     rpcURL,
 		ChainRPCDerived: derived,
+		DrainAnnounce:   drainAnnounce,
+		ShutdownBudget:  shutdownBudget,
 	}, nil
+}
+
+// durationFromEnv rejects a malformed value instead of silently falling back:
+// a typo in a shutdown budget would otherwise be found only during an outage.
+// A zero announce window is legitimate — it means "no balancer in front".
+func durationFromEnv(key string, fallback time.Duration) (time.Duration, error) {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return fallback, nil
+	}
+	value, err := time.ParseDuration(raw)
+	if err != nil {
+		return 0, fmt.Errorf("%s=%q: %w", key, raw, err)
+	}
+	if value < 0 {
+		return 0, fmt.Errorf("%s=%q must not be negative", key, raw)
+	}
+	return value, nil
 }

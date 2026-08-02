@@ -89,6 +89,9 @@ Because edge-api holds no state, it scales horizontally already:
 - `edge-api-router/` is an HAProxy **round-robin** (not sticky) load balancer
   over the `edge-api-pool` DNS alias, with active `/readyz` checks: an instance
   that cannot reach the chain leaves the rotation and rejoins on its own.
+- A stopping instance reports unready for `EDGE_API_DRAIN_ANNOUNCE` while it
+  keeps serving, then finishes accepted queries within
+  `EDGE_API_SHUTDOWN_BUDGET`, so replacing an instance does not cut queries.
 - Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
   (`local-test-net/docker-compose.edge-api.yml`,
   `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the

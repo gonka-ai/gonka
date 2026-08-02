@@ -22,12 +22,18 @@ x-edge-api: &edge-api
     - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
     - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
     - OTEL_HEADERS=${OTEL_HEADERS:-}
+    # Keep serving after /readyz starts failing, so the router drops this
+    # instance before it stops accepting; then finish what it already accepted.
+    - EDGE_API_DRAIN_ANNOUNCE=${EDGE_API_DRAIN_ANNOUNCE:-5s}
+    - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
   networks:
     default:
       aliases:
         - edge-api-pool
   depends_on:
     - node
+  # Outer Docker backstop; must exceed announce + shutdown budget.
+  stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
   restart: always
 
 services:

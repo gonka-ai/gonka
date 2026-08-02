@@ -27,6 +27,8 @@ x-edge-api: &edge-api
     OTEL_HEADERS: ${OTEL_HEADERS:-}
   depends_on:
     - chain-node
+  # Outer Docker backstop; must exceed announce + shutdown budget.
+  stop_grace_period: 3m
   # One DNS name, one A record per running instance: this is the pool.
   networks:
     chain-public:

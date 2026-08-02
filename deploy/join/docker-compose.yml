@@ -99,6 +99,9 @@ services:
       - OTEL_HEADERS=${OTEL_HEADERS:-}
     depends_on:
       - node
+    # Outer Docker backstop; keep it above the internal shutdown budget so a
+    # query in flight is not cut by SIGKILL.
+    stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
     restart: always
 
   versiond:

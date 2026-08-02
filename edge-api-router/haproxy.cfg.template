@@ -4,7 +4,9 @@
 # Pool membership comes from DNS (EDGE_API_POOL_HOST resolves to every replica)
 # and health from active /readyz checks. edge-api reports unready when it cannot
 # reach the chain, so an instance that is up but cut off leaves the rotation
-# without being restarted, and rejoins on its own.
+# without being restarted, and rejoins on its own. It also reports unready for
+# EDGE_API_DRAIN_ANNOUNCE before it stops accepting, so a planned stop leaves the
+# rotation before it stops serving.
 
 global
     log stdout format raw local0 info
