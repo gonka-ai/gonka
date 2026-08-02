@@ -160,8 +160,13 @@ entire pool — the failure mode readiness exists to prevent.
 **A failed reconcile is not a readiness failure.** Every versiond reads the same
 oracle, so anything gated on the outcome of that read fails everywhere at once:
 one unreachable oracle, or one bad archive, would empty the pool while every
-child is still running and able to serve. Reconcile failures surface as the
-`Degraded` condition, in `/healthz` and in the logs, where they belong.
+child is still running and able to serve. The failure is kept in versiond's
+internal `Degraded` condition and logged at `ERROR`; it is a deployment problem,
+not a routing one.
+
+`/healthz` is deliberately unchanged and does not carry it — that array is a
+contract existing clients parse. Reconcile failures currently have no
+machine-readable exposure; a metric is where that belongs.
 
 The cost of that choice is bounded and worth naming: a host that has served
 before and then fails to install a *newly approved* version keeps taking traffic,

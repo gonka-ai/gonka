@@ -126,11 +126,14 @@ reads the same oracle, that failure arrives on all of them at once, so a
 control-plane hiccup could empty the pool while every child was still running and
 serving normally.
 
-Reconcile failures are still reported, through the `Degraded` condition, in
-`/healthz` and in the logs; they are simply not a routing decision. One
-consequence to be aware of: a host that fails to install a newly approved version
-stays in the pool, so requests for that version fail on it rather than being sent
-to a host that installed it successfully.
+A reconcile failure is still recorded — versiond keeps it in its internal
+`Degraded` condition and logs it at `ERROR` — it is simply not a routing
+decision. Note that `/healthz` is unchanged and does **not** carry it: its JSON
+array of per-version child state is the same contract as before, so alerting on
+reconcile failures means reading the logs today. One consequence of the change to
+be aware of: a host that fails to install a newly approved version stays in the
+pool, so requests for that version fail on it rather than being sent to a host
+that installed it successfully.
 
 ### HA storage is enforced at boot as well as per request
 
@@ -188,6 +191,9 @@ Day-to-day operations:
 - Kubernetes: the readiness contract is on the traffic listener specifically so a
   `readinessProbe` and `preStop` can replace the router's role unchanged. Not in
   this release.
+- Reconcile failures have no machine-readable exposure. They belong in a metric,
+  not bolted onto the `/healthz` array that existing clients parse; versiond has
+  no metrics endpoint of its own yet.
 
 ## Related docs
 
