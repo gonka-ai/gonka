@@ -150,13 +150,44 @@ func TestDrainAndShutdown_ReportsUnreadyBeforeItStopsServing(t *testing.T) {
 
 func TestGracefulShutdown_ReportsBothTheReasonAndACloseFailure(t *testing.T) {
 	closeErr := errors.New("listener already gone")
-	srv := &stubServer{shutdownErr: errors.New("context deadline exceeded"), closeErr: closeErr}
+	srv := &stubServer{shutdownErr: context.DeadlineExceeded, closeErr: closeErr}
 
-	err := gracefulShutdown(srv, time.Millisecond, make(chan os.Signal))
+	err := gracefulShutdown(srv, time.Minute, make(chan os.Signal))
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "shutdown budget")
 	assert.ErrorIs(t, err, closeErr)
+}
+
+// Shutdown reports a broken listener the same way it reports a deadline. Calling
+// that a timeout would send the next operator to tune the wrong setting.
+func TestGracefulShutdown_DistinguishesAFailureFromABudgetExpiry(t *testing.T) {
+	listenerErr := errors.New("close tcp 127.0.0.1:18080: use of closed connection")
+	srv := &stubServer{shutdownErr: listenerErr}
+
+	err := gracefulShutdown(srv, time.Minute, make(chan os.Signal))
+
+	require.Error(t, err)
+	assert.ErrorIs(t, err, listenerErr)
+	assert.Contains(t, err.Error(), "shutdown failed")
+	assert.NotContains(t, err.Error(), "budget")
+}
+
+// A budget that only fires when Shutdown decides to look at its context is not a
+// budget. This stub never returns, the way a Shutdown blocked on a lock would.
+func TestGracefulShutdown_BudgetBoundsAShutdownThatIgnoresItsContext(t *testing.T) {
+	unblock := make(chan struct{})
+	t.Cleanup(func() { close(unblock) })
+	srv := &stubServer{shutdownBlocksOn: unblock}
+
+	start := time.Now()
+	err := gracefulShutdown(srv, 150*time.Millisecond, make(chan os.Signal))
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "shutdown budget")
+	assert.Less(t, time.Since(start), 10*time.Second)
+	assert.Contains(t, srv.order(), "ForceClose",
+		"budget expiry must close remaining connections itself")
 }
 
 // startTestServer runs a real server with one blocking route on a real port, so
@@ -207,10 +238,13 @@ func readyzBody(t *testing.T, baseURL string) string {
 }
 
 type stubServer struct {
-	mu          sync.Mutex
-	calls       []string
-	shutdownErr error
-	closeErr    error
+	mu    sync.Mutex
+	calls []string
+	// shutdownBlocksOn, when set, makes Shutdown ignore its context and wait,
+	// standing in for a Shutdown stuck on a lock.
+	shutdownBlocksOn <-chan struct{}
+	shutdownErr      error
+	closeErr         error
 }
 
 func (s *stubServer) record(name string) {
@@ -229,6 +263,9 @@ func (s *stubServer) BeginDrain() { s.record("BeginDrain") }
 
 func (s *stubServer) Shutdown(context.Context) error {
 	s.record("Shutdown")
+	if s.shutdownBlocksOn != nil {
+		<-s.shutdownBlocksOn
+	}
 	return s.shutdownErr
 }
 

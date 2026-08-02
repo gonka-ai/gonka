@@ -126,6 +126,11 @@ func drainAndShutdown(srv drainableServer, cfg config, force <-chan os.Signal) e
 // so a further signal has to be handled here or the only way out of a stuck
 // drain would be SIGKILL. Either that signal or the budget expiring closes the
 // remaining connections instead of leaving them to be cut mid-write.
+//
+// The budget is watched directly rather than only through the error Shutdown
+// returns, so it holds even if Shutdown never gets as far as looking at its
+// context — blocking on a lock, say. A ceiling that depends on the cooperation
+// of the thing it is bounding is not a ceiling.
 func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os.Signal) error {
 	ctx, cancel := context.WithTimeout(context.Background(), budget)
 	defer cancel()
@@ -139,7 +144,9 @@ func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os
 		if err == nil {
 			return nil
 		}
-		reason = fmt.Errorf("shutdown budget %s expired: %w", budget, err)
+		reason = shutdownFailure(budget, err)
+	case <-ctx.Done():
+		reason = fmt.Errorf("shutdown budget %s expired", budget)
 	case sig := <-force:
 		reason = fmt.Errorf("operator sent %s during shutdown", sig)
 		// Stop the still-running Shutdown from holding the budget open.
@@ -150,6 +157,16 @@ func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os
 		return errors.Join(reason, err)
 	}
 	return reason
+}
+
+// shutdownFailure keeps the real cause: Shutdown reports a closed listener the
+// same way it reports a deadline, and calling a broken listener a timeout would
+// send the next operator looking at the wrong setting.
+func shutdownFailure(budget time.Duration, err error) error {
+	if errors.Is(err, context.DeadlineExceeded) {
+		return fmt.Errorf("shutdown budget %s expired: %w", budget, err)
+	}
+	return fmt.Errorf("shutdown failed: %w", err)
 }
 
 // awaitDrainAnnouncement keeps serving for the announce window so the balancer
