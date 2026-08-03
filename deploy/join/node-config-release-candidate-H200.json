@@ -1,0 +1,24 @@
+[
+  {
+    "id": "node1",
+    "host": "inference",
+    "inference_port": 5000,
+    "poc_port": 8080,
+    "max_concurrent": 500,
+    "models": {
+      "REPLACE_WITH_RELEASE_MODEL_ID": {
+        "args": [
+          "--revision", "REPLACE_WITH_MODEL_REVISION",
+          "--tensor-parallel-size", "2",
+          "--gpu-memory-utilization", "0.90",
+          "--max-model-len", "400000",
+          "--max-num-batched-tokens", "32768",
+          "--kv-cache-dtype", "fp8",
+          "--logprobs-mode", "processed_logprobs",
+          "--worker-extension-cls", "gonka_poc.worker.PoCWorkerExtension",
+          "--trust-remote-code"
+        ]
+      }
+    }
+  }
+]

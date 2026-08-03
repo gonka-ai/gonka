@@ -245,7 +245,6 @@ class VLLMRunner(IVLLMRunner):
             command = ["sh", "-c", f"sleep {sleep_time} && exec {vllm_command_str}"]
 
             env = os.environ.copy()
-            env["VLLM_USE_V1"] = "0"
             # Metrics trust contract: no vendor telemetry from vLLM
             env["VLLM_NO_USAGE_STATS"] = "1"
 
