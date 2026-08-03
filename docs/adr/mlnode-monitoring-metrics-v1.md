@@ -43,7 +43,7 @@ Version-gated families (`*_by_reason`, `*_by_source`, `mm_cache_*`,
 core + HBM temperature (sensor-gated), power draw + enforced limit,
 SM clock + max SM clock, clocks-event-reasons bitmask, VRAM used/free,
 ECC DBE aggregate, PCIe replay counter,
-`mlnode_gpu_xid_events_total{gpu_index,xid}` (see D11),
+`mlnode_gpu_xid_events_total{gpu_index,xid}` (see D9),
 host CPU busy/steal ratios, memory used/limit from the cgroup
 (v2 with v1 fallback), HF-cache free disk space.
 No sensor ⇒ no series (never a fake zero/N-A value).
@@ -55,9 +55,9 @@ explicitly, effective vLLM default unknown to mlnode),
 `mlnode_version_info` (P2).
 
 **Source timestamps**: `mlnode_source_scrape_timestamp_seconds{source}` is a
-mandatory part of the schema (invariant 4: a hung vLLM is visible by data
-age). The vLLM source carries an additional `replica` label so one hung
-replica out of N is individually detectable.
+mandatory part of the schema. It records successful source collection, not
+scheduler progress. The vLLM source carries an additional `replica` label so
+one failed replica scrape out of N is individually detectable.
 
 ### D2. `model_name` normalization (added after live verification)
 
@@ -99,9 +99,9 @@ paths, hostnames, IPs and ports in label values.
   exposed through dedicated exact-match nginx locations rather than the generic
   `/v1/*` one (see D6).
 - Response: Prometheus text exposition; all ML-node series of this network node
-  with an added `node_id` label. Staleness is conveyed by the exporter's own
-  `mlnode_source_scrape_timestamp_seconds` plus `mlnode_up`, rather than by
-  per-sample timestamps — as built, dapi does not stamp samples.
+  with an added `node_id` label. Scrape freshness is conveyed by the exporter's
+  own `mlnode_source_scrape_timestamp_seconds` plus `mlnode_up`; dapi does not
+  stamp individual samples.
 - Three states: `mlnode_up{node_id} 1` scraped fine; `0` reachable but the
   scrape failed or exceeded a ceiling; a node answering 404 (metrics off, or an
   image predating the exporter) is absent entirely, with no zero stubs and no
@@ -111,8 +111,7 @@ paths, hostnames, IPs and ports in label values.
 ≤5 min buffer, per-sample timestamps). The implementation is a pull-through
 cache instead: a merged snapshot is cached 10 s and rebuilds are
 single-flighted, so N external scrapers still cost the ML nodes one fan-out per
-TTL, and there is no polling while nobody is looking. The staleness signals the
-poller design wanted are covered by the two metrics above.
+TTL, and there is no polling while nobody is looking.
 - Rejected alternative: per-node endpoints (consumers would need discovery;
   one scrape per network node is the point).
 
@@ -130,27 +129,7 @@ The in-app limiter was dropped accordingly. Residual risk: a deployment that
 strips the shipped proxy runs the endpoint unlimited; compute stays bounded
 regardless by the cached single-flight fan-out.
 
-### D7. dapi buffer ceilings
-
-- Only the **latest** snapshot per node_id is stored.
-- Max **2 MiB** of filtered text per node_id (read limit; larger ⇒ snapshot
-  rejected, error counter logged).
-- Max **5 000 series** per node_id (protection from a malicious/broken node;
-  honest maximum ≈ 1–2 k series per replica).
-- Snapshot TTL **5 min** (evicted on timer and on read).
-- Collector RSS budget: ≤ **64 MiB** at 16 nodes.
-- Polling: **45 s** ticker, per-node `context.WithTimeout` **10 s**, an
-  isolated worker goroutine (MLNodeBackgroundManager pattern) with a
-  WaitGroup fan-out; never on the broker command queue (invariant 6).
-
-### D8. Timestamps
-
-- mlnode exporter: gauge `mlnode_source_scrape_timestamp_seconds{source}`
-  (unix seconds, float) per source; `source="vllm"` also carries `replica`.
-- dapi: per-sample timestamps (unix ms) in the exposition output = the
-  moment of successful collection from the node.
-
-### D9. Schema version and change rules
+### D7. Schema version and change rules
 
 - Series `gonka_metrics_schema_info{version="1"} 1` in the exporter output.
 - Any change to the allowlist or label semantics = version bump + an entry
@@ -158,7 +137,7 @@ regardless by the cached single-flight fan-out.
 - Adding a series is minor-compatible (still logged in the changelog);
   removing/renaming = major bump.
 
-### D10. dapi libraries (Go)
+### D8. dapi libraries (Go)
 
 - Parsing node responses: `github.com/prometheus/common/expfmt` (already in
   the dependency tree as indirect).
@@ -170,7 +149,7 @@ regardless by the cached single-flight fan-out.
   effect without a restart. One switch, not two: as built, the collector and
   the endpoint are one component.
 
-### D11. XID mechanism (closes Open-2)
+### D9. XID mechanism (closes Open-2)
 
 XID critical errors are captured via the **NVML event API**
 (`nvmlDeviceRegisterEvents` + a listener thread) and exported as

@@ -1,5 +1,6 @@
 import asyncio
 import re
+import threading
 import time
 
 import pytest
@@ -43,12 +44,12 @@ python_gc_objects_collected_total{{generation="0"}} 146351.0
 
 @pytest.fixture(autouse=True)
 def metrics_state(monkeypatch):
-    vllm_source.reset_cache()
+    vllm_source._invalidate_cache(-1)
     host_source.reset()
     monkeypatch.setattr(proxy_module, "vllm_backend_ports", [5001, 5002])
     monkeypatch.setattr(proxy_module, "vllm_healthy", {5001: True, 5002: True})
     yield
-    vllm_source.reset_cache()
+    vllm_source._invalidate_cache(-1)
     host_source.reset()
 
 
@@ -133,14 +134,16 @@ def test_schema_and_source_timestamps_present(client):
     assert 'mlnode_source_scrape_timestamp_seconds{source="vllm",replica="0"}' in body
 
 
-def test_hung_replica_keeps_stale_timestamp(client, monkeypatch):
+def test_failed_replica_scrape_keeps_stale_timestamp(client, monkeypatch):
     first = client.get("/metrics").text
-    ts_line = [
-        l for l in first.splitlines()
-        if l.startswith('mlnode_source_scrape_timestamp_seconds{source="vllm",replica="1"')
-    ][0]
+    ts_line = next(
+        line
+        for line in first.splitlines()
+        if line.startswith(
+            'mlnode_source_scrape_timestamp_seconds{source="vllm",replica="1"'
+        )
+    )
 
-    # replica 1 stops answering /metrics but stays "healthy"
     async def flaky(port, method, path):
         if port == 5002:
             raise TimeoutError("frozen")
@@ -149,7 +152,6 @@ def test_hung_replica_keeps_stale_timestamp(client, monkeypatch):
     monkeypatch.setattr(proxy_module, "call_backend", flaky)
     second = client.get("/metrics").text
 
-    # stale copy still served, timestamp did not advance
     assert ts_line in second
     waiting = [l for l in second.splitlines() if l.startswith("vllm:num_requests_waiting{")]
     assert {re.search(r'replica="(\d+)"', l).group(1) for l in waiting} == {"0", "1"}
@@ -362,7 +364,7 @@ def test_config_info_normalizes_model_and_keeps_unset_empty(client):
     }
     client.app.state.inference_manager = MagicMock(vllm_runner=runner)
     body = client.get("/metrics").text
-    line = [l for l in body.splitlines() if l.startswith("mlnode_config_info{")][0]
+    line = next(l for l in body.splitlines() if l.startswith("mlnode_config_info{"))
     assert 'model_name="moonshotai/Kimi-K2.6"' in line  # normalized, not the path
     assert "/root/.cache" not in line
     assert 'max_num_seqs="128"' in line
@@ -380,14 +382,16 @@ async def test_stalled_local_stage_degrades_not_hangs(gpu_manager, monkeypatch):
     response_mock = MagicMock(status_code=200, text=CANONICAL_VLLM_METRICS)
     monkeypatch.setattr(proxy_module, "call_backend", AsyncMock(return_value=response_mock))
 
+    async_release = asyncio.Event()
+    thread_release = threading.Event()
+
     async def stuck():
-        await asyncio.sleep(30)
+        await async_release.wait()
 
     gpu_manager.collect_metrics_async = MagicMock(side_effect=stuck)
     monkeypatch.setattr(routes_module, "NVML_TIMEOUT_SECONDS", 0.05)
     monkeypatch.setattr(routes_module, "HOST_TIMEOUT_SECONDS", 0.05)
-    # short stall: the leaked worker is joined at test-teardown loop close
-    monkeypatch.setattr(routes_module.host_source, "collect", lambda: time.sleep(3))
+    monkeypatch.setattr(routes_module.host_source, "collect", thread_release.wait)
 
     app = FastAPI()
     app.state.gpu_manager = gpu_manager
@@ -403,9 +407,18 @@ async def test_stalled_local_stage_degrades_not_hangs(gpu_manager, monkeypatch):
     assert elapsed < 1.0, f"stalled local stages must not delay the response (took {elapsed:.2f}s)"
     assert "mlnode_gpu_" not in response.text  # degraded to missing series
 
+    pending = list(routes_module._pending_stages.values())
+    async_release.set()
+    thread_release.set()
+    await asyncio.gather(*pending)
+    routes_module._pending_stages.clear()
 
-def test_inflight_scrape_across_generation_bump_discarded(client, monkeypatch):
-    client.get("/metrics")
+
+@pytest.mark.asyncio
+async def test_inflight_scrape_across_generation_bump_discarded(monkeypatch):
+    response = MagicMock(status_code=200, text=CANONICAL_VLLM_METRICS)
+    monkeypatch.setattr(proxy_module, "call_backend", AsyncMock(return_value=response))
+    await vllm_source.collect(0.0)
     assert vllm_source._last_good
 
     gate = asyncio.Event()
@@ -416,20 +429,57 @@ def test_inflight_scrape_across_generation_bump_discarded(client, monkeypatch):
 
     monkeypatch.setattr(proxy_module, "call_backend", slow_backend)
 
-    async def race():
-        vllm_source.reset_cache()
-        task = asyncio.create_task(vllm_source.collect(1.0))  # suspends in gather
-        await asyncio.sleep(0.05)
-        # model switch happens while the scrape is in flight
-        proxy_module.vllm_setup_generation += 1
-        vllm_source._last_good.clear()
-        vllm_source._cache_generation = proxy_module.vllm_setup_generation
-        gate.set()
-        await task
-        return dict(vllm_source._last_good)
+    task = asyncio.create_task(vllm_source.collect(1.0))
+    await asyncio.sleep(0)
+    proxy_module.vllm_setup_generation += 1
+    gate.set()
+    lines, timestamps = await task
+    assert lines == []
+    assert timestamps == {}
+    assert vllm_source._last_good == {}
 
-    cache_after = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(race())
-    assert cache_after == {}  # stale in-flight results were discarded
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("generation_bump", [False, True])
+async def test_late_scrape_cannot_overwrite_newer_cache(
+    monkeypatch, generation_bump
+):
+    monkeypatch.setattr(proxy_module, "vllm_backend_ports", [5001])
+    monkeypatch.setattr(proxy_module, "vllm_healthy", {5001: True})
+    vllm_source._invalidate_cache(proxy_module.vllm_setup_generation)
+
+    old_release = asyncio.Event()
+    calls = 0
+
+    async def backend(port, method, path):
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            await old_release.wait()
+            value = "111.0"
+        else:
+            value = "222.0"
+        return MagicMock(
+            status_code=200,
+            text=CANONICAL_VLLM_METRICS.replace("144.0", value),
+        )
+
+    monkeypatch.setattr(proxy_module, "call_backend", backend)
+    older = asyncio.create_task(vllm_source.collect(1.0))
+    await asyncio.sleep(0)
+    if generation_bump:
+        proxy_module.vllm_setup_generation += 1
+    await vllm_source.collect(2.0)
+    old_release.set()
+    old_lines, old_timestamps = await older
+
+    series, timestamp = vllm_source._last_good["0"]
+    assert timestamp == 2.0
+    assert any("222.0" in line for line in series)
+    assert not any("111.0" in line for line in series)
+    if generation_bump:
+        assert old_lines == []
+        assert old_timestamps == {}
 
 
 def test_escape_label_values():
@@ -500,3 +550,42 @@ async def test_stalled_stage_not_reentered():
     release.set()
     await asyncio.sleep(0)
     routes_module._pending_stages.clear()
+
+
+@pytest.mark.asyncio
+async def test_completed_waiter_does_not_remove_new_stage(monkeypatch):
+    from api.metrics import routes as routes_module
+
+    routes_module._pending_stages.clear()
+    first_wait_finished = asyncio.Event()
+    release_first_waiter = asyncio.Event()
+    release_second_stage = asyncio.Event()
+    real_wait = asyncio.wait
+    wait_calls = 0
+
+    async def controlled_wait(*args, **kwargs):
+        nonlocal wait_calls
+        wait_calls += 1
+        done, pending = await real_wait(*args, **kwargs)
+        if wait_calls == 1:
+            first_wait_finished.set()
+            await release_first_waiter.wait()
+        return done, pending
+
+    monkeypatch.setattr(routes_module.asyncio, "wait", controlled_wait)
+    first = asyncio.create_task(routes_module._bounded(asyncio.sleep(0), 1, "src"))
+    await first_wait_finished.wait()
+
+    second = asyncio.create_task(
+        routes_module._bounded(release_second_stage.wait(), 1, "src")
+    )
+    await asyncio.sleep(0)
+    second_task = routes_module._pending_stages["src"]
+
+    release_first_waiter.set()
+    await first
+    assert routes_module._pending_stages.get("src") is second_task
+
+    release_second_stage.set()
+    await second
+    assert "src" not in routes_module._pending_stages
