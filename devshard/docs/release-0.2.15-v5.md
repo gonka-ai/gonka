@@ -231,12 +231,14 @@ control-plane hiccup could empty the pool while every child was still running an
 serving normally.
 
 A reconcile failure is still recorded — versiond keeps it in its internal
-`Degraded` condition and logs it — it is simply not a routing
-decision. Note that `/healthz` is unchanged and does **not** carry it: its JSON
-array of per-version child state is the same contract as before, so alerting on
-reconcile failures means reading the logs today. A host that fails to install a newly approved version leaves *that version's*
-pool through the per-version check above, and keeps serving the versions it does
-have.
+`Degraded` condition and logs it — it is simply not a routing decision. Note
+that `/healthz` is unchanged and does **not** carry it: its JSON array of
+per-version child state is the same contract as before, so alerting on reconcile
+failures means reading the logs today. A host that fails to install a newly
+approved version leaves *that version's* pool through the per-version check
+above, and keeps serving the versions it does have. Pinned pre-HA versions use
+the same per-version check against their single SQLite owner, so a failed v5
+install cannot hide otherwise healthy v1-v3 routes after the restart.
 
 ### HA storage is enforced at boot as well as per request
 

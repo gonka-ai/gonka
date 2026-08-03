@@ -89,16 +89,6 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
     esac
 done
 
-# One line per pinned version, rewritten on every boot from the environment.
-# Live edits use the HAProxy Runtime API (`add map` / `del map`), which changes
-# memory only — write this file too if the change must survive a restart.
-: > "$MAP"
-# Trailing newline is load-bearing: without it `read` swallows the last field.
-printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
-    [ -n "$version" ] || continue
-    echo "$version legacy" >> "$MAP"
-done
-
 if [ -n "$HA_DEPLOYMENT" ]; then
     # The deployment declaration is a latch, not a live-host count. Keep the
     # storage guard enabled while siblings restart or drain: they can return.
@@ -134,25 +124,54 @@ safe_id() {
         "$(printf '%s' "$1" | sha256sum | cut -c1-8)"
 }
 
-# One backend per version the router was told about, plus the host-level pool
-# every unlisted version falls back to. All of them are the same fragment, so the
-# routing policy cannot drift between them; only the name and the readiness
-# question differ.
-render_pool_backend() {
+# Refuse names that cannot be represented as the literal path segment used for
+# routing. This applies equally to HA and legacy declarations.
+validate_version() {
+    case "$1" in
+        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            echo "versiond-router: version '$1' cannot be routed: a path segment" >&2
+            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
+            echo "  would not match the name governance approved" >&2
+            exit 1
+            ;;
+    esac
+}
+
+# Return an HAProxy-safe backend name without losing the version's identity.
+backend_name() {
+    prefix=$1
+    version=$2
+    case "$version" in
+        [A-Za-z0-9]*)
+            case "$version" in
+                *[!A-Za-z0-9._-]*) printf '%s_%s' "$prefix" "$(safe_id "$version")" ;;
+                *) printf '%s_%s' "$prefix" "$version" ;;
+            esac
+            ;;
+        *) printf '%s_%s' "$prefix" "$(safe_id "$version")" ;;
+    esac
+}
+
+# One shared fragment renders both HA pools and single-owner legacy backends, so
+# their hashing, retry, and path-rewrite policies cannot drift apart.
+render_backend() {
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READYZ_URI}|$2|g" \
-        -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
+        -e "s|\${BACKEND_HOST}|$3|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
-        -e "s|\${POOL_SLOTS}|$SLOTS|g" \
-        -e "s|\${DEVSHARD_HA_HEADER}|$HA_HEADER|g" \
+        -e "s|\${BACKEND_SLOTS}|$4|g" \
+        -e "s|\${REQUEST_HA_HEADER}|$5|g" \
+        -e "s|\${RESPONSE_BACKEND}|$6|g" \
         "$POOL_TEMPLATE"
 }
 
+: > "$MAP"
 : > "$VERSIONS_MAP"
 POOL_BACKENDS_FILE="$(mktemp)"
 trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
-render_pool_backend versiond_ha_pool /readyz > "$POOL_BACKENDS_FILE"
+render_backend versiond_ha_pool /readyz "$POOL_HOST" "$SLOTS" \
+    "$HA_HEADER" versiond_ha_pool > "$POOL_BACKENDS_FILE"
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
     [ -n "$version" ] || continue
     # A version name is whatever governance approved. Three things are derived
@@ -169,31 +188,35 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
     # What cannot be handled is a name that cannot appear literally in a path
     # segment: those characters would have to be encoded by the client, and then
     # the segment no longer equals the name. Refuse rather than route on a guess.
-    case "$version" in
-        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
-            echo "versiond-router: version '$version' cannot be routed: a path segment" >&2
-            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
-            echo "  would not match the name governance approved" >&2
-            exit 1
-            ;;
-    esac
+    validate_version "$version"
     # The comparison is forced to strings: awk would otherwise treat 1, 01 and
     # 1.0 as the same version, and 1e2 as 100.
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
         echo "versiond-router: version '$version' is declared twice" >&2
         exit 1
     fi
-    case "$version" in
-        [A-Za-z0-9]*)
-            case "$version" in
-                *[!A-Za-z0-9._-]*) backend="versiond_pool_$(safe_id "$version")" ;;
-                *) backend="versiond_pool_$version" ;;
-            esac
-            ;;
-        *) backend="versiond_pool_$(safe_id "$version")" ;;
-    esac
+    backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
-    render_pool_backend "$backend" "/readyz?version=$(urlencode "$version")" >> "$POOL_BACKENDS_FILE"
+    render_backend "$backend" "/readyz?version=$(urlencode "$version")" \
+        "$POOL_HOST" "$SLOTS" "$HA_HEADER" "$backend" >> "$POOL_BACKENDS_FILE"
+done
+
+# Legacy versions share one SQLite owner, but not one health result. Rendering a
+# backend per version lets a missing archive take only that version out of
+# rotation; a generic /readyz failure must not hide the owner's healthy children.
+# Trailing newline is load-bearing: without it `read` swallows the last field.
+printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
+    [ -n "$version" ] || continue
+    validate_version "$version"
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$MAP"; then
+        echo "versiond-router: legacy version '$version' is declared twice" >&2
+        exit 1
+    fi
+    backend=$(backend_name versiond_legacy "$version")
+    echo "$version $backend" >> "$MAP"
+    render_backend "$backend" "/readyz?version=$(urlencode "$version")" \
+        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
+        versiond_legacy >> "$POOL_BACKENDS_FILE"
 done
 
 # Versions pinned to the legacy host exist because exactly one host owns their
@@ -241,16 +264,11 @@ sed \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
-    -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
-    -e "s|\${VERSIOND_PORT}|$PORT|g" \
-    -e "s|\${VERSIOND_LEGACY_HOST}|$LEGACY_HOST|g" \
-    -e "s|\${POOL_SLOTS}|$SLOTS|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${MAX_BODY_BYTES}|$MAX_BODY_BYTES|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
-    -e "s|\${DEVSHARD_HA_HEADER}|$HA_HEADER|g" \
     "$TEMPLATE" > "$OUT"
 
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null

@@ -187,10 +187,12 @@ contract existing clients parse. Reconcile failures currently have no
 machine-readable exposure; a metric is where that belongs.
 
 A host that fails to install one version is handled by the per-version check
-above rather than by the host-level one: it drops out of that version's pool and
-keeps serving the rest. Gating the *host* on it instead would be the correlated
-failure again — the same archive fails on every host, so the whole pool would
-leave at once over a version most traffic does not even use.
+above rather than by the host-level one: it drops out of that version's backend
+and keeps serving the rest. The same rule applies to versions pinned to the
+single legacy SQLite owner; each pin has an independent backend and readiness
+check. Gating the *host* on it instead would be the correlated failure again —
+the same archive fails on every host, so the whole pool would leave at once over
+a version most traffic does not even use.
 
 If a condition is ever found under which accepting traffic is genuinely unsafe,
 it belongs in its own typed condition rather than in the generic reconcile error.
@@ -213,8 +215,9 @@ usable pool server as a fail-closed fallback when that declaration was omitted:
 
 The second guard exists because the first can be bypassed by a partial rollout:
 a host that was configured before the deployment became HA is already running.
-The `versiond_legacy` backend strips the header, because a single-server backend
-has no sibling by construction.
+Each internal `versiond_legacy_<v>` backend strips the header, because a
+single-server backend has no sibling by construction. Responses retain the
+stable `X-Versiond-Backend: versiond_legacy` label.
 
 ## Failure policy
 

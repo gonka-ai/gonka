@@ -96,7 +96,8 @@ test-version-routing:
 	tmpdir=$$(mktemp -d); \
 	net=gonka-version-probe; \
 	cleanup() { \
-		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b >/dev/null 2>&1 || true; \
+		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
+			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
 		rm -rf "$$tmpdir"; \
 	}; \
@@ -106,6 +107,7 @@ test-version-routing:
 		'import os, http.server, urllib.parse' \
 		'NAME = os.environ["NAME"]' \
 		'SERVES = set(os.environ["SERVES"].split())' \
+		'GENERIC_READY = os.environ.get("GENERIC_READY", "true") == "true"' \
 		'class H(http.server.BaseHTTPRequestHandler):' \
 		'    protocol_version = "HTTP/1.1"' \
 		'    def _r(self, code, body):' \
@@ -118,7 +120,8 @@ test-version-routing:
 		'        u = urllib.parse.urlparse(self.path)' \
 		'        if u.path == "/readyz":' \
 		'            v = urllib.parse.parse_qs(u.query).get("version", [""])[0]' \
-		'            return self._r(503 if v and v not in SERVES else 200, "x")' \
+		'            ready = v in SERVES if v else GENERIC_READY' \
+		'            return self._r(200 if ready else 503, "x")' \
 		'        if u.path.endswith("/ha-header"):' \
 		'            return self._r(200, self.headers.get("Devshard-Ha", ""))' \
 		'        self._r(200, NAME)' \
@@ -127,20 +130,40 @@ test-version-routing:
 		> "$$tmpdir/upstream.py"; \
 	docker network create $$net >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe . >/dev/null; \
-	for spec in "a:v4" "b:v4 v5"; do \
-		name=$${spec%%:*}; serves=$${spec#*:}; \
+	for spec in "a:v4:true" "b:v4 v5:true"; do \
+		name=$${spec%%:*}; rest=$${spec#*:}; \
+		serves=$${rest%:*}; generic_ready=$${rest##*:}; \
 		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
-			-e NAME=$$name -e SERVES="$$serves" -v "$$tmpdir/upstream.py:/app.py:ro" \
+			-e NAME=$$name -e SERVES="$$serves" -e GENERIC_READY=$$generic_ready \
+			-v "$$tmpdir/upstream.py:/app.py:ro" \
 			python:3.12-alpine python /app.py >/dev/null; \
 	done; \
+	docker run -d --name gonka-vp-legacy --network $$net \
+		-e NAME=legacy -e SERVES=v1 -e GENERIC_READY=false \
+		-v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
 	docker run -d --name gonka-vp-router --network $$net -p 127.0.0.1:18132:8080 \
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
 	for i in $$(seq 60); do \
 		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \
 		sleep 0.5; \
 	done; \
 	sleep 4; \
+	legacy=$$(curl -sS -D "$$tmpdir/legacy.headers" -m 3 \
+		http://127.0.0.1:18132/v1/sessions/legacy/chat) \
+		|| fail "healthy v1 was hidden by its legacy host's failing generic readiness"; \
+	[ "$$legacy" = legacy ] \
+		|| fail "legacy v1 reached '$$legacy' instead of its SQLite owner"; \
+	tr -d '\r' < "$$tmpdir/legacy.headers" \
+		| grep -qi '^x-versiond-backend: versiond_legacy$$' \
+		|| fail "legacy diagnostics no longer expose the stable versiond_legacy label"; \
+	legacy_v2=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v2/sessions/legacy/chat); \
+	[ "$$legacy_v2" = 503 ] \
+		|| fail "legacy host missing v2 answered $$legacy_v2 instead of leaving only v2 down"; \
 	for version in v4 v5; do \
 		ha_header=$$(curl -s -m 3 "http://127.0.0.1:18132/$$version/ha-header"); \
 		[ "$$ha_header" = true ] \
@@ -211,8 +234,8 @@ test-render: test-hash-ring test-version-routing
 		|| fail "active health checks are not configured"; \
 	grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "GONKA_HA did not enable the Devshard-Ha header"; \
-	grep -q '^[[:space:]]*server legacy versiond:8080' "$$tmpdir/mixed.cfg" \
-		|| fail "legacy backend does not point at VERSIOND_LEGACY_HOST"; \
+	grep -q '^[[:space:]]*server-template versiond 1 versiond:8080' "$$tmpdir/mixed.cfg" \
+		|| fail "legacy backends do not point at the single VERSIOND_LEGACY_HOST"; \
 	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/mixed.cfg" \
 		|| fail "failover no longer excludes 503"; \
 	grep -q '^[[:space:]]*http-request disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
@@ -233,12 +256,32 @@ test-render: test-hash-ring test-version-routing
 		|| fail "declared versions must be health-checked individually"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
+	for version in v1 v2 v3; do \
+		backend=versiond_legacy_$$version; \
+		grep -q "^backend $$backend$$" "$$tmpdir/mixed.cfg" \
+			|| fail "no isolated legacy backend for $$version"; \
+		awk -v b="backend $$backend" -v uri="/readyz?version=$$version" \
+			'$$0 == b {inside=1; next} /^backend /{inside=0} \
+			 inside && /http-check send/ && index($$0, uri) {found=1} \
+			 END {exit !found}' "$$tmpdir/mixed.cfg" \
+			|| fail "$$backend does not check $$version independently"; \
+		awk -v b="backend $$backend" \
+			'$$0 == b {inside=1; next} /^backend /{inside=0} \
+			 inside && /http-request del-header Devshard-Ha/ {strips=1} \
+			 inside && /X-Versiond-Backend versiond_legacy/ {label=1} \
+			 END {exit !(strips && label)}' "$$tmpdir/mixed.cfg" \
+			|| fail "$$backend lost the single-owner header contract"; \
+	done; \
+	if grep -q '^backend versiond_legacy$$' "$$tmpdir/mixed.cfg"; then \
+		fail "one generic legacy backend still couples every pinned version to /readyz"; \
+	fi; \
 	grep -q '^[[:space:]]*use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
 		|| fail "requests are not routed to their version's pool"; \
 	printf 'v4 versiond_pool_v4\nv5 versiond_pool_v5\n' > "$$tmpdir/want.versions.map"; \
 	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
 		|| fail "declared versions rendered incorrectly"; \
-	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5; do \
+	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5 \
+		versiond_legacy_v1 versiond_legacy_v2 versiond_legacy_v3; do \
 		count=$$(awk -v b="backend $$backend" '$$0 == b {inside=1; next} /^backend /{inside=0} \
 			inside && $$0 !~ /^[[:space:]]*#/ && \
 			/hash-key addr|http-reuse safe|disable-l7-retry|retry-on|hash-type consistent/ {n++} \
@@ -246,7 +289,8 @@ test-render: test-hash-ring test-version-routing
 		[ "$$count" -eq 5 ] \
 			|| fail "$$backend has $$count of 5 policy lines; the pools have drifted apart"; \
 	done; \
-	printf 'v1 legacy\nv2 legacy\nv3 legacy\n' > "$$tmpdir/want.map"; \
+	printf 'v1 versiond_legacy_v1\nv2 versiond_legacy_v2\nv3 versiond_legacy_v3\n' \
+		> "$$tmpdir/want.map"; \
 	diff -u "$$tmpdir/want.map" "$$tmpdir/mixed.map" \
 		|| fail "pinned versions rendered incorrectly"; \
 	HAPROXY_BIN=true \
@@ -261,6 +305,9 @@ test-render: test-hash-ring test-version-routing
 		|| fail "no versions were declared but per-version pools were rendered"; \
 	[ ! -s "$$tmpdir/allha.map" ] \
 		|| fail "no pinned versions were requested but the map is not empty"; \
+	if grep -q '^backend versiond_legacy_' "$$tmpdir/allha.cfg"; then \
+		fail "legacy backends were rendered without pinned versions"; \
+	fi; \
 	sed -n '/^frontend versiond_in$$/,/^backend /p' "$$tmpdir/allha.cfg" \
 		| grep -q '^[[:space:]]*http-request del-header Devshard-Ha' \
 		|| fail "the frontend must strip a client-supplied Devshard-Ha"; \

@@ -23,16 +23,16 @@ request → normalise path → pick backend by version → pick server by escrow
 | Backend | Servers | Used for |
 | --- | --- | --- |
 | `versiond_pool_<v>` | every host that answers `/readyz?version=<v>` with 200 | each version listed in `VERSIOND_VERSIONS` |
-| `versiond_legacy` | the single `VERSIOND_LEGACY_HOST` | versions listed in `VERSIOND_NON_HA_VERSIONS`, which own pre-HA SQLite data dirs on one host |
+| `versiond_legacy_<v>` | the single `VERSIOND_LEGACY_HOST` when it answers `/readyz?version=<v>` with 200 | one per version in `VERSIOND_NON_HA_VERSIONS`, which owns pre-HA SQLite data on that host |
 | `versiond_ha_pool` | every host that answers `/readyz` with 200 | non-version paths such as `/healthz`, and every version when no version is declared at all |
 
 A version that is declared nowhere is **refused** with `503` naming the setting
 that fixes it, rather than being routed to a host that may not run it. See
 [Declaring versions](#declaring-versions).
 
-All three are the same pool of hosts; what differs is the question their health
-check asks. Every one of them is rendered from `pool-backend.cfg.template`, so
-the routing policy cannot drift between them.
+Every backend is rendered from `pool-backend.cfg.template`, so the routing
+policy cannot drift between them. HA backends use the DNS pool; each legacy
+backend uses one slot pointed at the explicit SQLite owner.
 
 Within `versiond_ha_pool` the server is chosen by **consistent hash** of the
 escrow id taken from the path (`/{version}/sessions/{escrow}/...`); other paths
@@ -82,13 +82,16 @@ server slots at startup.
 ## Health: one question per version
 
 A pool-wide "are you healthy" cannot say that a host is missing *one* of several
-versions. So the router asks about the version it is about to route to: each
-version in `VERSIOND_VERSIONS` gets its own backend over the same hosts, health
--checked with `GET /readyz?version=<v>`.
+versions. So the router asks about the version it is about to route to. Each
+version in `VERSIOND_VERSIONS` gets its own backend over the HA hosts, and each
+version in `VERSIOND_NON_HA_VERSIONS` gets its own backend over the one legacy
+host. Both are health-checked with `GET /readyz?version=<v>`.
 
 A host that cannot run `v5` — its download failed, its child will not start —
 answers `503` for `?version=v5` and `200` for `?version=v4`. It leaves `v5`'s
-ring and keeps serving `v4`. Nothing else changes: no eviction, no reload.
+backend and keeps serving `v4`. This also applies to the legacy owner: a failed
+new archive cannot hide its healthy pinned versions. Nothing else changes: no
+eviction, no reload.
 
 That also makes rolling out a version safe once it is declared. Until a host has
 `v6` running it is not in `v6`'s pool, so `v6` traffic goes only to hosts that can
@@ -239,8 +242,10 @@ The router strips every client-supplied `Devshard-Ha` value, then stamps
 storage is local (SQLite), a sibling could be serving the same escrow, so it
 answers `503` rather than fork the session's state.
 
-`versiond_legacy` always strips the header: that backend has exactly one server
-by definition, so no sibling can exist.
+Every `versiond_legacy_<v>` backend strips the header: each has exactly one
+server by definition, so no sibling can exist. Responses keep the stable
+`X-Versiond-Backend: versiond_legacy` diagnostic label; the internal suffix is
+only how HAProxy keeps the health results separate.
 
 `GONKA_HA` describes the deployment, so the HA overlay sets it for the router
 and every versiond host. It is the authoritative latch: it keeps the guard on
@@ -262,9 +267,11 @@ versiond_ha_pool
   2 server(s) taking traffic
 ```
 
-One host is a separate server in every backend, with its own health, so the same
-host can be serving `v4` and out of `v5`. This is the router's whole state, and
-it is read-only — a formatter over the HAProxy Runtime API
+One host is a separate server in every applicable backend, with its own health,
+so the same host can be serving `v4` and out of `v5`. Pinned versions appear as
+internal `versiond_legacy_<v>` backends, although their response header remains
+`versiond_legacy`. This is the router's whole state, and it is read-only — a
+formatter over the HAProxy Runtime API
 (`/var/run/haproxy/haproxy.sock`), kept off PATH because it is an internal diagnostic
 whose output the acceptance-test harness parses, not an operator CLI.
 
@@ -306,11 +313,9 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
 `non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
 value fails the container immediately instead of producing a subtly wrong
-config.
-
-Version pinning can also be changed at runtime through the Runtime API
-(`add map` / `del map` on `non_ha.map`); such edits live in memory only, so
-change `VERSIOND_NON_HA_VERSIONS` too if the change must survive a restart.
+config. Version pinning is startup configuration because each pin needs its own
+health-checked backend; change `VERSIOND_NON_HA_VERSIONS` and replace the router
+container to change it.
 
 Declared names are used three ways, and each is derived to suit itself: the map
 key is the name exactly as governance wrote it, because it is matched against the
@@ -328,7 +333,7 @@ would then not match the name at all.
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
 | `X-Upstream-Addr` | response header | which instance served the request |
-| `X-Versiond-Backend` | response header | `versiond_ha_pool` or `versiond_legacy` |
+| `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
 Neither the metrics endpoint nor the admin socket is reachable from outside the
 container, and the container runs as the unprivileged `haproxy` user from the
@@ -350,7 +355,9 @@ rendered config with the real HAProxy from the image the router ships.
 
 `test-version-routing` proves the headline property against the real image: two
 upstreams that disagree about which versions they serve, and a host that lacks
-one version must receive none of its traffic while still receiving the rest.
+one version must receive none of its traffic while still receiving the rest. It
+also gives the legacy owner failing generic readiness and proves that a healthy
+pinned version remains routable while an unhealthy pinned version stays down.
 
 `test-hash-ring` proves the property that cannot be seen by reading the config:
 it takes the hashing directives out of the rendered file, puts the same four

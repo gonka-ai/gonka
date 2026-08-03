@@ -7,8 +7,9 @@
 #                      ring and keeps serving the rest.
 #   versiond_ha_pool — the same pool asked the coarse "can you serve at all",
 #                      used for versions the router has not been told about
-#   versiond_legacy  — the single VERSIOND_LEGACY_HOST that owns pre-HA SQLite
-#                      session data for the versions listed in non_ha.map
+#   versiond_legacy_<v> — one per version listed in non_ha.map; each asks the
+#                         per-version question of the single host that owns its
+#                         pre-HA SQLite session data
 #
 # Pool membership comes from DNS, health comes from active checks. Neither
 # requires a reload: adding a replica publishes another A record, and a draining
@@ -117,8 +118,9 @@ frontend versiond_in
 
     ${UNDECLARED_VERSION_GUARD}
 
-    # Legacy pinning wins: those versions own SQLite data on one host.
-    use_backend versiond_legacy if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
+    # Legacy pinning wins: the map yields that version's backend on the one host
+    # that owns its SQLite data.
+    use_backend %[var(txn.ver),map_str(${NON_HA_MAP})] if { var(txn.ver),map_str(${NON_HA_MAP}) -m found }
     # Then the version's own pool. The map yields a backend name; with no entry
     # there is no match and the request falls through to the host-level pool,
     # which the guard above has already restricted to non-version paths whenever
@@ -127,27 +129,6 @@ frontend versiond_in
     default_backend versiond_ha_pool
 
 ${POOL_BACKENDS}
-
-backend versiond_legacy
-    # Single instance by definition: no sibling can serve the same escrow, so
-    # the multi-instance storage guard must not fire here.
-    http-request del-header Devshard-Ha
-
-    option httpchk
-    http-check send meth GET uri /readyz
-    http-check expect status 200
-
-    http-reuse safe
-    retry-on conn-failure empty-response 502
-    retries 2
-    http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS
-
-    http-request replace-path ^/devshard/(.*)$ /\1
-
-    http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
-    http-response set-header X-Versiond-Backend versiond_legacy
-
-    server legacy ${VERSIOND_LEGACY_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down
 
 frontend metrics
     bind 127.0.0.1:8405

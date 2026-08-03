@@ -13,7 +13,6 @@
 set -eu
 
 SOCK="${HAPROXY_SOCKET:-/var/run/haproxy/haproxy.sock}"
-NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 
 if [ "$#" -gt 0 ]; then
     echo "usage: pool-status (no arguments; read-only)" >&2
@@ -26,21 +25,8 @@ runtime() {
     printf '%s\n' "$1" | socat stdio "$SOCK"
 }
 
-# Backends that can actually receive a request. versiond_legacy exists even when
-# no version is pinned to it, and then it can be reached by nothing. The map is
-# read from HAProxy rather than from disk, because `add map` at runtime is a
-# supported way to pin a version and never touches the file.
-legacy_is_reachable() {
-    [ -n "$(runtime "show map $NON_HA_MAP" | grep -v '^#' | grep -v '^$' || true)" ]
-}
-
 backends() {
-    runtime "show backend" | grep -v '^#' | grep -v '^$' | while read -r backend; do
-        if [ "$backend" = versiond_legacy ] && ! legacy_is_reachable; then
-            continue
-        fi
-        printf '%s\n' "$backend"
-    done
+    runtime "show backend" | grep -v '^#' | grep -v '^$'
 }
 
 # `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
