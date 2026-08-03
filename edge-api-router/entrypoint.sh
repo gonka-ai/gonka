@@ -25,7 +25,9 @@ READ_TIMEOUT="${EDGE_API_ROUTER_READ_TIMEOUT_SECONDS:-120}"
 # anything else refuses to start rather than guessing a direction.
 bool_env() {
     raw=$(eval "printf '%s' \"\${$1:-}\"")
-    case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+    # Trim edges only, matching Go's TrimSpace on the same variables: deleting
+    # all whitespace would accept 't rue', which Go rejects.
+    case "$(printf '%s' "$raw" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | tr '[:upper:]' '[:lower:]')" in
         1 | true | yes) printf '1' ;;
         '' | 0 | false | no) ;;
         *)

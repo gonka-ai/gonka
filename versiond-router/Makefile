@@ -295,6 +295,29 @@ test-render: test-hash-ring test-version-routing
 		fail "GONKA_HA=false still stamps the HA header; false read as non-empty"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+	GONKA_HA=' true ' VERSIOND_VERSIONS=v4 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/hapad.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/hapad.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapad.versions.map" \
+	./entrypoint.sh \
+		|| fail "GONKA_HA=' true ' must read as on: Go trims whitespace, so must this parser"; \
+	grep -q 'set-header Devshard-Ha true' "$$tmpdir/hapad.cfg" \
+		|| fail "GONKA_HA=' true ' parsed but did not stamp the HA header"; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+	GONKA_HA=' no ' \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/hapadoff.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/hapadoff.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapadoff.versions.map" \
+	./entrypoint.sh \
+		|| fail "GONKA_HA=' no ' must read as off, not as garbage"; \
+	if grep -q 'set-header Devshard-Ha' "$$tmpdir/hapadoff.cfg"; then \
+		fail "GONKA_HA=' no ' still stamps the HA header"; \
+	fi; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
