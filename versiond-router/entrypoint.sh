@@ -63,6 +63,20 @@ HA_DEPLOYMENT=$(bool_env GONKA_HA)
 ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
 RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
 
+# Hostnames are substituted into the config by sed, and sed is not inert to
+# them: '&' expands to the matched placeholder and '|' terminates the
+# expression. The failure is not a refused render — with init-addr none HAProxy
+# accepts a mangled server address as an unresolvable name, so the config checks
+# green and the pool is simply empty forever. Validate like every other input.
+for name in "$POOL_HOST" "$LEGACY_HOST"; do
+    case "$name" in
+        '' | *[!A-Za-z0-9._-]*)
+            echo "versiond-router: invalid hostname '$name'" >&2
+            exit 1
+            ;;
+    esac
+done
+
 for value in "$SLOTS" "$MAXCONN" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT"; do
     case "$value" in
         ''|*[!0-9]*)

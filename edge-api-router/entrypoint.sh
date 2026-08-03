@@ -38,6 +38,16 @@ bool_env() {
 }
 RENDER_ONLY=$(bool_env EDGE_API_ROUTER_RENDER_ONLY)
 
+# Same hostname grammar as versiond-router: sed expands '&' and breaks on '|',
+# and a mangled address passes haproxy -c as an unresolvable name — an empty
+# pool with a green config.
+case "$POOL_HOST" in
+    '' | *[!A-Za-z0-9._-]*)
+        echo "edge-api-router: invalid hostname '$POOL_HOST'" >&2
+        exit 1
+        ;;
+esac
+
 for value in "$PORT" "$LISTEN_PORT" "$SLOTS" "$MAXCONN" "$CONNECT_TIMEOUT" "$READ_TIMEOUT"; do
     case "$value" in
         ''|*[!0-9]*)

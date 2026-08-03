@@ -181,31 +181,31 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/mixed.map" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/mixed.versions.map" \
 	./entrypoint.sh; \
-	grep -q 'server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool is not a DNS-resolved server-template"; \
-	grep -q 'hash-type consistent' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*hash-type consistent' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool lost consistent hashing"; \
-	grep -q 'server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
 		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
-	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
 		|| fail "active health checks are not configured"; \
-	grep -q 'http-request set-header Devshard-Ha true' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*http-request set-header Devshard-Ha true' "$$tmpdir/mixed.cfg" \
 		|| fail "GONKA_HA did not enable the Devshard-Ha header"; \
-	grep -q 'server legacy versiond:8080' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*server legacy versiond:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "legacy backend does not point at VERSIOND_LEGACY_HOST"; \
-	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/mixed.cfg" \
 		|| fail "failover no longer excludes 503"; \
-	grep -q 'disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*http-request disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
 		|| fail "non-idempotent requests could be replayed"; \
-	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
 		|| fail "metrics are not bound to loopback"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
 		|| fail "no timeout check directive: inter would double as the whole check budget and a slow answer would read as down"; \
-	grep -q 'http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
 		|| fail "declared versions must be health-checked individually"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
-	grep -q 'use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
+	grep -q '^[[:space:]]*use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
 		|| fail "requests are not routed to their version's pool"; \
 	printf 'v4 versiond_pool_v4\nv5 versiond_pool_v5\n' > "$$tmpdir/want.versions.map"; \
 	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
@@ -233,9 +233,9 @@ test-render: test-hash-ring test-version-routing
 		|| fail "no versions were declared but per-version pools were rendered"; \
 	[ ! -s "$$tmpdir/allha.map" ] \
 		|| fail "no pinned versions were requested but the map is not empty"; \
-	grep -q 'http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
+	grep -q '^[[:space:]]*http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
 		|| fail "unset GONKA_HA must strip a client-supplied Devshard-Ha"; \
-	if grep -q 'set-header Devshard-Ha' "$$tmpdir/allha.cfg"; then \
+	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/allha.cfg"; then \
 		fail "unset GONKA_HA still advertises an HA deployment"; \
 	fi; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
@@ -274,6 +274,18 @@ test-render: test-hash-ring test-version-routing
 		grep -q "not a boolean" "$$tmpdir/boolerr" \
 			|| fail "the refusal for '$$garbage' does not name the boolean grammar"; \
 	done; \
+	for badhost in 'a&b' 'a|b' 'a b'; do \
+		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+			VERSIOND_POOL_HOST="$$badhost" \
+			VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+			VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+			VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+			VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+			VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+			./entrypoint.sh 2>/dev/null; then \
+			fail "hostname '$$badhost' would be mangled by the renderer and was accepted"; \
+		fi; \
+	done; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		GONKA_HA=nonsense \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -293,7 +305,7 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/haoff.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=false must mean off, not on"; \
-	if grep -q 'set-header Devshard-Ha' "$$tmpdir/haoff.cfg"; then \
+	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/haoff.cfg"; then \
 		fail "GONKA_HA=false still stamps the HA header; false read as non-empty"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
@@ -305,7 +317,7 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapad.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=' true ' must read as on: Go trims whitespace, so must this parser"; \
-	grep -q 'set-header Devshard-Ha true' "$$tmpdir/hapad.cfg" \
+	grep -q '^[[:space:]]*http-request set-header Devshard-Ha true' "$$tmpdir/hapad.cfg" \
 		|| fail "GONKA_HA=' true ' parsed but did not stamp the HA header"; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=' no ' \
@@ -316,7 +328,7 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapadoff.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=' no ' must read as off, not as garbage"; \
-	if grep -q 'set-header Devshard-Ha' "$$tmpdir/hapadoff.cfg"; then \
+	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/hapadoff.cfg"; then \
 		fail "GONKA_HA=' no ' still stamps the HA header"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \

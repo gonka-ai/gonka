@@ -13,18 +13,27 @@ test-render:
 	EDGE_API_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	EDGE_API_ROUTER_OUT="$$tmpdir/edge.cfg" \
 	./entrypoint.sh; \
-	grep -q 'server-template edgeapi 64 edge-api-pool:18080' "$$tmpdir/edge.cfg" \
+	grep -q '^[[:space:]]*server-template edgeapi 64 edge-api-pool:18080' "$$tmpdir/edge.cfg" \
 		|| fail "pool is not a DNS-resolved server-template"; \
-	grep -q 'balance roundrobin' "$$tmpdir/edge.cfg" \
+	grep -q '^[[:space:]]*balance roundrobin' "$$tmpdir/edge.cfg" \
 		|| fail "stateless pool should round-robin"; \
-	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/edge.cfg" \
+	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/edge.cfg" \
 		|| fail "active health checks are not configured"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/edge.cfg" \
 		|| fail "no timeout check directive: the check budget must exceed edge-api's 2s chain probe"; \
-	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \
+	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \
 		|| fail "failover no longer excludes 503"; \
-	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/edge.cfg" \
+	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/edge.cfg" \
 		|| fail "metrics are not bound to loopback"; \
+	for badhost in 'a&b' 'a|b'; do \
+		if HAPROXY_BIN=true EDGE_API_ROUTER_RENDER_ONLY=1 \
+			EDGE_API_POOL_HOST="$$badhost" \
+			EDGE_API_ROUTER_TEMPLATE=./haproxy.cfg.template \
+			EDGE_API_ROUTER_OUT="$$tmpdir/bad.cfg" \
+			./entrypoint.sh 2>/dev/null; then \
+			fail "hostname '$$badhost' would be mangled by the renderer and was accepted"; \
+		fi; \
+	done; \
 	if HAPROXY_BIN=true EDGE_API_ROUTER_RENDER_ONLY=1 \
 		EDGE_API_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		EDGE_API_ROUTER_OUT="$$tmpdir/bad.cfg" \
