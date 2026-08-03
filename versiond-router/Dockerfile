@@ -1,4 +1,4 @@
-FROM haproxy:3.0-alpine
+FROM haproxy:3.2-alpine
 
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes
@@ -12,8 +12,6 @@ COPY haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY pool-backend.cfg.template /etc/haproxy/pool-backend.cfg.template
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
 COPY gonka-drain /usr/local/bin/gonka-drain
-COPY gonka-reload /usr/local/bin/gonka-reload
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain /usr/local/bin/gonka-reload \
-    && mkdir -p /var/lib/haproxy
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

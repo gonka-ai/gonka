@@ -133,16 +133,17 @@ declared, a request for one that is not gets `503` from the router naming the
 setting to fix, instead of being sent to a host that may not run it. Approving a
 new version is therefore two-phase:
 
-1. declare it — `docker compose exec versiond-router gonka-reload <versions...>`
-   reloads HAProxy in place, so the new pool appears without closing the listener
-   or disturbing the versions already running. Add it to `VERSIOND_VERSIONS` in
-   the deployment too, or the next container replacement forgets it;
+1. add it to `VERSIOND_VERSIONS` and replace the router container
+   (`docker compose up -d --force-recreate versiond-router`; a plain `restart`
+   keeps the old environment) — it gains an empty pool, which changes nothing for
+   the versions already running;
 2. approve it in governance; each host joins that pool as it installs it.
 
-Replacing the router container is the wrong tool here: it refuses new connections
-from the moment the old container is told to stop until it finishes its longest
-stream. The Compose files now set `stop_signal: SIGUSR1` so a replacement drains
-rather than cuts, but `gonka-reload` is what a config change wants.
+Replacing the router is a maintenance operation: Compose will not start the new
+container until the old one is gone, and `stop_signal: SIGUSR1` — HAProxy's soft
+stop — makes the old one finish the streams it is carrying first. **Declare the
+versions you expect ahead of time** and a governance approval needs step 2 only:
+a pool for a version nobody runs yet has no healthy members and costs nothing.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
 previous host-level behaviour. The join overlay declares `v4` by default, so a

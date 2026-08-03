@@ -1,6 +1,6 @@
 .PHONY: all build-docker release test-render
 
-HAPROXY_IMAGE ?= haproxy:3.0-alpine
+HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
 test-render:
 	@set -eu; \

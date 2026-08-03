@@ -3,7 +3,7 @@
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
 # Rendering needs no HAProxy locally; the syntax check needs Docker.
-HAPROXY_IMAGE ?= haproxy:3.0-alpine
+HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -25,7 +25,6 @@ test-hash-ring:
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/rendered.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/rendered.map" \
-	VERSIOND_ROUTER_SERVER_STATE="$$tmpdir/server-state" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/rendered.versions.map" \
 	./entrypoint.sh; \
 	hashvars=$$(grep 'set-var(txn\.' "$$tmpdir/rendered.cfg"); \
@@ -169,7 +168,6 @@ test-render: test-hash-ring test-version-routing
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
-	: > "$$tmpdir/server-state"; \
 	HAPROXY_BIN=true \
 	VERSIOND_ROUTER_RENDER_ONLY=1 \
 	VERSIOND_POOL_HOST=versiond-pool \
@@ -181,7 +179,6 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/mixed.map" \
-	VERSIOND_ROUTER_SERVER_STATE="$$tmpdir/server-state" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/mixed.versions.map" \
 	./entrypoint.sh; \
 	grep -q 'server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
@@ -228,7 +225,6 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/allha.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/allha.map" \
-	VERSIOND_ROUTER_SERVER_STATE="$$tmpdir/server-state" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/allha.versions.map" \
 	./entrypoint.sh; \
 	[ ! -s "$$tmpdir/allha.versions.map" ] \
@@ -245,8 +241,7 @@ test-render: test-hash-ring test-version-routing
 		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
 		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
-		VERSIOND_ROUTER_SERVER_STATE="$$tmpdir/server-state" \
-	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
 		VERSIOND_ROUTER_STREAM_IDLE_SECONDS=1200 \
 		VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS=60 \
 		./entrypoint.sh 2>/dev/null; then \
@@ -257,8 +252,7 @@ test-render: test-hash-ring test-version-routing
 		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
 		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
-		VERSIOND_ROUTER_SERVER_STATE="$$tmpdir/server-state" \
-	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
 		VERSIOND_PORT=invalid \
 		./entrypoint.sh 2>/dev/null; then \
 		fail "a non-numeric port was accepted"; \

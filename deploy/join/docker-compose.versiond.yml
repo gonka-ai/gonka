@@ -112,8 +112,10 @@ services:
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
       # Versions health-checked on each host individually. A host that cannot run
       # one of these leaves that version's pool and keeps serving the others.
-      # A version left out of this list still routes, on the coarser per-host check.
-      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS:-v4}
+      # An undeclared version is refused, and declaring one needs this container
+      # replaced — so the default declares a window ahead of governance. A pool
+      # for a version nobody runs yet has no members and costs nothing.
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS:-v4 v5 v6 v7 v8}
     depends_on:
       - versiond
       - versiond2

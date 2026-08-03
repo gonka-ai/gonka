@@ -38,7 +38,15 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 
 	for targetHostIndex := 0; targetHostIndex < 2; targetHostIndex++ {
 		t.Run(fmt.Sprintf("host_%d", targetHostIndex), func(t *testing.T) {
-			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true, nil)
+			env := bootVersiondRollingStack(t, "citest-versiond-rolling-*", true,
+				func(stack *harness.Stack, _ *config.File) {
+					// This suite pins traffic to one host by draining the other,
+					// and the legacy owner cannot be drained — its backend has a
+					// single server. Nothing here needs legacy pinning, so drop
+					// it and the legacy backend becomes unreachable and is left
+					// out of the drain entirely.
+					harness.PatchComposeEnvKey(t, stack.ComposePath, "VERSIOND_NON_HA_VERSIONS", `""`)
+				})
 			client := harness.GatewayChatClient()
 
 			delayMs := 750

@@ -125,26 +125,20 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
 
 ```console
-$ docker compose exec versiond-router gonka-reload v1 v2 v3 v4 v5 v6
-reloaded; declared versions: v1 v2 v3 v4 v5 v6
+$ docker compose up -d --force-recreate versiond-router
 ```
 
-`gonka-reload` re-renders the config, checks it, and signals HAProxy's
-master-worker reload. The listener is never closed and established streams stay
-on the old worker until they finish. Measured over 1200 requests at 92/s, a
-reload cost a single `503` — a window under about 10ms.
+There is no in-place way to declare a version: the backends are rendered from the
+environment when the container starts, so the environment has to change and the
+container has to be replaced. That replacement is not free — Compose does not
+start the new container until the old one has gone, and with `stop_signal:
+SIGUSR1` (HAProxy's soft stop, so carried streams finish rather than being cut)
+the old one lingers until its longest stream ends.
 
-Do **not** reach for the container instead. `docker compose restart` restarts the
-process with the environment the container was created with, so it would not see
-the new version at all; and `--force-recreate` refuses every new connection from
-the moment the old container is told to stop until it has finished its longest
-stream, which is minutes, up to `stop_grace_period`. The Compose files set
-`stop_signal: SIGUSR1` so that a replacement at least drains rather than cuts,
-but reloading in place is the tool for a config change.
-
-A version declared through `gonka-reload` lives until the container is replaced,
-so update `VERSIOND_VERSIONS` in the deployment as well — the same caveat as a
-runtime `add map`.
+**So declare the versions you expect before you need them.** A pool for a version
+nobody runs yet has no healthy members and costs nothing but its health checks;
+requests for it are refused either way, because no host can serve it. Declaring
+`v4 v5 v6 v7` up front turns a governance approval into step 2 alone.
 
 Doing it the other way round means `v6` requests are refused until step 1 lands.
 

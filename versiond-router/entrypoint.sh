@@ -26,7 +26,6 @@ TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
-SERVER_STATE_FILE="${VERSIOND_ROUTER_SERVER_STATE:-/var/lib/haproxy/server-state}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
 # Overridable so `make test-render` can render without a local HAProxy.
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
@@ -138,7 +137,9 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
             exit 1
             ;;
     esac
-    if awk -v v="$version" '$1 == v { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
+    # The comparison is forced to strings: awk would otherwise treat 1, 01 and
+    # 1.0 as the same version, and 1e2 as 100.
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
         echo "versiond-router: version '$version' is declared twice" >&2
         exit 1
     fi
@@ -173,7 +174,6 @@ sed \
     }" \
     -e "s|\${NON_HA_MAP}|$MAP|g" \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
-    -e "s|\${SERVER_STATE_FILE}|$SERVER_STATE_FILE|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
     -e "s|\${VERSIOND_POOL_HOST}|$POOL_HOST|g" \
     -e "s|\${VERSIOND_PORT}|$PORT|g" \
@@ -186,8 +186,6 @@ sed \
     -e "s|\${DEVSHARD_HA_HEADER}|$HA_HEADER|g" \
     "$TEMPLATE" > "$OUT"
 
-# The state file is written by gonka-reload just before it signals a reload. On a
-# cold start there is none, and HAProxy simply starts from health checks.
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null
 
 if [ -n "${VERSIOND_ROUTER_RENDER_ONLY:-}" ]; then

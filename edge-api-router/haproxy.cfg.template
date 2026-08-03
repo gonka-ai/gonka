@@ -57,7 +57,9 @@ backend edge_api_pool
 
     http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
 
-    server-template edgeapi ${POOL_SLOTS} ${EDGE_API_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none
+    # init-state fully-down: an instance joins only once a check has passed, not
+    # the moment DNS mentions it.
+    server-template edgeapi ${POOL_SLOTS} ${EDGE_API_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down
 
 frontend metrics
     bind 127.0.0.1:8405

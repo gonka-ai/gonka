@@ -1,4 +1,4 @@
-FROM haproxy:3.0-alpine
+FROM haproxy:3.2-alpine
 
 # Round-robin reverse-proxy in front of N edge-api instances. Membership from
 # DNS, health from active /readyz checks — no router-side state.

@@ -153,9 +153,11 @@ out | in)
     # Plan across every backend before touching any of them, remembering what to
     # put back if an apply fails part way through.
     plan=""
+    found_in=0
     for backend in $(backends); do
         found="$(find_server "$backend" "$addr")"
         [ -n "$found" ] || continue
+        found_in=$((found_in + 1))
         # shellcheck disable=SC2086
         set -- $found
         slot="$1"; op="$2"; admin="$3"
@@ -174,8 +176,15 @@ out | in)
         plan="$plan $backend/$slot=$was"
     done
 
+    if [ "$found_in" -eq 0 ]; then
+        echo "gonka-drain: '$target' ($addr) is in no backend HAProxy knows about" >&2
+        echo "  a host that has just entered DNS is not in the pool yet; reporting" >&2
+        echo "  success here would say it is quiesced when it is about to join" >&2
+        backends | sed 's/^/  /' >&2
+        exit 1
+    fi
     if [ -z "$plan" ]; then
-        echo "$target ($addr) is already $want everywhere it appears"
+        echo "$target ($addr) is already $want in all $found_in backend(s) it appears in"
         exit 0
     fi
 

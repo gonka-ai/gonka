@@ -47,4 +47,7 @@ backend ${BACKEND_NAME}
     # reshuffle which host sits where and re-home every session at once. Keying
     # on the address makes the ring depend on who is in the pool, not on the
     # order they were discovered in.
-    server-template versiond ${POOL_SLOTS} ${VERSIOND_POOL_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none hash-key addr
+    # init-state fully-down: a freshly resolved address is not assumed healthy.
+    # Without it a host entering DNS is selectable before its first check has
+    # run, which is a window straight onto a versiond that is still starting.
+    server-template versiond ${POOL_SLOTS} ${VERSIOND_POOL_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr

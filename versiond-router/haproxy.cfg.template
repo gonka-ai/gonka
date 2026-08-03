@@ -24,15 +24,10 @@ global
     # Admin socket only; no TCP bind, so it cannot be published by accident.
     stats socket /var/run/haproxy.sock mode 660 level admin
     stats timeout 30s
-    # Carried across a reload by gonka-reload. Without it a new worker re-probes
-    # every server from scratch and answers 503 until the checks rise, and any
-    # drain an operator had applied would silently come back into rotation.
-    server-state-file ${SERVER_STATE_FILE}
 
 defaults
     log     global
     mode    http
-    load-server-state-from-file global
     option  httplog
     option  dontlognull
     timeout connect ${CONNECT_TIMEOUT_SECONDS}s
@@ -123,7 +118,7 @@ backend versiond_legacy
     http-response set-header X-Upstream-Addr %[bc_dst]:%[bc_dst_port]
     http-response set-header X-Versiond-Backend versiond_legacy
 
-    server legacy ${VERSIOND_LEGACY_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none
+    server legacy ${VERSIOND_LEGACY_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down
 
 frontend metrics
     bind 127.0.0.1:8405
