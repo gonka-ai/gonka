@@ -1,0 +1,46 @@
+name: Join Postgres upgrade
+
+on:
+  pull_request:
+    paths:
+      - deploy/join/docker-compose.versiond.yml
+      - deploy/join/devshard-postgres-entrypoint.sh
+      - deploy/join/devshard-postgres-entrypoint_test.sh
+      - deploy/join/devshard-postgres-upgrade_test.sh
+      - deploy/join/testdata/postgres-v4.compose.yml
+      - deploy/join/testdata/postgres-v5.compose.yml
+      - .github/workflows/join-postgres-upgrade.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/join/docker-compose.versiond.yml
+      - deploy/join/devshard-postgres-entrypoint.sh
+      - deploy/join/devshard-postgres-entrypoint_test.sh
+      - deploy/join/devshard-postgres-upgrade_test.sh
+      - deploy/join/testdata/postgres-v4.compose.yml
+      - deploy/join/testdata/postgres-v5.compose.yml
+      - .github/workflows/join-postgres-upgrade.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test-upgrade:
+    name: Preserve v4 PostgreSQL data
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check deployment scripts
+        run: |
+          shellcheck \
+            deploy/join/devshard-postgres-entrypoint.sh \
+            deploy/join/devshard-postgres-entrypoint_test.sh \
+            deploy/join/devshard-postgres-upgrade_test.sh
+          deploy/join/devshard-postgres-entrypoint_test.sh
+
+      - name: Test in-place v4 migration and persistent restart
+        run: deploy/join/devshard-postgres-upgrade_test.sh

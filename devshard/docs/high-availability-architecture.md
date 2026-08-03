@@ -279,7 +279,12 @@ Therefore:
 
 Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
 `deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`
-for all versiond children.
+for all versiond children. The join overlay persists that database in the
+operator-visible `DEVSHARD_POSTGRES_DATA_DIR` bind directory. On the first
+in-place v5 start, its entrypoint atomically imports the anonymous Postgres
+volume used by v4. If that source was detached while versiond artifacts remain,
+startup fails instead of initializing an empty shared database (see
+[release-0.2.15-v5.md](./release-0.2.15-v5.md)).
 
 ---
 

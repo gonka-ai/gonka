@@ -68,6 +68,12 @@ services:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}
       POSTGRES_PASSWORD: ${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+      # Keep the image-declared /var/lib/postgresql/data volume mounted as the
+      # v4 migration source. New and migrated clusters live on the stable bind.
+      PGDATA: /var/lib/postgresql/gonka/data
+      DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: ${DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT:-false}
+    entrypoint: ["/usr/local/bin/gonka-postgres-entrypoint"]
+    command: ["postgres"]
     healthcheck:
       test:
         [
@@ -77,6 +83,22 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+      # A physical copy from an existing v4 cluster can take longer than normal
+      # database initialization. Successful checks still mark it healthy early.
+      start_period: ${DEVSHARD_POSTGRES_START_PERIOD:-30m}
+    volumes:
+      # The old image-owned anonymous volume remains at /var/lib/postgresql/data.
+      # Compose preserves it during an in-place `up`, and the entrypoint copies
+      # it atomically into this operator-visible bind on the first v5 start.
+      - ${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}:/var/lib/postgresql/gonka:Z
+      - ./devshard-postgres-entrypoint.sh:/usr/local/bin/gonka-postgres-entrypoint:ro,Z
+      # Existing v4 installations always have downloaded versiond artifacts.
+      # This read-only evidence prevents an accidental `down` from turning a
+      # detached anonymous database volume into a silently empty new cluster.
+      - ./devshards/bin:/var/lib/postgresql/gonka-existing-versiond:ro,z
+    # Give the old v4 server time to checkpoint before the migration entrypoint
+    # copies its stopped data directory. WAL recovery still handles a hard stop.
+    stop_grace_period: ${DEVSHARD_POSTGRES_STOP_GRACE_PERIOD:-5m}
     restart: always
 
   versiond:

@@ -59,14 +59,60 @@ survives a router restart. Moving onto the new router does re-home sessions once
 because the ring is not the one nginx computed; HA sessions recover from shared
 Postgres, so this costs a lookup rather than a session.
 
-**Upgrade order matters.** The new router expects hosts that serve `/readyz` and
-a pool alias in DNS, so bring the whole stack down and up rather than swapping the
-router under a running pool:
+### Automatic v4 PostgreSQL migration
+
+The v4 overlay left `devshard-postgres` on the anonymous
+`/var/lib/postgresql/data` volume declared by `postgres:16-alpine`. The v5
+overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
+(`./devshards/postgres` by default) and migrates an existing v4 cluster
+automatically.
+
+Upgrade in place from `deploy/join`:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+source ./config.env
+COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml)
+"${COMPOSE[@]}" pull
+"${COMPOSE[@]}" up -d
 ```
+
+Do not run `docker compose down` or use `up --renew-anon-volumes` before this
+first v5 `up`. During an in-place recreation, Compose carries the v4 anonymous
+volume into the replacement container. Before PostgreSQL starts, the shipped
+entrypoint copies the stopped cluster to a staging directory, validates
+`PG_VERSION`, syncs it, and atomically renames it to the new `PGDATA`. The old
+volume is not modified and remains the physical rollback copy. Later starts use
+the bind-mounted cluster directly, so ordinary `down` / `up` is then safe.
+
+This is fail-closed if an operator removed the old container first. When the old
+volume is no longer attached but existing versiond artifacts are present, the
+entrypoint refuses to initialize an empty database. It logs a direct recovery
+error instead of starting an apparently healthy node with lost HA state.
+`DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT=true` bypasses that guard only for an
+intentional new HA database; it is not a recovery mechanism.
+
+After startup, verify both the persistent mount and the database:
+
+```bash
+docker inspect devshard-postgres --format \
+  '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/gonka"}}{{.Type}} {{.Source}}{{end}}{{end}}'
+docker logs devshard-postgres 2>&1 | grep 'gonka-postgres-entrypoint'
+"${COMPOSE[@]}" exec -T devshard-postgres \
+  pg_isready -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
+  -d "${DEVSHARD_POSTGRES_DB:-devshardd}"
+"${COMPOSE[@]}" exec -T devshard-postgres \
+  psql -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
+  -d "${DEVSHARD_POSTGRES_DB:-devshardd}" -Atc \
+  "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public';"
+```
+
+The first command must report `bind` and the configured host directory. An
+upgraded v4 node also logs `v4 PostgreSQL migration completed`; a fresh node logs
+that it is initializing persistent `PGDATA`. Keep the old anonymous volume and a
+normal database backup through the rollback window. If the fail-closed guard
+reports a detached v4 volume, stop the stack and reattach or copy that volume
+into `DEVSHARD_POSTGRES_DATA_DIR` before retrying. Do not use the empty-init
+override to silence this condition.
 
 ### Graceful versiond shutdown (single-instance and HA)
 
@@ -229,14 +275,18 @@ host lands in that slot next.
 - [ ] Confirm every versiond in the HA overlay has
       `DEVSHARD_STORAGE_MODE=postgres` and a reachable `PGHOST` before enabling
       `GONKA_HA`
+- [ ] Perform the first v4-to-v5 cutover with in-place `docker compose up -d`,
+      not `down` or `up --renew-anon-volumes`; confirm the Postgres log reports a
+      completed automatic migration and retain the old volume through rollback
 - [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
       `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
       wait; short values can terminate accepted inference streams
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
-- [ ] Bring the stack down and up as a whole for the router change, rather than
-      recreating only the router
+- [ ] Reconcile the whole overlay with one `up -d` rather than replacing only
+      the router; the dependency order starts migrated Postgres first, and the
+      router health checks exclude versiond hosts until they report ready
 - [ ] After the stack is up, check the pool diagnostic lists every versiond as
       `UP`:
       `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status`
