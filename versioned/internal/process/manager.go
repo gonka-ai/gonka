@@ -1527,6 +1527,21 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 
 		m.mu.Lock()
+		// Never fork a process for a generation that has begun retiring.
+		// prepareChildrenForDrain can retire this generation at any point during
+		// the long preflight above, and transitionGenerationLocked deliberately
+		// tolerates the resulting stale transitions — so nothing downstream
+		// would object. The orphan would get no route, yet WaitChildrenIdle
+		// would still have to out-wait its startup on a port nobody is
+		// listening on: an evacuation stretched by a whole preflight and ready
+		// timeout for a child that exists only to be killed. The check runs
+		// under m.mu immediately before every start, restarts included.
+		if generationPhase(c.status) >= generationPhase(statusRetiring) {
+			slog.Info("child start suppressed; generation is already retiring",
+				"version", c.version.Name, "status", c.status)
+			m.mu.Unlock()
+			return
+		}
 		if c.status == statusFailed {
 			transitionGenerationLocked(c, statusStarting)
 		}

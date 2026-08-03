@@ -2813,3 +2813,64 @@ func TestReadyEndpointReadyReportsTheLegacyFallback(t *testing.T) {
 		t.Fatalf("fallback disallowed: ready=%v viaLegacy=%v, want false/false", ready, viaLegacy)
 	}
 }
+
+// prepareChildrenForDrain can retire a generation at any point during its long
+// preflight, and transitionGenerationLocked deliberately tolerates the stale
+// transitions that follow — so only an explicit check before the fork keeps
+// BeginHostDrain's contract that restarts are frozen. Without it the retired
+// generation still starts an OS process that no route will ever reach, and the
+// evacuation has to out-wait its startup for nothing.
+func TestRunChildDoesNotForkARetiredGeneration(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "forked")
+	bin := filepath.Join(dir, "child.sh")
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"--print-binary-version) echo test-1; exit 0 ;;\n" +
+		"--print-protocol-version) echo v4; exit 0 ;;\n" +
+		"--print-*) echo test-1; exit 0 ;;\n" +
+		"esac\n" +
+		"touch " + marker + "\n" +
+		"exec sleep 60\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BasePort:   5000,
+		DataDir:    t.TempDir(),
+		BinaryName: "testapp",
+		// Long enough that a forked child provably reaches its marker before
+		// the failed readiness wait force-stops it: with a zero timeout the
+		// SIGKILL races the shell to the touch, and the assertion below would
+		// pass even with the guard removed.
+		ReadyTimeout: 3 * time.Second,
+	})
+	c := &child{
+		version:     oracle.Version{Name: "v4"},
+		binPath:     bin,
+		port:        5001,
+		status:      statusRetiring,
+		done:        make(chan struct{}),
+		ready:       make(chan struct{}),
+		forceStopCh: make(chan struct{}),
+	}
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		m.runChild(context.Background(), c)
+	}()
+
+	select {
+	case <-finished:
+	case <-time.After(15 * time.Second):
+		t.Fatal("runChild did not return promptly for a retired generation")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a retired generation forked a child process after the drain freeze")
+	}
+}
