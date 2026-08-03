@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"decentralized-api/apiconfig"
@@ -86,6 +87,7 @@ type OnNewBlockDispatcher struct {
 	seedSubmissionMu   sync.Mutex
 	seedAttemptHeight  int64
 	seedConfirmedEpoch uint64
+	seedEnsureInFlight atomic.Bool
 }
 
 const seedRetryCooldownBlocks int64 = 2
@@ -413,7 +415,20 @@ func (d *OnNewBlockDispatcher) handlePhaseTransitions(ctx context.Context, epoch
 	}
 
 	if d.isSeedSubmissionWindow(epochContext, blockHeight) {
-		d.ensureSeedSubmitted(ctx, epochContext, blockHeight, d.nodeBroker.GetParticipantAddress())
+		participantAddress := d.nodeBroker.GetParticipantAddress()
+		// Best-effort across the PoC window, not a height-exact stage flip.
+		// Run async so ListRandomSeeds / GenerateSeedInfo cannot delay the
+		// QueueMessage transitions below (same pattern as RequestMoney).
+		// At most one ensure goroutine at a time — avoid per-block spawn pile-up.
+		if d.seedEnsureInFlight.CompareAndSwap(false, true) {
+			go func(epochContext types.EpochContext, blockHeight int64, participantAddress string) {
+				defer d.seedEnsureInFlight.Store(false)
+				// Bound the query/sign path so a hung RPC cannot pin inFlight forever.
+				seedCtx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+				defer cancel()
+				d.ensureSeedSubmitted(seedCtx, epochContext, blockHeight, participantAddress)
+			}(epochContext, blockHeight, participantAddress)
+		}
 	}
 
 	if epochContext.IsStartOfPocStage(blockHeight) {
