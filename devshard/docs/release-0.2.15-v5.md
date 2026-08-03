@@ -146,7 +146,11 @@ versions you expect ahead of time** and a governance approval needs step 2 only:
 a pool for a version nobody runs yet has no healthy members and costs nothing.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
-previous host-level behaviour. The join overlay declares `v4` through `v8`, so an
+previous host-level behaviour — and an HA deployment refuses to start that way,
+because the host-level check would keep routing a version whose child went
+unready wherever another version is still healthy
+(`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1` overrides, for stacks that cannot
+declare versions up front). The join overlay declares `v4` through `v8`, so an
 approval inside that window needs no router change; extend the list before
 governance moves past it.
 

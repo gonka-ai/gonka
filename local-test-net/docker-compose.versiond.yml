@@ -94,6 +94,9 @@ services:
       VERSIOND_NON_HA_VERSIONS: ${VERSIOND_NON_HA_VERSIONS:-}
       # Versions health-checked per host; unlisted ones use the per-host check.
       VERSIOND_VERSIONS: ${VERSIOND_VERSIONS:-}
+      # Test scenarios mint version names dynamically, so this stack cannot
+      # declare them up front and accepts the coarse per-host check instead.
+      VERSIOND_ROUTER_ALLOW_COARSE_READINESS: "1"
       GONKA_HA: ${GONKA_HA:-true}
     networks:
       - chain-public

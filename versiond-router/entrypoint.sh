@@ -156,6 +156,21 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
     render_pool_backend "$backend" "/readyz?version=$(urlencode "$version")" >> "$POOL_BACKENDS_FILE"
 done
 
+# An HA deployment must declare its versions. The host-level check the coarse
+# mode falls back to answers "can this host serve anything", so a host whose v5
+# child went unready keeps receiving v5 traffic as long as v4 is healthy —
+# hash-dependent failures the per-version pools exist to prevent. The override
+# names exactly what it accepts; test stacks with dynamic version names use it.
+if [ -n "${GONKA_HA:-}" ] && [ ! -s "$VERSIONS_MAP" ] \
+    && [ -z "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-}" ]; then
+    echo "versiond-router: GONKA_HA is set but VERSIOND_VERSIONS is empty." >&2
+    echo "  Without declared versions every version shares the host-level readiness" >&2
+    echo "  check, and a host with one unready version keeps receiving that version's" >&2
+    echo "  traffic. Declare the versions this deployment serves, or set" >&2
+    echo "  VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 to accept that behaviour." >&2
+    exit 1
+fi
+
 # Once any version is declared, a version that is not declared must not quietly
 # fall back to the host-level pool: that is the coarse check again, and it would
 # route to a host that may not run this version at all. Fail it here, where the

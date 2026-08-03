@@ -237,6 +237,25 @@ test-render: test-hash-ring test-version-routing
 		fail "unset GONKA_HA still advertises an HA deployment"; \
 	fi; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		GONKA_HA=true \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "an HA deployment with no declared versions was accepted"; \
+	fi; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+	GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/coarse.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/coarse.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/coarse.versions.map" \
+	./entrypoint.sh \
+		|| fail "the named coarse-readiness override was refused"; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \

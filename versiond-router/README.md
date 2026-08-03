@@ -143,9 +143,15 @@ requests for it are refused either way, because no host can serve it. Declaring
 Doing it the other way round means `v6` requests are refused until step 1 lands.
 
 Leaving `VERSIOND_VERSIONS` empty disables the whole mechanism: every version
-uses the host-level pool, exactly as before per-version pools existed. Versionless
-endpoints — `/healthz`, `/readyz`, `/metrics`, `/stats`, and the session
-observability routes — always use it and are never refused.
+uses the host-level pool, exactly as before per-version pools existed. In an HA
+deployment (`GONKA_HA` set) that is refused at startup — the host-level check
+answers "can this host serve *anything*", so a host whose `v5` child went unready
+would keep receiving `v5` traffic as long as `v4` is healthy, failing
+hash-dependently. A stack that genuinely cannot declare its versions up front
+(test environments minting names dynamically) opts in to exactly that with
+`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1`. Versionless endpoints — `/healthz`,
+`/readyz`, `/metrics`, `/stats`, and the session observability routes — always
+use the host-level pool and are never refused.
 
 Declared names are taken as governance wrote them. The one limit is that a name
 must be able to appear literally in a path segment: `/`, `?`, `#`, `%` and
@@ -178,8 +184,10 @@ requests while the host is still serving everything it already accepted.
 | `fall 1` | one failed check removes the host | it announced its own drain; do not wait for a second opinion |
 | `rise 2` | two passing checks restore it | do not flap a host back in on one lucky probe |
 
-A host that is up but still converging (downloading a new archive, restarting a
-child) reports `503` and simply does not receive traffic until it is ready.
+A host that has never converged reports `503` on the host-level check until it
+has run its full desired set. After that the latch holds: downloading a new
+archive does not retract readiness, and a version whose child is restarting drops
+out of *that version's* pool alone while the rest keep serving.
 
 ## Failure handling
 
@@ -276,7 +284,8 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `VERSIOND_PORT` | `8080` | upstream port |
 | `VERSIOND_LEGACY_HOST` | `VERSIOND_POOL_HOST` | single host owning pre-HA SQLite data dirs |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
-| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check; non-empty = undeclared versions are refused |
+| `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
+| `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic |
 | `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
