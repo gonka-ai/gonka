@@ -70,10 +70,9 @@ automatically.
 Upgrade in place from `deploy/join`:
 
 ```bash
-source ./config.env
-COMPOSE=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml)
-"${COMPOSE[@]}" pull
-"${COMPOSE[@]}" up -d
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml pull && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 ```
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
@@ -97,10 +96,14 @@ After startup, verify both the persistent mount and the database:
 docker inspect devshard-postgres --format \
   '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/gonka"}}{{.Type}} {{.Source}}{{end}}{{end}}'
 docker logs devshard-postgres 2>&1 | grep 'gonka-postgres-entrypoint'
-"${COMPOSE[@]}" exec -T devshard-postgres \
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  exec -T devshard-postgres \
   pg_isready -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
   -d "${DEVSHARD_POSTGRES_DB:-devshardd}"
-"${COMPOSE[@]}" exec -T devshard-postgres \
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  exec -T devshard-postgres \
   psql -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
   -d "${DEVSHARD_POSTGRES_DB:-devshardd}" -Atc \
   "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public';"
@@ -186,11 +189,18 @@ declared, a request for one that is not gets `503` from the router naming the
 setting to fix, instead of being sent to a host that may not run it. Approving a
 new version is therefore two-phase:
 
-1. add it to `VERSIOND_VERSIONS` and replace the router container
-   (`docker compose up -d --force-recreate versiond-router`; a plain `restart`
-   keeps the old environment) — it gains an empty pool, which changes nothing for
-   the versions already running;
-2. approve it in governance; each host joins that pool as it installs it.
+1. Add it to `VERSIOND_VERSIONS` and replace the router container from
+   `deploy/join`:
+
+   ```bash
+   source ./config.env && \
+   docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+     up -d --force-recreate versiond-router
+   ```
+
+   A plain `restart` keeps the old environment. Recreating it adds an empty pool,
+   which changes nothing for the versions already running.
+2. Approve it in governance; each host joins that pool as it installs it.
 
 Replacing the single shipped router service is a short maintenance operation:
 Compose will not start the new container until the old one exits. HAProxy uses a
@@ -245,18 +255,30 @@ node was previously serving HA traffic with unsafe storage.
 
 ## High-availability deployment
 
+Run these commands from `deploy/join`. Choose one complete Compose model and use
+the same set of `-f` arguments for later whole-stack operations:
+
 ```bash
+# HA versiond and shared PostgreSQL, with one edge-api.
+source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
-docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
+
+# HA versiond plus the optional multi-instance edge-api pool.
+source ./config.env && \
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.versiond.yml \
+  -f docker-compose.edge-api-multi.yml \
+  up -d
 ```
 
 Day-to-day operations:
 
 | Task | Command |
 | --- | --- |
-| Take a host out of service | `docker compose stop versiond2` |
-| Put it back / replace it | `docker compose up -d versiond2` |
-| Inspect the router's live view | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
+| Take a host out of service | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
+| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d versiond2` |
+| Inspect the router's live view | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
 
 Taking a host out of rotation is stopping it — there is no router-side drain,
 because HAProxy reuses server slots and a drain would be inherited by whichever
@@ -288,8 +310,7 @@ host lands in that slot next.
       the router; the dependency order starts migrated Postgres first, and the
       router health checks exclude versiond hosts until they report ready
 - [ ] After the stack is up, check the pool diagnostic lists every versiond as
-      `UP`:
-      `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status`
+      `UP` using the read-only `pool-status` command above
 
 ## Known follow-ups
 
