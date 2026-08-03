@@ -332,7 +332,7 @@ The implementation exposes these settings from
 | `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status cushion; exact non-devshard stop grace and lower bound for devshardd |
 | `DEVSHARD_SHUTDOWN_GRACE` | `10m` | `devshardd` HTTP shutdown budget after `SIGTERM` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | one absolute deadline for host admission drain, graceful child stop, and HTTP shutdown; expiry forces remaining work before reap |
-| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | how long versiond keeps serving after `/readyz` starts failing, so the balancer can react. Spends from the shutdown budget. `0` declares there is no balancer; a value below `2s` or at/above the budget refuses to boot |
+| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | how long versiond keeps serving after `/readyz` starts failing, so the balancer can react. Spends from the shutdown budget. `0` declares there is no balancer; a value below `5s` — the router can take ~4s to observe the failing check — or at/above the budget refuses to boot |
 
 versiond sets `DEVSHARD_ADMIN_ADDR` per child when `--print-admin-api-version`
 is supported. Operators normally do not set it by hand.

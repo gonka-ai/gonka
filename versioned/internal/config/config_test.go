@@ -131,9 +131,12 @@ func TestLoad_ZeroDurations(t *testing.T) {
 func TestLoad_DrainAnnounceBounds(t *testing.T) {
 	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
 
-	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "500ms")
-	if _, err := Load(); err == nil {
-		t.Fatal("an announce window the balancer can miss entirely was accepted")
+	for _, tooShort := range []string{"500ms", "2s", "4s"} {
+		t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "")
+		t.Setenv("VERSIOND_DRAIN_ANNOUNCE", tooShort)
+		if _, err := Load(); err == nil {
+			t.Fatalf("announce %s was accepted; the router needs ~4s to observe the failing check", tooShort)
+		}
 	}
 
 	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "10s")
@@ -235,5 +238,24 @@ func TestLoad_ForceVersionsDottedWithOverride(t *testing.T) {
 	}
 	if _, ok := cfg.Overrides["v0.2.11"]; !ok {
 		t.Fatal("forced version v0.2.11 should match override set via VERSIOND_OVERRIDE_v0_2_11")
+	}
+}
+
+// The floor is derived from the router's health-check settings, which live in a
+// config template no compiler connects to this package. Both sides name each
+// other — this test holds the numbers, the template comment points back here —
+// so changing either is a two-file change by construction.
+func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
+	const (
+		// versiond-router/pool-backend.cfg.template: check inter 1s
+		routerCheckInterval = time.Second
+		// versiond-router/haproxy.cfg.template: timeout check 3s
+		routerCheckTimeout = 3 * time.Second
+		margin             = time.Second
+	)
+	worstDetection := routerCheckTimeout + routerCheckInterval
+	if MinDrainAnnounce < worstDetection+margin {
+		t.Fatalf("MinDrainAnnounce=%s does not cover the router's worst-case detection %s plus %s margin",
+			MinDrainAnnounce, worstDetection, margin)
 	}
 }

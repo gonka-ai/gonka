@@ -44,6 +44,11 @@ defaults
     # host answering in just over a second reads as dead. /readyz here is a
     # memory read, so 3s of tolerance costs nothing; a host that cannot answer a
     # memory read in 3s is genuinely wedged.
+    #
+    # This value plus `inter` bounds how long the router can keep routing to a
+    # host that has begun announcing its drain. versiond's MinDrainAnnounce
+    # (versioned/internal/config/config.go, pinned by a test there) is derived
+    # from these two numbers — change one, change both.
     timeout check 3s
 
 resolvers docker

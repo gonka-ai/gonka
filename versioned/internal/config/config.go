@@ -172,10 +172,14 @@ func envOrDefault(key, fallback string) string {
 }
 
 // MinDrainAnnounce is the shortest announce window that guarantees the load
-// balancer observes the failing check: it probes /readyz every second, so a
-// shorter window can elapse entirely between two probes and the host would
-// close admission while still routed to.
-const MinDrainAnnounce = 2 * time.Second
+// balancer observes the failing check before admission closes. The router
+// (versiond-router/haproxy.cfg.template) probes with `inter 1s` and grants each
+// probe `timeout check 3s`, so the worst case is a probe answered "ready" just
+// before the flip that legally completes 3s later, plus 1s until the next probe
+// begins and fails: ~4s until the host is out of rotation, and one more second
+// of margin. A shorter window means versiond stops accepting while the router
+// still routes here, and the requests in between are refused.
+const MinDrainAnnounce = 5 * time.Second
 
 // validateDrainAnnounce accepts zero — the explicit "no balancer in front" —
 // but not a window too short for the balancer to see, nor one that swallows the
@@ -186,7 +190,7 @@ func validateDrainAnnounce(announce, budget time.Duration) error {
 	}
 	if announce < MinDrainAnnounce {
 		return fmt.Errorf(
-			"VERSIOND_DRAIN_ANNOUNCE=%s is below %s: the balancer checks once a second and could miss the whole window; use 0 to declare there is no balancer",
+			"VERSIOND_DRAIN_ANNOUNCE=%s is below %s: the balancer needs up to ~4s to observe the failing check (inter 1s, timeout check 3s), and a shorter window closes admission while traffic still arrives; use 0 to declare there is no balancer",
 			announce, MinDrainAnnounce)
 	}
 	if announce >= budget {
