@@ -1526,27 +1526,6 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		default:
 		}
 
-		m.mu.Lock()
-		// Never fork a process for a generation that has begun retiring.
-		// prepareChildrenForDrain can retire this generation at any point during
-		// the long preflight above, and transitionGenerationLocked deliberately
-		// tolerates the resulting stale transitions — so nothing downstream
-		// would object. The orphan would get no route, yet WaitChildrenIdle
-		// would still have to out-wait its startup on a port nobody is
-		// listening on: an evacuation stretched by a whole preflight and ready
-		// timeout for a child that exists only to be killed. The check runs
-		// under m.mu immediately before every start, restarts included.
-		if generationPhase(c.status) >= generationPhase(statusRetiring) {
-			slog.Info("child start suppressed; generation is already retiring",
-				"version", c.version.Name, "status", c.status)
-			m.mu.Unlock()
-			return
-		}
-		if c.status == statusFailed {
-			transitionGenerationLocked(c, statusStarting)
-		}
-		m.mu.Unlock()
-
 		cmd := exec.Command(c.binPath,
 			"--data-dir", dataDir,
 			"--port", fmt.Sprintf("%d", c.port),
@@ -1556,9 +1535,38 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		cmd.Stderr = os.Stderr
 
 		lastStart = time.Now()
-		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 
+		// The fork is linearised with the drain barrier: the guard and
+		// cmd.Start happen under the same m.mu that BeginHostDrain and
+		// prepareChildrenForDrain take, so only two orders exist — the process
+		// starts before the barrier and the drain sees and stops it, or the
+		// barrier is up first and the process never starts. A guard that
+		// released the lock before forking would only narrow the window:
+		// retirement could land between the check and cmd.Start.
+		//
+		// Both halves of the barrier matter. BeginHostDrain sets hostDraining
+		// long before RequestChildrenDrain retires the generations, and a child
+		// finishing its preflight during the announce window sits in `starting`
+		// — still legal by phase, already frozen by contract. The orphan would
+		// get no route, yet WaitChildrenIdle would out-wait its startup on a
+		// port nobody listens on: an evacuation stretched by a whole preflight
+		// and ready timeout for a child that exists only to be killed.
+		// startSupervisedProcess is fork/exec plus watcher goroutines; it does
+		// no child I/O, so holding m.mu across it does not violate the
+		// no-network-under-mutex rule.
+		m.mu.Lock()
+		if m.hostDraining || generationPhase(c.status) >= generationPhase(statusRetiring) {
+			slog.Info("child start suppressed; the host is draining or the generation retired",
+				"version", c.version.Name, "status", c.status, "host_draining", m.hostDraining)
+			m.mu.Unlock()
+			return
+		}
+		if c.status == statusFailed {
+			transitionGenerationLocked(c, statusStarting)
+		}
+		slog.Info("starting child", "version", c.version.Name, "port", c.port, "admin_addr", adminAddr, "sha256", c.archiveSHA256)
 		proc, err := startSupervisedProcess(cmd, ctx.Done(), c.forceStopCh, m.childStopTimeout())
+		m.mu.Unlock()
 		if err != nil {
 			slog.Error("child start failed", "version", c.version.Name, "error", err)
 			m.mu.Lock()

@@ -2874,3 +2874,66 @@ func TestRunChildDoesNotForkARetiredGeneration(t *testing.T) {
 		t.Fatal("a retired generation forked a child process after the drain freeze")
 	}
 }
+
+// BeginHostDrain freezes restarts long before RequestChildrenDrain retires the
+// generations. A child that finishes its preflight inside that gap — the
+// announce window, the proxy-lease wait — is still `starting` by phase, so the
+// phase half of the guard alone would let it fork after the barrier. The
+// hostDraining half must stop it.
+func TestRunChildDoesNotForkAfterBeginHostDrain(t *testing.T) {
+	dir := t.TempDir()
+	marker := filepath.Join(dir, "forked")
+	bin := filepath.Join(dir, "child.sh")
+	// The probes sleep, so the preflight is a wide, reliable window in which the
+	// test can raise the drain barrier.
+	script := "#!/bin/sh\n" +
+		"case \"$1\" in\n" +
+		"--print-binary-version) sleep 1; echo test-1; exit 0 ;;\n" +
+		"--print-protocol-version) sleep 1; echo v4; exit 0 ;;\n" +
+		"--print-*) echo test-1; exit 0 ;;\n" +
+		"esac\n" +
+		"touch " + marker + "\n" +
+		"exec sleep 60\n"
+	if err := os.WriteFile(bin, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	m := NewManager(config.Config{
+		BasePort:     5000,
+		DataDir:      t.TempDir(),
+		BinaryName:   "testapp",
+		ReadyTimeout: 3 * time.Second,
+	})
+	c := &child{
+		version:     oracle.Version{Name: "v4"},
+		binPath:     bin,
+		port:        5001,
+		status:      statusStarting,
+		done:        make(chan struct{}),
+		ready:       make(chan struct{}),
+		forceStopCh: make(chan struct{}),
+	}
+	m.mu.Lock()
+	m.children[c] = struct{}{}
+	m.mu.Unlock()
+
+	finished := make(chan struct{})
+	go func() {
+		defer close(finished)
+		m.runChild(context.Background(), c)
+	}()
+
+	// Land inside the sleeping preflight, exactly where an evacuation's
+	// announce window would find this child.
+	time.Sleep(300 * time.Millisecond)
+	m.BeginHostDrain()
+
+	select {
+	case <-finished:
+	case <-time.After(15 * time.Second):
+		t.Fatal("runChild did not return after the drain barrier")
+	}
+	if _, err := os.Stat(marker); err == nil {
+		t.Fatal("a child forked after BeginHostDrain froze restarts")
+	}
+}
