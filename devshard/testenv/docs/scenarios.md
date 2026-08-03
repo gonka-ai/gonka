@@ -14,7 +14,7 @@ versiond-router, devshardctl, Postgres) and asserts production-like behaviour en
 | **mock-dapi** | NodeManager gRPC (`GetRuntimeConfig` long-poll), chainoracle HTTP, fault proxy |
 | **mock-openai** | OpenAI-compatible ML upstream for devshardd after `AcquireMLNode` |
 | **versiond-0 / versiond-1** | Supervise linux **devshardd** child (protocol `v2`); both load the **same** `KEY_NAME` (HA participant `hosts[0]`) |
-| **versiond-router** | Sticky nginx (`consistent_hash` on session id) |
+| **versiond-router** | Sticky HAProxy (consistent hash on session id, per-version health-checked pools) |
 | **devshardctl** | Gateway (`/v1/chat/completions`, `/v1/status`) |
 | **devshard-postgres** | Shared payload store (required for 2× versiond) |
 
@@ -130,7 +130,7 @@ versiond across repeated requests, and at least two distinct upstreams are reach
 
 1. Boot the standard stack; wait for router `/healthz`.
 2. Hit `/{version}/sessions/{sessionA}/healthz` **8 times**; read `X-Upstream-Addr` header
-   (exposed by router nginx template).
+   (set by the router on every response).
 3. Assert every retry returns the **same** upstream address.
 4. Probe up to 64 other session ids until one lands on a **different** upstream.
 
@@ -231,32 +231,35 @@ Tests: `TestVersiondRollingUpdateSameVersionSHA` and
 
 ## Versiond host evacuation
 
-**What we test:** Router-controlled evacuation removes a versiond host from new
-traffic without terminating its established SSE stream. The operation remains
-recoverable across an interrupted CLI process, stops versiond after idle, keeps
-a replacement out of admission until full convergence, and supports permanent
-decommission followed by a guarded add.
+**What we test:** Stopping a versiond container is the whole evacuation: the
+router withdraws the host before it stops accepting, its established SSE stream
+finishes, the session recovers on the survivor, and the host rejoins the pool
+only once it reports ready. There is no control plane in the loop — membership
+is DNS, health is the per-version `/readyz` checks, and the only operator
+actions are `docker compose stop` and `start`.
 
 **How:**
 
 1. Boot the downloadable-binary stack with both versiond hosts in the router
-   pool and pin an escrow to one host.
-2. Start and pause an SSE response on that host.
-3. Interrupt a checkpointed evacuation, cancel it, and require router admission
-   to return to the original host.
-4. Start another evacuation, interrupt it after router drain, and resume it from
-   the durable hostctl journal.
-5. Require new requests to use the survivor while the old host reports proxy
-   inflight and remains alive.
-6. Release the SSE stream, require `[DONE]`, and require graceful versiond exit.
-7. Replace the host and require it to become active only after `/ready`
-   reports complete convergence.
-8. Decommission the host and require its DNS name to disappear from nginx.
-9. Add the stopped service back through `joining`, `/ready`, and `active`.
+   pool; verify a router restart does not re-home the pinned escrow.
+2. Start and pause an SSE response through the host that owns the escrow.
+3. `docker compose stop` that host; require the router to mark it DOWN in the
+   version's pool — and new requests to avoid it — while the host is still
+   alive and serving the paused stream, and a continuity probe sees no failure.
+4. Require the same escrow to be served by the survivor from shared Postgres.
+5. Release the SSE stream, require `[DONE]`, and require graceful versiond exit
+   within the shutdown budget.
+6. Require the stopped host to vanish from the router's pool entirely — a
+   decommission is nothing more than not starting it again.
+7. Start the host behind a readiness barrier (an oracle that refuses
+   connections): it must appear in DNS yet stay out of rotation, and
+   `/readyz?version=` must refuse, while the survivor keeps serving.
+8. Lift the barrier; require the host to rejoin and consistent hashing to
+   return the escrow to it.
 
-**Pass criteria:** Established work completes, new work avoids the draining
-host, interrupted operations resume safely, removed hosts disappear from the
-pool, and replacement/addition serves the same escrow only after it is ready.
+**Pass criteria:** Established work completes, no request fails while the host
+leaves, the survivor serves the escrow, and the returned host takes traffic
+only after its per-version readiness is green.
 
 Test: `TestVersiondHostEvacuation`.
 
@@ -365,8 +368,8 @@ recovery with the same gateway session).
 
 ### Versiond sticky-session failover
 
-**What we test:** Behaviour when a **sticky upstream versiond is stopped** — nginx
-reroutes on the first upstream **502** / connect failure (`proxy_next_upstream`) to a
+**What we test:** Behaviour when a **sticky upstream versiond is stopped** — the
+router reroutes on connect failure (`retry-on conn-failure`, redispatch) to a
 surviving peer; sessions already hashed to a live upstream keep working.
 
 **Test:** `TestVersiondStickySessionFailover` (`citest/versiond_failover_test.go`)

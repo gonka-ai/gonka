@@ -56,7 +56,7 @@ Skeleton: [`config/config.yaml`](config/config.yaml).
 |---------|---------|
 | `mock_chain`, `mock_dapi`, `mock_openai` | Mock services (ports, hosts) |
 | `versiond` | Protocol `version_name` (`v2`), `binary_version`, `mode` (`single` \| `multi`), devshardd override path, keyring |
-| `versiond_router` | Sticky nginx router (`:8080`) |
+| `versiond_router` | Sticky HAProxy router (`:8080`) |
 | `devshardctl` | Gateway listen port |
 | `postgres` | Shared Postgres — **required** for `versiond.mode: multi`; **off** for `single` (file payload fallback) |
 | `hosts` | One **versiond** + **devshardd** slot per entry (`id`, keys, IP) |
