@@ -64,6 +64,7 @@ throughput fell by 42%.
 
 ## Image and driver requirements
 
+- Use `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`.
 - Use the Gonka vLLM 0.25.1 build containing the current PoC replay support.
   Do not set the removed `VLLM_USE_V1` switch or pin
   `VLLM_USE_V2_MODEL_RUNNER=0`.
@@ -89,8 +90,8 @@ stale checkpoint was easier to detect, but one threshold cannot cover both.
 
 Before enabling the release model on chain:
 
-1. Publish and pin the Gonka MLNode image digest, then verify the vLLM,
-   gonka-poc, CUDA, driver, `libnvrtc.so`, model ID, and revision inside it.
+1. Verify the pinned image's vLLM, gonka-poc, CUDA, driver, `libnvrtc.so`,
+   model ID, and revision before activation.
 2. Run cold start, `/health`, `/metrics`, inference, PoC generation, and PoC
    validation on every advertised card profile.
 3. Reproduce the nonce/min rows with 5-second warmup and 30-second steady
