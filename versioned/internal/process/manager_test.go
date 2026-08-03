@@ -1665,6 +1665,97 @@ func TestDrainAfterProxyWaitsBeforeRequestingChildDrain(t *testing.T) {
 	}
 }
 
+func TestStopStartWithdrawsRouteAndWaitsForProxyLease(t *testing.T) {
+	requestStarted := make(chan struct{})
+	releaseRequest := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() { releaseOnce.Do(func() { close(releaseRequest) }) }
+	backend := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		close(requestStarted)
+		<-releaseRequest
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(func() {
+		release()
+		backend.Close()
+	})
+
+	m := NewManager(config.Config{
+		BasePort:     5000,
+		DrainTimeout: time.Second,
+	})
+	childDone := make(chan struct{})
+	stopCalled := make(chan struct{})
+	var stopOnce sync.Once
+	c := &child{
+		version:     oracle.Version{Name: "v1"},
+		port:        9001,
+		done:        childDone,
+		status:      statusRunning,
+		restart:     true,
+		proxyTarget: proxy.NewTarget(strings.TrimPrefix(backend.URL, "http://")),
+		stop: func() {
+			stopOnce.Do(func() {
+				close(stopCalled)
+				close(childDone)
+			})
+		},
+	}
+	m.mu.Lock()
+	m.processes["v1"] = c
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	proxyServer := httptest.NewServer(proxy.Handler(m.RouteTable()))
+	defer proxyServer.Close()
+	requestDone := make(chan error, 1)
+	go func() {
+		resp, err := http.Get(proxyServer.URL + "/v1/work")
+		if resp != nil {
+			_ = resp.Body.Close()
+		}
+		requestDone <- err
+	}()
+	select {
+	case <-requestStarted:
+	case <-time.After(time.Second):
+		t.Fatal("proxy request did not acquire the old target")
+	}
+
+	m.mu.Lock()
+	proxyDrained, retired := m.retireChildForStopStartLocked(c)
+	m.mu.Unlock()
+	if !retired {
+		t.Fatal("current child was not retired")
+	}
+	if _, routed := m.RouteTable().Load().(proxy.RouteTable)["v1"]; routed {
+		t.Fatal("retired child remained published in the route table")
+	}
+
+	stopDone := make(chan error, 1)
+	go func() {
+		stopDone <- m.stopRetiredChild(context.Background(), c, proxyDrained)
+	}()
+	select {
+	case <-stopCalled:
+		t.Fatal("child stopped while an acquired proxy request was still running")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	release()
+	if err := <-requestDone; err != nil {
+		t.Fatal(err)
+	}
+	if err := <-stopDone; err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopCalled:
+	case <-time.After(time.Second):
+		t.Fatal("child was not stopped after its proxy lease drained")
+	}
+}
+
 func TestReconcile_RemovedLegacyVersionUsesDrainGraceBeforeCancel(t *testing.T) {
 	dir := t.TempDir()
 	port, shutdown := startLocalHTTPServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

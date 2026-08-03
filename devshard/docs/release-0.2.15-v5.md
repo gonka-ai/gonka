@@ -87,6 +87,13 @@ The join Compose defaults are:
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
 | `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
 
+Before upgrading, audit custom versiond duration values. Duration settings now
+use Go duration syntax and fail startup on malformed or non-positive values
+instead of silently falling back to defaults. Use values with units such as
+`15m` or `1s`; bare numbers and `VERSIOND_DRAIN_TIMEOUT=0` are invalid. Only
+`VERSIOND_DRAIN_ANNOUNCE=0` is accepted, where it explicitly declares that no
+balancer announcement window is needed.
+
 These are maximum waits, not fixed delays: an idle versiond exits shortly after
 the announce window. A busy or stuck node may make a routine Compose stop wait
 longer than the old Docker default of roughly 10 seconds. Keep

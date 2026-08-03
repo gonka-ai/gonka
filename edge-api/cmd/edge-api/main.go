@@ -146,17 +146,43 @@ func gracefulShutdown(srv drainableServer, budget time.Duration, force <-chan os
 		}
 		reason = shutdownFailure(budget, err)
 	case <-ctx.Done():
-		reason = fmt.Errorf("shutdown budget %s expired", budget)
+		if err, completed := completedShutdown(done); completed {
+			if err == nil {
+				return nil
+			}
+			reason = shutdownFailure(budget, err)
+		} else {
+			reason = fmt.Errorf("shutdown budget %s expired", budget)
+		}
 	case sig := <-force:
-		reason = fmt.Errorf("operator sent %s during shutdown", sig)
-		// Stop the still-running Shutdown from holding the budget open.
-		cancel()
+		if err, completed := completedShutdown(done); completed {
+			if err == nil {
+				return nil
+			}
+			reason = shutdownFailure(budget, err)
+		} else {
+			reason = fmt.Errorf("operator sent %s during shutdown", sig)
+			// Stop the still-running Shutdown from holding the budget open.
+			cancel()
+		}
 	}
 	slog.Warn("closing remaining connections", "reason", reason)
 	if err := srv.ForceClose(); err != nil {
 		return errors.Join(reason, err)
 	}
 	return reason
+}
+
+// completedShutdown resolves the select race where Shutdown and an escalation
+// become ready together. Once Shutdown has produced its result, a queued signal
+// or deadline must not turn a clean process exit into a forced failure.
+func completedShutdown(done <-chan error) (error, bool) {
+	select {
+	case err := <-done:
+		return err, true
+	default:
+		return nil, false
+	}
 }
 
 // shutdownFailure keeps the real cause: Shutdown reports a closed listener the

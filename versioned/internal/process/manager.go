@@ -585,7 +585,8 @@ func (m *Manager) reconcile(ctx context.Context, desired []oracle.Version) (int,
 		}
 	}
 
-	// Zero-downtime swaps -- download THEN stop old process.
+	// Download first, then overlap generations where their storage permits it;
+	// otherwise the stop/start path withdraws the old route before stopping it.
 	for _, a := range toSwap {
 		if err := m.downloadAndSwap(ctx, a.version, a.sha256, a.child); err != nil {
 			slog.Error("swap failed, keeping old version", "version", a.version.Name, "error", err)
@@ -658,16 +659,21 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		}
 	}
 	if isRunning {
-		// Override source changed: stop old, copy new, start.
 		m.mu.Lock()
 		if m.hostDraining {
 			m.mu.Unlock()
 			return ErrHostDraining
 		}
+		proxyDrained, retired := m.retireChildForStopStartLocked(existing)
 		m.mu.Unlock()
+		if !retired {
+			return nil
+		}
+
+		// Override source changed: withdraw the route, let requests that already
+		// own its target lease finish, then stop, copy and start.
 		slog.Info("override binary changed, restarting", "version", v.Name)
-		existing.Stop()
-		if err := waitForChildContext(ctx, existing); err != nil {
+		if err := m.stopRetiredChild(ctx, existing, proxyDrained); err != nil {
 			return err
 		}
 	}
@@ -691,20 +697,7 @@ func (m *Manager) reconcileOverride(ctx context.Context, v oracle.Version, overr
 		m.mu.Unlock()
 		return ErrHostDraining
 	}
-	// Verify the process is still the one we captured before deleting.
-	// A concurrent reconcile could have replaced it.
-	if isRunning {
-		if current, ok := m.processes[v.Name]; ok {
-			if current != existing {
-				m.mu.Unlock()
-				return nil
-			}
-			delete(m.processes, v.Name)
-		} else if m.versionStartBlockedLocked(v.Name) {
-			m.mu.Unlock()
-			return nil
-		}
-	} else if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+	if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
 		m.mu.Unlock()
 		return nil
 	}
@@ -904,8 +897,9 @@ func (m *Manager) downloadAndStart(ctx context.Context, v oracle.Version, sha st
 	return nil
 }
 
-// downloadAndSwap downloads the new binary, starts it on a fresh port, swaps the
-// route after readiness, and drains the old child out of band.
+// downloadAndSwap downloads the new binary. Shared-storage generations overlap:
+// the replacement starts on a fresh port before the route swap. Other storage
+// modes withdraw and drain the old route before a stop/start replacement.
 func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha string, old *child) error {
 	dlErr := m.downloadBinary(ctx, v, sha)
 	if dlErr != nil || ctx.Err() != nil {
@@ -928,17 +922,40 @@ func (m *Manager) downloadAndSwap(ctx context.Context, v oracle.Version, sha str
 	m.mu.Unlock()
 	if !m.rollingOverlapAllowedContext(ctx, v.Name, old, newBinPath) {
 		slog.Warn("rolling overlap disabled without shared storage; falling back to stop/start swap", "version", v.Name)
-		old.Stop()
-		if err := waitForChildContext(ctx, old); err != nil {
+		m.mu.Lock()
+		if m.hostDraining {
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return ErrHostDraining
+		}
+		proxyDrained, retired := m.retireChildForStopStartLocked(old)
+		m.mu.Unlock()
+		if !retired {
+			m.mu.Lock()
+			delete(m.downloading, v.Name)
+			m.mu.Unlock()
+			return fmt.Errorf("current child changed before stop/start swap")
+		}
+		if err := m.stopRetiredChild(ctx, old, proxyDrained); err != nil {
 			m.mu.Lock()
 			delete(m.downloading, v.Name)
 			m.mu.Unlock()
 			return err
 		}
+
 		m.mu.Lock()
 		delete(m.downloading, v.Name)
-		if current, ok := m.processes[v.Name]; ok && current == old {
-			delete(m.processes, v.Name)
+		if m.hostDraining {
+			m.mu.Unlock()
+			return ErrHostDraining
+		}
+		if err := ctx.Err(); err != nil {
+			m.mu.Unlock()
+			return err
+		}
+		if _, running := m.processes[v.Name]; running || m.versionStartBlockedLocked(v.Name) {
+			m.mu.Unlock()
+			return fmt.Errorf("version %s became active while stop/start swap was draining", v.Name)
 		}
 		startErr := m.startChild(ctx, v, sha, newBinPath, true)
 		m.mu.Unlock()
@@ -2048,6 +2065,63 @@ func retireProxyTarget(c *child) <-chan struct{} {
 	drained := make(chan struct{})
 	close(drained)
 	return drained
+}
+
+// retireChildForStopStartLocked atomically withdraws one expected generation
+// before a replacement that cannot overlap it. New proxy requests immediately
+// reload a route table without this target; requests that already acquired it
+// remain counted by the returned lease channel. Manager.mu must be held.
+func (m *Manager) retireChildForStopStartLocked(c *child) (<-chan struct{}, bool) {
+	current, ok := m.processes[c.version.Name]
+	if !ok || current != c {
+		return nil, false
+	}
+	transitionGenerationLocked(c, statusRetiring)
+	c.restart = false
+	delete(m.processes, c.version.Name)
+	m.appendDrainingLocked(c)
+	m.rebuildRoutes()
+	return retireProxyTarget(c), true
+}
+
+// stopRetiredChild waits only for requests already admitted by versiond. The
+// configured timeout remains the safety boundary; after it, the child's own
+// graceful shutdown is the final chance for an unusually long request.
+func (m *Manager) stopRetiredChild(
+	ctx context.Context,
+	c *child,
+	proxyDrained <-chan struct{},
+) error {
+	timer := time.NewTimer(m.cfg.DrainTimeout)
+	defer timer.Stop()
+	select {
+	case <-c.done:
+		m.mu.Lock()
+		m.removeDrainingLocked(c)
+		m.mu.Unlock()
+		return nil
+	case <-proxyDrained:
+		slog.Info("proxy requests drained before stop/start", "version", c.version.Name, "port", c.port)
+	case <-ctx.Done():
+		go m.drainAfterProxy(c, proxyDrained)
+		return ctx.Err()
+	case <-timer.C:
+		slog.Warn("proxy drain timeout reached before stop/start", "version", c.version.Name, "port", c.port)
+	}
+
+	m.mu.Lock()
+	transitionGenerationLocked(c, statusStopping)
+	m.mu.Unlock()
+	c.Stop()
+	if err := waitForChildContext(ctx, c); err != nil {
+		return err
+	}
+	// Production runChild removes this entry before closing done. Keeping this
+	// idempotent cleanup here also makes the helper's lifecycle contract explicit.
+	m.mu.Lock()
+	m.removeDrainingLocked(c)
+	m.mu.Unlock()
+	return nil
 }
 
 func (m *Manager) fetchInflight(ctx context.Context, c *child) (int64, error) {

@@ -133,7 +133,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone, shutdownDeadline)
+	return shutdownHost(srv, mgr, hostLifecycle, force, pollDone, shutdownDeadline)
 }
 
 func runPollLoop(
@@ -205,6 +205,9 @@ func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, f
 	for {
 		select {
 		case sig := <-signals:
+			if channelClosed(shutdownDone) {
+				return
+			}
 			if !shouldForceShutdown(sig) {
 				slog.Warn("duplicate SIGTERM ignored while host is draining")
 				continue
@@ -235,7 +238,6 @@ type hostHTTPServer interface {
 }
 
 func shutdownHost(
-	cfg config.Config,
 	srv hostHTTPServer,
 	mgr hostShutdownManager,
 	hostLifecycle *host.Controller,
@@ -493,6 +495,9 @@ func watchShutdownEscalation(
 	go func() {
 		select {
 		case <-ctx.Done():
+			if channelClosed(done) {
+				return
+			}
 			slog.Warn(
 				"host shutdown escalation requested",
 				"reason", ctx.Err(),
@@ -506,6 +511,15 @@ func watchShutdownEscalation(
 	var once sync.Once
 	return func() {
 		once.Do(func() { close(done) })
+	}
+}
+
+func channelClosed(done <-chan struct{}) bool {
+	select {
+	case <-done:
+		return true
+	default:
+		return false
 	}
 }
 

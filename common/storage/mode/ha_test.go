@@ -7,28 +7,52 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestHasDevshardHAHeader(t *testing.T) {
-	require.False(t, HasDevshardHAHeader(nil))
-	require.False(t, HasDevshardHAHeader(http.Header{}))
+func TestParseDevshardHAHeader(t *testing.T) {
+	ha, err := ParseDevshardHAHeader(nil)
+	require.NoError(t, err)
+	require.False(t, ha)
+	ha, err = ParseDevshardHAHeader(http.Header{})
+	require.NoError(t, err)
+	require.False(t, ha)
 
 	h := http.Header{}
 	h.Set(HeaderDevshardHA, "true")
-	require.True(t, HasDevshardHAHeader(h))
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha)
 
 	h.Set(HeaderDevshardHA, "TRUE")
-	require.True(t, HasDevshardHAHeader(h))
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha)
 
 	h.Set(HeaderDevshardHA, "1")
-	require.True(t, HasDevshardHAHeader(h))
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha)
 
 	h.Set(HeaderDevshardHA, "yes")
-	require.True(t, HasDevshardHAHeader(h))
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha)
 
 	h.Set(HeaderDevshardHA, "")
-	require.True(t, HasDevshardHAHeader(h), "present empty value counts as HA mark")
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.True(t, ha, "present empty value counts as HA mark")
 
 	h.Set(HeaderDevshardHA, "false")
-	require.False(t, HasDevshardHAHeader(h))
+	ha, err = ParseDevshardHAHeader(h)
+	require.NoError(t, err)
+	require.False(t, ha)
+
+	h.Set(HeaderDevshardHA, "typo")
+	_, err = ParseDevshardHAHeader(h)
+	require.Error(t, err)
+
+	h[HeaderDevshardHA] = []string{"true", "false"}
+	_, err = ParseDevshardHAHeader(h)
+	require.Error(t, err)
 }
 
 func TestConfiguredForHA(t *testing.T) {

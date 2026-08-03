@@ -12,19 +12,34 @@ import (
 // declares itself HA.
 const HeaderDevshardHA = "Devshard-Ha"
 
-// HasDevshardHAHeader reports whether the request was marked as multi-instance HA
-// by the router. Accepts value "true" / "1" / "yes" (case-insensitive) or an
-// empty value when the header is present.
-func HasDevshardHAHeader(h http.Header) bool {
+// ParseDevshardHAHeader reports whether the request was marked as
+// multi-instance HA by the router. Absence means non-HA. A present malformed or
+// repeated value is an error so a typo cannot silently disable the storage
+// guard.
+func ParseDevshardHAHeader(h http.Header) (bool, error) {
 	if h == nil {
-		return false
+		return false, nil
 	}
-	vals, ok := h[http.CanonicalHeaderKey(HeaderDevshardHA)]
-	if !ok || len(vals) == 0 {
-		return false
+	vals := h.Values(HeaderDevshardHA)
+	if len(vals) == 0 {
+		return false, nil
 	}
-	v := strings.TrimSpace(strings.ToLower(vals[0]))
-	return v == "" || v == "true" || v == "1" || v == "yes"
+	if len(vals) != 1 {
+		return false, fmt.Errorf("%s must have exactly one value", HeaderDevshardHA)
+	}
+	raw := vals[0]
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "", "1", "true", "yes":
+		return true, nil
+	case "0", "false", "no":
+		return false, nil
+	default:
+		return false, fmt.Errorf(
+			"%s=%q is not a boolean; use 1/true/yes or 0/false/no",
+			HeaderDevshardHA,
+			raw,
+		)
+	}
 }
 
 // ConfiguredForHA reports whether process env is explicitly fail-closed Postgres

@@ -91,7 +91,6 @@ func TestShutdownHostCompletesLifecycle(t *testing.T) {
 	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostShutdownBudget: time.Second},
 		server.Config,
 		mgr,
 		hostLifecycle,
@@ -121,7 +120,6 @@ func TestShutdownHostHonorsForceSignal(t *testing.T) {
 	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostShutdownBudget: time.Hour},
 		server.Config,
 		mgr,
 		hostLifecycle,
@@ -178,7 +176,6 @@ func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
 	started := time.Now()
 
 	if err := shutdownHost(
-		config.Config{HostShutdownBudget: budget},
 		server.Config,
 		mgr,
 		hostLifecycle,
@@ -221,7 +218,6 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- shutdownHost(
-			config.Config{HostShutdownBudget: 3 * time.Second},
 			server.Config,
 			mgr,
 			hostLifecycle,
@@ -275,7 +271,6 @@ func TestShutdownHostForceDoesNotWaitForPollWorker(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- shutdownHost(
-			config.Config{HostShutdownBudget: time.Hour},
 			server.Config,
 			mgr,
 			hostLifecycle,
@@ -412,7 +407,6 @@ func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 	result := make(chan error, 1)
 	go func() {
 		result <- shutdownHost(
-			config.Config{HostShutdownBudget: time.Second},
 			server.Config,
 			mgr,
 			hostLifecycle,
@@ -488,7 +482,6 @@ func TestShutdownHostHonoursTheDeadlineNotTheBudget(t *testing.T) {
 	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostShutdownBudget: time.Hour},
 		server.Config,
 		mgr,
 		hostLifecycle,
@@ -533,7 +526,6 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 	close(pollDone)
 
 	if err := shutdownHost(
-		config.Config{HostShutdownBudget: 30 * time.Millisecond},
 		server.Config,
 		mgr,
 		hostLifecycle,
@@ -741,6 +733,41 @@ func TestWatchForceSignalsForcesOnSIGINT(t *testing.T) {
 	case <-force:
 	case <-time.After(time.Second):
 		t.Fatal("SIGINT did not force host shutdown")
+	}
+}
+
+func TestWatchForceSignalsPrefersCompletedShutdown(t *testing.T) {
+	signals := make(chan os.Signal, 1)
+	signals <- syscall.SIGINT
+	shutdownDone := make(chan struct{})
+	close(shutdownDone)
+	force := make(chan struct{})
+	watcherDone := make(chan struct{})
+	go func() {
+		watchForceSignals(signals, shutdownDone, force)
+		close(watcherDone)
+	}()
+
+	select {
+	case <-watcherDone:
+	case <-time.After(time.Second):
+		t.Fatal("force watcher did not observe completed shutdown")
+	}
+	select {
+	case <-force:
+		t.Fatal("queued signal forced an already completed shutdown")
+	default:
+	}
+}
+
+func TestChannelClosed(t *testing.T) {
+	open := make(chan struct{})
+	if channelClosed(open) {
+		t.Fatal("open channel reported closed")
+	}
+	close(open)
+	if !channelClosed(open) {
+		t.Fatal("closed channel reported open")
 	}
 }
 

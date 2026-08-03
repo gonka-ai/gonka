@@ -21,7 +21,11 @@ import (
 func haStorageGuard() echo.MiddlewareFunc {
 	return func(next echo.HandlerFunc) echo.HandlerFunc {
 		return func(c echo.Context) error {
-			if !mode.HasDevshardHAHeader(c.Request().Header) {
+			ha, err := mode.ParseDevshardHAHeader(c.Request().Header)
+			if err != nil {
+				return echo.NewHTTPError(http.StatusServiceUnavailable, err.Error())
+			}
+			if !ha {
 				return next(c)
 			}
 			if err := mode.RequireConfiguredForHA(); err != nil {

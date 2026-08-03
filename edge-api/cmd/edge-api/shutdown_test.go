@@ -190,6 +190,15 @@ func TestGracefulShutdown_BudgetBoundsAShutdownThatIgnoresItsContext(t *testing.
 		"budget expiry must close remaining connections itself")
 }
 
+func TestCompletedShutdownWinsOverQueuedEscalation(t *testing.T) {
+	done := make(chan error, 1)
+	done <- nil
+
+	err, completed := completedShutdown(done)
+	require.True(t, completed)
+	require.NoError(t, err)
+}
+
 // startTestServer runs a real server with one blocking route on a real port, so
 // the test exercises the same http.Server shutdown path production uses.
 func startTestServer(t *testing.T, slow echo.HandlerFunc) (*server.Server, string) {
