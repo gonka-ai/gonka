@@ -97,6 +97,7 @@ func TestShutdownHostCompletesLifecycle(t *testing.T) {
 		hostLifecycle,
 		force,
 		pollDone,
+		time.Now().Add(time.Second),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -126,6 +127,7 @@ func TestShutdownHostHonorsForceSignal(t *testing.T) {
 		hostLifecycle,
 		force,
 		pollDone,
+		time.Now().Add(time.Hour),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -182,6 +184,7 @@ func TestShutdownHostBudgetCapsProxyAndHTTPDrain(t *testing.T) {
 		hostLifecycle,
 		force,
 		pollDone,
+		time.Now().Add(budget),
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -224,6 +227,7 @@ func TestShutdownHostContinuesWhenPollWorkerDoesNotUnwind(t *testing.T) {
 			hostLifecycle,
 			force,
 			pollDone,
+			time.Now().Add(3*time.Second),
 		)
 	}()
 
@@ -277,6 +281,7 @@ func TestShutdownHostForceDoesNotWaitForPollWorker(t *testing.T) {
 			hostLifecycle,
 			force,
 			pollDone,
+			time.Now().Add(time.Hour),
 		)
 	}()
 
@@ -413,6 +418,7 @@ func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 			hostLifecycle,
 			force,
 			pollDone,
+			time.Now().Add(time.Second),
 		)
 	}()
 
@@ -446,6 +452,54 @@ func TestShutdownHostWaitsForChildIdleBeforeManagerShutdown(t *testing.T) {
 	)
 	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
 		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+// The absolute deadline is fixed when the shutdown signal arrives, before the
+// announce window runs; shutdownHost must spend what remains of it, not restart
+// the clock from the configured budget. A deadline that is already nearly gone
+// escalates immediately, however generous the budget looks.
+func TestShutdownHostHonoursTheDeadlineNotTheBudget(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+	mgr := newFakeHostShutdownManager()
+	mgr.waitChildrenIdle = func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	mgr.shutdown = func(ctx context.Context) error {
+		select {
+		case <-mgr.forceCalled:
+			return ctx.Err()
+		case <-time.After(time.Second):
+			t.Fatal("an expired deadline did not force the shutdown; the budget restarted the clock")
+			return nil
+		}
+	}
+	force := make(chan struct{})
+	pollDone := make(chan struct{})
+	close(pollDone)
+
+	if err := shutdownHost(
+		config.Config{HostShutdownBudget: time.Hour},
+		server.Config,
+		mgr,
+		hostLifecycle,
+		force,
+		pollDone,
+		time.Now().Add(30*time.Millisecond),
+	); err != nil {
+		t.Fatal(err)
+	}
+	if calls := mgr.callLog(); !strings.Contains(calls, "force_stop_children") {
+		t.Fatalf("hour-long budget masked the expired deadline:\n%s", calls)
 	}
 }
 
@@ -485,6 +539,7 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 		hostLifecycle,
 		force,
 		pollDone,
+		time.Now().Add(30*time.Millisecond),
 	); err != nil {
 		t.Fatal(err)
 	}

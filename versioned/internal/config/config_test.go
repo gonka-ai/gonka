@@ -86,16 +86,66 @@ func TestLoad_CustomValues(t *testing.T) {
 	}
 }
 
-func TestLoad_InvalidPollInterval(t *testing.T) {
-	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
-	t.Setenv("VERSIOND_POLL_INTERVAL", "notaduration")
+// A malformed duration refuses to boot rather than silently borrowing the
+// default: a typo in a drain or shutdown budget would otherwise surface during
+// the outage it was meant to bound.
+func TestLoad_MalformedDurationsRefuseToBoot(t *testing.T) {
+	for _, key := range []string{
+		"VERSIOND_POLL_INTERVAL",
+		"VERSIOND_HOST_SHUTDOWN_BUDGET",
+		"VERSIOND_DRAIN_ANNOUNCE",
+	} {
+		t.Run(key, func(t *testing.T) {
+			t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+			t.Setenv(key, "notaduration")
+			if _, err := Load(); err == nil {
+				t.Fatalf("%s=notaduration was silently accepted", key)
+			}
+		})
+	}
+}
 
+// Zero means "no ticker" for an interval, which panics, so only the announce
+// window — where zero is the explicit "no balancer in front" — may be zero.
+func TestLoad_ZeroDurations(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+	t.Setenv("VERSIOND_POLL_INTERVAL", "0s")
+	if _, err := Load(); err == nil {
+		t.Fatal("a zero poll interval was accepted; NewTicker(0) panics")
+	}
+
+	t.Setenv("VERSIOND_POLL_INTERVAL", "")
+	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "0s")
 	cfg, err := Load()
 	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+		t.Fatalf("zero announce must mean no balancer, got: %v", err)
 	}
-	if cfg.PollInterval != 30*time.Second {
-		t.Errorf("PollInterval = %v, want fallback %v", cfg.PollInterval, 30*time.Second)
+	if cfg.DrainAnnounce != 0 {
+		t.Fatalf("DrainAnnounce = %v, want 0", cfg.DrainAnnounce)
+	}
+}
+
+// The announce window has a floor and a ceiling: the balancer probes once a
+// second, so a shorter window can fall entirely between probes; and the window
+// is part of the shutdown budget, so it cannot swallow it.
+func TestLoad_DrainAnnounceBounds(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle:8080/versions")
+
+	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "500ms")
+	if _, err := Load(); err == nil {
+		t.Fatal("an announce window the balancer can miss entirely was accepted")
+	}
+
+	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "10s")
+	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "10s")
+	if _, err := Load(); err == nil {
+		t.Fatal("an announce window as long as the whole budget was accepted")
+	}
+
+	t.Setenv("VERSIOND_DRAIN_ANNOUNCE", "5s")
+	t.Setenv("VERSIOND_HOST_SHUTDOWN_BUDGET", "90s")
+	if _, err := Load(); err != nil {
+		t.Fatalf("valid announce/budget pair refused: %v", err)
 	}
 }
 

@@ -106,6 +106,15 @@ func run(ctx context.Context) error {
 	go watchForceSignals(signals, shutdownDone, force)
 	defer close(shutdownDone)
 
+	// The one absolute deadline starts at the signal: the announce window spends
+	// from the same budget as poll unwind, admission drain, child stop and HTTP
+	// shutdown, exactly as the shutdown contract states — not in addition to it.
+	budget := cfg.HostShutdownBudget
+	if budget <= 0 {
+		budget = config.DefaultHostShutdownBudget
+	}
+	shutdownDeadline := time.Now().Add(budget)
+
 	// Announce first: /readyz starts failing while the host keeps serving, so the
 	// load balancer can withdraw this upstream before admission ever closes.
 	if err := hostLifecycle.Transition(host.StateAnnouncing); err != nil {
@@ -120,7 +129,7 @@ func run(ctx context.Context) error {
 		return err
 	}
 
-	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone)
+	return shutdownHost(cfg, srv, mgr, hostLifecycle, force, pollDone, shutdownDeadline)
 }
 
 func runPollLoop(
@@ -228,12 +237,11 @@ func shutdownHost(
 	hostLifecycle *host.Controller,
 	force <-chan struct{},
 	pollDone <-chan struct{},
+	deadline time.Time,
 ) error {
-	budget := cfg.HostShutdownBudget
-	if budget <= 0 {
-		budget = config.DefaultHostShutdownBudget
-	}
-	shutdownCtx, cancelShutdown := context.WithTimeout(context.Background(), budget)
+	// The deadline was fixed when the shutdown signal arrived; whatever the
+	// announce window consumed is already gone from it.
+	shutdownCtx, cancelShutdown := context.WithDeadline(context.Background(), deadline)
 	if forceRequested(force) {
 		cancelShutdown()
 	}
@@ -248,7 +256,7 @@ func shutdownHost(
 	if err := waitForPollWorker(
 		shutdownCtx,
 		pollDone,
-		pollWorkerUnwindBudget(budget),
+		pollWorkerUnwindBudget(time.Until(deadline)),
 	); err != nil {
 		// BeginHostDrain already prevents new generation commits and disables
 		// child restart. Teardown can therefore continue without trusting a

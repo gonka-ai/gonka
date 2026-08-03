@@ -83,7 +83,7 @@ The join Compose defaults are:
 
 | Setting | Default | Role |
 | --- | --- | --- |
-| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | Keep serving after `/readyz` starts failing, so the balancer notices first |
+| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | Keep serving after `/readyz` starts failing, so the balancer notices first. Counts against the shutdown budget; `0` = no balancer; below `2s` refuses to boot |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
 | `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
 

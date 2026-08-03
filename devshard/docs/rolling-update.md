@@ -332,7 +332,7 @@ The implementation exposes these settings from
 | `VERSIOND_DRAIN_KILL_GRACE` | `10m` | legacy no-status cushion; exact non-devshard stop grace and lower bound for devshardd |
 | `DEVSHARD_SHUTDOWN_GRACE` | `10m` | `devshardd` HTTP shutdown budget after `SIGTERM` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | one absolute deadline for host admission drain, graceful child stop, and HTTP shutdown; expiry forces remaining work before reap |
-| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | how long versiond keeps serving after `/readyz` starts failing, so the balancer can react |
+| `VERSIOND_DRAIN_ANNOUNCE` | `5s` | how long versiond keeps serving after `/readyz` starts failing, so the balancer can react. Spends from the shutdown budget. `0` declares there is no balancer; a value below `2s` or at/above the budget refuses to boot |
 
 versiond sets `DEVSHARD_ADMIN_ADDR` per child when `--print-admin-api-version`
 is supported. Operators normally do not set it by hand.
@@ -473,9 +473,12 @@ an unsafe non-HA storage mode.
 
 `VERSIOND_STOP_GRACE_PERIOD` must exceed versiond's internal shutdown budget. The
 defaults leave five minutes between versiond's `25m` deadline and the external
-`30m` kill backstop. The announce window, admission drain, child drain, graceful
-child stop, and HTTP shutdown share the same absolute deadline; phase-local limits
-can only shorten a phase and are never added to the host budget. After expiry,
+`30m` kill backstop. The deadline is fixed the moment the shutdown signal
+arrives: the announce window, admission drain, child drain, graceful child stop,
+and HTTP shutdown all spend from that one budget — announce is not added on top —
+and phase-local limits can only shorten a phase. Config that would let the
+announce window swallow the budget, or fall under the balancer's one-second
+check, is refused at startup. After expiry,
 versiond forces remaining processes and confirms their reap during the outer
 reserve.
 
