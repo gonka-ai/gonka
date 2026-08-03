@@ -1,9 +1,9 @@
 package participant
 
 import (
+	"common/logging"
 	"context"
 	"decentralized-api/cosmosclient"
-	"common/logging"
 	"sync/atomic"
 	"time"
 

@@ -5,7 +5,6 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/broker"
-	"decentralized-api/chainphase"
 	"errors"
 	"fmt"
 	"net/http"

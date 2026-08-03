@@ -193,7 +193,6 @@ func (d *OnNewBlockDispatcher) SetOnEpochState(hook EpochStateHook) {
 	d.onEpochState.Store(&hook)
 }
 
-
 // ProcessNewBlock is the main entry point for processing new block events
 func (d *OnNewBlockDispatcher) ProcessNewBlock(ctx context.Context, blockInfo chainphase.BlockInfo) error {
 	logging.Debug("Processing new block", types.Stages,
