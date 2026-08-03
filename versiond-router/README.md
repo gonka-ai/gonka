@@ -285,8 +285,8 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `VERSIOND_LEGACY_HOST` | `VERSIOND_POOL_HOST` | single host owning pre-HA SQLite data dirs |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
 | `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
-| `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic |
-| `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic |
+| `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
+| `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |

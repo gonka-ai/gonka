@@ -80,3 +80,31 @@ func TestRequireHADeploymentStorage(t *testing.T) {
 	t.Setenv("PGHOST", "")
 	require.Error(t, RequireHADeploymentStorage(), "postgres without PGHOST")
 }
+
+// GONKA_HA gates a safety guard, so its grammar is closed on both ends: every
+// spelling of "off" is off, and a value outside the grammar refuses to boot.
+// The old parser read a typo as "off" — the one value that silently disables
+// the guard the variable exists to enable.
+func TestHADeploymentGrammar(t *testing.T) {
+	t.Setenv(EnvStorageMode, "sqlite")
+
+	for _, off := range []string{"", "0", "false", "no", "FALSE", " no "} {
+		t.Setenv(EnvHADeployment, off)
+		require.NoError(t, RequireHADeploymentStorage(),
+			"%q must read as off, and off must not require postgres", off)
+	}
+
+	for _, on := range []string{"1", "true", "yes", "TRUE", "Yes"} {
+		t.Setenv(EnvHADeployment, on)
+		require.Error(t, RequireHADeploymentStorage(),
+			"%q must read as on, and on must refuse sqlite", on)
+	}
+
+	for _, garbage := range []string{"maybe", "tru", "on", "2"} {
+		t.Setenv(EnvHADeployment, garbage)
+		err := RequireHADeploymentStorage()
+		require.Error(t, err, "%q is outside the grammar and must refuse to boot", garbage)
+		require.Contains(t, err.Error(), "not a boolean",
+			"the refusal for %q must name the actual problem", garbage)
+	}
+}

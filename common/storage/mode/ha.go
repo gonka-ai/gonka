@@ -67,13 +67,21 @@ func RequireConfiguredForHA() error {
 const EnvHADeployment = "GONKA_HA"
 
 // HADeployment reports whether this process runs as part of a multi-instance
-// deployment.
-func HADeployment() bool {
-	switch strings.ToLower(strings.TrimSpace(os.Getenv(EnvHADeployment))) {
-	case "true", "1", "yes":
-		return true
+// deployment. The boolean grammar is shared with the router's entrypoint —
+// 1/true/yes on, empty/0/false/no off — and anything else is an error rather
+// than a guess. GONKA_HA gates a storage-safety boot guard, and the previous
+// parser read a typo as "off": exactly the value that silently disables the
+// guard it was meant to enable.
+func HADeployment() (bool, error) {
+	raw := os.Getenv(EnvHADeployment)
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "1", "true", "yes":
+		return true, nil
+	case "", "0", "false", "no":
+		return false, nil
 	default:
-		return false
+		return false, fmt.Errorf("%s=%q is not a boolean; use 1/true/yes or 0/false/no",
+			EnvHADeployment, raw)
 	}
 }
 
@@ -85,7 +93,11 @@ func HADeployment() bool {
 // turns the far more common case — a misconfigured HA rollout — from a runtime
 // 503 that a user discovers into a boot failure that the operator sees.
 func RequireHADeploymentStorage() error {
-	if !HADeployment() {
+	ha, err := HADeployment()
+	if err != nil {
+		return err
+	}
+	if !ha {
 		return nil
 	}
 	if err := RequireConfiguredForHA(); err != nil {

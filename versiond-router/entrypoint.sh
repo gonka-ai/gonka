@@ -41,6 +41,26 @@ STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 # only hop that should cut a stream.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
 
+# Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
+# 1/true/yes are on, empty/0/false/no are off, anything else refuses to start.
+# Parsed once, here — a boolean read as "non-empty" at each use site treats
+# "false" as true, and one read as "anything unknown is off" treats a typo as
+# off; each fails open in whichever direction its author was not thinking about.
+bool_env() {
+    raw=$(eval "printf '%s' \"\${$1:-}\"")
+    case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+        1 | true | yes) printf '1' ;;
+        '' | 0 | false | no) ;;
+        *)
+            echo "versiond-router: $1='$raw' is not a boolean; use 1/true/yes or 0/false/no" >&2
+            exit 1
+            ;;
+    esac
+}
+HA_DEPLOYMENT=$(bool_env GONKA_HA)
+ALLOW_COARSE_READINESS=$(bool_env VERSIOND_ROUTER_ALLOW_COARSE_READINESS)
+RENDER_ONLY=$(bool_env VERSIOND_ROUTER_RENDER_ONLY)
+
 for value in "$SLOTS" "$MAXCONN" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT"; do
     case "$value" in
         ''|*[!0-9]*)
@@ -64,7 +84,7 @@ printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | 
     echo "$version legacy" >> "$MAP"
 done
 
-if [ -n "${GONKA_HA:-}" ]; then
+if [ -n "$HA_DEPLOYMENT" ]; then
     # Overwrites any client-supplied value: the guard must reflect the
     # deployment, not the request.
     HA_HEADER='http-request set-header Devshard-Ha true'
@@ -161,8 +181,8 @@ done
 # child went unready keeps receiving v5 traffic as long as v4 is healthy —
 # hash-dependent failures the per-version pools exist to prevent. The override
 # names exactly what it accepts; test stacks with dynamic version names use it.
-if [ -n "${GONKA_HA:-}" ] && [ ! -s "$VERSIONS_MAP" ] \
-    && [ -z "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-}" ]; then
+if [ -n "$HA_DEPLOYMENT" ] && [ ! -s "$VERSIONS_MAP" ] \
+    && [ -z "$ALLOW_COARSE_READINESS" ]; then
     echo "versiond-router: GONKA_HA is set but VERSIOND_VERSIONS is empty." >&2
     echo "  Without declared versions every version shares the host-level readiness" >&2
     echo "  check, and a host with one unready version keeps receiving that version's" >&2
@@ -203,7 +223,7 @@ sed \
 
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null
 
-if [ -n "${VERSIOND_ROUTER_RENDER_ONLY:-}" ]; then
+if [ -n "$RENDER_ONLY" ]; then
     exit 0
 fi
 

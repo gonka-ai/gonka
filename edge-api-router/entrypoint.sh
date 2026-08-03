@@ -21,6 +21,21 @@ MAXCONN="${EDGE_API_ROUTER_MAX_CONNECTIONS:-4096}"
 CONNECT_TIMEOUT="${EDGE_API_ROUTER_CONNECT_TIMEOUT_SECONDS:-30}"
 READ_TIMEOUT="${EDGE_API_ROUTER_READ_TIMEOUT_SECONDS:-120}"
 
+# Same boolean grammar as versiond-router: 1/true/yes on, empty/0/false/no off,
+# anything else refuses to start rather than guessing a direction.
+bool_env() {
+    raw=$(eval "printf '%s' \"\${$1:-}\"")
+    case "$(printf '%s' "$raw" | tr '[:upper:]' '[:lower:]')" in
+        1 | true | yes) printf '1' ;;
+        '' | 0 | false | no) ;;
+        *)
+            echo "edge-api-router: $1='$raw' is not a boolean; use 1/true/yes or 0/false/no" >&2
+            exit 1
+            ;;
+    esac
+}
+RENDER_ONLY=$(bool_env EDGE_API_ROUTER_RENDER_ONLY)
+
 for value in "$PORT" "$LISTEN_PORT" "$SLOTS" "$MAXCONN" "$CONNECT_TIMEOUT" "$READ_TIMEOUT"; do
     case "$value" in
         ''|*[!0-9]*)
@@ -42,7 +57,7 @@ sed \
 
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null
 
-if [ -n "${EDGE_API_ROUTER_RENDER_ONLY:-}" ]; then
+if [ -n "$RENDER_ONLY" ]; then
     exit 0
 fi
 

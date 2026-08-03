@@ -246,6 +246,54 @@ test-render: test-hash-ring test-version-routing
 		./entrypoint.sh 2>/dev/null; then \
 		fail "an HA deployment with no declared versions was accepted"; \
 	fi; \
+	for off in 0 false NO; do \
+		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+			GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=$$off \
+			VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+			VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+			VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+			VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+			VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+			./entrypoint.sh 2>/dev/null; then \
+			fail "override '$$off' spells false and must not unlock coarse readiness"; \
+		fi; \
+	done; \
+	for garbage in maybe tru 2; do \
+		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+			GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=$$garbage \
+			VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+			VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+			VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+			VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+			VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+			./entrypoint.sh 2>"$$tmpdir/boolerr"; then \
+			fail "override '$$garbage' is outside the boolean grammar and was accepted"; \
+		fi; \
+		grep -q "not a boolean" "$$tmpdir/boolerr" \
+			|| fail "the refusal for '$$garbage' does not name the boolean grammar"; \
+	done; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		GONKA_HA=nonsense \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "a non-boolean GONKA_HA was accepted"; \
+	fi; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+	GONKA_HA=false \
+	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+	VERSIOND_ROUTER_OUT="$$tmpdir/haoff.cfg" \
+	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/haoff.map" \
+	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/haoff.versions.map" \
+	./entrypoint.sh \
+		|| fail "GONKA_HA=false must mean off, not on"; \
+	if grep -q 'set-header Devshard-Ha' "$$tmpdir/haoff.cfg"; then \
+		fail "GONKA_HA=false still stamps the HA header; false read as non-empty"; \
+	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
