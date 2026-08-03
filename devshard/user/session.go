@@ -124,7 +124,6 @@ type TimeoutResult struct {
 	Outcome      string
 	DetailReason string
 	Applied      bool
-	Delivered    bool
 	AcceptWeight uint32
 	RejectWeight uint32
 	ErrorWeight  uint32
@@ -267,7 +266,7 @@ type Session struct {
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
-	epochID         uint64
+	diffObserver    func(types.Diff)
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -354,6 +353,7 @@ func NewSession(
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
 		verifierQueue:   SharedVerifierQueue,
+		diffObserver:    func(types.Diff) {},
 		//TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
@@ -629,20 +629,17 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	candidates = append(candidates, s.pendingTxs...)
 	candidates = append(candidates, extraTxs...)
 
-	var warmBefore map[uint32]string
+	var diff types.Diff
 	if s.store != nil {
-		warmBefore = s.sm.WarmKeys()
-	}
-	vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
-	if err != nil {
-		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
-	}
-	diff, err := s.signDiff(nonce, vd.Applied, vd.Root)
-	if err != nil {
-		return types.Diff{}, 0, err
-	}
-
-	if s.store != nil {
+		warmBefore := s.sm.WarmKeys()
+		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
+		if err != nil {
+			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
+		}
+		diff, err = s.signDiff(nonce, vd.Applied, vd.Root)
+		if err != nil {
+			return types.Diff{}, 0, err
+		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
 		if err := s.persistDiffRetryLocked(types.DiffRecord{
 			Diff:         diff,
@@ -651,10 +648,18 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
-	}
-
-	if !s.sm.CommitValidated(vd) {
-		return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
+		if !s.sm.CommitValidated(vd) {
+			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
+		}
+	} else {
+		postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
+		if err != nil {
+			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
+		}
+		diff, err = s.signDiff(nonce, applied, postStateRoot)
+		if err != nil {
+			return types.Diff{}, 0, err
+		}
 	}
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
@@ -662,7 +667,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	if s.store != nil {
 		s.maybeSaveSnapshotLocked()
 	}
-
+	s.diffObserver(diff)
 	return diff, hostIdx, nil
 }
 
@@ -1834,16 +1839,13 @@ func (s *Session) HostParticipantKeyList() []string {
 	return out
 }
 
-func (s *Session) SetEpochID(epochID uint64) {
+func (s *Session) SetDiffObserver(observer func(types.Diff)) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.epochID = epochID
-}
-
-func (s *Session) EpochID() uint64 {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.epochID
+	if observer == nil {
+		observer = func(types.Diff) {}
+	}
+	s.diffObserver = observer
 }
 
 // hostParticipantKeyLocked is the lock-free body of HostParticipantKey.
@@ -1946,10 +1948,9 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 			result.DetailReason = "timeout_not_applied"
 			return result, fmt.Errorf("timeout transaction was not applied")
 		}
-		result.Delivered = true
 		result.Outcome = "applied"
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
-		return result, nil
+		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
 	if result.ErrorWeight > 0 {

@@ -8,7 +8,7 @@ import (
 	"devshard/types"
 )
 
-const SchemaVersion = 2
+const SchemaVersion = 3
 
 type Disposition string
 
@@ -116,11 +116,14 @@ const (
 )
 
 type EscrowMetadata struct {
-	EscrowID      string                 `json:"escrow_id"`
-	CreationEpoch uint64                 `json:"creation_epoch"`
-	Model         string                 `json:"model"`
-	Slots         []types.SlotAssignment `json:"slots"`
-	Phase         EscrowPhase            `json:"phase"`
+	EscrowID             string                 `json:"escrow_id"`
+	CreationEpoch        uint64                 `json:"creation_epoch"`
+	Model                string                 `json:"model"`
+	Slots                []types.SlotAssignment `json:"slots"`
+	Phase                EscrowPhase            `json:"phase"`
+	RefusalTimeout       int64                  `json:"refusal_timeout_seconds"`
+	ExecutionTimeout     int64                  `json:"execution_timeout_seconds"`
+	TimeoutBufferSeconds int64                  `json:"timeout_buffer_seconds"`
 }
 
 type TimeoutRecord struct {
@@ -132,6 +135,12 @@ type TimeoutRecord struct {
 	Reason        TimeoutReason
 	FailureOrigin FailureOrigin
 	DetailReason  string
+}
+
+type VerdictRecord struct {
+	Nonce uint64
+	Slot  uint32
+	Kind  ProtocolKind
 }
 
 type CounterKey struct {
@@ -155,8 +164,9 @@ type CounterRecord struct {
 }
 
 type EscrowNonce struct {
-	EscrowID    string `json:"escrow_id"`
-	LatestNonce uint64 `json:"latest_nonce"`
+	EscrowID    string      `json:"escrow_id"`
+	LatestNonce uint64      `json:"latest_nonce"`
+	Phase       EscrowPhase `json:"phase"`
 }
 
 type SlotRecord struct {
@@ -170,6 +180,7 @@ type SlotRecord struct {
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
 	InFlight              uint64                    `json:"in_flight"`
+	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
@@ -198,6 +209,7 @@ type ParticipantRecord struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
@@ -220,6 +232,7 @@ type EpochSummary struct {
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
+	TimeoutPending        uint64                    `json:"timeout_pending"`
 	PendingClassification uint64                    `json:"pending_classification"`
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`

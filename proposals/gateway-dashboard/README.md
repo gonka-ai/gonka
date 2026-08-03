@@ -139,8 +139,8 @@ Terminal values:
 Non-terminal values:
 
 - `in_flight`: a `real_send` without `protocol_finish` before its
-  protocol deadline. Counted directly from live session state: these are
-  the attempts the gateway currently tracks;
+  protocol deadline. Derived at query time from the recorded send time,
+  applied receipt time, and frozen escrow timeout configuration;
 - `pending_classification`: a live nonce between protocol and gateway
   callbacks, such as a prepared send or a finish waiting for winner
   selection;
@@ -161,6 +161,11 @@ The leftover buckets do not overlap: `in_flight` is sent work,
 `pending_classification` is a live callback gap, `unclassified` has no
 live record, and `unknown` is not a disposition but the fallback value of
 a context or reason dimension on an otherwise classified nonce.
+
+`timeout_pending` is not another disposition. It is the subset of
+`unfinished_refused` and `unfinished_execution` whose `timeout_outcome`
+is unset. No deadline event or accounting timer is required: query and
+snapshot refresh derive the transition from time.
 
 Two rules:
 
@@ -387,7 +392,7 @@ Each participant-model record contains:
 - per-slot `assigned_nonces` and dispositions;
 - timeout requirements, outcomes, and reasons;
 - `protocol_misses`, `protocol_invalid`, and unresolved challenges;
-- accounting health: `in_flight`, `pending_classification`,
+- accounting health: `in_flight`, `timeout_pending`, `pending_classification`,
   `unclassified`, `overclassified`, `cross_check_error`,
   `unknown_reason_total`, and writer errors.
 
@@ -426,17 +431,19 @@ key: a distinct tuple of `escrow_id`, `slot_id`, `disposition`, and the
 fixed context and timeout dimensions. Counters hold current state, not
 event history: the first classification increments one key; a later
 reclassify atomically moves the count to the new key. The request path
-performs no accounting writes.
+performs only synchronous in-memory accounting updates and never writes
+to disk.
 
 There are no per-nonce database rows. Live nonce state exists only in
-memory while the nonce can still change. A restart drops that live state:
-unfinished live sends become `unclassified`, and non-applied timeout
-failures remain frozen in the counters they already reached.
+memory while the nonce can still change. It includes send and receipt
+times used for query-time deadline classification. A restart drops that
+live state: unfinished live sends become `unclassified`, and non-applied
+timeout failures remain frozen in the counters they already reached.
 
 A snapshot writer stores each escrow's metadata, `latest_nonce`,
 `HostStats`, per-slot challenge and invalid counts, and counter map into
 `accounting.db` every five minutes and at escrow finalization,
-settlement, rotation, epoch transition, and shutdown. A failed snapshot
+settlement, rotation, and shutdown. A failed snapshot
 keeps the previous one and is reported as a writer error. The database
 uses one JSON payload per escrow, not per-nonce history. Every dimension
 is a small enum and only observed combinations create counters, so an
@@ -446,8 +453,8 @@ An escrow registry stores the chain `epoch_index`, model, ordered slots,
 and participant addresses. Aggregation happens at query time: epoch,
 model, participant, slot, and optional escrow totals join counters
 through the registry. Aggregates are never stored. `in_flight`,
-`pending_classification`, and `unclassified` are computed from current
-memory and `latest_nonce`. None is stored.
+`timeout_pending`, `pending_classification`, and `unclassified` are
+computed or refreshed from current memory, time, and `latest_nonce`.
 
 `DEVSHARD_STATS_RETENTION_EPOCHS=0` disables automatic deletion. A
 positive value removes only complete epochs older than the configured
@@ -460,25 +467,25 @@ the difference as applied protocol misses with empty gateway context.
 `HostStats.Missed` is the protocol ground truth, so this only restores a
 settlement fact already present in state.
 
-The state machine is the source for protocol facts. After a diff commits,
-it emits small observer events for diff nonce, receipt, finish, timeout,
-challenge, validation, invalidation, and current `HostStats`. The gateway
-is still the source for gateway facts: ghost, real send, winner, timeout
-attempt, policy reason, and lifecycle phase. There is no accounting
-poller and no accounting-owned deadline heap.
+The state machine remains the source for protocol facts but contains no
+accounting code. After the user session commits a diff, one generic
+observer call passes the applied diff to `devshard/accounting`.
+Accounting parses start, receipt, finish, timeout, validation, and
+validation-vote transactions and reads final verdict state. The gateway
+remains the source for gateway facts: ghost, real send with send time,
+winner, timeout result, policy reason, and lifecycle phase. There is no
+accounting poller, event queue, dropped event, or accounting-owned
+deadline heap.
 
 ### Lifecycle integration
 
 Record at:
 
-- session-picker nonce consumption and ghost decisions;
-- timeout-submission and finalization diffs;
+- the single committed-diff observer in the user session;
+- session-picker ghost decisions;
 - real-send dispatch;
-- receipt and finish state transitions;
 - winner selection;
-- timeout eligibility and skip decisions;
-- timeout vote collection and diff submission;
-- `protocol_miss` and `protocol_invalid` transitions;
+- timeout skip and result decisions;
 - escrow finalization, settlement, rotation, and shutdown.
 
 A repeated or replayed callback that changes no session state changes no

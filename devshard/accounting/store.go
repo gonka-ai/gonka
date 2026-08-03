@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -71,6 +72,35 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 	if s == nil || s.db == nil || t == nil {
 		return nil
 	}
+	metaRows, err := s.db.QueryContext(ctx, `SELECT key, value FROM accounting_meta`)
+	if err != nil {
+		return err
+	}
+	for metaRows.Next() {
+		var key, value string
+		if err := metaRows.Scan(&key, &value); err != nil {
+			metaRows.Close()
+			return err
+		}
+		switch key {
+		case "updated_at":
+			if updated, err := time.Parse(time.RFC3339Nano, value); err == nil {
+				t.updated = updated
+			}
+		case "writer_errors":
+			if count, err := strconv.ParseUint(value, 10, 64); err == nil {
+				t.wrCount = count
+			}
+		}
+	}
+	if err := metaRows.Err(); err != nil {
+		metaRows.Close()
+		return err
+	}
+	if err := metaRows.Close(); err != nil {
+		return err
+	}
+
 	rows, err := s.db.QueryContext(ctx, `SELECT payload FROM accounting_escrows`)
 	if err != nil {
 		return err
@@ -169,6 +199,11 @@ type storeSnapshot struct {
 func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
 	t.pruneLocked(retention)
 	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
 	for _, escrow := range t.escrows {

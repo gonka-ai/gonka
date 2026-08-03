@@ -22,9 +22,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
-	devshardpkg "devshard"
+	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -56,7 +57,7 @@ type Gateway struct {
 	store                 *GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
-	accounting            *gatewayAccountingRecorder
+	accounting            *accounting.Recorder
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
 	baseStorageDir        string
@@ -80,6 +81,7 @@ type Gateway struct {
 type devshardRuntime struct {
 	id              string
 	model           string
+	creationEpoch   uint64
 	handler         http.Handler
 	proxy           *Proxy
 	session         *user.Session
@@ -320,6 +322,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	rt := &devshardRuntime{
 		id:                    cfg.ID,
 		model:                 model,
+		creationEpoch:         escrow.EpochID,
 		handler:               newRuntimeMux(proxy),
 		proxy:                 proxy,
 		session:               session,
@@ -724,7 +727,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *gatewayAccountingRecorder) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -739,7 +742,9 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		g.accounting = accounting
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-	g.configurePhaseGate(settings)
+	if g.phaseGate != nil && chainClient != nil {
+		g.phaseGate.SetChainQueryClient(chainClient.InferenceQueryClient())
+	}
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)
@@ -748,7 +753,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		g.phaseGate.Start()
 	} else if g.accounting != nil {
 		for _, rt := range g.runtimeOrder {
-			g.accounting.attachRuntime(rt)
+			attachAccounting(g.accounting, rt)
 		}
 	}
 	g.escrowChecker = NewEscrowChecker(g.chainBridge)
@@ -762,31 +767,10 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 			g.replaceSuspiciousHosts(hosts)
 		}
 	}
-	g.reconcileCommitments(context.Background(), settings)
-	g.startEscrowRotatorIfEnabled()
-	// Settle escrows left pending by a pre-restart drain. Runs synchronously
-	// so the store read completes before the gateway serves traffic; the
-	// settlements it schedules run in their own goroutines.
 	g.reconcilePendingSettlements()
+	g.startEscrowRotatorIfEnabled()
 	go g.balanceCheckLoop()
 	return g
-}
-
-func (g *Gateway) configurePhaseGate(settings GatewaySettings) {
-	if g == nil || g.phaseGate == nil {
-		return
-	}
-	g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
-	if g.chainClient != nil {
-		g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
-	}
-	if g.accounting != nil {
-		g.phaseGate.SetEpochTransitionHook(func(_, _ uint64) {
-			if err := g.accounting.flush(context.Background()); err != nil {
-				log.Printf("gateway accounting epoch flush: %v", err)
-			}
-		})
-	}
 }
 
 func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
@@ -800,9 +784,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
 	}
 	g.attachMetrics(rt)
-	if g.accounting != nil {
-		g.accounting.attachRuntime(rt)
-	}
+	attachAccounting(g.accounting, rt)
 	g.attachEscrowChecker(rt)
 	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
@@ -1287,7 +1269,7 @@ func (g *Gateway) Close() error {
 		}
 	}
 	if g.accounting != nil {
-		if err := g.accounting.close(); err != nil && firstErr == nil {
+		if err := g.accounting.Close(); err != nil && firstErr == nil {
 			firstErr = err
 		}
 	}
@@ -1407,12 +1389,6 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 			g.finalizeMu.Lock()
 			defer g.finalizeMu.Unlock()
 			log.Printf("gateway_finalize_lock_acquired escrow=%s path=%s", runtimes[0].id, r.URL.Path)
-			capture := &gatewayStatusResponseWriter{ResponseWriter: w}
-			runtimes[0].handler.ServeHTTP(capture, r)
-			if status := capture.statusCode(); status >= 200 && status < 300 {
-				g.markDevshardInactiveAfterFinalize(runtimes[0].id, runtimes[0])
-			}
-			return
 		}
 		runtimes[0].handler.ServeHTTP(w, r)
 		return
@@ -1757,10 +1733,7 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
 	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
-		g.accounting.recordEscrowPhase(id, rt.proxy.sm.Phase())
-		if err := g.accounting.flush(context.Background()); err != nil {
-			log.Printf("finalize: flush accounting for devshard %s: %v", id, err)
-		}
+		g.accounting.Finalize(id)
 	}
 	if g.store == nil {
 		return
@@ -2438,11 +2411,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID            string `json:"id"`
-	PrivateKey    string `json:"private_key,omitempty"`
-	PrivateKeyEnv string `json:"private_key_env,omitempty"`
-	Model         string `json:"model,omitempty"`
-	StoragePath   string `json:"storage_path,omitempty"`
+	ID              string `json:"id"`
+	PrivateKey      string `json:"private_key,omitempty"`
+	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
+	Model           string `json:"model,omitempty"`
+	StoragePath     string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2453,17 +2426,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey    string `json:"private_key,omitempty"`
-	PrivateKeyEnv string `json:"private_key_env,omitempty"`
-	Amount        uint64 `json:"amount"`
-	ModelID       string `json:"model_id,omitempty"`
-	Register      *bool  `json:"register,omitempty"`
-	StoragePath   string `json:"storage_path,omitempty"`
-	RoutePrefix   string `json:"route_prefix,omitempty"`
-	ChainID       string `json:"chain_id,omitempty"`
-	FeeDenom      string `json:"fee_denom,omitempty"`
-	FeeAmount     uint64 `json:"fee_amount,omitempty"`
-	GasLimit      uint64 `json:"gas_limit,omitempty"`
+	PrivateKey      string `json:"private_key,omitempty"`
+	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
+	Amount          uint64 `json:"amount"`
+	ModelID         string `json:"model_id,omitempty"`
+	Register        *bool  `json:"register,omitempty"`
+	StoragePath     string `json:"storage_path,omitempty"`
+	RoutePrefix     string `json:"route_prefix,omitempty"`
+	ChainID         string `json:"chain_id,omitempty"`
+	FeeDenom        string `json:"fee_denom,omitempty"`
+	FeeAmount       uint64 `json:"fee_amount,omitempty"`
+	GasLimit        uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2683,7 +2656,9 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			g.phaseGate.Stop()
 		}
 		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-		g.configurePhaseGate(settings)
+		if g.phaseGate != nil && g.chainClient != nil {
+			g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
+		}
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)
 		}
@@ -3112,9 +3087,9 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:          strconv.FormatUint(result.EscrowID, 10),
-			Model:       modelID,
-			StoragePath: strings.TrimSpace(req.StoragePath),
+			ID:              strconv.FormatUint(result.EscrowID, 10),
+			Model:           modelID,
+			StoragePath:     strings.TrimSpace(req.StoragePath),
 			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
@@ -3425,11 +3400,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:            req.ID,
-			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
-			Model:         strings.TrimSpace(req.Model),
-			StoragePath:   req.StoragePath,
+			ID:              req.ID,
+			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
+			Model:           strings.TrimSpace(req.Model),
+			StoragePath:     req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
@@ -3989,13 +3964,11 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	modelID := rt.model
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
-			go func() {
-				g.escrowChecker.TriggerCheck(escrowID, func() {
-					g.deactivateDevshardByID(escrowID)
-					// Escrow no longer exists on chain -- nothing to settle.
-					g.retireRuntime(escrowID, "escrow confirmed missing on chain")
-				})
-			}()
+			go g.escrowChecker.TriggerCheck(escrowID, func() {
+				g.deactivateDevshardByID(escrowID)
+				// Escrow no longer exists on chain -- nothing to settle.
+				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+			})
 		}
 	}
 	rt.proxy.redundancy.onBalanceExhausted = func() {

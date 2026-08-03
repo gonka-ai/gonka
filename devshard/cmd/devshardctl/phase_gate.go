@@ -76,7 +76,6 @@ type ChainPhaseGate struct {
 	// scaleApplyHook's responsibility.
 	capacityState  *CapacityState
 	scaleApplyHook func(scale float64)
-	epochHook      func(previous, next uint64)
 
 	chainQuery chain.InferenceClient
 
@@ -343,15 +342,6 @@ func (g *ChainPhaseGate) SetCapacityState(state *CapacityState, scaleHook func(s
 	g.scaleApplyHook = scaleHook
 }
 
-func (g *ChainPhaseGate) SetEpochTransitionHook(hook func(previous, next uint64)) {
-	if g == nil {
-		return
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	g.epochHook = hook
-}
-
 func (g *ChainPhaseGate) capacitySinks() (*CapacityState, func(float64)) {
 	if g == nil {
 		return nil, nil
@@ -479,14 +469,6 @@ func (g *ChainPhaseGate) refresh() {
 	g.applySpeculativeAttemptPolicy(snapshot)
 	g.logSnapshotTransition(previous, snapshot)
 	g.storeSnapshot(snapshot)
-	if previous.EpochIndex != 0 && previous.EpochIndex != snapshot.EpochIndex {
-		g.mu.RLock()
-		hook := g.epochHook
-		g.mu.RUnlock()
-		if hook != nil {
-			hook(previous.EpochIndex, snapshot.EpochIndex)
-		}
-	}
 }
 
 func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {

@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"devshard"
+	"devshard/accounting"
 	"devshard/host"
 	"devshard/logging"
 	"devshard/transport"
@@ -560,15 +561,6 @@ type Decision struct {
 	ImmediateAttempts int
 }
 
-// gatewayAccounting receives protocol accounting events (real sends, ghosts,
-// usage, timeout outcomes) without coupling Redundancy to the recorder type.
-type gatewayAccounting interface {
-	recordRealSend(escrowID string, nonce uint64, quarantineMode string)
-	recordGhost(escrowID string, nonce uint64, reason, quarantineMode string)
-	recordUsage(escrowID string, nonce, winnerNonce uint64)
-	recordTimeout(escrowID string, nonce uint64, kind, action, reason, detailReason, timeoutReason string)
-}
-
 // Redundancy runs one request reliably, using extra attempts when needed.
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
@@ -579,7 +571,7 @@ type Redundancy struct {
 	devshardID           string
 	model                string // escrow's registered model; used for ghost probes when no real request is around
 	metrics              *DevshardMetrics
-	accounting           gatewayAccounting
+	accounting           *accounting.Recorder
 	onEscrowMissing      func() // called (at most once per request) when a host reports escrow not found
 	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
 	balanceExhaustedOnce sync.Once
@@ -2902,9 +2894,7 @@ func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.Infe
 	role := gatewayAttemptRole(inf)
 	reason := gatewayAttemptStartReason(inf)
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if e.accounting != nil {
-		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode)
-	}
+	e.accounting.RealSend(inf.escrowID, inf.nonce, inf.sendTime, quarantineMode)
 	if e.metrics == nil {
 		return
 	}
@@ -2932,9 +2922,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if e.accounting != nil {
-		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
-	}
+	e.accounting.Usage(inf.escrowID, inf.nonce, winnerNonce)
 	if e.metrics == nil {
 		return
 	}
@@ -2990,14 +2978,12 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	if e.accounting != nil {
-		detailReason := gatewayAttemptFailureReason(inf, e.session)
-		timeoutReason := reason
-		if len(detailReasons) > 0 && detailReasons[0] != "" {
-			timeoutReason = detailReasons[0]
-		}
-		e.accounting.recordTimeout(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
+	detailReason := gatewayAttemptFailureReason(inf, e.session)
+	timeoutReason := reason
+	if len(detailReasons) > 0 && detailReasons[0] != "" {
+		timeoutReason = detailReasons[0]
 	}
+	e.accounting.TimeoutResult(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
 	if e.metrics == nil {
 		return
 	}
@@ -4212,19 +4198,7 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 	}
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if e.accounting != nil {
-		e.accounting.recordGhost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
-	}
-	if e.metrics != nil {
-		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
-			ParticipantKey: participantKey,
-			Model:          e.model,
-			EscrowID:       e.devshardID,
-			Decision:       "ghost_no_send",
-			Reason:         reason,
-			QuarantineMode: quarantineMode,
-		})
-	}
+	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
 		"host", e.session.HostLabel(prepared.HostIdx()),

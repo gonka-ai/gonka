@@ -96,7 +96,7 @@ type StateMachine struct {
 	addressToSlots     map[string][]uint32 // address -> sorted slot IDs
 	totalSlots         uint32
 
-	warmResolver WarmKeyResolver // optional, nil = no warm key support
+	warmResolver    WarmKeyResolver       // optional, nil = no warm key support
 
 	// obsDeferred, when non-nil, redirects observability writes made during a
 	// trial apply (ValidateDiff / PreviewLocalBestEffort) into a buffer instead
@@ -104,31 +104,8 @@ type StateMachine struct {
 	// diff is durably persisted, so persist-first neither double-writes obs
 	// (validate + apply) nor leaves obs rows for a diff that never committed.
 	// Set only while sm.mu is held during a trial apply.
-	obsDeferred     *[]deferredObsWrite
-	protocolVersion types.ProtocolVersion // surfaced for gateway status/config compatibility
-	accounting      AccountingObserver
-	accountingBuf   []AccountingEvent
+	obsDeferred *[]deferredObsWrite
 }
-
-type AccountingObserver func(AccountingEvent)
-
-type AccountingEvent struct {
-	DiffNonce         uint64
-	HasStartInference bool
-	InferenceID       uint64
-	ExecutorSlot      uint32
-	Kind              string
-	HostStats         types.HostStats
-}
-
-const (
-	accountingProtocolReceipt     = "receipt_applied"
-	accountingProtocolFinish      = "finish_applied"
-	accountingProtocolTimeout     = "timeout_applied"
-	accountingProtocolChallenged  = "challenged"
-	accountingProtocolValidated   = "validated"
-	accountingProtocolInvalidated = "invalidated"
-)
 
 // deferredObsWrite is a single observability-store write captured during a
 // trial apply and replayed at commit time. All obs writes are observability
@@ -146,68 +123,16 @@ type deferredObsWrite struct {
 // installing it is equivalent to re-applying (minus the obs writes, which are
 // buffered in obs and flushed on commit).
 type ValidatedDiff struct {
-	Root       []byte
-	WarmAfter  map[uint32]string
-	Applied    []*types.DevshardTx // populated for the best-effort (gateway) path
-	nonce      uint64
-	post       mutableSnapshot
-	obs        []deferredObsWrite
-	accounting []AccountingEvent
+	Root      []byte
+	WarmAfter map[uint32]string
+	Applied   []*types.DevshardTx // populated for the best-effort (gateway) path
+	nonce     uint64
+	post      mutableSnapshot
+	obs       []deferredObsWrite
 }
 
 // Nonce reports the nonce this validated diff will commit.
 func (vd *ValidatedDiff) Nonce() uint64 { return vd.nonce }
-
-func (sm *StateMachine) SetAccountingObserver(observer AccountingObserver) {
-	sm.mu.Lock()
-	defer sm.mu.Unlock()
-	sm.accounting = observer
-}
-
-func accountingDiffEvent(nonce uint64, txs []*types.DevshardTx) AccountingEvent {
-	hasStart := false
-	for _, tx := range txs {
-		if tx.GetStartInference() != nil {
-			hasStart = true
-			break
-		}
-	}
-	return AccountingEvent{
-		DiffNonce:         nonce,
-		HasStartInference: hasStart,
-	}
-}
-
-func (sm *StateMachine) queueTransitionAccounting(nonce uint64, rec *types.InferenceRecord, kind string) {
-	if rec == nil {
-		return
-	}
-	var stats types.HostStats
-	if current := sm.state.HostStats[rec.ExecutorSlot]; current != nil {
-		stats = *current
-	}
-	sm.accountingBuf = append(sm.accountingBuf, AccountingEvent{
-		InferenceID:  nonce,
-		ExecutorSlot: rec.ExecutorSlot,
-		Kind:         kind,
-		HostStats:    stats,
-	})
-}
-
-func (sm *StateMachine) takeAccountingLocked() []AccountingEvent {
-	events := append([]AccountingEvent(nil), sm.accountingBuf...)
-	sm.accountingBuf = nil
-	return events
-}
-
-func emitAccounting(observer AccountingObserver, events []AccountingEvent) {
-	if observer == nil {
-		return
-	}
-	for _, event := range events {
-		observer(event)
-	}
-}
 
 // SMOption configures optional StateMachine behavior.
 type SMOption func(*StateMachine)
@@ -330,18 +255,8 @@ func (sm *StateMachine) ApplyDiff(diff types.Diff) ([]byte, error) {
 
 	// Apply txs and verify post_state_root atomically.
 	sm.mu.Lock()
-	sm.accountingBuf = nil
-	root, err := sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
-	var events []AccountingEvent
-	if err == nil {
-		events = append([]AccountingEvent{accountingDiffEvent(diff.Nonce, diff.Txs)}, sm.takeAccountingLocked()...)
-	} else {
-		sm.accountingBuf = nil
-	}
-	observer := sm.accounting
-	sm.mu.Unlock()
-	emitAccounting(observer, events)
-	return root, err
+	defer sm.mu.Unlock()
+	return sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
 }
 
 // ValidateDiff verifies the user signature and trial-applies the diff (nonce,
@@ -362,8 +277,6 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	var obs []deferredObsWrite
 	sm.obsDeferred = &obs
 	root, err := sm.applyCore(diff.Nonce, diff.Txs, diff.PostStateRoot, "host")
-	accountingEvents := append([]AccountingEvent(nil), sm.accountingBuf...)
-	sm.accountingBuf = nil
 	sm.obsDeferred = nil
 	if err != nil {
 		// applyCore self-restores mutable state on every error path.
@@ -372,7 +285,7 @@ func (sm *StateMachine) ValidateDiff(diff types.Diff) (*ValidatedDiff, error) {
 	post := sm.snapshotMutable()
 	warmAfter := copyStringMap(sm.state.WarmKeys)
 	sm.restoreMutable(pre)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, post: post, obs: obs, accounting: accountingEvents}, nil
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, nonce: diff.Nonce, post: post, obs: obs}, nil
 }
 
 func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
@@ -395,18 +308,8 @@ func (sm *StateMachine) verifyDiffUserSig(diff types.Diff) error {
 // to compute the post_state_root before signing the diff.
 func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byte, error) {
 	sm.mu.Lock()
-	sm.accountingBuf = nil
-	root, err := sm.applyCore(nonce, txs, nil, "user")
-	var events []AccountingEvent
-	if err == nil {
-		events = append([]AccountingEvent{accountingDiffEvent(nonce, txs)}, sm.takeAccountingLocked()...)
-	} else {
-		sm.accountingBuf = nil
-	}
-	observer := sm.accounting
-	sm.mu.Unlock()
-	emitAccounting(observer, events)
-	return root, err
+	defer sm.mu.Unlock()
+	return sm.applyCore(nonce, txs, nil, "user")
 }
 
 // ApplyLocalBestEffort applies txs one by one, skipping any that fail.
@@ -414,18 +317,8 @@ func (sm *StateMachine) ApplyLocal(nonce uint64, txs []*types.DevshardTx) ([]byt
 // Used by the user to compose diffs from pending txs that may be stale.
 func (sm *StateMachine) ApplyLocalBestEffort(nonce uint64, txs []*types.DevshardTx) ([]byte, []*types.DevshardTx, error) {
 	sm.mu.Lock()
-	sm.accountingBuf = nil
-	root, applied, err := sm.localBestEffortLocked(nonce, txs)
-	var events []AccountingEvent
-	if err == nil {
-		events = append([]AccountingEvent{accountingDiffEvent(nonce, applied)}, sm.takeAccountingLocked()...)
-	} else {
-		sm.accountingBuf = nil
-	}
-	observer := sm.accounting
-	sm.mu.Unlock()
-	emitAccounting(observer, events)
-	return root, applied, err
+	defer sm.mu.Unlock()
+	return sm.localBestEffortLocked(nonce, txs)
 }
 
 // PreviewLocalBestEffort is the validate-on-clone form of ApplyLocalBestEffort:
@@ -441,8 +334,6 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 	var obs []deferredObsWrite
 	sm.obsDeferred = &obs
 	root, applied, err := sm.localBestEffortLocked(nonce, txs)
-	accountingEvents := append([]AccountingEvent(nil), sm.accountingBuf...)
-	sm.accountingBuf = nil
 	sm.obsDeferred = nil
 	if err != nil {
 		// localBestEffortLocked self-restores mutable state on every error path.
@@ -451,7 +342,7 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 	warmAfter := copyStringMap(sm.state.WarmKeys)
 	post := sm.snapshotMutable()
 	sm.restoreMutable(pre)
-	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs, accounting: accountingEvents}, nil
+	return &ValidatedDiff{Root: root, WarmAfter: warmAfter, Applied: applied, nonce: nonce, post: post, obs: obs}, nil
 }
 
 // CommitValidated installs a previously validated diff's post-state and flushes
@@ -461,23 +352,17 @@ func (sm *StateMachine) PreviewLocalBestEffort(nonce uint64, txs []*types.Devsha
 // then treat the diff as already applied. Caller must not hold sm.mu.
 func (sm *StateMachine) CommitValidated(vd *ValidatedDiff) bool {
 	sm.mu.Lock()
+	defer sm.mu.Unlock()
 
 	// The post snapshot was computed against LatestNonce == vd.nonce-1. It is
 	// only valid to install when the live state is still at that point. Any
 	// mutation to this SM advances the nonce, so an unchanged nonce means no
 	// intervening change; a mismatch means someone else already committed.
 	if vd.nonce != sm.state.LatestNonce+1 {
-		sm.mu.Unlock()
 		return false
 	}
-	sm.accountingBuf = nil
 	sm.restoreMutable(vd.post)
 	sm.flushDeferredObsLocked(vd.obs)
-	events := append([]AccountingEvent{accountingDiffEvent(vd.nonce, vd.Applied)}, vd.accounting...)
-	sm.accountingBuf = nil
-	observer := sm.accounting
-	sm.mu.Unlock()
-	emitAccounting(observer, events)
 	return true
 }
 
@@ -1093,11 +978,7 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		"executor_slot", rec.ExecutorSlot,
 		"confirmed_at", msg.ConfirmedAt,
 	)
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
-		return err
-	}
-	sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolReceipt))
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) error {
@@ -1158,11 +1039,7 @@ func (sm *StateMachine) applyFinishInference(msg *types.MsgFinishInference) erro
 		"output_tokens", msg.OutputTokens,
 		"actual_cost", actualCost,
 	)
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
-		return err
-	}
-	sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolFinish))
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
@@ -1174,7 +1051,6 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		return fmt.Errorf("%w: inference %d", types.ErrInferenceNotFound, msg.InferenceId)
 	}
 
-	previousStatus := rec.Status
 	// Common pre-checks.
 	if _, ok := sm.slotToAddress[msg.ValidatorSlot]; !ok {
 		return fmt.Errorf("%w: slot %d", types.ErrSlotNotInGroup, msg.ValidatorSlot)
@@ -1236,13 +1112,7 @@ func (sm *StateMachine) applyValidation(msg *types.MsgValidation) error {
 		}
 	}
 
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
-		return err
-	}
-	if previousStatus != rec.Status && rec.Status == types.StatusChallenged {
-		sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolChallenged))
-	}
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 // addressHasValidated checks if the address owning slotID has any slot bit set in ValidatedBy.
@@ -1269,7 +1139,6 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 	}
 
 	// Skip already-resolved challenge votes (allows safe vote batching).
-	previousStatus := rec.Status
 	if rec.Status == types.StatusValidated || rec.Status == types.StatusInvalidated {
 		return nil
 	}
@@ -1340,18 +1209,7 @@ func (sm *StateMachine) applyValidationVote(msg *types.MsgValidationVote) error 
 		sm.persistLiveInferenceObsBestEffortLocked(msg.InferenceId, rec)
 	}
 
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
-		return err
-	}
-	if previousStatus != rec.Status {
-		switch rec.Status {
-		case types.StatusValidated:
-			sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolValidated))
-		case types.StatusInvalidated:
-			sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolInvalidated))
-		}
-	}
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
@@ -1439,11 +1297,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 		"executor_slot", rec.ExecutorSlot,
 		"reason", msg.Reason.String(),
 	)
-	if err := sm.updateCommittedEntryLocked(msg.InferenceId, rec); err != nil {
-		return err
-	}
-	sm.queueTransitionAccounting(msg.InferenceId, rec, string(accountingProtocolTimeout))
-	return nil
+	return sm.updateCommittedEntryLocked(msg.InferenceId, rec)
 }
 
 func (sm *StateMachine) applyRevealSeed(msg *types.MsgRevealSeed) error {

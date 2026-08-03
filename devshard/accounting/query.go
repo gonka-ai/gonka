@@ -3,6 +3,7 @@ package accounting
 import (
 	"sort"
 	"strings"
+	"time"
 )
 
 type participantKey struct {
@@ -11,8 +12,13 @@ type participantKey struct {
 }
 
 func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
-	t.mu.RLock()
-	defer t.mu.RUnlock()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
 	escrowFilter := stringSet(filter.EscrowIDs)
 	records := make(map[participantKey]*ParticipantRecord)
 	nonceSeen := make(map[participantKey]map[string]struct{})
@@ -51,16 +57,21 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 				nonceSeen[key] = make(map[string]struct{})
 			}
 			if _, ok := nonceSeen[key][escrowID]; !ok {
-				record.LatestNonces = append(record.LatestNonces, EscrowNonce{EscrowID: escrowID, LatestNonce: escrow.Latest})
+				record.LatestNonces = append(record.LatestNonces, EscrowNonce{
+					EscrowID:    escrowID,
+					LatestNonce: escrow.Latest,
+					Phase:       escrow.Meta.Phase,
+				})
 				nonceSeen[key][escrowID] = struct{}{}
 			}
-			slotRecord := buildSlotRecord(escrowID, escrow, slot.SlotID)
+			slotRecord := buildSlotRecord(escrowID, escrow, slot.SlotID, now)
 			record.Slots = append(record.Slots, slotRecord)
 			record.AssignedNonces += slotRecord.AssignedNonces
 			record.ProtocolMisses += slotRecord.ProtocolMisses
 			record.ProtocolInvalid += slotRecord.ProtocolInvalid
 			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
 			record.InFlight += slotRecord.InFlight
+			record.TimeoutPending += slotRecord.TimeoutPending
 			record.PendingClassification += slotRecord.PendingClassification
 			record.Unclassified += slotRecord.Unclassified
 			record.Overclassified += slotRecord.Overclassified
@@ -75,14 +86,26 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			for outcome, count := range slotRecord.TimeoutOutcomes {
 				record.TimeoutOutcomes[outcome] += count
 			}
-			for _, counterKey := range sortedCounterKeys(escrow.Counters) {
+			counterTotals := make(map[CounterKey]uint64)
+			for counterKey, count := range escrow.Counters {
 				if counterKey.SlotID != slot.SlotID {
 					continue
 				}
+				counterTotals[counterKey] += count
+			}
+			for _, live := range escrow.Live {
+				if live.SlotID != slot.SlotID || live.Counted != nil {
+					continue
+				}
+				if counterKey, ok := live.counterKey(escrow.Meta, now); ok {
+					counterTotals[counterKey]++
+				}
+			}
+			for _, counterKey := range sortedCounterKeys(counterTotals) {
 				record.Counters = append(record.Counters, CounterRecord{
 					EscrowID: escrowID,
 					Key:      counterKey,
-					Count:    escrow.Counters[counterKey],
+					Count:    counterTotals[counterKey],
 				})
 			}
 		}
@@ -92,7 +115,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 	for _, record := range records {
 		record.CrossChecks.ErrorCount =
 			absDiff(record.CrossChecks.TimeoutApplied, record.CrossChecks.HostMissed) +
-				absDiff(record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid)
+				absDiff(record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid) +
+				record.Overclassified
 		sort.Slice(record.LatestNonces, func(i, j int) bool {
 			return record.LatestNonces[i].EscrowID < record.LatestNonces[j].EscrowID
 		})
@@ -119,7 +143,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 	return out
 }
 
-func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32) SlotRecord {
+func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time.Time) SlotRecord {
 	assigned, _ := AssignedNoncesForSlot(escrow.Latest, uint64(len(escrow.Meta.Slots)), slot)
 	record := SlotRecord{
 		EscrowID:        escrowID,
@@ -138,6 +162,11 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32) SlotReco
 		if key.TimeoutOutcome != "" {
 			record.TimeoutOutcomes[key.TimeoutOutcome] += count
 		}
+		if (key.Disposition == DispositionUnfinishedRefused ||
+			key.Disposition == DispositionUnfinishedExecution) &&
+			key.TimeoutOutcome == "" {
+			record.TimeoutPending += count
+		}
 		if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
 			record.UnknownReasonTotal += count
 		}
@@ -147,10 +176,20 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32) SlotReco
 			continue
 		}
 		switch {
-		case live.Sent && !live.Finished && live.TimeoutOutcome == "":
+		case live.Counted != nil:
+			continue
+		case live.Sent && !live.Finished:
+			if key, ok := live.counterKey(escrow.Meta, now); ok {
+				record.Dispositions[key.Disposition]++
+				if key.TimeoutOutcome == "" {
+					record.TimeoutPending++
+				}
+				accounted++
+				continue
+			}
 			record.InFlight++
 			accounted++
-		case live.Counted == nil:
+		default:
 			record.PendingClassification++
 			accounted++
 		}
@@ -213,6 +252,7 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			summary.ProtocolInvalid += record.ProtocolInvalid
 			summary.UnresolvedChallenges += record.UnresolvedChallenges
 			summary.InFlight += record.InFlight
+			summary.TimeoutPending += record.TimeoutPending
 			summary.PendingClassification += record.PendingClassification
 			summary.Unclassified += record.Unclassified
 			summary.Overclassified += record.Overclassified

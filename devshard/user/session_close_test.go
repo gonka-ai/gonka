@@ -15,8 +15,6 @@ import (
 // per-runtime memory leak was failing to free.
 type closeCountingStore struct {
 	closeCalls int
-	appendErr  error
-	diffs      []types.DiffRecord
 }
 
 func (s *closeCountingStore) CreateSession(storage.CreateSessionParams) error { return nil }
@@ -24,20 +22,9 @@ func (s *closeCountingStore) MarkSettled(string) error                        { 
 func (s *closeCountingStore) ListActiveSessions() ([]storage.ActiveSession, error) {
 	return nil, nil
 }
-func (s *closeCountingStore) AppendDiff(_ string, record types.DiffRecord) error {
-	if s.appendErr == nil {
-		s.diffs = append(s.diffs, record)
-	}
-	return s.appendErr
-}
-func (s *closeCountingStore) GetDiffs(_ string, from, to uint64) ([]types.DiffRecord, error) {
-	var result []types.DiffRecord
-	for _, record := range s.diffs {
-		if record.Nonce >= from && record.Nonce <= to {
-			result = append(result, record)
-		}
-	}
-	return result, nil
+func (s *closeCountingStore) AppendDiff(string, types.DiffRecord) error { return nil }
+func (s *closeCountingStore) GetDiffs(string, uint64, uint64) ([]types.DiffRecord, error) {
+	return nil, nil
 }
 func (s *closeCountingStore) AddSignature(string, uint64, uint32, []byte) error { return nil }
 func (s *closeCountingStore) GetSignatures(string, uint64) (map[uint32][]byte, error) {
@@ -64,7 +51,7 @@ func (s *closeCountingStore) DrainInferenceValidationObs(string, uint64) error {
 func (s *closeCountingStore) GetValidationObservability(string) ([]storage.SlotValidationObs, error) {
 	return nil, nil
 }
-func (s *closeCountingStore) ClearValidationObs(string) error              { return nil }
+func (s *closeCountingStore) ClearValidationObs(string) error { return nil }
 func (s *closeCountingStore) PutEscrowCache(storage.EscrowCacheInfo) error { return nil }
 func (s *closeCountingStore) GetEscrowCache(string) (*storage.EscrowCacheInfo, error) {
 	return nil, storage.ErrEscrowCacheNotFound

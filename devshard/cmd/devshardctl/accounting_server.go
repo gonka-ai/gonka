@@ -14,13 +14,6 @@ import (
 	"devshard/accounting"
 )
 
-func (r *gatewayAccountingRecorder) handler(current accounting.CurrentEpochFunc) http.Handler {
-	if r == nil || r.tracker == nil {
-		return http.NotFoundHandler()
-	}
-	return accounting.NewHandler(r.tracker, current)
-}
-
 func accountingRetentionEpochs() uint64 {
 	value := readInt64Env("DEVSHARD_STATS_RETENTION_EPOCHS", 0)
 	if value < 0 {
@@ -43,23 +36,17 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
-// accountingStatsPort returns the port for the private accounting API.
-// Always on; DEVSHARD_STATS_PORT overrides the default.
-func accountingStatsPort() string {
-	if port := strings.TrimSpace(os.Getenv("DEVSHARD_STATS_PORT")); port != "" {
-		return port
-	}
-	return "9091"
+func accountingStatsAddress() string {
+	return strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR"))
 }
 
-func startAccountingServer(g *Gateway, port string) (*http.Server, error) {
-	if g == nil || g.accounting == nil {
+func startAccountingServer(g *Gateway, address string) (*http.Server, error) {
+	if g == nil || g.accounting == nil || address == "" {
 		return nil, nil
 	}
-	address := ":" + port
 	server := &http.Server{
 		Addr:              address,
-		Handler:           g.accounting.handler(accountingCurrentEpoch(g)),
+		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,

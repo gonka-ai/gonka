@@ -160,10 +160,9 @@ func main() {
 	if gateway.phaseGate != nil {
 		gateway.phaseGate.refresh()
 	}
-	statsServer, err := startAccountingServer(gateway, accountingStatsPort())
+	statsServer, err := startAccountingServer(gateway, accountingStatsAddress())
 	if err != nil {
 		log.Printf("start accounting server: %v", err)
-		return
 	}
 	if statsServer != nil {
 		defer func() {
@@ -440,7 +439,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.MaxInputTokensInFlight,
 		gatewayState.Settings.ModelLimits,
 	)
-	recorder := newGatewayAccountingRecorder(accountingTracker)
+	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {

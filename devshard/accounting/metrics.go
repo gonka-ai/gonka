@@ -11,17 +11,21 @@ type Collector struct {
 	tracker      *Tracker
 	currentEpoch CurrentEpochFunc
 
-	assigned     *prometheus.Desc
-	disposition  *prometheus.Desc
-	timeout      *prometheus.Desc
-	missed       *prometheus.Desc
-	invalid      *prometheus.Desc
-	challenges   *prometheus.Desc
-	inFlight     *prometheus.Desc
-	unclassified *prometheus.Desc
-	unknown      *prometheus.Desc
-	writerErrors *prometheus.Desc
-	crossCheck   *prometheus.Desc
+	assigned              *prometheus.Desc
+	disposition           *prometheus.Desc
+	timeout               *prometheus.Desc
+	missed                *prometheus.Desc
+	invalid               *prometheus.Desc
+	challenges            *prometheus.Desc
+	inFlight              *prometheus.Desc
+	timeoutPending        *prometheus.Desc
+	pendingClassification *prometheus.Desc
+	unclassified          *prometheus.Desc
+	overclassified        *prometheus.Desc
+	unknown               *prometheus.Desc
+	recordingErrors       *prometheus.Desc
+	writerErrors          *prometheus.Desc
+	crossCheck            *prometheus.Desc
 }
 
 func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
@@ -63,9 +67,24 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 			"Live sent nonces before finish or timeout in the current epoch.",
 			[]string{"participant", "model"}, nil,
 		),
+		timeoutPending: prometheus.NewDesc(
+			"devshard_accounting_timeout_pending",
+			"Deadline-reached unfinished nonces without a timeout outcome.",
+			[]string{"participant", "model"}, nil,
+		),
+		pendingClassification: prometheus.NewDesc(
+			"devshard_accounting_pending_classification",
+			"Live nonces waiting for gateway classification.",
+			[]string{"participant", "model"}, nil,
+		),
 		unclassified: prometheus.NewDesc(
 			"devshard_accounting_unclassified",
 			"Consumed nonces without a disposition or live attempt in the current epoch.",
+			[]string{"participant", "model"}, nil,
+		),
+		overclassified: prometheus.NewDesc(
+			"devshard_accounting_overclassified",
+			"Classifications exceeding settlement-assigned nonces.",
 			[]string{"participant", "model"}, nil,
 		),
 		unknown: prometheus.NewDesc(
@@ -76,6 +95,11 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 		writerErrors: prometheus.NewDesc(
 			"devshard_accounting_writer_errors",
 			"Accounting snapshot writer errors.",
+			[]string{"participant", "model"}, nil,
+		),
+		recordingErrors: prometheus.NewDesc(
+			"devshard_accounting_recording_errors",
+			"Accounting event recording errors.",
 			[]string{"participant", "model"}, nil,
 		),
 		crossCheck: prometheus.NewDesc(
@@ -93,7 +117,9 @@ func NewPrometheusCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) pro
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{
 		c.assigned, c.disposition, c.timeout, c.missed, c.invalid,
-		c.challenges, c.inFlight, c.unclassified, c.unknown, c.writerErrors, c.crossCheck,
+		c.challenges, c.inFlight, c.timeoutPending, c.pendingClassification,
+		c.unclassified, c.overclassified, c.unknown, c.recordingErrors,
+		c.writerErrors, c.crossCheck,
 	} {
 		ch <- desc
 	}
@@ -114,8 +140,12 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		gauge(ch, c.invalid, record.ProtocolInvalid, base...)
 		gauge(ch, c.challenges, record.UnresolvedChallenges, base...)
 		gauge(ch, c.inFlight, record.InFlight, base...)
+		gauge(ch, c.timeoutPending, record.TimeoutPending, base...)
+		gauge(ch, c.pendingClassification, record.PendingClassification, base...)
 		gauge(ch, c.unclassified, record.Unclassified, base...)
+		gauge(ch, c.overclassified, record.Overclassified, base...)
 		gauge(ch, c.unknown, record.UnknownReasonTotal, base...)
+		gauge(ch, c.recordingErrors, record.RecordingErrors, base...)
 		gauge(ch, c.writerErrors, record.WriterErrors, base...)
 		gauge(ch, c.crossCheck, record.CrossChecks.ErrorCount, base...)
 
