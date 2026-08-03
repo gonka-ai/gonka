@@ -40,8 +40,8 @@ MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
 MAX_BODY_BYTES="${VERSIOND_ROUTER_MAX_BODY_BYTES:-10485760}"
 CONNECT_TIMEOUT="${VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS:-2}"
 STREAM_IDLE="${VERSIOND_ROUTER_STREAM_IDLE_SECONDS:-1200}"
-# Deliberately far above the client-facing idle timeout: the outer proxy is the
-# only hop that should cut a stream.
+# Used only after HTTP Upgrade/CONNECT. SSE uses STREAM_IDLE because it remains
+# an ordinary HTX response.
 TUNNEL_TIMEOUT="${VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS:-86400}"
 
 # Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
@@ -88,10 +88,6 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
             ;;
     esac
 done
-if [ "$TUNNEL_TIMEOUT" -lt "$STREAM_IDLE" ]; then
-    echo "versiond-router: tunnel timeout ${TUNNEL_TIMEOUT}s must not be below stream idle ${STREAM_IDLE}s" >&2
-    exit 1
-fi
 
 # One line per pinned version, rewritten on every boot from the environment.
 # Live edits use the HAProxy Runtime API (`add map` / `del map`), which changes

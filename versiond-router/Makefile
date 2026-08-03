@@ -211,7 +211,9 @@ test-render: test-hash-ring test-version-routing
 	grep -q '^[[:space:]]*http-request set-header X-Real-IP' "$$tmpdir/mixed.cfg" \
 		|| fail "X-Real-IP is no longer set"; \
 	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
-		|| fail "the request body cap is gone"; \
+		|| fail "the advertised request body cap is gone"; \
+	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
+		|| fail "DNS replies are still capped below the configured pool capacity"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
 		|| fail "no timeout check directive: inter would double as the whole check budget and a slow answer would read as down"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
@@ -366,17 +368,20 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/coarse.versions.map" \
 	./entrypoint.sh \
 		|| fail "the named coarse-readiness override was refused"; \
-	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
-		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
-		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
-		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		VERSIOND_ROUTER_OUT="$$tmpdir/independent-timeouts.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/independent-timeouts.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/independent-timeouts.versions.map" \
 		VERSIOND_ROUTER_STREAM_IDLE_SECONDS=1200 \
 		VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS=60 \
-		./entrypoint.sh 2>/dev/null; then \
-		fail "a tunnel timeout below the idle timeout was accepted"; \
-	fi; \
+		./entrypoint.sh \
+			|| fail "independent SSE and upgraded-connection timeouts were rejected"; \
+	grep -Eq '^[[:space:]]*timeout client[[:space:]]+1200s([[:space:]]|$$)' "$$tmpdir/independent-timeouts.cfg" \
+		|| fail "SSE client idle timeout was not rendered"; \
+	grep -Eq '^[[:space:]]*timeout tunnel[[:space:]]+60s([[:space:]]|$$)' "$$tmpdir/independent-timeouts.cfg" \
+		|| fail "upgraded-connection timeout was not rendered independently"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \

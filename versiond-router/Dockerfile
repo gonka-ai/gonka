@@ -3,7 +3,8 @@ FROM haproxy:3.2-alpine
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes
 # a host out of rotation from active /readyz checks rather than from router-side
-# state. Plays nice with SSE (generous tunnel timeout, no response buffering).
+# state. SSE is streamed without response buffering and bounded by an idle
+# timeout rather than by a total request deadline.
 
 # Root only long enough to install socat and hand the writable paths to the
 # haproxy user the base image already defines: the entrypoint renders into

@@ -25,6 +25,8 @@ test-render:
 		|| fail "X-Real-IP is no longer set"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/edge.cfg" \
 		|| fail "no timeout check directive: the check budget must exceed edge-api's 2s chain probe"; \
+	grep -Eq '^[[:space:]]*accepted_payload_size 8192([[:space:]]|$$)' "$$tmpdir/edge.cfg" \
+		|| fail "DNS replies are still capped below the configured pool capacity"; \
 	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \
 		|| fail "failover no longer excludes 503"; \
 	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/edge.cfg" \

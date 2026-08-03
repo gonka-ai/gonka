@@ -130,10 +130,12 @@ $ docker compose up -d --force-recreate versiond-router
 
 There is no in-place way to declare a version: the backends are rendered from the
 environment when the container starts, so the environment has to change and the
-container has to be replaced. That replacement is not free — Compose does not
-start the new container until the old one has gone, and with `stop_signal:
-SIGUSR1` (HAProxy's soft stop, so carried streams finish rather than being cut)
-the old one lingers until its longest stream ends.
+container has to be replaced. Compose does not start the replacement until the
+old container exits. HAProxy soft-stops first, but the shipped
+`VERSIOND_ROUTER_STOP_GRACE_PERIOD=10s` bounds that listener gap; brief requests
+can finish, while a longer SSE stream may be closed at the bound. A deployment
+that requires seamless upgrades of the router itself must run redundant router
+instances behind a stable frontend and replace them one at a time.
 
 **So declare the versions you expect before you need them.** A pool for a version
 nobody runs yet has no healthy members and costs nothing but its health checks;
@@ -213,20 +215,20 @@ be replayed if the reuse raced with the peer closing it.
 
 ## Streaming
 
-Inference responses are long-lived SSE streams. HAProxy does not buffer
-responses, and the timeouts are set so the innermost hop is never the one that
-cuts a stream:
+Inference responses are long-lived SSE streams. HAProxy does not buffer them.
+SSE remains a normal HTX response, so `timeout client` and `timeout server` are
+its inactivity limits: the stream can live longer than the configured value as
+long as data continues to flow within that interval.
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | `timeout client` / `timeout server`: idle time allowed on a stream |
-| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | `timeout tunnel`: total life of an established stream |
+| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | idle timeout after HTTP Upgrade/CONNECT; does not apply to SSE |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect to an upstream, and header read timeout |
 
-The tunnel timeout is deliberately far above the idle timeout: the outer Gonka
-API proxy owns the client-facing limit, because it has the context to report a
-useful error. The entrypoint refuses to start if the tunnel timeout is below the
-idle timeout.
+The SSE and tunnel settings control different HAProxy modes and are independent.
+Reducing `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` reduces the maximum quiet period
+inside an SSE response; a larger tunnel timeout does not override it.
 
 ## The `Devshard-Ha` header
 
@@ -293,17 +295,18 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
 | `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
-| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
+| `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; the resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
-| `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | request bodies above this declared length are refused with 413; keep aligned with the outer API proxy, which also bounds chunked bodies this check cannot see |
+| `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | early 413 for an advertised `Content-Length` above this value. `devshardd` independently caps actual bytes at 10 MiB, including chunked bodies and direct-router traffic |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
-| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | established stream lifetime |
+| `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
+| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | Compose-only soft-stop ceiling for replacing the single shipped router service |
 
-The entrypoint validates every numeric setting and the tunnel/idle relationship,
-renders `haproxy.cfg` and `non_ha.map`, runs `haproxy -c` on the result, and only
-then execs HAProxy. A bad value fails the container immediately instead of
-producing a subtly wrong config.
+The entrypoint validates every numeric setting, renders `haproxy.cfg` and
+`non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
+value fails the container immediately instead of producing a subtly wrong
+config.
 
 Version pinning can also be changed at runtime through the Runtime API
 (`add map` / `del map` on `non_ha.map`); such edits live in memory only, so

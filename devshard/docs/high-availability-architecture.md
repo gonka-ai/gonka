@@ -86,10 +86,12 @@ Both routers derive membership and eligibility from runtime state:
   an established stream.
 
 The HAProxy configurations provide streaming, forwarding headers,
-legacy-version pinning, request limits, and a retry policy that never replays a
-non-idempotent application request. The public nginx `proxy/` is the edge
-router, and the in-process proxy inside each `versiond` maps a protocol
-version to one local `devshardd` child generation.
+legacy-version pinning, an early declared-length request limit, and a retry
+policy that never replays a non-idempotent application request. `devshardd`
+enforces the matching 10 MiB limit against bytes actually read, including
+chunked requests. The public nginx `proxy/` is the edge router, and the
+in-process proxy inside each `versiond` maps a protocol version to one local
+`devshardd` child generation.
 
 ---
 
@@ -195,7 +197,9 @@ HAProxy with **consistent hashing on escrow/session ID**, so all requests for on
 escrow stick to the same versiond host. Pool membership comes from the
 `versiond-pool` DNS alias and health from active `/readyz` checks, so hosts can
 be added, drained or removed with no router config change and no reload.
-Streaming-friendly (no buffering, generous tunnel timeout). Request path:
+Streaming responses are not buffered. SSE inactivity is bounded by
+`VERSIOND_ROUTER_STREAM_IDLE_SECONDS`; the separate tunnel timeout applies only
+after an HTTP Upgrade or CONNECT. Request path:
 
 ```text
 client → proxy (/devshard/) → versiond-router:8080 → versiond-N:8080 → devshardd :500x

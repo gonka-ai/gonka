@@ -139,11 +139,15 @@ new version is therefore two-phase:
    the versions already running;
 2. approve it in governance; each host joins that pool as it installs it.
 
-Replacing the router is a maintenance operation: Compose will not start the new
-container until the old one is gone, and `stop_signal: SIGUSR1` — HAProxy's soft
-stop — makes the old one finish the streams it is carrying first. **Declare the
-versions you expect ahead of time** and a governance approval needs step 2 only:
-a pool for a version nobody runs yet has no healthy members and costs nothing.
+Replacing the single shipped router service is a short maintenance operation:
+Compose will not start the new container until the old one exits. HAProxy uses a
+soft stop, but `VERSIOND_ROUTER_STOP_GRACE_PERIOD` defaults to 10 seconds so one
+long SSE stream cannot leave the listener absent for minutes; a stream still open
+at that bound is closed. A deployment that requires seamless router upgrades
+must run redundant routers behind a stable frontend and roll them one at a time.
+**Declare the versions you expect ahead of time** and governance approval needs
+step 2 only: a pool for a version nobody runs yet has no healthy members and costs
+nothing.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
 previous host-level behaviour — and an HA deployment refuses to start that way,

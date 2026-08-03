@@ -33,6 +33,8 @@ defaults
 
 resolvers docker
     nameserver dns 127.0.0.11:53
+    # A 64-slot pool can produce a DNS answer larger than the 512-byte default.
+    accepted_payload_size 8192
     resolve_retries 3
     timeout resolve 1s
     timeout retry   1s

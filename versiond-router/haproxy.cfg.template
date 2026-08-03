@@ -34,12 +34,12 @@ defaults
     # the audit trail of who called must survive the extra hop.
     option  forwardfor
     timeout connect ${CONNECT_TIMEOUT_SECONDS}s
+    # SSE remains an ordinary HTX response. These are inactivity timeouts, so a
+    # stream may live indefinitely while either side keeps transferring data.
     timeout client  ${STREAM_IDLE_SECONDS}s
     timeout server  ${STREAM_IDLE_SECONDS}s
-    # Inference streams are long-lived; tunnel governs an established stream and
-    # is deliberately generous. The outer Gonka API proxy owns the client-facing
-    # limit — the innermost hop must not be the one that cuts a stream, because
-    # it has the least context to report a useful error.
+    # This takes over only after an HTTP Upgrade/CONNECT. It does not govern SSE,
+    # and therefore has no ordering relationship with STREAM_IDLE_SECONDS.
     timeout tunnel  ${TUNNEL_TIMEOUT_SECONDS}s
     timeout http-request ${CONNECT_TIMEOUT_SECONDS}s
     timeout http-keep-alive 10s
@@ -57,6 +57,9 @@ defaults
 
 resolvers docker
     nameserver dns 127.0.0.11:53
+    # The default 512-byte EDNS payload cannot carry all addresses represented
+    # by the 64 server-template slots. Keep DNS capacity aligned with pool size.
+    accepted_payload_size 8192
     resolve_retries 3
     timeout resolve 1s
     timeout retry   1s
@@ -96,10 +99,10 @@ frontend versiond_in
     # Overwritten, never trusted from the client: it names the immediate peer.
     http-request set-header X-Real-IP %[src]
 
-    # The nginx router capped request bodies; keep the cap. This checks the
-    # declared Content-Length — HAProxy does not buffer request bodies, so a
-    # chunked request without a declared length passes this hop and is bounded
-    # by the outer API proxy's own limit instead.
+    # Reject an advertised oversize body before opening an upstream connection.
+    # HAProxy streams rather than buffers bodies, so devshardd independently
+    # enforces the same default against bytes actually read, including chunked
+    # requests and direct deployments without the public nginx proxy.
     http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
 
     # versiond's own route grammar has versionless endpoints, and their first

@@ -64,8 +64,9 @@ its address. The router does not contain a replica-name list and keeps no
 membership state to recover after restart.
 
 `EDGE_API_ROUTER_POOL_SLOTS` limits the simultaneous pool size and defaults to
-64. Slots are allocated when HAProxy starts; unused slots have no upstream
-address.
+64. The resolver advertises and accepts DNS payloads up to 8192 bytes instead of
+HAProxy's 512-byte default, so the DNS answer can carry the configured pool.
+Slots are allocated when HAProxy starts; unused slots have no upstream address.
 
 ## Readiness
 

@@ -56,6 +56,7 @@ type HostManager struct {
 	recorder           PayloadAuthClient
 	availability       devshardpkg.AvailabilityProvider
 	maxNonce           devshardpkg.MaxNonceProvider
+	maxBodySize        int64
 
 	statsMu            sync.Mutex
 	statsShardsCache   *statsShardsResponse
@@ -103,6 +104,7 @@ func NewHostManager(
 		recorder:           recorder,
 		statsDetailsCache:  make(map[string]statsShardDetailCache),
 		statsNegativeCache: make(map[string]statsNegativeCacheEntry),
+		maxBodySize:        transport.DefaultMaxBodySize,
 	}
 }
 
@@ -173,7 +175,7 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 // Auth context (sender + body) is injected for HandleInference.
 func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	escrowID := c.Param("id")
-	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, 0)
+	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, m.maxBodySize)
 	if err != nil {
 		return nil, err
 	}
@@ -409,6 +411,7 @@ func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*trans
 	srv, err := transport.NewServer(h, m.store, m.verifier, creatorAddr,
 		transport.WithBridge(m.bridge),
 		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
+		transport.WithMaxBodySize(m.maxBodySize),
 	)
 	if err != nil {
 		h.Close()
@@ -526,6 +529,7 @@ func (m *HostManager) recoverStoredSession(escrowID string) (*transport.Server, 
 	srv, err := transport.NewServer(h, m.store, m.verifier, meta.CreatorAddr,
 		transport.WithBridge(m.bridge),
 		transport.WithRateLimit(transport.DefaultRateLimitConfig()),
+		transport.WithMaxBodySize(m.maxBodySize),
 	)
 	if err != nil {
 		h.Close()

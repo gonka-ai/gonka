@@ -79,9 +79,10 @@ services:
 
   versiond-router:
     image: ghcr.io/product-science/versiond-router:latest
-    # HAProxy's soft stop: finish carried streams instead of cutting them.
+    # Compose starts the replacement only after this container exits. Bound the
+    # soft stop so one long stream cannot leave the test stack without a router.
     stop_signal: SIGUSR1
-    stop_grace_period: 30m
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     build:
       context: ./versiond-router
       dockerfile: Dockerfile
