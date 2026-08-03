@@ -49,7 +49,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.15
+    image: ghcr.io/product-science/api:0.2.15-post2
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
