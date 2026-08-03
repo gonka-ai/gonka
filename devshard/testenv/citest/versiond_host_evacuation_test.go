@@ -200,8 +200,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	select {
 	case outcome := <-evacuationResult:
 		require.NoError(t, outcome.err)
-		require.Contains(t, []int{0, 143}, outcome.result.ExitCode,
-			"versiond did not exit gracefully; container %s exited with code %d",
+		require.Equal(t, 0, outcome.result.ExitCode,
+			"versiond did not complete its handled SIGTERM shutdown; container %s exited with code %d",
 			outcome.result.ContainerID, outcome.result.ExitCode)
 	case <-time.After(remainingUntil(t, gracefulExitDeadline, "versiond graceful exit")):
 		t.Fatal("versiond did not exit before the Docker SIGKILL backstop")
