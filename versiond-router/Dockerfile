@@ -11,7 +11,9 @@ RUN apk add --no-cache socat
 COPY haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY pool-backend.cfg.template /etc/haproxy/pool-backend.cfg.template
 COPY entrypoint.sh /usr/local/bin/entrypoint.sh
-COPY gonka-drain /usr/local/bin/gonka-drain
-RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/bin/gonka-drain
+# Internal diagnostic, deliberately off PATH: it is a formatter over the
+# Runtime API that the citest harness parses, not an operator CLI.
+COPY pool-status /usr/local/lib/versiond-router/pool-status
+RUN chmod +x /usr/local/bin/entrypoint.sh /usr/local/lib/versiond-router/pool-status
 
 ENTRYPOINT ["/usr/local/bin/entrypoint.sh"]

@@ -242,10 +242,10 @@ by definition, so no sibling can exist.
 `GONKA_HA` describes the deployment, so it is set by the HA overlay itself, not
 per host.
 
-## Looking at the pool: `gonka-drain status`
+## Looking at the pool
 
 ```console
-$ docker compose exec versiond-router gonka-drain status
+$ docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status
 versiond_pool_v4
   versiond1  172.30.0.10  UP
   versiond2  172.30.0.11  DOWN
@@ -258,7 +258,9 @@ versiond_ha_pool
 
 One host is a separate server in every backend, with its own health, so the same
 host can be serving `v4` and out of `v5`. This is the router's whole state, and
-it is read-only.
+it is read-only — a formatter over the HAProxy Runtime API
+(`/var/run/haproxy.sock`), kept off PATH because it is an internal diagnostic
+whose output the acceptance-test harness parses, not an operator CLI.
 
 **There is no manual drain.** There was, and it was wrong: HAProxy identifies a
 server by its slot in a `server-template`, and slots are reused. A drained host

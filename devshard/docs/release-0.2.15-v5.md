@@ -49,7 +49,7 @@ Removed with the old model:
 
 | Removed | Replacement |
 | --- | --- |
-| `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; `gonka-drain status` to see what the router believes |
+| `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; a read-only pool diagnostic ships inside the router image |
 | Router state volume (`/var/lib/gonka/versiond-router`) | nothing — the router holds no durable state |
 | `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
 | `VERSIOND_ADMIN_LISTEN_ADDR` (loopback readiness listener) | `GET :8080/readyz` on the traffic listener |
@@ -195,7 +195,7 @@ Day-to-day operations:
 | --- | --- |
 | Take a host out of service | `docker compose stop versiond2` |
 | Put it back / replace it | `docker compose up -d versiond2` |
-| Inspect the router's live view | `docker compose exec versiond-router gonka-drain status` (read-only) |
+| Inspect the router's live view | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
 
 Taking a host out of rotation is stopping it — there is no router-side drain,
 because HAProxy reuses server slots and a drain would be inherited by whichever
@@ -222,8 +222,9 @@ host lands in that slot next.
       overridden
 - [ ] Bring the stack down and up as a whole for the router change, rather than
       recreating only the router
-- [ ] After the stack is up, check `gonka-drain status` lists every versiond as
-      `UP`
+- [ ] After the stack is up, check the pool diagnostic lists every versiond as
+      `UP`:
+      `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status`
 
 ## Known follow-ups
 

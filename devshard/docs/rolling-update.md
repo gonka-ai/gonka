@@ -462,7 +462,7 @@ an unsafe non-HA storage mode.
 | Piece | Meaning |
 |---|---|
 | `docker compose stop` / `start` | The whole host lifecycle. Membership is DNS; health is measured |
-| `gonka-drain status` | Read-only view of what the router believes; there is no router-side drain |
+| `pool-status` (in the router image, off PATH) | Read-only view of what the router believes; there is no router-side drain |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
 | `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |
@@ -540,7 +540,7 @@ docker compose up -d versiond2
 Inspect what the router believes:
 
 ```bash
-docker compose exec versiond-router gonka-drain status
+docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status
 ```
 
 Taking a host out of rotation is stopping it. There is no router-side drain:

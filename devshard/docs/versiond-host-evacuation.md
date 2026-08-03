@@ -19,7 +19,7 @@ its container:
 | Replace / restart | `docker compose up -d versiond2` | it rejoins the pool only once `/readyz` returns 200 |
 | Add a host | start another container on the pool alias | DNS gains an A record; the router finds it within seconds |
 | Decommission | stop it and do not start it again | DNS loses the record; the router forgets it |
-| Inspect what the router believes | `docker compose exec versiond-router gonka-drain status` | read-only; the router keeps no other state |
+| Inspect what the router believes | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told

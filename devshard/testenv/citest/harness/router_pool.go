@@ -11,7 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Router pool states as reported by gonka-drain.
+// Router pool states as reported by the router's pool-status diagnostic.
 const (
 	RouterSlotUp    = "UP"
 	RouterSlotDown  = "DOWN"
@@ -39,15 +39,20 @@ func RouterPool(t *testing.T, stack *Stack) []RouterSlot {
 }
 
 func routerPool(stack *Stack) ([]RouterSlot, error) {
-	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "status")
+	out, err := stack.ComposeExecOutput("versiond-router", routerPoolStatusBin)
 	if err != nil {
-		return nil, fmt.Errorf("gonka-drain status: %w: %s", err, out)
+		return nil, fmt.Errorf("pool-status: %w: %s", err, out)
 	}
 	return parseRouterPool(out), nil
 }
 
-// parseRouterPool reads `gonka-drain status`, which prints each backend followed
-// by its indented servers.
+// routerPoolStatusBin is the router's read-only pool diagnostic. Off PATH on
+// purpose — it is an internal formatter over the HAProxy Runtime API, and this
+// harness is its primary consumer.
+const routerPoolStatusBin = "/usr/local/lib/versiond-router/pool-status"
+
+// parseRouterPool reads pool-status output: each backend followed by its
+// indented servers.
 func parseRouterPool(out string) []RouterSlot {
 	var slots []RouterSlot
 	backend := ""
