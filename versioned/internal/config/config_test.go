@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"regexp"
+	"strings"
 	"testing"
 	"time"
 )
@@ -243,22 +244,27 @@ func TestLoad_ForceVersionsDottedWithOverride(t *testing.T) {
 	}
 }
 
-// The floor is derived from the router's health-check settings, which live in a
-// config template no compiler connects to this package — so this test reads the
-// real templates rather than restating their numbers. Editing `inter` or
-// `timeout check` without revisiting MinDrainAnnounce fails here; moving or
-// renaming the templates fails here too, loudly, which is the point: a skipped
-// contract is a disabled one.
+// The floor is derived from the router's health-check settings, which live in
+// config templates no compiler connects to this package — so this test reads
+// the real templates rather than restating their numbers. Every backend that
+// health-checks versiond counts: the per-version pools and the host-level pool
+// share one server-template, but versiond_legacy carries its own check
+// directive, and legacy-pinned traffic deserves the same announce guarantee.
+// The worst case is therefore the maximum over every checked server.
+//
+// Editing any `inter` or `timeout check` without revisiting MinDrainAnnounce
+// fails here; so does a checked server that stops declaring `inter` (HAProxy
+// would silently substitute its own default), and so does moving or renaming a
+// template — loudly, because a skipped contract is a disabled one.
 func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
-	// Anchored to the directive at line start: the templates' comments mention
-	// both settings by name, and a comment must never satisfy — or supply — a
-	// contract read (the render suites learned that the hard way).
-	interval := routerTemplateDuration(t,
-		"../../../versiond-router/pool-backend.cfg.template",
-		regexp.MustCompile(`(?m)^[	 ]*server-template .* inter ([0-9]+m?s)`))
-	checkTimeout := routerTemplateDuration(t,
+	templates := []string{
 		"../../../versiond-router/haproxy.cfg.template",
-		regexp.MustCompile(`(?m)^[	 ]*timeout check ([0-9]+m?s)`))
+		"../../../versiond-router/pool-backend.cfg.template",
+	}
+
+	interval := maxCheckedServerInterval(t, templates)
+	checkTimeout := maxTemplateDuration(t, templates,
+		regexp.MustCompile(`(?m)^[\t ]*timeout check ([0-9]+m?s)`))
 
 	// Worst case: a probe answered "ready" just before the flip legally
 	// concludes checkTimeout later, and the next probe begins interval after.
@@ -271,17 +277,70 @@ func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
 	}
 }
 
-func routerTemplateDuration(t *testing.T, path string, directive *regexp.Regexp) time.Duration {
+// Anchored to directives at line start: the templates' comments mention these
+// settings by name, and a comment must no more supply a contract value than
+// satisfy a render assert.
+var (
+	serverLine  = regexp.MustCompile(`(?m)^[\t ]*server(-template)? [^\n]*`)
+	serverInter = regexp.MustCompile(` inter ([0-9]+m?s)`)
+)
+
+func maxCheckedServerInterval(t *testing.T, paths []string) time.Duration {
+	t.Helper()
+	var max time.Duration
+	found := 0
+	for _, path := range paths {
+		for _, line := range serverLine.FindAllString(readTemplate(t, path), -1) {
+			if !strings.Contains(line, " check") {
+				continue
+			}
+			m := serverInter.FindStringSubmatch(line)
+			if m == nil {
+				t.Fatalf("%s: a checked server does not declare `inter`; HAProxy would silently use its own default:\n%s",
+					path, line)
+			}
+			found++
+			if d := parseTemplateDuration(t, path, m[1]); d > max {
+				max = d
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatal("no checked servers found in the router templates; the MinDrainAnnounce derivation has lost its source")
+	}
+	return max
+}
+
+func maxTemplateDuration(t *testing.T, paths []string, directive *regexp.Regexp) time.Duration {
+	t.Helper()
+	var max time.Duration
+	found := 0
+	for _, path := range paths {
+		for _, m := range directive.FindAllStringSubmatch(readTemplate(t, path), -1) {
+			found++
+			if d := parseTemplateDuration(t, path, m[1]); d > max {
+				max = d
+			}
+		}
+	}
+	if found == 0 {
+		t.Fatalf("no template contains %v; the MinDrainAnnounce derivation has lost its source", directive)
+	}
+	return max
+}
+
+func readTemplate(t *testing.T, path string) string {
 	t.Helper()
 	body, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("the router template this contract is derived from is unreadable: %v", err)
 	}
-	m := directive.FindSubmatch(body)
-	if m == nil {
-		t.Fatalf("%s no longer contains %v; the MinDrainAnnounce derivation has lost its source", path, directive)
-	}
-	d, err := time.ParseDuration(string(m[1]))
+	return string(body)
+}
+
+func parseTemplateDuration(t *testing.T, path, raw string) time.Duration {
+	t.Helper()
+	d, err := time.ParseDuration(raw)
 	if err != nil {
 		t.Fatalf("%s: %v", path, err)
 	}
