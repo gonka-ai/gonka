@@ -4,110 +4,78 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
-	"net/url"
 	"strconv"
 	"strings"
 )
 
+// Handler serves the read-only accounting API:
+//
+//	GET /api/v1/epochs
+//	GET /api/v1/epochs/{epoch}/participants
+//	GET /api/v1/epochs/{epoch}/participants/{participant}
+//
+// {epoch} is a chain epoch index or "current". All endpoints accept
+// optional model and escrow_id query filters (repeated or comma-separated).
 type Handler struct {
 	tracker      *Tracker
 	currentEpoch CurrentEpochFunc
+	mux          *http.ServeMux
 }
 
 func NewHandler(tracker *Tracker, currentEpoch CurrentEpochFunc) *Handler {
-	return &Handler{tracker: tracker, currentEpoch: currentEpoch}
+	h := &Handler{tracker: tracker, currentEpoch: currentEpoch, mux: http.NewServeMux()}
+	h.mux.HandleFunc("GET /api/v1/epochs", h.epochs)
+	h.mux.HandleFunc("GET /api/v1/epochs/{epoch}/participants", h.participants)
+	h.mux.HandleFunc("GET /api/v1/epochs/{epoch}/participants/{participant}", h.participant)
+	return h
 }
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Content-Type", "application/json")
-	if r.Method != http.MethodGet {
-		w.Header().Set("Allow", http.MethodGet)
-		writeError(w, http.StatusMethodNotAllowed, "method not allowed")
-		return
-	}
-	if h == nil || h.tracker == nil {
-		writeError(w, http.StatusServiceUnavailable, "accounting unavailable")
-		return
-	}
-	path := strings.TrimSuffix(r.URL.Path, "/")
-	if path == "/api/v1/epochs" {
-		writeJSON(w, http.StatusOK, struct {
-			SchemaVersion int            `json:"schema_version"`
-			Epochs        []EpochSummary `json:"epochs"`
-		}{SchemaVersion: SchemaVersion, Epochs: h.tracker.Epochs(queryFilter(r, 0, ""))})
-		return
-	}
-	const prefix = "/api/v1/epochs/"
-	if !strings.HasPrefix(path, prefix) {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	parts := strings.Split(strings.TrimPrefix(path, prefix), "/")
-	if len(parts) < 2 || parts[1] != "participants" {
-		writeError(w, http.StatusNotFound, "not found")
-		return
-	}
-	epoch, err := h.resolveEpoch(r, parts[0])
+	h.mux.ServeHTTP(w, r)
+}
+
+func (h *Handler) epochs(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, struct {
+		SchemaVersion int            `json:"schema_version"`
+		Epochs        []EpochSummary `json:"epochs"`
+	}{SchemaVersion, h.tracker.Epochs(queryFilter(r, 0, ""))})
+}
+
+func (h *Handler) participants(w http.ResponseWriter, r *http.Request) {
+	epoch, err := h.resolveEpoch(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	switch len(parts) {
-	case 2:
-		writeJSON(w, http.StatusOK, struct {
-			SchemaVersion int                 `json:"schema_version"`
-			EpochIndex    uint64              `json:"epoch_index"`
-			Participants  []ParticipantRecord `json:"participants"`
-		}{
-			SchemaVersion: SchemaVersion,
-			EpochIndex:    epoch,
-			Participants:  h.tracker.Query(queryFilter(r, epoch, "")),
-		})
-	case 3:
-		participant, err := url.PathUnescape(parts[2])
-		if err != nil || strings.TrimSpace(participant) == "" {
-			writeError(w, http.StatusBadRequest, "invalid participant")
-			return
-		}
-		records := h.tracker.Query(queryFilter(r, epoch, participant))
-		if len(records) == 0 {
-			writeError(w, http.StatusNotFound, "participant not found")
-			return
-		}
-		writeJSON(w, http.StatusOK, struct {
-			SchemaVersion int                 `json:"schema_version"`
-			EpochIndex    uint64              `json:"epoch_index"`
-			Participant   string              `json:"participant"`
-			Records       []ParticipantRecord `json:"records"`
-		}{SchemaVersion: SchemaVersion, EpochIndex: epoch, Participant: participant, Records: records})
-	default:
-		writeError(w, http.StatusNotFound, "not found")
-	}
+	writeJSON(w, http.StatusOK, struct {
+		SchemaVersion int                 `json:"schema_version"`
+		EpochIndex    uint64              `json:"epoch_index"`
+		Participants  []ParticipantRecord `json:"participants"`
+	}{SchemaVersion, epoch, h.tracker.Query(queryFilter(r, epoch, ""))})
 }
 
-func queryFilter(r *http.Request, epoch uint64, participant string) QueryFilter {
-	return QueryFilter{
-		EpochIndex:  epoch,
-		Model:       strings.TrimSpace(r.URL.Query().Get("model")),
-		EscrowIDs:   escrowIDs(r),
-		Participant: participant,
+func (h *Handler) participant(w http.ResponseWriter, r *http.Request) {
+	epoch, err := h.resolveEpoch(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
 	}
+	participant := r.PathValue("participant")
+	records := h.tracker.Query(queryFilter(r, epoch, participant))
+	if len(records) == 0 {
+		writeError(w, http.StatusNotFound, "participant not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, struct {
+		SchemaVersion int                 `json:"schema_version"`
+		EpochIndex    uint64              `json:"epoch_index"`
+		Participant   string              `json:"participant"`
+		Records       []ParticipantRecord `json:"records"`
+	}{SchemaVersion, epoch, participant, records})
 }
 
-func escrowIDs(r *http.Request) []string {
-	var out []string
-	for _, raw := range r.URL.Query()["escrow_id"] {
-		for _, item := range strings.Split(raw, ",") {
-			item = strings.TrimSpace(item)
-			if item != "" {
-				out = append(out, item)
-			}
-		}
-	}
-	return out
-}
-
-func (h *Handler) resolveEpoch(r *http.Request, raw string) (uint64, error) {
+func (h *Handler) resolveEpoch(r *http.Request) (uint64, error) {
+	raw := r.PathValue("epoch")
 	if raw == "current" {
 		if h.currentEpoch == nil {
 			return 0, errors.New("current epoch unavailable")
@@ -121,7 +89,17 @@ func (h *Handler) resolveEpoch(r *http.Request, raw string) (uint64, error) {
 	return epoch, nil
 }
 
+func queryFilter(r *http.Request, epoch uint64, participant string) QueryFilter {
+	return QueryFilter{
+		EpochIndex:  epoch,
+		Model:       strings.TrimSpace(r.URL.Query().Get("model")),
+		EscrowIDs:   r.URL.Query()["escrow_id"],
+		Participant: participant,
+	}
+}
+
 func writeJSON(w http.ResponseWriter, status int, value any) {
+	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(value)
 }

@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -42,10 +43,20 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
-func startAccountingServer(g *Gateway, address string) (*http.Server, error) {
-	if g == nil || g.accounting == nil || strings.TrimSpace(address) == "" {
+// accountingStatsPort returns the port for the private accounting API.
+// Always on; DEVSHARD_STATS_PORT overrides the default.
+func accountingStatsPort() string {
+	if port := strings.TrimSpace(os.Getenv("DEVSHARD_STATS_PORT")); port != "" {
+		return port
+	}
+	return "9091"
+}
+
+func startAccountingServer(g *Gateway, port string) (*http.Server, error) {
+	if g == nil || g.accounting == nil {
 		return nil, nil
 	}
+	address := ":" + port
 	server := &http.Server{
 		Addr:              address,
 		Handler:           g.accounting.handler(accountingCurrentEpoch(g)),

@@ -560,33 +560,37 @@ type Decision struct {
 	ImmediateAttempts int
 }
 
+// gatewayAccounting receives protocol accounting events (real sends, ghosts,
+// usage, timeout outcomes) without coupling Redundancy to the recorder type.
 type gatewayAccounting interface {
-	recordRealSend(string, uint64, string)
-	recordGhost(string, uint64, string, string)
-	recordUsage(string, uint64, uint64)
-	recordTimeout(string, uint64, string, string, string, string, string)
+	recordRealSend(escrowID string, nonce uint64, quarantineMode string)
+	recordGhost(escrowID string, nonce uint64, reason, quarantineMode string)
+	recordUsage(escrowID string, nonce, winnerNonce uint64)
+	recordTimeout(escrowID string, nonce uint64, kind, action, reason, detailReason, timeoutReason string)
 }
 
 // Redundancy runs one request reliably, using extra attempts when needed.
 // It sits between Proxy and Session: Proxy delegates request execution here,
 // and Redundancy decides whether to use just one nonce or several.
 type Redundancy struct {
-	session               *user.Session
-	perf                  *PerfTracker
-	groupSize             int
-	devshardID            string
-	model                 string // escrow's registered model; used for ghost probes when no real request is around
-	metrics               *DevshardMetrics
-	accounting            gatewayAccounting
-	onEscrowMissing       func() // called (at most once per request) when a host reports escrow not found
-	onBalanceExhausted    func() // called (once) when local state hits insufficient balance
-	onRaceCleanupStart    func() // fires synchronously before a race cleanup goroutine spawns
-	onRaceCleanupDone     func() // fires when a race cleanup goroutine finishes
-	balanceExhaustedOnce  sync.Once
-	picker                *sessionPicker
-	participantLimiter    *ParticipantRequestLimiter
-	stateBlockMu          sync.RWMutex
-	stateBlockedHosts     map[string]string // escrow-local participant blocks for non-recoverable state divergence
+	session              *user.Session
+	perf                 *PerfTracker
+	groupSize            int
+	devshardID           string
+	model                string // escrow's registered model; used for ghost probes when no real request is around
+	metrics              *DevshardMetrics
+	accounting           gatewayAccounting
+	onEscrowMissing      func() // called (at most once per request) when a host reports escrow not found
+	onBalanceExhausted   func() // called (once) when local state hits insufficient balance
+	balanceExhaustedOnce sync.Once
+	picker               *sessionPicker
+	participantLimiter   *ParticipantRequestLimiter
+	stateBlockMu         sync.RWMutex
+	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
+
+	onRaceCleanupStart func()
+	onRaceCleanupDone  func()
+
 	suspiciousParticipant func(participantKey string) bool
 }
 
@@ -867,9 +871,9 @@ type inflight struct {
 	role        string
 	startReason string
 
-	receiptOnce     sync.Once
-	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
-	receiptCh       chan struct{} // closed when receipt arrives
+	receiptOnce      sync.Once
+	receiptTimeNano  atomic.Int64 // unix nano; 0 means not received
+	receiptCh        chan struct{} // closed when receipt arrives
 
 	tokenOnce       sync.Once
 	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
@@ -1201,6 +1205,7 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	return nil
 }
 
+
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1522,6 +1527,7 @@ func (inf *inflight) releaseClassifyPartial() {
 	}
 	inf.classifyPartial = nil
 }
+
 
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
@@ -2800,6 +2806,210 @@ func (e *Redundancy) isNoWinnerParticipant(participantKey string) bool {
 	return ok
 }
 
+func (e *Redundancy) quarantineModeForParticipant(participantKey string) string {
+	if e == nil || participantKey == "" {
+		return "none"
+	}
+	if status, ok := e.noWinnerStatusForParticipant(participantKey); ok {
+		if status.quarantineMode != "" {
+			return status.quarantineMode
+		}
+		return "probation"
+	}
+	if e.participantLimiter != nil && e.participantLimiter.IsBlockedForModel(participantKey, e.model) {
+		return participantQuarantineProbe.String()
+	}
+	return "none"
+}
+
+func gatewayMetricModel(params user.InferenceParams, fallback string) string {
+	if params.Model != "" {
+		return params.Model
+	}
+	return fallback
+}
+
+func gatewayAttemptRole(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.role) == "" {
+		return "primary"
+	}
+	return inf.role
+}
+
+func gatewayAttemptStartReason(inf *inflight) string {
+	if inf == nil || strings.TrimSpace(inf.startReason) == "" {
+		return "primary"
+	}
+	return inf.startReason
+}
+
+func gatewayRequestFailureReason(failed []*inflight) string {
+	for _, inf := range failed {
+		if inf != nil && !inf.probe {
+			return gatewayAttemptFailureReason(inf, nil)
+		}
+	}
+	return "unknown"
+}
+
+func timeoutKindForInflight(inf *inflight) string {
+	if inf == nil {
+		return "unknown"
+	}
+	if !inf.hasReceipt() {
+		return "refused"
+	}
+	return "execution"
+}
+
+func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
+	switch result.Reason {
+	case "refused", "execution":
+		return result.Reason
+	default:
+		return timeoutKindForInflight(inf)
+	}
+}
+
+// gatewayTimeoutFailureAction maps a failed HandleTimeout to a metric/accounting
+// action and reason. Applied-but-delivery-failed still counts as completed.
+func gatewayTimeoutFailureAction(result user.TimeoutResult) (string, string) {
+	if result.Applied {
+		return "completed", firstNonEmpty(result.DetailReason, "delivery_failed")
+	}
+	if result.Outcome == "skipped" {
+		return "skipped", firstNonEmpty(result.DetailReason, "unknown")
+	}
+	return "failed", firstNonEmpty(result.Outcome, "vote_collection_failed")
+}
+
+func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
+	if e == nil || e.metrics == nil {
+		return
+	}
+	e.metrics.RecordGatewayRequest(model, outcome, reason)
+	if outcome == "failed" {
+		e.metrics.RecordCriticalUserFailure(model, reason)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
+	if e == nil || inf == nil || inf.probe {
+		return
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	role := gatewayAttemptRole(inf)
+	reason := gatewayAttemptStartReason(inf)
+	quarantineMode := e.quarantineModeForParticipant(participantKey)
+	if e.accounting != nil {
+		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode)
+	}
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		EscrowID:       inf.escrowID,
+		Decision:       "real_send",
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	e.metrics.RecordGatewayAttemptStarted(GatewayAttemptStartMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Reason:         reason,
+		QuarantineMode: quarantineMode,
+	})
+	if inf.suspicious {
+		e.metrics.RecordGatewayNoWinnerAttempt(participantKey, model, inf.noWinnerReason, inf.noWinnerQuarantineMode)
+	}
+}
+
+func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
+	if e == nil || inf == nil || inf.probe {
+		return
+	}
+	if e.accounting != nil {
+		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
+	}
+	if e.metrics == nil {
+		return
+	}
+	outcome := "success"
+	if !ok {
+		outcome = "failed"
+	}
+	participantKey := e.participantKeyForHost(inf.hostIdx)
+	model := gatewayMetricModel(params, e.model)
+	visibility := gatewayAttemptVisibility(inf, winnerNonce, ok)
+	role := gatewayAttemptRole(inf)
+	e.metrics.RecordGatewayAttemptTerminal(GatewayAttemptTerminalMetric{
+		ParticipantKey: participantKey,
+		Model:          model,
+		Role:           role,
+		Outcome:        outcome,
+		Visibility:     visibility,
+	})
+	if !ok {
+		e.metrics.RecordGatewayAttemptFailure(GatewayAttemptFailureMetric{
+			ParticipantKey: participantKey,
+			Model:          model,
+			Role:           role,
+			Reason:         gatewayAttemptFailureReason(inf, e.session),
+			Visibility:     visibility,
+		})
+	}
+}
+
+func (e *Redundancy) recordGatewayUserVisibleWin(attempts []*inflight, params user.InferenceParams, winnerNonce uint64) {
+	if e == nil || e.metrics == nil || winnerNonce == 0 {
+		return
+	}
+	if winner := inflightByNonce(attempts, winnerNonce); winner != nil && !winner.probe {
+		e.metrics.RecordGatewayUserVisibleWin(e.participantKeyForHost(winner.hostIdx), gatewayMetricModel(params, e.model))
+	}
+}
+
+func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight) {
+	if e == nil || e.metrics == nil || len(failed) == 0 {
+		return
+	}
+	for _, inf := range failed {
+		if inf == nil || inf.probe {
+			continue
+		}
+		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session))
+		return
+	}
+}
+
+func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string, detailReasons ...string) {
+	if e == nil || inf == nil || inf.probe {
+		return
+	}
+	if e.accounting != nil {
+		detailReason := gatewayAttemptFailureReason(inf, e.session)
+		timeoutReason := reason
+		if len(detailReasons) > 0 && detailReasons[0] != "" {
+			timeoutReason = detailReasons[0]
+		}
+		e.accounting.recordTimeout(inf.escrowID, inf.nonce, kind, action, reason, detailReason, timeoutReason)
+	}
+	if e.metrics == nil {
+		return
+	}
+	e.metrics.RecordGatewayTimeoutAction(GatewayTimeoutActionMetric{
+		ParticipantKey: e.participantKeyForHost(inf.hostIdx),
+		Model:          gatewayMetricModel(params, e.model),
+		Kind:           kind,
+		Action:         action,
+		Reason:         reason,
+	})
+}
+
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
 	bgCtx, _ := ensureRequestLogContext(context.Background())
 	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
@@ -3215,6 +3425,7 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	}
 	return inf.contentChunks.Load() == 0
 }
+
 
 // isModelBurnEmpty: empty stream where the model generated tokens that vLLM
 // stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
@@ -3852,211 +4063,6 @@ func (e *Redundancy) completeAccountingRequest(ctx context.Context, winnerNonce 
 		return
 	}
 	e.perf.CompleteAccountingRequest(requestID, e.devshardID, winnerNonce, decision.Reason, outcome, time.Now())
-}
-
-func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
-	if e == nil || e.metrics == nil {
-		return
-	}
-	e.metrics.RecordGatewayRequest(model, outcome, reason)
-	if outcome == "failed" {
-		e.metrics.RecordCriticalUserFailure(model, reason)
-	}
-}
-
-func (e *Redundancy) recordGatewayAttemptStarted(inf *inflight, params user.InferenceParams) {
-	if e == nil || inf == nil || inf.probe {
-		return
-	}
-	participantKey := e.participantKeyForHost(inf.hostIdx)
-	model := gatewayMetricModel(params, e.model)
-	role := gatewayAttemptRole(inf)
-	reason := gatewayAttemptStartReason(inf)
-	quarantineMode := e.quarantineModeForParticipant(participantKey)
-	if e.accounting != nil {
-		e.accounting.recordRealSend(inf.escrowID, inf.nonce, quarantineMode)
-	}
-	if e.metrics == nil {
-		return
-	}
-	e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
-		ParticipantKey: participantKey,
-		Model:          model,
-		EscrowID:       inf.escrowID,
-		Decision:       "real_send",
-		Reason:         reason,
-		QuarantineMode: quarantineMode,
-	})
-	e.metrics.RecordGatewayAttemptStarted(GatewayAttemptStartMetric{
-		ParticipantKey: participantKey,
-		Model:          model,
-		Role:           role,
-		Reason:         reason,
-		QuarantineMode: quarantineMode,
-	})
-	if inf.suspicious {
-		e.metrics.RecordGatewayNoWinnerAttempt(participantKey, model, inf.noWinnerReason, inf.noWinnerQuarantineMode)
-	}
-}
-
-func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.InferenceParams, winnerNonce uint64, ok bool) {
-	if e == nil || inf == nil || inf.probe {
-		return
-	}
-	if e.accounting != nil {
-		e.accounting.recordUsage(inf.escrowID, inf.nonce, winnerNonce)
-	}
-	if e.metrics == nil {
-		return
-	}
-	outcome := "success"
-	if !ok {
-		outcome = "failed"
-	}
-	participantKey := e.participantKeyForHost(inf.hostIdx)
-	model := gatewayMetricModel(params, e.model)
-	visibility := gatewayAttemptVisibility(inf, winnerNonce, ok)
-	role := gatewayAttemptRole(inf)
-	e.metrics.RecordGatewayAttemptTerminal(GatewayAttemptTerminalMetric{
-		ParticipantKey: participantKey,
-		Model:          model,
-		Role:           role,
-		Outcome:        outcome,
-		Visibility:     visibility,
-	})
-	if !ok {
-		e.metrics.RecordGatewayAttemptFailure(GatewayAttemptFailureMetric{
-			ParticipantKey: participantKey,
-			Model:          model,
-			Role:           role,
-			Reason:         gatewayAttemptFailureReason(inf, e.session),
-			Visibility:     visibility,
-		})
-	}
-}
-
-func (e *Redundancy) recordGatewayUserVisibleWin(attempts []*inflight, params user.InferenceParams, winnerNonce uint64) {
-	if e == nil || e.metrics == nil || winnerNonce == 0 {
-		return
-	}
-	if winner := inflightByNonce(attempts, winnerNonce); winner != nil && !winner.probe {
-		e.metrics.RecordGatewayUserVisibleWin(e.participantKeyForHost(winner.hostIdx), gatewayMetricModel(params, e.model))
-	}
-}
-
-func (e *Redundancy) recordGatewayHiddenFailure(model string, failed []*inflight) {
-	if e == nil || e.metrics == nil || len(failed) == 0 {
-		return
-	}
-	for _, inf := range failed {
-		if inf == nil || inf.probe {
-			continue
-		}
-		e.metrics.RecordGatewayHiddenFailure(model, "protected", gatewayAttemptFailureReason(inf, e.session))
-		return
-	}
-}
-
-func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.InferenceParams, kind, action, reason string, detailReasons ...string) {
-	if e == nil || inf == nil || inf.probe {
-		return
-	}
-	if e.accounting != nil {
-		detailReason := gatewayAttemptFailureReason(inf, e.session)
-		timeoutReason := reason
-		if len(detailReasons) > 0 && detailReasons[0] != "" {
-			timeoutReason = detailReasons[0]
-		}
-		e.accounting.recordTimeout(
-			inf.escrowID, inf.nonce, kind, action, reason, detailReason,
-			timeoutReason,
-		)
-	}
-	if e.metrics == nil {
-		return
-	}
-	e.metrics.RecordGatewayTimeoutAction(GatewayTimeoutActionMetric{
-		ParticipantKey: e.participantKeyForHost(inf.hostIdx),
-		Model:          gatewayMetricModel(params, e.model),
-		Kind:           kind,
-		Action:         action,
-		Reason:         reason,
-	})
-}
-
-func (e *Redundancy) quarantineModeForParticipant(participantKey string) string {
-	if e == nil || participantKey == "" {
-		return "none"
-	}
-	if status, ok := e.noWinnerStatusForParticipant(participantKey); ok {
-		if status.quarantineMode != "" {
-			return status.quarantineMode
-		}
-		return "probation"
-	}
-	if e.participantLimiter != nil && e.participantLimiter.IsBlockedForModel(participantKey, e.model) {
-		return participantQuarantineProbe.String()
-	}
-	return "none"
-}
-
-func gatewayMetricModel(params user.InferenceParams, fallback string) string {
-	if params.Model != "" {
-		return params.Model
-	}
-	return fallback
-}
-
-func gatewayAttemptRole(inf *inflight) string {
-	if inf == nil || strings.TrimSpace(inf.role) == "" {
-		return "primary"
-	}
-	return inf.role
-}
-
-func gatewayAttemptStartReason(inf *inflight) string {
-	if inf == nil || strings.TrimSpace(inf.startReason) == "" {
-		return "primary"
-	}
-	return inf.startReason
-}
-
-func gatewayRequestFailureReason(failed []*inflight) string {
-	for _, inf := range failed {
-		if inf != nil && !inf.probe {
-			return gatewayAttemptFailureReason(inf, nil)
-		}
-	}
-	return "unknown"
-}
-
-func timeoutKindForInflight(inf *inflight) string {
-	if inf == nil {
-		return "unknown"
-	}
-	if !inf.hasReceipt() {
-		return "refused"
-	}
-	return "execution"
-}
-
-func timeoutResultKind(result user.TimeoutResult, inf *inflight) string {
-	switch result.Reason {
-	case "refused", "execution":
-		return result.Reason
-	default:
-		return timeoutKindForInflight(inf)
-	}
-}
-
-func gatewayTimeoutFailureAction(result user.TimeoutResult) (string, string) {
-	if result.Applied {
-		return "completed", firstNonEmpty(result.DetailReason, "delivery_failed")
-	}
-	if result.Outcome == "skipped" {
-		return "skipped", firstNonEmpty(result.DetailReason, "unknown")
-	}
-	return "failed", firstNonEmpty(result.Outcome, "vote_collection_failed")
 }
 
 func (e *Redundancy) buildInvolvement(inf *inflight, winnerNonce uint64, params user.InferenceParams) HostInvolvement {

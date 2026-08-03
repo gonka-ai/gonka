@@ -160,7 +160,7 @@ func main() {
 	if gateway.phaseGate != nil {
 		gateway.phaseGate.refresh()
 	}
-	statsServer, err := startAccountingServer(gateway, strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR")))
+	statsServer, err := startAccountingServer(gateway, accountingStatsPort())
 	if err != nil {
 		log.Printf("start accounting server: %v", err)
 		return
