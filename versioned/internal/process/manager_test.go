@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -2599,4 +2600,59 @@ func zipBinary(t *testing.T, binaryName string, data []byte) ([]byte, string) {
 
 	zipData := buf.Bytes()
 	return zipData, sha256Hex(zipData)
+}
+
+// A child is probed for readiness once when it starts, but it can lose readiness
+// later — devshardd reports itself unready when its chain subscription drops.
+// If versiond kept answering 200 for that version the balancer would hold a
+// route open to a host that cannot serve.
+func TestServesVersion_FollowsTheChildLosingReadiness(t *testing.T) {
+	ready := atomic.Bool{}
+	ready.Store(true)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" && !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	port := serverPort(t, srv)
+
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	c := &child{status: statusRunning, port: port, version: oracle.Version{Name: "v4"}}
+	m.mu.Lock()
+	m.processes["v4"] = c
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if !m.ServesVersion("v4") {
+		t.Fatal("a running, ready child does not serve its version")
+	}
+
+	ready.Store(false)
+	m.mu.Lock()
+	delete(m.serveChecks, "v4")
+	m.mu.Unlock()
+	if m.ServesVersion("v4") {
+		t.Fatal("child reports unready but versiond still offers the version")
+	}
+
+	// An unknown version is not served whatever the child says.
+	if m.ServesVersion("v9") {
+		t.Fatal("a version with no route is served")
+	}
+}
+
+func serverPort(t *testing.T, srv *httptest.Server) int {
+	t.Helper()
+	_, portStr, err := net.SplitHostPort(strings.TrimPrefix(srv.URL, "http://"))
+	if err != nil {
+		t.Fatalf("split %s: %v", srv.URL, err)
+	}
+	port, err := strconv.Atoi(portStr)
+	if err != nil {
+		t.Fatalf("port %q: %v", portStr, err)
+	}
+	return port
 }

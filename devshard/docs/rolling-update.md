@@ -462,9 +462,9 @@ an unsafe non-HA storage mode.
 | Piece | Meaning |
 |---|---|
 | `docker compose stop` / `start` | The whole host lifecycle. Membership is DNS; health is measured |
-| `gonka-drain out\|in\|status` | Quiesce a host without stopping it, or inspect the router's live view |
+| `gonka-drain status` | Read-only view of what the router believes; there is no router-side drain |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
-| `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here |
+| `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
 | `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host with an available child that has converged at least once |
 | `VERSIOND_VERSIONS` | Versions the router can route. Add a version here *before* governance approves it; undeclared versions are refused |
 | `VERSIOND_DRAIN_ANNOUNCE` | How long the host stays accepting after it starts failing `/readyz`, default `5s` |
@@ -537,14 +537,15 @@ Replace or restart it:
 docker compose up -d versiond2
 ```
 
-Take a host out of rotation without stopping it (maintenance that is not a
-versiond shutdown):
+Inspect what the router believes:
 
 ```bash
-docker compose exec versiond-router gonka-drain out versiond2
 docker compose exec versiond-router gonka-drain status
-docker compose exec versiond-router gonka-drain in versiond2
 ```
+
+Taking a host out of rotation is stopping it. There is no router-side drain:
+HAProxy reuses server slots, so a drain outlives the host it was meant for and is
+inherited by whichever host DNS puts in that slot next.
 
 Scale up by starting another container on the pool alias; scale down by stopping
 one and not starting it again. Neither needs a router change.
@@ -598,15 +599,12 @@ consumes unchanged, which is the point of putting it on the traffic listener.
 - **versiond host FSM:** admission closes atomically on `draining`, leases span
   full streams, reconcile/restarts freeze, and first/second signals exercise
   graceful/idempotent/forced process states.
-- **versiond-router:** test every router transition and guard, config validation,
-  committed-intent recovery, desired/applied convergence, and hostctl checkpoint
-  resume/order without requiring SSH. Removal must drop the DNS name from the
-  rendered pool after recovery from a reload failure and replay idempotently
-  from the terminal operation receipt. Re-adding the same host name must create
-  a new membership ID. State and pending journal fixtures from schemas 1
-  through 4 must migrate without losing an in-progress transfer. A rejected
-  config must recover through a new projection revision after its render
-  source is fixed, while an already applied operation remains immutable.
+- **versiond-router:** `make test-render` renders every supported shape and
+  validates each result with the HAProxy the router ships; `make test-hash-ring`
+  proves the sticky ring follows which hosts are in the pool rather than the
+  order DNS returned them; `make test-version-routing` proves a host missing one
+  version leaves that version's pool and keeps serving the rest, and that an
+  undeclared version is refused rather than routed by luck.
 - **full stack (`devshard/testenv`):**
   `TestVersiondRollingUpdateSameVersionSHA` covers Postgres overlap and SSE
   continuity, and `TestVersiondRollingUpdateHybridFallback` covers the
@@ -629,13 +627,14 @@ stop/start. No feature flag.
 **Track B — versiond host removal/replacement (§1.8): implemented** on the
 host-evacuation line:
 
-7. The versiond host FSM has an internal absolute shutdown budget,
-   transactional router FSM, replacement `/ready` gate, and resumable SSH
-   operator CLI for drain, stop, replacement, and activation.
-8. Unit/race coverage and `TestVersiondHostEvacuation` pin a long request
-   to `versiond-N`, mark the upstream down, assert completion and survivor
-   routing, then assert process exit after idle and healthy replacement
-   activation.
+1. The versiond host FSM has an internal absolute shutdown budget and an
+   announce window, so a host reports unready while it is still serving and the
+   router removes it before it stops accepting. There is no router-side control
+   plane: membership is DNS and health is measured per version.
+2. Unit/race coverage and `TestVersiondHostEvacuation` pin a long request to
+   `versiond-N`, assert the router stops routing there while that request is
+   still running, assert completion and survivor routing, then assert process
+   exit after idle and a rejoin only once readiness returns.
 
 ---
 

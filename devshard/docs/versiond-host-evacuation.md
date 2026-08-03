@@ -19,7 +19,7 @@ its container:
 | Replace / restart | `docker compose up -d versiond2` | it rejoins the pool only once `/readyz` returns 200 |
 | Add a host | start another container on the pool alias | DNS gains an A record; the router finds it within seconds |
 | Decommission | stop it and do not start it again | DNS loses the record; the router forgets it |
-| Quiesce without stopping | `docker compose exec versiond-router gonka-drain out versiond2` | keeps serving accepted work, receives nothing new |
+| Inspect what the router believes | `docker compose exec versiond-router gonka-drain status` | read-only; the router keeps no other state |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told
@@ -41,18 +41,16 @@ about the change, so nothing can be told about it incorrectly.
    idempotent. Every child process is reaped before `versiond` exits.
 6. The external kill grace must exceed versiond's single absolute shutdown
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
-7. An established request stays on its original router connection and versiond
+8. An established request stays on its original router connection and versiond
    generation. A later request for the same HA escrow may recover on another host
    from shared Postgres; legacy SQLite escrows never enter the HA pool.
-8. A host that is running but not yet converged is not routed to: readiness is a
+9. A host that is running but not yet converged is not routed to: readiness is a
    statement about capacity to serve, not about having finished booting.
 
-Invariant 6 in earlier revisions ("only one host is evacuated at a time, and the
-last active upstream cannot be drained") is now split: `gonka-drain` still
-refuses to drain the last host taking traffic, but nothing prevents an operator
-from stopping two containers at once. Stopping is a Docker operation and cannot
-be intercepted, so the guarantee has to come from procedure, not from software
-pretending to own the host.
+Earlier revisions promised that the last active upstream could not be drained
+away. Nothing enforces that now: stopping a container is a Docker operation and
+cannot be intercepted, so evacuating one host at a time is a procedure, not
+something software can pretend to own.
 
 ## State machines
 
@@ -140,7 +138,7 @@ Endpoints, all on the traffic listener (`:8080`):
 | Endpoint | Answers | Used by |
 | --- | --- | --- |
 | `GET /healthz` | the legacy JSON array of per-version child state | operators, dashboards, existing clients |
-| `GET /readyz?version=<v>` | `200` when this host has a running child serving `<v>` | the router's per-version health check |
+| `GET /readyz?version=<v>` | `200` when a running child serves `<v>` **and** still reports itself ready | the router's per-version health check |
 | `GET /readyz` | `200` when this host should receive new work at all | the router's check for non-version paths, and for every version when none is declared |
 
 `/readyz` is on the public listener on purpose. It is not a private admin
@@ -161,7 +159,10 @@ entire pool — the failure mode readiness exists to prevent.
 `/readyz?version=<v>` is the question the balancer actually has, and it needs no
 convergence latch and no view of the desired set: either a running child serves
 that version here or it does not. It reads the same route table the proxy uses,
-so the answer cannot disagree with what a request would get. Draining still takes
+so the answer cannot disagree with what a request would get, and it re-asks the
+child — readiness is checked once at start, but a child can lose it afterwards,
+and a route held open to a child that has gone unready is a route to a host that
+cannot serve. Draining still takes
 every version out at once, or the announce window would not empty the host.
 
 **A failed reconcile is not a readiness failure.** Every versiond reads the same

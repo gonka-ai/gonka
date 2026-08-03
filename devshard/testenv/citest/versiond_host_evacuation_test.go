@@ -169,10 +169,6 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	require.Equal(t, []string{survivorHost}, harness.RouterServingHosts(t, env.stack, env.cfg, pool))
 	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
 
-	harness.Step(t, "the last serving host cannot be drained away")
-	harness.RequireRouterRefusesToEmptyPool(t, env.stack, survivorHost)
-	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
-
 	harness.Step(t, "%s comes back up but cannot converge: it must stay out of the pool", targetHost)
 	// A host that is up but not yet able to serve must not be routed to. Racing
 	// a normal start is no way to check that — a fast child wins and the window

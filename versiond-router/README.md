@@ -147,13 +147,11 @@ uses the host-level pool, exactly as before per-version pools existed. Versionle
 endpoints — `/healthz`, `/readyz`, `/metrics`, `/stats`, and the session
 observability routes — always use it and are never refused.
 
-Declared names must match `[A-Za-z0-9][A-Za-z0-9._-]*`. The same string is a
-HAProxy backend name, a health-check query value and a map key matched against a
-path segment, and a name outside that grammar cannot be all three
-unambiguously — `+` alone decodes to a space in the query and would leave the
-host permanently down. The router refuses such a name at startup rather than
-route on a guess. The chain accepts a wider set today; narrowing it there is the
-proper fix and is listed as a follow-up.
+Declared names are taken as governance wrote them. The one limit is that a name
+must be able to appear literally in a path segment: `/`, `?`, `#`, `%` and
+whitespace are refused at startup, because the request path would then not match
+the name at all. See [Configuration](#configuration) for how the three uses of a
+name are derived.
 
 For `/readyz?version=<v>`, `versiond` answers `200` when it is accepting traffic
 and has a running child serving exactly that version — it reads the same route
@@ -234,53 +232,39 @@ by definition, so no sibling can exist.
 `GONKA_HA` describes the deployment, so it is set by the HA overlay itself, not
 per host.
 
-## Taking a host out by hand: `gonka-drain`
-
-A graceful `versiond` stop needs nothing from the router. `gonka-drain` is for
-the other direction — quiescing a host from outside, for maintenance that is not
-a `versiond` shutdown:
+## Looking at the pool: `gonka-drain status`
 
 ```console
 $ docker compose exec versiond-router gonka-drain status
-SLOT       ADDRESS         STATE
-versiond1  172.30.0.10     UP
-versiond2  172.30.0.11     UP
-2 server(s) taking traffic in versiond_ha_pool
-
-$ docker compose exec versiond-router gonka-drain out versiond2
-drained versiond_ha_pool/versiond2 (versiond2); 1 of 2 left serving
-
-$ docker compose exec versiond-router gonka-drain in versiond2
-returned versiond_ha_pool/versiond2 (versiond2) to rotation
+versiond_pool_v4
+  versiond1  172.30.0.10  UP
+  versiond2  172.30.0.11  DOWN
+  1 server(s) taking traffic
+versiond_ha_pool
+  versiond1  172.30.0.10  UP
+  versiond2  172.30.0.11  UP
+  2 server(s) taking traffic
 ```
 
-A drained host keeps serving what it already accepted and receives no new work.
-Hosts are addressed by container name or IP; slot names are an HAProxy
-implementation detail and are resolved for you.
+One host is a separate server in every backend, with its own health, so the same
+host can be serving `v4` and out of `v5`. This is the router's whole state, and
+it is read-only.
 
-Server state in HAProxy belongs to a backend/server pair, and one host sits in
-every backend it belongs to — the host-level pool, one per declared version, and
-`versiond_legacy` if it owns the pre-HA data. `gonka-drain` therefore drains a
-host from all of them. It snapshots each server's admin state before changing
-anything and restores those exact states if one of the changes fails, so a host
-is never left half out, and it holds a lock for the whole plan-and-apply so two
-concurrent drains cannot each see a live peer and then leave none.
+**There is no manual drain.** There was, and it was wrong: HAProxy identifies a
+server by its slot in a `server-template`, and slots are reused. A drained host
+that leaves DNS frees its slot, the next host to arrive lands in it and inherits
+the drain — kept out of rotation with nothing to show why. Admin state belongs to
+the identity of a process; the router only ever knows an address DNS lent it.
 
-`gonka-drain out` refuses when the target is the last server *taking traffic* in
-some backend, naming it. A host that is already down in a version's pool — it
-does not run that version — does not keep that pool alive, so it can still be
-drained from the pools where it does serve.
+To take a host out of rotation, stop its versiond:
 
-The legacy owner is one server in `versiond_legacy` by definition, so it cannot
-be drained while any version is pinned there: emptying it would fail every
-request for those versions. Stop that host only when it is genuinely being
-evacuated. The guard
-is advisory — `docker stop` bypasses it — and exists so that draining hosts one
-by one cannot empty the pool by accident.
+```console
+$ docker compose stop versiond2
+```
 
-Drain state lives in HAProxy's memory only: a restarted router starts from a
-clean pool and rebuilds its whole view from DNS and health checks within a
-couple of seconds.
+That is graceful by construction — versiond reports unready for
+`VERSIOND_DRAIN_ANNOUNCE` while it keeps serving, so the router removes it before
+it stops accepting — and it is tied to the process, so nothing can inherit it.
 
 ## Configuration
 

@@ -1,57 +1,32 @@
 #!/bin/sh
-# gonka-drain — take one versiond out of rotation, or put it back.
+# gonka-drain — show what the router currently believes about the pool.
 #
-# Draining is not required for a graceful stop: versiond fails /readyz for
-# VERSIOND_DRAIN_ANNOUNCE before it stops accepting, and the router notices.
-# This is for the other direction — quiescing a host from the outside, e.g.
-# before maintenance that is not a versiond shutdown at all.
+# Read-only on purpose. There used to be `out` and `in` here, applying HAProxy's
+# forced DRAIN to a server. HAProxy identifies a server by its slot in a
+# server-template, and a slot is reused: when a drained host leaves DNS and an
+# unrelated one arrives, the new host lands in that slot and inherits the drain.
+# It is then quietly kept out of rotation with nothing to show why. Admin state
+# belongs to the identity of a process, and the router has no such identity —
+# only an address that DNS lent it.
 #
-# Usage:
-#   gonka-drain status
-#   gonka-drain out <host|ip|slot>   # stop new traffic, keep serving established
-#   gonka-drain in  <host|ip|slot>
+# To take a host out of rotation, stop its versiond:
 #
-# A host is addressed the way an operator knows it — the container name or IP.
-# It is resolved to one address first, and every backend is then matched on that
-# address: server-template slots (versiond1..versiondN) are filled in DNS answer
-# order and are local to a backend, so the same slot name is a different host
-# from one backend to the next.
+#   docker compose stop versiond2
 #
-# HAProxy server state is per backend/server pair, and one host appears in every
-# backend it belongs to: the host-level pool, one pool per declared version, and
-# versiond_legacy if it owns the pre-HA data. Draining means draining everywhere,
-# or the host keeps taking the traffic that was missed. Every backend is
-# inspected and snapshotted first; if one change fails, the ones already made are
-# put back exactly as they were.
-#
-# A backend whose last server still taking traffic is the target refuses the
-# drain — that includes versiond_legacy, which has exactly one server, so the
-# legacy owner cannot be quiesced this way at all. Emptying it would fail every
-# request for the versions pinned to it. This is advisory: `docker stop` still
-# bypasses it.
+# That is graceful by construction — versiond reports unready for
+# VERSIOND_DRAIN_ANNOUNCE while it keeps serving, so the router removes it before
+# it stops accepting — and it is tied to the process, so nothing can inherit it.
 set -eu
 
 SOCK="${HAPROXY_SOCKET:-/var/run/haproxy.sock}"
-LOCK="${GONKA_DRAIN_LOCK:-/var/run/gonka-drain.lock}"
+NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 
 runtime() {
     printf '%s\n' "$1" | socat stdio "$SOCK"
 }
 
-# A command that changed nothing answers with an error line; success is silent.
-apply() {
-    reply="$(runtime "$1" | tr -d '\n')"
-    if [ -n "$reply" ]; then
-        echo "gonka-drain: $reply" >&2
-        return 1
-    fi
-}
-
-NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
-
 # Backends that can actually receive a request. versiond_legacy exists even when
-# no version is pinned to it, and then it can be reached by nothing — counting
-# its single server would pin one host as undrainable for no reason. The map is
+# no version is pinned to it, and then it can be reached by nothing. The map is
 # read from HAProxy rather than from disk, because `add map` at runtime is a
 # supported way to pin a version and never touches the file.
 legacy_is_reachable() {
@@ -68,8 +43,8 @@ backends() {
 }
 
 # `show servers state` columns: 4 = srv_name, 5 = srv_addr, 6 = srv_op_state
-# (2 means UP), 7 = srv_admin_state (0 means no drain/maintenance bit). Slots a
-# DNS answer has never filled carry no address and are skipped.
+# (2 means UP), 7 = srv_admin_state. Slots a DNS answer has never filled carry no
+# address and are skipped.
 servers() {
     runtime "show servers state $1" | awk 'NR > 2 && NF > 7 && $5 != "-"'
 }
@@ -78,45 +53,8 @@ serving_count() {
     servers "$1" | awk '$6 == 2 && $7 == 0 { n++ } END { print n + 0 }'
 }
 
-# Prints "<slot> <op_state> <admin_state>" for the server at this address.
-find_server() {
-    servers "$1" | awk -v addr="$2" '$5 == addr { print $4, $6, $7; exit }'
-}
-
-# The one address a target names. Slot names are local to a backend — versiond1
-# is a different host in each — so a slot is resolved to its address once here
-# and every backend is then matched on that address alone.
-address_of() {
-    target="$1"
-    resolved="$(getent hosts "$target" 2>/dev/null | awk 'NR == 1 { print $1 }')"
-    if [ -n "$resolved" ]; then
-        printf '%s' "$resolved"
-        return 0
-    fi
-    for backend in $(backends); do
-        addr="$(servers "$backend" | awk -v t="$target" '$4 == t || $5 == t { print $5; exit }')"
-        if [ -n "$addr" ]; then
-            printf '%s' "$addr"
-            return 0
-        fi
-    done
-    return 1
-}
-
-# The admin state to restore this server to. HAProxy reports a bitfield;
-# 0x1 is forced maintenance and 0x8 forced drain.
-state_for_admin() {
-    if [ $(($1 & 1)) -ne 0 ]; then
-        echo maint
-    elif [ $(($1 & 8)) -ne 0 ]; then
-        echo drain
-    else
-        echo ready
-    fi
-}
-
 case "${1:-}" in
-status)
+status | "")
     for backend in $(backends); do
         printf '%s\n' "$backend"
         servers "$backend" | awk '{
@@ -129,90 +67,14 @@ status)
     done
     ;;
 out | in)
-    action="$1"
-    target="${2:?usage: gonka-drain $1 <host|ip|slot>}"
-
-    # Two concurrent drains could each see two live servers and then leave none.
-    # The lock is held for the whole plan-and-apply, so the second one sees the
-    # first one's result.
-    if [ -z "${GONKA_DRAIN_LOCKED:-}" ]; then
-        GONKA_DRAIN_LOCKED=1
-        export GONKA_DRAIN_LOCKED
-        exec flock "$LOCK" "$0" "$@"
-    fi
-
-    if ! addr="$(address_of "$target")"; then
-        echo "gonka-drain: '$target' does not resolve and matches no server" >&2
-        echo "known backends:" >&2
-        backends | sed 's/^/  /' >&2
-        exit 1
-    fi
-    want=drain
-    [ "$action" = out ] || want=ready
-
-    # Plan across every backend before touching any of them, remembering what to
-    # put back if an apply fails part way through.
-    plan=""
-    found_in=0
-    for backend in $(backends); do
-        found="$(find_server "$backend" "$addr")"
-        [ -n "$found" ] || continue
-        found_in=$((found_in + 1))
-        # shellcheck disable=SC2086
-        set -- $found
-        slot="$1"; op="$2"; admin="$3"
-        was="$(state_for_admin "$admin")"
-        if [ "$was" = "$want" ]; then
-            continue
-        fi
-        # Only the traffic this host is actually taking can be taken away. A
-        # host that is already DOWN here — it does not run this version — is not
-        # what keeps the backend alive, so draining it empties nothing.
-        if [ "$action" = out ] && [ "$op" = 2 ] && [ "$admin" = 0 ] &&
-            [ "$(serving_count "$backend")" -le 1 ]; then
-            echo "refusing: $target is the last server taking traffic in $backend" >&2
-            exit 1
-        fi
-        plan="$plan $backend/$slot=$was"
-    done
-
-    if [ "$found_in" -eq 0 ]; then
-        echo "gonka-drain: '$target' ($addr) is in no backend HAProxy knows about" >&2
-        echo "  a host that has just entered DNS is not in the pool yet; reporting" >&2
-        echo "  success here would say it is quiesced when it is about to join" >&2
-        backends | sed 's/^/  /' >&2
-        exit 1
-    fi
-    if [ -z "$plan" ]; then
-        echo "$target ($addr) is already $want in all $found_in backend(s) it appears in"
-        exit 0
-    fi
-
-    applied=""
-    for entry in $plan; do
-        server="${entry%=*}"
-        if ! apply "set server $server state $want"; then
-            echo "gonka-drain: rolling back after failing on $server" >&2
-            for undo in $applied; do
-                apply "set server ${undo%=*} state ${undo#*=}" || true
-            done
-            exit 1
-        fi
-        applied="$applied $entry"
-    done
-
-    changed=""
-    for entry in $plan; do
-        changed="$changed ${entry%=*}"
-    done
-    if [ "$action" = out ]; then
-        echo "drained $target from:$changed"
-    else
-        echo "returned $target to:$changed"
-    fi
+    echo "gonka-drain: '$1' was removed: HAProxy server slots are reused, so a" >&2
+    echo "  drain outlives the host it was meant for and is inherited by whichever" >&2
+    echo "  host DNS puts in that slot next. Stop the versiond instead:" >&2
+    echo "    docker compose stop <service>" >&2
+    exit 2
     ;;
 *)
-    echo "usage: gonka-drain <status|out|in> [host|ip|slot]" >&2
+    echo "usage: gonka-drain status" >&2
     exit 2
     ;;
 esac

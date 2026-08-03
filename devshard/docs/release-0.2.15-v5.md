@@ -146,8 +146,9 @@ versions you expect ahead of time** and a governance approval needs step 2 only:
 a pool for a version nobody runs yet has no healthy members and costs nothing.
 
 Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
-previous host-level behaviour. The join overlay declares `v4` by default, so a
-deployment that later serves `v5` must add it before governance approves it.
+previous host-level behaviour. The join overlay declares `v4` through `v8`, so an
+approval inside that window needs no router change; extend the list before
+governance moves past it.
 
 ### A failed version poll no longer takes hosts out of rotation
 
@@ -191,11 +192,11 @@ Day-to-day operations:
 | --- | --- |
 | Take a host out of service | `docker compose stop versiond2` |
 | Put it back / replace it | `docker compose up -d versiond2` |
-| Inspect the router's live view | `docker compose exec versiond-router gonka-drain status` |
-| Quiesce without stopping | `docker compose exec versiond-router gonka-drain out versiond2` |
-| Undo that | `docker compose exec versiond-router gonka-drain in versiond2` |
+| Inspect the router's live view | `docker compose exec versiond-router gonka-drain status` (read-only) |
 
-`gonka-drain out` refuses to drain the last host still taking traffic.
+Taking a host out of rotation is stopping it — there is no router-side drain,
+because HAProxy reuses server slots and a drain would be inherited by whichever
+host lands in that slot next.
 
 ## Upgrade / rollout checklist
 

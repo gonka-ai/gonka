@@ -56,14 +56,14 @@ func TestVersiondRollingUpdateSameVersionSHA(t *testing.T) {
 
 			targetHost := env.hosts[targetHostIndex]
 			// Pin new work to the host under test so sticky hashing cannot hide
-			// the drain on the other replica. Draining keeps it running and
-			// serving what it already accepted, which is the point.
+			// the drain on the other replica. Stopping it is how an operator takes
+			// a host out of rotation, and it is what the router is built around.
 			otherHost := env.hosts[1-targetHostIndex]
-			harness.Step(t, "draining %s so every new session lands on %s", otherHost, targetHost)
-			harness.RouterDrain(t, env.stack, otherHost)
+			harness.Step(t, "stopping %s so every new session lands on %s", otherHost, targetHost)
+			env.stack.StopService(t, otherHost)
 			harness.WaitRouterPoolState(t, env.stack, env.cfg,
 				harness.VersionPoolBackend(env.cfg.Versiond.VersionName), otherHost,
-				harness.RouterSlotDrain, 30*time.Second)
+				"", 60*time.Second)
 			exerciseVersiondRollingFlip(t, &env, client, targetHost, env.oldVersion, env.newVersion, targetHost)
 		})
 	}
@@ -127,7 +127,9 @@ func exerciseVersiondRollingFlip(
 		t.Fatal("continuity probe did not stop")
 	}
 
-	requireNoOldDraining(t, env.stack, env.hosts, env.cfg.Versiond.VersionName, fromVersion.SHA256)
+	// Only the host that flipped: the other one is deliberately stopped, and a
+	// stopped host has no health to report.
+	requireNoOldDraining(t, env.stack, []string{overlapHost}, env.cfg.Versiond.VersionName, fromVersion.SHA256)
 }
 
 // TestVersiondRollingUpdateHybridFallback verifies that the same sha-flip

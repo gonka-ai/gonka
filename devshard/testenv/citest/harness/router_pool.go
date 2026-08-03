@@ -122,31 +122,6 @@ func WaitRouterPoolState(
 	require.True(t, ok, "router never saw %s as %q in %s (last %q)", host, wantState, backend, last)
 }
 
-// RouterDrain takes a host out of rotation without stopping it, addressing it by
-// compose service name the way an operator would.
-func RouterDrain(t *testing.T, stack *Stack, host string) {
-	t.Helper()
-	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "out", host)
-	require.NoError(t, err, "gonka-drain out %s: %s", host, out)
-}
-
-// RouterUndrain puts a drained host back into rotation.
-func RouterUndrain(t *testing.T, stack *Stack, host string) {
-	t.Helper()
-	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "in", host)
-	require.NoError(t, err, "gonka-drain in %s: %s", host, out)
-}
-
-// RequireRouterRefusesToEmptyPool asserts the last serving host cannot be
-// drained. The guard is what keeps a host-by-host drain from taking the whole
-// deployment down.
-func RequireRouterRefusesToEmptyPool(t *testing.T, stack *Stack, host string) {
-	t.Helper()
-	out, err := stack.ComposeExecOutput("versiond-router", "gonka-drain", "out", host)
-	require.Error(t, err, "draining the last serving host should be refused: %s", out)
-	require.Contains(t, out, "last server taking traffic")
-}
-
 // RouterServingHosts lists the hosts currently taking new traffic in a backend.
 func RouterServingHosts(t *testing.T, stack *Stack, cfg *config.File, backend string) []string {
 	t.Helper()

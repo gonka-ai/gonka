@@ -77,11 +77,13 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg             config.Config
-	processes       map[string]*child
-	draining        map[string][]*child
-	children        map[*child]struct{}
-	downloading     map[string]struct{}
+	cfg         config.Config
+	processes   map[string]*child
+	draining    map[string][]*child
+	children    map[*child]struct{}
+	downloading map[string]struct{}
+	// serveChecks caches the child readiness probe behind ServesVersion.
+	serveChecks     map[string]serveCheck
 	allocatedPorts  map[int]struct{}
 	reservedPorts   map[int]struct{}
 	operations      map[uint64]controlOperation
@@ -105,6 +107,7 @@ func NewManager(cfg config.Config) *Manager {
 		draining:       make(map[string][]*child),
 		children:       make(map[*child]struct{}),
 		downloading:    make(map[string]struct{}),
+		serveChecks:    make(map[string]serveCheck),
 		allocatedPorts: make(map[int]struct{}),
 		reservedPorts:  reservedChildPorts(),
 		operations:     make(map[uint64]controlOperation),
@@ -207,17 +210,66 @@ func (m *Manager) RouteTable() *atomic.Value {
 	return &m.routes
 }
 
-// ServesVersion reports whether this host currently has a running child for the
-// named version — that is, whether a request for it would be routed rather than
-// answered "no such version". It reads the same route table the proxy uses, so
-// the answer cannot disagree with what actually happens to a request.
+// serveCheck is the last answer the child gave, and when.
+type serveCheck struct {
+	at    time.Time
+	ready bool
+}
+
+// serveCheckTTL keeps a per-second balancer health check from turning into a
+// per-second probe of the child. serveCheckTimeout bounds a child that has
+// stopped answering: a stuck child is not a serving one.
+const (
+	serveCheckTTL     = 900 * time.Millisecond
+	serveCheckTimeout = 2 * time.Second
+)
+
+// ServesVersion reports whether this host can serve the named version right now.
+//
+// Two things have to hold, and neither implies the other. The route table — the
+// same one the proxy uses, so the answer cannot disagree with what a request
+// would get — must have a target for the version. And the child behind it must
+// still say it is ready: readiness is checked once when a child starts, but a
+// child can lose it afterwards, and a versiond that kept answering 200 for a
+// child that has gone unready would hold open a route to a host that cannot
+// serve.
 func (m *Manager) ServesVersion(name string) bool {
 	routes, ok := m.routes.Load().(proxy.RouteTable)
 	if !ok {
 		return false
 	}
-	_, served := routes[name]
-	return served
+	if _, served := routes[name]; !served {
+		return false
+	}
+
+	m.mu.Lock()
+	c := m.processes[name]
+	if c == nil || c.status != statusRunning {
+		m.mu.Unlock()
+		return false
+	}
+	if cached, ok := m.serveChecks[name]; ok && time.Since(cached.at) < serveCheckTTL {
+		m.mu.Unlock()
+		return cached.ready
+	}
+	port := c.lifecyclePort()
+	publicPort := c.port
+	allowLegacy := int(c.adminPort.Load()) == 0
+	path := m.cfg.ReadyPath
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithTimeout(context.Background(), serveCheckTimeout)
+	defer cancel()
+	client := &http.Client{Timeout: serveCheckTimeout}
+	ready := readyEndpointReady(ctx, client, port, path, allowLegacy)
+	if ready && !allowLegacy {
+		ready = publicEndpointReady(ctx, client, publicPort)
+	}
+
+	m.mu.Lock()
+	m.serveChecks[name] = serveCheck{at: time.Now(), ready: ready}
+	m.mu.Unlock()
+	return ready
 }
 
 func (m *Manager) Available() <-chan struct{} {
