@@ -30,6 +30,9 @@ defaults
     mode    http
     option  httplog
     option  dontlognull
+    # Append the client address to X-Forwarded-For, as the nginx router did:
+    # the audit trail of who called must survive the extra hop.
+    option  forwardfor
     timeout connect ${CONNECT_TIMEOUT_SECONDS}s
     timeout client  ${STREAM_IDLE_SECONDS}s
     timeout server  ${STREAM_IDLE_SECONDS}s
@@ -90,6 +93,14 @@ frontend versiond_in
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
     http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
+    # Overwritten, never trusted from the client: it names the immediate peer.
+    http-request set-header X-Real-IP %[src]
+
+    # The nginx router capped request bodies; keep the cap. This checks the
+    # declared Content-Length — HAProxy does not buffer request bodies, so a
+    # chunked request without a declared length passes this hop and is bounded
+    # by the outer API proxy's own limit instead.
+    http-request deny deny_status 413 if { req.hdr_val(content-length) gt ${MAX_BODY_BYTES} }
 
     # versiond's own route grammar has versionless endpoints, and their first
     # path segment is not a version. Classifying by "field 2 is non-empty" would

@@ -18,6 +18,8 @@ defaults
     mode    http
     option  httplog
     option  dontlognull
+    # Append the client address to X-Forwarded-For, as the nginx router did.
+    option  forwardfor
     timeout connect ${CONNECT_TIMEOUT_SECONDS}s
     timeout client  ${READ_TIMEOUT_SECONDS}s
     timeout server  ${READ_TIMEOUT_SECONDS}s
@@ -43,6 +45,9 @@ resolvers docker
 frontend edge_api_in
     bind :${EDGE_API_ROUTER_PORT}
     maxconn ${MAX_CONNECTIONS}
+    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
+    # Overwritten, never trusted from the client: it names the immediate peer.
+    http-request set-header X-Real-IP %[src]
     default_backend edge_api_pool
 
 backend edge_api_pool

@@ -199,6 +199,12 @@ test-render: test-hash-ring test-version-routing
 		|| fail "non-idempotent requests could be replayed"; \
 	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
 		|| fail "metrics are not bound to loopback"; \
+	grep -q '^[[:space:]]*option[[:space:]]*forwardfor' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Forwarded-For is no longer appended; the client audit trail dies at this hop"; \
+	grep -q '^[[:space:]]*http-request set-header X-Real-IP' "$$tmpdir/mixed.cfg" \
+		|| fail "X-Real-IP is no longer set"; \
+	grep -q '^[[:space:]]*http-request deny deny_status 413 if { req.hdr_val(content-length) gt 10485760 }' "$$tmpdir/mixed.cfg" \
+		|| fail "the request body cap is gone"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/mixed.cfg" \
 		|| fail "no timeout check directive: inter would double as the whole check budget and a slow answer would read as down"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \

@@ -37,9 +37,13 @@ type stateSpec struct {
 
 var stateTable = map[State]stateSpec{
 	StateStarting: {
+		// No path to announcing: announcing keeps accepting while balancers
+		// notice, and a starting host has never accepted. Reaching announcing
+		// from here would open admission for the first time on the way down,
+		// taking work no balancer will see drained. Shutdown from starting goes
+		// straight to draining.
 		targets: []State{
 			StateServing,
-			StateAnnouncing,
 			StateDraining,
 			StateForcing,
 		},

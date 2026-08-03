@@ -19,6 +19,10 @@ test-render:
 		|| fail "stateless pool should round-robin"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/edge.cfg" \
 		|| fail "active health checks are not configured"; \
+	grep -q '^[[:space:]]*option[[:space:]]*forwardfor' "$$tmpdir/edge.cfg" \
+		|| fail "X-Forwarded-For is no longer appended"; \
+	grep -q '^[[:space:]]*http-request set-header X-Real-IP' "$$tmpdir/edge.cfg" \
+		|| fail "X-Real-IP is no longer set"; \
 	grep -Eq '^[[:space:]]*timeout check 3s([[:space:]]|$$)' "$$tmpdir/edge.cfg" \
 		|| fail "no timeout check directive: the check budget must exceed edge-api's 2s chain probe"; \
 	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \

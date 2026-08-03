@@ -26,12 +26,16 @@ func TestStateTableTransitionMatrix(t *testing.T) {
 	states := []State{
 		StateStarting,
 		StateServing,
+		StateAnnouncing,
 		StateDraining,
 		StateStopping,
 		StateForcing,
 		StateStopped,
 	}
 	allowed := map[State]map[State]bool{
+		// starting -> announcing is deliberately absent: announcing accepts,
+		// and a host that never served must not open admission while shutting
+		// down.
 		StateStarting: {
 			StateStarting: true,
 			StateServing:  true,
@@ -39,9 +43,15 @@ func TestStateTableTransitionMatrix(t *testing.T) {
 			StateForcing:  true,
 		},
 		StateServing: {
-			StateServing:  true,
-			StateDraining: true,
-			StateForcing:  true,
+			StateServing:    true,
+			StateAnnouncing: true,
+			StateDraining:   true,
+			StateForcing:    true,
+		},
+		StateAnnouncing: {
+			StateAnnouncing: true,
+			StateDraining:   true,
+			StateForcing:    true,
 		},
 		StateDraining: {
 			StateDraining: true,

@@ -115,16 +115,20 @@ func run(ctx context.Context) error {
 	}
 	shutdownDeadline := time.Now().Add(budget)
 
-	// Announce first: /readyz starts failing while the host keeps serving, so the
-	// load balancer can withdraw this upstream before admission ever closes.
-	if err := hostLifecycle.Transition(host.StateAnnouncing); err != nil {
-		return err
-	}
+	// Announce only if the host was serving. A host still starting has never
+	// been ready, so no balancer routed to it and there is nothing to announce —
+	// and starting->announcing is not a legal transition, because announcing
+	// keeps accepting and a starting host must not open admission on the way
+	// down. The transition attempt is the race-free check: serving is set by a
+	// separate goroutine, and the controller decides under its own lock.
+	announcing := hostLifecycle.Transition(host.StateAnnouncing) == nil
 	// Freeze desired-state changes and cancel every active generation operation.
 	// Child process contexts stay alive until the drain phase stops or forces them.
 	mgr.BeginHostDrain()
 	cancelPoll()
-	awaitDrainAnnouncement(cfg.DrainAnnounce, force)
+	if announcing {
+		awaitDrainAnnouncement(cfg.DrainAnnounce, force)
+	}
 	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
 		return err
 	}

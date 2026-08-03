@@ -291,6 +291,7 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
+| `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | request bodies above this declared length are refused with 413; keep aligned with the outer API proxy, which also bounds chunked bodies this check cannot see |
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | established stream lifetime |
