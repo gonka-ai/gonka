@@ -43,11 +43,27 @@ func TestVersiondHostEvacuation(t *testing.T) {
 			`"`+hostEvacuationShutdownBudget.String()+`"`)
 	})
 	client := harness.GatewayChatClient()
+	t.Cleanup(func() {
+		if t.Failed() {
+			harness.DumpComposeLogs(t, env.stack,
+				env.hosts[0], env.hosts[1], "versiond-router", "devshardctl")
+		}
+	})
 	// Declared versions are routed and health-checked through their own pool, so
 	// that is the pool whose view of a host the test has to read.
 	version := env.cfg.Versiond.VersionName
 	pool := harness.VersionPoolBackend(version)
 	escrowID := harness.GetGatewayEscrowID(t, client, env.eps.GatewayHTTP)
+	harness.Step(t, "binding escrow %s through the owner chat path", escrowID)
+	harness.PostGatewayChatCompletion(t, client, env.eps.GatewayHTTP,
+		harness.TestenvAdminAPIKey, harness.ChatCompletionRequest{
+			Model:     "test-model",
+			MaxTokens: 16,
+			Messages: []harness.ChatMessage{{
+				Role:    "user",
+				Content: "initialize the versiond host evacuation session",
+			}},
+		})
 	sessionURL := harness.RouterSessionURL(
 		env.eps.RouterHTTP,
 		env.cfg.Versiond.VersionName,
@@ -62,12 +78,6 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	if survivorHost == targetHost {
 		survivorHost = env.hosts[1]
 	}
-
-	t.Cleanup(func() {
-		if t.Failed() {
-			harness.DumpComposeLogs(t, env.stack, targetHost, survivorHost, "versiond-router", "devshardctl")
-		}
-	})
 
 	harness.Step(t, "both hosts are in the router pool before evacuation")
 	require.ElementsMatch(t, env.hosts, harness.RouterServingHosts(t, env.stack, env.cfg, pool),
