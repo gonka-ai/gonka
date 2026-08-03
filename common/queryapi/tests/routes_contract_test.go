@@ -18,7 +18,6 @@ import (
 // verify/debug paths.
 var canonicalPublicReadOnlyRoutes = []string{
 	"/v1/status",
-	"/v1/versions",
 	"/v1/models",
 	"/v1/governance/models",
 	"/v1/governance/models-legacy",
@@ -37,6 +36,10 @@ var canonicalPublicReadOnlyRoutes = []string{
 	"/v1/bridge/addresses",
 }
 
+var edgeAPIOnlyRoutes = []string{
+	"/v1/versions",
+}
+
 // canonicalOptionalReadOnlyRoutes are CPU-heavy verify/debug helpers served by
 // edge-api but private on the proxy unless EDGE_API_EXPOSE_OPTIONAL_ROUTES=true.
 var canonicalOptionalReadOnlyRoutes = []string{
@@ -46,14 +49,18 @@ var canonicalOptionalReadOnlyRoutes = []string{
 	"/v1/debug/verify/{height}",
 }
 
-// canonicalReadOnlyRoutes is the full edge-api OpenAPI surface (public + optional).
+// canonicalReadOnlyRoutes is the full edge-api OpenAPI surface.
 var canonicalReadOnlyRoutes = append(
-	append([]string(nil), canonicalPublicReadOnlyRoutes...),
+	append(
+		append([]string(nil), canonicalPublicReadOnlyRoutes...),
+		edgeAPIOnlyRoutes...,
+	),
 	canonicalOptionalReadOnlyRoutes...,
 )
 
 func TestReadOnlyRouteCount(t *testing.T) {
-	assert.Len(t, canonicalPublicReadOnlyRoutes, 18)
+	assert.Len(t, canonicalPublicReadOnlyRoutes, 17)
+	assert.Len(t, edgeAPIOnlyRoutes, 1)
 	assert.Len(t, canonicalOptionalReadOnlyRoutes, 4)
 	assert.Len(t, canonicalReadOnlyRoutes, 22)
 }
@@ -72,6 +79,17 @@ func TestProxyEntrypointPublicRoutesMatchCanonical(t *testing.T) {
 	want := append([]string(nil), canonicalPublicReadOnlyRoutes...)
 	sort.Strings(want)
 	assert.Equal(t, want, got)
+	assert.NotContains(t, got, "/v1/versions")
+}
+
+func TestProxyEntrypointSkipsVersionsOverride(t *testing.T) {
+	_, file, _, ok := runtime.Caller(0)
+	require.True(t, ok)
+	repoRoot := filepath.Clean(filepath.Join(filepath.Dir(file), "..", "..", ".."))
+	path := filepath.Join(repoRoot, "proxy", "entrypoint.sh")
+	b, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.Contains(t, string(b), `if [ "$route" = "/v1/versions" ]; then`)
 }
 
 func TestProxyEntrypointOptionalRoutesMatchCanonical(t *testing.T) {
