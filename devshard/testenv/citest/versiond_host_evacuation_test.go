@@ -23,6 +23,14 @@ const (
 	hostEvacuationDockerStopGrace    = 2 * time.Minute
 	hostEvacuationObservationTimeout = 60 * time.Second
 	hostReplacementReadyTimeout      = 3 * time.Minute
+	// All checks made while the old stream is deliberately paused share this
+	// one budget. They must release the stream with enough of versiond's own
+	// shutdown budget left for request completion and child reaping.
+	hostEvacuationPreReleaseBudget       = hostEvacuationShutdownBudget - 30*time.Second
+	hostEvacuationStreamCompletionBudget = hostEvacuationShutdownBudget -
+		15*time.Second
+	hostEvacuationGracefulExitBudget = hostEvacuationShutdownBudget +
+		15*time.Second
 	// Refused instantly inside the container, so the host under barrier fails
 	// its reconcile immediately and keeps failing it.
 	unreachableOracleURL = "http://127.0.0.1:1/versions"
@@ -105,7 +113,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	env.eps = env.stack.Endpoints(t, env.cfg)
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
 		harness.RouterSlotUp, hostEvacuationObservationTimeout)
-	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
+	requireSessionAvailableOnHost(t, env, escrowID, targetHost,
+		hostEvacuationObservationTimeout)
 
 	pauseStream := true
 	harness.PatchMockOpenAIFault(t, client, env.eps.MockOpenAIHTTP, mockopenai.FaultPatch{
@@ -148,6 +157,10 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		err    error
 	}
 	evacuationResult := make(chan stopOutcome, 1)
+	evacuationStarted := time.Now()
+	preReleaseDeadline := evacuationStarted.Add(hostEvacuationPreReleaseBudget)
+	streamCompletionDeadline := evacuationStarted.Add(hostEvacuationStreamCompletionBudget)
+	gracefulExitDeadline := evacuationStarted.Add(hostEvacuationGracefulExitBudget)
 	go func() {
 		result, stopErr := env.stack.StopServiceGracefully(targetHost, hostEvacuationDockerStopGrace)
 		evacuationResult <- stopOutcome{result: result, err: stopErr}
@@ -155,8 +168,9 @@ func TestVersiondHostEvacuation(t *testing.T) {
 
 	harness.Step(t, "the router stops routing to %s while it is still serving", targetHost)
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost,
-		harness.RouterSlotDown, hostEvacuationObservationTimeout)
-	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
+		harness.RouterSlotDown, remainingUntil(t, preReleaseDeadline, "router drain announcement"))
+	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost,
+		remainingUntil(t, preReleaseDeadline, "new-request failover"))
 
 	harness.Step(t, "versiond stays alive while its internal FSM drains the established stream")
 	running, err := env.stack.ServiceRunning(targetHost)
@@ -165,11 +179,19 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	requireVersiondStreamStillRunning(t, accepted, streamResult, "host evacuation stream")
 
 	harness.Step(t, "the same escrow is recovered on the surviving host")
-	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
+	requireSessionAvailableOnHost(t, env, escrowID, survivorHost,
+		remainingUntil(t, preReleaseDeadline, "survivor session recovery"))
 
 	harness.Step(t, "releasing the old stream before versiond exits")
-	harness.ReleaseMockOpenAIStreams(t, client, env.eps.MockOpenAIHTTP)
-	result := <-streamResult
+	releaseClient := *client
+	releaseClient.Timeout = remainingUntil(t, streamCompletionDeadline, "stream release request")
+	harness.ReleaseMockOpenAIStreams(t, &releaseClient, env.eps.MockOpenAIHTTP)
+	var result harness.GatewayStreamResult
+	select {
+	case result = <-streamResult:
+	case <-time.After(remainingUntil(t, streamCompletionDeadline, "old stream completion")):
+		t.Fatal("accepted stream did not finish inside the versiond shutdown budget")
+	}
 	require.NoError(t, result.Err)
 	require.Equal(t, http.StatusOK, result.Status, "stream body: %s", result.Body)
 	require.True(t, result.SawDone, "stream missing [DONE]")
@@ -181,8 +203,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		require.Contains(t, []int{0, 143}, outcome.result.ExitCode,
 			"versiond did not exit gracefully; container %s exited with code %d",
 			outcome.result.ContainerID, outcome.result.ExitCode)
-	case <-time.After(hostEvacuationDockerStopGrace + 30*time.Second):
-		t.Fatal("versiond did not exit after its host became idle")
+	case <-time.After(remainingUntil(t, gracefulExitDeadline, "versiond graceful exit")):
+		t.Fatal("versiond did not exit before the Docker SIGKILL backstop")
 	}
 	running, err = env.stack.ServiceRunning(targetHost)
 	require.NoError(t, err)
@@ -199,7 +221,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	harness.Step(t, "a decommissioned host simply stops resolving; no router change")
 	harness.WaitRouterPoolState(t, env.stack, env.cfg, pool, targetHost, "", hostEvacuationObservationTimeout)
 	require.Equal(t, []string{survivorHost}, harness.RouterServingHosts(t, env.stack, env.cfg, pool))
-	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
+	requireSessionAvailableOnHost(t, env, escrowID, survivorHost,
+		hostEvacuationObservationTimeout)
 
 	harness.Step(t, "%s comes back up but cannot converge: it must stay out of the pool", targetHost)
 	// A host that is up but not yet able to serve must not be routed to. Racing
@@ -220,8 +243,10 @@ func TestVersiondHostEvacuation(t *testing.T) {
 		harness.RouterSlotDown, hostEvacuationObservationTimeout)
 	require.Error(t, harness.TryVersiondReady(env.stack, targetHost, version),
 		"%s should report unready while it cannot reach its oracle", targetHost)
-	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost)
-	requireSessionAvailableOnHost(t, env, escrowID, survivorHost)
+	requireNewRouterRequestsAvoidHost(t, client, env, escrowID, targetHost,
+		hostEvacuationObservationTimeout)
+	requireSessionAvailableOnHost(t, env, escrowID, survivorHost,
+		hostEvacuationObservationTimeout)
 
 	harness.Step(t, "lifting the barrier: %s rejoins once it reports ready", targetHost)
 	harness.PatchComposeServiceEnv(t, env.stack.ComposePath, targetHost,
@@ -233,7 +258,8 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	require.NoError(t, harness.TryVersiondReady(env.stack, targetHost, version))
 
 	harness.Step(t, "consistent hashing returns the escrow to %s", targetHost)
-	requireSessionAvailableOnHost(t, env, escrowID, targetHost)
+	requireSessionAvailableOnHost(t, env, escrowID, targetHost,
+		hostEvacuationObservationTimeout)
 }
 
 func requireSessionAvailableOnHost(
@@ -241,6 +267,7 @@ func requireSessionAvailableOnHost(
 	env versiondRollingTestStack,
 	escrowID string,
 	wantHost string,
+	timeout time.Duration,
 ) {
 	t.Helper()
 	client := &http.Client{
@@ -249,7 +276,16 @@ func requireSessionAvailableOnHost(
 			DisableKeepAlives: true,
 		},
 	}
-	available := harness.AssertEventually(t, hostEvacuationObservationTimeout, 250*time.Millisecond, func() bool {
+	if timeout < client.Timeout {
+		client.Timeout = timeout
+	}
+	deadline := time.Now().Add(timeout)
+	available := harness.AssertEventually(t, timeout, 250*time.Millisecond, func() bool {
+		remaining := time.Until(deadline)
+		if remaining <= 0 {
+			return false
+		}
+		client.Timeout = min(5*time.Second, remaining)
 		resp, err := client.Get(harness.RouterSessionURL(
 			env.eps.RouterHTTP,
 			env.cfg.Versiond.VersionName,
@@ -275,12 +311,20 @@ func requireNewRouterRequestsAvoidHost(
 	env versiondRollingTestStack,
 	escrowID string,
 	targetHost string,
+	timeout time.Duration,
 ) {
 	t.Helper()
-	avoided := harness.AssertEventually(t, hostEvacuationObservationTimeout, 100*time.Millisecond, func() bool {
+	probeClient := *client
+	deadline := time.Now().Add(timeout)
+	avoided := harness.AssertEventually(t, timeout, 100*time.Millisecond, func() bool {
 		for i := 0; i < 4; i++ {
+			remaining := time.Until(deadline)
+			if remaining <= 0 {
+				return false
+			}
+			probeClient.Timeout = min(5*time.Second, remaining)
 			upstream, err := harness.GetSuccessfulResponseHeader(
-				client,
+				&probeClient,
 				harness.RouterSessionURL(
 					env.eps.RouterHTTP,
 					env.cfg.Versiond.VersionName,
@@ -296,4 +340,13 @@ func requireNewRouterRequestsAvoidHost(
 		return true
 	})
 	require.True(t, avoided, "new router requests still reached %s", targetHost)
+}
+
+func remainingUntil(t *testing.T, deadline time.Time, stage string) time.Duration {
+	t.Helper()
+	remaining := time.Until(deadline)
+	if remaining <= 0 {
+		t.Fatalf("host evacuation exceeded its shared deadline before %s", stage)
+	}
+	return remaining
 }

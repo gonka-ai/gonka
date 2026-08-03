@@ -17,7 +17,10 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-const defaultStackTimeout = 12 * time.Minute
+const (
+	defaultStackTimeout       = 12 * time.Minute
+	composeCleanupStopTimeout = 5 * time.Second
+)
 
 // Stack is a generated compose workdir for Docker citest.
 type Stack struct {
@@ -211,10 +214,18 @@ func (s *Stack) Down(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	args := append([]string{"compose"}, s.composeFileArgs()...)
-	args = append(args, "down", "-v")
+	args = append(args,
+		"down",
+		"--volumes",
+		"--remove-orphans",
+		"--timeout", strconv.Itoa(int(composeCleanupStopTimeout/time.Second)),
+	)
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
-	_, _ = cmd.CombinedOutput()
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Logf("docker compose cleanup: %v\n%s", err, out)
+	}
 }
 
 // StopService stops a compose service without removing volumes (fault injection).

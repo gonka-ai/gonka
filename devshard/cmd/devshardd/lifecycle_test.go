@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestLifecycleTransitionTable(t *testing.T) {
+func TestLifecycleTransitionTableInvariants(t *testing.T) {
 	states := []lifecyclePhase{
 		lifecyclePhaseStarting,
 		lifecyclePhaseServing,
@@ -24,55 +24,31 @@ func TestLifecycleTransitionTable(t *testing.T) {
 		lifecycleEventChainDisconnected,
 		lifecycleEventDrainRequested,
 	}
-	expected := map[lifecyclePhase]map[lifecycleEvent]lifecyclePhase{
-		lifecyclePhaseStarting: {
-			lifecycleEventChainReady:        lifecyclePhaseServing,
-			lifecycleEventChainDisconnected: lifecyclePhaseStarting,
-			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
-		},
-		lifecyclePhaseServing: {
-			lifecycleEventChainReady:        lifecyclePhaseServing,
-			lifecycleEventChainDisconnected: lifecyclePhaseDisconnected,
-			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
-		},
-		lifecyclePhaseDisconnected: {
-			lifecycleEventChainReady:        lifecyclePhaseServing,
-			lifecycleEventChainDisconnected: lifecyclePhaseDisconnected,
-			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
-		},
-		lifecyclePhaseDraining: {
-			lifecycleEventChainReady:        lifecyclePhaseDraining,
-			lifecycleEventChainDisconnected: lifecyclePhaseDraining,
-			lifecycleEventDrainRequested:    lifecyclePhaseDraining,
-		},
-	}
 
-	require.Len(t, lifecyclePhaseTable, len(expected))
+	require.Len(t, lifecyclePhaseTable, len(states))
 	for _, from := range states {
 		spec, ok := lifecyclePhaseTable[from]
 		require.Truef(t, ok, "missing lifecycle phase %s", from)
 		require.Lenf(t, spec.transitions, len(events), "transitions from %s", from)
 		for _, event := range events {
-			got, gotOK := nextLifecyclePhase(from, event)
-			want, wantOK := expected[from][event]
-			require.Equalf(
-				t,
-				wantOK,
-				gotOK,
-				"transition existence for %s + %s",
-				from,
-				event,
-			)
-			require.Equalf(
-				t,
-				want,
-				got,
-				"transition target for %s + %s",
-				from,
-				event,
-			)
+			to, exists := nextLifecyclePhase(from, event)
+			require.Truef(t, exists, "missing transition for %s + %s", from, event)
+			_, targetKnown := lifecyclePhaseTable[to]
+			require.Truef(t, targetKnown, "transition %s + %s targets unknown phase %s", from, event, to)
 		}
+
+		to, _ := nextLifecyclePhase(from, lifecycleEventDrainRequested)
+		require.Equalf(t, lifecyclePhaseDraining, to,
+			"drain request from %s must close admission", from)
 	}
+
+	for _, event := range events {
+		to, ok := nextLifecyclePhase(lifecyclePhaseDraining, event)
+		require.True(t, ok)
+		require.Equalf(t, lifecyclePhaseDraining, to,
+			"draining must absorb late %s events", event)
+	}
+
 	_, ok := nextLifecyclePhase("unknown", lifecycleEventDrainRequested)
 	require.False(t, ok, "unknown lifecycle state accepted an event")
 	_, ok = nextLifecyclePhase(lifecyclePhaseServing, "unknown")

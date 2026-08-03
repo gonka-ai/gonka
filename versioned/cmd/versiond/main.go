@@ -115,21 +115,13 @@ func run(ctx context.Context) error {
 	}
 	shutdownDeadline := time.Now().Add(budget)
 
-	// Announce only if the host was serving. A host still starting has never
-	// been ready, so no balancer routed to it and there is nothing to announce —
-	// and starting->announcing is not a legal transition, because announcing
-	// keeps accepting and a starting host must not open admission on the way
-	// down. The transition attempt is the race-free check: serving is set by a
-	// separate goroutine, and the controller decides under its own lock.
-	announcing := hostLifecycle.Transition(host.StateAnnouncing) == nil
-	// Freeze desired-state changes and cancel every active generation operation.
-	// Child process contexts stay alive until the drain phase stops or forces them.
-	mgr.BeginHostDrain()
-	cancelPoll()
-	if announcing {
-		awaitDrainAnnouncement(cfg.DrainAnnounce, force)
-	}
-	if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+	if err := beginHostDrain(
+		cfg.DrainAnnounce,
+		mgr,
+		hostLifecycle,
+		force,
+		cancelPoll,
+	); err != nil {
 		return err
 	}
 
@@ -177,9 +169,14 @@ func reconcileOnce(ctx context.Context, oracleClient *oracle.Client, mgr *proces
 	}
 }
 
+type hostAvailabilityProvider interface {
+	Available() <-chan struct{}
+	Conditions() process.Conditions
+}
+
 func promoteHostWhenAvailable(
 	ctx context.Context,
-	mgr *process.Manager,
+	mgr hostAvailabilityProvider,
 	hostLifecycle *host.Controller,
 ) {
 	for {
@@ -199,6 +196,34 @@ func promoteHostWhenAvailable(
 		}
 		return
 	}
+}
+
+type hostDrainManager interface {
+	BeginHostDrain()
+}
+
+// beginHostDrain is the load-balancer handoff above the shutdown machinery.
+// A serving host first becomes unready while admission remains open, freezes
+// reconcile, and waits for the router to observe that state. Only then does it
+// close admission. A host that never served skips the announce window.
+func beginHostDrain(
+	announce time.Duration,
+	mgr hostDrainManager,
+	hostLifecycle *host.Controller,
+	force <-chan struct{},
+	cancelPoll context.CancelFunc,
+) error {
+	// The transition attempt is the race-free serving check: promotion and
+	// shutdown both serialize through the host controller.
+	announcing := hostLifecycle.Transition(host.StateAnnouncing) == nil
+	// Freeze desired-state changes and cancel every active generation operation.
+	// Child process contexts stay alive until the drain phase stops or forces them.
+	mgr.BeginHostDrain()
+	cancelPoll()
+	if announcing {
+		awaitDrainAnnouncement(announce, force)
+	}
+	return hostLifecycle.Transition(host.StateDraining)
 }
 
 func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, force chan<- struct{}) {

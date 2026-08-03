@@ -30,6 +30,32 @@ func newFakeHostShutdownManager() *fakeHostShutdownManager {
 	return &fakeHostShutdownManager{forceCalled: make(chan struct{})}
 }
 
+type fakeHostDrainManager struct {
+	beginOnce sync.Once
+	began     chan struct{}
+}
+
+func newFakeHostDrainManager() *fakeHostDrainManager {
+	return &fakeHostDrainManager{began: make(chan struct{})}
+}
+
+func (m *fakeHostDrainManager) BeginHostDrain() {
+	m.beginOnce.Do(func() { close(m.began) })
+}
+
+type fakeHostAvailabilityProvider struct {
+	available  chan struct{}
+	conditions process.Conditions
+}
+
+func (p *fakeHostAvailabilityProvider) Available() <-chan struct{} {
+	return p.available
+}
+
+func (p *fakeHostAvailabilityProvider) Conditions() process.Conditions {
+	return p.conditions
+}
+
 func (m *fakeHostShutdownManager) RequestChildrenDrain(context.Context) error {
 	m.record("request_children_drain")
 	return nil
@@ -68,6 +94,145 @@ func (m *fakeHostShutdownManager) callLog() string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return strings.Join(m.calls, "\n")
+}
+
+func TestBeginHostDrainAnnouncesBeforeClosingAdmission(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newFakeHostDrainManager()
+	pollCtx, cancelPoll := context.WithCancel(context.Background())
+	force := make(chan struct{})
+	result := make(chan error, 1)
+	go func() {
+		result <- beginHostDrain(
+			time.Hour,
+			mgr,
+			hostLifecycle,
+			force,
+			cancelPoll,
+		)
+	}()
+
+	select {
+	case <-mgr.began:
+	case <-time.After(time.Second):
+		t.Fatal("manager drain barrier was not raised")
+	}
+	select {
+	case <-pollCtx.Done():
+	case <-time.After(time.Second):
+		t.Fatal("poll loop was not canceled before the announce wait")
+	}
+
+	snapshot := hostLifecycle.Snapshot()
+	if snapshot.State != host.StateAnnouncing || snapshot.Ready || !snapshot.Accepting {
+		t.Fatalf("announce snapshot = %+v, want unready and accepting", snapshot)
+	}
+	response := httptest.NewRecorder()
+	hostLifecycle.Admission(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})).ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1", nil))
+	if response.Code != http.StatusNoContent {
+		t.Fatalf("announce admission status = %d, want %d", response.Code, http.StatusNoContent)
+	}
+
+	select {
+	case err := <-result:
+		t.Fatalf("announce window ended early: %v", err)
+	default:
+	}
+	close(force)
+	select {
+	case err := <-result:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("host did not enter draining after the announce window")
+	}
+	snapshot = hostLifecycle.Snapshot()
+	if snapshot.State != host.StateDraining || snapshot.Accepting {
+		t.Fatalf("post-announce snapshot = %+v, want draining and closed admission", snapshot)
+	}
+}
+
+func TestBeginHostDrainSkipsAnnouncementBeforeFirstServing(t *testing.T) {
+	hostLifecycle := host.NewController()
+	mgr := newFakeHostDrainManager()
+	started := time.Now()
+
+	err := beginHostDrain(
+		time.Hour,
+		mgr,
+		hostLifecycle,
+		make(chan struct{}),
+		func() {},
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("never-serving host waited through announce window: %s", elapsed)
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateDraining {
+		t.Fatalf("host state = %s, want draining", got)
+	}
+}
+
+func TestBeginHostDrainForceCutsAnnouncementShort(t *testing.T) {
+	hostLifecycle := host.NewController()
+	if err := hostLifecycle.Transition(host.StateServing); err != nil {
+		t.Fatal(err)
+	}
+	mgr := newFakeHostDrainManager()
+	force := make(chan struct{})
+	close(force)
+	started := time.Now()
+
+	err := beginHostDrain(time.Hour, mgr, hostLifecycle, force, func() {})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if elapsed := time.Since(started); elapsed > time.Second {
+		t.Fatalf("force did not cut announce window short: %s", elapsed)
+	}
+}
+
+func TestPromoteHostWhenAvailableHonorsDrainState(t *testing.T) {
+	t.Run("starting host becomes serving", func(t *testing.T) {
+		provider := &fakeHostAvailabilityProvider{
+			available:  make(chan struct{}, 1),
+			conditions: process.Conditions{Available: true},
+		}
+		provider.available <- struct{}{}
+		hostLifecycle := host.NewController()
+
+		promoteHostWhenAvailable(context.Background(), provider, hostLifecycle)
+
+		if got := hostLifecycle.Snapshot().State; got != host.StateServing {
+			t.Fatalf("host state = %s, want serving", got)
+		}
+	})
+
+	t.Run("draining host cannot be reopened", func(t *testing.T) {
+		provider := &fakeHostAvailabilityProvider{
+			available:  make(chan struct{}, 1),
+			conditions: process.Conditions{Available: true},
+		}
+		provider.available <- struct{}{}
+		hostLifecycle := host.NewController()
+		if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+			t.Fatal(err)
+		}
+
+		promoteHostWhenAvailable(context.Background(), provider, hostLifecycle)
+
+		if got := hostLifecycle.Snapshot().State; got != host.StateDraining {
+			t.Fatalf("host state = %s, want draining", got)
+		}
+	})
 }
 
 func TestShutdownHostCompletesLifecycle(t *testing.T) {

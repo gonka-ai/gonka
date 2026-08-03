@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -252,28 +253,30 @@ func TestLoad_ForceVersionsDottedWithOverride(t *testing.T) {
 // directive, and legacy-pinned traffic deserves the same announce guarantee.
 // The worst case is therefore the maximum over every checked server.
 //
-// Editing any `inter` or `timeout check` without revisiting MinDrainAnnounce
-// fails here; so does a checked server that stops declaring `inter` (HAProxy
-// would silently substitute its own default), and so does moving or renaming a
-// template — loudly, because a skipped contract is a disabled one.
+// Editing any `inter`, `fall`, or `timeout check` without revisiting
+// MinDrainAnnounce fails here; so does a checked server that stops declaring
+// either health-check parameter (HAProxy would silently substitute its own
+// default), and so does moving or renaming a template — loudly, because a
+// skipped contract is a disabled one.
 func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
 	templates := []string{
 		"../../../versiond-router/haproxy.cfg.template",
 		"../../../versiond-router/pool-backend.cfg.template",
 	}
 
-	interval := maxCheckedServerInterval(t, templates)
+	detectionInterval := maxCheckedServerDetectionInterval(t, templates)
 	checkTimeout := maxTemplateDuration(t, templates,
 		regexp.MustCompile(`(?m)^[\t ]*timeout check ([0-9]+m?s)`))
 
 	// Worst case: a probe answered "ready" just before the flip legally
-	// concludes checkTimeout later, and the next probe begins interval after.
+	// concludes checkTimeout later, followed by every failed check required to
+	// mark the server down.
 	const margin = time.Second
-	worstDetection := checkTimeout + interval
+	worstDetection := checkTimeout + detectionInterval
 	if MinDrainAnnounce < worstDetection+margin {
 		t.Fatalf(
-			"MinDrainAnnounce=%s does not cover the router's worst-case detection %s (timeout check %s + inter %s) plus %s margin",
-			MinDrainAnnounce, worstDetection, checkTimeout, interval, margin)
+			"MinDrainAnnounce=%s does not cover the router's worst-case detection %s (timeout check %s + inter*fall %s) plus %s margin",
+			MinDrainAnnounce, worstDetection, checkTimeout, detectionInterval, margin)
 	}
 }
 
@@ -283,9 +286,10 @@ func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
 var (
 	serverLine  = regexp.MustCompile(`(?m)^[\t ]*server(-template)? [^\n]*`)
 	serverInter = regexp.MustCompile(` inter ([0-9]+m?s)`)
+	serverFall  = regexp.MustCompile(` fall ([0-9]+)`)
 )
 
-func maxCheckedServerInterval(t *testing.T, paths []string) time.Duration {
+func maxCheckedServerDetectionInterval(t *testing.T, paths []string) time.Duration {
 	t.Helper()
 	var max time.Duration
 	found := 0
@@ -299,8 +303,17 @@ func maxCheckedServerInterval(t *testing.T, paths []string) time.Duration {
 				t.Fatalf("%s: a checked server does not declare `inter`; HAProxy would silently use its own default:\n%s",
 					path, line)
 			}
+			fall := serverFall.FindStringSubmatch(line)
+			if fall == nil {
+				t.Fatalf("%s: a checked server does not declare `fall`; HAProxy would silently use its own default:\n%s",
+					path, line)
+			}
+			failures, err := strconv.Atoi(fall[1])
+			if err != nil {
+				t.Fatalf("%s: invalid fall count %q: %v", path, fall[1], err)
+			}
 			found++
-			if d := parseTemplateDuration(t, path, m[1]); d > max {
+			if d := parseTemplateDuration(t, path, m[1]) * time.Duration(failures); d > max {
 				max = d
 			}
 		}
