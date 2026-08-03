@@ -40,6 +40,11 @@ defaults
     timeout tunnel  ${TUNNEL_TIMEOUT_SECONDS}s
     timeout http-request ${CONNECT_TIMEOUT_SECONDS}s
     timeout http-keep-alive 10s
+    # Without `timeout check`, `inter` doubles as the entire check budget, and a
+    # host answering in just over a second reads as dead. /readyz here is a
+    # memory read, so 3s of tolerance costs nothing; a host that cannot answer a
+    # memory read in 3s is genuinely wedged.
+    timeout check 3s
 
 resolvers docker
     nameserver dns 127.0.0.11:53

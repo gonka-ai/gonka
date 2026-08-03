@@ -199,6 +199,8 @@ test-render: test-hash-ring test-version-routing
 		|| fail "non-idempotent requests could be replayed"; \
 	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
 		|| fail "metrics are not bound to loopback"; \
+	grep -q 'timeout check' "$$tmpdir/mixed.cfg" \
+		|| fail "no timeout check: inter would double as the whole check budget and a slow answer would read as down"; \
 	grep -q 'http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
 		|| fail "declared versions must be health-checked individually"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \

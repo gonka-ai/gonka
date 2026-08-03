@@ -23,6 +23,11 @@ defaults
     timeout server  ${READ_TIMEOUT_SECONDS}s
     timeout http-request ${CONNECT_TIMEOUT_SECONDS}s
     timeout http-keep-alive 10s
+    # Without `timeout check`, `inter` doubles as the entire check budget. Must
+    # exceed edge-api's own chain-probe budget (readinessTimeout, 2s): a chain
+    # answering in 1-2s is slow, not down, and every edge-api shares that chain
+    # node — a 1s budget would evict the whole pool over a slow moment.
+    timeout check 3s
 
 resolvers docker
     nameserver dns 127.0.0.11:53

@@ -19,6 +19,8 @@ test-render:
 		|| fail "stateless pool should round-robin"; \
 	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/edge.cfg" \
 		|| fail "active health checks are not configured"; \
+	grep -q 'timeout check' "$$tmpdir/edge.cfg" \
+		|| fail "no timeout check: the check budget must exceed edge-api's 2s chain probe"; \
 	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/edge.cfg" \
 		|| fail "failover no longer excludes 503"; \
 	grep -q 'bind 127.0.0.1:8405' "$$tmpdir/edge.cfg" \

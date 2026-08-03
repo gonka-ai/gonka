@@ -1,9 +1,13 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/assert"
@@ -54,4 +58,65 @@ func serveReadyz(t *testing.T, r *readiness) *httptest.ResponseRecorder {
 	c := e.NewContext(httptest.NewRequest(http.MethodGet, "/readyz", nil), rec)
 	require.NoError(t, r.handler(c))
 	return rec
+}
+
+// One expired cache plus N concurrent checks must cost one chain query, and the
+// probe must run on its own clock: the answer is about the chain, not about how
+// long any particular caller was willing to wait.
+func TestCheck_ConcurrentCallersShareOneProbe(t *testing.T) {
+	var probes atomic.Int32
+	release := make(chan struct{})
+	r := &readiness{probe: func(ctx context.Context) error {
+		probes.Add(1)
+		select {
+		case <-release:
+			return nil
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}}
+
+	var wg sync.WaitGroup
+	results := make([]error, 8)
+	for i := range results {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			results[i] = r.check()
+		}(i)
+	}
+	time.Sleep(100 * time.Millisecond)
+	close(release)
+	wg.Wait()
+
+	require.EqualValues(t, 1, probes.Load(),
+		"concurrent checks over one expired cache must share one probe")
+	for i, err := range results {
+		require.NoError(t, err, "caller %d must ride on the shared probe's answer", i)
+	}
+}
+
+// A probe that hangs is bounded by the readiness budget, not by the caller: the
+// check concludes "unreachable" on its own schedule and caches that, instead of
+// inheriting whatever deadline the health checker happened to have.
+func TestCheck_ProbeIsBoundedByItsOwnBudget(t *testing.T) {
+	r := &readiness{probe: func(ctx context.Context) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}}
+
+	start := time.Now()
+	err := r.check()
+	elapsed := time.Since(start)
+
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.GreaterOrEqual(t, elapsed, readinessTimeout-100*time.Millisecond)
+	require.Less(t, elapsed, readinessTimeout+time.Second,
+		"the probe must be cut at its own budget")
+
+	// The verdict is cached: the next check answers immediately from the cache
+	// rather than hanging on another probe.
+	start = time.Now()
+	require.Error(t, r.check())
+	require.Less(t, time.Since(start), 100*time.Millisecond)
 }
