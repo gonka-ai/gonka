@@ -39,7 +39,10 @@ about the change, so nothing can be told about it incorrectly.
 5. `SIGKILL` is only an external backstop after a configured timeout. A second
    `SIGINT` is the explicit interactive force command; repeated `SIGTERM` is
    idempotent. Every child process is reaped before `versiond` exits.
-6. The external kill grace must exceed versiond's single absolute shutdown
+6. Taking a host out of rotation is stopping its versiond. There is no
+   router-side drain: HAProxy server slots are reused, so a drain outlives the
+   host it was meant for and is inherited by whichever host DNS puts there next.
+7. The external kill grace must exceed versiond's single absolute shutdown
    budget, so `SIGKILL` remains a backstop rather than a competing deadline.
 8. An established request stays on its original router connection and versiond
    generation. A later request for the same HA escrow may recover on another host
@@ -239,7 +242,7 @@ restarted host rejoins the pool only after it reports ready.
 
 | Doc | Use |
 | --- | --- |
-| [versiond-router/README.md](../../versiond-router/README.md) | Router routing, health, and `gonka-drain` reference |
+| [versiond-router/README.md](../../versiond-router/README.md) | Router routing, per-version health, and how to read the pool |
 | [rolling-update.md](./rolling-update.md) | Same-name SHA blue/green inside one versiond (Track A) |
 | [high-availability-architecture.md](./high-availability-architecture.md) | Where each component sits |
 | [release-0.2.15-v5.md](./release-0.2.15-v5.md) | Operator-facing release notes |

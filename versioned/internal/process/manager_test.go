@@ -2603,9 +2603,9 @@ func zipBinary(t *testing.T, binaryName string, data []byte) ([]byte, string) {
 }
 
 // A child is probed for readiness once when it starts, but it can lose readiness
-// later — devshardd reports itself unready when its chain subscription drops.
-// If versiond kept answering 200 for that version the balancer would hold a
-// route open to a host that cannot serve.
+// afterwards — devshardd reports itself unready when its chain subscription
+// drops. If versiond kept answering 200 for that version the balancer would hold
+// a route open to a host that cannot serve.
 func TestServesVersion_FollowsTheChildLosingReadiness(t *testing.T) {
 	ready := atomic.Bool{}
 	ready.Store(true)
@@ -2621,27 +2621,93 @@ func TestServesVersion_FollowsTheChildLosingReadiness(t *testing.T) {
 
 	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
 	c := &child{status: statusRunning, port: port, version: oracle.Version{Name: "v4"}}
+	c.serving.Store(true)
+	c.servingAt.Store(time.Now().UnixNano())
 	m.mu.Lock()
 	m.processes["v4"] = c
 	m.rebuildRoutes()
 	m.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go m.watchChildReadiness(ctx, c)
 
 	if !m.ServesVersion("v4") {
 		t.Fatal("a running, ready child does not serve its version")
 	}
 
 	ready.Store(false)
-	m.mu.Lock()
-	delete(m.serveChecks, "v4")
-	m.mu.Unlock()
-	if m.ServesVersion("v4") {
+	if !waitFor(2*time.Second, func() bool { return !m.ServesVersion("v4") }) {
 		t.Fatal("child reports unready but versiond still offers the version")
+	}
+
+	ready.Store(true)
+	if !waitFor(2*time.Second, func() bool { return m.ServesVersion("v4") }) {
+		t.Fatal("child is ready again but versiond does not offer the version")
 	}
 
 	// An unknown version is not served whatever the child says.
 	if m.ServesVersion("v9") {
 		t.Fatal("a version with no route is served")
 	}
+}
+
+// A monitor that has stopped reporting must not leave the answer frozen at
+// "ready": the last thing it said gets old, and old is not an answer.
+func TestServesVersion_StaleReadinessIsNotReadiness(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	c := &child{status: statusRunning, port: 1, version: oracle.Version{Name: "v4"}}
+	c.serving.Store(true)
+	c.servingAt.Store(time.Now().Add(-2 * childReadyStale).UnixNano())
+	m.mu.Lock()
+	m.processes["v4"] = c
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if m.ServesVersion("v4") {
+		t.Fatal("a readiness answer older than childReadyStale still counts as ready")
+	}
+}
+
+// Readiness belongs to the generation that was asked. A probe answered by a
+// child that has since been swapped out must not decide anything about its
+// replacement.
+func TestServesVersion_ReadinessIsPerGeneration(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	old := &child{status: statusRunning, port: 1, version: oracle.Version{Name: "v4"}}
+	old.serving.Store(false)
+	old.servingAt.Store(time.Now().UnixNano())
+
+	replacement := &child{status: statusRunning, port: 2, version: oracle.Version{Name: "v4"}}
+	replacement.serving.Store(true)
+	replacement.servingAt.Store(time.Now().UnixNano())
+
+	m.mu.Lock()
+	m.processes["v4"] = replacement
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	if !m.ServesVersion("v4") {
+		t.Fatal("the unready generation that was replaced still decides the answer")
+	}
+
+	// And the reverse: a healthy old generation cannot vouch for an unready one.
+	replacement.serving.Store(false)
+	if m.ServesVersion("v4") {
+		t.Fatal("the current generation is unready but the version is still offered")
+	}
+	_ = old
+}
+
+func waitFor(timeout time.Duration, cond func() bool) bool {
+	deadline := time.Now().Add(timeout)
+	for time.Now().Before(deadline) {
+		if cond() {
+			return true
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	return cond()
 }
 
 func serverPort(t *testing.T, srv *httptest.Server) int {

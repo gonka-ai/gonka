@@ -49,7 +49,7 @@ Removed with the old model:
 
 | Removed | Replacement |
 | --- | --- |
-| `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; `gonka-drain` for quiescing without stopping |
+| `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; `gonka-drain status` to see what the router believes |
 | Router state volume (`/var/lib/gonka/versiond-router`) | nothing — the router holds no durable state |
 | `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
 | `VERSIOND_ADMIN_LISTEN_ADDR` (loopback readiness listener) | `GET :8080/readyz` on the traffic listener |
@@ -163,10 +163,9 @@ A reconcile failure is still recorded — versiond keeps it in its internal
 `Degraded` condition and logs it — it is simply not a routing
 decision. Note that `/healthz` is unchanged and does **not** carry it: its JSON
 array of per-version child state is the same contract as before, so alerting on
-reconcile failures means reading the logs today. One consequence of the change to
-be aware of: a host that fails to install a newly approved version stays in the
-pool, so requests for that version fail on it rather than being sent to a host
-that installed it successfully.
+reconcile failures means reading the logs today. A host that fails to install a newly approved version leaves *that version's*
+pool through the per-version check above, and keeps serving the versions it does
+have.
 
 ### HA storage is enforced at boot as well as per request
 
@@ -242,5 +241,5 @@ host lands in that slot next.
 | --- | --- |
 | [versiond-host-evacuation.md](./versiond-host-evacuation.md) | Whole-host evacuation / replacement design and operator contract (Track B) |
 | [rolling-update.md](./rolling-update.md) | Same-name SHA blue/green + drain (Track A) and §1.8 host draining |
-| [versiond-router/README.md](../../versiond-router/README.md) | Router routing, health checks, `gonka-drain` reference |
+| [versiond-router/README.md](../../versiond-router/README.md) | Router routing, per-version health checks, and how to read the pool |
 | [release-0.2.14-v4.md](./release-0.2.14-v4.md) | Previous release line |

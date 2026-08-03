@@ -54,9 +54,15 @@ type child struct {
 	done          chan struct{} // closed when runChild exits
 	ready         chan struct{} // closed after readiness succeeds
 	readyOnce     sync.Once
-	proxyTarget   *proxy.Target
-	status        generationState
-	restart       bool
+	// serving is this generation's own live readiness, refreshed by a monitor
+	// started when it begins running. It is per generation on purpose: a probe
+	// answered by a child that has since been swapped out must not decide
+	// anything about its replacement.
+	serving     atomic.Bool
+	servingAt   atomic.Int64
+	proxyTarget *proxy.Target
+	status      generationState
+	restart     bool
 }
 
 func (c *child) Stop() {
@@ -77,13 +83,11 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg         config.Config
-	processes   map[string]*child
-	draining    map[string][]*child
-	children    map[*child]struct{}
-	downloading map[string]struct{}
-	// serveChecks caches the child readiness probe behind ServesVersion.
-	serveChecks     map[string]serveCheck
+	cfg             config.Config
+	processes       map[string]*child
+	draining        map[string][]*child
+	children        map[*child]struct{}
+	downloading     map[string]struct{}
 	allocatedPorts  map[int]struct{}
 	reservedPorts   map[int]struct{}
 	operations      map[uint64]controlOperation
@@ -107,7 +111,6 @@ func NewManager(cfg config.Config) *Manager {
 		draining:       make(map[string][]*child),
 		children:       make(map[*child]struct{}),
 		downloading:    make(map[string]struct{}),
-		serveChecks:    make(map[string]serveCheck),
 		allocatedPorts: make(map[int]struct{}),
 		reservedPorts:  reservedChildPorts(),
 		operations:     make(map[uint64]controlOperation),
@@ -210,29 +213,28 @@ func (m *Manager) RouteTable() *atomic.Value {
 	return &m.routes
 }
 
-// serveCheck is the last answer the child gave, and when.
-type serveCheck struct {
-	at    time.Time
-	ready bool
-}
-
-// serveCheckTTL keeps a per-second balancer health check from turning into a
-// per-second probe of the child. serveCheckTimeout bounds a child that has
-// stopped answering: a stuck child is not a serving one.
+// childReadyInterval matches the balancer's own cadence: readiness that is
+// refreshed less often than it is asked about would report a stale answer, and
+// refreshing it more often only adds load. childReadyStale is the point past
+// which a missing refresh is treated as unready — a monitor that has stopped
+// must not freeze the answer at "ready" forever.
 const (
-	serveCheckTTL     = 900 * time.Millisecond
-	serveCheckTimeout = 2 * time.Second
+	childReadyInterval = time.Second
+	childReadyTimeout  = 2 * time.Second
+	childReadyStale    = 5 * time.Second
 )
 
 // ServesVersion reports whether this host can serve the named version right now.
+// It is a pure read of state a monitor keeps current, so a balancer checking
+// every second cannot turn into a probe of the child every second, and no number
+// of concurrent callers can fan out into concurrent probes.
 //
 // Two things have to hold, and neither implies the other. The route table — the
 // same one the proxy uses, so the answer cannot disagree with what a request
-// would get — must have a target for the version. And the child behind it must
-// still say it is ready: readiness is checked once when a child starts, but a
-// child can lose it afterwards, and a versiond that kept answering 200 for a
-// child that has gone unready would hold open a route to a host that cannot
-// serve.
+// would get — must have a target for the version. And the generation behind it
+// must still be reporting itself ready: readiness is checked once when a child
+// starts, but a child can lose it afterwards, and a route held open to a child
+// that has gone unready is a route to a host that cannot serve.
 func (m *Manager) ServesVersion(name string) bool {
 	routes, ok := m.routes.Load().(proxy.RouteTable)
 	if !ok {
@@ -244,32 +246,50 @@ func (m *Manager) ServesVersion(name string) bool {
 
 	m.mu.Lock()
 	c := m.processes[name]
-	if c == nil || c.status != statusRunning {
-		m.mu.Unlock()
+	running := c != nil && c.status == statusRunning
+	m.mu.Unlock()
+	if !running || !c.serving.Load() {
 		return false
 	}
-	if cached, ok := m.serveChecks[name]; ok && time.Since(cached.at) < serveCheckTTL {
+	last := time.Unix(0, c.servingAt.Load())
+	return time.Since(last) < childReadyStale
+}
+
+// watchChildReadiness keeps one generation's serving flag current. It is bound to
+// the generation, so a swap simply ends this monitor and starts the next one; a
+// late answer can only ever be written to the child that was asked.
+func (m *Manager) watchChildReadiness(ctx context.Context, c *child) {
+	ticker := time.NewTicker(childReadyInterval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+
+		m.mu.Lock()
+		stillRunning := c.status == statusRunning
+		port := c.lifecyclePort()
+		publicPort := c.port
+		allowLegacy := int(c.adminPort.Load()) == 0
+		path := m.cfg.ReadyPath
 		m.mu.Unlock()
-		return cached.ready
-	}
-	port := c.lifecyclePort()
-	publicPort := c.port
-	allowLegacy := int(c.adminPort.Load()) == 0
-	path := m.cfg.ReadyPath
-	m.mu.Unlock()
+		if !stillRunning {
+			return
+		}
 
-	ctx, cancel := context.WithTimeout(context.Background(), serveCheckTimeout)
-	defer cancel()
-	client := &http.Client{Timeout: serveCheckTimeout}
-	ready := readyEndpointReady(ctx, client, port, path, allowLegacy)
-	if ready && !allowLegacy {
-		ready = publicEndpointReady(ctx, client, publicPort)
-	}
+		probeCtx, cancel := context.WithTimeout(ctx, childReadyTimeout)
+		client := &http.Client{Timeout: childReadyTimeout}
+		ready := readyEndpointReady(probeCtx, client, port, path, allowLegacy)
+		if ready && !allowLegacy {
+			ready = publicEndpointReady(probeCtx, client, publicPort)
+		}
+		cancel()
 
-	m.mu.Lock()
-	m.serveChecks[name] = serveCheck{at: time.Now(), ready: ready}
-	m.mu.Unlock()
-	return ready
+		c.serving.Store(ready)
+		c.servingAt.Store(time.Now().UnixNano())
+	}
 }
 
 func (m *Manager) Available() <-chan struct{} {
@@ -1541,6 +1561,12 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			m.rebuildRoutes()
 		}
 		m.mu.Unlock()
+
+		// It has just passed the startup readiness wait; the monitor takes over
+		// from here and is the only writer of this generation's flag.
+		c.serving.Store(true)
+		c.servingAt.Store(time.Now().UnixNano())
+		go m.watchChildReadiness(ctx, c)
 
 		err = proc.Wait()
 

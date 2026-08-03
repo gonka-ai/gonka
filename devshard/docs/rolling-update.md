@@ -449,8 +449,8 @@ Key invariants:
   internal budget expires, versiond logs the remaining work and forces teardown
   before the outer runtime backstop.
 - **One host at a time:** with `N−1` replicas still in the pool, other escrows
-  keep serving while one host evacuates. `gonka-drain` refuses to drain the last
-  host taking traffic; `docker stop` cannot be intercepted, so stopping the whole
+  keep serving while one host evacuates. Nothing enforces it: `docker stop` cannot
+  be intercepted, so stopping the whole
   pool at once remains the operator's responsibility.
 
 `Devshard-Ha` follows the deployment (`GONKA_HA`), not the current number of live
