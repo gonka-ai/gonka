@@ -1,6 +1,8 @@
 package config
 
 import (
+	"os"
+	"regexp"
 	"testing"
 	"time"
 )
@@ -242,20 +244,46 @@ func TestLoad_ForceVersionsDottedWithOverride(t *testing.T) {
 }
 
 // The floor is derived from the router's health-check settings, which live in a
-// config template no compiler connects to this package. Both sides name each
-// other — this test holds the numbers, the template comment points back here —
-// so changing either is a two-file change by construction.
+// config template no compiler connects to this package — so this test reads the
+// real templates rather than restating their numbers. Editing `inter` or
+// `timeout check` without revisiting MinDrainAnnounce fails here; moving or
+// renaming the templates fails here too, loudly, which is the point: a skipped
+// contract is a disabled one.
 func TestMinDrainAnnounceCoversTheRouterDetectionWorstCase(t *testing.T) {
-	const (
-		// versiond-router/pool-backend.cfg.template: check inter 1s
-		routerCheckInterval = time.Second
-		// versiond-router/haproxy.cfg.template: timeout check 3s
-		routerCheckTimeout = 3 * time.Second
-		margin             = time.Second
-	)
-	worstDetection := routerCheckTimeout + routerCheckInterval
+	// Anchored to the directive at line start: the templates' comments mention
+	// both settings by name, and a comment must never satisfy — or supply — a
+	// contract read (the render suites learned that the hard way).
+	interval := routerTemplateDuration(t,
+		"../../../versiond-router/pool-backend.cfg.template",
+		regexp.MustCompile(`(?m)^[	 ]*server-template .* inter ([0-9]+m?s)`))
+	checkTimeout := routerTemplateDuration(t,
+		"../../../versiond-router/haproxy.cfg.template",
+		regexp.MustCompile(`(?m)^[	 ]*timeout check ([0-9]+m?s)`))
+
+	// Worst case: a probe answered "ready" just before the flip legally
+	// concludes checkTimeout later, and the next probe begins interval after.
+	const margin = time.Second
+	worstDetection := checkTimeout + interval
 	if MinDrainAnnounce < worstDetection+margin {
-		t.Fatalf("MinDrainAnnounce=%s does not cover the router's worst-case detection %s plus %s margin",
-			MinDrainAnnounce, worstDetection, margin)
+		t.Fatalf(
+			"MinDrainAnnounce=%s does not cover the router's worst-case detection %s (timeout check %s + inter %s) plus %s margin",
+			MinDrainAnnounce, worstDetection, checkTimeout, interval, margin)
 	}
+}
+
+func routerTemplateDuration(t *testing.T, path string, directive *regexp.Regexp) time.Duration {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("the router template this contract is derived from is unreadable: %v", err)
+	}
+	m := directive.FindSubmatch(body)
+	if m == nil {
+		t.Fatalf("%s no longer contains %v; the MinDrainAnnounce derivation has lost its source", path, directive)
+	}
+	d, err := time.ParseDuration(string(m[1]))
+	if err != nil {
+		t.Fatalf("%s: %v", path, err)
+	}
+	return d
 }

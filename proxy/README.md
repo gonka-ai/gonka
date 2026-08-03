@@ -177,7 +177,7 @@ upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
 | Router env | Role |
 | --- | --- |
 | `VERSIOND_POOL_HOST` | DNS name resolving to every host in the HA pool (a Compose network alias) |
-| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs (default: `VERSIOND_POOL_HOST`) |
+| `VERSIOND_LEGACY_HOST` | Host that owns pre-HA SQLite data dirs. Required whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start without it; unused otherwise |
 | `VERSIOND_NON_HA_VERSIONS` | Version path segments pinned to legacy (whitespace and/or comma). Empty = all versions HA. Future versions are HA by default |
 | `GONKA_HA` | Set by the HA overlay; stamps `Devshard-Ha: true` on pool traffic |
 
