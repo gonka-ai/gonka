@@ -274,6 +274,16 @@ test-render: test-hash-ring test-version-routing
 		grep -q "not a boolean" "$$tmpdir/boolerr" \
 			|| fail "the refusal for '$$garbage' does not name the boolean grammar"; \
 	done; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_NON_HA_VERSIONS='v1' \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/bad.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
+		./entrypoint.sh 2>/dev/null; then \
+		fail "legacy versions without an explicit owner were accepted; the pool alias is not one host"; \
+	fi; \
 	for badhost in 'a&b' 'a|b' 'a b'; do \
 		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 			VERSIOND_POOL_HOST="$$badhost" \

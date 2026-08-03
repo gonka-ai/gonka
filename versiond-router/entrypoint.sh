@@ -192,6 +192,17 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
     render_pool_backend "$backend" "/readyz?version=$(urlencode "$version")" >> "$POOL_BACKENDS_FILE"
 done
 
+# Versions pinned to the legacy host exist because exactly one host owns their
+# SQLite data dirs. Defaulting that owner to the pool alias would resolve "the
+# single owner" to whichever pool member DNS answers with — the split state the
+# pin exists to prevent, reached through an omission.
+if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
+    echo "versiond-router: VERSIOND_NON_HA_VERSIONS pins versions to a legacy host," >&2
+    echo "  but VERSIOND_LEGACY_HOST is not set. The owner of pre-HA SQLite data" >&2
+    echo "  is one specific host and must be named explicitly." >&2
+    exit 1
+fi
+
 # An HA deployment must declare its versions. The host-level check the coarse
 # mode falls back to answers "can this host serve anything", so a host whose v5
 # child went unready keeps receiving v5 traffic as long as v4 is healthy —

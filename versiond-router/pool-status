@@ -12,7 +12,7 @@
 # contract (see devshard/testenv/citest/harness/router_pool.go).
 set -eu
 
-SOCK="${HAPROXY_SOCKET:-/var/run/haproxy.sock}"
+SOCK="${HAPROXY_SOCKET:-/var/run/haproxy/haproxy.sock}"
 NON_HA_MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 
 if [ "$#" -gt 0 ]; then

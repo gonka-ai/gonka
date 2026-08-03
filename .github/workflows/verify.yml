@@ -298,6 +298,13 @@ jobs:
         working-directory: edge-api
         run: go build ./...
 
+      # The module's own unit tests — readiness, the drain sequence, config
+      # validation. The JUnit step below covers common/queryapi only, and for a
+      # while nothing ran these at all.
+      - name: Run edge-api unit tests
+        working-directory: ./edge-api
+        run: go test -race ./...
+
       - name: Run edge-api tests (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
         run: bash scripts/validate-edge-api.sh

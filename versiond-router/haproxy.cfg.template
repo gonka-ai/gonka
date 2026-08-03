@@ -22,7 +22,7 @@
 global
     log stdout format raw local0 info
     # Admin socket only; no TCP bind, so it cannot be published by accident.
-    stats socket /var/run/haproxy.sock mode 660 level admin
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin
     stats timeout 30s
 
 defaults

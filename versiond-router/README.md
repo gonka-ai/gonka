@@ -259,7 +259,7 @@ versiond_ha_pool
 One host is a separate server in every backend, with its own health, so the same
 host can be serving `v4` and out of `v5`. This is the router's whole state, and
 it is read-only — a formatter over the HAProxy Runtime API
-(`/var/run/haproxy.sock`), kept off PATH because it is an internal diagnostic
+(`/var/run/haproxy/haproxy.sock`), kept off PATH because it is an internal diagnostic
 whose output the acceptance-test harness parses, not an operator CLI.
 
 **There is no manual drain.** There was, and it was wrong: HAProxy identifies a
@@ -318,12 +318,15 @@ would then not match the name at all.
 | Endpoint | Where | Notes |
 | --- | --- | --- |
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
-| Runtime API | `/var/run/haproxy.sock` | admin socket, no TCP bind |
+| Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | `versiond_ha_pool` or `versiond_legacy` |
 
 Neither the metrics endpoint nor the admin socket is reachable from outside the
-container. Scrape metrics with a sidecar or `docker compose exec`.
+container, and the container runs as the unprivileged `haproxy` user from the
+base image — root is used only at build time to install `socat` and hand over
+the config and socket directories. Scrape metrics with a sidecar or
+`docker compose exec`.
 
 ## Tests
 
