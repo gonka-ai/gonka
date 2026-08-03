@@ -27,9 +27,14 @@ import (
 // either half of the sequence regressing must fail here.
 func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.T) {
 	release := make(chan struct{})
+	requestStarted := make(chan struct{})
 	srv, baseURL := startTestServer(t, func(c echo.Context) error {
+		close(requestStarted)
 		<-release
 		return c.String(http.StatusOK, "finished")
+	})
+	srv.GET("/fast", func(c echo.Context) error {
+		return c.NoContent(http.StatusNoContent)
 	})
 
 	requestDone := make(chan int, 1)
@@ -42,7 +47,7 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 		defer resp.Body.Close()
 		requestDone <- resp.StatusCode
 	}()
-	waitForInFlight(t, baseURL)
+	waitForRequestStarted(t, requestStarted)
 
 	// Readiness before shutdown is about chain reachability, which this test
 	// deliberately does not provide; what matters here is that it does not yet
@@ -51,11 +56,12 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 		"instance should not report draining before shutdown starts")
 
 	shutdownDone := make(chan error, 1)
+	force := make(chan os.Signal, 1)
 	go func() {
 		shutdownDone <- drainAndShutdown(srv, config{
-			DrainAnnounce:  150 * time.Millisecond,
+			DrainAnnounce:  time.Hour,
 			ShutdownBudget: 30 * time.Second,
-		}, make(chan os.Signal))
+		}, force)
 	}()
 
 	// Inside the announce window the process is unready but still serving: that
@@ -64,6 +70,12 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 		status, body := readyz(t, baseURL)
 		return status == http.StatusServiceUnavailable && strings.Contains(body, "draining")
 	}, 2*time.Second, 10*time.Millisecond, "/readyz should report draining during the announce window")
+	resp, err := http.Get(baseURL + "/fast")
+	require.NoError(t, err)
+	_ = resp.Body.Close()
+	require.Equal(t, http.StatusNoContent, resp.StatusCode,
+		"announce window must keep accepting while the router observes readiness")
+	force <- syscall.SIGTERM
 
 	select {
 	case <-shutdownDone:
@@ -83,13 +95,15 @@ func TestDrainAndShutdown_ServesInFlightRequestWhileReportingUnready(t *testing.
 func TestDrainAndShutdown_BudgetExpiryClosesRemainingConnections(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
+	requestStarted := make(chan struct{})
 	srv, baseURL := startTestServer(t, func(c echo.Context) error {
+		close(requestStarted)
 		<-release
 		return c.String(http.StatusOK, "finished")
 	})
 
 	go func() { _, _ = http.Get(baseURL + "/slow") }()
-	waitForInFlight(t, baseURL)
+	waitForRequestStarted(t, requestStarted)
 
 	err := drainAndShutdown(srv, config{
 		DrainAnnounce:  0,
@@ -106,13 +120,15 @@ func TestDrainAndShutdown_BudgetExpiryClosesRemainingConnections(t *testing.T) {
 func TestDrainAndShutdown_SecondSignalDuringShutdownForcesClose(t *testing.T) {
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
+	requestStarted := make(chan struct{})
 	srv, baseURL := startTestServer(t, func(c echo.Context) error {
+		close(requestStarted)
 		<-release
 		return c.String(http.StatusOK, "finished")
 	})
 
 	go func() { _, _ = http.Get(baseURL + "/slow") }()
-	waitForInFlight(t, baseURL)
+	waitForRequestStarted(t, requestStarted)
 
 	force := make(chan os.Signal, 1)
 	done := make(chan error, 1)
@@ -199,6 +215,59 @@ func TestCompletedShutdownWinsOverQueuedEscalation(t *testing.T) {
 	require.NoError(t, err)
 }
 
+func TestGracefulShutdownForceRaceHasOneCoherentOutcome(t *testing.T) {
+	const iterations = 64
+	for iteration := 0; iteration < iterations; iteration++ {
+		release := make(chan struct{})
+		shutdownStarted := make(chan struct{})
+		srv := &stubServer{
+			shutdownBlocksOn: release,
+			shutdownStarted:  shutdownStarted,
+		}
+		force := make(chan os.Signal, 1)
+		result := make(chan error, 1)
+		go func() {
+			result <- gracefulShutdown(srv, time.Second, force)
+		}()
+
+		select {
+		case <-shutdownStarted:
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d shutdown did not start", iteration)
+		}
+		start := make(chan struct{})
+		var racers sync.WaitGroup
+		racers.Add(2)
+		go func() {
+			defer racers.Done()
+			<-start
+			close(release)
+		}()
+		go func() {
+			defer racers.Done()
+			<-start
+			force <- syscall.SIGINT
+		}()
+		close(start)
+		racers.Wait()
+
+		select {
+		case err := <-result:
+			calls := srv.order()
+			if err == nil {
+				assert.NotContains(t, calls, "ForceClose",
+					"iteration %d clean completion was force-closed", iteration)
+				continue
+			}
+			assert.Contains(t, err.Error(), "operator sent", "iteration %d", iteration)
+			assert.Contains(t, calls, "ForceClose",
+				"iteration %d forced completion did not close connections", iteration)
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d shutdown did not finish", iteration)
+		}
+	}
+}
+
 // startTestServer runs a real server with one blocking route on a real port, so
 // the test exercises the same http.Server shutdown path production uses.
 func startTestServer(t *testing.T, slow echo.HandlerFunc) (*server.Server, string) {
@@ -215,19 +284,15 @@ func startTestServer(t *testing.T, slow echo.HandlerFunc) (*server.Server, strin
 	return srv, "http://" + ln.Addr().String()
 }
 
-// waitForInFlight blocks until the server is up and the slow request has been
-// accepted, so shutdown cannot start before there is anything to wait for.
-func waitForInFlight(t *testing.T, baseURL string) {
+// waitForRequestStarted proves the request crossed the HTTP admission boundary;
+// probing a side endpoint or sleeping cannot establish that ordering.
+func waitForRequestStarted(t *testing.T, started <-chan struct{}) {
 	t.Helper()
-	require.Eventually(t, func() bool {
-		resp, err := http.Get(baseURL + "/healthz")
-		if err != nil {
-			return false
-		}
-		_ = resp.Body.Close()
-		return resp.StatusCode == http.StatusOK
-	}, 5*time.Second, 10*time.Millisecond, "server never came up")
-	time.Sleep(50 * time.Millisecond)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("slow request never entered its handler")
+	}
 }
 
 func readyz(t *testing.T, baseURL string) (int, string) {
@@ -252,6 +317,8 @@ type stubServer struct {
 	// shutdownBlocksOn, when set, makes Shutdown ignore its context and wait,
 	// standing in for a Shutdown stuck on a lock.
 	shutdownBlocksOn <-chan struct{}
+	shutdownStarted  chan struct{}
+	shutdownOnce     sync.Once
 	shutdownErr      error
 	closeErr         error
 }
@@ -272,6 +339,9 @@ func (s *stubServer) BeginDrain() { s.record("BeginDrain") }
 
 func (s *stubServer) Shutdown(context.Context) error {
 	s.record("Shutdown")
+	if s.shutdownStarted != nil {
+		s.shutdownOnce.Do(func() { close(s.shutdownStarted) })
+	}
 	if s.shutdownBlocksOn != nil {
 		<-s.shutdownBlocksOn
 	}

@@ -118,6 +118,30 @@ func (c *Controller) Transition(next State) error {
 	return nil
 }
 
+// BeginDrain atomically chooses the shutdown edge for the host's current
+// lifecycle. A serving host must announce before admission closes; a host that
+// never served goes directly to draining. Keeping this choice under the FSM
+// lock prevents a concurrent availability promotion from reopening a starting
+// host after shutdown has begun.
+func (c *Controller) BeginDrain() (announcing bool, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	if validTransition(c.state, StateAnnouncing) {
+		c.state = StateAnnouncing
+		return true, nil
+	}
+	if validTransition(c.state, StateDraining) {
+		c.state = StateDraining
+		return false, nil
+	}
+	return false, fmt.Errorf(
+		"%w: cannot begin drain from %s",
+		ErrInvalidTransition,
+		c.state,
+	)
+}
+
 func validTransition(from, to State) bool {
 	spec, fromKnown := stateTable[from]
 	_, toKnown := stateTable[to]

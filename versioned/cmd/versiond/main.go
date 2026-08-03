@@ -213,17 +213,21 @@ func beginHostDrain(
 	force <-chan struct{},
 	cancelPoll context.CancelFunc,
 ) error {
-	// The transition attempt is the race-free serving check: promotion and
-	// shutdown both serialize through the host controller.
-	announcing := hostLifecycle.Transition(host.StateAnnouncing) == nil
+	// Choosing announcing versus direct drain must be atomic with availability
+	// promotion, or a starting host could become serving after shutdown begins.
+	announcing, err := hostLifecycle.BeginDrain()
+	if err != nil {
+		return err
+	}
 	// Freeze desired-state changes and cancel every active generation operation.
 	// Child process contexts stay alive until the drain phase stops or forces them.
 	mgr.BeginHostDrain()
 	cancelPoll()
 	if announcing {
 		awaitDrainAnnouncement(announce, force)
+		return hostLifecycle.Transition(host.StateDraining)
 	}
-	return hostLifecycle.Transition(host.StateDraining)
+	return nil
 }
 
 func watchForceSignals(signals <-chan os.Signal, shutdownDone <-chan struct{}, force chan<- struct{}) {

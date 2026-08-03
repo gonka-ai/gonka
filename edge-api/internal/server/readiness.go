@@ -4,7 +4,6 @@ import (
 	"context"
 	"net/http"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
@@ -34,9 +33,10 @@ type readiness struct {
 	// probe asks the chain; injectable so tests can shape its timing.
 	probe func(ctx context.Context) error
 
-	// draining latches at shutdown. It is checked before the chain probe, so a
-	// leaving instance reports unready at once instead of waiting out the cache.
-	draining atomic.Bool
+	// drainMu makes the final readiness response linearizable with BeginDrain:
+	// after BeginDrain returns, no concurrent handler can still publish 200.
+	drainMu  sync.RWMutex
+	draining bool
 
 	// probeMu serialises the probe itself: when the cache expires, every
 	// concurrent /readyz would otherwise fire its own chain query.
@@ -62,7 +62,17 @@ func newReadiness(chainClient *chain.Client) *readiness {
 // beginDrain makes this instance report unready while it keeps serving. The
 // balancer needs a moment to observe the failing check and stop routing here;
 // that window is owned by the caller (see the announce window in cmd/edge-api).
-func (r *readiness) beginDrain() { r.draining.Store(true) }
+func (r *readiness) beginDrain() {
+	r.drainMu.Lock()
+	r.draining = true
+	r.drainMu.Unlock()
+}
+
+func (r *readiness) isDraining() bool {
+	r.drainMu.RLock()
+	defer r.drainMu.RUnlock()
+	return r.draining
+}
 
 func (r *readiness) check() error {
 	if err, ok := r.cached(); ok {
@@ -104,13 +114,20 @@ func (r *readiness) cached() (error, bool) {
 
 func (r *readiness) handler(c echo.Context) error {
 	c.Response().Header().Set("Cache-Control", "no-store")
-	if r.draining.Load() {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{
-			"status": "not ready",
-			"reason": "draining",
-		})
+	if r.isDraining() {
+		return drainingResponse(c)
 	}
-	if err := r.check(); err != nil {
+	err := r.check()
+	// BeginDrain can race a probe already in progress. Drain is a latch, so its
+	// newer answer must win even if that older chain probe eventually succeeds.
+	// Hold the read lock through response publication: either this 200 completes
+	// first, or BeginDrain completes first and this request returns 503.
+	r.drainMu.RLock()
+	defer r.drainMu.RUnlock()
+	if r.draining {
+		return drainingResponse(c)
+	}
+	if err != nil {
 		return c.JSON(http.StatusServiceUnavailable, map[string]string{
 			"status": "not ready",
 			"reason": "chain unreachable",
@@ -118,4 +135,11 @@ func (r *readiness) handler(c echo.Context) error {
 		})
 	}
 	return c.JSON(http.StatusOK, map[string]string{"status": "ready"})
+}
+
+func drainingResponse(c echo.Context) error {
+	return c.JSON(http.StatusServiceUnavailable, map[string]string{
+		"status": "not ready",
+		"reason": "draining",
+	})
 }

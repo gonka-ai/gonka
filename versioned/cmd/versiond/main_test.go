@@ -48,6 +48,36 @@ type fakeHostAvailabilityProvider struct {
 	conditions process.Conditions
 }
 
+type blockingHostDrainManager struct {
+	began   chan struct{}
+	release chan struct{}
+}
+
+func (m *blockingHostDrainManager) BeginHostDrain() {
+	close(m.began)
+	<-m.release
+}
+
+type racingHostHTTPServer struct {
+	shutdownStarted chan struct{}
+	release         <-chan struct{}
+	startOnce       sync.Once
+}
+
+func (s *racingHostHTTPServer) Shutdown(ctx context.Context) error {
+	s.startOnce.Do(func() { close(s.shutdownStarted) })
+	select {
+	case <-s.release:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *racingHostHTTPServer) Close() error {
+	return nil
+}
+
 func (p *fakeHostAvailabilityProvider) Available() <-chan struct{} {
 	return p.available
 }
@@ -233,6 +263,55 @@ func TestPromoteHostWhenAvailableHonorsDrainState(t *testing.T) {
 			t.Fatalf("host state = %s, want draining", got)
 		}
 	})
+}
+
+func TestBeginHostDrainCannotRaceAvailabilityPromotion(t *testing.T) {
+	hostLifecycle := host.NewController()
+	mgr := &blockingHostDrainManager{
+		began:   make(chan struct{}),
+		release: make(chan struct{}),
+	}
+	t.Cleanup(func() {
+		select {
+		case <-mgr.release:
+		default:
+			close(mgr.release)
+		}
+	})
+	drainDone := make(chan error, 1)
+	go func() {
+		drainDone <- beginHostDrain(
+			time.Hour,
+			mgr,
+			hostLifecycle,
+			make(chan struct{}),
+			func() {},
+		)
+	}()
+
+	select {
+	case <-mgr.began:
+	case <-time.After(time.Second):
+		t.Fatal("host drain did not reach the manager barrier")
+	}
+	if got := hostLifecycle.Snapshot().State; got != host.StateDraining {
+		t.Fatalf("host state at manager barrier = %s, want draining", got)
+	}
+
+	provider := &fakeHostAvailabilityProvider{
+		available:  make(chan struct{}, 1),
+		conditions: process.Conditions{Available: true},
+	}
+	provider.available <- struct{}{}
+	promoteHostWhenAvailable(context.Background(), provider, hostLifecycle)
+	if got := hostLifecycle.Snapshot().State; got != host.StateDraining {
+		t.Fatalf("availability promotion reopened draining host as %s", got)
+	}
+
+	close(mgr.release)
+	if err := <-drainDone; err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestShutdownHostCompletesLifecycle(t *testing.T) {
@@ -463,6 +542,85 @@ func TestShutdownHostForceDoesNotWaitForPollWorker(t *testing.T) {
 	}
 	if got := hostLifecycle.Snapshot().State; got != host.StateStopped {
 		t.Fatalf("host state = %s, want stopped", got)
+	}
+}
+
+func TestShutdownHostForceRaceAlwaysReachesStopped(t *testing.T) {
+	const iterations = 64
+	for iteration := 0; iteration < iterations; iteration++ {
+		hostLifecycle := host.NewController()
+		if err := hostLifecycle.Transition(host.StateDraining); err != nil {
+			t.Fatal(err)
+		}
+		release := make(chan struct{})
+		server := &racingHostHTTPServer{
+			shutdownStarted: make(chan struct{}),
+			release:         release,
+		}
+		managerStarted := make(chan struct{})
+		mgr := newFakeHostShutdownManager()
+		mgr.shutdown = func(ctx context.Context) error {
+			close(managerStarted)
+			select {
+			case <-release:
+				return nil
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		force := make(chan struct{})
+		pollDone := make(chan struct{})
+		close(pollDone)
+		result := make(chan error, 1)
+		go func() {
+			result <- shutdownHost(
+				server,
+				mgr,
+				hostLifecycle,
+				force,
+				pollDone,
+				time.Now().Add(time.Second),
+			)
+		}()
+
+		select {
+		case <-server.shutdownStarted:
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d HTTP shutdown did not start", iteration)
+		}
+		select {
+		case <-managerStarted:
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d manager shutdown did not start", iteration)
+		}
+		start := make(chan struct{})
+		var racers sync.WaitGroup
+		racers.Add(2)
+		go func() {
+			defer racers.Done()
+			<-start
+			close(force)
+		}()
+		go func() {
+			defer racers.Done()
+			<-start
+			close(release)
+		}()
+		close(start)
+		racers.Wait()
+
+		select {
+		case err := <-result:
+			if err != nil {
+				t.Fatalf("iteration %d shutdown: %v", iteration, err)
+			}
+		case <-time.After(time.Second):
+			t.Fatalf("iteration %d shutdown did not finish", iteration)
+		}
+		snapshot := hostLifecycle.Snapshot()
+		if snapshot.State != host.StateStopped || snapshot.Inflight != 0 {
+			t.Fatalf("iteration %d final snapshot = %+v", iteration, snapshot)
+		}
 	}
 }
 

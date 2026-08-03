@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"testing"
 	"time"
 )
@@ -19,6 +20,102 @@ func TestControllerTransitions(t *testing.T) {
 	}
 	if err := c.Transition(StateServing); !errors.Is(err, ErrInvalidTransition) {
 		t.Fatalf("stopped -> serving error = %v, want invalid transition", err)
+	}
+}
+
+func TestBeginDrainChoosesTheCurrentLifecycleEdge(t *testing.T) {
+	t.Run("starting host skips announcement", func(t *testing.T) {
+		c := NewController()
+		announcing, err := c.BeginDrain()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if announcing {
+			t.Fatal("starting host entered announcement")
+		}
+		if got := c.Snapshot().State; got != StateDraining {
+			t.Fatalf("host state = %s, want draining", got)
+		}
+	})
+
+	t.Run("serving host announces first", func(t *testing.T) {
+		c := NewController()
+		if err := c.Transition(StateServing); err != nil {
+			t.Fatal(err)
+		}
+		announcing, err := c.BeginDrain()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !announcing {
+			t.Fatal("serving host skipped announcement")
+		}
+		snapshot := c.Snapshot()
+		if snapshot.State != StateAnnouncing || snapshot.Ready || !snapshot.Accepting {
+			t.Fatalf("announcement snapshot = %+v", snapshot)
+		}
+	})
+}
+
+func TestControllerConcurrentAdmissionAndDrain(t *testing.T) {
+	const (
+		iterations = 64
+		workers    = 32
+	)
+	for iteration := 0; iteration < iterations; iteration++ {
+		c := NewController()
+		if err := c.Transition(StateServing); err != nil {
+			t.Fatal(err)
+		}
+		handler := c.Admission(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusNoContent)
+		}))
+		start := make(chan struct{})
+		statuses := make([]int, workers)
+		var wg sync.WaitGroup
+		for worker := range workers {
+			wg.Add(1)
+			go func() {
+				defer wg.Done()
+				<-start
+				response := httptest.NewRecorder()
+				handler.ServeHTTP(
+					response,
+					httptest.NewRequest(http.MethodGet, "/v1", nil),
+				)
+				statuses[worker] = response.Code
+			}()
+		}
+		drainDone := make(chan error, 1)
+		go func() {
+			<-start
+			announcing, err := c.BeginDrain()
+			if err == nil && announcing {
+				err = c.Transition(StateDraining)
+			}
+			drainDone <- err
+		}()
+
+		close(start)
+		wg.Wait()
+		if err := <-drainDone; err != nil {
+			t.Fatal(err)
+		}
+		for worker, status := range statuses {
+			if status != http.StatusNoContent && status != http.StatusServiceUnavailable {
+				t.Fatalf("iteration %d worker %d status = %d", iteration, worker, status)
+			}
+		}
+
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, httptest.NewRequest(http.MethodGet, "/v1", nil))
+		if response.Code != http.StatusServiceUnavailable {
+			t.Fatalf("iteration %d post-drain status = %d, want 503", iteration, response.Code)
+		}
+		snapshot := c.Snapshot()
+		if snapshot.State != StateDraining || snapshot.Inflight != 0 || !snapshot.Idle {
+			t.Fatalf("iteration %d final snapshot = %+v", iteration, snapshot)
+		}
 	}
 }
 

@@ -224,17 +224,19 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Run Tests (fork PRs)
+      # Host shutdown races readiness promotion, admission leases, child reaping,
+      # and force signals. Keep the detector on the mandatory versioned suite.
+      - name: Run Tests with race detector (fork PRs)
         if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
-        run: go test ./... -v
+        run: go test -race ./... -v
 
       - name: Install go-junit-report
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go install github.com/jstemmer/go-junit-report/v2@v2.1.0
 
-      - name: Run Tests and Generate JUnit Report
+      - name: Run Tests with race detector and Generate JUnit Report
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
-        run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
+        run: go test -race ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
       - name: Publish Test Results
         uses: actions/upload-artifact@v4

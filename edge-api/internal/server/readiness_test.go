@@ -51,6 +51,44 @@ func TestBeginDrain_FlipsReadinessOnTheServer(t *testing.T) {
 	assert.Contains(t, rec.Body.String(), `"reason":"draining"`)
 }
 
+func TestReadyz_DrainWinsAgainstConcurrentChainProbe(t *testing.T) {
+	probeStarted := make(chan struct{})
+	releaseProbe := make(chan struct{})
+	r := &readiness{probe: func(context.Context) error {
+		close(probeStarted)
+		<-releaseProbe
+		return nil
+	}}
+	type result struct {
+		response *httptest.ResponseRecorder
+		err      error
+	}
+	response := make(chan result, 1)
+	go func() {
+		e := echo.New()
+		recorder := httptest.NewRecorder()
+		ctx := e.NewContext(httptest.NewRequest(http.MethodGet, "/readyz", nil), recorder)
+		response <- result{response: recorder, err: r.handler(ctx)}
+	}()
+
+	select {
+	case <-probeStarted:
+	case <-time.After(time.Second):
+		t.Fatal("readiness probe did not start")
+	}
+	r.beginDrain()
+	close(releaseProbe)
+
+	select {
+	case got := <-response:
+		require.NoError(t, got.err)
+		assert.Equal(t, http.StatusServiceUnavailable, got.response.Code)
+		assert.Contains(t, got.response.Body.String(), `"reason":"draining"`)
+	case <-time.After(time.Second):
+		t.Fatal("readiness request did not finish")
+	}
+}
+
 func serveReadyz(t *testing.T, r *readiness) *httptest.ResponseRecorder {
 	t.Helper()
 	e := echo.New()
