@@ -971,15 +971,37 @@ func TestReadinessAnswersTheVersionItWasAskedAbout(t *testing.T) {
 
 	// No child runs, so every version is unserved — including the unqualified
 	// host-level question.
-	for _, path := range []string{"/readyz", "/readyz?version=v4"} {
-		resp, err := http.Get(srv.URL + path)
-		if err != nil {
-			t.Fatalf("GET %s: %v", path, err)
+	for _, method := range []string{http.MethodGet, http.MethodHead} {
+		for _, path := range []string{"/readyz", "/readyz?version=v4"} {
+			req, err := http.NewRequest(method, srv.URL+path, nil)
+			if err != nil {
+				t.Fatal(err)
+			}
+			resp, err := http.DefaultClient.Do(req)
+			if err != nil {
+				t.Fatalf("%s %s: %v", method, path, err)
+			}
+			_ = resp.Body.Close()
+			if resp.StatusCode != http.StatusServiceUnavailable {
+				t.Fatalf("%s %s = %d, want 503", method, path, resp.StatusCode)
+			}
 		}
-		_ = resp.Body.Close()
-		if resp.StatusCode != http.StatusServiceUnavailable {
-			t.Fatalf("GET %s = %d, want 503", path, resp.StatusCode)
-		}
+	}
+
+	req, err := http.NewRequest(http.MethodPost, srv.URL+"/readyz", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusMethodNotAllowed {
+		t.Fatalf("POST /readyz = %d, want 405", resp.StatusCode)
+	}
+	if got := resp.Header.Get("Allow"); got != "GET, HEAD" {
+		t.Fatalf("POST /readyz Allow = %q, want GET, HEAD", got)
 	}
 }
 

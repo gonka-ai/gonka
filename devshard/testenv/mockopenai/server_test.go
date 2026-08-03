@@ -128,6 +128,74 @@ func TestChatCompletions_StreamPauseCanBeReleased(t *testing.T) {
 	}
 }
 
+func TestChatCompletions_StreamPauseCanBeRearmed(t *testing.T) {
+	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
+		Faults: mockopenai.FaultConfig{
+			PauseStream:      true,
+			StreamChunkDelay: time.Millisecond,
+		},
+	}).Handler())
+	defer srv.Close()
+
+	body := []byte(`{"model":"test-model","stream":true,"messages":[{"role":"user","content":"pause"}]}`)
+	startPausedStream := func() (*http.Response, <-chan error) {
+		resp, err := http.Post(srv.URL+"/v1/chat/completions", "application/json", bytes.NewReader(body))
+		require.NoError(t, err)
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+		scanner := bufio.NewScanner(resp.Body)
+		require.True(t, scanner.Scan(), "stream did not publish its first chunk")
+		require.True(t, strings.HasPrefix(scanner.Text(), "data: "))
+		done := make(chan error, 1)
+		go func() {
+			for scanner.Scan() {
+			}
+			done <- scanner.Err()
+		}()
+		return resp, done
+	}
+	assertPaused := func(done <-chan error) {
+		select {
+		case err := <-done:
+			t.Fatalf("paused stream completed before release: %v", err)
+		case <-time.After(50 * time.Millisecond):
+		}
+	}
+	release := func() {
+		resp, err := http.Post(srv.URL+"/testenv/stream/release", "application/json", nil)
+		require.NoError(t, err)
+		_ = resp.Body.Close()
+		require.Equal(t, http.StatusOK, resp.StatusCode)
+	}
+	waitReleased := func(resp *http.Response, done <-chan error) {
+		select {
+		case err := <-done:
+			require.NoError(t, err)
+		case <-time.After(time.Second):
+			t.Fatal("stream did not complete after release")
+		}
+		_ = resp.Body.Close()
+	}
+
+	firstResp, firstDone := startPausedStream()
+	assertPaused(firstDone)
+	release()
+	waitReleased(firstResp, firstDone)
+
+	patch, err := http.Post(
+		srv.URL+"/testenv/fault",
+		"application/json",
+		strings.NewReader(`{"pause_stream":true}`),
+	)
+	require.NoError(t, err)
+	_ = patch.Body.Close()
+	require.Equal(t, http.StatusOK, patch.StatusCode)
+
+	secondResp, secondDone := startPausedStream()
+	assertPaused(secondDone)
+	release()
+	waitReleased(secondResp, secondDone)
+}
+
 func TestChatCompletions_FaultHTTPStatus(t *testing.T) {
 	srv := httptest.NewServer(mockopenai.NewServer(mockopenai.Config{
 		Faults: mockopenai.FaultConfig{HTTPStatus: 503},

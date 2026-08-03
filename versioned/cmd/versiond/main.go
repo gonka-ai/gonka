@@ -188,12 +188,9 @@ func promoteHostWhenAvailable(
 		if !mgr.Conditions().Available {
 			continue
 		}
-		if hostLifecycle.Snapshot().State != host.StateStarting {
-			return
-		}
-		if err := hostLifecycle.Transition(host.StateServing); err != nil {
-			slog.Error("host state transition failed", "error", err)
-		}
+		// Promotion and BeginDrain race under the controller lock. If drain won,
+		// promotion is an expected no-op rather than a failed transition.
+		hostLifecycle.Promote()
 		return
 	}
 }
@@ -405,8 +402,8 @@ func waitForPollWorker(
 func readinessHandler(mgr *process.Manager, hostLifecycle *host.Controller) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Cache-Control", "no-store")
-		if r.Method != http.MethodGet {
-			w.Header().Set("Allow", http.MethodGet)
+		if r.Method != http.MethodGet && r.Method != http.MethodHead {
+			w.Header().Set("Allow", http.MethodGet+", "+http.MethodHead)
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}

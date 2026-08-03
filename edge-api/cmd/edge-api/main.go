@@ -40,10 +40,16 @@ const (
 )
 
 func main() {
+	if exitCode := run(); exitCode != 0 {
+		os.Exit(exitCode)
+	}
+}
+
+func run() int {
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("config", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	if cfg.ChainRPCDerived {
 		slog.Warn("chain rpc endpoint derived from gRPC host; set it explicitly to override",
@@ -62,7 +68,7 @@ func main() {
 	})
 	if err != nil {
 		slog.Error("otel init", "error", err)
-		os.Exit(1)
+		return 1
 	}
 	defer func() {
 		ctx, cancel := context.WithTimeout(context.Background(), observabilityShutdownTimeout)
@@ -73,7 +79,7 @@ func main() {
 	chainClient, err := chain.NewWithQueryFallback(cfg.ChainGRPCURL, cfg.ChainRPCURL)
 	if err != nil {
 		slog.Error("chain client", "error", err)
-		os.Exit(1)
+		return 1
 	}
 
 	srv := server.New(chainClient)
@@ -88,11 +94,12 @@ func main() {
 
 	stop := make(chan os.Signal, 1)
 	signal.Notify(stop, syscall.SIGINT, syscall.SIGTERM)
+	defer signal.Stop(stop)
 
 	select {
 	case err := <-errCh:
 		slog.Error("server", "error", err)
-		os.Exit(1)
+		return 1
 	case sig := <-stop:
 		slog.Info("shutdown", "signal", sig.String())
 	}
@@ -100,8 +107,9 @@ func main() {
 	if err := drainAndShutdown(srv, cfg, stop); err != nil {
 		slog.Error("graceful shutdown did not finish; closed remaining connections",
 			"error", err, "budget", cfg.ShutdownBudget)
-		os.Exit(1)
+		return 1
 	}
+	return 0
 }
 
 // drainableServer is the part of the server the shutdown sequence needs.

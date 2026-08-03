@@ -57,6 +57,48 @@ func TestBeginDrainChoosesTheCurrentLifecycleEdge(t *testing.T) {
 	})
 }
 
+func TestPromoteAndBeginDrainAreAtomic(t *testing.T) {
+	const iterations = 128
+	for iteration := 0; iteration < iterations; iteration++ {
+		c := NewController()
+		start := make(chan struct{})
+		promoted := make(chan bool, 1)
+		announcement := make(chan bool, 1)
+		drainErr := make(chan error, 1)
+
+		go func() {
+			<-start
+			promoted <- c.Promote()
+		}()
+		go func() {
+			<-start
+			announcing, err := c.BeginDrain()
+			announcement <- announcing
+			drainErr <- err
+		}()
+		close(start)
+
+		if err := <-drainErr; err != nil {
+			t.Fatalf("iteration %d: begin drain: %v", iteration, err)
+		}
+		promotionWon := <-promoted
+		announcing := <-announcement
+		state := c.Snapshot().State
+		switch {
+		case promotionWon && announcing && state == StateAnnouncing:
+		case !promotionWon && !announcing && state == StateDraining:
+		default:
+			t.Fatalf(
+				"iteration %d: promoted=%t announcing=%t state=%s",
+				iteration,
+				promotionWon,
+				announcing,
+				state,
+			)
+		}
+	}
+}
+
 func TestControllerConcurrentAdmissionAndDrain(t *testing.T) {
 	const (
 		iterations = 64

@@ -108,6 +108,19 @@ func NewController() *Controller {
 	}
 }
 
+// Promote atomically publishes a starting host as serving. A concurrent drain
+// wins by changing the state first; availability observed before that barrier
+// must not reopen the host afterwards.
+func (c *Controller) Promote() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.state != StateStarting || !validTransition(c.state, StateServing) {
+		return false
+	}
+	c.state = StateServing
+	return true
+}
+
 func (c *Controller) Transition(next State) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()

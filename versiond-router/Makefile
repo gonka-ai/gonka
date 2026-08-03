@@ -159,6 +159,19 @@ test-version-routing:
 	case "$$v4" in *b*) ;; *) fail "host b serves v4 but got none of its traffic" ;; esac; \
 	case "$$v5" in *a*) fail "host a does not serve v5 but received v5 traffic" ;; esac; \
 	case "$$v5" in *b*) ;; *) fail "host b serves v5 but got none of its traffic" ;; esac; \
+	docker stop gonka-vp-a >/dev/null; \
+	for i in $$(seq 20); do \
+		if ha_header=$$(curl -fsS -m 3 -H 'Devshard-Ha: forged' \
+			http://127.0.0.1:18132/v4/ha-header); then \
+			[ -n "$$ha_header" ] || break; \
+		fi; \
+		sleep 0.5; \
+	done; \
+	ha_header=$$(curl -fsS -m 3 -H 'Devshard-Ha: forged' \
+		http://127.0.0.1:18132/v4/ha-header) \
+		|| fail "the surviving backend did not answer the HA-header probe"; \
+	[ -z "$$ha_header" ] \
+		|| fail "client supplied Devshard-Ha survived as '$$ha_header' with one usable host"; \
 	undeclared=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v9/sessions/a/chat); \
 	[ "$$undeclared" = 503 ] \
@@ -248,7 +261,8 @@ test-render: test-hash-ring test-version-routing
 		|| fail "no versions were declared but per-version pools were rendered"; \
 	[ ! -s "$$tmpdir/allha.map" ] \
 		|| fail "no pinned versions were requested but the map is not empty"; \
-	grep -q '^[[:space:]]*http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
+	sed -n '/^frontend versiond_in$$/,/^backend /p' "$$tmpdir/allha.cfg" \
+		| grep -q '^[[:space:]]*http-request del-header Devshard-Ha' \
 		|| fail "the frontend must strip a client-supplied Devshard-Ha"; \
 	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/allha.cfg" \
 		|| fail "unset GONKA_HA lost the runtime multi-host storage guard"; \

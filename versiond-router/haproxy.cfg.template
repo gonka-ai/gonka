@@ -73,6 +73,10 @@ frontend versiond_in
     bind :8080
     maxconn ${MAX_CONNECTIONS}
 
+    # This is a trusted router-to-devshardd signal, never client input. Backends
+    # below either stamp the deployment value or deliberately leave it absent.
+    http-request del-header Devshard-Ha
+
     # Normalised path: the optional /devshard/ prefix is present only when
     # genesis-proxy is not in front, and must not change routing. Field 2 is
     # then the protocol version and field 4 the escrow id — field 1 is the
