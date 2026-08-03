@@ -15,31 +15,26 @@ edge-api-router :18080
           `-- edge-api-2 :18080
 ```
 
-The public edge `proxy/` remains the client-facing nginx. This router is the
+The public edge `proxy/` is the client-facing nginx. This router is the
 internal service-pool hop selected through
 `EDGE_API_SERVICE_NAME=edge-api-router` in a multi-instance deployment.
 
-## Why HAProxy
+## Design
 
-The previous router was nginx OSS. Its entrypoint rendered the space-separated
-`EDGE_API_HOSTS` value into an upstream block at container startup. nginx could
-re-resolve the address of a listed hostname, but changing the set of replicas
-required a new host list and a newly rendered router configuration. Its
-upstream checks were passive, so it learned that a replica was unusable only
-after an operation failed.
-
-The HA deployment needs the router to observe two independent facts:
+The router observes two independent properties of the service pool:
 
 1. which replicas currently exist;
 2. which existing replicas may receive new requests.
 
-HAProxy supplies both directly. `server-template` follows a shared DNS name,
-and an active `GET /readyz` check controls eligibility. A stopping replica can
-therefore leave rotation before it stops accepting, while requests it already
-accepted continue on their established connections.
+`server-template` follows a shared DNS name, and an active `GET /readyz` check
+controls eligibility. A stopping replica leaves rotation before it stops
+accepting, while requests it already accepted continue on their established
+connections. A new replica remains down until its first readiness check
+succeeds.
 
-The corresponding design rationale for both pool routers is documented in
-[the HA architecture](../devshard/docs/high-availability-architecture.md).
+Round-robin is sufficient because `edge-api` is stateless: every replica
+serves the same read-only Tier A queries directly from the chain. No session
+affinity or router-side membership state is required.
 
 ## Membership: DNS
 
@@ -125,7 +120,7 @@ share. L7 retries are disabled for methods other than `GET`, `HEAD`, and
 `OPTIONS`, so a future non-idempotent route cannot be executed twice by the
 router.
 
-The router preserves the forwarding contract of the previous nginx hop:
+The router sets the forwarding headers used by the stack:
 
 - append the peer to `X-Forwarded-For`;
 - overwrite `X-Real-IP` with the immediate client address;

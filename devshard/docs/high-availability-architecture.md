@@ -56,34 +56,20 @@ generic `/v1/ → dapi` location so they take precedence. Key env:
 `EDGE_API_SERVICE_NAME`, `VERSIOND_SERVICE_NAME` (set to the `*-router` service
 name when running multi-instance overlays).
 
-### Why the pool routers use HAProxy
+### HAProxy service-pool routers
 
-The public edge `proxy/` remains nginx. Before the HA pool work, the two
-routers behind it were also nginx OSS containers, with different jobs:
+The public nginx `proxy/` owns client-facing routing and selects a service by
+path. The two HAProxy routers behind it own dynamic replica selection inside
+their respective services:
 
-- `versiond-router/` received `/devshard/*`, selected HA or legacy routing by
-  protocol version, and used a consistent hash of the escrow/session ID to
-  keep one session on one `versiond` host;
-- `edge-api-router/` received the Tier A `/v1/*` routes and distributed those
-  stateless, read-only requests across `edge-api` replicas with round-robin
-  balancing.
+- `versiond-router/` receives `/devshard/*`, selects HA or legacy routing by
+  protocol version, and consistently hashes the escrow/session ID so one
+  session stays on one healthy `versiond` host;
+- `edge-api-router/` receives the Tier A `/v1/*` routes and distributes those
+  stateless, read-only requests across ready `edge-api` replicas with
+  round-robin balancing.
 
-Their entrypoints rendered `VERSIOND_HOSTS` and `EDGE_API_HOSTS` into fixed
-nginx upstream blocks when each router container started. nginx `resolve`
-could refresh the IP address of a hostname already in the block, for example
-after a container restart, but it did not discover new replicas or remove old
-list entries. Changing membership therefore required changing the host list
-and rendering a new router configuration. The shipped nginx OSS routers also
-used passive failure handling: they reacted after an upstream operation
-failed, rather than actively asking whether an application was ready,
-initialising, missing one protocol version, or intentionally draining.
-
-That model cannot provide the shutdown ordering required by long HTTP and SSE
-requests. A leaving replica must become ineligible for **new** work while it is
-still alive and serving accepted work. A joining replica must stay ineligible
-until it can serve the exact traffic assigned to it.
-
-The two pool routers therefore use HAProxy:
+Both routers derive membership and eligibility from runtime state:
 
 - `server-template` follows every address published under the shared
   `versiond-pool` or `edge-api-pool` DNS alias, so normal replica start and
@@ -99,11 +85,11 @@ The two pool routers therefore use HAProxy:
 - marking a backend unready affects new selections but does not move or close
   an established stream.
 
-The HAProxy configurations preserve the relevant nginx data-plane contract:
-streaming, forwarding headers, legacy-version pinning, request limits, and the
-restricted retry policy. This change applies only to `versiond-router/` and
-`edge-api-router/`; it does not replace the public nginx `proxy/` or the
-in-process version-to-child proxy inside `versiond`.
+The HAProxy configurations provide streaming, forwarding headers,
+legacy-version pinning, request limits, and a retry policy that never replays a
+non-idempotent application request. The public nginx `proxy/` is the edge
+router, and the in-process proxy inside each `versiond` maps a protocol
+version to one local `devshardd` child generation.
 
 ---
 
