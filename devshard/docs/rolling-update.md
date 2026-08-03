@@ -465,7 +465,7 @@ an unsafe non-HA storage mode.
 | `gonka-drain status` | Read-only view of what the router believes; there is no router-side drain |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
-| `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host with an available child that has converged at least once |
+| `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |
 | `VERSIOND_VERSIONS` | Versions the router can route. Add a version here *before* governance approves it; undeclared versions are refused |
 | `VERSIOND_DRAIN_ANNOUNCE` | How long the host stays accepting after it starts failing `/readyz`, default `5s` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |

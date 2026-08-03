@@ -2722,3 +2722,94 @@ func serverPort(t *testing.T, srv *httptest.Server) int {
 	}
 	return port
 }
+
+// The contract the crash-restart path relies on: once the monitor's context is
+// cancelled and its goroutine has been awaited, it writes nothing more. A
+// monitor that survived into the next process attempt would overwrite that
+// attempt's answers with probes of the dead process.
+func TestWatchChildReadiness_WritesNothingAfterCancelAndAwait(t *testing.T) {
+	ready := atomic.Bool{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" && !ready.Load() {
+			w.WriteHeader(http.StatusServiceUnavailable)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	c := &child{status: statusRunning, port: serverPort(t, srv), version: oracle.Version{Name: "v4"}}
+	c.serving.Store(true)
+	c.servingAt.Store(time.Now().UnixNano())
+	m.mu.Lock()
+	m.processes["v4"] = c
+	m.mu.Unlock()
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		m.watchChildReadiness(ctx, c)
+	}()
+
+	// The monitor is alive and writing: it must observe the unready child.
+	if !waitFor(3*time.Second, func() bool { return !c.serving.Load() }) {
+		t.Fatal("monitor never observed the unready child")
+	}
+
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("cancelled monitor did not exit; the restart path would block on it")
+	}
+
+	// From here any write is a bug: flip the child to ready and give a leaked
+	// prober ample time to have finished a probe it might have had in flight.
+	stamp := c.servingAt.Load()
+	ready.Store(true)
+	time.Sleep(2 * childReadyInterval)
+	if c.serving.Load() || c.servingAt.Load() != stamp {
+		t.Fatal("monitor wrote after cancel+await; a restarted child would inherit its answers")
+	}
+}
+
+// The legacy /healthz fallback is worth one line per generation, not one per
+// probe: the monitor asks every second.
+func TestNoteLegacyFallbackWarnsOncePerGeneration(t *testing.T) {
+	c := &child{version: oracle.Version{Name: "v4"}}
+	if !c.legacyWarned.CompareAndSwap(false, false) {
+		t.Fatal("fresh child already marked as warned")
+	}
+	c.noteLegacyFallback("/ready")
+	if !c.legacyWarned.Load() {
+		t.Fatal("first fallback did not latch the warning")
+	}
+	// A second call must find the latch set; the log side is the CAS.
+	c.noteLegacyFallback("/ready")
+}
+
+// The probe distinguishes real readiness from the legacy fallback so the caller
+// can decide what to log; the fallback only engages when it is allowed.
+func TestReadyEndpointReadyReportsTheLegacyFallback(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/ready" {
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+	port := serverPort(t, srv)
+	client := &http.Client{Timeout: time.Second}
+
+	ready, viaLegacy := readyEndpointReady(context.Background(), client, port, "/ready", true)
+	if !ready || !viaLegacy {
+		t.Fatalf("fallback path: ready=%v viaLegacy=%v, want true/true", ready, viaLegacy)
+	}
+	ready, viaLegacy = readyEndpointReady(context.Background(), client, port, "/ready", false)
+	if ready || viaLegacy {
+		t.Fatalf("fallback disallowed: ready=%v viaLegacy=%v, want false/false", ready, viaLegacy)
+	}
+}

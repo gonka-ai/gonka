@@ -58,11 +58,34 @@ type child struct {
 	// started when it begins running. It is per generation on purpose: a probe
 	// answered by a child that has since been swapped out must not decide
 	// anything about its replacement.
-	serving     atomic.Bool
-	servingAt   atomic.Int64
-	proxyTarget *proxy.Target
-	status      generationState
-	restart     bool
+	serving   atomic.Bool
+	servingAt atomic.Int64
+	// legacyWarned rate-limits the legacy-fallback warning to once per
+	// generation: the monitor re-probes every second, and a legacy child
+	// without /ready would otherwise write the same line forever.
+	legacyWarned atomic.Bool
+	proxyTarget  *proxy.Target
+	status       generationState
+	restart      bool
+}
+
+// servingFresh reports whether this generation's readiness monitor currently
+// vouches for it. An answer older than childReadyStale is not an answer: a
+// monitor that has stopped must not freeze the child at "ready".
+func (c *child) servingFresh() bool {
+	if !c.serving.Load() {
+		return false
+	}
+	return time.Since(time.Unix(0, c.servingAt.Load())) < childReadyStale
+}
+
+// noteLegacyFallback records, once per generation, that readiness came through
+// the legacy /healthz fallback rather than /ready.
+func (c *child) noteLegacyFallback(path string) {
+	if c.legacyWarned.CompareAndSwap(false, true) {
+		slog.Warn("ready path unavailable; using legacy readiness fallback",
+			"version", c.version.Name, "port", c.port, "ready_path", path)
+	}
 }
 
 func (c *child) Stop() {
@@ -248,11 +271,7 @@ func (m *Manager) ServesVersion(name string) bool {
 	c := m.processes[name]
 	running := c != nil && c.status == statusRunning
 	m.mu.Unlock()
-	if !running || !c.serving.Load() {
-		return false
-	}
-	last := time.Unix(0, c.servingAt.Load())
-	return time.Since(last) < childReadyStale
+	return running && c.servingFresh()
 }
 
 // watchChildReadiness keeps one generation's serving flag current. It is bound to
@@ -281,7 +300,10 @@ func (m *Manager) watchChildReadiness(ctx context.Context, c *child) {
 
 		probeCtx, cancel := context.WithTimeout(ctx, childReadyTimeout)
 		client := &http.Client{Timeout: childReadyTimeout}
-		ready := readyEndpointReady(probeCtx, client, port, path, allowLegacy)
+		ready, viaLegacy := readyEndpointReady(probeCtx, client, port, path, allowLegacy)
+		if viaLegacy {
+			c.noteLegacyFallback(path)
+		}
 		if ready && !allowLegacy {
 			ready = publicEndpointReady(probeCtx, client, publicPort)
 		}
@@ -1553,6 +1575,14 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 			}
 			continue
 		}
+		// Seed the readiness flag before anything can see the route. close(c.ready)
+		// wakes the swap path, which publishes this generation itself, and a
+		// published route whose flag is still false answers 503 to the balancer's
+		// next per-version check — with fall 1, one such answer evicts the host,
+		// and a fleet-wide rolling update would blink the whole pool.
+		c.serving.Store(true)
+		c.servingAt.Store(time.Now().UnixNano())
+
 		m.mu.Lock()
 		transitionGenerationLocked(c, statusRunning)
 		c.proxyTarget = proxy.NewTarget(fmt.Sprintf("localhost:%d", c.port))
@@ -1562,13 +1592,20 @@ func (m *Manager) runChild(ctx context.Context, c *child) {
 		}
 		m.mu.Unlock()
 
-		// It has just passed the startup readiness wait; the monitor takes over
-		// from here and is the only writer of this generation's flag.
-		c.serving.Store(true)
-		c.servingAt.Store(time.Now().UnixNano())
-		go m.watchChildReadiness(ctx, c)
+		// The monitor owns the flag from here. Its context is scoped to this
+		// process attempt and it is awaited after the process exits: a monitor
+		// left running through a quick crash-restart could otherwise finish a
+		// probe of the dead process and write the answer over the next attempt's.
+		monitorCtx, cancelMonitor := context.WithCancel(ctx)
+		monitorDone := make(chan struct{})
+		go func() {
+			defer close(monitorDone)
+			m.watchChildReadiness(monitorCtx, c)
+		}()
 
 		err = proc.Wait()
+		cancelMonitor()
+		<-monitorDone
 
 		select {
 		case <-ctx.Done():
@@ -1762,19 +1799,17 @@ func waitForChildServingReady(ctx context.Context, c *child, path string, timeou
 			ctx,
 			timeout,
 			func(probeCtx context.Context, client *http.Client) bool {
-				return readyEndpointReady(
-					probeCtx,
-					client,
-					c.port,
-					path,
-					true,
-				)
+				ready, viaLegacy := readyEndpointReady(probeCtx, client, c.port, path, true)
+				if viaLegacy {
+					c.noteLegacyFallback(path)
+				}
+				return ready
 			},
 		)
 	}
 	return waitForReadiness(ctx, timeout, func(probeCtx context.Context, client *http.Client) bool {
-		return readyEndpointReady(probeCtx, client, adminPort, path, false) &&
-			publicEndpointReady(probeCtx, client, c.port)
+		ready, _ := readyEndpointReady(probeCtx, client, adminPort, path, false)
+		return ready && publicEndpointReady(probeCtx, client, c.port)
 	})
 }
 
@@ -1800,20 +1835,23 @@ func waitForReadiness(
 	}
 }
 
-func readyEndpointReady(ctx context.Context, client *http.Client, port int, path string, allowLegacy bool) bool {
+// readyEndpointReady reports readiness and whether the answer came through the
+// legacy /healthz fallback. Logging that fallback is the caller's job: this runs
+// once a second per child from the monitor, and only the caller knows the
+// generation it belongs to.
+func readyEndpointReady(ctx context.Context, client *http.Client, port int, path string, allowLegacy bool) (ready, viaLegacy bool) {
 	readyPath := normalizeHTTPPath(path)
 	status, err := getHTTPStatus(ctx, client, port, readyPath)
 	if err != nil {
-		return false
+		return false, false
 	}
 	if status == http.StatusOK {
-		return true
+		return true, false
 	}
 	if allowLegacy && legacyReadyFallbackAllowed(readyPath, status) && legacyReady(ctx, client, port) {
-		slog.Warn("ready path unavailable; using legacy readiness fallback", "port", port, "ready_path", readyPath, "status", status)
-		return true
+		return true, true
 	}
-	return false
+	return false, false
 }
 
 func publicEndpointReady(ctx context.Context, client *http.Client, port int) bool {

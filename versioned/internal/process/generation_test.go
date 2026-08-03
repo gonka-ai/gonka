@@ -374,3 +374,31 @@ func TestPreflightHonorsCallerCancellation(t *testing.T) {
 		t.Fatalf("canceled preflight took %s", elapsed)
 	}
 }
+
+// The coarse readiness answer must use the same live-readiness predicate as the
+// per-version one: a running child is not a serving child until its monitor
+// vouches for it, and a vouch that has gone stale is no vouch at all.
+func TestConditionsServingRequiresALiveReadyChild(t *testing.T) {
+	m := NewManager(config.Config{BasePort: 5000})
+	c := &child{status: statusRunning}
+	m.mu.Lock()
+	m.conditions = Conditions{Desired: 1}
+	m.processes["v1"] = c
+	m.mu.Unlock()
+
+	if got := m.Conditions(); !got.Available || got.Serving {
+		t.Fatalf("running child without a fresh vouch: Available=%v Serving=%v",
+			got.Available, got.Serving)
+	}
+
+	c.serving.Store(true)
+	c.servingAt.Store(time.Now().UnixNano())
+	if got := m.Conditions(); !got.Serving {
+		t.Fatalf("live-ready child not reflected in Serving: %+v", got)
+	}
+
+	c.servingAt.Store(time.Now().Add(-2 * childReadyStale).UnixNano())
+	if got := m.Conditions(); got.Serving {
+		t.Fatal("a stale readiness answer still counts as serving")
+	}
+}

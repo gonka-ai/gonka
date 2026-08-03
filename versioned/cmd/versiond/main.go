@@ -425,10 +425,16 @@ func publicHandler(
 // out of several is missing here. versiondReadyForVersion answers that precisely
 // and the router asks it per version, so this is the fallback for a version the
 // router has not been told about.
+// Serving is deliberately "at least one live-ready child", not "every child":
+// a version whose children went unready everywhere at once — the correlated
+// case — would otherwise empty the pool and take the healthy versions with it.
+// Per-version pools are the precise tool for a single broken version; this
+// coarse answer only has to be honest about "can this host serve anything".
 func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool {
 	return hostStatus.Ready &&
 		hostStatus.Accepting &&
 		conditions.Available &&
+		conditions.Serving &&
 		conditions.Converged
 }
 

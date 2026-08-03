@@ -157,8 +157,10 @@ For `/readyz?version=<v>`, `versiond` answers `200` when it is accepting traffic
 and has a running child serving exactly that version — it reads the same route
 table the proxy uses, so the answer cannot disagree with what a request would
 actually get. For the unqualified `/readyz`, it answers `200` when it is
-accepting traffic **and** has a healthy child, having run its full desired set at
-least once. It answers `503` when it is
+accepting traffic **and** has a child that still reports itself ready, having run
+its full desired set at least once — a child that lost its chain subscription is
+running but not ready, and takes the host out of this pool with it when it is the
+only one. It answers `503` when it is
 starting, when it has no usable child, and — importantly — for a few seconds
 *before* it stops accepting work at shutdown.
 

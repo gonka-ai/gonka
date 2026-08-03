@@ -47,8 +47,11 @@ about the change, so nothing can be told about it incorrectly.
 8. An established request stays on its original router connection and versiond
    generation. A later request for the same HA escrow may recover on another host
    from shared Postgres; legacy SQLite escrows never enter the HA pool.
-9. A host that is running but not yet converged is not routed to: readiness is a
-   statement about capacity to serve, not about having finished booting.
+9. A host that has never converged is not routed to through the host-level
+   pool: coarse readiness is a statement about capacity to serve, not about
+   having finished booting. Per-version pools are narrower on purpose — they
+   route each version the host already serves — so a host mid-install takes
+   traffic for what it has and nothing else.
 
 Earlier revisions promised that the last active upstream could not be drained
 away. Nothing enforces that now: stopping a container is a Docker operation and
@@ -151,7 +154,9 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
 `/readyz` returns 200 when **all** of:
 
 - the host FSM advertises readiness (`serving`), and is accepting;
-- at least one child is available to serve traffic;
+- at least one child is running **and** its live readiness is current — a child
+  that lost its chain subscription is running but not serving, and its monitor
+  withdraws the vouch within a second;
 - the manager has run every desired version at least once (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later

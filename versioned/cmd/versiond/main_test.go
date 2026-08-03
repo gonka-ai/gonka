@@ -506,10 +506,19 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 
 func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	status := host.Snapshot{State: host.StateServing, Accepting: true, Ready: true}
-	conditions := process.Conditions{Available: true, Converged: true}
+	conditions := process.Conditions{Available: true, Serving: true, Converged: true}
 	if !versiondReady(status, conditions) {
 		t.Fatal("serving host with a running child is not ready")
 	}
+
+	// A child process can exist while unable to take a request — devshardd
+	// reports itself unready when its chain subscription drops. Available alone
+	// must not keep the host in the pool.
+	conditions.Serving = false
+	if versiondReady(status, conditions) {
+		t.Fatal("host whose children are running but not live-ready is ready")
+	}
+	conditions.Serving = true
 
 	// A routine same-name SHA bump makes every host progress at once. Evicting
 	// them all would take the pool down, so progressing must stay ready.

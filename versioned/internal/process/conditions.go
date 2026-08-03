@@ -5,6 +5,11 @@ type Conditions struct {
 	Progressing bool
 	Reconciled  bool
 	Degraded    bool
+	// Serving means at least one running child whose live readiness is current.
+	// Available says a child process exists; Serving says it can take a request
+	// right now — a child that lost its chain subscription is running but not
+	// serving.
+	Serving bool
 	// Converged latches once the manager has run every desired version at least
 	// once. It never clears, so a later download or restart does not retract it.
 	Converged      bool
@@ -19,6 +24,7 @@ func (m *Manager) Conditions() Conditions {
 	conditions := m.conditions
 	conditions.Running = runningChildrenLocked(m.processes)
 	conditions.Available = conditions.Running > 0
+	conditions.Serving = servingChildrenLocked(m.processes) > 0
 	converged := conditions.Running == conditions.Desired
 	if converged && conditions.Desired > 0 {
 		m.everConverged = true
@@ -52,6 +58,19 @@ func (m *Manager) ReportReconcileError(err error) {
 	m.conditions.Reconciled = false
 	m.conditions.ReconcileError = err.Error()
 	m.mu.Unlock()
+}
+
+// servingChildrenLocked counts running children the readiness monitor currently
+// vouches for — the same predicate ServesVersion applies per version, so the
+// coarse and the per-version answers cannot drift apart.
+func servingChildrenLocked(children map[string]*child) int {
+	serving := 0
+	for _, child := range children {
+		if child.status == statusRunning && child.servingFresh() {
+			serving++
+		}
+	}
+	return serving
 }
 
 func runningChildrenLocked(children map[string]*child) int {
