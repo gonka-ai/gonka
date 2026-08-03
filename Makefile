@@ -235,7 +235,13 @@ node-local-build:
 
 api-test:
 	@echo "Running decentralized-api tests..."
-	@cd decentralized-api && go test ./... -v -short > ../api-test-output.log
+	@cd decentralized-api && \
+		if [ "$(BLST_PORTABLE)" = "1" ]; then \
+			CGO_CFLAGS="$$(go env CGO_CFLAGS) -O2 $(BLST_PORTABLE_CGO_CFLAGS)" \
+				go test ./... -v -short > ../api-test-output.log 2>&1; \
+		else \
+			go test ./... -v -short > ../api-test-output.log 2>&1; \
+		fi
 	@echo "----------------------------------------"
 	@echo "DECENTRALIZED-API TEST SUMMARY:"
 	@PASS_COUNT=$$(grep -c "PASS:" api-test-output.log); \
