@@ -56,6 +56,55 @@ generic `/v1/ → dapi` location so they take precedence. Key env:
 `EDGE_API_SERVICE_NAME`, `VERSIOND_SERVICE_NAME` (set to the `*-router` service
 name when running multi-instance overlays).
 
+### Why the pool routers use HAProxy
+
+The public edge `proxy/` remains nginx. Before the HA pool work, the two
+routers behind it were also nginx OSS containers, with different jobs:
+
+- `versiond-router/` received `/devshard/*`, selected HA or legacy routing by
+  protocol version, and used a consistent hash of the escrow/session ID to
+  keep one session on one `versiond` host;
+- `edge-api-router/` received the Tier A `/v1/*` routes and distributed those
+  stateless, read-only requests across `edge-api` replicas with round-robin
+  balancing.
+
+Their entrypoints rendered `VERSIOND_HOSTS` and `EDGE_API_HOSTS` into fixed
+nginx upstream blocks when each router container started. nginx `resolve`
+could refresh the IP address of a hostname already in the block, for example
+after a container restart, but it did not discover new replicas or remove old
+list entries. Changing membership therefore required changing the host list
+and rendering a new router configuration. The shipped nginx OSS routers also
+used passive failure handling: they reacted after an upstream operation
+failed, rather than actively asking whether an application was ready,
+initialising, missing one protocol version, or intentionally draining.
+
+That model cannot provide the shutdown ordering required by long HTTP and SSE
+requests. A leaving replica must become ineligible for **new** work while it is
+still alive and serving accepted work. A joining replica must stay ineligible
+until it can serve the exact traffic assigned to it.
+
+The two pool routers therefore use HAProxy:
+
+- `server-template` follows every address published under the shared
+  `versiond-pool` or `edge-api-pool` DNS alias, so normal replica start and
+  stop change membership without a router reload;
+- active `/readyz` checks remove a draining or unavailable replica before it
+  stops serving, and `init-state fully-down` keeps a new replica out until its
+  first successful check;
+- version-specific `GET /readyz?version=<v>` checks let one `versiond` remain
+  eligible for the versions it can serve while leaving only a missing
+  version's pool;
+- consistent hashing with `hash-key addr` keeps escrow placement stable across
+  DNS answer order and router restarts, while `edge-api` retains round-robin;
+- marking a backend unready affects new selections but does not move or close
+  an established stream.
+
+The HAProxy configurations preserve the relevant nginx data-plane contract:
+streaming, forwarding headers, legacy-version pinning, request limits, and the
+restricted retry policy. This change applies only to `versiond-router/` and
+`edge-api-router/`; it does not replace the public nginx `proxy/` or the
+in-process version-to-child proxy inside `versiond`.
+
 ---
 
 ## 2. edge-api — stateless read-only chain query API
