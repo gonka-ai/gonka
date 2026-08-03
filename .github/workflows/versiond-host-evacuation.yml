@@ -11,11 +11,12 @@ on:
       - 'versioned/**'
       - 'versiond-router/**'
       - 'common/storage/**'
-      - 'devshard/cmd/devshardd/**'
-      - 'devshard/testenv/**'
-      - 'devshard/Dockerfile'
-      - 'devshard/go.mod'
-      - 'devshard/go.sum'
+      # devshardd and the devshardctl gateway span packages across the module;
+      # storage recovery, routing, state and transport changes all affect this
+      # acceptance contract. Documentation alone does not need the 40m stack.
+      - 'devshard/**'
+      - '!devshard/docs/**'
+      - '!devshard/**/*.md'
       - '.github/workflows/versiond-host-evacuation.yml'
   workflow_dispatch:
 

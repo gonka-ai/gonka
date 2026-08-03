@@ -16,7 +16,11 @@ import (
 )
 
 const (
-	hostEvacuationShutdownBudget     = 90 * time.Second
+	hostEvacuationShutdownBudget = 90 * time.Second
+	// Docker's SIGKILL backstop must sit outside versiond's own shutdown
+	// budget. The exit-code assertion below proves that this reserve was not
+	// consumed by a stuck process.
+	hostEvacuationDockerStopGrace    = 2 * time.Minute
 	hostEvacuationObservationTimeout = 60 * time.Second
 	hostReplacementReadyTimeout      = 3 * time.Minute
 	// Refused instantly inside the container, so the host under barrier fails
@@ -64,14 +68,16 @@ func TestVersiondHostEvacuation(t *testing.T) {
 				Content: "initialize the versiond host evacuation session",
 			}},
 		})
-	sessionURL := harness.RouterSessionURL(
-		env.eps.RouterHTTP,
-		env.cfg.Versiond.VersionName,
-		escrowID,
-		"/mempool",
-	)
+	stickySessionURL := func() string {
+		return harness.RouterSessionURL(
+			env.eps.RouterHTTP,
+			env.cfg.Versiond.VersionName,
+			escrowID,
+			"/mempool",
+		)
+	}
 	targetUpstream := harness.RequireSuccessfulResponseHeader(
-		t, client, sessionURL, harness.StickyUpstreamHeader)
+		t, client, stickySessionURL(), harness.StickyUpstreamHeader)
 	targetHost := harness.HostIDForUpstream(env.cfg, targetUpstream)
 	require.Contains(t, env.hosts, targetHost)
 	survivorHost := env.hosts[0]
@@ -124,14 +130,27 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	harness.Step(t, "evacuating %s with docker compose stop", targetHost)
 	// Nothing may fail while the host leaves: the announce window exists so the
 	// router observes the failing health check before versiond stops accepting.
+	// Use the target escrow's sticky path: the same URL was resolved to targetHost
+	// above, so this probe necessarily crosses the host being evacuated rather
+	// than whichever host owns a constant version-level health path.
+	probeURL := stickySessionURL()
+	probeUpstream := harness.RequireSuccessfulResponseHeader(
+		t, client, probeURL, harness.StickyUpstreamHeader)
+	require.Equal(t, targetHost, harness.HostIDForUpstream(env.cfg, probeUpstream),
+		"continuity probe is not pinned to the host selected for evacuation")
 	probeCtx, stopProbe := context.WithCancel(context.Background())
-	probeErr := startRouterContinuityProbe(probeCtx, client,
-		env.eps.RouterHTTP+"/"+env.cfg.Versiond.VersionName+"/healthz")
+	probeErr, err := startRouterContinuityProbe(probeCtx, client, probeURL)
+	require.NoError(t, err)
 	defer stopProbe()
 
-	evacuationResult := make(chan error, 1)
+	type stopOutcome struct {
+		result harness.ServiceStopResult
+		err    error
+	}
+	evacuationResult := make(chan stopOutcome, 1)
 	go func() {
-		evacuationResult <- env.stack.StopServiceGracefully(targetHost, hostEvacuationShutdownBudget)
+		result, stopErr := env.stack.StopServiceGracefully(targetHost, hostEvacuationDockerStopGrace)
+		evacuationResult <- stopOutcome{result: result, err: stopErr}
 	}()
 
 	harness.Step(t, "the router stops routing to %s while it is still serving", targetHost)
@@ -157,9 +176,12 @@ func TestVersiondHostEvacuation(t *testing.T) {
 	harness.RequireMockOpenAIContent(t, result.Content)
 
 	select {
-	case err := <-evacuationResult:
-		require.NoError(t, err)
-	case <-time.After(hostEvacuationShutdownBudget + 30*time.Second):
+	case outcome := <-evacuationResult:
+		require.NoError(t, outcome.err)
+		require.Contains(t, []int{0, 143}, outcome.result.ExitCode,
+			"versiond did not exit gracefully; container %s exited with code %d",
+			outcome.result.ContainerID, outcome.result.ExitCode)
+	case <-time.After(hostEvacuationDockerStopGrace + 30*time.Second):
 		t.Fatal("versiond did not exit after its host became idle")
 	}
 	running, err = env.stack.ServiceRunning(targetHost)

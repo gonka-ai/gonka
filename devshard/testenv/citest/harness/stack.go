@@ -230,10 +230,22 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	}
 }
 
+// ServiceStopResult records Docker's terminal state after a compose stop. Exit
+// code 137 proves Docker had to consume its SIGKILL backstop even though the
+// compose command itself reports success.
+type ServiceStopResult struct {
+	ContainerID string
+	ExitCode    int
+}
+
 // StopServiceGracefully sends the container stop signal and gives versiond a
 // caller-controlled grace before Docker's SIGKILL backstop. It returns errors
 // instead of failing a test so callers can run it concurrently with live work.
-func (s *Stack) StopServiceGracefully(service string, grace time.Duration) error {
+func (s *Stack) StopServiceGracefully(service string, grace time.Duration) (ServiceStopResult, error) {
+	containerID, err := s.containerID(service)
+	if err != nil {
+		return ServiceStopResult{}, err
+	}
 	graceSeconds := int((grace + time.Second - 1) / time.Second)
 	ctx, cancel := context.WithTimeout(context.Background(), grace+30*time.Second)
 	defer cancel()
@@ -243,9 +255,13 @@ func (s *Stack) StopServiceGracefully(service string, grace time.Duration) error
 	cmd.Dir = s.WorkDir
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return fmt.Errorf("docker compose stop %s: %w: %s", service, err, out)
+		return ServiceStopResult{}, fmt.Errorf("docker compose stop %s: %w: %s", service, err, out)
 	}
-	return nil
+	exitCode, err := containerExitCode(containerID)
+	if err != nil {
+		return ServiceStopResult{}, err
+	}
+	return ServiceStopResult{ContainerID: containerID, ExitCode: exitCode}, nil
 }
 
 // StartService starts a previously stopped compose service.

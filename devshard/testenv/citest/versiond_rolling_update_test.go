@@ -93,7 +93,12 @@ func exerciseVersiondRollingFlip(
 	requireVersiondStreamStillRunning(t, accepted, gatewayStreamResult, "gateway stream")
 
 	probeCtx, stopProbe := context.WithCancel(context.Background())
-	probeErr := startRouterContinuityProbe(probeCtx, client, env.eps.RouterHTTP+"/"+env.cfg.Versiond.VersionName+"/healthz")
+	probeErr, err := startRouterContinuityProbe(
+		probeCtx,
+		client,
+		env.eps.RouterHTTP+"/"+env.cfg.Versiond.VersionName+"/healthz",
+	)
+	require.NoError(t, err)
 	defer stopProbe()
 
 	harness.Step(t, "publishing new archive sha through mock-dapi /versions")
@@ -306,7 +311,17 @@ func requireNoOldDraining(t *testing.T, stack *harness.Stack, hosts []string, ve
 	require.True(t, ok, "old sha %s still draining", oldSHA)
 }
 
-func startRouterContinuityProbe(ctx context.Context, client *http.Client, url string) <-chan error {
+func startRouterContinuityProbe(
+	ctx context.Context,
+	client *http.Client,
+	url string,
+) (<-chan error, error) {
+	// Complete one request synchronously. The caller can start its mutation only
+	// after the probe has demonstrably covered the pre-transition target.
+	if err := probeRouterContinuity(client, url); err != nil {
+		return nil, err
+	}
+
 	errCh := make(chan error, 1)
 	go func() {
 		ticker := time.NewTicker(300 * time.Millisecond)
@@ -317,19 +332,25 @@ func startRouterContinuityProbe(ctx context.Context, client *http.Client, url st
 				errCh <- nil
 				return
 			case <-ticker.C:
-				resp, err := client.Get(url)
-				if err != nil {
+				if err := probeRouterContinuity(client, url); err != nil {
 					errCh <- err
-					return
-				}
-				_, _ = io.Copy(io.Discard, resp.Body)
-				_ = resp.Body.Close()
-				if resp.StatusCode != http.StatusOK {
-					errCh <- fmt.Errorf("continuity probe %s: HTTP %d", url, resp.StatusCode)
 					return
 				}
 			}
 		}
 	}()
-	return errCh
+	return errCh, nil
+}
+
+func probeRouterContinuity(client *http.Client, url string) error {
+	resp, err := client.Get(url)
+	if err != nil {
+		return err
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("continuity probe %s: HTTP %d", url, resp.StatusCode)
+	}
+	return nil
 }
