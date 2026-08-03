@@ -119,6 +119,8 @@ test-version-routing:
 		'        if u.path == "/readyz":' \
 		'            v = urllib.parse.parse_qs(u.query).get("version", [""])[0]' \
 		'            return self._r(503 if v and v not in SERVES else 200, "x")' \
+		'        if u.path.endswith("/ha-header"):' \
+		'            return self._r(200, self.headers.get("Devshard-Ha", ""))' \
 		'        self._r(200, NAME)' \
 		'    def log_message(self, *a): pass' \
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
@@ -139,6 +141,11 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	sleep 4; \
+	for version in v4 v5; do \
+		ha_header=$$(curl -s -m 3 "http://127.0.0.1:18132/$$version/ha-header"); \
+		[ "$$ha_header" = true ] \
+			|| fail "two usable hosts without GONKA_HA produced Devshard-Ha='$$ha_header' for $$version"; \
+	done; \
 	hosts_for() { \
 		for escrow in a b c d e f g h i j k l; do \
 			curl -s -m 3 "http://127.0.0.1:18132/$$1/sessions/esc-$$escrow/chat"; \
@@ -189,7 +196,7 @@ test-render: test-hash-ring test-version-routing
 		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
 		|| fail "active health checks are not configured"; \
-	grep -q '^[[:space:]]*http-request set-header Devshard-Ha true' "$$tmpdir/mixed.cfg" \
+	grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "GONKA_HA did not enable the Devshard-Ha header"; \
 	grep -q '^[[:space:]]*server legacy versiond:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "legacy backend does not point at VERSIOND_LEGACY_HOST"; \
@@ -240,10 +247,9 @@ test-render: test-hash-ring test-version-routing
 	[ ! -s "$$tmpdir/allha.map" ] \
 		|| fail "no pinned versions were requested but the map is not empty"; \
 	grep -q '^[[:space:]]*http-request del-header Devshard-Ha' "$$tmpdir/allha.cfg" \
-		|| fail "unset GONKA_HA must strip a client-supplied Devshard-Ha"; \
-	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/allha.cfg"; then \
-		fail "unset GONKA_HA still advertises an HA deployment"; \
-	fi; \
+		|| fail "the frontend must strip a client-supplied Devshard-Ha"; \
+	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/allha.cfg" \
+		|| fail "unset GONKA_HA lost the runtime multi-host storage guard"; \
 	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 		GONKA_HA=true \
 		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -321,8 +327,10 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/haoff.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=false must mean off, not on"; \
-	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/haoff.cfg"; then \
-		fail "GONKA_HA=false still stamps the HA header; false read as non-empty"; \
+	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/haoff.cfg" \
+		|| fail "GONKA_HA=false must leave only the runtime multi-host guard"; \
+	if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/haoff.cfg"; then \
+		fail "GONKA_HA=false enabled the unconditional HA declaration"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=' true ' VERSIOND_VERSIONS=v4 \
@@ -333,7 +341,7 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapad.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=' true ' must read as on: Go trims whitespace, so must this parser"; \
-	grep -q '^[[:space:]]*http-request set-header Devshard-Ha true' "$$tmpdir/hapad.cfg" \
+	grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/hapad.cfg" \
 		|| fail "GONKA_HA=' true ' parsed but did not stamp the HA header"; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=' no ' \
@@ -344,8 +352,10 @@ test-render: test-hash-ring test-version-routing
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/hapadoff.versions.map" \
 	./entrypoint.sh \
 		|| fail "GONKA_HA=' no ' must read as off, not as garbage"; \
-	if grep -q '^[[:space:]]*http-request set-header Devshard-Ha' "$$tmpdir/hapadoff.cfg"; then \
-		fail "GONKA_HA=' no ' still stamps the HA header"; \
+	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/hapadoff.cfg" \
+		|| fail "GONKA_HA=' no ' must leave only the runtime multi-host guard"; \
+	if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/hapadoff.cfg"; then \
+		fail "GONKA_HA=' no ' enabled the unconditional HA declaration"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
 	GONKA_HA=true VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1 \

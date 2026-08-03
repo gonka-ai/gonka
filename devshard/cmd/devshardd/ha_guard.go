@@ -11,7 +11,8 @@ import (
 // haStorageGuard rejects multi-instance HA-marked requests unless this process
 // is explicitly configured for fail-closed Postgres (DEVSHARD_STORAGE_MODE=postgres
 // and PGHOST set). versiond-router sets Devshard-Ha on HA-pool traffic when the
-// deployment declares itself HA, so a sibling could be serving the same escrow.
+// deployment declares itself HA or multiple pool hosts are usable, so a sibling
+// could be serving the same escrow.
 //
 // This is the request-time half of the pair; the startup half lives in
 // mode.RequireHADeploymentStorage and refuses to boot at all. Both exist because

@@ -20,9 +20,10 @@ func PatchComposeEnvKey(t *testing.T, composePath, key, value string) {
 	require.NoError(t, os.WriteFile(composePath, updated, 0o644))
 }
 
-// PatchRouterHADeployment declares (or un-declares) the stack as HA, which is
-// what makes the router stamp Devshard-Ha on sticky-pool traffic. Recreate the
-// router afterwards for it to take effect.
+// PatchRouterHADeployment changes the authoritative HA declaration. The router
+// also has a runtime multi-host fallback, so tests that disable this declaration
+// must keep only one pool host usable. Recreate the router afterwards for the
+// declaration to take effect.
 func PatchRouterHADeployment(t *testing.T, composePath string, ha bool) {
 	t.Helper()
 	value := `""`

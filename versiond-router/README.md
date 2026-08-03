@@ -230,17 +230,21 @@ idle timeout.
 
 ## The `Devshard-Ha` header
 
-When `GONKA_HA` is set, the router stamps `Devshard-Ha: true` on requests going
-to `versiond_ha_pool`, and strips any client-supplied value. `devshardd` uses it
-to refuse work it cannot safely serve: if the deployment is HA but this child's
+The router strips every client-supplied `Devshard-Ha` value, then stamps
+`Devshard-Ha: true` on HA-pool requests when either the deployment declares
+`GONKA_HA` or more than one server is currently usable in `versiond_ha_pool`.
+`devshardd` uses it to refuse work it cannot safely serve: if this child's
 storage is local (SQLite), a sibling could be serving the same escrow, so it
 answers `503` rather than fork the session's state.
 
 `versiond_legacy` always strips the header: that backend has exactly one server
 by definition, so no sibling can exist.
 
-`GONKA_HA` describes the deployment, so it is set by the HA overlay itself, not
-per host.
+`GONKA_HA` describes the deployment, so the HA overlay sets it for the router
+and every versiond host. It is the authoritative latch: it keeps the guard on
+when siblings are temporarily unavailable. The runtime server count is a
+fail-closed fallback for an accidentally scaled pool, not a substitute for the
+deployment declaration.
 
 ## Looking at the pool
 
@@ -288,7 +292,7 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
 | `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
-| `GONKA_HA` | *(unset)* | set by the HA overlay; stamps `Devshard-Ha` on pool traffic. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
+| `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | request bodies above this declared length are refused with 413; keep aligned with the outer API proxy, which also bounds chunked bodies this check cannot see |

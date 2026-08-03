@@ -177,6 +177,10 @@ The HA overlay sets `GONKA_HA=true`. A `devshardd` child then refuses to start
 unless its storage is fail-closed Postgres, instead of starting and failing every
 HA-marked request. The existing per-request `Devshard-Ha` guard stays: a process
 that started before the deployment became HA is still caught at request time.
+The router also stamps that header when it sees more than one usable pool host,
+so accidentally scaling without the overlay fails closed at request time. The
+explicit flag remains required because it keeps the guard enabled through a
+partial pool outage.
 
 If a versiond container exits at startup with a storage-mode error after this
 upgrade, its `DEVSHARD_STORAGE_MODE`/`PGHOST` did not match the HA overlay — that

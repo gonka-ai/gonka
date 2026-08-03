@@ -453,9 +453,11 @@ Key invariants:
   be intercepted, so stopping the whole
   pool at once remains the operator's responsibility.
 
-`Devshard-Ha` follows the deployment (`GONKA_HA`), not the current number of live
-hosts: a host that is temporarily down must not silently switch the survivor to
-an unsafe non-HA storage mode.
+`GONKA_HA` is the authoritative deployment latch for `Devshard-Ha`: a host that
+is temporarily down must not silently switch the survivor to an unsafe non-HA
+storage mode. As a fail-closed fallback for an operator who scales the pool but
+forgets the HA overlay, the router also stamps the header whenever more than one
+server is currently usable in `versiond_ha_pool`.
 
 #### Implemented controls
 

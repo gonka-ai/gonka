@@ -14,8 +14,9 @@
 #                             missing one of them leaves that version's pool and
 #                             keeps serving the rest. Empty = every version uses
 #                             the coarse host-level check.
-#   GONKA_HA                  set by the HA compose overlay; adds the
-#                             Devshard-Ha request header on the HA backend
+#   GONKA_HA                  set by the HA compose overlay; keeps the
+#                             Devshard-Ha request header on the HA backend even
+#                             while all but one pool member are unavailable
 #   VERSIOND_ROUTER_*         proxy policy, see README
 #
 # Pool membership is discovered from DNS and health from active /readyz checks,
@@ -103,11 +104,16 @@ printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | 
 done
 
 if [ -n "$HA_DEPLOYMENT" ]; then
-    # Overwrites any client-supplied value: the guard must reflect the
-    # deployment, not the request.
+    # The deployment declaration is a latch, not a live-host count. Keep the
+    # storage guard enabled while siblings restart or drain: they can return.
     HA_HEADER='http-request set-header Devshard-Ha true'
 else
-    HA_HEADER='http-request del-header Devshard-Ha'
+    # Recover the old router's fail-closed behaviour when an operator scales the
+    # pool but forgets the HA overlay. nbsrv counts usable servers, so this is a
+    # safety net rather than a replacement for GONKA_HA: a partial outage can
+    # make the count one, while an explicitly declared HA deployment stays HA.
+    # The frontend has already stripped any client-supplied value.
+    HA_HEADER='http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }'
 fi
 
 # Percent-encode everything that is not unreserved, so the check asks about the
