@@ -7,6 +7,13 @@ out of band until the model announcement.
 The benchmark used gonka-poc with sequence length 1024 and `k_dim=12`. Nonce
 rates are measurements, not admission limits or calibrated chain weights.
 
+## Planned chain parameters
+
+The pending release model uses a PoC weight scale factor of `0.32` and a PoC
+L2 distance threshold (`PoCStatTestParams.dist_threshold`) of `0.41`. These are
+release inputs for the separate chain activation; this MLNode PR records them
+but does not activate the model on chain.
+
 ## Hardware profiles
 
 | GPU profile | TP per vLLM instance | GPU memory | Batched tokens | PoC batch | Measured nonce/min | Tested driver |
@@ -64,7 +71,11 @@ throughput fell by 42%.
 
 ## Image and driver requirements
 
-- Use `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`.
+- Use the production org mirror
+  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`.
+  The source image
+  `ghcr.io/vbgd0/gonka-mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`
+  resolves to the same OCI index digest.
 - Use the Gonka vLLM 0.25.1 build containing the current PoC replay support.
   Do not set the removed `VLLM_USE_V1` switch or pin
   `VLLM_USE_V2_MODEL_RUNNER=0`.
@@ -101,7 +112,8 @@ Before enabling the release model on chain:
 5. Test speculation off and on against the expected serving mix; keep it off
    when it reduces aggregate throughput or KV headroom.
 6. Measure the alternate quantization across GPU families and calibrate fraud
-   thresholds. No threshold from the campaign is safe to copy into chain
-   parameters.
-7. Add the private manifest values and calibrated validation policy to the
-   chain upgrade, then rehearse mixed old and new nodes through a full epoch.
+   thresholds. No inference fraud threshold from the campaign is safe to copy
+   into chain parameters; this is separate from the planned PoC L2 threshold.
+7. Add the private manifest values, PoC weight scale `0.32`, PoC L2 threshold
+   `0.41`, and calibrated validation policy to the chain upgrade, then rehearse
+   mixed old and new nodes through a full epoch.
