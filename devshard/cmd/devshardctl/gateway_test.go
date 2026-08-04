@@ -1018,6 +1018,16 @@ func TestGatewayHostRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	require.Error(t, validateGatewayHostRoutePrefix("/v1/devshard"))
 }
 
+func TestRuntimeRoutePrefixDefaultsToV4(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "")
+	require.Equal(t, "/devshard/v4", resolveRuntimeRoutePrefix(""))
+}
+
+func TestRuntimeRoutePrefixPreservesExplicitDev(t *testing.T) {
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/dev")
+	require.Equal(t, "/devshard/dev", resolveRuntimeRoutePrefix(""))
+}
+
 func TestResolveGatewayRoutePrefixDefaultsToBuildVersion(t *testing.T) {
 	oldVersion := Version
 	t.Cleanup(func() { Version = oldVersion })

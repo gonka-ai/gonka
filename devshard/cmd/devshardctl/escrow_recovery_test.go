@@ -134,7 +134,8 @@ func TestCreateRotationEscrowIntentFirstThenPersistAndClear(t *testing.T) {
 	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)
 	require.NoError(t, err)
 
-	require.Contains(t, devshardIDs(t, store), "777", "escrow persisted")
+	record := devshardIDs(t, store)["777"]
+	require.Equal(t, "4", record.ProtocolVersion, "replacement escrow uses the default protocol")
 	commitments, err := store.LoadCommitments()
 	require.NoError(t, err)
 	assert.Empty(t, commitments, "commitment cleared after persist")
@@ -157,17 +158,20 @@ func TestCreateRotationEscrowCarriesProtocolVersionFromRoutePrefix(t *testing.T)
 }
 
 // A route prefix whose version segment is not a protocol version (e.g. a named
-// versiond runtime) keeps the empty/v1-default behavior; semver-like versions
-// map by their major component.
+// versiond runtime) uses the current default; semver-like versions map by major.
 func TestRotationEscrowProtocolVersionRouteMapping(t *testing.T) {
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/mainnet-canary")
-	assert.Empty(t, rotationEscrowProtocolVersion())
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v3")
 	assert.Equal(t, "3", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v2.1.0")
 	assert.Equal(t, "2", rotationEscrowProtocolVersion())
 	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/3")
 	assert.Equal(t, "3", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/v4")
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
+	t.Setenv("DEVSHARD_ROUTE_PREFIX", "/devshard/4")
+	assert.Equal(t, "4", rotationEscrowProtocolVersion())
 }
 
 func TestReconcileCommitmentsCarriesProtocolVersion(t *testing.T) {

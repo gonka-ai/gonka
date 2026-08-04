@@ -388,18 +388,17 @@ func newRotationDevshardState(result *CreateDevshardEscrowResult, model EscrowRo
 // /devshard/v3 mints protocol-v3 escrows. Semver-like route versions map by
 // major (v2.1.0 -> v2), relying on the same naming convention that ties a
 // route version to its protocol. An unparseable version segment (e.g. a
-// named versiond runtime) falls back to the v1 default, matching the
-// pre-existing behavior for explicit registrations without a protocol.
+// named versiond runtime) falls back to the current protocol default.
 func rotationEscrowProtocolVersion() string {
 	routePrefix, err := resolveGatewayRoutePrefix()
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback reason=route_prefix_unresolved error=%v", err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	normalized := strings.TrimSpace(version)
 	if i := strings.IndexByte(normalized, '.'); i > 0 {
@@ -408,7 +407,7 @@ func rotationEscrowProtocolVersion() string {
 	pv, err := types.ParseProtocolVersion(normalized)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	return string(pv)
 }
