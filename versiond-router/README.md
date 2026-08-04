@@ -22,9 +22,9 @@ request → normalise path → pick backend by version → pick server by escrow
 
 | Backend | Servers | Used for |
 | --- | --- | --- |
-| `versiond_pool_<v>` | every host that answers `/readyz?version=<v>` with 200 | each version listed in `VERSIOND_VERSIONS` |
-| `versiond_legacy_<v>` | the single `VERSIOND_LEGACY_HOST` when it answers `/readyz?version=<v>` with 200 | one per version in `VERSIOND_NON_HA_VERSIONS`, which owns pre-HA SQLite data on that host |
-| `versiond_ha_pool` | every host that answers `/readyz` with 200 | non-version paths such as `/healthz`, and every version when no version is declared at all |
+| `versiond_pool_<v>` | every host that passes the per-version readiness sequence below | each version listed in `VERSIOND_VERSIONS` |
+| `versiond_legacy_<v>` | the single `VERSIOND_LEGACY_HOST` when it passes the same sequence | one per version in `VERSIOND_NON_HA_VERSIONS`, which owns pre-HA SQLite data on that host |
+| `versiond_ha_pool` | every host that passes the coarse readiness sequence | non-version paths such as `/healthz`, and every version when no version is declared at all |
 
 A version that is declared nowhere is **refused** with `503` naming the setting
 that fixes it, rather than being routed to a host that may not run it. See
@@ -85,7 +85,17 @@ A pool-wide "are you healthy" cannot say that a host is missing *one* of several
 versions. So the router asks about the version it is about to route to. Each
 version in `VERSIOND_VERSIONS` gets its own backend over the HA hosts, and each
 version in `VERSIOND_NON_HA_VERSIONS` gets its own backend over the one legacy
-host. Both are health-checked with `GET /readyz?version=<v>`.
+host. Each check performs two requests:
+
+1. `GET /readyz?version=<v>` must return `200`, or `404` from a pre-v5
+   `versiond` that does not implement this capability.
+2. `GET /<v>/healthz` must return `200`, proving that the actual route exists.
+
+The coarse backend uses the same sequence with `/readyz` and `/healthz`.
+`503` from a v5 readiness endpoint is always a failed check, so a starting or
+draining v5 host still leaves the pool before admission closes. The `404`
+fallback exists only to keep a restored v4 image routable during the v5 cutover;
+it is never sufficient without the successful route-health request.
 
 A host that cannot run `v5` — its download failed, its child will not start —
 answers `503` for `?version=v5` and `200` for `?version=v4`. It leaves `v5`'s
@@ -99,7 +109,7 @@ serve it, while `v4` and `v5` carry on untouched. Compare the alternative of one
 host-wide readiness flag: the moment governance approves `v6`, *every* host would
 be missing it at once, and gating on that would empty the whole pool.
 
-Every second HAProxy asks each host its backend's question and expects `200`.
+Every second HAProxy runs the complete sequence against each host.
 
 ## Declaring versions
 

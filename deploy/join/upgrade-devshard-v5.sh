@@ -168,6 +168,7 @@ declare -A image_variables=(
 )
 declare -A rollback_images=()
 declare -A rollback_version_baselines=()
+declare -A rollback_service_was_running=()
 
 foreground_pid=
 active_service=
@@ -177,6 +178,7 @@ traffic_barrier_env=
 traffic_barrier_original_hosts=
 traffic_barrier_entrypoint=
 traffic_barrier_target=
+last_captured_version_baseline=
 
 run_interruptible() {
     local status=0
@@ -415,26 +417,12 @@ versiond_routes_are_available() {
     done <<<"$encoded_versions"
 }
 
-ensure_versiond_rollback_source_running() {
-    local service=$1
-    local container_id=$2
-
-    if [[ $("$docker_bin" inspect --format '{{.State.Running}}' \
-        "$container_id") == true ]]; then
-        return 0
-    fi
-
-    echo "Starting existing $service to establish its rollback baseline"
-    run_interruptible "${compose[@]}" start "$service" || fail \
-        "cannot start existing $service before the upgrade"
-}
-
 capture_versiond_rollback_baseline() {
     local service=$1
     local container_id=$2
+    local commit=${3:-true}
     local timeout deadline snapshot versions display
 
-    ensure_versiond_rollback_source_running "$service" "$container_id"
     timeout=$(service_startup_timeout "$service")
     deadline=$((SECONDS + timeout))
     echo "Waiting up to ${timeout}s for the existing $service baseline"
@@ -444,7 +432,10 @@ capture_versiond_rollback_baseline() {
                 <<<"$snapshot" >/dev/null; then
             versions=$(jq -ce '.running' <<<"$snapshot")
             if versiond_routes_are_available "$container_id" "$versions"; then
-                rollback_version_baselines[$service]=$versions
+                last_captured_version_baseline=$versions
+                if [[ $commit == true ]]; then
+                    rollback_version_baselines[$service]=$versions
+                fi
                 display=$(jq -c '.' <<<"$versions")
                 echo "Captured $service running-version baseline: $display"
                 return 0
@@ -457,6 +448,7 @@ capture_versiond_rollback_baseline() {
 }
 
 capture_versiond_router_rollback_baseline() {
+    local second_override=${1:-}
     local container_id first second versions display
 
     [[ -n ${rollback_images[versiond-router]-} ]] || return 0
@@ -464,7 +456,7 @@ capture_versiond_router_rollback_baseline() {
     [[ -n $container_id ]] || fail \
         "cannot find versiond-router while capturing its rollback baseline"
     first=${rollback_version_baselines[versiond]-[]}
-    second=${rollback_version_baselines[versiond2]-[]}
+    second=${second_override:-${rollback_version_baselines[versiond2]-[]}}
     versions=$(jq -cn \
         --argjson first "$first" \
         --argjson second "$second" \
@@ -481,7 +473,7 @@ capture_versiond_router_rollback_baseline() {
 
 capture_rollback_image() {
     local service=$1
-    local container_id image_id rollback_image
+    local container_id image_id rollback_image was_running
 
     container_id=$("${compose[@]}" ps --all --quiet "$service")
     if [[ -z $container_id ]]; then
@@ -494,10 +486,21 @@ capture_rollback_image() {
     rollback_image="gonka-upgrade-rollback/$service:$operation_id"
     "$docker_bin" tag "$image_id" "$rollback_image"
     rollback_images[$service]=$rollback_image
+    was_running=$("$docker_bin" inspect --format '{{.State.Running}}' \
+        "$container_id")
+    case $was_running in
+        true | false) ;;
+        *) fail "cannot determine whether the current $service is running" ;;
+    esac
+    rollback_service_was_running[$service]=$was_running
     echo "Captured $service rollback image as $rollback_image"
     case $service in
         versiond | versiond2)
-            capture_versiond_rollback_baseline "$service" "$container_id"
+            if [[ $was_running == true ]]; then
+                capture_versiond_rollback_baseline "$service" "$container_id"
+            else
+                echo "Preserving the stopped state of existing $service"
+            fi
             ;;
     esac
 }
@@ -534,6 +537,24 @@ rollback_edge_is_available() {
         -q -T 3 -O /dev/null http://127.0.0.1:18080/v1/versions
 }
 
+versiond_production_routes_are_available() {
+    local service=$1
+    local runtime router_id required
+
+    [[ $versiond_mode == ha ]] || return 0
+    case $service in
+        versiond | versiond2) ;;
+        *) return 0 ;;
+    esac
+    runtime=$(router_runtime versiond-router) || return 1
+    [[ $runtime == haproxy ]] || return 0
+    required=${rollback_version_baselines[$service]-}
+    [[ -n $required ]] || return 1
+    router_id=$("${compose[@]}" ps --all --quiet versiond-router)
+    [[ -n $router_id ]] || return 1
+    versiond_routes_are_available "$router_id" "$required"
+}
+
 rollback_service_is_available() {
     local service=$1
     local container_id
@@ -544,15 +565,17 @@ rollback_service_is_available() {
         "$container_id") == true ]] || return 1
     case $service in
         versiond | versiond2 | versiond-router)
-            rollback_versiond_is_available "$service" "$container_id"
+            rollback_versiond_is_available \
+                "$service" "$container_id" || return 1
             ;;
         edge-api | edge-api2 | edge-api3 | edge-api-router)
-            rollback_edge_is_available "$container_id"
+            rollback_edge_is_available "$container_id" || return 1
             ;;
         *)
             return 1
             ;;
     esac
+    versiond_production_routes_are_available "$service"
 }
 
 wait_for_rollback_availability() {
@@ -591,10 +614,28 @@ rollback_service() {
     local service=$1
     local rollback_image=${rollback_images[$service]-}
     local image_variable=${image_variables[$service]}
+    local container_id
 
     if [[ -z $rollback_image ]]; then
         warn "$service has no captured image; stopping it instead"
         stop_failed_service "$service"
+        return 1
+    fi
+
+    if [[ ${rollback_service_was_running[$service]-true} == false ]]; then
+        echo "Restoring stopped $service from $rollback_image" >&2
+        if env "$image_variable=$rollback_image" \
+            "${compose[@]}" up --no-start --no-deps --force-recreate \
+                "$service"; then
+            container_id=$("${compose[@]}" ps --all --quiet "$service")
+            if [[ -n $container_id && \
+                $("$docker_bin" inspect --format '{{.State.Running}}' \
+                    "$container_id") == false ]]; then
+                return 0
+            fi
+        fi
+        warn "could not restore the stopped state of $service"
+        stop_failed_service "$service" || true
         return 1
     fi
 
@@ -744,9 +785,6 @@ fi
 for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
-if [[ $versiond_mode == ha ]]; then
-    capture_versiond_router_rollback_baseline
-fi
 
 pull_services=(versiond edge-api)
 if [[ $versiond_mode == ha ]]; then
@@ -790,6 +828,26 @@ if [[ $versiond_mode == ha ]]; then
         versiond-router VERSIOND_HOSTS versiond2 \
         /docker-entrypoint.d/40-render-versiond-upstream.sh
     replace_service versiond2 "$(service_startup_timeout versiond2)" rollback
+    # Compose readiness and the route baseline are one replacement commit.
+    # Keep compensation armed across the postcondition so a target that passed
+    # its coarse healthcheck but cannot serve every route remains isolated.
+    active_service=versiond2
+    active_failure_strategy=rollback
+    versiond2_container=$("${compose[@]}" ps --all --quiet versiond2)
+    [[ -n $versiond2_container ]] || fail \
+        "versiond2 disappeared after its successful replacement"
+    capture_versiond_rollback_baseline \
+        versiond2 "$versiond2_container" false
+    versiond2_target_baseline=$last_captured_version_baseline
+    restore_traffic_barrier || fail \
+        "cannot restore the complete legacy versiond-router upstream"
+    capture_versiond_router_rollback_baseline "$versiond2_target_baseline"
+    # Commit only after the replacement and the production route union both
+    # satisfy their postconditions. Until here rollback still uses the immutable
+    # source baseline and restores the source running/stopped state.
+    active_service=
+    active_failure_strategy=
+    rollback_version_baselines[versiond2]=$versiond2_target_baseline
     replace_service versiond-router \
         "$(service_startup_timeout versiond-router)" rollback
     clear_traffic_barrier

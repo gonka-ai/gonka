@@ -160,11 +160,12 @@ render_backend() {
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READYZ_URI}|$2|g" \
-        -e "s|\${BACKEND_HOST}|$3|g" \
+        -e "s|\${ROUTE_HEALTH_URI}|$3|g" \
+        -e "s|\${BACKEND_HOST}|$4|g" \
         -e "s|\${VERSIOND_PORT}|$PORT|g" \
-        -e "s|\${BACKEND_SLOTS}|$4|g" \
-        -e "s|\${REQUEST_HA_HEADER}|$5|g" \
-        -e "s|\${RESPONSE_BACKEND}|$6|g" \
+        -e "s|\${BACKEND_SLOTS}|$5|g" \
+        -e "s|\${REQUEST_HA_HEADER}|$6|g" \
+        -e "s|\${RESPONSE_BACKEND}|$7|g" \
         "$POOL_TEMPLATE"
 }
 
@@ -172,7 +173,7 @@ render_backend() {
 : > "$VERSIONS_MAP"
 POOL_BACKENDS_FILE="$(mktemp)"
 trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
-render_backend versiond_ha_pool /readyz "$POOL_HOST" "$SLOTS" \
+render_backend versiond_ha_pool /readyz /healthz "$POOL_HOST" "$SLOTS" \
     "$(ha_header_for versiond_ha_pool)" versiond_ha_pool > "$POOL_BACKENDS_FILE"
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
     [ -n "$version" ] || continue
@@ -199,8 +200,10 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
     fi
     backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
-    render_backend "$backend" "/readyz?version=$(urlencode "$version")" \
-        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" \
+    encoded_version=$(urlencode "$version")
+    render_backend "$backend" "/readyz?version=$encoded_version" \
+        "/$encoded_version/healthz" "$POOL_HOST" "$SLOTS" \
+        "$(ha_header_for "$backend")" "$backend" \
         >> "$POOL_BACKENDS_FILE"
 done
 
@@ -217,9 +220,11 @@ printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | 
     fi
     backend=$(backend_name versiond_legacy "$version")
     echo "$version $backend" >> "$MAP"
-    render_backend "$backend" "/readyz?version=$(urlencode "$version")" \
-        "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
-        versiond_legacy >> "$POOL_BACKENDS_FILE"
+    encoded_version=$(urlencode "$version")
+    render_backend "$backend" "/readyz?version=$encoded_version" \
+        "/$encoded_version/healthz" "$LEGACY_HOST" 1 \
+        'http-request del-header Devshard-Ha' versiond_legacy \
+        >> "$POOL_BACKENDS_FILE"
 done
 
 # Versions pinned to the legacy host exist because exactly one host owns their

@@ -114,6 +114,7 @@ test-version-routing:
 		'NAME = os.environ["NAME"]' \
 		'SERVES = set(os.environ["SERVES"].split())' \
 		'GENERIC_READY = os.environ.get("GENERIC_READY", "true") == "true"' \
+		'READYZ_SUPPORTED = os.environ.get("READYZ_SUPPORTED", "true") == "true"' \
 		'class H(http.server.BaseHTTPRequestHandler):' \
 		'    protocol_version = "HTTP/1.1"' \
 		'    def _r(self, code, body):' \
@@ -125,9 +126,14 @@ test-version-routing:
 		'    def do_GET(self):' \
 		'        u = urllib.parse.urlparse(self.path)' \
 		'        if u.path == "/readyz":' \
+		'            if not READYZ_SUPPORTED:' \
+		'                return self._r(404, "legacy")' \
 		'            v = urllib.parse.parse_qs(u.query).get("version", [""])[0]' \
 		'            ready = v in SERVES if v else GENERIC_READY' \
 		'            return self._r(200 if ready else 503, "x")' \
+		'        fields = u.path.strip("/").split("/")' \
+		'        if len(fields) == 2 and fields[1] == "healthz":' \
+		'            return self._r(200 if fields[0] in SERVES else 404, "x")' \
 		'        if u.path.endswith("/ha-header"):' \
 		'            return self._r(200, self.headers.get("Devshard-Ha", ""))' \
 		'        self._r(200, NAME)' \
@@ -136,16 +142,20 @@ test-version-routing:
 		> "$$tmpdir/upstream.py"; \
 	docker network create $$net >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe . >/dev/null; \
-	for spec in "a:v4:false" "b:v4 v5:true"; do \
+	for spec in "a:v4:false:false" "b:v4 v5:true:true"; do \
 		name=$${spec%%:*}; rest=$${spec#*:}; \
-		serves=$${rest%:*}; generic_ready=$${rest##*:}; \
+		serves=$${rest%%:*}; rest=$${rest#*:}; \
+		generic_ready=$${rest%%:*}; readyz_supported=$${rest##*:}; \
 		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
-			-e NAME=$$name -e SERVES="$$serves" -e GENERIC_READY=$$generic_ready \
+			-e NAME=$$name -e SERVES="$$serves" \
+			-e GENERIC_READY=$$generic_ready \
+			-e READYZ_SUPPORTED=$$readyz_supported \
 			-v "$$tmpdir/upstream.py:/app.py:ro" \
 			python:3.12-alpine python /app.py >/dev/null; \
 	done; \
 	docker run -d --name gonka-vp-legacy --network $$net \
 		-e NAME=legacy -e SERVES=v1 -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=false \
 		-v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
 	docker run -d --name gonka-vp-router --network $$net -p 127.0.0.1:18132:8080 \
@@ -241,6 +251,10 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
 		|| fail "active health checks are not configured"; \
+	grep -q '^[[:space:]]*http-check expect status 200,404' "$$tmpdir/mixed.cfg" \
+		|| fail "pre-v5 readiness capability fallback is not configured"; \
+	grep -q '^[[:space:]]*http-check send meth GET uri /healthz' "$$tmpdir/mixed.cfg" \
+		|| fail "coarse readiness does not verify the legacy health contract"; \
 	grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/mixed.cfg" \
 		|| fail "GONKA_HA did not enable the Devshard-Ha header"; \
 	grep -q '^[[:space:]]*server-template versiond 1 versiond:8080' "$$tmpdir/mixed.cfg" \
@@ -263,6 +277,8 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "no timeout check directive: inter would double as the whole check budget and a slow answer would read as down"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz?version=v4' "$$tmpdir/mixed.cfg" \
 		|| fail "declared versions must be health-checked individually"; \
+	grep -q '^[[:space:]]*http-check send meth GET uri /v4/healthz' "$$tmpdir/mixed.cfg" \
+		|| fail "declared versions lack the pre-v5 route-health fallback"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
 	for version in v1 v2 v3; do \
@@ -274,6 +290,11 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 			 inside && /http-check send/ && index($$0, uri) {found=1} \
 			 END {exit !found}' "$$tmpdir/mixed.cfg" \
 			|| fail "$$backend does not check $$version independently"; \
+		awk -v b="backend $$backend" -v uri="/$$version/healthz" \
+			'$$0 == b {inside=1; next} /^backend /{inside=0} \
+			 inside && /http-check send/ && index($$0, uri) {found=1} \
+			 END {exit !found}' "$$tmpdir/mixed.cfg" \
+			|| fail "$$backend lacks the pre-v5 route-health fallback"; \
 		awk -v b="backend $$backend" \
 			'$$0 == b {inside=1; next} /^backend /{inside=0} \
 			 inside && /http-request del-header Devshard-Ha/ {strips=1} \

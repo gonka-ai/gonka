@@ -101,14 +101,15 @@ Before pulling, the script records the immutable image ID of every application
 or router service it may roll back. For each existing versiond replica, it also
 waits for a settled `/healthz` snapshot and records every running child whose
 version route is reachable. If an existing supervisor is stopped, the script
-starts that exact old container first and waits up to the normal 35-minute
-versiond startup budget; it does not recreate it. The union of both replica
-baselines becomes the router baseline. This is the availability contract that
-a rollback must fully restore. The v4 nginx routers do not consume `/readyz`,
-so before replacing the first replica the script removes that replica from the
-rendered upstream, validates the nginx config, and performs a graceful reload.
-Existing requests remain on the old nginx workers; the replacement does not
-receive new traffic while `up --wait` is establishing readiness. The script
+records that fact and does not start it merely to manufacture a baseline. Its
+replacement is introduced only at the normal isolated step; failed rollback
+recreates the captured old image without starting it. The union of running
+replica baselines becomes the router baseline. This is the availability
+contract that a rollback must fully restore. The v4 nginx routers do not consume
+`/readyz`, so before replacing the first replica the script removes that replica
+from the rendered upstream, validates the nginx config, and performs a graceful
+reload. Existing requests remain on the old nginx workers; the replacement does
+not receive new traffic while `up --wait` is establishing readiness. The script
 also installs a temporary after-render hook in the v4 router container. If that
 container crashes and Docker restarts it, the shortened upstream is rendered
 again before nginx starts accepting traffic.
@@ -122,12 +123,16 @@ replacement: 35 minutes for versiond and 3 minutes for edge-api. A restored
 versiond must report and route every version from its captured baseline;
 restoring only one of several versions is a failed rollback. Router rollback
 must route the union captured from all versiond replicas rather than trusting
-its hash-selected `/healthz` response. Edge-api must execute the chain-backed
-`/v1/versions` query. If a check fails, the service is stopped and the script
-requires operator recovery. A replica interrupted after the nginx barrier
-remains isolated; rerun the same command to retry it. Temporary rollback tags
-are removed only after the whole upgrade succeeds. After a failed attempt, keep
-the reported
+its hash-selected `/healthz` response. Once HAProxy is active, supervisor
+rollback is also probed through the production router. HAProxy treats a `404`
+from `/readyz` as the explicit pre-v5 capability case and then requires the real
+version route's `/healthz`; a v5 `503` remains authoritative for starting and
+draining hosts. Edge-api must execute the chain-backed `/v1/versions` query. If
+a check fails, the service is stopped and the script requires operator recovery.
+A replica interrupted after the nginx barrier remains isolated; rerunning the
+command first replaces that replica, then restores the complete nginx upstream
+and captures the router baseline. Temporary rollback tags are removed only
+after the whole upgrade succeeds. After a failed attempt, keep the reported
 `gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
 removed with `docker image rm`.
 
@@ -300,14 +305,14 @@ before retrying the copy. Rerun the same block after an interrupted recovery;
 do not delete either directory to make the space check pass.
 
 Repeat the database verification above, then rerun
-`./upgrade-devshard-v5.sh`. The script finds the stopped old `versiond`
-containers, starts them without recreating them, waits until their complete
-child sets and routes are healthy, and only then captures rollback baselines
-and resumes the normal cutover. Keep the detached source volume and a logical
-or physical backup through the rollback window. Do not use the empty-init
-override to silence a recovery condition. `--renew-anon-volumes` is safe only
-in the post-recovery command above, after the bind-mounted `PGDATA` has been
-verified; never add it to the initial v4-to-v5 migration command.
+`./upgrade-devshard-v5.sh`. The script preserves the stopped state of both old
+supervisors, introduces `versiond2` behind the legacy-router barrier, and only
+restores the complete upstream after that replacement is ready. It then
+continues the normal cutover. Keep the detached source volume and a logical or
+physical backup through the rollback window. Do not use the empty-init override
+to silence a recovery condition. `--renew-anon-volumes` is safe only in the
+post-recovery command above, after the bind-mounted `PGDATA` has been verified;
+never add it to the initial v4-to-v5 migration command.
 
 ### Graceful versiond shutdown (single-instance and HA)
 

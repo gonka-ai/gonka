@@ -18,7 +18,16 @@ backend ${BACKEND_NAME}
     hash-type consistent
 
     option httpchk
+    # v5 readiness is authoritative: 503 removes a starting or draining host.
+    # A 404 identifies a pre-v5 versiond, whose route health is the only
+    # readiness contract available during rollback and mixed-version cutover.
+    # The second request is required in both cases, so accepting 404 never
+    # admits a legacy process that cannot actually serve this backend.
+    http-check connect
     http-check send meth GET uri ${READYZ_URI}
+    http-check expect status 200,404
+    http-check connect
+    http-check send meth GET uri ${ROUTE_HEALTH_URI}
     http-check expect status 200
 
     # safe never reuses a pooled connection for a request that could not be
