@@ -32,6 +32,23 @@ x-edge-api: &edge-api
         - edge-api-pool
   depends_on:
     - node
+  # `up --wait` uses the same readiness contract as HAProxy. A replica is not
+  # considered replaced until it can reach the chain and accept new work.
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "/bin/busybox",
+        "wget",
+        "-q",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:18080/readyz",
+      ]
+    interval: 1s
+    timeout: 3s
+    retries: 3
+    start_period: ${EDGE_API_HEALTH_START_PERIOD:-2m}
   # Outer Docker backstop; must exceed announce + shutdown budget.
   stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
   restart: always
@@ -61,6 +78,23 @@ services:
       - edge-api
       - edge-api2
       - edge-api3
+    # /readyz is proxied to the pool, so this proves both that HAProxy started
+    # and that at least one already-upgraded replica passed its active check.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:18080/readyz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
     restart: always
 
   proxy:

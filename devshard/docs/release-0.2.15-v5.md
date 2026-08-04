@@ -84,41 +84,86 @@ maintenance plan requires stopping those services too, first follow the full
 disable the ML nodes, wait for the next epoch, and verify reward and active-set
 state before stopping the Network Node.
 
+Choose the procedure that matches the existing deployment. Compose operations
+must keep using the same complete model that created the installation; applying
+the single-edge model to an `edge-api-multi` installation removes its pool
+configuration.
+
+#### Existing single-edge-api deployment
+
 Upgrade in place from `deploy/join`:
 
 ```bash
 (
 set -e
+source ./config.env
+compose=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml)
 
 # Pull only the services changed by the devshard v5 release.
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+"${compose[@]}" \
   pull devshard-postgres versiond versiond2 versiond-router edge-api
 
 # Recreate PostgreSQL first and wait for the v4 data migration and healthcheck.
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+"${compose[@]}" \
   up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 
 # Replace versiond hosts one at a time. The legacy SQLite owner is last.
 # --wait consumes the Compose /readyz healthcheck; a failed or slow reconcile
 # stops this sequence before the other working host is touched.
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+"${compose[@]}" \
   up -d --no-deps --wait --wait-timeout 2100 versiond2
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+"${compose[@]}" \
   up -d --no-deps --wait --wait-timeout 2100 versiond
 
 # Install the health-aware router only after both hosts provide /readyz.
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+"${compose[@]}" \
   up -d --no-deps versiond-router
 
 # Update the single edge-api without touching its node/api dependencies.
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  up -d --no-deps edge-api
+"${compose[@]}" \
+  up -d --no-deps --wait --wait-timeout 180 edge-api
+)
+```
+
+#### Existing edge-api-multi deployment
+
+Use this procedure when the running installation was created with
+`docker-compose.edge-api-multi.yml`. Every command retains all three files.
+The old edge-api router remains in service while its replicas are replaced one
+at a time; the HAProxy router is installed only after all three answer
+`/readyz`:
+
+```bash
+(
+set -e
+source ./config.env
+compose=(
+  docker compose
+  -f docker-compose.yml
+  -f docker-compose.versiond.yml
+  -f docker-compose.edge-api-multi.yml
+)
+
+"${compose[@]}" pull \
+  devshard-postgres versiond versiond2 versiond-router \
+  edge-api edge-api2 edge-api3 edge-api-router
+
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
+  devshard-postgres
+
+# Keep one ready versiond while replacing the other; install its router last.
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond2
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond
+"${compose[@]}" up -d --no-deps versiond-router
+
+# Preserve the old router and at least two ready Tier A replicas throughout.
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api2
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api3
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api
+
+# Replace nginx only after every v5 replica has passed /readyz. This final wait
+# also confirms that the new HAProxy has discovered a healthy pool member.
+"${compose[@]}" up -d --no-deps --wait --wait-timeout 60 edge-api-router
 )
 ```
 
@@ -145,14 +190,11 @@ After startup, verify both the persistent mount and the database:
 docker inspect devshard-postgres --format \
   '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/gonka"}}{{.Type}} {{.Source}}{{end}}{{end}}'
 docker logs devshard-postgres 2>&1 | grep 'gonka-postgres-entrypoint'
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  exec -T devshard-postgres \
+source ./config.env
+docker exec devshard-postgres \
   pg_isready -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
   -d "${DEVSHARD_POSTGRES_DB:-devshardd}"
-source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  exec -T devshard-postgres \
+docker exec devshard-postgres \
   psql -U "${DEVSHARD_POSTGRES_USER:-devshardd}" \
   -d "${DEVSHARD_POSTGRES_DB:-devshardd}" -Atc \
   "SELECT count(*) FROM pg_catalog.pg_tables WHERE schemaname = 'public';"
@@ -209,6 +251,7 @@ any query still running. It now follows the same contract as versiond:
 | Setting | Default | Role |
 | --- | --- | --- |
 | `EDGE_API_DRAIN_ANNOUNCE` | `5s` | `/readyz` answers 503 while the instance keeps serving, so the router drops it before it stops accepting. `0` declares no balancer; any other value below `5s` refuses to boot |
+| `EDGE_API_HEALTH_START_PERIOD` | `2m` | Compose allowance for a replacement to reach the chain and pass `/readyz`; ordered upgrades wait at most three minutes |
 | `EDGE_API_SHUTDOWN_BUDGET` | `2m` | How long accepted queries then have to finish; matches the router's default read timeout |
 | `EDGE_API_STOP_GRACE_PERIOD` | `3m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
 
@@ -369,6 +412,9 @@ daemon restart. Persist the corresponding replica count as `0` first.
       `VERSIOND_LEGACY_HOST` while `VERSIOND_NON_HA_VERSIONS` is non-empty
 - [ ] Keep `--wait --wait-timeout 2100` on each ordered versiond replacement;
       do not start replacing the legacy owner until `versiond2` is healthy
+- [ ] For an existing edge-api-multi installation, retain all three Compose
+      files, replace `edge-api2`, `edge-api3`, and `edge-api` one at a time with
+      `--wait`, and replace `edge-api-router` last
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden

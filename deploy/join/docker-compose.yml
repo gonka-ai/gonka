@@ -103,6 +103,21 @@ services:
       - EDGE_API_SHUTDOWN_BUDGET=${EDGE_API_SHUTDOWN_BUDGET:-2m}
     depends_on:
       - node
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:18080/readyz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 3
+      start_period: ${EDGE_API_HEALTH_START_PERIOD:-2m}
     # Outer Docker backstop; keep it above the internal shutdown budget so a
     # query in flight is not cut by SIGKILL.
     stop_grace_period: ${EDGE_API_STOP_GRACE_PERIOD:-3m}
