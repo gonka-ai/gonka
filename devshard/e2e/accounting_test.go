@@ -131,6 +131,65 @@ func TestE2E_AccountingOverscheduledLoserFinishes(t *testing.T) {
 }
 
 // Test flow:
+//  1. Start the three-host environment with every host publishing protocol finish but empty user content.
+//  2. Shorten non-streaming no-content/fallback windows so no-winner accounting settles quickly.
+//  3. Send one non-streaming completion through the gateway, then a second one to commit queued finish txs.
+//  4. Poll accounting until a finished protocol nonce has usage=unknown.
+//  5. Assert finished_usage_unknown is counted and every assigned nonce is still counted once.
+func TestE2E_AccountingFinishedUsageUnknown(t *testing.T) {
+	const emptyCompletionBody = `{"choices":[{"message":{"role":"assistant","content":""},"finish_reason":"stop"}],"usage":{"prompt_tokens":80,"completion_tokens":0}}`
+
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			0: {
+				e2econfig.StubInferenceResponseBodyEnv: emptyCompletionBody,
+			},
+			1: {
+				e2econfig.StubInferenceResponseBodyEnv: emptyCompletionBody,
+			},
+			2: {
+				e2econfig.StubInferenceResponseBodyEnv: emptyCompletionBody,
+			},
+		},
+	})
+
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeUnknown := testutil.AccountingDispositionCount(before, "finished_usage_unknown")
+	beforeAssigned := testutil.AccountingAssignedTotal(before)
+
+	resp := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting finished usage unknown", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting finished usage unknown completion", resp)
+
+	drain := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting finished usage unknown drain", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting finished usage unknown drain completion", drain)
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingAssignedTotal(resp) > beforeAssigned &&
+			testutil.AccountingDispositionCount(resp, "finished_usage_unknown") > beforeUnknown
+	})
+	require.Greater(t,
+		testutil.AccountingDispositionCount(accounting, "finished_usage_unknown"),
+		beforeUnknown,
+		"protocol-finished attempt without a recoverable winner should be counted as finished_usage_unknown",
+	)
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
 //  1. Start the three-host environment with the nonce-1 host delaying inference.
 //  2. Send one non-streaming completion asynchronously so its sent nonce stays live.
 //  3. Poll accounting until the sent nonce appears in the in_flight bucket.
@@ -251,6 +310,100 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 	})
 	require.Less(t, testutil.AccountingInFlightTotal(accounting), inFlightCount, "timed-out live send should leave the in_flight bucket")
 	require.Greater(t, testutil.AccountingUnfinishedTotal(accounting), beforeUnfinished, "timed-out live send should become an unfinished disposition")
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
+//  1. Start the three-host environment with the next assigned host delaying its receipt.
+//  2. Shorten only this e2e run's protocol and redundancy timeout windows.
+//  3. Send one non-streaming completion and observe the no-receipt nonce in-flight.
+//  4. Stop that executor before it can publish receipt or finish, while a fast secondary wins.
+//  5. Poll accounting until the timed-out no-receipt nonce becomes unfinished_refused.
+//  6. Assert unfinished_execution does not increase and nonce accounting still balances.
+func TestE2E_AccountingNoReceiptTimeoutBecomesUnfinishedRefused(t *testing.T) {
+	const shortProtocolTimeoutSeconds = "1"
+
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			0: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+			1: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+				e2econfig.ReceiptDelayMillisEnv:      "8000",
+			},
+			2: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+		},
+		devshardctlEnvOverrides: map[string]string{
+			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+		},
+	})
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	require.Equal(t, 1, nextSlot, "test setup expects the delayed-receipt host to own the first traffic nonce")
+
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeRefused := testutil.AccountingDispositionCount(before, "unfinished_refused")
+	beforeExecution := testutil.AccountingDispositionCount(before, "unfinished_execution")
+	beforeApplied := testutil.AccountingTimeoutOutcomeCount(before, "applied")
+
+	done := make(chan testutil.RawResponseResult, 1)
+	go func() {
+		resp, err := testutil.SendCompletionRawE(client, env.clientURL, "accounting no-receipt unfinished refused", testutil.AdminAPIKey)
+		done <- testutil.RawResponseResult{Response: resp, Err: err}
+	}()
+
+	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
+	})
+	inFlightCount := testutil.AccountingInFlightTotal(inFlight)
+	require.Greater(t, inFlightCount, uint64(0), "accounting should expose the no-receipt sent nonce as in_flight")
+	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, inFlight)
+
+	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
+	t.Cleanup(cancel)
+	env.stopHost(ctx, t, nextSlot)
+
+	select {
+	case result := <-done:
+		require.NoError(t, result.Err)
+		testutil.LogRawResponse(t, "accounting no-receipt unfinished refused completion", result.Response)
+		testutil.RequireOpenAINonStreamingCompletion(t, result.Response)
+	case <-time.After(testutil.DefaultRequestTimeout):
+		t.Fatal("timed out waiting for no-receipt timeout-backed completion")
+	}
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingInFlightTotal(resp) < inFlightCount &&
+			testutil.AccountingDispositionCount(resp, "unfinished_refused") > beforeRefused &&
+			testutil.AccountingDispositionCount(resp, "unfinished_execution") == beforeExecution &&
+			testutil.AccountingTimeoutOutcomeCount(resp, "applied") > beforeApplied
+	})
+	require.Less(t, testutil.AccountingInFlightTotal(accounting), inFlightCount, "timed-out no-receipt send should leave the in_flight bucket")
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "unfinished_refused"), beforeRefused, "no-receipt timeout should become unfinished_refused")
+	require.Equal(t, beforeExecution, testutil.AccountingDispositionCount(accounting, "unfinished_execution"), "no-receipt timeout must not become unfinished_execution")
+	require.Greater(t, testutil.AccountingTimeoutOutcomeCount(accounting, "applied"), beforeApplied, "no-receipt timeout should apply at protocol level")
 	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, accounting)
 }

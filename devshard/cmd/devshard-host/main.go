@@ -217,7 +217,10 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		return nil, err
 	}
 
-	inferenceEngine := devshardpkg.InferenceEngine(stub.NewInferenceEngine())
+	inferenceEngine, err := stubInferenceEngineFromEnv()
+	if err != nil {
+		return nil, err
+	}
 	sseErrorMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceSSEErrorEnv)
 	if err != nil {
 		return nil, err
