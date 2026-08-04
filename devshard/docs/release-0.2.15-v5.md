@@ -203,10 +203,81 @@ docker exec devshard-postgres \
 The first command must report `bind` and the configured host directory. An
 upgraded v4 node also logs `v4 PostgreSQL migration completed`; a fresh node logs
 that it is initializing persistent `PGDATA`. Keep the old anonymous volume and a
-normal database backup through the rollback window. If the fail-closed guard
-reports a detached v4 volume, stop the stack and reattach or copy that volume
-into `DEVSHARD_POSTGRES_DATA_DIR` before retrying. Do not use the empty-init
-override to silence this condition.
+normal database backup through the rollback window.
+
+#### Recover a detached v4 PostgreSQL volume
+
+If the fail-closed guard reports a detached v4 volume, do not copy its contents
+directly into `DEVSHARD_POSTGRES_DATA_DIR`. That directory is the bind-mount
+root; the actual `PGDATA` is its `data` subdirectory. Prefer the shipped recovery
+overlay instead: it temporarily mounts the selected volume back at the legacy
+`/var/lib/postgresql/data` path and lets the same validated, atomic migration
+entrypoint populate `DEVSHARD_POSTGRES_DATA_DIR/data`.
+
+First identify the exact detached volume from the deployment inventory or
+backup records. `docker volume ls --filter dangling=true` can list candidates,
+but do not guess when several PostgreSQL volumes exist. Then run this from
+`deploy/join`, replacing the placeholder value:
+
+```bash
+export DEVSHARD_POSTGRES_LEGACY_VOLUME=replace-with-exact-volume-name
+
+(
+set -e
+source ./config.env
+: "${DEVSHARD_POSTGRES_LEGACY_VOLUME:?set the detached v4 volume name}"
+
+compose=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml)
+recovery_compose=(
+  "${compose[@]}"
+  -f docker-compose.versiond-postgres-recovery.yml
+)
+
+# Stop database clients and PostgreSQL without deleting containers or volumes.
+"${compose[@]}" stop versiond versiond2 devshard-postgres
+
+# Fail before Docker can create a new empty volume for a mistyped name.
+docker volume inspect "$DEVSHARD_POSTGRES_LEGACY_VOLUME" >/dev/null
+if [ -n "$(docker ps -q --filter "volume=$DEVSHARD_POSTGRES_LEGACY_VOLUME")" ]; then
+  echo "legacy volume is still mounted by a running container" >&2
+  exit 1
+fi
+
+target_root=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
+mkdir -p "$target_root"
+
+# Migration creates a full second copy. Require the source size plus 10% free
+# on the filesystem that contains the persistent bind directory.
+source_kib=$(
+  docker run --rm --entrypoint /bin/sh \
+    --mount "type=volume,src=${DEVSHARD_POSTGRES_LEGACY_VOLUME},dst=/source,readonly" \
+    postgres:16-alpine -ec \
+    'test -s /source/PG_VERSION; du -sk /source | cut -f1'
+)
+free_kib=$(df -Pk "$target_root" | awk 'NR == 2 { print $4 }')
+required_kib=$((source_kib + source_kib / 10))
+printf 'PostgreSQL source: %s KiB; required free: %s KiB; available: %s KiB\n' \
+  "$source_kib" "$required_kib" "$free_kib"
+if ((free_kib < required_kib)); then
+  echo "not enough free space for PostgreSQL recovery" >&2
+  exit 1
+fi
+
+"${recovery_compose[@]}" up -d --no-deps --force-recreate \
+  --wait --wait-timeout 2100 devshard-postgres
+"${recovery_compose[@]}" exec -T devshard-postgres \
+  test -s /var/lib/postgresql/gonka/data/PG_VERSION
+
+# Detach the temporary source. The recovered bind is now authoritative.
+"${compose[@]}" up -d --no-deps --force-recreate \
+  --wait --wait-timeout 2100 devshard-postgres
+)
+```
+
+Repeat the database verification above, then resume the normal cutover at the
+first versiond replacement. Keep the detached source volume and a logical or
+physical backup through the rollback window. Do not use the empty-init override
+to silence a recovery condition.
 
 ### Graceful versiond shutdown (single-instance and HA)
 

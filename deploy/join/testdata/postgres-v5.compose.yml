@@ -1,5 +1,5 @@
 services:
-  postgres:
+  devshard-postgres:
     environment:
       PGDATA: /var/lib/postgresql/gonka/data
       DEVSHARD_POSTGRES_ALLOW_EMPTY_INIT: "false"

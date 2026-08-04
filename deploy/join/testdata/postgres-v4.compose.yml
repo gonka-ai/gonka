@@ -1,5 +1,5 @@
 services:
-  postgres:
+  devshard-postgres:
     image: postgres:16-alpine
     environment:
       POSTGRES_DB: devshardd
