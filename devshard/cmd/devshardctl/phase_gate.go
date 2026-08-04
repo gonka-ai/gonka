@@ -16,7 +16,10 @@ import (
 
 	"common/chain"
 
+	"github.com/cosmos/cosmos-sdk/client/grpc/cmtservice"
+	"github.com/golang/protobuf/proto"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
+	"google.golang.org/grpc"
 )
 
 const (
@@ -78,12 +81,17 @@ type ChainPhaseGate struct {
 	scaleApplyHook func(scale float64)
 
 	chainQuery chain.InferenceClient
+	storeQuery phaseGateStoreQuery
 
 	// versions polls each candidate miner's /v1/versions endpoint
 	versions *VersionsCache
 
 	stopCh chan struct{}
 	doneCh chan struct{}
+}
+
+type phaseGateStoreQuery interface {
+	ABCIQuery(context.Context, *cmtservice.ABCIQueryRequest, ...grpc.CallOption) (*cmtservice.ABCIQueryResponse, error)
 }
 
 type chainEpochInfoResponse struct {
@@ -251,16 +259,19 @@ func (e *RequestAdmissionError) Error() string {
 
 func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGate {
 	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
-		return nil
-	}
 	if pollInterval <= 0 {
 		pollInterval = defaultChainPhasePollInterval
 	}
 	client := &http.Client{Timeout: 5 * time.Second}
+	endpoint := ""
+	participantsEndpoint := ""
+	if strings.HasPrefix(baseURL, "http://") || strings.HasPrefix(baseURL, "https://") {
+		endpoint = strings.TrimRight(baseURL, "/") + "/v1/epochs/latest"
+		participantsEndpoint = strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants"
+	}
 	return &ChainPhaseGate{
-		endpoint:                      strings.TrimRight(baseURL, "/") + "/v1/epochs/latest",
-		participantsEndpoint:          strings.TrimRight(baseURL, "/") + "/v1/epochs/current/participants",
+		endpoint:                      endpoint,
+		participantsEndpoint:          participantsEndpoint,
 		client:                        client,
 		pollInterval:                  pollInterval,
 		defaultMaxSpeculativeAttempts: CurrentMaxSpeculativeAttempts(),
@@ -277,6 +288,15 @@ func (g *ChainPhaseGate) SetChainQueryClient(client chain.InferenceClient) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.chainQuery = client
+}
+
+func (g *ChainPhaseGate) SetStoreQueryClient(client phaseGateStoreQuery) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.storeQuery = client
 }
 
 func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
@@ -472,6 +492,21 @@ func (g *ChainPhaseGate) refresh() {
 }
 
 func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
+	payload, apiErr := g.fetchEpochInfoFromAPI()
+	if apiErr == nil {
+		return payload, nil
+	}
+	payload, chainErr := g.fetchEpochInfoFromChain()
+	if chainErr != nil {
+		return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
+	}
+	return payload, nil
+}
+
+func (g *ChainPhaseGate) fetchEpochInfoFromAPI() (*chainEpochInfoResponse, error) {
+	if strings.TrimSpace(g.endpoint) == "" {
+		return nil, fmt.Errorf("public API is not configured")
+	}
 	resp, err := g.client.Get(g.endpoint)
 	if err != nil {
 		return nil, err
@@ -488,6 +523,51 @@ func (g *ChainPhaseGate) fetchEpochInfo() (*chainEpochInfoResponse, error) {
 		return nil, err
 	}
 	return &payload, nil
+}
+
+func (g *ChainPhaseGate) fetchEpochInfoFromChain() (*chainEpochInfoResponse, error) {
+	qc := g.chainQueryClient()
+	if qc == nil {
+		return nil, fmt.Errorf("inference query client is unavailable")
+	}
+	resp, err := qc.EpochInfo(context.Background(), &inferencetypes.QueryEpochInfoRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if resp == nil || resp.Params.EpochParams == nil {
+		return nil, fmt.Errorf("epoch info response is missing epoch params")
+	}
+
+	epoch := inferencetypes.NewEpochContext(resp.LatestEpoch, *resp.Params.EpochParams)
+	nextEpoch := epoch.NextEpochContext()
+	currentStages := epoch.GetEpochStages()
+	nextStages := nextEpoch.GetEpochStages()
+	payload := &chainEpochInfoResponse{
+		BlockHeight: jsonInt64(resp.BlockHeight),
+		Phase:       string(epoch.GetCurrentPhase(resp.BlockHeight)),
+		LatestEpoch: chainLatestEpoch{
+			Index:               jsonUint64(resp.LatestEpoch.Index),
+			PocStartBlockHeight: jsonInt64(resp.LatestEpoch.PocStartBlockHeight),
+		},
+		EpochStages: chainEpochStages{
+			EpochIndex:       jsonUint64(currentStages.EpochIndex),
+			SetNewValidators: jsonInt64(currentStages.SetNewValidators),
+			NextPoCStart:     jsonInt64(currentStages.NextPocStart),
+		},
+		NextEpochStages: chainEpochStages{
+			EpochIndex:       jsonUint64(nextStages.EpochIndex),
+			SetNewValidators: jsonInt64(nextStages.SetNewValidators),
+			NextPoCStart:     jsonInt64(nextStages.NextPocStart),
+		},
+		IsConfirmationPoCActive: resp.IsConfirmationPocActive,
+	}
+	if event := resp.ActiveConfirmationPocEvent; event != nil {
+		payload.ActiveConfirmationPoC = &chainConfirmationPoCEventPayload{
+			Phase:         confirmationPoCPhaseValue(event.Phase.String()),
+			TriggerHeight: jsonInt64(event.TriggerHeight),
+		}
+	}
+	return payload, nil
 }
 
 // participantNode holds the per-node data for one ML node belonging to a participant
@@ -530,6 +610,22 @@ func (g *ChainPhaseGate) fetchPreservedParticipantKeys() ([]string, []string, er
 }
 
 func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
+	payload, apiErr := g.fetchParticipantsFromAPI()
+	if apiErr != nil {
+		var chainErr error
+		payload, chainErr = g.fetchParticipantsFromChain()
+		if chainErr != nil {
+			return nil, fmt.Errorf("public API: %v; chain fallback: %w", apiErr, chainErr)
+		}
+	}
+
+	return g.participantsStateFromPayload(payload, pocActive, expectedSnapshotAnchor, allowAllWhenSnapshotMissing)
+}
+
+func (g *ChainPhaseGate) fetchParticipantsFromAPI() (*chainCurrentParticipantsResponse, error) {
+	if strings.TrimSpace(g.participantsEndpoint) == "" {
+		return nil, fmt.Errorf("public API is not configured")
+	}
 	resp, err := g.client.Get(g.participantsEndpoint)
 	if err != nil {
 		return nil, err
@@ -544,6 +640,94 @@ func (g *ChainPhaseGate) fetchParticipantsState(pocActive bool, expectedSnapshot
 	var payload chainCurrentParticipantsResponse
 	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
 		return nil, err
+	}
+	return &payload, nil
+}
+
+func (g *ChainPhaseGate) fetchParticipantsFromChain() (*chainCurrentParticipantsResponse, error) {
+	qc := g.chainQueryClient()
+	sq := g.storeQueryClient()
+	if qc == nil || sq == nil {
+		return nil, fmt.Errorf("chain participant query clients are unavailable")
+	}
+	current, err := qc.GetCurrentEpoch(context.Background(), &inferencetypes.QueryGetCurrentEpochRequest{})
+	if err != nil {
+		return nil, err
+	}
+	if current == nil {
+		return nil, fmt.Errorf("current epoch response is nil")
+	}
+	result, err := sq.ABCIQuery(context.Background(), &cmtservice.ABCIQueryRequest{
+		Path: "store/inference/key",
+		Data: inferencetypes.ActiveParticipantsFullKey(current.Epoch),
+	})
+	if err != nil {
+		return nil, err
+	}
+	if result == nil {
+		return nil, fmt.Errorf("active participants response is nil")
+	}
+	if result.Code != 0 {
+		return nil, fmt.Errorf("active participants query failed with code %d", result.Code)
+	}
+	if len(result.Value) == 0 {
+		return nil, fmt.Errorf("active participants are unavailable for epoch %d", current.Epoch)
+	}
+
+	var active inferencetypes.ActiveParticipants
+	if err := proto.Unmarshal(result.Value, &active); err != nil {
+		return nil, err
+	}
+	return activeParticipantsPayload(&active), nil
+}
+
+func activeParticipantsPayload(active *inferencetypes.ActiveParticipants) *chainCurrentParticipantsResponse {
+	payload := &chainCurrentParticipantsResponse{}
+	if active == nil {
+		return payload
+	}
+	payload.ActiveParticipants.Participants = make([]chainActiveParticipant, 0, len(active.Participants))
+	for _, participant := range active.Participants {
+		if participant == nil {
+			continue
+		}
+		item := chainActiveParticipant{
+			Index:        participant.Index,
+			InferenceURL: participant.InferenceUrl,
+			Models:       append([]string(nil), participant.Models...),
+		}
+		if participant.Weight > 0 {
+			item.Weight = jsonUint64(participant.Weight)
+		}
+		item.MLNodes = make([]chainModelMLNodes, 0, len(participant.MlNodes))
+		for _, modelNodes := range participant.MlNodes {
+			converted := chainModelMLNodes{}
+			if modelNodes != nil {
+				converted.MLNodes = make([]chainMLNodeInfo, 0, len(modelNodes.MlNodes))
+				for _, node := range modelNodes.MlNodes {
+					if node == nil {
+						continue
+					}
+					convertedNode := chainMLNodeInfo{
+						NodeID:             node.NodeId,
+						TimeslotAllocation: append([]bool(nil), node.TimeslotAllocation...),
+					}
+					if node.PocWeight > 0 {
+						convertedNode.PoCWeight = jsonUint64(node.PocWeight)
+					}
+					converted.MLNodes = append(converted.MLNodes, convertedNode)
+				}
+			}
+			item.MLNodes = append(item.MLNodes, converted)
+		}
+		payload.ActiveParticipants.Participants = append(payload.ActiveParticipants.Participants, item)
+	}
+	return payload
+}
+
+func (g *ChainPhaseGate) participantsStateFromPayload(payload *chainCurrentParticipantsResponse, pocActive bool, expectedSnapshotAnchor int64, allowAllWhenSnapshotMissing bool) (*participantsState, error) {
+	if payload == nil {
+		return nil, fmt.Errorf("participants payload is nil")
 	}
 
 	var preservedSnapshot *preservedSnapshotState
@@ -678,6 +862,15 @@ func (g *ChainPhaseGate) chainQueryClient() chain.InferenceClient {
 	g.mu.RLock()
 	defer g.mu.RUnlock()
 	return g.chainQuery
+}
+
+func (g *ChainPhaseGate) storeQueryClient() phaseGateStoreQuery {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.storeQuery
 }
 
 func preservedSnapshotFromProto(snapshot *inferencetypes.PreservedNodesSnapshot) *chainPreservedNodesSnapshot {

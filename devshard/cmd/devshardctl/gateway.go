@@ -744,6 +744,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil && chainClient != nil {
 		g.phaseGate.SetChainQueryClient(chainClient.InferenceQueryClient())
+		g.phaseGate.SetStoreQueryClient(chainClient.CometServiceClient())
 	}
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
@@ -2658,6 +2659,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 		if g.phaseGate != nil && g.chainClient != nil {
 			g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
+			g.phaseGate.SetStoreQueryClient(g.chainClient.CometServiceClient())
 		}
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)

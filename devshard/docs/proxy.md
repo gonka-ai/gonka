@@ -23,6 +23,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
+| - | `DEVSHARD_PUBLIC_API` | no | `http://localhost:9000` | Public API URL used for epoch/PoC phase checks. Set to `none` to query the chain directly. |
 | - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs. Known values: `gonka-mainnet` (production), `gonka-testnet` (devnet/testnet), `gonka-test` (testenv mock-chain). |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
@@ -380,6 +381,16 @@ The `api_key` is required by the SDK. It is ignored for models with
 `access_mode: "open"` and must match one of `DEVSHARD_API_KEYS` for models with
 `access_mode: "api_key"`. Models with `access_mode: "admin_only"` require
 `DEVSHARD_ADMIN_API_KEY`.
+
+### Standalone / Read-Only Node Deployment
+
+If running the gateway alongside a read-only full node without `edge-api` or `dapi`, configure it to query the blockchain directly via gRPC/RPC:
+
+```bash
+export DEVSHARD_PUBLIC_API="none"
+export DEVSHARD_CHAIN_GRPC="node:9090"
+export DEVSHARD_PARAMS_SOURCE="chain"
+```
 
 ## Finalization and settlement
 
