@@ -33,9 +33,10 @@ defaults this means `versiond` cannot be evacuated while `v1 v2 v3` are pinned;
 only `versiond2` is an eligible evacuation target.
 
 Before evacuating the owner, migrate every pinned version to shared Postgres,
-remove it from `VERSIOND_NON_HA_VERSIONS`, recreate `versiond-router`, and verify
-that requests use a `versiond_pool_<v>` backend. Stopping the owner first is an
-outage, not failover.
+persist `export VERSIOND_NON_HA_VERSIONS=""` in `config.env`, recreate
+`versiond-router`, and verify that requests use a `versiond_pool_<v>` backend.
+Keep the empty export: deleting or unsetting it restores the safe `v1 v2 v3`
+default. Stopping the owner first is an outage, not failover.
 
 ### Permanent membership changes
 

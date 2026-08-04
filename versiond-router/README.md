@@ -319,6 +319,12 @@ config. Version pinning is startup configuration because each pin needs its own
 health-checked backend; change `VERSIOND_NON_HA_VERSIONS` and replace the router
 container to change it.
 
+The shipped join overlay distinguishes unset from explicitly empty values.
+Unset `VERSIOND_NON_HA_VERSIONS` and `VERSIOND_VERSIONS` receive the deployment
+defaults; an empty export reaches this entrypoint unchanged. Coarse mode needs
+both `VERSIOND_VERSIONS=""` and
+`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true`.
+
 Declared names are used three ways, and each is derived to suit itself: the map
 key is the name exactly as governance wrote it, because it is matched against the
 path segment; the health-check query is percent-encoded, because `+` in a query

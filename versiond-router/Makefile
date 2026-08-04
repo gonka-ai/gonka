@@ -1,9 +1,13 @@
-.PHONY: all build-docker release test-render test-hash-ring test-version-routing
+.PHONY: all build-docker release test-render test-compose-contract
+.PHONY: test-hash-ring test-version-routing
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
 # Rendering needs no HAProxy locally; the syntax check needs Docker.
 HAPROXY_IMAGE ?= haproxy:3.2-alpine
+
+test-compose-contract:
+	@../deploy/join/versiond-compose-config_test.sh
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -211,7 +215,7 @@ test-version-routing:
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	echo "test-version-routing: ok"
 
-test-render: test-hash-ring test-version-routing
+test-render: test-compose-contract test-hash-ring test-version-routing
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	trap 'rm -rf "$$tmpdir"' EXIT; \

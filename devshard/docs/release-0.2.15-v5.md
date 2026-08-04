@@ -314,6 +314,21 @@ declare versions up front). The join overlay declares `v4` through `v8`, so an
 approval inside that window needs no router change; extend the list before
 governance moves past it.
 
+Coarse mode is an explicit two-part opt-in. Persist both lines in `config.env`,
+then recreate `versiond-router` using the complete Compose model for the
+installation:
+
+```bash
+export VERSIOND_VERSIONS=""
+export VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
+```
+
+An empty value is different from an unset value. Removing the first export
+restores the join overlay's `v4 v5 v6 v7 v8` default. Likewise, after migrating
+all legacy versions to Postgres, clear their pins with
+`export VERSIOND_NON_HA_VERSIONS=""`; removing that export restores the
+`v1 v2 v3` default.
+
 ### A failed version poll no longer takes hosts out of rotation
 
 `/readyz` reports whether a host can serve, not whether its last reconcile
@@ -410,6 +425,9 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Keep `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` in `config.env`; use a
       persisted value of `0` for permanent decommission and never decommission
       `VERSIOND_LEGACY_HOST` while `VERSIOND_NON_HA_VERSIONS` is non-empty
+- [ ] To remove all legacy pins, persist
+      `VERSIOND_NON_HA_VERSIONS=""`; do not unset it, because unset restores
+      the `v1 v2 v3` default
 - [ ] Keep `--wait --wait-timeout 2100` on each ordered versiond replacement;
       do not start replacing the legacy owner until `versiond2` is healthy
 - [ ] For an existing edge-api-multi installation, retain all three Compose

@@ -157,13 +157,16 @@ services:
       # Version path segments that pin to VERSIOND_LEGACY_HOST (whitespace and/or comma).
       # All other versions sticky-hash across the pool and get Devshard-Ha: true.
       # Default lists known pre-HA paths; clear (empty) once every live version is Postgres HA.
-      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS:-v1 v2 v3}
+      # Use `-`, not `:-`: an explicitly empty value means "no legacy pins".
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
       # Versions health-checked on each host individually. A host that cannot run
       # one of these leaves that version's pool and keeps serving the others.
       # An undeclared version is refused, and declaring one needs this container
       # replaced — so the default declares a window ahead of governance. A pool
       # for a version nobody runs yet has no members and costs nothing.
-      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS:-v4 v5 v6 v7 v8}
+      # Empty is the explicit coarse-readiness mode; unset keeps safe defaults.
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
     # Pool members are optional dependencies: readiness and DNS, not Compose
     # startup order, decide membership. This also permits a persisted replica
     # count of zero for a decommissioned host.
