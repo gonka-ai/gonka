@@ -74,6 +74,465 @@ func TestRestartTurnsLiveStateIntoUnclassified(t *testing.T) {
 	require.Equal(t, uint64(1), record.Unclassified)
 }
 
+func TestTrackerRecordsFinishedUnused(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 11, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 11}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionFinishedUnused])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerRecordsFinishedUsageUnknown(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 12, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageUnknownValue))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 12}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionFinishedUsageUnknown])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerRecordsUnfinishedExecution(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 13, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolReceiptApplied, types.HostStats{}))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutExecution,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureHostResponse,
+		DetailReason:  "not_finished",
+	}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 13}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedExecution])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerMovesInFlightToFinishedUsed(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 14, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+
+	inFlight := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 14}), "p1")
+	require.Equal(t, uint64(1), inFlight.InFlight)
+	require.Zero(t, inFlight.Dispositions[DispositionFinishedUsed])
+
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 14}), "p1")
+	require.Equal(t, uint64(1), finished.Dispositions[DispositionFinishedUsed])
+	require.Zero(t, finished.InFlight)
+	require.Zero(t, finished.PendingClassification)
+	require.Zero(t, finished.Unclassified)
+	require.Zero(t, finished.Overclassified)
+}
+
+func TestTrackerMovesInFlightToFinishedUnused(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 15, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+
+	inFlight := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
+	require.Equal(t, uint64(1), inFlight.InFlight)
+	require.Zero(t, inFlight.Dispositions[DispositionFinishedUnused])
+
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
+	require.Equal(t, uint64(1), finished.Dispositions[DispositionFinishedUnused])
+	require.Zero(t, finished.InFlight)
+	require.Zero(t, finished.PendingClassification)
+	require.Zero(t, finished.Unclassified)
+	require.Zero(t, finished.Overclassified)
+}
+
+func TestTrackerMovesInFlightToUnfinishedRefused(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 16, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+
+	inFlight := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 16}), "p1")
+	require.Equal(t, uint64(1), inFlight.InFlight)
+	require.Zero(t, inFlight.Dispositions[DispositionUnfinishedRefused])
+
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutRefused,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureTransportUnknown,
+	}))
+
+	unfinished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 16}), "p1")
+	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), unfinished.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+	require.Zero(t, unfinished.InFlight)
+	require.Zero(t, unfinished.PendingClassification)
+	require.Zero(t, unfinished.Unclassified)
+	require.Zero(t, unfinished.Overclassified)
+}
+
+func TestTrackerMovesInFlightToUnfinishedExecution(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 17, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+
+	inFlight := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 17}), "p1")
+	require.Equal(t, uint64(1), inFlight.InFlight)
+	require.Zero(t, inFlight.Dispositions[DispositionUnfinishedExecution])
+
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolReceiptApplied, types.HostStats{}))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutExecution,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureHostResponse,
+		DetailReason:  "not_finished",
+	}))
+
+	unfinished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 17}), "p1")
+	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedExecution])
+	require.Equal(t, uint64(1), unfinished.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+	require.Zero(t, unfinished.InFlight)
+	require.Zero(t, unfinished.PendingClassification)
+	require.Zero(t, unfinished.Unclassified)
+	require.Zero(t, unfinished.Overclassified)
+}
+
+func TestTrackerCountsPendingClassification(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 18, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 18}), "p1")
+	require.Equal(t, uint64(1), record.PendingClassification)
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerMovesPendingClassificationToGhost(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 19, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+
+	pending := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 19}), "p1")
+	require.Equal(t, uint64(1), pending.PendingClassification)
+	require.Zero(t, pending.Dispositions[DispositionGhost])
+
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendPoCUnavailable, ""))
+
+	ghost := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 19}), "p1")
+	require.Equal(t, uint64(1), ghost.Dispositions[DispositionGhost])
+	require.Zero(t, ghost.PendingClassification)
+	require.Zero(t, ghost.InFlight)
+	require.Zero(t, ghost.Unclassified)
+	require.Zero(t, ghost.Overclassified)
+}
+
+func TestTrackerReportsUnclassifiedWithoutRestart(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 20, "m")
+	require.NoError(t, tr.RecordDiff("e1", 2, false))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 20}), "p1")
+	require.Equal(t, uint64(1), record.AssignedNonces)
+	require.Equal(t, uint64(1), record.Unclassified)
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerReportsOverclassified(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 21, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, false))
+	require.NoError(t, tr.RecordDiff("e1", 1, false))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 21}), "p1")
+	require.Equal(t, uint64(1), record.AssignedNonces)
+	require.Equal(t, uint64(2), record.Dispositions[DispositionProtocolOnly])
+	require.Equal(t, uint64(1), record.Overclassified)
+	require.Zero(t, record.Unclassified)
+}
+
+func TestTrackerReclassificationMovesCountAtomically(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 22, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutRefused,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureTransportUnknown,
+	}))
+
+	unfinished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 22}), "p1")
+	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedRefused])
+
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 22}), "p1")
+	require.Zero(t, finished.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), finished.Dispositions[DispositionFinishedUsed])
+	require.Zero(t, finished.InFlight)
+	require.Zero(t, finished.PendingClassification)
+	require.Zero(t, finished.Unclassified)
+	require.Zero(t, finished.Overclassified)
+}
+
+func TestTrackerRepeatedTimeoutCallbackDoesNotDuplicateCount(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 23, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	timeout := TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutRefused,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureTransportUnknown,
+	}
+	require.NoError(t, tr.RecordTimeout(timeout))
+	require.NoError(t, tr.RecordTimeout(timeout))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 23}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerReceiptAfterTimeoutRecordStaysUnfinishedRefused(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 24, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutRefused,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureTransportUnknown,
+	}))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolReceiptApplied, types.HostStats{}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 24}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Zero(t, record.Dispositions[DispositionUnfinishedExecution])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerFinishAfterNonAppliedTimeoutWins(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 25, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutExecution,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutVoteCollectionFailed,
+		FailureOrigin: FailureHostResponse,
+		DetailReason:  "not_finished",
+	}))
+
+	unfinished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 25}), "p1")
+	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), unfinished.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
+
+	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 25}), "p1")
+	require.Zero(t, finished.Dispositions[DispositionUnfinishedRefused])
+	require.Zero(t, finished.TimeoutOutcomes[TimeoutVoteCollectionFailed])
+	require.Equal(t, uint64(1), finished.Dispositions[DispositionFinishedUsed])
+	require.Zero(t, finished.InFlight)
+	require.Zero(t, finished.PendingClassification)
+	require.Zero(t, finished.Unclassified)
+	require.Zero(t, finished.Overclassified)
+}
+
+func TestTrackerFinishAfterAppliedTimeoutDoesNotReclassify(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 26, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutExecution,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutApplied,
+		FailureOrigin: FailureHostResponse,
+		DetailReason:  "not_finished",
+	}))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{Missed: 1}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 26}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutApplied])
+	require.Zero(t, record.Dispositions[DispositionFinishedUsed])
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+	require.Zero(t, record.CrossChecks.ErrorCount)
+}
+
+func TestTrackerRecordsProtocolTimeoutAppliedFromLiveNonce(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 27, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolTimeoutApplied, types.HostStats{Missed: 1}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 27}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutApplied])
+	require.Equal(t, uint64(1), record.ProtocolMisses)
+	require.Equal(t, uint64(1), record.CrossChecks.TimeoutApplied)
+	require.Equal(t, uint64(1), record.CrossChecks.HostMissed)
+	require.Zero(t, record.CrossChecks.ErrorCount)
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func TestTrackerReconcilesAppliedMissesFromHostStats(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 28, "m")
+	require.NoError(t, tr.RecordDiff("e1", 2, false))
+	require.NoError(t, tr.RecordHostStats("e1", 1, types.HostStats{Missed: 1}))
+	require.NoError(t, tr.ReconcileAppliedMisses("e1"))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 28}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutApplied])
+	require.Equal(t, uint64(1), record.ProtocolMisses)
+	require.Equal(t, uint64(1), record.CrossChecks.TimeoutApplied)
+	require.Equal(t, uint64(1), record.CrossChecks.HostMissed)
+	require.Zero(t, record.CrossChecks.ErrorCount)
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+	require.Len(t, record.Counters, 1)
+	require.Empty(t, record.Counters[0].Key.DispatchPhase)
+	require.Empty(t, record.Counters[0].Key.QuarantineMode)
+	require.Empty(t, record.Counters[0].Key.FailureOrigin)
+	require.Empty(t, record.Counters[0].Key.DetailReason)
+}
+
+func TestTrackerReportsHostStatsMissedCrossCheckMismatch(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 29, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolTimeoutApplied, types.HostStats{}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 29}), "p1")
+	require.Equal(t, uint64(1), record.CrossChecks.TimeoutApplied)
+	require.Zero(t, record.CrossChecks.HostMissed)
+	require.Equal(t, uint64(1), record.CrossChecks.ErrorCount)
+}
+
+func TestTrackerReportsHostStatsInvalidCrossCheckMismatch(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 30, "m")
+	require.NoError(t, tr.RecordHostStats("e1", 1, types.HostStats{Invalid: 1}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Zero(t, record.CrossChecks.RecordedInvalid)
+	require.Equal(t, uint64(1), record.CrossChecks.HostInvalid)
+	require.Equal(t, uint64(1), record.CrossChecks.ErrorCount)
+}
+
+func TestTrackerRecordsUnknownNoSendReason(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 31, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordGhost("e1", 1, PhaseNormal, QuarantineNone, NoSendReason("not_a_reason"), "not_a_detail"))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 31}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionGhost])
+	require.Equal(t, uint64(1), record.UnknownReasonTotal)
+	require.Len(t, record.Counters, 1)
+	require.Equal(t, NoSendUnknown, record.Counters[0].Key.NoSendReason)
+	require.Equal(t, "unknown", record.Counters[0].Key.DetailReason)
+}
+
+func TestTrackerRecordsUnknownTimeoutReasonAndDetail(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 32, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID:      "e1",
+		Nonce:         1,
+		Kind:          TimeoutExecution,
+		Phase:         PhaseNormal,
+		Outcome:       TimeoutSkipped,
+		Reason:        TimeoutReason("not_a_timeout_reason"),
+		FailureOrigin: FailureTransportUnknown,
+		DetailReason:  "not_a_detail",
+	}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 32}), "p1")
+	require.Equal(t, uint64(1), record.Dispositions[DispositionUnfinishedRefused])
+	require.Equal(t, uint64(1), record.TimeoutOutcomes[TimeoutSkipped])
+	require.Equal(t, uint64(1), record.UnknownReasonTotal)
+	require.Len(t, record.Counters, 1)
+	require.Equal(t, TimeoutReasonUnknown, record.Counters[0].Key.TimeoutReason)
+	require.Equal(t, "unknown", record.Counters[0].Key.DetailReason)
+}
+
 func TestHTTPFiltersAndMetrics(t *testing.T) {
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 9, "m1")
