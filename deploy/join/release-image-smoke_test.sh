@@ -73,6 +73,8 @@ check_compose_contract() {
         "$(compose_image edge-api -f "$base" -f "$edge_overlay")"
     assert_image "base versiond" "$versiond_image" \
         "$(compose_image versiond -f "$base")"
+    assert_healthcheck_url "base versiond healthcheck" versiond \
+        "http://127.0.0.1:8080/readyz" -f "$base"
     assert_image "versiond HA overlay" "$versiond_image" \
         "$(compose_image versiond -f "$base" -f "$versiond_overlay")"
     assert_image "edge-api router" "$edge_router_image" \

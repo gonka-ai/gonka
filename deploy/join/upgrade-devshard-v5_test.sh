@@ -24,7 +24,13 @@ printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
 
 if [[ ${1:-} == inspect ]]; then
-    [[ $# -eq 2 ]] && exit 0
+    if [[ $# -eq 2 ]]; then
+        container=${2#cid-}
+        case " ${EXISTING_CONTAINERS-} " in
+            *" $container "*) exit 0 ;;
+            *) exit 1 ;;
+        esac
+    fi
     case ${3:-} in
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
         '{{.State.Running}}') printf 'true\n' ;;
@@ -87,10 +93,29 @@ run_upgrade() {
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         FAIL_SERVICE="$failed_service" \
+        EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
-        "$script_dir/upgrade-devshard-v5.sh" --edge-mode "$mode" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
         fail "$mode upgrade unexpectedly succeeded when $failed_service failed"
+    fi
+}
+
+run_auto_upgrade() {
+    local containers=$1
+    local log=$2
+    local stdout=$3
+
+    : >"$log"
+    if ! DOCKER_BIN="$tmpdir/docker" \
+        DOCKER_LOG="$log" \
+        FAIL_SERVICE=none \
+        EXISTING_CONTAINERS="$containers" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
+        cat "$tmpdir/stderr" >&2
+        fail "automatic topology upgrade failed"
     fi
 }
 
@@ -124,6 +149,56 @@ line_number() {
 write_fake_docker
 printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\n' "$tmpdir/postgres" \
     >"$tmpdir/config.env"
+
+if DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/unknown.log" \
+    FAIL_SERVICE=none \
+    EXISTING_CONTAINERS='' \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    >"$tmpdir/unknown.stdout" 2>"$tmpdir/unknown.stderr"; then
+    fail "upgrade unexpectedly accepted an unknown deployment topology"
+fi
+grep -q 'cannot detect versiond topology' "$tmpdir/unknown.stderr" || {
+    cat "$tmpdir/unknown.stderr" >&2
+    fail "unknown topology did not produce a useful error"
+}
+
+run_auto_upgrade "versiond edge-api" "$tmpdir/base.log" "$tmpdir/base.stdout"
+grep -q 'versiond=single, edge-api=single' "$tmpdir/base.stdout" || fail \
+    "base-only topology was not detected"
+assert_not_contains "$tmpdir/base.log" "docker-compose.versiond.yml"
+assert_not_contains "$tmpdir/base.log" "docker-compose.edge-api-multi.yml"
+assert_not_contains "$tmpdir/base.log" " pull devshard-postgres"
+assert_not_contains "$tmpdir/base.log" \
+    "--wait-timeout 2100 devshard-postgres"
+if ! grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/base.log" >/dev/null; then
+    cat "$tmpdir/base.log" >&2
+    fail "base-only versiond was not replaced"
+fi
+if ! grep -E -- '--wait-timeout 180 edge-api$' "$tmpdir/base.log" >/dev/null; then
+    cat "$tmpdir/base.log" >&2
+    fail "base-only edge-api was not replaced"
+fi
+
+run_auto_upgrade \
+    "versiond edge-api edge-api2 edge-api3 edge-api-router" \
+    "$tmpdir/mixed.log" "$tmpdir/mixed.stdout"
+grep -q 'versiond=single, edge-api=multi' "$tmpdir/mixed.stdout" || fail \
+    "independent versiond and edge-api axes were not detected"
+assert_not_contains "$tmpdir/mixed.log" "docker-compose.versiond.yml"
+assert_contains "$tmpdir/mixed.log" "docker-compose.edge-api-multi.yml"
+assert_not_contains "$tmpdir/mixed.log" \
+    "--wait-timeout 2100 devshard-postgres"
+
+run_auto_upgrade \
+    "versiond versiond2 versiond-router devshard-postgres edge-api" \
+    "$tmpdir/ha.log" "$tmpdir/ha.stdout"
+grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
+    "HA versiond topology was not detected"
+assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
+assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
+assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
 
 run_upgrade single versiond2 "$tmpdir/versiond2.log"
 preflight_line=$(line_number "$tmpdir/versiond2.log" \

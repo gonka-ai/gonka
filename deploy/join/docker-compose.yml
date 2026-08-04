@@ -149,6 +149,24 @@ services:
       - ./devshards/data:/opt/versiond/data
     depends_on:
       - api
+    # The topology-aware release driver uses this contract in base-only
+    # installations too. Running is not enough: versiond must reconcile its
+    # desired children before the old image can be discarded.
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/readyz",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 3
+      start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
     # Outer Docker backstop; keep it greater than the internal host budget.
     stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
     restart: always

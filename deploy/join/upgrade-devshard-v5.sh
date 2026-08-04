@@ -7,7 +7,8 @@ config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
 docker_bin=${DOCKER_BIN:-docker}
 release_tag=0.2.15-devshard-v5
 operation_id="$(date +%s%N)-$$"
-edge_mode=
+versiond_mode=auto
+edge_mode=auto
 
 fail() {
     echo "upgrade-devshard-v5: $*" >&2
@@ -20,15 +21,23 @@ warn() {
 
 usage() {
     cat >&2 <<'EOF'
-Usage: upgrade-devshard-v5.sh --edge-mode single|multi
+Usage: upgrade-devshard-v5.sh [OPTIONS]
 
-Use single for docker-compose.yml + docker-compose.versiond.yml.
-Use multi when docker-compose.edge-api-multi.yml is also deployed.
+Normally run without options. The script detects the existing deployment.
+
+Options:
+  --versiond-mode auto|single|ha
+  --edge-mode     auto|single|multi
 EOF
 }
 
 while [[ $# -gt 0 ]]; do
     case $1 in
+        --versiond-mode)
+            [[ $# -ge 2 ]] || fail "--versiond-mode requires a value"
+            versiond_mode=$2
+            shift 2
+            ;;
         --edge-mode)
             [[ $# -ge 2 ]] || fail "--edge-mode requires a value"
             edge_mode=$2
@@ -45,12 +54,13 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+case $versiond_mode in
+    auto | single | ha) ;;
+    *) fail "--versiond-mode must be auto, single, or ha" ;;
+esac
 case $edge_mode in
-    single | multi) ;;
-    *)
-        usage
-        fail "--edge-mode must be single or multi"
-        ;;
+    auto | single | multi) ;;
+    *) fail "--edge-mode must be auto, single, or multi" ;;
 esac
 
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
@@ -58,6 +68,34 @@ esac
 source "$config_env"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
+
+container_exists() {
+    "$docker_bin" inspect "$1" >/dev/null 2>&1
+}
+
+if [[ $versiond_mode == auto ]]; then
+    if container_exists devshard-postgres ||
+        container_exists versiond-router ||
+        container_exists versiond2; then
+        versiond_mode=ha
+    elif container_exists versiond; then
+        versiond_mode=single
+    else
+        fail "cannot detect versiond topology: no existing versiond deployment was found"
+    fi
+fi
+if [[ $edge_mode == auto ]]; then
+    if container_exists edge-api-router ||
+        container_exists edge-api2 ||
+        container_exists edge-api3; then
+        edge_mode=multi
+    elif container_exists edge-api; then
+        edge_mode=single
+    else
+        fail "cannot detect edge-api topology: no existing edge-api deployment was found"
+    fi
+fi
+echo "Deployment topology: versiond=$versiond_mode, edge-api=$edge_mode"
 
 # Pin this operation to the exact release. The Compose files expose these
 # variables so a failed replacement can be recreated from its captured image.
@@ -70,8 +108,10 @@ compose=(
     "$docker_bin" compose
     --project-directory "$script_dir"
     -f "$script_dir/docker-compose.yml"
-    -f "$script_dir/docker-compose.versiond.yml"
 )
+if [[ $versiond_mode == ha ]]; then
+    compose+=(-f "$script_dir/docker-compose.versiond.yml")
+fi
 if [[ $edge_mode == multi ]]; then
     compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
 fi
@@ -183,7 +223,10 @@ cleanup_rollback_tags() {
     done
 }
 
-services=(versiond versiond2 versiond-router edge-api)
+services=(versiond edge-api)
+if [[ $versiond_mode == ha ]]; then
+    services+=(versiond2 versiond-router)
+fi
 if [[ $edge_mode == multi ]]; then
     services+=(edge-api2 edge-api3 edge-api-router)
 fi
@@ -191,36 +234,47 @@ for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
 
-pull_services=(devshard-postgres versiond versiond2 versiond-router edge-api)
+pull_services=(versiond edge-api)
+if [[ $versiond_mode == ha ]]; then
+    pull_services+=(devshard-postgres versiond2 versiond-router)
+fi
 if [[ $edge_mode == multi ]]; then
     pull_services+=(edge-api2 edge-api3 edge-api-router)
 fi
 "${compose[@]}" pull "${pull_services[@]}"
 
-postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
-[[ -n $postgres_container ]] || fail \
-    "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
-postgres_target_dir=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
-case $postgres_target_dir in
-    /*) ;;
-    *) postgres_target_dir="$script_dir/$postgres_target_dir" ;;
-esac
-DOCKER_BIN="$docker_bin" "$script_dir/devshard-postgres-migration-preflight.sh" \
-    --source-container "$postgres_container" \
-    --target-dir "$postgres_target_dir"
+if [[ $versiond_mode == ha ]]; then
+    postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
+    [[ -n $postgres_container ]] || fail \
+        "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
+    postgres_target_dir=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
+    case $postgres_target_dir in
+        /*) ;;
+        *) postgres_target_dir="$script_dir/$postgres_target_dir" ;;
+    esac
+    DOCKER_BIN="$docker_bin" \
+        "$script_dir/devshard-postgres-migration-preflight.sh" \
+        --source-container "$postgres_container" \
+        --target-dir "$postgres_target_dir"
 
-echo "Migrating and starting devshard-postgres"
-if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
-    devshard-postgres; then
-    stop_failed_service devshard-postgres || true
-    fail "devshard-postgres did not become ready and was stopped"
+    echo "Migrating and starting devshard-postgres"
+    if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
+        devshard-postgres; then
+        stop_failed_service devshard-postgres || true
+        fail "devshard-postgres did not become ready and was stopped"
+    fi
+
+    # Keep the old nginx router until both versiond hosts implement the v5
+    # readiness contract. Restore a failed host before touching the other one.
+    replace_service versiond2 2100 rollback
+    replace_service versiond 2100 rollback
+    replace_service versiond-router 60 rollback
+else
+    # The standard Quickstart topology has no versiond router or shared
+    # PostgreSQL. Replace its only supervisor and restore the old image if the
+    # v5 /readyz contract does not converge.
+    replace_service versiond 2100 rollback
 fi
-
-# Keep the old nginx router until both versiond hosts implement the v5
-# readiness contract. A failed host is restored before the other is touched.
-replace_service versiond2 2100 rollback
-replace_service versiond 2100 rollback
-replace_service versiond-router 60 rollback
 
 if [[ $edge_mode == single ]]; then
     # There is no second Tier A replica in this topology, so preserve the old

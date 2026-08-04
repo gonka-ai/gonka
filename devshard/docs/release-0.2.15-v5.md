@@ -70,15 +70,51 @@ survives a router restart. Moving onto the new router does re-home sessions once
 because the ring is not the one nginx computed; HA sessions recover from shared
 Postgres, so this costs a lookup rather than a session.
 
-### Automatic v4 PostgreSQL migration
+### Topology-aware upgrade
 
-The v4 overlay left `devshard-postgres` on the anonymous
+Run one command from `deploy/join` for every supported join topology:
+
+```bash
+./upgrade-devshard-v5.sh
+```
+
+The script sources `config.env` and detects two independent axes from the
+existing containers:
+
+| Axis | Standard mode | HA / multi mode |
+| --- | --- | --- |
+| `versiond` | only `versiond` | `devshard-postgres`, `versiond2`, or `versiond-router` exists |
+| `edge-api` | only `edge-api` | `edge-api2`, `edge-api3`, or `edge-api-router` exists |
+
+The standard Host Quickstart therefore selects `versiond=single` and
+`edge-api=single` automatically. It loads only `docker-compose.yml`, does not
+require `DEVSHARD_POSTGRES_PASSWORD`, and does not create PostgreSQL or either
+router. The ML services from `docker-compose.mlnode.yml` are not recreated. HA
+and multi-edge installations add only their detected overlay files. Explicit
+`--versiond-mode` and `--edge-mode` overrides exist for recovery diagnostics;
+normal upgrades should not need them.
+
+Before pulling, the script records the immutable image ID of every service it
+will replace. If `--wait` fails before a health-aware router is active, it
+restores that service and exits before touching the next one. Temporary rollback
+tags are removed only after the whole upgrade succeeds. After a failed attempt,
+keep the reported `gonka-upgrade-rollback/*` tags until recovery is verified;
+they can then be removed with `docker image rm`.
+
+For multi-edge, the script replaces `edge-api2` first and waits for its v5
+`/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready
+replicas, so each later replacement either joins after `/readyz` passes or is
+stopped without poisoning the live pool.
+
+#### HA-only PostgreSQL migration
+
+The v4 HA overlay left `devshard-postgres` on the anonymous
 `/var/lib/postgresql/data` volume declared by `postgres:16-alpine`. The v5
 overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
 (`./devshards/postgres` by default) and migrates an existing v4 cluster
-automatically.
+automatically. Base-only installations skip this entire path.
 
-The first v4-to-v5 cutover is a **devshard maintenance operation**, not a
+The first HA v4-to-v5 cutover is a **devshard maintenance operation**, not a
 rolling update. It restarts the one shared PostgreSQL instance, and the v4 nginx
 router cannot use the v5 readiness protocol while the two versiond hosts are
 being replaced. Schedule it outside PoC/cPoC, make sure no long inference or SSE
@@ -86,59 +122,15 @@ request is still in flight, and update multiple network nodes one at a time. Thi
 matches the maintenance guidance in
 [Network Updates](https://gonka.ai/docs/network-updates/).
 
-Do not stop the whole node for this cutover. The commands below name every
-service they may recreate and use `--no-deps`, so `node`, `api`, `tmkms`,
-`bridge`, `proxy`, `explorer`, and ML containers remain running. If a separate
-maintenance plan requires stopping those services too, first follow the full
-[node stopping procedure](https://gonka.ai/docs/host/quickstart/#stopping-and-cleaning-up-your-node):
-disable the ML nodes, wait for the next epoch, and verify reward and active-set
-state before stopping the Network Node.
-
-Choose the procedure that matches the existing deployment. Compose operations
-must keep using the same complete model that created the installation; applying
-the single-edge model to an `edge-api-multi` installation removes its pool
-configuration.
-
-#### Existing single-edge-api deployment
-
-Upgrade in place from `deploy/join`:
-
-```bash
-./upgrade-devshard-v5.sh --edge-mode single
-```
-
-The script sources `config.env`, uses the complete base plus versiond Compose
-model, and records the immutable image ID of every service it will replace. If
-`--wait` fails, it recreates that service from the captured image and exits
-before touching the next working replica. If the failed service had no previous
-container, it is stopped instead. Temporary rollback tags are removed only
-after the whole upgrade succeeds. After a failed attempt, keep the reported
-`gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
-removed with `docker image rm`.
+Do not stop the whole node for this cutover. The script names every service it
+may recreate and uses `--no-deps`, so `node`, `api`, `tmkms`, `bridge`, `proxy`,
+`explorer`, and ML containers remain running.
 
 Before stopping or recreating the shared PostgreSQL container, the script
 mounts its v4 data volume read-only, measures the cluster with `du`, and checks
 the filesystem behind `DEVSHARD_POSTGRES_DATA_DIR` with `df`. Migration requires
 the full source size plus a 10% reserve. An insufficient filesystem therefore
 stops the procedure while the existing PostgreSQL process is still running.
-
-#### Existing edge-api-multi deployment
-
-Use this procedure when the running installation was created with
-`docker-compose.edge-api-multi.yml`. Every command retains all three files.
-The same script retains all three files:
-
-```bash
-./upgrade-devshard-v5.sh --edge-mode multi
-```
-
-The script replaces `edge-api2` first and waits for its v5 `/readyz`. It then
-switches the edge router from nginx to HAProxy while that known-good replica is
-available. HAProxy actively excludes the remaining old or unready replicas, so
-each later replacement either joins the pool after `/readyz` passes or is
-stopped after a failed wait. Before that router cutover, a failed replacement
-is restored from its captured image because the v4 nginx router does not consume
-Docker health or `/readyz`.
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
 first v5 `up`. During an in-place recreation, Compose carries the v4 anonymous
@@ -447,10 +439,10 @@ daemon restart. Persist the corresponding replica count as `0` first.
 
 ## Upgrade / rollout checklist
 
-- [ ] Set `VERSIOND_VERSIONS` to every version this deployment serves — an
+- [ ] For HA, set `VERSIOND_VERSIONS` to every version this deployment serves — an
       undeclared version is refused, and the list must be updated *before*
       governance approves a new one
-- [ ] Replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` overrides with
+- [ ] For HA or multi-edge, replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` with
       `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`, or drop them and take the
       shipped defaults
 - [ ] Remove `VERSIOND_ADMIN_LISTEN_ADDR` from `config.env`; readiness is now
@@ -458,33 +450,33 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Confirm every versiond in the HA overlay has
       `DEVSHARD_STORAGE_MODE=postgres` and a reachable `PGHOST` before enabling
       `GONKA_HA`
-- [ ] Perform the first v4-to-v5 cutover with in-place `docker compose up -d`,
-      not `down` or `up --renew-anon-volumes`; confirm the Postgres log reports a
-      completed automatic migration and retain the old volume through rollback
-- [ ] Let `upgrade-devshard-v5.sh` complete its PostgreSQL disk-space preflight
-      before stopping any service; migration needs the source size plus 10%
+- [ ] Run `upgrade-devshard-v5.sh` without topology flags and verify its printed
+      `versiond` and `edge-api` modes match the existing installation
+- [ ] For HA, let the script finish its PostgreSQL disk-space preflight before
+      stopping any service; migration needs the source size plus 10%. Use the
+      in-place migration, not `down` or `--renew-anon-volumes`
 - [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
       `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
       wait; short values can terminate accepted inference streams
-- [ ] Keep `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` in `config.env`; use a
+- [ ] For HA, keep `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` in `config.env`; use a
       persisted value of `0` for permanent decommission and never decommission
       `VERSIOND_LEGACY_HOST` while `VERSIOND_NON_HA_VERSIONS` is non-empty
-- [ ] To remove all legacy pins, persist
+- [ ] For HA, remove all legacy pins by persisting
       `VERSIOND_NON_HA_VERSIONS=""`; do not unset it, because unset restores
       the `v1 v2 v3` default
 - [ ] Use `upgrade-devshard-v5.sh` so a failed versiond replacement is rolled
       back before the legacy owner or router is touched
-- [ ] For an existing edge-api-multi installation, use `--edge-mode multi`;
-      the script replaces `edge-api2`, switches to the health-aware HAProxy,
-      and then replaces the remaining replicas one at a time
+- [ ] For edge-api-multi, confirm auto-detection reports `edge-api=multi`; the
+      script replaces `edge-api2`, switches to HAProxy, and then replaces the
+      remaining replicas one at a time
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
-- [ ] Use the targeted `--no-deps` cutover above: migrate PostgreSQL first,
+- [ ] For HA, use the targeted `--no-deps` cutover above: migrate PostgreSQL first,
       replace `versiond2` and then the legacy owner `versiond`, and install the
       versiond router only after both hosts expose `/readyz`; do not reconcile
       the whole base Compose model as part of this devshard-only release
-- [ ] After the stack is up, check the pool diagnostic lists every versiond as
+- [ ] For HA, check that the pool diagnostic lists every versiond as
       `UP` using the read-only `pool-status` command above
 
 ## Known follow-ups
