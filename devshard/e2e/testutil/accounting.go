@@ -150,6 +150,11 @@ func AccountingInFlightTotal(resp AccountingParticipantsResponse) uint64 {
 	return total
 }
 
+func AccountingUnfinishedTotal(resp AccountingParticipantsResponse) uint64 {
+	return AccountingDispositionCount(resp, "unfinished_refused") +
+		AccountingDispositionCount(resp, "unfinished_execution")
+}
+
 func RequireAccountingResponseCoherent(t *testing.T, resp AccountingParticipantsResponse, expectedModel string) {
 	t.Helper()
 	require.NotZero(t, resp.SchemaVersion, "accounting response should declare a schema version")

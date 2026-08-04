@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/e2e/testutil"
+	"devshard/internal/e2econfig"
 )
 
 // Test flow:
@@ -103,6 +104,89 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 	case <-time.After(testutil.DefaultRequestTimeout):
 		t.Fatal("timed out waiting for delayed completion")
 	}
+}
+
+// Test flow:
+//  1. Start the three-host environment with the next assigned host delaying inference.
+//  2. Shorten only this e2e run's protocol and redundancy timeout windows.
+//  3. Send one non-streaming completion asynchronously and observe its sent nonce in-flight.
+//  4. Let redundancy return a fast secondary winner while timeout handling runs for the slow send.
+//  5. Poll accounting until in_flight drops and an unfinished disposition appears.
+func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
+	const shortProtocolTimeoutSeconds = "1"
+
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			0: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+			1: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+				"DEVSHARD_STUB_INFERENCE_DELAY_MS":   "8000",
+			},
+			2: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+		},
+		devshardctlEnvOverrides: map[string]string{
+			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+		},
+	})
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeUnfinished := testutil.AccountingUnfinishedTotal(before)
+
+	done := make(chan testutil.RawResponseResult, 1)
+	go func() {
+		resp, err := testutil.SendCompletionRawE(client, env.clientURL, "accounting live send timeout", testutil.AdminAPIKey)
+		done <- testutil.RawResponseResult{Response: resp, Err: err}
+	}()
+
+	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
+	})
+	inFlightCount := testutil.AccountingInFlightTotal(inFlight)
+	require.Greater(t, inFlightCount, uint64(0), "accounting should expose the live sent nonce as in_flight")
+	testutil.RequireAccountingResponseCoherent(t, inFlight, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, inFlight)
+
+	select {
+	case result := <-done:
+		require.NoError(t, result.Err)
+		testutil.LogRawResponse(t, "accounting live send timeout completion", result.Response)
+		testutil.RequireOpenAINonStreamingCompletion(t, result.Response)
+	case <-time.After(testutil.DefaultRequestTimeout):
+		t.Fatal("timed out waiting for timeout-backed completion")
+	}
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingInFlightTotal(resp) < inFlightCount &&
+			testutil.AccountingUnfinishedTotal(resp) > beforeUnfinished
+	})
+	require.Less(t, testutil.AccountingInFlightTotal(accounting), inFlightCount, "timed-out live send should leave the in_flight bucket")
+	require.Greater(t, testutil.AccountingUnfinishedTotal(accounting), beforeUnfinished, "timed-out live send should become an unfinished disposition")
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
 }
 
 // Test flow:

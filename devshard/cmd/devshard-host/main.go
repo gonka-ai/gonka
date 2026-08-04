@@ -19,6 +19,7 @@ import (
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/internal/e2econfig"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -154,7 +155,10 @@ func loadConfig() (hostConfig, error) {
 
 func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
 	verifier := signing.NewSecp256k1Verifier()
-	sessionConfig := sessionConfigFromEnv(len(cfg.group))
+	sessionConfig, err := sessionConfigFromEnv(len(cfg.group))
+	if err != nil {
+		return nil, err
+	}
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
@@ -293,8 +297,8 @@ func (e delayedInferenceEngine) Execute(ctx context.Context, req devshardpkg.Exe
 
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
-func sessionConfigFromEnv(groupSize int) types.SessionConfig {
-	return types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
+	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
 		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
 		FeePerNonce:               uintEnv("DEVSHARD_FEE_PER_NONCE", 0),
@@ -304,6 +308,12 @@ func sessionConfigFromEnv(groupSize int) types.SessionConfig {
 		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
 	})
+	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
+	if err != nil {
+		return types.SessionConfig{}, err
+	}
+	cfg = overrides.Apply(cfg)
+	return types.NormalizeSessionConfig(cfg, groupSize), nil
 }
 
 func groupFromKeys(keys []string) ([]types.SlotAssignment, error) {

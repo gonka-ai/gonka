@@ -62,9 +62,10 @@ type containerSpec struct {
 }
 
 type e2eEnvOptions struct {
-	hostVolumeNames    []string
-	hostEnvOverrides   map[int]map[string]string
-	usePostgresStorage bool
+	hostVolumeNames         []string
+	hostEnvOverrides        map[int]map[string]string
+	usePostgresStorage      bool
+	devshardctlEnvOverrides map[string]string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -141,6 +142,22 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.startHost(ctx, t, i)
 	}
 
+	devshardctlEnv := map[string]string{
+		"DEVSHARD_E2E":           "1",
+		"DEVSHARD_ESCROW_ID":     defaultEscrowID,
+		"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
+		"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
+		"DEVSHARD_PARAMS_SOURCE": "chain",
+		"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+		"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
+		"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
+		"DEVSHARD_MODEL":         "stub-model",
+		"GATEWAY_MAX_TOKENS_CAP": "4096",
+		"DEVSHARD_STATS_PORT":    "9091",
+	}
+	for k, v := range opts.devshardctlEnvOverrides {
+		devshardctlEnv[k] = v
+	}
 	devshardctl := env.startContainer(ctx, t, containerSpec{
 		name:  devshardCtlName,
 		image: images.devshardctl,
@@ -148,19 +165,8 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		extraPorts: []string{
 			"9091/tcp",
 		},
-		aliases: []string{devshardCtlName},
-		env: map[string]string{
-			"DEVSHARD_ESCROW_ID":     defaultEscrowID,
-			"DEVSHARD_CHAIN_GRPC":    mockChainAlias + ":9090",
-			"DEVSHARD_PUBLIC_API":    "http://" + mockChainAlias + ":9191",
-			"DEVSHARD_PARAMS_SOURCE": "chain",
-			"DEVSHARD_PRIVATE_KEY":   testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
-			"DEVSHARD_ADMIN_API_KEY": testutil.AdminAPIKey,
-			"DEVSHARD_STORAGE_PATH":  "/tmp/devshardctl",
-			"DEVSHARD_MODEL":         "stub-model",
-			"GATEWAY_MAX_TOKENS_CAP": "4096",
-			"DEVSHARD_STATS_PORT":    "9091",
-		},
+		aliases:  []string{devshardCtlName},
+		env:      devshardctlEnv,
 		waitPath: "/v1/status",
 	})
 
