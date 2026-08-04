@@ -17,7 +17,7 @@ model; the base file alone does not define `versiond2` or `versiond-router`:
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
 | Evacuate / stop temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps versiond2` | it rejoins the pool only once `/readyz` returns 200 |
+| Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
 | Inspect what the router believes | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
 
 This works because the router derives everything it needs by observation:
@@ -66,6 +66,12 @@ decommissioned service. To add it back as a new pool member, persist the
 corresponding value as `1`, then run the targeted `up -d --no-deps` command. To
 add a third distinct host, add a new service with its own data directory and the
 `versiond-pool` network alias to the deployment model before starting it.
+
+The HA overlay defines a Compose healthcheck against `/readyz`. Use `--wait` for
+every ordered replacement so the next host is not touched until the previous
+one has reconciled and can serve. `VERSIOND_HEALTH_START_PERIOD` defaults to
+`30m` for slow downloads; the runbook's `2100`-second wait adds five minutes for
+failure accounting and command completion.
 
 ## Safety invariants
 

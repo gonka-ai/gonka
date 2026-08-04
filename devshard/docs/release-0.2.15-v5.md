@@ -87,6 +87,9 @@ state before stopping the Network Node.
 Upgrade in place from `deploy/join`:
 
 ```bash
+(
+set -e
+
 # Pull only the services changed by the devshard v5 release.
 source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
@@ -98,12 +101,14 @@ docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
   up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
 
 # Replace versiond hosts one at a time. The legacy SQLite owner is last.
+# --wait consumes the Compose /readyz healthcheck; a failed or slow reconcile
+# stops this sequence before the other working host is touched.
 source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  up -d --no-deps versiond2
+  up -d --no-deps --wait --wait-timeout 2100 versiond2
 source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-  up -d --no-deps versiond
+  up -d --no-deps --wait --wait-timeout 2100 versiond
 
 # Install the health-aware router only after both hosts provide /readyz.
 source ./config.env && \
@@ -114,6 +119,7 @@ docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
 source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
   up -d --no-deps edge-api
+)
 ```
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
@@ -176,6 +182,7 @@ The join Compose defaults are:
 | Setting | Default | Role |
 | --- | --- | --- |
 | `VERSIOND_DRAIN_ANNOUNCE` | `5s` | Keep serving after `/readyz` starts failing, so the balancer notices first. Counts against the shutdown budget; `0` = no balancer; below `5s` refuses to boot |
+| `VERSIOND_HEALTH_START_PERIOD` | `30m` | Compose startup allowance for downloads and first reconcile. A successful `/readyz` check marks the host healthy immediately; ordered upgrades wait at most 35 minutes |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
 | `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
 
@@ -324,7 +331,7 @@ Day-to-day operations:
 | Task | Command |
 | --- | --- |
 | Take `versiond2` out of service temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
-| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps versiond2` |
+| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` |
 | Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
 | Inspect the router's live view | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
 
@@ -360,6 +367,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Keep `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` in `config.env`; use a
       persisted value of `0` for permanent decommission and never decommission
       `VERSIOND_LEGACY_HOST` while `VERSIOND_NON_HA_VERSIONS` is non-empty
+- [ ] Keep `--wait --wait-timeout 2100` on each ordered versiond replacement;
+      do not start replacing the legacy owner until `versiond2` is healthy
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden

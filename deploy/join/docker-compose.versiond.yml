@@ -56,6 +56,26 @@ x-versiond: &versiond
       condition: service_started
     devshard-postgres:
       condition: service_healthy
+  # Compose readiness is the same contract the router consumes. A successful
+  # `up --wait` therefore means this host has reconciled and can receive work,
+  # not merely that its PID exists. BusyBox is part of the Alpine versiond image.
+  healthcheck:
+    test:
+      [
+        "CMD",
+        "/bin/busybox",
+        "wget",
+        "-q",
+        "-O",
+        "/dev/null",
+        "http://127.0.0.1:8080/readyz",
+      ]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    # Slow binary downloads may legitimately keep a new host unready. A passing
+    # check still marks it healthy immediately during the start period.
+    start_period: ${VERSIOND_HEALTH_START_PERIOD:-30m}
   # Outer Docker backstop; keep it greater than the internal host budget.
   stop_grace_period: ${VERSIOND_STOP_GRACE_PERIOD:-30m}
   restart: always
