@@ -336,8 +336,9 @@ func mustRepairPersistedGatewayEndpointSettings(gatewayStore *GatewayStore, gate
 		settings.ChainGRPC = effectiveChainGRPC(flags, "")
 		changed = true
 	}
-	if strings.TrimSpace(settings.PublicAPI) == "" {
-		settings.PublicAPI = envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL)
+	resolvedPublicAPI := effectivePublicAPI(flags, settings.PublicAPI)
+	if settings.PublicAPI != resolvedPublicAPI {
+		settings.PublicAPI = resolvedPublicAPI
 		changed = true
 	}
 	if !changed {
@@ -390,9 +391,27 @@ func effectiveChainRPC() string {
 	return strings.TrimSpace(firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_RPC"), os.Getenv("NODE_RPC_URL")))
 }
 
+func effectivePublicAPI(flags cliFlags, persisted string) string {
+	envVal := os.Getenv("DEVSHARD_PUBLIC_API")
+	if strings.TrimSpace(envVal) == "none" || strings.TrimSpace(envVal) == "disabled" {
+		return strings.TrimSpace(envVal)
+	}
+	if strings.TrimSpace(persisted) != "" {
+		return strings.TrimSpace(persisted)
+	}
+	if strings.TrimSpace(envVal) != "" {
+		return strings.TrimSpace(envVal)
+	}
+	if flags.publicAPI != defaultPublicAPIURL {
+		return flags.publicAPI
+	}
+	return defaultPublicAPIURL
+}
+
 func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
 	gatewayState.Settings = gatewayState.Settings.WithTuningDefaults()
 	gatewayState.Settings.ChainGRPC = effectiveChainGRPC(flags, gatewayState.Settings.ChainGRPC)
+	gatewayState.Settings.PublicAPI = effectivePublicAPI(flags, gatewayState.Settings.PublicAPI)
 	DefaultRequestMaxTokens = gatewayState.Settings.DefaultRequestMaxTokens
 	RequestMaxTokensCap = gatewayState.Settings.RequestMaxTokensCap
 	applyGatewayTuningSettings(gatewayState.Settings)
