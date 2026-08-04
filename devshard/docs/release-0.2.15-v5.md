@@ -67,12 +67,52 @@ overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
 (`./devshards/postgres` by default) and migrates an existing v4 cluster
 automatically.
 
+The first v4-to-v5 cutover is a **devshard maintenance operation**, not a
+rolling update. It restarts the one shared PostgreSQL instance, and the v4 nginx
+router cannot use the v5 readiness protocol while the two versiond hosts are
+being replaced. Schedule it outside PoC/cPoC, make sure no long inference or SSE
+request is still in flight, and update multiple network nodes one at a time. This
+matches the maintenance guidance in
+[Network Updates](https://gonka.ai/docs/network-updates/).
+
+Do not stop the whole node for this cutover. The commands below name every
+service they may recreate and use `--no-deps`, so `node`, `api`, `tmkms`,
+`bridge`, `proxy`, `explorer`, and ML containers remain running. If a separate
+maintenance plan requires stopping those services too, first follow the full
+[node stopping procedure](https://gonka.ai/docs/host/quickstart/#stopping-and-cleaning-up-your-node):
+disable the ML nodes, wait for the next epoch, and verify reward and active-set
+state before stopping the Network Node.
+
 Upgrade in place from `deploy/join`:
 
 ```bash
+# Pull only the services changed by the devshard v5 release.
 source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml pull && \
-docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  pull devshard-postgres versiond versiond2 versiond-router edge-api
+
+# Recreate PostgreSQL first and wait for the v4 data migration and healthcheck.
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
+
+# Replace versiond hosts one at a time. The legacy SQLite owner is last.
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  up -d --no-deps versiond2
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  up -d --no-deps versiond
+
+# Install the health-aware router only after both hosts provide /readyz.
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  up -d --no-deps versiond-router
+
+# Update the single edge-api without touching its node/api dependencies.
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  up -d --no-deps edge-api
 ```
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
@@ -81,7 +121,9 @@ volume into the replacement container. Before PostgreSQL starts, the shipped
 entrypoint copies the stopped cluster to a staging directory, validates
 `PG_VERSION`, syncs it, and atomically renames it to the new `PGDATA`. The old
 volume is not modified and remains the physical rollback copy. Later starts use
-the bind-mounted cluster directly, so ordinary `down` / `up` is then safe.
+the bind-mounted cluster directly, so `down` / `up` no longer risks this database
+migration. It is still a full-stack maintenance operation and must follow the
+official node stopping procedure above.
 
 This is fail-closed if an operator removed the old container first. When the old
 volume is no longer attached but existing versiond artifacts are present, the
@@ -258,7 +300,9 @@ node was previously serving HA traffic with unsafe storage.
 ## High-availability deployment
 
 Run these commands from `deploy/join`. Choose one complete Compose model and use
-the same set of `-f` arguments for later whole-stack operations:
+the same set of `-f` arguments for later service-targeted operations. These
+full-model `up` commands are for initial deployment; use the targeted cutover
+above when upgrading a running v4 node:
 
 ```bash
 # HA versiond and shared PostgreSQL, with one edge-api.
@@ -308,9 +352,10 @@ host lands in that slot next.
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
-- [ ] Reconcile the whole overlay with one `up -d` rather than replacing only
-      the router; the dependency order starts migrated Postgres first, and the
-      router health checks exclude versiond hosts until they report ready
+- [ ] Use the targeted `--no-deps` cutover above: migrate PostgreSQL first,
+      replace `versiond2` and then the legacy owner `versiond`, and install the
+      router only after both hosts expose `/readyz`; do not reconcile the whole
+      base Compose model as part of this devshard-only release
 - [ ] After the stack is up, check the pool diagnostic lists every versiond as
       `UP` using the read-only `pool-status` command above
 
