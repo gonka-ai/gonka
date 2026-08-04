@@ -173,7 +173,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
+    image: ghcr.io/product-science/bridge:0.2.15
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
