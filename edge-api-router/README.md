@@ -103,11 +103,13 @@ signal
   `-- exit, or force-close on budget expiry / another signal
 ```
 
-The default announce window is five seconds. It gives the one-second HAProxy
-check enough time to remove the replica before the listener closes. The
-shutdown budget defaults to two minutes, matching the router's default read
-timeout. The Compose `EDGE_API_STOP_GRACE_PERIOD` defaults to three minutes and
-is the outer Docker SIGKILL backstop.
+The announce window is either zero for a direct deployment with no balancer, or
+at least five seconds. Five seconds covers the one-second check interval, the
+three-second check timeout, and an observation margin before the listener
+closes. A shorter non-zero value is rejected at startup. The shutdown budget
+defaults to two minutes, matching the router's default read timeout. The Compose
+`EDGE_API_STOP_GRACE_PERIOD` defaults to three minutes and is the outer Docker
+SIGKILL backstop.
 
 An established response stays on its original connection after readiness
 fails. HAProxy sends only later requests to another replica.

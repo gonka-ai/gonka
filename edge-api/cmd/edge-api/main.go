@@ -27,9 +27,10 @@ const (
 	envDrainAnnounce  = "EDGE_API_DRAIN_ANNOUNCE"
 	envShutdownBudget = "EDGE_API_SHUTDOWN_BUDGET"
 
-	// defaultDrainAnnounce must exceed the balancer's health-check interval
-	// (edge-api-router probes /readyz every second) so the instance is out of
-	// rotation before it stops accepting.
+	// minDrainAnnounce covers edge-api-router's complete health-check failure
+	// window plus an observation margin. Zero explicitly means no balancer.
+	minDrainAnnounce = 5 * time.Second
+	// The default is the minimum safe value for the shipped router.
 	defaultDrainAnnounce = 5 * time.Second
 	// defaultShutdownBudget matches the router's default read timeout: the
 	// process should wait for exactly as long as the hop in front is still
@@ -266,6 +267,9 @@ func loadConfig() (config, error) {
 	if err != nil {
 		return config{}, err
 	}
+	if err := validateDrainAnnounce(drainAnnounce); err != nil {
+		return config{}, err
+	}
 	shutdownBudget, err := durationFromEnv(envShutdownBudget, defaultShutdownBudget)
 	if err != nil {
 		return config{}, err
@@ -282,6 +286,21 @@ func loadConfig() (config, error) {
 		DrainAnnounce:   drainAnnounce,
 		ShutdownBudget:  shutdownBudget,
 	}, nil
+}
+
+// validateDrainAnnounce accepts zero as an explicit direct-deployment mode.
+// With a balancer, the window must cover a check that may consume its full 3s
+// timeout plus the 1s interval before it starts, with one second of margin.
+func validateDrainAnnounce(announce time.Duration) error {
+	if announce == 0 {
+		return nil
+	}
+	if announce < minDrainAnnounce {
+		return fmt.Errorf(
+			"%s=%s is below %s: the balancer needs up to ~4s to observe the failing check (inter 1s, timeout check 3s), and a shorter window closes the listener while traffic still arrives; use 0 to declare there is no balancer",
+			envDrainAnnounce, announce, minDrainAnnounce)
+	}
+	return nil
 }
 
 // durationFromEnv rejects a malformed value instead of silently falling back:

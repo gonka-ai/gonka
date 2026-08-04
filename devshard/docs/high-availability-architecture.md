@@ -129,6 +129,8 @@ Because edge-api holds no state, it scales horizontally already:
 - A stopping instance reports unready for `EDGE_API_DRAIN_ANNOUNCE` while it
   keeps serving, then finishes accepted queries within
   `EDGE_API_SHUTDOWN_BUDGET`, so replacing an instance does not cut queries.
+  The announce value is `0` only without a balancer; HA deployments require at
+  least `5s` so the router can finish its health-check failure window.
 - Compose overlays add `edge-api-2`, `edge-api-3` + `edge-api-router`
   (`local-test-net/docker-compose.edge-api.yml`,
   `deploy/join/docker-compose.edge-api-multi.yml`), and point the proxy at the

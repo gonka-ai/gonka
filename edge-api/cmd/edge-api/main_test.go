@@ -85,8 +85,10 @@ func TestShutdownDefaultsCoverRouterContract(t *testing.T) {
 		regexp.MustCompile(`(?m)^[\t ]*server-template [^\n]* fall ([0-9]+)`))
 	const observationMargin = time.Second
 	worstDetection := checkTimeout + checkInterval*time.Duration(fall)
-	require.GreaterOrEqual(t, defaultDrainAnnounce, worstDetection+observationMargin,
-		"announce default must cover the router health-check failure window")
+	require.GreaterOrEqual(t, minDrainAnnounce, worstDetection+observationMargin,
+		"minimum announce must cover the router health-check failure window")
+	require.GreaterOrEqual(t, defaultDrainAnnounce, minDrainAnnounce,
+		"announce default must not bypass the minimum")
 
 	readTimeoutSeconds := routerInteger(t, entrypoint,
 		regexp.MustCompile(`READ_TIMEOUT="\$\{EDGE_API_ROUTER_READ_TIMEOUT_SECONDS:-([0-9]+)\}"`))
@@ -113,6 +115,7 @@ func TestLoadConfig_RejectsBadShutdownDurations(t *testing.T) {
 		{"unparsable announce", envDrainAnnounce, "5"},
 		{"unparsable budget", envShutdownBudget, "forever"},
 		{"negative announce", envDrainAnnounce, "-1s"},
+		{"short announce", envDrainAnnounce, "4s"},
 		{"zero budget", envShutdownBudget, "0s"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -123,6 +126,15 @@ func TestLoadConfig_RejectsBadShutdownDurations(t *testing.T) {
 			require.ErrorContains(t, err, tc.key)
 		})
 	}
+}
+
+func TestLoadConfig_AcceptsDrainAnnounceBoundary(t *testing.T) {
+	t.Setenv(envChainGRPCURL, "node:9090")
+	t.Setenv(envDrainAnnounce, minDrainAnnounce.String())
+
+	cfg, err := loadConfig()
+	require.NoError(t, err)
+	assert.Equal(t, minDrainAnnounce, cfg.DrainAnnounce)
 }
 
 func TestAwaitDrainAnnouncement_WaitsOutTheWindow(t *testing.T) {
