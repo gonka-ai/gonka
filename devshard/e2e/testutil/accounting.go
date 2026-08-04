@@ -126,6 +126,14 @@ func AccountingDispositionTotal(resp AccountingParticipantsResponse) uint64 {
 	return total
 }
 
+func AccountingDispositionCount(resp AccountingParticipantsResponse, disposition string) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		total += participant.Dispositions[disposition]
+	}
+	return total
+}
+
 func AccountingParticipantDispositionTotal(participant AccountingParticipant) uint64 {
 	var total uint64
 	for _, count := range participant.Dispositions {

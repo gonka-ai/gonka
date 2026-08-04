@@ -107,6 +107,38 @@ func TestE2E_AccountingLiveInFlightIsCountedOnce(t *testing.T) {
 
 // Test flow:
 //  1. Start the default three-host environment.
+//  2. Stop the host assigned to the next nonce so the first attempt fails.
+//  3. Send enough sequential completions for the failed participant to be skipped.
+//  4. Poll accounting until the skipped no-send nonce appears as ghost.
+//  5. Assert accounting remains coherent and every assigned nonce is counted once.
+func TestE2E_AccountingFocusedGhostRequestNotSent(t *testing.T) {
+	env, client := startNonStreamingEnv(t)
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeGhost := testutil.AccountingDispositionCount(before, "ghost")
+	beforeAssigned := testutil.AccountingAssignedTotal(before)
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
+	t.Cleanup(cancel)
+	env.stopHost(ctx, t, nextSlot)
+
+	testutil.SendCompletions(t, client, env.clientURL, "accounting focused ghost", len(env.hostURLs)+1)
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingAssignedTotal(resp) > beforeAssigned &&
+			testutil.AccountingDispositionCount(resp, "ghost") > beforeGhost
+	})
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "ghost"), beforeGhost, "stopped participant should eventually be skipped as a ghost no-send nonce")
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
+//  1. Start the default three-host environment.
 //  2. Stop one devshard-host container.
 //  3. Send a non-streaming completion through devshardctl and assert success.
 //  4. Query accounting for the current epoch and model.
