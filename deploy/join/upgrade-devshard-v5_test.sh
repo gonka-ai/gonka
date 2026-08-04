@@ -51,6 +51,11 @@ if [[ ${1:-} == inspect ]]; then
 fi
 
 if [[ ${1:-} == exec ]]; then
+    if [[ ${2:-} == "cid-${ROLLBACK_PROBE_FAIL_SERVICE-}" ]]; then
+        for arg in "$@"; do
+            [[ $arg == http://*/healthz ]] && exit 1
+        done
+    fi
     for arg in "$@"; do
         [[ $arg == nginx ]] && exit 0
         [[ $arg == haproxy ]] && exit 1
@@ -135,6 +140,10 @@ run_upgrade() {
         BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        ROLLBACK_PROBE_FAIL_SERVICE="${ROLLBACK_PROBE_FAIL_SERVICE-}" \
+        UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-5}" \
+        UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
+        UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode ha --edge-mode "$mode" \
@@ -177,6 +186,10 @@ run_interrupted_upgrade() {
         BLOCK_SIGNAL="$signal" \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        ROLLBACK_PROBE_FAIL_SERVICE='' \
+        UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
+        UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
+        UPGRADE_ROLLBACK_STABILITY_CHECKS=1 \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode ha --edge-mode single \
@@ -287,7 +300,18 @@ versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
     $versiond_router_up_line -lt $versiond_up_line ]] ||
     fail "versiond traffic barrier or HAProxy cutover order is wrong"
 
-run_upgrade single versiond2 "$tmpdir/versiond2.log"
+run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
+assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"
+assert_not_contains "$tmpdir/postgres-failure.log" \
+    "gonka-upgrade-rollback/devshard-postgres:"
+grep -q 'source volume and persistent target are preserved' \
+    "$tmpdir/stderr" || {
+    cat "$tmpdir/stderr" >&2
+    fail "PostgreSQL failure did not explain its preservation contract"
+}
+
+UPGRADE_ROLLBACK_STABILITY_CHECKS=3 \
+    run_upgrade single versiond2 "$tmpdir/versiond2.log"
 preflight_line=$(line_number "$tmpdir/versiond2.log" \
     "--volumes-from cid-devshard-postgres:ro")
 postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
@@ -297,12 +321,25 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+rollback_probe_count=$(grep -Fc \
+    'http://127.0.0.1:8080/healthz' "$tmpdir/versiond2.log")
+[[ $rollback_probe_count -eq 3 ]] || fail \
+    "rollback was not held through the configured stability window"
 assert_not_contains "$tmpdir/versiond2.log" \
     "VERSIOND_HOSTS=versiond\\ versiond2"
 if grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/versiond2.log" >/dev/null; then
     cat "$tmpdir/versiond2.log" >&2
     fail "versiond was replaced after versiond2 failed"
 fi
+
+ROLLBACK_PROBE_FAIL_SERVICE=versiond2 \
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
+    run_upgrade single versiond2 "$tmpdir/versiond2-unavailable.log"
+assert_contains "$tmpdir/versiond2-unavailable.log" " stop versiond2"
+grep -q 'did not become stably available' "$tmpdir/stderr" || {
+    cat "$tmpdir/stderr" >&2
+    fail "unavailable rollback did not report the failed verification"
+}
 
 for signal in HUP INT TERM; do
     signal_name=${signal,,}

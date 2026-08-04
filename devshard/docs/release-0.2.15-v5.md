@@ -94,21 +94,24 @@ and multi-edge installations add only their detected overlay files. Explicit
 `--versiond-mode` and `--edge-mode` overrides exist for recovery diagnostics;
 normal upgrades should not need them.
 
-Before pulling, the script records the immutable image ID of every service it
-will replace. The v4 nginx routers do not consume `/readyz`, so before replacing
-the first replica the script removes that replica from the rendered upstream,
-validates the nginx config, and performs a graceful reload. Existing requests
-remain on the old nginx workers; the replacement does not receive new traffic
-while `up --wait` is establishing readiness.
+Before pulling, the script records the immutable image ID of every application
+or router service it may roll back. The v4 nginx routers do not consume
+`/readyz`, so before replacing the first replica the script removes that replica
+from the rendered upstream, validates the nginx config, and performs a graceful
+reload. Existing requests remain on the old nginx workers; the replacement does
+not receive new traffic while `up --wait` is establishing readiness.
 
 `EXIT`, `INT`, `TERM`, and `HUP` share the same compensation path. If an active
-replacement fails or the script is interrupted, its previous image is restored
-(or a newly introduced service is stopped) before the script exits. A replica
-interrupted after the nginx barrier remains isolated because a v4 process has no
-reliable readiness signal; rerun the same command to retry it. Temporary
-rollback tags are removed only after the whole upgrade succeeds. After a failed
-attempt, keep the reported `gonka-upgrade-rollback/*` tags until recovery is
-verified; they can then be removed with `docker image rm`.
+replacement fails or the script is interrupted, it attempts to recreate the
+previous image; a newly introduced service is stopped instead. A restored v4
+service must remain running and answer its existing `/healthz` endpoint on three
+consecutive probes before rollback is reported as successful. If that check
+fails, the service is stopped and the script requires operator recovery. A
+replica interrupted after the nginx barrier remains isolated because `/healthz`
+is a weaker contract than v5 readiness; rerun the same command to retry it.
+Temporary rollback tags are removed only after the whole upgrade succeeds.
+After a failed attempt, keep the reported `gonka-upgrade-rollback/*` tags until
+recovery is verified; they can then be removed with `docker image rm`.
 
 For multi-edge, the script replaces `edge-api2` first and waits for its v5
 `/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready
@@ -128,6 +131,13 @@ The v4 HA overlay left `devshard-postgres` on the anonymous
 overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
 (`./devshards/postgres` by default) and migrates an existing v4 cluster
 automatically. Base-only installations skip this entire path.
+
+PostgreSQL is deliberately outside the image rollback contract above. Its v4
+source volume is retained and migration publishes an atomic copy into the
+persistent target. If migration or startup fails, the script stops PostgreSQL
+and preserves both locations for diagnosis or another restart. It does not
+automatically switch back to the source volume: the new database may already
+have accepted writes, so doing that could fork the storage history.
 
 The first HA v4-to-v5 cutover is a **devshard maintenance operation**, not a
 rolling update. It restarts the one shared PostgreSQL instance, replaces the

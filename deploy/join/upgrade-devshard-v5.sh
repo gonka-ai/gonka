@@ -69,6 +69,25 @@ source "$config_env"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 
+rollback_verify_timeout=${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-60}
+rollback_verify_interval=${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-2}
+rollback_stability_checks=${UPGRADE_ROLLBACK_STABILITY_CHECKS:-3}
+case $rollback_verify_timeout in
+    '' | *[!0-9]* | 0)
+        fail "UPGRADE_ROLLBACK_VERIFY_TIMEOUT must be a positive integer"
+        ;;
+esac
+case $rollback_verify_interval in
+    '' | *[!0-9]* | 0)
+        fail "UPGRADE_ROLLBACK_VERIFY_INTERVAL must be a positive integer"
+        ;;
+esac
+case $rollback_stability_checks in
+    '' | *[!0-9]* | 0)
+        fail "UPGRADE_ROLLBACK_STABILITY_CHECKS must be a positive integer"
+        ;;
+esac
+
 container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
 }
@@ -302,13 +321,52 @@ capture_rollback_image() {
     echo "Captured $service rollback image as $rollback_image"
 }
 
-service_is_running() {
+rollback_health_url() {
+    case $1 in
+        versiond | versiond2 | versiond-router)
+            printf 'http://127.0.0.1:8080/healthz\n'
+            ;;
+        edge-api | edge-api2 | edge-api3 | edge-api-router)
+            printf 'http://127.0.0.1:18080/healthz\n'
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+rollback_service_is_available() {
     local service=$1
-    local container_id
+    local container_id health_url
 
     container_id=$("${compose[@]}" ps --all --quiet "$service")
     [[ -n $container_id ]] || return 1
-    [[ $("$docker_bin" inspect --format '{{.State.Running}}' "$container_id") == true ]]
+    [[ $("$docker_bin" inspect --format '{{.State.Running}}' \
+        "$container_id") == true ]] || return 1
+    health_url=$(rollback_health_url "$service") || return 1
+    "$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O /dev/null "$health_url"
+}
+
+wait_for_rollback_availability() {
+    local service=$1
+    local deadline=$((SECONDS + rollback_verify_timeout))
+    local consecutive=0
+
+    echo "Verifying rollback of $service through $rollback_stability_checks consecutive health checks" >&2
+    while :; do
+        if rollback_service_is_available "$service"; then
+            ((consecutive += 1))
+            if ((consecutive >= rollback_stability_checks)); then
+                return 0
+            fi
+        else
+            consecutive=0
+        fi
+
+        ((SECONDS < deadline)) || return 1
+        sleep "$rollback_verify_interval"
+    done
 }
 
 stop_failed_service() {
@@ -334,11 +392,11 @@ rollback_service() {
     echo "Restoring $service from $rollback_image" >&2
     if env "$image_variable=$rollback_image" \
         "${compose[@]}" up -d --no-deps --force-recreate "$service" &&
-        service_is_running "$service"; then
+        wait_for_rollback_availability "$service"; then
         return 0
     fi
 
-    warn "rollback of $service failed; stopping the failed service"
+    warn "rollback of $service did not become stably available; stopping it"
     stop_failed_service "$service" || true
     return 1
 }
@@ -506,7 +564,7 @@ if [[ $versiond_mode == ha ]]; then
     active_failure_strategy=stop
     if ! run_interruptible "${compose[@]}" \
         up -d --no-deps --wait --wait-timeout 2100 devshard-postgres; then
-        fail "devshard-postgres did not become ready and was stopped"
+        fail "devshard-postgres did not become ready and will be stopped; its source volume and persistent target are preserved for recovery"
     fi
     active_service=
     active_failure_strategy=
