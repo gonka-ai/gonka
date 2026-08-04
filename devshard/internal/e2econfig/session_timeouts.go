@@ -5,13 +5,16 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"devshard/types"
 )
 
 const (
-	RefusalTimeoutSecondsEnv   = "DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS"
-	ExecutionTimeoutSecondsEnv = "DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS"
+	RefusalTimeoutSecondsEnv    = "DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS"
+	ExecutionTimeoutSecondsEnv  = "DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS"
+	StubInferenceDelayMillisEnv = "DEVSHARD_STUB_INFERENCE_DELAY_MS"
+	ReceiptDelayMillisEnv       = "DEVSHARD_E2E_RECEIPT_DELAY_MS"
 )
 
 type SessionTimeoutOverrides struct {
@@ -50,7 +53,19 @@ func (o SessionTimeoutOverrides) Apply(config types.SessionConfig) types.Session
 	return config
 }
 
+func DurationMillisFromEnv(name string) (time.Duration, error) {
+	value, ok, err := e2eInt64Env(name)
+	if err != nil || !ok {
+		return 0, err
+	}
+	return time.Duration(value) * time.Millisecond, nil
+}
+
 func sessionTimeoutSecondsEnv(name string) (int64, bool, error) {
+	return e2eInt64Env(name)
+}
+
+func e2eInt64Env(name string) (int64, bool, error) {
 	raw := strings.TrimSpace(os.Getenv(name))
 	if raw == "" {
 		return 0, false, nil

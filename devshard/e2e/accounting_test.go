@@ -255,6 +255,101 @@ func TestE2E_AccountingLiveSendTimeout(t *testing.T) {
 }
 
 // Test flow:
+//  1. Start the three-host environment with the next assigned host delaying its receipt.
+//  2. Shorten only this e2e run's protocol and redundancy timeout windows.
+//  3. Send one non-streaming completion, observe the no-receipt nonce in-flight, then stop that executor.
+//  4. Let a fast secondary win while timeout voting applies a protocol miss for the stopped send.
+//  5. Poll accounting until timeout_outcome=applied and HostStats.Missed move together.
+//  6. Assert the applied timeout cross-check remains clean and nonce accounting still balances.
+func TestE2E_AccountingAppliedTimeoutCrossCheck(t *testing.T) {
+	const shortProtocolTimeoutSeconds = "1"
+
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			0: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+			1: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+				"DEVSHARD_E2E_RECEIPT_DELAY_MS":      "8000",
+			},
+			2: {
+				e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+				e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+			},
+		},
+		devshardctlEnvOverrides: map[string]string{
+			e2econfig.RefusalTimeoutSecondsEnv:   shortProtocolTimeoutSeconds,
+			e2econfig.ExecutionTimeoutSecondsEnv: shortProtocolTimeoutSeconds,
+		},
+	})
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeApplied := testutil.AccountingTimeoutOutcomeCount(before, "applied")
+	beforeMisses := testutil.AccountingProtocolMissTotal(before)
+
+	done := make(chan testutil.RawResponseResult, 1)
+	go func() {
+		resp, err := testutil.SendCompletionRawE(client, env.clientURL, "accounting applied timeout cross-check", testutil.AdminAPIKey)
+		done <- testutil.RawResponseResult{Response: resp, Err: err}
+	}()
+
+	inFlight := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 && testutil.AccountingInFlightTotal(resp) > 0
+	})
+	require.Greater(t, testutil.AccountingInFlightTotal(inFlight), uint64(0), "accounting should expose the live sent nonce before timeout voting")
+
+	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
+	t.Cleanup(cancel)
+	env.stopHost(ctx, t, nextSlot)
+
+	select {
+	case result := <-done:
+		require.NoError(t, result.Err)
+		testutil.LogRawResponse(t, "accounting applied timeout cross-check completion", result.Response)
+		testutil.RequireOpenAINonStreamingCompletion(t, result.Response)
+	case <-time.After(testutil.DefaultRequestTimeout):
+		t.Fatal("timed out waiting for timeout-backed completion")
+	}
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		applied := testutil.AccountingTimeoutOutcomeCount(resp, "applied")
+		missed := testutil.AccountingProtocolMissTotal(resp)
+		return len(resp.Participants) > 0 &&
+			applied > beforeApplied &&
+			missed > beforeMisses &&
+			applied == missed &&
+			testutil.AccountingCrossCheckTimeoutAppliedTotal(resp) == applied &&
+			testutil.AccountingCrossCheckHostMissedTotal(resp) == missed
+	})
+	applied := testutil.AccountingTimeoutOutcomeCount(accounting, "applied")
+	missed := testutil.AccountingProtocolMissTotal(accounting)
+	require.Greater(t, applied, beforeApplied, "timeout_outcome=applied should increase")
+	require.Equal(t, applied, missed, "applied timeout count should match HostStats.Missed")
+	require.Equal(t, applied, testutil.AccountingCrossCheckTimeoutAppliedTotal(accounting), "cross-check applied side should match timeout outcome count")
+	require.Equal(t, missed, testutil.AccountingCrossCheckHostMissedTotal(accounting), "cross-check missed side should match protocol misses")
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
 //  1. Start the default three-host environment.
 //  2. Stop the host assigned to the next nonce so the first attempt fails.
 //  3. Send enough sequential completions for the failed participant to be skipped.

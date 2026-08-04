@@ -2,6 +2,7 @@ package e2econfig
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 
@@ -48,4 +49,21 @@ func TestSessionTimeoutOverridesFromEnvRejectsInvalidValues(t *testing.T) {
 		_, err := SessionTimeoutOverridesFromEnv()
 		require.ErrorContains(t, err, "must be non-negative")
 	})
+}
+
+func TestDurationMillisFromEnv(t *testing.T) {
+	t.Setenv("DEVSHARD_E2E", "1")
+	t.Setenv(ReceiptDelayMillisEnv, "250")
+
+	value, err := DurationMillisFromEnv(ReceiptDelayMillisEnv)
+
+	require.NoError(t, err)
+	require.Equal(t, 250*time.Millisecond, value)
+}
+
+func TestDurationMillisFromEnvAllowsUnset(t *testing.T) {
+	value, err := DurationMillisFromEnv(ReceiptDelayMillisEnv)
+
+	require.NoError(t, err)
+	require.Zero(t, value)
 }

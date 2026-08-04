@@ -25,6 +25,8 @@ type AccountingParticipant struct {
 	Model                 string            `json:"model"`
 	AssignedNonces        uint64            `json:"assigned_nonces"`
 	Dispositions          map[string]uint64 `json:"dispositions"`
+	TimeoutOutcomes       map[string]uint64 `json:"timeout_outcomes"`
+	ProtocolMisses        uint64            `json:"protocol_misses"`
 	InFlight              uint64            `json:"in_flight"`
 	TimeoutPending        uint64            `json:"timeout_pending"`
 	PendingClassification uint64            `json:"pending_classification"`
@@ -34,7 +36,11 @@ type AccountingParticipant struct {
 }
 
 type AccountingChecks struct {
-	ErrorCount uint64 `json:"error_count"`
+	TimeoutApplied  uint64 `json:"timeout_applied"`
+	HostMissed      uint64 `json:"host_missed"`
+	RecordedInvalid uint64 `json:"recorded_invalid_transitions"`
+	HostInvalid     uint64 `json:"host_invalid"`
+	ErrorCount      uint64 `json:"error_count"`
 }
 
 func WaitAccountingParticipants(
@@ -130,6 +136,38 @@ func AccountingDispositionCount(resp AccountingParticipantsResponse, disposition
 	var total uint64
 	for _, participant := range resp.Participants {
 		total += participant.Dispositions[disposition]
+	}
+	return total
+}
+
+func AccountingTimeoutOutcomeCount(resp AccountingParticipantsResponse, outcome string) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		total += participant.TimeoutOutcomes[outcome]
+	}
+	return total
+}
+
+func AccountingProtocolMissTotal(resp AccountingParticipantsResponse) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		total += participant.ProtocolMisses
+	}
+	return total
+}
+
+func AccountingCrossCheckTimeoutAppliedTotal(resp AccountingParticipantsResponse) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		total += participant.CrossChecks.TimeoutApplied
+	}
+	return total
+}
+
+func AccountingCrossCheckHostMissedTotal(resp AccountingParticipantsResponse) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		total += participant.CrossChecks.HostMissed
 	}
 	return total
 }
