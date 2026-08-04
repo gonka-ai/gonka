@@ -89,7 +89,8 @@ services:
 
   edge-api:
     container_name: edge-api
-    image: ghcr.io/product-science/edge-api:0.2.15-devshard-v5
+    image: >-
+      ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
     environment:
       - EDGE_API_PORT=18080
       - CHAIN_GRPC_URL=node:9090
@@ -125,7 +126,8 @@ services:
 
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.15-devshard-v5
+    image: >-
+      ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd

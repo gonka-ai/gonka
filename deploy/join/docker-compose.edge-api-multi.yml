@@ -14,7 +14,8 @@
 # x-edge-api anchor holds everything shared between instances.
 
 x-edge-api: &edge-api
-  image: ghcr.io/product-science/edge-api:0.2.15-devshard-v5
+  image: >-
+    ${EDGE_API_IMAGE:-ghcr.io/product-science/edge-api:0.2.15-devshard-v5}
   environment:
     - EDGE_API_PORT=18080
     - CHAIN_GRPC_URL=node:9090
@@ -70,10 +71,15 @@ services:
 
   edge-api-router:
     container_name: edge-api-router
-    image: ghcr.io/product-science/edge-api-router:0.2.15-devshard-v5
+    image: >-
+      ${EDGE_API_ROUTER_IMAGE:-ghcr.io/product-science/edge-api-router:0.2.15-devshard-v5}
     environment:
       - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
       - EDGE_API_PORT=18080
+      # Kept for rollback compatibility with the v4 nginx image. The v5
+      # HAProxy entrypoint ignores this static list and discovers the pool via
+      # EDGE_API_POOL_HOST instead.
+      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
     depends_on:
       - edge-api
       - edge-api2

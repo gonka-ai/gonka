@@ -13,6 +13,9 @@ versiond_image="ghcr.io/product-science/versiond:$release_tag"
 edge_router_image="ghcr.io/product-science/edge-api-router:$release_tag"
 versiond_router_image="ghcr.io/product-science/versiond-router:$release_tag"
 
+# This test validates the shipped defaults, not an operator's local override.
+unset EDGE_API_IMAGE VERSIOND_IMAGE EDGE_API_ROUTER_IMAGE VERSIOND_ROUTER_IMAGE
+
 fail() {
     echo "release-image-smoke_test: $*" >&2
     exit 1
@@ -34,6 +37,35 @@ assert_image() {
         "$description resolves to $actual, expected $expected"
 }
 
+assert_healthcheck_url() {
+    local description=$1
+    local service=$2
+    local url=$3
+    shift 3
+
+    DEVSHARD_POSTGRES_PASSWORD=compose-contract \
+        docker compose "$@" config --format json 2>/dev/null |
+        jq -e --arg service "$service" --arg url "$url" \
+            '.services[$service].healthcheck.test | index($url) != null' \
+            >/dev/null || fail "$description does not check $url"
+}
+
+assert_environment() {
+    local description=$1
+    local service=$2
+    local key=$3
+    local expected=$4
+    shift 4
+    local actual
+
+    actual=$(DEVSHARD_POSTGRES_PASSWORD=compose-contract \
+        docker compose "$@" config --format json 2>/dev/null |
+        jq -er --arg service "$service" --arg key "$key" \
+            '.services[$service].environment[$key]')
+    [[ $actual == "$expected" ]] || fail \
+        "$description resolves to $actual, expected $expected"
+}
+
 check_compose_contract() {
     assert_image "base edge-api" "$edge_image" \
         "$(compose_image edge-api -f "$base")"
@@ -47,6 +79,18 @@ check_compose_contract() {
         "$(compose_image edge-api-router -f "$base" -f "$edge_overlay")"
     assert_image "versiond router" "$versiond_router_image" \
         "$(compose_image versiond-router -f "$base" -f "$versiond_overlay")"
+    assert_healthcheck_url "versiond router healthcheck" versiond-router \
+        "http://127.0.0.1:8080/healthz" \
+        -f "$base" -f "$versiond_overlay"
+    assert_healthcheck_url "edge-api router healthcheck" edge-api-router \
+        "http://127.0.0.1:18080/readyz" \
+        -f "$base" -f "$edge_overlay"
+    assert_environment "versiond v4 rollback hosts" versiond-router \
+        VERSIOND_HOSTS "versiond versiond2" \
+        -f "$base" -f "$versiond_overlay"
+    assert_environment "edge-api v4 rollback hosts" edge-api-router \
+        EDGE_API_HOSTS "edge-api edge-api2 edge-api3" \
+        -f "$base" -f "$edge_overlay"
 }
 
 if [[ ${1:-} == --contract ]]; then

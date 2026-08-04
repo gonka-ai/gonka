@@ -17,7 +17,8 @@
 # only container_name and per-instance data volumes differ.
 
 x-versiond: &versiond
-  image: ghcr.io/product-science/versiond:0.2.15-devshard-v5
+  image: >-
+    ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
     - VERSIOND_BINARY_NAME=devshardd
@@ -145,12 +146,17 @@ services:
 
   versiond-router:
     container_name: versiond-router
-    image: ghcr.io/product-science/versiond-router:0.2.15-devshard-v5
+    image: >-
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     environment:
       # A DNS name, not a host list: adding or removing an instance changes only
       # which containers answer to this alias.
       - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_PORT=8080
+      # Kept for rollback compatibility with the v4 nginx image. The v5
+      # HAProxy entrypoint ignores this static list and discovers the pool via
+      # VERSIOND_POOL_HOST instead.
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
       - GONKA_HA=true
       # SQLite-bound pre-HA versions must stay on the host that owns their data dirs.
       - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
@@ -177,6 +183,21 @@ services:
       versiond2:
         condition: service_started
         required: false
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/healthz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
     # Nothing durable to keep: membership is DNS and health is measured, so a
     # restarted router rebuilds its whole view within one check interval.
     # Compose cannot start this service's replacement before the old container

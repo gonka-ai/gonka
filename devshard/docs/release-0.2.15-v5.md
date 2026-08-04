@@ -104,78 +104,35 @@ configuration.
 Upgrade in place from `deploy/join`:
 
 ```bash
-(
-set -e
-source ./config.env
-compose=(docker compose -f docker-compose.yml -f docker-compose.versiond.yml)
-
-# Pull only the services changed by the devshard v5 release.
-"${compose[@]}" \
-  pull devshard-postgres versiond versiond2 versiond-router edge-api
-
-# Recreate PostgreSQL first and wait for the v4 data migration and healthcheck.
-"${compose[@]}" \
-  up -d --no-deps --wait --wait-timeout 2100 devshard-postgres
-
-# Replace versiond hosts one at a time. The legacy SQLite owner is last.
-# --wait consumes the Compose /readyz healthcheck; a failed or slow reconcile
-# stops this sequence before the other working host is touched.
-"${compose[@]}" \
-  up -d --no-deps --wait --wait-timeout 2100 versiond2
-"${compose[@]}" \
-  up -d --no-deps --wait --wait-timeout 2100 versiond
-
-# Install the health-aware router only after both hosts provide /readyz.
-"${compose[@]}" \
-  up -d --no-deps versiond-router
-
-# Update the single edge-api without touching its node/api dependencies.
-"${compose[@]}" \
-  up -d --no-deps --wait --wait-timeout 180 edge-api
-)
+./upgrade-devshard-v5.sh --edge-mode single
 ```
+
+The script sources `config.env`, uses the complete base plus versiond Compose
+model, and records the immutable image ID of every service it will replace. If
+`--wait` fails, it recreates that service from the captured image and exits
+before touching the next working replica. If the failed service had no previous
+container, it is stopped instead. Temporary rollback tags are removed only
+after the whole upgrade succeeds. After a failed attempt, keep the reported
+`gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
+removed with `docker image rm`.
 
 #### Existing edge-api-multi deployment
 
 Use this procedure when the running installation was created with
 `docker-compose.edge-api-multi.yml`. Every command retains all three files.
-The old edge-api router remains in service while its replicas are replaced one
-at a time; the HAProxy router is installed only after all three answer
-`/readyz`:
+The same script retains all three files:
 
 ```bash
-(
-set -e
-source ./config.env
-compose=(
-  docker compose
-  -f docker-compose.yml
-  -f docker-compose.versiond.yml
-  -f docker-compose.edge-api-multi.yml
-)
-
-"${compose[@]}" pull \
-  devshard-postgres versiond versiond2 versiond-router \
-  edge-api edge-api2 edge-api3 edge-api-router
-
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
-  devshard-postgres
-
-# Keep one ready versiond while replacing the other; install its router last.
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond2
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 versiond
-"${compose[@]}" up -d --no-deps versiond-router
-
-# Preserve the old router and at least two ready Tier A replicas throughout.
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api2
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api3
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 180 edge-api
-
-# Replace nginx only after every v5 replica has passed /readyz. This final wait
-# also confirms that the new HAProxy has discovered a healthy pool member.
-"${compose[@]}" up -d --no-deps --wait --wait-timeout 60 edge-api-router
-)
+./upgrade-devshard-v5.sh --edge-mode multi
 ```
+
+The script replaces `edge-api2` first and waits for its v5 `/readyz`. It then
+switches the edge router from nginx to HAProxy while that known-good replica is
+available. HAProxy actively excludes the remaining old or unready replicas, so
+each later replacement either joins the pool after `/readyz` passes or is
+stopped after a failed wait. Before that router cutover, a failed replacement
+is restored from its captured image because the v4 nginx router does not consume
+Docker health or `/readyz`.
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
 first v5 `up`. During an in-place recreation, Compose carries the v4 anonymous
@@ -509,18 +466,18 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] To remove all legacy pins, persist
       `VERSIOND_NON_HA_VERSIONS=""`; do not unset it, because unset restores
       the `v1 v2 v3` default
-- [ ] Keep `--wait --wait-timeout 2100` on each ordered versiond replacement;
-      do not start replacing the legacy owner until `versiond2` is healthy
-- [ ] For an existing edge-api-multi installation, retain all three Compose
-      files, replace `edge-api2`, `edge-api3`, and `edge-api` one at a time with
-      `--wait`, and replace `edge-api-router` last
+- [ ] Use `upgrade-devshard-v5.sh` so a failed versiond replacement is rolled
+      back before the legacy owner or router is touched
+- [ ] For an existing edge-api-multi installation, use `--edge-mode multi`;
+      the script replaces `edge-api2`, switches to the health-aware HAProxy,
+      and then replaces the remaining replicas one at a time
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
 - [ ] Use the targeted `--no-deps` cutover above: migrate PostgreSQL first,
       replace `versiond2` and then the legacy owner `versiond`, and install the
-      router only after both hosts expose `/readyz`; do not reconcile the whole
-      base Compose model as part of this devshard-only release
+      versiond router only after both hosts expose `/readyz`; do not reconcile
+      the whole base Compose model as part of this devshard-only release
 - [ ] After the stack is up, check the pool diagnostic lists every versiond as
       `UP` using the read-only `pool-status` command above
 
