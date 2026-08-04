@@ -50,8 +50,6 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 					Model:           key.model,
 					Dispositions:    make(map[Disposition]uint64),
 					TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
-					RecordingErrors: t.errCount,
-					WriterErrors:    t.wrCount,
 				}
 				records[key] = record
 				nonceSeen[key] = make(map[string]struct{})
@@ -257,8 +255,6 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			summary.Unclassified += record.Unclassified
 			summary.Overclassified += record.Overclassified
 			summary.UnknownReasonTotal += record.UnknownReasonTotal
-			summary.RecordingErrors = record.RecordingErrors
-			summary.WriterErrors = record.WriterErrors
 			summary.CrossCheckErrors += record.CrossChecks.ErrorCount
 			for disposition, count := range record.Dispositions {
 				summary.Dispositions[disposition] += count

@@ -35,10 +35,18 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) epochs(w http.ResponseWriter, r *http.Request) {
+	recordingErrors, writerErrors := h.tracker.ErrorCounts()
 	writeJSON(w, http.StatusOK, struct {
-		SchemaVersion int            `json:"schema_version"`
-		Epochs        []EpochSummary `json:"epochs"`
-	}{SchemaVersion, h.tracker.Epochs(queryFilter(r, 0, ""))})
+		SchemaVersion   int            `json:"schema_version"`
+		RecordingErrors uint64         `json:"recording_errors"`
+		WriterErrors    uint64         `json:"writer_errors"`
+		Epochs          []EpochSummary `json:"epochs"`
+	}{
+		SchemaVersion:   SchemaVersion,
+		RecordingErrors: recordingErrors,
+		WriterErrors:    writerErrors,
+		Epochs:          h.tracker.Epochs(queryFilter(r, 0, "")),
+	})
 }
 
 func (h *Handler) participants(w http.ResponseWriter, r *http.Request) {
@@ -47,11 +55,20 @@ func (h *Handler) participants(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	recordingErrors, writerErrors := h.tracker.ErrorCounts()
 	writeJSON(w, http.StatusOK, struct {
-		SchemaVersion int                 `json:"schema_version"`
-		EpochIndex    uint64              `json:"epoch_index"`
-		Participants  []ParticipantRecord `json:"participants"`
-	}{SchemaVersion, epoch, h.tracker.Query(queryFilter(r, epoch, ""))})
+		SchemaVersion   int                 `json:"schema_version"`
+		RecordingErrors uint64              `json:"recording_errors"`
+		WriterErrors    uint64              `json:"writer_errors"`
+		EpochIndex      uint64              `json:"epoch_index"`
+		Participants    []ParticipantRecord `json:"participants"`
+	}{
+		SchemaVersion:   SchemaVersion,
+		RecordingErrors: recordingErrors,
+		WriterErrors:    writerErrors,
+		EpochIndex:      epoch,
+		Participants:    h.tracker.Query(queryFilter(r, epoch, "")),
+	})
 }
 
 func (h *Handler) participant(w http.ResponseWriter, r *http.Request) {
@@ -66,12 +83,22 @@ func (h *Handler) participant(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "participant not found")
 		return
 	}
+	recordingErrors, writerErrors := h.tracker.ErrorCounts()
 	writeJSON(w, http.StatusOK, struct {
-		SchemaVersion int                 `json:"schema_version"`
-		EpochIndex    uint64              `json:"epoch_index"`
-		Participant   string              `json:"participant"`
-		Records       []ParticipantRecord `json:"records"`
-	}{SchemaVersion, epoch, participant, records})
+		SchemaVersion   int                 `json:"schema_version"`
+		RecordingErrors uint64              `json:"recording_errors"`
+		WriterErrors    uint64              `json:"writer_errors"`
+		EpochIndex      uint64              `json:"epoch_index"`
+		Participant     string              `json:"participant"`
+		Records         []ParticipantRecord `json:"records"`
+	}{
+		SchemaVersion:   SchemaVersion,
+		RecordingErrors: recordingErrors,
+		WriterErrors:    writerErrors,
+		EpochIndex:      epoch,
+		Participant:     participant,
+		Records:         records,
+	})
 }
 
 func (h *Handler) resolveEpoch(r *http.Request) (uint64, error) {

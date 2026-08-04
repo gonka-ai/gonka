@@ -94,13 +94,13 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 		),
 		writerErrors: prometheus.NewDesc(
 			"devshard_accounting_writer_errors",
-			"Accounting snapshot writer errors.",
-			[]string{"participant", "model"}, nil,
+			"Gateway-wide accounting snapshot writer errors.",
+			nil, nil,
 		),
 		recordingErrors: prometheus.NewDesc(
 			"devshard_accounting_recording_errors",
-			"Accounting event recording errors.",
-			[]string{"participant", "model"}, nil,
+			"Gateway-wide accounting event recording errors.",
+			nil, nil,
 		),
 		crossCheck: prometheus.NewDesc(
 			"devshard_accounting_cross_check_error",
@@ -133,6 +133,9 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	if err != nil {
 		return
 	}
+	recordingErrors, writerErrors := c.tracker.ErrorCounts()
+	gauge(ch, c.recordingErrors, recordingErrors)
+	gauge(ch, c.writerErrors, writerErrors)
 	for _, record := range c.tracker.Query(QueryFilter{EpochIndex: epoch}) {
 		base := []string{record.Participant, record.Model}
 		gauge(ch, c.assigned, record.AssignedNonces, base...)
@@ -145,8 +148,6 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		gauge(ch, c.unclassified, record.Unclassified, base...)
 		gauge(ch, c.overclassified, record.Overclassified, base...)
 		gauge(ch, c.unknown, record.UnknownReasonTotal, base...)
-		gauge(ch, c.recordingErrors, record.RecordingErrors, base...)
-		gauge(ch, c.writerErrors, record.WriterErrors, base...)
 		gauge(ch, c.crossCheck, record.CrossChecks.ErrorCount, base...)
 
 		dispositions := make(map[string]uint64)

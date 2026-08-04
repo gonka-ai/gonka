@@ -29,7 +29,7 @@ func serveGateway(handler http.Handler, port string, runtimeCount int) {
 	select {
 	case err := <-errCh:
 		if err != nil && !errors.Is(err, http.ErrServerClosed) {
-			log.Printf("server: %v", err)
+			log.Fatalf("server: %v", err)
 		}
 	case <-signalCtx.Done():
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

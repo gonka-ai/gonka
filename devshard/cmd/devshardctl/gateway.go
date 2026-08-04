@@ -72,6 +72,7 @@ type Gateway struct {
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
 	replenishmentInFlight map[string]struct{}
+	raceCleanupWG         sync.WaitGroup
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
 
@@ -1258,6 +1259,7 @@ func (g *Gateway) Close() error {
 		g.phaseGate.Stop()
 	}
 	g.stopEscrowRotator()
+	g.raceCleanupWG.Wait()
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1985,11 +1987,13 @@ func (g *Gateway) runtimeDrained(rt *devshardRuntime) {
 
 // startRaceCleanup registers a background race cleanup against the drain barrier; it must run synchronously before the cleanup goroutine spawns (and before the winning handler returns).
 func (g *Gateway) startRaceCleanup(rt *devshardRuntime) {
+	g.raceCleanupWG.Add(1)
 	rt.pendingRaceCleanup.Add(1)
 }
 
 // releaseRaceCleanup clears a race cleanup from the barrier and fires the deferred settle/retire if the runtime is now quiet.
 func (g *Gateway) releaseRaceCleanup(rt *devshardRuntime) {
+	defer g.raceCleanupWG.Done()
 	remaining := rt.pendingRaceCleanup.Add(-1)
 	if remaining != 0 || rt.activeUserRequests.Load() != 0 {
 		return

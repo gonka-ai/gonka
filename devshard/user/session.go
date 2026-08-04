@@ -124,15 +124,6 @@ type TimeoutResult struct {
 	Outcome      string
 	DetailReason string
 	Applied      bool
-	AcceptWeight uint32
-	RejectWeight uint32
-	ErrorWeight  uint32
-}
-
-type TimeoutVoteTally struct {
-	AcceptWeight uint32
-	RejectWeight uint32
-	ErrorWeight  uint32
 }
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
@@ -1912,10 +1903,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 
-	votes, tally, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
-	result.AcceptWeight = tally.AcceptWeight
-	result.RejectWeight = tally.RejectWeight
-	result.ErrorWeight = tally.ErrorWeight
+	votes, hadVerifierErrors, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
 	if err != nil {
 		result.Outcome = "vote_collection_failed"
 		if ctx.Err() != nil {
@@ -1953,7 +1941,7 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
-	if result.ErrorWeight > 0 {
+	if hadVerifierErrors {
 		result.Outcome = "vote_collection_failed"
 		if ctx.Err() != nil {
 			result.DetailReason = "context_canceled"
@@ -2062,7 +2050,7 @@ func (s *Session) collectTimeoutVotes(
 	payload *host.InferencePayload,
 	verifiers map[int]TimeoutVerifier,
 	diffs []types.Diff,
-) ([]*types.TimeoutVote, TimeoutVoteTally, error) {
+) ([]*types.TimeoutVote, bool, error) {
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2184,19 +2172,17 @@ func (s *Session) collectTimeoutVotes(
 	expected := len(deduped)
 
 	voteThreshold := s.sm.VoteThreshold()
-	var tally TimeoutVoteTally
+	var acceptWeight uint32
 	var errors, rejects int
 	for i := 0; i < expected; i++ {
 		res := <-results
-		resultWeight := s.sm.AddressSlotCount(res.verifierAddr)
 		if res.err != nil {
 			errors++
-			tally.ErrorWeight += resultWeight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "error",
-					"running_weight", tally.AcceptWeight,
+					"running_weight", acceptWeight,
 					"threshold", voteThreshold,
 					"error", res.err,
 				)...,
@@ -2209,7 +2195,7 @@ func (s *Session) collectTimeoutVotes(
 			votes = append(votes, res.vote)
 			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
 			weight := s.sm.AddressSlotCount(voterAddr)
-			tally.AcceptWeight += weight
+			acceptWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
@@ -2217,23 +2203,22 @@ func (s *Session) collectTimeoutVotes(
 					"voter_slot", res.vote.VoterSlot,
 					"voter", shortAddress(voterAddr),
 					"weight", weight,
-					"running_weight", tally.AcceptWeight,
+					"running_weight", acceptWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
 		} else {
 			rejects++
-			tally.RejectWeight += resultWeight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "reject",
-					"running_weight", tally.AcceptWeight,
+					"running_weight", acceptWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
 		}
-		if tally.AcceptWeight > voteThreshold {
+		if acceptWeight > voteThreshold {
 			break
 		}
 	}
@@ -2241,21 +2226,21 @@ func (s *Session) collectTimeoutVotes(
 		logFields(
 			"",
 			"accept", len(votes),
-			"weight", tally.AcceptWeight,
+			"weight", acceptWeight,
 			"reject", rejects,
 			"errors", errors,
 			"threshold", voteThreshold,
 			"verifiers", expected,
-			"sufficient", tally.AcceptWeight > voteThreshold,
+			"sufficient", acceptWeight > voteThreshold,
 		)...,
 	)
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
-		"accept", len(votes), "weight", tally.AcceptWeight,
+		"accept", len(votes), "weight", acceptWeight,
 		"reject", rejects, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
-	return votes, tally, nil
+	return votes, errors > 0, nil
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.

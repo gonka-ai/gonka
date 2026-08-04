@@ -178,17 +178,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 
 func (t *Tracker) RecordPhase(escrowID string, phase EscrowPhase) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
-		if !validPhase(phase) {
-			return fmt.Errorf("invalid phase %q", phase)
-		}
-		if phaseRank(phase) > phaseRank(e.Meta.Phase) {
-			e.Meta.Phase = phase
-		}
-		if phase == EscrowFinalized || phase == EscrowSettled {
-			e.Live = make(map[uint64]*nonceState)
-			e.OpenChallenge = make(map[uint64]uint32)
-		}
-		return nil
+		return e.recordPhase(phase)
 	})
 }
 
@@ -204,64 +194,31 @@ func (t *Tracker) RecordDiff(escrowID string, nonce uint64, hasStart bool) error
 
 func (t *Tracker) RecordCommittedDiff(escrowID string, diff types.Diff, verdicts []VerdictRecord) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
-		if diff.Nonce == 0 {
-			return errors.New("nonce must be greater than zero")
+		if err := e.validateCommittedDiff(diff, verdicts); err != nil {
+			return err
 		}
-		if diff.Nonce <= e.Latest {
-			return nil
-		}
-
-		hasStart := false
-		for _, tx := range diff.Txs {
-			if start := tx.GetStartInference(); start != nil && start.InferenceId == diff.Nonce {
-				hasStart = true
-				break
-			}
-		}
-		e.recordDiff(diff.Nonce, hasStart)
-
-		now := t.nowUTC()
-		for _, tx := range diff.Txs {
-			if msg := tx.GetConfirmStart(); msg != nil {
-				if state := e.Live[msg.InferenceId]; state != nil {
-					state.Receipt = true
-					state.ReceiptAt = msg.ConfirmedAt
-					e.reclassify(msg.InferenceId, state, now)
-				}
-				continue
-			}
-			if msg := tx.GetFinishInference(); msg != nil {
-				if state := e.Live[msg.InferenceId]; state != nil {
-					state.markFinished()
-					e.reclassify(msg.InferenceId, state, now)
-				}
-				continue
-			}
-			if msg := tx.GetTimeoutInference(); msg != nil {
-				if state := e.Live[msg.InferenceId]; state != nil {
-					state.markProtocolTimeout()
-					e.reclassify(msg.InferenceId, state, now)
-				}
-			}
-		}
-		for _, verdict := range verdicts {
-			if int(verdict.Slot) >= len(e.Meta.Slots) {
-				return fmt.Errorf("slot %d out of range", verdict.Slot)
-			}
-			switch verdict.Kind {
-			case ProtocolChallenged:
-				if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
-					e.OpenChallenge[verdict.Nonce] = verdict.Slot
-					e.ChallengeBySlot[verdict.Slot]++
-				}
-			case ProtocolValidated:
-				e.closeChallenge(verdict.Nonce, verdict.Slot)
-			case ProtocolInvalidated:
-				slot := e.closeChallenge(verdict.Nonce, verdict.Slot)
-				e.InvalidBySlot[slot]++
-			}
-		}
+		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
 		return nil
+	})
+}
+
+func (t *Tracker) RecordCommittedState(
+	escrowID string,
+	diff types.Diff,
+	verdicts []VerdictRecord,
+	snapshot types.EscrowState,
+) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		phase := escrowPhase(snapshot.Phase)
+		if err := e.validateCommittedDiff(diff, verdicts); err != nil {
+			return err
+		}
+		if err := e.validateState(snapshot.HostStats, phase); err != nil {
+			return err
+		}
+		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
+		e.mergeState(snapshot.LatestNonce, snapshot.HostStats)
+		return e.recordPhase(phase)
 	})
 }
 
@@ -327,26 +284,10 @@ func (t *Tracker) RecordHostStats(escrowID string, slot uint32, stats types.Host
 
 func (t *Tracker) SyncState(escrowID string, latest uint64, hostStats map[uint32]*types.HostStats) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
-		if latest > e.Latest {
-			e.Latest = latest
+		if err := e.validateHostStats(hostStats); err != nil {
+			return err
 		}
-		for slot, stats := range hostStats {
-			if stats == nil {
-				continue
-			}
-			if int(slot) >= len(e.Meta.Slots) {
-				return fmt.Errorf("slot %d out of range", slot)
-			}
-			e.HostStats[slot] = maxHostStats(e.HostStats[slot], *stats)
-		}
-		e.reconcileAppliedMisses()
-		return nil
-	})
-}
-
-func (t *Tracker) ReconcileAppliedMisses(escrowID string) error {
-	return t.withEscrow(escrowID, func(e *escrowState) error {
-		e.reconcileAppliedMisses()
+		e.mergeState(latest, hostStats)
 		return nil
 	})
 }
@@ -403,10 +344,17 @@ func (t *Tracker) RecordTimeout(record TimeoutRecord) error {
 		if !s.Sent {
 			return errors.New("timeout recorded before real send")
 		}
+		outcome, ok := normalizeTimeoutOutcome(record.Outcome)
+		if !ok {
+			return fmt.Errorf("invalid timeout outcome %q", record.Outcome)
+		}
 		s.TimeoutKind = normalizeTimeoutKind(record.Kind)
 		s.TimeoutPhase = normalizePhase(record.Phase)
-		s.TimeoutOutcome = normalizeTimeoutOutcome(record.Outcome)
+		s.TimeoutOutcome = outcome
 		s.TimeoutReason = normalizeTimeoutReason(record.Reason)
+		if outcome != TimeoutApplied && s.TimeoutReason == "" {
+			s.TimeoutReason = TimeoutReasonUnknown
+		}
 		s.FailureOrigin = normalizeFailureOrigin(record.FailureOrigin, record.DetailReason)
 		s.DetailReason = normalizeDetailReason(record.DetailReason)
 		s.TimeoutResultSeen = true
@@ -436,6 +384,15 @@ func (t *Tracker) nowUTC() time.Time {
 	return t.now().UTC()
 }
 
+func (t *Tracker) ErrorCounts() (recording, writer uint64) {
+	if t == nil {
+		return 0, 0
+	}
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.errCount, t.wrCount
+}
+
 func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error {
 	return t.withWrite(func() error {
 		escrowID = strings.TrimSpace(escrowID)
@@ -459,6 +416,109 @@ func (e *escrowState) liveNonce(nonce uint64) (*nonceState, error) {
 		return nil, fmt.Errorf("nonce %d is not a live inference", nonce)
 	}
 	return s, nil
+}
+
+func (e *escrowState) validateCommittedDiff(diff types.Diff, verdicts []VerdictRecord) error {
+	if diff.Nonce == 0 {
+		return errors.New("nonce must be greater than zero")
+	}
+	for _, verdict := range verdicts {
+		if int(verdict.Slot) >= len(e.Meta.Slots) {
+			return fmt.Errorf("slot %d out of range", verdict.Slot)
+		}
+	}
+	return nil
+}
+
+func (e *escrowState) validateHostStats(hostStats map[uint32]*types.HostStats) error {
+	for slot := range hostStats {
+		if int(slot) >= len(e.Meta.Slots) {
+			return fmt.Errorf("slot %d out of range", slot)
+		}
+	}
+	return nil
+}
+
+func (e *escrowState) validateState(hostStats map[uint32]*types.HostStats, phase EscrowPhase) error {
+	if err := e.validateHostStats(hostStats); err != nil {
+		return err
+	}
+	if !validPhase(phase) {
+		return fmt.Errorf("invalid phase %q", phase)
+	}
+	return nil
+}
+
+func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRecord, now time.Time) {
+	if diff.Nonce <= e.Latest {
+		return
+	}
+	hasStart := false
+	for _, tx := range diff.Txs {
+		if start := tx.GetStartInference(); start != nil && start.InferenceId == diff.Nonce {
+			hasStart = true
+			break
+		}
+	}
+	e.recordDiff(diff.Nonce, hasStart)
+	for _, tx := range diff.Txs {
+		if msg := tx.GetConfirmStart(); msg != nil {
+			if state := e.Live[msg.InferenceId]; state != nil {
+				state.Receipt = true
+				state.ReceiptAt = msg.ConfirmedAt
+				e.reclassify(msg.InferenceId, state, now)
+			}
+			continue
+		}
+		if msg := tx.GetFinishInference(); msg != nil {
+			if state := e.Live[msg.InferenceId]; state != nil {
+				state.markFinished()
+				e.reclassify(msg.InferenceId, state, now)
+			}
+			continue
+		}
+		if msg := tx.GetTimeoutInference(); msg != nil {
+			if state := e.Live[msg.InferenceId]; state != nil {
+				state.markProtocolTimeout()
+				e.reclassify(msg.InferenceId, state, now)
+			}
+		}
+	}
+	for _, verdict := range verdicts {
+		switch verdict.Kind {
+		case ProtocolChallenged:
+			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
+				e.OpenChallenge[verdict.Nonce] = verdict.Slot
+				e.ChallengeBySlot[verdict.Slot]++
+			}
+		case ProtocolValidated:
+			e.closeChallenge(verdict.Nonce, verdict.Slot)
+		case ProtocolInvalidated:
+			slot := e.closeChallenge(verdict.Nonce, verdict.Slot)
+			e.InvalidBySlot[slot]++
+		}
+	}
+}
+
+func (e *escrowState) mergeState(latest uint64, hostStats map[uint32]*types.HostStats) {
+	if latest > e.Latest {
+		e.Latest = latest
+	}
+	for slot, stats := range hostStats {
+		if stats != nil {
+			e.HostStats[slot] = maxHostStats(e.HostStats[slot], *stats)
+		}
+	}
+}
+
+func (e *escrowState) recordPhase(phase EscrowPhase) error {
+	if !validPhase(phase) {
+		return fmt.Errorf("invalid phase %q", phase)
+	}
+	if phaseRank(phase) > phaseRank(e.Meta.Phase) {
+		e.Meta.Phase = phase
+	}
+	return nil
 }
 
 func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {
@@ -532,30 +592,6 @@ func (e *escrowState) closeChallenge(nonce uint64, fallback uint32) uint32 {
 		e.ChallengeBySlot[slot]--
 	}
 	return slot
-}
-
-func (e *escrowState) timeoutAppliedForSlot(slot uint32) uint64 {
-	var count uint64
-	for key, value := range e.Counters {
-		if key.SlotID == slot && key.TimeoutOutcome == TimeoutApplied {
-			count += value
-		}
-	}
-	return count
-}
-
-func (e *escrowState) reconcileAppliedMisses() {
-	for slot, stats := range e.HostStats {
-		applied := e.timeoutAppliedForSlot(slot)
-		if uint64(stats.Missed) <= applied {
-			continue
-		}
-		e.add(CounterKey{
-			SlotID:         slot,
-			Disposition:    DispositionUnfinishedRefused,
-			TimeoutOutcome: TimeoutApplied,
-		}, uint64(stats.Missed)-applied)
-	}
 }
 
 func (s *nonceState) markFinished() {
@@ -764,12 +800,12 @@ func normalizeTimeoutKind(k TimeoutKind) TimeoutKind {
 	return TimeoutRefused
 }
 
-func normalizeTimeoutOutcome(o TimeoutOutcome) TimeoutOutcome {
+func normalizeTimeoutOutcome(o TimeoutOutcome) (TimeoutOutcome, bool) {
 	switch o {
 	case TimeoutSkipped, TimeoutVoteCollectionFailed, TimeoutInsufficientVotes, TimeoutDiffSendFailed, TimeoutApplied:
-		return o
+		return o, true
 	default:
-		return TimeoutVoteCollectionFailed
+		return "", false
 	}
 }
 

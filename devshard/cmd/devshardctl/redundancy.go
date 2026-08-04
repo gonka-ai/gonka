@@ -863,9 +863,9 @@ type inflight struct {
 	role        string
 	startReason string
 
-	receiptOnce      sync.Once
-	receiptTimeNano  atomic.Int64 // unix nano; 0 means not received
-	receiptCh        chan struct{} // closed when receipt arrives
+	receiptOnce     sync.Once
+	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	receiptCh       chan struct{} // closed when receipt arrives
 
 	tokenOnce       sync.Once
 	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
@@ -1197,7 +1197,6 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	return nil
 }
 
-
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1519,7 +1518,6 @@ func (inf *inflight) releaseClassifyPartial() {
 	}
 	inf.classifyPartial = nil
 }
-
 
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
@@ -2872,7 +2870,7 @@ func gatewayTimeoutFailureAction(result user.TimeoutResult) (string, string) {
 	if result.Outcome == "skipped" {
 		return "skipped", firstNonEmpty(result.DetailReason, "unknown")
 	}
-	return "failed", firstNonEmpty(result.Outcome, "vote_collection_failed")
+	return "failed", firstNonEmpty(result.Outcome, "unknown")
 }
 
 func (e *Redundancy) recordGatewayRequestOutcome(model, outcome, reason string) {
@@ -3411,7 +3409,6 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	}
 	return inf.contentChunks.Load() == 0
 }
-
 
 // isModelBurnEmpty: empty stream where the model generated tokens that vLLM
 // stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
@@ -4199,6 +4196,16 @@ func (e *Redundancy) runGhostProbe(prepared *user.PreparedInference, kind ghostK
 	participantKey := e.participantKeyForHost(prepared.HostIdx())
 	quarantineMode := e.quarantineModeForParticipant(participantKey)
 	e.accounting.Ghost(e.devshardID, prepared.Nonce(), reason, quarantineMode)
+	if e.metrics != nil {
+		e.metrics.RecordGatewaySlotDecision(GatewaySlotDecisionMetric{
+			ParticipantKey: participantKey,
+			Model:          e.model,
+			EscrowID:       e.devshardID,
+			Decision:       "ghost_no_send",
+			Reason:         reason,
+			QuarantineMode: quarantineMode,
+		})
+	}
 	ctx, _ := ensureRequestLogContext(context.Background())
 	logInferenceStage(ctx, e.devshardID, prepared.Nonce(), "ghost_probe_skipped",
 		"host", e.session.HostLabel(prepared.HostIdx()),

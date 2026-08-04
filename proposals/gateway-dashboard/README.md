@@ -238,6 +238,10 @@ gateway policy
 
 `timeout_outcome` is unset while handling is in progress. Non-applied
 outcomes are current state: a retry can move any of them to `applied`.
+An unrecognized timeout action or outcome is rejected, increments
+`recording_errors`, and leaves the nonce's current timeout state
+unchanged; without an earlier result it remains `timeout_pending`. It is
+never reinterpreted as `vote_collection_failed`.
 
 Each non-applied outcome carries a fixed `timeout_reason`. `skipped`
 supports at least `phase_transition_aborted`,
@@ -432,13 +436,15 @@ fixed context and timeout dimensions. Counters hold current state, not
 event history: the first classification increments one key; a later
 reclassify atomically moves the count to the new key. The request path
 performs only synchronous in-memory accounting updates and never writes
-to disk.
+to accounting SQLite. The session may persist its protocol diff before
+the accounting callback.
 
 There are no per-nonce database rows. Live nonce state exists only in
 memory while the nonce can still change. It includes send and receipt
 times used for query-time deadline classification. A restart drops that
-live state: unfinished live sends become `unclassified`, and non-applied
-timeout failures remain frozen in the counters they already reached.
+live state. Unfinished sends and pre-deadline timeout results become
+`unclassified`; non-applied timeout failures already moved into counters
+remain frozen there.
 
 A snapshot writer stores each escrow's metadata, `latest_nonce`,
 `HostStats`, per-slot challenge and invalid counts, and counter map into
@@ -460,21 +466,22 @@ computed or refreshed from current memory, time, and `latest_nonce`.
 positive value removes only complete epochs older than the configured
 count.
 
-On restart, counters resume from the last snapshot. The gateway does not
-replay diffs for accounting. Instead, it reads recovered `HostStats` and,
-if `HostStats.Missed` exceeds counted `timeout_outcome=applied`, records
-the difference as applied protocol misses with empty gateway context.
-`HostStats.Missed` is the protocol ground truth, so this only restores a
-settlement fact already present in state.
+On restart, counters resume from the last snapshot and the gateway reads
+recovered `HostStats`. It does not replay diffs or invent dispositions for
+protocol misses whose gateway context was lost. `HostStats.Missed` remains
+the protocol ground truth; a difference from counted
+`timeout_outcome=applied` stays visible as a cross-check error alongside
+the `unclassified` residual.
 
 The state machine remains the source for protocol facts but contains no
 accounting code. After the user session commits a diff, one generic
 observer call passes the applied diff to `devshard/accounting`.
 Accounting parses start, receipt, finish, timeout, validation, and
-validation-vote transactions and reads final verdict state. The gateway
-remains the source for gateway facts: ghost, real send with send time,
-winner, timeout result, policy reason, and lifecycle phase. There is no
-accounting poller, event queue, dropped event, or accounting-owned
+validation-vote transactions, reads final verdict state, and synchronizes
+`latest_nonce`, `HostStats`, and phase after every committed diff. The
+gateway remains the source for gateway facts: ghost, real send with send
+time, winner, timeout result, policy reason, and lifecycle phase. There
+is no accounting poller, event queue, dropped event, or accounting-owned
 deadline heap.
 
 ### Lifecycle integration
@@ -489,14 +496,16 @@ Record at:
 - escrow finalization, settlement, rotation, and shutdown.
 
 A repeated or replayed callback that changes no session state changes no
-counter.
+counter. Finalization and settlement retain unresolved live facts for the
+rest of the process instead of converting them immediately to
+`unclassified`. Shutdown waits for registered background loser cleanup
+before closing accounting and writing its final snapshot.
 
 `HandleTimeout` returns a structured result:
 
 - `timeout_kind`: `refused` or `execution`;
 - `timeout_outcome`;
 - `timeout_reason`;
-- accept, reject, and error vote weights;
 - whether the timeout diff was applied.
 
 A successfully applied timeout returns `timeout_outcome=applied`.
@@ -510,39 +519,35 @@ network isolation. The listener is never published through the public
 proxy or Caddy. The dashboard sidecar runs on the same private network,
 configured with the stats URL only. Any container on the shared private
 Docker network can read the API; that is fine for this internal tool.
+Failure to bind this optional listener is logged and does not stop the
+gateway. Failure to bind the main gateway listener remains fatal.
 
 The counter store also feeds Prometheus. A collector exports the
 in-memory counters as `devshard_accounting_*` gauges for the current
 epoch, labeled by `participant`, `model`, and the dimensions used by
 each metric family. Labels never include `escrow_id`, nonce, block
 heights, or `detail_reason`. The API and the metrics share one store;
-exact and historical totals come from the snapshots and the API. Existing
-`devshard_gateway_*` metrics remain the live operational view.
+historical terminal counters and protocol totals come from snapshots and
+the API. Mutable facts lost between snapshots become visible recovery
+gaps. Existing `devshard_gateway_*` metrics remain the live operational
+view, including both `real_send` and `ghost_no_send` slot decisions.
 
 ### Verification
 
 Tests cover:
 
-- the `unclassified` leftover: never negative, grows only across restart
-  windows;
-- `in_flight` draining to zero on inactive escrows;
-- reclassify moving counts atomically between keys;
-- repeated callbacks changing no counter;
-- the `non_execution_credit` identity, including restart gaps;
-- settlement assignment matching, including slot `0` and
-  `protocol_only_nonce`;
-- every refused and execution `timeout_outcome`;
+- every disposition and fixed gateway policy reason in both diagrams;
+- pre-deadline `in_flight`, post-deadline timeout classification, and
+  late receipt reclassification;
+- every timeout outcome and non-applied reason fallback;
+- repeated callbacks and order-independent in-process reclassification;
+- restart gaps without invented terminal outcomes;
+- finalization preserving current-process live facts;
 - cross-checks against `HostStats.Missed` and `HostStats.Invalid`;
-- PoC, throttle, capability, and stale-exclusion ghost reasons;
-- shadow quarantine and probation as `real_send`;
-- phase transitions and normal-phase filtering;
-- overscheduled winners and unfinished losers;
-- streamed output without `protocol_finish`;
-- restart recovery without inventing terminal outcomes;
-- aggregation across models, slots, participants, rotated escrows, and
-  epochs;
-- API schema stability;
-- the Prometheus export matching the counter store.
+- production ghost, winner, loser, state-divergence, and committed-diff
+  seams;
+- shutdown waiting for background race cleanup;
+- API filters and representative Prometheus/query parity.
 
 This proposal does not change devshard consensus, timeout thresholds,
 validation rules, settlement payloads, participant incentives, or public

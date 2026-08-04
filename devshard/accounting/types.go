@@ -8,7 +8,7 @@ import (
 	"devshard/types"
 )
 
-const SchemaVersion = 3
+const SchemaVersion = 4
 
 type Disposition string
 
@@ -214,8 +214,6 @@ type ParticipantRecord struct {
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
 	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
-	RecordingErrors       uint64                    `json:"recording_errors"`
-	WriterErrors          uint64                    `json:"writer_errors"`
 	CrossChecks           CrossChecks               `json:"cross_checks"`
 	Counters              []CounterRecord           `json:"counters"`
 	Slots                 []SlotRecord              `json:"slots"`
@@ -237,8 +235,6 @@ type EpochSummary struct {
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
 	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
-	RecordingErrors       uint64                    `json:"recording_errors"`
-	WriterErrors          uint64                    `json:"writer_errors"`
 	CrossCheckErrors      uint64                    `json:"cross_check_errors"`
 }
 
@@ -293,6 +289,10 @@ func TimeoutReasonFromString(outcome TimeoutOutcome, reason string) TimeoutReaso
 		return value
 	}
 	if outcome == TimeoutSkipped {
+		return TimeoutReasonUnknown
+	}
+	switch outcome {
+	case TimeoutVoteCollectionFailed, TimeoutInsufficientVotes, TimeoutDiffSendFailed:
 		return TimeoutReasonUnknown
 	}
 	return ""

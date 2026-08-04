@@ -314,9 +314,10 @@ func (p *sessionPicker) run() {
 		// No ghost outcome contacts the host; the kind is purely a
 		// log label (see ghostDispatcher doc).
 		var (
-			chosen    *pickerRequest
-			ghost     ghostKind
-			holdUntil time.Time
+			chosen              *pickerRequest
+			ghost               ghostKind
+			ghostReason         string
+			holdUntil           time.Time
 			ghostParticipantKey string
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
@@ -398,6 +399,9 @@ func (p *sessionPicker) run() {
 			}
 			if blockReason != "" {
 				ghost = ghostCapability
+				if blockReason == "escrow_state_root_diverged" {
+					ghostReason = blockReason
+				}
 				logRequestStage(p.logCtx, "session_picker_capability_blocked",
 					"reason", blockReason,
 					"participant_key", b.ParticipantKey,
@@ -453,8 +457,11 @@ func (p *sessionPicker) run() {
 
 		// Phase 4: dispatch.
 		if ghost != ghostNone {
+			if ghostReason == "" {
+				ghostReason = ghost.reason()
+			}
 			logFields := []any{
-				"reason", ghost.reason(),
+				"reason", ghostReason,
 				"host_idx", prepared.HostIdx(),
 				"nonce", prepared.Nonce(),
 				"queue_depth", p.queueLen(),
@@ -468,7 +475,7 @@ func (p *sessionPicker) run() {
 			}
 			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
 			if p.dispatchGhost != nil {
-				p.dispatchGhost(prepared, ghost, ghost.reason())
+				p.dispatchGhost(prepared, ghost, ghostReason)
 			}
 			// Loop straight into the next iteration. Ghost burns are
 			// the cost of advancing the nonce stream past hosts that

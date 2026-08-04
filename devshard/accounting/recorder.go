@@ -16,7 +16,6 @@ type DiffObserverTarget interface {
 type ProtocolView interface {
 	GetInference(uint64) (types.InferenceRecord, bool)
 	SnapshotStateNoInferences() types.EscrowState
-	Phase() types.SessionPhase
 }
 
 type RuntimeMetadata struct {
@@ -57,7 +56,7 @@ func (r *Recorder) Attach(meta RuntimeMetadata, session DiffObserverTarget, stat
 		CreationEpoch:        meta.CreationEpoch,
 		Model:                meta.Model,
 		Slots:                snapshot.Group,
-		Phase:                escrowPhase(state.Phase()),
+		Phase:                escrowPhase(snapshot.Phase),
 		RefusalTimeout:       snapshot.Config.RefusalTimeout,
 		ExecutionTimeout:     snapshot.Config.ExecutionTimeout,
 		TimeoutBufferSeconds: int64(meta.TimeoutBuffer / time.Second),
@@ -117,11 +116,9 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			Kind:  kind,
 		})
 	}
-	if err := r.tracker.RecordCommittedDiff(escrowID, diff, verdicts); err != nil {
+	snapshot := state.SnapshotStateNoInferences()
+	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, snapshot); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
-	}
-	if err := r.tracker.RecordPhase(escrowID, escrowPhase(state.Phase())); err != nil {
-		log.Printf("gateway accounting phase escrow=%s: %v", escrowID, err)
 	}
 }
 
@@ -189,9 +186,6 @@ func (r *Recorder) TimeoutResult(
 		return
 	}
 	outcome := TimeoutOutcomeFromAction(action, reason)
-	if outcome == "" {
-		return
-	}
 	if err := r.tracker.RecordTimeout(TimeoutRecord{
 		EscrowID:      escrowID,
 		Nonce:         nonce,
@@ -252,7 +246,7 @@ func (r *Recorder) sync(escrowID string, phase EscrowPhase) {
 		log.Printf("gateway accounting sync escrow=%s: %v", escrowID, err)
 	}
 	if phase == "" {
-		phase = escrowPhase(state.Phase())
+		phase = escrowPhase(snapshot.Phase)
 	}
 	if err := r.tracker.RecordPhase(escrowID, phase); err != nil {
 		log.Printf("gateway accounting phase escrow=%s: %v", escrowID, err)
