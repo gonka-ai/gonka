@@ -8,6 +8,16 @@ Host evacuation: [versiond-host-evacuation.md](./versiond-host-evacuation.md).
 Rolling updates: [rolling-update.md](./rolling-update.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
 
+The base and HA Compose models use the v5 `edge-api`, `versiond`,
+`edge-api-router`, and `versiond-router` images under
+`ghcr.io/product-science`, all tagged `0.2.15-devshard-v5`. Before making this
+guide available to operators, publish all four images and run the **Release
+image smoke** workflow manually. It pulls those exact registry artifacts,
+validates both router configurations, and requires `/healthz` to answer `200`
+and `/readyz` to answer `503` while a deliberately unavailable dependency keeps
+each service out of rotation. A `404` therefore blocks the release instead of
+failing later in `up --wait`.
+
 ---
 
 ## Overview

@@ -1,0 +1,36 @@
+name: Release image smoke
+
+on:
+  pull_request:
+    paths:
+      - deploy/join/docker-compose.yml
+      - deploy/join/docker-compose.versiond.yml
+      - deploy/join/docker-compose.edge-api-multi.yml
+      - deploy/join/release-image-smoke_test.sh
+      - .github/workflows/release-image-smoke.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compose-contract:
+    name: Compose release image contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Check base and HA image pins
+        run: deploy/join/release-image-smoke_test.sh --contract
+
+  registry-smoke:
+    name: Published image endpoints
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Pull and smoke-test release images
+        run: deploy/join/release-image-smoke_test.sh
