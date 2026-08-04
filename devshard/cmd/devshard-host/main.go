@@ -48,13 +48,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("build server: %v", err)
 	}
+	stubInferenceHTTPStatus, hasStubInferenceHTTPStatus, err := e2econfig.IntFromEnv(e2econfig.StubInferenceHTTPStatusEnv)
+	if err != nil {
+		log.Fatalf("load %s: %v", e2econfig.StubInferenceHTTPStatusEnv, err)
+	}
+	if hasStubInferenceHTTPStatus && (stubInferenceHTTPStatus < http.StatusBadRequest || stubInferenceHTTPStatus > 599) {
+		log.Fatalf("invalid %s: must be an HTTP error status", e2econfig.StubInferenceHTTPStatusEnv)
+	}
 
 	e := echo.New()
 	e.HideBanner = true
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, stubInferenceHTTPStatus)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -66,7 +73,7 @@ func main() {
 
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server) {
+func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatus int) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -77,7 +84,22 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 		}
 	}
 
-	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	inferenceHandler := srv.HandleInference
+	if stubInferenceHTTPStatus != 0 {
+		inferenceHandler = func(c echo.Context) error {
+			message := http.StatusText(stubInferenceHTTPStatus)
+			if message == "" {
+				message = fmt.Sprintf("stub inference HTTP status %d", stubInferenceHTTPStatus)
+			}
+			return c.JSON(stubInferenceHTTPStatus, map[string]any{
+				"error": map[string]string{
+					"message": message,
+				},
+			})
+		}
+	}
+
+	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
@@ -196,6 +218,13 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	}
 
 	inferenceEngine := devshardpkg.InferenceEngine(stub.NewInferenceEngine())
+	sseErrorMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceSSEErrorEnv)
+	if err != nil {
+		return nil, err
+	}
+	if sseErrorMessage != "" {
+		inferenceEngine = sseErrorInferenceEngine{message: sseErrorMessage}
+	}
 	inferenceDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.StubInferenceDelayMillisEnv)
 	if err != nil {
 		return nil, err
@@ -305,6 +334,20 @@ func (e delayedInferenceEngine) Execute(ctx context.Context, req devshardpkg.Exe
 	case <-timer.C:
 		return e.inner.Execute(ctx, req)
 	}
+}
+
+type sseErrorInferenceEngine struct {
+	message string
+}
+
+func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	if req.ResponseWriter != nil {
+		fmt.Fprintf(req.ResponseWriter, "data: {\"error\":{\"code\":400,\"message\":%s,\"type\":\"BadRequestError\"}}\n\n", strconv.Quote(e.message))
+		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
+			rw.Flush()
+		}
+	}
+	return nil, errors.New(e.message)
 }
 
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay

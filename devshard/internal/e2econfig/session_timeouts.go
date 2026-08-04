@@ -15,6 +15,8 @@ const (
 	ExecutionTimeoutSecondsEnv  = "DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS"
 	StubInferenceDelayMillisEnv = "DEVSHARD_STUB_INFERENCE_DELAY_MS"
 	ReceiptDelayMillisEnv       = "DEVSHARD_E2E_RECEIPT_DELAY_MS"
+	StubInferenceSSEErrorEnv    = "DEVSHARD_STUB_INFERENCE_SSE_ERROR_MESSAGE"
+	StubInferenceHTTPStatusEnv  = "DEVSHARD_STUB_INFERENCE_HTTP_STATUS"
 )
 
 type SessionTimeoutOverrides struct {
@@ -59,6 +61,28 @@ func DurationMillisFromEnv(name string) (time.Duration, error) {
 		return 0, err
 	}
 	return time.Duration(value) * time.Millisecond, nil
+}
+
+func IntFromEnv(name string) (int, bool, error) {
+	value, ok, err := e2eInt64Env(name)
+	if err != nil || !ok {
+		return 0, ok, err
+	}
+	if int64(int(value)) != value {
+		return 0, false, fmt.Errorf("invalid %s: value exceeds int range", name)
+	}
+	return int(value), true, nil
+}
+
+func StringFromEnv(name string) (string, error) {
+	raw := strings.TrimSpace(os.Getenv(name))
+	if raw == "" {
+		return "", nil
+	}
+	if os.Getenv("DEVSHARD_E2E") != "1" {
+		return "", fmt.Errorf("%s is only supported when DEVSHARD_E2E=1", name)
+	}
+	return raw, nil
 }
 
 func sessionTimeoutSecondsEnv(name string) (int64, bool, error) {

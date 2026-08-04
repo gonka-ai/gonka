@@ -2,6 +2,7 @@ package e2e
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
@@ -350,33 +351,89 @@ func TestE2E_AccountingAppliedTimeoutCrossCheck(t *testing.T) {
 }
 
 // Test flow:
-//  1. Start the default three-host environment.
-//  2. Stop the host assigned to the next nonce so the first attempt fails.
-//  3. Send enough sequential completions for the failed participant to be skipped.
-//  4. Poll accounting until the skipped no-send nonce appears as ghost.
-//  5. Assert accounting remains coherent and every assigned nonce is counted once.
+//  1. Start the three-host environment with the nonce-1 host returning HTTP 503.
+//  2. Send enough sequential completions for the throttled participant to be skipped.
+//  3. Let the first 503 teach the gateway to quarantine that participant.
+//  4. Poll accounting until the skipped no-send nonce appears as a throttled probe ghost.
+//  5. Assert accounting records the no-send reason/quarantine dimensions and every assigned nonce is counted once.
 func TestE2E_AccountingFocusedGhostRequestNotSent(t *testing.T) {
-	env, client := startNonStreamingEnv(t)
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			1: {
+				e2econfig.StubInferenceHTTPStatusEnv: "503",
+			},
+		},
+	})
 
 	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0
 	})
 	beforeGhost := testutil.AccountingDispositionCount(before, "ghost")
+	beforeThrottledProbeGhost := testutil.AccountingGhostCounterCount(before, "participant_throttled_no_send", "probe")
 	beforeAssigned := testutil.AccountingAssignedTotal(before)
 
 	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
-	ctx, cancel := context.WithTimeout(context.Background(), testutil.DefaultRequestTimeout)
-	t.Cleanup(cancel)
-	env.stopHost(ctx, t, nextSlot)
+	require.Equal(t, 1, nextSlot, "test setup expects the HTTP 503 host to own the first traffic nonce")
 
-	testutil.SendCompletions(t, client, env.clientURL, "accounting focused ghost", len(env.hostURLs)+1)
+	testutil.SendCompletions(t, client, env.clientURL, "accounting focused ghost", len(env.hostURLs)+2)
 
 	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
 		return len(resp.Participants) > 0 &&
 			testutil.AccountingAssignedTotal(resp) > beforeAssigned &&
-			testutil.AccountingDispositionCount(resp, "ghost") > beforeGhost
+			testutil.AccountingDispositionCount(resp, "ghost") > beforeGhost &&
+			testutil.AccountingGhostCounterCount(resp, "participant_throttled_no_send", "probe") > beforeThrottledProbeGhost
 	})
-	require.Greater(t, testutil.AccountingDispositionCount(accounting, "ghost"), beforeGhost, "stopped participant should eventually be skipped as a ghost no-send nonce")
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "ghost"), beforeGhost, "HTTP 503 participant should eventually be skipped as a ghost no-send nonce")
+	require.Greater(t,
+		testutil.AccountingGhostCounterCount(accounting, "participant_throttled_no_send", "probe"),
+		beforeThrottledProbeGhost,
+		"HTTP 503 participant should be accounted with throttled no-send reason and probe quarantine mode",
+	)
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
+//  1. Start the three-host environment with the nonce-1 host returning a retriable tool capability error.
+//  2. Send tool completions so the gateway learns that participant cannot serve tool requests.
+//  3. Continue tool traffic until the participant's next assigned slot is skipped as a ghost no-send.
+//  4. Poll accounting until no_send_reason=participant_capability_no_send is visible.
+//  5. Assert the capability ghost is not a quarantine probe and every assigned nonce is counted once.
+func TestE2E_AccountingGhostCapabilityNoSendReason(t *testing.T) {
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			1: {
+				e2econfig.StubInferenceSSEErrorEnv: testutil.ToolChoiceUnsupportedMessage,
+			},
+		},
+	})
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	require.Equal(t, 1, nextSlot, "test setup expects the tool-capability-error host to own the first traffic nonce")
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeCapabilityGhost := testutil.AccountingGhostCounterCount(before, "participant_capability_no_send", "none")
+	beforeAssigned := testutil.AccountingAssignedTotal(before)
+
+	for i := 0; i < len(env.hostURLs)+2; i++ {
+		label := fmt.Sprintf("accounting capability ghost %d", i+1)
+		resp := testutil.PostJSONRaw(t, client, env.clientURL+"/v1/chat/completions", testutil.ToolCompletionBody(label, false), testutil.AdminAPIKey)
+		testutil.LogRawResponse(t, label, resp)
+		testutil.RequireOpenAINonStreamingCompletion(t, resp)
+	}
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingAssignedTotal(resp) > beforeAssigned &&
+			testutil.AccountingGhostCounterCount(resp, "participant_capability_no_send", "none") > beforeCapabilityGhost
+	})
+	require.Greater(t,
+		testutil.AccountingGhostCounterCount(accounting, "participant_capability_no_send", "none"),
+		beforeCapabilityGhost,
+		"tool-capability-incompatible participant should be accounted with capability no-send reason and no quarantine mode",
+	)
 	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
 	testutil.RequireNonceAccountingBalanced(t, accounting)
 }

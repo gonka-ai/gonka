@@ -67,3 +67,40 @@ func TestDurationMillisFromEnvAllowsUnset(t *testing.T) {
 	require.NoError(t, err)
 	require.Zero(t, value)
 }
+
+func TestIntFromEnv(t *testing.T) {
+	t.Setenv("DEVSHARD_E2E", "1")
+	t.Setenv(StubInferenceHTTPStatusEnv, "503")
+
+	value, ok, err := IntFromEnv(StubInferenceHTTPStatusEnv)
+
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.Equal(t, 503, value)
+}
+
+func TestIntFromEnvAllowsUnset(t *testing.T) {
+	value, ok, err := IntFromEnv(StubInferenceHTTPStatusEnv)
+
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Zero(t, value)
+}
+
+func TestStringFromEnv(t *testing.T) {
+	t.Setenv("DEVSHARD_E2E", "1")
+	t.Setenv(StubInferenceSSEErrorEnv, "  upstream tool error  ")
+
+	value, err := StringFromEnv(StubInferenceSSEErrorEnv)
+
+	require.NoError(t, err)
+	require.Equal(t, "upstream tool error", value)
+}
+
+func TestStringFromEnvRequiresE2E(t *testing.T) {
+	t.Setenv(StubInferenceSSEErrorEnv, "upstream tool error")
+
+	_, err := StringFromEnv(StubInferenceSSEErrorEnv)
+
+	require.ErrorContains(t, err, "only supported when DEVSHARD_E2E=1")
+}

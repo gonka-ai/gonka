@@ -83,6 +83,25 @@ func ChatCompletionBody(content string, stream bool) map[string]any {
 	return body
 }
 
+const ToolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
+
+func ToolCompletionBody(content string, stream bool) map[string]any {
+	body := ChatCompletionBody(content, stream)
+	body["tool_choice"] = "auto"
+	body["tools"] = []map[string]any{{
+		"type": "function",
+		"function": map[string]any{
+			"name":        "lookup_status",
+			"description": "Return a test status string.",
+			"parameters": map[string]any{
+				"type":       "object",
+				"properties": map[string]any{},
+			},
+		},
+	}}
+	return body
+}
+
 func readSSEEvents(t *testing.T, body io.Reader) (string, []string) {
 	t.Helper()
 	var raw strings.Builder

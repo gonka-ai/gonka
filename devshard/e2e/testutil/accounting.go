@@ -21,18 +21,39 @@ type AccountingParticipantsResponse struct {
 }
 
 type AccountingParticipant struct {
-	Participant           string            `json:"participant"`
-	Model                 string            `json:"model"`
-	AssignedNonces        uint64            `json:"assigned_nonces"`
-	Dispositions          map[string]uint64 `json:"dispositions"`
-	TimeoutOutcomes       map[string]uint64 `json:"timeout_outcomes"`
-	ProtocolMisses        uint64            `json:"protocol_misses"`
-	InFlight              uint64            `json:"in_flight"`
-	TimeoutPending        uint64            `json:"timeout_pending"`
-	PendingClassification uint64            `json:"pending_classification"`
-	Unclassified          uint64            `json:"unclassified"`
-	Overclassified        uint64            `json:"overclassified"`
-	CrossChecks           AccountingChecks  `json:"cross_checks"`
+	Participant           string              `json:"participant"`
+	Model                 string              `json:"model"`
+	AssignedNonces        uint64              `json:"assigned_nonces"`
+	Dispositions          map[string]uint64   `json:"dispositions"`
+	TimeoutOutcomes       map[string]uint64   `json:"timeout_outcomes"`
+	ProtocolMisses        uint64              `json:"protocol_misses"`
+	InFlight              uint64              `json:"in_flight"`
+	TimeoutPending        uint64              `json:"timeout_pending"`
+	PendingClassification uint64              `json:"pending_classification"`
+	Unclassified          uint64              `json:"unclassified"`
+	Overclassified        uint64              `json:"overclassified"`
+	CrossChecks           AccountingChecks    `json:"cross_checks"`
+	Counters              []AccountingCounter `json:"counters"`
+}
+
+type AccountingCounter struct {
+	EscrowID string               `json:"escrow_id"`
+	Key      AccountingCounterKey `json:"key"`
+	Count    uint64               `json:"count"`
+}
+
+type AccountingCounterKey struct {
+	SlotID                 uint32 `json:"slot_id"`
+	Disposition            string `json:"disposition"`
+	DispatchPhase          string `json:"dispatch_phase,omitempty"`
+	TimeoutEvaluationPhase string `json:"timeout_evaluation_phase,omitempty"`
+	QuarantineMode         string `json:"quarantine_mode,omitempty"`
+	NoSendReason           string `json:"no_send_reason,omitempty"`
+	FailureOrigin          string `json:"failure_origin,omitempty"`
+	DetailReason           string `json:"detail_reason,omitempty"`
+	TimeoutKind            string `json:"timeout_kind,omitempty"`
+	TimeoutOutcome         string `json:"timeout_outcome,omitempty"`
+	TimeoutReason          string `json:"timeout_reason,omitempty"`
 }
 
 type AccountingChecks struct {
@@ -136,6 +157,25 @@ func AccountingDispositionCount(resp AccountingParticipantsResponse, disposition
 	var total uint64
 	for _, participant := range resp.Participants {
 		total += participant.Dispositions[disposition]
+	}
+	return total
+}
+
+func AccountingGhostCounterCount(resp AccountingParticipantsResponse, noSendReason, quarantineMode string) uint64 {
+	var total uint64
+	for _, participant := range resp.Participants {
+		for _, counter := range participant.Counters {
+			if counter.Key.Disposition != "ghost" {
+				continue
+			}
+			if noSendReason != "" && counter.Key.NoSendReason != noSendReason {
+				continue
+			}
+			if quarantineMode != "" && counter.Key.QuarantineMode != quarantineMode {
+				continue
+			}
+			total += counter.Count
+		}
 	}
 	return total
 }
