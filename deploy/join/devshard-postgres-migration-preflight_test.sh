@@ -52,7 +52,7 @@ run_preflight() {
 
 : >"$tmpdir/docker.log"
 target_mount="type=bind\\,src=$tmpdir/target\\,dst=/target\\,readonly"
-DOCKER_PROBE='source 1000'
+DOCKER_PROBE='source 1000 0'
 FREE_KIB=1100
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-container postgres-v4 --target-dir "$tmpdir/target" \
@@ -75,7 +75,7 @@ grep -q 'not enough free space' "$tmpdir/fail.stderr" || fail \
     "insufficient-space error was not explained"
 
 : >"$tmpdir/docker.log"
-DOCKER_PROBE='source 2000'
+DOCKER_PROBE='source 2000 0'
 FREE_KIB=2200
 export DOCKER_PROBE FREE_KIB
 run_preflight --source-volume postgres-v4-volume \
@@ -89,6 +89,23 @@ grep -q 'readonly' "$tmpdir/docker.log" || fail \
 grep -Fq -- "$target_mount" \
     "$tmpdir/docker.log" || fail \
     "target directory was not mounted for the volume-source probe"
+
+DOCKER_PROBE='source 1000 200'
+FREE_KIB=900
+export DOCKER_PROBE FREE_KIB
+run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/target" >"$tmpdir/reclaim.stdout"
+grep -q 'filesystem free: 900 KiB; reclaimable staging: 200 KiB; effective available: 1100 KiB' \
+    "$tmpdir/reclaim.stdout" || fail \
+    "partial staging was not counted as reclaimable space"
+
+FREE_KIB=899
+export FREE_KIB
+if run_preflight --source-volume postgres-v4-volume \
+    --target-dir "$tmpdir/target" \
+    >"$tmpdir/reclaim-fail.stdout" 2>"$tmpdir/reclaim-fail.stderr"; then
+    fail "insufficient effective space passed after staging accounting"
+fi
 
 DOCKER_PROBE='target-ready'
 FREE_KIB=0

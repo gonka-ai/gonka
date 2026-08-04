@@ -242,6 +242,49 @@ apply_nginx_host_list() {
         ' sh "$entrypoint"
 }
 
+install_nginx_traffic_barrier() {
+    local router=$1
+    local env_name=$2
+    local hosts=$3
+    local entrypoint=$4
+    local hook=/docker-entrypoint.d/99-gonka-upgrade-barrier.sh
+    local staged_hook=/tmp/99-gonka-upgrade-barrier.sh
+    local state=/etc/gonka-upgrade-barrier
+
+    run_interruptible "$docker_bin" cp \
+        "$script_dir/legacy-router-upgrade-barrier.sh" \
+        "$router:$staged_hook"
+    # The quoted program is evaluated by /bin/sh inside the router container.
+    # shellcheck disable=SC2016
+    run_interruptible "$docker_bin" exec \
+        --env "GONKA_BARRIER_ENV_NAME=$env_name" \
+        --env "GONKA_BARRIER_HOSTS=$hosts" \
+        --env "GONKA_BARRIER_RENDERER=$entrypoint" \
+        "$router" /bin/sh -ec '
+            state=$1
+            hook=$2
+            staged_hook=$3
+            staged_state="${state}.tmp"
+            printf "%s\n%s\n%s\n" \
+                "$GONKA_BARRIER_ENV_NAME" \
+                "$GONKA_BARRIER_HOSTS" \
+                "$GONKA_BARRIER_RENDERER" >"$staged_state"
+            chmod 0600 "$staged_state"
+            mv "$staged_state" "$state"
+            chmod 0755 "$staged_hook"
+            mv "$staged_hook" "$hook"
+        ' sh "$state" "$hook" "$staged_hook"
+}
+
+remove_nginx_traffic_barrier() {
+    local router=$1
+
+    run_interruptible "$docker_bin" exec "$router" rm -f \
+        /etc/gonka-upgrade-barrier \
+        /docker-entrypoint.d/99-gonka-upgrade-barrier.sh \
+        /tmp/99-gonka-upgrade-barrier.sh
+}
+
 clear_traffic_barrier() {
     traffic_barrier_router=
     traffic_barrier_env=
@@ -277,6 +320,8 @@ begin_traffic_barrier() {
     traffic_barrier_target=$target
 
     echo "Removing $target from the legacy $router upstream"
+    install_nginx_traffic_barrier \
+        "$router" "$env_name" "$isolated_hosts" "$entrypoint"
     apply_nginx_host_list "$router" "$env_name" "$isolated_hosts" \
         "$entrypoint"
     # nginx reload is asynchronous. Keep the replacement out of DNS until old
@@ -295,6 +340,7 @@ restore_traffic_barrier() {
     fi
 
     echo "Restoring $traffic_barrier_target in the legacy router upstream" >&2
+    remove_nginx_traffic_barrier "$traffic_barrier_router" || return 1
     apply_nginx_host_list \
         "$traffic_barrier_router" \
         "$traffic_barrier_env" \
@@ -321,31 +367,50 @@ capture_rollback_image() {
     echo "Captured $service rollback image as $rollback_image"
 }
 
-rollback_health_url() {
-    case $1 in
-        versiond | versiond2 | versiond-router)
-            printf 'http://127.0.0.1:8080/healthz\n'
-            ;;
-        edge-api | edge-api2 | edge-api3 | edge-api-router)
-            printf 'http://127.0.0.1:18080/healthz\n'
-            ;;
-        *)
-            return 1
-            ;;
-    esac
+rollback_versiond_is_available() {
+    local container_id=$1
+    local status version
+    local running_entry='"name":"([^"]+)"[^}]*"status":"running"'
+
+    status=$("$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O - http://127.0.0.1:8080/healthz) || return 1
+    [[ $status =~ $running_entry ]] || return 1
+    version=${BASH_REMATCH[1]}
+    [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+
+    "$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O /dev/null \
+        "http://127.0.0.1:8080/$version/healthz"
+}
+
+rollback_edge_is_available() {
+    local container_id=$1
+
+    # /v1/versions executes a gRPC query against the chain. Unlike /healthz,
+    # it fails when edge-api is alive but cannot serve its production workload.
+    "$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O /dev/null http://127.0.0.1:18080/v1/versions
 }
 
 rollback_service_is_available() {
     local service=$1
-    local container_id health_url
+    local container_id
 
     container_id=$("${compose[@]}" ps --all --quiet "$service")
     [[ -n $container_id ]] || return 1
     [[ $("$docker_bin" inspect --format '{{.State.Running}}' \
         "$container_id") == true ]] || return 1
-    health_url=$(rollback_health_url "$service") || return 1
-    "$docker_bin" exec "$container_id" /bin/busybox wget \
-        -q -T 3 -O /dev/null "$health_url"
+    case $service in
+        versiond | versiond2 | versiond-router)
+            rollback_versiond_is_available "$container_id"
+            ;;
+        edge-api | edge-api2 | edge-api3 | edge-api-router)
+            rollback_edge_is_available "$container_id"
+            ;;
+        *)
+            return 1
+            ;;
+    esac
 }
 
 wait_for_rollback_availability() {

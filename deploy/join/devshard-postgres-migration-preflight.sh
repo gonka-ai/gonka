@@ -73,7 +73,11 @@ elif [ -s "$2/.migrating/PG_VERSION" ] &&
     printf 'staging-ready\n'
 elif [ -s "$1/PG_VERSION" ]; then
     source_kib=$(du -sk "$1" | cut -f1)
-    printf 'source %s\n' "$source_kib"
+    reclaimable_kib=0
+    if [ -d "$2/.migrating" ]; then
+        reclaimable_kib=$(du -sk "$2/.migrating" | cut -f1)
+    fi
+    printf 'source %s %s\n' "$source_kib" "$reclaimable_kib"
 else
     printf 'source-missing\n'
 fi
@@ -107,7 +111,7 @@ else
         -ec "$probe_script" sh /source /target)
 fi
 
-read -r probe_state source_kib extra <<<"$probe"
+read -r probe_state source_kib reclaimable_kib extra <<<"$probe"
 [[ -z ${extra:-} ]] || fail "unexpected source probe output: $probe"
 case $probe_state in
     target-ready)
@@ -126,6 +130,8 @@ case $probe_state in
 esac
 [[ $source_kib =~ ^[1-9][0-9]*$ ]] || fail \
     "invalid PostgreSQL source size: ${source_kib:-empty}"
+[[ $reclaimable_kib =~ ^[0-9]+$ ]] || fail \
+    "invalid reclaimable staging size: ${reclaimable_kib:-empty}"
 
 free_kib=$(df -Pk -- "$target_dir" | awk 'NR == 2 { print $4 }')
 [[ $free_kib =~ ^[0-9]+$ ]] || fail \
@@ -134,8 +140,10 @@ free_kib=$(df -Pk -- "$target_dir" | awk 'NR == 2 { print $4 }')
 # The migration is a full copy. Keep a 10% reserve for filesystem metadata,
 # WAL growth between this preflight and shutdown, and the completion marker.
 required_kib=$((source_kib + (source_kib + 9) / 10))
-printf 'PostgreSQL source: %s KiB; required free: %s KiB; available: %s KiB\n' \
-    "$source_kib" "$required_kib" "$free_kib"
-if ((free_kib < required_kib)); then
+effective_free_kib=$((free_kib + reclaimable_kib))
+printf 'PostgreSQL source: %s KiB; required free: %s KiB; filesystem free: %s KiB; reclaimable staging: %s KiB; effective available: %s KiB\n' \
+    "$source_kib" "$required_kib" "$free_kib" "$reclaimable_kib" \
+    "$effective_free_kib"
+if ((effective_free_kib < required_kib)); then
     fail "not enough free space for PostgreSQL migration"
 fi

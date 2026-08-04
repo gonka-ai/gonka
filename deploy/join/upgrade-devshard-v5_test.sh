@@ -51,24 +51,42 @@ if [[ ${1:-} == inspect ]]; then
 fi
 
 if [[ ${1:-} == exec ]]; then
-    if [[ ${2:-} == "cid-${ROLLBACK_PROBE_FAIL_SERVICE-}" ]]; then
-        for arg in "$@"; do
-            [[ $arg == http://*/healthz ]] && exit 1
-        done
-    fi
+    container=${2:-}
     for arg in "$@"; do
         [[ $arg == nginx ]] && exit 0
         [[ $arg == haproxy ]] && exit 1
+        case $arg in
+            http://*) probe_url=$arg ;;
+        esac
     done
+    if [[ -n ${probe_url:-} ]]; then
+        [[ $container != "cid-${ROLLBACK_PROBE_FAIL_SERVICE-}" ]] || exit 1
+        case $container:$probe_url in
+            cid-versiond*:http://127.0.0.1:8080/healthz)
+                if [[ $container == "cid-${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" ]]; then
+                    printf '[]\n'
+                else
+                    printf '[{"name":"v4","port":5000,"status":"running"}]\n'
+                fi
+                exit 0
+                ;;
+            cid-versiond*:http://127.0.0.1:8080/v4/healthz | \
+                cid-edge-api*:http://127.0.0.1:18080/v1/versions)
+                exit 0
+                ;;
+            *) exit 1 ;;
+        esac
+    fi
     exit 0
 fi
 
 if [[ ${1:-} == run ]]; then
-    printf 'source 1\n'
+    printf 'source 1 0\n'
     exit 0
 fi
 
-if [[ ${1:-} == tag || (${1:-} == image && ${2:-} == rm) ]]; then
+if [[ ${1:-} == cp || ${1:-} == tag || \
+    (${1:-} == image && ${2:-} == rm) ]]; then
     exit 0
 fi
 
@@ -140,6 +158,7 @@ run_upgrade() {
         BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        ROLLBACK_EMPTY_VERSIOND_SERVICE="${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" \
         ROLLBACK_PROBE_FAIL_SERVICE="${ROLLBACK_PROBE_FAIL_SERVICE-}" \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-5}" \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
@@ -186,6 +205,7 @@ run_interrupted_upgrade() {
         BLOCK_SIGNAL="$signal" \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        ROLLBACK_EMPTY_VERSIOND_SERVICE='' \
         ROLLBACK_PROBE_FAIL_SERVICE='' \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
@@ -289,13 +309,17 @@ versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")
 versiond2_up_line=$(line_number "$tmpdir/ha.log" \
     "--wait-timeout 2100 versiond2")
+versiond_barrier_hook_line=$(line_number "$tmpdir/ha.log" \
+    "legacy-router-upgrade-barrier.sh versiond-router:/tmp/99-gonka-upgrade-barrier.sh")
 versiond_router_up_line=$(line_number "$tmpdir/ha.log" \
     "--wait-timeout 60 versiond-router")
 versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
     '--wait-timeout 2100 versiond$')
-[[ -n $versiond_barrier_line && -n $versiond2_up_line && \
+[[ -n $versiond_barrier_line && -n $versiond_barrier_hook_line && \
+    -n $versiond2_up_line && \
     -n $versiond_router_up_line && -n $versiond_up_line && \
     $versiond_barrier_line -lt $versiond2_up_line && \
+    $versiond_barrier_hook_line -lt $versiond2_up_line && \
     $versiond2_up_line -lt $versiond_router_up_line && \
     $versiond_router_up_line -lt $versiond_up_line ]] ||
     fail "versiond traffic barrier or HAProxy cutover order is wrong"
@@ -322,7 +346,7 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
 assert_contains "$tmpdir/versiond2.log" \
     "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
 rollback_probe_count=$(grep -Fc \
-    'http://127.0.0.1:8080/healthz' "$tmpdir/versiond2.log")
+    'http://127.0.0.1:8080/v4/healthz' "$tmpdir/versiond2.log")
 [[ $rollback_probe_count -eq 3 ]] || fail \
     "rollback was not held through the configured stability window"
 assert_not_contains "$tmpdir/versiond2.log" \
@@ -340,6 +364,17 @@ grep -q 'did not become stably available' "$tmpdir/stderr" || {
     cat "$tmpdir/stderr" >&2
     fail "unavailable rollback did not report the failed verification"
 }
+
+ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
+    run_upgrade single versiond2 "$tmpdir/versiond2-empty.log"
+assert_contains "$tmpdir/versiond2-empty.log" " stop versiond2"
+
+run_upgrade single versiond-router "$tmpdir/versiond-router.log"
+assert_contains "$tmpdir/versiond-router.log" \
+    "exec versiond-router rm -f /etc/gonka-upgrade-barrier"
+assert_contains "$tmpdir/versiond-router.log" \
+    "VERSIOND_HOSTS=versiond\\ versiond2"
 
 for signal in HUP INT TERM; do
     signal_name=${signal,,}
@@ -383,6 +418,8 @@ fi
 run_upgrade multi edge-api-router "$tmpdir/edge-router.log"
 assert_contains "$tmpdir/edge-router.log" \
     "EDGE_API_ROUTER_IMAGE=gonka-upgrade-rollback/edge-api-router:"
+assert_contains "$tmpdir/edge-router.log" \
+    "http://127.0.0.1:18080/v1/versions"
 if grep -F -- '--wait-timeout 180 edge-api3' "$tmpdir/edge-router.log" >/dev/null; then
     cat "$tmpdir/edge-router.log" >&2
     fail "edge-api3 was replaced after the HAProxy cutover failed"
@@ -391,5 +428,12 @@ fi
 run_upgrade single edge-api "$tmpdir/edge-api.log"
 assert_contains "$tmpdir/edge-api.log" \
     "EDGE_API_IMAGE=gonka-upgrade-rollback/edge-api:"
+assert_contains "$tmpdir/edge-api.log" \
+    "http://127.0.0.1:18080/v1/versions"
+
+ROLLBACK_PROBE_FAIL_SERVICE=edge-api \
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
+    run_upgrade single edge-api "$tmpdir/edge-api-unavailable.log"
+assert_contains "$tmpdir/edge-api-unavailable.log" " stop edge-api"
 
 echo "upgrade-devshard-v5_test: ok"

@@ -99,19 +99,24 @@ or router service it may roll back. The v4 nginx routers do not consume
 `/readyz`, so before replacing the first replica the script removes that replica
 from the rendered upstream, validates the nginx config, and performs a graceful
 reload. Existing requests remain on the old nginx workers; the replacement does
-not receive new traffic while `up --wait` is establishing readiness.
+not receive new traffic while `up --wait` is establishing readiness. The script
+also installs a temporary after-render hook in the v4 router container. If that
+container crashes and Docker restarts it, the shortened upstream is rendered
+again before nginx starts accepting traffic.
 
 `EXIT`, `INT`, `TERM`, and `HUP` share the same compensation path. If an active
 replacement fails or the script is interrupted, it attempts to recreate the
 previous image; a newly introduced service is stopped instead. A restored v4
-service must remain running and answer its existing `/healthz` endpoint on three
-consecutive probes before rollback is reported as successful. If that check
-fails, the service is stopped and the script requires operator recovery. A
-replica interrupted after the nginx barrier remains isolated because `/healthz`
-is a weaker contract than v5 readiness; rerun the same command to retry it.
-Temporary rollback tags are removed only after the whole upgrade succeeds.
-After a failed attempt, keep the reported `gonka-upgrade-rollback/*` tags until
-recovery is verified; they can then be removed with `docker image rm`.
+service must pass three consecutive functional probes before rollback is
+reported as successful. For versiond, the probe requires a running child and
+requests that child's routed `/healthz`; for edge-api, it executes the
+chain-backed `/v1/versions` query. Router rollback is checked through the same
+proxied workload. If that check fails, the service is stopped and the script
+requires operator recovery. A replica interrupted after the nginx barrier
+remains isolated; rerun the same command to retry it. Temporary rollback tags
+are removed only after the whole upgrade succeeds. After a failed attempt, keep
+the reported `gonka-upgrade-rollback/*` tags until recovery is verified; they can
+then be removed with `docker image rm`.
 
 For multi-edge, the script replaces `edge-api2` first and waits for its v5
 `/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready
@@ -154,8 +159,11 @@ may recreate and uses `--no-deps`, so `node`, `api`, `tmkms`, `bridge`, `proxy`,
 Before stopping or recreating the shared PostgreSQL container, the script
 mounts its v4 data volume read-only, measures the cluster with `du`, and checks
 the filesystem behind `DEVSHARD_POSTGRES_DATA_DIR` with `df`. Migration requires
-the full source size plus a 10% reserve. An insufficient filesystem therefore
-stops the procedure while the existing PostgreSQL process is still running.
+the full source size plus a 10% reserve. If an earlier copy left an incomplete
+`.migrating` directory, preflight counts its size as reclaimable because the
+entrypoint removes it before copying again. An insufficient effective amount of
+space stops the procedure while the existing PostgreSQL process is still
+running.
 
 Do not run `docker compose down` or use `up --renew-anon-volumes` before this
 first v5 `up`. During an in-place recreation, Compose carries the v4 anonymous
@@ -164,8 +172,12 @@ entrypoint copies the stopped cluster to a staging directory, validates
 `PG_VERSION`, syncs it, and atomically renames it to the new `PGDATA`. The old
 volume is not modified and remains the physical rollback copy. Later starts use
 the bind-mounted cluster directly, so `down` / `up` no longer risks this database
-migration. It is still a full-stack maintenance operation and must follow the
-official node stopping procedure above.
+migration.
+
+The v5 upgrade command is the targeted devshard cutover described here; it does
+not stop the whole node. Any later full-stack stop is a separate maintenance
+operation and must follow the official
+[Host Quickstart stopping procedure](https://gonka.ai/docs/host/quickstart/).
 
 This is fail-closed if an operator removed the old container first. When the old
 volume is no longer attached but existing versiond artifacts are present, the
@@ -269,9 +281,10 @@ fi
 The preflight is restart-safe. It mounts both the selected legacy volume and
 `target_root` read-only. If the persistent `data/PG_VERSION` is already
 published, or `.migrating` contains a validated completion marker, it succeeds
-without requiring free space for another full copy. Rerun the same block after
-an interrupted recovery; do not delete either directory to make the space check
-pass.
+without requiring free space for another full copy. An incomplete `.migrating`
+directory is included as reclaimable space because the entrypoint removes it
+before retrying the copy. Rerun the same block after an interrupted recovery;
+do not delete either directory to make the space check pass.
 
 Repeat the database verification above, then resume the normal cutover at the
 first versiond replacement. Keep the detached source volume and a logical or
