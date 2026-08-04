@@ -17,8 +17,9 @@ _TBD as v5 scope settles._
 ## What's in this release
 
 - **Whole-`versiond` host evacuation, replacement, addition and decommission**
-  (Track B) — `docker compose stop` / `start` is the entire operator interface;
-  see [versiond-host-evacuation.md](./versiond-host-evacuation.md) and
+  (Track B) — Compose owns both the running containers and their persisted
+  replica counts; see
+  [versiond-host-evacuation.md](./versiond-host-evacuation.md) and
   [rolling-update.md §1.8](./rolling-update.md#18-versiond-router-draining-versiond-hosts-ha).
 - **Both routers moved from nginx to HAProxy** with active health checks and
   DNS-based membership (below).
@@ -322,13 +323,20 @@ Day-to-day operations:
 
 | Task | Command |
 | --- | --- |
-| Take a host out of service | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
-| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d versiond2` |
+| Take `versiond2` out of service temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
+| Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps versiond2` |
+| Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
 | Inspect the router's live view | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
 
 Taking a host out of rotation is stopping it — there is no router-side drain,
 because HAProxy reuses server slots and a drain would be inherited by whichever
 host lands in that slot next.
+
+Do not stop or decommission `VERSIOND_LEGACY_HOST` while
+`VERSIOND_NON_HA_VERSIONS` is non-empty. Those versions have SQLite state on
+that host and no failover backend. A plain `stop` is also not a permanent
+decommission: `restart: always` can bring the container back after a Docker
+daemon restart. Persist the corresponding replica count as `0` first.
 
 ## Upgrade / rollout checklist
 
@@ -349,6 +357,9 @@ host lands in that slot next.
 - [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
       `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
       wait; short values can terminate accepted inference streams
+- [ ] Keep `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` in `config.env`; use a
+      persisted value of `0` for permanent decommission and never decommission
+      `VERSIOND_LEGACY_HOST` while `VERSIOND_NON_HA_VERSIONS` is non-empty
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden

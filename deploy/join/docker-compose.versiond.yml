@@ -104,6 +104,10 @@ services:
   versiond:
     <<: *versiond
     container_name: versiond
+    # Persisted pool membership. Set to 0 in config.env before permanently
+    # decommissioning this host; a plain `stop` is only a temporary evacuation.
+    deploy:
+      replicas: ${VERSIOND_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -112,6 +116,8 @@ services:
   versiond2:
     <<: *versiond
     container_name: versiond2
+    deploy:
+      replicas: ${VERSIOND2_REPLICAS:-1}
     volumes:
       - .inference:/root/.inference:ro
       - ./devshards/bin:/opt/versiond/bin
@@ -138,9 +144,16 @@ services:
       # replaced — so the default declares a window ahead of governance. A pool
       # for a version nobody runs yet has no members and costs nothing.
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS:-v4 v5 v6 v7 v8}
+    # Pool members are optional dependencies: readiness and DNS, not Compose
+    # startup order, decide membership. This also permits a persisted replica
+    # count of zero for a decommissioned host.
     depends_on:
-      - versiond
-      - versiond2
+      versiond:
+        condition: service_started
+        required: false
+      versiond2:
+        condition: service_started
+        required: false
     # Nothing durable to keep: membership is DNS and health is measured, so a
     # restarted router rebuilds its whole view within one check interval.
     # Compose cannot start this service's replacement before the old container
@@ -154,3 +167,11 @@ services:
     environment:
       - VERSIOND_SERVICE_NAME=versiond-router
       - VERSIOND_PORT=8080
+    depends_on:
+      # The base file points directly at versiond. In this overlay the router is
+      # the stable dependency and either individual pool member may be absent.
+      versiond:
+        condition: service_started
+        required: false
+      versiond-router:
+        condition: service_started

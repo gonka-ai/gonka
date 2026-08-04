@@ -11,19 +11,61 @@ updates remain a separate operation managed inside one live `versiond`
 ## The operator contract
 
 There are no evacuation commands. The lifecycle of a host is the lifecycle of
-its container:
+its container. Run every command from `deploy/join` with the complete HA Compose
+model; the base file alone does not define `versiond2` or `versiond-router`:
 
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
-| Evacuate / stop | `docker compose stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
-| Replace / restart | `docker compose up -d versiond2` | it rejoins the pool only once `/readyz` returns 200 |
-| Add a host | start another container on the pool alias | DNS gains an A record; the router finds it within seconds |
-| Decommission | stop it and do not start it again | DNS loses the record; the router forgets it |
-| Inspect what the router believes | `docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
+| Evacuate / stop temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
+| Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps versiond2` | it rejoins the pool only once `/readyz` returns 200 |
+| Inspect what the router believes | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told
 about the change, so nothing can be told about it incorrectly.
+
+### Legacy owner cannot be evacuated
+
+`VERSIOND_LEGACY_HOST` owns the local SQLite data for every version in
+`VERSIOND_NON_HA_VERSIONS`. No other host can serve those sessions. **Do not stop
+or decommission that service while the list is non-empty.** With the shipped
+defaults this means `versiond` cannot be evacuated while `v1 v2 v3` are pinned;
+only `versiond2` is an eligible evacuation target.
+
+Before evacuating the owner, migrate every pinned version to shared Postgres,
+remove it from `VERSIOND_NON_HA_VERSIONS`, recreate `versiond-router`, and verify
+that requests use a `versiond_pool_<v>` backend. Stopping the owner first is an
+outage, not failover.
+
+### Permanent membership changes
+
+`docker compose stop` is temporary. Both hosts use `restart: always`; Docker
+starts a manually stopped container again after the daemon restarts. Permanent
+membership is therefore stored in `config.env`, not in the current container
+state:
+
+```bash
+# Persist this line in config.env; do not only run it in the current shell.
+export VERSIOND2_REPLICAS=0
+```
+
+Then drain and remove the old container:
+
+```bash
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  stop versiond2
+source ./config.env && \
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
+  rm -f versiond2
+```
+
+The overlay applies `VERSIOND_REPLICAS` and `VERSIOND2_REPLICAS` as desired
+replica counts. A later full-model `up -d` therefore does not recreate a
+decommissioned service. To add it back as a new pool member, persist the
+corresponding value as `1`, then run the targeted `up -d --no-deps` command. To
+add a third distinct host, add a new service with its own data directory and the
+`versiond-pool` network alias to the deployment model before starting it.
 
 ## Safety invariants
 
