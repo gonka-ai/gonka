@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -305,14 +306,8 @@ func TestRecordCommittedStateAlignsProtocolTotals(t *testing.T) {
 			}},
 		}},
 	}
-	snapshot := types.EscrowState{
-		LatestNonce: 2,
-		Phase:       types.PhaseActive,
-		HostStats: map[uint32]*types.HostStats{
-			1: {Missed: 1},
-		},
-	}
-	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, snapshot))
+	hostStats := map[uint32]*types.HostStats{1: {Missed: 1}}
+	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, EscrowActive, hostStats))
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 18}), "p1")
 	require.Equal(t, uint64(1), record.ProtocolMisses)
@@ -324,16 +319,10 @@ func TestRecordCommittedStateReplaySynchronizesHostStatsWithoutInventingTimeouts
 	tr := newTestTracker(t)
 	registerEscrow(t, tr, "e1", 19, "m")
 	diff := types.Diff{Nonce: 1}
-	snapshot := types.EscrowState{
-		LatestNonce: 1,
-		Phase:       types.PhaseActive,
-		HostStats: map[uint32]*types.HostStats{
-			1: {Missed: 1},
-		},
-	}
-	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, snapshot))
-	snapshot.HostStats[1].Missed = 2
-	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, snapshot))
+	hostStats := map[uint32]*types.HostStats{1: {Missed: 1}}
+	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, EscrowActive, hostStats))
+	hostStats[1].Missed = 2
+	require.NoError(t, tr.RecordCommittedState("e1", diff, nil, EscrowActive, hostStats))
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 19}), "p1")
 	require.Equal(t, uint64(1), record.Dispositions[DispositionProtocolOnly])
@@ -353,7 +342,8 @@ func TestRecordCommittedStateValidatesBeforeMutation(t *testing.T) {
 		"e1",
 		types.Diff{Nonce: 2},
 		[]VerdictRecord{{Nonce: 1, Slot: 99, Kind: ProtocolInvalidated}},
-		types.EscrowState{LatestNonce: 2, Phase: types.PhaseActive},
+		EscrowActive,
+		nil,
 	)
 	require.ErrorContains(t, err, "slot 99 out of range")
 	require.Equal(t, beforeLatest, tr.escrows["e1"].Latest)
@@ -560,6 +550,211 @@ func TestFinalizedEscrowKeepsLiveClassification(t *testing.T) {
 		require.Equal(t, uint64(1), record.InFlight)
 		require.Zero(t, record.Unclassified)
 	}
+}
+
+// fakeProtocolView counts how often the per-diff path reads protocol state.
+type fakeProtocolView struct {
+	phase      types.SessionPhase
+	inferences map[uint64]types.InferenceRecord
+	hostStats  map[uint32]types.HostStats
+	statReads  int
+	snapshots  int
+}
+
+func (f *fakeProtocolView) GetInference(nonce uint64) (types.InferenceRecord, bool) {
+	record, ok := f.inferences[nonce]
+	return record, ok
+}
+
+func (f *fakeProtocolView) Phase() types.SessionPhase { return f.phase }
+
+func (f *fakeProtocolView) HostStatsFor(slot uint32) (types.HostStats, bool) {
+	f.statReads++
+	stats, ok := f.hostStats[slot]
+	return stats, ok
+}
+
+func (f *fakeProtocolView) SnapshotStateNoInferences() types.EscrowState {
+	f.snapshots++
+	return types.EscrowState{
+		Phase: f.phase,
+		Group: []types.SlotAssignment{
+			{SlotID: 0, ValidatorAddress: "p0"},
+			{SlotID: 1, ValidatorAddress: "p1"},
+		},
+	}
+}
+
+func TestRepeatedInvalidVerdictCountsOnce(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 30, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolChallenged, types.HostStats{}))
+
+	verdict := []VerdictRecord{{Nonce: 1, Slot: 1, Kind: ProtocolInvalidated}}
+	stats := map[uint32]*types.HostStats{1: {Invalid: 1}}
+	require.NoError(t, tr.RecordCommittedState("e1", types.Diff{Nonce: 2}, verdict, EscrowActive, stats))
+	// A validation landing after the invalidation repeats the verdict.
+	require.NoError(t, tr.RecordCommittedState("e1", types.Diff{Nonce: 3}, verdict, EscrowActive, stats))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 30}), "p1")
+	require.Equal(t, uint64(1), record.CrossChecks.RecordedInvalid)
+	require.Equal(t, uint64(1), record.CrossChecks.HostInvalid)
+	require.Zero(t, record.UnresolvedChallenges)
+	require.Zero(t, record.CrossChecks.ErrorCount)
+}
+
+func TestInvalidDedupeSurvivesRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounting.db")
+	tr, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	tr.now = func() time.Time { return accountingTestNow }
+	registerEscrow(t, tr, "e1", 31, "m")
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	verdict := []VerdictRecord{{Nonce: 1, Slot: 1, Kind: ProtocolInvalidated}}
+	require.NoError(t, tr.RecordCommittedState("e1", types.Diff{Nonce: 2}, verdict, EscrowActive, nil))
+	require.NoError(t, tr.Close())
+
+	reopened, err := OpenTracker(path, 0, 0)
+	require.NoError(t, err)
+	defer reopened.Close()
+	reopened.now = func() time.Time { return accountingTestNow }
+	require.NoError(t, reopened.RecordCommittedState("e1", types.Diff{Nonce: 3}, verdict, EscrowActive, nil))
+
+	record := onlyRecord(t, reopened.Query(QueryFilter{EpochIndex: 31}), "p1")
+	require.Equal(t, uint64(1), record.CrossChecks.RecordedInvalid)
+}
+
+func TestCrossCheckErrorsDoNotCancelBetweenEscrows(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 32, "m")
+	registerEscrow(t, tr, "e2", 32, "m")
+
+	// Opposite errors: e1 has a miss the gateway never counted, e2 an applied
+	// timeout the protocol never recorded. Aggregating first would report zero.
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolTimeoutApplied, types.HostStats{Missed: 1}))
+	require.NoError(t, tr.RecordDiff("e2", 1, true))
+	require.NoError(t, tr.RecordRealSend("e2", 1, accountingTestNow.Add(-2*time.Minute), PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e2", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal, Outcome: TimeoutApplied,
+	}))
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 32}), "p1")
+	require.Equal(t, uint64(1), record.CrossChecks.HostMissed)
+	require.Equal(t, uint64(1), record.CrossChecks.TimeoutApplied)
+	require.Equal(t, uint64(2), record.CrossChecks.ErrorCount)
+}
+
+func TestCommittedDiffReadsOnlyAffectedSlots(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 33, "m")
+	state := &fakeProtocolView{
+		phase: types.PhaseActive,
+		inferences: map[uint64]types.InferenceRecord{
+			1: {ExecutorSlot: 1, Status: types.StatusTimedOut},
+		},
+		hostStats: map[uint32]types.HostStats{1: {Missed: 1}},
+	}
+	recorder := NewRecorder(tr, nil)
+
+	start := types.Diff{Nonce: 1, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{InferenceId: 1}},
+	}}}
+	recorder.committedDiff("e1", start, state)
+	require.Zero(t, state.statReads, "a start inference cannot move host tallies")
+	require.Zero(t, state.snapshots, "the per-diff path must not snapshot escrow state")
+
+	timeout := types.Diff{Nonce: 2, Txs: []*types.DevshardTx{{
+		Tx: &types.DevshardTx_TimeoutInference{TimeoutInference: &types.MsgTimeoutInference{InferenceId: 1}},
+	}}}
+	recorder.committedDiff("e1", timeout, state)
+	require.Equal(t, 1, state.statReads, "an applied timeout reads its own slot only")
+	require.Zero(t, state.snapshots)
+
+	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 33}), "p1")
+	require.Equal(t, uint64(1), record.ProtocolMisses)
+}
+
+func TestSettledReleasesProtocolView(t *testing.T) {
+	tr := newTestTracker(t)
+	recorder := NewRecorder(tr, nil)
+	state := &fakeProtocolView{phase: types.PhaseActive, inferences: map[uint64]types.InferenceRecord{}}
+	recorder.Attach(RuntimeMetadata{EscrowID: "e1", CreationEpoch: 34, Model: "m"}, &fakeDiffTarget{}, state)
+
+	recorder.mu.RLock()
+	_, held := recorder.states["e1"]
+	recorder.mu.RUnlock()
+	require.True(t, held)
+
+	recorder.Settled("e1")
+	recorder.mu.RLock()
+	_, stillHeld := recorder.states["e1"]
+	recorder.mu.RUnlock()
+	require.False(t, stillHeld, "a settled escrow must not pin its state machine")
+}
+
+type fakeDiffTarget struct{}
+
+func (*fakeDiffTarget) SetDiffObserver(func(types.Diff)) {}
+
+func TestQueryDoesNotMutateLedger(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 35, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal, Outcome: TimeoutApplied,
+	}))
+
+	now = now.Add(66 * time.Second)
+	before := tr.Query(QueryFilter{EpochIndex: 35})
+	counters := len(tr.escrows["e1"].Counters)
+	live := len(tr.escrows["e1"].Live)
+	require.Equal(t, before, tr.Query(QueryFilter{EpochIndex: 35}))
+	require.Equal(t, counters, len(tr.escrows["e1"].Counters))
+	require.Equal(t, live, len(tr.escrows["e1"].Live))
+
+	// Promotion happens on the snapshot tick; the counts must not change.
+	require.NoError(t, tr.Flush(context.Background()))
+	require.Greater(t, len(tr.escrows["e1"].Counters), counters)
+	require.Equal(t, before[0].Dispositions, tr.Query(QueryFilter{EpochIndex: 35})[0].Dispositions)
+}
+
+// A dashboard poll must never take the lock that committed diffs need.
+func TestQueriesRunAlongsideCommittedDiffs(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 36, "m")
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		for nonce := uint64(1); nonce <= 200; nonce++ {
+			require.NoError(t, tr.RecordDiff("e1", nonce, true))
+			require.NoError(t, tr.RecordRealSend("e1", nonce, accountingTestNow, PhaseNormal, QuarantineNone))
+		}
+	}()
+	readers := sync.WaitGroup{}
+	for i := 0; i < 4; i++ {
+		readers.Add(1)
+		go func() {
+			defer readers.Done()
+			for {
+				select {
+				case <-done:
+					return
+				default:
+					tr.Query(QueryFilter{EpochIndex: 36})
+					tr.Epochs(QueryFilter{})
+				}
+			}
+		}()
+	}
+	<-done
+	readers.Wait()
+	require.Equal(t, uint64(200), tr.escrows["e1"].Latest)
 }
 
 func newTestTracker(t *testing.T) *Tracker {

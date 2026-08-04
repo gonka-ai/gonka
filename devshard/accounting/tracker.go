@@ -36,6 +36,7 @@ type escrowState struct {
 	OpenChallenge   map[uint64]uint32          `json:"-"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
+	InvalidNonce    map[uint64]struct{}        `json:"-"`
 	Live            map[uint64]*nonceState     `json:"-"`
 }
 
@@ -170,6 +171,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: make(map[uint32]uint64),
 			InvalidBySlot:   make(map[uint32]uint64),
+			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
 		}
 		return nil
@@ -202,22 +204,24 @@ func (t *Tracker) RecordCommittedDiff(escrowID string, diff types.Diff, verdicts
 	})
 }
 
+// RecordCommittedState folds one committed diff into the ledger. hostStats may
+// be nil, or hold only the slots this diff could have moved.
 func (t *Tracker) RecordCommittedState(
 	escrowID string,
 	diff types.Diff,
 	verdicts []VerdictRecord,
-	snapshot types.EscrowState,
+	phase EscrowPhase,
+	hostStats map[uint32]*types.HostStats,
 ) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
-		phase := escrowPhase(snapshot.Phase)
 		if err := e.validateCommittedDiff(diff, verdicts); err != nil {
 			return err
 		}
-		if err := e.validateState(snapshot.HostStats, phase); err != nil {
+		if err := e.validateState(hostStats, phase); err != nil {
 			return err
 		}
 		e.recordCommittedDiff(diff, verdicts, t.nowUTC())
-		e.mergeState(snapshot.LatestNonce, snapshot.HostStats)
+		e.mergeState(diff.Nonce, hostStats)
 		return e.recordPhase(phase)
 	})
 }
@@ -252,8 +256,7 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 		case ProtocolValidated:
 			e.closeChallenge(nonce, slot)
 		case ProtocolInvalidated:
-			challengeSlot := e.closeChallenge(nonce, slot)
-			e.InvalidBySlot[challengeSlot]++
+			e.recordInvalid(nonce, slot)
 		default:
 			return fmt.Errorf("invalid protocol kind %q", kind)
 		}
@@ -494,8 +497,7 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 		case ProtocolValidated:
 			e.closeChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolInvalidated:
-			slot := e.closeChallenge(verdict.Nonce, verdict.Slot)
-			e.InvalidBySlot[slot]++
+			e.recordInvalid(verdict.Nonce, verdict.Slot)
 		}
 	}
 }
@@ -582,16 +584,34 @@ func (e *escrowState) remove(key CounterKey) {
 	e.Counters[key]--
 }
 
+// closeChallenge returns the challenged slot, or fallback when no challenge was
+// open. A repeated verdict must not consume another slot's unresolved count, so
+// nothing is decremented in the fallback case.
 func (e *escrowState) closeChallenge(nonce uint64, fallback uint32) uint32 {
-	slot := fallback
-	if got, ok := e.OpenChallenge[nonce]; ok {
-		slot = got
-		delete(e.OpenChallenge, nonce)
+	slot, open := e.OpenChallenge[nonce]
+	if !open {
+		return fallback
 	}
+	delete(e.OpenChallenge, nonce)
 	if e.ChallengeBySlot[slot] > 0 {
 		e.ChallengeBySlot[slot]--
 	}
 	return slot
+}
+
+// recordInvalid counts each invalidated inference once. Verdicts come from a
+// record's current status, so validations landing after an invalidation repeat
+// it, while HostStats.Invalid moves only once.
+func (e *escrowState) recordInvalid(nonce uint64, fallback uint32) {
+	slot := e.closeChallenge(nonce, fallback)
+	if _, counted := e.InvalidNonce[nonce]; counted {
+		return
+	}
+	if e.InvalidNonce == nil {
+		e.InvalidNonce = make(map[uint64]struct{})
+	}
+	e.InvalidNonce[nonce] = struct{}{}
+	e.InvalidBySlot[slot]++
 }
 
 func (s *nonceState) markFinished() {

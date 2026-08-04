@@ -157,10 +157,7 @@ func main() {
 			log.Printf("close gateway: %v", err)
 		}
 	}()
-	if gateway.phaseGate != nil {
-		gateway.phaseGate.refresh()
-	}
-	statsServer, err := startAccountingServer(gateway, accountingStatsAddress())
+	statsServer, err := startAccountingServer(gateway)
 	if err != nil {
 		log.Printf("start accounting server: %v", err)
 	}
@@ -655,6 +652,14 @@ func buildGatewayHandler(gateway *Gateway, opts runtimeOptions) http.Handler {
 	handler = adminAuthMiddleware(opts.adminAPIKey, handler)
 	handler = gateway.disabledMiddleware(handler)
 	return gateway.metrics.Wrap(handler)
+}
+
+func serveGateway(handler http.Handler, port string, runtimeCount int) {
+	addr := ":" + port
+	log.Printf("devshardctl gateway listening on %s (devshards=%d default_max_tokens=%d max_tokens_cap=%d)", addr, runtimeCount, DefaultRequestMaxTokens, RequestMaxTokensCap)
+	if err := http.ListenAndServe(addr, handler); err != nil {
+		log.Fatalf("server: %v", err)
+	}
 }
 
 func firstNonEmpty(values ...string) string {

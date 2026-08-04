@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,6 +29,7 @@ type escrowBlob struct {
 	Counters        []counterBlob              `json:"counters"`
 	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
 	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
+	InvalidNonces   []uint64                   `json:"invalid_nonces,omitempty"`
 }
 
 type counterBlob struct {
@@ -130,7 +132,11 @@ func (s *Store) Load(ctx context.Context, t *Tracker) error {
 			OpenChallenge:   make(map[uint64]uint32),
 			ChallengeBySlot: blob.ChallengeBySlot,
 			InvalidBySlot:   blob.InvalidBySlot,
+			InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
 			Live:            make(map[uint64]*nonceState),
+		}
+		for _, nonce := range blob.InvalidNonces {
+			escrow.InvalidNonce[nonce] = struct{}{}
 		}
 		if escrow.ChallengeBySlot == nil {
 			escrow.ChallengeBySlot = make(map[uint32]uint64)
@@ -213,6 +219,7 @@ func (t *Tracker) snapshot(retention uint64) storeSnapshot {
 			HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
 			ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
 			InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
+			InvalidNonces:   sortedNonces(escrow.InvalidNonce),
 		}
 		for slot, stats := range escrow.HostStats {
 			blob.HostStats[slot] = stats
@@ -259,6 +266,18 @@ func copyUint32Map(in map[uint32]uint64) map[uint32]uint64 {
 	for k, v := range in {
 		out[k] = v
 	}
+	return out
+}
+
+func sortedNonces(in map[uint64]struct{}) []uint64 {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]uint64, 0, len(in))
+	for nonce := range in {
+		out = append(out, nonce)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
 	return out
 }
 

@@ -270,8 +270,14 @@ recorded_invalid_transitions  = HostStats.Invalid
 ```
 
 `recorded_invalid_transitions` counts observed `StatusChallenged` to
-`StatusInvalidated` transitions on the executor slot. Any difference is a
-`cross_check_error`.
+`StatusInvalidated` transitions on the executor slot, once per inference:
+verdicts are read from current status, so a validation landing after an
+invalidation repeats it while `HostStats.Invalid` moves only once. The
+counted set survives restarts.
+
+Differences are taken per escrow and slot, then summed into
+`cross_check_error`. Differencing aggregates would let a surplus in one
+escrow cancel a shortfall in another.
 
 ### Settlement projection
 
@@ -439,21 +445,20 @@ performs only synchronous in-memory accounting updates and never writes
 to accounting SQLite. The session may persist its protocol diff before
 the accounting callback.
 
-There are no per-nonce database rows. Live nonce state exists only in
-memory while the nonce can still change. It includes send and receipt
-times used for query-time deadline classification. A restart drops that
-live state. Unfinished sends and pre-deadline timeout results become
-`unclassified`; non-applied timeout failures already moved into counters
-remain frozen there.
+Live nonce state exists only in memory while the nonce can still change,
+including the send and receipt times used for query-time deadline
+classification. A restart drops it: unfinished sends and pre-deadline
+timeout results become `unclassified`, while non-applied timeout failures
+already moved into counters stay frozen there.
 
 A snapshot writer stores each escrow's metadata, `latest_nonce`,
-`HostStats`, per-slot challenge and invalid counts, and counter map into
-`accounting.db` every five minutes and at escrow finalization,
-settlement, rotation, and shutdown. A failed snapshot
-keeps the previous one and is reported as a writer error. The database
-uses one JSON payload per escrow, not per-nonce history. Every dimension
-is a small enum and only observed combinations create counters, so an
-escrow produces at most a few hundred counter entries.
+`HostStats`, per-slot challenge and invalid counts, invalidated nonces,
+and counter map into `accounting.db` every five minutes and at escrow
+finalization, settlement, rotation, and shutdown. A failed snapshot keeps
+the previous one and is reported as a writer error. The payload is one
+JSON blob per escrow. Every dimension is a small enum and only observed
+combinations create counters, so an escrow produces at most a few hundred
+counter entries.
 
 An escrow registry stores the chain `epoch_index`, model, ordered slots,
 and participant addresses. Aggregation happens at query time: epoch,
@@ -477,12 +482,22 @@ The state machine remains the source for protocol facts but contains no
 accounting code. After the user session commits a diff, one generic
 observer call passes the applied diff to `devshard/accounting`.
 Accounting parses start, receipt, finish, timeout, validation, and
-validation-vote transactions, reads final verdict state, and synchronizes
-`latest_nonce`, `HostStats`, and phase after every committed diff. The
-gateway remains the source for gateway facts: ghost, real send with send
-time, winner, timeout result, policy reason, and lifecycle phase. There
-is no accounting poller, event queue, dropped event, or accounting-owned
+validation-vote transactions and reads final verdict state. The gateway
+remains the source for gateway facts: ghost, real send with send time,
+winner, timeout result, policy reason, and lifecycle phase. There is no
+accounting poller, event queue, dropped event, or accounting-owned
 deadline heap.
+
+The observer runs on the sequencer's critical section, so it reads only
+what the diff cannot tell it: the diff's own nonce is the new
+`latest_nonce`, the phase is a scalar read, and `HostStats` is read only
+for the executor slot of an applied timeout or a verdict. Queries hold a
+read lock and mutate nothing, so a dashboard poll never stands between a
+committed diff and its counters. Promoting a passed deadline into the
+persisted counters is the writer's job, on the snapshot tick.
+
+A settled or retired escrow releases its protocol view; keeping it would
+pin every inference record of a rotated escrow for the process lifetime.
 
 ### Lifecycle integration
 
@@ -498,8 +513,8 @@ Record at:
 A repeated or replayed callback that changes no session state changes no
 counter. Finalization and settlement retain unresolved live facts for the
 rest of the process instead of converting them immediately to
-`unclassified`. Shutdown waits for registered background loser cleanup
-before closing accounting and writing its final snapshot.
+`unclassified`. Shutdown writes a final snapshot before closing
+accounting.
 
 `HandleTimeout` returns a structured result:
 
@@ -513,14 +528,14 @@ Operational errors remain errors but do not mean the timeout succeeded.
 
 ### Security and metrics
 
-Add `DEVSHARD_STATS_LISTEN_ADDR`, empty by default; an empty value
-disables the listener. The API has no authentication: access control is
-network isolation. The listener is never published through the public
-proxy or Caddy. The dashboard sidecar runs on the same private network,
-configured with the stats URL only. Any container on the shared private
-Docker network can read the API; that is fine for this internal tool.
-Failure to bind this optional listener is logged and does not stop the
-gateway. Failure to bind the main gateway listener remains fatal.
+The API always listens on all interfaces at `DEVSHARD_STATS_PORT`,
+default `9091`; the reader is a dashboard sidecar in another container, so
+loopback would be unreachable. There is no authentication: access control
+is network isolation, so the port stays unpublished and never passes
+through the public proxy or Caddy. Any container on the private Docker
+network can read it, which is acceptable for an internal tool. Failure to
+bind is logged and does not stop the gateway; failure to bind the main
+gateway listener stays fatal.
 
 The counter store also feeds Prometheus. A collector exports the
 in-memory counters as `devshard_accounting_*` gauges for the current
@@ -543,10 +558,13 @@ Tests cover:
 - repeated callbacks and order-independent in-process reclassification;
 - restart gaps without invented terminal outcomes;
 - finalization preserving current-process live facts;
-- cross-checks against `HostStats.Missed` and `HostStats.Invalid`;
+- cross-checks against `HostStats.Missed` and `HostStats.Invalid`,
+  including repeated verdicts and opposite errors in two escrows;
 - production ghost, winner, loser, state-divergence, and committed-diff
   seams;
-- shutdown waiting for background race cleanup;
+- the observer reading no snapshot and no unaffected slot, queries running
+  concurrently with committed diffs under `-race`, and a settled escrow
+  releasing its protocol view;
 - API filters and representative Prometheus/query parity.
 
 This proposal does not change devshard consensus, timeout thresholds,

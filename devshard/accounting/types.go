@@ -185,6 +185,7 @@ type SlotRecord struct {
 	Unclassified          uint64                    `json:"unclassified"`
 	Overclassified        uint64                    `json:"overclassified"`
 	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
+	CrossCheckError       uint64                    `json:"cross_check_error"`
 }
 
 type CrossChecks struct {

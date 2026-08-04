@@ -8,7 +8,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"strings"
 	"time"
 
 	"devshard/accounting"
@@ -36,28 +35,34 @@ func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	}
 }
 
-func accountingStatsAddress() string {
-	return strings.TrimSpace(os.Getenv("DEVSHARD_STATS_LISTEN_ADDR"))
+const defaultStatsPort = "9091"
+
+// accountingStatsAddr binds every interface: the reader is a dashboard sidecar in
+// another container, so loopback would be unreachable. The listener has no
+// authentication and must stay unpublished outside the private network.
+func accountingStatsAddr() string {
+	return "0.0.0.0:" + firstNonEmpty(os.Getenv("DEVSHARD_STATS_PORT"), defaultStatsPort)
 }
 
-func startAccountingServer(g *Gateway, address string) (*http.Server, error) {
-	if g == nil || g.accounting == nil || address == "" {
+func startAccountingServer(g *Gateway) (*http.Server, error) {
+	if g == nil || g.accounting == nil {
 		return nil, nil
 	}
+	addr := accountingStatsAddr()
 	server := &http.Server{
-		Addr:              address,
+		Addr:              addr,
 		Handler:           accounting.NewHandler(g.accounting.Tracker(), accountingCurrentEpoch(g)),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       time.Minute,
 	}
-	listener, err := net.Listen("tcp", address)
+	listener, err := net.Listen("tcp", addr)
 	if err != nil {
-		return nil, fmt.Errorf("listen on accounting address %s: %w", address, err)
+		return nil, fmt.Errorf("listen on accounting address %s: %w", addr, err)
 	}
 	go func() {
-		log.Printf("devshard accounting API listening on %s", address)
+		log.Printf("devshard accounting API listening on %s", addr)
 		if err := server.Serve(listener); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			log.Printf("devshard accounting API stopped: %v", err)
 		}

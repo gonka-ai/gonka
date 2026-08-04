@@ -11,14 +11,14 @@ type participantKey struct {
 	model       string
 }
 
+// Query mutates nothing, so it holds only the read lock and never stands between
+// a committed diff and its counters. Live nonces past their deadline are
+// classified for this response; the writer promotes them on the snapshot tick.
 func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
-	t.mu.Lock()
-	defer t.mu.Unlock()
+	t.mu.RLock()
+	defer t.mu.RUnlock()
 	now := t.nowUTC()
-	for _, escrow := range t.escrows {
-		escrow.refreshDerived(now)
-	}
-	t.updated = now
+	updated := t.updated
 	escrowFilter := stringSet(filter.EscrowIDs)
 	records := make(map[participantKey]*ParticipantRecord)
 	nonceSeen := make(map[participantKey]map[string]struct{})
@@ -44,7 +44,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			if record == nil {
 				record = &ParticipantRecord{
 					SchemaVersion:   SchemaVersion,
-					UpdatedAt:       t.updated,
+					UpdatedAt:       updated,
 					EpochIndex:      filter.EpochIndex,
 					Participant:     key.participant,
 					Model:           key.model,
@@ -78,6 +78,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			record.CrossChecks.HostMissed += slotRecord.ProtocolMisses
 			record.CrossChecks.RecordedInvalid += slotRecord.RecordedInvalid
 			record.CrossChecks.HostInvalid += slotRecord.ProtocolInvalid
+			record.CrossChecks.ErrorCount += slotRecord.CrossCheckError
 			for d, count := range slotRecord.Dispositions {
 				record.Dispositions[d] += count
 			}
@@ -111,10 +112,6 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 
 	out := make([]ParticipantRecord, 0, len(records))
 	for _, record := range records {
-		record.CrossChecks.ErrorCount =
-			absDiff(record.CrossChecks.TimeoutApplied, record.CrossChecks.HostMissed) +
-				absDiff(record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid) +
-				record.Overclassified
 		sort.Slice(record.LatestNonces, func(i, j int) bool {
 			return record.LatestNonces[i].EscrowID < record.LatestNonces[j].EscrowID
 		})
@@ -141,6 +138,24 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 	return out
 }
 
+// addCounter folds one counter key into the slot record. A timeout is pending
+// while its disposition is terminal but its outcome is not yet known; an unknown
+// reason in any position makes the whole counter unknown.
+func (r *SlotRecord) addCounter(key CounterKey, count uint64) {
+	r.Dispositions[key.Disposition] += count
+	if key.TimeoutOutcome != "" {
+		r.TimeoutOutcomes[key.TimeoutOutcome] += count
+	}
+	if (key.Disposition == DispositionUnfinishedRefused ||
+		key.Disposition == DispositionUnfinishedExecution) &&
+		key.TimeoutOutcome == "" {
+		r.TimeoutPending += count
+	}
+	if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
+		r.UnknownReasonTotal += count
+	}
+}
+
 func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time.Time) SlotRecord {
 	assigned, _ := AssignedNoncesForSlot(escrow.Latest, uint64(len(escrow.Meta.Slots)), slot)
 	record := SlotRecord{
@@ -155,20 +170,11 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 		if key.SlotID != slot || count == 0 {
 			continue
 		}
-		record.Dispositions[key.Disposition] += count
+		record.addCounter(key, count)
 		accounted += count
-		if key.TimeoutOutcome != "" {
-			record.TimeoutOutcomes[key.TimeoutOutcome] += count
-		}
-		if (key.Disposition == DispositionUnfinishedRefused ||
-			key.Disposition == DispositionUnfinishedExecution) &&
-			key.TimeoutOutcome == "" {
-			record.TimeoutPending += count
-		}
-		if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
-			record.UnknownReasonTotal += count
-		}
 	}
+	// Unpromoted live nonces go through the same fold, so a nonce reads the same
+	// before and after the writer promotes it.
 	for _, live := range escrow.Live {
 		if live.SlotID != slot {
 			continue
@@ -178,10 +184,7 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 			continue
 		case live.Sent && !live.Finished:
 			if key, ok := live.counterKey(escrow.Meta, now); ok {
-				record.Dispositions[key.Disposition]++
-				if key.TimeoutOutcome == "" {
-					record.TimeoutPending++
-				}
+				record.addCounter(key, 1)
 				accounted++
 				continue
 			}
@@ -203,6 +206,12 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 	} else if accounted > assigned {
 		record.Overclassified = accounted - assigned
 	}
+	// Differences are taken per slot of one escrow. Summing the two sides first
+	// would let a surplus in one escrow hide a shortfall in another.
+	record.CrossCheckError =
+		absDiff(record.TimeoutOutcomes[TimeoutApplied], record.ProtocolMisses) +
+			absDiff(record.RecordedInvalid, record.ProtocolInvalid) +
+			record.Overclassified
 	return record
 }
 

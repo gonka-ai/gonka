@@ -13,8 +13,12 @@ type DiffObserverTarget interface {
 	SetDiffObserver(func(types.Diff))
 }
 
+// ProtocolView is the protocol state accounting reads. The per-diff path uses
+// only Phase and HostStatsFor; the snapshot is for attach and lifecycle sync.
 type ProtocolView interface {
 	GetInference(uint64) (types.InferenceRecord, bool)
+	Phase() types.SessionPhase
+	HostStatsFor(slot uint32) (types.HostStats, bool)
 	SnapshotStateNoInferences() types.EscrowState
 }
 
@@ -74,6 +78,11 @@ func (r *Recorder) Attach(meta RuntimeMetadata, session DiffObserverTarget, stat
 	session.SetDiffObserver(r.DiffObserver(meta.EscrowID, state))
 }
 
+// DiffObserver returns the callback the session invokes after a diff commits.
+//
+// TODO: move the call outside Session.mu. Holding it is what orders a
+// start-inference diff before the Ghost and RealSend facts for that nonce, and
+// a fact naming an unregistered nonce is dropped.
 func (r *Recorder) DiffObserver(escrowID string, state ProtocolView) func(types.Diff) {
 	if r == nil || r.tracker == nil || state == nil {
 		return func(types.Diff) {}
@@ -83,27 +92,42 @@ func (r *Recorder) DiffObserver(escrowID string, state ProtocolView) func(types.
 	}
 }
 
+// committedDiff runs on the sequencer's critical section, so it reads only what
+// the diff cannot tell it and allocates nothing for a plain start inference.
 func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state ProtocolView) {
-	verdicts := make([]VerdictRecord, 0, len(diff.Txs))
-	seen := make(map[uint64]struct{})
+	var verdicts []VerdictRecord
+	var seen map[uint64]struct{}
+	var hostStats map[uint32]*types.HostStats
+
 	for _, tx := range diff.Txs {
+		// An applied timeout moves HostStats.Missed and a verdict moves
+		// HostStats.Invalid, both on the executor slot. Nothing else in a diff
+		// touches the tallies.
 		var inferenceID uint64
-		validation := tx.GetValidation()
-		vote := tx.GetValidationVote()
-		switch {
+		verdict := false
+		switch timeout, validation, vote := tx.GetTimeoutInference(), tx.GetValidation(), tx.GetValidationVote(); {
+		case timeout != nil:
+			inferenceID = timeout.InferenceId
 		case validation != nil:
-			inferenceID = validation.InferenceId
+			inferenceID, verdict = validation.InferenceId, true
 		case vote != nil:
-			inferenceID = vote.InferenceId
+			inferenceID, verdict = vote.InferenceId, true
 		default:
 			continue
 		}
 		if _, ok := seen[inferenceID]; ok {
 			continue
 		}
+		if seen == nil {
+			seen = make(map[uint64]struct{})
+		}
 		seen[inferenceID] = struct{}{}
 		record, ok := state.GetInference(inferenceID)
 		if !ok {
+			continue
+		}
+		hostStats = r.appendHostStats(record.ExecutorSlot, state, hostStats)
+		if !verdict {
 			continue
 		}
 		kind := protocolKindForStatus(record.Status)
@@ -116,10 +140,30 @@ func (r *Recorder) committedDiff(escrowID string, diff types.Diff, state Protoco
 			Kind:  kind,
 		})
 	}
-	snapshot := state.SnapshotStateNoInferences()
-	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, snapshot); err != nil {
+
+	phase := escrowPhase(state.Phase())
+	if err := r.tracker.RecordCommittedState(escrowID, diff, verdicts, phase, hostStats); err != nil {
 		log.Printf("gateway accounting diff escrow=%s nonce=%d: %v", escrowID, diff.Nonce, err)
 	}
+}
+
+func (r *Recorder) appendHostStats(
+	slot uint32,
+	state ProtocolView,
+	into map[uint32]*types.HostStats,
+) map[uint32]*types.HostStats {
+	if _, done := into[slot]; done {
+		return into
+	}
+	stats, ok := state.HostStatsFor(slot)
+	if !ok {
+		return into
+	}
+	if into == nil {
+		into = make(map[uint32]*types.HostStats, 1)
+	}
+	into[slot] = &stats
+	return into
 }
 
 func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string) {
@@ -204,8 +248,27 @@ func (r *Recorder) Finalize(escrowID string) {
 	r.syncAndFlush(escrowID, "", "finalize")
 }
 
+// Settled records the terminal phase, then releases the protocol view: counters
+// live in the tracker from here on, and holding the state machine would pin
+// every inference record of a rotated escrow for the process lifetime.
 func (r *Recorder) Settled(escrowID string) {
 	r.syncAndFlush(escrowID, EscrowSettled, "settle")
+	r.Release(escrowID)
+}
+
+// Retire is the same release for a runtime that goes away without settling.
+func (r *Recorder) Retire(escrowID string) {
+	r.syncAndFlush(escrowID, "", "retire")
+	r.Release(escrowID)
+}
+
+func (r *Recorder) Release(escrowID string) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	delete(r.states, escrowID)
+	r.mu.Unlock()
 }
 
 func (r *Recorder) Flush() {
@@ -221,6 +284,9 @@ func (r *Recorder) Close() error {
 	if r == nil || r.tracker == nil {
 		return nil
 	}
+	r.mu.Lock()
+	r.states = make(map[string]ProtocolView)
+	r.mu.Unlock()
 	return r.tracker.Close()
 }
 

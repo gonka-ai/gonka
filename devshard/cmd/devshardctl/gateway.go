@@ -72,7 +72,6 @@ type Gateway struct {
 	settlementInFlight    map[string]struct{}
 	replenishmentMu       sync.Mutex
 	replenishmentInFlight map[string]struct{}
-	raceCleanupWG         sync.WaitGroup
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
 
@@ -114,7 +113,7 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
-	accountingFlush  func()
+	accountingRetire func()
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -572,8 +571,8 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
 		}
 	}
-	if rt.accountingFlush != nil {
-		rt.accountingFlush()
+	if rt.accountingRetire != nil {
+		rt.accountingRetire()
 	}
 	return rt.close()
 }
@@ -1259,7 +1258,6 @@ func (g *Gateway) Close() error {
 		g.phaseGate.Stop()
 	}
 	g.stopEscrowRotator()
-	g.raceCleanupWG.Wait()
 	for _, rt := range g.runtimeOrder {
 		if err := rt.close(); err != nil && firstErr == nil {
 			firstErr = err
@@ -1987,13 +1985,11 @@ func (g *Gateway) runtimeDrained(rt *devshardRuntime) {
 
 // startRaceCleanup registers a background race cleanup against the drain barrier; it must run synchronously before the cleanup goroutine spawns (and before the winning handler returns).
 func (g *Gateway) startRaceCleanup(rt *devshardRuntime) {
-	g.raceCleanupWG.Add(1)
 	rt.pendingRaceCleanup.Add(1)
 }
 
 // releaseRaceCleanup clears a race cleanup from the barrier and fires the deferred settle/retire if the runtime is now quiet.
 func (g *Gateway) releaseRaceCleanup(rt *devshardRuntime) {
-	defer g.raceCleanupWG.Done()
 	remaining := rt.pendingRaceCleanup.Add(-1)
 	if remaining != 0 || rt.activeUserRequests.Load() != 0 {
 		return
@@ -3094,7 +3090,7 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 			ID:              strconv.FormatUint(result.EscrowID, 10),
 			Model:           modelID,
 			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
+			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}

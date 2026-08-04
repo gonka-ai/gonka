@@ -120,10 +120,10 @@ type nonceOutcome struct {
 
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
-	Reason       string
-	Outcome      string
-	DetailReason string
-	Applied      bool
+	Reason       string // "execution", "refused", or "" if deadline not reached
+	Outcome      string // how handling ended: skipped, vote_collection_failed, insufficient_votes, diff_send_failed, applied
+	DetailReason string // why it ended that way, when the outcome alone is ambiguous
+	Applied      bool   // MsgTimeoutInference reached the escrow state
 }
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
@@ -639,6 +639,10 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
+		// Install the previewed post-state without a second apply (no re-sign,
+		// so a retried compose cannot fork on a new UserSig after a durable
+		// write). The gateway is the single sequencer and holds s.mu across
+		// persist, so the nonce cannot have advanced concurrently.
 		if !s.sm.CommitValidated(vd) {
 			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
 		}
@@ -1931,12 +1935,15 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 			logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("send timeout diff: %w", err)
 		}
-		if !result.Applied {
+		if result.Applied {
+			result.Outcome = "applied"
+		} else {
+			// The send succeeded but the transaction did not land. Report it
+			// rather than counting an applied timeout; the caller's control flow
+			// is unchanged.
 			result.Outcome = "diff_send_failed"
 			result.DetailReason = "timeout_not_applied"
-			return result, fmt.Errorf("timeout transaction was not applied")
 		}
-		result.Outcome = "applied"
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
@@ -2172,7 +2179,7 @@ func (s *Session) collectTimeoutVotes(
 	expected := len(deduped)
 
 	voteThreshold := s.sm.VoteThreshold()
-	var acceptWeight uint32
+	var accWeight uint32
 	var errors, rejects int
 	for i := 0; i < expected; i++ {
 		res := <-results
@@ -2182,7 +2189,7 @@ func (s *Session) collectTimeoutVotes(
 				logFields(
 					res.verifierAddr,
 					"outcome", "error",
-					"running_weight", acceptWeight,
+					"running_weight", accWeight,
 					"threshold", voteThreshold,
 					"error", res.err,
 				)...,
@@ -2195,7 +2202,7 @@ func (s *Session) collectTimeoutVotes(
 			votes = append(votes, res.vote)
 			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
 			weight := s.sm.AddressSlotCount(voterAddr)
-			acceptWeight += weight
+			accWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
@@ -2203,7 +2210,7 @@ func (s *Session) collectTimeoutVotes(
 					"voter_slot", res.vote.VoterSlot,
 					"voter", shortAddress(voterAddr),
 					"weight", weight,
-					"running_weight", acceptWeight,
+					"running_weight", accWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
@@ -2213,12 +2220,12 @@ func (s *Session) collectTimeoutVotes(
 				logFields(
 					res.verifierAddr,
 					"outcome", "reject",
-					"running_weight", acceptWeight,
+					"running_weight", accWeight,
 					"threshold", voteThreshold,
 				)...,
 			)
 		}
-		if acceptWeight > voteThreshold {
+		if accWeight > voteThreshold {
 			break
 		}
 	}
@@ -2226,17 +2233,17 @@ func (s *Session) collectTimeoutVotes(
 		logFields(
 			"",
 			"accept", len(votes),
-			"weight", acceptWeight,
+			"weight", accWeight,
 			"reject", rejects,
 			"errors", errors,
 			"threshold", voteThreshold,
 			"verifiers", expected,
-			"sufficient", acceptWeight > voteThreshold,
+			"sufficient", accWeight > voteThreshold,
 		)...,
 	)
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
-		"accept", len(votes), "weight", acceptWeight,
+		"accept", len(votes), "weight", accWeight,
 		"reject", rejects, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 

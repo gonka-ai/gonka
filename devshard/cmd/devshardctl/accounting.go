@@ -18,5 +18,5 @@ func attachAccounting(recorder *accounting.Recorder, rt *devshardRuntime) {
 	if rt.proxy.redundancy != nil {
 		rt.proxy.redundancy.accounting = recorder
 	}
-	rt.accountingFlush = recorder.Flush
+	rt.accountingRetire = func() { recorder.Retire(rt.id) }
 }

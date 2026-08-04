@@ -82,27 +82,6 @@ func TestGoTrackedRaceCleanupStartsBarrierSynchronously(t *testing.T) {
 		"done hook must fire once the cleanup completes")
 }
 
-func TestGatewayCloseWaitsForRaceCleanup(t *testing.T) {
-	g := &Gateway{}
-	rt := &devshardRuntime{}
-	g.runtimeOrder = []*devshardRuntime{rt}
-	g.startRaceCleanup(rt)
-
-	closed := make(chan error, 1)
-	go func() {
-		closed <- g.Close()
-	}()
-
-	select {
-	case err := <-closed:
-		t.Fatalf("gateway closed before race cleanup completed: %v", err)
-	case <-time.After(100 * time.Millisecond):
-	}
-
-	g.releaseRaceCleanup(rt)
-	require.NoError(t, <-closed)
-}
-
 // TestConcurrentDrainSettlesExactlyOnce guards the two-counter drain: when the
 // last foreground request and the last race cleanup reach zero concurrently,
 // exactly one of the racing drain paths must settle — never zero (a lost
