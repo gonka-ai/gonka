@@ -145,6 +145,7 @@ declare -A image_variables=(
     [edge-api-router]=EDGE_API_ROUTER_IMAGE
 )
 declare -A rollback_images=()
+declare -A rollback_version_baselines=()
 
 foreground_pid=
 active_service=
@@ -349,6 +350,60 @@ restore_traffic_barrier() {
     clear_traffic_barrier
 }
 
+versiond_running_versions() {
+    local container_id=$1
+    local payload remaining entry version
+    local entry_pattern='\{([^}]*)\}'
+    local name_pattern='"name":"([^"]+)"'
+    local running_pattern='"status":"running"'
+    local -A seen=()
+
+    payload=$("$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O - http://127.0.0.1:8080/healthz) || return 1
+    remaining=$payload
+    while [[ $remaining =~ $entry_pattern ]]; do
+        entry=${BASH_REMATCH[1]}
+        remaining=${remaining#*\}}
+        if [[ $entry =~ $name_pattern ]]; then
+            version=${BASH_REMATCH[1]}
+            [[ $entry =~ $running_pattern ]] || continue
+            [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+            if [[ -z ${seen[$version]+x} ]]; then
+                seen[$version]=true
+                printf '%s\n' "$version"
+            fi
+        fi
+    done
+}
+
+versiond_route_is_available() {
+    local container_id=$1
+    local version=$2
+
+    "$docker_bin" exec "$container_id" /bin/busybox wget \
+        -q -T 3 -O /dev/null \
+        "http://127.0.0.1:8080/$version/healthz"
+}
+
+capture_versiond_rollback_baseline() {
+    local service=$1
+    local container_id=$2
+    local versions version display
+
+    versions=$(versiond_running_versions "$container_id") || fail \
+        "cannot read the running-version baseline from $service"
+    [[ -n $versions ]] || fail \
+        "$service has no running version to preserve during rollback"
+    while IFS= read -r version; do
+        versiond_route_is_available "$container_id" "$version" || fail \
+            "$service baseline route $version is unavailable before upgrade"
+    done <<<"$versions"
+
+    rollback_version_baselines[$service]=$versions
+    display=${versions//$'\n'/, }
+    echo "Captured $service running-version baseline: $display"
+}
+
 capture_rollback_image() {
     local service=$1
     local container_id image_id rollback_image
@@ -365,22 +420,31 @@ capture_rollback_image() {
     "$docker_bin" tag "$image_id" "$rollback_image"
     rollback_images[$service]=$rollback_image
     echo "Captured $service rollback image as $rollback_image"
+    case $service in
+        versiond | versiond2)
+            capture_versiond_rollback_baseline "$service" "$container_id"
+            ;;
+    esac
 }
 
 rollback_versiond_is_available() {
-    local container_id=$1
-    local status version
-    local running_entry='"name":"([^"]+)"[^}]*"status":"running"'
+    local service=$1
+    local container_id=$2
+    local current required version
+    local -A running=()
 
-    status=$("$docker_bin" exec "$container_id" /bin/busybox wget \
-        -q -T 3 -O - http://127.0.0.1:8080/healthz) || return 1
-    [[ $status =~ $running_entry ]] || return 1
-    version=${BASH_REMATCH[1]}
-    [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
+    current=$(versiond_running_versions "$container_id") || return 1
+    [[ -n $current ]] || return 1
+    while IFS= read -r version; do
+        running[$version]=true
+    done <<<"$current"
 
-    "$docker_bin" exec "$container_id" /bin/busybox wget \
-        -q -T 3 -O /dev/null \
-        "http://127.0.0.1:8080/$version/healthz"
+    required=${rollback_version_baselines[$service]-}
+    [[ -n $required ]] || required=$current
+    while IFS= read -r version; do
+        [[ -n ${running[$version]+x} ]] || return 1
+        versiond_route_is_available "$container_id" "$version" || return 1
+    done <<<"$required"
 }
 
 rollback_edge_is_available() {
@@ -402,7 +466,7 @@ rollback_service_is_available() {
         "$container_id") == true ]] || return 1
     case $service in
         versiond | versiond2 | versiond-router)
-            rollback_versiond_is_available "$container_id"
+            rollback_versiond_is_available "$service" "$container_id"
             ;;
         edge-api | edge-api2 | edge-api3 | edge-api-router)
             rollback_edge_is_available "$container_id"

@@ -95,28 +95,32 @@ and multi-edge installations add only their detected overlay files. Explicit
 normal upgrades should not need them.
 
 Before pulling, the script records the immutable image ID of every application
-or router service it may roll back. The v4 nginx routers do not consume
-`/readyz`, so before replacing the first replica the script removes that replica
-from the rendered upstream, validates the nginx config, and performs a graceful
-reload. Existing requests remain on the old nginx workers; the replacement does
-not receive new traffic while `up --wait` is establishing readiness. The script
-also installs a temporary after-render hook in the v4 router container. If that
-container crashes and Docker restarts it, the shortened upstream is rendered
-again before nginx starts accepting traffic.
+or router service it may roll back. For each existing versiond replica, it also
+records every child that is both `running` in `/healthz` and reachable through
+its version route. This is the availability baseline that a rollback must fully
+restore. The v4 nginx routers do not consume `/readyz`, so before replacing the
+first replica the script removes that replica from the rendered upstream,
+validates the nginx config, and performs a graceful reload. Existing requests
+remain on the old nginx workers; the replacement does not receive new traffic
+while `up --wait` is establishing readiness. The script also installs a
+temporary after-render hook in the v4 router container. If that container
+crashes and Docker restarts it, the shortened upstream is rendered again before
+nginx starts accepting traffic.
 
 `EXIT`, `INT`, `TERM`, and `HUP` share the same compensation path. If an active
 replacement fails or the script is interrupted, it attempts to recreate the
 previous image; a newly introduced service is stopped instead. A restored v4
 service must pass three consecutive functional probes before rollback is
-reported as successful. For versiond, the probe requires a running child and
-requests that child's routed `/healthz`; for edge-api, it executes the
-chain-backed `/v1/versions` query. Router rollback is checked through the same
-proxied workload. If that check fails, the service is stopped and the script
-requires operator recovery. A replica interrupted after the nginx barrier
-remains isolated; rerun the same command to retry it. Temporary rollback tags
-are removed only after the whole upgrade succeeds. After a failed attempt, keep
-the reported `gonka-upgrade-rollback/*` tags until recovery is verified; they can
-then be removed with `docker image rm`.
+reported as successful. A restored versiond must report and route every version
+from its captured baseline; restoring only one of several versions is a failed
+rollback. Edge-api must execute the chain-backed `/v1/versions` query. Router
+rollback is checked through the same proxied workload. If that check fails, the
+service is stopped and the script requires operator recovery. A replica
+interrupted after the nginx barrier remains isolated; rerun the same command to
+retry it. Temporary rollback tags are removed only after the whole upgrade
+succeeds. After a failed attempt, keep the reported
+`gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
+removed with `docker image rm`.
 
 For multi-edge, the script replaces `edge-api2` first and waits for its v5
 `/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready

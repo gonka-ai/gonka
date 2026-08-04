@@ -52,6 +52,7 @@ fi
 
 if [[ ${1:-} == exec ]]; then
     container=${2:-}
+    service=${container#cid-}
     for arg in "$@"; do
         [[ $arg == nginx ]] && exit 0
         [[ $arg == haproxy ]] && exit 1
@@ -60,17 +61,27 @@ if [[ ${1:-} == exec ]]; then
         esac
     done
     if [[ -n ${probe_url:-} ]]; then
-        [[ $container != "cid-${ROLLBACK_PROBE_FAIL_SERVICE-}" ]] || exit 1
+        is_rollback=false
+        [[ ! -f $FAKE_STATE_DIR/rollback-$service ]] || is_rollback=true
+        if [[ $is_rollback == true && \
+            $service == "${ROLLBACK_PROBE_FAIL_SERVICE-}" ]]; then
+            exit 1
+        fi
         case $container:$probe_url in
             cid-versiond*:http://127.0.0.1:8080/healthz)
-                if [[ $container == "cid-${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" ]]; then
+                if [[ $is_rollback == true && \
+                    $service == "${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" ]]; then
                     printf '[]\n'
+                elif [[ $is_rollback == true && \
+                    $service == "${ROLLBACK_MISSING_VERSION_SERVICE-}" ]]; then
+                    printf '[{"name":"v3","port":5000,"status":"running"}]\n'
                 else
-                    printf '[{"name":"v4","port":5000,"status":"running"}]\n'
+                    printf '[{"name":"v3","port":5000,"status":"running"},{"name":"v4","port":5001,"status":"running"}]\n'
                 fi
                 exit 0
                 ;;
-            cid-versiond*:http://127.0.0.1:8080/v4/healthz | \
+            cid-versiond*:http://127.0.0.1:8080/v3/healthz | \
+                cid-versiond*:http://127.0.0.1:8080/v4/healthz | \
                 cid-edge-api*:http://127.0.0.1:18080/v1/versions)
                 exit 0
                 ;;
@@ -110,25 +121,23 @@ is_up=false
 for arg in "$@"; do
     [[ $arg == up ]] && is_up=true
 done
-if [[ $is_up == true && $service == "${FAIL_SERVICE-}" ]]; then
+image=
+if [[ $is_up == true ]]; then
     case $service in
         versiond | versiond2) image=${VERSIOND_IMAGE-} ;;
         versiond-router) image=${VERSIOND_ROUTER_IMAGE-} ;;
         edge-api | edge-api2 | edge-api3) image=${EDGE_API_IMAGE-} ;;
         edge-api-router) image=${EDGE_API_ROUTER_IMAGE-} ;;
-        *) image= ;;
     esac
+    if [[ $image == gonka-upgrade-rollback/* ]]; then
+        : >"$FAKE_STATE_DIR/rollback-$service"
+    fi
+fi
+if [[ $is_up == true && $service == "${FAIL_SERVICE-}" ]]; then
     [[ $image == gonka-upgrade-rollback/* ]] && exit 0
     exit 1
 fi
 if [[ $is_up == true && $service == "${BLOCK_SERVICE-}" ]]; then
-    case $service in
-        versiond | versiond2) image=${VERSIOND_IMAGE-} ;;
-        versiond-router) image=${VERSIOND_ROUTER_IMAGE-} ;;
-        edge-api | edge-api2 | edge-api3) image=${EDGE_API_IMAGE-} ;;
-        edge-api-router) image=${EDGE_API_ROUTER_IMAGE-} ;;
-        *) image= ;;
-    esac
     if [[ $image != gonka-upgrade-rollback/* ]]; then
         trap 'exit 143' TERM HUP
         trap 'exit 130' INT
@@ -149,7 +158,11 @@ run_upgrade() {
     local mode=$1
     local failed_service=$2
     local log=$3
+    local versiond_mode=${4:-ha}
+    local state_dir=$log.state
 
+    rm -rf "$state_dir"
+    mkdir -p "$state_dir"
     : >"$log"
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -157,15 +170,17 @@ run_upgrade() {
         BLOCK_SERVICE=none \
         BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
+        FAKE_STATE_DIR="$state_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         ROLLBACK_EMPTY_VERSIOND_SERVICE="${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" \
+        ROLLBACK_MISSING_VERSION_SERVICE="${ROLLBACK_MISSING_VERSION_SERVICE-}" \
         ROLLBACK_PROBE_FAIL_SERVICE="${ROLLBACK_PROBE_FAIL_SERVICE-}" \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-5}" \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
         UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" \
-        --versiond-mode ha --edge-mode "$mode" \
+        --versiond-mode "$versiond_mode" --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
         fail "$mode upgrade unexpectedly succeeded when $failed_service failed"
     fi
@@ -175,7 +190,10 @@ run_auto_upgrade() {
     local containers=$1
     local log=$2
     local stdout=$3
+    local state_dir=$log.state
 
+    rm -rf "$state_dir"
+    mkdir -p "$state_dir"
     : >"$log"
     if ! DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -183,6 +201,7 @@ run_auto_upgrade() {
         BLOCK_SERVICE=none \
         BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="$containers" \
+        FAKE_STATE_DIR="$state_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
@@ -196,7 +215,10 @@ run_interrupted_upgrade() {
     local log=$2
     local stdout=$3
     local stderr=$4
+    local state_dir=$log.state
 
+    rm -rf "$state_dir"
+    mkdir -p "$state_dir"
     : >"$log"
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -204,8 +226,10 @@ run_interrupted_upgrade() {
         BLOCK_SERVICE=versiond2 \
         BLOCK_SIGNAL="$signal" \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
+        FAKE_STATE_DIR="$state_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         ROLLBACK_EMPTY_VERSIOND_SERVICE='' \
+        ROLLBACK_MISSING_VERSION_SERVICE='' \
         ROLLBACK_PROBE_FAIL_SERVICE='' \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL=1 \
@@ -345,9 +369,10 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
-rollback_probe_count=$(grep -Fc \
-    'http://127.0.0.1:8080/v4/healthz' "$tmpdir/versiond2.log")
-[[ $rollback_probe_count -eq 3 ]] || fail \
+rollback_probe_count=$(grep -Ec \
+    'exec cid-versiond2 .*http://127.0.0.1:8080/v4/healthz' \
+    "$tmpdir/versiond2.log")
+[[ $rollback_probe_count -eq 4 ]] || fail \
     "rollback was not held through the configured stability window"
 assert_not_contains "$tmpdir/versiond2.log" \
     "VERSIOND_HOSTS=versiond\\ versiond2"
@@ -369,6 +394,15 @@ ROLLBACK_EMPTY_VERSIOND_SERVICE=versiond2 \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
     run_upgrade single versiond2 "$tmpdir/versiond2-empty.log"
 assert_contains "$tmpdir/versiond2-empty.log" " stop versiond2"
+
+ROLLBACK_MISSING_VERSION_SERVICE=versiond \
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
+    run_upgrade single versiond "$tmpdir/versiond-partial.log" single
+assert_contains "$tmpdir/versiond-partial.log" " stop versiond"
+partial_v4_probe_count=$(grep -Fc \
+    'http://127.0.0.1:8080/v4/healthz' "$tmpdir/versiond-partial.log")
+[[ $partial_v4_probe_count -eq 1 ]] || fail \
+    "partial rollback unexpectedly restored the missing v4 baseline route"
 
 run_upgrade single versiond-router "$tmpdir/versiond-router.log"
 assert_contains "$tmpdir/versiond-router.log" \
