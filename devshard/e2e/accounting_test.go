@@ -65,6 +65,71 @@ func TestE2E_AccountingNoResidualAfterFinishedTraffic(t *testing.T) {
 }
 
 // Test flow:
+//  1. Start the three-host environment with the next assigned host delayed.
+//  2. Use pairwise warmup sampling to start one fast secondary immediately.
+//  3. Send one non-streaming completion and wait for the delayed primary to publish finish.
+//  4. Send a non-redundant follow-up request so the gateway commits the pending finish txs.
+//  5. Poll accounting until the winner is finished_used and the delayed loser is finished_unused.
+//  6. Assert the redundant request consumed two finished nonces and accounting still balances.
+func TestE2E_AccountingOverscheduledLoserFinishes(t *testing.T) {
+	env, client := startNonStreamingEnvWithOptions(t, e2eEnvOptions{
+		hostEnvOverrides: map[int]map[string]string{
+			1: {
+				"DEVSHARD_STUB_INFERENCE_DELAY_MS": "800",
+			},
+		},
+	})
+
+	nextSlot := int((testutil.LatestSessionNonce(t, client, env.clientURL) + 1) % uint64(len(env.hostURLs)))
+	require.Equal(t, 1, nextSlot, "test setup expects the delayed host to own the first traffic nonce")
+
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"speed_policy":                     "hybrid",
+			"pairwise_max_proactive_attempts":  1,
+			"pairwise_min_direct_comparisons":  1,
+			"non_stream_no_content_timeout_ms": int64(3000),
+			"non_stream_max_attempt_wait_ms":   int64(3500),
+			"secondary_wait_after_winner_ms":   int64(2500),
+		},
+	})
+
+	before := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0
+	})
+	beforeAssigned := testutil.AccountingAssignedTotal(before)
+	beforeUsed := testutil.AccountingDispositionCount(before, "finished_used")
+	beforeUnused := testutil.AccountingDispositionCount(before, "finished_unused")
+
+	resp := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting overscheduled loser finishes", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting overscheduled loser finishes completion", resp)
+	testutil.RequireOpenAINonStreamingCompletion(t, resp)
+
+	time.Sleep(2 * time.Second)
+	testutil.PostJSON(t, client, env.clientURL+"/v1/admin/settings", map[string]any{
+		"redundancy": map[string]any{
+			"speed_policy":       "legacy",
+			"receipt_timeout_ms": int64(5000),
+		},
+	})
+	flush := testutil.SendCompletionRaw(t, client, env.clientURL, "accounting overscheduled loser finish flush", testutil.AdminAPIKey)
+	testutil.LogRawResponse(t, "accounting overscheduled loser finish flush completion", flush)
+	testutil.RequireOpenAINonStreamingCompletion(t, flush)
+
+	accounting := testutil.WaitAccountingParticipants(t, client, env.statsURL, "model=stub-model", func(resp testutil.AccountingParticipantsResponse) bool {
+		return len(resp.Participants) > 0 &&
+			testutil.AccountingAssignedTotal(resp) >= beforeAssigned+2 &&
+			testutil.AccountingDispositionCount(resp, "finished_used") > beforeUsed &&
+			testutil.AccountingDispositionCount(resp, "finished_unused") > beforeUnused
+	})
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "finished_used"), beforeUsed, "winner should be counted as finished_used")
+	require.Greater(t, testutil.AccountingDispositionCount(accounting, "finished_unused"), beforeUnused, "finished redundant loser should be counted as finished_unused")
+	require.GreaterOrEqual(t, testutil.AccountingAssignedTotal(accounting), beforeAssigned+2, "redundant send should consume separate nonces for winner and loser")
+	testutil.RequireAccountingResponseCoherent(t, accounting, "stub-model")
+	testutil.RequireNonceAccountingBalanced(t, accounting)
+}
+
+// Test flow:
 //  1. Start the three-host environment with the nonce-1 host delaying inference.
 //  2. Send one non-streaming completion asynchronously so its sent nonce stays live.
 //  3. Poll accounting until the sent nonce appears in the in_flight bucket.
