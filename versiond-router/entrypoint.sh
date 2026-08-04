@@ -89,18 +89,20 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
     esac
 done
 
-if [ -n "$HA_DEPLOYMENT" ]; then
-    # The deployment declaration is a latch, not a live-host count. Keep the
-    # storage guard enabled while siblings restart or drain: they can return.
-    HA_HEADER='http-request set-header Devshard-Ha true'
-else
-    # Recover the old router's fail-closed behaviour when an operator scales the
-    # pool but forgets the HA overlay. nbsrv counts usable servers, so this is a
-    # safety net rather than a replacement for GONKA_HA: a partial outage can
-    # make the count one, while an explicitly declared HA deployment stays HA.
-    # The frontend has already stripped any client-supplied value.
-    HA_HEADER='http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }'
-fi
+ha_header_for() {
+    if [ -n "$HA_DEPLOYMENT" ]; then
+        # The deployment declaration is a latch, not a live-host count. Keep the
+        # storage guard enabled while siblings restart or drain: they can return.
+        printf '%s' 'http-request set-header Devshard-Ha true'
+    else
+        # Recover the old router's fail-closed behaviour when an operator scales
+        # the pool but forgets the HA overlay. Count the backend selected for this
+        # request: per-version readiness can admit more hosts than the coarse pool.
+        # This is a safety net rather than a replacement for GONKA_HA because a
+        # partial outage can still reduce the selected backend to one server.
+        printf '%s' "http-request set-header Devshard-Ha true if { nbsrv($1) gt 1 }"
+    fi
+}
 
 # Percent-encode everything that is not unreserved, so the check asks about the
 # name governance approved rather than about whatever the query parser made of it.
@@ -171,7 +173,7 @@ render_backend() {
 POOL_BACKENDS_FILE="$(mktemp)"
 trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
 render_backend versiond_ha_pool /readyz "$POOL_HOST" "$SLOTS" \
-    "$HA_HEADER" versiond_ha_pool > "$POOL_BACKENDS_FILE"
+    "$(ha_header_for versiond_ha_pool)" versiond_ha_pool > "$POOL_BACKENDS_FILE"
 printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
     [ -n "$version" ] || continue
     # A version name is whatever governance approved. Three things are derived
@@ -198,7 +200,8 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
     backend=$(backend_name versiond_pool "$version")
     echo "$version $backend" >> "$VERSIONS_MAP"
     render_backend "$backend" "/readyz?version=$(urlencode "$version")" \
-        "$POOL_HOST" "$SLOTS" "$HA_HEADER" "$backend" >> "$POOL_BACKENDS_FILE"
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" \
+        >> "$POOL_BACKENDS_FILE"
 done
 
 # Legacy versions share one SQLite owner, but not one health result. Rendering a

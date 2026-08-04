@@ -90,7 +90,9 @@ test-hash-ring:
 # The point of per-version pools is that one host missing one version keeps
 # serving the others. That is a property of the running router, not of the text
 # of its config, so it is checked by routing real requests through the real
-# image at two upstreams that disagree about which versions they serve.
+# image at two upstreams that disagree about both coarse and per-version
+# readiness. The mismatch also proves that the storage guard counts the backend
+# selected for the request instead of the less precise host-level pool.
 test-version-routing:
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
@@ -130,7 +132,7 @@ test-version-routing:
 		> "$$tmpdir/upstream.py"; \
 	docker network create $$net >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe . >/dev/null; \
-	for spec in "a:v4:true" "b:v4 v5:true"; do \
+	for spec in "a:v4:false" "b:v4 v5:true"; do \
 		name=$${spec%%:*}; rest=$${spec#*:}; \
 		serves=$${rest%:*}; generic_ready=$${rest##*:}; \
 		docker run -d --name gonka-vp-$$name --network $$net --network-alias versiond-pool \
@@ -164,11 +166,14 @@ test-version-routing:
 		http://127.0.0.1:18132/v2/sessions/legacy/chat); \
 	[ "$$legacy_v2" = 503 ] \
 		|| fail "legacy host missing v2 answered $$legacy_v2 instead of leaving only v2 down"; \
-	for version in v4 v5; do \
-		ha_header=$$(curl -s -m 3 "http://127.0.0.1:18132/$$version/ha-header"); \
-		[ "$$ha_header" = true ] \
-			|| fail "two usable hosts without GONKA_HA produced Devshard-Ha='$$ha_header' for $$version"; \
-	done; \
+	ha_header=$$(curl -s -m 3 -H 'Devshard-Ha: forged' \
+		http://127.0.0.1:18132/v4/ha-header); \
+	[ "$$ha_header" = true ] \
+		|| fail "two v4 hosts produced Devshard-Ha='$$ha_header' while the coarse pool had one"; \
+	ha_header=$$(curl -s -m 3 -H 'Devshard-Ha: forged' \
+		http://127.0.0.1:18132/v5/ha-header); \
+	[ -z "$$ha_header" ] \
+		|| fail "one v5 host received Devshard-Ha='$$ha_header' from another backend's count"; \
 	hosts_for() { \
 		for escrow in a b c d e f g h i j k l; do \
 			curl -s -m 3 "http://127.0.0.1:18132/$$1/sessions/esc-$$escrow/chat"; \
@@ -382,7 +387,7 @@ test-render: test-hash-ring test-version-routing
 		fail "a non-boolean GONKA_HA was accepted"; \
 	fi; \
 	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
-	GONKA_HA=false \
+	GONKA_HA=false VERSIOND_VERSIONS=v4 \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
 	VERSIOND_ROUTER_OUT="$$tmpdir/haoff.cfg" \
@@ -391,7 +396,9 @@ test-render: test-hash-ring test-version-routing
 	./entrypoint.sh \
 		|| fail "GONKA_HA=false must mean off, not on"; \
 	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_ha_pool) gt 1 }' "$$tmpdir/haoff.cfg" \
-		|| fail "GONKA_HA=false must leave only the runtime multi-host guard"; \
+		|| fail "GONKA_HA=false lost the coarse backend runtime guard"; \
+	grep -Fq 'http-request set-header Devshard-Ha true if { nbsrv(versiond_pool_v4) gt 1 }' "$$tmpdir/haoff.cfg" \
+		|| fail "the v4 storage guard does not count its selected backend"; \
 	if grep -Eq '^[[:space:]]*http-request set-header Devshard-Ha true[[:space:]]*$$' "$$tmpdir/haoff.cfg"; then \
 		fail "GONKA_HA=false enabled the unconditional HA declaration"; \
 	fi; \

@@ -457,7 +457,9 @@ Key invariants:
 is temporarily down must not silently switch the survivor to an unsafe non-HA
 storage mode. As a fail-closed fallback for an operator who scales the pool but
 forgets the HA overlay, the router also stamps the header whenever more than one
-server is currently usable in `versiond_ha_pool`.
+server is currently usable in the backend selected for the request. This matters
+when per-version readiness admits two hosts while the coarse host-level check
+admits only one.
 
 #### Implemented controls
 

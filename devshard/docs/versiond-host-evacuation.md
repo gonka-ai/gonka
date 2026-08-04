@@ -246,14 +246,15 @@ parameters do not select a second schema.
 
 Two independent guards apply in an HA deployment. `GONKA_HA` is the
 authoritative declaration; the router also detects more than one currently
-usable pool server as a fail-closed fallback when that declaration was omitted:
+usable server in the selected backend as a fail-closed fallback when that
+declaration was omitted:
 
 1. **At startup**: `devshardd` refuses to boot if its storage is not fail-closed
    Postgres. A child that could fork session state never starts.
 2. **At request time**: the router stamps `Devshard-Ha: true` on sticky-pool
-   traffic when `GONKA_HA` is set or more than one pool server is usable, and
-   `devshardd` answers `503` if it is serving that request from storage a sibling
-   cannot see.
+   traffic when `GONKA_HA` is set or more than one server is usable in the
+   selected per-version or coarse backend, and `devshardd` answers `503` if it
+   is serving that request from storage a sibling cannot see.
 
 The second guard exists because the first can be bypassed by a partial rollout:
 a host that was configured before the deployment became HA is already running.

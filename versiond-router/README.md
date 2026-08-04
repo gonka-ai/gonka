@@ -237,7 +237,9 @@ inside an SSE response; a larger tunnel timeout does not override it.
 
 The router strips every client-supplied `Devshard-Ha` value, then stamps
 `Devshard-Ha: true` on HA-pool requests when either the deployment declares
-`GONKA_HA` or more than one server is currently usable in `versiond_ha_pool`.
+`GONKA_HA` or more than one server is currently usable in the backend selected
+for that request. A per-version pool can therefore fail closed even while the
+coarse host-level pool sees only one ready server.
 `devshardd` uses it to refuse work it cannot safely serve: if this child's
 storage is local (SQLite), a sibling could be serving the same escrow, so it
 answers `503` rather than fork the session's state.
@@ -301,7 +303,7 @@ it stops accepting — and it is tied to the process, so nothing can inherit it.
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
 | `VERSIOND_VERSIONS` | *(empty)* | versions to health-check individually, whitespace and/or comma separated. Empty = every version uses the host-level check (refused when `GONKA_HA` is set); non-empty = undeclared versions are refused |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment to run with no declared versions, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
-| `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
+| `GONKA_HA` | *(unset)* | authoritative HA deployment latch; stamps `Devshard-Ha` even while only one pool member is usable. With it off, the router still stamps the header whenever more than one host is usable in the selected backend. Booleans share one grammar with devshardd: `1/true/yes` on, empty/`0/false/no` off, anything else refuses to start |
 | `VERSIOND_ROUTER_POOL_SLOTS` | `64` | maximum simultaneous pool members; the resolver accepts DNS payloads up to 8192 bytes so the default pool fits in one answer |
 | `VERSIOND_ROUTER_MAX_CONNECTIONS` | `4096` | frontend `maxconn` |
 | `VERSIOND_ROUTER_MAX_BODY_BYTES` | `10485760` | early 413 for an advertised `Content-Length` above this value. `devshardd` independently caps actual bytes at 10 MiB, including chunked bodies and direct-router traffic |
