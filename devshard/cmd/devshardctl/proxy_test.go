@@ -847,6 +847,40 @@ func TestRunInference_HappyPath(t *testing.T) {
 	require.True(t, ok, "inference 1 should exist")
 }
 
+func TestRunInference_AllHostsOnProbationCrownsSuspiciousFallback(t *testing.T) {
+	zeroReceiptTimeout(t)
+	setNonStreamingTimeouts(t, 5*time.Second, 10*time.Second, 12*time.Second)
+	env := setupTestProxy(t, 3, nil, true)
+
+	limiter := NewParticipantRequestLimiter(600, 10)
+	env.proxy.redundancy.participantLimiter = limiter
+	keys := env.session.ParticipantKeys()
+	require.Len(t, keys, 3)
+	for _, key := range keys {
+		limiter.ObserveResultWithBody(key, "/sessions/1/chat/completions", http.StatusNotFound, "")
+		require.True(t, limiter.ClearQuarantine(key))
+		status, noWinner := limiter.NoWinnerStatusForModel(key, "llama")
+		require.True(t, noWinner)
+		require.Equal(t, "probation", status.reason)
+	}
+
+	start := time.Now()
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &buf, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, buf.String())
+	require.Less(t, time.Since(start), 8*time.Second)
+
+	for i := 0; i < participantProbationSuccessesAfterQuarantine; i++ {
+		var next bytes.Buffer
+		require.NoError(t, env.proxy.redundancy.RunInference(context.Background(), defaultParams(), &next, nil))
+	}
+	for _, key := range keys {
+		_, noWinner := limiter.NoWinnerStatusForModel(key, "llama")
+		require.False(t, noWinner, "participant %s should have recovered from probation", key)
+	}
+}
+
 // errSimulatedWinnerTransport is returned by streamContentThenErrClient after
 // it streams a content-bearing SSE chunk so the race crowns a winner.
 var errSimulatedWinnerTransport = errors.New("simulated winner transport failure")

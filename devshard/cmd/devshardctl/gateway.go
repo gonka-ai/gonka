@@ -3729,6 +3729,7 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 	}
 	var req struct {
 		ParticipantKey string `json:"participant_key"`
+		Full           bool   `json:"full"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
@@ -3742,10 +3743,16 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 		http.Error(w, `{"error":{"message":"participant limiter not configured"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	cleared := g.participantLimiter.ClearQuarantine(req.ParticipantKey)
+	var cleared bool
+	if req.Full {
+		cleared = g.participantLimiter.ForgetParticipant(req.ParticipantKey)
+	} else {
+		cleared = g.participantLimiter.ClearQuarantine(req.ParticipantKey)
+	}
 	writeJSON(w, map[string]any{
 		"participant_key": req.ParticipantKey,
 		"cleared":         cleared,
+		"full":            req.Full,
 	})
 }
 

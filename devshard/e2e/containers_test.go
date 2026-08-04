@@ -61,6 +61,7 @@ type containerSpec struct {
 type e2eEnvOptions struct {
 	hostVolumeNames    []string
 	usePostgresStorage bool
+	ctlPrivateKey      string
 }
 
 func startHappyPathEnv(ctx context.Context, t *testing.T, images e2eImages) *e2eEnv {
@@ -136,6 +137,10 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 		env.startHost(ctx, t, i)
 	}
 
+	ctlPrivateKey := opts.ctlPrivateKey
+	if ctlPrivateKey == "" {
+		ctlPrivateKey = testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey)
+	}
 	devshardctl := env.startContainer(ctx, t, containerSpec{
 		name:    devshardCtlName,
 		image:   images.devshardctl,
@@ -146,7 +151,7 @@ func startE2EEnv(ctx context.Context, t *testing.T, images e2eImages, opts e2eEn
 			"DEVSHARD_CHAIN_GRPC":      mockChainAlias + ":9090",
 			"DEVSHARD_PUBLIC_API":      "http://" + mockChainAlias + ":9191",
 			"DEVSHARD_PARAMS_SOURCE":   "chain",
-			"DEVSHARD_PRIVATE_KEY":     testutil.EnvDefault("DEVSHARD_E2E_USER_PRIVATE_KEY", testutil.UserPrivateKey),
+			"DEVSHARD_PRIVATE_KEY":     ctlPrivateKey,
 			"DEVSHARD_ADMIN_API_KEY":   testutil.AdminAPIKey,
 			"DEVSHARD_STORAGE_PATH":    "/tmp/devshardctl",
 			"DEVSHARD_MODEL":           "stub-model",
@@ -363,6 +368,23 @@ func (e *e2eEnv) terminate(ctx context.Context, t *testing.T) {
 			t.Logf("terminate %s: %v", c.name, err)
 		}
 	}
+}
+
+func (e *e2eEnv) containerLogs(ctx context.Context, t *testing.T, name string) string {
+	t.Helper()
+	for _, c := range e.containers {
+		if c.name != name {
+			continue
+		}
+		logs, err := c.container.Logs(ctx)
+		require.NoError(t, err, "logs for %s", name)
+		body, readErr := io.ReadAll(logs)
+		require.NoError(t, logs.Close())
+		require.NoError(t, readErr, "read logs for %s", name)
+		return string(body)
+	}
+	t.Fatalf("container %s not found", name)
+	return ""
 }
 
 func (e *e2eEnv) dumpContainerLogs(ctx context.Context, t *testing.T) {

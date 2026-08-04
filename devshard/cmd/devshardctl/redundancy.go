@@ -2387,7 +2387,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 		}
 		if allInflightsDone(attempts) && escalationC == nil {
-			if !params.Stream && winner == 0 && time.Now().Before(requestStart.Add(nonStreamingNoContentTimeout)) {
+			var fallback *inflight
+			if winner == 0 {
+				fallback = fallbackSuspiciousWinner(attempts)
+			}
+			if !params.Stream && winner == 0 && fallback == nil && time.Now().Before(requestStart.Add(nonStreamingNoContentTimeout)) {
 				if !reducedMaxTokensFallbackStarted && time.Now().Before(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay)) && len(attempts) < maxAttempts {
 					trigger := attempts[len(attempts)-1]
 					trigger.escalated = true
@@ -2411,13 +2415,11 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if nonStreamingTimeoutTimer != nil {
 					stopTimer(nonStreamingTimeoutTimer)
 				}
-				if winner == 0 {
-					if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
-						if err := race.promoteFallbackWinner(fallback); err != nil {
-							return err
-						}
-						winner = fallback.nonce
+				if winner == 0 && fallback != nil {
+					if err := race.promoteFallbackWinner(fallback); err != nil {
+						return err
 					}
+					winner = fallback.nonce
 				}
 				return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
 			}

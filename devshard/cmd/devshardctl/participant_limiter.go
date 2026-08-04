@@ -771,6 +771,21 @@ func (l *ParticipantRequestLimiter) ClearQuarantine(participantKey string) bool 
 	return true
 }
 
+func (l *ParticipantRequestLimiter) ForgetParticipant(participantKey string) bool {
+	if participantKey == "" {
+		return false
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if _, ok := l.participants[participantKey]; !ok {
+		return false
+	}
+	delete(l.participants, participantKey)
+	l.persistDeleteLocked(participantKey)
+	log.Printf("participant_quarantine_forgotten participant_key=%s", participantKey)
+	return true
+}
+
 func (l *ParticipantRequestLimiter) SetMetrics(metrics *DevshardMetrics) {
 	l.mu.Lock()
 	defer l.mu.Unlock()
@@ -1258,8 +1273,6 @@ func participantHTTPQuarantineReason(path string, statusCode int, body string) s
 		return "http_timestamp_drift"
 	case statusCode == http.StatusNotFound && participantPathKind(path) == "inference":
 		return "http_not_found"
-	case statusCode == http.StatusForbidden && participantPathKind(path) == "inference":
-		return "http_forbidden"
 	default:
 		return "transport_failure_quarantine"
 	}
@@ -1271,7 +1284,7 @@ func (l *ParticipantRequestLimiter) participantHTTPQuarantine(path string, statu
 		return l.httpThrottleQuarantine
 	case statusCode == http.StatusUnauthorized && participantPathKind(path) == "inference" && strings.Contains(strings.ToLower(body), "timestamp drift"):
 		return l.transportFailureQuarantine
-	case (statusCode == http.StatusNotFound || statusCode == http.StatusForbidden) && participantPathKind(path) == "inference":
+	case statusCode == http.StatusNotFound && participantPathKind(path) == "inference":
 		return l.transportFailureQuarantine
 	default:
 		return 0

@@ -2179,10 +2179,6 @@ func TestParticipantRequestLimiterInferenceRouteFailureUsesShortQuarantine(t *te
 	limiter.ObserveResult("broken-host", "/sessions/38/chat/completions", http.StatusNotFound)
 	require.True(t, limiter.IsBlocked("broken-host"))
 	require.True(t, limiter.allow("broken-host", t0.Add(transportFailureQuarantine+time.Second)))
-
-	limiter.ObserveResult("forbidden-host", "/sessions/38/chat/completions", http.StatusForbidden)
-	require.True(t, limiter.IsBlocked("forbidden-host"))
-	require.True(t, limiter.allow("forbidden-host", t0.Add(transportFailureQuarantine+time.Second)))
 }
 
 func TestParticipantRequestLimiterTimestampDriftUsesShortQuarantine(t *testing.T) {
@@ -2334,6 +2330,60 @@ func TestParticipantRequestLimiterClearQuarantineStartsProbation(t *testing.T) {
 	}
 	limiter.ObserveSuccessfulInference("shared-host")
 	require.False(t, limiter.IsRecentlyQuarantined("shared-host"))
+	require.Equal(t, 0, limiter.TrackedCount())
+}
+
+func TestParticipantRequestLimiterForgetParticipantClearsProbation(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+
+	require.True(t, limiter.ClearQuarantine("shared-host"))
+	require.True(t, limiter.IsRecentlyQuarantined("shared-host"))
+
+	require.True(t, limiter.ForgetParticipant("shared-host"))
+	require.False(t, limiter.IsRecentlyQuarantined("shared-host"))
+	require.False(t, limiter.IsBlocked("shared-host"))
+	_, noWinner := limiter.NoWinnerStatusForModel("shared-host", "")
+	require.False(t, noWinner)
+	require.Equal(t, 0, limiter.TrackedCount())
+
+	require.False(t, limiter.ForgetParticipant("shared-host"))
+	require.False(t, limiter.ForgetParticipant(""))
+}
+
+func TestHandleAdminUnquarantineFullForgetsParticipant(t *testing.T) {
+	g := NewGateway(nil, NewGatewayLimiter(0, 0), "Qwen/Test")
+	limiter := NewParticipantRequestLimiter(10, 10)
+	g.participantLimiter = limiter
+	limiter.ObserveResult("host-a", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+	limiter.ObserveResult("host-b", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/admin/participants/unquarantine",
+		strings.NewReader(`{"participant_key":"host-a"}`))
+	rec := httptest.NewRecorder()
+	g.handleAdminUnquarantine(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.True(t, limiter.IsRecentlyQuarantined("host-a"))
+
+	req = httptest.NewRequest(http.MethodPost, "/v1/admin/participants/unquarantine",
+		strings.NewReader(`{"participant_key":"host-b","full":true}`))
+	rec = httptest.NewRecorder()
+	g.handleAdminUnquarantine(rec, req)
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.False(t, limiter.IsRecentlyQuarantined("host-b"))
+	require.Equal(t, 1, limiter.TrackedCount())
+}
+
+func TestParticipantRequestLimiterWrongOwner403DoesNotQuarantine(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(10, 10)
+
+	for i := 0; i < 10; i++ {
+		limiter.ObserveResultWithBody("owner-host", "/sessions/23/chat/completions", http.StatusForbidden, `{"message":"restricted to escrow owner"}`)
+	}
+
+	require.False(t, limiter.IsBlocked("owner-host"))
+	require.False(t, limiter.IsRecentlyQuarantined("owner-host"))
+	require.NoError(t, limiter.AllowRequest("owner-host", "/sessions/23/chat/completions"))
 	require.Equal(t, 0, limiter.TrackedCount())
 }
 

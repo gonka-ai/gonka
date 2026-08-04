@@ -20,9 +20,11 @@ rotation but is effectively skipped.
 |---|---|---|---|
 | HTTP 429 or 503 | 60 min | any | Host reported overload or rate limit |
 | HTTP 404 on inference | 30 min | `/chat/completions` | Escrow not registered on host |
+| HTTP 401 with `timestamp drift` body on inference | 30 min | `/chat/completions` | Gateway clock skew vs host, or signed request aged in queue before send |
 | Non-EOF transport failure on inference | 30 min | `/chat/completions` | Dial timeout, connection refused, TLS error |
 | 3 consecutive EOF transport failures on inference | 30 min | `/chat/completions` | EOF-style stream/read failures. Streak resets on quarantine or on a successful inference. |
 | Transport failure on non-inference | none | `/verify-timeout`, `/gossip/*`, etc. | Logged but not quarantined — a flaky vote RPC should not remove an otherwise healthy inference host |
+| HTTP 403 on inference | none | `/chat/completions` | Not quarantined — `restricted to escrow owner` is a request-level fault (signer/escrow mismatch), identical from every host, and says nothing about host health |
 | 3 consecutive empty streams | 30 min | inference result | Host returns receipt but zero content chunks, three times in a row. Empty streams are only counted when the overall request succeeded via another attempt. Streak resets on quarantine or on a successful inference. |
 | Stalled winner | 30 min | inference result | Host won the race, emitted content, then went silent long enough to trigger the inter-chunk stall timeout (1 min). Immediate quarantine, no streak. |
 
@@ -34,6 +36,22 @@ rotation but is effectively skipped.
 - When quarantine expires and tokens recover to full burst, the host is removed from tracking entirely (persistent record deleted).
 - A successful inference (`ObserveSuccessfulInference`) clears empty-stream and EOF streaks but does not end an active quarantine early.
 
+### Post-quarantine probation
+
+Every exit from quarantine — natural expiry, admin unquarantine, or restart
+with an expired persisted row — leaves the host with 2 failure strikes
+("probation"). While on probation the host receives real traffic but its
+attempts are marked no-winner (`suspicious_winner_deferred`): its content is
+buffered and only crowned as a fallback when no clean host produces content
+first. Each finished, non-empty inference decrements one strike; at zero the
+host leaves tracking.
+
+When every host in an escrow is on probation (e.g. after a mass quarantine),
+the race ends with no crowned winner and the buffered content of the best
+suspicious attempt is promoted to the client immediately, for both streaming
+and non-streaming requests. The settled request then counts toward strike
+recovery, so the pool heals itself instead of deadlocking.
+
 ### Admin override
 
 ```
@@ -44,8 +62,17 @@ Authorization: Bearer $DEVSHARD_ADMIN_API_KEY
 {"participant_key": "gonka1abc...xyz"}
 ```
 
-Immediately clears quarantine and resets the token bucket. The host becomes
-available for the next nonce that maps to it.
+Immediately clears quarantine and resets the token bucket, but keeps the host
+on the normal post-quarantine probation path (2 strikes).
+
+```
+{"participant_key": "gonka1abc...xyz", "full": true}
+```
+
+With `"full": true` the participant is forgotten entirely: quarantine,
+probation strikes, and the persisted throttle row are all removed, as if the
+host had never been throttled. Use this when the quarantine is known to be a
+false positive.
 
 ## PerfTracker (Performance Tracking)
 
@@ -114,7 +141,7 @@ The two systems are independent and can overlap:
 
 ### Quarantine
 
-- `participant_limit_activated` — 429/503 quarantine
+- `participant_limit_activated` — 429/503/404/drift-401 quarantine
 - `participant_limit_transport_failure` — non-EOF inference transport failure quarantine
 - `participant_limit_eof_transport_streak` — EOF inference transport failure streak increment
 - `participant_limit_eof_transport_quarantine` — 3-strike EOF inference transport failure quarantine
@@ -122,6 +149,7 @@ The two systems are independent and can overlap:
 - `participant_limit_empty_stream_quarantine` — 3-strike empty stream on requests that succeeded via another attempt
 - `participant_limit_stalled_winner_quarantine` — stalled winner
 - `participant_quarantine_cleared` — admin override via unquarantine endpoint
+- `participant_quarantine_forgotten` — admin full clear (`"full": true`)
 - `participant_quarantine_ended` — natural expiry
 - `participant_limit_rejected` — request blocked by quarantine
 
