@@ -407,7 +407,8 @@ Applies when taking `versiond-N` out of service: container replace, supervisor
 upgrade, scale-down, or decommission.
 
 ```text
-1. docker compose stop versiond-N   (SIGTERM, stop_grace_period as backstop)
+1. operator requests a temporary stop of versiond-N
+        (SIGTERM, stop_grace_period as backstop)
         ▼
 2. versiond enters `announcing`: /readyz starts failing, admission stays OPEN
         │  → within ~1s the router marks the host down
@@ -424,7 +425,7 @@ upgrade, scale-down, or decommission.
         ▼
 4. the container exits; its DNS record disappears and the slot empties
         ▼
-5. replacement/addition: docker compose up -d versiond-N
+5. replacement/addition: operator starts versiond-N
         the host appears in DNS at once, but /readyz returns 503 until it has
         a healthy child and has reconciled every approved version, so it takes
         no traffic until it can serve it
@@ -465,7 +466,7 @@ admits only one.
 
 | Piece | Meaning |
 |---|---|
-| `docker compose stop` / `start` | The whole host lifecycle. Membership is DNS; health is measured |
+| Container stop / start | The whole host lifecycle. Membership is DNS; health is measured |
 | `pool-status` (in the router image, off PATH) | Read-only view of what the router believes; there is no router-side drain |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
@@ -530,32 +531,23 @@ on all of them simultaneously; gating on it would turn a control-plane hiccup
 into an empty pool while every child is still serving. That failure is reported
 as the `Degraded` condition and in the logs, not through the balancer.
 
-#### Operator commands
+#### Operator procedure
 
-Evacuate a host:
-
-```bash
-docker compose stop versiond2
-```
-
-Replace or restart it:
-
-```bash
-docker compose up -d versiond2
-```
-
-Inspect what the router believes:
-
-```bash
-docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status
-```
+Use the canonical [versiond host evacuation
+runbook](./versiond-host-evacuation.md) for executable commands. It loads
+`config.env`, supplies the complete HA Compose model, protects the pinned legacy
+owner, and distinguishes a temporary evacuation from permanent decommission.
 
 Taking a host out of rotation is stopping it. There is no router-side drain:
 HAProxy reuses server slots, so a drain outlives the host it was meant for and is
 inherited by whichever host DNS puts in that slot next.
 
-Scale up by starting another container on the pool alias; scale down by stopping
-one and not starting it again. Neither needs a router change.
+Temporary `stop` does not change membership: the deployment uses
+`restart: always`, so Docker may start that container again after a daemon
+restart. Permanent scale-down changes the persisted desired replica count in
+`config.env` and removes the old container, as specified by the runbook. Adding
+a host likewise updates the deployment model before starting it. Neither action
+requires stored state in the router.
 
 A `docker kill`, or a `stop` with a grace shorter than the work in flight, still
 terminates accepted requests: the announce window protects the transition, not an

@@ -127,9 +127,10 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
    `v4`;
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
 
-```console
-$ docker compose up -d --force-recreate versiond-router
-```
+Apply the changed environment with the **Apply router configuration** command in
+the canonical [versiond host evacuation
+runbook](../devshard/docs/versiond-host-evacuation.md). That command loads
+`config.env` and uses the complete HA Compose model.
 
 There is no in-place way to declare a version: the backends are rendered from the
 environment when the container starts, so the environment has to change and the
@@ -257,8 +258,10 @@ deployment declaration.
 
 ## Looking at the pool
 
-```console
-$ docker compose exec versiond-router /usr/local/lib/versiond-router/pool-status
+The canonical runbook contains the full command for inspecting the pool. Its
+output looks like this:
+
+```text
 versiond_pool_v4
   versiond1  172.30.0.10  UP
   versiond2  172.30.0.11  DOWN
@@ -283,15 +286,13 @@ that leaves DNS frees its slot, the next host to arrive lands in it and inherits
 the drain — kept out of rotation with nothing to show why. Admin state belongs to
 the identity of a process; the router only ever knows an address DNS lent it.
 
-To take a host out of rotation, stop its versiond:
-
-```console
-$ docker compose stop versiond2
-```
-
-That is graceful by construction — versiond reports unready for
+To take a host out of rotation, follow the canonical [versiond host evacuation
+runbook](../devshard/docs/versiond-host-evacuation.md). A temporary stop is
+graceful by construction: versiond reports unready for
 `VERSIOND_DRAIN_ANNOUNCE` while it keeps serving, so the router removes it before
-it stops accepting — and it is tied to the process, so nothing can inherit it.
+it stops accepting. Permanent decommission is different: it persists the new
+desired replica count and removes the container so `restart: always` cannot add
+the host back later.
 
 ## Configuration
 
