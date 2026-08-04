@@ -1222,12 +1222,16 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 }
 
 func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) {
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	limiter := NewParticipantRequestLimiter(10, 10)
-	env.proxy.redundancy.participantLimiter = limiter
+	// Relaxed PoC intentionally suppresses empty-stream samples; this test is
+	// only about the long non-stream exemption path.
+	setPoCModeForTest(t, pocRequestModeOff)
 	oldWindow := ParticipantPerfWindow
 	ParticipantPerfWindow = 24 * time.Hour
 	t.Cleanup(func() { ParticipantPerfWindow = oldWindow })
+
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	limiter := NewParticipantRequestLimiter(10, 10)
+	env.proxy.redundancy.participantLimiter = limiter
 	participantKey := env.session.HostParticipantKey(0)
 	params := defaultParams()
 	params.Stream = false
