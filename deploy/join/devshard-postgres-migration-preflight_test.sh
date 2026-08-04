@@ -51,6 +51,7 @@ run_preflight() {
 }
 
 : >"$tmpdir/docker.log"
+target_mount="type=bind\\,src=$tmpdir/target\\,dst=/target\\,readonly"
 DOCKER_PROBE='source 1000'
 FREE_KIB=1100
 export DOCKER_PROBE FREE_KIB
@@ -60,6 +61,9 @@ grep -q 'required free: 1100 KiB' "$tmpdir/pass.stdout" || fail \
     "successful preflight did not report its calculation"
 grep -q -- '--volumes-from postgres-v4:ro' "$tmpdir/docker.log" || fail \
     "container source was not mounted read-only"
+grep -Fq -- "$target_mount" \
+    "$tmpdir/docker.log" || fail \
+    "target directory was not mounted for the container-source probe"
 
 FREE_KIB=1099
 export FREE_KIB
@@ -82,18 +86,21 @@ grep -q 'src=postgres-v4-volume' "$tmpdir/docker.log" || fail \
     "selected volume was not mounted"
 grep -q 'readonly' "$tmpdir/docker.log" || fail \
     "volume source was not mounted read-only"
+grep -Fq -- "$target_mount" \
+    "$tmpdir/docker.log" || fail \
+    "target directory was not mounted for the volume-source probe"
 
 DOCKER_PROBE='target-ready'
 FREE_KIB=0
 export DOCKER_PROBE FREE_KIB
-run_preflight --source-container postgres-v5 --target-dir "$tmpdir/target" \
+run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/target.stdout"
 grep -q 'no migration copy is required' "$tmpdir/target.stdout" || fail \
     "existing persistent PGDATA was not recognized"
 
 DOCKER_PROBE='staging-ready'
 export DOCKER_PROBE
-run_preflight --source-container postgres-v5 --target-dir "$tmpdir/target" \
+run_preflight --source-volume postgres-v4-volume --target-dir "$tmpdir/target" \
     >"$tmpdir/staging.stdout"
 grep -q 'staging is complete' "$tmpdir/staging.stdout" || fail \
     "committed migration staging was not recognized"

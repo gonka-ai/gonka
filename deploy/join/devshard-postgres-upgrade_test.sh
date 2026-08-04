@@ -144,6 +144,17 @@ guard_old_volume=$(docker inspect "$guard_old_container" --format \
 "$preflight" --source-volume "$guard_old_volume" \
     --target-dir "$GONKA_POSTGRES_TEST_DATA" >/dev/null
 
+# A completed staging copy is sufficient for a restart. The detached source
+# volume and host target must both be visible to the helper in this mode.
+restart_target="$tmpdir/recovery-restart"
+mkdir -p "$restart_target/.migrating"
+printf '16\n' >"$restart_target/.migrating/PG_VERSION"
+: >"$restart_target/.migrating/.gonka-copy-complete"
+restart_result=$("$preflight" --source-volume "$guard_old_volume" \
+    --target-dir "$restart_target")
+grep -q 'staging is complete' <<<"$restart_result" || fail \
+    "volume recovery preflight did not recognize completed staging"
+
 "${guard_new_compose[@]}" up -d "$service"
 guard_container=$("${guard_new_compose[@]}" ps -aq "$service")
 for _ in {1..30}; do
@@ -178,6 +189,10 @@ recovered_row=$("${guard_recovery_compose[@]}" exec -T "$service" psql \
 "${guard_recovery_compose[@]}" exec -T "$service" \
     test -s /var/lib/postgresql/gonka/data/PG_VERSION || fail \
     "recovery overlay did not publish persistent PGDATA"
+restart_result=$("$preflight" --source-volume "$guard_old_volume" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA")
+grep -q 'no migration copy is required' <<<"$restart_result" || fail \
+    "volume recovery preflight did not recognize published PGDATA"
 
 # Remove the temporary legacy mount and prove the recovered bind is now the
 # only storage needed by a normal deployment restart.

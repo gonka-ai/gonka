@@ -215,10 +215,16 @@ recovery_compose=(
 
 # Fail before Docker can create a new empty volume for a mistyped name.
 docker volume inspect "$DEVSHARD_POSTGRES_LEGACY_VOLUME" >/dev/null
-if [ -n "$(docker ps -q --filter "volume=$DEVSHARD_POSTGRES_LEGACY_VOLUME")" ]; then
-  echo "legacy volume is still mounted by a running container" >&2
-  exit 1
-fi
+mounted_ids=$(docker ps -q \
+  --filter "volume=$DEVSHARD_POSTGRES_LEGACY_VOLUME")
+for mounted_id in $mounted_ids; do
+  mounted_name=$(docker inspect "$mounted_id" --format '{{.Name}}')
+  if [ "$mounted_name" != /devshard-postgres ]; then
+    echo "legacy volume is mounted by unexpected container $mounted_name" >&2
+    exit 1
+  fi
+  echo "resuming recovery through existing devshard-postgres container"
+done
 
 target_root=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
 ./devshard-postgres-migration-preflight.sh \
@@ -249,6 +255,13 @@ if [ -z "$current_legacy_volume" ] || \
 fi
 )
 ```
+
+The preflight is restart-safe. It mounts both the selected legacy volume and
+`target_root` read-only. If the persistent `data/PG_VERSION` is already
+published, or `.migrating` contains a validated completion marker, it succeeds
+without requiring free space for another full copy. Rerun the same block after
+an interrupted recovery; do not delete either directory to make the space check
+pass.
 
 Repeat the database verification above, then resume the normal cutover at the
 first versiond replacement. Keep the detached source volume and a logical or

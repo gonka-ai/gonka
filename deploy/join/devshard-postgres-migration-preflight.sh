@@ -20,7 +20,8 @@ Usage:
     (--source-container ID | --source-volume NAME) --target-dir DIR
 
 Checks that the target filesystem has enough free space for an atomic copy of
-the v4 PostgreSQL cluster. The source is mounted read-only and is not modified.
+the v4 PostgreSQL cluster. Source and target are mounted read-only and are not
+modified.
 EOF
 }
 
@@ -65,10 +66,10 @@ mkdir -p "$target_dir"
 target_dir=$(cd -- "$target_dir" && pwd -P)
 
 probe_script=$(cat <<'PROBE'
-if [ -s /var/lib/postgresql/gonka/data/PG_VERSION ]; then
+if [ -s "$2/data/PG_VERSION" ]; then
     printf 'target-ready\n'
-elif [ -s /var/lib/postgresql/gonka/.migrating/PG_VERSION ] &&
-    [ -f /var/lib/postgresql/gonka/.migrating/.gonka-copy-complete ]; then
+elif [ -s "$2/.migrating/PG_VERSION" ] &&
+    [ -f "$2/.migrating/.gonka-copy-complete" ]; then
     printf 'staging-ready\n'
 elif [ -s "$1/PG_VERSION" ]; then
     source_kib=$(du -sk "$1" | cut -f1)
@@ -79,20 +80,31 @@ fi
 PROBE
 )
 
+probe_args=(
+    run --rm
+    --network none
+    --read-only
+    --security-opt no-new-privileges
+    # Inspect an existing Compose :Z bind without relabeling it away from the
+    # running PostgreSQL container.
+    --security-opt label=disable
+    --mount "type=bind,src=$target_dir,dst=/target,readonly"
+)
+
 if [[ -n $source_container ]]; then
     "$docker_bin" inspect "$source_container" >/dev/null ||
         fail "source container does not exist: $source_container"
-    probe=$("$docker_bin" run --rm \
+    probe=$("$docker_bin" "${probe_args[@]}" \
         --volumes-from "$source_container:ro" \
         --entrypoint /bin/sh "$helper_image" \
-        -ec "$probe_script" sh /var/lib/postgresql/data)
+        -ec "$probe_script" sh /var/lib/postgresql/data /target)
 else
     "$docker_bin" volume inspect "$source_volume" >/dev/null ||
         fail "source volume does not exist: $source_volume"
-    probe=$("$docker_bin" run --rm \
+    probe=$("$docker_bin" "${probe_args[@]}" \
         --mount "type=volume,src=$source_volume,dst=/source,readonly" \
         --entrypoint /bin/sh "$helper_image" \
-        -ec "$probe_script" sh /source)
+        -ec "$probe_script" sh /source /target)
 fi
 
 read -r probe_state source_kib extra <<<"$probe"
