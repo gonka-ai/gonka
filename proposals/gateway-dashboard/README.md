@@ -453,12 +453,14 @@ already moved into counters stay frozen there.
 
 A snapshot writer stores each escrow's metadata, `latest_nonce`,
 `HostStats`, per-slot challenge and invalid counts, invalidated nonces,
-and counter map into `accounting.db` every five minutes and at escrow
-finalization, settlement, rotation, and shutdown. A failed snapshot keeps
-the previous one and is reported as a writer error. The payload is one
-JSON blob per escrow. Every dimension is a small enum and only observed
-combinations create counters, so an escrow produces at most a few hundred
-counter entries.
+and counter map into `accounting.db` on the snapshot tick and at escrow
+settlement and rotation. Finalization only syncs in memory, to keep a
+full-table rewrite off the settlement path. An unclean exit therefore
+loses at most one tick of counters. A failed snapshot keeps the previous
+one and is reported as a writer error. The payload is one JSON blob per
+escrow. Every dimension is a small enum and only observed combinations
+create counters, so an escrow produces at most a few hundred counter
+entries.
 
 An escrow registry stores the chain `epoch_index`, model, ordered slots,
 and participant addresses. Aggregation happens at query time: epoch,
@@ -469,7 +471,8 @@ computed or refreshed from current memory, time, and `latest_nonce`.
 
 `DEVSHARD_STATS_RETENTION_EPOCHS=0` disables automatic deletion. A
 positive value removes only complete epochs older than the configured
-count.
+count. `DEVSHARD_STATS_SNAPSHOT_SECONDS` sets the snapshot tick, default
+300.
 
 On restart, counters resume from the last snapshot and the gateway reads
 recovered `HostStats`. It does not replay diffs or invent dispositions for
@@ -491,13 +494,15 @@ deadline heap.
 The observer runs on the sequencer's critical section, so it reads only
 what the diff cannot tell it: the diff's own nonce is the new
 `latest_nonce`, the phase is a scalar read, and `HostStats` is read only
-for the executor slot of an applied timeout or a verdict. Queries hold a
-read lock and mutate nothing, so a dashboard poll never stands between a
-committed diff and its counters. Promoting a passed deadline into the
-persisted counters is the writer's job, on the snapshot tick.
+for the executor slot of an applied timeout or a verdict. Queries mutate
+nothing and aggregate outside the lock, so no dashboard poll or
+Prometheus scrape stands between a committed diff and its counters.
+Promoting a passed deadline into the persisted counters is the writer's
+job, on the snapshot tick.
 
-A settled or retired escrow releases its protocol view; keeping it would
-pin every inference record of a rotated escrow for the process lifetime.
+A settled or retired escrow releases its protocol view, and settlement
+releases the live nonces already folded into counters. Keeping either
+would pin a rotated escrow's records for the process lifetime.
 
 ### Lifecycle integration
 
@@ -511,10 +516,8 @@ Record at:
 - escrow finalization, settlement, rotation, and shutdown.
 
 A repeated or replayed callback that changes no session state changes no
-counter. Finalization and settlement retain unresolved live facts for the
-rest of the process instead of converting them immediately to
-`unclassified`. Shutdown writes a final snapshot before closing
-accounting.
+counter. Finalization and settlement retain unresolved live facts instead
+of converting them immediately to `unclassified`.
 
 `HandleTimeout` returns a structured result:
 
@@ -529,13 +532,13 @@ Operational errors remain errors but do not mean the timeout succeeded.
 ### Security and metrics
 
 The API always listens on all interfaces at `DEVSHARD_STATS_PORT`,
-default `9091`; the reader is a dashboard sidecar in another container, so
-loopback would be unreachable. There is no authentication: access control
-is network isolation, so the port stays unpublished and never passes
-through the public proxy or Caddy. Any container on the private Docker
-network can read it, which is acceptable for an internal tool. Failure to
-bind is logged and does not stop the gateway; failure to bind the main
-gateway listener stays fatal.
+default `9091`, because the reader is a dashboard sidecar in another
+container. There is no authentication: access control is network
+isolation, so the port stays unpublished and never passes through the
+public proxy or Caddy. Any container on the private Docker network can
+read it, which is acceptable for an internal tool. Failure to bind is
+logged and does not stop the gateway; failure to bind the main gateway
+listener stays fatal.
 
 The counter store also feeds Prometheus. A collector exports the
 in-memory counters as `devshard_accounting_*` gauges for the current
@@ -554,17 +557,17 @@ Tests cover:
 - every disposition and fixed gateway policy reason in both diagrams;
 - pre-deadline `in_flight`, post-deadline timeout classification, and
   late receipt reclassification;
-- every timeout outcome and non-applied reason fallback;
+- every timeout outcome and non-applied reason fallback, including a
+  canceled wait that is a skip and not a timeout;
 - repeated callbacks and order-independent in-process reclassification;
 - restart gaps without invented terminal outcomes;
-- finalization preserving current-process live facts;
-- cross-checks against `HostStats.Missed` and `HostStats.Invalid`,
-  including repeated verdicts and opposite errors in two escrows;
+- finalization and settlement preserving live facts, and what each writes;
+- cross-checks against `HostStats.Missed` and `HostStats.Invalid`, with
+  repeated verdicts and errors that would cancel across escrows;
 - production ghost, winner, loser, state-divergence, and committed-diff
   seams;
-- the observer reading no snapshot and no unaffected slot, queries running
-  concurrently with committed diffs under `-race`, and a settled escrow
-  releasing its protocol view;
+- the observer's reads, and queries concurrent with committed diffs under
+  `-race`;
 - API filters and representative Prometheus/query parity.
 
 This proposal does not change devshard consensus, timeout thresholds,

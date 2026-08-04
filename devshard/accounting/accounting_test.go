@@ -552,6 +552,44 @@ func TestFinalizedEscrowKeepsLiveClassification(t *testing.T) {
 	}
 }
 
+// A non-applied timeout is never terminal on its own, so settlement has to be
+// what releases its nonce state.
+func TestSettlementReleasesCountedLiveNonces(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 43, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+	for _, nonce := range []uint64{1, 3} {
+		require.NoError(t, tr.RecordDiff("e1", nonce, true))
+		require.NoError(t, tr.RecordRealSend("e1", nonce, now, PhaseNormal, QuarantineNone))
+	}
+	now = now.Add(66 * time.Second)
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
+		Outcome: TimeoutInsufficientVotes,
+	}))
+	require.Len(t, tr.escrows["e1"].Live, 2)
+
+	before := withoutEscrowPhase(tr.Query(QueryFilter{EpochIndex: 43}))
+	require.NoError(t, tr.RecordPhase("e1", EscrowSettled))
+	require.Equal(t, before, withoutEscrowPhase(tr.Query(QueryFilter{EpochIndex: 43})),
+		"releasing a counted nonce changes no count")
+
+	live := tr.escrows["e1"].Live
+	require.Len(t, live, 1)
+	require.Contains(t, live, uint64(3), "an unclassified nonce keeps its live state")
+}
+
+// withoutEscrowPhase drops LatestNonces, the only field a phase change moves, so
+// a comparison across one sees the counts alone.
+func withoutEscrowPhase(records []ParticipantRecord) []ParticipantRecord {
+	out := append([]ParticipantRecord(nil), records...)
+	for i := range out {
+		out[i].LatestNonces = nil
+	}
+	return out
+}
+
 // fakeProtocolView counts how often the per-diff path reads protocol state.
 type fakeProtocolView struct {
 	phase      types.SessionPhase
@@ -697,6 +735,46 @@ func TestSettledReleasesProtocolView(t *testing.T) {
 type fakeDiffTarget struct{}
 
 func (*fakeDiffTarget) SetDiffObserver(func(types.Diff)) {}
+
+// Finalize runs between the finalize handshake and the chain broadcast, so it
+// syncs in memory and leaves the write to Settled.
+func TestFinalizeSyncsWithoutWriting(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "accounting.db")
+	tr, err := OpenTracker(path, 0, time.Hour)
+	require.NoError(t, err)
+	tr.now = func() time.Time { return accountingTestNow }
+	t.Cleanup(func() { require.NoError(t, tr.Close()) })
+
+	recorder := NewRecorder(tr, nil)
+	state := &fakeProtocolView{phase: types.PhaseSettlement, inferences: map[uint64]types.InferenceRecord{}}
+	recorder.Attach(RuntimeMetadata{EscrowID: "e1", CreationEpoch: 42, Model: "m"}, &fakeDiffTarget{}, state)
+
+	recorder.Finalize("e1")
+	require.Empty(t, persistedPhases(t, path), "settlement must not wait on a snapshot")
+	tr.mu.RLock()
+	phase := tr.escrows["e1"].Meta.Phase
+	tr.mu.RUnlock()
+	require.Equal(t, EscrowFinalized, phase, "Finalize still syncs the phase in memory")
+
+	recorder.Settled("e1")
+	require.Equal(t, map[string]EscrowPhase{"e1": EscrowSettled}, persistedPhases(t, path))
+}
+
+// persistedPhases reads the database directly. Going through OpenTracker would
+// flush on Close and hide what was actually written.
+func persistedPhases(t *testing.T, path string) map[string]EscrowPhase {
+	t.Helper()
+	store, err := OpenStore(path, 0)
+	require.NoError(t, err)
+	defer func() { require.NoError(t, store.Close()) }()
+	reader := &Tracker{escrows: make(map[string]*escrowState)}
+	require.NoError(t, store.Load(context.Background(), reader))
+	out := make(map[string]EscrowPhase, len(reader.escrows))
+	for id, escrow := range reader.escrows {
+		out[id] = escrow.Meta.Phase
+	}
+	return out
+}
 
 func TestQueryDoesNotMutateLedger(t *testing.T) {
 	tr := newTestTracker(t)

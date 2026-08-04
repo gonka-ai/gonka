@@ -94,6 +94,25 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 		require.Error(t, err)
 		require.Equal(t, "vote_collection_failed", result.Outcome)
 	})
+
+	t.Run("canceled wait", func(t *testing.T) {
+		env := setupTestProxy(t, 3, nil, false)
+		prepared, err := env.session.PrepareInference(defaultParams())
+		require.NoError(t, err)
+		ctx, cancel := context.WithCancel(context.Background())
+		cancel()
+		result, err := env.session.HandleTimeout(
+			ctx,
+			prepared.Nonce(),
+			time.Now(),
+			&host.InferencePayload{},
+		)
+		require.Error(t, err)
+		require.Equal(t, "skipped", result.Outcome)
+		require.Equal(t, "context_canceled", result.DetailReason)
+		require.Empty(t, result.Reason,
+			"the deadline was never reached, so this must not count as an inference timeout")
+	})
 }
 
 type timeoutErrorClient struct{}

@@ -244,8 +244,11 @@ func (r *Recorder) TimeoutResult(
 	}
 }
 
+// Finalize syncs in memory without writing: it runs before the settlement JSON
+// and the chain broadcast, and a snapshot there would put a full-table sqlite
+// rewrite ahead of settlement. Settled, Retire, Close, and the tick persist.
 func (r *Recorder) Finalize(escrowID string) {
-	r.syncAndFlush(escrowID, "", "finalize")
+	r.sync(escrowID, "")
 }
 
 // Settled records the terminal phase, then releases the protocol view: counters
@@ -304,15 +307,19 @@ func (r *Recorder) sync(escrowID string, phase EscrowPhase) {
 	r.mu.RLock()
 	state := r.states[escrowID]
 	r.mu.RUnlock()
-	if state == nil {
-		return
-	}
-	snapshot := state.SnapshotStateNoInferences()
-	if err := r.tracker.SyncState(escrowID, snapshot.LatestNonce, snapshot.HostStats); err != nil {
-		log.Printf("gateway accounting sync escrow=%s: %v", escrowID, err)
+	// An explicit phase is recorded even without a protocol view, so a terminal
+	// phase does not depend on whether the view was released first.
+	if state != nil {
+		snapshot := state.SnapshotStateNoInferences()
+		if err := r.tracker.SyncState(escrowID, snapshot.LatestNonce, snapshot.HostStats); err != nil {
+			log.Printf("gateway accounting sync escrow=%s: %v", escrowID, err)
+		}
+		if phase == "" {
+			phase = escrowPhase(snapshot.Phase)
+		}
 	}
 	if phase == "" {
-		phase = escrowPhase(snapshot.Phase)
+		return
 	}
 	if err := r.tracker.RecordPhase(escrowID, phase); err != nil {
 		log.Printf("gateway accounting phase escrow=%s: %v", escrowID, err)

@@ -1883,19 +1883,22 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		return append(base, extra...)
 	}
 
+	// A canceled wait leaves Reason empty, because Reason means the deadline was
+	// reached and callers count an inference timeout from it. Outcome and
+	// DetailReason still report the skip.
 	var reason types.TimeoutReason
 	if reasonLabel == "execution" {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{Reason: "execution", Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{Reason: "refused", Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
+			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}

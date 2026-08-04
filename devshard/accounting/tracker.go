@@ -517,10 +517,27 @@ func (e *escrowState) recordPhase(phase EscrowPhase) error {
 	if !validPhase(phase) {
 		return fmt.Errorf("invalid phase %q", phase)
 	}
-	if phaseRank(phase) > phaseRank(e.Meta.Phase) {
-		e.Meta.Phase = phase
+	if phaseRank(phase) <= phaseRank(e.Meta.Phase) {
+		return nil
+	}
+	e.Meta.Phase = phase
+	if phase == EscrowSettled {
+		e.releaseCountedLive()
 	}
 	return nil
+}
+
+// releaseCountedLive drops the live nonces already folded into the counters. A
+// settled escrow commits no further diffs, so nothing can reclassify them, and a
+// non-applied timeout is never terminal on its own: without this it would keep
+// its nonce state for as long as the escrow is retained. Uncounted nonces stay,
+// since they are what in_flight and pending_classification report.
+func (e *escrowState) releaseCountedLive() {
+	for nonce, state := range e.Live {
+		if state.Counted != nil {
+			delete(e.Live, nonce)
+		}
+	}
 }
 
 func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {

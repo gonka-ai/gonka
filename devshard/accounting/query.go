@@ -4,6 +4,8 @@ import (
 	"sort"
 	"strings"
 	"time"
+
+	"devshard/types"
 )
 
 type participantKey struct {
@@ -11,18 +13,28 @@ type participantKey struct {
 	model       string
 }
 
-// Query mutates nothing, so it holds only the read lock and never stands between
-// a committed diff and its counters. Live nonces past their deadline are
-// classified for this response; the writer promotes them on the snapshot tick.
-func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
+// escrowView is a copy of one escrow's ledger. Query aggregates and sorts from
+// these outside the lock, because a reader blocks a pending writer for as long
+// as it holds it, and that writer is the per-diff observer on the sequencer's
+// critical section.
+type escrowView struct {
+	id              string
+	meta            EscrowMetadata
+	latest          uint64
+	counters        map[CounterKey]uint64
+	hostStats       map[uint32]types.HostStats
+	challengeBySlot map[uint32]uint64
+	invalidBySlot   map[uint32]uint64
+	live            []nonceState
+}
+
+// viewsFor copies the escrows a filter selects. This is the only part of a query
+// that holds the read lock.
+func (t *Tracker) viewsFor(filter QueryFilter) ([]escrowView, time.Time) {
+	escrowFilter := stringSet(filter.EscrowIDs)
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	now := t.nowUTC()
-	updated := t.updated
-	escrowFilter := stringSet(filter.EscrowIDs)
-	records := make(map[participantKey]*ParticipantRecord)
-	nonceSeen := make(map[participantKey]map[string]struct{})
-
+	views := make([]escrowView, 0, len(t.escrows))
 	for escrowID, escrow := range t.escrows {
 		if escrow.Meta.CreationEpoch != filter.EpochIndex {
 			continue
@@ -35,11 +47,54 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 				continue
 			}
 		}
-		for _, slot := range escrow.Meta.Slots {
+		views = append(views, escrow.view(escrowID))
+	}
+	return views, t.updated
+}
+
+// view copies everything a query reads. Meta.Slots is shared because it is
+// copied once at registration and never mutated after. nonceState.Counted is
+// only tested for nil, never dereferenced.
+func (e *escrowState) view(id string) escrowView {
+	out := escrowView{
+		id:              id,
+		meta:            e.Meta,
+		latest:          e.Latest,
+		counters:        make(map[CounterKey]uint64, len(e.Counters)),
+		hostStats:       make(map[uint32]types.HostStats, len(e.HostStats)),
+		challengeBySlot: copyUint32Map(e.ChallengeBySlot),
+		invalidBySlot:   copyUint32Map(e.InvalidBySlot),
+		live:            make([]nonceState, 0, len(e.Live)),
+	}
+	for key, count := range e.Counters {
+		out.counters[key] = count
+	}
+	for slot, stats := range e.HostStats {
+		out.hostStats[slot] = stats
+	}
+	for _, state := range e.Live {
+		out.live = append(out.live, *state)
+	}
+	return out
+}
+
+// Query mutates nothing and never stands between a committed diff and its
+// counters. Live nonces past their deadline are classified for this response;
+// the writer promotes them on the snapshot tick.
+func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
+	views, updated := t.viewsFor(filter)
+	now := t.nowUTC()
+	records := make(map[participantKey]*ParticipantRecord)
+	nonceSeen := make(map[participantKey]map[string]struct{})
+
+	for i := range views {
+		escrow := &views[i]
+		escrowID := escrow.id
+		for _, slot := range escrow.meta.Slots {
 			if filter.Participant != "" && slot.ValidatorAddress != filter.Participant {
 				continue
 			}
-			key := participantKey{participant: slot.ValidatorAddress, model: escrow.Meta.Model}
+			key := participantKey{participant: slot.ValidatorAddress, model: escrow.meta.Model}
 			record := records[key]
 			if record == nil {
 				record = &ParticipantRecord{
@@ -57,12 +112,12 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			if _, ok := nonceSeen[key][escrowID]; !ok {
 				record.LatestNonces = append(record.LatestNonces, EscrowNonce{
 					EscrowID:    escrowID,
-					LatestNonce: escrow.Latest,
-					Phase:       escrow.Meta.Phase,
+					LatestNonce: escrow.latest,
+					Phase:       escrow.meta.Phase,
 				})
 				nonceSeen[key][escrowID] = struct{}{}
 			}
-			slotRecord := buildSlotRecord(escrowID, escrow, slot.SlotID, now)
+			slotRecord := buildSlotRecord(escrow, slot.SlotID, now)
 			record.Slots = append(record.Slots, slotRecord)
 			record.AssignedNonces += slotRecord.AssignedNonces
 			record.ProtocolMisses += slotRecord.ProtocolMisses
@@ -86,17 +141,18 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 				record.TimeoutOutcomes[outcome] += count
 			}
 			counterTotals := make(map[CounterKey]uint64)
-			for counterKey, count := range escrow.Counters {
+			for counterKey, count := range escrow.counters {
 				if counterKey.SlotID != slot.SlotID {
 					continue
 				}
 				counterTotals[counterKey] += count
 			}
-			for _, live := range escrow.Live {
+			for i := range escrow.live {
+				live := &escrow.live[i]
 				if live.SlotID != slot.SlotID || live.Counted != nil {
 					continue
 				}
-				if counterKey, ok := live.counterKey(escrow.Meta, now); ok {
+				if counterKey, ok := live.counterKey(escrow.meta, now); ok {
 					counterTotals[counterKey]++
 				}
 			}
@@ -156,17 +212,17 @@ func (r *SlotRecord) addCounter(key CounterKey, count uint64) {
 	}
 }
 
-func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time.Time) SlotRecord {
-	assigned, _ := AssignedNoncesForSlot(escrow.Latest, uint64(len(escrow.Meta.Slots)), slot)
+func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord {
+	assigned, _ := AssignedNoncesForSlot(escrow.latest, uint64(len(escrow.meta.Slots)), slot)
 	record := SlotRecord{
-		EscrowID:        escrowID,
+		EscrowID:        escrow.id,
 		SlotID:          slot,
 		AssignedNonces:  assigned,
 		Dispositions:    make(map[Disposition]uint64),
 		TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
 	}
 	var accounted uint64
-	for key, count := range escrow.Counters {
+	for key, count := range escrow.counters {
 		if key.SlotID != slot || count == 0 {
 			continue
 		}
@@ -175,7 +231,8 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 	}
 	// Unpromoted live nonces go through the same fold, so a nonce reads the same
 	// before and after the writer promotes it.
-	for _, live := range escrow.Live {
+	for i := range escrow.live {
+		live := &escrow.live[i]
 		if live.SlotID != slot {
 			continue
 		}
@@ -183,7 +240,7 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 		case live.Counted != nil:
 			continue
 		case live.Sent && !live.Finished:
-			if key, ok := live.counterKey(escrow.Meta, now); ok {
+			if key, ok := live.counterKey(escrow.meta, now); ok {
 				record.addCounter(key, 1)
 				accounted++
 				continue
@@ -195,9 +252,9 @@ func buildSlotRecord(escrowID string, escrow *escrowState, slot uint32, now time
 			accounted++
 		}
 	}
-	record.UnresolvedChallenges = escrow.ChallengeBySlot[slot]
-	record.RecordedInvalid = escrow.InvalidBySlot[slot]
-	if stats, ok := escrow.HostStats[slot]; ok {
+	record.UnresolvedChallenges = escrow.challengeBySlot[slot]
+	record.RecordedInvalid = escrow.invalidBySlot[slot]
+	if stats, ok := escrow.hostStats[slot]; ok {
 		record.ProtocolMisses = uint64(stats.Missed)
 		record.ProtocolInvalid = uint64(stats.Invalid)
 	}

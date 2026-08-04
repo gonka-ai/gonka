@@ -422,7 +422,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	accountingTracker, err := accounting.OpenTracker(
 		filepath.Join(baseStorageDir, "accounting.db"),
 		accountingRetentionEpochs(),
-		accounting.DefaultSnapshotInterval,
+		accountingSnapshotInterval(),
 	)
 	if err != nil {
 		log.Printf("open accounting store: %v (accounting disabled)", err)

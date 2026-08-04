@@ -22,6 +22,16 @@ func accountingRetentionEpochs() uint64 {
 	return uint64(value)
 }
 
+// accountingSnapshotInterval bounds what a container stop loses: the gateway
+// handles no signals, so the tick is the only writer between settlements.
+func accountingSnapshotInterval() time.Duration {
+	seconds := readInt64Env("DEVSHARD_STATS_SNAPSHOT_SECONDS", 0)
+	if seconds <= 0 {
+		return accounting.DefaultSnapshotInterval
+	}
+	return time.Duration(seconds) * time.Second
+}
+
 func accountingCurrentEpoch(g *Gateway) accounting.CurrentEpochFunc {
 	return func(context.Context) (uint64, error) {
 		if g == nil || g.phaseGate == nil {
