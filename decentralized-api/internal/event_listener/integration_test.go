@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"os"
 	"strconv"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -160,6 +162,7 @@ func (m *MockBrokerChainBridge) GetParams() (*types.QueryParamsResponse, error) 
 
 type MockRandomSeedManager struct {
 	mock.Mock
+	onGenerate func(epochIndex uint64)
 }
 
 func (m *MockRandomSeedManager) ChangeCurrentSeed() {
@@ -176,16 +179,28 @@ func (m *MockRandomSeedManager) RequestMoney(epochIndex uint64) {
 }
 
 func (m *MockRandomSeedManager) CreateNewSeed(epochIndex uint64) (*apiconfig.SeedInfo, error) {
-	m.Called()
-	return nil, nil
+	m.Called(epochIndex)
+	// Match the signature ListRandomSeeds returns after GenerateSeedInfo so
+	// confirmSeedLocally can succeed the same way production restore does.
+	return &apiconfig.SeedInfo{
+		Seed:       1,
+		EpochIndex: epochIndex,
+		Signature:  integrationTestSeedSignature,
+	}, nil
 }
 
 func (m *MockRandomSeedManager) GenerateSeedInfo(epochIndex uint64) {
 	m.Called(epochIndex)
+	if m.onGenerate != nil {
+		m.onGenerate(epochIndex)
+	}
 }
 
 type MockQueryClient struct {
 	mock.Mock
+	listRandomSeedsCalls atomic.Int64
+	mu                   sync.Mutex
+	submittedByEpoch     map[uint64]*types.RandomSeed
 }
 
 func (m *MockQueryClient) EpochInfo(ctx context.Context, req *types.QueryEpochInfoRequest, opts ...grpc.CallOption) (*types.QueryEpochInfoResponse, error) {
@@ -201,12 +216,34 @@ func (m *MockQueryClient) Params(ctx context.Context, req *types.QueryParamsRequ
 	return args.Get(0).(*types.QueryParamsResponse), args.Error(1)
 }
 
+const integrationTestSeedParticipant = "some-address"
+const integrationTestSeedSignature = "integration-test-seed-signature"
+
+// ListRandomSeeds is not testify-expectation based: ensureSeedSubmitted runs
+// asynchronously and can race ExpectedCalls = nil in setLatestEpoch.
+// After GenerateSeedInfo, the seed becomes visible here so later ensures take
+// the confirm path and stop resubmitting (same shape as production).
 func (m *MockQueryClient) ListRandomSeeds(ctx context.Context, req *types.QueryRandomSeedsRequest, opts ...grpc.CallOption) (*types.QueryRandomSeedsResponse, error) {
-	args := m.Called(ctx, req)
-	if args.Get(0) == nil {
-		return nil, args.Error(1)
+	m.listRandomSeedsCalls.Add(1)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if seed, ok := m.submittedByEpoch[req.EpochIndex]; ok {
+		return &types.QueryRandomSeedsResponse{Seeds: []*types.RandomSeed{seed}}, nil
 	}
-	return args.Get(0).(*types.QueryRandomSeedsResponse), args.Error(1)
+	return &types.QueryRandomSeedsResponse{}, nil
+}
+
+func (m *MockQueryClient) markSeedSubmitted(epochIndex uint64) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.submittedByEpoch == nil {
+		m.submittedByEpoch = make(map[uint64]*types.RandomSeed)
+	}
+	m.submittedByEpoch[epochIndex] = &types.RandomSeed{
+		Participant: integrationTestSeedParticipant,
+		EpochIndex:  epochIndex,
+		Signature:   integrationTestSeedSignature,
+	}
 }
 
 // Test setup helpers
@@ -227,7 +264,11 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 	os.Setenv("ENFORCED_MODEL_ID", "disabled")
 
 	mockQueryClient := &MockQueryClient{}
-	mockSeedManager := &MockRandomSeedManager{}
+	mockSeedManager := &MockRandomSeedManager{
+		onGenerate: func(epochIndex uint64) {
+			mockQueryClient.markSeedSubmitted(epochIndex)
+		},
+	}
 
 	phaseTracker := &chainphase.ChainPhaseTracker{}
 
@@ -324,7 +365,6 @@ func createIntegrationTestSetup(reconcilialtionConfig *MlNodeReconciliationConfi
 			ValidationParams: validationParams,
 		},
 	}, nil)
-	mockQueryClient.On("ListRandomSeeds", mock.Anything, mock.Anything).Return(&types.QueryRandomSeedsResponse{}, nil)
 
 	// Setup mock expectations for RandomSeedManager
 	mockSeedManager.On("ChangeCurrentSeed").Return()
@@ -418,7 +458,6 @@ func (setup *IntegrationTestSetup) setLatestEpoch(blockHeight int64, epoch types
 			},
 		},
 	}, nil)
-	setup.MockQueryClient.On("ListRandomSeeds", mock.Anything, mock.Anything).Return(&types.QueryRandomSeedsResponse{}, nil)
 }
 
 func (setup *IntegrationTestSetup) transitionChainStateToNextEpoch(blockHeight int64) {
@@ -456,7 +495,19 @@ func (setup *IntegrationTestSetup) simulateBlock(height int64) error {
 		Height: height,
 		Hash:   fmt.Sprintf("hash-%d", height),
 	}
-	return setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	err := setup.Dispatcher.ProcessNewBlock(context.Background(), blockInfo)
+	setup.waitForSeedEnsureIdle()
+	return err
+}
+
+func (setup *IntegrationTestSetup) waitForSeedEnsureIdle() {
+	deadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(deadline) {
+		if !setup.Dispatcher.seedEnsureInFlight.Load() {
+			return
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
 }
 
 func (setup *IntegrationTestSetup) getNodeClient(nodeId string, port int) *mlnodeclient.MockClient {
@@ -663,6 +714,8 @@ func TestRegularPocScenario(t *testing.T) {
 		assertNodeClient(t, expected, node2Client)
 		i++
 	}
+	require.GreaterOrEqual(t, setup.MockQueryClient.listRandomSeedsCalls.Load(), int64(1),
+		"seed ensure should query ListRandomSeeds at least once during PoC window")
 
 	pocValStart := i
 	pocValEnd := pocValStart + setup.EpochParams.PocValidationDelay + setup.EpochParams.PocValidationDuration
