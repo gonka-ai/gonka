@@ -95,16 +95,31 @@ and multi-edge installations add only their detected overlay files. Explicit
 normal upgrades should not need them.
 
 Before pulling, the script records the immutable image ID of every service it
-will replace. If `--wait` fails before a health-aware router is active, it
-restores that service and exits before touching the next one. Temporary rollback
-tags are removed only after the whole upgrade succeeds. After a failed attempt,
-keep the reported `gonka-upgrade-rollback/*` tags until recovery is verified;
-they can then be removed with `docker image rm`.
+will replace. The v4 nginx routers do not consume `/readyz`, so before replacing
+the first replica the script removes that replica from the rendered upstream,
+validates the nginx config, and performs a graceful reload. Existing requests
+remain on the old nginx workers; the replacement does not receive new traffic
+while `up --wait` is establishing readiness.
+
+`EXIT`, `INT`, `TERM`, and `HUP` share the same compensation path. If an active
+replacement fails or the script is interrupted, its previous image is restored
+(or a newly introduced service is stopped) before the script exits. A replica
+interrupted after the nginx barrier remains isolated because a v4 process has no
+reliable readiness signal; rerun the same command to retry it. Temporary
+rollback tags are removed only after the whole upgrade succeeds. After a failed
+attempt, keep the reported `gonka-upgrade-rollback/*` tags until recovery is
+verified; they can then be removed with `docker image rm`.
 
 For multi-edge, the script replaces `edge-api2` first and waits for its v5
 `/readyz`, then switches from nginx to HAProxy. HAProxy excludes old or unready
 replicas, so each later replacement either joins after `/readyz` passes or is
 stopped without poisoning the live pool.
+
+For versiond HA, the equivalent order is `versiond2`, `versiond-router`, then
+the legacy owner `versiond`. The first replica is protected by the nginx
+barrier; after HAProxy is active, its per-version health checks protect the
+legacy-owner replacement. Requests pinned to pre-HA SQLite versions still need
+the maintenance window described below because only `versiond` owns that data.
 
 #### HA-only PostgreSQL migration
 
@@ -115,10 +130,10 @@ overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
 automatically. Base-only installations skip this entire path.
 
 The first HA v4-to-v5 cutover is a **devshard maintenance operation**, not a
-rolling update. It restarts the one shared PostgreSQL instance, and the v4 nginx
-router cannot use the v5 readiness protocol while the two versiond hosts are
-being replaced. Schedule it outside PoC/cPoC, make sure no long inference or SSE
-request is still in flight, and update multiple network nodes one at a time. This
+rolling update. It restarts the one shared PostgreSQL instance, replaces the
+router process, and temporarily takes the only pre-HA SQLite owner out of
+service. Schedule it outside PoC/cPoC, make sure no long inference or SSE request
+is still in flight, and update multiple network nodes one at a time. This
 matches the maintenance guidance in
 [Network Updates](https://gonka.ai/docs/network-updates/).
 
@@ -472,10 +487,10 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
-- [ ] For HA, use the targeted `--no-deps` cutover above: migrate PostgreSQL first,
-      replace `versiond2` and then the legacy owner `versiond`, and install the
-      versiond router only after both hosts expose `/readyz`; do not reconcile
-      the whole base Compose model as part of this devshard-only release
+- [ ] For HA, use the targeted `--no-deps` cutover above: migrate PostgreSQL,
+      isolate and replace `versiond2`, install the readiness-aware router, then
+      replace the legacy owner `versiond`; do not reconcile the whole base
+      Compose model as part of this devshard-only release
 - [ ] For HA, check that the pool diagnostic lists every versiond as
       `UP` using the read-only `pool-status` command above
 

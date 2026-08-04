@@ -34,8 +34,27 @@ if [[ ${1:-} == inspect ]]; then
     case ${3:-} in
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
         '{{.State.Running}}') printf 'true\n' ;;
+        '{{range .Config.Env}}{{println .}}{{end}}')
+            case ${4:-} in
+                versiond-router)
+                    printf 'VERSIOND_HOSTS=versiond versiond2\n'
+                    ;;
+                edge-api-router)
+                    printf 'EDGE_API_HOSTS=edge-api edge-api2 edge-api3\n'
+                    ;;
+                *) exit 1 ;;
+            esac
+            ;;
         *) exit 1 ;;
     esac
+    exit 0
+fi
+
+if [[ ${1:-} == exec ]]; then
+    for arg in "$@"; do
+        [[ $arg == nginx ]] && exit 0
+        [[ $arg == haproxy ]] && exit 1
+    done
     exit 0
 fi
 
@@ -79,6 +98,25 @@ if [[ $is_up == true && $service == "${FAIL_SERVICE-}" ]]; then
     [[ $image == gonka-upgrade-rollback/* ]] && exit 0
     exit 1
 fi
+if [[ $is_up == true && $service == "${BLOCK_SERVICE-}" ]]; then
+    case $service in
+        versiond | versiond2) image=${VERSIOND_IMAGE-} ;;
+        versiond-router) image=${VERSIOND_ROUTER_IMAGE-} ;;
+        edge-api | edge-api2 | edge-api3) image=${EDGE_API_IMAGE-} ;;
+        edge-api-router) image=${EDGE_API_ROUTER_IMAGE-} ;;
+        *) image= ;;
+    esac
+    if [[ $image != gonka-upgrade-rollback/* ]]; then
+        trap 'exit 143' TERM HUP
+        trap 'exit 130' INT
+        if [[ ${BLOCK_SIGNAL-} != none ]]; then
+            kill -"$BLOCK_SIGNAL" "$PPID"
+        fi
+        while :; do
+            sleep 1
+        done
+    fi
+fi
 exit 0
 EOF
     chmod +x "$tmpdir/docker"
@@ -93,8 +131,11 @@ run_upgrade() {
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         FAIL_SERVICE="$failed_service" \
+        BLOCK_SERVICE=none \
+        BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode ha --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
@@ -111,11 +152,36 @@ run_auto_upgrade() {
     if ! DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         FAIL_SERVICE=none \
+        BLOCK_SERVICE=none \
+        BLOCK_SIGNAL=none \
         EXISTING_CONTAINERS="$containers" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
         cat "$tmpdir/stderr" >&2
         fail "automatic topology upgrade failed"
+    fi
+}
+
+run_interrupted_upgrade() {
+    local signal=$1
+    local log=$2
+    local stdout=$3
+    local stderr=$4
+
+    : >"$log"
+    if DOCKER_BIN="$tmpdir/docker" \
+        DOCKER_LOG="$log" \
+        FAIL_SERVICE=none \
+        BLOCK_SERVICE=versiond2 \
+        BLOCK_SIGNAL="$signal" \
+        EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$stdout" 2>"$stderr"; then
+        fail "upgrade interrupted by $signal exited successfully"
     fi
 }
 
@@ -144,6 +210,13 @@ line_number() {
     local pattern=$2
 
     grep -nF -- "$pattern" "$file" | head -n1 | cut -d: -f1
+}
+
+line_number_regex() {
+    local file=$1
+    local pattern=$2
+
+    grep -nE -- "$pattern" "$file" | head -n1 | cut -d: -f1
 }
 
 write_fake_docker
@@ -199,6 +272,20 @@ grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
 assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
 assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
+versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
+    "--env VERSIOND_HOSTS=versiond versiond-router")
+versiond2_up_line=$(line_number "$tmpdir/ha.log" \
+    "--wait-timeout 2100 versiond2")
+versiond_router_up_line=$(line_number "$tmpdir/ha.log" \
+    "--wait-timeout 60 versiond-router")
+versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
+    '--wait-timeout 2100 versiond$')
+[[ -n $versiond_barrier_line && -n $versiond2_up_line && \
+    -n $versiond_router_up_line && -n $versiond_up_line && \
+    $versiond_barrier_line -lt $versiond2_up_line && \
+    $versiond2_up_line -lt $versiond_router_up_line && \
+    $versiond_router_up_line -lt $versiond_up_line ]] ||
+    fail "versiond traffic barrier or HAProxy cutover order is wrong"
 
 run_upgrade single versiond2 "$tmpdir/versiond2.log"
 preflight_line=$(line_number "$tmpdir/versiond2.log" \
@@ -210,18 +297,44 @@ postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
     fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+assert_not_contains "$tmpdir/versiond2.log" \
+    "VERSIOND_HOSTS=versiond\\ versiond2"
 if grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/versiond2.log" >/dev/null; then
     cat "$tmpdir/versiond2.log" >&2
     fail "versiond was replaced after versiond2 failed"
 fi
 
+for signal in HUP INT TERM; do
+    signal_name=${signal,,}
+    run_interrupted_upgrade \
+        "$signal" \
+        "$tmpdir/interrupted-$signal_name.log" \
+        "$tmpdir/interrupted-$signal_name.stdout" \
+        "$tmpdir/interrupted-$signal_name.stderr"
+    assert_contains "$tmpdir/interrupted-$signal_name.log" \
+        "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
+    assert_not_contains "$tmpdir/interrupted-$signal_name.log" \
+        "VERSIOND_HOSTS=versiond\\ versiond2"
+    grep -q "received $signal" \
+        "$tmpdir/interrupted-$signal_name.stderr" || {
+        cat "$tmpdir/interrupted-$signal_name.stderr" >&2
+        fail "interrupted upgrade did not report $signal"
+    }
+done
+
 run_upgrade multi edge-api3 "$tmpdir/edge-api3.log"
+edge_barrier_line=$(line_number "$tmpdir/edge-api3.log" \
+    "EDGE_API_HOSTS=edge-api\\ edge-api3")
+edge_api2_line=$(line_number "$tmpdir/edge-api3.log" \
+    "--wait-timeout 180 edge-api2")
 router_line=$(line_number "$tmpdir/edge-api3.log" \
     "--wait-timeout 60 edge-api-router")
 replica_line=$(line_number "$tmpdir/edge-api3.log" \
     "--wait-timeout 180 edge-api3")
-[[ -n $router_line && -n $replica_line && $router_line -lt $replica_line ]] ||
-    fail "edge-api-router was not replaced before edge-api3"
+[[ -n $edge_barrier_line && -n $edge_api2_line && -n $router_line && \
+    -n $replica_line && $edge_barrier_line -lt $edge_api2_line && \
+    $edge_api2_line -lt $router_line && $router_line -lt $replica_line ]] ||
+    fail "edge-api traffic barrier or HAProxy cutover order is wrong"
 assert_contains "$tmpdir/edge-api3.log" " stop edge-api3"
 assert_not_contains "$tmpdir/edge-api3.log" \
     "EDGE_API_IMAGE=gonka-upgrade-rollback/edge-api3:"

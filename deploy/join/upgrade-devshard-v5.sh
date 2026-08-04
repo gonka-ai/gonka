@@ -127,6 +127,163 @@ declare -A image_variables=(
 )
 declare -A rollback_images=()
 
+foreground_pid=
+active_service=
+active_failure_strategy=
+traffic_barrier_router=
+traffic_barrier_env=
+traffic_barrier_original_hosts=
+traffic_barrier_entrypoint=
+traffic_barrier_target=
+
+run_interruptible() {
+    local status=0
+
+    "$@" &
+    foreground_pid=$!
+    wait "$foreground_pid" || status=$?
+    foreground_pid=
+    return "$status"
+}
+
+container_env_value() {
+    local container=$1
+    local name=$2
+    local line
+
+    while IFS= read -r line; do
+        case $line in
+            "$name="*)
+                printf '%s\n' "${line#*=}"
+                return 0
+                ;;
+        esac
+    done < <(
+        "$docker_bin" inspect --format \
+            '{{range .Config.Env}}{{println .}}{{end}}' "$container"
+    )
+    return 1
+}
+
+without_host() {
+    local hosts=$1
+    local excluded=$2
+    local host
+    local found=false
+    local -a host_list=()
+    local -a remaining=()
+
+    read -r -a host_list <<<"$hosts"
+    for host in "${host_list[@]}"; do
+        if [[ $host == "$excluded" ]]; then
+            found=true
+        else
+            remaining+=("$host")
+        fi
+    done
+    [[ $found == true ]] || return 1
+    ((${#remaining[@]} > 0)) || return 1
+    printf '%s\n' "${remaining[*]}"
+}
+
+router_runtime() {
+    local router=$1
+
+    if "$docker_bin" exec "$router" nginx -v >/dev/null 2>&1; then
+        printf 'nginx\n'
+        return 0
+    fi
+    if "$docker_bin" exec "$router" haproxy -v >/dev/null 2>&1; then
+        printf 'haproxy\n'
+        return 0
+    fi
+    return 1
+}
+
+apply_nginx_host_list() {
+    local router=$1
+    local env_name=$2
+    local hosts=$3
+    local entrypoint=$4
+
+    # The quoted program is evaluated by /bin/sh inside the router container.
+    # shellcheck disable=SC2016
+    run_interruptible "$docker_bin" exec --env "$env_name=$hosts" "$router" \
+        /bin/sh -ec '
+            conf=/etc/nginx/conf.d/default.conf
+            backup=$(mktemp)
+            cp "$conf" "$backup"
+            if "$1" && nginx -t && nginx -s reload; then
+                rm -f "$backup"
+            else
+                cp "$backup" "$conf"
+                rm -f "$backup"
+                exit 1
+            fi
+        ' sh "$entrypoint"
+}
+
+clear_traffic_barrier() {
+    traffic_barrier_router=
+    traffic_barrier_env=
+    traffic_barrier_original_hosts=
+    traffic_barrier_entrypoint=
+    traffic_barrier_target=
+}
+
+begin_traffic_barrier() {
+    local router=$1
+    local env_name=$2
+    local target=$3
+    local entrypoint=$4
+    local runtime original_hosts isolated_hosts
+
+    runtime=$(router_runtime "$router") || fail \
+        "cannot identify the running $router proxy"
+    if [[ $runtime == haproxy ]]; then
+        echo "$router already has readiness-aware routing; no legacy barrier needed"
+        return 0
+    fi
+
+    original_hosts=$(container_env_value "$router" "$env_name") || fail \
+        "cannot read $env_name from $router"
+    isolated_hosts=$(without_host "$original_hosts" "$target") || fail \
+        "cannot isolate the only upstream $target from $router"
+
+    # Record the compensation before publishing the changed nginx config.
+    traffic_barrier_router=$router
+    traffic_barrier_env=$env_name
+    traffic_barrier_original_hosts=$original_hosts
+    traffic_barrier_entrypoint=$entrypoint
+    traffic_barrier_target=$target
+
+    echo "Removing $target from the legacy $router upstream"
+    apply_nginx_host_list "$router" "$env_name" "$isolated_hosts" \
+        "$entrypoint"
+    # nginx reload is asynchronous. Keep the replacement out of DNS until old
+    # workers have stopped accepting new connections.
+    sleep "${UPGRADE_ROUTER_RELOAD_SETTLE:-5}"
+}
+
+restore_traffic_barrier() {
+    local runtime
+
+    [[ -n $traffic_barrier_router ]] || return 0
+    runtime=$(router_runtime "$traffic_barrier_router") || return 1
+    if [[ $runtime == haproxy ]]; then
+        clear_traffic_barrier
+        return 0
+    fi
+
+    echo "Restoring $traffic_barrier_target in the legacy router upstream" >&2
+    apply_nginx_host_list \
+        "$traffic_barrier_router" \
+        "$traffic_barrier_env" \
+        "$traffic_barrier_original_hosts" \
+        "$traffic_barrier_entrypoint" || return 1
+    clear_traffic_barrier
+}
+
 capture_rollback_image() {
     local service=$1
     local container_id image_id rollback_image
@@ -186,30 +343,112 @@ rollback_service() {
     return 1
 }
 
+compensate_active_service() {
+    local service=$active_service
+    local strategy=$active_failure_strategy
+    local status=0
+
+    [[ -n $service ]] || return 0
+    case $strategy in
+        rollback)
+            rollback_service "$service" || status=$?
+            ;;
+        stop)
+            stop_failed_service "$service" || status=$?
+            ;;
+        *)
+            warn "unknown compensation strategy $strategy for $service"
+            status=1
+            ;;
+    esac
+    active_service=
+    active_failure_strategy=
+    return "$status"
+}
+
+handle_signal() {
+    local signal=$1
+    local status=$2
+    local interrupted_pid
+    local watchdog_pid
+
+    trap - HUP INT TERM
+    warn "received $signal; aborting the active upgrade step"
+    if [[ -n $foreground_pid ]]; then
+        interrupted_pid=$foreground_pid
+        kill -TERM "$interrupted_pid" 2>/dev/null || true
+        (
+            sleep 5
+            kill -KILL "$interrupted_pid" 2>/dev/null || true
+        ) &
+        watchdog_pid=$!
+        wait "$interrupted_pid" 2>/dev/null || true
+        kill -KILL "$watchdog_pid" 2>/dev/null || true
+        wait "$watchdog_pid" 2>/dev/null || true
+        foreground_pid=
+    fi
+    exit "$status"
+}
+
+handle_exit() {
+    local status=$1
+    local interrupted_service=$active_service
+    local compensation_ok=true
+    local restore_allowed=true
+
+    trap - EXIT HUP INT TERM
+    if ((status == 0)); then
+        exit 0
+    fi
+
+    set +e
+    if [[ -n $active_service ]]; then
+        warn "compensating interrupted replacement of $active_service"
+        if ! compensate_active_service; then
+            compensation_ok=false
+            warn "automatic compensation failed; operator action is required"
+        fi
+    fi
+    if [[ $compensation_ok == false && \
+        $interrupted_service == "$traffic_barrier_router" ]]; then
+        restore_allowed=false
+        warn "leaving the failed upstream isolated from the legacy router"
+    fi
+    if [[ -n $traffic_barrier_router && \
+        $interrupted_service == "$traffic_barrier_target" ]]; then
+        # Running is the strongest signal available from a rolled-back v4
+        # process; it does not prove that its children have reconciled.
+        restore_allowed=false
+        warn "leaving $traffic_barrier_target isolated until the upgrade is retried"
+    fi
+    if [[ -n $traffic_barrier_router && $restore_allowed == true ]] && \
+        ! restore_traffic_barrier; then
+        warn "could not restore the legacy router upstream"
+    fi
+    exit "$status"
+}
+
 replace_service() {
     local service=$1
     local wait_timeout=$2
     local failure_strategy=$3
 
-    echo "Replacing $service"
-    if "${compose[@]}" up -d --no-deps --force-recreate --wait \
-        --wait-timeout "$wait_timeout" "$service"; then
-        return 0
-    fi
-
     case $failure_strategy in
-        rollback)
-            if rollback_service "$service"; then
-                fail "$service did not become ready; its previous image was restored"
-            fi
-            fail "$service did not become ready and rollback failed; it was stopped"
-            ;;
-        stop)
-            stop_failed_service "$service" || true
-            fail "$service did not become ready and was removed from service"
-            ;;
+        rollback | stop) ;;
         *) fail "internal error: unknown failure strategy $failure_strategy" ;;
     esac
+    echo "Replacing $service"
+    active_service=$service
+    active_failure_strategy=$failure_strategy
+    if run_interruptible "${compose[@]}" \
+        up -d --no-deps --force-recreate --wait \
+        --wait-timeout "$wait_timeout" "$service"; then
+        active_service=
+        active_failure_strategy=
+        return 0
+    fi
+    warn "$service did not become ready; aborting the upgrade"
+    return 1
 }
 
 cleanup_rollback_tags() {
@@ -222,6 +461,11 @@ cleanup_rollback_tags() {
         fi
     done
 }
+
+trap 'handle_signal HUP 129' HUP
+trap 'handle_signal INT 130' INT
+trap 'handle_signal TERM 143' TERM
+trap 'handle_exit $?' EXIT
 
 services=(versiond edge-api)
 if [[ $versiond_mode == ha ]]; then
@@ -241,7 +485,7 @@ fi
 if [[ $edge_mode == multi ]]; then
     pull_services+=(edge-api2 edge-api3 edge-api-router)
 fi
-"${compose[@]}" pull "${pull_services[@]}"
+run_interruptible "${compose[@]}" pull "${pull_services[@]}"
 
 if [[ $versiond_mode == ha ]]; then
     postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
@@ -252,23 +496,31 @@ if [[ $versiond_mode == ha ]]; then
         /*) ;;
         *) postgres_target_dir="$script_dir/$postgres_target_dir" ;;
     esac
-    DOCKER_BIN="$docker_bin" \
+    run_interruptible env DOCKER_BIN="$docker_bin" \
         "$script_dir/devshard-postgres-migration-preflight.sh" \
         --source-container "$postgres_container" \
         --target-dir "$postgres_target_dir"
 
     echo "Migrating and starting devshard-postgres"
-    if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
-        devshard-postgres; then
-        stop_failed_service devshard-postgres || true
+    active_service=devshard-postgres
+    active_failure_strategy=stop
+    if ! run_interruptible "${compose[@]}" \
+        up -d --no-deps --wait --wait-timeout 2100 devshard-postgres; then
         fail "devshard-postgres did not become ready and was stopped"
     fi
+    active_service=
+    active_failure_strategy=
 
-    # Keep the old nginx router until both versiond hosts implement the v5
-    # readiness contract. Restore a failed host before touching the other one.
+    # Remove the first replacement from the v4 nginx config before Docker gives
+    # its new container the old DNS name. Once one v5 replica is ready, install
+    # HAProxy so active checks protect the remaining replacement.
+    begin_traffic_barrier \
+        versiond-router VERSIOND_HOSTS versiond2 \
+        /docker-entrypoint.d/40-render-versiond-upstream.sh
     replace_service versiond2 2100 rollback
-    replace_service versiond 2100 rollback
     replace_service versiond-router 60 rollback
+    clear_traffic_barrier
+    replace_service versiond 2100 rollback
 else
     # The standard Quickstart topology has no versiond router or shared
     # PostgreSQL. Replace its only supervisor and restore the old image if the
@@ -281,11 +533,14 @@ if [[ $edge_mode == single ]]; then
     # image if the only edge-api replacement does not become ready.
     replace_service edge-api 180 rollback
 else
-    # Upgrade one replica behind nginx, then put HAProxy in front immediately.
-    # HAProxy routes only to replicas whose /readyz check passes. Later failed
-    # replacements can therefore be stopped without poisoning the live pool.
+    # First remove edge-api2 from the v4 nginx pool. Once it passes /readyz,
+    # switch to HAProxy; active checks then isolate every later replacement.
+    begin_traffic_barrier \
+        edge-api-router EDGE_API_HOSTS edge-api2 \
+        /docker-entrypoint.d/40-render-edge-api-upstream.sh
     replace_service edge-api2 180 rollback
     replace_service edge-api-router 60 rollback
+    clear_traffic_barrier
     replace_service edge-api3 180 stop
     replace_service edge-api 180 stop
 fi
