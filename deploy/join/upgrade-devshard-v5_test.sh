@@ -33,7 +33,15 @@ if [[ ${1:-} == inspect ]]; then
     fi
     case ${3:-} in
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
-        '{{.State.Running}}') printf 'true\n' ;;
+        '{{.State.Running}}')
+            service=${4#cid-}
+            if [[ $service == "${STOPPED_VERSIOND_SERVICE-}" && \
+                ! -f $FAKE_STATE_DIR/started-$service ]]; then
+                printf 'false\n'
+            else
+                printf 'true\n'
+            fi
+            ;;
         '{{range .Config.Env}}{{println .}}{{end}}')
             case ${4:-} in
                 versiond-router)
@@ -67,6 +75,11 @@ if [[ ${1:-} == exec ]]; then
             $service == "${ROLLBACK_PROBE_FAIL_SERVICE-}" ]]; then
             exit 1
         fi
+        if [[ $is_rollback == true && \
+            $service == "${ROLLBACK_MISSING_ROUTE_SERVICE-}" && \
+            $probe_url == http://127.0.0.1:8080/v3/healthz ]]; then
+            exit 1
+        fi
         case $container:$probe_url in
             cid-versiond*:http://127.0.0.1:8080/healthz)
                 if [[ $is_rollback == true && \
@@ -75,13 +88,24 @@ if [[ ${1:-} == exec ]]; then
                 elif [[ $is_rollback == true && \
                     $service == "${ROLLBACK_MISSING_VERSION_SERVICE-}" ]]; then
                     printf '[{"name":"v3","port":5000,"status":"running"}]\n'
+                elif [[ $service == "${SPECIAL_VERSIOND_HEALTH_SERVICE-}" ]]; then
+                    printf '[{"name":"v4+hotfix","port":5000,"status":"running"},{"name":"v4}x","port":5001,"status":"running"}]\n'
                 else
-                    printf '[{"name":"v3","port":5000,"status":"running"},{"name":"v4","port":5001,"status":"running"}]\n'
+                    case $service in
+                        versiond)
+                            printf '[{"name":"v3","port":5000,"status":"running"},{"name":"v4","port":5001,"status":"running"}]\n'
+                            ;;
+                        versiond2 | versiond-router)
+                            printf '[{"name":"v4","port":5001,"status":"running"}]\n'
+                            ;;
+                    esac
                 fi
                 exit 0
                 ;;
             cid-versiond*:http://127.0.0.1:8080/v3/healthz | \
                 cid-versiond*:http://127.0.0.1:8080/v4/healthz | \
+                cid-versiond*:http://127.0.0.1:8080/v4%2Bhotfix/healthz | \
+                cid-versiond*:http://127.0.0.1:8080/v4%7Dx/healthz | \
                 cid-edge-api*:http://127.0.0.1:18080/v1/versions)
                 exit 0
                 ;;
@@ -113,6 +137,10 @@ done
 
 for arg in "$@"; do
     if [[ $arg == stop || $arg == pull ]]; then
+        exit 0
+    fi
+    if [[ $arg == start ]]; then
+        : >"$FAKE_STATE_DIR/started-$service"
         exit 0
     fi
 done
@@ -174,8 +202,11 @@ run_upgrade() {
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         ROLLBACK_EMPTY_VERSIOND_SERVICE="${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" \
         ROLLBACK_MISSING_VERSION_SERVICE="${ROLLBACK_MISSING_VERSION_SERVICE-}" \
+        ROLLBACK_MISSING_ROUTE_SERVICE="${ROLLBACK_MISSING_ROUTE_SERVICE-}" \
         ROLLBACK_PROBE_FAIL_SERVICE="${ROLLBACK_PROBE_FAIL_SERVICE-}" \
-        UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-5}" \
+        SPECIAL_VERSIOND_HEALTH_SERVICE="${SPECIAL_VERSIOND_HEALTH_SERVICE-}" \
+        STOPPED_VERSIOND_SERVICE="${STOPPED_VERSIOND_SERVICE-}" \
+        UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT-}" \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
         UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
@@ -358,8 +389,14 @@ grep -q 'source volume and persistent target are preserved' \
     fail "PostgreSQL failure did not explain its preservation contract"
 }
 
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT='' \
 UPGRADE_ROLLBACK_STABILITY_CHECKS=3 \
     run_upgrade single versiond2 "$tmpdir/versiond2.log"
+grep -q 'Verifying rollback of versiond2 for up to 2100s' \
+    "$tmpdir/stderr" || {
+    cat "$tmpdir/stderr" >&2
+    fail "versiond rollback did not inherit the forward startup budget"
+}
 preflight_line=$(line_number "$tmpdir/versiond2.log" \
     "--volumes-from cid-devshard-postgres:ro")
 postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
@@ -404,11 +441,37 @@ partial_v4_probe_count=$(grep -Fc \
 [[ $partial_v4_probe_count -eq 1 ]] || fail \
     "partial rollback unexpectedly restored the missing v4 baseline route"
 
+SPECIAL_VERSIOND_HEALTH_SERVICE=versiond \
+    run_upgrade single versiond "$tmpdir/versiond-special-name.log" single
+assert_contains "$tmpdir/versiond-special-name.log" \
+    'http://127.0.0.1:8080/v4%2Bhotfix/healthz'
+assert_contains "$tmpdir/versiond-special-name.log" \
+    'http://127.0.0.1:8080/v4%7Dx/healthz'
+assert_not_contains "$tmpdir/versiond-special-name.log" " stop versiond"
+
+STOPPED_VERSIOND_SERVICE=versiond2 \
+    run_upgrade single versiond2 "$tmpdir/versiond2-stopped.log"
+assert_contains "$tmpdir/versiond2-stopped.log" " start versiond2"
+start_line=$(line_number "$tmpdir/versiond2-stopped.log" " start versiond2")
+baseline_line=$(line_number "$tmpdir/versiond2-stopped.log" \
+    'exec cid-versiond2 /bin/busybox wget -q -T 3 -O - http://127.0.0.1:8080/healthz')
+[[ -n $start_line && -n $baseline_line && $start_line -lt $baseline_line ]] ||
+    fail "stopped versiond was not restarted before baseline capture"
+
 run_upgrade single versiond-router "$tmpdir/versiond-router.log"
 assert_contains "$tmpdir/versiond-router.log" \
     "exec versiond-router rm -f /etc/gonka-upgrade-barrier"
 assert_contains "$tmpdir/versiond-router.log" \
     "VERSIOND_HOSTS=versiond\\ versiond2"
+assert_contains "$tmpdir/versiond-router.log" \
+    'exec cid-versiond-router /bin/busybox wget -q -T 3 -O /dev/null http://127.0.0.1:8080/v3/healthz'
+
+ROLLBACK_MISSING_ROUTE_SERVICE=versiond-router \
+UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \
+    run_upgrade single versiond-router \
+        "$tmpdir/versiond-router-missing-route.log"
+assert_contains "$tmpdir/versiond-router-missing-route.log" \
+    " stop versiond-router"
 
 for signal in HUP INT TERM; do
     signal_name=${signal,,}

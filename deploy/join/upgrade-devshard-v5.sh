@@ -68,12 +68,17 @@ esac
 source "$config_env"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
+command -v jq >/dev/null 2>&1 || fail "jq is required"
 
-rollback_verify_timeout=${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-60}
+# A rollback gets the same startup budget as the corresponding forward
+# replacement. UPGRADE_ROLLBACK_VERIFY_TIMEOUT remains an emergency override
+# for diagnostics and tests; an unset value selects the service budget.
+rollback_verify_timeout_override=${UPGRADE_ROLLBACK_VERIFY_TIMEOUT:-}
 rollback_verify_interval=${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-2}
 rollback_stability_checks=${UPGRADE_ROLLBACK_STABILITY_CHECKS:-3}
-case $rollback_verify_timeout in
-    '' | *[!0-9]* | 0)
+case $rollback_verify_timeout_override in
+    '') ;;
+    *[!0-9]* | 0)
         fail "UPGRADE_ROLLBACK_VERIFY_TIMEOUT must be a positive integer"
         ;;
 esac
@@ -82,6 +87,23 @@ case $rollback_verify_interval in
         fail "UPGRADE_ROLLBACK_VERIFY_INTERVAL must be a positive integer"
         ;;
 esac
+
+service_startup_timeout() {
+    case $1 in
+        versiond | versiond2 | devshard-postgres) printf '2100\n' ;;
+        edge-api | edge-api2 | edge-api3) printf '180\n' ;;
+        versiond-router | edge-api-router) printf '60\n' ;;
+        *) fail "internal error: no startup timeout for $1" ;;
+    esac
+}
+
+rollback_timeout_for_service() {
+    if [[ -n $rollback_verify_timeout_override ]]; then
+        printf '%s\n' "$rollback_verify_timeout_override"
+        return 0
+    fi
+    service_startup_timeout "$1"
+}
 case $rollback_stability_checks in
     '' | *[!0-9]* | 0)
         fail "UPGRADE_ROLLBACK_STABILITY_CHECKS must be a positive integer"
@@ -350,58 +372,111 @@ restore_traffic_barrier() {
     clear_traffic_barrier
 }
 
-versiond_running_versions() {
+versiond_health_snapshot() {
     local container_id=$1
-    local payload remaining entry version
-    local entry_pattern='\{([^}]*)\}'
-    local name_pattern='"name":"([^"]+)"'
-    local running_pattern='"status":"running"'
-    local -A seen=()
+    local payload
 
     payload=$("$docker_bin" exec "$container_id" /bin/busybox wget \
         -q -T 3 -O - http://127.0.0.1:8080/healthz) || return 1
-    remaining=$payload
-    while [[ $remaining =~ $entry_pattern ]]; do
-        entry=${BASH_REMATCH[1]}
-        remaining=${remaining#*\}}
-        if [[ $entry =~ $name_pattern ]]; then
-            version=${BASH_REMATCH[1]}
-            [[ $entry =~ $running_pattern ]] || continue
-            [[ $version =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || return 1
-            if [[ -z ${seen[$version]+x} ]]; then
-                seen[$version]=true
-                printf '%s\n' "$version"
-            fi
-        fi
-    done
+    jq -ce '
+        def valid_entry:
+            type == "object" and
+            ((.name | type) == "string") and
+            ((.status | type) == "string");
+        if type != "array" or (all(.[]; valid_entry) | not) then
+            error("invalid versiond health payload")
+        else
+            {
+                settled: (length > 0 and all(.[]; .status == "running")),
+                running: ([.[] | select(.status == "running") | .name] | unique)
+            }
+        end
+    ' <<<"$payload"
 }
 
 versiond_route_is_available() {
     local container_id=$1
-    local version=$2
+    local encoded_version=$2
 
     "$docker_bin" exec "$container_id" /bin/busybox wget \
         -q -T 3 -O /dev/null \
-        "http://127.0.0.1:8080/$version/healthz"
+        "http://127.0.0.1:8080/$encoded_version/healthz"
+}
+
+versiond_routes_are_available() {
+    local container_id=$1
+    local versions=$2
+    local encoded_versions encoded_version
+
+    encoded_versions=$(jq -er '.[] | @uri' <<<"$versions") || return 1
+    while IFS= read -r encoded_version; do
+        versiond_route_is_available \
+            "$container_id" "$encoded_version" || return 1
+    done <<<"$encoded_versions"
+}
+
+ensure_versiond_rollback_source_running() {
+    local service=$1
+    local container_id=$2
+
+    if [[ $("$docker_bin" inspect --format '{{.State.Running}}' \
+        "$container_id") == true ]]; then
+        return 0
+    fi
+
+    echo "Starting existing $service to establish its rollback baseline"
+    run_interruptible "${compose[@]}" start "$service" || fail \
+        "cannot start existing $service before the upgrade"
 }
 
 capture_versiond_rollback_baseline() {
     local service=$1
     local container_id=$2
-    local versions version display
+    local timeout deadline snapshot versions display
 
-    versions=$(versiond_running_versions "$container_id") || fail \
-        "cannot read the running-version baseline from $service"
-    [[ -n $versions ]] || fail \
-        "$service has no running version to preserve during rollback"
-    while IFS= read -r version; do
-        versiond_route_is_available "$container_id" "$version" || fail \
-            "$service baseline route $version is unavailable before upgrade"
-    done <<<"$versions"
+    ensure_versiond_rollback_source_running "$service" "$container_id"
+    timeout=$(service_startup_timeout "$service")
+    deadline=$((SECONDS + timeout))
+    echo "Waiting up to ${timeout}s for the existing $service baseline"
+    while :; do
+        if snapshot=$(versiond_health_snapshot "$container_id") &&
+            jq -e '.settled and (.running | length > 0)' \
+                <<<"$snapshot" >/dev/null; then
+            versions=$(jq -ce '.running' <<<"$snapshot")
+            if versiond_routes_are_available "$container_id" "$versions"; then
+                rollback_version_baselines[$service]=$versions
+                display=$(jq -c '.' <<<"$versions")
+                echo "Captured $service running-version baseline: $display"
+                return 0
+            fi
+        fi
+        ((SECONDS < deadline)) || fail \
+            "$service did not establish a complete rollback baseline within ${timeout}s"
+        sleep "$rollback_verify_interval"
+    done
+}
 
-    rollback_version_baselines[$service]=$versions
-    display=${versions//$'\n'/, }
-    echo "Captured $service running-version baseline: $display"
+capture_versiond_router_rollback_baseline() {
+    local container_id first second versions display
+
+    [[ -n ${rollback_images[versiond-router]-} ]] || return 0
+    container_id=$("${compose[@]}" ps --all --quiet versiond-router)
+    [[ -n $container_id ]] || fail \
+        "cannot find versiond-router while capturing its rollback baseline"
+    first=${rollback_version_baselines[versiond]-[]}
+    second=${rollback_version_baselines[versiond2]-[]}
+    versions=$(jq -cn \
+        --argjson first "$first" \
+        --argjson second "$second" \
+        '$first + $second | unique')
+    jq -e 'length > 0' <<<"$versions" >/dev/null || fail \
+        "versiond-router has no replica version baseline to preserve"
+    versiond_routes_are_available "$container_id" "$versions" || fail \
+        "versiond-router cannot route every replica baseline version"
+
+    rollback_version_baselines[versiond-router]=$versions
+    display=$(jq -c '.' <<<"$versions")
+    echo "Captured versiond-router route baseline: $display"
 }
 
 capture_rollback_image() {
@@ -430,21 +505,24 @@ capture_rollback_image() {
 rollback_versiond_is_available() {
     local service=$1
     local container_id=$2
-    local current required version
-    local -A running=()
-
-    current=$(versiond_running_versions "$container_id") || return 1
-    [[ -n $current ]] || return 1
-    while IFS= read -r version; do
-        running[$version]=true
-    done <<<"$current"
+    local snapshot current required
 
     required=${rollback_version_baselines[$service]-}
-    [[ -n $required ]] || required=$current
-    while IFS= read -r version; do
-        [[ -n ${running[$version]+x} ]] || return 1
-        versiond_route_is_available "$container_id" "$version" || return 1
-    done <<<"$required"
+    [[ -n $required ]] || return 1
+    if [[ $service == versiond-router ]]; then
+        # The router's /healthz is itself hash-routed and can describe only one
+        # replica. Its authoritative contract is the union captured from both
+        # supervisors, checked through every public version route below.
+        versiond_routes_are_available "$container_id" "$required"
+        return
+    fi
+    snapshot=$(versiond_health_snapshot "$container_id") || return 1
+    current=$(jq -ce '.running' <<<"$snapshot") || return 1
+    jq -ne \
+        --argjson current "$current" \
+        --argjson required "$required" \
+        '$required - $current | length == 0' >/dev/null || return 1
+    versiond_routes_are_available "$container_id" "$required"
 }
 
 rollback_edge_is_available() {
@@ -479,10 +557,12 @@ rollback_service_is_available() {
 
 wait_for_rollback_availability() {
     local service=$1
-    local deadline=$((SECONDS + rollback_verify_timeout))
+    local timeout deadline
     local consecutive=0
 
-    echo "Verifying rollback of $service through $rollback_stability_checks consecutive health checks" >&2
+    timeout=$(rollback_timeout_for_service "$service")
+    deadline=$((SECONDS + timeout))
+    echo "Verifying rollback of $service for up to ${timeout}s through $rollback_stability_checks consecutive health checks" >&2
     while :; do
         if rollback_service_is_available "$service"; then
             ((consecutive += 1))
@@ -664,6 +744,9 @@ fi
 for service in "${services[@]}"; do
     capture_rollback_image "$service"
 done
+if [[ $versiond_mode == ha ]]; then
+    capture_versiond_router_rollback_baseline
+fi
 
 pull_services=(versiond edge-api)
 if [[ $versiond_mode == ha ]]; then
@@ -692,7 +775,9 @@ if [[ $versiond_mode == ha ]]; then
     active_service=devshard-postgres
     active_failure_strategy=stop
     if ! run_interruptible "${compose[@]}" \
-        up -d --no-deps --wait --wait-timeout 2100 devshard-postgres; then
+        up -d --no-deps --wait \
+        --wait-timeout "$(service_startup_timeout devshard-postgres)" \
+        devshard-postgres; then
         fail "devshard-postgres did not become ready and will be stopped; its source volume and persistent target are preserved for recovery"
     fi
     active_service=
@@ -704,32 +789,34 @@ if [[ $versiond_mode == ha ]]; then
     begin_traffic_barrier \
         versiond-router VERSIOND_HOSTS versiond2 \
         /docker-entrypoint.d/40-render-versiond-upstream.sh
-    replace_service versiond2 2100 rollback
-    replace_service versiond-router 60 rollback
+    replace_service versiond2 "$(service_startup_timeout versiond2)" rollback
+    replace_service versiond-router \
+        "$(service_startup_timeout versiond-router)" rollback
     clear_traffic_barrier
-    replace_service versiond 2100 rollback
+    replace_service versiond "$(service_startup_timeout versiond)" rollback
 else
     # The standard Quickstart topology has no versiond router or shared
     # PostgreSQL. Replace its only supervisor and restore the old image if the
     # v5 /readyz contract does not converge.
-    replace_service versiond 2100 rollback
+    replace_service versiond "$(service_startup_timeout versiond)" rollback
 fi
 
 if [[ $edge_mode == single ]]; then
     # There is no second Tier A replica in this topology, so preserve the old
     # image if the only edge-api replacement does not become ready.
-    replace_service edge-api 180 rollback
+    replace_service edge-api "$(service_startup_timeout edge-api)" rollback
 else
     # First remove edge-api2 from the v4 nginx pool. Once it passes /readyz,
     # switch to HAProxy; active checks then isolate every later replacement.
     begin_traffic_barrier \
         edge-api-router EDGE_API_HOSTS edge-api2 \
         /docker-entrypoint.d/40-render-edge-api-upstream.sh
-    replace_service edge-api2 180 rollback
-    replace_service edge-api-router 60 rollback
+    replace_service edge-api2 "$(service_startup_timeout edge-api2)" rollback
+    replace_service edge-api-router \
+        "$(service_startup_timeout edge-api-router)" rollback
     clear_traffic_barrier
-    replace_service edge-api3 180 stop
-    replace_service edge-api 180 stop
+    replace_service edge-api3 "$(service_startup_timeout edge-api3)" stop
+    replace_service edge-api "$(service_startup_timeout edge-api)" stop
 fi
 
 cleanup_rollback_tags
