@@ -9,10 +9,13 @@ rates are measurements, not admission limits or calibrated chain weights.
 
 ## Planned chain parameters
 
-The pending release model uses a PoC weight scale factor of `0.32` and a PoC
-L2 distance threshold (`PoCStatTestParams.dist_threshold`) of `0.41`. These are
-release inputs for the separate chain activation; this MLNode PR records them
-but does not activate the model on chain.
+The pending release model uses a PoC weight scale factor of `0.32`, a PoC L2
+distance threshold (`PoCStatTestParams.dist_threshold`) of `0.41`, and a
+provisional inference validation threshold (`Model.validation_threshold`) of
+`0.90` with processed logprobs. These are release inputs for the separate chain
+activation; this MLNode PR records them but does not activate the model on
+chain. The inference threshold is independent of the PoC L2 threshold and must
+be revisited as validation evidence grows.
 
 ## Hardware profiles
 
@@ -111,9 +114,9 @@ Before enabling the release model on chain:
    `--max-num-seqs` before advertising H100 beyond the tested profile.
 5. Test speculation off and on against the expected serving mix; keep it off
    when it reduces aggregate throughput or KV headroom.
-6. Measure the alternate quantization across GPU families and calibrate fraud
-   thresholds. No inference fraud threshold from the campaign is safe to copy
-   into chain parameters; this is separate from the planned PoC L2 threshold.
+6. Measure the alternate quantization across GPU families and evaluate the
+   provisional inference validation threshold `0.90`. This is separate from
+   the planned PoC L2 threshold and remains subject to recalibration.
 7. Add the private manifest values, PoC weight scale `0.32`, PoC L2 threshold
-   `0.41`, and calibrated validation policy to the chain upgrade, then rehearse
-   mixed old and new nodes through a full epoch.
+   `0.41`, and provisional inference validation threshold `0.90` to the chain
+   upgrade, then rehearse mixed old and new nodes through a full epoch.
