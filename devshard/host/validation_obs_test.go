@@ -158,12 +158,12 @@ func (r *obsTestRig) driveStartConfirmFinish(inferenceID, startNonce uint64) uin
 	r.t.Helper()
 	executorSlot := uint32(inferenceID % uint64(len(r.group)))
 	executorSigner := r.hosts[executorSlot]
-	confirmedAt := int64(2000) + int64(inferenceID)
+	confirmedAt := testutil.TestConfirmedAt + int64(inferenceID)
 
 	r.applyDiff(startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
 
 	execSig := testutil.SignExecutorReceipt(r.t, executorSigner, r.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, confirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
 	}}}
@@ -496,9 +496,9 @@ func TestHost_ValidateAsync_DoesNotRecordObsBeforeDiff(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,
@@ -556,9 +556,9 @@ func TestHost_ValidateAsync_RecordsObsAfterDiffApplied(t *testing.T) {
 	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff1}})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}
 	finishMsg := &types.MsgFinishInference{
 		InferenceId: 1, ResponseHash: engine.ResponseHash, InputTokens: 80, OutputTokens: 40,

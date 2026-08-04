@@ -1713,13 +1713,13 @@ func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	require.NoError(t, err)
 
 	start := &types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err = sm.ApplyLocal(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: start}}})
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}})
 	require.NoError(t, err)
 	finish := &types.MsgFinishInference{

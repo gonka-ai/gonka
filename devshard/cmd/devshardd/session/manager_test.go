@@ -80,7 +80,7 @@ func startTx(inferenceID uint64) *types.DevshardTx {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}}}
 }
 

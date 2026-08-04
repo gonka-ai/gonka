@@ -516,6 +516,23 @@ func (s *Session) processResponse(hostIdx int, resp *host.HostResponse, inferenc
 	// Queue receipt as MsgConfirmStart for the next diff.
 	// Use inferenceNonce (the logical inference ID), not resp.Nonce (host's latest state).
 	if resp.Receipt != nil {
+		rec, known := s.sm.GetCommittedRecord(inferenceNonce)
+		if known {
+			if err := types.ValidateConfirmedAt(resp.ConfirmedAt, rec.StartedAt); err != nil {
+				logging.Warn("dropping executor receipt with out-of-bounds confirmed_at",
+					"subsystem", "user",
+					"escrow_id", s.escrowID,
+					"inference_id", inferenceNonce,
+					"executor_slot", rec.ExecutorSlot,
+					"started_at", rec.StartedAt,
+					"confirmed_at", resp.ConfirmedAt,
+					"error", err,
+				)
+				resp.Receipt = nil
+			}
+		}
+	}
+	if resp.Receipt != nil {
 		s.addPendingTx(&types.DevshardTx{
 			Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 				InferenceId: inferenceNonce,

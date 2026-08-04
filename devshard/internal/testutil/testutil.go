@@ -2,6 +2,7 @@ package testutil
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
@@ -12,6 +13,9 @@ import (
 )
 
 var deterministicMarshal = proto.MarshalOptions{Deterministic: true}
+
+var TestStartedAt = time.Now().Unix()
+var TestConfirmedAt = TestStartedAt + 1
 
 // TestPrompt is exactly 100 bytes and includes max_tokens:50 so host workload
 // checks (input_length == len(prompt), body max_tokens <= declared) pass with
@@ -178,12 +182,16 @@ func SignRevealSeed(t *testing.T, signer *signing.Secp256k1Signer, escrowID stri
 }
 
 func StartTx(inferenceID uint64) *types.DevshardTx {
+	return StartTxAt(inferenceID, TestStartedAt)
+}
+
+func StartTxAt(inferenceID uint64, startedAt int64) *types.DevshardTx {
 	return &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
 		InferenceId: inferenceID,
 		PromptHash:  TestPromptHash[:],
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   startedAt,
 	}}}
 }

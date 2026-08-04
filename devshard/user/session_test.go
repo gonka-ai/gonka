@@ -97,7 +97,7 @@ func TestUser_RoundRobinSelection(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// Nonce 1 -> host 1%3=1, nonce 2 -> host 2%3=2, nonce 3 -> host 3%3=0.
@@ -115,7 +115,7 @@ func TestPrepareInference_StartInferenceIsMandatory(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	prepared, err := session.PrepareInference(params)
@@ -135,7 +135,7 @@ func TestUser_PipelinesReceipt(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// First inference.
@@ -166,7 +166,7 @@ func TestUser_CollectsSignatures(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	_, err := session.SendInference(ctx, params)
@@ -222,7 +222,7 @@ func TestUser_HostError_StateConsistency(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// Nonce 1 -> host 1 (error client). Should fail.
@@ -245,7 +245,7 @@ func TestUser_Finalize(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	for i := 0; i < 3; i++ {
@@ -268,7 +268,7 @@ func TestUser_Finalize_CollectsSignatures(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	for i := 0; i < 3; i++ {
@@ -298,7 +298,7 @@ func TestUser_Finalize_DiffCount(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	for i := 0; i < 3; i++ {
@@ -321,7 +321,7 @@ func TestUser_PendingTxDedup(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// Send one inference to populate host mempool.
@@ -386,7 +386,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	_, err = session.SendInference(ctx, params)
@@ -415,7 +415,7 @@ func TestCollectTimeoutVotes_WeightEarlyExit(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}, verifiers, nil)
 	require.NoError(t, err)
 
@@ -553,7 +553,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -592,7 +592,7 @@ func TestCollectTimeoutVotes_SerializesPerVerifier(t *testing.T) {
 
 	payload := &host.InferencePayload{
 		Prompt: testutil.TestPrompt, Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	type collectResult struct {
@@ -659,7 +659,7 @@ func TestCollectTimeoutVotes_DifferentVerifiersRunInParallel(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -697,7 +697,7 @@ func TestCollectTimeoutVotes_DifferentVerifiersRunInParallel(t *testing.T) {
 
 	payload := &host.InferencePayload{
 		Prompt: testutil.TestPrompt, Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	done := make(chan error, 1)
@@ -742,7 +742,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -802,7 +802,7 @@ func TestCollectTimeoutVotes_WaitTimeoutDropsStaleGoroutines(t *testing.T) {
 
 	payload := &host.InferencePayload{
 		Prompt: testutil.TestPrompt, Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// Launch the blocking first call so all verifier slots are occupied.
@@ -846,7 +846,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -889,7 +889,7 @@ func TestCollectTimeoutVotes_DepthGreaterThanOne(t *testing.T) {
 
 	payload := &host.InferencePayload{
 		Prompt: testutil.TestPrompt, Model: "llama",
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	var wg sync.WaitGroup
@@ -960,7 +960,7 @@ func TestUser_Finalize_SeedRevealAndSettlement(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	// Send 3 inferences (one per host via round-robin).
@@ -1030,7 +1030,7 @@ func TestFinalize_DoubleCall_AfterSuccess(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
@@ -1068,7 +1068,7 @@ func TestFinalize_DoubleCall_InsufficientQuorum(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	for i := 0; i < 5; i++ {
@@ -1100,7 +1100,7 @@ func TestFinalize_SettlementRerun_EmptyDiffsCollectsFromHosts(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
@@ -1150,7 +1150,7 @@ func TestFinalize_SignatureStatus(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	for i := 0; i < 3; i++ {
 		_, err := session.SendInference(ctx, params)
@@ -1184,7 +1184,7 @@ func TestFinalize_SignatureStatus_InsufficientQuorum(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 
 	for i := 0; i < 5; i++ {

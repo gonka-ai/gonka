@@ -7,6 +7,7 @@ var (
 	ErrInvalidUserSig        = errors.New("invalid user signature")
 	ErrInvalidProposerSig    = errors.New("invalid proposer signature: not a group member")
 	ErrInvalidExecutorSig    = errors.New("invalid executor signature")
+	ErrInvalidConfirmedAt    = errors.New("confirmed_at outside deterministic bounds")
 	ErrInsufficientBalance   = errors.New("insufficient escrow balance")
 	ErrMultipleStartMsgs     = errors.New("at most one MsgStartInference per diff")
 	ErrSessionFinalizing     = errors.New("session is finalizing: no new inferences")

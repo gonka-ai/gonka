@@ -58,7 +58,11 @@ func VerifyRefusedTimeout(
 	// Fast path: check local mempool for MsgConfirmStart or MsgFinishInference.
 	for _, tx := range localMempool {
 		if cs := tx.GetConfirmStart(); cs != nil && cs.InferenceId == inferenceID {
-			return false, nil // executor already confirmed
+			// An unapplicable receipt counts as absent, else it would block
+			// the refusal timeout forever.
+			if types.ValidateConfirmedAt(cs.ConfirmedAt, rec.StartedAt) == nil {
+				return false, nil // executor already confirmed
+			}
 		}
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == inferenceID {
 			return false, nil // executor already finished
@@ -73,6 +77,10 @@ func VerifyRefusedTimeout(
 	// Verifier validates payload against on-chain record (same checks executor does).
 	if err := VerifyPayload(payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
 		return false, nil // bad payload -> reject timeout
+	}
+
+	if types.ValidateConfirmedAt(nowUnix, rec.StartedAt) != nil {
+		return true, nil
 	}
 
 	// Challenge executor: one call that applies diffs + verifies payload + returns receipt.

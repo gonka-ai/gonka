@@ -942,6 +942,10 @@ func (sm *StateMachine) applyConfirmStart(msg *types.MsgConfirmStart) error {
 		return fmt.Errorf("%w: expected pending, got %d", types.ErrInvalidTransition, rec.Status)
 	}
 
+	if err := types.ValidateConfirmedAt(msg.ConfirmedAt, rec.StartedAt); err != nil {
+		return err
+	}
+
 	// Verify executor receipt (includes confirmed_at from the executor's wall clock).
 	receiptContent := &types.ExecutorReceiptContent{
 		InferenceId: msg.InferenceId,

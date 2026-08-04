@@ -108,7 +108,7 @@ func defaultPayload() *InferencePayload {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 }
 
@@ -272,7 +272,7 @@ func TestHost_ExecutorReceipt(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 		EscrowId:    "escrow-1",
 		ConfirmedAt: resp.ConfirmedAt,
 	}
@@ -704,7 +704,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: 0,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -717,7 +717,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 			Model:       "llama",
 			InputLength: 0,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
@@ -739,7 +739,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 		Model:       "llama",
 		InputLength: uint64(len(prompt)),
 		MaxTokens:   1,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
 		{Tx: &types.DevshardTx_StartInference{StartInference: start}},
@@ -752,7 +752,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 			Model:       "llama",
 			InputLength: uint64(len(prompt)),
 			MaxTokens:   1,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	})
 	require.ErrorIs(t, err, types.ErrPayloadMismatch)
@@ -1231,10 +1231,10 @@ func TestWarmKey_HostFindsSlotByWarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)
@@ -1392,9 +1392,9 @@ func TestHost_ValidationTriggersOnFinishedInference(t *testing.T) {
 	require.Empty(t, valEngine.getCalls(), "should not validate pending inference")
 
 	// Nonce 2: ConfirmStart (to transition from Pending to Started).
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}
 	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
 
@@ -1494,9 +1494,9 @@ func TestHost_ValidationQueueLimitsConcurrentWorkers(t *testing.T) {
 		}))
 		nonce++
 
-		confirmedAt := int64(2000 + i)
+		confirmedAt := testutil.TestConfirmedAt + int64(i)
 		execSig := testutil.SignExecutorReceipt(t, hosts[1], "escrow-queue", inferenceID,
-			testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+			testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, confirmedAt)
 		confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 			InferenceId: inferenceID,
 			ExecutorSig: execSig,
@@ -1639,10 +1639,10 @@ func TestAccumulateGossipSig_WarmKey(t *testing.T) {
 	_, err = sm.ApplyDiff(diff)
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, 1000, 1000)
+	execSig := testutil.SignExecutorReceipt(t, warmSigner, "escrow-1", 1, testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	nonce++
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 1000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}
 	diff = testutil.SignDiff(t, user, "escrow-1", nonce, []*types.DevshardTx{confirmTx})
 	_, err = sm.ApplyDiff(diff)

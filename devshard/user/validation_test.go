@@ -114,7 +114,7 @@ func TestSession_Validation_InvalidationConverges(t *testing.T) {
 		MaxTokens:   50,
 	}
 	for i := 1; i <= numInferences; i++ {
-		params.StartedAt = int64(i) * 1000
+		params.StartedAt = testutil.TestStartedAt + int64(i)
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err, "inference %d", i)
 	}
@@ -255,7 +255,7 @@ func TestSession_Validation_MultiSlotValidatorCountedOnce(t *testing.T) {
 		MaxTokens:   50,
 	}
 	for i := 1; i <= numInferences; i++ {
-		params.StartedAt = int64(i) * 1000
+		params.StartedAt = testutil.TestStartedAt + int64(i)
 		_, err := session.SendInference(ctx, params)
 		require.NoError(t, err, "inference %d", i)
 	}

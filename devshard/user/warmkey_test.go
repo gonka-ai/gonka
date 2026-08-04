@@ -39,7 +39,7 @@ func acceptResolver(warmKeys, coldKeys []*signing.Secp256k1Signer) state.WarmKey
 
 var defaultParams = InferenceParams{
 	Model: "llama", Prompt: testutil.TestPrompt,
-	InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 }
 
 // setupWarmKeySession creates a session where hosts sign with warm keys

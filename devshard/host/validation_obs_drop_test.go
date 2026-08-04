@@ -81,9 +81,9 @@ func driveToValidation(t *testing.T, h *Host, user *signing.Secp256k1Signer, hos
 	apply(1, []*types.DevshardTx{testutil.StartTx(inferenceID)})
 
 	execSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	apply(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
-		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	}}}})
 
 	finishMsg := &types.MsgFinishInference{

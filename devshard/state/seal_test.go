@@ -35,13 +35,13 @@ func driveSealInferenceToFinished(t *testing.T, sm *StateMachine, escrowID strin
 	t.Helper()
 
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	})})
 	require.NoError(t, err)
 
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
+		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	})})
 	require.NoError(t, err)
 
@@ -243,25 +243,25 @@ func TestAutoSealStateClock_SkipsUnconfirmedInTailWindow(t *testing.T) {
 	sm, _, _, _ := newSealTestSM(t, "escrow-clock", hosts, false)
 
 	_, err := sm.ApplyLocal(1, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("pending"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("pending"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	})})
 	require.NoError(t, err)
 
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{txStart(&types.MsgStartInference{
-		InferenceId: 2, PromptHash: []byte("confirmed"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 2, PromptHash: []byte("confirmed"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	})})
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[2], "escrow-clock", 2, []byte("confirmed"), "llama", 100, 50, 1000, 5000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[2], "escrow-clock", 2, []byte("confirmed"), "llama", 100, 50, testutil.TestStartedAt, testutil.TestConfirmedAt)
 	_, err = sm.ApplyLocal(3, []*types.DevshardTx{txConfirm(&types.MsgConfirmStart{
-		InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: 5000,
+		InferenceId: 2, ExecutorSig: execSig, ConfirmedAt: testutil.TestConfirmedAt,
 	})})
 	require.NoError(t, err)
 
 	clock := sm.AutoSealStateClock()
 	require.True(t, clock.Known)
-	require.Equal(t, int64(5000), clock.MinConfirmedAt, "Pending ConfirmedAt=0 must not pull window min to zero")
-	require.Equal(t, int64(5000), clock.MaxConfirmedAt)
-	require.Equal(t, int64(5000), clock.Clock)
+	require.Equal(t, testutil.TestConfirmedAt, clock.MinConfirmedAt, "Pending ConfirmedAt=0 must not pull window min to zero")
+	require.Equal(t, testutil.TestConfirmedAt, clock.MaxConfirmedAt)
+	require.Equal(t, testutil.TestConfirmedAt, clock.Clock)
 }
 
 func TestExportAllInferenceRecords_IncludesSealedFromDB(t *testing.T) {

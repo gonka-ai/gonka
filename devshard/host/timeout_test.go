@@ -36,7 +36,7 @@ func testPayload() *InferencePayload {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 }
 
@@ -72,7 +72,7 @@ func stateWithPendingFull(inferenceID uint64, executorSlot uint32) types.EscrowS
 				Status:       types.StatusPending,
 				ExecutorSlot: executorSlot,
 				ReservedCost: 150,
-				StartedAt:    1000,
+				StartedAt:    testutil.TestStartedAt,
 				PromptHash:   promptHash[:],
 				Model:        "llama",
 				InputLength:  100,
@@ -121,12 +121,40 @@ func deadlinePassedExecution(st types.EscrowState, inferenceID uint64) int64 {
 func TestVerifyRefused_ReceiptInLocalMempool(t *testing.T) {
 	st := stateWithPendingFull(1, 1)
 	mempool := []*types.DevshardTx{
-		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{InferenceId: 1}}},
+		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: 1,
+			ConfirmedAt: st.Inferences[1].StartedAt + 1,
+		}}},
 	}
 
 	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, mempool, nil, st.Config, deadlinePassedRefused(st, 1))
 	require.NoError(t, err)
 	require.False(t, accept, "should reject: receipt in local mempool")
+}
+
+func TestVerifyRefused_OutOfBoundsReceiptInMempoolDoesNotBlockTimeout(t *testing.T) {
+	st := stateWithPendingFull(1, 1)
+	mempool := []*types.DevshardTx{
+		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
+			InferenceId: 1,
+			ConfirmedAt: st.Inferences[1].StartedAt + types.MaxConfirmationDelaySeconds + 1,
+		}}},
+	}
+	executor := &mockExecutorClient{challengeReceiptErr: errors.New("unreachable")}
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, mempool, executor, st.Config, deadlinePassedRefused(st, 1))
+	require.NoError(t, err)
+	require.True(t, accept, "unapplicable receipt must count as absent, not block the timeout")
+}
+
+func TestVerifyRefused_PastConfirmationBoundAcceptsWithoutChallenge(t *testing.T) {
+	st := stateWithPendingFull(1, 1)
+	executor := &mockExecutorClient{challengeReceipt: []byte("receipt")}
+	now := st.Inferences[1].StartedAt + types.MaxConfirmationDelaySeconds + 1
+
+	accept, err := VerifyRefusedTimeout(context.Background(), st, 1, testPayload(), nil, nil, executor, st.Config, now)
+	require.NoError(t, err)
+	require.True(t, accept, "no admissible receipt can exist past the bound")
 }
 
 func TestVerifyRefused_ExecutorUnreachable_ValidRequest(t *testing.T) {

@@ -16,33 +16,34 @@ import (
 )
 
 const (
-	autoSealTestInferenceSealGraceNonces     = 2
-	autoSealTestInferenceSealGraceSeconds   = 5
-	autoSealTestBaseConfirmedAt     = 10_000
-	autoSealAgreementNumHosts       = 16
-	autoSealAgreementPipelinedCount = 80
+	autoSealTestInferenceSealGraceNonces  = 2
+	autoSealTestInferenceSealGraceSeconds = 5
+	autoSealAgreementNumHosts             = 16
+	autoSealAgreementPipelinedCount       = 80
 )
 
+var autoSealTestBaseConfirmedAt = testutil.TestStartedAt
+
 type autoSealEnv struct {
-	session   *user.Session
-	hosts     []*host.Host
-	hostSMs   []*state.StateMachine
-	userSM    *state.StateMachine
-	user      *signing.Secp256k1Signer
+	session     *user.Session
+	hosts       []*host.Host
+	hostSMs     []*state.StateMachine
+	userSM      *state.StateMachine
+	user        *signing.Secp256k1Signer
 	hostSigners []*signing.Secp256k1Signer
-	group     []types.SlotAssignment
-	escrowID  string
+	group       []types.SlotAssignment
+	escrowID    string
 }
 
 func autoSealTestConfig(numHosts int) types.SessionConfig {
 	return types.NormalizeSessionConfig(types.SessionConfig{
-		RefusalTimeout:             60,
-		ExecutionTimeout:           1200,
-		TokenPrice:                 1,
-		VoteThreshold:              uint32(numHosts) / 2,
-		ValidationRate:             0,
-		FeePerNonce:                0,
-		InferenceSealGraceNonces:            autoSealTestInferenceSealGraceNonces,
+		RefusalTimeout:            60,
+		ExecutionTimeout:          1200,
+		TokenPrice:                1,
+		VoteThreshold:             uint32(numHosts) / 2,
+		ValidationRate:            0,
+		FeePerNonce:               0,
+		InferenceSealGraceNonces:  autoSealTestInferenceSealGraceNonces,
 		InferenceSealGraceSeconds: autoSealTestInferenceSealGraceSeconds,
 	}, numHosts)
 }
@@ -155,11 +156,12 @@ func applySignedDiffToUserAndHost(t *testing.T, env *autoSealEnv, nonce uint64, 
 
 func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint64, confirmedAt int64) {
 	t.Helper()
-	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{testutil.StartTx(inferenceID)})
+	startedAt := confirmedAt - 1
+	applySignedDiffToUserAndHost(t, env, startNonce, []*types.DevshardTx{testutil.StartTxAt(inferenceID, startedAt)})
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, 50, startedAt, confirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
 	}}}

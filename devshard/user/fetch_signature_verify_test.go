@@ -44,7 +44,7 @@ func TestFetchSignature_RejectsUnverifiedGarbage(t *testing.T) {
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -78,7 +78,7 @@ func TestFetchSignature_LiveStateRootWhenDiffsEmpty(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -121,7 +121,7 @@ func TestFetchSignature_NoFallbackForNonCurrentNonce(t *testing.T) {
 
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: 50, StartedAt: testutil.TestStartedAt,
 	}
 	_, err := session.SendInference(ctx, params)
 	require.NoError(t, err)

@@ -99,7 +99,7 @@ func runFault(t *testing.T, failPct int) {
 		Prompt:      stressPrompt,
 		InputLength: faultInputLen,
 		MaxTokens:   faultMaxTokens,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 
 	// --- Phase 1: healthy inferences ---
@@ -218,7 +218,7 @@ func runFault(t *testing.T, failPct int) {
 		Model:       faultModel,
 		InputLength: faultInputLen,
 		MaxTokens:   faultMaxTokens,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 	for _, infID := range pendingDeadIDs {
 		votes, err := session.CollectTimeoutVotes(ctx, infID,

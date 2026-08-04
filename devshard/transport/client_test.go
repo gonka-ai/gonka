@@ -75,7 +75,7 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -146,7 +146,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -172,7 +172,7 @@ func TestHTTPClient_GetMempool(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -238,7 +238,7 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, streamSink, nil)
 	require.NoError(t, err)
@@ -295,7 +295,7 @@ func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.ErrorContains(t, err, "participant request budget exhausted")
@@ -329,7 +329,7 @@ func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.Error(t, err)

@@ -1,5 +1,7 @@
 package types
 
+import "fmt"
+
 const (
 	defaultInferenceSealGraceMultiplier = 1 // for tests
 	minInferenceSealGraceNonces         = 20
@@ -12,7 +14,29 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	DefaultValidationRate uint32 = 5000
+
+	// MaxConfirmationDelaySeconds and MaxConfirmationSkewSeconds bound how far
+	// confirmed_at may sit from started_at in either direction. Both must stay
+	// well below InferenceSealGraceSeconds.
+	MaxConfirmationDelaySeconds int64 = 900
+	MaxConfirmationSkewSeconds  int64 = 900
 )
+
+func ValidateConfirmedAt(confirmedAt, startedAt int64) error {
+	if confirmedAt <= 0 {
+		return fmt.Errorf("%w: confirmed_at must be positive, got %d",
+			ErrInvalidConfirmedAt, confirmedAt)
+	}
+	if confirmedAt-startedAt > MaxConfirmationDelaySeconds {
+		return fmt.Errorf("%w: confirmed_at %d is %ds after started_at %d (max %ds)",
+			ErrInvalidConfirmedAt, confirmedAt, confirmedAt-startedAt, startedAt, MaxConfirmationDelaySeconds)
+	}
+	if startedAt-confirmedAt > MaxConfirmationSkewSeconds {
+		return fmt.Errorf("%w: confirmed_at %d is %ds before started_at %d (max skew %ds)",
+			ErrInvalidConfirmedAt, confirmedAt, startedAt-confirmedAt, startedAt, MaxConfirmationSkewSeconds)
+	}
+	return nil
+}
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
 // Phase 1 uses a nonce gate of 10 * groupSize with a floor of 20 so small

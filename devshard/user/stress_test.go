@@ -213,7 +213,7 @@ func runStress(t *testing.T, numHosts, rounds int) {
 		Prompt:      stressPrompt,
 		InputLength: stressInputLength,
 		MaxTokens:   stressMaxTokens,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}
 
 	// --- Inference loop ---

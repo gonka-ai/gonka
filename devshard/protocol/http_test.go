@@ -229,7 +229,7 @@ func TestHTTP_Auth_Rejected(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.Error(t, err)
@@ -250,7 +250,7 @@ func TestHTTP_GossipPropagation(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -279,7 +279,7 @@ func TestHTTP_EquivocationDetection(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -301,6 +301,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 
 	// Send one inference. Executor is slot 1%5=1.
 	params := defaultParams()
+	params.StartedAt = testutil.TestStartedAt - env.config.RefusalTimeout - 1
 	_, err := env.session.SendInference(ctx, params)
 	require.NoError(t, err)
 
@@ -332,7 +333,7 @@ func TestHTTP_TimeoutRefused(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   params.StartedAt,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
 	require.True(t, len(votes) > int(env.config.VoteThreshold), "need >%d votes, got %d", env.config.VoteThreshold, len(votes))
@@ -472,7 +473,7 @@ func TestHTTP_ChallengeReceipt_RejectsTimeout(t *testing.T) {
 		Model:       "llama",
 		InputLength: 100,
 		MaxTokens:   50,
-		StartedAt:   1000,
+		StartedAt:   testutil.TestStartedAt,
 	}, verifiers, allDiffs)
 	require.NoError(t, err)
 	require.Equal(t, 0, len(votes), "all hosts should reject timeout because executor is alive and produced receipt")
@@ -577,7 +578,7 @@ func TestHTTP_GossipAmplification(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -742,7 +743,7 @@ func TestHTTP_GossipIntegration(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -768,7 +769,7 @@ func TestHTTP_EquivocationViaGossipHTTP(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -798,7 +799,7 @@ func TestHTTP_LazyTxGossipHTTP(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -921,7 +922,7 @@ func TestAttack_GossipUnverifiedNonce(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
@@ -953,7 +954,7 @@ func TestAttack_GossipEmptySigBypass(t *testing.T) {
 			Model:       "llama",
 			InputLength: 100,
 			MaxTokens:   50,
-			StartedAt:   1000,
+			StartedAt:   testutil.TestStartedAt,
 		},
 	}, nil, nil)
 	require.NoError(t, err)
