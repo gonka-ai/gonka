@@ -7,6 +7,8 @@ on:
       - deploy/join/docker-compose.versiond.yml
       - deploy/join/docker-compose.edge-api-multi.yml
       - deploy/join/release-image-smoke_test.sh
+      - deploy/join/devshard-postgres-migration-preflight.sh
+      - deploy/join/devshard-postgres-migration-preflight_test.sh
       - deploy/join/upgrade-devshard-v5.sh
       - deploy/join/upgrade-devshard-v5_test.sh
       - .github/workflows/release-image-smoke.yml
@@ -29,6 +31,7 @@ jobs:
       - name: Check fail-safe upgrade workflow
         run: |
           shellcheck \
+            deploy/join/devshard-postgres-migration-preflight.sh \
             deploy/join/upgrade-devshard-v5.sh \
             deploy/join/upgrade-devshard-v5_test.sh
           deploy/join/upgrade-devshard-v5_test.sh

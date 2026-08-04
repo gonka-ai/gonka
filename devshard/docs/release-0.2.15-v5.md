@@ -116,6 +116,12 @@ after the whole upgrade succeeds. After a failed attempt, keep the reported
 `gonka-upgrade-rollback/*` tags until recovery is verified; they can then be
 removed with `docker image rm`.
 
+Before stopping or recreating the shared PostgreSQL container, the script
+mounts its v4 data volume read-only, measures the cluster with `du`, and checks
+the filesystem behind `DEVSHARD_POSTGRES_DATA_DIR` with `df`. Migration requires
+the full source size plus a 10% reserve. An insufficient filesystem therefore
+stops the procedure while the existing PostgreSQL process is still running.
+
 #### Existing edge-api-multi deployment
 
 Use this procedure when the running installation was created with
@@ -200,9 +206,6 @@ recovery_compose=(
   -f docker-compose.versiond-postgres-recovery.yml
 )
 
-# Stop database clients and PostgreSQL without deleting containers or volumes.
-"${compose[@]}" stop versiond versiond2 devshard-postgres
-
 # Fail before Docker can create a new empty volume for a mistyped name.
 docker volume inspect "$DEVSHARD_POSTGRES_LEGACY_VOLUME" >/dev/null
 if [ -n "$(docker ps -q --filter "volume=$DEVSHARD_POSTGRES_LEGACY_VOLUME")" ]; then
@@ -211,24 +214,13 @@ if [ -n "$(docker ps -q --filter "volume=$DEVSHARD_POSTGRES_LEGACY_VOLUME")" ]; 
 fi
 
 target_root=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
-mkdir -p "$target_root"
+./devshard-postgres-migration-preflight.sh \
+  --source-volume "$DEVSHARD_POSTGRES_LEGACY_VOLUME" \
+  --target-dir "$target_root"
 
-# Migration creates a full second copy. Require the source size plus 10% free
-# on the filesystem that contains the persistent bind directory.
-source_kib=$(
-  docker run --rm --entrypoint /bin/sh \
-    --mount "type=volume,src=${DEVSHARD_POSTGRES_LEGACY_VOLUME},dst=/source,readonly" \
-    postgres:16-alpine -ec \
-    'test -s /source/PG_VERSION; du -sk /source | cut -f1'
-)
-free_kib=$(df -Pk "$target_root" | awk 'NR == 2 { print $4 }')
-required_kib=$((source_kib + source_kib / 10))
-printf 'PostgreSQL source: %s KiB; required free: %s KiB; available: %s KiB\n' \
-  "$source_kib" "$required_kib" "$free_kib"
-if ((free_kib < required_kib)); then
-  echo "not enough free space for PostgreSQL recovery" >&2
-  exit 1
-fi
+# Only after every non-disruptive preflight succeeds, stop database clients and
+# PostgreSQL without deleting containers or volumes.
+"${compose[@]}" stop versiond versiond2 devshard-postgres
 
 "${recovery_compose[@]}" up -d --no-deps --force-recreate \
   --wait --wait-timeout 2100 devshard-postgres
@@ -457,6 +449,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Perform the first v4-to-v5 cutover with in-place `docker compose up -d`,
       not `down` or `up --renew-anon-volumes`; confirm the Postgres log reports a
       completed automatic migration and retain the old volume through rollback
+- [ ] Let `upgrade-devshard-v5.sh` complete its PostgreSQL disk-space preflight
+      before stopping any service; migration needs the source size plus 10%
 - [ ] Confirm `VERSIOND_HOST_SHUTDOWN_BUDGET` and the larger
       `VERSIOND_STOP_GRACE_PERIOD` match the maximum acceptable maintenance
       wait; short values can terminate accepted inference streams

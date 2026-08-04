@@ -9,6 +9,7 @@ guard_project="$project-guard"
 base="$script_dir/testdata/postgres-v4.compose.yml"
 overlay="$script_dir/testdata/postgres-v5.compose.yml"
 recovery_overlay="$script_dir/docker-compose.versiond-postgres-recovery.yml"
+preflight="$script_dir/devshard-postgres-migration-preflight.sh"
 service=devshard-postgres
 export GONKA_POSTGRES_TEST_DATA="$tmpdir/persistent"
 export GONKA_POSTGRES_TEST_ENTRYPOINT="$script_dir/devshard-postgres-entrypoint.sh"
@@ -74,6 +75,11 @@ old_volume=$(docker inspect "$old_container" --format \
     '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
 [[ -n $old_volume ]] || fail "v4 PostgreSQL did not use an anonymous volume"
 
+# The operator preflight must inspect the live v4 container without stopping it
+# and approve the target filesystem before Compose performs the first recreate.
+"$preflight" --source-container "$old_container" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA" >/dev/null
+
 # This is the supported upgrade: recreate in place. Compose carries the old
 # anonymous mount to the new container, whose entrypoint migrates it.
 "${new_compose[@]}" up -d --force-recreate "$service"
@@ -91,6 +97,10 @@ row=$("${new_compose[@]}" exec -T "$service" psql \
 "${new_compose[@]}" exec -T "$service" \
     test -s /var/lib/postgresql/gonka/data/PG_VERSION || fail \
     "persistent PGDATA was not published"
+preflight_result=$("$preflight" --source-container "$new_container" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA")
+grep -q 'no migration copy is required' <<<"$preflight_result" || fail \
+    "preflight did not recognize migrated persistent PGDATA"
 
 # Once migrated, even removing the container is safe: the bind-mounted PGDATA
 # is authoritative and the replacement no longer needs the anonymous source.
@@ -126,6 +136,9 @@ guard_old_volume=$(docker inspect "$guard_old_container" --format \
 [[ -n $guard_old_volume ]] || fail \
     "guard fixture did not create an anonymous v4 volume"
 "${guard_old_compose[@]}" down
+
+"$preflight" --source-volume "$guard_old_volume" \
+    --target-dir "$GONKA_POSTGRES_TEST_DATA" >/dev/null
 
 "${guard_new_compose[@]}" up -d "$service"
 guard_container=$("${guard_new_compose[@]}" ps -aq "$service")

@@ -22,6 +22,7 @@ new_case() {
 
 run_entrypoint() {
     env \
+        PATH="${entrypoint_path:-$PATH}" \
         GONKA_POSTGRES_LEGACY_DATA="$legacy" \
         GONKA_POSTGRES_PERSISTENT_ROOT="$persistent" \
         GONKA_POSTGRES_EXISTING_VERSIOND="$existing" \
@@ -44,6 +45,26 @@ run_entrypoint
     "migration marker was not written"
 [[ ! -e "$persistent/.migrating" ]] || fail \
     "staging directory remained after migration"
+
+new_case reject-insufficient-space
+printf '16\n' > "$legacy/PG_VERSION"
+printf 'cannot-fit\n' > "$legacy/session-row"
+mkdir -p "$case_dir/bin"
+cat >"$case_dir/bin/df" <<'EOF'
+#!/bin/sh
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/fake 100 99 1 99%% /persistent\n'
+EOF
+chmod +x "$case_dir/bin/df"
+entrypoint_path="$case_dir/bin:$PATH"
+if run_entrypoint >"$case_dir/stdout" 2>"$case_dir/stderr"; then
+    fail "migration started without enough free space"
+fi
+unset entrypoint_path
+grep -q 'not enough free space' "$case_dir/stderr" || fail \
+    "insufficient-space failure was not diagnosed"
+[[ ! -e "$persistent/.migrating" ]] || fail \
+    "staging directory was created after the space check failed"
 
 new_case migrate-crash-state
 printf '16\n' > "$legacy/PG_VERSION"

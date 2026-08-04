@@ -24,11 +24,17 @@ printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
 
 if [[ ${1:-} == inspect ]]; then
+    [[ $# -eq 2 ]] && exit 0
     case ${3:-} in
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
         '{{.State.Running}}') printf 'true\n' ;;
         *) exit 1 ;;
     esac
+    exit 0
+fi
+
+if [[ ${1:-} == run ]]; then
+    printf 'source 1\n'
     exit 0
 fi
 
@@ -116,9 +122,17 @@ line_number() {
 }
 
 write_fake_docker
-: >"$tmpdir/config.env"
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\n' "$tmpdir/postgres" \
+    >"$tmpdir/config.env"
 
 run_upgrade single versiond2 "$tmpdir/versiond2.log"
+preflight_line=$(line_number "$tmpdir/versiond2.log" \
+    "--volumes-from cid-devshard-postgres:ro")
+postgres_up_line=$(line_number "$tmpdir/versiond2.log" \
+    "--wait-timeout 2100 devshard-postgres")
+[[ -n $preflight_line && -n $postgres_up_line && \
+    $preflight_line -lt $postgres_up_line ]] ||
+    fail "PostgreSQL space preflight did not run before its first recreate"
 assert_contains "$tmpdir/versiond2.log" \
     "VERSIOND_IMAGE=gonka-upgrade-rollback/versiond2:"
 if grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/versiond2.log" >/dev/null; then

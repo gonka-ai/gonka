@@ -38,6 +38,23 @@ validate_cluster() {
     esac
 }
 
+ensure_migration_space() {
+    source_kib=$(du -sk "$legacy_data" | awk '{ print $1 }') ||
+        die "cannot measure PostgreSQL source cluster"
+    free_kib=$(df -Pk "$persistent_root" | awk 'NR == 2 { print $4 }') ||
+        die "cannot measure free space for $persistent_root"
+    case "$source_kib" in
+        '' | *[!0-9]* | 0) die "invalid PostgreSQL source size" ;;
+    esac
+    case "$free_kib" in
+        '' | *[!0-9]*) die "invalid PostgreSQL free-space measurement" ;;
+    esac
+    required_kib=$((source_kib + (source_kib + 9) / 10))
+    log "source is $source_kib KiB; migration requires $required_kib KiB; $free_kib KiB is free"
+    [ "$free_kib" -ge "$required_kib" ] ||
+        die "not enough free space for PostgreSQL migration"
+}
+
 publish_staging() {
     if [ -e "$target_data" ]; then
         if directory_has_entries "$target_data"; then
@@ -72,6 +89,7 @@ elif cluster_exists "$legacy_data"; then
     if [ -e "$staging_data" ]; then
         rm -rf "$staging_data" || die "cannot reset stale migration staging data"
     fi
+    ensure_migration_space
     mkdir "$staging_data"
 
     log "migrating the preserved v4 PostgreSQL cluster into persistent storage"

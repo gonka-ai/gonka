@@ -7,6 +7,8 @@ on:
       - deploy/join/docker-compose.versiond-postgres-recovery.yml
       - deploy/join/devshard-postgres-entrypoint.sh
       - deploy/join/devshard-postgres-entrypoint_test.sh
+      - deploy/join/devshard-postgres-migration-preflight.sh
+      - deploy/join/devshard-postgres-migration-preflight_test.sh
       - deploy/join/devshard-postgres-upgrade_test.sh
       - deploy/join/testdata/postgres-v4.compose.yml
       - deploy/join/testdata/postgres-v5.compose.yml
@@ -18,6 +20,8 @@ on:
       - deploy/join/docker-compose.versiond-postgres-recovery.yml
       - deploy/join/devshard-postgres-entrypoint.sh
       - deploy/join/devshard-postgres-entrypoint_test.sh
+      - deploy/join/devshard-postgres-migration-preflight.sh
+      - deploy/join/devshard-postgres-migration-preflight_test.sh
       - deploy/join/devshard-postgres-upgrade_test.sh
       - deploy/join/testdata/postgres-v4.compose.yml
       - deploy/join/testdata/postgres-v5.compose.yml
@@ -41,8 +45,11 @@ jobs:
           shellcheck \
             deploy/join/devshard-postgres-entrypoint.sh \
             deploy/join/devshard-postgres-entrypoint_test.sh \
+            deploy/join/devshard-postgres-migration-preflight.sh \
+            deploy/join/devshard-postgres-migration-preflight_test.sh \
             deploy/join/devshard-postgres-upgrade_test.sh
           deploy/join/devshard-postgres-entrypoint_test.sh
+          deploy/join/devshard-postgres-migration-preflight_test.sh
 
       - name: Test in-place v4 migration and persistent restart
         run: deploy/join/devshard-postgres-upgrade_test.sh

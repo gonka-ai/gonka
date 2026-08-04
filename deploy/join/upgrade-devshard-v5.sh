@@ -197,6 +197,18 @@ if [[ $edge_mode == multi ]]; then
 fi
 "${compose[@]}" pull "${pull_services[@]}"
 
+postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
+[[ -n $postgres_container ]] || fail \
+    "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
+postgres_target_dir=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
+case $postgres_target_dir in
+    /*) ;;
+    *) postgres_target_dir="$script_dir/$postgres_target_dir" ;;
+esac
+DOCKER_BIN="$docker_bin" "$script_dir/devshard-postgres-migration-preflight.sh" \
+    --source-container "$postgres_container" \
+    --target-dir "$postgres_target_dir"
+
 echo "Migrating and starting devshard-postgres"
 if ! "${compose[@]}" up -d --no-deps --wait --wait-timeout 2100 \
     devshard-postgres; then
