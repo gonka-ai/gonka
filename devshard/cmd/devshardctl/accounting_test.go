@@ -20,21 +20,10 @@ import (
 )
 
 func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
-	require.NoError(t, err)
-	defer tracker.Close()
+	tracker := newGatewayAccountingTestTracker(t)
 	recorder := accounting.NewRecorder(tracker, nil)
 	require.NotNil(t, recorder)
-	require.NoError(t, tracker.RegisterEscrow(accounting.EscrowMetadata{
-		EscrowID:      "e1",
-		CreationEpoch: 1,
-		Model:         "m",
-		Phase:         accounting.EscrowActive,
-		Slots: []types.SlotAssignment{
-			{SlotID: 0, ValidatorAddress: "p0"},
-			{SlotID: 1, ValidatorAddress: "p1"},
-		},
-	}))
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe")
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
@@ -476,4 +465,204 @@ func accountingRecordForParticipant(
 	}
 	t.Fatalf("missing participant %s", participant)
 	return accounting.ParticipantRecord{}
+}
+
+func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, nil)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 2, "m")
+
+	cases := []struct {
+		name       string
+		reason     string
+		quarantine string
+		wantReason accounting.NoSendReason
+		wantMode   accounting.QuarantineMode
+	}{
+		{
+			name:       "probe quarantine",
+			reason:     "participant_throttled_no_send",
+			quarantine: "probe",
+			wantReason: accounting.NoSendParticipantThrottled,
+			wantMode:   accounting.QuarantineProbe,
+		},
+		{
+			name:       "plain throttling",
+			reason:     "participant_throttled_no_send",
+			quarantine: "none",
+			wantReason: accounting.NoSendParticipantThrottled,
+			wantMode:   accounting.QuarantineNone,
+		},
+		{
+			name:       "capability exclusion",
+			reason:     "participant_capability_no_send",
+			quarantine: "none",
+			wantReason: accounting.NoSendParticipantCapability,
+			wantMode:   accounting.QuarantineNone,
+		},
+		{
+			name:       "stale incompatible request",
+			reason:     "no_compatible_request_after_stale",
+			quarantine: "none",
+			wantReason: accounting.NoSendNoCompatibleAfterStale,
+			wantMode:   accounting.QuarantineNone,
+		},
+		{
+			name:       "unlisted policy",
+			reason:     "some_new_policy",
+			quarantine: "none",
+			wantReason: accounting.NoSendUnknown,
+			wantMode:   accounting.QuarantineNone,
+		},
+	}
+
+	for i, tc := range cases {
+		nonce := uint64(i + 1)
+		require.NoError(t, tracker.RecordDiff("e1", nonce, true), tc.name)
+		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine)
+	}
+
+	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 2}))
+	for _, tc := range cases {
+		counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
+			return key.Disposition == accounting.DispositionGhost &&
+				key.NoSendReason == tc.wantReason &&
+				key.QuarantineMode == tc.wantMode
+		})
+		require.Equal(t, uint64(1), counter.Count, tc.name)
+		if tc.wantReason == accounting.NoSendUnknown {
+			require.Equal(t, "unknown", counter.Key.DetailReason)
+		}
+	}
+	require.Equal(t, uint64(1), record.UnknownReasonTotal)
+}
+
+func TestGatewayAccountingAdapterRecordsPoCGhostPolicyDimensions(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
+	setPoCPhaseState(true, "poc")
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, currentPoCPhaseReason)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 3, "m")
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+
+	recorder.Ghost("e1", 1, "poc_unavailable_host", "none")
+
+	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 3}))
+	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
+		return key.Disposition == accounting.DispositionGhost &&
+			key.DispatchPhase == accounting.PhasePoC &&
+			key.NoSendReason == accounting.NoSendPoCUnavailable &&
+			key.QuarantineMode == accounting.QuarantineNone
+	})
+	require.Equal(t, uint64(1), counter.Count)
+}
+
+func TestGatewayAccountingAdapterRecordsRealSendPolicyDimensions(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, nil)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 4, "m")
+
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	recorder.RealSend("e1", 1, time.Now(), "shadow")
+	recorder.Usage("e1", 1, 1)
+	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
+
+	require.NoError(t, tracker.RecordDiff("e1", 2, true))
+	recorder.RealSend("e1", 2, time.Now(), "probation")
+	recorder.Usage("e1", 2, 1)
+	require.NoError(t, tracker.RecordProtocol("e1", 2, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
+
+	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 4}))
+	shadow := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
+		return key.Disposition == accounting.DispositionFinishedUsed &&
+			key.QuarantineMode == accounting.QuarantineShadow
+	})
+	require.Equal(t, uint64(1), shadow.Count)
+	probation := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
+		return key.Disposition == accounting.DispositionFinishedUnused &&
+			key.QuarantineMode == accounting.QuarantineProbation
+	})
+	require.Equal(t, uint64(1), probation.Count)
+}
+
+func TestGatewayAccountingAdapterRecordsPoCRealSendPhaseContext(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
+	setPoCPhaseState(true, "poc")
+	tracker := newGatewayAccountingTestTracker(t)
+	recorder := accounting.NewRecorder(tracker, currentPoCPhaseReason)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 5, "m")
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+
+	recorder.RealSend("e1", 1, time.Now(), "none")
+	recorder.Usage("e1", 1, 1)
+	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
+
+	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 5}))
+	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
+		return key.Disposition == accounting.DispositionFinishedUsed &&
+			key.DispatchPhase == accounting.PhasePoC &&
+			key.TimeoutEvaluationPhase == "" &&
+			key.QuarantineMode == accounting.QuarantineNone
+	})
+	require.Equal(t, uint64(1), counter.Count)
+}
+
+func TestGatewayAccountingNoNonceConsumedHasNoAccounting(t *testing.T) {
+	resetPoCPhaseStateForTest(t)
+	setPoCPhaseState(true, "poc")
+	tracker := newGatewayAccountingTestTracker(t)
+	registerGatewayAccountingTestEscrow(t, tracker, "e1", 6, "m")
+
+	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 6}))
+	require.Zero(t, record.AssignedNonces)
+	require.Empty(t, record.Dispositions)
+	require.Empty(t, record.Counters)
+	require.Zero(t, record.InFlight)
+	require.Zero(t, record.PendingClassification)
+	require.Zero(t, record.Unclassified)
+	require.Zero(t, record.Overclassified)
+}
+
+func newGatewayAccountingTestTracker(t *testing.T) *accounting.Tracker {
+	t.Helper()
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
+	return tracker
+}
+
+func registerGatewayAccountingTestEscrow(t *testing.T, tracker *accounting.Tracker, id string, epoch uint64, model string) {
+	t.Helper()
+	require.NoError(t, tracker.RegisterEscrow(accounting.EscrowMetadata{
+		EscrowID:      id,
+		CreationEpoch: epoch,
+		Model:         model,
+		Phase:         accounting.EscrowActive,
+		Slots: []types.SlotAssignment{
+			{SlotID: 0, ValidatorAddress: "p0"},
+		},
+	}))
+}
+
+func onlyGatewayAccountingRecord(t *testing.T, records []accounting.ParticipantRecord) accounting.ParticipantRecord {
+	t.Helper()
+	require.Len(t, records, 1)
+	return records[0]
+}
+
+func requireGatewayAccountingCounter(
+	t *testing.T,
+	record accounting.ParticipantRecord,
+	matches func(accounting.CounterKey) bool,
+) accounting.CounterRecord {
+	t.Helper()
+	for _, counter := range record.Counters {
+		if matches(counter.Key) {
+			return counter
+		}
+	}
+	t.Fatalf("missing counter in %#v", record.Counters)
+	return accounting.CounterRecord{}
 }

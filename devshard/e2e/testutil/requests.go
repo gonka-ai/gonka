@@ -27,6 +27,10 @@ func SendCompletionRaw(t *testing.T, client *http.Client, clientURL, content, be
 	return PostJSONRaw(t, client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
 }
 
+func SendCompletionRawE(client *http.Client, clientURL, content, bearerToken string) (RawResponse, error) {
+	return PostJSONRawE(client, clientURL+"/v1/chat/completions", ChatCompletionBody(content, false), bearerToken)
+}
+
 type StreamResponse struct {
 	ContentType string
 	Events      []string

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
@@ -190,10 +191,15 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		return nil, err
 	}
 
+	inferenceEngine := devshardpkg.InferenceEngine(stub.NewInferenceEngine())
+	if delay := stubInferenceDelayFromEnv(); delay > 0 {
+		inferenceEngine = delayedInferenceEngine{inner: inferenceEngine, delay: delay}
+	}
+
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
-		stub.NewInferenceEngine(),
+		inferenceEngine,
 		cfg.escrowID,
 		cfg.group,
 		nil,
@@ -268,6 +274,23 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	return nil
 }
 
+type delayedInferenceEngine struct {
+	inner devshardpkg.InferenceEngine
+	delay time.Duration
+}
+
+func (e delayedInferenceEngine) Execute(ctx context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	timer := time.NewTimer(e.delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return e.inner.Execute(ctx, req)
+	}
+}
+
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
 func sessionConfigFromEnv(groupSize int) types.SessionConfig {
@@ -327,6 +350,32 @@ func uintEnv(key string, fallback uint64) uint64 {
 		log.Fatalf("invalid %s: %v", key, err)
 	}
 	return value
+}
+
+func durationMillisEnv(key string, fallback time.Duration) time.Duration {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	value, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		log.Fatalf("invalid %s: %v", key, err)
+	}
+	if value < 0 {
+		log.Fatalf("invalid %s: must be non-negative", key)
+	}
+	return time.Duration(value) * time.Millisecond
+}
+
+func stubInferenceDelayFromEnv() time.Duration {
+	delay := durationMillisEnv("DEVSHARD_STUB_INFERENCE_DELAY_MS", 0)
+	if delay == 0 {
+		return 0
+	}
+	if os.Getenv("DEVSHARD_E2E") != "1" {
+		log.Fatalf("DEVSHARD_STUB_INFERENCE_DELAY_MS is only supported when DEVSHARD_E2E=1")
+	}
+	return delay
 }
 
 func defaultHostPrivateKeys() []string {
