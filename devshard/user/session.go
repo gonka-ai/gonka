@@ -121,6 +121,11 @@ type nonceOutcome struct {
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
 	Reason string // "execution", "refused", or "" if deadline not reached
+	// Applied is true only when the timeout tx survived the local apply and
+	// went out in the diff. HandleTimeout returns a non-nil error on every
+	// path, including success, so this is the field that distinguishes an
+	// applied timeout from one the state machine rejected.
+	Applied bool
 }
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
@@ -1374,6 +1379,32 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 	return nil
 }
 
+func (s *Session) verifyTimeoutVote(inferenceID uint64, reason types.TimeoutReason, vote *types.TimeoutVote, expectedAddr string) error {
+	voteData, err := proto.Marshal(&types.TimeoutVoteContent{
+		EscrowId:    s.escrowID,
+		InferenceId: inferenceID,
+		Reason:      reason,
+		Accept:      vote.Accept,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal timeout vote content: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr &&
+		s.sm.WarmKeys()[vote.VoterSlot] != recovered &&
+		!s.sm.CheckWarmKey(recovered, expectedAddr) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	if owner := s.sm.SlotAddress(vote.VoterSlot); owner != expectedAddr {
+		return fmt.Errorf("%w: slot %d is owned by %s, not by responder %s",
+			types.ErrInvalidVoteSig, vote.VoterSlot, owner, expectedAddr)
+	}
+	return nil
+}
+
 func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64, client HostClient) bool {
 	fetcher, ok := client.(SignatureFetcher)
 	if !ok {
@@ -1704,23 +1735,37 @@ func (s *Session) AddPendingTimeoutTx(inferenceID uint64, reason types.TimeoutRe
 // SendPendingDiff creates a diff from pending txs (no new MsgStartInference),
 // applies it locally, and sends it to the next host. Used for timeout submission.
 func (s *Session) SendPendingDiff(ctx context.Context) error {
+	_, err := s.sendPendingDiff(ctx)
+	return err
+}
+
+func (s *Session) sendPendingDiff(ctx context.Context) (types.Diff, error) {
 	s.mu.Lock()
 	diff, hostIdx, err := s.composeDiffLocked(nil)
 	if err != nil {
 		s.mu.Unlock()
-		return err
+		return types.Diff{}, err
 	}
 	catchUp := s.diffsForHost(hostIdx)
 	s.mu.Unlock()
 
 	resp, err := s.clients[hostIdx].Send(ctx, host.HostRequest{Diffs: catchUp, Nonce: diff.Nonce}, nil, nil)
 	if err != nil {
-		return fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
+		return diff, fmt.Errorf("send timeout diff to host %d: %w", hostIdx, err)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.processResponse(hostIdx, resp, diff.Nonce)
+	return diff, s.processResponse(hostIdx, resp, diff.Nonce)
+}
+
+func diffAppliedTimeout(diff types.Diff, inferenceID uint64) bool {
+	for _, tx := range diff.Txs {
+		if t := tx.GetTimeoutInference(); t != nil && t.InferenceId == inferenceID {
+			return true
+		}
+	}
+	return false
 }
 
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
@@ -1893,10 +1938,16 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 
 	if s.HasSufficientTimeoutVotes(votes) {
 		s.AddPendingTimeoutTx(nonce, reason, votes)
-		if err := s.SendPendingDiff(ctx); err != nil {
+		diff, err := s.sendPendingDiff(ctx)
+		if err != nil {
 			logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("send timeout diff: %w", err)
 		}
+		if !diffAppliedTimeout(diff, nonce) {
+			logging.Stage(ctx, "timeout_not_applied", logFields("reason", result.Reason, "diff_nonce", diff.Nonce)...)
+			return result, fmt.Errorf("inference %d timeout rejected by state machine at nonce %d", nonce, diff.Nonce)
+		}
+		result.Applied = true
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
@@ -2099,7 +2150,7 @@ func (s *Session) CollectTimeoutVotes(
 
 	voteThreshold := s.sm.VoteThreshold()
 	var accWeight uint32
-	var errors, rejects int
+	var errors, rejects, invalid int
 	for i := 0; i < expected; i++ {
 		res := <-results
 		if res.err != nil {
@@ -2118,6 +2169,29 @@ func (s *Session) CollectTimeoutVotes(
 			continue // skip failed hosts
 		}
 		if res.vote != nil {
+			// Verify before counting. An unverified vote must never contribute
+			// weight, reach the quorum decision, or trigger the early exit
+			// below: applyTimeout rejects the whole MsgTimeoutInference on the
+			// first bad vote, so a single spoofed slot would otherwise discard
+			// an honest quorum that was still in flight.
+			if vErr := s.verifyTimeoutVote(inferenceID, reason, res.vote, res.verifierAddr); vErr != nil {
+				invalid++
+				logging.Stage(ctx, "timeout_vote_result",
+					logFields(
+						res.verifierAddr,
+						"outcome", "invalid",
+						"voter_slot", res.vote.VoterSlot,
+						"running_weight", accWeight,
+						"threshold", voteThreshold,
+						"error", vErr,
+					)...,
+				)
+				logging.Warn("rejected unverified timeout vote",
+					"subsystem", "session", "escrow_id", s.escrowID,
+					"inference_id", inferenceID, "responder", res.verifierAddr,
+					"voter_slot", res.vote.VoterSlot, "error", vErr)
+				continue
+			}
 			votes = append(votes, res.vote)
 			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
 			weight := s.sm.AddressSlotCount(voterAddr)
@@ -2154,6 +2228,7 @@ func (s *Session) CollectTimeoutVotes(
 			"accept", len(votes),
 			"weight", accWeight,
 			"reject", rejects,
+			"invalid", invalid,
 			"errors", errors,
 			"threshold", voteThreshold,
 			"verifiers", expected,
@@ -2163,24 +2238,37 @@ func (s *Session) CollectTimeoutVotes(
 	logging.Debug("timeout vote collection",
 		"subsystem", "session", "inference_id", inferenceID,
 		"accept", len(votes), "weight", accWeight,
-		"reject", rejects, "errors", errors,
+		"reject", rejects, "invalid", invalid, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
 	return votes, nil
 }
 
-// HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.
+// HasSufficientTimeoutVotes returns true if the accept votes exceed the vote
+// threshold. Votes must already have been verified against their responder --
+// CollectTimeoutVotes only returns verified votes -- since this counts the
+// weight of whatever slot each vote claims.
+//
+// Weight is deduplicated by validator address, matching applyTimeout: one
+// address cannot contribute its slot count more than once regardless of how
+// many of its slots appear in the vote list.
 func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	threshold := s.sm.VoteThreshold()
+	counted := make(map[string]bool, len(votes))
 	var accWeight uint32
 	for _, v := range votes {
-		if v.Accept {
-			addr := s.sm.SlotAddress(v.VoterSlot)
-			accWeight += s.sm.AddressSlotCount(addr)
+		if !v.Accept {
+			continue
 		}
+		addr := s.sm.SlotAddress(v.VoterSlot)
+		if counted[addr] {
+			continue
+		}
+		counted[addr] = true
+		accWeight += s.sm.AddressSlotCount(addr)
 	}
 	return accWeight > threshold
 }
