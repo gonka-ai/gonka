@@ -21,6 +21,7 @@ guard_old_compose=(docker compose --project-name "$guard_project" -f "$base")
 guard_new_compose=(docker compose --project-name "$guard_project" -f "$base" -f "$overlay")
 guard_recovery_compose=(docker compose --project-name "$guard_project" -f "$base" -f "$overlay" -f "$recovery_overlay")
 guard_old_volume=""
+guard_replacement_volume=""
 
 cleanup() {
     "${new_compose[@]}" down --volumes --remove-orphans --timeout 1 \
@@ -29,6 +30,9 @@ cleanup() {
         >/dev/null 2>&1 || true
     if [[ -n $guard_old_volume ]]; then
         docker volume rm "$guard_old_volume" >/dev/null 2>&1 || true
+    fi
+    if [[ -n $guard_replacement_volume ]]; then
+        docker volume rm "$guard_replacement_volume" >/dev/null 2>&1 || true
     fi
     docker run --rm --entrypoint sh -v "$tmpdir:/cleanup" \
         postgres:16-alpine -c \
@@ -161,6 +165,11 @@ grep -q 'refusing to initialize an empty database' <<<"$guard_logs" || fail \
 export DEVSHARD_POSTGRES_LEGACY_VOLUME=$guard_old_volume
 "${guard_recovery_compose[@]}" up -d --force-recreate "$service"
 wait_for_postgres "${guard_recovery_compose[@]}"
+recovery_container=$("${guard_recovery_compose[@]}" ps -q "$service")
+recovery_volume=$(docker inspect "$recovery_container" --format \
+    '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+[[ $recovery_volume == "$guard_old_volume" ]] || fail \
+    "recovery container did not mount the selected v4 volume"
 recovered_row=$("${guard_recovery_compose[@]}" exec -T "$service" psql \
     -U devshardd -d devshardd -Atc \
     "SELECT value FROM detached_volume_probe;")
@@ -172,8 +181,17 @@ recovered_row=$("${guard_recovery_compose[@]}" exec -T "$service" psql \
 
 # Remove the temporary legacy mount and prove the recovered bind is now the
 # only storage needed by a normal deployment restart.
-"${guard_new_compose[@]}" up -d --force-recreate "$service"
+"${guard_new_compose[@]}" up -d --force-recreate --renew-anon-volumes "$service"
 wait_for_postgres "${guard_new_compose[@]}"
+replacement_container=$("${guard_new_compose[@]}" ps -q "$service")
+guard_replacement_volume=$(docker inspect "$replacement_container" --format \
+    '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+[[ -n $guard_replacement_volume ]] || fail \
+    "normal deployment did not create a replacement anonymous volume"
+[[ $guard_replacement_volume != "$guard_old_volume" ]] || fail \
+    "normal deployment retained the temporary recovery volume"
+docker volume inspect "$guard_old_volume" >/dev/null || fail \
+    "detaching the recovery mount removed its rollback volume"
 recovered_row=$("${guard_new_compose[@]}" exec -T "$service" psql \
     -U devshardd -d devshardd -Atc \
     "SELECT value FROM detached_volume_probe;")

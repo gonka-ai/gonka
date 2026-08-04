@@ -227,16 +227,28 @@ target_root=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
 "${recovery_compose[@]}" exec -T devshard-postgres \
   test -s /var/lib/postgresql/gonka/data/PG_VERSION
 
-# Detach the temporary source. The recovered bind is now authoritative.
-"${compose[@]}" up -d --no-deps --force-recreate \
+# Detach the temporary source. The recovered bind is now authoritative, so it
+# is safe to replace only the image-declared anonymous legacy mount.
+"${compose[@]}" up -d --no-deps --force-recreate --renew-anon-volumes \
   --wait --wait-timeout 2100 devshard-postgres
+
+container_id=$("${compose[@]}" ps -q devshard-postgres)
+current_legacy_volume=$(docker inspect "$container_id" --format \
+  '{{range .Mounts}}{{if eq .Destination "/var/lib/postgresql/data"}}{{.Name}}{{end}}{{end}}')
+if [ -z "$current_legacy_volume" ] || \
+   [ "$current_legacy_volume" = "$DEVSHARD_POSTGRES_LEGACY_VOLUME" ]; then
+  echo "temporary PostgreSQL recovery volume is still attached" >&2
+  exit 1
+fi
 )
 ```
 
 Repeat the database verification above, then resume the normal cutover at the
 first versiond replacement. Keep the detached source volume and a logical or
 physical backup through the rollback window. Do not use the empty-init override
-to silence a recovery condition.
+to silence a recovery condition. `--renew-anon-volumes` is safe only in the
+post-recovery command above, after the bind-mounted `PGDATA` has been verified;
+never add it to the initial v4-to-v5 migration command.
 
 ### Graceful versiond shutdown (single-instance and HA)
 
