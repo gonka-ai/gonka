@@ -2118,16 +2118,41 @@ func (s *Session) CollectTimeoutVotes(
 			continue // skip failed hosts
 		}
 		if res.vote != nil {
+			// Bind the response to the host we contacted. VoterSlot is not in
+			// the signed TimeoutVoteContent, so a byzantine verifier can claim
+			// another validator's slot; never count weight or append until the
+			// claimed slot belongs to the known responder (same pattern as
+			// fetchSignature / processResponse).
+			claimedAddr := s.sm.SlotAddress(res.vote.VoterSlot)
+			if claimedAddr == "" || claimedAddr != res.verifierAddr {
+				errors++
+				logging.Stage(ctx, "timeout_vote_result",
+					logFields(
+						res.verifierAddr,
+						"outcome", "error",
+						"voter_slot", res.vote.VoterSlot,
+						"claimed_voter", shortAddress(claimedAddr),
+						"running_weight", accWeight,
+						"threshold", voteThreshold,
+						"error", "voter_slot not owned by responder",
+					)...,
+				)
+				logging.Debug("timeout vote rejected: voter_slot not owned by responder",
+					"subsystem", "session", "inference_id", inferenceID,
+					"verifier", res.verifierAddr, "voter_slot", res.vote.VoterSlot,
+					"claimed", claimedAddr)
+				continue
+			}
 			votes = append(votes, res.vote)
-			voterAddr := s.sm.SlotAddress(res.vote.VoterSlot)
-			weight := s.sm.AddressSlotCount(voterAddr)
+			// Weight from the known responder address, not from the response field.
+			weight := s.sm.AddressSlotCount(res.verifierAddr)
 			accWeight += weight
 			logging.Stage(ctx, "timeout_vote_result",
 				logFields(
 					res.verifierAddr,
 					"outcome", "accept",
 					"voter_slot", res.vote.VoterSlot,
-					"voter", shortAddress(voterAddr),
+					"voter", shortAddress(res.verifierAddr),
 					"weight", weight,
 					"running_weight", accWeight,
 					"threshold", voteThreshold,
@@ -2170,6 +2195,8 @@ func (s *Session) CollectTimeoutVotes(
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote threshold.
+// Votes must already be responder-bound (CollectTimeoutVotes rejects spoofed
+// voter_slot); weight is derived from each vote's VoterSlot owner.
 func (s *Session) HasSufficientTimeoutVotes(votes []*types.TimeoutVote) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

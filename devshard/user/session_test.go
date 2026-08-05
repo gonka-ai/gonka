@@ -435,9 +435,21 @@ type mockTimeoutVerifier struct {
 	group    []types.SlotAssignment
 	slotIdx  int
 	escrowID string // defaults to "escrow-1" when empty
+	// claimSlot, when non-nil, overrides the returned voter_slot (used to
+	// simulate a byzantine verifier claiming another validator's slot).
+	claimSlot *uint32
+	// delay, when >0, sleeps before returning (honest slow responders).
+	delay time.Duration
 }
 
-func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+func (m *mockTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
+	if m.delay > 0 {
+		select {
+		case <-time.After(m.delay):
+		case <-ctx.Done():
+			return false, nil, 0, ctx.Err()
+		}
+	}
 	if !m.accept {
 		return false, nil, 0, nil
 	}
@@ -446,6 +458,9 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		eid = "escrow-1"
 	}
 	voterSlot := m.group[m.slotIdx].SlotID
+	if m.claimSlot != nil {
+		voterSlot = *m.claimSlot
+	}
 	content := &types.TimeoutVoteContent{
 		EscrowId:    eid,
 		InferenceId: inferenceID,
@@ -461,6 +476,107 @@ func (m *mockTimeoutVerifier) VerifyTimeout(_ context.Context, inferenceID uint6
 		return false, nil, 0, err
 	}
 	return true, sig, voterSlot, nil
+}
+
+// TestCollectTimeoutVotes_RejectsSpoofedVoterSlot ensures a byzantine verifier
+// cannot terminate collection early by returning accept=true with a high-weight
+// validator's voter_slot while signing with its own key. Weight and early-exit
+// must bind to the contacted responder; the spoofed vote must be dropped so
+// honest delayed responses can still form a valid quorum.
+func TestCollectTimeoutVotes_RejectsSpoofedVoterSlot(t *testing.T) {
+	// 4 validators, slots [1, 1, 5, 1] (total 8). VoteThreshold = 4; need >4.
+	// Signer[2] owns weight 5. Malicious signer[0] (weight 1) claims one of
+	// signer[2]'s slots. Without the bind check, a single spoofed response
+	// would push running weight to 5 and cancel the remaining honest RPCs.
+	signers := make([]*signing.Secp256k1Signer, 4)
+	for i := range signers {
+		signers[i] = testutil.MustGenerateKey(t)
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeMultiSlotGroup(signers, []int{1, 1, 5, 1})
+	numSlots := len(group)
+	config := types.SessionConfig{
+		RefusalTimeout:   60,
+		ExecutionTimeout: 1200,
+		TokenPrice:       1,
+		VoteThreshold:    uint32(numSlots) / 2, // 8/2 = 4
+	}
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]HostClient, numSlots)
+	for i, slot := range group {
+		slotSigner := signerForSlot(t, signers, slot)
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+		engine := stub.NewInferenceEngine()
+		h, err := host.NewHost(sm, slotSigner, engine, "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+
+	// Executor = group[1 % 8] (nonce 1). First index owned by signer[1].
+	executorIdx := int(1 % uint64(numSlots))
+	executorAddr := group[executorIdx].ValidatorAddress
+
+	// Pick a slot owned by high-weight signer[2] for the spoof claim.
+	var heavySlot uint32
+	for _, slot := range group {
+		if slot.ValidatorAddress == signers[2].Address() {
+			heavySlot = slot.SlotID
+			break
+		}
+	}
+
+	verifiers := make(map[int]TimeoutVerifier)
+	for i, slot := range group {
+		if slot.ValidatorAddress == executorAddr {
+			continue
+		}
+		slotSigner := signerForSlot(t, signers, slot)
+		m := &mockTimeoutVerifier{
+			accept:  true,
+			signer:  slotSigner,
+			group:   group,
+			slotIdx: i,
+			delay:   50 * time.Millisecond, // honest responders are slower
+		}
+		// First index owned by signer[0]: return immediately with spoofed slot.
+		if slot.ValidatorAddress == signers[0].Address() {
+			claim := heavySlot
+			m.claimSlot = &claim
+			m.delay = 0
+		}
+		verifiers[i] = m
+	}
+
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt:      testutil.TestPrompt,
+		Model:       "llama",
+		InputLength: 100,
+		MaxTokens:   50,
+		StartedAt:   1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+
+	// Malicious verifier only returned a spoofed foreign slot (never its own),
+	// so its address must not appear among collected votes.
+	for _, v := range votes {
+		require.NotEqual(t, signers[0].Address(), session.sm.SlotAddress(v.VoterSlot),
+			"spoofed response from validator-0 must be dropped")
+	}
+	require.NotEmpty(t, votes, "honest delayed verifiers must still be collected")
+	require.True(t, session.HasSufficientTimeoutVotes(votes),
+		"honest delayed votes must still form a quorum after spoofed response is dropped")
 }
 
 // concurrencyMockVerifier is a TimeoutVerifier that records concurrency
