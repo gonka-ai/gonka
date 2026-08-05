@@ -8,15 +8,25 @@ at revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`.
 The benchmark used gonka-poc with sequence length 1024 and `k_dim=12`. Nonce
 rates are measurements, not admission limits or calibrated chain weights.
 
+## Acknowledgements
+
+Most of the underlying hardware-profile, throughput, speculative-decoding,
+and validation experiments were conducted by the
+[Kaitaku team](https://github.com/kaitakuai/experiments/tree/main/2026-08).
+Thank you to Kaitaku for the research, development, and reproducible evidence
+that made this integration possible. The four-instance H200 verification below
+is a separate final-image rerun performed for this PR.
+
 ## Planned chain parameters
 
-DeepSeek V4 Flash 0731 uses a PoC weight scale factor of `0.32`, a PoC L2
-distance threshold (`PoCStatTestParams.dist_threshold`) of `0.41`, and a
-provisional inference validation threshold (`Model.validation_threshold`) of
-`0.90` with processed logprobs. These are release inputs for the separate
-chain activation; this MLNode PR records them but does not activate the model
-on chain. The inference threshold is independent of the PoC L2 threshold and
-must be revisited as validation evidence grows.
+The candidate chain settings are a PoC weight scale factor of `0.32`, PoC
+stat-test parameters `dist_threshold=0.41`, `p_mismatch=0.10`, and
+`fraud_threshold=0.05`, and a provisional inference validation threshold
+(`Model.validation_threshold`) of `0.90` with processed logprobs. The PoC and
+inference settings passed the honest multi-instance checks below. The `0.32`
+weight is chain-side arithmetic and is reported against measured throughput,
+not passed to MLNode as a runtime flag. This MLNode PR records release inputs
+and evidence but does not activate the model.
 
 ## Hardware profiles
 
@@ -25,6 +35,7 @@ must be revisited as validation evidence grows.
 | 1× B300 | 1 | 0.90 | 32768 | 32 | 1728 | 580.126.09 |
 | 2× B200 | 2 | 0.90 | 32768 | 32 | 2304 | 580.126.09 |
 | 2× H200 | 2 | 0.90 | 32768 | 32 | 1215–1216 | 590.48.01 |
+| 4× (2× H200), concurrent | 2 | 0.90 | 32768 | 32 | 1051.5–1055.7 each; 4205.7 aggregate | 580.173.02 |
 | 4× H100 80 GB | 4 | 0.85 | 16384 | 16 | 1504 | 580.126.20 |
 
 The rates above are per vLLM instance. The full batch sweeps below show
@@ -54,6 +65,40 @@ MLNode may start more than one vLLM instance on a node. It starts
 B300s with TP=1 start two instances; four B200s with TP=2 also start two. The
 configured `max_concurrent=500` is a routing queue ceiling, not a measured safe
 number of simultaneously running GPU sequences.
+
+## Four-instance H200 verification
+
+The published MLNode image cold-started four independent TP2 vLLM instances
+on eight H200s in 555.6 seconds. The model cache was mounted on tmpfs. All four
+backends reached `/health`, remained healthy under simultaneous load, and
+used the pinned model revision and processed logprobs.
+
+Inference validation replayed every source against every validator, including
+self-replay (16 directed pairs). All 16 similarities passed the provisional
+strict `>0.90` comparison; the observed range was 0.9591–1.0. Tool calling
+produced a valid parsed function call on all four backends. Reasoning was
+separated into the OpenAI-compatible `message.reasoning` field on all four
+backends.
+
+PoC generation used `seq_len=1024`, `k_dim=12`, and batch 32. A simultaneous
+640-nonce run measured 1051.5–1055.7 nonce/min per instance and 4205.7
+nonce/min in aggregate. Applying the `0.32` weight gives 336.5–337.8 weighted
+nonce/min per instance and 1345.8 in aggregate.
+
+For each of the 16 directed replica pairs, 640 fixed nonces were replayed
+three times (1920 L2 samples per pair). At `dist_threshold=0.41`, honest
+mismatch rates were 0.68%–1.72%. Observed p95 was 0.315–0.333, p99 was
+0.401–0.435, and isolated maxima reached 0.61–1.39. The live 64-nonce API
+matrix had at most two mismatches per validation. With `p_mismatch=0.10` and
+`fraud_threshold=0.05`, its smallest upper-tail p-value was approximately
+0.9904, so all 16 honest validations passed the statistical test.
+
+This agrees with the earlier B200/H200 campaign: normal routing accepted only
+98.8%–99.2% of honest artifacts at 0.41, while honest and alternate
+quantization distributions had AUC near 0.5. The intended statistical
+parameters avoid false fraud in this run, but they do not create quantization
+separability. Detection of a disallowed quantization therefore remains a
+separate policy gate.
 
 For H100, set `POC_BATCH_SIZE_DEFAULT=16`. The encoded 0.85/16384 profile is
 the only tested H100 configuration that survived the campaign's long-prompt,
@@ -122,6 +167,8 @@ Before enabling the release model on chain:
 6. Measure the alternate quantization across GPU families and evaluate the
    provisional inference validation threshold `0.90`. This is separate from
    the planned PoC L2 threshold and remains subject to recalibration.
-7. Add DeepSeek V4 Flash 0731, PoC weight scale `0.32`, PoC L2 threshold
-   `0.41`, and provisional inference validation threshold `0.90` to the chain
-   upgrade, then rehearse mixed old and new nodes through a full epoch.
+7. Keep PoC weight scale `0.32`, PoC stat-test parameters `0.41`/`0.10`/`0.05`,
+   and provisional inference validation threshold `0.90` as activation
+   candidates. Reproduce the PoC test with production sample sizing and keep
+   alternate-quantization detection as a separate policy gate.
+8. Rehearse mixed old and new nodes through a full epoch before activation.
