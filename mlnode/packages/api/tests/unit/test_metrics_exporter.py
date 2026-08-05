@@ -134,6 +134,14 @@ def test_schema_and_source_timestamps_present(client):
     assert 'mlnode_source_scrape_timestamp_seconds{source="vllm",replica="0"}' in body
 
 
+def test_version_metric_reports_release_version(client, monkeypatch):
+    monkeypatch.setenv("MLNODE_RELEASE_VERSION", "3.0.14-post2")
+
+    body = client.get("/metrics").text
+
+    assert 'mlnode_version_info{version="3.0.14-post2"} 1' in body
+
+
 def test_failed_replica_scrape_keeps_stale_timestamp(client, monkeypatch):
     first = client.get("/metrics").text
     ts_line = next(

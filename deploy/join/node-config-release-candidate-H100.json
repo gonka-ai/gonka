@@ -6,15 +6,19 @@
     "poc_port": 8080,
     "max_concurrent": 500,
     "models": {
-      "REPLACE_WITH_RELEASE_MODEL_ID": {
+      "deepseek-ai/DeepSeek-V4-Flash-0731": {
         "args": [
-          "--revision", "REPLACE_WITH_MODEL_REVISION",
+          "--revision", "7872f01b1d1fe23eabc4c98b48bffcef5a386062",
           "--tensor-parallel-size", "4",
           "--gpu-memory-utilization", "0.85",
           "--max-model-len", "400000",
           "--max-num-batched-tokens", "16384",
           "--kv-cache-dtype", "fp8",
           "--logprobs-mode", "processed_logprobs",
+          "--tokenizer-mode", "deepseek_v4",
+          "--enable-auto-tool-choice",
+          "--tool-call-parser", "deepseek_v4",
+          "--reasoning-parser", "deepseek_v4",
           "--worker-extension-cls", "gonka_poc.worker.PoCWorkerExtension",
           "--trust-remote-code"
         ]

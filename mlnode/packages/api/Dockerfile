@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.4
 ################################################################################
 ARG VLLM_BASE_IMAGE=ghcr.io/gonka-ai/vllm:v0.25.1-poc-v2
+ARG MLNODE_RELEASE_VERSION=unknown
 FROM ${VLLM_BASE_IMAGE} AS base
 
 RUN --mount=type=cache,target=/var/lib/apt/lists \
@@ -74,6 +75,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 
 ################################################################################
 FROM base AS app
+ARG MLNODE_RELEASE_VERSION
 COPY --from=builder /app/packages/api/.venv /app/packages/api/.venv
 
 COPY packages/api/src /app/packages/api/src
@@ -89,11 +91,14 @@ COPY packages/train/resources /app/packages/train/resources
 COPY packages/common/src /app/packages/common/src
 
 ENV PYTHONPATH="/app:/app/packages/api/src" \
+    MLNODE_RELEASE_VERSION="${MLNODE_RELEASE_VERSION}" \
     LD_LIBRARY_PATH="/lib/x86_64-linux-gnu:${LD_LIBRARY_PATH}" \
     MLNODE_VLLM_MODULE="gonka_poc.entrypoint.api_router" \
     TRITON_PTXAS_PATH="/usr/local/cuda/bin/ptxas" \
     VLLM_ALLOW_INSECURE_SERIALIZATION=1 \
     VLLM_RUNNER_TIMEOUT=3600
+
+LABEL org.opencontainers.image.version="${MLNODE_RELEASE_VERSION}"
 
 COPY packages/api/entrypoint.sh /app/entrypoint.sh
 RUN chmod +x /app/entrypoint.sh

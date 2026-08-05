@@ -1,6 +1,6 @@
 services:
   mlnode-308:
-    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b}
+    image: ${MLNODE_IMAGE:-ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc2@sha256:a476dd28b79b81126b460a56e3f2c8e573bbddfda3e854776cb6fc0f60208f81}
     hostname: mlnode-308
     volumes:
       - ${HF_HOME:-${HOME}/.cache}:/root/.cache

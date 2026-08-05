@@ -25,7 +25,7 @@ def series(name: str, labels: Dict[str, str], value: float) -> str:
 # counters lose counter semantics in strict consumers.
 FAMILY_META = {
     "gonka_metrics_schema_info": ("gauge", "Metrics schema version exported by this node."),
-    "mlnode_version_info": ("gauge", "mlnode API package version."),
+    "mlnode_version_info": ("gauge", "MLNode release version."),
     "mlnode_config_info": ("gauge", "Effective inference configuration of this node."),
     "mlnode_source_scrape_timestamp_seconds": ("gauge", "Unix time of the last successful collection per source."),
     "mlnode_gpu_temp_core_celsius": ("gauge", "GPU core temperature."),

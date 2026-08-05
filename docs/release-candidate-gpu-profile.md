@@ -1,21 +1,22 @@
 # Release-candidate GPU profile
 
 This document captures the reproducible parts of an external hardware
-campaign. The release model ID, revision, and experiment location are supplied
-out of band until the model announcement.
+campaign for
+[`deepseek-ai/DeepSeek-V4-Flash-0731`](https://huggingface.co/deepseek-ai/DeepSeek-V4-Flash-0731)
+at revision `7872f01b1d1fe23eabc4c98b48bffcef5a386062`.
 
 The benchmark used gonka-poc with sequence length 1024 and `k_dim=12`. Nonce
 rates are measurements, not admission limits or calibrated chain weights.
 
 ## Planned chain parameters
 
-The pending release model uses a PoC weight scale factor of `0.32`, a PoC L2
+DeepSeek V4 Flash 0731 uses a PoC weight scale factor of `0.32`, a PoC L2
 distance threshold (`PoCStatTestParams.dist_threshold`) of `0.41`, and a
 provisional inference validation threshold (`Model.validation_threshold`) of
-`0.90` with processed logprobs. These are release inputs for the separate chain
-activation; this MLNode PR records them but does not activate the model on
-chain. The inference threshold is independent of the PoC L2 threshold and must
-be revisited as validation evidence grows.
+`0.90` with processed logprobs. These are release inputs for the separate
+chain activation; this MLNode PR records them but does not activate the model
+on chain. The inference threshold is independent of the PoC L2 threshold and
+must be revisited as validation evidence grows.
 
 ## Hardware profiles
 
@@ -37,10 +38,16 @@ speculative decoding off/on in nonce/min:
 | 4× H100 80 GB | 1424 / 1408 | 1504 / 1504 | unavailable / unavailable |
 
 The matching files are in `deploy/join/node-config-release-candidate-*.json`.
-Replace `REPLACE_WITH_RELEASE_MODEL_ID` and `REPLACE_WITH_MODEL_REVISION` from
-the private release manifest before use. The profiles set 400k context, FP8 KV
-cache, processed logprobs, and the PoC worker extension. Do not force an
-attention backend; use the runtime-selected default.
+All profiles pin the Hugging Face model and revision above and set 400k
+context, FP8 KV cache, processed logprobs, and the PoC worker extension. They
+also use `--tokenizer-mode deepseek_v4`, `--enable-auto-tool-choice`,
+`--tool-call-parser deepseek_v4`, and `--reasoning-parser deepseek_v4`, matching
+the DeepSeek V4 encoding and parser implementations bundled with vLLM 0.25.1.
+Do not force an attention backend; use the runtime-selected default.
+
+Clients select reasoning with `chat_template_kwargs`: `thinking=true` and
+`reasoning_effort=low|high|max`. DeepSeek recommends `temperature=1.0` and
+`top_p=0.95` for agentic scenarios (`top_p=1.0` otherwise).
 
 MLNode may start more than one vLLM instance on a node. It starts
 `floor(visible GPUs / (TP × PP))`, capped by `INFERENCE_MAX_INSTANCES`. Two
@@ -56,8 +63,7 @@ until `--max-num-seqs` is calibrated; the campaign did not establish a value.
 
 ## Optional speculative decoding
 
-Speculative decoding is deliberately not enabled by the public node profiles;
-its exact configuration is part of the private release manifest. It was
+Speculative decoding is deliberately not enabled by the node profiles. It was
 neutral for PoC throughput and nonce compatibility, but its serving benefit
 depends strongly on workload:
 
@@ -75,10 +81,9 @@ throughput fell by 42%.
 ## Image and driver requirements
 
 - Use the production org mirror
-  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`.
-  The source image
-  `ghcr.io/vbgd0/gonka-mlnode:3.0.14-post2-vllm0.25.1-rc1@sha256:7ba43ce4ad98d0d34c7b8626b424fffc2857c8dd4a2de86831e1b522fa09042b`
-  resolves to the same OCI index digest.
+  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc2@sha256:a476dd28b79b81126b460a56e3f2c8e573bbddfda3e854776cb6fc0f60208f81`.
+  It reports the canonical MLNode release `3.0.14-post2` through
+  `/api/v1/state`, `/api/v1/versions`, and `mlnode_version_info`.
 - Use the Gonka vLLM 0.25.1 build containing the current PoC replay support.
   Do not set the removed `VLLM_USE_V1` switch or pin
   `VLLM_USE_V2_MODEL_RUNNER=0`.
@@ -104,8 +109,8 @@ stale checkpoint was easier to detect, but one threshold cannot cover both.
 
 Before enabling the release model on chain:
 
-1. Verify the pinned image's vLLM, gonka-poc, CUDA, driver, `libnvrtc.so`,
-   model ID, and revision before activation.
+1. Verify the pinned image's vLLM, gonka-poc, CUDA, driver, `libnvrtc.so`, and
+   the pinned DeepSeek V4 Flash 0731 revision before activation.
 2. Run cold start, `/health`, `/metrics`, inference, PoC generation, and PoC
    validation on every advertised card profile.
 3. Reproduce the nonce/min rows with 5-second warmup and 30-second steady
@@ -117,6 +122,6 @@ Before enabling the release model on chain:
 6. Measure the alternate quantization across GPU families and evaluate the
    provisional inference validation threshold `0.90`. This is separate from
    the planned PoC L2 threshold and remains subject to recalibration.
-7. Add the private manifest values, PoC weight scale `0.32`, PoC L2 threshold
+7. Add DeepSeek V4 Flash 0731, PoC weight scale `0.32`, PoC L2 threshold
    `0.41`, and provisional inference validation threshold `0.90` to the chain
    upgrade, then rehearse mixed old and new nodes through a full epoch.

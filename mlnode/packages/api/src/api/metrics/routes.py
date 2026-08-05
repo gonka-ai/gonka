@@ -7,7 +7,7 @@ and excludes placement details.
 import asyncio
 import os
 import time
-from typing import List, Optional
+from typing import List
 
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import PlainTextResponse
@@ -19,6 +19,7 @@ from api.metrics import host_source, vllm_source, xid_source
 from api.metrics.allowlist import SCHEMA_VERSION
 from api.metrics import render
 from api.metrics.render import series as _series
+from api.version import get_mlnode_version
 
 logger = create_logger(__name__)
 
@@ -95,18 +96,10 @@ def _config_info_lines(request: Request) -> List[str]:
     return [_series("mlnode_config_info", labels, 1)]
 
 
-_api_version: Optional[str] = None
-
-
 def _version_info_lines() -> List[str]:
-    global _api_version
-    if _api_version is None:
-        try:
-            from importlib.metadata import version
-            _api_version = version("mlnode-api")
-        except Exception:
-            _api_version = "unknown"
-    return [_series("mlnode_version_info", {"version": _api_version}, 1)]
+    return [
+        _series("mlnode_version_info", {"version": get_mlnode_version()}, 1)
+    ]
 
 
 @router.get("/metrics")
