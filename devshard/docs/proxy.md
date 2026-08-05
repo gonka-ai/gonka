@@ -21,7 +21,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `DEVSHARD_CHAIN_GRPC` | `localhost:9090` | Chain gRPC URL for queries and unordered create/settle transactions |
 | `DEVSHARD_CHAIN_RPC` (Optional) | `http://localhost:26657` | CometBFT RPC URL used as a fallback when gRPC is unreachable |
 | `DEVSHARD_PUBLIC_API` (Optional) | `http://localhost:9000` | Public API URL for epoch/PoC phase and participants (cached). Set to `none` or `disabled` to query the chain directly |
-| `DEVSHARD_PARAMS_SOURCE` (Optional) | `adaptive` | Set to `chain` to poll runtime params from the blockchain; otherwise, requires access to the API node (`api` container) with chain fallback |
+| `DEVSHARD_PARAMS_SOURCE` (Optional) | `adaptive` | Set to `chain` to poll runtime params from the blockchain; otherwise, queries the `api` container (NodeManager gRPC port `:9400`) with chain fallback |
 
 ### Other settings
 
