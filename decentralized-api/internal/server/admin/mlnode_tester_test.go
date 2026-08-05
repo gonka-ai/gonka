@@ -660,6 +660,21 @@ func TestMLNodeTester_TeardownOnlySkippedForInvalidation(t *testing.T) {
 		}
 	}
 
+	// IsRunning flips in Run before runOnce reaches the pre-launch Stop, so
+	// cancelling on that signal alone can abort at the loop's ctx.Err() check
+	// and skip it — leaving one Stop, not two. Wait for the launch sequence to
+	// have actually started before interfering with it.
+	waitStops := func(t *testing.T, mc *mlnodeclient.MockClient, want int) {
+		t.Helper()
+		deadline := time.Now().Add(2 * time.Second)
+		for stopCount(mc) < want {
+			if time.Now().After(deadline) {
+				t.Fatalf("Stop called %d times, want at least %d", stopCount(mc), want)
+			}
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
 	t.Run("client disconnect still tears down", func(t *testing.T) {
 		tester, mc, _ := newTester(t)
 		ctx, cancel := context.WithCancel(context.Background())
@@ -672,6 +687,7 @@ func TestMLNodeTester_TeardownOnlySkippedForInvalidation(t *testing.T) {
 			}
 		}()
 		waitInFlight(t, tester)
+		waitStops(t, mc, 1) // the pre-launch Stop has landed; the launch is under way
 
 		cancel() // the operator closed the tab
 		select {
