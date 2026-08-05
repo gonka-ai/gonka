@@ -51,6 +51,8 @@ type DevshardMetrics struct {
 	quarantineTransitions *prometheus.CounterVec
 	noWinnerAttempts      *prometheus.CounterVec
 	timeoutActions        *prometheus.CounterVec
+	affinityDecisions     *prometheus.CounterVec
+	affinityBindings      *prometheus.GaugeVec
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -315,6 +317,20 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model", "kind", "action", "reason"},
 		),
+		affinityDecisions: prometheus.NewCounterVec(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_affinity_decision_total",
+				Help: "Total session-affinity outcomes for the primary attempt by devshard and decision (hit, yielded, miss).",
+			},
+			[]string{"devshard_id", "decision"},
+		),
+		affinityBindings: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_affinity_bindings",
+				Help: "Current number of live session-affinity bindings tracked by the devshard.",
+			},
+			[]string{"devshard_id"},
+		),
 	}
 
 	registry.MustRegister(
@@ -347,6 +363,8 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.quarantineTransitions,
 		m.noWinnerAttempts,
 		m.timeoutActions,
+		m.affinityDecisions,
+		m.affinityBindings,
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
@@ -574,6 +592,20 @@ func (m *DevshardMetrics) RecordGatewayTimeoutAction(action GatewayTimeoutAction
 		metricLabel(action.Action, "unknown"),
 		metricLabel(action.Reason, "none"),
 	).Inc()
+}
+
+func (m *DevshardMetrics) RecordAffinityDecision(devshardID, decision string) {
+	if m == nil {
+		return
+	}
+	m.affinityDecisions.WithLabelValues(metricLabel(devshardID, "unknown"), metricLabel(decision, "unknown")).Inc()
+}
+
+func (m *DevshardMetrics) SetAffinityBindings(devshardID string, bindings int) {
+	if m == nil {
+		return
+	}
+	m.affinityBindings.WithLabelValues(metricLabel(devshardID, "unknown")).Set(float64(bindings))
 }
 
 func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample RequestSample) {

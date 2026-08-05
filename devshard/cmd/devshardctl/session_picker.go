@@ -26,7 +26,8 @@
 //	   excluded this host's participant: dispatch it as a real
 //	   inference. The matched request is removed from the queue
 //	   and replied to. This is the only branch that actually hits
-//	   the host.
+//	   the host. A live sticky preference wins among compatible
+//	   requests, unless the oldest unsteered one has aged out.
 //
 //	3. Healthy host but every queued request has already excluded
 //	   this host's participant: hold the nonce up to
@@ -80,6 +81,9 @@ import (
 // nonce as a synthetic ghost probe. Tuned so a single request landing
 // in an empty queue does not immediately consume nonces that
 // co-arriving traffic could have used productively.
+//
+// It is also the window in which a sticky preference may steer or be steered
+// past, so raising it to burn fewer nonces lengthens the reordering too.
 const pickerStaleThreshold = 200 * time.Millisecond
 
 // errPickerEmpty is returned by the chooser when the queue is empty
@@ -140,12 +144,27 @@ func (g ghostKind) reason() string {
 // of the per-request retry memory. Excluding by participant key
 // guarantees one-attempt-per-host even when a participant has
 // multiple group slots.
+//
+// stickyParticipant only reorders matching, so it can never burn or delay a nonce.
 type pickerRequest struct {
 	params              user.InferenceParams
 	excludeParticipants map[string]bool // participant keys this request has already tried
+	stickyParticipant   string
 	ctx                 context.Context
 	submitTime          time.Time
 	reply               chan pickerResult // buffered; one write only
+}
+
+// activeSticky returns the preference only while honouring it is free: the sticky
+// participant can serve now and the request has not aged past the stale threshold.
+func (r *pickerRequest) activeSticky(available map[string]bool, now time.Time) string {
+	if r.stickyParticipant == "" || !available[r.stickyParticipant] {
+		return ""
+	}
+	if now.Sub(r.submitTime) >= pickerStaleThreshold {
+		return ""
+	}
+	return r.stickyParticipant
 }
 
 // pickerResult is the dispatch outcome delivered back to the submitter.
@@ -314,9 +333,9 @@ func (p *sessionPicker) run() {
 		// No ghost outcome contacts the host; the kind is purely a
 		// log label (see ghostDispatcher doc).
 		var (
-			chosen    *pickerRequest
-			ghost     ghostKind
-			holdUntil time.Time
+			chosen              *pickerRequest
+			ghost               ghostKind
+			holdUntil           time.Time
 			ghostParticipantKey string
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
@@ -367,22 +386,11 @@ func (p *sessionPicker) run() {
 			// excluding by ParticipantKey ensures a request that
 			// already failed on participant X is not re-dispatched to
 			// another slot owned by X.
-			blockReason := ""
-			for i, r := range p.queue {
-				if r.excludeParticipants[b.ParticipantKey] {
-					continue
-				}
-				if p.capabilityBlock != nil {
-					if reason, blocked := p.capabilityBlock(b.ParticipantKey, r.params); blocked {
-						if blockReason == "" {
-							blockReason = reason
-						}
-						continue
-					}
-				}
-				chosen = r
-				p.removeAtLocked(i)
-				return r.params, false, nil
+			matched, blockReason := p.matchQueuedLocked(b.ParticipantKey, available, time.Now())
+			if matched >= 0 {
+				chosen = p.queue[matched]
+				p.removeAtLocked(matched)
+				return chosen.params, false, nil
 			}
 
 			// Branch 3: no compatible request. Hold the nonce briefly
@@ -590,6 +598,82 @@ func (p *sessionPicker) hasCompatibleParticipantLocked(req *pickerRequest, avail
 		return true
 	}
 	return false
+}
+
+// matchQueuedLocked (p.mu held) returns the queue index taking this nonce, or -1
+// and the first capability-block reason when no queued request can use it.
+func (p *sessionPicker) matchQueuedLocked(participantKey string, available map[string]bool, now time.Time) (int, string) {
+	stickyHit, unbound := p.preferredCandidatesLocked(participantKey, available, now)
+	candidates := [2]int{stickyHit, unbound}
+	// The queue is FIFO, so unbound is the oldest request nothing steers: once it
+	// has waited out the threshold it stops being overtaken.
+	if unbound >= 0 && now.Sub(p.queue[unbound].submitTime) >= pickerStaleThreshold {
+		candidates = [2]int{unbound, stickyHit}
+	}
+	for _, candidate := range candidates {
+		if candidate < 0 {
+			continue
+		}
+		if _, blocked := p.capabilityBlockedLocked(participantKey, candidate); !blocked {
+			return candidate, ""
+		}
+	}
+	return p.firstCompatibleLocked(participantKey)
+}
+
+// preferredCandidatesLocked (p.mu held) is the cheap pass, no capability calls:
+// the first sticky hit -- never ahead of a narrower retry -- and the first unbound.
+func (p *sessionPicker) preferredCandidatesLocked(participantKey string, available map[string]bool, now time.Time) (stickyHit, unbound int) {
+	stickyHit, unbound = -1, -1
+	narrowerWaiting := false
+	for i, request := range p.queue {
+		if request.excludeParticipants[participantKey] {
+			continue
+		}
+		sticky := request.activeSticky(available, now)
+		if sticky == "" {
+			if unbound < 0 {
+				unbound = i
+			}
+		} else if sticky == participantKey && stickyHit < 0 && !narrowerWaiting {
+			stickyHit = i
+		}
+		if len(request.excludeParticipants) > 0 {
+			narrowerWaiting = true
+		}
+		if stickyHit >= 0 && unbound >= 0 {
+			return stickyHit, unbound
+		}
+	}
+	return stickyHit, unbound
+}
+
+// firstCompatibleLocked (p.mu held) is the preference-free fallback: the first
+// request this participant may serve, or -1 and the first block reason seen.
+func (p *sessionPicker) firstCompatibleLocked(participantKey string) (int, string) {
+	blockReason := ""
+	for i, request := range p.queue {
+		if request.excludeParticipants[participantKey] {
+			continue
+		}
+		if reason, blocked := p.capabilityBlockedLocked(participantKey, i); blocked {
+			if blockReason == "" {
+				blockReason = reason
+			}
+			continue
+		}
+		return i, ""
+	}
+	return -1, blockReason
+}
+
+// capabilityBlockedLocked (p.mu held) asks the capability checker about one
+// queued request; a nil checker blocks nothing.
+func (p *sessionPicker) capabilityBlockedLocked(participantKey string, index int) (string, bool) {
+	if p.capabilityBlock == nil {
+		return "", false
+	}
+	return p.capabilityBlock(participantKey, p.queue[index].params)
 }
 
 // dropCanceledLocked removes requests whose context was canceled,

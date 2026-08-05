@@ -18,6 +18,10 @@ message AcquireMLNodeRequest {
   // Escrow that triggered this acquire (optional). Used by dapi to attribute
   // per-escrow mlnode load for the capacity-fallback divisor.
   string escrow_id               = 3;
+  // Optional client session id, supplied by the devshard gateway in the inference
+  // request payload (not an HTTP header). When set, the broker prefers this
+  // session's last mlnode for KV-cache reuse.
+  string session_id              = 4;
 }
 
 message AcquireMLNodeResponse {

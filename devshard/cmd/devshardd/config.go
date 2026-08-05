@@ -34,6 +34,7 @@ type runtimeConfig struct {
 	ProtocolVersion         string
 	NodeManagerAddr         string
 	HostEventsEnabled       bool
+	MLNodeAffinityEnabled   bool
 	ValidationRetryInterval time.Duration
 	ValidationLeaseTTL      time.Duration
 	ShutdownGrace           time.Duration
@@ -146,6 +147,7 @@ func loadRuntimeConfig(args []string, protocolVersion, linkBinaryVersion string)
 		ProtocolVersion:         protocolVersion,
 		NodeManagerAddr:         envOr("NODE_MANAGER_ADDR", "localhost:9400"),
 		HostEventsEnabled:       envBoolOr("DEVSHARD_HOST_EVENTS_ENABLED", true),
+		MLNodeAffinityEnabled:   envBoolOr("DAPI_MLNODE_AFFINITY_ENABLED", false),
 		ValidationRetryInterval: retryInterval,
 		ValidationLeaseTTL:      leaseTTL,
 		ShutdownGrace:           shutdownGrace,

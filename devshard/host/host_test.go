@@ -1139,6 +1139,29 @@ func TestHost_ExecutingCleanup(t *testing.T) {
 	require.False(t, inMap, "inference ID should be removed from executing after completion")
 }
 
+// A re-execution that loses the session id runs the same prompt into the shared,
+// unsalted cache namespace -- the isolation the main path buys, given back.
+func TestHost_ChallengeReceipt_CarriesSessionID(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+	h, err := NewHost(sm, hosts[1], stub.NewInferenceEngine(), "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	payload := defaultPayload()
+	payload.SessionID = "sess-A"
+
+	_, _, job, err := h.challengeReceiptLocked(1, payload, []types.Diff{diff})
+
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	require.Equal(t, "sess-A", job.SessionID, "the challenge path must salt the same cache namespace as the main path")
+}
+
 func TestHost_ChallengeReceipt_AlreadyExecuting(t *testing.T) {
 	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
 	user := testutil.MustGenerateKey(t)

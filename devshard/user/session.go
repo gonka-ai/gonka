@@ -216,6 +216,7 @@ type InferenceParams struct {
 	ContextTotalHint uint64
 	StartedAt        int64
 	Stream           bool
+	AffinityKey      string
 }
 
 // Session manages the user side of the devshard protocol.
@@ -863,6 +864,7 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 			InputLength: p.params.InputLength,
 			MaxTokens:   p.params.MaxTokens,
 			StartedAt:   p.params.StartedAt,
+			SessionID:   p.params.AffinityKey,
 		},
 	}, stream, receiptHandler)
 	if err != nil && state.IsPostStateRootMismatchError(err) {

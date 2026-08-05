@@ -57,13 +57,34 @@ func (g *fakeGhost) total() int { return int(atomic.LoadInt32(&g.count)) }
 // through Redundancy.RunInference.
 func pickerEnv(t *testing.T) (*sessionPicker, *user.Session, *fakeGhost) {
 	t.Helper()
+	picker, session, ghost := stagedPickerEnv(t)
+	startPicker(t, picker)
+	return picker, session, ghost
+}
+
+// stagedPickerEnv is pickerEnv with the dispatcher still stopped, so a test can
+// stage a whole queue before the first nonce is matched. Caller must startPicker.
+func stagedPickerEnv(t *testing.T) (*sessionPicker, *user.Session, *fakeGhost) {
+	t.Helper()
+	return stagedPickerEnvWithThrottle(t, nil)
+}
+
+// stagedPickerEnvWithThrottle is stagedPickerEnv with a reactive-throttle checker,
+// so a test can make one participant unavailable without the real limiter.
+func stagedPickerEnvWithThrottle(t *testing.T, throttleBlocked throttleChecker) (*sessionPicker, *user.Session, *fakeGhost) {
+	t.Helper()
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
 	ghost := &fakeGhost{}
-	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, nil)
-	p.start()
-	t.Cleanup(p.stop)
-	return p, env.session, ghost
+	picker := newSessionPicker(env.session, "llama", ghost.dispatch, throttleBlocked, nil)
+	return picker, env.session, ghost
+}
+
+// startPicker runs the dispatcher loop and stops it at the end of the test.
+func startPicker(t *testing.T, picker *sessionPicker) {
+	t.Helper()
+	picker.start()
+	t.Cleanup(picker.stop)
 }
 
 func defaultPickerRequest() *pickerRequest {
@@ -184,6 +205,199 @@ func TestPicker_PrefersCompatibleOverGhost(t *testing.T) {
 	require.False(t, r1.isProbe, "req1 must dispatch as a real request, never probe")
 	require.False(t, r2.isProbe, "req2 must dispatch as a real request, never probe")
 	require.NotEqual(t, 1, r1.prepared.HostIdx(), "req1 excludes host 1")
+}
+
+// TestPicker_StickyRequestOutranksEarlierUnboundRequest: a request sticky to
+// the participant this nonce binds is matched ahead of an earlier unbound one.
+func TestPicker_StickyRequestOutranksEarlierUnboundRequest(t *testing.T) {
+	picker, session, ghost := stagedPickerEnv(t)
+
+	unbound := defaultPickerRequest()
+	sticky := defaultPickerRequest()
+	sticky.stickyParticipant = session.HostParticipantKey(1)
+	picker.submit(unbound)
+	picker.submit(sticky)
+	startPicker(t, picker)
+
+	stickyResult := waitReply(t, sticky, 2*time.Second)
+	unboundResult := waitReply(t, unbound, 2*time.Second)
+
+	require.NoError(t, stickyResult.err)
+	require.NoError(t, unboundResult.err)
+	require.Equal(t, 1, stickyResult.prepared.HostIdx(),
+		"nonce 1 binds host 1, so its sticky request must take it")
+	require.NotEqual(t, 1, unboundResult.prepared.HostIdx(),
+		"the unbound request queued first must yield that nonce")
+	require.Equal(t, 0, ghost.total(), "preferring a sticky request must not burn a nonce")
+}
+
+// TestPicker_LoneStickyRequestTakesForeignNonce: with nothing else queued the
+// sticky request accepts another participant's nonce instead of waiting.
+func TestPicker_LoneStickyRequestTakesForeignNonce(t *testing.T) {
+	picker, session, ghost := pickerEnv(t)
+
+	request := defaultPickerRequest()
+	request.stickyParticipant = session.HostParticipantKey(2)
+	picker.submit(request)
+
+	result := waitReply(t, request, 2*time.Second)
+	require.NoError(t, result.err)
+	require.False(t, result.isProbe, "a yielding sticky request is still a real dispatch")
+	require.Equal(t, 1, result.prepared.HostIdx(), "sticky must accept the nonce it is offered")
+	require.Equal(t, 0, ghost.total(), "yielding must not burn a nonce")
+}
+
+// TestPicker_StickinessNeverBurnsNonces: whichever participant a request is
+// sticky to, the burn counter is unchanged across its dispatch.
+func TestPicker_StickinessNeverBurnsNonces(t *testing.T) {
+	testCases := []struct {
+		name       string
+		stickyHost int
+	}{
+		{"sticky to the participant this nonce binds", 1},
+		{"sticky to the next participant", 2},
+		{"sticky to the previous participant", 0},
+	}
+	for _, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			picker, session, ghost := pickerEnv(t)
+			burnsBefore := ghost.total()
+
+			request := defaultPickerRequest()
+			request.stickyParticipant = session.HostParticipantKey(testCase.stickyHost)
+			picker.submit(request)
+
+			result := waitReply(t, request, 2*time.Second)
+			require.NoError(t, result.err)
+			require.False(t, result.isProbe)
+			require.Equal(t, burnsBefore, ghost.total(), "stickiness must not burn a nonce")
+		})
+	}
+}
+
+// TestPicker_StickyToUnavailableParticipantIsNotStarved: while the sticky
+// participant cannot serve, the request queues as an ordinary one.
+func TestPicker_StickyToUnavailableParticipantIsNotStarved(t *testing.T) {
+	throttled := map[string]bool{}
+	picker, session, ghost := stagedPickerEnvWithThrottle(t,
+		func(participantKey string) bool { return throttled[participantKey] })
+	throttledKey := session.HostParticipantKey(1)
+	throttled[throttledKey] = true
+
+	sticky := defaultPickerRequest()
+	sticky.stickyParticipant = throttledKey
+	picker.submit(sticky)
+	unbound := make([]*pickerRequest, 5)
+	for i := range unbound {
+		unbound[i] = defaultPickerRequest()
+		picker.submit(unbound[i])
+	}
+	startPicker(t, picker)
+
+	stickyResult := waitReply(t, sticky, 2*time.Second)
+	require.NoError(t, stickyResult.err)
+	require.EqualValues(t, 2, stickyResult.prepared.Nonce(),
+		"the sticky request queued first must take the first servable nonce, not wait behind five others")
+	require.Equal(t, 0, ghost.kindCount(ghostExclude), "stickiness must add no exclude burn")
+	for i, request := range unbound {
+		require.NoError(t, waitReply(t, request, 2*time.Second).err, "unbound request %d", i)
+	}
+}
+
+// TestPicker_AgedStickyPreferenceExpires: past the stale threshold the
+// preference stops steering and the request competes in plain queue order.
+func TestPicker_AgedStickyPreferenceExpires(t *testing.T) {
+	picker, session, ghost := stagedPickerEnv(t)
+
+	aged := defaultPickerRequest()
+	aged.stickyParticipant = session.HostParticipantKey(2)
+	aged.submitTime = time.Now().Add(-2 * pickerStaleThreshold)
+	unbound := defaultPickerRequest()
+	picker.submit(aged)
+	picker.submit(unbound)
+	startPicker(t, picker)
+
+	agedResult := waitReply(t, aged, 2*time.Second)
+	require.NoError(t, agedResult.err)
+	require.Equal(t, 1, agedResult.prepared.HostIdx(),
+		"an aged preference must not hold the request back from the nonce it was offered")
+	require.NoError(t, waitReply(t, unbound, 2*time.Second).err)
+	require.Equal(t, 0, ghost.total())
+}
+
+// TestPicker_AgedUnboundRequestIsNotOvertakenByFreshSticky: once the oldest
+// unsteered request has waited out the threshold, preferences stop passing it.
+func TestPicker_AgedUnboundRequestIsNotOvertakenByFreshSticky(t *testing.T) {
+	picker, session, ghost := stagedPickerEnv(t)
+
+	aged := defaultPickerRequest()
+	aged.submitTime = time.Now().Add(-2 * pickerStaleThreshold)
+	picker.submit(aged)
+	// One fresh sticky request per participant, so every slot the nonce stream
+	// offers has a preference competing for it.
+	fresh := make([]*pickerRequest, 3)
+	for slot := range fresh {
+		fresh[slot] = defaultPickerRequest()
+		fresh[slot].stickyParticipant = session.HostParticipantKey(slot)
+		picker.submit(fresh[slot])
+	}
+	startPicker(t, picker)
+
+	agedResult := waitReply(t, aged, 2*time.Second)
+	require.NoError(t, agedResult.err)
+	require.EqualValues(t, 1, agedResult.prepared.Nonce(),
+		"the aged request must take the very next nonce, not queue behind three fresh preferences")
+	for slot, request := range fresh {
+		require.NoError(t, waitReply(t, request, 2*time.Second).err, "fresh request %d", slot)
+	}
+	require.Equal(t, 0, ghost.total())
+}
+
+// TestPicker_StickyDoesNotOvertakeNarrowerRetry: a retry that has already
+// excluded someone keeps its place, so its own options are not spent.
+func TestPicker_StickyDoesNotOvertakeNarrowerRetry(t *testing.T) {
+	picker, session, ghost := stagedPickerEnv(t)
+
+	retry := defaultPickerRequest()
+	retry.excludeParticipants = map[string]bool{session.HostParticipantKey(2): true}
+	sticky := defaultPickerRequest()
+	sticky.stickyParticipant = session.HostParticipantKey(1)
+	picker.submit(retry)
+	picker.submit(sticky)
+	startPicker(t, picker)
+
+	retryResult := waitReply(t, retry, 2*time.Second)
+	stickyResult := waitReply(t, sticky, 2*time.Second)
+
+	require.NoError(t, retryResult.err)
+	require.NoError(t, stickyResult.err)
+	require.Equal(t, 1, retryResult.prepared.HostIdx(),
+		"nonce 1 binds host 1, which the retry can still use; the sticky request must not take it")
+	require.Equal(t, 0, ghost.total(), "overtaking the retry would strand it on host 2 and burn a nonce")
+}
+
+// TestPicker_OtherStickyYieldsNonceToUnboundRequest: on a nonce nobody is
+// sticky to, an unbound request is served before a request bound elsewhere.
+func TestPicker_OtherStickyYieldsNonceToUnboundRequest(t *testing.T) {
+	picker, session, ghost := stagedPickerEnv(t)
+
+	boundElsewhere := defaultPickerRequest()
+	boundElsewhere.stickyParticipant = session.HostParticipantKey(2)
+	unbound := defaultPickerRequest()
+	picker.submit(boundElsewhere)
+	picker.submit(unbound)
+	startPicker(t, picker)
+
+	unboundResult := waitReply(t, unbound, 2*time.Second)
+	boundResult := waitReply(t, boundElsewhere, 2*time.Second)
+
+	require.NoError(t, unboundResult.err)
+	require.NoError(t, boundResult.err)
+	require.Equal(t, 1, unboundResult.prepared.HostIdx(),
+		"nonce 1 binds host 1, which nobody is sticky to, so the unbound request takes it")
+	require.Equal(t, 2, boundResult.prepared.HostIdx(),
+		"waiting one nonce lets the bound request reach its own participant")
+	require.Equal(t, 0, ghost.total())
 }
 
 // TestPicker_DropsCanceledRequest verifies that a request whose

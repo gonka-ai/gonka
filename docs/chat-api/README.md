@@ -58,7 +58,7 @@ OpenAI-compatible chat completions, routed to Kimi-K2.6 / Qwen3-235B / MiniMax-M
 | `store` | bool | — | silent-strip ([why](troubleshooting.md#strip-store)) | [[OpenAI-1]](references.md#openai) |
 | `provider` | object | — | silent-strip ([why](troubleshooting.md#strip-provider)) | [[OpenRouter-3]](references.md#openrouter) |
 | `plugins` | array | — | silent-strip ([why](troubleshooting.md#strip-plugins)) | [[OpenRouter-2]](references.md#openrouter) |
-| `prompt_cache_key` | string | — | silent-strip ([why](troubleshooting.md#strip-prompt_cache_key)) | [[OpenAI-1]](references.md#openai), [[Moonshot-1]](references.md#moonshot) |
+| `prompt_cache_key` | string | — | must be a string, byte-length ≤512 (else reject — [why](troubleshooting.md#reject-malformed-param-types)); read as the cache-affinity key, then stripped from the wire body ([why](troubleshooting.md#strip-prompt_cache_key)) | [[OpenAI-1]](references.md#openai), [[Moonshot-1]](references.md#moonshot) |
 | `cache_key` | string | — | silent-strip ([why](troubleshooting.md#strip-cache_key)) | [[Moonshot-1]](references.md#moonshot) |
 | `extra_headers` | object | — | silent-strip ([why](troubleshooting.md#strip-extra_headers)) | [[OpenAI-5]](references.md#openai) |
 | `extra_body` | object | — | unwrap to top-level ([why](troubleshooting.md#unwrap-extra_body)) | [[OpenAI-5]](references.md#openai) |

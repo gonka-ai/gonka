@@ -27,6 +27,8 @@ type chatRequest struct {
 	// logprobClientIntent.
 	Logprobs    bool   `json:"logprobs"`
 	TopLogprobs uint64 `json:"top_logprobs"`
+	// AffinityKey is lifted before PreValidation strips prompt_cache_key off the wire.
+	AffinityKey string `json:"-"`
 }
 
 type outputTokenLimits struct {
@@ -96,6 +98,8 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err != nil {
 		return nil, chatRequest{}, err
 	}
+	// Read before PreValidation strips prompt_cache_key off the wire.
+	affinityKey := affinityKeyFromDocument(&ctx.Document)
 	ctx.ResolveRoutedModel(routedModel)
 	if err := p.parameters.Apply(RequestFilterStagePreValidation, ctx); err != nil {
 		return nil, chatRequest{}, err
@@ -120,6 +124,7 @@ func (p ChatRequestPipeline) Normalize(body []byte, adminAuthenticated bool, lim
 	if err != nil {
 		return nil, chatRequest{}, err
 	}
+	ctx.Request.AffinityKey = affinityKey
 	return updatedBody, ctx.Request, nil
 }
 

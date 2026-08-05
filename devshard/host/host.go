@@ -45,6 +45,7 @@ type InferencePayload struct {
 	InputLength uint64
 	MaxTokens   uint64
 	StartedAt   int64
+	SessionID   string
 }
 
 // HostRequest carries diffs from the user to a host.
@@ -834,6 +835,7 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		MaxTokens:   rec.MaxTokens,
 		EscrowID:    h.escrowID,
 		EpochID:     h.epochID,
+		SessionID:   req.Payload.SessionID,
 	}
 	return sig, confirmedAt, job, nil, outcome, nil
 }
@@ -1438,6 +1440,7 @@ func (h *Host) challengeReceiptLocked(inferenceID uint64, payload *InferencePayl
 		MaxTokens:   rec.MaxTokens,
 		EscrowID:    h.escrowID,
 		EpochID:     h.epochID,
+		SessionID:   payload.SessionID,
 	}
 	return sig, confirmedAt, job, nil
 }

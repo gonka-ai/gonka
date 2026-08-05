@@ -38,7 +38,7 @@ They shouldn't. MiniMax-M2.7 emits reasoning inline as `<think>...</think>` in `
 
 ### "My cache key disappeared"
 
-Cause: `cache_key` / `prompt_cache_key` silently stripped. vLLM uses a different field (`cache_salt`) for cache isolation, and the aliasing PR is unmerged — see [troubleshooting](troubleshooting.md#strip-cache_key) for the full chain of upstream gaps.
+Cause: `cache_key` is silently stripped — vLLM does not understand Moonshot's field, and there is no bridge for it — see [troubleshooting](troubleshooting.md#strip-cache_key). `prompt_cache_key` is also stripped from the body forwarded to vLLM (vLLM has no native support for it either), but on a devshard with session affinity enabled the gateway reads it first and bridges it into vLLM's `cache_salt` for cache reuse — see [troubleshooting](troubleshooting.md#strip-prompt_cache_key) and [proposals/kv-cache-affinity](../../proposals/kv-cache-affinity/README.md).
 
 ### "Where do unsupported sampling fields go?"
 

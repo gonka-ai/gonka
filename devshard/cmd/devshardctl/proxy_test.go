@@ -744,12 +744,13 @@ func setupTestProxyWithBalance(t *testing.T, numHosts int, engines []devshard.In
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
-		session:    session,
-		sm:         userSM,
-		escrowID:   "escrow-proxy",
-		model:      "llama",
-		redundancy: redundancy,
-		perf:       perf,
+		session:       session,
+		sm:            userSM,
+		escrowID:      "escrow-proxy",
+		model:         "llama",
+		redundancy:    redundancy,
+		perf:          perf,
+		sessionSecret: []byte("test-secret"),
 	}
 
 	return &testProxyEnv{
@@ -786,12 +787,13 @@ func setupTestProxyWithClients(t *testing.T, clients []user.HostClient) *testPro
 	t.Cleanup(redundancy.Stop)
 
 	p := &Proxy{
-		session:    session,
-		sm:         userSM,
-		escrowID:   "escrow-proxy",
-		model:      "llama",
-		redundancy: redundancy,
-		perf:       perf,
+		session:       session,
+		sm:            userSM,
+		escrowID:      "escrow-proxy",
+		model:         "llama",
+		redundancy:    redundancy,
+		perf:          perf,
+		sessionSecret: []byte("test-secret"),
 	}
 
 	return &testProxyEnv{
@@ -1693,6 +1695,120 @@ func TestProxyHandleChatCompletionsRejectsWhenRegularPoCActive(t *testing.T) {
 	require.Equal(t, http.StatusServiceUnavailable, rec.Code)
 	require.Contains(t, rec.Body.String(), "PoC generation")
 	require.EqualValues(t, 0, env.proxy.session.Nonce())
+}
+
+// sessionIDCapturingClient records the SessionID carried by every host
+// payload it receives, so tests can prove whether an affinity key actually
+// left the gateway.
+type sessionIDCapturingClient struct {
+	mu         sync.Mutex
+	sessionIDs []string
+}
+
+func (c *sessionIDCapturingClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	c.mu.Lock()
+	c.sessionIDs = append(c.sessionIDs, req.Payload.SessionID)
+	c.mu.Unlock()
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	if stream != nil {
+		_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n")
+	}
+	nonce := req.Nonce
+	return &host.HostResponse{
+		Nonce: nonce,
+		Mempool: []*types.DevshardTx{
+			{Tx: &types.DevshardTx_FinishInference{
+				FinishInference: &types.MsgFinishInference{InferenceId: nonce},
+			}},
+		},
+		ConfirmedAt: time.Now().Unix(),
+	}, nil
+}
+
+func (c *sessionIDCapturingClient) recorded() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]string(nil), c.sessionIDs...)
+}
+
+func TestHandleChatCompletionsAffinityKeyStaysAtGatewayWhenTrackerDisabled(t *testing.T) {
+	zeroReceiptTimeout(t)
+	client := &sessionIDCapturingClient{}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	// redundancy.affinity is left nil (never set), matching the shipped default: disabled.
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}],"user":"user-123"}`))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	sessionIDs := client.recorded()
+	require.NotEmpty(t, sessionIDs)
+	for _, id := range sessionIDs {
+		require.Empty(t, id, "affinity key must not leave the gateway while the tracker is disabled")
+	}
+}
+
+func TestHandleChatCompletionsAffinityKeyReachesHostWhenTrackerEnabled(t *testing.T) {
+	zeroReceiptTimeout(t)
+	client := &sessionIDCapturingClient{}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	cfg := defaultAffinityConfig()
+	cfg.Enabled = true
+	env.proxy.redundancy.affinity = newAffinityTracker(cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}],"user":"user-123"}`))
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	sessionIDs := client.recorded()
+	require.NotEmpty(t, sessionIDs)
+	for _, id := range sessionIDs {
+		require.NotEmpty(t, id, "a session token must reach the participant once the tracker is enabled")
+		require.NotEqual(t, "user-123", id, "the session token must be derived, never the client's own string")
+	}
+}
+
+// sessionTokenFromChat drives one chat request through the proxy with the given
+// Authorization header and returns the session token that left the gateway.
+func sessionTokenFromChat(t *testing.T, authorization string) string {
+	t.Helper()
+	zeroReceiptTimeout(t)
+	client := &sessionIDCapturingClient{}
+	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	cfg := defaultAffinityConfig()
+	cfg.Enabled = true
+	env.proxy.redundancy.affinity = newAffinityTracker(cfg)
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions",
+		bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}],"user":"user-123"}`))
+	if authorization != "" {
+		req.Header.Set("Authorization", authorization)
+	}
+	rec := httptest.NewRecorder()
+
+	env.proxy.handleChatCompletions(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	sessionIDs := client.recorded()
+	require.NotEmpty(t, sessionIDs)
+	require.NotEmpty(t, sessionIDs[0])
+	return sessionIDs[0]
+}
+
+func TestHandleChatCompletionsSessionTokenSeparatesAuthenticatedCallers(t *testing.T) {
+	alice := sessionTokenFromChat(t, "Bearer key-alice")
+	bob := sessionTokenFromChat(t, "Bearer key-bob")
+
+	require.NotEqual(t, alice, bob, "two API keys sending one client string must not share a cache namespace")
+	require.Equal(t, alice, sessionTokenFromChat(t, "Bearer key-alice"), "one caller's follow-ups must keep their namespace")
 }
 
 func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {

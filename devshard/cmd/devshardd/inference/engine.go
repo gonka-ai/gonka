@@ -3,17 +3,23 @@ package inference
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
+	"sync"
 	"time"
 
 	"common/chain"
+	"common/logging"
 	mlnodeclient "common/nodemanager"
 	mlnodegen "common/nodemanager/gen"
 	"devshard"
 	"devshard/observability"
 
+	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
 )
@@ -32,6 +38,17 @@ const maxAcquireAttempts = 10
 // local capacity bound before retrying PickNode.
 const fallbackSlotWait = 100 * time.Millisecond
 
+// maxSessionIDLength bounds the gateway-supplied session id before it keys a cache
+// namespace or an mlnode binding; a longer one is dropped rather than stored.
+const maxSessionIDLength = 512
+
+// cacheSaltField is vLLM's own knob: prefix-cache blocks are shared only between requests whose salt matches.
+const cacheSaltField = "cache_salt"
+
+// sessionIDTooLongOnce logs once per process: a healthy gateway token is a fixed 64-hex
+// digest, so a longer id here means a foreign gateway or a changed token format.
+var sessionIDTooLongOnce sync.Once
+
 // Engine implements devshard.InferenceEngine for the standalone devshardd binary.
 // It acquires a locked ML node via NodeManager gRPC, POSTs directly, and releases
 // with an outcome reflecting the result.
@@ -40,18 +57,21 @@ const fallbackSlotWait = 100 * time.Millisecond
 // round-robins direct HTTP without lock/release. When capacity has been
 // observed via ListNodeCapacity, fallback is bounded by capacity.Cache.
 type Engine struct {
-	mlClient     *mlnodeclient.Client
-	mgr          *mlnodeclient.Manager
-	capacity     *mlnodeclient.Cache
-	payloadStore PayloadStore
-	httpClient   *http.Client
-	chainParams  ChainParamsProvider
-	phase        *chain.Phase
+	mlClient        *mlnodeclient.Client
+	mgr             *mlnodeclient.Manager
+	capacity        *mlnodeclient.Cache
+	payloadStore    PayloadStore
+	httpClient      *http.Client
+	chainParams     ChainParamsProvider
+	phase           *chain.Phase
+	affinityEnabled bool
 }
 
 // NewEngine creates an Engine backed by a NodeManager gRPC client and optional
 // passive ML-node cache for dapi-unreachable fallback. capacity may be nil,
 // in which case fallback is unbounded (matches old-dapi/never-observed behavior).
+// affinityEnabled is the participant's own switch over mlnode stickiness only; the cache
+// salt rides with any non-empty session id, because isolation is not the participant's to waive.
 func NewEngine(
 	mlClient *mlnodeclient.Client,
 	mgr *mlnodeclient.Manager,
@@ -59,15 +79,17 @@ func NewEngine(
 	payloadStore PayloadStore,
 	chainParams ChainParamsProvider,
 	phase *chain.Phase,
+	affinityEnabled bool,
 ) *Engine {
 	return &Engine{
-		mlClient:     mlClient,
-		mgr:          mgr,
-		capacity:     capacity,
-		payloadStore: payloadStore,
-		httpClient:   NewNoRedirectClient(mlNodeHTTPTimeout),
-		chainParams:  chainParams,
-		phase:        phase,
+		mlClient:        mlClient,
+		mgr:             mgr,
+		capacity:        capacity,
+		payloadStore:    payloadStore,
+		httpClient:      NewNoRedirectClient(mlNodeHTTPTimeout),
+		chainParams:     chainParams,
+		phase:           phase,
+		affinityEnabled: affinityEnabled,
 	}
 }
 
@@ -79,12 +101,27 @@ func NewEngine(
 // falls back to the passive ML-node cache.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body)
+		return e.executeMLRequest(ctx, model, req.EscrowID, req.SessionID, body)
 	}, e.chainParams)
 }
 
-func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
+func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, sessionID string, body []byte) (*http.Response, error) {
+	if len(sessionID) > maxSessionIDLength {
+		sessionIDTooLongOnce.Do(func() {
+			logging.Warn("Dropping session id longer than the bound", types.Inferences, "length", len(sessionID), "max", maxSessionIDLength)
+		})
+		sessionID = ""
+	}
+	// The salt only narrows which KV blocks may be reused, so it rides along with the id itself.
+	if sessionID != "" {
+		body = withCacheSalt(body, escrowID, sessionID)
+	}
+	// The switch governs mlnode stickiness, which is the part that changes this node's scheduling.
+	stickySessionID := sessionID
+	if !e.affinityEnabled {
+		stickySessionID = ""
+	}
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, stickySessionID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
@@ -101,6 +138,23 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 	return resp, nil
 }
 
+// withCacheSalt salts one session's prefix cache, scoped to its escrow so the same session id
+// from two escrows never shares KV blocks. An unparseable body passes through unchanged.
+func withCacheSalt(body []byte, escrowID, sessionID string) []byte {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(body, &fields); err != nil {
+		return body
+	}
+	digest := sha256.Sum256([]byte(escrowID + "\x00" + sessionID))
+	// The digest is hex, so quoting it is the whole of JSON string encoding.
+	fields[cacheSaltField] = json.RawMessage(`"` + hex.EncodeToString(digest[:]) + `"`)
+	salted, err := json.Marshal(fields)
+	if err != nil {
+		return body
+	}
+	return salted
+}
+
 // doWithLockedNode tries NodeManager gRPC first. On success it records the
 // node in the passive cache (Observe), POSTs, and Releases. If dapi is
 // unreachable it falls back to mgr.PickNode round-robin without lock/release.
@@ -111,6 +165,7 @@ func (e *Engine) doWithLockedNode(
 	path observability.Path,
 	model string,
 	escrowID string,
+	sessionID string,
 	fn func(endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
 	var excluded []string
@@ -120,7 +175,7 @@ func (e *Engine) doWithLockedNode(
 
 	for attempt := 0; attempt < maxAcquireAttempts; attempt++ {
 		acqCtx, cancel := context.WithTimeout(ctx, acquireTimeout)
-		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID)
+		acq, err := e.mlClient.Acquire(acqCtx, model, excluded, escrowID, sessionID)
 		cancel()
 
 		if err != nil {

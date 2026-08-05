@@ -2447,6 +2447,65 @@ func TestNormalizeChatRequestStripsSilentDropFields(t *testing.T) {
 	}
 }
 
+// TestNormalizeChatRequestLiftsAffinityKeyBeforePromptCacheKeyIsStripped guards the seam
+// task 4 fixed: prompt_cache_key must reach req.AffinityKey before PreValidation strips it
+// off the wire, or the sticky-session feature silently never fires.
+func TestNormalizeChatRequestLiftsAffinityKeyBeforePromptCacheKeyIsStripped(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"conv-1"}`
+	out, req, err := normalizeChatRequest([]byte(body))
+	require.NoError(t, err)
+	require.Equal(t, "conv-1", req.AffinityKey)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.NotContains(t, raw, "prompt_cache_key")
+}
+
+func TestNormalizeChatRequestAffinityKeyPrefersPromptCacheKeyOverUser(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"conv-1","user":"u-9"}`
+	_, req, err := normalizeChatRequest([]byte(body))
+	require.NoError(t, err)
+	require.Equal(t, "conv-1", req.AffinityKey)
+}
+
+// TestNormalizeChatRequestAffinityKeyFallsBackToUser also guards that `user`, unlike
+// prompt_cache_key, is never stripped -- it is an OpenAI end-user identifier the caller
+// legitimately expects to see forwarded.
+func TestNormalizeChatRequestAffinityKeyFallsBackToUser(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}],"user":"u-9"}`
+	out, req, err := normalizeChatRequest([]byte(body))
+	require.NoError(t, err)
+	require.Equal(t, "u-9", req.AffinityKey)
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(out, &raw))
+	require.Contains(t, raw, "user")
+}
+
+func TestNormalizeChatRequestAffinityKeyEmptyWithoutEitherField(t *testing.T) {
+	body := `{"messages":[{"role":"user","content":"hi"}]}`
+	_, req, err := normalizeChatRequest([]byte(body))
+	require.NoError(t, err)
+	require.Empty(t, req.AffinityKey)
+}
+
+// TestNormalizeChatRequestRejectsMalformedPromptCacheKey: like `user`, prompt_cache_key
+// now gets a 400 instead of a silent strip when it violates the shape contract.
+func TestNormalizeChatRequestRejectsMalformedPromptCacheKey(t *testing.T) {
+	tests := []struct {
+		name string
+		body string
+	}{
+		{"non-string", `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":42}`},
+		{"too long", `{"messages":[{"role":"user","content":"hi"}],"prompt_cache_key":"` + strings.Repeat("x", PromptCacheKeyMaxLen+1) + `"}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, _, err := normalizeChatRequest([]byte(tt.body))
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "prompt_cache_key")
+		})
+	}
+}
+
 func TestNormalizeChatRequestUnwrapsExtraBodyThinkingForKimi(t *testing.T) {
 	body := `{"model":"moonshotai/Kimi-K2.6","messages":[{"role":"user","content":"hi"}],"extra_body":{"thinking":{"type":"disabled"}}}`
 	out, _, err := normalizeChatRequestForModel([]byte(body), kimiK26ModelID)

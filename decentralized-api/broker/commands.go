@@ -15,6 +15,8 @@ type LockAvailableNode struct {
 	Model       string
 	Response    chan *Node
 	SkipNodeIDs []string
+	EscrowID    string
+	SessionID   string
 }
 
 func (g LockAvailableNode) GetResponseChannelCapacity() int {

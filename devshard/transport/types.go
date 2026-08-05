@@ -25,6 +25,7 @@ type PayloadJSON struct {
 	InputLength uint64 `json:"input_length"`
 	MaxTokens   uint64 `json:"max_tokens"`
 	StartedAt   int64  `json:"started_at"`
+	SessionID   string `json:"session_id,omitempty"`
 }
 
 // InferenceRequest is the JSON body for POST /sessions/:id/chat/completions.
@@ -248,6 +249,7 @@ func PayloadToJSON(p *host.InferencePayload) *PayloadJSON {
 		InputLength: p.InputLength,
 		MaxTokens:   p.MaxTokens,
 		StartedAt:   p.StartedAt,
+		SessionID:   p.SessionID,
 	}
 }
 
@@ -262,6 +264,7 @@ func PayloadFromJSON(pj *PayloadJSON) *host.InferencePayload {
 		InputLength: pj.InputLength,
 		MaxTokens:   pj.MaxTokens,
 		StartedAt:   pj.StartedAt,
+		SessionID:   pj.SessionID,
 	}
 }
 

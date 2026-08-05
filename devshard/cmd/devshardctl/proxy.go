@@ -195,6 +195,7 @@ type Proxy struct {
 	phaseGate               *ChainPhaseGate
 	defaultRequestMaxTokens uint64
 	requestMaxTokensCap     uint64
+	sessionSecret           []byte
 }
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -222,6 +223,12 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
+	// Extraction is the gate: disabled means the key never reaches the wire.
+	sessionToken := ""
+	if p.redundancy.affinityEnabled() {
+		callerCredential, _ := bearerToken(r)
+		sessionToken = deriveSessionToken(p.sessionSecret, p.escrowID, callerCredential, req.AffinityKey)
+	}
 	params := user.InferenceParams{
 		Model:       model,
 		Prompt:      body,
@@ -229,6 +236,7 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		MaxTokens:   req.MaxTokens,
 		StartedAt:   time.Now().Unix(),
 		Stream:      req.Stream,
+		AffinityKey: sessionToken,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 

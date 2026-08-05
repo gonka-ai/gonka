@@ -7,6 +7,7 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
 	"encoding/json"
 	"errors"
@@ -132,6 +133,7 @@ type Broker struct {
 	configManager        *apiconfig.ConfigManager
 	lockMap              map[string]lockEntry
 	lockMapMu            sync.Mutex
+	sessionAffinity      *nodeSessionAffinity
 }
 
 type lockEntry struct {
@@ -326,6 +328,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		statusQueryTrigger:   make(chan statusQuerySignal, 1),
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
+		sessionAffinity:      newNodeSessionAffinity(nodeAffinityConfigFromEnv()),
 	}
 
 	// Initialize NodeWorkGroup
@@ -470,6 +473,7 @@ func (b *Broker) lockAvailableNode(command LockAvailableNode) {
 		b.mu.Lock()
 		leastBusyNode.State.LockCount++
 		b.mu.Unlock()
+		b.sessionAffinity.record(command.EscrowID, command.SessionID, leastBusyNode.Node.Id)
 	}
 	logging.Debug("Locked node", types.Nodes, "node", leastBusyNode)
 	if leastBusyNode == nil {
@@ -494,6 +498,22 @@ func (b *Broker) getLeastBusyNode(command LockAvailableNode) *NodeWithState {
 		if id != "" {
 			skip[id] = struct{}{}
 		}
+	}
+
+	// Prefer this session's sticky mlnode (warm KV cache) when it is usable;
+	// otherwise fall through to least-busy.
+	if stickyID, ok := b.sessionAffinity.pick(command.EscrowID, command.SessionID); ok {
+		if _, skipped := skip[stickyID]; !skipped {
+			if node, exists := b.nodes[stickyID]; exists {
+				if available, _ := b.nodeAvailable(node, command.Model, epochState.LatestEpoch.EpochIndex, epochState.CurrentPhase); available {
+					observability.RecordMLNodeAffinityDecision(mlnodeAffinityDecisionHit, command.Model)
+					return node
+				}
+			}
+		}
+		observability.RecordMLNodeAffinityDecision(mlnodeAffinityDecisionYielded, command.Model)
+	} else if b.sessionAffinity.enabled() && command.SessionID != "" {
+		observability.RecordMLNodeAffinityDecision(mlnodeAffinityDecisionMiss, command.Model)
 	}
 
 	var leastBusyNode *NodeWithState = nil

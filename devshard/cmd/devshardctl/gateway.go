@@ -306,13 +306,15 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 		sharedParticipantRequestLimiter.IsBlocked,
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
+	redundancy.affinity = newAffinityTracker(affinityConfigFromEnv())
 	proxy := &Proxy{
-		session:    session,
-		sm:         sm,
-		escrowID:   cfg.ID,
-		model:      model,
-		redundancy: redundancy,
-		perf:       perf,
+		session:       session,
+		sm:            sm,
+		escrowID:      cfg.ID,
+		model:         model,
+		redundancy:    redundancy,
+		perf:          perf,
+		sessionSecret: sessionTokenSecret(),
 	}
 
 	rt := &devshardRuntime{
@@ -450,11 +452,12 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		return nil, fmt.Errorf("runtime %s: rehydrate local session: %w", cfg.ID, err)
 	}
 	proxy := &Proxy{
-		session:  session,
-		sm:       sm,
-		escrowID: cfg.ID,
-		model:    model,
-		perf:     perf,
+		session:       session,
+		sm:            sm,
+		escrowID:      cfg.ID,
+		model:         model,
+		perf:          perf,
+		sessionSecret: sessionTokenSecret(),
 	}
 	rt := &devshardRuntime{
 		id:              cfg.ID,

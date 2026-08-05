@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"testing"
 	"time"
 
@@ -165,6 +166,24 @@ type unknownValidationResult struct{}
 func (unknownValidationResult) IsSuccessful() bool                     { return true }
 func (unknownValidationResult) GetInferenceId() string               { return "unknown" }
 func (unknownValidationResult) GetValidationResponseBytes() []byte   { return nil }
+
+// The executor salts, the validator must not: a replay carrying a cache_salt would
+// diverge from the prompt the executor signed and committed.
+func TestValidatorExecuteMLRequest_ReplaysWithoutCacheSalt(t *testing.T) {
+	var gotBody []byte
+	srv := captureBodyMLServer(t, &gotBody)
+	engine := newTestEngineForNode(t, srv.URL)
+	engine.affinityEnabled = true
+	validator := &Validator{engine: engine}
+	prompt := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+
+	resp, err := validator.executeMLRequest(context.Background(), "model-a", "escrow-1", prompt)
+	require.NoError(t, err)
+	_, _ = io.Copy(io.Discard, resp.Body)
+	_ = resp.Body.Close()
+
+	assert.JSONEq(t, string(prompt), string(gotBody), "the validator must replay the executor's prompt with no cache_salt added")
+}
 
 func TestEvaluateValidationResult_UsesModelThreshold(t *testing.T) {
 	resolver := stubThresholdResolver{threshold: 0.90}

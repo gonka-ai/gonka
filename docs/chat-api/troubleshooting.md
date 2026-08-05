@@ -35,9 +35,9 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Why**: `cache_key` is a Moonshot Kimi native top-level context-cache hint documented for the Kimi Code Plan tier [[Moonshot-1]](references.md#moonshot). It is emitted in the wild by Moonshot's own `kimi-cli`, which forwards `cache_key: "kimi-cli_<hash>"` even when the target endpoint is not a Moonshot-hosted API. Our path serves the same Kimi-K2.6 weights via vLLM, which does not honor `cache_key` — vLLM uses a distinct `cache_salt` field for prompt-cache isolation [[vLLM-3]](references.md#vllm) [[vLLM-13]](references.md#vllm), and the open aliasing request [[vLLM-7]](references.md#vllm) remains unmerged. Forwarding the field bare would imply cache-isolation guarantees we cannot deliver in a domain with [published prompt-cache timing side-channel attacks](https://arxiv.org/abs/2502.07776).
 
-**When to restore**: when multi-tenant cache isolation lands via hash → `cache_salt` injection; restore together with `prompt_cache_key` — both share the same upstream gap and should bridge as one feature.
+**When to restore**: `prompt_cache_key` already restored its half of this — see [#strip-prompt_cache_key](#strip-prompt_cache_key) and [proposals/kv-cache-affinity](../../proposals/kv-cache-affinity/README.md). `cache_key` itself has no bridge: the gateway does not read Moonshot's field, only OpenAI's `prompt_cache_key` / `user`.
 
-**Fix (client-side)**: drop the field if not needed; the gateway provides no cache-key semantics today.
+**Fix (client-side)**: send `prompt_cache_key` instead if you want session affinity and cache-salt isolation; drop `cache_key` — it has no effect on this path.
 
 <details>
 <summary>Sample request body fragment</summary>
@@ -58,9 +58,9 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 
 **Why**: `prompt_cache_key` is a first-class OpenAI Chat Completions field for prompt-cache routing and sharding hints [[OpenAI-1]](references.md#openai), and is also documented by Moonshot for the Kimi Code Plan tier [[Moonshot-1]](references.md#moonshot). The vLLM-served path does not honor it — vLLM uses `cache_salt` for prompt-cache isolation [[vLLM-3]](references.md#vllm) [[vLLM-13]](references.md#vllm), and a request to alias `prompt_cache_key` → `cache_salt` has been open since January 2026 with no merged PR [[vLLM-7]](references.md#vllm). Forwarding bare would give clients false cache-isolation guarantees in a domain with [published prompt-cache timing side-channel attacks](https://arxiv.org/abs/2502.07776).
 
-**When to restore**: same trigger as `#strip-cache_key` — when a hash → `cache_salt` bridge lands; both fields share one rationale and should restore together.
+**When to restore**: met by this branch — the gateway now reads `prompt_cache_key` (fallback `user`) as a session-affinity key before stripping it, hashes it into a `cache_salt` the executor injects for vLLM, and steers follow-up requests back to a warm node; see [proposals/kv-cache-affinity](../../proposals/kv-cache-affinity/README.md). The field itself is still stripped from the body forwarded to vLLM, which has no native `prompt_cache_key` support — the bridge lives entirely on the gateway/participant side, not in vLLM.
 
-**Fix (client-side)**: drop the field if not needed; no cache routing is performed on the gateway path.
+**Fix (client-side)**: sending `prompt_cache_key` is worth doing on a devshard with session affinity enabled — it steers your follow-up requests back to the same warm GPU. It does not by itself isolate you from other clients of the same escrow; that isolation requires `access_mode: api_key` with a distinct key per client — see [Consensus & Security Analysis](../../proposals/kv-cache-affinity/README.md#consensus--security-analysis).
 
 ---
 

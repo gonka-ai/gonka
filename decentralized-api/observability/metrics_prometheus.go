@@ -10,16 +10,17 @@ import (
 	"go.opentelemetry.io/otel/attribute"
 )
 
-// promInstruments mirrors the OTel instruments into Prometheus so the local
-// /metrics endpoint stays self-contained — operators can scrape directly even
-// when an OTLP collector is unreachable.
+// promInstruments holds the Prometheus side of local observability so the /metrics endpoint
+// stays self-contained — operators can scrape directly even when an OTLP collector is
+// unreachable. Most instruments mirror an OTel counterpart; mlnodeAffinityDecision has none.
 type promInstruments struct {
-	activeOperations  *prometheus.GaugeVec
-	operationDuration *prometheus.HistogramVec
-	operationErrors   *prometheus.CounterVec
-	promptTokens      *prometheus.HistogramVec
-	completionTokens  *prometheus.HistogramVec
-	totalTokens       *prometheus.HistogramVec
+	activeOperations       *prometheus.GaugeVec
+	operationDuration      *prometheus.HistogramVec
+	operationErrors        *prometheus.CounterVec
+	promptTokens           *prometheus.HistogramVec
+	completionTokens       *prometheus.HistogramVec
+	totalTokens            *prometheus.HistogramVec
+	mlnodeAffinityDecision *prometheus.CounterVec
 }
 
 var (
@@ -87,6 +88,10 @@ func initPrometheusMetrics() {
 				Help:    "Total tokens (prompt + completion) recorded by inference operations.",
 				Buckets: prometheus.ExponentialBuckets(16, 2, 14),
 			}, promLabelKeys),
+			mlnodeAffinityDecision: prometheus.NewCounterVec(prometheus.CounterOpts{
+				Name: "decentralized_api_mlnode_affinity_decision_total",
+				Help: "Total session-affinity outcomes for mlnode selection by decision (hit, yielded, miss) and model.",
+			}, []string{"decision", "model"}),
 		}
 		prometheus.MustRegister(
 			promInstrument.activeOperations,
@@ -95,8 +100,16 @@ func initPrometheusMetrics() {
 			promInstrument.promptTokens,
 			promInstrument.completionTokens,
 			promInstrument.totalTokens,
+			promInstrument.mlnodeAffinityDecision,
 		)
 	})
+}
+
+// RecordMLNodeAffinityDecision reports whether a session's remembered mlnode served it
+// (hit), was unusable so the broker fell back to least-busy (yielded), or had no binding (miss).
+func RecordMLNodeAffinityDecision(decision, model string) {
+	initPrometheusMetrics()
+	promInstrument.mlnodeAffinityDecision.WithLabelValues(decision, valueOrDefault(model, "unknown")).Inc()
 }
 
 func recordPrometheusOperationStarted(attrs []attribute.KeyValue) {

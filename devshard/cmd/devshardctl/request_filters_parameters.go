@@ -560,6 +560,17 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 						DefaultMaxLen: UserMaxLen,
 					},
 				}),
+			// `prompt_cache_key`: lifted into chatRequest.AffinityKey before this stage runs
+			// (see ChatRequestPipeline.Normalize), then validated here like `user` before
+			// StripParameter removes it from the wire.
+			newParameter("prompt_cache_key").
+				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
+					Validator: paramvalidators.StringFieldValidator{
+						FieldName:     "prompt_cache_key",
+						DefaultMaxLen: PromptCacheKeyMaxLen,
+					},
+				}).
+				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}),
 			// metadata: OpenAI bounds it to 16 keys × 64-char keys × 512-char string values;
 			// we enforce the same bounds at the gateway boundary as a free defensive cap.
 			newParameter("metadata").
@@ -671,7 +682,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: mustBeBool},
 		),
-		newParameters([]string{"service_tier", "store", "provider", "plugins", "prompt_cache_key", "cache_key", "extra_headers", "thinking_config", "think"},
+		newParameters([]string{"service_tier", "store", "provider", "plugins", "cache_key", "extra_headers", "thinking_config", "think"},
 			ParameterRule{Stage: RequestFilterStagePreValidation, Handler: ParameterHandlerAdapter{Handler: paramvalidators.StripParameter{}}},
 		),
 		// frequency_penalty / presence_penalty share identical rules: catalog clamp

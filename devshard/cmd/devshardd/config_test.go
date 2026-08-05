@@ -37,3 +37,24 @@ func TestValidateBinaryLogVersion(t *testing.T) {
 		})
 	}
 }
+
+func TestLoadRuntimeConfig_MLNodeAffinityEnabledDefaultsOff(t *testing.T) {
+	cfg, err := loadRuntimeConfig(nil, "v2", "v2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if cfg.MLNodeAffinityEnabled {
+		t.Fatal("MLNodeAffinityEnabled must default to off")
+	}
+}
+
+func TestLoadRuntimeConfig_MLNodeAffinityEnabledFromEnv(t *testing.T) {
+	t.Setenv("DAPI_MLNODE_AFFINITY_ENABLED", "true")
+	cfg, err := loadRuntimeConfig(nil, "v2", "v2")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !cfg.MLNodeAffinityEnabled {
+		t.Fatal("DAPI_MLNODE_AFFINITY_ENABLED=true must enable it")
+	}
+}

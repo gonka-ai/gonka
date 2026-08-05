@@ -19,9 +19,13 @@ type mockBroker struct {
 	acquireFunc  func(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error)
 	releaseFunc  func(lockID string, outcome broker.InferenceResult) error
 	getNodesFunc func() ([]broker.NodeResponse, error)
+	gotEscrowID  string
+	gotSessionID string
 }
 
-func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string) (string, string, string, error) {
+func (m *mockBroker) AcquireMLNode(ctx context.Context, model string, skipNodeIDs []string, escrowID, sessionID string) (string, string, string, error) {
+	m.gotEscrowID = escrowID
+	m.gotSessionID = sessionID
 	return m.acquireFunc(ctx, model, skipNodeIDs)
 }
 func (m *mockBroker) ReleaseMLNode(lockID string, outcome broker.InferenceResult) error {
@@ -46,6 +50,21 @@ func TestAcquireMLNode_Success(t *testing.T) {
 	require.Equal(t, "lock-abc", resp.LockId)
 	require.Equal(t, "http://host:8080/v1", resp.Endpoint)
 	require.Equal(t, "node-1", resp.NodeId)
+}
+
+func TestAcquireMLNode_ForwardsEscrowIDWithSessionID(t *testing.T) {
+	brokerMock := &mockBroker{
+		acquireFunc: func(_ context.Context, _ string, _ []string) (string, string, string, error) {
+			return "lock-abc", "http://host:8080/v1", "node-1", nil
+		},
+	}
+	srv := NewServer(brokerMock, nil, nil)
+
+	_, err := srv.AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "gpt4", EscrowId: "escrow-1", SessionId: "sess"})
+
+	require.NoError(t, err)
+	require.Equal(t, "escrow-1", brokerMock.gotEscrowID, "the broker keys its mlnode binding per escrow, so the escrow id must reach it")
+	require.Equal(t, "sess", brokerMock.gotSessionID)
 }
 
 func TestAcquireMLNode_NoNodes(t *testing.T) {

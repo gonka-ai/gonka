@@ -67,11 +67,12 @@ func ClientForTest(client gen.NodeManagerClient) *Client {
 // On failure the returned error wraps a sentinel and preserves the gRPC status
 // code so callers can branch with IsNoNodesAvailable / IsUnavailable (or
 // errors.Is / status.Code).
-func (c *Client) Acquire(ctx context.Context, model string, excludedNodeIDs []string, escrowID string) (*gen.AcquireMLNodeResponse, error) {
+func (c *Client) Acquire(ctx context.Context, model string, excludedNodeIDs []string, escrowID string, sessionID string) (*gen.AcquireMLNodeResponse, error) {
 	resp, err := c.client.AcquireMLNode(ctx, &gen.AcquireMLNodeRequest{
 		Model:         model,
 		ExcludedNodes: excludedNodeIDs,
 		EscrowId:      escrowID,
+		SessionId:     sessionID,
 	})
 	if err != nil {
 		return nil, classifyAcquireError(model, err)

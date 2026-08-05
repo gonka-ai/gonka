@@ -68,6 +68,7 @@ const (
 	ResponseFormatMaxPatternLen = 512
 
 	UserMaxLen             = 512
+	PromptCacheKeyMaxLen   = 512
 	SafetyIdentifierMaxLen = 512
 
 	StructuredOutputsMaxDepth            = 16

@@ -575,6 +575,7 @@ type Redundancy struct {
 	balanceExhaustedOnce sync.Once
 	picker               *sessionPicker
 	participantLimiter   *ParticipantRequestLimiter
+	affinity             *affinityTracker
 	stateBlockMu         sync.RWMutex
 	stateBlockedHosts    map[string]string // escrow-local participant blocks for non-recoverable state divergence
 
@@ -861,9 +862,9 @@ type inflight struct {
 	role        string
 	startReason string
 
-	receiptOnce      sync.Once
-	receiptTimeNano  atomic.Int64 // unix nano; 0 means not received
-	receiptCh        chan struct{} // closed when receipt arrives
+	receiptOnce     sync.Once
+	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
+	receiptCh       chan struct{} // closed when receipt arrives
 
 	tokenOnce       sync.Once
 	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
@@ -1195,7 +1196,6 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 	return nil
 }
 
-
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
 	if rg == nil || inf == nil || PairwiseWinnerHold <= 0 {
 		return
@@ -1518,7 +1518,6 @@ func (inf *inflight) releaseClassifyPartial() {
 	inf.classifyPartial = nil
 }
 
-
 // raceWriter is an io.Writer that only forwards writes from the winning nonce.
 type raceWriter struct {
 	group *raceGroup
@@ -1717,7 +1716,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	// awaitRace in the same goroutine), so no synchronisation needed.
 	triedParticipants := map[string]bool{}
 
-	primary, err := e.prepareInflight(ctx, params, triedParticipants)
+	primary, err := e.preparePrimaryWithAffinity(ctx, params, triedParticipants)
 	if err != nil {
 		logRequestStage(ctx, "runner_prepare_failed", "escrow", e.devshardID, "error", err)
 		if errors.Is(err, types.ErrInsufficientBalance) {
@@ -1799,6 +1798,41 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	return e.awaitRace(ctx, settleCtx, attempts, race, params, decision, triedParticipants, clientFlag)
 }
 
+// affinityEnabled is nil-safe: a read-only debug runtime has no Redundancy.
+func (e *Redundancy) affinityEnabled() bool {
+	return e != nil && e.affinity.enabled()
+}
+
+// preparePrimaryWithAffinity hands the session's sticky participant to the
+// picker as a preference, then records where the nonce actually went.
+func (e *Redundancy) preparePrimaryWithAffinity(ctx context.Context, params user.InferenceParams, tried map[string]bool) (*inflight, error) {
+	stickyParticipant := e.stickyParticipantFor(params.AffinityKey)
+	inf, err := e.prepareInflight(ctx, params, tried, stickyParticipant)
+	if err != nil {
+		return nil, err
+	}
+	if e.affinity.enabled() && params.AffinityKey != "" {
+		servedBy := e.session.HostParticipantKey(inf.hostIdx)
+		e.affinity.Record(params.AffinityKey, servedBy)
+		if e.metrics != nil {
+			e.metrics.RecordAffinityDecision(e.devshardID, affinityDecision(stickyParticipant, servedBy))
+			e.metrics.SetAffinityBindings(e.devshardID, e.affinity.Size())
+		}
+	}
+	return inf, nil
+}
+
+// stickyParticipantFor returns the session's remembered participant, or "" when
+// affinity is off, unbound, or bound to a participant that left the group.
+func (e *Redundancy) stickyParticipantFor(affinityKey string) string {
+	if !e.affinity.enabled() || affinityKey == "" {
+		return ""
+	}
+	// Snapshot participants once (brief Session.mu) so the Pick closure is lock-free.
+	sticky, _ := e.affinity.Pick(affinityKey, membershipTest(e.session.ParticipantKeys()))
+	return sticky
+}
+
 // prepareInflight enqueues a request with the session picker and waits
 // for a nonce to be assigned. exclude is the set of participant keys
 // this request has already tried; the picker matches the request to a
@@ -1819,13 +1853,16 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 // through pickerResult.isProbe and is recorded on the inflight so the
 // rest of the lifecycle (raceWriter, perf tracking, escalation) can
 // react accordingly.
-func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceParams, exclude map[string]bool) (*inflight, error) {
+//
+// stickyParticipant is carried by the primary only; secondaries keep cross-checking hosts.
+func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceParams, exclude map[string]bool, stickyParticipant string) (*inflight, error) {
 	if len(exclude) >= len(e.session.ParticipantKeys()) {
 		return nil, ErrAllHostsExcluded
 	}
 	req := &pickerRequest{
 		params:              params,
 		excludeParticipants: exclude,
+		stickyParticipant:   stickyParticipant,
 		ctx:                 ctx,
 		submitTime:          time.Now(),
 		reply:               make(chan pickerResult, 1),
@@ -1999,7 +2036,7 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 		fields = append(fields, "delay_ms", delay.Milliseconds())
 	}
 	logInferenceStage(settleCtx, trigger.escrowID, trigger.nonce, stage, fields...)
-	next, err := e.prepareInflight(streamCtx, params, triedParticipants)
+	next, err := e.prepareInflight(streamCtx, params, triedParticipants, "")
 	if err != nil {
 		// Distinguish exhaustion from generic prepare failures so the
 		// next stress test can measure how often the per-request
@@ -2842,6 +2879,19 @@ func gatewayRequestFailureReason(failed []*inflight) string {
 	return "unknown"
 }
 
+// timeoutPayload rebuilds what the hosts were sent. The session id belongs here too:
+// a re-execution that loses it lands in the shared, unsalted cache namespace.
+func timeoutPayload(params user.InferenceParams) *host.InferencePayload {
+	return &host.InferencePayload{
+		Prompt:      params.Prompt,
+		Model:       params.Model,
+		InputLength: params.InputLength,
+		MaxTokens:   params.MaxTokens,
+		StartedAt:   params.StartedAt,
+		SessionID:   params.AffinityKey,
+	}
+}
+
 func timeoutKindForInflight(inf *inflight) string {
 	if inf == nil {
 		return "unknown"
@@ -3381,7 +3431,6 @@ func isEmptyStreamAttempt(inf *inflight) bool {
 	return inf.contentChunks.Load() == 0
 }
 
-
 // isModelBurnEmpty: empty stream where the model generated tokens that vLLM
 // stripped (e.g. </think> at small max_tokens). Documented reasoning outcome,
 // not a host fault — must not penalize. Scoped to the reasoning route: the
@@ -3795,13 +3844,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 				e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "skipped", "long_response_after_content")
 				continue
 			}
-			payload := &host.InferencePayload{
-				Prompt:      params.Prompt,
-				Model:       params.Model,
-				InputLength: params.InputLength,
-				MaxTokens:   params.MaxTokens,
-				StartedAt:   params.StartedAt,
-			}
+			payload := timeoutPayload(params)
 			e.recordGatewayTimeoutAction(inf, params, timeoutKindForInflight(inf), "started", "none")
 			result, err := e.session.HandleTimeout(ctx, inf.nonce, inf.sendTime, payload)
 			if result.Reason != "" && e.metrics != nil {
@@ -3863,13 +3906,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		Hosts:         involvement,
 	})
 	if len(failed) > 0 {
-		payload := &host.InferencePayload{
-			Prompt:      params.Prompt,
-			Model:       params.Model,
-			InputLength: params.InputLength,
-			MaxTokens:   params.MaxTokens,
-			StartedAt:   params.StartedAt,
-		}
+		payload := timeoutPayload(params)
 		if anySucceeded {
 			e.goTrackedRaceCleanup(func() {
 				bgCtx, _ := ensureRequestLogContext(context.Background())
