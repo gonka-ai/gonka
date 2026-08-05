@@ -626,7 +626,7 @@ func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings 
 	if client == nil {
 		return 0, false, fmt.Errorf("chain gRPC client is not configured")
 	}
-	txMgr, err := newGatewayChainTxClient(client.Conn(), settings, "", "", 0, 0)
+	txMgr, err := newGatewayChainTxClient(client.UnorderedTxConn(), settings, "", "", 0, 0)
 	if err != nil {
 		return 0, false, err
 	}

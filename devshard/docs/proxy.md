@@ -17,7 +17,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | ------ | ------ | ------ | ------ | ------ |
 | `--private-key` | `DEVSHARD_PRIVATE_KEY` | yes | - | Hex-encoded secp256k1 private key |
 | `--escrow-id` | `DEVSHARD_ESCROW_ID` | yes | - | On-chain escrow ID |
-| `--chain-rest` | `DEVSHARD_CHAIN_REST` | no | `http://localhost:1317` | Chain REST API URL |
+| `--chain-grpc` | `DEVSHARD_CHAIN_GRPC` | no | `localhost:9090` | Chain gRPC URL (queries and transactions) |
 | `--model` | `DEVSHARD_MODEL` | no | `Qwen/Qwen3-235B-A22B-Instruct-2507-FP8` | Default model (used when request omits `model`) |
 | `--port` | `DEVSHARD_PORT` | no | `8080` | Listen port |
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
@@ -44,7 +44,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 devshardctl \
   --private-key "deadbeef..." \
   --escrow-id 42 \
-  --chain-rest "http://localhost:1317"
+  --chain-grpc "localhost:9090"
 
 # In another terminal:
 curl -X POST http://localhost:8080/v1/chat/completions \
@@ -57,7 +57,7 @@ Or using environment variables:
 ```bash
 export DEVSHARD_PRIVATE_KEY="deadbeef..."
 export DEVSHARD_ESCROW_ID="42"
-export DEVSHARD_CHAIN_REST="http://localhost:1317"
+export DEVSHARD_CHAIN_GRPC="localhost:9090"
 
 devshardctl
 ```
@@ -382,14 +382,21 @@ The `api_key` is required by the SDK. It is ignored for models with
 `access_mode: "api_key"`. Models with `access_mode: "admin_only"` require
 `DEVSHARD_ADMIN_API_KEY`.
 
-### Standalone / Read-Only Node Deployment
+### Standalone Deployment
 
-If running the gateway alongside a read-only full node without `edge-api` or `dapi`, configure it to query the blockchain directly via gRPC/RPC:
+If you are running the gateway alongside a read-only full node (`node` container only):
 
 ```bash
+# Disable Public API requests (queries go to direct chain instead)
 export DEVSHARD_PUBLIC_API="none"
-export DEVSHARD_CHAIN_GRPC="node:9090"
 export DEVSHARD_PARAMS_SOURCE="chain"
+
+# Chain gRPC endpoint (sufficient for both queries and transactions)
+export DEVSHARD_CHAIN_GRPC="node:9090"
+
+# Optional: CometBFT RPC endpoint (auto-derived if omitted)
+# Used as a fallback for both queries and transactions if gRPC is blocked or unreachable.
+# export DEVSHARD_CHAIN_RPC="http://node:26657"
 ```
 
 ## Finalization and settlement

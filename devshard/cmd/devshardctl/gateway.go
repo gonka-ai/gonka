@@ -358,7 +358,7 @@ func (g *Gateway) newChainTxManager(settings GatewaySettings, chainID, feeDenom 
 	if g == nil || g.chainClient == nil {
 		return nil, fmt.Errorf("chain gRPC client is not configured")
 	}
-	return newGatewayChainTxClient(g.chainClient.Conn(), settings, chainID, feeDenom, feeAmount, gasLimit)
+	return newGatewayChainTxClient(g.chainClient.UnorderedTxConn(), settings, chainID, feeDenom, feeAmount, gasLimit)
 }
 
 func resolveRuntimeRoutePrefix(configured string) string {
