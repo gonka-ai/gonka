@@ -438,6 +438,10 @@ type mockTimeoutVerifier struct {
 	// claimSlot, when non-nil, overrides the returned voter_slot (used to
 	// simulate a byzantine verifier claiming another validator's slot).
 	claimSlot *uint32
+	// signSlot, when non-nil, is the voter_slot embedded in the signed
+	// TimeoutVoteContent. Defaults to the returned voter_slot. Set differently
+	// from claimSlot/own slot to simulate a signature/slot mismatch.
+	signSlot *uint32
 	// delay, when >0, sleeps before returning (honest slow responders).
 	delay time.Duration
 }
@@ -461,11 +465,16 @@ func (m *mockTimeoutVerifier) VerifyTimeout(ctx context.Context, inferenceID uin
 	if m.claimSlot != nil {
 		voterSlot = *m.claimSlot
 	}
+	signedSlot := voterSlot
+	if m.signSlot != nil {
+		signedSlot = *m.signSlot
+	}
 	content := &types.TimeoutVoteContent{
 		EscrowId:    eid,
 		InferenceId: inferenceID,
 		Reason:      reason,
 		Accept:      true,
+		VoterSlot:   signedSlot,
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {
@@ -568,15 +577,139 @@ func TestCollectTimeoutVotes_RejectsSpoofedVoterSlot(t *testing.T) {
 	}, verifiers, nil)
 	require.NoError(t, err)
 
-	// Malicious verifier only returned a spoofed foreign slot (never its own),
-	// so its address must not appear among collected votes.
+	// Precondition: the spoofed claim alone carries enough weight to have
+	// terminated collection early, so this test only passes because the
+	// responder bind rejected it.
+	require.Greater(t, session.sm.AddressSlotCount(signers[2].Address()), config.VoteThreshold,
+		"spoofed slot must be heavy enough to trip early exit on its own")
+
+	// The spoofed vote and the honest signer[2] vote both claim slots owned by
+	// signer[2]; a collected spoof would show up as a duplicate voter address,
+	// which the state machine rejects for the whole MsgTimeoutInference.
+	seenAddrs := make(map[string]bool, len(votes))
 	for _, v := range votes {
-		require.NotEqual(t, signers[0].Address(), session.sm.SlotAddress(v.VoterSlot),
-			"spoofed response from validator-0 must be dropped")
+		addr := session.sm.SlotAddress(v.VoterSlot)
+		require.False(t, seenAddrs[addr], "duplicate voter address %s implies a spoofed vote was collected", addr)
+		seenAddrs[addr] = true
 	}
 	require.NotEmpty(t, votes, "honest delayed verifiers must still be collected")
 	require.True(t, session.HasSufficientTimeoutVotes(votes),
 		"honest delayed votes must still form a quorum after spoofed response is dropped")
+
+	// Every collected vote must satisfy the same rule applyTimeout enforces:
+	// the recovered signer owns the claimed slot. This is the property the
+	// vulnerability broke — collection returned votes the state machine would
+	// later reject, after the honest RPCs had already been cancelled.
+	requireVotesPassStateMachineRules(t, verifier, "escrow-1", 1,
+		types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes, session)
+}
+
+// requireVotesPassStateMachineRules mirrors StateMachine.applyTimeout's per-vote
+// signature check so collection tests can assert that everything they return
+// would be accepted on apply.
+func requireVotesPassStateMachineRules(
+	t *testing.T,
+	verifier signing.Verifier,
+	escrowID string,
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	votes []*types.TimeoutVote,
+	session *Session,
+) {
+	t.Helper()
+	for _, v := range votes {
+		voterAddr := session.sm.SlotAddress(v.VoterSlot)
+		require.NotEmpty(t, voterAddr, "vote claims slot %d which is not in the group", v.VoterSlot)
+
+		data, err := proto.MarshalOptions{Deterministic: true}.Marshal(&types.TimeoutVoteContent{
+			EscrowId:    escrowID,
+			InferenceId: inferenceID,
+			Reason:      reason,
+			Accept:      v.Accept,
+			VoterSlot:   v.VoterSlot,
+		})
+		require.NoError(t, err)
+
+		recovered, err := verifier.RecoverAddress(data, v.Signature)
+		require.NoError(t, err, "vote from slot %d has an unrecoverable signature", v.VoterSlot)
+		require.Equal(t, voterAddr, recovered,
+			"vote from slot %d recovers to %s, not the slot owner", v.VoterSlot, recovered)
+	}
+}
+
+// TestCollectTimeoutVotes_RejectsSignedSlotMismatch covers the case where a
+// verifier returns its own voter_slot (so the responder-bind check passes) but
+// the signature was produced over TimeoutVoteContent with a different
+// voter_slot. Collection must drop that vote.
+func TestCollectTimeoutVotes_RejectsSignedSlotMismatch(t *testing.T) {
+	signers := make([]*signing.Secp256k1Signer, 3)
+	for i := range signers {
+		signers[i] = testutil.MustGenerateKey(t)
+	}
+	userKey := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(signers)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+
+	clients := make([]HostClient, len(group))
+	for i := range signers {
+		sm := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+		h, err := host.NewHost(sm, signers[i], stub.NewInferenceEngine(), "escrow-1", group, nil, host.WithGrace(100))
+		require.NoError(t, err)
+		clients[i] = &InProcessClient{Host: h}
+	}
+
+	userSM := statetest.MustStateMachine(t, "escrow-1", config, group, 100000, userKey.Address(), verifier)
+	session, err := NewSession(userSM, userKey, "escrow-1", group, clients, verifier)
+	require.NoError(t, err)
+
+	ctx := context.Background()
+	_, err = session.SendInference(ctx, InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	})
+	require.NoError(t, err)
+
+	executorIdx := int(1 % uint64(len(group)))
+	foreignSlot := group[(executorIdx+1)%len(group)].SlotID
+	// Pick a non-executor host that is not the foreign slot owner if possible.
+	badIdx := 0
+	if badIdx == executorIdx {
+		badIdx = 2
+	}
+
+	verifiers := make(map[int]TimeoutVerifier)
+	for i := range group {
+		if i == executorIdx {
+			continue
+		}
+		m := &mockTimeoutVerifier{
+			accept:  true,
+			signer:  signers[i],
+			group:   group,
+			slotIdx: i,
+		}
+		if i == badIdx {
+			sign := foreignSlot
+			if sign == group[i].SlotID {
+				sign = group[(i+1)%len(group)].SlotID
+			}
+			m.signSlot = &sign // return own slot, sign a different one
+		}
+		verifiers[i] = m
+	}
+
+	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, &host.InferencePayload{
+		Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}, verifiers, nil)
+	require.NoError(t, err)
+
+	for _, v := range votes {
+		require.NotEqual(t, group[badIdx].SlotID, v.VoterSlot,
+			"vote with signature/slot mismatch must be dropped")
+	}
+	requireVotesPassStateMachineRules(t, verifier, "escrow-1", 1,
+		types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes, session)
 }
 
 // concurrencyMockVerifier is a TimeoutVerifier that records concurrency
@@ -630,6 +763,7 @@ func (m *concurrencyMockVerifier) VerifyTimeout(ctx context.Context, inferenceID
 		InferenceId: inferenceID,
 		Reason:      reason,
 		Accept:      true,
+		VoterSlot:   voterSlot,
 	}
 	data, err := proto.Marshal(content)
 	if err != nil {

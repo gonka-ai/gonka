@@ -40,11 +40,15 @@ message ExecutorReceiptContent {
 }
 
 // TimeoutVoteContent is what a host signs for a TimeoutVote.
+// voter_slot is included so the signature binds the vote to a specific
+// group slot; verifiers must not be able to reuse a signature under a
+// different claimed VoterSlot.
 message TimeoutVoteContent {
   string escrow_id = 1;
   uint64 inference_id = 2;
   TimeoutReason reason = 3;
   bool   accept = 4;
+  uint32 voter_slot = 5;
 }
 
 // StateSignatureContent is what a host signs for state attestation.

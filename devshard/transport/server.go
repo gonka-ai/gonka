@@ -576,6 +576,7 @@ func signTimeoutVote(escrowID string, inferenceID uint64, reason types.TimeoutRe
 		InferenceId: inferenceID,
 		Reason:      reason,
 		Accept:      true,
+		VoterSlot:   voterSlot,
 	}
 	voteData, err := proto.Marshal(voteContent)
 	if err != nil {

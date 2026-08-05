@@ -1374,6 +1374,36 @@ func (s *Session) verifyStateSignature(nonce uint64, postRoot, signature []byte,
 	return nil
 }
 
+// verifyTimeoutVoteSignature recovers the signer of vote.Signature over
+// TimeoutVoteContent (including voter_slot) and requires it to match
+// expectedAddr (warm-key fallback allowed). Caller must already have bound
+// vote.VoterSlot to expectedAddr.
+func (s *Session) verifyTimeoutVoteSignature(
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	vote *types.TimeoutVote,
+	expectedAddr string,
+) error {
+	voteData, err := proto.Marshal(&types.TimeoutVoteContent{
+		EscrowId:    s.escrowID,
+		InferenceId: inferenceID,
+		Reason:      reason,
+		Accept:      vote.Accept,
+		VoterSlot:   vote.VoterSlot,
+	})
+	if err != nil {
+		return fmt.Errorf("marshal timeout vote: %w", err)
+	}
+	recovered, err := s.verifier.RecoverAddress(voteData, vote.Signature)
+	if err != nil {
+		return fmt.Errorf("%w: %v", types.ErrInvalidVoteSig, err)
+	}
+	if recovered != expectedAddr && !s.sm.CheckWarmKey(recovered, expectedAddr) {
+		return fmt.Errorf("%w: expected %s, got %s", types.ErrInvalidVoteSig, expectedAddr, recovered)
+	}
+	return nil
+}
+
 func (s *Session) fetchSignature(ctx context.Context, hostIdx int, nonce uint64, client HostClient) bool {
 	fetcher, ok := client.(SignatureFetcher)
 	if !ok {
@@ -2118,11 +2148,11 @@ func (s *Session) CollectTimeoutVotes(
 			continue // skip failed hosts
 		}
 		if res.vote != nil {
-			// Bind the response to the host we contacted. VoterSlot is not in
-			// the signed TimeoutVoteContent, so a byzantine verifier can claim
-			// another validator's slot; never count weight or append until the
-			// claimed slot belongs to the known responder (same pattern as
-			// fetchSignature / processResponse).
+			// Bind claimed voter_slot to the host we contacted, then verify the
+			// signature over TimeoutVoteContent (which includes voter_slot) so a
+			// byzantine verifier cannot reuse a signature under a different slot
+			// or count foreign weight. Same host-binding idea as fetchSignature /
+			// processResponse.
 			claimedAddr := s.sm.SlotAddress(res.vote.VoterSlot)
 			if claimedAddr == "" || claimedAddr != res.verifierAddr {
 				errors++
@@ -2141,6 +2171,24 @@ func (s *Session) CollectTimeoutVotes(
 					"subsystem", "session", "inference_id", inferenceID,
 					"verifier", res.verifierAddr, "voter_slot", res.vote.VoterSlot,
 					"claimed", claimedAddr)
+				continue
+			}
+			if err := s.verifyTimeoutVoteSignature(inferenceID, reason, res.vote, res.verifierAddr); err != nil {
+				errors++
+				logging.Stage(ctx, "timeout_vote_result",
+					logFields(
+						res.verifierAddr,
+						"outcome", "error",
+						"voter_slot", res.vote.VoterSlot,
+						"running_weight", accWeight,
+						"threshold", voteThreshold,
+						"error", err,
+					)...,
+				)
+				logging.Debug("timeout vote rejected: invalid signature",
+					"subsystem", "session", "inference_id", inferenceID,
+					"verifier", res.verifierAddr, "voter_slot", res.vote.VoterSlot,
+					"error", err)
 				continue
 			}
 			votes = append(votes, res.vote)

@@ -1257,6 +1257,7 @@ func (sm *StateMachine) applyTimeout(msg *types.MsgTimeoutInference) error {
 			InferenceId: msg.InferenceId,
 			Reason:      msg.Reason,
 			Accept:      vote.Accept,
+			VoterSlot:   vote.VoterSlot,
 		}
 		voteData, err := deterministicMarshal.Marshal(voteContent)
 		if err != nil {

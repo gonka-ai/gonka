@@ -70,8 +70,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	// Four accept timeout votes: weight 4 is not > threshold 4.
 	votes := make([]*types.TimeoutVote, 4)
 	for i := uint32(0); i < 4; i++ {
-		v := testutil.SignTimeoutVote(t, hosts[i], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-		v.VoterSlot = i
+		v := testutil.SignTimeoutVote(t, hosts[i], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, i)
 		votes[i] = v
 	}
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
@@ -82,8 +81,7 @@ func TestVoteThreshold_StableAcrossValidationAndTimeout(t *testing.T) {
 	require.Equal(t, voteThreshold, sm.VoteThreshold())
 
 	// Fifth accept vote resolves timeout; threshold unchanged.
-	v5 := testutil.SignTimeoutVote(t, hosts[4], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true)
-	v5.VoterSlot = 4
+	v5 := testutil.SignTimeoutVote(t, hosts[4], "escrow-1", 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, true, 4)
 	votes = append(votes, v5)
 	diff = testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{txTimeout(&types.MsgTimeoutInference{
 		InferenceId: 1, Reason: types.TimeoutReason_TIMEOUT_REASON_REFUSED, Votes: votes,
