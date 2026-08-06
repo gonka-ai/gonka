@@ -126,7 +126,11 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     
     // Efficient storage: only what's needed
     mapping(uint64 => GroupKey) public epochGroupKeys;  // epochId => 256-byte G2 public key (8 slots)
-    mapping(uint64 => mapping(bytes32 => bool)) public processedRequests;  // epochId => requestId => processed
+
+    // Global request deduplication: keccak256(epochId ++ requestId) => processed.
+    // Using a flat key instead of a nested mapping prevents the same requestId from
+    // being replayed under a different (but still-valid) epoch key.
+    mapping(bytes32 => bool) private _processedRequests;
 
     // Packed metadata (single 32-byte storage slot)
     EpochMetadata public epochMeta;
@@ -134,6 +138,10 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // Constants
     uint64 public constant MAX_STORED_EPOCHS = 365;  // 365 epochs = 365 days
     uint64 public constant TIMEOUT_DURATION = 30 days;
+    // Maximum number of epochs a signature remains valid after the current epoch.
+    // Keeps the acceptance window tight (≈2 days) so rotated-out validators cannot
+    // abuse stale epoch keys.  Allow 2 epochs of grace for in-flight requests.
+    uint64 public constant MAX_VALID_EPOCH_AGE = 2;
 
     // Chain ID constants for cross-chain replay protection
     bytes32 public immutable GONKA_CHAIN_ID;    // Source chain identifier (e.g., keccak256("gonka-mainnet-v1"))
@@ -179,6 +187,7 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
 
     error BridgeNotOperational();
     error InvalidEpoch();
+    error EpochTooOld();
     error RequestAlreadyProcessed();
     error InvalidSignature();
     error MustBeInAdminControl();
@@ -342,8 +351,17 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         }
         bytes memory groupKey = _groupKeyToBytes(groupKeyStruct);
 
-        // 2. Replay Protection: Check requestId hasn't been processed for this epochId
-        if (processedRequests[cmd.epochId][cmd.requestId]) {
+        // 1b. Epoch Staleness Check: reject signatures from epochs older than MAX_VALID_EPOCH_AGE.
+        // Prevents rotated-out validators from authorising withdrawals with stale epoch keys.
+        uint64 latest = epochMeta.latestEpochId;
+        if (latest > MAX_VALID_EPOCH_AGE && cmd.epochId < latest - MAX_VALID_EPOCH_AGE) {
+            revert EpochTooOld();
+        }
+
+        // 2. Replay Protection: global dedup key prevents the same requestId from being
+        // replayed under a different (but still-valid) epoch key.
+        bytes32 reqKey = _requestKey(cmd.epochId, cmd.requestId);
+        if (_processedRequests[reqKey]) {
             revert RequestAlreadyProcessed();
         }
 
@@ -362,19 +380,19 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 cmd.amount
             )
         );
-        
+
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {
             revert InvalidSignature();
         }
 
-        // 4. Record Processing: Mark requestId as processed (defense-in-depth CEI pattern)
-        processedRequests[cmd.epochId][cmd.requestId] = true;
+        // 4. Record Processing: Mark as processed before external calls (CEI pattern)
+        _processedRequests[reqKey] = true;
 
         // 5. Execution: Transfer tokens or ETH to recipient address
         if (cmd.tokenContract == address(this)) {
             // ETH withdrawal: tokenContract == address(this) indicates ETH
             require(address(this).balance >= cmd.amount, "Insufficient ETH balance");
-            
+
             // Use call{value:} for better gas compatibility (no 2300 gas limit)
             (bool success, ) = cmd.recipient.call{value: cmd.amount}("");
             require(success, "ETH transfer failed");
@@ -406,8 +424,15 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
         }
         bytes memory groupKey = _groupKeyToBytes(groupKeyStruct);
 
-        // 2. Replay Protection: Check requestId hasn't been processed for this epochId
-        if (processedRequests[cmd.epochId][cmd.requestId]) {
+        // 1b. Epoch Staleness Check: same window as withdraw().
+        uint64 latest = epochMeta.latestEpochId;
+        if (latest > MAX_VALID_EPOCH_AGE && cmd.epochId < latest - MAX_VALID_EPOCH_AGE) {
+            revert EpochTooOld();
+        }
+
+        // 2. Replay Protection: global dedup key (same scheme as withdraw).
+        bytes32 reqKey = _requestKey(cmd.epochId, cmd.requestId);
+        if (_processedRequests[reqKey]) {
             revert RequestAlreadyProcessed();
         }
 
@@ -425,13 +450,13 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 cmd.amount
             )
         );
-        
+
         if (!_verifyBLSSignature(groupKey, messageHash, cmd.signature)) {
             revert InvalidSignature();
         }
 
-        // 4. Record Processing: Mark requestId as processed (defense-in-depth CEI pattern)
-        processedRequests[cmd.epochId][cmd.requestId] = true;
+        // 4. Record Processing: Mark as processed before mint (CEI pattern)
+        _processedRequests[reqKey] = true;
 
         // 5. Execution: Mint WGNK tokens to recipient
         _mint(cmd.recipient, cmd.amount);
@@ -508,10 +533,10 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Check if a request has been processed for a given epoch
+     * @dev Check if a request has been processed (epoch + requestId pair)
      */
     function isRequestProcessed(uint64 epochId, bytes32 requestId) external view returns (bool) {
-        return processedRequests[epochId][requestId];
+        return _processedRequests[_requestKey(epochId, requestId)];
     }
 
     /**
@@ -576,6 +601,15 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // =============================================================================
     // INTERNAL FUNCTIONS
     // =============================================================================
+
+    /**
+     * @dev Derive a global deduplication key from (epochId, requestId).
+     *      Using a flat key instead of a nested mapping prevents the same requestId
+     *      from being replayed under a different (but still-valid) epoch key.
+     */
+    function _requestKey(uint64 epochId, bytes32 requestId) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(epochId, requestId));
+    }
 
     /**
      * @dev Trigger admin control state with reason
@@ -683,7 +717,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
                 borrow = 1;
             }
         }
-        // If borrow == 1 here, input y >= p, which should not happen for valid points.
+        // borrow == 1 means y >= p (out-of-range field element); reject rather than
+        // silently producing an incorrect result that would pass the pairing check.
+        require(borrow == 0, "G1 y coordinate out of field range");
         return out;
     }
 
