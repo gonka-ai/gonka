@@ -567,9 +567,20 @@ func (k Keeper) CollectEpochReservedNodeIds(ctx context.Context, epochIndex uint
 
 // CollectEpochReservedNodeWeights returns frozen reserved model-node weights
 func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64) map[string][]*types.TrainshardReservedNode {
+	return k.collectEpochReservedNodeWeights(ctx, epochIndex, nil)
+}
+
+func (k Keeper) CollectEpochReservedNodeWeightsAtHeight(ctx context.Context, epochIndex uint64, height int64) map[string][]*types.TrainshardReservedNode {
+	return k.collectEpochReservedNodeWeights(ctx, epochIndex, &height)
+}
+
+func (k Keeper) collectEpochReservedNodeWeights(ctx context.Context, epochIndex uint64, height *int64) map[string][]*types.TrainshardReservedNode {
 	type modelNode struct{ model, nodeId string }
 	seen := make(map[string]map[modelNode]int64)
-	k.forEachEpochReservedShard(ctx, epochIndex, func(shard *types.Trainshard, _, _ int64) {
+	k.forEachEpochReservedShard(ctx, epochIndex, func(shard *types.Trainshard, start, end int64) {
+		if height != nil && (*height < start || *height > end) {
+			return
+		}
 		for _, n := range shard.Nodes {
 			set, ok := seen[n.Participant]
 			if !ok {
@@ -596,11 +607,10 @@ func (k Keeper) CollectEpochReservedNodeWeights(ctx context.Context, epochIndex 
 	return result
 }
 
-// CollectEpochReservedWeightTotals aggregates frozen reserved weight
-func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+func aggregateReservedWeightTotals(reserved map[string][]*types.TrainshardReservedNode) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
 	byModelHost = make(map[string]map[string]int64)
 	byHost = make(map[string]int64)
-	for host, nodes := range k.CollectEpochReservedNodeWeights(ctx, epochIndex) {
+	for host, nodes := range reserved {
 		// byModelHost counts per model; byHost dedups node ids
 		nodeWeight := make(map[string]int64, len(nodes))
 		for _, n := range nodes {
@@ -617,6 +627,15 @@ func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex
 		}
 	}
 	return byModelHost, byHost
+}
+
+// CollectEpochReservedWeightTotals aggregates frozen reserved weight
+func (k Keeper) CollectEpochReservedWeightTotals(ctx context.Context, epochIndex uint64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeights(ctx, epochIndex))
+}
+
+func (k Keeper) CollectEpochReservedWeightTotalsAtHeight(ctx context.Context, epochIndex uint64, height int64) (byModelHost map[string]map[string]int64, byHost map[string]int64) {
+	return aggregateReservedWeightTotals(k.CollectEpochReservedNodeWeightsAtHeight(ctx, epochIndex, height))
 }
 
 type hostReservedInterval struct {
@@ -708,6 +727,7 @@ func (v EpochReservationView) FullyReservedAt(host string, height int64) bool {
 // CollectEpochFullyReservedHostsForModel returns epoch-fully-reserved hosts
 func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epochIndex uint64, modelId string) map[string]struct{} {
 	fullyReserved := make(map[string]struct{})
+	start, end := k.epochBlockRange(ctx, epochIndex)
 	intervals := k.collectEpochReservedIntervals(ctx, epochIndex)
 	if len(intervals) == 0 {
 		return fullyReserved
@@ -721,7 +741,7 @@ func (k Keeper) CollectEpochFullyReservedHostsForModel(ctx context.Context, epoc
 			continue
 		}
 		modelNodes := modelNodeSet(p, modelId)
-		if len(modelNodes) > 0 && hostEverFullyReservedForModel(modelNodes, intervals[p.Index]) {
+		if len(modelNodes) > 0 && hostFullyReservedForModelAcrossRange(modelNodes, intervals[p.Index], start, end) {
 			fullyReserved[p.Index] = struct{}{}
 		}
 	}
@@ -747,12 +767,35 @@ func modelNodeSet(p *types.ActiveParticipant, modelId string) map[string]struct{
 	return nil
 }
 
-// hostEverFullyReservedForModel checks if all model nodes were reserved at once
-func hostEverFullyReservedForModel(modelNodes map[string]struct{}, intervals []hostReservedInterval) bool {
-	for _, probe := range intervals {
-		if hostFullyReservedAtHeight(modelNodes, intervals, probe.start) {
-			return true
+func hostFullyReservedForModelAcrossRange(modelNodes map[string]struct{}, intervals []hostReservedInterval, start, end int64) bool {
+	if len(modelNodes) == 0 || len(intervals) == 0 || start > end {
+		return false
+	}
+	checkpoints := make([]int64, 0, len(intervals)*2+1)
+	checkpoints = append(checkpoints, start)
+	for _, iv := range intervals {
+		if iv.end < start || iv.start > end {
+			continue
+		}
+		ivStart := iv.start
+		if ivStart < start {
+			ivStart = start
+		}
+		checkpoints = append(checkpoints, ivStart)
+		if iv.end < end {
+			checkpoints = append(checkpoints, iv.end+1)
 		}
 	}
-	return false
+	sort.Slice(checkpoints, func(i, j int) bool {
+		return checkpoints[i] < checkpoints[j]
+	})
+	for i, checkpoint := range checkpoints {
+		if i > 0 && checkpoint == checkpoints[i-1] {
+			continue
+		}
+		if !hostFullyReservedAtHeight(modelNodes, intervals, checkpoint) {
+			return false
+		}
+	}
+	return true
 }

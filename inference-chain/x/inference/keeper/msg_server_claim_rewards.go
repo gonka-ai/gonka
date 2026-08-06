@@ -457,36 +457,24 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 		modelTotalWeights[subModelId] = subTotalWeight
 	}
 
-	reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotals(ctx, msg.EpochIndex)
-	for modelId, weightMap := range modelWeightMaps {
-		reserved := reservedByModelHost[modelId]
-		if modelId == "" {
-			reserved = reservedByHost
-		}
-		if len(reserved) == 0 {
-			continue
-		}
-		removed := int64(0)
-		for host, vw := range weightMap {
-			r := reserved[host]
-			if r <= 0 {
-				continue
-			}
-			if r > vw.Weight {
-				r = vw.Weight
-			}
-			vw.Weight -= r
-			weightMap[host] = vw
-			removed += r
-		}
-		if t := modelTotalWeights[modelId] - removed; t > 0 {
-			modelTotalWeights[modelId] = t
-		} else {
-			modelTotalWeights[modelId] = 0
-		}
-	}
-
 	reservedView := k.BuildEpochReservationView(ctx, msg.EpochIndex)
+	type modelWeightsAtHeight struct {
+		weights map[string]map[string]types.ValidationWeight
+		totals  map[string]int64
+	}
+	weightsByHeight := make(map[int64]modelWeightsAtHeight)
+	getWeightsAtHeight := func(height int64) modelWeightsAtHeight {
+		if cached, ok := weightsByHeight[height]; ok {
+			return cached
+		}
+		weights := cloneValidationWeightMaps(modelWeightMaps)
+		totals := cloneModelTotalWeights(modelTotalWeights)
+		reservedByModelHost, reservedByHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, msg.EpochIndex, height)
+		applyReservedWeightAdjustment(weights, totals, reservedByModelHost, reservedByHost)
+		cached := modelWeightsAtHeight{weights: weights, totals: totals}
+		weightsByHeight[height] = cached
+		return cached
+	}
 
 	blockHash := ctx.HeaderInfo().Hash
 	blockHashSeed := int64(binary.BigEndian.Uint64(blockHash[:8]))
@@ -540,15 +528,20 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	mustBeValidated := make([]string, 0)
 	for _, inference := range sample {
 		modelId := inference.Model
-		weightMap := modelWeightMaps[modelId]
-		validatorPowerForModel := weightMap[msg.Creator]
+		weightsAtHeight := getWeightsAtHeight(inference.CreatedAtBlockHeight)
+		weightMap := weightsAtHeight.weights[modelId]
+		validatorPowerForModel, found := weightMap[msg.Creator]
+		if !found {
+			skipped++
+			continue
+		}
 		executorPower, found := weightMap[inference.ExecutorId]
 		if !found {
 			k.LogWarn("Executor not found in weight map", types.Claims, "executor", inference.ExecutorId, "model", modelId)
 			continue
 		}
 
-		totalWeight := modelTotalWeights[modelId]
+		totalWeight := weightsAtHeight.totals[modelId]
 		if totalWeight <= 0 {
 			skipped++
 			continue
@@ -601,6 +594,61 @@ func (k msgServer) getMustBeValidatedInferences(ctx sdk.Context, msg *types.MsgC
 	)
 
 	return mustBeValidated, nil
+}
+
+func cloneValidationWeightMaps(src map[string]map[string]types.ValidationWeight) map[string]map[string]types.ValidationWeight {
+	cloned := make(map[string]map[string]types.ValidationWeight, len(src))
+	for modelID, weights := range src {
+		modelWeights := make(map[string]types.ValidationWeight, len(weights))
+		for addr, vw := range weights {
+			modelWeights[addr] = vw
+		}
+		cloned[modelID] = modelWeights
+	}
+	return cloned
+}
+
+func cloneModelTotalWeights(src map[string]int64) map[string]int64 {
+	cloned := make(map[string]int64, len(src))
+	for modelID, total := range src {
+		cloned[modelID] = total
+	}
+	return cloned
+}
+
+func applyReservedWeightAdjustment(
+	modelWeightMaps map[string]map[string]types.ValidationWeight,
+	modelTotalWeights map[string]int64,
+	reservedByModelHost map[string]map[string]int64,
+	reservedByHost map[string]int64,
+) {
+	for modelID, weightMap := range modelWeightMaps {
+		reserved := reservedByModelHost[modelID]
+		if modelID == "" {
+			reserved = reservedByHost
+		}
+		if len(reserved) == 0 {
+			continue
+		}
+		removed := int64(0)
+		for host, vw := range weightMap {
+			r := reserved[host]
+			if r <= 0 {
+				continue
+			}
+			if r > vw.Weight {
+				r = vw.Weight
+			}
+			vw.Weight -= r
+			weightMap[host] = vw
+			removed += r
+		}
+		if t := modelTotalWeights[modelID] - removed; t > 0 {
+			modelTotalWeights[modelID] = t
+		} else {
+			modelTotalWeights[modelID] = 0
+		}
+	}
 }
 
 // OverlapsWithPoC reports whether an inference was created late enough in the epoch that

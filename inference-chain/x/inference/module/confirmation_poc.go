@@ -436,7 +436,7 @@ func (am AppModule) evaluateConfirmation(
 
 	// remove reserved nodes' expected confirmation weight so they do not drag down the host ratio
 	coefficients := types.ConfirmationWeightCoefficients(presentScales)
-	for host, nodes := range am.keeper.CollectEpochReservedNodeWeights(ctx, event.EpochIndex) {
+	for host, nodes := range am.keeper.CollectEpochReservedNodeWeightsAtHeight(ctx, event.EpochIndex, event.TriggerHeight) {
 		modelNodes := make(map[string][]*types.MLNodeInfo)
 		for _, n := range nodes {
 			modelNodes[n.ModelId] = append(modelNodes[n.ModelId], &types.MLNodeInfo{NodeId: n.NodeId, PocWeight: n.PocWeight})

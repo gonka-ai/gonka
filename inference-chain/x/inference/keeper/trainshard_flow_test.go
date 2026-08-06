@@ -177,7 +177,7 @@ func TestEpochReservationView_TimeLocalFullReservation(t *testing.T) {
 	require.False(t, view.FullyReservedAt(host, 150)) // only B reserved
 }
 
-// TestCollectEpochFullyReservedHostsForModel keeps hosts ever fully reserved
+// TestCollectEpochFullyReservedHostsForModel keeps only hosts fully reserved for the entire epoch
 func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	const epoch = uint64(7)
@@ -207,10 +207,23 @@ func TestCollectEpochFullyReservedHostsForModel(t *testing.T) {
 	}))
 	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
 
-	// concurrent: both nodes reserved [110,140]
+	// concurrent but partial: both nodes reserved [110,140], still not full-epoch
 	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
 		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
 		CreatedAtHeight: 110, ClosedAtHeight: 140,
+		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
+	}))
+	require.Empty(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"))
+
+	// full-epoch reservation across [100,199]
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId: 1, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 100, ClosedAtHeight: 199,
+		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n1", ModelId: "model1"}},
+	}))
+	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
+		TrainshardId: 2, Status: types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 100, ClosedAtHeight: 199,
 		Nodes: []*types.TrainshardReservedNode{{Participant: host, NodeId: "n2", ModelId: "model1"}},
 	}))
 	require.Contains(t, k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1"), host)
@@ -258,6 +271,42 @@ func TestCollectEpochReservedWeightTotals(t *testing.T) {
 	// A1 (max 50) + A2 (20, counted once), not 50+20+20
 	require.Equal(t, int64(70), byHost[hostA])
 	require.Equal(t, int64(40), byHost[hostB])
+}
+
+func TestCollectEpochReservedWeightTotalsAtHeight(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	const epoch = uint64(7)
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch, PocStartBlockHeight: 100}))
+	require.NoError(t, k.SetEpoch(ctx, &types.Epoch{Index: epoch + 1, PocStartBlockHeight: 200}))
+
+	host := sample.AccAddress()
+	require.NoError(t, k.Trainshards.Set(ctx, 1, types.Trainshard{
+		TrainshardId:    1,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 100,
+		ClosedAtHeight:  120,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "n1", ModelId: "model1", PocWeight: 30},
+		},
+	}))
+	require.NoError(t, k.Trainshards.Set(ctx, 2, types.Trainshard{
+		TrainshardId:    2,
+		Status:          types.TrainshardStatus_TRAINSHARD_STATUS_SETTLED,
+		CreatedAtHeight: 150,
+		ClosedAtHeight:  190,
+		Nodes: []*types.TrainshardReservedNode{
+			{Participant: host, NodeId: "n1", ModelId: "model1", PocWeight: 50},
+		},
+	}))
+
+	_, byHost := k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 130)
+	require.Zero(t, byHost[host])
+
+	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 110)
+	require.Equal(t, int64(30), byHost[host])
+
+	_, byHost = k.CollectEpochReservedWeightTotalsAtHeight(ctx, epoch, 160)
+	require.Equal(t, int64(50), byHost[host])
 }
 
 // TestTrainshardLifecycle_E2E walks the full lifecycle a creator drives:
@@ -375,10 +424,9 @@ func TestTrainshardFullReservation_ShieldsPocAndUnfreezes(t *testing.T) {
 	require.True(t, k.IsNodeReserved(ctx, hostA, "node-a"))
 	require.False(t, k.IsNodeReserved(ctx, hostB, "node-b"))
 
-	// PoC duties: hostA fully reserved across the epoch (the predicate claim_rewards,
-	// confirmation_poc and devshard escrow use to skip its validation/penalties)
+	// devshard shield uses full-epoch reservation; this shard starts mid-epoch
 	fully := k.CollectEpochFullyReservedHostsForModel(ctx, epoch, "model1")
-	require.Contains(t, fully, hostA)
+	require.NotContains(t, fully, hostA)
 	require.NotContains(t, fully, hostB)
 	view := k.BuildEpochReservationView(ctx, epoch)
 	require.True(t, view.FullyReservedAt(hostA, 60))
