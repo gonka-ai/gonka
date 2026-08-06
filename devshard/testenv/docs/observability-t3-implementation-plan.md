@@ -1,6 +1,6 @@
 # T3 — disposition on the trace: step-by-step implementation plan
 
-**Status:** in progress — T3.0 ✅, T3.1 ✅; next is T3.2.
+**Status:** in progress — T3.0–T3.7 ✅; next is T3.8.
 **Design:** [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) §5 (T3).
 This document is *plan only*: what to change, in what order, and how each step is proven. It does
 not restate the design rationale — read §5.1–§5.9 of the parent document first.
@@ -46,12 +46,12 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done · ⏸ deferred
 |----|------|------|--------------------------|--------|
 | **T3.0** | Classification sweep ticker, off the persistence path | — | ✅ yes (pure correctness fix) | ✅ |
 | **T3.1** | Attribute-name constants + Prometheus↔span value contract test (C4) | — | ✅ yes | ✅ |
-| **T3.2** | `devshard.gateway.attempt` span skeleton + split/escalation reason | 1 | ✅ yes | ⬜ |
-| **T3.3** | Phase children `dispatch`/`prefill`/`stream` + stall events | 1 | ✅ yes | ⬜ |
-| **T3.4** | Synchronous disposition attributes on the attempt span | 1 | ✅ yes | ⬜ |
-| **T3.5** | Ghost probe inherits the originating request context | 1 | ✅ yes | ⬜ |
-| **T3.6** | Span context on `nonceState` + `finalizeNonce` choke point + emission queue | 2 | ✅ yes (sink is a no-op until T3.7) | ⬜ |
-| **T3.7** | Classification log line from the gateway sink | 2 | ✅ yes | ⬜ |
+| **T3.2** | `devshard.gateway.attempt` span skeleton + split/escalation reason | 1 | ✅ yes | ✅ |
+| **T3.3** | Phase children `dispatch`/`prefill`/`stream` + stall events | 1 | ✅ yes | ✅ |
+| **T3.4** | Synchronous disposition attributes on the attempt span | 1 | ✅ yes | ✅ |
+| **T3.5** | Ghost probe inherits the originating request context | 1 | ✅ yes | ✅ |
+| **T3.6** | Span context on `nonceState` + `finalizeNonce` choke point + emission queue | 2 | ✅ yes (sink is a no-op until T3.7) | ✅ |
+| **T3.7** | Classification log line from the gateway sink | 2 | ✅ yes | ✅ |
 | **T3.8** | Late `devshard.nonce.disposition` span, linked root | 3 | ✅ yes | ⬜ |
 | **T3.9** | Prometheus exemplars on the disposition series | 2-bonus | ⏸ deferred by D2 | ⏸ |
 | **T3.10** | Harness helpers + e2e assertions C3/C4 | — | needs T3.4 + T3.7 | ⬜ |
@@ -80,7 +80,7 @@ table below is the record, not an open question list.
 
 | ID | Question | Decision ✅ | Enforced by |
 |----|----------|-------------|-------------|
-| **D1** | `reclassify` runs under `Tracker.mu` write lock (`tracker.go:372-381` `withWrite`). Emitting a log line or span there would do I/O under the lock. | Queue events on the tracker under the lock; drain and dispatch **after** unlock, in `withWrite`/`withEscrow`/`snapshot`. | T3.6 · `TestDispositionEventEmittedOutsideLock` (`-race`) |
+| **D1** | `reclassify` runs under `Tracker.mu` write lock (`tracker.go:372-381` `withWrite`). Emitting a log line or span there would do I/O under the lock. | **Amended 2026-08-06 (see §6).** Non-blocking send onto a bounded queue drained by the tracker's own goroutine. The original "drain after unlock in `withWrite`/`snapshot`" still ran the sink on the caller's goroutine, and the hottest caller is `RecordDiff` inside the sequencer's `Session.mu`. | T3.6 · `TestDispositionEventEmittedOutsideLock`, `TestDispositionSinkNeverBlocksTheRecorder`, `TestDispositionQueueDropsInsteadOfBlocking` (`-race`) |
 | **D2** | `devshard_accounting_disposition` is a **Gauge** (`accounting/metrics.go:181-183`, `prometheus.GaugeValue`). Prometheus/OpenMetrics only carries exemplars on counters and histogram buckets, so `NewMetricWithExemplars` on this series would be dropped at exposition. | **Defer T3.9.** The "click the spike → open the trace" path is served by the Grafana TraceQL data link in T6, which needs no Go change. Revisit only if a monotonic `devshard_accounting_disposition_total` twin is added. | T3.9 marked ⏸; no code |
 | **D3** | Ghost probes need the originating ctx (`session_picker.go:169` `ghostDispatcher`, dispatch at `476-478`, `pickerRequest.ctx` at `146`). Change the callback signature, or carry ctx on `PreparedInference`? | Change the callback signature to take `ctx` — 1 type, 1 dispatch site, 1 implementation (`redundancy.go:628`, `4189`). | T3.5 · `TestGhostProbeSpanSharesTraceWithRequest` |
 | **D4** | `Recorder.Ghost/RealSend/Usage/TimeoutResult` take no ctx. Add `ctx` as a first parameter, or add `*Ctx` variants? | Add `ctx` as the **first parameter**; no `*Ctx` variants. 4 production call sites (`redundancy.go:2886, 2919, 2975, 4189` regions) plus `cmd/devshardctl/accounting_test.go`. | T3.6 · `TestDispositionEventCarriesTraceRef` |
@@ -245,7 +245,7 @@ mapping fails the build or the test.
 
 ---
 
-### T3.2 — `devshard.gateway.attempt` span skeleton ⬜
+### T3.2 — `devshard.gateway.attempt` span skeleton ✅
 
 **Goal:** one span per nonce, opened where the attempt is prepared and closed at the race outcome,
 carrying **why this attempt exists**. No phase children, no disposition yet.
@@ -363,7 +363,7 @@ the reason as an event on the parent span.
 
 ---
 
-### T3.3 — phase children and stall events ⬜
+### T3.3 — phase children and stall events ✅
 
 **Goal:** the span shape from parent §5.8 — `attempt.dispatch` / `attempt.prefill` /
 `attempt.stream` plus stall events — projected from measurements the gateway already takes. No new
@@ -409,7 +409,7 @@ on every path including client cancel and stall abort.
 
 ---
 
-### T3.4 — synchronous disposition attributes on the attempt span ⬜
+### T3.4 — synchronous disposition attributes on the attempt span ✅
 
 **Goal:** everything the gateway knows *before the response is flushed* lands on the attempt span:
 ghost / no-send reason / quarantine / race outcome / timeout action / failure origin, plus a
@@ -430,13 +430,33 @@ provisional `devshard.disposition` for `ghost`, `finished_used`, `finished_unuse
 3. Values must come from the T3.1 mapping helper, never from an inline string literal — this is what
    keeps C4 meaningful.
 
-**Tests** — `attempt_span_test.go` and `cmd/devshardctl/accounting_test.go`:
+**Span lifetime (added after review).** Each fact stamps only the dimensions it recorded, and the
+attempt span has to stay open long enough to receive all of them:
+
+- The dispatch phase is read **once**, at `RealSend`, and returned by the recorder. Terminal and
+  timeout facts never re-read it — a phase flip mid-request would otherwise put a different
+  `dispatch_phase` on the span than on the Prometheus label for the same nonce.
+- `finishRaceOutcome` closes the phase children at the race outcome but ends the attempt span only
+  after `recordGatewayAttemptTerminal`, and for failed attempts only after timeout evaluation has
+  run (both the synchronous loop and the background one). `endAttemptSpan` replays the
+  race-outcome timestamp, so the span's *duration* is still the race duration even though it is
+  exported later.
+- A timeout action is mirrored onto the span only when `accounting.TimeoutActionRecorded` says it
+  became a counter fact, so the span can never claim a dimension Prometheus does not have.
+
+**Tests** — `attempt_disposition_test.go`, `attempt_span_test.go`:
 
 - `TestAttemptSpanDispositionForWinnerAndLoser`
 - `TestAttemptSpanGhostDispositionAndNoSendReason`
 - `TestAttemptSpanTimeoutAttributes` — one case per `TimeoutOutcome` value (`types.go:76-84`).
 - `TestAttemptSpanAttributesMatchAccountingFacts` — for the same simulated attempt, the span
   attribute set equals the `CounterKey` the tracker derives. This is the unit-level twin of C4.
+- `TestRunInferenceStampsDispositionOnEveryAttemptSpan` and
+  `TestRunInferenceStampsTimeoutOutcomeOnAttemptSpan` — the same claims through a real
+  `RunInference`. The unit tests above call record-then-end in the order the helpers were designed
+  for, so they cannot see an ordering bug in `finishRaceOutcome`; these two can, and did.
+- `TestAttemptSpanEndIsIdempotent` — the race loop and the timeout loop can both reach a failed
+  attempt.
 
 ```bash
 cd devshard && go test ./cmd/devshardctl/ -count=1
@@ -447,7 +467,7 @@ return traces in Tempo for the ghost e2e scenarios, without any late-classificat
 
 ---
 
-### T3.5 — ghost probe inherits the originating request context ⬜
+### T3.5 — ghost probe inherits the originating request context ✅
 
 **Goal:** a ghost burn is attributable to the user request whose overscheduling caused it. Today it
 is deliberately detached, so ghost traces would be orphans.
@@ -456,8 +476,10 @@ is deliberately detached, so ghost traces would be orphans.
 
 1. `devshard/cmd/devshardctl/session_picker.go`
    - `ghostDispatcher` type (169): add `ctx context.Context` as the first parameter.
-   - Dispatch site (476-478): pass `req.ctx` (the submitter's context, `pickerRequest.ctx` at 146)
-     rather than `p.logCtx`. Fall back to `p.logCtx` when the request context is absent.
+   - Dispatch site (476-478): pass the waiting request's context rather than `p.logCtx`. A burn only
+     happens on an iteration that did *not* choose a request, so the causally responsible request is
+     the oldest waiter — the one whose dispatch the burn is delaying. Fall back to `p.logCtx` when
+     the queue is empty.
    - Leave `p.logCtx = context.Background()` (208) as the fallback for picker-internal logging.
 2. `devshard/cmd/devshardctl/redundancy.go`
    - `runGhostProbe` (4189): accept `ctx`, replace
@@ -475,6 +497,8 @@ is deliberately detached, so ghost traces would be orphans.
 - `TestGhostProbeSpanSharesTraceWithRequest` — ghost `gateway.attempt` span has the same trace id as
   `gateway.request`.
 - `TestGhostProbeFallsBackWhenNoRequestContext` — background dispatch still works, span is a root.
+- `TestPicker_GhostBurnInheritsWaitingRequestTrace` — the picker-side half: the burn carries the
+  queued submitter's trace, not a detached one.
 
 ```bash
 cd devshard && go test ./cmd/devshardctl/ -run 'TestGhost|TestSessionPicker' -count=1
@@ -485,7 +509,7 @@ cd devshard && go test ./cmd/devshardctl/ -run 'TestGhost|TestSessionPicker' -co
 
 ---
 
-### T3.6 — span context on `nonceState`, `finalizeNonce`, and the emission queue ⬜
+### T3.6 — span context on `nonceState`, `finalizeNonce`, and the emission queue ✅
 
 **Goal:** the tracker remembers *which trace* a nonce belonged to, and emits exactly one terminal
 event per nonce from exactly one choke point — without doing I/O under its write lock.
@@ -551,7 +575,7 @@ path, with no lock held during dispatch.
 
 ---
 
-### T3.7 — the classification log line ⬜
+### T3.7 — the classification log line ✅
 
 **Goal:** the backbone of late classification. One structured log line per terminal nonce, carrying
 `trace_id`/`span_id` of the original request plus the full dimension set — queryable in both
@@ -711,12 +735,12 @@ OBS_PROFILE=jaeger-promtail make -C devshard/testenv citest-observability   # C7
 
 - [x] **T3.0** Eventless deadline transitions promoted and reaped within one sweep interval, no SQLite write, `Query` output unchanged, sweep cost benchmarked.
 - [x] **T3.1** C4 contract test green; every enum in `accounting/types.go` has a mapped attribute value.
-- [ ] **T3.2** One `gateway.attempt` span per nonce, child of `gateway.request`, always ended, carrying role + start reason; escalation log line names the joining attempt; no-split paths (`picker_exhausted`, `escalation_skipped`, `secondary_prepare_failed`) carried as parent span events.
-- [ ] **T3.3** `attempt.dispatch`/`prefill`/`stream` contiguous; stall events paired; heartbeat still logs-only.
-- [ ] **T3.4** Ghost / winner / loser / timeout attributes on the attempt span, from the T3.1 mapping.
-- [ ] **T3.5** Ghost probes share `request_id` and `trace_id` with the originating request.
-- [ ] **T3.6** Exactly one `DispositionEvent` per nonce, from both delete sites, dispatched outside the lock (`-race` green).
-- [ ] **T3.7** Classification log line carries `trace_id` + full dimension set; both LogQL queries from parent §5.5 return results.
+- [x] **T3.2** One `gateway.attempt` span per nonce, child of `gateway.request`, always ended, carrying role + start reason; escalation log line names the joining attempt; no-split paths (`picker_exhausted`, `escalation_skipped`, `secondary_prepare_failed`) carried as parent span events.
+- [x] **T3.3** `attempt.dispatch`/`prefill`/`stream` contiguous; stall events paired; heartbeat still logs-only.
+- [x] **T3.4** Ghost / winner / loser / timeout attributes on the attempt span, from the T3.1 mapping, proven through a real `RunInference` and not just through the helpers in isolation.
+- [x] **T3.5** Ghost probes share `request_id` and `trace_id` with the originating request.
+- [x] **T3.6** Exactly one `DispositionEvent` per nonce, from both delete sites, delivered on the tracker's own goroutine so no sink work touches the sequencer path (`-race` green).
+- [x] **T3.7** Classification log line carries `trace_id` + full dimension set; both LogQL queries from parent §5.5 return results.
 - [ ] **T3.8** Late disposition span emitted as a linked root; sampling decision preserved.
 - [x] **T3.9** Deferred by D2; no code. Revisit gate recorded: a `devshard_accounting_disposition_total` counter twin.
 - [ ] **T3.10** C3 + C4 green in citest on `tempo-alloy`; C7 green on `jaeger-promtail`.
@@ -728,8 +752,15 @@ OBS_PROFILE=jaeger-promtail make -C devshard/testenv citest-observability   # C7
 
 | Date | Step | Notes |
 |------|------|-------|
+| 2026-08-06 | T3.4–T3.7 | **Review pass; seven fixes.** (1) `finishRaceOutcome` ended the attempt span *before* recording the terminal fact, so every synchronous disposition attribute was silently dropped — T3.4 was not actually working. Span now ends after terminal and after timeout evaluation, replaying the race-outcome timestamp; two `RunInference`-level tests added, both verified to fail against the old ordering. (2) A terminal-but-unclassified nonce emitted an all-zero `CounterKey`, attributing the event to slot 0; it now keeps its identity dimensions and only the disposition is empty. (3) Dispatch phase was re-read at terminal/timeout time instead of reusing the phase stamped at `RealSend`. (4) The winner/loser mapping was duplicated between `Recorder.Usage` and the gateway; now one `UsageFor`/`DispositionForUsage`, likewise `NoSendFromReason` and `TimeoutActionRecorded`. (5) D1 amended — bounded async queue instead of post-unlock drain (see §2). (6) Duplicate `ParticipantKeys()` call on the picker-exhausted path. (7) `Tracker.sink` was written under `mu` but read by the dispatcher without it; now an atomic pointer. Minimalism: dropped `AnnotateAttemptDispatch`, `Recorder.CurrentPhase`, `TraceRef.SpanIDString`, the always-true `stream` attribute, the unreachable `chosen` arm in `ghostOriginContext`, and the ad-hoc inline attribute keys on the three parent events (their counters are in the adjacent log line, same trace id). |
 | 2026-08-06 | T3.0 ✅ | `Tracker.Sweep` + `sweepLoop`; `OpenTracker(..., sweep)`; `DEVSHARD_STATS_SWEEP_SECONDS` (default 5s, 0 disables). Tests: `TestTrackerSweep*`. Benchmark arm64: live=100 ~8µs, 1k ~75µs, 10k ~726µs — all under 1ms; short-circuit deferred. |
 | 2026-08-06 | T3.1 ✅ | `observability/attrs.go` keys + `CounterKeyAttrs` + identity string helpers; gateway span name constants; C4 in `attrs_contract_test.go`. `service.go` SetEscrowID/SetNonce/SetSlotID/SetModel use Attr* keys. |
+| 2026-08-06 | T3.2 ✅ | `observability/gateway_attempt.go` + `StartGatewayAttempt` / role attrs / parent no-split events. Wired in `attempt_spans.go` + `redundancy.go` (`inflight.span`/`spanCtx`, open in `prepareInflight`, role on primary/secondary, end in `finishRaceOutcome`). Escalation log enriched after prepare (`reason`/`new_nonce`/`new_host`/`attempt_index`/`role`). Tests in `attempt_span_test.go` + `gateway_attempt_test.go`. |
+| 2026-08-06 | T3.3 ✅ | Phase children `attempt.dispatch`/`prefill`/`stream` from existing timestamps; stall `detected`/`recovered` events; heartbeat stays logs-only. Tests: contiguous phases, chunk counters, stall pair, no stream without first token, `TestHeartbeatEmitsNoSpanEvents`. |
+| 2026-08-06 | T3.4 ✅ | Sync disposition attrs via `SetAttemptCounterKeyAttrs` / `CounterKeyAttrs` on started/terminal/timeout helpers; ghost sets `disposition=ghost` + `no_send_reason`. Tests: winner/loser/failure, ghost, all `TimeoutOutcome`s, C4 twin `TestAttemptSpanAttributesMatchAccountingFacts`. |
+| 2026-08-06 | T3.5 ✅ | `ghostDispatcher`/`runGhostProbe` take `ctx`; picker passes `ghostOriginContext` (oldest waiter → `logCtx`); ghost opens/ends `gateway.attempt` under that ctx. Tests: request_id inherit, shared trace, background root fallback, picker-side attribution. |
+| 2026-08-06 | T3.6 ✅ | `TraceRef` on `nonceState`; `finalizeNonce` from reclassify + `releaseCountedLive`; bounded queue drained by the tracker goroutine, `FlushDispositions` barrier for shutdown and tests, `DispositionDrops` counter; Recorder methods take `ctx`. Tests: once-per-nonce, settlement release, trace survival, outside-lock (`-race`), non-blocking recorder, queue drop, sink swap under load, protocol_only empty trace, nil sink. |
+| 2026-08-06 | T3.7 ✅ | `dispositionLogSink` logs `nonce_disposition` with CounterKey fields + explicit empty `trace_id` for orphans; registered in `main.go`. Promtail/Alloy cardinality lint extended. |
 | 2026-08-06 | — | Plan created; no step started. |
 | 2026-08-06 | T3.2 | Attribute set trimmed after review. Kept `role`/`start_reason` on the attempt span (bounded enums, needed for TraceQL filtering and to make the trace view self-describing); dropped the `attempt.escalated` parent event for the *successful* case as a restatement of its own child, and dropped `escalation_stage`/`delay_ms` as derivable. Parent span events retained only for the no-split paths, where no attempt span exists. |
 | 2026-08-06 | T3.2 | Scope extended to the **split reason**. Audit found attempts are staggered escalations, not an up-front parallel fan-out, and that `inflight.role`/`startReason` already exist and already feed Prometheus. T3.2 now adds those as span attributes, an `attempt.escalated` event on the parent per split, enriched escalation log fields (today the line is attributed to the trigger nonce, not the new attempt), and the non-split paths. |

@@ -64,7 +64,7 @@ func TestPromtailConfig_OnlyLowCardinalityLabels(t *testing.T) {
 		_, ok := jsonExprs[key]
 		require.True(t, ok, "json.expressions missing %q", key)
 	}
-	for _, forbidden := range []string{"trace_id", "span_id", "request_id", "where", "nonce"} {
+	for _, forbidden := range []string{"trace_id", "span_id", "request_id", "where", "nonce", "escrow_id"} {
 		for _, k := range labelKeys {
 			require.NotEqual(t, forbidden, k)
 		}
@@ -106,6 +106,21 @@ func TestAlloyConfig_PreservesComposeServiceLabel(t *testing.T) {
 	alloy := string(mustRead(t, filepath.Join(dir, "config.alloy")))
 	require.Contains(t, alloy, `otelcol.exporter.otlp "trace_backend"`)
 	require.Contains(t, alloy, `endpoint = "tempo:4317"`)
+}
+
+// High-cardinality identifiers must never become Loki stream labels via Alloy
+// relabel rules (parent §11 / T3.7 cardinality guard).
+func TestAlloyConfig_NoHighCardinalityLabels(t *testing.T) {
+	dir := filepath.Join(findTestenvObservabilityDir(t), "alloy")
+	forbidden := []string{"nonce", "escrow_id", "trace_id", "span_id", "request_id"}
+	for _, name := range []string{"config.alloy", "config.base.alloy"} {
+		text := string(mustRead(t, filepath.Join(dir, name)))
+		for _, key := range forbidden {
+			// Match intentional label assignments, not comments mentioning the words.
+			require.NotContains(t, text, `target_label = "`+key+`"`, "%s must not promote %q", name, key)
+			require.NotRegexp(t, `(?m)^\s*`+key+`\s*=`, text, "%s must not set stream label %q", name, key)
+		}
+	}
 }
 
 func mustRead(t *testing.T, path string) []byte {

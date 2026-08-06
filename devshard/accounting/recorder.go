@@ -166,82 +166,85 @@ func (r *Recorder) appendHostStats(
 	return into
 }
 
-func (r *Recorder) Ghost(escrowID string, nonce uint64, reason, quarantine string) {
+// Ghost records a burned nonce and returns the dispatch phase it stamped, so
+// the caller can label the attempt span with the same value the counter got.
+func (r *Recorder) Ghost(ctx context.Context, escrowID string, nonce uint64, reason, quarantine string) Phase {
+	phase := r.currentPhase()
 	if r == nil || r.tracker == nil {
-		return
+		return phase
 	}
-	noSend := NoSendReasonFromString(reason)
-	detail := ""
-	if noSend == NoSendUnknown {
-		detail = reason
-	}
+	noSend, detail := NoSendFromReason(reason)
 	if err := r.tracker.RecordGhost(
 		escrowID,
 		nonce,
-		r.currentPhase(),
+		phase,
 		QuarantineFromString(quarantine),
 		noSend,
 		detail,
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting ghost escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
+	return phase
 }
 
-func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, quarantine string) {
+// RealSend records the dispatch and returns the phase it stamped. That phase,
+// not the phase at some later instant, is the one the nonce keeps for the rest
+// of its life, so terminal-time callers must reuse this value.
+func (r *Recorder) RealSend(ctx context.Context, escrowID string, nonce uint64, sentAt time.Time, quarantine string) Phase {
+	phase := r.currentPhase()
 	if r == nil || r.tracker == nil {
-		return
+		return phase
 	}
 	if err := r.tracker.RecordRealSend(
 		escrowID,
 		nonce,
 		sentAt,
-		r.currentPhase(),
+		phase,
 		QuarantineFromString(quarantine),
+		TraceRefFromContext(ctx),
 	); err != nil {
 		log.Printf("gateway accounting real send escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
+	return phase
 }
 
-func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64) {
+func (r *Recorder) Usage(ctx context.Context, escrowID string, nonce, winnerNonce uint64) {
 	if r == nil || r.tracker == nil {
 		return
 	}
-	usage := UsageLoser
-	switch {
-	case winnerNonce == 0:
-		usage = UsageUnknownValue
-	case nonce == winnerNonce:
-		usage = UsageWinner
-	}
-	if err := r.tracker.RecordUsage(escrowID, nonce, usage); err != nil {
+	if err := r.tracker.RecordUsage(escrowID, nonce, UsageFor(nonce, winnerNonce), TraceRefFromContext(ctx)); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }
 
+// TimeoutResult records a timeout outcome and returns the evaluation phase it
+// stamped. Actions that TimeoutActionRecorded rejects are not recorded.
 func (r *Recorder) TimeoutResult(
+	ctx context.Context,
 	escrowID string,
 	nonce uint64,
 	kind, action, reason, detailReason, timeoutReason string,
-) {
-	if r == nil || r.tracker == nil || action == "started" {
-		return
-	}
-	if action == "skipped" && !timeoutSkipRequiresAccounting(reason) {
-		return
+) Phase {
+	phase := r.currentPhase()
+	if r == nil || r.tracker == nil || !TimeoutActionRecorded(action, reason) {
+		return phase
 	}
 	outcome := TimeoutOutcomeFromAction(action, reason)
 	if err := r.tracker.RecordTimeout(TimeoutRecord{
 		EscrowID:      escrowID,
 		Nonce:         nonce,
 		Kind:          TimeoutKind(kind),
-		Phase:         r.currentPhase(),
+		Phase:         phase,
 		Outcome:       outcome,
 		Reason:        TimeoutReasonFromString(outcome, timeoutReason),
 		FailureOrigin: FailureOriginFromDetail(detailReason),
 		DetailReason:  detailReason,
+		Trace:         TraceRefFromContext(ctx),
 	}); err != nil {
 		log.Printf("gateway accounting timeout escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
+	return phase
 }
 
 // Finalize syncs in memory without writing: it runs before the settlement JSON
@@ -375,7 +378,16 @@ func escrowPhase(phase types.SessionPhase) EscrowPhase {
 	}
 }
 
-func timeoutSkipRequiresAccounting(reason string) bool {
+// TimeoutActionRecorded reports whether a gateway timeout action becomes an
+// accounting fact. Callers that mirror the outcome onto a span consult it too,
+// so the span never claims a dimension the counter does not carry.
+func TimeoutActionRecorded(action, reason string) bool {
+	if action == "started" {
+		return false
+	}
+	if action != "skipped" {
+		return true
+	}
 	switch reason {
 	case "nonce_already_finished", "empty_stream_without_non_empty_winner":
 		return false

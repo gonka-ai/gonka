@@ -25,10 +25,10 @@ func TestGatewayAccountingAdapterRecordsEvents(t *testing.T) {
 	require.NotNil(t, recorder)
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.Ghost("e1", 1, "participant_throttled_no_send", "probe")
+	recorder.Ghost(context.Background(), "e1", 1, "participant_throttled_no_send", "probe")
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
-	recorder.RealSend("e1", 2, time.Now().Add(-time.Second), "shadow")
-	recorder.TimeoutResult("e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
+	recorder.RealSend(context.Background(), "e1", 2, time.Now().Add(-time.Second), "shadow")
+	recorder.TimeoutResult(context.Background(), "e1", 2, "refused", "failed", "insufficient_votes", "no_receipt", "")
 
 	records := tracker.Query(accounting.QueryFilter{EpochIndex: 1})
 	var ghost, unfinished uint64
@@ -140,8 +140,8 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 
 	_, err = env.session.SendInference(context.Background(), defaultParams())
 	require.NoError(t, err)
-	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
-	recorder.Usage("escrow-proxy", 1, 1)
+	recorder.RealSend(context.Background(), "escrow-proxy", 1, time.Now(), "")
+	recorder.Usage(context.Background(), "escrow-proxy", 1, 1)
 	_, err = env.session.PrepareInference(defaultParams())
 	require.NoError(t, err)
 
@@ -171,7 +171,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	prepared, err := env.session.PrepareInference(params)
 	require.NoError(t, err)
 	sentAt := time.Now().Add(-2 * time.Second)
-	recorder.RealSend("escrow-proxy", prepared.Nonce(), sentAt, "")
+	recorder.RealSend(context.Background(), "escrow-proxy", prepared.Nonce(), sentAt, "")
 
 	result, err := env.session.HandleTimeout(context.Background(), prepared.Nonce(), sentAt, &host.InferencePayload{
 		Prompt:      params.Prompt,
@@ -182,7 +182,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.True(t, result.Applied)
-	recorder.TimeoutResult("escrow-proxy", prepared.Nonce(), result.Reason, "completed", "none", "", "")
+	recorder.TimeoutResult(context.Background(), "escrow-proxy", prepared.Nonce(), result.Reason, "completed", "none", "", "")
 
 	var applied, missed, crossCheckErrors uint64
 	for _, record := range tracker.Query(accounting.QueryFilter{EpochIndex: 22}) {
@@ -214,7 +214,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 	require.Equal(t, uint64(1), record.PendingClassification)
 	require.Zero(t, record.InFlight)
 
-	recorder.RealSend("escrow-proxy", prepared.Nonce(), time.Now(), "")
+	recorder.RealSend(context.Background(), "escrow-proxy", prepared.Nonce(), time.Now(), "")
 	record = accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Zero(t, record.PendingClassification)
 	require.Equal(t, uint64(1), record.InFlight)
@@ -240,6 +240,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostThrottled,
 		ghostThrottled.reason(),
@@ -279,6 +280,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 	prepared := prepareForGhost(t, env.session, "llama")
 	env.proxy.redundancy.runGhostProbe(
+		context.Background(),
 		prepared,
 		ghostCapability,
 		"escrow_state_root_diverged",
@@ -520,7 +522,7 @@ func TestGatewayAccountingAdapterRecordsGhostPolicyDimensions(t *testing.T) {
 	for i, tc := range cases {
 		nonce := uint64(i + 1)
 		require.NoError(t, tracker.RecordDiff("e1", nonce, true), tc.name)
-		recorder.Ghost("e1", nonce, tc.reason, tc.quarantine)
+		recorder.Ghost(context.Background(), "e1", nonce, tc.reason, tc.quarantine)
 	}
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 2}))
@@ -546,7 +548,7 @@ func TestGatewayAccountingAdapterRecordsPoCGhostPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 3, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.Ghost("e1", 1, "poc_unavailable_host", "none")
+	recorder.Ghost(context.Background(), "e1", 1, "poc_unavailable_host", "none")
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 3}))
 	counter := requireGatewayAccountingCounter(t, record, func(key accounting.CounterKey) bool {
@@ -565,13 +567,13 @@ func TestGatewayAccountingAdapterRecordsRealSendPolicyDimensions(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 4, "m")
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
-	recorder.RealSend("e1", 1, time.Now(), "shadow")
-	recorder.Usage("e1", 1, 1)
+	recorder.RealSend(context.Background(), "e1", 1, time.Now(), "shadow")
+	recorder.Usage(context.Background(), "e1", 1, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
-	recorder.RealSend("e1", 2, time.Now(), "probation")
-	recorder.Usage("e1", 2, 1)
+	recorder.RealSend(context.Background(), "e1", 2, time.Now(), "probation")
+	recorder.Usage(context.Background(), "e1", 2, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 2, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 4}))
@@ -595,8 +597,8 @@ func TestGatewayAccountingAdapterRecordsPoCRealSendPhaseContext(t *testing.T) {
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 5, "m")
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
-	recorder.RealSend("e1", 1, time.Now(), "none")
-	recorder.Usage("e1", 1, 1)
+	recorder.RealSend(context.Background(), "e1", 1, time.Now(), "none")
+	recorder.Usage(context.Background(), "e1", 1, 1)
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 5}))

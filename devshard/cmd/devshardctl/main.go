@@ -471,6 +471,9 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 		gatewayState.Settings.ModelLimits,
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
+	if accountingTracker != nil {
+		accountingTracker.SetDispositionSink(dispositionLogSink{})
+	}
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
 	if accountingTracker != nil {
 		if err := gateway.metrics.RegisterCollector(accounting.NewCollector(accountingTracker, accountingCurrentEpoch(gateway))); err != nil {

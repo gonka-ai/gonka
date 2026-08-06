@@ -25,6 +25,7 @@ type Collector struct {
 	unknown               *prometheus.Desc
 	recordingErrors       *prometheus.Desc
 	writerErrors          *prometheus.Desc
+	dispositionDrops      *prometheus.Desc
 	crossCheck            *prometheus.Desc
 }
 
@@ -102,6 +103,11 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 			"Gateway-wide accounting event recording errors.",
 			nil, nil,
 		),
+		dispositionDrops: prometheus.NewDesc(
+			"devshard_accounting_disposition_drops",
+			"Terminal disposition events discarded because the sink could not keep up.",
+			nil, nil,
+		),
 		crossCheck: prometheus.NewDesc(
 			"devshard_accounting_cross_check_error",
 			"Absolute protocol-to-gateway accounting cross-check difference.",
@@ -119,7 +125,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 		c.assigned, c.disposition, c.timeout, c.missed, c.invalid,
 		c.challenges, c.inFlight, c.timeoutPending, c.pendingClassification,
 		c.unclassified, c.overclassified, c.unknown, c.recordingErrors,
-		c.writerErrors, c.crossCheck,
+		c.writerErrors, c.dispositionDrops, c.crossCheck,
 	} {
 		ch <- desc
 	}
@@ -136,6 +142,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 	recordingErrors, writerErrors := c.tracker.ErrorCounts()
 	gauge(ch, c.recordingErrors, recordingErrors)
 	gauge(ch, c.writerErrors, writerErrors)
+	gauge(ch, c.dispositionDrops, c.tracker.DispositionDrops())
 	for _, record := range c.tracker.Query(QueryFilter{EpochIndex: epoch}) {
 		base := []string{record.Participant, record.Model}
 		gauge(ch, c.assigned, record.AssignedNonces, base...)
