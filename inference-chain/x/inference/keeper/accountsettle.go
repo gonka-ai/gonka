@@ -207,14 +207,16 @@ func (k *Keeper) SettleAccounts(ctx context.Context, currentEpochIndex uint64, p
 
 	var bitcoinResult BitcoinResult
 	reservedNodes := k.CollectEpochReservedNodeWeights(ctx, currentEpochIndex)
-	amounts, bitcoinResult, err = GetBitcoinSettleAmounts(
+	amounts, bitcoinResult, err = GetBitcoinSettleAmountsWithTransfers(
 		allParticipants,
 		&data,
 		params.BitcoinRewardParams,
 		inputs.ValidationParams,
 		settleParameters,
-		participantMLNodes,
+		inputs.ParticipantMLNodes,
 		reservedNodes,
+		inputs.RewardTransfers,
+		inputs.RewardPenalties,
 		k.Logger(),
 	)
 	if err != nil {

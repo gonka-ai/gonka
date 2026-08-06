@@ -133,6 +133,9 @@ type (
 		PoCDirectIntents            collections.KeySet[collections.Pair[string, string]]
 		DelegationSnapshot          collections.Item[types.DelegationSnapshot]
 		BootstrapDelegationSnapshot collections.Item[types.BootstrapDelegationSnapshot]
+		DelegationRewardTransferSnapshot collections.Item[types.DelegationRewardTransferSnapshot]
+		ClaimRecipients                 collections.Map[collections.Pair[sdk.AccAddress, uint64], string]
+		ClaimRecipientsByEpoch          collections.KeySet[collections.Pair[uint64, sdk.AccAddress]]
 		// Trainshard collections
 		Trainshards               collections.Map[uint64, types.Trainshard]
 		TrainshardCounter         collections.Item[uint64]
@@ -658,6 +661,25 @@ func NewKeeper(
 			types.BootstrapDelegationSnapshotPrefix,
 			"bootstrap_delegation_snapshot",
 			codec.CollValue[types.BootstrapDelegationSnapshot](cdc),
+		),
+		DelegationRewardTransferSnapshot: collections.NewItem(
+			sb,
+			types.DelegationRewardTransferSnapshotPrefix,
+			"delegation_reward_transfer_snapshot",
+			codec.CollValue[types.DelegationRewardTransferSnapshot](cdc),
+		),
+		ClaimRecipients: collections.NewMap(
+			sb,
+			types.ClaimRecipientsPrefix,
+			"claim_recipients",
+			collections.PairKeyCodec(sdk.AccAddressKey, collections.Uint64Key),
+			collections.StringValue,
+		),
+		ClaimRecipientsByEpoch: collections.NewKeySet(
+			sb,
+			types.ClaimRecipientsByEpochPrefix,
+			"claim_recipients_by_epoch",
+			collections.PairKeyCodec(collections.Uint64Key, sdk.AccAddressKey),
 		),
 		// Trainshard collections
 		Trainshards: collections.NewMap(

@@ -1,7 +1,6 @@
 package inference
 
 import (
-	"math"
 	"testing"
 
 	"cosmossdk.io/core/header"

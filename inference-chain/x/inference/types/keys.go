@@ -123,6 +123,9 @@ var (
 	// Lets concurrency / schedulability queries iterate only the bounded set
 	// of scheduled reservations instead of every participant's MaintenanceState.
 	MaintenanceScheduledIndexPrefix = collections.NewPrefix(105)
+	ClaimRecipientsPrefix           = collections.NewPrefix(106)
+	ClaimRecipientsByEpochPrefix    = collections.NewPrefix(107)
+	DelegationRewardTransferSnapshotPrefix = collections.NewPrefix(108)
 	// Trainshard prefixes start at 130, above ASCII, so they never collide with legacy string keys like ParamsKey
 	TrainshardsPrefix               = collections.NewPrefix(130)
 	TrainshardCounterPrefix         = collections.NewPrefix(131)

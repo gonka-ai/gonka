@@ -203,6 +203,7 @@ func TestCalculateBitcoinRewards_PenaltyDoesNotRenormalizeDenominator(t *testing
 		nil,
 		modelNodesAndScales(epochGroupData),
 		nil,
+		nil,
 		penalties,
 		createTestLogger(t),
 	)

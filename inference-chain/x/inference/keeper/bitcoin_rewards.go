@@ -43,6 +43,7 @@ func GetBitcoinSettleAmounts(
 		validationParams,
 		settleParams,
 		participantMLNodes,
+		reservedNodes,
 		nil,
 		nil,
 		logger,
@@ -56,6 +57,7 @@ func GetBitcoinSettleAmountsWithTransfers(
 	validationParams *types.ValidationParams,
 	settleParams *SettleParameters,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservedNodes map[string][]*types.TrainshardReservedNode,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
 	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,
@@ -87,6 +89,8 @@ func GetBitcoinSettleAmountsWithTransfers(
 		validationParams,
 		participantMLNodes,
 		reservedNodes,
+		delegationRewardTransfers,
+		delegationRewardPenalties,
 		logger,
 	)
 	if err != nil {
@@ -350,7 +354,6 @@ func weightedModelNodeTotal(modelNodes map[string][]*types.MLNodeInfo, coefficie
 	return types.ConfirmationWeightOfModelNodesWithCoefficients(modelNodes, coefficients)
 }
 
-// applyTrainingReservationAdjustment zeroes reserved payouts
 func applyTrainingReservationAdjustment(
 	participantWeights map[string]uint64,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
@@ -833,6 +836,7 @@ func CalculateParticipantBitcoinRewards(
 		bitcoinParams,
 		validationParams,
 		participantMLNodes,
+		reservedNodes,
 		nil,
 		nil,
 		logger,
@@ -845,6 +849,7 @@ func CalculateParticipantBitcoinRewardsWithTransfers(
 	bitcoinParams *types.BitcoinRewardParams,
 	validationParams *types.ValidationParams,
 	participantMLNodes map[string]map[string][]*types.MLNodeInfo,
+	reservedNodes map[string][]*types.TrainshardReservedNode,
 	delegationRewardTransfers []*types.DelegationRewardTransfer,
 	delegationRewardPenalties []*types.DelegationRewardPenalty,
 	logger log.Logger,

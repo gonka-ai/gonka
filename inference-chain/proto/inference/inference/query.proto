@@ -36,6 +36,7 @@ import "inference/inference/devshard_escrow.proto";
 import "inference/inference/maintenance.proto";
 import "inference/inference/preserved_nodes_snapshot.proto";
 import "inference/inference/poc_delegation.proto";
+import "inference/inference/claim_recipient.proto";
 import "inference/inference/trainshard.proto";
 
 option go_package = "github.com/productscience/inference/x/inference/types";
@@ -485,17 +486,19 @@ service Query {
     option (google.api.http).get = "/productscience/inference/inference/maintenance_schedulability/{participant}/{start_height}/{duration_blocks}";
   }
 
-  // Queries a single trainshard by id
+  // Lists the scheduled per-epoch claim recipient overrides for a participant.
+  rpc ListClaimRecipients (QueryListClaimRecipientsRequest) returns (QueryListClaimRecipientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/list_claim_recipients/{participant}";
+  }
+
   rpc Trainshard (QueryGetTrainshardRequest) returns (QueryGetTrainshardResponse) {
     option (google.api.http).get = "/productscience/inference/inference/trainshard/{trainshard_id}";
   }
 
-  // Queries all active trainshards
   rpc ActiveTrainshards (QueryActiveTrainshardsRequest) returns (QueryActiveTrainshardsResponse) {
     option (google.api.http).get = "/productscience/inference/inference/active_trainshards";
   }
 
-  // Queries a training proposal by id
   rpc TrainshardProposal (QueryGetTrainshardProposalRequest) returns (QueryGetTrainshardProposalResponse) {
     option (google.api.http).get = "/productscience/inference/inference/trainshard_proposal/{proposal_id}";
   }
@@ -1314,6 +1317,14 @@ message QueryMaintenanceSchedulabilityRequest {
 message QueryMaintenanceSchedulabilityResponse {
   bool   schedulable        = 1;
   string rejection_reason   = 2;
+}
+
+message QueryListClaimRecipientsRequest {
+  string participant = 1;
+}
+
+message QueryListClaimRecipientsResponse {
+  repeated ClaimRecipientEntry entries = 1 [(gogoproto.nullable) = false];
 }
 
 message QueryGetTrainshardRequest {

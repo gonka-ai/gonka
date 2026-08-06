@@ -447,7 +447,8 @@ func (am AppModule) evaluateConfirmation(
 		}
 	}
 
-	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected)
+	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
+	updated, ratios := foldEventReadings(epochGroupData, measured, preserved, totalExpected, maintenanceAddrs)
 	if updated {
 		am.LogInfo("evaluateConfirmation: confirmation weights lowered", types.PoC,
 			"epochIndex", event.EpochIndex,
@@ -457,7 +458,6 @@ func (am AppModule) evaluateConfirmation(
 	// Skip CPoC ratio assignment for maintenance-covered participants — they
 	// are expected to be offline and must not be marked INACTIVE due to
 	// maintenance-covered absence from CPoC duties.
-	maintenanceAddrs := am.keeper.CollectActiveMaintenanceAddresses(ctx)
 	reservedView := am.keeper.BuildEpochReservationView(ctx, event.EpochIndex)
 
 	for _, vw := range epochGroupData.ValidationWeights {
