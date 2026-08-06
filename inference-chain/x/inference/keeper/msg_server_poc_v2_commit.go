@@ -21,7 +21,7 @@ type pocV2CommitUpdate struct {
 
 // PoCV2StoreCommit handles submission of off-chain artifact store commits.
 func (k msgServer) PoCV2StoreCommit(goCtx context.Context, msg *types.MsgPoCV2StoreCommit) (*types.MsgPoCV2StoreCommitResponse, error) {
-	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 
@@ -270,7 +270,7 @@ func checkedMul(a, b uint64) (uint64, bool) {
 
 // MLNodeWeightDistribution handles submission of per-node weight distribution.
 func (k msgServer) MLNodeWeightDistribution(goCtx context.Context, msg *types.MsgMLNodeWeightDistribution) (*types.MsgMLNodeWeightDistributionResponse, error) {
-	if err := k.CheckPermission(goCtx, msg, NoPermission); err != nil {
+	if err := k.CheckPermission(goCtx, msg, ParticipantPermission); err != nil {
 		return nil, err
 	}
 

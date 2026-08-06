@@ -128,11 +128,37 @@ func (ppd PocPeriodValidationDecorator) checkPocMessageTooLate(ctx sdk.Context, 
 	return nil
 }
 
+func (ppd PocPeriodValidationDecorator) checkPocMessageSender(ctx sdk.Context, msg sdk.Msg) error {
+	if ppd.inferenceKeeper == nil {
+		return nil
+	}
+
+	signers, ok := msg.(inferencemodulekeeper.HasSigners)
+	if !ok {
+		return nil
+	}
+
+	for _, signer := range signers.GetSignersStrings() {
+		addr, err := sdk.AccAddressFromBech32(signer)
+		if err != nil {
+			continue
+		}
+		if found, err := ppd.inferenceKeeper.Participants.Has(ctx, addr); err == nil && found {
+			return nil
+		}
+	}
+
+	return inferencetypes.ErrParticipantNotFound
+}
+
 func (ppd PocPeriodValidationDecorator) checkMessage(ctx sdk.Context, msg sdk.Msg) error {
 	switch m := msg.(type) {
 	case *inferencetypes.MsgSubmitPocBatch,
 		*inferencetypes.MsgSubmitPocValidationsV2,
 		*inferencetypes.MsgPoCV2StoreCommit, *inferencetypes.MsgMLNodeWeightDistribution:
+		if err := ppd.checkPocMessageSender(ctx, msg); err != nil {
+			return err
+		}
 		return ppd.checkPocMessageTooLate(ctx, msg)
 
 	case *authztypes.MsgExec:
