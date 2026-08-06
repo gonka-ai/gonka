@@ -556,6 +556,27 @@ func TestCachingConn_HintFallbackForUnpinnedCallers(t *testing.T) {
 	require.Equal(t, 1, inner.invokeCount(), "second unpinned call must hit cache via hint")
 }
 
+func TestCachingConn_HintFallbackPinsTrustedHintForABCIPath(t *testing.T) {
+	cache := NewQueryCache()
+	cache.SetHeightHint(200)
+
+	inner := &testConn{heightFromCtx: true}
+	conn := &CachingConn{inner: inner, cache: cache}
+
+	req := &emptypb.Empty{}
+	resp := &emptypb.Empty{}
+
+	require.NoError(t, conn.Invoke(context.Background(), "/inference.Query/Models", req, resp))
+	require.Equal(t, 1, inner.invokeCount())
+
+	require.NoError(t, conn.Invoke(context.Background(), "/inference.Query/Models", req, resp))
+	require.Equal(t, 1, inner.invokeCount(), "trusted hint should be pinned so ABCI path can write cache entries")
+
+	stats := cache.SnapshotStats()
+	require.Equal(t, uint64(1), stats.CacheWriteTotal)
+	require.Equal(t, uint64(0), stats.CacheWriteSkippedHeightTotal)
+}
+
 func TestCachingConn_HintFlipDuringRequest_NoCorruption(t *testing.T) {
 	cache := NewQueryCache()
 	cache.SetHeightHint(100)

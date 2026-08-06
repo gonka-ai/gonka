@@ -292,6 +292,11 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 	}
 	c.cache.stats.cacheMissTotal.Add(1)
 
+	backendCtx := ctx
+	if explicitHeight == 0 && hintTrusted {
+		backendCtx = setPinnedHeight(ctx, height)
+	}
+
 	callOpts := make([]grpc.CallOption, len(opts))
 	copy(callOpts, opts)
 	responseHeader := headerAddrFromCallOptions(callOpts)
@@ -309,7 +314,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 			}
 		}
 
-		if err := c.invokeBackend(ctx, method, args, reply, callOpts...); err != nil {
+		if err := c.invokeBackend(backendCtx, method, args, reply, callOpts...); err != nil {
 			return nil, err
 		}
 
@@ -358,7 +363,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 
 	if !result.dataValid {
 		if shared {
-			return c.invokeBackend(ctx, method, args, reply, callOpts...)
+			return c.invokeBackend(backendCtx, method, args, reply, callOpts...)
 		}
 		return nil
 	}
@@ -370,7 +375,7 @@ func (c *CachingConn) Invoke(ctx context.Context, method string, args, reply int
 		if result.height > 0 {
 			c.cache.deleteEntry(result.height, key)
 		}
-		return c.invokeBackend(ctx, method, args, reply, callOpts...)
+		return c.invokeBackend(backendCtx, method, args, reply, callOpts...)
 	}
 	return nil
 }
