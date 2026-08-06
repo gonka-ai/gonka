@@ -10,9 +10,11 @@ Assume we now have models:
 - M3, coeff3
 
 Then, before group cap and collateral/power adjustments, for each host:
+
 ```
 W = W1*coeff1 + W2*coeff2 + W3*coeff3
 ```
+
 where `Wi` is the host's pocWeight in `Mi`.
 
 
@@ -23,7 +25,7 @@ Fully automated demand-driven coefficients are complex, vulnerable to manipulati
 This proposal introduces a transitional approach:
 
 - Governance sets target compute allocation shares per model (share of total compute capacity, which directly defines model throughput when network size is stable) based on demand signals (revenue, data from brokers, expectations from open source data, etc).
-- Governance defines a bounded range [coeff_min, coeff_max] per model.
+- Governance defines a bounded range `[coeff_min, coeff_max]` per model.
 - The protocol dynamically adjusts coefficients within these bounds to align actual hardware distribution with the target shares.
 
 -----
@@ -38,50 +40,85 @@ This proposal introduces a transitional approach:
 
 ### Formalization
 
-Governance defines three parameters for each model M_i:
+Governance defines three parameters for each model `M_i`:
 
-- [coeff_i_min, coeff_i_max] - tight coefficient range. The maximum value coeff_i_max provides a ~5% incentive to switch to model M_i, while the minimum value coeff_i_min provides a ~5% incentive to switch back to the base model.
+- `[coeff_i_min, coeff_i_max]` - tight coefficient range. The maximum value `coeff_i_max` provides a ~5% incentive to switch to model `M_i`, while the minimum value `coeff_i_min` provides a ~5% incentive to switch back to the base model.
 
-- D_i - relative model inference complexity (measured based on PoC results as correlated with real inference difficulty by PoC definition). Unlike the current coefficient, D_i carries no economic assumptions and is used solely to normalize nonces to comparable units. It is defined by throughput parity on a reference server (e.g., 8xH100) relative to a base model. If a model exceeds reference server capacity, it is measured on the next server by capacity (e.g., 8xH200):
+- `D_i` - relative model inference complexity (measured based on PoC results as correlated with real inference difficulty by PoC definition). Unlike the current coefficient, `D_i` carries no economic assumptions and is used solely to normalize nonces to comparable units. It is defined by throughput parity on a reference server (e.g., 8xH100) relative to a base model. If a model exceeds reference server capacity, it is measured on the next server by capacity (e.g., 8xH200):
 
-  Example: If base model M_1 has throughput of 4736 nonces/min and model M_2 has 3072 nonces/min on the reference server:
+  Example: If base model `M_1` has throughput of 4736 nonces/min and model `M_2` has 3072 nonces/min on the reference server:
   D_1 = 1.0
   D_2 = 4736 / 3072 = 1.54
 
   Relative difficulties vary across hardware configurations, but high precision is not required.
 
-- T_i - target compute share of the model, where T_i in [0, 1] and sum(T_i) = 1. Targets are set as shares rather than absolute nonces to avoid updating parameters as total chain capacity fluctuates.
+- `T_i` - target compute share of the model, where `T_i` is in `[0, 1]` and `sum(T_i) = 1`. Using shares avoids parameter updates as total network capacity fluctuates.
 
-The actual compute share (share_i) for model M_i is:
+The actual compute share (`share_i`) for model `M_i` is:
 
+```
 share_i = (D_i * sum_j(W[i,j])) / sum_k(D_k * sum_j(W[k,j]))
+```
 
-where W[i,j] is the pocWeight of host j in model i.
+where `W[i,j]` is the `pocWeight` of host `j` in model `i`.
 
 
-Each host H_j has a list of MLNodes [node_k]. For each node:
-
-- e[i,j,k] - relative performance of node k on model M_i, measured against the same reference configuration as D_i. This is internal host knowledge used for rational model selection.
-
-  Example: If model M_i has throughput of 3072 nonces/min on the reference server and 10072 nonces/min on node k:
-  e[i,j,k] = 10072 / 3072 = 3.28
-
+Each host `H_j` has a list of MLNodes `[node_k]`. Each host knows `throughput[i,k]`, the throughput (nonces/min) of model `M_i` on node `k`. This is internal host knowledge used for rational model selection.
 
 Assuming each host is a rational agent. 
 
 
 #### Protocol
 
-Weight computation after PoC for epoch N is structurally unchanged:
+Weight computation after PoC for epoch `N` is structurally unchanged:
+
 ```
 coeff[i,N] = f(share[i,N-1], coeff[i,N-1], params_i)
 W_j = sum_i(W[i,j] * coeff[i,N])
 ```
-where params_i is the full governance parameter set from Formalization: [coeff_i_min, coeff_i_max], D_i, T_i.
+
+where `params_i` is the full governance parameter set: `[coeff_i_min, coeff_i_max]`, `D_i`, `T_i`.
 
 
+#### Design of f
 
+The protocol adjusts `coeff_i` until `share_i` enters the target zone `[T_i - Z, T_i + Z]`:
 
+```
+err_i = T_i - share[i,N-1]
 
-### Experiments
+if |err_i| <= Z:
+    coeff[i,N] = coeff[i,N-1]
+else if err_i > 0:
+    coeff[i,N] = min(coeff[i,N-1] * (1 + s), coeff_i_max)
+else:
+    coeff[i,N] = max(coeff[i,N-1] * (1 - s), coeff_i_min)
+```
 
+Defaults: `Z = 0.02`, `s = 0.01`. If `T_i = 0`, `coeff_i = coeff_i_min`.
+New models start at `coeff_i_min`. At rollout, existing models keep their current coefficients.
+
+#### Host response
+
+A rational host assigns each node `k` to the model maximizing consensus weight:
+
+```
+argmax_i throughput[i,k] * coeff_i
+```
+
+Switching node `k` from model `a` to `b` occurs when:
+
+```
+coeff_b / coeff_a > throughput[a,k] / throughput[b,k]
+```
+
+Target reachability is constrained by available physical hardware and coefficient bounds.
+
+#### Bounds and stability
+
+With `coeff_i` bounded by `[coeff_i_min, coeff_i_max]`, the maximum manipulation payoff is capped by `coeff_i_max / coeff_i_min`.
+
+Stable states:
+- Within the target zone, `coeff_i` remains constant.
+- Pinned at `coeff_i_min` with `share_i > T_i + Z` represents oversupply. Governance can raise `T_i` or accept the excess.
+- Pinned at `coeff_i_max` with `share_i < T_i - Z` represents an unfeasible target. Governance must lower `T_i` or widen the bounds.
