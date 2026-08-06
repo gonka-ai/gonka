@@ -59,8 +59,15 @@ share_i = (D_i * sum_j(W[i,j])) / sum_k(D_k * sum_j(W[k,j]))
 where W[i,j] is the pocWeight of host j in model i.
 
 
-Hosts H_j has list of MLNodes [node_j] with:
-- e_i_j - 
+Each host H_j has a list of MLNodes [node_k]. For each node:
+
+- e[i,j,k] - relative performance of node k on model M_i, measured against the same reference configuration as D_i. This is internal host knowledge used for rational model selection.
+
+  Example: If model M_i has throughput of 3072 nonces/min on the reference server and 10072 nonces/min on node k:
+  e[i,j,k] = 10072 / 3072 = 3.28
+
+
+Assuming each host is a rational agent. 
 
 
 ### Experiments
