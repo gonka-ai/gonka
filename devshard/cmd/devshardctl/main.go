@@ -472,7 +472,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	)
 	recorder := accounting.NewRecorder(accountingTracker, currentPoCPhaseReason)
 	if accountingTracker != nil {
-		accountingTracker.SetDispositionSink(dispositionLogSink{})
+		accountingTracker.SetDispositionSink(dispositionSink{})
 	}
 	gateway := NewManagedGateway(runtimes, limiter, gatewayState.Settings, baseStorageDir, gatewayStore, chainClient, perf, recorder)
 	if accountingTracker != nil {

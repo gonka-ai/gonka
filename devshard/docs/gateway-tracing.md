@@ -112,6 +112,33 @@ Where each disposition can be observed:
 | deadline + receipt applied | `unfinished_execution` | up to ≈ 32 min later — linked trace |
 | nonce consumed with no dispatch | `protocol_only` | root trace, no parent by definition |
 
+### The disposition queue
+
+Both the log line and the late span come off one bounded channel inside the accounting tracker
+(`dispositionQueueSize = 1024`, `accounting/disposition.go`).
+
+**Who fills it.** `finalizeNonce` — the single choke point every nonce passes through on its way out
+of the live set — plus the `protocol_only` path. Its hottest caller is the per-diff observer, which
+runs inside the sequencer's `Session.mu` critical section, so the enqueue is a **non-blocking send**:
+if the queue is full the event is dropped and `devshard_accounting_disposition_drops` counts it. The
+sequencer is never made to wait on telemetry.
+
+**What it carries.** Immutable `DispositionEvent` values — the finished `CounterKey`, the nonce's
+`TraceRef`, and the send/observe timestamps. It is an output tap, not a work queue: every state
+mutation has already been committed under `Tracker.mu` before the event is enqueued, so dropping one
+loses observability, never accounting truth. That is why a bounded queue with a drop counter is the
+right trade rather than backpressure or unbounded growth.
+
+**Who drains it.** One goroutine per tracker, calling the registered sink. Sink work — building a
+log line, starting a span, exporting it — therefore never runs on a lock-holding writer's goroutine.
+1024 is sized to absorb a settlement burst while still surfacing a wedged sink through the drop
+counter within seconds instead of quietly eating memory.
+
+**When it fires for a long stream.** Not until the stream ends. A nonce becomes terminal only once
+the protocol `FinishInference` diff and the gateway's usage fact have both landed, and a
+past-deadline nonce with neither is held back by `persistable`, so it stays visible as
+`devshard_accounting_in_flight` / `timeout_pending` rather than emitting a premature verdict.
+
 ### Why the accounting sweep runs every 5 seconds
 
 Deadline-based dispositions (`unfinished_refused`, `unfinished_execution`) are time-dependent: a
@@ -163,8 +190,7 @@ attributes. Only small fingerprints / a `payload.captured` span event stay on th
 ```
 
 Grafana wiring: Loki derived field `trace_id` → Tempo; Tempo `tracesToLogsV2` → Loki; Prometheus
-panels link into Tempo via TraceQL templates on disposition labels (exemplars on the disposition
-*gauge* are deferred — OpenMetrics only carries exemplars on counters/histograms).
+panels link into Tempo via TraceQL templates on disposition labels.
 
 ## Stack
 

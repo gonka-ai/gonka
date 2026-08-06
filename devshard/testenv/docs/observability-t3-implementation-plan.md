@@ -1,6 +1,6 @@
 # T3 — disposition on the trace: step-by-step implementation plan
 
-**Status:** in progress — T3.0–T3.7 ✅; next is T3.8.
+**Status:** in progress — T3.0–T3.8 ✅; next is T3.10.
 **Design:** [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) §5 (T3).
 This document is *plan only*: what to change, in what order, and how each step is proven. It does
 not restate the design rationale — read §5.1–§5.9 of the parent document first.
@@ -40,7 +40,7 @@ And what T3 must build from zero:
 
 ## 1. Step index
 
-Status key: ⬜ not started · 🟡 in progress · ✅ done · ⏸ deferred
+Status key: ⬜ not started · 🟡 in progress · ✅ done
 
 | ID | Step | Tier | Independently shippable? | Status |
 |----|------|------|--------------------------|--------|
@@ -52,8 +52,7 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done · ⏸ deferred
 | **T3.5** | Ghost probe inherits the originating request context | 1 | ✅ yes | ✅ |
 | **T3.6** | Span context on `nonceState` + `finalizeNonce` choke point + emission queue | 2 | ✅ yes (sink is a no-op until T3.7) | ✅ |
 | **T3.7** | Classification log line from the gateway sink | 2 | ✅ yes | ✅ |
-| **T3.8** | Late `devshard.nonce.disposition` span, linked root | 3 | ✅ yes | ⬜ |
-| **T3.9** | Prometheus exemplars on the disposition series | 2-bonus | ⏸ deferred by D2 | ⏸ |
+| **T3.8** | Late `devshard.nonce.disposition` span, linked root | 3 | ✅ yes | ✅ |
 | **T3.10** | Harness helpers + e2e assertions C3/C4 | — | needs T3.4 + T3.7 | ⬜ |
 
 ```mermaid
@@ -66,7 +65,6 @@ flowchart TD
   T35["T3.5 ghost ctx"] --> T36
   T36 --> T37["T3.7 classification log line"]
   T37 --> T38["T3.8 late disposition span"]
-  T37 --> T39["T3.9 exemplars (deferred)"]
   T34 --> T310["T3.10 e2e C3/C4"]
   T37 --> T310
 ```
@@ -81,7 +79,7 @@ table below is the record, not an open question list.
 | ID | Question | Decision ✅ | Enforced by |
 |----|----------|-------------|-------------|
 | **D1** | `reclassify` runs under `Tracker.mu` write lock (`tracker.go:372-381` `withWrite`). Emitting a log line or span there would do I/O under the lock. | **Amended 2026-08-06 (see §6).** Non-blocking send onto a bounded queue drained by the tracker's own goroutine. The original "drain after unlock in `withWrite`/`snapshot`" still ran the sink on the caller's goroutine, and the hottest caller is `RecordDiff` inside the sequencer's `Session.mu`. | T3.6 · `TestDispositionEventEmittedOutsideLock`, `TestDispositionSinkNeverBlocksTheRecorder`, `TestDispositionQueueDropsInsteadOfBlocking` (`-race`) |
-| **D2** | `devshard_accounting_disposition` is a **Gauge** (`accounting/metrics.go:181-183`, `prometheus.GaugeValue`). Prometheus/OpenMetrics only carries exemplars on counters and histogram buckets, so `NewMetricWithExemplars` on this series would be dropped at exposition. | **Defer T3.9.** The "click the spike → open the trace" path is served by the Grafana TraceQL data link in T6, which needs no Go change. Revisit only if a monotonic `devshard_accounting_disposition_total` twin is added. | T3.9 marked ⏸; no code |
+| **D2** | Attach Prometheus exemplars to `devshard_accounting_disposition`? | **Out of scope for T3.** The series is a Gauge (`accounting/metrics.go:188-190`); OpenMetrics only carries exemplars on counters/histograms, and `NewMetricWithExemplars` errors on gauges (breaks the scrape). The "click the spike → open the trace" path is the Grafana TraceQL data link in T6 — no Go change. | no step |
 | **D3** | Ghost probes need the originating ctx (`session_picker.go:169` `ghostDispatcher`, dispatch at `476-478`, `pickerRequest.ctx` at `146`). Change the callback signature, or carry ctx on `PreparedInference`? | Change the callback signature to take `ctx` — 1 type, 1 dispatch site, 1 implementation (`redundancy.go:628`, `4189`). | T3.5 · `TestGhostProbeSpanSharesTraceWithRequest` |
 | **D4** | `Recorder.Ghost/RealSend/Usage/TimeoutResult` take no ctx. Add `ctx` as a first parameter, or add `*Ctx` variants? | Add `ctx` as the **first parameter**; no `*Ctx` variants. 4 production call sites (`redundancy.go:2886, 2919, 2975, 4189` regions) plus `cmd/devshardctl/accounting_test.go`. | T3.6 · `TestDispositionEventCarriesTraceRef` |
 | **D5** | Late spans: re-parent onto the original trace, or emit a linked root span? Parent §5.8 says linked root beyond `max_trace_live` (30 s). | Single constant `dispositionReparentWindow = 10s` (Tempo's `max_trace_idle`): lag `< 10 s` → re-parented child; lag `>= 10 s` → linked root span. | T3.8 · `TestLateDispositionSpanIsLinkedRootBeyondThreshold`, `TestEarlyDispositionSpanIsReparentedChild` |
@@ -625,7 +623,7 @@ cd devshard/testenv && go test ./observability/... -count=1
 
 ---
 
-### T3.8 — the late `devshard.nonce.disposition` span ⬜
+### T3.8 — the late `devshard.nonce.disposition` span ✅
 
 **Goal:** make `{ span.devshard.disposition = "…" }` a first-class TraceQL query and put the
 outcome in a timeline. Explicitly *not* load-bearing — tiers 1–2 already deliver the workflow.
@@ -644,13 +642,34 @@ outcome in a timeline. Explicitly *not* load-bearing — tiers 1–2 already del
 4. Skip the span entirely when `TraceRef` is zero and the disposition is `protocol_only`, or emit a
    root span with no link — the absence of a parent is the correct signal.
 
-**Tests** — `devshard/cmd/devshardctl/`, with `tracetest.SpanRecorder`:
+**As built.** `observability/disposition_span.go` owns `EmitDispositionSpan`; `dispositionLogSink`
+became `dispositionSink` and now produces both artefacts from the same event, so registration stays
+a single `SetDispositionSink` call and there is no sink fan-out to maintain. Three points the plan
+left open:
+
+- **Lag is `ObservedAt − SendAt`**, the same quantity the T3.7 log line reports as `lag_ms`, because
+  that is the only pair of timestamps the event carries. It is a *conservative* proxy for "how long
+  ago was this trace live": a 30-minute stream has a 30-minute lag even though its trace closed
+  seconds before the verdict, so it takes the linked-root path. That errs in the safe direction — a
+  link always resolves, a child stitched onto a flushed trace does not. Lag is defined as zero when
+  either timestamp is unset, which is what puts ghosts (never sent) on the re-parent path, where
+  they belong: a ghost is decided at dispatch, inside the live request.
+- **Unsampled origin ⇒ no span at all.** The alternative, minting a sampled root for an unsampled
+  request, produces a disposition trace whose link points at a trace that was never recorded.
+- **Orphans still get a span**, root and unlinked, with no `devshard.origin_trace_id`. The missing
+  parent *is* the finding, and it is countable in TraceQL.
+
+Span start and end are both stamped at `ObservedAt`, so the timeline shows when the verdict was
+reached rather than when the tracker's delivery goroutine got to it.
+
+**Tests** — `devshard/cmd/devshardctl/disposition_span_test.go`, with `tracetest.SpanRecorder`:
 
 - `TestLateDispositionSpanIsLinkedRootBeyondThreshold`
 - `TestEarlyDispositionSpanIsReparentedChild`
 - `TestDispositionSpanPreservesSamplingDecision` — unsampled input produces no exported span.
 - `TestDispositionSpanCarriesFullAttributeSet` — asserts self-sufficiency for TraceQL search.
 - `TestProtocolOnlyDispositionSpanHasNoLink`
+- `TestDispositionSpanIsStampedAtObservationTime`
 
 ```bash
 cd devshard && go test ./cmd/devshardctl/ -run 'TestDisposition|TestLate' -count=1
@@ -658,20 +677,6 @@ cd devshard && go test ./cmd/devshardctl/ -run 'TestDisposition|TestLate' -count
 
 **Exit:** in testenv, the refusal-timeout e2e produces a `devshard.nonce.disposition` span found by
 TraceQL attribute search, and Grafana renders a navigable link back to the request trace.
-
----
-
-### T3.9 — Prometheus exemplars on the disposition series ⏸ deferred
-
-**Deferred by decision D2 (confirmed).** `devshard_accounting_disposition` is exposed as a Gauge
-(`accounting/metrics.go:40-44` descriptor, `181-183` `gauge()` helper using
-`prometheus.GaugeValue`), and exemplars are only carried on counters and histogram buckets. Wrapping
-it with `prometheus.NewMetricWithExemplars` would compile and then be silently dropped at exposition
-time.
-
-**Revisit when** a monotonic `devshard_accounting_disposition_total` counter twin exists. Until then
-the "click the spike → open the trace" path is served by the Grafana TraceQL data link in T6, which
-needs no Go change.
 
 ---
 
@@ -741,8 +746,7 @@ OBS_PROFILE=jaeger-promtail make -C devshard/testenv citest-observability   # C7
 - [x] **T3.5** Ghost probes share `request_id` and `trace_id` with the originating request.
 - [x] **T3.6** Exactly one `DispositionEvent` per nonce, from both delete sites, delivered on the tracker's own goroutine so no sink work touches the sequencer path (`-race` green).
 - [x] **T3.7** Classification log line carries `trace_id` + full dimension set; both LogQL queries from parent §5.5 return results.
-- [ ] **T3.8** Late disposition span emitted as a linked root; sampling decision preserved.
-- [x] **T3.9** Deferred by D2; no code. Revisit gate recorded: a `devshard_accounting_disposition_total` counter twin.
+- [x] **T3.8** Late disposition span emitted as a linked root; sampling decision preserved.
 - [ ] **T3.10** C3 + C4 green in citest on `tempo-alloy`; C7 green on `jaeger-promtail`.
 - [ ] Parent [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) §12 T3 row updated to ✅.
 
@@ -752,6 +756,7 @@ OBS_PROFILE=jaeger-promtail make -C devshard/testenv citest-observability   # C7
 
 | Date | Step | Notes |
 |------|------|-------|
+| 2026-08-06 | T3.8 ✅ | `observability/disposition_span.go`: `EmitDispositionSpan` + `DispositionOrigin` + `DispositionLag`, `DispositionReparentWindow = 10s` per D5. `dispositionLogSink` → `dispositionSink`, now log **and** span from one event; `DispositionOrigin` is the single place a `TraceRef` becomes a `SpanContext`, shared with the log line. Lag defined as `ObservedAt − SendAt` (same value as `lag_ms`), zero when either is unset so ghosts re-parent. Unsampled origin emits nothing; orphans emit an unlinked root. Span stamped at `ObservedAt` at both ends. Tests: reparent, linked root, sampling, full attribute set, protocol-only, observation timestamp. |
 | 2026-08-06 | T3.4–T3.7 | **Review pass; seven fixes.** (1) `finishRaceOutcome` ended the attempt span *before* recording the terminal fact, so every synchronous disposition attribute was silently dropped — T3.4 was not actually working. Span now ends after terminal and after timeout evaluation, replaying the race-outcome timestamp; two `RunInference`-level tests added, both verified to fail against the old ordering. (2) A terminal-but-unclassified nonce emitted an all-zero `CounterKey`, attributing the event to slot 0; it now keeps its identity dimensions and only the disposition is empty. (3) Dispatch phase was re-read at terminal/timeout time instead of reusing the phase stamped at `RealSend`. (4) The winner/loser mapping was duplicated between `Recorder.Usage` and the gateway; now one `UsageFor`/`DispositionForUsage`, likewise `NoSendFromReason` and `TimeoutActionRecorded`. (5) D1 amended — bounded async queue instead of post-unlock drain (see §2). (6) Duplicate `ParticipantKeys()` call on the picker-exhausted path. (7) `Tracker.sink` was written under `mu` but read by the dispatcher without it; now an atomic pointer. Minimalism: dropped `AnnotateAttemptDispatch`, `Recorder.CurrentPhase`, `TraceRef.SpanIDString`, the always-true `stream` attribute, the unreachable `chosen` arm in `ghostOriginContext`, and the ad-hoc inline attribute keys on the three parent events (their counters are in the adjacent log line, same trace id). |
 | 2026-08-06 | T3.0 ✅ | `Tracker.Sweep` + `sweepLoop`; `OpenTracker(..., sweep)`; `DEVSHARD_STATS_SWEEP_SECONDS` (default 5s, 0 disables). Tests: `TestTrackerSweep*`. Benchmark arm64: live=100 ~8µs, 1k ~75µs, 10k ~726µs — all under 1ms; short-circuit deferred. |
 | 2026-08-06 | T3.1 ✅ | `observability/attrs.go` keys + `CounterKeyAttrs` + identity string helpers; gateway span name constants; C4 in `attrs_contract_test.go`. `service.go` SetEscrowID/SetNonce/SetSlotID/SetModel use Attr* keys. |
@@ -765,4 +770,5 @@ OBS_PROFILE=jaeger-promtail make -C devshard/testenv citest-observability   # C7
 | 2026-08-06 | T3.2 | Attribute set trimmed after review. Kept `role`/`start_reason` on the attempt span (bounded enums, needed for TraceQL filtering and to make the trace view self-describing); dropped the `attempt.escalated` parent event for the *successful* case as a restatement of its own child, and dropped `escalation_stage`/`delay_ms` as derivable. Parent span events retained only for the no-split paths, where no attempt span exists. |
 | 2026-08-06 | T3.2 | Scope extended to the **split reason**. Audit found attempts are staggered escalations, not an up-front parallel fan-out, and that `inflight.role`/`startReason` already exist and already feed Prometheus. T3.2 now adds those as span attributes, an `attempt.escalated` event on the parent per split, enriched escalation log fields (today the line is attributed to the trigger nonce, not the new attempt), and the non-split paths. |
 | 2026-08-06 | T3.0 | Parent §5.2's "stale Prometheus/API" side finding disproved against `query.go:81-158` — reads were already fresh. T3.0's justification rewritten: it exists to give the eventless deadline transition an event for tiers 2–3, to shrink the restart-loss window, and to reap terminal live state. Performance guard + `BenchmarkTrackerSweep` added; parent doc corrected. |
-| 2026-08-06 | §2 | **D1–D6 confirmed at their recommended defaults.** D1 post-unlock emission queue; D2 T3.9 deferred (gauge cannot carry exemplars); D3 `ghostDispatcher` gains `ctx`; D4 `ctx` as first param on the four `Recorder` methods; D5 10 s re-parent window, linked root beyond; D6 5 s sweep via `DEVSHARD_STATS_SWEEP_SECONDS`. Plan status → ready to implement. |
+| 2026-08-06 | — | **T3.9 dropped.** Prometheus exemplars on the disposition gauge are out of scope (D2); TraceQL data link in T6 covers the workflow. Step removed from the index, mermaid, §3, and definition of done. |
+| 2026-08-06 | §2 | **D1–D6 confirmed at their recommended defaults.** D1 post-unlock emission queue; D2 exemplars out of scope (gauge cannot carry them); D3 `ghostDispatcher` gains `ctx`; D4 `ctx` as first param on the four `Recorder` methods; D5 10 s re-parent window, linked root beyond; D6 5 s sweep via `DEVSHARD_STATS_SWEEP_SECONDS`. Plan status → ready to implement. |

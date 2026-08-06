@@ -14,9 +14,6 @@ import (
 	"devshard/types"
 
 	"github.com/stretchr/testify/require"
-	"go.opentelemetry.io/otel"
-	sdktrace "go.opentelemetry.io/otel/sdk/trace"
-	"go.opentelemetry.io/otel/sdk/trace/tracetest"
 	"go.opentelemetry.io/otel/trace"
 )
 
@@ -37,22 +34,12 @@ func withDispositionLogCapture(t *testing.T) *bytes.Buffer {
 
 func TestDispositionLogLineCarriesTraceID(t *testing.T) {
 	buf := withDispositionLogCapture(t)
-	rec := tracetest.NewSpanRecorder()
-	prev := otel.GetTracerProvider()
-	tp := sdktrace.NewTracerProvider(
-		sdktrace.WithSampler(sdktrace.AlwaysSample()),
-		sdktrace.WithSpanProcessor(rec),
-	)
-	otel.SetTracerProvider(tp)
-	t.Cleanup(func() {
-		_ = tp.Shutdown(context.Background())
-		otel.SetTracerProvider(prev)
-	})
+	withAttemptSpanRecorder(t)
 
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
-	tracker.SetDispositionSink(dispositionLogSink{})
+	tracker.SetDispositionSink(dispositionSink{})
 
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 	ctx, span := observability.StartGatewayAttempt(context.Background(), observability.AttemptIdentity{
@@ -78,7 +65,7 @@ func TestDispositionLogLineFieldsMatchCounterKey(t *testing.T) {
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
-	tracker.SetDispositionSink(dispositionLogSink{})
+	tracker.SetDispositionSink(dispositionSink{})
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "llama")
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
@@ -103,7 +90,7 @@ func TestDispositionLogLineOrphanHasEmptyTraceID(t *testing.T) {
 	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
-	tracker.SetDispositionSink(dispositionLogSink{})
+	tracker.SetDispositionSink(dispositionSink{})
 	registerGatewayAccountingTestEscrow(t, tracker, "e1", 1, "m")
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, false)) // protocol_only, zero TraceRef

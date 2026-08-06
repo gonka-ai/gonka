@@ -9,38 +9,30 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// dispositionLogSink emits one structured nonce_disposition log line per
-// terminal accounting event (T3.7). Trace context is rebuilt from the stored
-// TraceRef so TraceHandler stamps trace_id/span_id; orphans emit empty ids.
-type dispositionLogSink struct{}
+// dispositionSink turns a terminal accounting event into the two artefacts
+// T3 promises: a structured nonce_disposition log line, and a
+// devshard.nonce.disposition span. Both rebuild trace context from the stored
+// TraceRef, so a verdict is reachable from the request that caused it.
+type dispositionSink struct{}
 
-func (dispositionLogSink) OnDisposition(ev accounting.DispositionEvent) {
+func (s dispositionSink) OnDisposition(ev accounting.DispositionEvent) {
+	s.log(ev)
+	observability.EmitDispositionSpan(ev)
+}
+
+func (dispositionSink) log(ev accounting.DispositionEvent) {
 	ctx := context.Background()
 	fields := dispositionLogFields(ev)
-	if ev.Trace.IsZero() {
-		fields = append(fields, "trace_id", "", "span_id", "")
+	if origin, ok := observability.DispositionOrigin(ev.Trace); ok {
+		ctx = trace.ContextWithRemoteSpanContext(ctx, origin)
 	} else {
-		flags := trace.TraceFlags(0)
-		if ev.Trace.Sampled {
-			flags = trace.FlagsSampled
-		}
-		sc := trace.NewSpanContext(trace.SpanContextConfig{
-			TraceID:    ev.Trace.TraceID,
-			SpanID:     ev.Trace.SpanID,
-			TraceFlags: flags,
-			Remote:     true,
-		})
-		ctx = trace.ContextWithRemoteSpanContext(ctx, sc)
+		fields = append(fields, "trace_id", "", "span_id", "")
 	}
 	logInferenceStage(ctx, ev.EscrowID, ev.Nonce, "nonce_disposition", fields...)
 }
 
 func dispositionLogFields(ev accounting.DispositionEvent) []any {
 	key := ev.Key
-	lagMS := int64(0)
-	if !ev.SendAt.IsZero() && !ev.ObservedAt.IsZero() {
-		lagMS = ev.ObservedAt.Sub(ev.SendAt).Milliseconds()
-	}
 	return []any{
 		"disposition", observability.DispositionString(key.Disposition),
 		"dispatch_phase", observability.PhaseString(key.DispatchPhase),
@@ -54,6 +46,6 @@ func dispositionLogFields(ev accounting.DispositionEvent) []any {
 		"detail_reason", key.DetailReason,
 		"participant", ev.Participant,
 		"model", ev.Model,
-		"lag_ms", lagMS,
+		"lag_ms", observability.DispositionLag(ev).Milliseconds(),
 	}
 }
