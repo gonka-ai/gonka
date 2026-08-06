@@ -11,7 +11,6 @@ import (
 )
 
 type GatewaySettings struct {
-	ChainREST                      string                      `json:"chain_rest"` // deprecated: ignored for chain I/O
 	ChainGRPC                      string                      `json:"chain_grpc,omitempty"`
 	PublicAPI                      string                      `json:"public_api"`
 	DefaultModel                   string                      `json:"default_model"`
@@ -331,7 +330,6 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	stmts := []string{
 		`CREATE TABLE IF NOT EXISTS gateway_settings (
 			id INTEGER PRIMARY KEY CHECK (id = 1),
-			chain_rest TEXT NOT NULL,
 			public_api TEXT NOT NULL DEFAULT '',
 			default_model TEXT NOT NULL,
 			default_request_max_tokens INTEGER NOT NULL,
@@ -404,6 +402,10 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			db.Close()
 			return nil, fmt.Errorf("init gateway store: %w", err)
 		}
+	}
+	if err := dropColumnIfExists(db, "gateway_settings", "chain_rest"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway store drop chain_rest: %w", err)
 	}
 	if err := ensureGatewaySettingsColumn(db, "public_api", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
@@ -553,7 +555,7 @@ func (s *GatewayStore) Close() error {
 func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	var state GatewayState
 	row := s.db.QueryRow(`
-		SELECT chain_rest, public_api, default_model, default_request_max_tokens, request_max_tokens_cap,
+		SELECT public_api, default_model, default_request_max_tokens, request_max_tokens_cap,
 		       max_concurrent_requests, max_concurrent_requests_per_10000_weight,
 		       poc_max_concurrent_requests_per_10000_weight, max_input_tokens_in_flight,
 		       model_limits_json, model_access_json, tx_gas_limit,
@@ -584,7 +586,6 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	var modelLimitsJSON string
 	var modelAccessJSON string
 	err := row.Scan(
-		&state.Settings.ChainREST,
 		&state.Settings.PublicAPI,
 		&state.Settings.DefaultModel,
 		&state.Settings.DefaultRequestMaxTokens,
@@ -725,7 +726,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 
 	if _, err := tx.Exec(`
 		INSERT INTO gateway_settings (
-			id, chain_rest, public_api, default_model, default_request_max_tokens, request_max_tokens_cap,
+			id, public_api, default_model, default_request_max_tokens, request_max_tokens_cap,
 			max_concurrent_requests, max_concurrent_requests_per_10000_weight,
 			poc_max_concurrent_requests_per_10000_weight, max_input_tokens_in_flight,
 			model_limits_json, model_access_json, tx_gas_limit,
@@ -748,8 +749,7 @@ func (s *GatewayStore) Initialize(settings GatewaySettings, devshards []GatewayD
 			escrow_rotation_pre_poc_blocks, escrow_rotation_models_json,
 			gateway_disabled_enabled, gateway_disabled_message, gateway_disabled_new_url,
 			updated_at
-		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(settings.ChainREST),
+		) VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
 		settings.DefaultRequestMaxTokens,
@@ -814,8 +814,7 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 	settings = settings.WithTuningDefaults()
 	res, err := s.db.Exec(`
 		UPDATE gateway_settings
-		SET chain_rest = ?,
-		    public_api = ?,
+		SET public_api = ?,
 		    default_model = ?,
 		    default_request_max_tokens = ?,
 		    request_max_tokens_cap = ?,
@@ -864,7 +863,6 @@ func (s *GatewayStore) UpdateSettings(settings GatewaySettings) error {
 		    gateway_disabled_new_url = ?,
 		    updated_at = ?
 		WHERE id = 1`,
-		strings.TrimSpace(settings.ChainREST),
 		strings.TrimSpace(settings.PublicAPI),
 		strings.TrimSpace(settings.DefaultModel),
 		settings.DefaultRequestMaxTokens,
@@ -1588,10 +1586,19 @@ func ensureGatewayDevshardsColumn(db *sql.DB, columnName, columnDDL string) erro
 	return ensureColumn(db, "gateway_devshards", columnName, columnDDL)
 }
 
-func ensureColumn(db *sql.DB, table, columnName, columnDDL string) error {
+func dropColumnIfExists(db *sql.DB, table, columnName string) error {
+	exists, err := columnExists(db, table, columnName)
+	if err != nil || !exists {
+		return err
+	}
+	_, err = db.Exec(fmt.Sprintf(`ALTER TABLE %s DROP COLUMN %s`, table, columnName))
+	return err
+}
+
+func columnExists(db *sql.DB, table, columnName string) (bool, error) {
 	rows, err := db.Query(fmt.Sprintf(`PRAGMA table_info(%s)`, table))
 	if err != nil {
-		return err
+		return false, err
 	}
 	defer rows.Close()
 
@@ -1603,13 +1610,18 @@ func ensureColumn(db *sql.DB, table, columnName, columnDDL string) error {
 		var defaultValue sql.NullString
 		var pk int
 		if err := rows.Scan(&cid, &name, &dataType, &notNull, &defaultValue, &pk); err != nil {
-			return err
+			return false, err
 		}
 		if name == columnName {
-			return nil
+			return true, nil
 		}
 	}
-	if err := rows.Err(); err != nil {
+	return false, rows.Err()
+}
+
+func ensureColumn(db *sql.DB, table, columnName, columnDDL string) error {
+	exists, err := columnExists(db, table, columnName)
+	if err != nil || exists {
 		return err
 	}
 

@@ -12,7 +12,8 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Production gateway paths must not call REST chain clients (Track C/D/E).
+// Forbidden REST chain symbols. This file is excluded from the scan so the
+// lists below can name them without failing the gate.
 var restChainForbiddenCalls = []string{
 	"NewRESTBridge",
 	"NewRESTChainTxClient",

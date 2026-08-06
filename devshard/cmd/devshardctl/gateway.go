@@ -2457,7 +2457,6 @@ type adminSettleEscrowRequest struct {
 }
 
 type adminSettingsRequest struct {
-	ChainREST                      *string                          `json:"chain_rest,omitempty"`
 	PublicAPI                      *string                          `json:"public_api,omitempty"`
 	DefaultModel                   *string                          `json:"default_model,omitempty"`
 	MaxConcurrentRequests          *int64                           `json:"max_concurrent_requests,omitempty"`
@@ -2602,9 +2601,6 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 
 		g.mu.Lock()
 		settings := g.settings
-		if req.ChainREST != nil {
-			log.Printf("admin settings: chain_rest is deprecated and ignored (use DEVSHARD_CHAIN_GRPC / chain_grpc)")
-		}
 		if req.PublicAPI != nil {
 			settings.PublicAPI = strings.TrimSpace(*req.PublicAPI)
 		}
