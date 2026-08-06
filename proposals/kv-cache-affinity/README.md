@@ -1,151 +1,161 @@
-# Proposal: Session Affinity for KV-Cache Reuse
+# Session Affinity for KV-Cache Reuse
 
-## Summary
+## Overview
 
-Inference requests are routed to a pseudo-random node on every call. That is correct for fairness and validation, but it throws away the most valuable piece of serving state: the **KV / prefix cache**. A serving node (vLLM) keeps, per GPU, the attention key/value tensors for prefixes it has already processed. When a client's follow-up request in the same conversation lands on a *different* node, that node must recompute prefill for the whole shared prefix (system prompt + chat history) from cold — which, for multi-turn chat, is the dominant latency.
+Inference requests are routed to a pseudo-random serving node on every call. That is correct for fairness and validation sampling, but it discards the most valuable piece of serving state: the KV / prefix cache. A serving node keeps, per GPU, the attention key/value tensors for prefixes it has already processed. When a client's follow-up request in the same conversation lands on a different node, that node recomputes prefill for the whole shared prefix — system prompt plus chat history — from cold. For multi-turn chat that recomputation is the dominant latency.
 
-This proposal adds **bounded, opt-in session affinity**: a client that tags a conversation with the OpenAI-standard `prompt_cache_key` request field (fallback `user`) has its follow-up requests steered back to the same serving GPU, so the warm cache is reused. It is a pure scheduling hint — it does **not** change the nonce→host binding, the signed diff chain, payment, or validation — and it is bounded so no node can be pinned to a client indefinitely.
+This proposal adds bounded, opt-in session affinity: a client that tags a conversation with the OpenAI-standard `prompt_cache_key` request field (fallback `user`) has its follow-up requests steered back to the same serving GPU, so the warm cache is reused. It is a scheduling preference, not a reservation, and it is bounded so no node can be pinned to one client indefinitely.
 
-Non-goals: this does not trust, verify, or reward any node-reported cache hit; it does not add a global cache index or cross-node cache sharing; it does not change reward accounting.
+---
 
-## Problem
+## Motivation
 
-Routing is two hops, and the cache lives at the far end of the second one:
+Routing is two hops, and the cache lives at the far end of the second one.
 
-1. **Gateway → participant.** The devshard gateway (`devshardctl`) binds each inference nonce to a participant deterministically, `hostIdx = nonce % len(group)`, cycling round-robin over the escrow's slot set. This spread is deliberate: it keeps validation sampling representative and stops any single host from steering all of a client's traffic to itself.
-2. **Participant → mlnode.** A participant runs a *pool* of mlnodes (GPUs). Its broker (`decentralized-api`, `broker.getLeastBusyNode`) hands each inference to the lowest-`LockCount` node for the model, with no session awareness.
+1. **Gateway to participant.** The devshard gateway binds each inference nonce to a participant deterministically as `nonce mod group_size`, cycling over the escrow's slot set. This spread is deliberate: it keeps validation sampling representative and stops any single host from steering all of a client's traffic to itself.
+2. **Participant to mlnode.** A participant runs a pool of mlnodes. Its broker hands each inference to the least-busy node for the model, with no session awareness.
 
-The KV cache is **per-mlnode (per-GPU)**. So even a client that happened to return to the same participant can still be dispatched to a different GPU and miss the warm cache. To reuse the cache end-to-end, the same session must land on the same participant (hop 1) *and* the same mlnode within it (hop 2).
+The KV cache is per-GPU. A client that happens to return to the same participant can still be dispatched to a different GPU and miss the warm cache. To reuse the cache end to end, a session must land on the same participant at hop 1 and the same mlnode at hop 2.
 
-## Proposed Solution
+A second problem arrives with the first. A shared prefix cache is a timing side channel: a client co-located on a GPU can learn from its own reported cached-token count that some prefix is already resident, and recover another tenant's prompt piece by piece. Any design that deliberately concentrates one client's traffic on one GPU must also say which requests are allowed to share cached blocks.
 
-Give each client session an opaque key (the OpenAI-standard `prompt_cache_key`, fallback `user`, read from the request body — no gonka-specific header, so standard OpenAI clients need no adaptation) and steer that session back to its last-used serving node at both hops, for a **bounded** window, then re-randomise.
+---
 
-**Hop 1 — gateway → participant (`devshardctl`).** A session's **primary** attempt carries its sticky participant as a *preference* into the session picker, which honors it only while doing so is free: the sticky participant can serve the request now, and the request has not waited past `pickerStaleThreshold` (200ms). Otherwise the picker takes the next compatible nonce as it always did. The preference reorders which queued request meets an upcoming nonce; it never holds a nonce back, so nothing is burned and nothing waits on a participant that is PoC-gated, throttled, or idle. Speculative/redundant **secondary** attempts keep their normal other-host routing, so latency racing and cross-host validation are unaffected.
+## Goals
 
-**Hop 2 — participant → mlnode (`decentralized-api` broker).** `AcquireMLNodeRequest` gains an optional `session_id`. When set, `getLeastBusyNode` prefers the mlnode this session last used, if it is not in the skip set and is currently available for the model; otherwise it falls through to the existing least-busy selection. `lockAvailableNode` records which node the session landed on.
+1. Reuse a warm prefix cache across the turns of one conversation, at both routing hops.
+2. Require no client adaptation beyond a standard OpenAI request field.
+3. Leave the nonce-to-host binding, the signed diff chain, payment, and validation untouched.
+4. Bound how long any session may occupy one node, so routing re-randomises on its own.
+5. Give cached blocks an explicit sharing scope, so concentrating traffic does not widen the existing timing side channel.
+6. Stay off until an operator turns it on, independently at the gateway and at each participant.
 
-**Bound (both hops).** A session sticks to a node for at most `MaxRequests` requests or `TTL` wall-clock, whichever comes first; then the binding is evicted and the session re-randomises. Bindings are held in a fixed-cap map (`MaxEntries`) with a lazy expiry+eviction sweep, so an untrusted stream of distinct session keys cannot grow memory without bound.
+---
 
-## How it works (request flow)
+## Non-Goals
 
-A single request, from the client body to vLLM and back. Both routing decisions are the same shape: no session key (or expired/over-bound) → today's behaviour; sticky key within its bound → steer back to the warm node.
+1. This proposal does not trust, verify, or reward any node-reported cache hit.
+2. This proposal does not add a global cache index or cross-node cache sharing.
+3. This proposal does not change reward accounting or settlement.
+4. This proposal does not isolate clients that present no credential; see [Consensus and Security Analysis](#consensus-and-security-analysis).
+5. This proposal does not extend cache scoping to the validation path.
+
+---
+
+## High-Level Design
+
+Each client session gets an opaque key, taken from the request body so that standard OpenAI clients need no gonka-specific header. That key steers the session back to its last-used serving node at both hops for a bounded window, then the binding is dropped and routing re-randomises.
+
+### Hop 1 — gateway to participant
+
+A session's primary attempt carries its remembered participant into the gateway's request picker as a preference. The picker honours it only while doing so costs nothing: the remembered participant can serve the request now, and the request has not been waiting past the picker's staleness threshold. Otherwise the picker takes the next compatible nonce, exactly as it does today.
+
+The preference reorders which queued request meets an upcoming nonce. It never holds a nonce back, so no nonce is burned and no request waits on a participant that is proof-of-compute gated, throttled, or idle. Speculative secondary attempts keep their normal other-host routing, so latency racing and cross-host verification are unaffected.
+
+### Hop 2 — participant to mlnode
+
+The acquire request a participant's engine makes on its own broker gains an optional session identifier. When set, the broker prefers the mlnode this session last used, provided that node is not being skipped and is currently available for the model; otherwise it falls through to the existing least-busy selection, and records where the session actually landed.
+
+### Cache namespace
+
+Steering alone would concentrate a client's traffic without saying who may reuse its cached blocks. The serving node therefore stamps each request with a cache namespace derived from its own escrow identifier and the session identifier, and the serving engine shares cached blocks only between requests carrying the same namespace.
+
+The session identifier is not the client's own string. The gateway derives it as a keyed hash over the escrow identifier, the credential the caller presented, and the client's string, under a secret drawn at gateway start and never persisted. Three properties follow. The client's string never leaves the gateway. Guessing another client's string does not reach that client's namespace, because the caller's own credential is folded in. And the identifier cannot be recomputed off-box, because the secret is not derivable from anything on the wire.
+
+The namespace stamp is applied whenever a request carries a session identifier, independently of whether that participant enabled mlnode stickiness. Stickiness changes a participant's own GPU scheduling and is therefore its choice; narrowing which requests may share cached blocks is not something a participant is offered a choice to waive, because the client whose data it protects is not the one making the choice.
+
+### Bounds
+
+A session sticks to a node for at most a fixed number of requests or a fixed wall-clock lifetime, whichever comes first; then the binding is evicted and the session re-randomises. Bindings live in a fixed-capacity map with a lazy expiry-and-eviction sweep, so an untrusted stream of distinct session keys cannot grow memory without bound.
+
+### Request flow
 
 ```text
-request  (body: prompt_cache_key = "conv-42", fallback "user")
+request (body carries prompt_cache_key, or user as fallback)
  |
- +--> GATEWAY (devshardctl):  key = affinityKeyFromDocument(document)   # read before prompt_cache_key is stripped from the body
- |     |
- |     +--> no key ------------------------------> feature inert: behaves exactly as today
- |     |
- |     +--> HOP 1  gateway -> participant
- |           |
- |           +--> key unseen / expired ----------> nonce % len(group) ------> participant P (random)
- |           +--> key sticky, within bound ------> prefer same participant P for the primary
- |                  (bound = MaxRequests | TTL; P busy or request aged 200ms -> next compatible nonce)
+ +-- GATEWAY
+ |     no key ---------------------> unchanged behaviour, nothing below happens
+ |     key unseen or past bound ---> nonce mod group_size -> participant P
+ |     key within bound -----------> prefer P for the primary attempt
+ |                                   (P busy, or request gone stale -> next compatible nonce)
  |
- +--> session_id = HMAC(process secret, escrow | credential | key)   (rides the JSON wire to P; NOT in the signed payload)
+ +-- session id = keyed hash of (escrow, caller credential, client string)
        |
-       +--> PARTICIPANT P (decentralized-api):  HOP 2  participant -> mlnode  (broker.getLeastBusyNode)
-             |
-             +--> session_id unseen ------------> least-busy GPU (lowest LockCount) ----> node G
-             +--> session_id sticky ------------> prefer same GPU G (if free for model) -> node G
+       +-- PARTICIPANT P
+             session id unseen ----> least-busy GPU -> node G
+             session id sticky ----> prefer the same node G, if free for the model
                     |
-                    +--> ENGINE, just before the vLLM call:
-                    |      body = withCacheSalt(body, escrow_id, session_id)   # cache_salt = sha256(escrow_id | session_id)
-                    |
-                    +--> vLLM prefix cache on GPU G, keyed by (prompt tokens + cache_salt)
-                           |
-                           +--> first time on G ---------> cold prefill, warms the cache
-                           +--> repeat same prefix ------> PREFIX HIT: skip prefill of the shared prefix
-                                  |
-                                  +--> response streams back the SAME path, raw byte passthrough
-                                        usage.prompt_tokens_details.cached_tokens ------> client
+                    +-- cache namespace = hash of (P's own escrow id, session id)
+                          |
+                          +-- first time on G ------> cold prefill, warms the cache
+                          +-- same prefix again ----> prefix hit, prefill skipped
 ```
 
-Why the second turn is fast — same conversation, same warm GPU:
+---
 
-```text
-req #1  conv-42   -> P, GPU G  -> cold prefill of the 10k-token prefix   (cached_tokens = 0)
-req #2  conv-42   -> P, GPU G  -> PREFIX HIT on that 10k prefix          (cached_tokens ~= 10k, low latency)
-req #3  (no key)  -> nonce%len -> random participant / GPU               (unchanged behaviour)
-```
+## User-Facing Semantics
 
-`cache_salt` is what scopes reuse: the salt is `sha256(escrow_id | session_id)`, and `session_id` is itself `HMAC(process secret, escrow_id | caller credential | client string)` derived at the gateway, so KV blocks never collide across escrows, across API keys, or with a guessed client string. What the salt cannot give is isolation between two anonymous callers of the same escrow on a model whose `access_mode` is `open`: there is no credential to fold in, so the same client string is the same client as far as the gateway can tell. Isolation between clients of one escrow therefore requires `access_mode: api_key` with a distinct key per client — see [Consensus & Security Analysis](#consensus--security-analysis).
+A client opts in by sending `prompt_cache_key` on the requests of one conversation; `user` is honoured as a fallback for clients that send only that. The field must be a top-level request field. Both are type-checked and length-capped at the gateway boundary, so a malformed or oversized value is rejected rather than forwarded.
 
-## Consensus & Security Analysis
+The key selects a cache namespace and a routing preference. It carries no guarantee: a request whose preferred node is busy is served elsewhere, and a conversation longer than the request bound re-randomises mid-way. Clients see this only as latency variance, never as an error.
 
-**Fits consensus — nothing verified changes.** `nonce % len(group)`, the signed diff chain, and host catch-up are untouched; hosts verify the exact same nonce sequence they do today. Hop 1 only reorders *which queued request* the gateway matches to an upcoming nonce — the same class of gateway-local scheduling the picker already performs with its exclude set — and is implemented by reusing that machinery, so no new dispatch or verification path is introduced. Hop 2 is internal load-balancing on a participant's own GPUs, invisible to the chain. The `session_id` stays out of consensus: it is not in the signed diff, not in the payload `VerifyPayload` checks, and not in the state root. It is sent — to every participant that serves or verifies the request, inside the JSON body, which `transport.SignRequest` signs as a whole, so it is covered by the transport request signature even though nothing on the chain sees it.
+Restarting the gateway draws a new secret, so every live binding and every namespace derived from it is invalidated and the next round of requests runs cold. This costs a warm cache, not correctness.
 
-**No self-dealing / validation-evasion (hop 1).** Steering the primary cannot dodge validation at all, with or without the bound: `ShouldValidate` (`devshard/state/validation.go`) draws on `deterministicHash(seed, inferenceID)` and folds the executor in only as `totalSlots - executorSlotCount` in the denominator, which holds the expected number of validations per inference at exactly the escrow's rate. A pinned session's inferences are therefore sampled like any other, by validators chosen the same way. Nor is concentration worth anything: the buyer pays its own funds for work actually performed, and a participant's weight comes from PoC, not from inference volume. Only the primary attempt is steered; secondaries still cross-check other hosts. The `MaxRequests` / `TTL` bounds are therefore load-spread and cache-economics parameters, not safety ones — see [Parameters](#parameters). And routing never affects payment — a host is paid only for the work it actually performs on funds the buyer supplied — so concentrating one's own bounded primaries earns nothing on top of the ~1/`groupSize` natural self-routing that already exists. No cache hit is trusted or rewarded.
+---
 
-**No new attack surface (hop 2).** These are one participant's own GPUs; steering a session among them cannot self-deal or dodge validation. The bound here exists purely so load can rebalance and a departed/rebalanced node is not chased.
+## Consensus and Security Analysis
 
-**DoS / memory.** `prompt_cache_key` and `user` are both type-checked and length-capped at the gateway boundary (`PromptCacheKeyMaxLen` / `UserMaxLen`, 512 bytes) before extraction, so a non-string or oversized value gets a 400 instead of being forwarded. Whichever string survives is then collapsed by `deriveSessionToken` into a fixed 64-character HMAC-SHA256 digest, so every entry in both binding maps has the same width regardless of what the client sent — the 512-byte cap is a courtesy to the caller, not what actually bounds memory. Both maps are additionally size-capped (`MaxEntries`) with an eviction sweep, and creating a binding costs the client a real, funded inference, so growth is cost-bounded on top of the fixed width.
+**Nothing verified changes.** The nonce-to-host binding, the signed diff chain, and host catch-up are untouched; hosts verify the same nonce sequence they do today. Hop 1 only reorders which queued request the gateway matches to an upcoming nonce — the same class of gateway-local scheduling the picker already performs. Hop 2 is internal load balancing on a participant's own GPUs, invisible to the chain. The cache namespace stamp is applied by the serving node after the payload is verified, is output-invariant, and never enters the committed prompt.
 
-**What the salt does not isolate.** A model served with `access_mode: "open"` authenticates nobody, so two anonymous callers of one escrow sending the same `user` value are indistinguishable to the gateway and share one namespace — by construction, not by oversight. The escrow component still separates them from every other escrow, and the process secret still keeps the wire token from being recomputed off-box, but within-escrow isolation is only achievable under `access_mode: "api_key"` with one key per client. Anything stronger would need a per-caller identity the gateway does not have.
+**The session identifier stays out of consensus** — not in the signed diff, not in the verified payload, not in the state root — but it is sent to every participant that serves or verifies the request, inside the request body, and is therefore covered by the transport request signature.
 
-**Validation replays leave the namespace.** The salt scopes the executor's GPU only. When an inference is sampled for validation, the validator replays the same prompt with no session and therefore no salt, so the victim's prefix lands in the shared, unsalted namespace on the validator's GPU, where any co-located client can probe it with the same `cached_tokens` oracle this feature exists to close. Isolation is therefore probabilistic, not absolute: a given inference is exposed with the probability that it is sampled for validation. The alternative — salting the validation path — would put a vLLM-version-dependent field on the consensus path for escrows that never opted into affinity, which is the worse trade.
+**Steering cannot dodge validation.** Validation sampling draws on the inference identifier and slot shares, with the executor's own slots removed from the denominator, which holds the expected number of validations per inference at the escrow's configured rate no matter who executed it. A steered session's inferences are sampled like any other, by validators chosen the same way.
 
-**One session token, every participant that touches the request.** The token is a stable function of (process secret, escrow, credential, client string); the `MaxRequests`/`TTL` bounds rotate the routing *binding*, not the identifier, which lives as long as the gateway process. The primary, every speculative secondary, and every timeout verifier receive the same value, so a participant can link two requests of one end-user — across models, and even when it only ever saw a losing speculative attempt. Folding the destination participant's key into the derivation would remove the cross-participant part of this; it is not done today because the timeout path broadcasts one payload to many verifiers.
+**Concentration is not worth anything.** A buyer pays its own funds for work actually performed, and a participant's weight comes from proof of compute, not from inference volume. Steering one's own primaries earns nothing beyond the natural one-in-`group_size` share. No cache hit is trusted or rewarded. The bounds are therefore load-spread and cache-economics parameters, not safety ones.
 
-**`prompt_cache_key` counts only at the top level.** The key is lifted from the parsed document before the `extra_body` envelope is unwrapped, so a client that passes `prompt_cache_key` inside `extra_body` gets no affinity and no salt — it silently falls back to `user`, or to nothing.
+**What the namespace does not isolate.** Three limits are inherent to the design rather than oversights.
 
-**Gateway restart rotates the secret.** `sessionTokenSecret` is drawn once per process from `crypto/rand` and never persisted (`gateway.go`), so restarting `devshardctl` invalidates every live hop-1 binding and every executor `cache_salt` derived from it — the next request under a given client key hashes to a new session id and starts in a cold cache namespace. This does not weaken anything (a rotated secret cannot leak the one it replaced), but it is a warm-cache reset from the caller's point of view, and an operator restarting the gateway should expect the next round of requests to run cold. A participant's own hop-2 bindings are unaffected by a gateway restart and age out on their own TTL/MaxRequests bound.
+A model served in open access mode authenticates nobody, so two anonymous callers of one escrow sending the same client string are indistinguishable and share one namespace. The escrow component still separates them from every other escrow, but isolation between clients of one escrow requires authenticated access with a distinct credential per client.
 
-## Implementation Status
+Validation replays the original prompt without a session, and therefore without a namespace, so a sampled inference's prefix lands in the shared namespace on the validator's GPU, where a co-located client can probe it. Isolation is thus probabilistic: an inference is exposed with the probability that it is sampled for validation. Extending namespacing to the validation path would place a serving-engine-version-dependent field on the consensus path for escrows that never opted in, which is the worse trade.
 
-- **Hop 1 (gateway, `devshardctl`): implemented.** `affinity.go` (bounded tracker, `affinityKeyFromDocument`, `deriveSessionToken`). `prompt_cache_key`/`user` are read from the parsed request document into `chatRequest.AffinityKey` inside `ChatRequestPipeline.Normalize` (`request_filters.go`), before the `PreValidation` stage strips `prompt_cache_key` off the wire body; `proxy.go` then derives the HMAC session token (`deriveSessionToken`) into `user.InferenceParams.AffinityKey`. Primary steering happens in `redundancy.go` (`preparePrimaryWithAffinity`). OFF by default; enable via `DEVSHARD_AFFINITY_ENABLED`. Unit-tested (bounded stickiness, TTL, rotation eviction, map cap, disabled/empty no-ops).
-- **Hop 2 (participant, `decentralized-api` broker): implemented, server side.** `session_id` on `AcquireMLNodeRequest`; broker preference + recording in `broker.go`; bounded tracker in `broker/session_affinity.go`; forwarded by the nodemanager gRPC server. Backward compatible — old clients send no `session_id` and get today's least-busy behaviour. Unit-tested.
-- **cache_salt (cache isolation) — implemented.** The devshardd engine injects vLLM's per-request `cache_salt = sha256(escrow id | session id)` **host-side, immediately before the vLLM call** (`withCacheSalt`), NOT in the gateway's signed-prompt pipeline. The escrow comes from the participant's own state, never from the wire, so a gateway cannot merge two escrows' namespaces. The salt is applied whenever a request carries a non-empty session id, independently of `DAPI_MLNODE_AFFINITY_ENABLED` — that flag only gates mlnode *stickiness*, because stickiness is what changes the participant's own GPU scheduling, while cache isolation is not something a participant is offered a choice to opt out of (`devshard/cmd/devshardd/inference/engine.go:106-122`). `cache_salt` enters vLLM's KV-block hash, so it narrows reuse to same-salt requests on the executor's GPU; it does not by itself close any wider timing side-channel. The validator deliberately replays the same prompt with no session and therefore no salt (`validator.go`), so validation traffic stays in the shared, unsalted namespace on the validator's GPU — putting a vLLM-version-dependent field on the validation path for escrows that never opted into affinity was judged not worth it, and the cost of that choice is a warmer, but not isolated, cache on the validator side. It is output-invariant (cache namespacing only), so the committed/signed prompt and executor↔validator validation are unaffected (`VerifyPayload` ignores it). Different escrows, and different sessions within one escrow, get different salts and share no KV blocks. Unit-tested.
-- **Session-id propagation — implemented.** The affinity key flows gateway → host → broker/engine: `SendOnly` sets it on `host.InferencePayload.SessionID`, carried over the JSON wire (`transport.PayloadJSON`) into `devshard.ExecuteRequest.SessionID`, threaded through the devshardd engine (`executeMLRequest` / `doWithLockedNode`) into `Client.Acquire` → `AcquireMLNodeRequest.session_id` (feeds hop-2 mlnode stickiness) and into the `cache_salt` injection. Every path that re-sends the same prompt carries the same field, so a retry never falls back into the shared namespace: `host.go` sets it on both execution jobs it builds (`signReceipt` and `challengeReceiptLocked`), and the gateway's timeout path builds its host payload through one `timeoutPayload` constructor rather than two literals that could drift apart again. It is not part of what consensus verifies (`VerifyPayload` ignores it, and it never enters a diff or the state root), though it does ride inside the HTTP body that `transport.SignRequest` signs. With no client key, nothing happens on either hop — no session id, no stickiness, no salt, exactly today's behaviour. With a client key, the executor salt always applies; stickiness at hop 1 and hop 2 are each gated by their own flag (`DEVSHARD_AFFINITY_ENABLED`, `DAPI_MLNODE_AFFINITY_ENABLED`).
+The session identifier is stable for the life of the gateway process and identical for every participant that touches the request — primary, speculative secondary, and timeout verifier alike. A participant can therefore link two requests of one end-user, across models, even when it only ever saw a losing speculative attempt. Folding the destination participant into the derivation would remove this; it is deferred because the timeout path broadcasts one payload to many verifiers.
 
-## Parameters
+---
 
-Gateway (hop 1), env:
+## Tunable Parameters
 
-| Var | Default | Meaning |
+Set per gateway and per participant by the operator, not by governance: these affect one operator's own scheduling and memory, never chain state.
+
+| Parameter | Default | Description |
 |---|---|---|
-| `DEVSHARD_AFFINITY_ENABLED` | off | without it the gateway never derives a session id at all, so neither hop-1 stickiness nor the executor's `cache_salt` happens for any request on this devshard |
-| `DEVSHARD_AFFINITY_MAX_REQUESTS` | 32 | consecutive requests before re-randomise; the warm-hit share inside a binding is `(N-1)/N`, so 32 buys 97% against 90% at 10 |
-| `DEVSHARD_AFFINITY_TTL_MS` | 120000 | wall-clock lifetime of a binding; **not measured** — see the sizing note below |
-| `DEVSHARD_AFFINITY_MAX_ENTRIES` | 50000 | binding-map size cap |
+| Gateway affinity enabled | off | Master switch. With it off the gateway derives no session identifier, so neither hop-1 stickiness nor the cache namespace happens for any request. |
+| Gateway max requests | 32 | Consecutive requests before a binding is dropped and the session re-randomises. |
+| Gateway binding lifetime | 120 s | Wall-clock lifetime of a binding. |
+| Gateway map capacity | 50 000 | Binding-map size cap. |
+| Participant stickiness enabled | off | Governs mlnode stickiness only; the cache namespace does not depend on it. Both the participant's engine and its broker read this flag, and both must have it set for hop-2 stickiness to happen. |
+| Participant max requests | 64 | As above, at hop 2. |
+| Participant binding lifetime | 600 s | As above, at hop 2. |
+| Participant map capacity | 50 000 | As above, at hop 2. |
 
-Participant broker (hop 2), env:
+**Sizing the request bound.** The warm-hit share inside a binding is `(N-1)/N`, so 32 buys 97% against 90% at 10. The limit on raising it is key granularity: with `prompt_cache_key` a key is one conversation, keys are many, the first landing is still pseudo-random, and a high bound only raises variance in per-host load. With `user` as the key, one tenant is one key, and the bound is what stops a whole application from occupying one host. The default is chosen for that second case. The hop-2 bound is mostly unreachable in practice, because once hop 1 re-randomises the session moves to a different participant with its own bindings.
 
-| Var | Default | Meaning |
-|---|---|---|
-| `DAPI_MLNODE_AFFINITY_ENABLED` | off | mlnode-stickiness switch; the executor's `cache_salt` injection does not depend on it (see cache_salt above) |
-| `DAPI_MLNODE_AFFINITY_MAX_REQUESTS` | 64 | consecutive requests before re-randomise |
-| `DAPI_MLNODE_AFFINITY_TTL_MS` | 600000 | wall-clock lifetime of a binding; **not measured**, and capped in practice by hop 1's own bounds |
-| `DAPI_MLNODE_AFFINITY_MAX_ENTRIES` | 50000 | binding-map size cap |
+**Sizing the lifetime.** A binding is useful only while the serving engine still holds the blocks, which depends on cache capacity — GPU memory times its utilisation share, less model weights, divided by bytes per token, itself halved by an 8-bit KV cache — over the token ingress rate on that GPU. None of that is knowable in advance. Measure it instead: replay one prefix with a growing idle gap and find where the reported cached-token count falls to zero. Above that point a binding routes to a cold cache and only delays re-balancing; below it, reuse is discarded. **The current lifetimes are round numbers, not measurements.**
 
-**Sizing these.** `MaxRequests` trades warm-hit share against how long one key monopolises a host. With `prompt_cache_key` the key is one conversation, so keys are many, the first landing is still `nonce % len(group)`, and a high bound only raises variance — not any host's expected share. With `user` as the key, one tenant is one key, and the bound is what stops a whole application from sitting on one host; 32 is chosen for that case, not for the first. Hop 2's larger bound is mostly unreachable: once hop 1 re-randomises, the session moves to a different participant with its own map, and the old binding ages out.
+**Sizing the map.** Capacity must exceed the sessions live within one lifetime, roughly requests per second times lifetime divided by requests per session; at 100 rps, 120 s and 10 requests per session that is about 1200. An entry costs roughly 275 bytes, so a full map is about 14 MB per escrow and multiplies by the number of escrows a gateway serves.
 
-`TTL` should equal how long vLLM actually keeps the blocks, which depends on cache capacity `(GPU memory x gpu-memory-utilization - weights) / bytes-per-token` (halved by `--kv-cache-dtype fp8`) divided by the token ingress rate on that GPU — none of which is knowable from this repo. Measure it directly instead: replay one prefix with a growing idle gap and find where `usage.prompt_tokens_details.cached_tokens` falls to zero. Above that point the binding routes to a cold cache and only delays re-balancing; below it, reuse is discarded. The current values are round numbers, not measurements.
-
-`MaxEntries` must exceed the sessions live within one TTL, roughly `requests_per_second x TTL / requests_per_session`; at 100 rps, 120s and 10 requests per session that is ~1200. The cap costs about 275 bytes per entry, so a full map is ~14 MB per escrow runtime and multiplies by the number of escrows a gateway serves.
-
-`DAPI_MLNODE_AFFINITY_ENABLED` is read independently by two processes on the participant side: devshardd (`cmd/devshardd/config.go`, gates whether the engine forwards a session id to the broker for stickiness at all) and the `decentralized-api` broker (`broker/session_affinity.go`, gates whether it honors a session id it receives). Both must have the flag set for hop-2 stickiness to actually happen; setting it on only one side leaves hop 2 at today's least-busy behaviour.
+---
 
 ## Observability
 
-`devshard_gateway_affinity_decision_total{devshard_id,decision}` (`devshard/cmd/devshardctl/metrics.go`) answers whether hop-1 stickiness is doing anything at all: `decision` is `hit` when the primary landed on the sticky participant, `yielded` when a sticky preference existed but the picker served someone else (the sticky participant was busy or the request aged past `pickerStaleThreshold`), or `miss` when no sticky preference existed for that request. `devshard_gateway_affinity_bindings{devshard_id}` is a gauge of the current hop-1 binding-map size, for watching `MaxEntries` pressure. `decentralized_api_mlnode_affinity_decision_total{decision,model}` (`decentralized-api/observability/metrics_prometheus.go`) is the hop-2 equivalent — same `hit`/`yielded`/`miss` decisions, answering whether a participant's own broker is actually landing sessions back on the same GPU.
+An operator who turns this on must be able to answer three questions without reading logs: whether stickiness is happening at all, whether the picker is yielding the preference more often than honouring it, and whether the binding map is approaching its cap. The second hop needs the same hit-versus-yield split separately, because hop 1 can be working perfectly while hop 2 lands the session on a different GPU and the cache stays cold either way. Cache effectiveness itself is reported by the serving engine as a cached-token count in each response and needs nothing new.
 
-## Files
+---
 
-- `devshard/cmd/devshardctl/affinity.go` (new) — gateway session tracker, `affinityKeyFromDocument`, `deriveSessionToken`.
-- `devshard/cmd/devshardctl/{proxy.go,redundancy.go,gateway.go}` — session-token derivation, primary steering, runtime wiring (session secret, affinity tracker).
-- `devshard/cmd/devshardctl/{request_filters.go,request_filters_parameters.go,request_filters_config.go}` — lift `prompt_cache_key`/`user` into `chatRequest.AffinityKey` before PreValidation strips the wire field.
-- `devshard/cmd/devshardctl/session_picker.go` — sticky-participant preference in nonce dispatch (`pickerRequest.stickyParticipant`, `activeSticky`).
-- `devshard/cmd/devshardctl/metrics.go` — hop-1 affinity-decision counter and binding-count gauge.
-- `devshard/user/session.go` — `InferenceParams.AffinityKey`.
-- `devshard/host/host.go` — session id carried into the execution job on both the normal receipt path and the receipt-challenge path.
-- `devshard/types.go`, `devshard/transport/types.go` — `SessionID` on the wire (`ExecuteRequest`, `PayloadJSON`).
-- `devshard/cmd/devshardd/inference/engine.go` — `cache_salt` injection (`withCacheSalt`), applied independently of the participant's own affinity flag.
-- `devshard/cmd/devshardd/config.go` — participant-side `DAPI_MLNODE_AFFINITY_ENABLED` flag.
-- `common/nodemanager/nodemanager.proto` — `AcquireMLNodeRequest.session_id`.
-- `decentralized-api/broker/session_affinity.go` (new) — broker mlnode tracker.
-- `decentralized-api/broker/{broker.go,commands.go,node_lock.go}` — mlnode preference.
-- `decentralized-api/nodemanager/server.go` — forward `session_id` to broker.
-- `decentralized-api/observability/metrics_prometheus.go` — hop-2 affinity-decision counter.
+## Future Considerations
+
+* Replace hop-2 stickiness with a shared KV pool inside one participant. A cache layer such as LMCache moves KV blocks out of GPU memory into a tiered store — host memory, local disk, a remote backend — and lets several serving instances read one pool, so a warm prefix stops being the property of the single GPU that computed it. Within one participant that is its own hardware and its own choice, and it would make hop-2 preference unnecessary: any of that participant's mlnodes could serve the warm prefix, leaving hop 1 as the only steering the network needs. Two conditions gate it. The cache namespace this proposal introduces must be carried into the pool's own key, or isolation that currently ends at one GPU is lost across every instance reading the pool. And the pool must stay inside a participant: sharing one across participants would mean one operator serving another's cached blocks, a trust boundary the network does not have and this proposal does not propose to create.
+* Derive the session identifier per destination participant, removing cross-participant linkability, once the timeout path no longer broadcasts one payload to many verifiers.
+* Extend namespacing to validation replays if the serving-engine field becomes version-stable across the network.
+* Honour the Moonshot-native `cache_key` field as a third source, for clients that send it instead of `prompt_cache_key`.
+* Replace the measured lifetime defaults with values derived from observed cache residency once the network has been measured under load.
