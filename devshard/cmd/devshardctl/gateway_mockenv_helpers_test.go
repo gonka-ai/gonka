@@ -28,11 +28,13 @@ type gatewayMockEnv struct {
 }
 
 type gatewayMockRuntime struct {
-	id      string
-	model   string
-	active  bool
-	handler http.HandlerFunc
-	calls   atomic.Int64
+	id            string
+	model         string
+	active        bool
+	privateKeyHex string
+	privateKeyEnv string
+	handler       http.HandlerFunc
+	calls         atomic.Int64
 }
 
 type gatewayMockOption func(*gatewayMockConfig)
@@ -73,7 +75,7 @@ func newGatewayMockEnv(t *testing.T, runtimes []*gatewayMockRuntime, opts ...gat
 	store, err := NewGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(cfg.settings, gatewayMockStates(devshards)))
+	require.NoError(t, store.Initialize(cfg.settings, gatewayMockStates(runtimes, devshards)))
 	g.store = store
 	handler := buildGatewayHandler(g, runtimeOptions{
 		adminAPIKey: cfg.adminKey,
@@ -83,16 +85,23 @@ func newGatewayMockEnv(t *testing.T, runtimes []*gatewayMockRuntime, opts ...gat
 	return &gatewayMockEnv{t: t, gateway: g, handler: handler}
 }
 
-func gatewayMockStates(runtimes []*devshardRuntime) []GatewayDevshardState {
+func gatewayMockStates(mocks []*gatewayMockRuntime, runtimes []*devshardRuntime) []GatewayDevshardState {
 	states := make([]GatewayDevshardState, 0, len(runtimes))
-	for _, rt := range runtimes {
+	for i, rt := range runtimes {
 		if rt == nil {
 			continue
 		}
+		var privateKeyHex, privateKeyEnv string
+		if i < len(mocks) && mocks[i] != nil {
+			privateKeyHex = mocks[i].privateKeyHex
+			privateKeyEnv = mocks[i].privateKeyEnv
+		}
 		states = append(states, GatewayDevshardState{
 			RuntimeConfig: RuntimeConfig{
-				ID:    rt.id,
-				Model: rt.model,
+				ID:            rt.id,
+				PrivateKeyHex: privateKeyHex,
+				PrivateKeyEnv: privateKeyEnv,
+				Model:         rt.model,
 			},
 			Active: rt.active.Load(),
 		})

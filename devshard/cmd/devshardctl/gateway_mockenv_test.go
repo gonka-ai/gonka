@@ -388,6 +388,27 @@ func TestGatewayMockEnvAdminStateRequiresAdminKey(t *testing.T) {
 }
 
 // Steps:
+// - Store a private key in the gateway registry for one active runtime.
+// - Request admin state through the real authenticated gateway handler.
+// - Assert the read API does not expose the private key material.
+func TestGatewayMockEnvAdminStateDoesNotExposePrivateKey(t *testing.T) {
+	const privateKey = "super-secret-private-key"
+	rt := &gatewayMockRuntime{
+		id:            "12",
+		model:         "Qwen/Test",
+		active:        true,
+		privateKeyHex: privateKey,
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+	rec := env.get("/v1/admin/state", withBearer(mockenvAdminKey))
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.NotContains(t, rec.Body.String(), privateKey)
+	require.NotContains(t, rec.Body.String(), `"private_key"`)
+}
+
+// Steps:
 // - Create a gateway with one active runtime.
 // - Send direct chat to an unknown devshard ID.
 // - Assert the gateway returns 404 and does not call any runtime.
