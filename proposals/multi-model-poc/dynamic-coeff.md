@@ -70,7 +70,16 @@ Each host H_j has a list of MLNodes [node_k]. For each node:
 Assuming each host is a rational agent. 
 
 
-#### Protocol 
+#### Protocol
+
+Weight computation after PoC for epoch N is structurally unchanged:
+```
+coeff[i,N] = f(share[i,N-1], coeff[i,N-1], params_i)
+W_j = sum_i(W[i,j] * coeff[i,N])
+```
+where params_i is the full governance parameter set from Formalization: [coeff_i_min, coeff_i_max], D_i, T_i.
+
+
 
 
 
