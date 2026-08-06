@@ -7,14 +7,20 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/labstack/echo/v4"
 	"github.com/stretchr/testify/require"
+	"go.opentelemetry.io/otel"
+	"go.opentelemetry.io/otel/propagation"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
 
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -400,4 +406,71 @@ func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {
 	require.Len(t, admission.observed, 1)
 	require.Contains(t, admission.observed[0], "shared-host")
 	require.Contains(t, admission.observed[0], "transport")
+}
+
+func TestHTTPClient_Send_PropagatesCorrelationHeaders(t *testing.T) {
+	prevTP := otel.GetTracerProvider()
+	prevProp := otel.GetTextMapPropagator()
+	tp := sdktrace.NewTracerProvider(sdktrace.WithSampler(sdktrace.AlwaysSample()))
+	otel.SetTracerProvider(tp)
+	otel.SetTextMapPropagator(propagation.TraceContext{})
+	t.Cleanup(func() {
+		_ = tp.Shutdown(context.Background())
+		otel.SetTracerProvider(prevTP)
+		otel.SetTextMapPropagator(prevProp)
+	})
+
+	var (
+		mu      sync.Mutex
+		gotHdrs http.Header
+	)
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		mu.Lock()
+		gotHdrs = r.Header.Clone()
+		mu.Unlock()
+		// Minimal SSE body so Send's stream parser can finish without erroring
+		// on an empty JSON decode; StatusOK is enough for header capture.
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"nonce":1}`))
+	}))
+	t.Cleanup(ts.Close)
+
+	signer := testutil.MustGenerateKey(t)
+	client := NewHTTPClient(ts.URL, "escrow-1", signer)
+
+	ctx, _ := logging.WithRequestID(context.Background(), "req-gateway-42")
+	ctx, span := observability.StartGatewayRequest(ctx)
+	defer span.End()
+
+	_, _ = client.Send(ctx, host.HostRequest{Nonce: 99}, nil, nil)
+
+	mu.Lock()
+	defer mu.Unlock()
+	require.NotEmpty(t, gotHdrs.Get("traceparent"), "gateway→host must inject traceparent")
+	require.Equal(t, "req-gateway-42", gotHdrs.Get(observability.RequestIDHeader))
+	require.Equal(t, "99", gotHdrs.Get(observability.InferenceIDHeader))
+}
+
+func TestRequestIDMiddleware_KeepsInboundFromGateway(t *testing.T) {
+	e := echo.New()
+	var boundID string
+	e.Use(observability.RequestIDMiddleware)
+	e.POST("/sessions/:id/chat/completions", func(c echo.Context) error {
+		id, ok := logging.RequestID(c.Request().Context())
+		require.True(t, ok)
+		boundID = id
+		return c.NoContent(http.StatusOK)
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/sessions/escrow-1/chat/completions", strings.NewReader(`{}`))
+	req.Header.Set(observability.RequestIDHeader, "req-from-gateway")
+	// Simulate a prior local mint on the inbound context (should lose to header).
+	seeded, _ := logging.WithRequestID(req.Context(), "req-host-local")
+	req = req.WithContext(seeded)
+	rec := httptest.NewRecorder()
+	e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "req-from-gateway", boundID)
+	require.Equal(t, "req-from-gateway", rec.Header().Get(observability.RequestIDHeader))
 }

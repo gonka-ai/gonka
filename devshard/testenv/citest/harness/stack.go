@@ -145,12 +145,13 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 }
 
 // Up starts the stack with docker compose up (expects citest-images built; pulls missing hub images).
+// Set TESTENV_CITEST_BUILD=1 to pass --build (local iteration); CI should reuse images from citest-images.
 func (s *Stack) Up(t *testing.T) {
 	t.Helper()
-	s.composeUp(t, false, nil)
+	s.composeUp(t, ComposeBuildEnabled(), nil)
 }
 
-// UpBuild starts the stack and rebuilds images first.
+// UpBuild starts the stack and always rebuilds images first.
 func (s *Stack) UpBuild(t *testing.T) {
 	t.Helper()
 	s.composeUp(t, true, nil)
@@ -163,10 +164,18 @@ func (s *Stack) UpServices(t *testing.T, build bool, services ...string) {
 }
 
 // UpWithObservability starts the stack and observability overlay (see PrepareObservabilityOverlay).
+// Same image policy as Up: reuse by default; TESTENV_CITEST_BUILD=1 adds --build.
+// (devshardd is volume-mounted; gateway is baked into devshard-runtime — rebuild when that code changes.)
 func (s *Stack) UpWithObservability(t *testing.T, cfg *config.File) {
 	t.Helper()
 	s.PrepareObservabilityOverlay(t, cfg)
-	s.composeUp(t, false, nil)
+	s.composeUp(t, ComposeBuildEnabled(), nil)
+}
+
+// ComposeBuildEnabled reports whether compose up should pass --build.
+// Opt-in via TESTENV_CITEST_BUILD=1; Makefile citest-* targets build images separately.
+func ComposeBuildEnabled() bool {
+	return os.Getenv("TESTENV_CITEST_BUILD") == "1"
 }
 
 func (s *Stack) composeFileArgs() []string {

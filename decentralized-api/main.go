@@ -28,6 +28,7 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"common/logging"
+	"decentralized-api/observability"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -87,6 +88,8 @@ func main() {
 	if len(os.Args) >= 2 && os.Args[1] == "pre-upgrade" {
 		os.Exit(1)
 	}
+
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
 
 	configManager, err := apiconfig.LoadDefaultConfigManager()
 	if err != nil {

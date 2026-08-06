@@ -17,6 +17,7 @@ import (
 	"common/chain"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/observability"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -127,6 +128,19 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+	shutdownObs, err := observability.Init(context.Background(), observability.Config{
+		ServiceName: observability.GatewayServiceName,
+	})
+	if err != nil {
+		log.Fatalf("otel init: %v", err)
+	}
+	defer func() {
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = shutdownObs(shutdownCtx)
+	}()
+
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
 	flags := parseCLIFlags()

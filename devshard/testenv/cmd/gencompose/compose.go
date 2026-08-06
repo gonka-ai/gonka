@@ -141,6 +141,7 @@ services:
       DEVSHARD_VALIDATION_RETRY_INTERVAL: ${DEVSHARD_VALIDATION_RETRY_INTERVAL:-5m}
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
 {{ if and (eq $.Versiond.Mode "multi") (isHAReplica $ .) }}
       # HA pair shares Postgres (sticky single-writer + lease table).
       DEVSHARD_STORAGE_MODE: postgres
@@ -228,6 +229,9 @@ services:
       DEVSHARD_ADMIN_API_KEY: ${TESTENV_ADMIN_API_KEY}
       DEVSHARD_STORAGE_DIR: /var/lib/devshardctl
       GATEWAY_MAX_TOKENS_CAP: "4096"
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
@@ -288,6 +292,7 @@ func writeEnvFile(cfg *config.File, outPath string) error {
 	b.WriteString(fmt.Sprintf("TESTENV_KEYRING_PASSWORD=%s\n", cfg.Versiond.KeyringPassword))
 	b.WriteString("TESTENV_OTEL_ENABLED=false\n")
 	b.WriteString("TESTENV_OTEL_ENDPOINT=\n")
+	b.WriteString("LOG_FORMAT=json\n")
 	return os.WriteFile(outPath, []byte(b.String()), 0o600)
 }
 

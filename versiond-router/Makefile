@@ -33,6 +33,8 @@ test-render:
 	echo "test-render: ok"; \
 	rm -rf "$$tmpdir"
 
+include ../scripts/blst-portable.mk
+
 VERSION ?= $(shell git describe --always)
 SET_LATEST ?= 0
 SET_LATEST := $(shell if [ "$(SET_LATEST)" = "1" ]; then echo 1; else echo 0; fi)
@@ -59,7 +61,7 @@ endef
 all: build-docker
 
 build-docker:
-	$(eval PLATFORM=linux/amd64)
+	$(eval PLATFORM=$(DOCKER_PLATFORM))
 	$(eval DOCKER_FILE=Dockerfile)
 	$(eval DOCKER_TAG=ghcr.io/product-science/versiond-router:$(VERSION))
 	$(DOCKER_BUILD)

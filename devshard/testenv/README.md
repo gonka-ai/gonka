@@ -278,16 +278,18 @@ curl -sG 'http://127.0.0.1:13101/loki/api/v1/query_range' \
 curl -sf http://127.0.0.1:18080/v2/metrics | grep devshardd_request_duration_seconds | head
 ```
 
-**Automated O1 citest:**
+**Automated O1 + trace/log correlation citest:**
 
 ```bash
 make citest-observability
-# or: TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run TestO1_ObservabilitySmoke -v
+# or: TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation' -v
 ```
+
+Compose images are reused by default (Makefile runs `citest-images` first). For local gateway-image iteration without a separate `make citest-images`, set `TESTENV_CITEST_BUILD=1` so `docker compose up` passes `--build`.
 
 Stop overlay: `make obs-down`.
 
-Requires rebuilding **devshardd** after pulling observability init changes (`make build-devshardd`).
+Requires rebuilding **devshardd** after pulling observability init changes (`make build-devshardd`). Gateway changes need a runtime image rebuild (`make citest-images` or `TESTENV_CITEST_BUILD=1`).
 
 ### Phase 7 gateway smoke (Docker)
 

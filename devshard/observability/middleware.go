@@ -54,8 +54,10 @@ func EchoMiddleware() echo.MiddlewareFunc {
 }
 
 // RequestIDMiddleware binds X-Request-Id from the inbound request to the
-// context (generating one if absent) and echoes it back on the response.
-// Use after EchoMiddleware so the span context is already extracted.
+// context, preferring the inbound header when present so gateway→host hops
+// keep one request_id. A fresh id is minted only when the header is absent.
+// Echoes the bound id on the response. Use after EchoMiddleware so the span
+// context is already extracted.
 func RequestIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	return func(c echo.Context) error {
 		BindEchoRequestID(c)
@@ -63,8 +65,9 @@ func RequestIDMiddleware(next echo.HandlerFunc) echo.HandlerFunc {
 	}
 }
 
-// BindEchoRequestID stores the inbound X-Request-Id (or a fresh one) on the
-// echo request context and writes it onto the response header.
+// BindEchoRequestID stores the inbound X-Request-Id (preferring it over any
+// id already on the context) on the echo request context and writes it onto
+// the response header. Mints a fresh id only when the header is absent.
 func BindEchoRequestID(c echo.Context) context.Context {
 	id := c.Request().Header.Get(RequestIDHeader)
 	ctx := BindRequestID(c.Request().Context(), id)

@@ -47,6 +47,7 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 		version = "v2"
 	}
 
+	harness.WaitJaegerSpan(t, obs, "devshardctl", "gateway.request", 2*time.Minute)
 	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
 	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
 	harness.WaitLokiSubstring(t, obs, "devshard request terminal", 2*time.Minute)

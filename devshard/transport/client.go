@@ -20,6 +20,7 @@ import (
 
 	"devshard/host"
 	"devshard/logging"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/types"
 
@@ -249,6 +250,8 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 		return nil, fmt.Errorf("marshal json: %w", err)
 	}
 
+	// Nonce == inferenceId on the chat path; propagate as X-Inference-Id.
+	ctx = observability.WithInferenceID(ctx, req.Nonce)
 	resp, err := c.doPostRaw(ctx, "/sessions/"+c.escrowID+"/chat/completions", body)
 	if err != nil {
 		return nil, err
@@ -505,6 +508,7 @@ func (c *HTTPClient) SendVerifyTimeout(ctx context.Context, req VerifyTimeoutReq
 func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, payload *host.InferencePayload, diffs []types.Diff) ([]byte, error) {
 	ctx, cancel := context.WithTimeout(ctx, c.config.VerifyTimeout)
 	defer cancel()
+	ctx = observability.WithInferenceID(ctx, inferenceID)
 
 	djList := make([]DiffJSON, len(diffs))
 	for i, d := range diffs {
@@ -537,6 +541,7 @@ func (c *HTTPClient) ChallengeReceipt(ctx context.Context, inferenceID uint64, p
 
 // VerifyTimeout implements user.TimeoutVerifier over HTTP.
 func (c *HTTPClient) VerifyTimeout(ctx context.Context, inferenceID uint64, reason types.TimeoutReason, payload *host.InferencePayload, diffs []types.Diff) (bool, []byte, uint32, error) {
+	ctx = observability.WithInferenceID(ctx, inferenceID)
 	var djList []DiffJSON
 	if len(diffs) > 0 {
 		djList = make([]DiffJSON, len(diffs))
@@ -626,6 +631,7 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set(c.signatureHeader(), hex.EncodeToString(sig))
 	req.Header.Set(c.timestampHeader(), strconv.FormatInt(ts, 10))
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {
@@ -668,6 +674,7 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
+	observability.InjectOutboundHeaders(ctx, req.Header)
 
 	resp, err := c.http.Do(req)
 	if err != nil {

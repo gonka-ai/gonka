@@ -9,6 +9,8 @@ datasources:
     editable: false
     jsonData:
       derivedFields:
+        # jaeger-promtail (T1 exit criteria): click TraceID → Jaeger.
+        # T2 retargets datasourceUid to tempo when tempo-* is the primary profile.
         - datasourceUid: jaeger
           matcherRegex: '"trace_id":"(\w+)"'
           name: TraceID

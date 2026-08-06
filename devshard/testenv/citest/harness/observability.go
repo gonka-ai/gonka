@@ -67,6 +67,7 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 	set := map[string]string{
 		"TESTENV_OTEL_ENABLED":  "true",
 		"TESTENV_OTEL_ENDPOINT": "http://jaeger:4317",
+		"LOG_FORMAT":            "json",
 	}
 	outLines := make([]string, 0, len(lines)+len(set))
 	seen := make(map[string]struct{})

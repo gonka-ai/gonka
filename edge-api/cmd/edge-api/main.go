@@ -26,6 +26,7 @@ const (
 )
 
 func main() {
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
 	cfg, err := loadConfig()
 	if err != nil {
 		slog.Error("config", "error", err)

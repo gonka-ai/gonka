@@ -199,6 +199,8 @@ type Proxy struct {
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := ensureRequestLogContext(r.Context())
+	ctx, endSpan := bindGatewayRequestSpan(ctx)
+	defer endSpan()
 	r = r.WithContext(ctx)
 	if r.Method != http.MethodPost {
 		logRequestStage(ctx, "proxy_method_not_allowed", "method", r.Method)
@@ -380,12 +382,12 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	defer stopClientWatch()
 	dw := newDeferredWriter(r.Context(), w, p.escrowID, flag)
 
-	// Upstream redundancy is NOT bound to r.Context(): host SSE must be
-	// drained through devshard_meta even if the client disconnects.
-	// metaDrainTimeout (via withMetaDrain in redundancy) bounds how long
-	// upstream may run after the client is gone.
+	// Upstream redundancy must not cancel with the client (host SSE still
+	// drains through devshard_meta), but must keep request_id + OTel span so
+	// gateway→host injects the same traceparent. WithoutCancel preserves
+	// values; metaDrainTimeout (via withMetaDrain) bounds post-disconnect work.
 	var doneWriteErr error
-	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	err := p.redundancy.RunInference(context.WithoutCancel(r.Context()), params, dw, flag)
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -546,7 +548,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	err := p.redundancy.RunInference(context.WithoutCancel(r.Context()), params, &buf, flag)
 	if flag.Gone() {
 		return
 	}

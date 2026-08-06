@@ -1,6 +1,7 @@
 # testenv observability plan
 
-**Scope:** optional Docker overlay for `devshard/testenv` (Phase 10).  
+**Scope:** optional Docker overlay for `devshard/testenv` (Phase 10) — *which backends do we run*.  
+**Continued by:** [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) — *what goes into the telemetry* (trace/log correlation, disposition span attributes, prompt capture). That plan makes `tempo-alloy` the primary e2e profile.  
 **Related:** [testenv-v2-plan.md](./testenv-v2-plan.md) §Phase 10, [README.md](../README.md) §Phase 10, `deploy/join/docker-compose.observability.yml`.
 
 ---

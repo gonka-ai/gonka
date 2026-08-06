@@ -19,7 +19,6 @@ import (
 	"devshard"
 	"devshard/accounting"
 	"devshard/host"
-	"devshard/logging"
 	"devshard/transport"
 	"devshard/types"
 	"devshard/user"
@@ -1701,8 +1700,9 @@ func (rw *raceWriter) Flush() {
 // It replaces the old retry-based runInference in proxy.go.
 func (e *Redundancy) RunInference(ctx context.Context, params user.InferenceParams, w io.Writer, clientFlag *cancelFlag) error {
 	ctx, _ = ensureRequestLogContext(ctx)
-	settleCtx, _ := ensureRequestLogContext(context.Background())
-	settleCtx = logging.PropagateRequestID(settleCtx, ctx)
+	// Detach cancel/deadline for post-response settle work, but keep
+	// request_id + span so background finalize logs stay correlatable.
+	settleCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 	logRequestStage(ctx, "runner_started", "escrow", e.devshardID, "input_tokens", params.InputLength, "model", params.Model)
 	e.recordAccountingRequestStart(ctx, params)
 
@@ -2995,8 +2995,7 @@ func (e *Redundancy) recordGatewayTimeoutAction(inf *inflight, params user.Infer
 }
 
 func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64, opts raceFinishOptions) {
-	bgCtx, _ := ensureRequestLogContext(context.Background())
-	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+	bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 
 	e.waitForPendingLosers(bgCtx, winnerNonce, attempts)
 
@@ -3006,8 +3005,7 @@ func (e *Redundancy) finishRaceWhenPendingDone(ctx context.Context, attempts []*
 }
 
 func (e *Redundancy) finishStalledWinnerAfterClientTimeout(ctx context.Context, attempts []*inflight, params user.InferenceParams, decision Decision, winnerNonce uint64) {
-	bgCtx, _ := ensureRequestLogContext(context.Background())
-	bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+	bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 
 	winner := inflightByNonce(attempts, winnerNonce)
 	abandonedWinner := e.waitForClientTimedOutAttempts(bgCtx, winnerNonce, attempts)
@@ -3901,8 +3899,7 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		}
 		if anySucceeded {
 			e.goTrackedRaceCleanup(func() {
-				bgCtx, _ := ensureRequestLogContext(context.Background())
-				bgCtx = logging.PropagateRequestID(bgCtx, ctx)
+				bgCtx, _ := ensureRequestLogContext(context.WithoutCancel(ctx))
 				for _, inf := range failed {
 					if inf.probe {
 						logInferenceStage(bgCtx, inf.escrowID, inf.nonce, "poc_probe_failed_no_timeout", "host", inf.hostID, "poc_reason", currentPoCPhaseReason())

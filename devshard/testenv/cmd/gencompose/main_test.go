@@ -291,6 +291,9 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "DEVSHARD_PUBLIC_API")
 	require.Contains(t, text, "DEVSHARD_CHAIN_GRPC")
 	require.Contains(t, text, "DEVSHARD_NODE_MANAGER_ADDR")
+	require.Contains(t, text, "LOG_FORMAT: ${LOG_FORMAT:-json}")
+	require.Contains(t, text, "DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}")
+	require.Contains(t, text, "OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")
 	require.NotContains(t, text, "MOCK_CHAIN_REST")
@@ -338,6 +341,7 @@ func TestWriteCompose_EnvFile(t *testing.T) {
 	text := string(body)
 	require.Contains(t, text, "TESTENV_USER_PRIVATE_KEY="+cfg.User.PrivateKeyHex)
 	require.Contains(t, text, "TESTENV_CHAIN_ID="+cfg.ChainID)
+	require.Contains(t, text, "LOG_FORMAT=json")
 }
 
 func TestFillConfig_MaterializesKeyrings(t *testing.T) {

@@ -43,7 +43,7 @@ func run(parent context.Context, args []string, protocolVersion, binaryVersion s
 		return err
 	}
 
-	slog.SetDefault(slog.New(newPrefixedTextHandler(cfg.BinaryLogVersion, os.Stderr, slog.LevelInfo)))
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
 
 	observability.SetRuntime(cfg.BinaryLogVersion, cfg.ProtocolVersion, "standalone")
 	shutdownObs, err := observability.Init(parent, observability.Config{
