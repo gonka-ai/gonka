@@ -130,7 +130,8 @@ func buildApp(ctx context.Context, cfg runtimeConfig) (_ *devshardApp, err error
 
 func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainRuntime, error) {
 	slog.Info("chain node",
-		"url", nodeConfig.ChainRpcUrl,
+		"grpc_url", nodeConfig.ChainGrpcUrl,
+		"rpc_url", nodeConfig.ChainRpcUrl,
 		"keyring_backend", nodeConfig.KeyringBackend,
 		"keyring_dir", nodeConfig.KeyringDir)
 
@@ -144,7 +145,7 @@ func buildChainRuntime(ctx context.Context, nodeConfig ChainNodeConfig) (*chainR
 		return nil, fmt.Errorf("api account: %w", err)
 	}
 
-	chainClient, err := chain.New(nodeConfig.ChainGrpcUrl)
+	chainClient, err := chain.NewWithQueryFallback(nodeConfig.ChainGrpcUrl, nodeConfig.ChainRpcUrl)
 	if err != nil {
 		return nil, fmt.Errorf("chain client: %w", err)
 	}

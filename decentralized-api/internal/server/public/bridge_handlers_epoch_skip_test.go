@@ -1,9 +1,16 @@
 package public
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"testing"
+
+	"decentralized-api/cosmosclient"
+
+	"github.com/productscience/inference/x/inference/types"
+	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestClassifyBridgeExchangeSubmit(t *testing.T) {
@@ -14,32 +21,35 @@ func TestClassifyBridgeExchangeSubmit(t *testing.T) {
 		wantReason string
 	}{
 		{
-			name:       "already validated",
-			err:        fmt.Errorf("bridge exchange failed: code=5 rawLog=validator has already validated this transaction"),
+			name: "already validated",
+			err: fmt.Errorf("bridge exchange failed: code=5 rawLog=%s",
+				types.ErrBridgeAlreadyValidated.Error()),
 			wantAction: bridgeSubmitSkip,
 			wantReason: bridgeSkipAlreadyValidated,
 		},
 		{
-			name:       "not in tx epoch group",
-			err:        fmt.Errorf("bridge exchange failed: code=5 rawLog=validator not in transaction's epoch group"),
+			name: "not in tx epoch group",
+			err: fmt.Errorf("bridge exchange failed: code=5 rawLog=%s",
+				types.ErrBridgeValidatorNotInTxEpochGroup.Error()),
 			wantAction: bridgeSubmitSkip,
 			wantReason: bridgeSkipNotInTxEpoch,
 		},
 		{
 			name:       "not in active participants",
-			err:        errors.New("validator not in active participants"),
+			err:        errors.New(types.ErrBridgeValidatorNotInActiveGroup.Error()),
 			wantAction: bridgeSubmitSkip,
 			wantReason: bridgeSkipNotActive,
 		},
 		{
-			name:       "permission participant is not active",
-			err:        fmt.Errorf("bridge exchange failed: code=1109 rawLog=participant is not active"),
+			name: "permission participant is not active",
+			err: fmt.Errorf("bridge exchange failed: code=1109 rawLog=%s",
+				types.ErrActiveParticipantNotFound.Error()),
 			wantAction: bridgeSubmitSkip,
 			wantReason: bridgeSkipNotActive,
 		},
 		{
 			name:       "content mismatch",
-			err:        errors.New("transaction content mismatch - potential attack detected"),
+			err:        errors.New(types.ErrBridgeContentMismatch.Error()),
 			wantAction: bridgeSubmitSkip,
 			wantReason: bridgeSkipContentMismatch,
 		},
@@ -90,4 +100,59 @@ func TestClassifyBridgeExchangeSubmit(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestCommitReceipt_AnteShapedPermanentRejectAdvances is the DAPI half of the
+// certainty path that #1478 assumed but never proved end-to-end:
+//
+//	ante CheckTx err → BroadcastTxSync Code!=0 → BridgeExchange wrap →
+//	classifyBridgeExchangeSubmit skip → commitReceipt returns nil (no confirm wait).
+//
+// Without this, a Sync Code=0 + DeliverTx reject stalls on confirm timeout.
+func TestCommitReceipt_AnteShapedPermanentRejectAdvances(t *testing.T) {
+	mockClient := &cosmosclient.MockCosmosMessageClient{}
+	mockClient.On("GetAccountAddress").Return("gonka1validator")
+	mockClient.On("BridgeExchange", mock.AnythingOfType("*types.MsgBridgeExchange")).Return(
+		fmt.Errorf("bridge exchange failed: code=5 rawLog=%s",
+			types.ErrBridgeValidatorNotInTxEpochGroup.Error()),
+	)
+
+	q := NewBlockQueue(mockClient, nil)
+	err := q.commitReceipt(context.Background(), BridgeReceipt{
+		ContractAddress: "0xabc",
+		OwnerAddress:    "ignored",
+		OwnerPubKey:     "034daac7b5be60532b562b030824b2c9b7c450985b894dd5544f9c7dd807d8bb88",
+		Amount:          "100",
+		ReceiptIndex:    "0",
+	}, BridgeBlock{
+		BlockNumber:  "25586367",
+		OriginChain:  "ethereum",
+		ReceiptsRoot: "0xroot",
+	})
+	require.NoError(t, err, "permanent ante-shaped reject must skip (advance), not pause drain")
+	mockClient.AssertExpectations(t)
+	mockClient.AssertNotCalled(t, "BridgeTransactionsByReceipt", mock.Anything, mock.Anything, mock.Anything, mock.Anything)
+}
+
+func TestCommitReceipt_UncertainRejectPausesDrain(t *testing.T) {
+	mockClient := &cosmosclient.MockCosmosMessageClient{}
+	mockClient.On("GetAccountAddress").Return("gonka1validator")
+	mockClient.On("BridgeExchange", mock.AnythingOfType("*types.MsgBridgeExchange")).Return(
+		fmt.Errorf("bridge exchange failed: code=11 rawLog=out of gas"),
+	)
+
+	q := NewBlockQueue(mockClient, nil)
+	err := q.commitReceipt(context.Background(), BridgeReceipt{
+		ContractAddress: "0xabc",
+		OwnerAddress:    "ignored",
+		OwnerPubKey:     "034daac7b5be60532b562b030824b2c9b7c450985b894dd5544f9c7dd807d8bb88",
+		Amount:          "100",
+		ReceiptIndex:    "0",
+	}, BridgeBlock{
+		BlockNumber:  "25586367",
+		OriginChain:  "ethereum",
+		ReceiptsRoot: "0xroot",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "not confirmable")
 }

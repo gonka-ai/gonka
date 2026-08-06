@@ -30,11 +30,14 @@ var (
 	ErrIncompleteCoverage      = errors.New("response does not cover all requested leaf indices")
 	ErrNonceAbsent             = errors.New("response does not cover all requested nonces")
 	ErrInvalidVectorData       = errors.New("invalid vector data detected")
+	// ErrLocalRequestFailure marks a failure to build the request on our side, such
+	// as a broken keyring. It says nothing about the validatee.
+	ErrLocalRequestFailure = errors.New("local request preparation failed")
 )
 
-// ProofClient fetches and verifies SMST proofs from participant APIs.
 const DefaultKDim = 12
 
+// ProofClient fetches and verifies SMST proofs from participant APIs.
 type ProofClient struct {
 	httpClient *http.Client
 	recorder   cosmosclient.CosmosMessageClient
@@ -101,18 +104,15 @@ func NewProofClient(recorder cosmosclient.CosmosMessageClient, config ProofClien
 }
 
 // FetchAndVerifyProofs fetches proofs from the participant's API and verifies them.
-// Returns verified artifacts or error.
 func (c *ProofClient) FetchAndVerifyProofs(
 	ctx context.Context,
 	participantUrl string,
 	req ProofRequest,
 ) ([]VerifiedArtifact, error) {
-	// Build request body
 	timestamp := time.Now().UnixNano()
 	validatorAddress := c.recorder.GetAccountAddress()
 	signerAddress := c.recorder.GetSignerAddress()
 
-	// Build signature payload
 	signPayload := buildProofSignPayload(
 		req.PocStageStartBlockHeight,
 		req.ModelId,
@@ -124,13 +124,11 @@ func (c *ProofClient) FetchAndVerifyProofs(
 		signerAddress,
 	)
 
-	// Sign the payload
 	signature, err := c.recorder.SignBytes(signPayload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign request: %w", err)
+		return nil, fmt.Errorf("%w: failed to sign request: %w", ErrLocalRequestFailure, err)
 	}
 
-	// Build JSON request body
 	leafIndicesInt := make([]int64, len(req.LeafIndices))
 	for i, idx := range req.LeafIndices {
 		leafIndicesInt[i] = int64(idx)
@@ -150,16 +148,14 @@ func (c *ProofClient) FetchAndVerifyProofs(
 
 	bodyBytes, err := json.Marshal(requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("%w: failed to marshal request: %w", ErrLocalRequestFailure, err)
 	}
 
-	// Build URL
 	proofUrl, err := url.JoinPath(participantUrl, "v1/poc/proofs")
 	if err != nil {
 		return nil, fmt.Errorf("failed to build proof URL: %w", err)
 	}
 
-	// Make HTTP request
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, proofUrl, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, fmt.Errorf("failed to create request: %w", err)
@@ -177,13 +173,12 @@ func (c *ProofClient) FetchAndVerifyProofs(
 		return nil, fmt.Errorf("proof request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	// Parse response
 	var proofResp ProofResponse
 	if err := json.NewDecoder(resp.Body).Decode(&proofResp); err != nil {
 		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	// Validate coverage: response must contain exactly the requested leaf indices
+	// The response must cover exactly the requested leaf indices, no more, no less.
 	if err := validateLeafCoverage(req.LeafIndices, proofResp.Proofs); err != nil {
 		return nil, err
 	}
@@ -226,7 +221,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 	)
 	signature, err := c.recorder.SignBytes(signPayload)
 	if err != nil {
-		return nil, fmt.Errorf("failed to sign request: %w", err)
+		return nil, fmt.Errorf("%w: failed to sign request: %w", ErrLocalRequestFailure, err)
 	}
 
 	noncesInt := make([]int64, len(req.Nonces))
@@ -247,7 +242,7 @@ func (c *ProofClient) FetchAndVerifyProofsByNonce(
 
 	bodyBytes, err := json.Marshal(requestBody)
 	if err != nil {
-		return nil, fmt.Errorf("failed to marshal request: %w", err)
+		return nil, fmt.Errorf("%w: failed to marshal request: %w", ErrLocalRequestFailure, err)
 	}
 
 	proofUrl, err := url.JoinPath(participantUrl, "v1/poc/proofs/by-nonce")
@@ -318,13 +313,11 @@ func validateLeafCoverage(requested []uint32, proofs []ProofItem) error {
 		return nil
 	}
 
-	// Build set of requested indices
 	requestedSet := make(map[uint32]struct{}, len(requested))
 	for _, idx := range requested {
 		requestedSet[idx] = struct{}{}
 	}
 
-	// Check each proof's leaf index
 	seen := make(map[uint32]struct{}, len(proofs))
 	for _, p := range proofs {
 		if _, duplicate := seen[p.LeafIndex]; duplicate {

@@ -41,8 +41,6 @@ type NatsServerConfig struct {
 
 type TxBatchingConfig struct {
 	Disabled                        bool `koanf:"disabled" json:"disabled"`
-	FlushSize                       int  `koanf:"flush_size" json:"flush_size"`
-	FlushTimeoutSeconds             int  `koanf:"flush_timeout_seconds" json:"flush_timeout_seconds"`
 	ValidationV2FlushSize           int  `koanf:"validation_v2_flush_size" json:"validation_v2_flush_size"`
 	ValidationV2FlushTimeoutSeconds int  `koanf:"validation_v2_flush_timeout_seconds" json:"validation_v2_flush_timeout_seconds"`
 	PocCommitIntervalSeconds        int  `koanf:"poc_commit_interval_seconds" json:"poc_commit_interval_seconds"`
@@ -259,21 +257,21 @@ func (p PoCParamsCache) GetModelConfig(modelID string) (PoCModelConfigCache, boo
 type DevshardVersionsCache struct {
 	// Versions are approved devshard binaries (`name`, download URL, sha256)
 	// used by versiond/routing policy.
-	Versions                          []DevshardVersion `json:"versions"`
+	Versions []DevshardVersion `json:"versions"`
 	// DevshardRequestsEnabled is the live governance kill-switch for host-side
 	// completion/timeout request handling.
-	DevshardRequestsEnabled bool              `json:"devshard_requests_enabled"`
+	DevshardRequestsEnabled bool `json:"devshard_requests_enabled"`
 	// MaxNonce is the chain upper bound for session nonces.
-	MaxNonce                          uint32            `json:"max_nonce"`
+	MaxNonce uint32 `json:"max_nonce"`
 	// RefusalTimeout is the live refusal timeout used by runtime-config consumers (seconds).
-	RefusalTimeout                    int64             `json:"refusal_timeout"`
+	RefusalTimeout int64 `json:"refusal_timeout"`
 	// ExecutionTimeout is the live execution timeout used by runtime-config consumers (seconds).
-	ExecutionTimeout                  int64             `json:"execution_timeout"`
+	ExecutionTimeout int64 `json:"execution_timeout"`
 	// ValidationRate is the validation sampling rate in basis points (0..10000).
-	ValidationRate                    uint32            `json:"validation_rate"`
+	ValidationRate uint32 `json:"validation_rate"`
 	// VoteThresholdFactor is the vote threshold factor in percent (1..100),
 	// converted to slot threshold at bind time.
-	VoteThresholdFactor               uint32            `json:"vote_threshold_factor"`
+	VoteThresholdFactor uint32 `json:"vote_threshold_factor"`
 }
 
 // DevshardVersion describes a single approved devshard binary.

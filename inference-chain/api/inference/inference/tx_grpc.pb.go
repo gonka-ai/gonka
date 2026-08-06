@@ -20,13 +20,8 @@ const _ = grpc.SupportPackageIsVersion7
 
 const (
 	Msg_UpdateParams_FullMethodName                     = "/inference.inference.Msg/UpdateParams"
-	Msg_StartInference_FullMethodName                   = "/inference.inference.Msg/StartInference"
-	Msg_FinishInference_FullMethodName                  = "/inference.inference.Msg/FinishInference"
 	Msg_SubmitNewParticipant_FullMethodName             = "/inference.inference.Msg/SubmitNewParticipant"
-	Msg_Validation_FullMethodName                       = "/inference.inference.Msg/Validation"
 	Msg_SubmitNewUnfundedParticipant_FullMethodName     = "/inference.inference.Msg/SubmitNewUnfundedParticipant"
-	Msg_InvalidateInference_FullMethodName              = "/inference.inference.Msg/InvalidateInference"
-	Msg_RevalidateInference_FullMethodName              = "/inference.inference.Msg/RevalidateInference"
 	Msg_ClaimRewards_FullMethodName                     = "/inference.inference.Msg/ClaimRewards"
 	Msg_SetClaimRecipients_FullMethodName               = "/inference.inference.Msg/SetClaimRecipients"
 	Msg_SubmitPocBatch_FullMethodName                   = "/inference.inference.Msg/SubmitPocBatch"
@@ -71,18 +66,8 @@ type MsgClient interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(ctx context.Context, in *MsgUpdateParams, opts ...grpc.CallOption) (*MsgUpdateParamsResponse, error)
-	// Deprecated: Do not use.
-	StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error)
-	// Deprecated: Do not use.
-	FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error)
-	// Deprecated: Do not use.
-	Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error)
-	// Deprecated: Do not use.
-	InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error)
-	// Deprecated: Do not use.
-	RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(ctx context.Context, in *MsgClaimRewards, opts ...grpc.CallOption) (*MsgClaimRewardsResponse, error)
 	SetClaimRecipients(ctx context.Context, in *MsgSetClaimRecipients, opts ...grpc.CallOption) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(ctx context.Context, in *MsgSubmitPocBatch, opts ...grpc.CallOption) (*MsgSubmitPocBatchResponse, error)
@@ -139,26 +124,6 @@ func (c *msgClient) UpdateParams(ctx context.Context, in *MsgUpdateParams, opts 
 	return out, nil
 }
 
-// Deprecated: Do not use.
-func (c *msgClient) StartInference(ctx context.Context, in *MsgStartInference, opts ...grpc.CallOption) (*MsgStartInferenceResponse, error) {
-	out := new(MsgStartInferenceResponse)
-	err := c.cc.Invoke(ctx, Msg_StartInference_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// Deprecated: Do not use.
-func (c *msgClient) FinishInference(ctx context.Context, in *MsgFinishInference, opts ...grpc.CallOption) (*MsgFinishInferenceResponse, error) {
-	out := new(MsgFinishInferenceResponse)
-	err := c.cc.Invoke(ctx, Msg_FinishInference_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewParticipant, opts ...grpc.CallOption) (*MsgSubmitNewParticipantResponse, error) {
 	out := new(MsgSubmitNewParticipantResponse)
 	err := c.cc.Invoke(ctx, Msg_SubmitNewParticipant_FullMethodName, in, out, opts...)
@@ -168,39 +133,9 @@ func (c *msgClient) SubmitNewParticipant(ctx context.Context, in *MsgSubmitNewPa
 	return out, nil
 }
 
-// Deprecated: Do not use.
-func (c *msgClient) Validation(ctx context.Context, in *MsgValidation, opts ...grpc.CallOption) (*MsgValidationResponse, error) {
-	out := new(MsgValidationResponse)
-	err := c.cc.Invoke(ctx, Msg_Validation_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
 func (c *msgClient) SubmitNewUnfundedParticipant(ctx context.Context, in *MsgSubmitNewUnfundedParticipant, opts ...grpc.CallOption) (*MsgSubmitNewUnfundedParticipantResponse, error) {
 	out := new(MsgSubmitNewUnfundedParticipantResponse)
 	err := c.cc.Invoke(ctx, Msg_SubmitNewUnfundedParticipant_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// Deprecated: Do not use.
-func (c *msgClient) InvalidateInference(ctx context.Context, in *MsgInvalidateInference, opts ...grpc.CallOption) (*MsgInvalidateInferenceResponse, error) {
-	out := new(MsgInvalidateInferenceResponse)
-	err := c.cc.Invoke(ctx, Msg_InvalidateInference_FullMethodName, in, out, opts...)
-	if err != nil {
-		return nil, err
-	}
-	return out, nil
-}
-
-// Deprecated: Do not use.
-func (c *msgClient) RevalidateInference(ctx context.Context, in *MsgRevalidateInference, opts ...grpc.CallOption) (*MsgRevalidateInferenceResponse, error) {
-	out := new(MsgRevalidateInferenceResponse)
-	err := c.cc.Invoke(ctx, Msg_RevalidateInference_FullMethodName, in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -529,18 +464,8 @@ type MsgServer interface {
 	// UpdateParams defines a (governance) operation for updating the module
 	// parameters. The authority defaults to the x/gov module account.
 	UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error)
-	// Deprecated: Do not use.
-	StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error)
-	// Deprecated: Do not use.
-	FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error)
 	SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error)
-	// Deprecated: Do not use.
-	Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error)
 	SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error)
-	// Deprecated: Do not use.
-	InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error)
-	// Deprecated: Do not use.
-	RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error)
 	ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error)
 	SetClaimRecipients(context.Context, *MsgSetClaimRecipients) (*MsgSetClaimRecipientsResponse, error)
 	SubmitPocBatch(context.Context, *MsgSubmitPocBatch) (*MsgSubmitPocBatchResponse, error)
@@ -588,26 +513,11 @@ type UnimplementedMsgServer struct {
 func (UnimplementedMsgServer) UpdateParams(context.Context, *MsgUpdateParams) (*MsgUpdateParamsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method UpdateParams not implemented")
 }
-func (UnimplementedMsgServer) StartInference(context.Context, *MsgStartInference) (*MsgStartInferenceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method StartInference not implemented")
-}
-func (UnimplementedMsgServer) FinishInference(context.Context, *MsgFinishInference) (*MsgFinishInferenceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method FinishInference not implemented")
-}
 func (UnimplementedMsgServer) SubmitNewParticipant(context.Context, *MsgSubmitNewParticipant) (*MsgSubmitNewParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewParticipant not implemented")
 }
-func (UnimplementedMsgServer) Validation(context.Context, *MsgValidation) (*MsgValidationResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method Validation not implemented")
-}
 func (UnimplementedMsgServer) SubmitNewUnfundedParticipant(context.Context, *MsgSubmitNewUnfundedParticipant) (*MsgSubmitNewUnfundedParticipantResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method SubmitNewUnfundedParticipant not implemented")
-}
-func (UnimplementedMsgServer) InvalidateInference(context.Context, *MsgInvalidateInference) (*MsgInvalidateInferenceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method InvalidateInference not implemented")
-}
-func (UnimplementedMsgServer) RevalidateInference(context.Context, *MsgRevalidateInference) (*MsgRevalidateInferenceResponse, error) {
-	return nil, status.Errorf(codes.Unimplemented, "method RevalidateInference not implemented")
 }
 func (UnimplementedMsgServer) ClaimRewards(context.Context, *MsgClaimRewards) (*MsgClaimRewardsResponse, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method ClaimRewards not implemented")
@@ -745,42 +655,6 @@ func _Msg_UpdateParams_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_StartInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgStartInference)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).StartInference(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_StartInference_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).StartInference(ctx, req.(*MsgStartInference))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_FinishInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgFinishInference)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).FinishInference(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_FinishInference_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).FinishInference(ctx, req.(*MsgFinishInference))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Msg_SubmitNewParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSubmitNewParticipant)
 	if err := dec(in); err != nil {
@@ -799,24 +673,6 @@ func _Msg_SubmitNewParticipant_Handler(srv interface{}, ctx context.Context, dec
 	return interceptor(ctx, in, info, handler)
 }
 
-func _Msg_Validation_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgValidation)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).Validation(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_Validation_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).Validation(ctx, req.(*MsgValidation))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
 func _Msg_SubmitNewUnfundedParticipant_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(MsgSubmitNewUnfundedParticipant)
 	if err := dec(in); err != nil {
@@ -831,42 +687,6 @@ func _Msg_SubmitNewUnfundedParticipant_Handler(srv interface{}, ctx context.Cont
 	}
 	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
 		return srv.(MsgServer).SubmitNewUnfundedParticipant(ctx, req.(*MsgSubmitNewUnfundedParticipant))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_InvalidateInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgInvalidateInference)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).InvalidateInference(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_InvalidateInference_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).InvalidateInference(ctx, req.(*MsgInvalidateInference))
-	}
-	return interceptor(ctx, in, info, handler)
-}
-
-func _Msg_RevalidateInference_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
-	in := new(MsgRevalidateInference)
-	if err := dec(in); err != nil {
-		return nil, err
-	}
-	if interceptor == nil {
-		return srv.(MsgServer).RevalidateInference(ctx, in)
-	}
-	info := &grpc.UnaryServerInfo{
-		Server:     srv,
-		FullMethod: Msg_RevalidateInference_FullMethodName,
-	}
-	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
-		return srv.(MsgServer).RevalidateInference(ctx, req.(*MsgRevalidateInference))
 	}
 	return interceptor(ctx, in, info, handler)
 }
@@ -1513,32 +1333,12 @@ var Msg_ServiceDesc = grpc.ServiceDesc{
 			Handler:    _Msg_UpdateParams_Handler,
 		},
 		{
-			MethodName: "StartInference",
-			Handler:    _Msg_StartInference_Handler,
-		},
-		{
-			MethodName: "FinishInference",
-			Handler:    _Msg_FinishInference_Handler,
-		},
-		{
 			MethodName: "SubmitNewParticipant",
 			Handler:    _Msg_SubmitNewParticipant_Handler,
 		},
 		{
-			MethodName: "Validation",
-			Handler:    _Msg_Validation_Handler,
-		},
-		{
 			MethodName: "SubmitNewUnfundedParticipant",
 			Handler:    _Msg_SubmitNewUnfundedParticipant_Handler,
-		},
-		{
-			MethodName: "InvalidateInference",
-			Handler:    _Msg_InvalidateInference_Handler,
-		},
-		{
-			MethodName: "RevalidateInference",
-			Handler:    _Msg_RevalidateInference_Handler,
 		},
 		{
 			MethodName: "ClaimRewards",

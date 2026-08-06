@@ -28,7 +28,6 @@ import (
 	"google.golang.org/grpc/reflection"
 
 	"common/logging"
-	"decentralized-api/internal/validation"
 	"decentralized-api/participant"
 	"encoding/json"
 	"fmt"
@@ -209,7 +208,6 @@ func main() {
 		defer statsStore.Close()
 	}
 
-	validator := validation.NewInferenceValidator(nodeBroker, configManager, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
 	if db := configManager.SqlDb().GetDb(); db != nil {
 		if err := blsManager.SetDealerOpeningsDB(db); err != nil {
@@ -222,7 +220,6 @@ func main() {
 		configManager,
 		offChainValidator,
 		nodeBroker,
-		validator,
 		*recorder,
 		chainPhaseTracker,
 		cancel,
@@ -284,12 +281,15 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort
-	// port should be set explicitly in the config to start NodeManager GRPC server. 0 means we skip it
-	if nmGrpcPort != 0 {
+	if nmGrpcPort == 0 {
+		nmGrpcPort = 9400
+	}
+	// Negative ports explicitly disable the NodeManager gRPC server.
+	if nmGrpcPort > 0 {
 		nmGrpcServer := grpc.NewServer()
 		nmgen.RegisterNodeManagerServer(nmGrpcServer, nodemanager.NewServer(nodeBroker, configManager, chainPhaseTracker,
 			nodemanager.WithHostEventRing(hostEventRing),

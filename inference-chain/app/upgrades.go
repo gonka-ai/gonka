@@ -17,6 +17,8 @@ import (
 	"github.com/productscience/inference/app/upgrades/v0_2_12"
 	"github.com/productscience/inference/app/upgrades/v0_2_13"
 	"github.com/productscience/inference/app/upgrades/v0_2_14"
+	"github.com/productscience/inference/app/upgrades/v0_2_15"
+	"github.com/productscience/inference/app/upgrades/v0_2_16"
 	v0_2_2 "github.com/productscience/inference/app/upgrades/v0_2_2"
 	v0_2_3 "github.com/productscience/inference/app/upgrades/v0_2_3"
 	"github.com/productscience/inference/app/upgrades/v0_2_4"
@@ -69,6 +71,8 @@ func (app *App) setupUpgradeHandlers() {
 	app.setTrackedUpgradeHandler(v0_2_12.UpgradeName, v0_2_12.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.DistrKeeper, app.BlsKeeper, app.AuthzKeeper, app.FeeGrantKeeper))
 	app.setTrackedUpgradeHandler(v0_2_13.UpgradeName, v0_2_13.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper, app.GovKeeper))
 	app.setTrackedUpgradeHandler(v0_2_14.UpgradeName, v0_2_14.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.GenesistransferKeeper, app.MintKeeper))
+	app.setTrackedUpgradeHandler(v0_2_15.UpgradeName, v0_2_15.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper, app.AuthzKeeper))
+	app.setTrackedUpgradeHandler(v0_2_16.UpgradeName, v0_2_16.CreateUpgradeHandler(app.ModuleManager, app.Configurator(), app.InferenceKeeper))
 }
 
 func (app *App) registerMigrations() {

@@ -28,6 +28,23 @@ data class InferenceState(
     val genesisOnlyParams: GenesisOnlyParams,
     val tokenomicsData: TokenomicsData,
     val modelList: List<ModelListItem>,
+    /** Optional; testermint genesis overrides can seed WGNK unwrap bridge contracts. */
+    val bridge: BridgeState? = null,
+)
+
+/**
+ * Mirrors inference genesis `bridge` (gogo json tags). Nested address fields use
+ * proto `json:"chainId"` (camelCase), so pin SerializedName for cosmosJson.
+ */
+data class BridgeState(
+    val contractAddresses: List<BridgeContractAddressEntry> = emptyList(),
+)
+
+data class BridgeContractAddressEntry(
+    val id: String = "",
+    @SerializedName("chainId")
+    val chainId: String = "",
+    val address: String = "",
 )
 
 data class TokenomicsData(

@@ -16,11 +16,19 @@ import (
 // (same split as decentralized-api/cosmosclient/query.go vs query_client_conn.go).
 type ObservedConn struct {
 	grpc.ClientConnInterface
+	transport string
 }
 
 // NewObservedConn returns a conn wrapper that records OTel spans.
 func NewObservedConn(conn grpc.ClientConnInterface) ObservedConn {
-	return ObservedConn{ClientConnInterface: conn}
+	return NewObservedConnWithTransport(conn, TransportGRPC)
+}
+
+// NewObservedConnWithTransport is NewObservedConn for a conn that reaches the
+// chain by something other than direct gRPC. The transport lands on every span
+// so a query served by a fallback is distinguishable from a healthy one.
+func NewObservedConnWithTransport(conn grpc.ClientConnInterface, transport string) ObservedConn {
+	return ObservedConn{ClientConnInterface: conn, transport: transport}
 }
 
 func (c ObservedConn) Invoke(ctx context.Context, method string, args any, reply any, opts ...grpc.CallOption) error {
@@ -29,7 +37,7 @@ func (c ObservedConn) Invoke(ctx context.Context, method string, args any, reply
 	}
 
 	service, rpcMethod := splitGRPCMethod(method)
-	queryCtx, queryOp := Chain.StartGRPCQuery(ctx, service, rpcMethod)
+	queryCtx, queryOp := Chain.StartGRPCQuery(ctx, service, rpcMethod, c.transportName())
 	var (
 		err     error
 		spanErr error
@@ -49,6 +57,15 @@ func (c ObservedConn) Invoke(ctx context.Context, method string, args any, reply
 
 func (c ObservedConn) NewStream(ctx context.Context, desc *grpc.StreamDesc, method string, opts ...grpc.CallOption) (grpc.ClientStream, error) {
 	return c.ClientConnInterface.NewStream(ctx, desc, method, opts...)
+}
+
+// transportName keeps the zero value meaning direct gRPC, which is what every
+// ObservedConn was before transports were labelled.
+func (c ObservedConn) transportName() string {
+	if c.transport == "" {
+		return TransportGRPC
+	}
+	return c.transport
 }
 
 func splitGRPCMethod(fullMethod string) (string, string) {

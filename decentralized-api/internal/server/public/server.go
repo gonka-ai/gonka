@@ -75,9 +75,6 @@ func NewServer(
 	// This extracts the nearest untrusted hop from XFF (falling back to RemoteAddr).
 	e.IPExtractor = echo.ExtractIPFromXFFHeader()
 
-	// Set the package-level configManagerRef
-	configManagerRef = configManager
-
 	s := &Server{
 		e:                   e,
 		nodeBroker:          nodeBroker,
@@ -158,6 +155,8 @@ func NewServer(
 	// Implementations come from common/queryapi (same as edge-api) and are
 	// marked Deprecation: true. Prefer edge-api for new proxy configs.
 	s.mountDeprecatedQueryAPIRoutes(e)
+
+	e.GET("/v1/versions", s.getVersions)
 
 	e.Any(deprecatedDevshardV1Prefix, legacyDevshardDeprecated)
 	e.Any(deprecatedDevshardV1Prefix+"/*", legacyDevshardDeprecated)

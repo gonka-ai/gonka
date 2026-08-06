@@ -166,12 +166,6 @@ func (cm *ConfigManager) GetTxBatchingConfig() TxBatchingConfig {
 	cm.mutex.Lock()
 	defer cm.mutex.Unlock()
 	cfg := cm.currentConfig.TxBatching
-	if cfg.FlushSize == 0 {
-		cfg.FlushSize = 50
-	}
-	if cfg.FlushTimeoutSeconds == 0 {
-		cfg.FlushTimeoutSeconds = 5
-	}
 	if cfg.ValidationV2FlushSize == 0 {
 		cfg.ValidationV2FlushSize = 10
 	}

@@ -115,7 +115,6 @@ const (
 type bootstrapOptions struct {
 	escrowID          string
 	privateKeyHex     string
-	chainGRPC         string
 	publicAPI         string
 	defaultModel      string
 	storagePath       string
@@ -178,7 +177,6 @@ func mustLoadBootstrapOptions(flags cliFlags, baseStorageDir string) bootstrapOp
 		multiMode:      strings.TrimSpace(os.Getenv("DEVSHARDS_JSON")) != "",
 		escrowID:       firstNonEmpty(flags.escrowID, os.Getenv("DEVSHARD_ESCROW_ID")),
 		privateKeyHex:  firstNonEmpty(flags.privateKey, os.Getenv("DEVSHARD_PRIVATE_KEY")),
-		chainGRPC:      effectiveChainGRPC(flags, ""),
 		publicAPI:      envOverride(flags.publicAPI, os.Getenv("DEVSHARD_PUBLIC_API"), defaultPublicAPIURL),
 		defaultModel:   envOverride(flags.model, os.Getenv("DEVSHARD_MODEL"), defaultModelName),
 		storagePath:    firstNonEmpty(flags.storagePath, os.Getenv("DEVSHARD_STORAGE_PATH")),
@@ -357,20 +355,23 @@ func mustBootstrapGatewayState(gatewayStore *GatewayStore, opts bootstrapOptions
 	}
 }
 
-func resolveChainGRPCURL() string {
-	return firstNonEmpty(
-		os.Getenv("DEVSHARD_CHAIN_GRPC"),
-		os.Getenv("NODE_GRPC_URL"),
-		defaultChainGRPCURL,
-	)
-}
-
+// effectiveChainGRPC resolves the chain gRPC endpoint the gateway stores in its
+// settings. Only mustBuildGateway dials it; the other callers persist or repair
+// the setting, which is why the CometBFT RPC endpoint is resolved at the dial
+// site instead of being threaded through here.
 func effectiveChainGRPC(flags cliFlags, persisted string) string {
 	envVal := firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_GRPC"), os.Getenv("NODE_GRPC_URL"))
 	if strings.TrimSpace(persisted) != "" && persisted != defaultChainGRPCURL {
 		return strings.TrimSpace(persisted)
 	}
 	return envOverride(flags.chainGRPC, envVal, defaultChainGRPCURL)
+}
+
+// effectiveChainRPC returns the explicitly configured CometBFT RPC endpoint for
+// the gateway's chain query fallback. Empty means unset, which lets
+// chain.NewWithQueryFallback derive it from the gRPC host.
+func effectiveChainRPC() string {
+	return strings.TrimSpace(firstNonEmpty(os.Getenv("DEVSHARD_CHAIN_RPC"), os.Getenv("NODE_RPC_URL")))
 }
 
 func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, baseStorageDir string, flags cliFlags) *Gateway {
@@ -380,7 +381,7 @@ func mustBuildGateway(gatewayStore *GatewayStore, gatewayState GatewayState, bas
 	RequestMaxTokensCap = gatewayState.Settings.RequestMaxTokensCap
 	applyGatewayTuningSettings(gatewayState.Settings)
 
-	chainClient, err := chain.New(gatewayState.Settings.ChainGRPC)
+	chainClient, err := chain.NewWithQueryFallback(gatewayState.Settings.ChainGRPC, effectiveChainRPC())
 	if err != nil {
 		log.Fatalf("dial chain gRPC %s: %v", gatewayState.Settings.ChainGRPC, err)
 	}

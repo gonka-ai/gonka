@@ -522,12 +522,104 @@ func validateDecimalFraction(d *Decimal, name string) error {
 	if d == nil || (d.Value == 0 && d.Exponent == 0) {
 		return nil
 	}
+	if err := d.Validate(); err != nil {
+		return fmt.Errorf("%s: %w", name, err)
+	}
 	dec, err := d.ToLegacyDec()
 	if err != nil {
 		return fmt.Errorf("%s: invalid decimal: %w", name, err)
 	}
 	if dec.IsNegative() || dec.GT(sdkmath.LegacyOneDec()) {
 		return fmt.Errorf("%s must be between 0 and 1, got %s", name, dec.String())
+	}
+	return nil
+}
+
+func validateParamDecimalExponents(p Params) error {
+	check := func(name string, value *Decimal) error {
+		if err := value.Validate(); err != nil {
+			return fmt.Errorf("%s: %w", name, err)
+		}
+		return nil
+	}
+
+	fields := []struct {
+		name  string
+		value *Decimal
+	}{
+		{"epoch_params.poc_slot_allocation", p.EpochParams.GetPocSlotAllocation()},
+		{"tokenomics_params.subsidy_reduction_interval", p.TokenomicsParams.GetSubsidyReductionInterval()},
+		{"tokenomics_params.subsidy_reduction_amount", p.TokenomicsParams.GetSubsidyReductionAmount()},
+		{"tokenomics_params.current_subsidy_percentage", p.TokenomicsParams.GetCurrentSubsidyPercentage()},
+		{"validation_params.false_positive_rate", p.ValidationParams.GetFalsePositiveRate()},
+		{"validation_params.pass_value", p.ValidationParams.GetPassValue()},
+		{"validation_params.min_validation_average", p.ValidationParams.GetMinValidationAverage()},
+		{"validation_params.max_validation_average", p.ValidationParams.GetMaxValidationAverage()},
+		{"validation_params.min_validation_halfway", p.ValidationParams.GetMinValidationHalfway()},
+		{"validation_params.miss_percentage_cutoff", p.ValidationParams.GetMissPercentageCutoff()},
+		{"validation_params.miss_requests_penalty", p.ValidationParams.GetMissRequestsPenalty()},
+		{"validation_params.invalid_reputation_preserve", p.ValidationParams.GetInvalidReputationPreserve()},
+		{"validation_params.bad_participant_invalidation_rate", p.ValidationParams.GetBadParticipantInvalidationRate()},
+		{"validation_params.invalidation_h_threshold", p.ValidationParams.GetInvalidationHThreshold()},
+		{"validation_params.downtime_good_percentage", p.ValidationParams.GetDowntimeGoodPercentage()},
+		{"validation_params.downtime_bad_percentage", p.ValidationParams.GetDowntimeBadPercentage()},
+		{"validation_params.downtime_h_threshold", p.ValidationParams.GetDowntimeHThreshold()},
+		{"validation_params.downtime_reputation_preserve", p.ValidationParams.GetDowntimeReputationPreserve()},
+		{"validation_params.quick_failure_threshold", p.ValidationParams.GetQuickFailureThreshold()},
+		{"validation_params.binom_test_p0", p.ValidationParams.GetBinomTestP0()},
+		{"poc_params.weight_scale_factor", p.PocParams.GetWeightScaleFactor()},
+		{"poc_params.model_params.ffn_dim_multiplier", p.PocParams.GetModelParams().GetFfnDimMultiplier()},
+		{"poc_params.model_params.norm_eps", p.PocParams.GetModelParams().GetNormEps()},
+		{"poc_params.model_params.r_target", p.PocParams.GetModelParams().GetRTarget()},
+		{"poc_params.stat_test.dist_threshold", p.PocParams.GetStatTest().GetDistThreshold()},
+		{"poc_params.stat_test.p_mismatch", p.PocParams.GetStatTest().GetPMismatch()},
+		{"poc_params.stat_test.p_value_threshold", p.PocParams.GetStatTest().GetPValueThreshold()},
+		{"confirmation_poc_params.alpha_threshold", p.ConfirmationPocParams.GetAlphaThreshold()},
+		{"confirmation_poc_params.slash_fraction", p.ConfirmationPocParams.GetSlashFraction()},
+		{"collateral_params.slash_fraction_invalid", p.CollateralParams.GetSlashFractionInvalid()},
+		{"collateral_params.slash_fraction_downtime", p.CollateralParams.GetSlashFractionDowntime()},
+		{"collateral_params.downtime_missed_percentage_threshold", p.CollateralParams.GetDowntimeMissedPercentageThreshold()},
+		{"collateral_params.base_weight_ratio", p.CollateralParams.GetBaseWeightRatio()},
+		{"collateral_params.collateral_per_weight_unit", p.CollateralParams.GetCollateralPerWeightUnit()},
+		{"bitcoin_reward_params.decay_rate", p.BitcoinRewardParams.GetDecayRate()},
+		{"bitcoin_reward_params.utilization_bonus_factor", p.BitcoinRewardParams.GetUtilizationBonusFactor()},
+		{"bitcoin_reward_params.full_coverage_bonus_factor", p.BitcoinRewardParams.GetFullCoverageBonusFactor()},
+		{"bitcoin_reward_params.partial_coverage_bonus_factor", p.BitcoinRewardParams.GetPartialCoverageBonusFactor()},
+		{"dynamic_pricing_params.stability_zone_lower_bound", p.DynamicPricingParams.GetStabilityZoneLowerBound()},
+		{"dynamic_pricing_params.stability_zone_upper_bound", p.DynamicPricingParams.GetStabilityZoneUpperBound()},
+		{"dynamic_pricing_params.price_elasticity", p.DynamicPricingParams.GetPriceElasticity()},
+		{"bandwidth_limits_params.kb_per_input_token", p.BandwidthLimitsParams.GetKbPerInputToken()},
+		{"bandwidth_limits_params.kb_per_output_token", p.BandwidthLimitsParams.GetKbPerOutputToken()},
+		{"delegation_params.refusal_penalty", p.DelegationParams.GetRefusalPenalty()},
+		{"delegation_params.no_participation_penalty", p.DelegationParams.GetNoParticipationPenalty()},
+		{"delegation_params.delegation_share", p.DelegationParams.GetDelegationShare()},
+		{"delegation_params.w_threshold", p.DelegationParams.GetWThreshold()},
+		{"delegation_params.cap_factor", p.DelegationParams.GetCapFactor()},
+		{"delegation_params.max_model_voting_power_percentage", p.DelegationParams.GetMaxModelVotingPowerPercentage()},
+	}
+	for _, field := range fields {
+		if err := check(field.name, field.value); err != nil {
+			return err
+		}
+	}
+	for i, model := range p.PocParams.GetModels() {
+		if model == nil {
+			continue
+		}
+		modelFields := []struct {
+			name  string
+			value *Decimal
+		}{
+			{fmt.Sprintf("poc_params.models[%d].weight_scale_factor", i), model.GetWeightScaleFactor()},
+			{fmt.Sprintf("poc_params.models[%d].stat_test.dist_threshold", i), model.GetStatTest().GetDistThreshold()},
+			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
+			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
+		}
+		for _, field := range modelFields {
+			if err := check(field.name, field.value); err != nil {
+				return err
+			}
+		}
 	}
 	return nil
 }
@@ -645,6 +737,9 @@ func (p Params) Validate() error {
 	}
 	if p.PocParams == nil {
 		return fmt.Errorf("poc params cannot be nil")
+	}
+	if err := validateParamDecimalExponents(p); err != nil {
+		return err
 	}
 	if err := p.ValidationParams.Validate(); err != nil {
 		return err
@@ -976,6 +1071,12 @@ func (p *DynamicPricingParams) Validate() error {
 	}
 
 	// Validate stability zone bounds are logically consistent
+	if err := p.StabilityZoneLowerBound.Validate(); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_lower_bound")
+	}
+	if err := p.StabilityZoneUpperBound.Validate(); err != nil {
+		return errors.Wrap(err, "invalid stability_zone_upper_bound")
+	}
 	lowerBound := p.StabilityZoneLowerBound.ToDecimal()
 	upperBound := p.StabilityZoneUpperBound.ToDecimal()
 	if lowerBound.GreaterThanOrEqual(upperBound) {
@@ -1126,6 +1227,9 @@ func validateDecayRate(i interface{}) error {
 	if legacyDec.LT(sdkmath.LegacyNewDecWithPrec(-1, 2)) { // Less than -0.01
 		return fmt.Errorf("decay rate too extreme (less than -0.01): %s", legacyDec.String())
 	}
+	if err := v.Validate(); err != nil {
+		return err
+	}
 	_, err = GetExponent(v.ToDecimal())
 	if err != nil {
 		return fmt.Errorf("decay rate does not have exponent defined %s", legacyDec.String())
@@ -1165,6 +1269,9 @@ func validateStabilityZoneBound(i interface{}) error {
 	if bound == nil {
 		return fmt.Errorf("stability zone bound cannot be nil")
 	}
+	if err := bound.Validate(); err != nil {
+		return err
+	}
 
 	value := bound.ToDecimal()
 	if value.IsNegative() || value.GreaterThan(decimal.NewFromInt(1)) {
@@ -1180,6 +1287,9 @@ func validatePriceElasticity(i interface{}) error {
 	}
 	if elasticity == nil {
 		return fmt.Errorf("price elasticity cannot be nil")
+	}
+	if err := elasticity.Validate(); err != nil {
+		return err
 	}
 
 	value := elasticity.ToDecimal()
@@ -1280,7 +1390,22 @@ func validateInferencePruningEpochThreshold(i interface{}) error {
 }
 
 func (d *Decimal) ToLegacyDec() (sdkmath.LegacyDec, error) {
+	if err := d.Validate(); err != nil {
+		return sdkmath.LegacyDec{}, err
+	}
 	return sdkmath.LegacyNewDecFromStr(d.ToDecimal().String())
+}
+
+const MaxDecimalExponentAbs int32 = 18
+
+func (d *Decimal) Validate() error {
+	if d == nil {
+		return nil
+	}
+	if d.Exponent < -MaxDecimalExponentAbs || d.Exponent > MaxDecimalExponentAbs {
+		return fmt.Errorf("%w: %d", ErrInvalidDecimalExponent, d.Exponent)
+	}
+	return nil
 }
 
 func (d *Decimal) ToDecimal() decimal.Decimal {

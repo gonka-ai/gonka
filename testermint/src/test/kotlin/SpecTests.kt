@@ -57,24 +57,6 @@ class TxMessageSerializationTests {
         println(blsData)
     }
 
-    @Test
-    fun `full transaction`() {
-        val transaction = Transaction(
-            body = TransactionBody(
-                messages = listOf(
-                    MsgStartInference(
-                        creator = "creator",
-                        inferenceId = "fjdsafdsa",
-                        promptHash = "",
-                        promptPayload = "test"
-                    )
-                ),
-                memo = "",
-                timeoutHeight = 0
-            )
-        )
-        println(cosmosJson.toJson(transaction))
-    }
 }
 
 

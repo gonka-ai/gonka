@@ -3,8 +3,8 @@ package app
 import (
 	"fmt"
 
-	"cosmossdk.io/math"
 	errorsmod "cosmossdk.io/errors"
+	"cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 	sdkerrors "github.com/cosmos/cosmos-sdk/types/errors"
 	"github.com/cosmos/cosmos-sdk/x/auth/ante"
@@ -123,20 +123,6 @@ func isExemptMessageType(msg sdk.Msg) bool {
 		*inferencetypes.MsgSubmitPocValidationsV2,
 		*inferencetypes.MsgMLNodeWeightDistribution,
 		*inferencetypes.MsgSubmitSeed:
-		return true
-
-	// Inference validation duty (throttled by ValidationEarlyRejectDecorator)
-	case *inferencetypes.MsgValidation:
-		return true
-
-	// Inference lifecycle (TA-whitelisted for start, host-submitted for finish)
-	case *inferencetypes.MsgStartInference,
-		*inferencetypes.MsgFinishInference:
-		return true
-
-	// Inference challenges (hosts are required to submit these)
-	case *inferencetypes.MsgInvalidateInference,
-		*inferencetypes.MsgRevalidateInference:
 		return true
 
 	// Routine host duties on a fixed schedule. Not user-discretionary, not a

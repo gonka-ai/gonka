@@ -899,6 +899,29 @@ data class ApplicationCLI(
             execAndParse(args)
         }
 
+    fun queryBridgeTransaction(
+        originChain: String,
+        blockNumber: String,
+        receiptIndex: String,
+    ): BridgeTransactionQueryResponse = wrapLog("queryBridgeTransaction", infoLevel = false) {
+        // AutoCLI has no PositionalArgs for BridgeTransaction yet, so fields are flags.
+        execAndParse(
+            listOf(
+                "query",
+                "inference",
+                "bridge-transaction",
+                "--origin-chain", originChain,
+                "--block-number", blockNumber,
+                "--receipt-index", receiptIndex,
+            )
+        )
+    }
+
+    fun queryGroupMembers(groupId: Long): GroupMembersQueryResponse =
+        wrapLog("queryGroupMembers", infoLevel = false) {
+            execAndParse(listOf("query", "group", "group-members", groupId.toString()))
+        }
+
     fun getColdPrivateKey(): String = getPrivateKey(this.getColdAccountName())
 
     fun getPrivateKey(keyName: String): String = wrapLog("getPrivateKey($keyName)", infoLevel = false) {

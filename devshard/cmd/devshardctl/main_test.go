@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/require"
 
+	"common/chain"
 	"devshard/bridge"
 	"devshard/user"
 )
@@ -477,6 +478,32 @@ func TestResolveMaxConcurrentRuntimeBuildsParsesOverride(t *testing.T) {
 			require.Equal(t, tc.want, resolveMaxConcurrentRuntimeBuilds())
 		})
 	}
+}
+
+func TestEffectiveChainRPCUnsetLeavesDerivationToCommonChain(t *testing.T) {
+	t.Setenv("DEVSHARD_CHAIN_RPC", "")
+	t.Setenv("NODE_RPC_URL", "")
+	require.Empty(t, effectiveChainRPC())
+}
+
+func TestEffectiveChainRPCPrefersEnv(t *testing.T) {
+	t.Setenv("NODE_RPC_URL", "http://from-node-env:26657")
+	require.Equal(t, "http://from-node-env:26657", effectiveChainRPC())
+
+	t.Setenv("DEVSHARD_CHAIN_RPC", "http://explicit:36657")
+	require.Equal(t, "http://explicit:36657", effectiveChainRPC())
+}
+
+func TestGatewayChainClientUsesQueryFallback(t *testing.T) {
+	t.Setenv("DEVSHARD_CHAIN_RPC", "")
+	t.Setenv("NODE_RPC_URL", "")
+
+	client, err := chain.NewWithQueryFallback("node:9090", effectiveChainRPC())
+	require.NoError(t, err)
+
+	// Queries must not run on the raw gRPC conn, or the gateway loses the
+	// fallback; txs must keep using it, or they could run over ABCI.
+	require.NotEqual(t, client.Conn(), client.QueryConn())
 }
 
 func TestRepairPersistedGatewayEndpointSettingsBackfillsBlankPublicAPI(t *testing.T) {

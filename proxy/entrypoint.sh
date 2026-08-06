@@ -45,7 +45,6 @@ EDGE_API_ROUTE_PATHS_DEFAULT='
 /v1/restrictions/status
 /v1/restrictions/exemptions
 /v1/restrictions/exemptions/{id}/usage/{account}
-/v1/versions
 /v1/bls/epoch/{id}
 /v1/bls/epochs/{id}
 /v1/bls/signatures/{request_id}
@@ -631,10 +630,10 @@ fi
 if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     export DEVSHARD_VERSIOND_LOCATION="# Versioned obs → versionless (internal rewrite); protocol stays versioned
         location ~ ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ {
-            rewrite ^ /devshard/sessions/\$\$1/\$\$2 last;
+            rewrite ^/devshard/[^/]+/sessions/([^/]+)/(diffs|mempool|signatures)\$ /devshard/sessions/\$\$1/\$\$2 last;
         }
         location ~ ^/devshard/[^/]+/stats/shards(/.*)?\$ {
-            rewrite ^ /devshard/stats/shards\$\$1 last;
+            rewrite ^/devshard/[^/]+/stats/shards(/.*)?\$ /devshard/stats/shards\$\$1 last;
         }
         location ~ ^/devshard/[^/]+/metrics\$ {
             rewrite ^ /devshard/metrics last;
@@ -943,6 +942,9 @@ append_edge_api_route_locations() {
     fi
 
     for route in $routes; do
+        if [ "$route" = "/v1/versions" ]; then
+            continue
+        fi
         # Optional verify/debug group stays private unless explicitly exposed.
         # Skip even if an old EDGE_API_ROUTE_PATHS override still lists them.
         if [ "${EDGE_API_EXPOSE_OPTIONAL_ROUTES}" != "true" ] && edge_api_is_optional_route "$route"; then
