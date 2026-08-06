@@ -388,18 +388,17 @@ func newRotationDevshardState(result *CreateDevshardEscrowResult, model EscrowRo
 // /devshard/v3 mints protocol-v3 escrows. Semver-like route versions map by
 // major (v2.1.0 -> v2), relying on the same naming convention that ties a
 // route version to its protocol. An unparseable version segment (e.g. a
-// named versiond runtime) falls back to the v1 default, matching the
-// pre-existing behavior for explicit registrations without a protocol.
+// named versiond runtime) falls back to the current protocol default.
 func rotationEscrowProtocolVersion() string {
 	routePrefix, err := resolveGatewayRoutePrefix()
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback reason=route_prefix_unresolved error=%v", err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	_, version, err := devshardpkg.ResolveRoutePrefix(routePrefix)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q reason=version_segment_unresolved error=%v", routePrefix, err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	normalized := strings.TrimSpace(version)
 	if i := strings.IndexByte(normalized, '.'); i > 0 {
@@ -408,7 +407,7 @@ func rotationEscrowProtocolVersion() string {
 	pv, err := types.ParseProtocolVersion(normalized)
 	if err != nil {
 		log.Printf("escrow_rotation_protocol_version_fallback route_prefix=%q version=%q reason=unparseable_protocol error=%v", routePrefix, version, err)
-		return ""
+		return string(types.DefaultProtocolVersion)
 	}
 	return string(pv)
 }
@@ -627,7 +626,7 @@ func defaultQueryTxEscrowID(ctx context.Context, client *chain.Client, settings 
 	if client == nil {
 		return 0, false, fmt.Errorf("chain gRPC client is not configured")
 	}
-	txMgr, err := newGatewayChainTxClient(client.Conn(), settings, "", "", 0, 0)
+	txMgr, err := newGatewayChainTxClient(client.UnorderedTxConn(), settings, "", "", 0, 0)
 	if err != nil {
 		return 0, false, err
 	}
@@ -676,6 +675,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		}
 		built.active.Store(false)
 		rt = built
+		attachAccounting(g.accounting, rt)
 		log.Printf("devshard_settle_rehydrated escrow=%s (transient, non-resident)", id)
 		defer func() {
 			// Flush a final snapshot: Finalize advances the nonce, so a later
@@ -721,6 +721,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 	} else {
 		log.Printf("devshard_settle_finalize_skipped escrow=%s phase=%s reason=quorum_present", id, sessionPhaseLabel(phase))
 	}
+	g.accounting.Finalize(id)
 	settlement, err := rt.proxy.settlementJSON()
 	if err != nil {
 		log.Printf("devshard_settle_failed escrow=%s stage=settlement_json error=%q", id, err.Error())
@@ -747,6 +748,7 @@ func (g *Gateway) settleDevshardOnChain(ctx context.Context, id string, req admi
 		return nil, err
 	}
 	log.Printf("devshard_settle_confirmed escrow=%s tx_hash=%s settler=%s", id, result.TxHash, result.Settler)
+	g.accounting.Settled(id)
 	// A settled escrow is terminal: drop the resident runtime so its memory
 	// (state machine, inference map, store handles) is released now rather
 	// than lingering until the next restart. Transient runtimes are closed by

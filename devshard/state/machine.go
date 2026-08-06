@@ -678,6 +678,19 @@ func (sm *StateMachine) SnapshotStateNoInferences() types.EscrowState {
 	return s
 }
 
+// HostStatsFor returns one slot's tallies. Use it instead of
+// SnapshotStateNoInferences, which copies every slot plus the group and warm-key
+// maps, when a caller needs a single slot on a hot path.
+func (sm *StateMachine) HostStatsFor(slot uint32) (types.HostStats, bool) {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	stats, ok := sm.state.HostStats[slot]
+	if !ok || stats == nil {
+		return types.HostStats{}, false
+	}
+	return *stats, true
+}
+
 // ExportState returns a deep-copied pointer form used by recovery snapshots.
 func (sm *StateMachine) ExportState() *types.EscrowState {
 	sm.mu.RLock()

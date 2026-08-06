@@ -517,6 +517,35 @@ func TestPicker_CapabilityBlockedHost_BurnsGhostNoSend(t *testing.T) {
 	require.Contains(t, ghost.reasons, ghostCapability.reason())
 }
 
+func TestPicker_StateRootDivergencePreservesGhostReason(t *testing.T) {
+	env := setupTestProxy(t, 3, nil, true)
+	env.proxy.redundancy.picker.stop()
+
+	blockedKey := env.session.HostParticipantKey(1)
+	checker := func(key string, _ user.InferenceParams) (string, bool) {
+		if key == blockedKey {
+			return "escrow_state_root_diverged", true
+		}
+		return "", false
+	}
+
+	ghost := &fakeGhost{}
+	p := newSessionPicker(env.session, "llama", ghost.dispatch, nil, checker)
+	p.start()
+	t.Cleanup(p.stop)
+
+	req := defaultPickerRequest()
+	p.submit(req)
+
+	res := waitReply(t, req, 2*time.Second)
+	require.NoError(t, res.err)
+	require.False(t, res.isProbe)
+	require.NotEqual(t, 1, res.prepared.HostIdx())
+	require.GreaterOrEqual(t, ghost.kindCount(ghostCapability), 1)
+	require.Contains(t, ghost.reasons, "escrow_state_root_diverged")
+	require.NotContains(t, ghost.reasons, ghostCapability.reason())
+}
+
 func TestPicker_AllRemainingHostsCapabilityBlocked_DropsExhausted(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()

@@ -120,18 +120,25 @@ type nonceOutcome struct {
 
 // TimeoutResult reports what happened during timeout handling.
 type TimeoutResult struct {
-	Reason string // "execution", "refused", or "" if deadline not reached
-	// Applied is true only when the timeout tx survived the local apply and
-	// went out in the diff. HandleTimeout returns a non-nil error on every
-	// path, including success, so this is the field that distinguishes an
-	// applied timeout from one the state machine rejected.
-	Applied bool
+	Reason       string // "execution", "refused", or "" if deadline not reached
+	Outcome      string // how handling ended: skipped, vote_collection_failed, insufficient_votes, diff_send_failed, applied
+	DetailReason string // why it ended that way, when the outcome alone is ambiguous
+	Applied      bool   // MsgTimeoutInference reached the escrow state
 }
 
 // HasMsgFinish returns true if mempool contains MsgFinishInference for the given nonce.
 func HasMsgFinish(txs []*types.DevshardTx, nonce uint64) bool {
 	for _, tx := range txs {
 		if fi := tx.GetFinishInference(); fi != nil && fi.InferenceId == nonce {
+			return true
+		}
+	}
+	return false
+}
+
+func HasMsgTimeout(txs []*types.DevshardTx, nonce uint64) bool {
+	for _, tx := range txs {
+		if timeout := tx.GetTimeoutInference(); timeout != nil && timeout.InferenceId == nonce {
 			return true
 		}
 	}
@@ -250,6 +257,7 @@ type Session struct {
 	store           storage.Storage              // optional persistent storage
 	nonceStates     map[uint64]*nonceOutcome     // nonce -> protocol outcome
 	verifierQueue   *verifierHostQueue           // per-verifier RPC limiter for timeout votes
+	diffObserver    func(types.Diff)
 
 	// snapshotInFlight is set to true while an async background snapshot
 	// save is running, so concurrent composeDiffLocked invocations do not
@@ -336,6 +344,7 @@ func NewSession(
 		signatures:      make(map[uint64]map[uint32][]byte),
 		nonceStates:     make(map[uint64]*nonceOutcome),
 		verifierQueue:   SharedVerifierQueue,
+		diffObserver:    func(types.Diff) {},
 		//TODO: check if we should move it from Session
 		signatureCollectMaxRetries:  3,
 		signatureCollectBaseDelay:   2 * time.Second,
@@ -611,23 +620,23 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 	candidates = append(candidates, s.pendingTxs...)
 	candidates = append(candidates, extraTxs...)
 
+	var diff types.Diff
 	if s.store != nil {
 		warmBefore := s.sm.WarmKeys()
 		vd, err := s.sm.PreviewLocalBestEffort(nonce, candidates)
 		if err != nil {
 			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
 		}
-		diff, err := s.signDiff(nonce, vd.Applied, vd.Root)
+		diff, err = s.signDiff(nonce, vd.Applied, vd.Root)
 		if err != nil {
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		rec := types.DiffRecord{
+		if err := s.persistDiffRetryLocked(types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
-		}
-		if err := s.persistDiffRetryLocked(rec); err != nil {
+		}); err != nil {
 			return types.Diff{}, 0, fmt.Errorf("persist diff: %w", err)
 		}
 		// Install the previewed post-state without a second apply (no re-sign,
@@ -637,24 +646,23 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 		if !s.sm.CommitValidated(vd) {
 			return types.Diff{}, 0, fmt.Errorf("commit diff nonce %d: state advanced concurrently", nonce)
 		}
-		s.diffs = append(s.diffs, diff)
-		s.nonce = nonce
-		s.clearPendingTxs()
-		s.maybeSaveSnapshotLocked()
-		return diff, hostIdx, nil
-	}
-
-	postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
-	if err != nil {
-		return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
-	}
-	diff, err := s.signDiff(nonce, applied, postStateRoot)
-	if err != nil {
-		return types.Diff{}, 0, err
+	} else {
+		postStateRoot, applied, err := s.sm.ApplyLocalBestEffort(nonce, candidates)
+		if err != nil {
+			return types.Diff{}, 0, fmt.Errorf("local apply: %w", err)
+		}
+		diff, err = s.signDiff(nonce, applied, postStateRoot)
+		if err != nil {
+			return types.Diff{}, 0, err
+		}
 	}
 	s.diffs = append(s.diffs, diff)
 	s.nonce = nonce
 	s.clearPendingTxs()
+	if s.store != nil {
+		s.maybeSaveSnapshotLocked()
+	}
+	s.diffObserver(diff)
 	return diff, hostIdx, nil
 }
 
@@ -1756,16 +1764,10 @@ func (s *Session) sendPendingDiff(ctx context.Context) (types.Diff, error) {
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return diff, s.processResponse(hostIdx, resp, diff.Nonce)
-}
-
-func diffAppliedTimeout(diff types.Diff, inferenceID uint64) bool {
-	for _, tx := range diff.Txs {
-		if t := tx.GetTimeoutInference(); t != nil && t.InferenceId == inferenceID {
-			return true
-		}
+	if err := s.processResponse(hostIdx, resp, diff.Nonce); err != nil {
+		return diff, err
 	}
-	return false
+	return diff, nil
 }
 
 // TimeoutVerifiers returns a map of host index -> TimeoutVerifier for all
@@ -1858,6 +1860,15 @@ func (s *Session) HostParticipantKeyList() []string {
 	return out
 }
 
+func (s *Session) SetDiffObserver(observer func(types.Diff)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if observer == nil {
+		observer = func(types.Diff) {}
+	}
+	s.diffObserver = observer
+}
+
 // hostParticipantKeyLocked is the lock-free body of HostParticipantKey.
 // Caller must hold s.mu. Used by PrepareInferenceFn so it can build a
 // HostBinding while still holding the nonce lock without re-entering it.
@@ -1887,12 +1898,8 @@ func (s *Session) IsNonceFinished(nonce uint64) bool {
 // MsgTimeoutInference if sufficient votes are gathered.
 // sendTime is when the nonce's network call started.
 func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time.Time, payload *host.InferencePayload) (TimeoutResult, error) {
+	reasonLabel, deadline := s.TimeoutDeadline(nonce, sendTime)
 	s.mu.Lock()
-	cfg := s.sm.SnapshotState().Config
-	confirmedAt := int64(0)
-	if o, ok := s.nonceStates[nonce]; ok {
-		confirmedAt = o.confirmedAt
-	}
 	hostIdx := int(nonce % uint64(len(s.group)))
 	hostID := s.HostLabel(hostIdx)
 	s.mu.Unlock()
@@ -1902,24 +1909,22 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 		return append(base, extra...)
 	}
 
+	// A canceled wait leaves Reason empty, because Reason means the deadline was
+	// reached and callers count an inference timeout from it. Outcome and
+	// DetailReason still report the skip.
 	var reason types.TimeoutReason
-	var deadline time.Time
-	if confirmedAt > 0 {
-		deadline = time.Unix(confirmedAt, 0).Add(
-			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer)
+	if reasonLabel == "execution" {
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "execution", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{}, ctx.Err()
+			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_EXECUTION
 	} else {
-		deadline = sendTime.Add(
-			time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer)
 		if !sleepUntilDeadlineWithHeartbeat(ctx, deadline, func() {
 			logging.Stage(ctx, "timeout_waiting", logFields("reason", "refused", "remaining_ms", time.Until(deadline).Milliseconds())...)
 		}) {
-			return TimeoutResult{}, ctx.Err()
+			return TimeoutResult{Outcome: "skipped", DetailReason: "context_canceled"}, ctx.Err()
 		}
 		reason = types.TimeoutReason_TIMEOUT_REASON_REFUSED
 	}
@@ -1931,29 +1936,71 @@ func (s *Session) HandleTimeout(ctx context.Context, nonce uint64, sendTime time
 	verifiers := s.TimeoutVerifiers()
 	storedDiffs := s.Diffs()
 
-	votes, err := s.CollectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
+	votes, hadVerifierErrors, err := s.collectTimeoutVotes(ctx, nonce, reason, payload, verifiers, storedDiffs)
 	if err != nil {
+		result.Outcome = "vote_collection_failed"
+		if ctx.Err() != nil {
+			result.DetailReason = "context_canceled"
+		}
 		return result, fmt.Errorf("collect timeout votes: %w", err)
 	}
 
 	if s.HasSufficientTimeoutVotes(votes) {
 		s.AddPendingTimeoutTx(nonce, reason, votes)
 		diff, err := s.sendPendingDiff(ctx)
+		result.Applied = HasMsgTimeout(diff.Txs, nonce)
+		if !result.Applied {
+			if record, found := s.sm.GetInference(nonce); found && record.Status == types.StatusTimedOut {
+				result.Applied = true
+			}
+		}
 		if err != nil {
+			result.DetailReason = "timeout_diff_delivery_failed"
+			if result.Applied {
+				result.Outcome = "applied"
+			} else {
+				result.Outcome = "diff_send_failed"
+			}
 			logging.Stage(ctx, "timeout_diff_send_failed", logFields("reason", result.Reason, "error", err)...)
 			return result, fmt.Errorf("send timeout diff: %w", err)
 		}
-		if !diffAppliedTimeout(diff, nonce) {
-			logging.Stage(ctx, "timeout_not_applied", logFields("reason", result.Reason, "diff_nonce", diff.Nonce)...)
-			return result, fmt.Errorf("inference %d timeout rejected by state machine at nonce %d", nonce, diff.Nonce)
+		if result.Applied {
+			result.Outcome = "applied"
+		} else {
+			// The send succeeded but the transaction did not land. Report it
+			// rather than counting an applied timeout; the caller's control flow
+			// is unchanged.
+			result.Outcome = "diff_send_failed"
+			result.DetailReason = "timeout_not_applied"
 		}
-		result.Applied = true
 		logging.Stage(ctx, "timeout_completed", logFields("reason", result.Reason)...)
 		return result, fmt.Errorf("inference %d timed out: %s", nonce, reason)
 	}
 
+	if hadVerifierErrors {
+		result.Outcome = "vote_collection_failed"
+		if ctx.Err() != nil {
+			result.DetailReason = "context_canceled"
+		}
+	} else {
+		result.Outcome = "insufficient_votes"
+	}
 	logging.Stage(ctx, "timeout_insufficient_votes", logFields("reason", result.Reason)...)
 	return result, fmt.Errorf("inference %d timed out but insufficient votes", nonce)
+}
+
+func (s *Session) TimeoutDeadline(nonce uint64, sendTime time.Time) (string, time.Time) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg := s.sm.Config()
+	if outcome := s.nonceStates[nonce]; outcome != nil && outcome.confirmedAt > 0 {
+		return "execution", time.Unix(outcome.confirmedAt, 0).Add(
+			time.Duration(cfg.ExecutionTimeout)*time.Second + TimeoutBuffer,
+		)
+	}
+	return "refused", sendTime.Add(
+		time.Duration(cfg.RefusalTimeout)*time.Second + TimeoutBuffer,
+	)
 }
 
 // TimeoutHeartbeatInterval controls how often timeout_waiting logs are emitted.
@@ -2028,6 +2075,18 @@ func (s *Session) CollectTimeoutVotes(
 	verifiers map[int]TimeoutVerifier, // hostIdx -> verifier
 	diffs []types.Diff,
 ) ([]*types.TimeoutVote, error) {
+	votes, _, err := s.collectTimeoutVotes(ctx, inferenceID, reason, payload, verifiers, diffs)
+	return votes, err
+}
+
+func (s *Session) collectTimeoutVotes(
+	ctx context.Context,
+	inferenceID uint64,
+	reason types.TimeoutReason,
+	payload *host.InferencePayload,
+	verifiers map[int]TimeoutVerifier,
+	diffs []types.Diff,
+) ([]*types.TimeoutVote, bool, error) {
 	// Cancel all in-flight verifier RPCs (and unblock any goroutines still
 	// waiting in the per-verifier queue) once we return — typically because
 	// the vote-weight threshold was met early. Without this, leftover
@@ -2241,7 +2300,7 @@ func (s *Session) CollectTimeoutVotes(
 		"reject", rejects, "invalid", invalid, "errors", errors,
 		"threshold", voteThreshold, "verifiers", expected)
 
-	return votes, nil
+	return votes, errors > 0, nil
 }
 
 // HasSufficientTimeoutVotes returns true if the accept votes exceed the vote

@@ -25,6 +25,7 @@ import (
 	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/runtimeparams"
 	"devshard/storage"
@@ -56,6 +57,7 @@ type Gateway struct {
 	store                 *GatewayStore
 	perf                  *PerfTracker
 	perfStore             *PerfStore
+	accounting            *accounting.Recorder
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
 	baseStorageDir        string
@@ -79,6 +81,7 @@ type Gateway struct {
 type devshardRuntime struct {
 	id              string
 	model           string
+	creationEpoch   uint64
 	handler         http.Handler
 	proxy           *Proxy
 	session         *user.Session
@@ -110,6 +113,7 @@ type devshardRuntime struct {
 	retireReason  string
 
 	activeConfigured bool
+	accountingRetire func()
 }
 
 // escrowHasBackgroundWork reports whether foreground requests or background race cleanups are in flight; settle and store-close must wait until it is false.
@@ -318,6 +322,7 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	rt := &devshardRuntime{
 		id:                    cfg.ID,
 		model:                 model,
+		creationEpoch:         escrow.EpochID,
 		handler:               newRuntimeMux(proxy),
 		proxy:                 proxy,
 		session:               session,
@@ -353,7 +358,7 @@ func (g *Gateway) newChainTxManager(settings GatewaySettings, chainID, feeDenom 
 	if g == nil || g.chainClient == nil {
 		return nil, fmt.Errorf("chain gRPC client is not configured")
 	}
-	return newGatewayChainTxClient(g.chainClient.Conn(), settings, chainID, feeDenom, feeAmount, gasLimit)
+	return newGatewayChainTxClient(g.chainClient.UnorderedTxConn(), settings, chainID, feeDenom, feeAmount, gasLimit)
 }
 
 func resolveRuntimeRoutePrefix(configured string) string {
@@ -566,6 +571,9 @@ func (rt *devshardRuntime) retireClose(reason string) error {
 			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
 		}
 	}
+	if rt.accountingRetire != nil {
+		rt.accountingRetire()
+	}
 	return rt.close()
 }
 
@@ -719,7 +727,7 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perfArgs ...*PerfTracker) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perf *PerfTracker, accounting *accounting.Recorder) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
@@ -727,12 +735,16 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 	g.baseStorageDir = baseStorageDir
 	g.store = store
 	g.chainClient = chainClient
-	if len(perfArgs) > 0 && perfArgs[0] != nil {
-		g.perf = perfArgs[0]
+	if perf != nil {
+		g.perf = perf
+	}
+	if accounting != nil {
+		g.accounting = accounting
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 	if g.phaseGate != nil && chainClient != nil {
 		g.phaseGate.SetChainQueryClient(chainClient.InferenceQueryClient())
+		g.phaseGate.SetStoreQueryClient(chainClient.CometServiceClient())
 	}
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
@@ -740,6 +752,10 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		}
 		g.attachCapacityStateToPhaseGate()
 		g.phaseGate.Start()
+	} else if g.accounting != nil {
+		for _, rt := range g.runtimeOrder {
+			attachAccounting(g.accounting, rt)
+		}
 	}
 	g.escrowChecker = NewEscrowChecker(g.chainBridge)
 	for _, rt := range g.runtimeOrder {
@@ -769,6 +785,7 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
 	}
 	g.attachMetrics(rt)
+	attachAccounting(g.accounting, rt)
 	g.attachEscrowChecker(rt)
 	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
@@ -1252,6 +1269,11 @@ func (g *Gateway) Close() error {
 			firstErr = err
 		}
 	}
+	if g.accounting != nil {
+		if err := g.accounting.Close(); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
 	return firstErr
 }
 
@@ -1711,6 +1733,9 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 
 func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
 	rt.active.Store(false)
+	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
+		g.accounting.Finalize(id)
+	}
 	if g.store == nil {
 		return
 	}
@@ -2634,6 +2659,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
 		if g.phaseGate != nil && g.chainClient != nil {
 			g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
+			g.phaseGate.SetStoreQueryClient(g.chainClient.CometServiceClient())
 		}
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)

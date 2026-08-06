@@ -313,7 +313,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 		before := f.userSM.SnapshotState()
 		diff, err := f.session.sendPendingDiff(context.Background())
 		require.NoError(t, err)
-		require.False(t, diffAppliedTimeout(diff, 1), "rejected timeout tx is not in the diff")
+		require.False(t, HasMsgTimeout(diff.Txs, 1), "rejected timeout tx is not in the diff")
 
 		after := f.userSM.SnapshotState()
 		require.Equal(t, types.StatusPending, after.Inferences[1].Status)
@@ -332,7 +332,7 @@ func TestSendPendingDiff_ReportsDroppedTimeoutTx(t *testing.T) {
 		f.session.AddPendingTimeoutTx(1, types.TimeoutReason_TIMEOUT_REASON_REFUSED, votes)
 		diff, err := f.session.sendPendingDiff(context.Background())
 		require.NoError(t, err)
-		require.True(t, diffAppliedTimeout(diff, 1))
+		require.True(t, HasMsgTimeout(diff.Txs, 1))
 		require.Equal(t, types.StatusTimedOut, f.userSM.SnapshotState().Inferences[1].Status)
 	})
 }
