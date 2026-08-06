@@ -47,9 +47,10 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 		version = "v2"
 	}
 
-	harness.WaitJaegerSpan(t, obs, "devshardctl", "gateway.request", 2*time.Minute)
-	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
-	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
+	t.Logf("citest: observability profile=%s", obs.Profile)
+	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 2*time.Minute)
+	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 2*time.Minute)
+	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.inference", 2*time.Minute)
 	harness.WaitLokiSubstring(t, obs, "devshard request terminal", 2*time.Minute)
 
 	harness.RequireMetricsBody(t, client, fmt.Sprintf("%s/%s/metrics", eps.RouterHTTP, version), "devshardd_request_duration_seconds")

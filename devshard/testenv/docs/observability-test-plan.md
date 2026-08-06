@@ -1,7 +1,7 @@
 # Observability test plan — disposition scenarios with mock ML nodes
 
 **Companion to:** [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md)
-(the *implementation* plan) and [gateway-tracing-overview.md](./gateway-tracing-overview.md).
+(the *implementation* plan) and [gateway-tracing.md](../docs/gateway-tracing.md).
 
 **Purpose.** [PR #1547](https://github.com/gonka-ai/gonka/pull/1547) proved that every consumed nonce
 lands in exactly one accounting disposition. It asserted *counters*. This plan re-runs the same
@@ -134,7 +134,7 @@ Run these as a shared helper rather than repeating them per test.
 | **I4** | Nonce ↔ span: for each nonce in the accounting API response there is a span with `devshard.nonce` equal to it, or a documented reason it is absent (`protocol_only`). |
 | **I5** | **Label parity (C4 from the impl plan):** for every label value present on `devshard_accounting_disposition`, a span attribute with the identical string exists. This is the contract that makes Grafana data links work. |
 | **I6** | No high-cardinality identifier appears as a Prometheus label or a Loki **stream label** — lint `promtail-config.yaml` / `config.alloy` label stages. |
-| **I7** | On any failing scenario, a prompt line exists with a `devshard.prompt.sha256` matching the span attribute (T4). |
+| **I7** | On an ML-node-failure scenario, a payload line exists carrying `devshard.prompt.sha256`, linked to the trace by `trace_id` (T4a). Validation-failure capture joins by `inference_id` + hash instead (T4b). |
 | **I8** | `RequireNonceAccountingBalanced` still passes — telemetry must not change accounting behaviour. |
 
 ---

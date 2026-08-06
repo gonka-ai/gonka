@@ -3,6 +3,7 @@ package accounting
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -57,7 +58,7 @@ func TestTrackerCountsAndCrossChecks(t *testing.T) {
 
 func TestRestartTurnsLiveStateIntoUnclassified(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
-	tr, err := OpenTracker(path, 0, 0)
+	tr, err := OpenTracker(path, 0, 0, 0)
 	require.NoError(t, err)
 	tr.now = func() time.Time { return accountingTestNow }
 	registerEscrow(t, tr, "e1", 8, "m")
@@ -66,7 +67,7 @@ func TestRestartTurnsLiveStateIntoUnclassified(t *testing.T) {
 	require.Equal(t, uint64(1), onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 8}), "p1").InFlight)
 	require.NoError(t, tr.Close())
 
-	reopened, err := OpenTracker(path, 0, 0)
+	reopened, err := OpenTracker(path, 0, 0, 0)
 	require.NoError(t, err)
 	defer reopened.Close()
 	record := onlyRecord(t, reopened.Query(QueryFilter{EpochIndex: 8}), "p1")
@@ -977,7 +978,7 @@ func TestNilRecorderMethodsAreNoOps(t *testing.T) {
 
 func TestRestartMissGapDoesNotInventDisposition(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
-	tr, err := OpenTracker(path, 0, time.Hour)
+	tr, err := OpenTracker(path, 0, time.Hour, 0)
 	require.NoError(t, err)
 	tr.now = func() time.Time { return accountingTestNow }
 	registerEscrow(t, tr, "e1", 16, "m")
@@ -985,7 +986,7 @@ func TestRestartMissGapDoesNotInventDisposition(t *testing.T) {
 	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
 	require.NoError(t, tr.Close())
 
-	reopened, err := OpenTracker(path, 0, time.Hour)
+	reopened, err := OpenTracker(path, 0, time.Hour, 0)
 	require.NoError(t, err)
 	defer reopened.Close()
 	reopened.now = func() time.Time { return accountingTestNow }
@@ -1108,7 +1109,7 @@ func TestRepeatedInvalidVerdictCountsOnce(t *testing.T) {
 
 func TestInvalidDedupeSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
-	tr, err := OpenTracker(path, 0, 0)
+	tr, err := OpenTracker(path, 0, 0, 0)
 	require.NoError(t, err)
 	tr.now = func() time.Time { return accountingTestNow }
 	registerEscrow(t, tr, "e1", 31, "m")
@@ -1117,7 +1118,7 @@ func TestInvalidDedupeSurvivesRestart(t *testing.T) {
 	require.NoError(t, tr.RecordCommittedState("e1", types.Diff{Nonce: 2}, verdict, EscrowActive, nil))
 	require.NoError(t, tr.Close())
 
-	reopened, err := OpenTracker(path, 0, 0)
+	reopened, err := OpenTracker(path, 0, 0, 0)
 	require.NoError(t, err)
 	defer reopened.Close()
 	reopened.now = func() time.Time { return accountingTestNow }
@@ -1204,7 +1205,7 @@ func (*fakeDiffTarget) SetDiffObserver(func(types.Diff)) {}
 // syncs in memory and leaves the write to Settled.
 func TestFinalizeSyncsWithoutWriting(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "accounting.db")
-	tr, err := OpenTracker(path, 0, time.Hour)
+	tr, err := OpenTracker(path, 0, time.Hour, 0)
 	require.NoError(t, err)
 	tr.now = func() time.Time { return accountingTestNow }
 	t.Cleanup(func() { require.NoError(t, tr.Close()) })
@@ -1299,9 +1300,136 @@ func TestQueriesRunAlongsideCommittedDiffs(t *testing.T) {
 	require.Equal(t, uint64(200), tr.escrows["e1"].Latest)
 }
 
+func TestTrackerSweepClassifiesDeadlineWithoutFlush(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 40, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
+	// Timeout result arrives before the accounting deadline (TimeoutBuffer
+	// sits on top of RefusalTimeout). Persistable, but not yet classified.
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
+		Outcome: TimeoutVoteCollectionFailed, FailureOrigin: FailureTransportUnknown,
+	}))
+	require.Zero(t, counterCount(tr, "e1", DispositionUnfinishedRefused))
+
+	now = now.Add(66 * time.Second)
+	before := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 40}), "p1")
+	require.Equal(t, uint64(1), before.Dispositions[DispositionUnfinishedRefused])
+	require.Zero(t, counterCount(tr, "e1", DispositionUnfinishedRefused),
+		"Query folds live state; Counters must stay unpromoted until Sweep/Flush")
+
+	tr.Sweep()
+	require.Equal(t, uint64(1), counterCount(tr, "e1", DispositionUnfinishedRefused),
+		"Sweep must promote without a SQLite write")
+	after := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 40}), "p1")
+	require.Equal(t, before.Dispositions, after.Dispositions)
+}
+
+func TestTrackerSweepIsIdempotent(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 41, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
+		Outcome: TimeoutVoteCollectionFailed, FailureOrigin: FailureTransportUnknown,
+	}))
+	now = now.Add(66 * time.Second)
+
+	tr.Sweep()
+	tr.Sweep()
+	require.Equal(t, uint64(1), counterCount(tr, "e1", DispositionUnfinishedRefused))
+}
+
+func TestTrackerSweepDisabledByZeroInterval(t *testing.T) {
+	tr, err := OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, tr.Close()) })
+	require.Nil(t, tr.sweepDone, "sweep <= 0 must not start a sweep goroutine")
+}
+
+func TestTrackerSweepMatchesQueryClassification(t *testing.T) {
+	tr := newTestTracker(t)
+	registerEscrow(t, tr, "e1", 42, "m")
+	now := accountingTestNow
+	tr.now = func() time.Time { return now }
+
+	require.NoError(t, tr.RecordDiff("e1", 1, true))
+	require.NoError(t, tr.RecordRealSend("e1", 1, now, PhaseNormal, QuarantineNone))
+	require.NoError(t, tr.RecordTimeout(TimeoutRecord{
+		EscrowID: "e1", Nonce: 1, Kind: TimeoutRefused, Phase: PhaseNormal,
+		Outcome: TimeoutSkipped, Reason: TimeoutPhaseTransitionAborted,
+	}))
+	now = now.Add(66 * time.Second)
+
+	before := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 42}), "p1")
+	tr.Sweep()
+	after := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 42}), "p1")
+	require.Equal(t, before.Dispositions, after.Dispositions)
+	require.Equal(t, before.TimeoutOutcomes, after.TimeoutOutcomes)
+	require.Equal(t, before.InFlight, after.InFlight)
+	require.Equal(t, uint64(1), counterCount(tr, "e1", DispositionUnfinishedRefused))
+}
+
+func BenchmarkTrackerSweep(b *testing.B) {
+	for _, n := range []int{100, 1000, 10000} {
+		b.Run(fmt.Sprintf("live=%d", n), func(b *testing.B) {
+			tr, err := OpenTracker(filepath.Join(b.TempDir(), "accounting.db"), 0, time.Hour, 0)
+			require.NoError(b, err)
+			b.Cleanup(func() { _ = tr.Close() })
+
+			now := accountingTestNow
+			tr.now = func() time.Time { return now }
+			const escrows = 10
+			perEscrow := n / escrows
+			for e := 0; e < escrows; e++ {
+				id := fmt.Sprintf("e%d", e)
+				require.NoError(b, tr.RegisterEscrow(EscrowMetadata{
+					EscrowID: id, CreationEpoch: 1, Model: "m", Phase: EscrowActive,
+					RefusalTimeout: 60, ExecutionTimeout: 1200, TimeoutBufferSeconds: 5,
+					Slots: []types.SlotAssignment{
+						{SlotID: 0, ValidatorAddress: "p0"},
+						{SlotID: 1, ValidatorAddress: "p1"},
+					},
+				}))
+				for i := 1; i <= perEscrow; i++ {
+					nonce := uint64(i*2 + 1) // slot 1
+					require.NoError(b, tr.RecordDiff(id, nonce, true))
+					require.NoError(b, tr.RecordRealSend(id, nonce, now, PhaseNormal, QuarantineNone))
+				}
+			}
+			// Past refusal deadline so Sweep does real reclassify work.
+			now = now.Add(66 * time.Second)
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				tr.Sweep()
+			}
+		})
+	}
+}
+
+func counterCount(tr *Tracker, escrowID string, disposition Disposition) uint64 {
+	var total uint64
+	for key, count := range tr.escrows[escrowID].Counters {
+		if key.Disposition == disposition {
+			total += count
+		}
+	}
+	return total
+}
+
 func newTestTracker(t *testing.T) *Tracker {
 	t.Helper()
-	tr, err := OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, 0)
+	tr, err := OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, 0, 0)
 	require.NoError(t, err)
 	tr.now = func() time.Time { return accountingTestNow }
 	t.Cleanup(func() { require.NoError(t, tr.Close()) })

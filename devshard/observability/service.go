@@ -167,7 +167,7 @@ func (*RequestTracer) SetEscrowID(op *Operation, escrowID string) {
 	if escrowID == "" {
 		return
 	}
-	op.SetAttributes(attribute.String("escrow.id", escrowID))
+	op.SetAttributes(AttrEscrowID.String(escrowID))
 }
 
 // SetModel tags the span with the inference model name.
@@ -175,7 +175,7 @@ func (*RequestTracer) SetModel(op *Operation, model string) {
 	if model == "" {
 		return
 	}
-	op.SetAttributes(attribute.String("model", model))
+	op.SetAttributes(AttrModel.String(model))
 }
 
 // SetInferenceID tags the span with the host-assigned inference id.
@@ -185,12 +185,12 @@ func (*RequestTracer) SetInferenceID(op *Operation, inferenceID uint64) {
 
 // SetNonce tags the span with the request nonce.
 func (*RequestTracer) SetNonce(op *Operation, nonce uint64) {
-	op.SetAttributes(attribute.Int64("devshard.nonce", int64(nonce)))
+	op.SetAttributes(AttrNonce.Int64(int64(nonce)))
 }
 
 // SetSlotID tags the span with the validator slot id.
 func (*RequestTracer) SetSlotID(op *Operation, slotID uint32) {
-	op.SetAttributes(attribute.Int("devshard.slot_id", int(slotID)))
+	op.SetAttributes(AttrSlotID.Int(int(slotID)))
 }
 
 // SetStateHash tags the span with the hex-encoded state hash.

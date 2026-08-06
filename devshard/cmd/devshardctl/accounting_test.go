@@ -127,7 +127,7 @@ func (timeoutErrorClient) VerifyTimeout(
 
 func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -154,7 +154,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 
 func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -197,7 +197,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 
 func TestAccountingProductionPendingClassification(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -223,7 +223,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 func TestAccountingProductionGhostFact(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -264,7 +264,7 @@ func TestAccountingProductionGhostFact(t *testing.T) {
 func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
 	env.proxy.redundancy.picker.stop()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -293,7 +293,7 @@ func TestAccountingStateDivergenceRemainsUnknownPolicy(t *testing.T) {
 
 func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env := setupTestProxy(t, 3, nil, true)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -365,7 +365,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 		userSigner.Address(),
 		signing.NewSecp256k1Verifier(),
 	)
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	recorder := accounting.NewRecorder(tracker, nil)
@@ -627,7 +627,7 @@ func TestGatewayAccountingNoNonceConsumedHasNoAccounting(t *testing.T) {
 
 func newGatewayAccountingTestTracker(t *testing.T) *accounting.Tracker {
 	t.Helper()
-	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour)
+	tracker, err := accounting.OpenTracker(filepath.Join(t.TempDir(), "accounting.db"), 0, time.Hour, 0)
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, tracker.Close()) })
 	return tracker

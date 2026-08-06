@@ -1,5 +1,13 @@
 # Proposal: Gateway Epoch Accounting Dashboard
 
+**Related — request forensics (traces + logs):**
+[devshard/docs/gateway-tracing.md](../../devshard/docs/gateway-tracing.md)
+covers how a disposition bucket (for example `unfinished_refused`) drills
+into the concrete request via Tempo/Loki, and why the accounting tracker
+sweeps every 5 s so deadline-based classifications emit telemetry instead
+of waiting on the 5-minute snapshot tick. Metrics-first live dashboards:
+[gateway-observability](../gateway-observability/observability.md).
+
 ## Goal / Problem
 
 Settlement credits each devshard slot with `assigned_nonces -

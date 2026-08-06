@@ -13,19 +13,25 @@ import (
 	"devshard/types"
 )
 
-const DefaultSnapshotInterval = 5 * time.Minute
+const (
+	DefaultSnapshotInterval = 5 * time.Minute
+	// DefaultSweepInterval is how often deadline-derived dispositions are
+	// promoted into Counters without a SQLite write. See T3.0.
+	DefaultSweepInterval = 5 * time.Second
+)
 
 type Tracker struct {
-	mu       sync.RWMutex
-	store    *Store
-	escrows  map[string]*escrowState
-	updated  time.Time
-	stop     context.CancelFunc
-	done     chan struct{}
-	once     sync.Once
-	now      func() time.Time
-	errCount uint64
-	wrCount  uint64
+	mu        sync.RWMutex
+	store     *Store
+	escrows   map[string]*escrowState
+	updated   time.Time
+	stop      context.CancelFunc
+	done      chan struct{}
+	sweepDone chan struct{} // nil when sweep is disabled
+	once      sync.Once
+	now       func() time.Time
+	errCount  uint64
+	wrCount   uint64
 }
 
 type escrowState struct {
@@ -64,7 +70,10 @@ type nonceState struct {
 	Counted           *CounterKey
 }
 
-func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracker, error) {
+// OpenTracker opens the accounting store and starts the snapshot loop.
+// sweep <= 0 disables the classification sweep goroutine; a positive value
+// runs refreshDerived on that cadence without touching SQLite.
+func OpenTracker(path string, retention uint64, interval, sweep time.Duration) (*Tracker, error) {
 	store, err := OpenStore(path, retention)
 	if err != nil {
 		return nil, err
@@ -86,6 +95,10 @@ func OpenTracker(path string, retention uint64, interval time.Duration) (*Tracke
 	t.stop = cancel
 	t.done = make(chan struct{})
 	go t.snapshotLoop(ctx, interval)
+	if sweep > 0 {
+		t.sweepDone = make(chan struct{})
+		go t.sweepLoop(ctx, sweep)
+	}
 	return t, nil
 }
 
@@ -105,6 +118,42 @@ func (t *Tracker) snapshotLoop(ctx context.Context, interval time.Duration) {
 	}
 }
 
+func (t *Tracker) sweepLoop(ctx context.Context, interval time.Duration) {
+	defer close(t.sweepDone)
+	ticker := time.NewTicker(interval)
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			t.Sweep()
+		case <-ctx.Done():
+			return
+		}
+	}
+}
+
+// Sweep promotes deadline-derived dispositions into Counters under the write
+// lock without touching the store. Settled escrows and escrows with no live
+// nonces are skipped.
+func (t *Tracker) Sweep() {
+	if t == nil {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		if escrow.Meta.Phase == EscrowSettled {
+			continue
+		}
+		if len(escrow.Live) == 0 {
+			continue
+		}
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
+}
+
 func (t *Tracker) Close() error {
 	if t == nil {
 		return nil
@@ -114,6 +163,9 @@ func (t *Tracker) Close() error {
 		if t.stop != nil {
 			t.stop()
 			<-t.done
+			if t.sweepDone != nil {
+				<-t.sweepDone
+			}
 		}
 		if flushErr := t.Flush(context.Background()); flushErr != nil {
 			err = flushErr

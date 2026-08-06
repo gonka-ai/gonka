@@ -13,6 +13,14 @@ const (
 
 	gatewayTracer      = tracerID("devshardctl.gateway")
 	gatewayRequestSpan = spanID("gateway.request")
+
+	// Gateway attempt / disposition span names (T3.2+). Declared here so T3.1
+	// pins the vocabulary before any call site lands.
+	SpanNameGatewayAttempt   = "gateway.attempt"
+	SpanNameAttemptDispatch  = "attempt.dispatch"
+	SpanNameAttemptPrefill   = "attempt.prefill"
+	SpanNameAttemptStream    = "attempt.stream"
+	SpanNameNonceDisposition = "devshard.nonce.disposition"
 )
 
 // StartGatewayRequest opens the root span for an inbound gateway HTTP request.

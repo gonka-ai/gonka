@@ -27,6 +27,7 @@ type Stack struct {
 	ComposePath   string
 	Timeout       time.Duration
 	Observability bool
+	ObsProfile    ObsProfile
 }
 
 // Endpoints are host-published URLs for health probes.
@@ -133,6 +134,7 @@ func (s *Stack) composePublishedAddr(t *testing.T, service string, targetPort in
 	args = append(args, "port", service, strconv.Itoa(targetPort))
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	require.NoError(t, err, "docker compose port %s %d\n%s", service, targetPort, out)
 	raw := strings.TrimSpace(string(out))
@@ -181,7 +183,14 @@ func ComposeBuildEnabled() bool {
 func (s *Stack) composeFileArgs() []string {
 	args := []string{"-f", s.ComposePath}
 	if s.Observability {
+		profile := s.ObsProfile
+		if profile == "" {
+			profile = ResolveObsProfile()
+		}
 		args = append(args, "-f", filepath.Join(s.TestenvDir, "docker-compose.observability.yml"))
+		for _, frag := range profile.ComposeFragmentNames() {
+			args = append(args, "-f", filepath.Join(s.TestenvDir, frag))
+		}
 		ipOverride := filepath.Join(s.WorkDir, "docker-compose.observability.ip.yml")
 		if _, err := os.Stat(ipOverride); err == nil {
 			args = append(args, "-f", ipOverride)
@@ -205,13 +214,23 @@ func (s *Stack) composeUp(t *testing.T, build bool, services []string) {
 	args = append(args, services...)
 	up := exec.CommandContext(ctx, "docker", args...)
 	up.Dir = s.WorkDir
-	up.Env = append(os.Environ(), "COMPOSE_HTTP_TIMEOUT=300")
+	up.Env = s.composeEnv()
 	out, err := up.CombinedOutput()
 	if err != nil {
 		DumpComposeLogs(t, s)
 		s.Down(t)
 		t.Fatalf("docker compose up: %v\n%s", err, out)
 	}
+}
+
+// composeEnv sets COMPOSE_HTTP_TIMEOUT and, for observability stacks,
+// TESTENV_OBS_CONFIG_DIR so overlay mounts resolve to the patched workdir copy.
+func (s *Stack) composeEnv() []string {
+	env := append(os.Environ(), "COMPOSE_HTTP_TIMEOUT=300")
+	if s.Observability {
+		env = append(env, "TESTENV_OBS_CONFIG_DIR="+s.WorkDir)
+	}
+	return env
 }
 
 // Down stops the stack and removes volumes.
@@ -223,6 +242,7 @@ func (s *Stack) Down(t *testing.T) {
 	args = append(args, "down", "-v")
 	cmd := exec.CommandContext(ctx, "docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	_, _ = cmd.CombinedOutput()
 }
 
@@ -233,6 +253,7 @@ func (s *Stack) StopService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "stop", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose stop %s: %v\n%s", service, err, out)
@@ -246,6 +267,7 @@ func (s *Stack) StartService(t *testing.T, service string) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, "docker", append(append([]string{"compose"}, s.composeFileArgs()...), "start", service)...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("docker compose start %s: %v\n%s", service, err, out)
@@ -266,6 +288,7 @@ func (s *Stack) ComposeLogsTail(tail int, services ...string) (string, error) {
 	args = append(args, services...)
 	cmd := exec.Command("docker", args...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	return string(out), err
 }
@@ -283,6 +306,7 @@ func (s *Stack) RequireServicesRunning(t *testing.T, services ...string) {
 func (s *Stack) runningServices() (map[string]struct{}, error) {
 	cmd := exec.Command("docker", append(append([]string{"compose"}, s.composeFileArgs()...), "ps", "--status", "running", "--format", "{{.Service}}")...)
 	cmd.Dir = s.WorkDir
+	cmd.Env = s.composeEnv()
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return nil, fmt.Errorf("docker compose ps: %w: %s", err, out)

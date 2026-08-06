@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"strings"
 	"time"
 
 	"devshard/accounting"
@@ -28,6 +29,24 @@ func accountingSnapshotInterval() time.Duration {
 	seconds := readInt64Env("DEVSHARD_STATS_SNAPSHOT_SECONDS", 0)
 	if seconds <= 0 {
 		return accounting.DefaultSnapshotInterval
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// accountingSweepInterval returns how often deadline-derived dispositions are
+// promoted without a SQLite write. Unset → DefaultSweepInterval; 0 disables.
+func accountingSweepInterval() time.Duration {
+	raw := strings.TrimSpace(os.Getenv("DEVSHARD_STATS_SWEEP_SECONDS"))
+	if raw == "" {
+		return accounting.DefaultSweepInterval
+	}
+	var seconds int64
+	if _, err := fmt.Sscan(raw, &seconds); err != nil || seconds < 0 {
+		log.Printf("invalid DEVSHARD_STATS_SWEEP_SECONDS=%q, using default %s", raw, accounting.DefaultSweepInterval)
+		return accounting.DefaultSweepInterval
+	}
+	if seconds == 0 {
+		return 0
 	}
 	return time.Duration(seconds) * time.Second
 }

@@ -15,30 +15,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// WaitJaegerTraceWithServices polls Jaeger until a single trace contains spans
-// from every listed service.name.
-func WaitJaegerTraceWithServices(t *testing.T, obs ObservabilityEndpoints, services []string, timeout time.Duration) string {
-	t.Helper()
-	if timeout == 0 {
-		timeout = 2 * time.Minute
-	}
-	require.NotEmpty(t, services)
-	client := &http.Client{Timeout: 10 * time.Second}
-	t.Logf("citest: waiting for Jaeger trace covering services %v", services)
-
-	var traceID string
-	ok := assertEventually(t, timeout, 3*time.Second, func() bool {
-		id, found := jaegerTraceCoveringServices(client, obs.Jaeger, services)
-		if found {
-			traceID = id
-		}
-		return found
-	})
-	require.True(t, ok, "Jaeger trace covering %v not found within %s", services, timeout)
-	require.NotEmpty(t, traceID)
-	return traceID
-}
-
 // RequireLogsForTrace asserts Loki has at least one JSON log line for traceID
 // from each compose_service regex.
 func RequireLogsForTrace(t *testing.T, obs ObservabilityEndpoints, traceID string, composeServices []string, timeout time.Duration) {

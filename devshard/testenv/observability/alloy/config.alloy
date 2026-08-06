@@ -1,0 +1,109 @@
+// Grafana Alloy — testenv observability pipeline (T2).
+//
+// Traces:  apps → OTLP :4317 → otelcol.exporter.otlp.trace_backend (merged from profile file)
+// Logs:    docker.sock → Loki (compose_service label preserved for citest queries)
+// Metrics: left to Prometheus scrape (Approach B); Alloy does not remote_write.
+//
+// Alloy accepts a single config file; harness (and the committed config.alloy)
+// concatenates this base with config.{tempo,jaeger}.trace.alloy.
+
+// ── OTLP ingress — apps use TESTENV_OTEL_ENDPOINT=http://alloy:4317 ─────────
+otelcol.receiver.otlp "devshard" {
+  grpc {
+    endpoint = "0.0.0.0:4317"
+  }
+
+  output {
+    traces = [otelcol.exporter.otlp.trace_backend.input]
+  }
+}
+
+// ── Docker log collection → Loki ───────────────────────────────────────────
+discovery.docker "containers" {
+  host = "unix:///var/run/docker.sock"
+}
+
+discovery.relabel "containers" {
+  targets = discovery.docker.containers.targets
+
+  // Keep the same service set Promtail scrapes (plus tempo/alloy).
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    regex         = "(mock-chain|mock-dapi|mock-openai|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail|tempo|alloy)"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/(.*)"
+    target_label  = "container"
+  }
+
+  // Preserve compose_service for RequireLogsForTrace / Loki LogQL.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "compose_service"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    target_label  = "compose_project"
+  }
+
+  // Also set "service" so loki.source.docker has a stable service_name seed.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
+    target_label  = "service"
+  }
+
+  rule {
+    target_label = "environment"
+    replacement  = "testenv"
+  }
+}
+
+loki.source.docker "containers" {
+  host             = "unix:///var/run/docker.sock"
+  targets          = discovery.relabel.containers.output
+  forward_to       = [loki.relabel.labels.receiver]
+  refresh_interval = "5s"
+}
+
+loki.relabel "labels" {
+  forward_to = [loki.process.filter.receiver]
+
+  // Keep compose_service; drop noisy detected_level.
+  rule {
+    action = "labeldrop"
+    regex  = "detected_level"
+  }
+}
+
+loki.process "filter" {
+  forward_to = [loki.write.loki.receiver]
+
+  stage.drop {
+    expression = "\"uri\":\"/health\""
+  }
+
+  stage.drop {
+    expression = "\"uri\":\"/healthz\""
+  }
+}
+
+loki.write "loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// Default active trace exporter (tempo-alloy). Harness rewrites this file in the
+// citest workdir when TESTENV_OBS_PROFILE selects a different backend.
+otelcol.exporter.otlp "trace_backend" {
+  client {
+    endpoint = "tempo:4317"
+    tls {
+      insecure = true
+    }
+  }
+}

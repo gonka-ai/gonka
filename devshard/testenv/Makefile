@@ -104,20 +104,42 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## Phase 10 O1 + trace/log correlation (Jaeger spans + Loki logs + metrics).
+citest-observability: citest-images ## T2: O1 + trace/log correlation (tempo-alloy) + jaeger-promtail C7.
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation' -count=1 -v -timeout 30m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -count=1 -v -timeout 45m
 
-OBS_OVERLAY := $(COMPOSE_BASE) -f docker-compose.observability.yml -f docker-compose.observability.ip.yml
+# Default e2e profile is tempo-alloy. Override with TESTENV_OBS_PROFILE=jaeger-promtail.
+OBS_PROFILE ?= tempo-alloy
+OBS_SHARED := $(COMPOSE_BASE) -f docker-compose.observability.yml
+ifeq ($(OBS_PROFILE),tempo-alloy)
+OBS_FRAGMENTS := -f docker-compose.observability.tempo.yml -f docker-compose.observability.alloy.yml
+OBS_OTEL_ENDPOINT := http://alloy:4317
+else ifeq ($(OBS_PROFILE),jaeger-promtail)
+OBS_FRAGMENTS := -f docker-compose.observability.jaeger.yml -f docker-compose.observability.promtail.yml
+OBS_OTEL_ENDPOINT := http://jaeger:4317
+else ifeq ($(OBS_PROFILE),tempo-promtail)
+OBS_FRAGMENTS := -f docker-compose.observability.tempo.yml -f docker-compose.observability.promtail.yml
+OBS_OTEL_ENDPOINT := http://tempo:4317
+else ifeq ($(OBS_PROFILE),jaeger-alloy)
+OBS_FRAGMENTS := -f docker-compose.observability.jaeger.yml -f docker-compose.observability.alloy.yml
+OBS_OTEL_ENDPOINT := http://alloy:4317
+else
+$(error unknown OBS_PROFILE=$(OBS_PROFILE))
+endif
+OBS_OVERLAY := $(OBS_SHARED) $(OBS_FRAGMENTS) -f docker-compose.observability.ip.yml
 
-obs-up: ## Start base stack + observability overlay (Jaeger/Loki/Prometheus/Grafana).
-	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=http://jaeger:4317 \
+obs-up: ## Start base stack + observability overlay (default OBS_PROFILE=tempo-alloy).
+	@if [ "$(OBS_PROFILE)" != "tempo-alloy" ]; then \
+	  echo "obs-up: regenerate docker-compose.observability.ip.yml for profile $(OBS_PROFILE) (citest does this automatically)"; \
+	fi
+	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=$(OBS_OTEL_ENDPOINT) TESTENV_OBS_PROFILE=$(OBS_PROFILE) \
 	  docker compose $(COMPOSE_BASE) up -d --wait
-	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=http://jaeger:4317 \
+	TESTENV_OTEL_ENABLED=true TESTENV_OTEL_ENDPOINT=$(OBS_OTEL_ENDPOINT) TESTENV_OBS_PROFILE=$(OBS_PROFILE) \
+	  TESTENV_OBS_CONFIG_DIR=$(CURDIR) \
 	  docker compose $(OBS_OVERLAY) up -d
 
 obs-down: ## Stop observability overlay (and base stack if merged).
-	docker compose $(OBS_OVERLAY) down
+	TESTENV_OBS_CONFIG_DIR=$(CURDIR) docker compose $(OBS_OVERLAY) down
 
 citest-stack-build: dev-build ## Build dev images then run full stack citests.
 	$(MAKE) citest-stack

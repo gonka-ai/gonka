@@ -1,6 +1,6 @@
 # testenv observability — trace/log correlation plan
 
-**One-page summary:** [gateway-tracing-overview.md](./gateway-tracing-overview.md).
+**One-page summary:** [gateway-tracing.md](../docs/gateway-tracing.md).
 **Test scenarios:** [observability-test-plan.md](./observability-test-plan.md) — the #1547 disposition
 matrix re-run against mock ML nodes, asserting telemetry instead of counters.
 
@@ -26,8 +26,8 @@ for that request**, including the prompt that triggered the failure.
 | Tier | Carries | Cardinality budget | Where it lives |
 |------|---------|--------------------|----------------|
 | **Prometheus labels** | `participant`, `model`, `disposition`, `dispatch_phase`, `quarantine_mode`, `no_send_reason`, `failure_origin`, `timeout_*` | bounded enums only — **never** `nonce`/`escrow_id`/`request_id` | already emitted (`devshard_accounting_disposition`, `devshard_gateway_slot_decisions_total`) |
-| **Span attributes (Tempo)** | everything above **plus** `escrow.id`, `devshard.nonce`, `request.id`, `participant.key`, `slot.id`, prompt hash | unbounded — Tempo indexes attributes per-span, high cardinality is fine | **new** — this plan |
-| **Loki log-line fields** | `trace_id`, `span_id`, `request_id`, `escrow_id`, `nonce`, prompt text | unbounded, but must stay **inside the line**, not in stream labels | **new** — this plan |
+| **Span attributes (Tempo)** | everything above **plus** `escrow.id`, `devshard.nonce`, `request.id`, `participant.key`, `slot.id` | unbounded — Tempo indexes attributes per-span, high cardinality is fine | **new** — this plan |
+| **Loki log-line fields** | `trace_id`, `span_id`, `request_id`, `escrow_id`, `nonce`, payload hash, prompt/response text | unbounded, but must stay **inside the line**, not in stream labels | **new** — this plan |
 
 The flow a developer follows:
 
@@ -106,8 +106,9 @@ constants where they exist; add the rest in `devshard/observability/names.go`.
 | `devshard.timeout_reason` | enum | `phase_transition_aborted` \| `long_response_after_content` \| `escrow_state_root_diverged` \| `context_canceled` \| `timeout_diff_delivery_failed` \| `timeout_not_applied` \| `unknown` | `types.go:86-96` |
 | `devshard.detail_reason` | free string | normalized raw reason | `tracker.go:878-893` |
 | `devshard.protocol_kind` | enum | `receipt_applied` \| `finish_applied` \| `timeout_applied` \| `challenged` \| `validated` \| `invalidated` | `types.go:98-107` |
-| `devshard.prompt.sha256` | hex | prompt fingerprint (always safe to emit) | new (§6) |
-| `devshard.prompt.chars` / `.messages` | int | size signal | new (§6) |
+| `devshard.stream` | bool | streaming vs unary — required to exclude stream spans from latency panels (§5.8) | new (§6) |
+
+Payload fingerprints and sizes are **log-line fields, not span attributes** — see §6.1 for why.
 
 **Rule:** the attribute value string must be byte-identical to the Prometheus label value for the
 same dimension. That is what makes "click from the `devshard_accounting_disposition` panel into
@@ -347,6 +348,10 @@ Add `WaitTraceByAttr(t, obs, tagQuery, timeout) []TraceID` for the disposition a
 
 ## 5. Phase T3 — attaching the disposition to the trace
 
+**Implementation plan:** [observability-t3-implementation-plan.md](./observability-t3-implementation-plan.md)
+— trackable steps T3.0–T3.10 with per-step tests and exit criteria. This section stays the design
+reference.
+
 ### 5.1 How a nonce is actually classified
 
 The tracker is a small event-sourced state machine. `nonceState` (`tracker.go:43-65`) accumulates
@@ -439,9 +444,14 @@ Resulting time from "user got their response" to "disposition exists":
 So "minutes" is not chain latency and not a slow pipeline — it is the refusal/execution timeout by
 definition, inflated by a 5-minute polling artifact.
 
-> **Side finding, independent of tracing:** because `refreshDerived` only runs inside the snapshot
-> write, the **Prometheus collector and the `/api/v1/epochs` HTTP API also serve stale
-> deadline-based dispositions** — up to a full snapshot interval. See T3.0.
+> **Side finding, corrected:** an earlier revision claimed the Prometheus collector and the
+> `/api/v1/epochs` HTTP API serve stale deadline-based dispositions. They do not. `Query` takes a
+> fresh `now` (`query.go:86`) and folds uncounted live nonces through `counterKey` at read time
+> (`query.go:150-158`, `225-254`; see the comment at `query.go:81-83`). The lazy sweep affects
+> *promotion into the persisted counters* and, critically, the fact that a deadline transition
+> produces **no event** for telemetry to hang off — which is why T3.0 blocks tiers 2 and 3 rather
+> than merely tidying the metrics. See T3.0 in
+> [observability-t3-implementation-plan.md](./observability-t3-implementation-plan.md).
 
 ### 5.3 Is async classification optimal?
 
@@ -862,39 +872,125 @@ TraceQL via a span-not-exists filter.
 
 ---
 
-## 6. Phase T4 — prompt capture for failing requests
+## 6. Phase T4 — payload capture for failing requests
 
-**Requirement:** when a request fails, is quarantined, or is missed, the prompt that caused it must
-be recoverable from the same trace.
+**Requirement:** when a request fails on the ML node, is quarantined, or fails validation, the
+payload that caused it must be recoverable — from the same trace where the capture is synchronous,
+and by `inference_id` + payload hash where it is not.
 
-**Policy knob** `DEVSHARD_LOG_PROMPTS`:
+**Split by storage requirement.** Two of the three triggers fire while the payload is still in
+scope; the third fires long after the request completed, which changes both the storage requirement
+and the landing order:
 
-| Value | Behaviour | Default |
-|-------|-----------|---------|
-| `off` | nothing captured | ✅ production / join |
-| `hash` | `devshard.prompt.sha256`, `.chars`, `.messages` only | recommended production-debug |
-| `redacted` | hash + first/last N chars per message, PII-ish patterns masked | staging |
-| `full` | complete request body as a log line | ✅ **testenv only** |
+| Sub-phase | Triggers | Storage needed | Blocked by |
+|-----------|----------|----------------|------------|
+| **T4a** | ML-node failure, quarantine | none — payload is in scope at failure time | — |
+| **T4b** | validation failure | gateway must retain payloads until the verdict lands | **`ak/gateway-v2-postgres`** |
 
-**Where it goes — split by size:**
+### 6.1 What goes on the span — almost nothing
 
-- **Span attributes, always (any mode ≥ `hash`):** `devshard.prompt.sha256`, `devshard.prompt.chars`,
-  `devshard.prompt.messages`, `devshard.prompt.max_tokens`, `devshard.stream`. Small, bounded, keeps
-  the trace view useful on its own.
-- **A Loki log line, on failure only:** the prompt text at the configured redaction level, written
-  with the ctx-aware logger so it inherits `trace_id`/`span_id`/`request_id`/`nonce` from §3. A full
-  prompt does not belong in a span attribute — Tempo would carry it in every block, and Loki is the
-  right store for large payloads.
-- **Span event as the pointer:** add a `prompt.captured` span event carrying the hash, so the trace
-  view shows *that* a prompt was recorded and the Tempo→Loki link retrieves it.
+Earlier drafts put `devshard.prompt.sha256`, `.chars`, `.messages` and `.max_tokens` on the span.
+**Dropped.** T3 already carries `devshard.disposition`, `failure_origin`, `quarantine_mode`,
+`no_send_reason` and `timeout_kind`, which is what makes a trace answerable on its own. A payload
+fingerprint only pays off if you search by it, and you would get the fingerprint from a log line
+anyway.
 
-**Trigger set** (emit only for these, to keep e2e log volume sane): `devshard.disposition` ∈
-{`ghost`, `unfinished_refused`, `unfinished_execution`, `finished_unused`, `finished_usage_unknown`},
-or any request with a non-2xx client outcome, or `devshard.quarantine_mode != none`.
+Two things stay on the trace:
+
+- **`devshard.stream` (bool) as a span attribute.** §5.8 requires excluding streaming spans from
+  latency panels; that filter is unimplementable in TraceQL or span-metrics if the bit is not on the
+  span. One boolean, zero cardinality.
+- **A `payload.captured` span event** carrying the hash, as the pointer from the trace view to the
+  Loki line.
+
+`devshard.prompt.sha256` becomes a **log-line field at every capture site**. It is the only join key
+between the gateway capture and the validation capture, because the validation path carries hashes
+only on the protocol side (`host.go:913-926`).
+
+### 6.2 Policy knobs
+
+All capture is off unless explicitly enabled. One level knob, plus one switch per trigger so a
+production-debug session can turn on exactly one path:
+
+| Variable | Values | Default | Scope |
+|----------|--------|---------|-------|
+| `DEVSHARD_LOG_PAYLOADS` | `off` \| `hash` \| `redacted` \| `full` | `off` | redaction level applied to every trigger below |
+| `DEVSHARD_LOG_PAYLOADS_MLNODE` | `true` \| `false` | `false` | T4a — ML-node failure |
+| `DEVSHARD_LOG_PAYLOADS_QUARANTINE` | `true` \| `false` | `false` | T4a — quarantine (sizes only; level-independent) |
+| `DEVSHARD_LOG_PAYLOADS_VALIDATION` | `true` \| `false` | `false` | T4b — validation failure |
+| `DEVSHARD_LOG_PAYLOADS_MAX_BYTES` | int | `16384` | per-line cap, applied after redaction |
+
+Renamed from `DEVSHARD_LOG_PROMPTS` — responses are in scope now, so "prompts" was a misnomer.
+
+Levels: `hash` = fingerprint, sizes and request attributes only; `redacted` = hash plus first/last N
+chars per message with PII-ish patterns masked; `full` = complete bodies, **testenv only**. Assert in
+a test that the `deploy/join` compose files never set `full`.
+
+The size cap is not optional. Loki rejects oversized batches, and testenv already hits the
+per-tenant ingestion limit under load (`429 … ingestion rate limit exceeded … limit: 4194304
+bytes/sec`).
+
+### 6.3 T4a — ML-node failure (gateway, synchronous)
+
+**Trigger:** the host answered and the answer *is* the failure — `failure_origin == host_response`
+(`accounting/types.go:52-59`), plus the `error_stream` case where the host returns 200 but the SSE
+carries an OpenAI error event. Explicitly **excluded:** `transport_unknown`, which is host
+unavailability and says nothing about the request that triggered it.
+
+**What to log:** request body, response body, and request attributes (model, `max_tokens`, stream
+flag, message count, sizes), on one line through the ctx-aware logger so it inherits
+`trace_id`/`span_id`/`request_id`/`nonce` from §3.
+
+**Response availability differs by path** — the one implementation subtlety:
+
+| Path | Response in scope today |
+|------|-------------------------|
+| non-streaming | full body already buffered (`proxy.go:545-577`) — free |
+| streaming | write-through; only `pendingBuf` pre-content bytes and a truncated `errorBodySample` (`redundancy.go:887-892`) |
+
+Take prefix-plus-error for streaming rather than adding a full-response buffer: a mid-stream
+failure's diagnostic value is in the prefix and the error event, and buffering whole streams would
+reintroduce exactly the memory cost this phase is structured to avoid.
+
+### 6.4 T4a — quarantine (gateway, sizes only)
+
+**Trigger:** any `applyQuarantineLocked` transition (`participant_limiter.go:1195-1210`).
+
+**What to log:** request and response **sizes** and attributes, the reason string, `participant_key`,
+`model_id`, `quarantine_mode`. **No bodies.** Quarantine is a host-health signal, not a content bug,
+and the observers deliberately never receive `params.Prompt` today
+(`participant_limiter.go:532-611`) — keep it that way and thread a small stats struct instead.
+
+### 6.5 T4b — validation failure (deferred behind Postgres)
+
+**Trigger:** a validation verdict of `Valid: false`, including the hash-mismatch path.
+
+**What to log:** full prompt, full response, and all request/response attributes.
+
+**Why this is deferred, not merely late.** The gateway learns of invalidation through the accounting
+recorder (`recorder.go:133-141` → `ProtocolInvalidated`), long after the request completed. To log
+payloads at the gateway it must have retained them — and since it cannot know in advance which
+inferences will be sampled for validation, that means retaining payloads for **all traffic** across
+the validation window, not just for failures. That is a full-traffic payload store: it needs a real
+persistence engine, and it is the largest privacy surface in this plan. SQLite is the wrong engine
+for it, and §11 already records the non-goal of persisting per-nonce data in the accounting store.
+**Land `ak/gateway-v2-postgres` first.**
+
+**Fallback that needs no persistence.** The validator already holds both payloads in memory at the
+decision point (`cmd/devshardd/inference/validator.go:103-123`), so capturing there costs zero
+storage and zero retention. The trade is correlation: `devshardd` runs validation in a different
+process on a different trace, so the line joins on `inference_id`/nonce plus the payload hash rather
+than on `trace_id`. If the Postgres branch slips, this still satisfies the requirement.
+
+Either way, capture must happen **before** the hash-mismatch check returns
+(`cmd/devshardd/inference/validate.go:130-140`). That path discards the bodies and propagates only
+expected-vs-actual hashes — which is precisely the case you most want to inspect.
+
+### 6.6 Notes
 
 The gateway already parses the body for filters/parameters
-(`devshard/cmd/devshardctl/request_filters_parameters.go`), so the prompt is in scope at the point
-where the root span is created — no extra body buffering.
+(`devshard/cmd/devshardctl/request_filters_parameters.go`), so the request is in scope at the point
+where the root span is created — no extra body buffering for T4a.
 
 **Do not** conflate this with the existing OpenAI `metadata.trace_id` / `metadata.span_id`
 passthrough at `request_filters_parameters.go:550-567`. That is a client-supplied field forwarded
@@ -1102,7 +1198,8 @@ func RequireSpanAttrs(t, obs, traceID string, want map[string]string)
 | **C2** | Every Loki line for that trace carries the same `trace_id`, across ≥2 `compose_service` values | T1.1–T1.6 |
 | **C3** | `WaitTraceByAttr("{ span.devshard.disposition = \"ghost\" }")` returns ≥1 trace in the ghost e2e | T3 |
 | **C4** | For each Prometheus label value present on `devshard_accounting_disposition`, a matching span attribute value exists — the contract test for §2 | T3 |
-| **C5** | Failing-request e2e: the trace's log set contains the prompt line with the matching `devshard.prompt.sha256` | T4 |
+| **C5a** | ML-node failure e2e: the trace's log set contains the payload line with the matching `devshard.prompt.sha256` | T4a |
+| **C5b** | Validation-failure e2e: a payload line exists for the invalidated `inference_id`, joinable by payload hash | T4b (does not gate T6) |
 | **C6** | `tempo-alloy` profile: Alloy UI shows OTLP receiver → exporter connected and Tempo returns the trace | T2 |
 | **C7** | `jaeger-promtail` remains green (no regression in the legacy profile) | T1, T2 |
 
@@ -1215,7 +1312,8 @@ gap G2 without new fault verbs.
 | **Double-emitted or missing disposition telemetry** | A nonce's bucket is mutable (`reclassify` moves it between `CounterKey`s), and `releaseCountedLive` deletes counted-but-not-terminal entries without going through `reclassify`. Emit from a single `finalizeNonce` choke point called from both, guarded by an `Emitted` flag — §5.7. |
 | **Stale deadline-based dispositions** | `refreshDerived` runs only inside the snapshot write, so metrics and the accounting API lag by up to one snapshot interval. T3.0 fixes it; until then, e2e must force a flush rather than assume freshness. |
 | **Cardinality blowup** | Hard rule from §0: nonce/escrow/request ids are span attributes and log-line fields only, never Prometheus or Loki stream labels. Add a lint over `promtail-config.yaml` / `config.alloy` `labels` stages. |
-| **Prompt leakage** | `DEVSHARD_LOG_PROMPTS` defaults to `off`; `full` is set by the testenv harness only. Add a test asserting the production compose files never set `full`. |
+| **Payload leakage** | `DEVSHARD_LOG_PAYLOADS` defaults to `off` and each trigger has its own default-`false` switch (§6.2); `full` is set by the testenv harness only. Add a test asserting the production compose files never set `full`. Responses are in scope too, so the blast radius is larger than the original prompt-only design. |
+| **Full-traffic payload retention (T4b)** | Gateway-side validation capture cannot know which inferences will be sampled, so it retains payloads for all traffic across the validation window — the reason T4b waits on `ak/gateway-v2-postgres`, and the reason validator-side capture (zero retention) is kept as a fallback. §6.5. |
 | **Sampling drops the interesting trace** | Run e2e at `AlwaysSample`. For production, prefer tail-based sampling in Alloy keyed on `devshard.disposition != finished_used` so failures are always kept. |
 | **`X-Request-Id` semantic split** | Fix in T1 before anything depends on it (§2). |
 | **Two log stacks** (`devshard/logging` vs `common/logging`) | T1 handles `devshard/logging`; `common/logging` gets the same handler in T5b. Until then dapi broker/nodemanager lines lack `trace_id` — tolerable, since T5a puts the selection *result* on a devshardd span. |
@@ -1232,7 +1330,9 @@ flowchart TD
   T2["T2 — Tempo + Alloy<br/>tempo-alloy default"]
   T30["T3.0 — decouple sweep from Flush<br/>(standalone correctness fix)"]
   T3["T3 — tier 1 attempt spans,<br/>tier 2 classification log,<br/>tier 3 late disposition span"]
-  T4["T4 — prompt capture"]
+  T4A["T4a — payload capture<br/>ML-node failure + quarantine"]
+  T4B["T4b — validation payload capture"]
+  PG["ak/gateway-v2-postgres<br/>(outside this plan)"]
   T50["T5.0 — dapi cleanup +<br/>ctx-aware common/logging"]
   T5["T5 — node-selection spans<br/>(dapi hop) + mlnode"]
   T7["T7 — N mock ML nodes<br/>pool in mock-dapi, per-node faults"]
@@ -1240,7 +1340,10 @@ flowchart TD
   T1 --> T2 --> T6
   T30 --> T3
   T1 --> T3 --> T6
-  T1 --> T4 --> T6
+  T1 --> T4A --> T6
+  T1 --> T4B
+  PG --> T4B
+  T4B -.->|C5b only,<br/>non-blocking| T6
   T50 --> T5
   T1 --> T5 --> T6
   T7 --> T6
@@ -1250,10 +1353,11 @@ flowchart TD
 | Phase | Deliverable | Blocking? |
 |-------|-------------|-----------|
 | **T1** | Shared handler + `Init` + request-id helpers in `common/observability`; logs carry `trace_id`; gateway is traced; one trace spans gateway + host | ✅ everything depends on it |
-| **T2** | `tempo-alloy` profile is the e2e default; Jaeger/Promtail stay green | ✅ for TraceQL queries (tier 3 only) |
+| **T2** | `tempo-alloy` profile is the e2e default; Jaeger/Promtail stay green (compose split + harness landed) | ✅ for TraceQL queries (tier 3 only) |
 | **T3.0** | Classification sweep on its own 5–10 s ticker, off the persistence path | independent — also fixes stale metrics/API |
 | **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span | tiers are independently shippable |
-| **T4** | Prompt capture with redaction policy | — |
+| **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` | — |
+| **T4b** | Payload capture for validation failures | ⛔ needs `ak/gateway-v2-postgres` on the release branch (§6.5); can land last |
 | **T5.0** | dapi cleanup: delete the dead inference surface; add `*Ctx` variants to `common/logging` and thread `ctx` through broker/nodemanager (§7.2) | independent; prerequisite for T5b/T5c |
 | **T5** | T5a client-side acquire/release spans in devshardd (no dapi change); then shared gRPC interceptors in `common/`; dapi server-side selection span optional | — |
 | **T7** | `MLNodes: N` in gencompose, real node pool in the params server (round-robin + exclusions + lock tracking), per-node fault helpers (§10) | ✅ for the per-node scenarios in the test plan |

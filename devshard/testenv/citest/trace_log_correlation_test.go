@@ -43,8 +43,10 @@ func TestTraceLogCorrelation(t *testing.T) {
 	requestID := hdr.Get("X-Request-Id")
 	t.Logf("citest: gateway X-Request-Id=%q", requestID)
 
+	t.Logf("citest: observability profile=%s otel=%s", obs.Profile, obs.Profile.OTELEndpoint())
+
 	// One trace spanning gateway (devshardctl) and host (devshardd).
-	traceID := harness.WaitJaegerTraceWithServices(t, obs,
+	traceID := harness.WaitTraceCoveringServices(t, obs,
 		[]string{"devshardctl", "devshardd"},
 		2*time.Minute,
 	)
@@ -57,6 +59,6 @@ func TestTraceLogCorrelation(t *testing.T) {
 	}, 2*time.Minute)
 
 	// Sanity: gateway.request + host request spans exist (operations).
-	harness.WaitJaegerSpan(t, obs, "devshardctl", "gateway.request", 30*time.Second)
-	harness.WaitJaegerSpan(t, obs, "devshardd", "devshardd.request", 30*time.Second)
+	harness.WaitTraceSpan(t, obs, "devshardctl", "gateway.request", 30*time.Second)
+	harness.WaitTraceSpan(t, obs, "devshardd", "devshardd.request", 30*time.Second)
 }

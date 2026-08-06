@@ -3,8 +3,6 @@ package observability_test
 import (
 	"os"
 	"path/filepath"
-	"regexp"
-	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -80,12 +78,41 @@ func TestLokiDatasource_DerivedFieldPointsAtTraceBackend(t *testing.T) {
 	text := string(body)
 
 	require.Contains(t, text, `matcherRegex: '"trace_id":"(\w+)"'`)
-	// T1 exit criteria runs on jaeger-promtail; T2 retargets to tempo.
-	require.Regexp(t, regexp.MustCompile(`datasourceUid:\s*(jaeger|tempo)`), text)
-	require.True(t,
-		strings.Contains(text, "datasourceUid: jaeger") || strings.Contains(text, "datasourceUid: tempo"),
-		"derived field must target a trace backend",
-	)
+	// T2 default profile is tempo-alloy; harness patches to jaeger for jaeger-promtail.
+	require.Contains(t, text, "datasourceUid: tempo")
+}
+
+func TestTempoDatasource_TracesToLogs(t *testing.T) {
+	path := filepath.Join(findTestenvObservabilityDir(t), "grafana", "provisioning", "datasources", "tempo.yaml")
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "uid: tempo")
+	require.Contains(t, text, "tracesToLogsV2")
+	require.Contains(t, text, "datasourceUid: loki")
+	require.Contains(t, text, "trace_id")
+}
+
+func TestAlloyConfig_PreservesComposeServiceLabel(t *testing.T) {
+	dir := filepath.Join(findTestenvObservabilityDir(t), "alloy")
+	for _, name := range []string{"config.alloy", "config.base.alloy"} {
+		body, err := os.ReadFile(filepath.Join(dir, name))
+		require.NoError(t, err, name)
+		text := string(body)
+		require.Contains(t, text, `compose_service`, name)
+		require.Contains(t, text, `otelcol.receiver.otlp`, name)
+		require.Contains(t, text, `loki.write`, name)
+	}
+	alloy := string(mustRead(t, filepath.Join(dir, "config.alloy")))
+	require.Contains(t, alloy, `otelcol.exporter.otlp "trace_backend"`)
+	require.Contains(t, alloy, `endpoint = "tempo:4317"`)
+}
+
+func mustRead(t *testing.T, path string) []byte {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	return body
 }
 
 func findTestenvObservabilityDir(t *testing.T) string {
