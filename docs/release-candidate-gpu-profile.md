@@ -19,14 +19,14 @@ is a separate final-image rerun performed for this PR.
 
 ## Planned chain parameters
 
-The candidate chain settings are a PoC weight scale factor of `0.32`, PoC
-stat-test parameters `dist_threshold=0.41`, `p_mismatch=0.10`, and
+The candidate chain settings are a PoC weight scale factor of `0.21`,
+PoC stat-test parameters `dist_threshold=0.41`, `p_mismatch=0.10`, and
 `fraud_threshold=0.05`, and a provisional inference validation threshold
 (`Model.validation_threshold`) of `0.90` with processed logprobs. The PoC and
-inference settings passed the honest multi-instance checks below. The `0.32`
-weight is chain-side arithmetic and is reported against measured throughput,
-not passed to MLNode as a runtime flag. This MLNode PR records release inputs
-and evidence but does not activate the model.
+inference settings passed the honest multi-instance checks below. The
+`0.21` weight is chain-side arithmetic and is reported against measured
+throughput, not passed to MLNode as a runtime flag. This MLNode PR records
+release inputs and evidence but does not activate the model.
 
 ## Hardware profiles
 
@@ -82,8 +82,8 @@ backends.
 
 PoC generation used `seq_len=1024`, `k_dim=12`, and batch 32. A simultaneous
 640-nonce run measured 1051.5–1055.7 nonce/min per instance and 4205.7
-nonce/min in aggregate. Applying the `0.32` weight gives 336.5–337.8 weighted
-nonce/min per instance and 1345.8 in aggregate.
+nonce/min in aggregate. Applying the `0.21` weight gives 883.2 weighted
+nonce/min in aggregate.
 
 For each of the 16 directed replica pairs, 640 fixed nonces were replayed
 three times (1920 L2 samples per pair). At `dist_threshold=0.41`, honest
@@ -167,8 +167,8 @@ Before enabling the release model on chain:
 6. Measure the alternate quantization across GPU families and evaluate the
    provisional inference validation threshold `0.90`. This is separate from
    the planned PoC L2 threshold and remains subject to recalibration.
-7. Keep PoC weight scale `0.32`, PoC stat-test parameters `0.41`/`0.10`/`0.05`,
-   and provisional inference validation threshold `0.90` as activation
-   candidates. Reproduce the PoC test with production sample sizing and keep
-   alternate-quantization detection as a separate policy gate.
+7. Keep PoC weight scale `0.21`, PoC stat-test parameters
+   `0.41`/`0.10`/`0.05`, and provisional inference validation threshold `0.90`
+   as activation candidates. Reproduce the PoC test with production sample
+   sizing and keep alternate-quantization detection as a separate policy gate.
 8. Rehearse mixed old and new nodes through a full epoch before activation.
