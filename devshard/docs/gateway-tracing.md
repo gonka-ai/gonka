@@ -194,8 +194,26 @@ panels link into Tempo via TraceQL templates on disposition labels.
 
 ## Stack
 
-`tempo-alloy` is the primary e2e profile (apps → Alloy `:4317` → Tempo; Alloy also ships Docker logs
-to Loki). `jaeger-promtail` stays supported.
+`tempo-alloy` is the primary e2e profile. `jaeger-promtail` stays supported as the legacy fallback.
+
+**Why Alloy, not Promtail.** Tempo and Jaeger are interchangeable *storage/query* backends for
+traces. The choice that matters for the agent is Alloy vs Promtail:
+
+| Profile shape | App OTLP target | Logs | Traces |
+|---------------|-----------------|------|--------|
+| `*-alloy` | **Alloy** `:4317` | Alloy → Loki | Alloy → Tempo *or* Jaeger |
+| `*-promtail` | **Tempo or Jaeger** directly | Promtail → Loki | app → Tempo/Jaeger (no agent) |
+
+Promtail only ships logs. Under a Promtail profile, spans go straight from the process to Jaeger or
+Tempo; if that backend is down or the link flaps, those spans are dropped at the client — Promtail
+cannot buffer them.
+
+Alloy is the single telemetry agent: metrics scrape, Docker logs → Loki, **and** OTLP trace ingest.
+Apps never talk to Tempo/Jaeger when an `*-alloy` profile is active. Alloy can queue and retry both
+logs and traces across backend blips, then deliver them when the backend recovers. That is why
+Alloy is the better default, and why `tempo-alloy` (apps → Alloy → Tempo + Loki) is the primary
+stack. Buffering is best-effort (queue/WAL sized by config), not infinite durable storage if Alloy
+itself dies with a full disk.
 
 ## Build order (phases)
 

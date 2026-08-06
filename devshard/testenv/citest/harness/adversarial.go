@@ -207,6 +207,40 @@ func PatchAdversarialFastTimeouts(t *testing.T, client *http.Client, mockDapiHTT
 	time.Sleep(8 * time.Second)
 }
 
+// PatchGatewayAdminSettings POSTs a partial /v1/admin/settings body (JSON object).
+func PatchGatewayAdminSettings(t *testing.T, client *http.Client, gatewayURL string, body map[string]any) {
+	t.Helper()
+	if client == nil {
+		client = HTTPClient()
+	}
+	data, err := json.Marshal(body)
+	require.NoError(t, err)
+	req, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/admin/settings", bytes.NewReader(data))
+	require.NoError(t, err)
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+TestenvAdminAPIKey)
+	resp, err := client.Do(req)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	respBody, _ := io.ReadAll(resp.Body)
+	require.Equal(t, http.StatusOK, resp.StatusCode, "POST /v1/admin/settings: %s", string(respBody))
+}
+
+// PatchAdversarialFastRedundancy shrinks gateway redundancy timers so a stopped
+// host fails the race quickly enough for deadline-based dispositions in citest.
+func PatchAdversarialFastRedundancy(t *testing.T, client *http.Client, gatewayURL string) {
+	t.Helper()
+	PatchGatewayAdminSettings(t, client, gatewayURL, map[string]any{
+		"redundancy": map[string]any{
+			"receipt_timeout_ms":               int64(200),
+			"non_stream_response_floor_ms":     int64(300),
+			"non_stream_no_content_timeout_ms": int64(800),
+			"non_stream_max_attempt_wait_ms":   int64(900),
+			"secondary_wait_after_winner_ms":   int64(250),
+		},
+	})
+}
+
 // PostGatewayChatStreamResult posts stream chat and returns status, assembled content, and whether [DONE] was seen.
 func PostGatewayChatStreamResult(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, content string, sawDone bool) {
 	t.Helper()
@@ -311,6 +345,20 @@ func postGatewayChatHTTPStatus(client *http.Client, gatewayURL, adminAPIKey stri
 	defer resp.Body.Close()
 	raw, _ := io.ReadAll(resp.Body)
 	return resp.StatusCode, nil, string(raw)
+}
+
+// PostGatewayChatSoft posts non-stream chat and returns status / transport error
+// without failing the test. Used while injecting host faults where either
+// success or failure is acceptable.
+func PostGatewayChatSoft(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (status int, transportErr error) {
+	t.Helper()
+	status, transportErr, body := postGatewayChatHTTPStatus(client, gatewayURL, adminAPIKey, req)
+	if transportErr != nil {
+		t.Logf("citest: soft chat transport error: %v", transportErr)
+		return 0, transportErr
+	}
+	t.Logf("citest: soft chat status=%d body_len=%d", status, len(body))
+	return status, nil
 }
 
 // PostGatewayChatExpectFailure posts non-stream chat and requires HTTP status >= 400 or transport timeout.

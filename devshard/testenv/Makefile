@@ -104,9 +104,9 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## T2: O1 + trace/log correlation (tempo-alloy) + jaeger-promtail C7.
+citest-observability: citest-images ## T2/T3.10: O1 + correlation + disposition C3/C4 (tempo-alloy) + jaeger-promtail C7.
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -count=1 -v -timeout 45m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression' -count=1 -v -timeout 90m
 
 # Default e2e profile is tempo-alloy. Override with TESTENV_OBS_PROFILE=jaeger-promtail.
 OBS_PROFILE ?= tempo-alloy

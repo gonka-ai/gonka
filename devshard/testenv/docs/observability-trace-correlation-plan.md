@@ -1355,7 +1355,7 @@ flowchart TD
 | **T1** | Shared handler + `Init` + request-id helpers in `common/observability`; logs carry `trace_id`; gateway is traced; one trace spans gateway + host | ✅ everything depends on it |
 | **T2** | `tempo-alloy` profile is the e2e default; Jaeger/Promtail stay green (compose split + harness landed) | ✅ for TraceQL queries (tier 3 only) |
 | **T3.0** | Classification sweep on its own 5–10 s ticker, off the persistence path | independent — also fixes stale metrics/API |
-| **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span | tiers are independently shippable |
+| **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span — ✅ landed (T3.0–T3.8 + T3.10 citest C3/C4; unfinished late-path citest pending G3) | tiers are independently shippable |
 | **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` | — |
 | **T4b** | Payload capture for validation failures | ⛔ needs `ak/gateway-v2-postgres` on the release branch (§6.5); can land last |
 | **T5.0** | dapi cleanup: delete the dead inference surface; add `*Ctx` variants to `common/logging` and thread `ctx` through broker/nodemanager (§7.2) | independent; prerequisite for T5b/T5c |

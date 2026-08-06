@@ -50,6 +50,22 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
 }
 
+// BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
+// (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
+// Stopping versiond-2 is the citest-reachable F8 path that produces ghost burns;
+// a 2-host HA-only stack cannot, because both hosts share one participant.
+func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
+	t.Helper()
+	stack := NewStack(t, prefix)
+	RequireLinuxDevshardd(t, stack.TestenvDir)
+	WriteMultiConfig(t, stack.WorkDir, MultiConfigOpts{Hosts: 3, EscrowSlots: 4})
+	stack.RunGencompose(t)
+	cfg := stack.LoadConfig(t)
+	requireThreeVersiondHosts(t, cfg)
+	stack.UpWithObservability(t, cfg)
+	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
+}
+
 // WaitStackHealthy polls the chain, dapi, router, and gateway boundaries.
 func WaitStackHealthy(t *testing.T, stack *Stack, eps Endpoints) {
 	t.Helper()
