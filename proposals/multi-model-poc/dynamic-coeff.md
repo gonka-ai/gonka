@@ -40,7 +40,7 @@ This proposal introduces a transitional approach:
 
 Governance defines three parameters for each model M_i:
 
-- [coeff_i_min, coeff_i_max] - coefficient range
+- [coeff_i_min, coeff_i_max] - tight coefficient range. The maximum value coeff_i_max provides a ~5% incentive to switch to model M_i, while the minimum value coeff_i_min provides a ~5% incentive to switch back to the base model.
 
 - D_i - relative model inference complexity (measured based on PoC results as correlated with real inference difficulty by PoC definition). Unlike the current coefficient, D_i carries no economic assumptions and is used solely to normalize nonces to comparable units. It is defined by throughput parity on a reference server (e.g., 8xH100) relative to a base model. If a model exceeds reference server capacity, it is measured on the next server by capacity (e.g., 8xH200):
 
@@ -68,6 +68,10 @@ Each host H_j has a list of MLNodes [node_k]. For each node:
 
 
 Assuming each host is a rational agent. 
+
+
+#### Protocol 
+
 
 
 ### Experiments
