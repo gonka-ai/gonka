@@ -29,6 +29,18 @@ data class TxResponse(
         val event = events.firstOrNull { it.type == "devshard_escrow_created" }
         return event?.attributes?.firstOrNull { it.key == "escrow_id" }?.value?.toLongOrNull()
     }
+
+    /** Code id emitted by `tx wasm store`. */
+    fun getCodeId(): Long? {
+        val event = events.firstOrNull { it.type == "store_code" }
+        return event?.attributes?.firstOrNull { it.key == "code_id" }?.value?.toLongOrNull()
+    }
+
+    /** Contract address emitted by `tx wasm instantiate`. */
+    fun getContractAddress(): String? {
+        val event = events.firstOrNull { it.type == "instantiate" }
+        return event?.attributes?.firstOrNull { it.key == "_contract_address" }?.value
+    }
 }
 
 data class Event(
