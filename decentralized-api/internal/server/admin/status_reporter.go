@@ -21,7 +21,11 @@ func BuildMLNodeMessage(state MLNodeOnboardingState, secondsUntilNextPoC int64, 
 		if failingModel == "" {
 			return "MLnode test failed"
 		}
-		return "MLnode test failed: model '" + failingModel + "' could not be loaded"
+		// Neutral wording: FailingModel is set for any failing stage (load,
+		// health, inference probe, timeout), not just a load failure, so naming
+		// the model without claiming "could not be loaded" avoids misdirecting
+		// the operator. The precise per-stage error is on GET /nodes/:id/test.
+		return "MLnode test failed: validation failed for model '" + failingModel + "'"
 	case MLNodeState_WAITING_FOR_POC:
 		if shouldBeOnline {
 			// In or approaching the PoC window — must be online now,
