@@ -16,6 +16,36 @@ becomes the assertion.
 
 ---
 
+## 0. Status — what is landed today
+
+This is the single status page for observability citests. [`scenarios.md`](./scenarios.md) links
+here instead of duplicating the table. The C-series ids come from
+[observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) §9; the
+S-series (§4–§5) and invariants (§6) below are still design-only.
+
+| ID | What it proves | Test | Suite | Status |
+|----|----------------|------|-------|--------|
+| **C1 / C2** | One chat → one trace with `devshardctl` + `devshardd` spans; every Loki line for it carries that `trace_id` across ≥2 `compose_service` values | `TestTraceLogCorrelation` | `citest-observability` | ✅ T1/T2 |
+| **C3** | Ghost disposition is reachable by TraceQL on `span.devshard.disposition` | `TestDispositionTraceGhost` | `citest-observability` | ✅ T3.10 |
+| — | Late `unfinished_refused` disposition trace | `TestDispositionTraceUnfinishedRefused` | `citest-observability` | ⏸ skipped — gap **G3** |
+| **C4** | Every `devshard_accounting_disposition` label value has an identical span attribute value | `TestDispositionLabelValuesMatchSpanAttrs` | `citest-observability` | ✅ T3.1/T3.10 |
+| **C5a** | ML-node failure payload line joins the trace (503, partial stream, SSE error) | `TestC5a_PayloadCaptureHTTP503` / `…PartialStream` / `…SSEError` | `citest-observability` | ✅ T4a |
+| **C5b** | Validation-failure payload line, joinable by `inference_id` + payload hash | — | — | deferred behind T4b/Postgres — scenario documented in [`scenarios.md`](./scenarios.md) |
+| **C6** | `tempo-alloy` profile serves the trace end to end | `TestO1_ObservabilitySmoke` | `citest-observability` | ✅ for the Tempo leg; the Alloy-UI receiver→exporter check stays manual |
+| **C7** | `jaeger-promtail` profile has not regressed | `TestJaegerPromtailRegression` | `OBS_PROFILE=jaeger-promtail make citest-observability` | ✅ |
+| **C8** | One chat → `devshardctl`, `devshardd`/`versiond.*` **and** `mock-dapi` share `trace_id` (+ `request_id`) | `TestT5_TraceLogCorrelationGatewayHostDapi` | planned | T5 — [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
+| **C9** | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id` | `TestT5_ShadowHostMultiAttemptSameTrace` | planned | T5 — same doc |
+
+Per-node ML fault targeting (**T7**, which closes gap **G1** below) is a stack scenario rather than
+a telemetry one — `TestMLNodePool_PerNodeFault` / `make citest-ml-nodes`, documented in
+[`scenarios.md`](./scenarios.md). It is a prerequisite for S3 and S16, not an assertion about traces.
+
+**Nothing in §4–§6 is implemented yet.** S1–S17 and the I1–I8 invariants describe the target suite;
+the tests above are the subset that exists. The overlap is worth knowing when picking up an S row:
+S7 (`ghost` after quarantine) is partly covered by C3, I1–I3 by C1/C2, I5 by C4, and I7 by C5a.
+
+---
+
 ## 1. Why testenv and not `devshard/e2e`
 
 | | `devshard/e2e` (testcontainers) | `devshard/testenv/citest` (compose) |
@@ -81,8 +111,8 @@ These are prerequisites; without them the matrix in §4 cannot be expressed.
 | **G1** | **Per-node ML fault targeting** | ✅ **Closed by T7** — `ml_nodes: N` emits `mock-openai-{i}`; mock-dapi `MOCK_ML_NODES` round-robins with real `NodeId` / exclusions / lock tracking; harness `PatchMockOpenAIFaultForNode` + `StopMLNode`; citest `TestMLNodePool_PerNodeFault` (`make citest-ml-nodes`). Unlocks S3/S16 winner–loser asymmetry. |
 | **G2** | **Fault vocabulary** | Partial: T4a added `sse_error_message` + nested OpenAI/vLLM HTTP error bodies. Still missing `empty_content` / `response_body` for full host-stub parity (`DEVSHARD_STUB_INFERENCE_RESPONSE_BODY`). |
 | **G3** | **Host-side e2e knobs in testenv** | `DEVSHARD_E2E_RECEIPT_DELAY_MS`, `DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS`, `DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS` are read by `devshard-host` but not plumbed through `versiond` → `devshardd` in the generated compose. Needed for F10 and to shorten F3/F9. |
-| **G4** | **Observability overlay on the accounting stack** | `BootObservabilityStack` exists, but the adversarial/accounting stacks boot without it. Add an `Observability: true` option so any scenario can assert telemetry. |
-| **G5** | **Trace/log assertion helpers** | Per §9 of the implementation plan: `WaitTraceSpan`, `WaitTraceByAttr`, `RequireLogsForTrace`, `RequireSpanAttrs`, plus `RequireNoSpan` for the negative assertions this plan depends on. |
+| **G4** | **Observability overlay on the accounting stack** | Partial: `BootObservabilityStack` and `BootObservabilityStackHASolo` (3×versiond, HA pair + solo executor) exist, but the adversarial/accounting stacks still boot without the overlay. Add an `Observability: true` option so any scenario can assert telemetry. |
+| **G5** | **Trace/log assertion helpers** | Partial: `WaitTraceSpan`, `WaitTraceByAttr`, `RequireSpanAttrs`, `RequireLogsForTrace` and `WaitLokiLogQL` landed with T3.10. Still missing **`RequireNoSpan`**, the negative assertion every §5 failure-origin scenario depends on. |
 | **G6** | **No mid-test pause** | Only stop/start/restart exist (`stack.go:220-244`, `restart.go:92-108`) — no `docker pause`/SIGSTOP. F9 therefore models a *restart*, not a freeze. Adding pause would let us test a host that is hung rather than gone; optional. |
 
 ---
@@ -180,11 +210,22 @@ Deadline-based dispositions are slow by construction (§5.2 of the implementatio
 
 ---
 
-## 9. Suggested CI shape
+## 9. CI shape
+
+**Today** — CI discovers suites with `make -C devshard/testenv list-citest-targets` and fans them
+out one runner per target, so a new `citest-*` target runs in parallel with no workflow edit.
+
+| Target | Profile | Scenarios |
+|--------|---------|-----------|
+| `citest-observability` | `tempo-alloy` (default) | C1/C2, C3, C4, C5a, C6, plus C7 on the `jaeger-promtail` leg |
+| `citest-observability` with `OBS_PROFILE=jaeger-promtail` | `jaeger-promtail` | C7 regression guard |
+| `citest-ml-nodes` | none | T7 per-node fault targeting (unlocks S3/S16) |
+
+**Once the S-series lands** — split by cost rather than growing one target:
 
 | Job | Profile | Scenarios | Cadence |
 |-----|---------|-----------|---------|
-| `citest-observability` | `tempo-alloy` | I1–I3, S1, S7, S9 | every PR |
+| `citest-observability` | `tempo-alloy` | C1–C7, I1–I3, S1, S7, S9 | every PR |
 | `citest-observability-dispositions` | `tempo-alloy` | S2–S11 | nightly |
 | `citest-observability-failure-origin` | `tempo-alloy` | S12–S17 | nightly |
 | `citest-observability-jaeger` | `jaeger-promtail` | I1–I3, S1 | weekly, regression guard |

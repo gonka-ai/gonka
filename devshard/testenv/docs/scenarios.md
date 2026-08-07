@@ -37,6 +37,7 @@ make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-ml-nodes              # multi mock-openai pool + per-node fault
 ```
 
 Or run a single scenario:
@@ -77,6 +78,7 @@ picked up automatically (no workflow edit). For a local sequential subset, use
 | **Validation lease race** | Same-key HA lease exclusivity, pending stretch, stale reclaim | `TestValidationLeaseRaceCore`, `…PendingStretch`, `…StaleReclaim` |
 | **Versiond rolling update** | Postgres blue/green drain and hybrid fallback | `TestVersiondRollingUpdateSameVersionSHA`, `…HybridFallback` |
 | **Escrow long-poll warm** | DAPI escrow-created host event → devshardd `escrow_cache` prefetch → first inference binds from cache with the live escrow query faulted | `TestEscrowLongPollWarmWithoutInferenceNode` |
+| **ML node pool** | N mock-openai instances behind mock-dapi `AcquireMLNode`; a fault on one node leaves the others healthy | `TestMLNodePool_PerNodeFault` |
 
 Source files under `devshard/testenv/citest/` use the same behavior-oriented
 names. Versiond failover and restart persistence intentionally remain separate
@@ -381,8 +383,16 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
+| Observability | `make citest-observability` | O1 smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression — status table in [`observability-test-plan.md`](./observability-test-plan.md) §0 |
+| ML node pool | `make citest-ml-nodes` | T7 per-node ML fault targeting (below) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
+
+Observability scenario ids (C1–C9, S1–S17, the I invariants and the F fault taxonomy) are **not**
+duplicated here — [`observability-test-plan.md`](./observability-test-plan.md) §0 is the single
+status page for what is landed, skipped or planned. Design rationale lives in
+[`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md), and the
+next phase (mock-dapi hop, shadow multi-host) in
+[`observability-t5-test-plan.md`](./observability-t5-test-plan.md).
 
 See [`README.md`](../README.md) for adversarial and observability detail.
 
@@ -478,6 +488,55 @@ inference succeeds with the live escrow query faulted.
 
 ---
 
+## ML node pool — per-node fault targeting (T7)
+
+**What we test:** the stack can express "one ML node is broken while the others are fine".
+Before T7 a single `mock-openai` served every host, so any fault hit all attempts at once and
+winner/loser asymmetry was impossible to stage. `ml_nodes: N` in the citest config makes
+`gencompose` emit `mock-openai-0…N-1`, and mock-dapi hands them out through real `AcquireMLNode`
+node ids instead of a single hard-coded endpoint.
+
+**How:** `TestMLNodePool_PerNodeFault`
+
+1. `harness.BootMLNodePoolStack` with `ml_nodes: 2`; wait for stack health.
+2. Dial mock-dapi NodeManager gRPC; two `AcquireMLNode` calls must return **distinct** `NodeId`s
+   drawn from the pool, then release both `LockId`s.
+3. `harness.PatchMockOpenAIFaultForNode` applies `latency_ms: 1500` to `mock-openai-1` only.
+4. Chat directly against each node: node-0 stays under 800 ms, node-1 takes at least 1200 ms.
+5. `harness.StopMLNode("mock-openai-1")` — that instance refuses connections while node-0 still
+   serves `/healthz` 200; restart it at the end.
+
+**Pass criteria:** distinct node ids per acquire, fault and stop confined to the targeted instance.
+This closes gap **G1** of [`observability-test-plan.md`](./observability-test-plan.md) and is the
+prerequisite for its S3 (`finished_unused` loser) and S16 (slow node vs. fast node) scenarios.
+
+**Run:** `make citest-ml-nodes` (or `-run TestMLNodePool_`).
+
+---
+
+## Validation-failure payload capture (C5b) — planned
+
+**What we will test:** when a validator returns `Valid: false` — including the hash-mismatch path —
+a payload line exists for the invalidated `inference_id` carrying the full prompt and response, so
+the disagreement between executor and validator can be reconstructed from the two bodies.
+
+**Why it is not here yet.** The gateway only learns of invalidation through the accounting recorder
+(`ProtocolInvalidated`), long after the request completed, and it cannot know in advance which
+inferences will be sampled. Capturing at the gateway therefore means retaining payloads for **all**
+traffic across the validation window — a full-traffic payload store that needs Postgres, not the
+SQLite accounting store. This is T4b, blocked on `ak/gateway-v2-postgres`.
+
+**Fallback if the Postgres branch slips:** capture inside `cmd/devshardd/inference/validator.go`,
+which already holds both payloads at the decision point, before the hash-mismatch check discards
+them. That costs no storage but joins on `inference_id` + payload hash rather than on `trace_id`,
+because validation runs in a different process on a different trace.
+
+Design: [`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md) §6.5.
+The landed ML-failure half of payload capture is C5a
+([`observability-test-plan.md`](./observability-test-plan.md) §0).
+
+---
+
 ## Chaining vs. parallelism
 
 Every full-stack citest boots a Docker Compose stack that pins a **fixed subnet
@@ -509,12 +568,15 @@ pattern and **no `t.Parallel()`**.
   (own project dir, own stack, Docker-assigned ports): `TestStackSmoke`,
   `TestRouterStickiness`, `TestGatewayChat`, `TestEpochSwitch`,
   `TestParamsLongPoll`, `TestLegacyVersionPinnedToSingleHost`, the `G1/G2/G3`,
-  `A1–A4`, `O1`, and **escrow long-poll warm**.
+  `A1–A4`, the observability suite (`O1`, correlation, disposition, `C5a`,
+  jaeger-promtail regression), `TestMLNodePool_PerNodeFault`, and **escrow
+  long-poll warm**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
-  supported form of parallelism today. CI enumerates these targets automatically
+  `citest-ml-nodes`, `citest-escrow-longpoll`) so CI can fan them out to
+  **separate runners** — the supported form of parallelism today. CI
+  enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,
   so adding a new `citest-*` suite runs it in parallel with no workflow change.
