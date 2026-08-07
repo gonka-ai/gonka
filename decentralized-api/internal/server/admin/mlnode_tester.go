@@ -303,7 +303,12 @@ func (t *MLNodeTester) Run(ctx context.Context, nodeId string) (*TestResult, err
 	// or the node was reconfigured mid-test (Invalidate). Recording its failure
 	// would latch a bogus TEST_FAILED and, worse, describe inputs that no
 	// longer exist. Report it to the caller but keep it out of the record.
-	if ctxErr := runCtx.Err(); ctxErr != nil && result.Status == TestFailed {
+	//
+	// A deadline is different: it is a fact about the node — it did not finish
+	// within the test budget. Auto-test's backoff keys off a recorded retryable
+	// failure, so dropping timeouts would leave a wedged node re-tested on every
+	// synced block instead of after a backoff.
+	if errors.Is(runCtx.Err(), context.Canceled) && result.Status == TestFailed {
 		return result, nil
 	}
 

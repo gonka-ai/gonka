@@ -190,6 +190,13 @@ func NewOnNewBlockDispatcherFromCosmosClient(
 // SetOnEpochState registers a hook invoked on every new block once the chain
 // is synced, with the freshly-updated epoch state.
 func (d *OnNewBlockDispatcher) SetOnEpochState(hook EpochStateHook) {
+	// Clear on a nil hook rather than storing a pointer to a nil func: the load
+	// site only nil-checks the pointer, so &hook would pass that guard and then
+	// panic when the nil func is invoked.
+	if hook == nil {
+		d.onEpochState.Store(nil)
+		return
+	}
 	d.onEpochState.Store(&hook)
 }
 

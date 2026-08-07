@@ -155,6 +155,46 @@ func TestMLNodeTester_ModelLoadFailure(t *testing.T) {
 	}
 }
 
+// TestMLNodeTester_TimeoutRecordsRetryableFailure guards the fix for the
+// dropped-timeout bug: when a run exceeds its budget the failure is a real fact
+// about the node and must be recorded. Auto-test's backoff keys off a recorded
+// retryable failure, so dropping timeouts would re-test a wedged node on every
+// synced block instead of after a backoff.
+func TestMLNodeTester_TimeoutRecordsRetryableFailure(t *testing.T) {
+	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
+		Id:            "node1",
+		Host:          "test-host",
+		PoCPort:       8080,
+		InferencePort: 5000,
+		Models: map[string]apiconfig.ModelConfig{
+			"slow-model": {},
+		},
+	}})
+	factory := mlnodeclient.NewMockClientFactory()
+	mockClient := factory.CreateClient("http://test-host:8080", "http://test-host:5000").(*mlnodeclient.MockClient)
+	// Never closed: InferenceUp blocks until the run's deadline fires, mimicking
+	// a wedged MLnode that does not answer within the test budget.
+	mockClient.InferenceUpBlock = make(chan struct{})
+
+	tester := NewMLNodeTester(cm, factory, stubGovModelsForConfig(cm))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	result, err := tester.Run(ctx, "node1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Status != TestFailed {
+		t.Fatalf("got %q, want %q", result.Status, TestFailed)
+	}
+	if !result.Retryable {
+		t.Error("a timeout must be retryable so auto-test backs off and retries")
+	}
+	if got := tester.LastResult("node1"); got == nil || got.Status != TestFailed || !got.Retryable {
+		t.Fatalf("timeout failure was not recorded (backoff would never engage): %+v", got)
+	}
+}
+
 func TestMLNodeTester_MergesGovernanceArgs(t *testing.T) {
 	cm := newTesterConfig(t, []apiconfig.InferenceNodeConfig{{
 		Id:            "node1",
@@ -551,9 +591,11 @@ func TestMLNodeTester_GovernanceQueryIsCancellable(t *testing.T) {
 	if tester.IsAnyRunning() {
 		t.Fatal("in-flight slot leaked after a cancelled test")
 	}
-	// A cancelled run says nothing about the node, so nothing is recorded.
-	if got := tester.LastResult("node1"); got != nil {
-		t.Fatalf("cancelled run recorded a result: %+v", got)
+	// The run ended on its deadline, not a caller cancel: a governance RPC that
+	// overruns the whole test budget is a real, retryable fact, so it IS recorded
+	// so auto-test backs off instead of re-testing on every synced block.
+	if got := tester.LastResult("node1"); got == nil || got.Status != TestFailed || !got.Retryable {
+		t.Fatalf("deadline-exceeded run not recorded as a retryable failure: %+v", got)
 	}
 }
 

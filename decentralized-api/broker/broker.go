@@ -138,6 +138,10 @@ type Broker struct {
 	// workers keep querying MLnodes and the chain after their broker is gone.
 	stop     chan struct{}
 	stopOnce sync.Once
+	// commandLoopDone is closed by processCommands once it has observed stop and
+	// torn down the per-node workers, so Stop can block until teardown is
+	// complete rather than returning while workers are still shutting down.
+	commandLoopDone chan struct{}
 }
 
 type lockEntry struct {
@@ -327,6 +331,7 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 		configManager:        configManager,
 		lockMap:              make(map[string]lockEntry),
 		stop:                 make(chan struct{}),
+		commandLoopDone:      make(chan struct{}),
 	}
 
 	// Initialize NodeWorkGroup
@@ -347,9 +352,15 @@ func NewBroker(chainBridge BrokerChainBridge, phaseTracker *chainphase.ChainPhas
 // Contract after Stop: QueueMessage returns ErrBrokerStopped rather than
 // accepting a command nobody will execute, and GetNodes returns that error
 // instead of blocking. Commands already queued are not drained, so a caller that
-// needs a command's result must await it before stopping.
+// needs a command's result must await it before stopping. On return the
+// per-node workers have been shut down, so a throwaway broker (selfcheck, tests)
+// leaves no goroutines still querying MLnodes or the chain.
+//
+// Must not be called from the command loop itself: Stop waits for that loop to
+// finish tearing down the workers, which cannot happen while it is blocked here.
 func (b *Broker) Stop() {
 	b.stopOnce.Do(func() { close(b.stop) })
+	<-b.commandLoopDone
 }
 
 type statusQuerySignal struct {
@@ -420,6 +431,8 @@ func nodeSyncWorker(broker *Broker) {
 }
 
 func (b *Broker) processCommands() {
+	// Signal Stop only after the per-node workers are torn down below.
+	defer close(b.commandLoopDone)
 	for {
 		select {
 		case command := <-b.highPriorityCommands:
@@ -431,6 +444,12 @@ func (b *Broker) processCommands() {
 			case command := <-b.lowPriorityCommands:
 				b.executeCommand(command)
 			case <-b.stop:
+				// Shut down the per-node workers here, on the sole goroutine that
+				// submits to them, so teardown can never race a Submit into a
+				// closed channel. stop is already closed, so a draining worker's
+				// final QueueMessage returns ErrBrokerStopped instead of blocking
+				// on a queue this loop will no longer drain.
+				b.nodeWorkGroup.ShutdownAll()
 				return
 			}
 		}
