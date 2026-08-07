@@ -1,4 +1,5 @@
-# Seed for testenv/cmd/mockchain in devshard e2e (gRPC on :9090).
+# Fast timeout override for timeout-protocol E2E scenarios.
+# Omitted timeout fields in mock-chain-config.yaml exercise chain defaults.
 chain_id: gonka-e2e
 block_height: 150
 epoch:
@@ -8,6 +9,8 @@ params:
   logprobs_mode: raw
   devshard_requests_enabled: true
   max_nonce: 500
+  refusal_timeout: 5
+  execution_timeout: 17
   validation_rate: 10000
   vote_threshold_factor: 66
 participants:
