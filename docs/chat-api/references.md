@@ -59,6 +59,10 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[vLLM-26]** [PR #35895 — minimax_m2 tool parser fix for stream_interval > 1](https://github.com/vllm-project/vllm/pull/35895) — covers one streaming malformation class.
 - **[vLLM-27]** [Issue #36632 — MiniMax-M2.5 reasoning missing in chat completions stream](https://github.com/vllm-project/vllm/issues/36632) — `--reasoning-parser minimax_m2_append_think` skips reasoning content in SSE deltas.
 - **[vLLM-28]** [Issue #28963 — MiniMax tool parsing errors](https://github.com/vllm-project/vllm/issues/28963) — error in `_convert_param_value`.
+- **[vLLM-29]** [logits_processor/__init__.py source](https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/v1/sample/logits_processor/__init__.py#L202) — when `speculative_config` is set, vLLM returns only `MinTokensLogitsProcessor` and discards every other built-in processor, `ThinkingTokenBudgetLogitsProcessor` included. The warning names only `min_p` and `logit_bias`, so the loss is silent.
+- **[vLLM-30]** [Issue #39573 — thinking budget not enforced with MTP](https://github.com/vllm-project/vllm/issues/39573) — "Without MTP → thinking budget enforced. With MTP → thinking budget NOT enforced." Confirms vLLM-29 end to end.
+- **[vLLM-31]** [Issue #36969 — Kimi-K2.5 emits a stray `</think>` when `enable_thinking` is false](https://github.com/vllm-project/vllm/issues/36969) — top-level `enable_thinking` leaks the tag into `content`; the maintainer's working answer is `chat_template_kwargs: {"thinking": false}`.
+- **[vLLM-32]** [chat_completion/protocol.py source](https://github.com/vllm-project/vllm/blob/v0.20.0/vllm/entrypoints/openai/chat_completion/protocol.py#L183) — `thinking_token_budget` is a declared top-level request field, forwarded to `SamplingParams`; it belongs at the top level, not inside `chat_template_kwargs`.
 
 ## Moonshot
 
@@ -66,6 +70,7 @@ Industry/community sources (Ollama blog, OpenAI community thread, arxiv papers) 
 - **[Moonshot-2]** [Kimi K2.6 quickstart](https://platform.kimi.ai/docs/guide/kimi-k2-6-quickstart) — K2.6-specific capabilities including multimodal content parts.
 - **[Moonshot-3]** [Kimi-K2-Thinking tool_call_guidance.md](https://huggingface.co/moonshotai/Kimi-K2-Thinking/blob/main/docs/tool_call_guidance.md) — official guidance on client-side tool-call ID rewrite to canonical `functions.<name>:<global_idx>` form.
 - **[Moonshot-4]** [OpenAI → Kimi API migration guide](https://kimi-ai.chat/guide/openai-to-kimi-api/) — Moonshot's own migration guide; shows `extra_body={"thinking":{"type":"disabled"}}` example that is misinterpreted as a wire field.
+- **[Moonshot-6]** [Kimi-K2.6 chat_template.jinja](https://huggingface.co/moonshotai/Kimi-K2.6/blob/main/chat_template.jinja) — the template reads a boolean `thinking` variable: `{%- if thinking is defined and thinking is false -%}<think></think>`. It never reads `thinking_token_budget` or `enable_thinking`.
 
 ## Qwen
 
