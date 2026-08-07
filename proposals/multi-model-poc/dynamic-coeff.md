@@ -36,6 +36,7 @@ This proposal introduces a transitional approach:
 2. How to define range?
 3. What happens if exceed target values
 4. Attack when re-deploy
+5. Attack when host lies about intent
 
 
 ### Formalization
@@ -70,14 +71,22 @@ Assuming each host is a rational agent.
 
 #### Protocol
 
-Weight computation after PoC for epoch `N` is structurally unchanged:
+At epoch `N` formation, the protocol computes the participant weights:
 
 ```
 coeff[i,N] = f(share[i,N-1], coeff[i,N-1], params_i)
-W_j = sum_i(W[i,j] * coeff[i,N])
+
+R_i = coeff[i,N] * min(share[i,N], T_i + Z) + coeff_i_min * max(0, share[i,N] - (T_i + Z))
+effective_coeff[i,N] = R_i / share[i,N]
+
+W_j = sum_i(W[i,j] * effective_coeff[i,N])
 ```
 
-where `params_i` is the full governance parameter set: `[coeff_i_min, coeff_i_max]`, `D_i`, `T_i`.
+where `params_i` is the governance parameter set `[coeff_i_min, coeff_i_max]`, `D_i`, and `T_i`, and `Z` is the target zone half-width.
+
+`coeff[i,N]` is the stable window coefficient from epoch `N-1` data.
+
+Share up to `T_i + Z` earns `coeff[i,N]`, while any excess earns `coeff_i_min`. The blended rate `effective_coeff[i,N]` dilutes marginal returns above the target, incentivizing hosts to self-limit allocation. The adjustment function `f` uses the unscaled compute share.
 
 
 #### Design of f
@@ -100,19 +109,42 @@ New models start at `coeff_i_min`. At rollout, existing models keep their curren
 
 #### Host response
 
-A rational host assigns each node `k` to the model maximizing consensus weight:
+A rational host assigns node `k` to the model maximizing consensus weight:
 
 ```
-argmax_i throughput[i,k] * coeff_i
+argmax_i throughput[i,k] * effective_coeff_i
 ```
 
 Switching node `k` from model `a` to `b` occurs when:
 
 ```
-coeff_b / coeff_a > throughput[a,k] / throughput[b,k]
+effective_coeff_b / effective_coeff_a > throughput[a,k] / throughput[b,k]
 ```
 
-Target reachability is constrained by available physical hardware and coefficient bounds.
+Above the target zone, dilution lowers `effective_coeff_b` and drives the network toward a stable allocation (no node gains by switching). For any hardware class, the parity point `p` is the value of `effective_coeff_b` that yields equal weight on both models:
+
+```
+p = effective_coeff_a * throughput[a,k] / throughput[b,k]
+```
+
+- If `p > coeff[b,N]`, the hardware class never switches to `b`.
+- If `coeff_b_min < p <= coeff[b,N]`, the class switches until dilution pins `effective_coeff_b` at `p` or all such hardware is exhausted.
+- If `p <= coeff_b_min`, the class always runs `b` because dilution cannot drop the coefficient below the minimum floor.
+
+The relation between `coeff_b_min` and class parity determines whether a hardware class is permanently pinned to model `b`.
+
+The stable allocation has no closed form. Because PoC weights, intents, and throughputs are public, hosts can find it by simulating best-response dynamics:
+
+```
+allocation = current assignments + declared intents
+repeat until no node moves:
+    for each node k:
+        share_i = compute shares from allocation
+        eff_i   = effective_coeff from share_i
+        reassign k to argmax_i throughput[i,k] * eff_i
+```
+
+Nodes move one at a time against recomputed coefficients. Each move strictly increases the moving node's payoff, guaranteeing convergence. Hosts run this simulation to predict effective coefficients and optimize physical hardware allocation before the epoch starts.
 
 #### Bounds and stability
 

@@ -8,7 +8,8 @@ environment = {
 
 params_i = {
     "kimi-k2.6": {
-        "coeff_i_min": 2.342857142857143,
+        # B200 parity (10496 / 4480) less the ~5% switch-back incentive
+        "coeff_i_min": 10496 / 4480 / 1.05,
         "coeff_i_max": 6.814388489208633,
         "D_i": 6.814388489208633,
         "T_i": 1 / 3,
