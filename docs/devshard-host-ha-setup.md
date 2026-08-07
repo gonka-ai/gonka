@@ -28,6 +28,8 @@ Public proxy (/devshard/...)
 
 ---
 
+
+
 ## Prerequisites
 
 1. Join stack from a release that includes **devshard v4 HA** (for example `0.2.15` images).
@@ -38,6 +40,8 @@ Public proxy (/devshard/...)
 4. Only put **Postgres-capable versions** (v4+) into the HA pool. Keep older versions (`v1` / `v2` / `v3`) pinned to a **legacy** single host if you still serve them.
 
 ---
+
+
 
 ## Step 1 - Install Postgres (preferably HA itself)
 
@@ -80,6 +84,8 @@ CREATE DATABASE devshardd OWNER devshardd;
 | `PGHOST`, `PGDATABASE`, `PGUSER`, `PGPASSWORD`, `DEVSHARD_STORAGE_MODE` on every `versiond*` container | `deploy/join/docker-compose.versiond.yml` (already in the overlay) **or** a compose **override** you add | Overlay by default; override only for an external DB; repeat for any extra replica |
 
 
+
+
 #### External or managed Postgres
 
 Use this when the DB runs outside the join host (managed cloud DB or your own Postgres cluster - Options A and B).
@@ -96,6 +102,8 @@ Use this when the DB runs outside the join host (managed cloud DB or your own Po
 
 > Do not run two `versiond` instances on SQLite.  
 > Keep `DEVSHARD_STORAGE_MODE=postgres` on HA `versiond` containers — when `versiond-router` sends `Devshard-Ha: true`, children without Postgres mode reject HA traffic.
+
+
 
 #### Local compose Postgres (`devshard-postgres`)
 
@@ -119,6 +127,8 @@ Use this when you run the DB from the HA overlay on the join host (Option C).
 
 ---
 
+
+
 ## Step 2 - Run multiple `versiond` instances + `versiond-router`
 
 Example files in your setup. Some are present in the release branch:
@@ -133,6 +143,8 @@ Example files in your setup. Some are present in the release branch:
 
 
 > **Why the v4-only override?** Stock `api:9100/versions` still lists **v3 and v4**. Without a filter, every HA peer starts a **v3** child against shared Postgres, which is unsupported and can race on schema migration. Clearing `VERSIOND_NON_HA_VERSIONS` only changes **routing**; it does **not** stop versiond from launching v3. The override filters the oracle to **v4** and empties the non-HA pin list.
+
+
 
 ### 2.1 Same machine, two instances (v4-only HA)
 
@@ -281,6 +293,8 @@ export VERSIOND_NON_HA_VERSIONS="v1 v2 v3"
 
 Do **not** use the v4-only override in that case; use a split layout instead of launching v3 under `DEVSHARD_STORAGE_MODE=postgres` on HA replicas.
 
+
+
 ### 2.2 Using external / managed Postgres with the same overlay
 
 `config.env` alone is **not enough**: stock `docker-compose.versiond.yml` still sets `PGHOST=devshard-postgres`. You must add a **compose override file on the host**.
@@ -328,7 +342,7 @@ docker compose \
 
 If you fully disable the local `devshard-postgres` service, also remove or override its `depends_on` entries on **every** `versiond`* service so compose does not wait on a container you never start.
 
-### 2.3 Multiple machines (true host HA)
+### 2.3 Multiple machines (recommended, true host HA)
 
 Conceptually the same layout, but each machine runs one `versiond`, and one place runs `versiond-router` (or you place the router behind a future load balancer). Prefer a **private network** between machines; bind new listeners to private IPs only if you cannot open extra public ports.
 
@@ -351,37 +365,64 @@ Minimum for two machines:
 3. Oracle URL — use the **same filtered oracle** as local HA (e.g. `oracle-v4` on a private port). Pointing remote `versiond` at raw `api:9100/versions` will pull **v3+v4** and break the v4-only HA path.
 4. Confirm `PGPASSWORD` / `KEYRING_PASSWORD` in `config.env` match what **running** local `versiond`* containers use.
 
-**On every machine that runs** `versiond`**:**
+**On machine B (**`versiond` **only) — one compose file is enough**
 
-1. Same join identity (`KEY_NAME`, keyring files, `ACCOUNT_PUBKEY`, `KEYRING_PASSWORD`). Copy `keyring-file` with sufficient permissions.
-2. Reachable `NODE_MANAGER_ADDR` (A’s private `:9400`). Do **not** start a second `api` with those keys on B.
-3. Wire Postgres in the **service environment**: `PGHOST=<A-private-ip>`, `DEVSHARD_STORAGE_MODE=postgres`, same DB user/password as A.
-4. Point at shared API/node/oracle, for example:
-  - `VERSIOND_ORACLE_URL=http://<A-private>:19100/versions` (filtered v4 oracle — not raw `:9100`)
-  - `NODE_MANAGER_ADDR=<A-private>:9400`
-  - `NODE_HOST=<A-private>` (RPC/gRPC published on A)
-5. **Separate** local data dirs per instance. Binary caches may be shared or per-node.
-6. Publish `versiond` on the **private IP at port 8080** (recommended):
+B does not run `api` / `node`. It runs a single `versiond` that uses **A’s** Postgres, oracle, node-manager, and chain endpoints over the private network.
+
+1. **Same participant identity as A** — same `KEY_NAME`, `ACCOUNT_PUBKEY`, `KEYRING_PASSWORD`, and a copy of A’s `.inference/keyring-file/` (often root-owned; copy with `sudo`). Mount it read-only as `/root/.inference`. Do **not** start a second `api` with those keys on B.
+2. **Put all connection settings in the** `versiond` **service** `environment:` (compose file). Shell `export`s in `config.env` only help if compose interpolates them into that block — the container must see the vars.
+3. **Own data dir** on B (do not share A’s `./devshards*/data`). Binary cache dir may be local.
+4. **Publish** `versiond` **on B’s private IP at port 8080** (recommended) so A’s router can use `VERSIOND_PORT=8080` with B’s IP in `VERSIOND_HOSTS`. Bind LAN-only, not `0.0.0.0`. Optionally firewall so only A can connect.
+
+Example file on B: `docker-compose.versiond-remote.yml` (replace private IPs; `source ./config.env` before `docker compose up`):
 
 ```yaml
-ports:
-  - "<B-private-ip>:8080:8080"   # LAN only — not 0.0.0.0
+services:
+  versiond:
+    image: ghcr.io/product-science/versiond:0.2.15
+    container_name: versiond
+    environment:
+      # Filtered v4 oracle on A (not raw api:9100 — that returns v3+v4)
+      - VERSIOND_ORACLE_URL=http://<A-private-ip>:19100/versions
+      - VERSIOND_BINARY_NAME=devshardd
+      - NODE_MANAGER_ADDR=<A-private-ip>:9400
+      - NODE_HOST=<A-private-ip>
+      - KEY_NAME=${KEY_NAME}
+      - ACCOUNT_PUBKEY=${ACCOUNT_PUBKEY}
+      - KEYRING_BACKEND=${KEYRING_BACKEND:-file}
+      - KEYRING_PASSWORD=${KEYRING_PASSWORD}
+      - KEYRING_DIR=/root/.inference
+      - PGHOST=<A-private-ip>
+      - PGDATABASE=${DEVSHARD_POSTGRES_DB:-devshardd}
+      - PGUSER=${DEVSHARD_POSTGRES_USER:-devshardd}
+      - PGPASSWORD=${DEVSHARD_POSTGRES_PASSWORD:?DEVSHARD_POSTGRES_PASSWORD is required}
+      - DEVSHARD_STORAGE_MODE=postgres
+    volumes:
+      - .inference:/root/.inference:ro
+      - ./devshards-remote/bin:/opt/versiond/bin
+      - ./devshards-remote/data:/opt/versiond/data
+    ports:
+      - "<B-private-ip>:8080:8080"   # LAN only — not 0.0.0.0
+    restart: always
 ```
 
-Optionally firewall that port so only machine A can connect. No relay container on A.
+```bash
+mkdir -p devshards-remote/{bin,data}
+source ./config.env
+docker compose -f docker-compose.versiond-remote.yml up -d
+curl -sS http://<B-private-ip>:8080/healthz   # not 127.0.0.1 if bound to LAN IP only
+```
 
-**On the machine that runs** `versiond-router`**:** list every replica (local Docker DNS names and/or B’s private IP or DNS name). `VERSIOND_PORT` is shared and should stay **8080**:
+**On the machine that runs** `versiond-router` **(usually A):** list every replica. `VERSIOND_PORT` stays **8080**:
 
 ```bash
-export VERSIOND_HOSTS="versiond versiond2 172.18.114.132"   # example: local + B LAN IP
-# or: VERSIOND_HOSTS="versiond-a.internal versiond-b.internal"
+export VERSIOND_HOSTS="versiond versiond2 <B-private-ip>"
+# or DNS names: versiond-a.internal versiond-b.internal
 export VERSIOND_PORT=8080
 # v4-only: clear NON_HA via override (empty); do not leave stock "v1 v2 v3"
 ```
 
 Recreate `versiond-router` after changing hosts. 
-
-**Fallback only:** if B cannot bind host `:8080`, publish another private port and put a TCP relay on A’s Docker network that listens `:8080` and forwards to B (e.g. socat). Add the relay’s Docker DNS name to `VERSIOND_HOSTS`. 
 
 **On the public** `proxy`**:** confirm after recreate:
 
@@ -400,7 +441,11 @@ VERSIOND_PORT=8080
 
 ---
 
+
+
 ## Step 3 - Environment variables checklist
+
+
 
 ### Put in `deploy/join/config.env` (and `source` it before compose)
 
@@ -431,6 +476,8 @@ You normally **do not edit these by hand** when using the local `devshard-postgr
 - `DEVSHARD_STORAGE_MODE=postgres`
 - proxy: `VERSIOND_SERVICE_NAME=versiond-router`
 
+
+
 ### Put in compose overrides
 
 
@@ -441,6 +488,8 @@ You normally **do not edit these by hand** when using the local `devshard-postgr
 
 
 ---
+
+
 
 ## Step 4 - Verify it works
 
@@ -480,6 +529,8 @@ Healthy signs:
 
 ---
 
+
+
 ## Step 5 - `versiond-router` HA (in progress)
 
 
@@ -494,6 +545,8 @@ Healthy signs:
 
 ---
 
+
+
 ## What not to do
 
 1. **Two versionds on SQLite** — split-brain / missing leases.
@@ -504,6 +557,8 @@ Healthy signs:
 6. `**docker compose up` without `-f docker-compose.devshard-v4-only.override.yml**` when you intended v4-only — stock oracle still starts v3.
 
 ---
+
+
 
 ## Minimal recipe (one host, two versionds, v4-only)
 
