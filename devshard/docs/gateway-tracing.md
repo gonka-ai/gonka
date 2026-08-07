@@ -230,6 +230,6 @@ itself dies with a full disk.
    client spans, shared gRPC interceptors carrying `traceparent` + `x-request-id`, and
    `stage=mlnode_acquire`/`mlnode_release` logs on mock-dapi. C8/C9 green via
    `make citest-observability` (or the focused `citest-dapi-correlation`).
-   Test plan: [observability-t5-test-plan.md](../testenv/docs/observability-t5-test-plan.md).
+   Scenarios C8/C9: [observability-test-plan.md](../testenv/docs/observability-test-plan.md).
    Remaining: production `decentralized-api` registers the same server interceptor and Init (T5c).
 7. **T6** — Grafana forensics dashboards + citest C1–C9.

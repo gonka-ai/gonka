@@ -383,17 +383,15 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression, C8/C9 mock-dapi hop + shadow multi-host — status table in [`observability-test-plan.md`](./observability-test-plan.md) §0 |
+| Observability | `make citest-observability` | Profile smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression, C8/C9 mock-dapi hop + shadow multi-host — full scenarios in [`observability-test-plan.md`](./observability-test-plan.md) |
 | Observability (node-selection hop only) | `make citest-dapi-correlation` | C8/C9 subset of the above, for iterating on the mock-dapi hop |
 | ML node pool | `make citest-ml-nodes` | T7 per-node ML fault targeting (below) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
-Observability scenario ids (C1–C9, S1–S17, the I invariants and the F fault taxonomy) are **not**
-duplicated here — [`observability-test-plan.md`](./observability-test-plan.md) §0 is the single
-status page for what is landed, skipped or planned. Design rationale lives in
-[`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md), and the
-mock-dapi hop and shadow multi-host cases (C8/C9) in
-[`observability-t5-test-plan.md`](./observability-t5-test-plan.md).
+Observability scenarios (C1–C9, S1–S17, the I invariants and the F fault taxonomy) are **not**
+duplicated here — [`observability-test-plan.md`](./observability-test-plan.md) carries each one in
+full, with its boot, setup, drive and assertion steps. Design rationale lives in
+[`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md).
 
 See [`README.md`](../README.md) for adversarial and observability detail.
 
@@ -508,8 +506,8 @@ node ids instead of a single hard-coded endpoint.
    serves `/healthz` 200; restart it at the end.
 
 **Pass criteria:** distinct node ids per acquire, fault and stop confined to the targeted instance.
-This closes gap **G1** of [`observability-test-plan.md`](./observability-test-plan.md) and is the
-prerequisite for its S3 (`finished_unused` loser) and S16 (slow node vs. fast node) scenarios.
+Per-node fault targeting is what the S3 (`finished_unused` loser) and S16 (slow node vs. fast node)
+scenarios of [`observability-test-plan.md`](./observability-test-plan.md) build on.
 
 **Run:** `make citest-ml-nodes` (or `-run TestMLNodePool_`).
 
@@ -533,8 +531,8 @@ them. That costs no storage but joins on `inference_id` + payload hash rather th
 because validation runs in a different process on a different trace.
 
 Design: [`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md) §6.5.
-The landed ML-failure half of payload capture is C5a
-([`observability-test-plan.md`](./observability-test-plan.md) §0).
+Both halves are written up as scenarios C5a and C5b in
+[`observability-test-plan.md`](./observability-test-plan.md).
 
 ---
 

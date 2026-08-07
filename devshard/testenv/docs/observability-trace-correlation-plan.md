@@ -1206,15 +1206,15 @@ func RequireSpanAttrs(t, obs, traceID string, want map[string]string)
 
 | ID | Assertion | Depends on |
 |----|-----------|-----------|
-| **C1** | One gateway chat → a single trace containing spans from `devshardctl` **and** `devshardd` | T1.4, T1.5 |
-| **C2** | Every Loki line for that trace carries the same `trace_id`, across ≥2 `compose_service` values | T1.1–T1.6 |
-| **C3** | `WaitTraceByAttr("{ span.devshard.disposition = \"ghost\" }")` returns ≥1 trace in the ghost e2e | T3 |
-| **C4** | For each Prometheus label value present on `devshard_accounting_disposition`, a matching span attribute value exists — the contract test for §2 | T3 |
-| **C5a** | ML-node failure e2e: the trace's log set contains the payload line with the matching `devshard.prompt.sha256` | T4a |
+| **C1** ✅ | One gateway chat → a single trace containing spans from `devshardctl` **and** `devshardd` | T1.4, T1.5 — `TestTraceLogCorrelation`, [observability-test-plan.md](./observability-test-plan.md) §4 |
+| **C2** ✅ | Every Loki line for that trace carries the same `trace_id`, across ≥2 `compose_service` values | T1.1–T1.6 — same test / doc |
+| **C3** ✅ | `WaitTraceByAttr("{ span.devshard.disposition = \"ghost\" }")` returns ≥1 trace in the ghost e2e | T3 — `TestDispositionTraceGhost`, same doc |
+| **C4** ✅ | For each Prometheus label value present on `devshard_accounting_disposition`, a matching span attribute value exists — the contract test for §2 | T3 — `TestDispositionLabelValuesMatchSpanAttrs`, same doc |
+| **C5a** ✅ | ML-node failure e2e: the trace's log set contains the payload line with the matching `devshard.prompt.sha256` | T4a — `TestPayloadCaptureHTTP503` / `…PartialStream` / `…SSEError`, same doc |
 | **C5b** | Validation-failure e2e: a payload line exists for the invalidated `inference_id`, joinable by payload hash | T4b (does not gate T6) |
-| **C6** | `tempo-alloy` profile: Alloy UI shows OTLP receiver → exporter connected and Tempo returns the trace | T2 |
-| **C7** | `jaeger-promtail` remains green (no regression in the legacy profile) | T1, T2 |
-| **C8** ✅ | One chat → Loki (+ Tempo) from `devshardctl`, `devshardd`/`versiond.*`, **and** `mock-dapi` share `trace_id` **and** `request_id` (metadata landed: `x-request-id` rides the gRPC hop) | T5 — `TestTraceLogCorrelationGatewayHostDapi`, see [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
+| **C6** ✅ | `tempo-alloy` profile: Tempo returns the trace end to end (Alloy-UI receiver→exporter check stays manual) | T2 — `TestObservabilitySmoke`, same doc |
+| **C7** ✅ | `jaeger-promtail` remains green (no regression in the legacy profile) | T1, T2 — `TestJaegerPromtailRegression`, same doc |
+| **C8** ✅ | One chat → Loki (+ Tempo) from `devshardctl`, `devshardd`/`versiond.*`, **and** `mock-dapi` share `trace_id` **and** `request_id` (metadata landed: `x-request-id` rides the gRPC hop) | T5 — `TestTraceLogCorrelationGatewayHostDapi`, scenario in [observability-test-plan.md](./observability-test-plan.md) §4 |
 | **C9** ✅ | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id`; mock-dapi acquires stay on that trace | T5 — `TestShadowHostMultiAttemptSameTrace`, same doc |
 
 Wire the disposition assertions into the existing accounting e2e tests listed in §5 rather than
@@ -1226,7 +1226,7 @@ traces today.
 ## 10. Phase T7 — multi-node mock ML pool in testenv ✅
 
 Prerequisite for the per-node failure scenarios in
-[observability-test-plan.md](./observability-test-plan.md) (gap **G1**), and the thing that makes
+[observability-test-plan.md](./observability-test-plan.md), and the thing that makes
 `mlnode.node.id` from T5a worth asserting.
 
 **Landed:** `ml_nodes` in gencompose → `mock-openai-{i}` at `BaseIP.40+i`; mock-dapi
