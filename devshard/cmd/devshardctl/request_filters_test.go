@@ -361,7 +361,7 @@ func TestNormalizeChatRequestKimiClampsZeroMaxTokensInsteadOfRejecting(t *testin
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"])
+	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_tokens"])
 }
 
 // Regression (found via e2e against the live Kimi route): a Kimi request that
@@ -374,9 +374,9 @@ func TestNormalizeChatRequestKimiMaxCompletionTokensZeroMirrorsToMaxTokens(t *te
 	require.NoError(t, err)
 	var raw map[string]any
 	require.NoError(t, json.Unmarshal(body, &raw))
-	require.EqualValues(t, kimiMaxTokensMin, raw["max_tokens"], "max_tokens mirrored + floored")
-	require.EqualValues(t, kimiMaxTokensMin, raw["max_completion_tokens"], "max_completion_tokens floored")
-	require.EqualValues(t, kimiMaxTokensMin, req.MaxTokens)
+	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_tokens"], "max_tokens mirrored + floored")
+	require.EqualValues(t, completionapi.MinTokensFloor, raw["max_completion_tokens"], "max_completion_tokens floored")
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
 	require.Contains(t, raw, "thinking_token_budget", "thinking budget derives from the mirrored max_tokens")
 }
 
@@ -390,13 +390,18 @@ func TestNormalizeChatRequestRejectsNonBoolFlags(t *testing.T) {
 	require.NoError(t, err)
 }
 
-func TestNormalizeChatRequestRejectsNonIntStopTokenIds(t *testing.T) {
-	_, _, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,"two",3]}`))
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "stop_token_ids")
+func TestNormalizeChatRequestStripsStopTokenIdsWithoutValidatingThem(t *testing.T) {
+	for _, body := range []string{
+		`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,"two",3]}`,
+		`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,2,3]}`,
+	} {
+		normalized, _, err := normalizeChatRequest([]byte(body))
+		require.NoError(t, err)
 
-	_, _, err = normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"stop_token_ids":[1,2,3]}`))
-	require.NoError(t, err)
+		var raw map[string]any
+		require.NoError(t, json.Unmarshal(normalized, &raw))
+		require.NotContains(t, raw, "stop_token_ids")
+	}
 }
 
 func TestNormalizeChatRequestRejectsNonStringStopAndBadWords(t *testing.T) {

@@ -529,7 +529,8 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ToolChoiceValidator{MaxNameLen: ToolChoiceMaxNameLen},
 				}),
-			newParameter("min_tokens"),
+			newParameter("min_tokens").
+				withRule(RequestFilterStagePreValidation, mustBeUint),
 			newParameter("bad_words").
 				withRule(RequestFilterStagePreValidation, elementsMustBeString).
 				withRule(RequestFilterStagePreValidation, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeStringListParameter{

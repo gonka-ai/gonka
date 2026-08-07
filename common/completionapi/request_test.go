@@ -493,7 +493,21 @@ func TestModifyRequestBodyWithLogprobsMode_TestermintInferenceRequestPromptHash(
 
 	canonical, err := utils.CanonicalizeJSON(r.NewBody)
 	require.NoError(t, err)
-	require.Equal(t, "a5d657a116456a31026dea733abf558bf97d6ea1051e32d2a95ee9e67e2464f6", utils.GenerateSHA256Hash(canonical))
+	require.Equal(t, "957c3d8008b8a568b104403f4d44d82d054f05e60dc221ddca1b7ba2903a3424", utils.GenerateSHA256Hash(canonical))
+}
+
+// Cross-language vector: testermint reimplements ModifyRequestBody in Kotlin and both must emit
+// a byte-identical body, or the prompt hash a node computes and the one testermint expects drift
+// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt.
+func TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector(t *testing.T) {
+	body := []byte(`{"model":"Qwen/Qwen2.5-7B-Instruct","temperature":0.8,"messages":[{"role":"system","content":"Regardless of the language of the question, answer in english"},{"role":"user","content":"When did Hawaii become a state"}]}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 0, "processed_logprobs")
+	require.NoError(t, err)
+
+	canonical, err := utils.CanonicalizeJSON(r.NewBody)
+	require.NoError(t, err)
+	require.Equal(t, "840c921425b13906f6131af5db28c5f29f67e1b2e5703938cb41ecf08e8a7f96", utils.GenerateSHA256Hash(canonical))
 }
 
 // #6: top_logprobs is hard-pinned to ForcedTopLogprobs on every request — absent,
