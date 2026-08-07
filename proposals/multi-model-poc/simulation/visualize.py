@@ -7,8 +7,8 @@ import matplotlib.pyplot as plt
 BASE_MODEL = "minimax-m2.7-fp8"
 
 
-def selected_model(throughput, GPU, coeff_i):
-    return max(throughput, key=lambda M_i: throughput[M_i][GPU] * coeff_i[M_i])
+def selected_model(throughput, GPU, effective_coeff_i):
+    return max(throughput, key=lambda M_i: throughput[M_i][GPU] * effective_coeff_i[M_i])
 
 
 def visualize():
@@ -25,16 +25,16 @@ def visualize():
     colors = {M_i: f"C{index}" for index, M_i in enumerate(models)}
     gpu_colors = {"H100": "#94a3b8", "H200": "#64748b", "B200": "#3b82f6", "B300": "#1d4ed8"}
 
-    REWARD_POOL = experiment.get("REWARD_POOL", 300000)
+    REWARD_POOL = experiment["REWARD_POOL"]
     gpu_rewards = {GPU: [] for GPU in gpus}
     for epoch in epochs:
         total_W = sum(epoch["W_j"].values())
-        coeff_i = epoch["coeff_i"]
-        W_ref = throughput[BASE_MODEL]["H100"] * coeff_i[BASE_MODEL]
+        effective_coeff_i = epoch["effective_coeff_i"]
+        W_ref = throughput[BASE_MODEL]["H100"] * effective_coeff_i[BASE_MODEL]
         reward_ref = (REWARD_POOL * W_ref / total_W) if total_W > 0 else 0.0
         for GPU in gpus:
-            best_model = selected_model(throughput, GPU, coeff_i)
-            W_node = throughput[best_model][GPU] * coeff_i[best_model]
+            best_model = selected_model(throughput, GPU, effective_coeff_i)
+            W_node = throughput[best_model][GPU] * effective_coeff_i[best_model]
             reward_per_node = (REWARD_POOL * W_node / total_W) if total_W > 0 else 0.0
             normalized_reward = (reward_per_node / reward_ref) if reward_ref > 0 else 0.0
             gpu_rewards[GPU].append(normalized_reward)
@@ -60,11 +60,14 @@ def visualize():
 
     panel = figure.add_subplot(grid[0, 0])
     panel.axis("off")
+    total_nodes = sum(len(nodes) for nodes in experiment["hardware_distribution"])
     lines = [
         "Simulation parameters",
-        "  hosts={hosts}  nodes={nodes}  seed={seed}".format(**environment),
-        f"  Z={experiment['Z']}  s={experiment['s']}  epochs={environment['N']}",
-        f"  T_i = {params_i[models[0]]['T_i']:.3f} for all models",
+        f"  hosts={environment['hosts']}  nodes={total_nodes}  seed={environment['seed']}",
+        f"  Z={experiment['Z']}  s_min={experiment['s_min']}  s_max={experiment['s_max']}",
+        f"  s_max_bootstrap={experiment['s_max_bootstrap']}  epsilon={experiment['epsilon']}  epochs={environment['N']}",
+        "Targets",
+        *[f"  {M_i}: T_i={params_i[M_i]['T_i']:.2f}" for M_i in models],
         "",
         "Static coefficients",
         *static_coeffs,
@@ -116,14 +119,14 @@ def visualize():
     lines = ["GPU preferences (from run)", ""]
     for GPU in gpus:
         chosen = [
-            selected_model(throughput, GPU, epoch["coeff_i"]) for epoch in epochs
+            selected_model(throughput, GPU, epoch["effective_coeff_i"]) for epoch in epochs
         ]
         if len(set(chosen)) > 1:
             lines.append(f"  {GPU}: switches {' <-> '.join(sorted(set(chosen)))}")
             continue
         best = chosen[0]
-        coeff_i = epochs[-1]["coeff_i"]
-        rewards = {M_i: throughput[M_i][GPU] * coeff_i[M_i] for M_i in models}
+        effective_coeff_i = epochs[-1]["effective_coeff_i"]
+        rewards = {M_i: throughput[M_i][GPU] * effective_coeff_i[M_i] for M_i in models}
         runner = max((M_i for M_i in models if M_i != best), key=rewards.get)
         ratio = rewards[runner] / rewards[best]
         tie = "  TIE" if ratio == 1 else ""
@@ -151,11 +154,16 @@ def visualize():
     other_models = [M_i for M_i in models if M_i != BASE_MODEL]
     for row, M_i in enumerate(other_models, start=1):
         panel = figure.add_subplot(grid[row, 1])
-        ratio = [
+        coeff_ratio = [
             epoch["coeff_i"][M_i] / epoch["coeff_i"][BASE_MODEL]
             for epoch in epochs
         ]
-        panel.plot(N, ratio, color=colors[M_i], label=f"coeff {M_i} / {BASE_MODEL}")
+        effective_coeff_ratio = [
+            epoch["effective_coeff_i"][M_i] / epoch["effective_coeff_i"][BASE_MODEL]
+            for epoch in epochs
+        ]
+        panel.plot(N, coeff_ratio, color=colors[M_i], linestyle=":", label=f"coeff {M_i} / {BASE_MODEL}")
+        panel.plot(N, effective_coeff_ratio, color=colors[M_i], label=f"effective_coeff {M_i} / {BASE_MODEL}")
         thresholds = {
             GPU: throughput[BASE_MODEL][GPU] / throughput[M_i][GPU]
             for GPU in gpus
@@ -166,17 +174,18 @@ def visualize():
                 N[-1], threshold, f" {GPU}: {threshold:.3f}",
                 va="center", fontsize=8, color="gray",
             )
-        if max(ratio) > min(ratio):
+        if max(effective_coeff_ratio) > min(effective_coeff_ratio):
             inset = panel.inset_axes([0.35, 0.45, 0.6, 0.45])
-            inset.plot(N, ratio, color=colors[M_i])
+            inset.plot(N, effective_coeff_ratio, color=colors[M_i])
             active = min(
                 thresholds.values(),
-                key=lambda t: abs(t - sum(ratio) / len(ratio)),
+                key=lambda t: abs(t - sum(effective_coeff_ratio) / len(effective_coeff_ratio)),
             )
             inset.axhline(active, color="gray", linestyle="--", linewidth=0.8)
-            margin = (max(ratio) - min(ratio)) * 0.3
+            margin = (max(effective_coeff_ratio) - min(effective_coeff_ratio)) * 0.3
             inset.set_ylim(
-                min(ratio + [active]) - margin, max(ratio + [active]) + margin
+                min(effective_coeff_ratio + [active]) - margin,
+                max(effective_coeff_ratio + [active]) + margin,
             )
             inset.set_title("zoom at active threshold", fontsize=8)
             inset.tick_params(labelsize=7)
@@ -195,7 +204,9 @@ def visualize():
     panel.legend(fontsize=8)
     panel.set_xlabel("N")
 
-    artifact = Path(__file__).parent / "dynamic-coeff.png"
+    name = environment.get("name")
+    suffix = f"-{name}" if name else ""
+    artifact = Path(__file__).parent / f"dynamic-coeff{suffix}.png"
     figure.savefig(artifact, bbox_inches="tight", dpi=110)
     return artifact
 
