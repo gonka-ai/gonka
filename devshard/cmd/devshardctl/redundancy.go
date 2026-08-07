@@ -946,10 +946,15 @@ type inflight struct {
 	emptyResponseBodySampleTruncated bool
 
 	// payloadResponseSample is a capped write-through copy of stream bytes for
-	// failure capture (partial streams clear pendingBuf after content).
+	// failure capture (partial streams clear pendingBuf after content). Only
+	// filled when capturePayload is set, so the default-off deployment retains
+	// nothing.
 	payloadResponseSample          []byte
 	payloadResponseSampleTruncated bool
 	payloadCaptured                atomic.Bool // once-guard for T4a ML payload log
+	// capturePayload resolves DEVSHARD_LOG_PAYLOADS* once per attempt. Probes
+	// are excluded because maybeLogMLNodePayloadForAttempt discards them.
+	capturePayload bool
 
 	resp *host.HostResponse
 	err  error
@@ -1023,7 +1028,7 @@ func (inf *inflight) captureShortContentResponseChunk(p []byte) {
 
 // capturePayloadResponseChunk keeps a capped stream sample for T4a failure logs.
 func (inf *inflight) capturePayloadResponseChunk(p []byte) {
-	if inf == nil || len(p) == 0 || inf.payloadResponseSampleTruncated {
+	if inf == nil || !inf.capturePayload || len(p) == 0 || inf.payloadResponseSampleTruncated {
 		return
 	}
 	remaining := emptyStreamBodySampleLimit - len(inf.payloadResponseSample)
@@ -1912,6 +1917,7 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 			noWinnerReason:           noWinner.reason,
 			noWinnerQuarantineMode:   noWinner.quarantineMode,
 			noWinnerFailureStrikes:   noWinner.failureStrikes,
+			capturePayload:           !res.isProbe && observability.LoadPayloadPolicy().MLNodeCaptureEnabled(),
 			participantClassifyBytes: participantClassify.counterFor(participantKey),
 			done:                     make(chan struct{}),
 			receiptCh:                make(chan struct{}),
@@ -3027,7 +3033,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 		detail := gatewayAttemptFailureReason(inf, e.session)
 		key.DetailReason = detail
 		key.FailureOrigin = accounting.FailureOriginFromDetail(detail)
-		e.maybeLogMLNodePayloadForAttempt(inf, params, key.FailureOrigin, detail)
+		e.maybeLogMLNodePayloadForTerminal(inf, params, key.FailureOrigin, detail)
 	}
 	inf.applyCounterKeyAttrs(key)
 	if e.metrics == nil {
@@ -4235,14 +4241,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 			// no content. Telemetry-only — not a host fault, no quarantine.
 			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
 		} else {
-			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model, QuarantinePayloadStats{
-				Ctx:           inf.attemptCtx(),
-				RequestBytes:  len(params.Prompt),
-				ResponseBytes: len(inf.payloadResponseSample) + len(inf.emptyResponseBodySample),
-				Stream:        params.Stream,
-				MessageCount:  observability.CountChatMessages(params.Prompt),
-				MaxTokens:     params.MaxTokens,
-			})
+			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model, emptyStreamQuarantineStats(inf, params))
 		}
 	}
 	if !requestSucceeded && emptyStream {

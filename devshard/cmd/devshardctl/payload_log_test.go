@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"strings"
 	"testing"
 	"time"
+
+	commonobs "common/observability"
 
 	"devshard/accounting"
 	"devshard/observability"
@@ -140,6 +144,165 @@ func TestMaybeLogQuarantinePayload_SizesOnly(t *testing.T) {
 	require.Contains(t, out, `"quarantine_mode":"probe"`)
 	require.NotContains(t, out, `"request":"`)
 	require.NotContains(t, out, `"response":"`)
+}
+
+// An attempt abandoned by a bounded wait is still streaming when
+// finishRaceOutcome reaches it. The terminal path must leave it alone so the
+// once-guard survives for the classifier that actually knows how it failed.
+func TestMaybeLogMLNodePayloadForTerminal_SkipsAttemptStillStreaming(t *testing.T) {
+	withPayloadPolicy(t, "full", "true", "false")
+	buf := withDispositionLogCapture(t)
+
+	e := &Redundancy{}
+	prompt := []byte(`{"messages":[{"role":"user","content":"hi"}]}`)
+	inf := &inflight{
+		escrowID:              "e1",
+		nonce:                 21,
+		sendTime:              time.Now(),
+		capturePayload:        true,
+		payloadResponseSample: []byte("data: partial"),
+		done:                  make(chan struct{}),
+	}
+	inf.setReceiptAt(time.Now())
+
+	// not_finished is a host_response origin, so only the done check stops it.
+	e.maybeLogMLNodePayloadForTerminal(inf, user.InferenceParams{Prompt: prompt},
+		accounting.FailureOriginFromDetail("not_finished"), "not_finished")
+	require.NotContains(t, buf.String(), `"stage":"payload_captured"`)
+	require.False(t, inf.payloadCaptured.Load(), "once-guard must stay available")
+
+	// The attempt finishes and its own classifier emits the authoritative line.
+	inf.err = errEmptyStream
+	inf.errorSource = "error.TimeoutError"
+	inf.errorMessage = "host gave up"
+	close(inf.done)
+	e.maybeLogMLNodePayloadForAttempt(inf, user.InferenceParams{Prompt: prompt},
+		accounting.FailureHostResponse, "empty_stream")
+
+	out := buf.String()
+	require.Contains(t, out, `"stage":"payload_captured"`)
+	require.Contains(t, out, `"detail_reason":"empty_stream"`)
+	require.Contains(t, out, `"error_message":"host gave up"`)
+}
+
+func TestMaybeLogMLNodePayloadForTerminal_CapturesFinishedAttempt(t *testing.T) {
+	withPayloadPolicy(t, "full", "true", "false")
+	buf := withDispositionLogCapture(t)
+
+	e := &Redundancy{}
+	inf := &inflight{
+		escrowID:              "e1",
+		nonce:                 22,
+		sendTime:              time.Now(),
+		capturePayload:        true,
+		payloadResponseSample: []byte("data: partial"),
+		err:                   transport.ErrSSEStreamTruncated,
+		done:                  make(chan struct{}),
+	}
+	close(inf.done)
+
+	e.maybeLogMLNodePayloadForTerminal(inf, user.InferenceParams{Prompt: []byte(`{}`)},
+		accounting.FailureHostResponse, "sse_truncated")
+
+	require.Contains(t, buf.String(), `"stage":"payload_captured"`)
+	require.Contains(t, buf.String(), `"detail_reason":"sse_truncated"`)
+}
+
+func TestMaybeLogMLNodePayload_SampleTruncationIsItsOwnField(t *testing.T) {
+	withPayloadPolicy(t, "full", "true", "false")
+	buf := withDispositionLogCapture(t)
+
+	inf := &inflight{
+		escrowID:                       "e1",
+		nonce:                          12,
+		sendTime:                       time.Now(),
+		payloadResponseSample:          []byte("data: {}"),
+		payloadResponseSampleTruncated: true,
+		err:                            errEmptyStream,
+	}
+	maybeLogMLNodePayload(inf.attemptCtx(), inf, user.InferenceParams{Prompt: []byte(`{}`)},
+		accounting.FailureHostResponse, "empty_stream")
+
+	out := buf.String()
+	require.Contains(t, out, `"sample_truncated":true`)
+	require.Equal(t, 1, strings.Count(out, `"response_truncated"`), "the formatter owns response_truncated alone")
+}
+
+func TestCollectFailureResponseBody_ErrorSampleIsComplete(t *testing.T) {
+	inf := &inflight{errorBodySample: []byte(`data: {"error":{"message":"boom"}}`)}
+	body, truncated := collectFailureResponseBody(inf)
+	require.Equal(t, `data: {"error":{"message":"boom"}}`, string(body))
+	require.False(t, truncated)
+}
+
+func TestCapturePayloadResponseChunk_RetainsNothingWhenDisabled(t *testing.T) {
+	inf := &inflight{}
+	inf.capturePayloadResponseChunk(bytes.Repeat([]byte("x"), 4096))
+	require.Empty(t, inf.payloadResponseSample)
+	require.False(t, inf.payloadResponseSampleTruncated)
+
+	inf.capturePayload = true
+	inf.capturePayloadResponseChunk([]byte("data: {}"))
+	require.Equal(t, "data: {}", string(inf.payloadResponseSample))
+}
+
+func TestEmptyStreamQuarantineStats_LazyAndCountsStreamBytesOnce(t *testing.T) {
+	prompt := []byte(`{"messages":[{"role":"system"},{"role":"user"}]}`)
+	inf := &inflight{
+		payloadResponseSample:   []byte("data: role-chunk"),
+		emptyResponseBodySample: "data: role-chunk",
+	}
+	inf.outputBytes.Store(16)
+
+	withPayloadPolicy(t, "off", "false", "false")
+	require.Equal(t, QuarantinePayloadStats{}, emptyStreamQuarantineStats(inf, user.InferenceParams{Prompt: prompt}))
+
+	withPayloadPolicy(t, "off", "false", "true")
+	stats := emptyStreamQuarantineStats(inf, user.InferenceParams{Prompt: prompt, Stream: true, MaxTokens: 8})
+	require.Equal(t, 16, stats.ResponseBytes, "overlapping capture buffers must not be summed")
+	require.Equal(t, len(prompt), stats.RequestBytes)
+	require.Equal(t, 2, stats.MessageCount)
+}
+
+// lockProbeWriter fails the test if a quarantine payload line is written while
+// the limiter mutex is held — that mutex gates admission for every request.
+type lockProbeWriter struct {
+	t       *testing.T
+	limiter *ParticipantRequestLimiter
+	buf     *bytes.Buffer
+}
+
+func (w *lockProbeWriter) Write(p []byte) (int, error) {
+	if bytes.Contains(p, []byte(`"stage":"payload_quarantine"`)) {
+		if w.limiter.mu.TryLock() {
+			w.limiter.mu.Unlock()
+		} else {
+			w.t.Error("payload_quarantine emitted while holding the limiter lock")
+		}
+	}
+	return w.buf.Write(p)
+}
+
+func TestQuarantinePayloadLogEmittedOffTheLimiterLock(t *testing.T) {
+	withPayloadPolicy(t, "off", "false", "true")
+
+	limiter := NewParticipantRequestLimiter(10, 10)
+	var buf bytes.Buffer
+	observability.InstallLogger("json")
+	probe := &lockProbeWriter{t: t, limiter: limiter, buf: &buf}
+	prev := slog.Default()
+	slog.SetDefault(slog.New(commonobs.NewTraceHandler(
+		slog.NewJSONHandler(probe, &slog.HandlerOptions{Level: slog.LevelInfo}))))
+	t.Cleanup(func() {
+		slog.SetDefault(prev)
+		observability.InstallLogger("text")
+	})
+
+	limiter.ObserveStalledWinner("stall-host")
+
+	require.Contains(t, buf.String(), `"stage":"payload_quarantine"`)
+	require.Contains(t, buf.String(), `"reason":"stalled_winner_quarantine"`)
+	require.Zero(t, limiter.pendingQuarantineCount.Load(), "queue must drain on unlock")
 }
 
 func TestCollectFailureResponseBody_PrefersPayloadSample(t *testing.T) {

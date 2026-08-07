@@ -123,6 +123,11 @@ func BodySHA256(body []byte) string {
 const (
 	redactHeadRunes = 32
 	redactTailRunes = 32
+	// redactMaskWindow is the extra raw context masked around each kept slice.
+	// Masking runs on the windows rather than the whole body, so a PII token
+	// straddling a cut still has to be fully inside a masked region to be
+	// caught; 256 bytes comfortably exceeds any pattern below.
+	redactMaskWindow = 256
 )
 
 var piiPatterns = []*regexp.Regexp{
@@ -135,13 +140,22 @@ var piiPatterns = []*regexp.Regexp{
 // given level. Hash is always included when body is non-empty. Cap applies
 // after redaction.
 func FormatPayloadBodies(level string, maxBytes int, request, response []byte) []any {
+	return FormatPayloadBodiesWithPromptHash(level, maxBytes, request, response, "")
+}
+
+// FormatPayloadBodiesWithPromptHash is FormatPayloadBodies for callers that
+// already hashed the prompt for a span attribute; pass "" to hash here.
+func FormatPayloadBodiesWithPromptHash(level string, maxBytes int, request, response []byte, promptHash string) []any {
 	if maxBytes <= 0 {
 		maxBytes = DefaultPayloadMaxBytes
 	}
 	fields := make([]any, 0, 12)
 	fields = append(fields, "request_bytes", len(request))
 	if len(request) > 0 {
-		fields = append(fields, "devshard.prompt.sha256", PromptSHA256(request))
+		if promptHash == "" {
+			promptHash = PromptSHA256(request)
+		}
+		fields = append(fields, "devshard.prompt.sha256", promptHash)
 	}
 	fields = append(fields, "response_bytes", len(response))
 	if len(response) > 0 {
@@ -173,16 +187,26 @@ func FormatPayloadBodies(level string, maxBytes int, request, response []byte) [
 	return fields
 }
 
+// redactBody keeps a rune-bounded head and tail and drops everything between.
+// It slices before masking: the output is ~64 runes regardless of input, so
+// running the PII patterns over the whole body would cost three passes and a
+// full copy of megabytes to produce a line of text.
 func redactBody(raw []byte, maxBytes int) (string, bool) {
-	s := string(raw)
-	s = maskPII(s)
-	head, mid, tail := splitHeadTail(s, redactHeadRunes, redactTailRunes)
-	out := head
-	if mid {
-		out += "…[redacted]…"
+	headEnd := headRuneEnd(raw, redactHeadRunes)
+	tailStart := tailRuneStart(raw, redactTailRunes)
+	if headEnd >= tailStart {
+		// Head and tail already cover the body; nothing to drop.
+		return truncateBytes(maskPII(string(raw)), maxBytes)
 	}
-	out += tail
-	return truncateBytes(out, maxBytes)
+	head := []byte(maskPII(string(raw[:min(headEnd+redactMaskWindow, len(raw))])))
+	tail := []byte(maskPII(string(raw[max(tailStart-redactMaskWindow, 0):])))
+	out := string(head[:headRuneEnd(head, redactHeadRunes)]) +
+		"…[redacted]…" +
+		string(tail[tailRuneStart(tail, redactTailRunes):])
+	out, _ = truncateBytes(out, maxBytes)
+	// Dropping the middle loses far more than the byte cap ever does, so the
+	// flag must report it; otherwise a 256 KiB body reads as untruncated.
+	return out, true
 }
 
 func maskPII(s string) string {
@@ -192,21 +216,37 @@ func maskPII(s string) string {
 	return s
 }
 
-func splitHeadTail(s string, headN, tailN int) (head string, mid bool, tail string) {
-	runes := []rune(s)
-	if len(runes) <= headN+tailN {
-		return s, false, ""
+// headRuneEnd returns the byte offset just past the first n runes of b, or
+// len(b) when b holds fewer.
+func headRuneEnd(b []byte, n int) int {
+	off := 0
+	for i := 0; i < n && off < len(b); i++ {
+		_, size := utf8.DecodeRune(b[off:])
+		off += size
 	}
-	return string(runes[:headN]), true, string(runes[len(runes)-tailN:])
+	return off
+}
+
+// tailRuneStart returns the byte offset where the last n runes of b begin, or
+// 0 when b holds fewer.
+func tailRuneStart(b []byte, n int) int {
+	off := len(b)
+	for i := 0; i < n && off > 0; i++ {
+		_, size := utf8.DecodeLastRune(b[:off])
+		off -= size
+	}
+	return off
 }
 
 func truncateBytes(s string, maxBytes int) (string, bool) {
 	if maxBytes <= 0 || len(s) <= maxBytes {
 		return s, false
 	}
-	// Avoid splitting a multi-byte rune at the cut.
+	// Avoid splitting a multi-byte rune at the cut. A rune is at most four
+	// bytes, so this backs up at most three times; validating the whole prefix
+	// instead would be quadratic in maxBytes.
 	cut := maxBytes
-	for cut > 0 && !utf8.ValidString(s[:cut]) {
+	for cut > 0 && !utf8.RuneStart(s[cut]) {
 		cut--
 	}
 	if cut <= 0 {
@@ -236,14 +276,14 @@ func AddPayloadCaptured(span trace.Span, hash string) {
 
 // ResponseHeaderAllowlist is the set of response headers retained for empty-body fallback.
 var ResponseHeaderAllowlist = map[string]struct{}{
-	"Content-Type":             {},
-	"Content-Length":           {},
-	"X-Request-Id":             {},
-	"X-Request-ID":             {},
-	"Server":                   {},
-	"X-Devshard-Error":         {},
-	"Openai-Processing-Ms":     {},
-	"X-Envoy-Upstream-Service": {},
+	"Content-Type":                  {},
+	"Content-Length":                {},
+	"X-Request-Id":                  {},
+	"X-Request-ID":                  {},
+	"Server":                        {},
+	"X-Devshard-Error":              {},
+	"Openai-Processing-Ms":          {},
+	"X-Envoy-Upstream-Service-Time": {},
 }
 
 // FilterResponseHeaders keeps only allowlisted header keys (canonical MIME keys).
