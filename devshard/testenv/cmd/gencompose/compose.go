@@ -64,7 +64,8 @@ services:
       MOCK_CHAIN_GRPC_ADDR: "{{ .MockChain.Host }}:{{ .MockChain.GRPCPort }}"
       MOCK_CHAIN_RPC_ADDR: "http://{{ .MockChain.Host }}:{{ .MockChain.RPCPort }}"
       MOCK_CHAIN_TESTENV_URL: "http://{{ .MockChain.Host }}:{{ .MockChain.TestenvPort }}"
-      MOCK_ML_ENDPOINT: "http://{{ .MockOpenAI.Host }}:{{ .MockOpenAI.HTTPPort }}"
+      MOCK_ML_ENDPOINT: "{{ primaryMLEndpoint . }}"
+      MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
     volumes:
@@ -77,22 +78,26 @@ services:
         ipv4_address: {{ .Network.BaseIP }}.3
     depends_on:
       - mock-chain
-      - mock-openai
+{{ range mlNodeIDs . }}
+      - {{ . }}
+{{ end }}
     restart: unless-stopped
+{{ range $i, $id := mlNodeIDs . }}
 
-  mock-openai:
+  {{ $id }}:
     build:
       context: ../..
       dockerfile: devshard/testenv/Dockerfile.mockopenai
     image: devshard-mock-openai:latest
     environment:
-      MOCK_OPENAI_ADDR: ":{{ .MockOpenAI.HTTPPort }}"
+      MOCK_OPENAI_ADDR: ":{{ $.MockOpenAI.HTTPPort }}"
     ports:
-      - "{{ .MockOpenAI.HTTPPort }}:{{ .MockOpenAI.HTTPPort }}"
+      - "{{ mlNodeHostPort $ $i }}:{{ $.MockOpenAI.HTTPPort }}"
     networks:
       testenv:
-        ipv4_address: {{ .Network.BaseIP }}.4
+        ipv4_address: {{ $.Network.BaseIP }}.{{ mlNodeIPOffset $i }}
     restart: unless-stopped
+{{ end }}
 {{ if .Postgres.Enabled }}
 
   devshard-postgres:
@@ -167,8 +172,10 @@ services:
         condition: service_healthy
       mock-dapi:
         condition: service_started
-      mock-openai:
+{{ range mlNodeIDs $ }}
+      {{ . }}:
         condition: service_started
+{{ end }}
 {{ if isHAReplica $ . }}
       devshard-postgres:
         condition: service_healthy
@@ -180,7 +187,9 @@ services:
 {{ else }}
       - mock-chain
       - mock-dapi
-      - mock-openai
+{{ range mlNodeIDs $ }}
+      - {{ . }}
+{{ end }}
 {{ end }}
     restart: unless-stopped
 {{ end }}
@@ -232,6 +241,10 @@ services:
       DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
       OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
       LOG_FORMAT: ${LOG_FORMAT:-json}
+      DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}
+      DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}
+      DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}
+      DEVSHARD_LOG_PAYLOADS_MAX_BYTES: ${DEVSHARD_LOG_PAYLOADS_MAX_BYTES:-16384}
     volumes:
       - ./data/devshardctl:/var/lib/devshardctl
     ports:
@@ -264,6 +277,11 @@ func writeCompose(cfg *config.File, outPath string) error {
 		"legacyVersiondHost": legacyVersiondHost,
 		"primaryEscrowID":    primaryEscrowID,
 		"primaryModelID":     primaryModelID,
+		"mlNodeIDs":          mlNodeIDs,
+		"mlNodeIPOffset":     config.MLNodeIPOffset,
+		"mlNodeHostPort":     mlNodeHostPort,
+		"primaryMLEndpoint":  primaryMLEndpoint,
+		"mockMLNodesEnv":     mockMLNodesEnv,
 	}
 	tmpl, err := template.New("compose").Funcs(funcs).Parse(composeTmpl)
 	if err != nil {
@@ -364,4 +382,34 @@ func primaryEscrowID(cfg *config.File) string {
 
 func primaryModelID(cfg *config.File) string {
 	return config.PrimaryModelID(cfg)
+}
+
+func mlNodeIDs(cfg *config.File) []string {
+	if cfg == nil {
+		return []string{config.MLNodeID(0)}
+	}
+	return cfg.MLNodeIDs()
+}
+
+func primaryMLEndpoint(cfg *config.File) string {
+	if cfg == nil {
+		return "http://mock-openai-0:8088"
+	}
+	return cfg.PrimaryMLEndpoint()
+}
+
+func mockMLNodesEnv(cfg *config.File) string {
+	if cfg == nil {
+		return "mock-openai-0=http://mock-openai-0:8088"
+	}
+	return cfg.MockMLNodesEnv()
+}
+
+// mlNodeHostPort publishes a distinct host port per pool member (container port unchanged).
+func mlNodeHostPort(cfg *config.File, i int) int {
+	port := config.DefaultMockOpenAIHTTPPort
+	if cfg != nil && cfg.MockOpenAI.HTTPPort > 0 {
+		port = cfg.MockOpenAI.HTTPPort
+	}
+	return port + i
 }

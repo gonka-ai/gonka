@@ -172,9 +172,11 @@ See **T3.0** in
 
 ## Payloads
 
-`DEVSHARD_LOG_PROMPTS` (and related payload knobs in the correlation plan) control whether failing
-requests capture prompt text. Payloads go to a Loki line inheriting `trace_id` — not to span
-attributes. Only small fingerprints / a `payload.captured` span event stay on the trace.
+`DEVSHARD_LOG_PAYLOADS` (`off`|`hash`|`redacted`|`full`, default `off`) plus per-trigger switches
+(`_MLNODE`, `_QUARANTINE`, `_VALIDATION`) control whether failing request/response bodies are
+written to Loki. Payloads go to a Loki line inheriting `trace_id` — not to span attributes. Only a
+fingerprint join key on the log line and a `payload.captured` span event stay on the trace.
+`full` is testenv-only.
 
 ## Queries
 
@@ -217,11 +219,14 @@ itself dies with a full disk.
 
 ## Build order (phases)
 
-1. **T1** — ctx-aware logging with `trace_id`/`span_id`; OTel init in `devshardctl`; `traceparent` +
-   `X-Request-Id` on the gateway → host hop. *(landed)*
-2. **T2** — Tempo + Alloy profiles. *(landed)*
-3. **T3.0** — 5 s classification sweep (this document, above). *(landed)*
-4. **T3** — attempt spans, classification log line, linked disposition trace.
-5. **T4** — prompt / payload capture for failing requests.
+1. **T1** ✅ — ctx-aware logging with `trace_id`/`span_id`; OTel init in `devshardctl`; `traceparent` +
+   `X-Request-Id` on the gateway → host hop.
+2. **T2** ✅ — Tempo + Alloy profiles (`tempo-alloy` e2e default; Jaeger/Promtail still green).
+3. **T3.0** ✅ — 5 s classification sweep (this document, above).
+4. **T3** ✅ — attempt spans, classification log line, linked disposition trace
+   (`TestDispositionTrace*` / C3–C4 via `make citest-observability`; unfinished late-path citest still pending G3).
+5. **T4a** ✅ — ML-node failure + quarantine payload capture (`DEVSHARD_LOG_PAYLOADS*`); T4b (validation) still deferred.
 6. **T5** — dapi node-selection hop + mlnode (devshardd client spans first).
-7. **T6** — Grafana forensics dashboards + citest C1–C7.
+   Test plan: [observability-t5-test-plan.md](../testenv/docs/observability-t5-test-plan.md) (C8 three-service
+   logs; C9 shadow multi-host under one `request_id` / `trace_id`).
+7. **T6** — Grafana forensics dashboards + citest C1–C7 (+ C8/C9 once T5 lands).

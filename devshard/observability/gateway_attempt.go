@@ -26,6 +26,7 @@ type AttemptIdentity struct {
 	StartReason    string
 	AttemptIndex   int
 	TriggerNonce   uint64 // 0 for primary
+	Stream         bool   // T4a / §5.8 latency-panel filter
 }
 
 // StartGatewayAttempt opens a child span under the active gateway.request.
@@ -60,6 +61,7 @@ func StartGatewayAttempt(ctx context.Context, a AttemptIdentity) (context.Contex
 	if a.TriggerNonce != 0 {
 		attrs = append(attrs, AttrAttemptTriggerNonce.Int64(int64(a.TriggerNonce)))
 	}
+	attrs = append(attrs, AttrStream.Bool(a.Stream))
 	return otel.Tracer(string(gatewayTracer)).Start(
 		ctx,
 		SpanNameGatewayAttempt,

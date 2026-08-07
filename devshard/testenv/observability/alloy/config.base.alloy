@@ -29,7 +29,7 @@ discovery.relabel "containers" {
   // Keep the same service set Promtail scrapes (plus tempo/alloy).
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_service"]
-    regex         = "(mock-chain|mock-dapi|mock-openai|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail|tempo|alloy)"
+    regex         = "(mock-chain|mock-dapi|mock-openai.*|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail|tempo|alloy)"
     action        = "keep"
   }
 

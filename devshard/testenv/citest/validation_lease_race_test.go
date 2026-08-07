@@ -25,7 +25,7 @@ func TestValidationLeaseRaceCore(t *testing.T) {
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "devshardctl", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "devshardctl", "mock-openai-0", "devshard-postgres")
 		}
 	})
 
@@ -100,7 +100,7 @@ func TestValidationLeaseRacePendingStretch(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai-0", "devshard-postgres")
 		}
 	})
 
@@ -169,7 +169,7 @@ func TestValidationLeaseRaceStaleReclaim(t *testing.T) {
 	t.Cleanup(func() {
 		harness.ResetMockOpenAIFault(t, client, mockOpenAI)
 		if t.Failed() {
-			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai", "devshard-postgres")
+			harness.DumpComposeLogs(t, stack, "versiond-0", "versiond-1", "versiond-2", "mock-openai-0", "devshard-postgres")
 		}
 	})
 

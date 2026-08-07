@@ -42,7 +42,7 @@ scrape_configs:
           stage:
     relabel_configs:
       - source_labels: [__meta_docker_container_label_com_docker_compose_service]
-        regex: "(mock-chain|mock-dapi|mock-openai|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail)"
+        regex: "(mock-chain|mock-dapi|mock-openai.*|versiond-.*|versiond-router|devshardctl|devshard-postgres|jaeger|loki|prometheus|grafana|promtail)"
         action: keep
       - source_labels: [__meta_docker_container_name]
         regex: '/(.*)'

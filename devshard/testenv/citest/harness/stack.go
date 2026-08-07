@@ -28,6 +28,7 @@ type Stack struct {
 	Timeout       time.Duration
 	Observability bool
 	ObsProfile    ObsProfile
+	payloadEnv    map[string]string // merged into .env by PrepareObservabilityOverlay (T4a)
 }
 
 // Endpoints are host-published URLs for health probes.
@@ -110,7 +111,7 @@ func (s *Stack) Endpoints(t *testing.T, cfg *config.File) Endpoints {
 	eps := s.MockChainEndpoints(t, cfg)
 	eps.MockDapiHTTP = "http://" + s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.HTTPPort)
 	eps.MockDapiGRPC = s.composePublishedAddr(t, "mock-dapi", cfg.MockDapi.GRPCPort)
-	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, "mock-openai", cfg.MockOpenAI.HTTPPort)
+	eps.MockOpenAIHTTP = "http://" + s.composePublishedAddr(t, cfg.PrimaryMLNodeID(), cfg.MockOpenAI.HTTPPort)
 	eps.RouterHTTP = "http://" + s.composePublishedAddr(t, "versiond-router", 8080)
 	eps.GatewayHTTP = "http://" + s.composePublishedAddr(t, "devshardctl", cfg.Devshardctl.Port)
 	return eps

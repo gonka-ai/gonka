@@ -46,8 +46,8 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	if cfg.ChainGRPCAddr == "" {
 		return nil, errors.New("mockdapi: ChainGRPCAddr is required")
 	}
-	if cfg.MLEndpoint == "" {
-		return nil, errors.New("mockdapi: MLEndpoint is required")
+	if len(cfg.MLNodes) == 0 && cfg.MLEndpoint == "" {
+		return nil, errors.New("mockdapi: MLNodes or MLEndpoint is required")
 	}
 	if cfg.ChainPollInterval <= 0 {
 		cfg.ChainPollInterval = time.Second
@@ -81,6 +81,7 @@ func New(ctx context.Context, cfg Config) (*Service, error) {
 	paramsSrv, err := params.NewServer(params.Config{
 		Source:     src,
 		MLEndpoint: cfg.MLEndpoint,
+		MLNodes:    cfg.MLNodes,
 		MaxWaitCap: func() time.Duration { return commonruntimeconfig.DefaultMaxWaitCap },
 		Log:        slog.Default(),
 	})

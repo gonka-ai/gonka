@@ -945,6 +945,12 @@ type inflight struct {
 	emptyResponseBodySample          string
 	emptyResponseBodySampleTruncated bool
 
+	// payloadResponseSample is a capped write-through copy of stream bytes for
+	// T4a failure capture (partial streams clear pendingBuf after content).
+	payloadResponseSample          []byte
+	payloadResponseSampleTruncated bool
+	payloadCaptured                atomic.Bool // once-guard for T4a ML payload log
+
 	resp *host.HostResponse
 	err  error
 	done chan struct{}
@@ -1013,6 +1019,24 @@ func (inf *inflight) captureShortContentResponseChunk(p []byte) {
 		return
 	}
 	inf.shortContentResponseBody = append(inf.shortContentResponseBody, p...)
+}
+
+// capturePayloadResponseChunk keeps a capped stream sample for T4a failure logs.
+func (inf *inflight) capturePayloadResponseChunk(p []byte) {
+	if inf == nil || len(p) == 0 || inf.payloadResponseSampleTruncated {
+		return
+	}
+	remaining := emptyStreamBodySampleLimit - len(inf.payloadResponseSample)
+	if remaining <= 0 {
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	if len(p) > remaining {
+		inf.payloadResponseSample = append(inf.payloadResponseSample, p[:remaining]...)
+		inf.payloadResponseSampleTruncated = true
+		return
+	}
+	inf.payloadResponseSample = append(inf.payloadResponseSample, p...)
 }
 
 type attemptStall struct {
@@ -1571,6 +1595,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	rw.inf.outputBytes.Add(int64(len(p)))
 	rw.inf.lastChunkAt.Store(now.UnixNano())
 	rw.inf.captureShortContentResponseChunk(p)
+	rw.inf.capturePayloadResponseChunk(p)
 
 	// Detect whether this Write contains the first content-bearing event for
 	// this attempt. Only content events promote a nonce to winner; role-only
@@ -1907,6 +1932,9 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// is what unwinds SendOnly for speculative losers that outlived the winner.
 	attemptCtx, cancel := withMetaDrain(ctx, clientFlag)
 	inf.cancel = cancel
+	if inf.span != nil && inf.span.IsRecording() {
+		inf.span.SetAttributes(observability.AttrStream.Bool(params.Stream))
+	}
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	receiptHandler := func() {
 		inf.receiptOnce.Do(func() {
@@ -1959,6 +1987,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"stream_bytes_read", streamBytes,
 				"error", inf.err,
 			)
+			detail := gatewayAttemptFailureReason(inf, e.session)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureOriginFromDetail(detail), detail)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
 			return
 		}
@@ -1990,6 +2020,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"content_source", inf.contentSource,
 				"request_flags", requestFlagsForLog(params),
 			)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureHostResponse, "empty_stream")
 		}
 		if !inf.probe && inf.errorSource != "" {
 			responseBodySample, responseSampleTruncated := bodySampleForLog(inf.errorBodySample, emptyStreamBodySampleLimit)
@@ -2005,6 +2036,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"response_body_sample_truncated", responseSampleTruncated,
 				"request_flags", requestFlagsForLog(params),
 			)
+			e.maybeLogMLNodePayloadForAttempt(inf, params, accounting.FailureHostResponse, "error_stream")
 		}
 		if e.markPhaseTransitionAbort(inf) {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "phase_transition_aborted",
@@ -2995,6 +3027,7 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 		detail := gatewayAttemptFailureReason(inf, e.session)
 		key.DetailReason = detail
 		key.FailureOrigin = accounting.FailureOriginFromDetail(detail)
+		e.maybeLogMLNodePayloadForAttempt(inf, params, key.FailureOrigin, detail)
 	}
 	inf.applyCounterKeyAttrs(key)
 	if e.metrics == nil {
@@ -3384,7 +3417,11 @@ func attemptCountsAsSuccessfulForPerf(inf *inflight, params user.InferenceParams
 }
 
 func isFailedStreamAttempt(inf *inflight) bool {
-	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf)
+	return isEmptyStreamAttempt(inf) || isErrorStreamAttempt(inf) || isTruncatedStreamAttempt(inf)
+}
+
+func isTruncatedStreamAttempt(inf *inflight) bool {
+	return inf != nil && errors.Is(inf.err, transport.ErrSSEStreamTruncated)
 }
 
 func (e *Redundancy) markPhaseTransitionAbort(inf *inflight) bool {
@@ -4198,7 +4235,14 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 			// no content. Telemetry-only — not a host fault, no quarantine.
 			e.participantLimiter.ObserveModelBurnEmpty(participantKey, e.model)
 		} else {
-			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model)
+			e.participantLimiter.ObserveEmptyStreamForModel(participantKey, e.model, QuarantinePayloadStats{
+				Ctx:           inf.attemptCtx(),
+				RequestBytes:  len(params.Prompt),
+				ResponseBytes: len(inf.payloadResponseSample) + len(inf.emptyResponseBodySample),
+				Stream:        params.Stream,
+				MessageCount:  observability.CountChatMessages(params.Prompt),
+				MaxTokens:     params.MaxTokens,
+			})
 		}
 	}
 	if !requestSucceeded && emptyStream {

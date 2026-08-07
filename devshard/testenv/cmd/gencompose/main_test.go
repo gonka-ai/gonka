@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -261,8 +262,10 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "Dockerfile.mock-chain")
 	require.Contains(t, text, "CONFIG_PATH")
 	require.Contains(t, text, "mock-dapi:")
-	require.Contains(t, text, "mock-openai:")
+	require.Contains(t, text, "mock-openai-0:")
 	require.Contains(t, text, "Dockerfile.mockopenai")
+	require.Contains(t, text, "MOCK_ML_NODES:")
+	require.Contains(t, text, "mock-openai-0=http://mock-openai-0:")
 	require.Contains(t, text, "versiond-0:")
 	require.Contains(t, text, "versiond-1:")
 	require.Contains(t, text, "versiond-2:")
@@ -294,6 +297,9 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "LOG_FORMAT: ${LOG_FORMAT:-json}")
 	require.Contains(t, text, "DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}")
 	require.Contains(t, text, "OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS: ${DEVSHARD_LOG_PAYLOADS:-off}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_MLNODE: ${DEVSHARD_LOG_PAYLOADS_MLNODE:-false}")
+	require.Contains(t, text, "DEVSHARD_LOG_PAYLOADS_QUARANTINE: ${DEVSHARD_LOG_PAYLOADS_QUARANTINE:-false}")
 	require.NotContains(t, text, "DEVSHARD_TX_QUERY_REST")
 	require.NotContains(t, text, "DEVSHARD_CHAIN_REST:")
 	require.NotContains(t, text, "MOCK_CHAIN_REST")
@@ -301,6 +307,29 @@ func TestWriteCompose_MockChainService(t *testing.T) {
 	require.Contains(t, text, "/health")
 	require.Contains(t, text, "DEVSHARD_MODEL")
 	require.Contains(t, text, "/v1/status")
+}
+
+func TestWriteCompose_MLNodesPool(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	cfg.MLNodes = 2
+	require.NoError(t, fillConfig(cfg))
+	require.Equal(t, 2, cfg.ResolvedMLNodes())
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+	text := string(body)
+	require.Contains(t, text, "mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1:")
+	require.Contains(t, text, "MOCK_ML_NODES:")
+	require.Contains(t, text, "mock-openai-0=http://mock-openai-0:")
+	require.Contains(t, text, "mock-openai-1=http://mock-openai-1:")
+	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort, cfg.MockOpenAI.HTTPPort))
+	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort+1, cfg.MockOpenAI.HTTPPort))
+	require.NotContains(t, text, "\n  mock-openai:\n")
 }
 
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {

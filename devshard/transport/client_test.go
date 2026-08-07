@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -385,6 +386,21 @@ func TestParseSSE_ReceiptThenCleanEOFSucceeds(t *testing.T) {
 	require.NotNil(t, result)
 	require.Equal(t, uint64(1), result.Nonce)
 	require.NotNil(t, result.Receipt)
+}
+
+func TestParseSSE_ReceiptContentWithoutDoneIsTruncated(t *testing.T) {
+	// Hosts may publish finish from a truncated ML stream while never emitting
+	// OpenAI [DONE]. Content without [DONE] must surface as ErrSSEStreamTruncated
+	// even when a receipt was already observed.
+	client := &HTTPClient{config: DefaultClientConfig()}
+	sse := receiptOnlySSE +
+		"data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"
+	var buf bytes.Buffer
+	result, err := client.parseSSEResponse(context.Background(), strings.NewReader(sse), &buf, nil)
+	require.ErrorIs(t, err, ErrSSEStreamTruncated)
+	require.NotNil(t, result)
+	require.NotNil(t, result.Receipt)
+	require.Contains(t, buf.String(), "hi")
 }
 
 func TestObserveTransportFailure_IgnoresContextCancellation(t *testing.T) {

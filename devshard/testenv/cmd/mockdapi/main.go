@@ -8,6 +8,7 @@ import (
 	"syscall"
 	"time"
 
+	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
 	"devshard/testenv/mockdapi"
 )
@@ -19,7 +20,14 @@ func main() {
 	cfg.ChainGRPCAddr = envOr("MOCK_CHAIN_GRPC_ADDR", "mock-chain:9090")
 	cfg.ChainRPCAddr = envOr("MOCK_CHAIN_RPC_ADDR", "http://mock-chain:26657")
 	cfg.ChainTestenvURL = os.Getenv("MOCK_CHAIN_TESTENV_URL")
-	cfg.MLEndpoint = envOr("MOCK_ML_ENDPOINT", "http://mock-openai:8088")
+	cfg.MLEndpoint = envOr("MOCK_ML_ENDPOINT", "http://mock-openai-0:8088")
+	if raw := os.Getenv("MOCK_ML_NODES"); raw != "" {
+		nodes, err := params.ParseMLNodesEnv(raw)
+		if err != nil {
+			log.Fatalf("mock-dapi: MOCK_ML_NODES: %v", err)
+		}
+		cfg.MLNodes = nodes
+	}
 	cfg.ChainID = envOr("CHAIN_ID", cfg.ChainID)
 	cfg.BinaryDir = os.Getenv("MOCK_DAPI_BINARY_DIR")
 	if v := versionFromEnv(); v.Name != "" {
@@ -44,8 +52,12 @@ func main() {
 		log.Fatalf("mock-dapi: %v", err)
 	}
 
+	mlDesc := cfg.MLEndpoint
+	if len(cfg.MLNodes) > 0 {
+		mlDesc = os.Getenv("MOCK_ML_NODES")
+	}
 	log.Printf("mock-dapi gRPC on %s HTTP on %s chain=%s ml=%s",
-		cfg.GRPCAddr, cfg.HTTPAddr, cfg.ChainGRPCAddr, cfg.MLEndpoint)
+		cfg.GRPCAddr, cfg.HTTPAddr, cfg.ChainGRPCAddr, mlDesc)
 	if err := svc.Run(ctx); err != nil && err != context.Canceled {
 		log.Fatalf("mock-dapi: %v", err)
 	}

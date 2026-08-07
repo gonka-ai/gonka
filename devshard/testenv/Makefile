@@ -66,7 +66,7 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-ml-nodes citest-grpc-transport test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -77,7 +77,7 @@ list-citest-targets: ## Print runnable citest suite targets (one per line) for t
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
-CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai devshardctl versiond-router versiond-0
+CITEST_BUILD_SERVICES := mock-chain mock-dapi mock-openai-0 devshardctl versiond-router versiond-0
 STACK_CITEST_PATTERN := ^Test(StackSmoke|RouterStickiness|ParamsLongPoll|EpochSwitch|GatewayChat|Versiond.*|HAStaleStandbyCatchupIdempotent|LegacyVersionPinnedToSingleHost|SQLiteToPostgresHAMigration|ValidationLeaseRace.*)$$
 
 citest-images: ## Pull hub images and build all compose images required for citest.
@@ -104,9 +104,13 @@ citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway cite
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
 	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## T2/T3.10: O1 + correlation + disposition C3/C4 (tempo-alloy) + jaeger-promtail C7.
+citest-observability: citest-images ## T2/T3.10/T4a: O1 + correlation + disposition C3/C4 + C5a payload + jaeger-promtail C7.
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression' -count=1 -v -timeout 90m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestC5a_PayloadCapture' -count=1 -v -timeout 90m
+
+citest-ml-nodes: citest-images ## T7: multi mock-openai pool + per-node fault (G1).
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestMLNodePool_' -count=1 -v -timeout 45m
 
 # Default e2e profile is tempo-alloy. Override with TESTENV_OBS_PROFILE=jaeger-promtail.
 OBS_PROFILE ?= tempo-alloy

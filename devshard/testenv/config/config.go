@@ -31,6 +31,9 @@ type File struct {
 	MockChain  MockChainCfg  `yaml:"mock_chain"`
 	MockDapi   MockDapiCfg   `yaml:"mock_dapi"`
 	MockOpenAI MockOpenAICfg `yaml:"mock_openai"`
+	// MLNodes is the number of mock-openai instances (T7). Default 1.
+	// Services are named mock-openai-0 … mock-openai-{N-1}.
+	MLNodes        int               `yaml:"ml_nodes"`
 	Versiond       VersiondCfg       `yaml:"versiond"`
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
@@ -201,7 +204,10 @@ const (
 	DefaultMockDapiHTTPPort  = 9100
 	DefaultMockDapiHost      = "mock-dapi"
 	DefaultMockOpenAIHTTPPort = 8088
-	DefaultMockOpenAIHost     = "mock-openai"
+	DefaultMockOpenAIHost     = "mock-openai-0"
+	DefaultMLNodes            = 1
+	// MLNodeIPBase is the first host octet offset for mock-openai-0 (BaseIP.40+i).
+	MLNodeIPBase = 40
 	DefaultVersionName        = "v2"
 	DefaultBinaryVersion      = "0.2.13-v2-r2"
 	VersiondModeSingle        = "single"
@@ -314,8 +320,12 @@ func (c *File) ApplyDefaults() {
 	if c.MockOpenAI.HTTPPort == 0 {
 		c.MockOpenAI.HTTPPort = DefaultMockOpenAIHTTPPort
 	}
-	if c.MockOpenAI.Host == "" {
-		c.MockOpenAI.Host = DefaultMockOpenAIHost
+	if c.MLNodes <= 0 {
+		c.MLNodes = DefaultMLNodes
+	}
+	// Pre-T7 configs used host "mock-openai"; normalize to the primary pool id.
+	if c.MockOpenAI.Host == "" || c.MockOpenAI.Host == "mock-openai" {
+		c.MockOpenAI.Host = c.PrimaryMLNodeID()
 	}
 
 	if c.Versiond.VersionName == "" {
@@ -416,6 +426,63 @@ func RouterBaseURL(c *File) string {
 		host = DefaultVersiondRouterHost
 	}
 	return fmt.Sprintf("http://%s:%d", host, DefaultHostPort)
+}
+
+// ResolvedMLNodes returns the effective mock-openai pool size (at least 1).
+func (c *File) ResolvedMLNodes() int {
+	if c == nil || c.MLNodes <= 0 {
+		return DefaultMLNodes
+	}
+	return c.MLNodes
+}
+
+// MLNodeID returns the compose service / AcquireMLNode id for pool index i.
+func MLNodeID(i int) string {
+	return fmt.Sprintf("mock-openai-%d", i)
+}
+
+// PrimaryMLNodeID is mock-openai-0 (the PatchMockOpenAIFault alias target).
+func (c *File) PrimaryMLNodeID() string {
+	return MLNodeID(0)
+}
+
+// MLNodeIDs returns mock-openai-0 … mock-openai-{N-1}.
+func (c *File) MLNodeIDs() []string {
+	n := c.ResolvedMLNodes()
+	ids := make([]string, n)
+	for i := 0; i < n; i++ {
+		ids[i] = MLNodeID(i)
+	}
+	return ids
+}
+
+// MLNodeEndpoint is the in-compose HTTP base URL for a pool member.
+func (c *File) MLNodeEndpoint(nodeID string) string {
+	port := DefaultMockOpenAIHTTPPort
+	if c != nil && c.MockOpenAI.HTTPPort > 0 {
+		port = c.MockOpenAI.HTTPPort
+	}
+	return fmt.Sprintf("http://%s:%d", nodeID, port)
+}
+
+// PrimaryMLEndpoint is MOCK_ML_ENDPOINT shorthand (first pool member).
+func (c *File) PrimaryMLEndpoint() string {
+	return c.MLNodeEndpoint(c.PrimaryMLNodeID())
+}
+
+// MockMLNodesEnv formats MOCK_ML_NODES: "id=url,id=url".
+func (c *File) MockMLNodesEnv() string {
+	ids := c.MLNodeIDs()
+	parts := make([]string, len(ids))
+	for i, id := range ids {
+		parts[i] = id + "=" + c.MLNodeEndpoint(id)
+	}
+	return strings.Join(parts, ",")
+}
+
+// MLNodeIPOffset is the fourth octet offset for mock-openai-i (40+i).
+func MLNodeIPOffset(i int) int {
+	return MLNodeIPBase + i
 }
 
 // PrimaryEscrowID returns the seeded escrow id for single-escrow gateway bootstrap.

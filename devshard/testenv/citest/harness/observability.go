@@ -94,6 +94,9 @@ func (s *Stack) PrepareObservabilityOverlay(t *testing.T, cfg *config.File) {
 		"LOG_FORMAT":            "json",
 		"TESTENV_OBS_PROFILE":   string(s.ObsProfile),
 	}
+	for k, v := range s.payloadEnv {
+		set[k] = v
+	}
 	outLines := make([]string, 0, len(lines)+len(set))
 	seen := make(map[string]struct{})
 	for _, line := range lines {

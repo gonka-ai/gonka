@@ -56,11 +56,13 @@ func ResetMockOpenAIFault(t *testing.T, client *http.Client, mockOpenAIURL strin
 	t.Helper()
 	zero := 0
 	f := false
+	empty := ""
 	PatchMockOpenAIFault(t, client, mockOpenAIURL, mockopenai.FaultPatch{
 		LatencyMs:        &zero,
 		HTTPStatus:       &zero,
 		DropFirstChunk:   &f,
 		PartialStream:    &f,
+		SSEErrorMessage:  &empty,
 		StreamChunkDelay: &zero,
 	})
 }

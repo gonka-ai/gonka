@@ -57,7 +57,7 @@ different **disposition**, and — most usefully — a different **missing span*
 | F4 | ML node truncates the stream | `{partial_stream: true}` | `host_response` | `finished_usage_unknown` | `attempt.stream` ends without usage attrs |
 | F5 | ML node drops the first chunk | `{drop_first_chunk: true}` | `host_response` | empty-stream quarantine | `first_token` log absent, `attempt.prefill` never closes normally |
 | F6 | ML node returns empty content | `{empty_content: true}` **(gap G2)** | `host_response` | `finished_usage_unknown` | usage attrs zero |
-| F7 | ML node rejects tool calls | `{sse_error_message: …}` **(gap G2)** | `host_response` | `ghost` / `participant_capability_no_send` | SSE error event on the host span |
+| F7 | ML node rejects tool calls | `{sse_error_message: …}` (mock-openai T4a) | `host_response` | `ghost` / `participant_capability_no_send` | SSE error event on the host span |
 | F8 | **devshardd host stopped** | `stack.StopService("versiond-1")` | `transport_unknown` | `ghost` / `poc_unavailable_host` | **no host span at all** — gateway spans only; `attempt.dispatch` errors |
 | F9 | **devshardd host restarts mid-stream** | `RestartService` during a stream | `transport_unknown` | `unfinished_refused` | `attempt.stream` truncated, no `race_completed` |
 | F10 | Host slow to acknowledge receipt | `DEVSHARD_E2E_RECEIPT_DELAY_MS` **(gap G3)** | `gateway_policy` | `unfinished_refused` | `attempt.dispatch` long, **`attempt.prefill` never starts** |
@@ -78,8 +78,8 @@ These are prerequisites; without them the matrix in §4 cannot be expressed.
 
 | ID | Gap | Detail |
 |----|-----|--------|
-| **G1** | **Per-node ML fault targeting** | `gencompose` emits a **single** `mock-openai` and hands `MOCK_ML_ENDPOINT` to mock-dapi (`cmd/gencompose/compose.go:67,83`), so every host resolves the same ML node and `/testenv/fault` is global. The winner/loser asymmetry scenarios (S3, S4) need one slow node and one fast node. Fix: **T7** in the [implementation plan](./observability-trace-correlation-plan.md) §10 — N `mock-openai` instances with mock-dapi round-robining endpoints per `AcquireMLNode`. A `node_id` selector on the fault payload was considered and rejected there: the mock cannot tell which node it is impersonating, so nodes must be distinguished by address. |
-| **G2** | **Fault vocabulary** | `mockopenai/config.go:35-59` supports `latency_ms`, `http_status`, `drop_first_chunk`, `partial_stream`, `stream_chunk_delay_ms`. Add `sse_error_message` (F7) and `empty_content` / `response_body` (F6) to reach parity with the host stub knobs `DEVSHARD_STUB_INFERENCE_SSE_ERROR_MESSAGE` and `DEVSHARD_STUB_INFERENCE_RESPONSE_BODY`. |
+| **G1** | **Per-node ML fault targeting** | ✅ **Closed by T7** — `ml_nodes: N` emits `mock-openai-{i}`; mock-dapi `MOCK_ML_NODES` round-robins with real `NodeId` / exclusions / lock tracking; harness `PatchMockOpenAIFaultForNode` + `StopMLNode`; citest `TestMLNodePool_PerNodeFault` (`make citest-ml-nodes`). Unlocks S3/S16 winner–loser asymmetry. |
+| **G2** | **Fault vocabulary** | Partial: T4a added `sse_error_message` + nested OpenAI/vLLM HTTP error bodies. Still missing `empty_content` / `response_body` for full host-stub parity (`DEVSHARD_STUB_INFERENCE_RESPONSE_BODY`). |
 | **G3** | **Host-side e2e knobs in testenv** | `DEVSHARD_E2E_RECEIPT_DELAY_MS`, `DEVSHARD_E2E_REFUSAL_TIMEOUT_SECONDS`, `DEVSHARD_E2E_EXECUTION_TIMEOUT_SECONDS` are read by `devshard-host` but not plumbed through `versiond` → `devshardd` in the generated compose. Needed for F10 and to shorten F3/F9. |
 | **G4** | **Observability overlay on the accounting stack** | `BootObservabilityStack` exists, but the adversarial/accounting stacks boot without it. Add an `Observability: true` option so any scenario can assert telemetry. |
 | **G5** | **Trace/log assertion helpers** | Per §9 of the implementation plan: `WaitTraceSpan`, `WaitTraceByAttr`, `RequireLogsForTrace`, `RequireSpanAttrs`, plus `RequireNoSpan` for the negative assertions this plan depends on. |
@@ -200,6 +200,5 @@ and it runs faster than any of the above.
    the I1–I3 invariants against the *current* Jaeger stack; this validates T1 end to end.
 2. **G3** — host knobs through versiond. Unlocks S5, S6, S10.
 3. **G2** — fault vocabulary parity. Unlocks S4, S8.
-4. **G1** — per-node fault targeting, i.e. phase **T7**. Unlocks S3, S16 (the only genuinely new
-   harness capability), and makes `mlnode.node.id` on the T5a span worth asserting.
+4. **G1** ✅ — per-node fault targeting (**T7** landed). Unlocks S3, S16; `mlnode.node.id` is a real dimension.
 5. **S12–S17** — failure-origin suite, once T5a gives us the `mlnode.acquire` span that S15 asserts.

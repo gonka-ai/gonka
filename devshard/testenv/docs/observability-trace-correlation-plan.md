@@ -874,6 +874,13 @@ TraceQL via a span-not-exists filter.
 
 ## 6. Phase T4 — payload capture for failing requests
 
+**T4a status:** ✅ landed — gateway `payload_captured` / `payload_quarantine` stages,
+`payload.captured` span event, mock-openai nested HTTP + `sse_error_message` faults,
+citest `TestC5a_PayloadCapture*` via `make citest-observability`. Capture emits as soon as a
+`host_response` classifier fires (empty/error/truncated send path) as well as at race terminal;
+content-bearing streams without `[DONE]` are `sse_truncated` even when a receipt was seen.
+T4b remains deferred.
+
 **Requirement:** when a request fails on the ML node, is quarantined, or fails validation, the
 payload that caused it must be recoverable — from the same trace where the capture is synchronous,
 and by `inference_id` + payload hash where it is not.
@@ -1202,6 +1209,8 @@ func RequireSpanAttrs(t, obs, traceID string, want map[string]string)
 | **C5b** | Validation-failure e2e: a payload line exists for the invalidated `inference_id`, joinable by payload hash | T4b (does not gate T6) |
 | **C6** | `tempo-alloy` profile: Alloy UI shows OTLP receiver → exporter connected and Tempo returns the trace | T2 |
 | **C7** | `jaeger-promtail` remains green (no regression in the legacy profile) | T1, T2 |
+| **C8** | One chat → Loki (+ Tempo) from `devshardctl`, `devshardd`/`versiond.*`, **and** `mock-dapi` share `trace_id` (+ `request_id` when metadata lands) | T5 — see [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
+| **C9** | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id`; mock-dapi acquires stay on that trace | T5 — same doc |
 
 Wire the disposition assertions into the existing accounting e2e tests listed in §5 rather than
 writing new scenarios — those tests already force every disposition; they simply do not look at
@@ -1209,28 +1218,33 @@ traces today.
 
 ---
 
-## 10. Phase T7 — multi-node mock ML pool in testenv
+## 10. Phase T7 — multi-node mock ML pool in testenv ✅
 
 Prerequisite for the per-node failure scenarios in
 [observability-test-plan.md](./observability-test-plan.md) (gap **G1**), and the thing that makes
 `mlnode.node.id` from T5a worth asserting.
 
-### 10.1 Why today's mock cannot express "one node is slow"
+**Landed:** `ml_nodes` in gencompose → `mock-openai-{i}` at `BaseIP.40+i`; mock-dapi
+`MOCK_ML_NODES` + pool broker in `chainoracle/params`; harness
+`PatchMockOpenAIFaultForNode` / `StopMLNode` / `MLNodeIDs`; citest
+`TestMLNodePool_PerNodeFault` (`make citest-ml-nodes`).
 
-testenv has **one** ML node and every host resolves it:
+### 10.1 Why the pre-T7 mock could not express "one node is slow"
 
-| Fact | Location |
+Before T7, testenv had **one** ML node and every host resolved it:
+
+| Fact (pre-T7) | Location (historical) |
 |------|----------|
-| A single `mock-openai` service on `BaseIP.4` | `cmd/gencompose/compose.go:83-95` |
-| One `MOCK_ML_ENDPOINT` handed to mock-dapi | `compose.go:67` |
-| `AcquireMLNode` returns that constant endpoint, `NodeId: "mock-openai"`, and a monotonic lock id | `devshard/chainoracle/params/server.go:53-63` |
-| `ExcludedNodes` on the request is **ignored** | `server.go:53` — the parameter is never read |
-| `ReleaseMLNode` is a no-op | `server.go:65-67` |
-| `/testenv/fault` therefore has global blast radius | `mockopenai/config.go:35-59` |
+| A single `mock-openai` service on `BaseIP.4` | `cmd/gencompose/compose.go` |
+| One `MOCK_ML_ENDPOINT` handed to mock-dapi | compose env |
+| `AcquireMLNode` returned that constant endpoint, `NodeId: "mock-openai"`, and a monotonic lock id | `chainoracle/params/server.go` |
+| `ExcludedNodes` on the request was **ignored** | params server |
+| `ReleaseMLNode` was a no-op | params server |
+| `/testenv/fault` therefore had global blast radius | `mockopenai` |
 
-Consequences: overscheduling scenarios cannot have a fast winner and a slow loser; `mlnode.node.id`
-is a constant so it proves nothing; and devshardd's retry-with-exclusion logic is never exercised
-because exclusion is ignored.
+Consequences: overscheduling scenarios could not have a fast winner and a slow loser; `mlnode.node.id`
+was a constant so it proved nothing; and devshardd's retry-with-exclusion logic was never exercised
+because exclusion was ignored.
 
 ### 10.2 Design — N instances, not a payload selector
 
@@ -1356,11 +1370,11 @@ flowchart TD
 | **T2** | `tempo-alloy` profile is the e2e default; Jaeger/Promtail stay green (compose split + harness landed) | ✅ for TraceQL queries (tier 3 only) |
 | **T3.0** | Classification sweep on its own 5–10 s ticker, off the persistence path | independent — also fixes stale metrics/API |
 | **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span — ✅ landed (T3.0–T3.8 + T3.10 citest C3/C4; unfinished late-path citest pending G3) | tiers are independently shippable |
-| **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` | — |
+| **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` — ✅ landed (`TestC5a_PayloadCapture*`, `make citest-observability`) | — |
 | **T4b** | Payload capture for validation failures | ⛔ needs `ak/gateway-v2-postgres` on the release branch (§6.5); can land last |
 | **T5.0** | dapi cleanup: delete the dead inference surface; add `*Ctx` variants to `common/logging` and thread `ctx` through broker/nodemanager (§7.2) | independent; prerequisite for T5b/T5c |
 | **T5** | T5a client-side acquire/release spans in devshardd (no dapi change); then shared gRPC interceptors in `common/`; dapi server-side selection span optional | — |
-| **T7** | `MLNodes: N` in gencompose, real node pool in the params server (round-robin + exclusions + lock tracking), per-node fault helpers (§10) | ✅ for the per-node scenarios in the test plan |
+| **T7** | `MLNodes: N` in gencompose, real node pool in the params server (round-robin + exclusions + lock tracking), per-node fault helpers (§10) — ✅ landed (`make citest-ml-nodes`) | ✅ for the per-node scenarios in the test plan |
 | **T6** | Dashboards + C1–C7 in CI | last |
 
 T1 is small (a slog handler, one `Init` call, one header injection) and immediately useful on the

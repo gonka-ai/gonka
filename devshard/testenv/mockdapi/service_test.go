@@ -224,7 +224,8 @@ func TestMockDAPI_AcquireMLNode(t *testing.T) {
 
 	resp, err := gen.NewNodeManagerClient(conn).AcquireMLNode(context.Background(), &gen.AcquireMLNodeRequest{Model: "test-model"})
 	require.NoError(t, err)
-	require.Equal(t, "http://mock-openai:8088", resp.Endpoint)
+	require.Equal(t, "http://mock-openai-0:8088", resp.Endpoint)
+	require.Equal(t, "mock-openai-0", resp.NodeId)
 }
 
 func readSSEDataLine(r *bufio.Reader) (string, error) {

@@ -353,6 +353,7 @@ func FailureOriginFromDetail(detail string) FailureOrigin {
 		return FailureGatewayPolicy
 	case detail == "not_finished",
 		detail == "escrow_state_root_diverged",
+		detail == "sse_truncated",
 		strings.Contains(detail, "http_"),
 		strings.Contains(detail, "stream"),
 		strings.Contains(detail, "response"):
