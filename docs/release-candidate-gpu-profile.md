@@ -130,7 +130,7 @@ throughput fell by 42%.
 ## Image and driver requirements
 
 - Use the production org mirror
-  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc2@sha256:a476dd28b79b81126b460a56e3f2c8e573bbddfda3e854776cb6fc0f60208f81`.
+  `ghcr.io/gonka-ai/mlnode:3.0.14-post2-vllm0.25.1-rc3@sha256:450983bbef31c8e19b8d24edb00c17520af7cc4fb0d186943f3ac3dec4dad387`.
   It reports the canonical MLNode release `3.0.14-post2` through
   `/api/v1/state`, `/api/v1/versions`, and `mlnode_version_info`.
 - Use the Gonka vLLM 0.25.1 build containing the current PoC replay support.
