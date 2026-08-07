@@ -29,12 +29,12 @@ S-series (§4–§5) and invariants (§6) below are still design-only.
 | **C3** | Ghost disposition is reachable by TraceQL on `span.devshard.disposition` | `TestDispositionTraceGhost` | `citest-observability` | ✅ T3.10 |
 | — | Late `unfinished_refused` disposition trace | `TestDispositionTraceUnfinishedRefused` | `citest-observability` | ⏸ skipped — gap **G3** |
 | **C4** | Every `devshard_accounting_disposition` label value has an identical span attribute value | `TestDispositionLabelValuesMatchSpanAttrs` | `citest-observability` | ✅ T3.1/T3.10 |
-| **C5a** | ML-node failure payload line joins the trace (503, partial stream, SSE error) | `TestC5a_PayloadCaptureHTTP503` / `…PartialStream` / `…SSEError` | `citest-observability` | ✅ T4a |
+| **C5a** | ML-node failure payload line joins the trace (503, partial stream, SSE error) | `TestPayloadCaptureHTTP503` / `…PartialStream` / `…SSEError` | `citest-observability` | ✅ T4a |
 | **C5b** | Validation-failure payload line, joinable by `inference_id` + payload hash | — | — | deferred behind T4b/Postgres — scenario documented in [`scenarios.md`](./scenarios.md) |
-| **C6** | `tempo-alloy` profile serves the trace end to end | `TestO1_ObservabilitySmoke` | `citest-observability` | ✅ for the Tempo leg; the Alloy-UI receiver→exporter check stays manual |
+| **C6** | `tempo-alloy` profile serves the trace end to end | `TestObservabilitySmoke` | `citest-observability` | ✅ for the Tempo leg; the Alloy-UI receiver→exporter check stays manual |
 | **C7** | `jaeger-promtail` profile has not regressed | `TestJaegerPromtailRegression` | `OBS_PROFILE=jaeger-promtail make citest-observability` | ✅ |
-| **C8** | One chat → `devshardctl`, `devshardd`/`versiond.*` **and** `mock-dapi` share `trace_id` (+ `request_id`) | `TestT5_TraceLogCorrelationGatewayHostDapi` | planned | T5 — [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
-| **C9** | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id` | `TestT5_ShadowHostMultiAttemptSameTrace` | planned | T5 — same doc |
+| **C8** | One chat → `devshardctl`, `devshardd`/`versiond.*` **and** `mock-dapi` share `trace_id` (+ `request_id`) | `TestTraceLogCorrelationGatewayHostDapi` | `citest-observability` (or focused `citest-dapi-correlation`) | ✅ T5 for testenv mock-dapi — [observability-t5-test-plan.md](./observability-t5-test-plan.md); production `decentralized-api` still to adopt the interceptors (T5c) |
+| **C9** | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id` | `TestShadowHostMultiAttemptSameTrace` | `citest-observability` (or focused `citest-dapi-correlation`) | ✅ T5 — same doc |
 
 Per-node ML fault targeting (**T7**, which closes gap **G1** below) is a stack scenario rather than
 a telemetry one — `TestMLNodePool_PerNodeFault` / `make citest-ml-nodes`, documented in
@@ -217,15 +217,16 @@ out one runner per target, so a new `citest-*` target runs in parallel with no w
 
 | Target | Profile | Scenarios |
 |--------|---------|-----------|
-| `citest-observability` | `tempo-alloy` (default) | C1/C2, C3, C4, C5a, C6, plus C7 on the `jaeger-promtail` leg |
+| `citest-observability` | `tempo-alloy` (default) | C1/C2, C3, C4, C5a, C6, C8, C9, plus C7 on the `jaeger-promtail` leg |
 | `citest-observability` with `OBS_PROFILE=jaeger-promtail` | `jaeger-promtail` | C7 regression guard |
+| `citest-dapi-correlation` | `tempo-alloy` | C8, C9 only — a subset of `citest-observability` for iterating on the dapi hop, so CI's matrix skips it |
 | `citest-ml-nodes` | none | T7 per-node fault targeting (unlocks S3/S16) |
 
 **Once the S-series lands** — split by cost rather than growing one target:
 
 | Job | Profile | Scenarios | Cadence |
 |-----|---------|-----------|---------|
-| `citest-observability` | `tempo-alloy` | C1–C7, I1–I3, S1, S7, S9 | every PR |
+| `citest-observability` | `tempo-alloy` | C1–C9, I1–I3, S1, S7, S9 | every PR |
 | `citest-observability-dispositions` | `tempo-alloy` | S2–S11 | nightly |
 | `citest-observability-failure-origin` | `tempo-alloy` | S12–S17 | nightly |
 | `citest-observability-jaeger` | `jaeger-promtail` | I1–I3, S1 | weekly, regression guard |

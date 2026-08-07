@@ -226,7 +226,10 @@ itself dies with a full disk.
 4. **T3** ✅ — attempt spans, classification log line, linked disposition trace
    (`TestDispositionTrace*` / C3–C4 via `make citest-observability`; unfinished late-path citest still pending G3).
 5. **T4a** ✅ — ML-node failure + quarantine payload capture (`DEVSHARD_LOG_PAYLOADS*`); T4b (validation) still deferred.
-6. **T5** — dapi node-selection hop + mlnode (devshardd client spans first).
-   Test plan: [observability-t5-test-plan.md](../testenv/docs/observability-t5-test-plan.md) (C8 three-service
-   logs; C9 shadow multi-host under one `request_id` / `trace_id`).
-7. **T6** — Grafana forensics dashboards + citest C1–C7 (+ C8/C9 once T5 lands).
+6. **T5** ✅ for testenv — dapi node-selection hop + mlnode: `devshardd.mlnode.acquire`/`.release`
+   client spans, shared gRPC interceptors carrying `traceparent` + `x-request-id`, and
+   `stage=mlnode_acquire`/`mlnode_release` logs on mock-dapi. C8/C9 green via
+   `make citest-observability` (or the focused `citest-dapi-correlation`).
+   Test plan: [observability-t5-test-plan.md](../testenv/docs/observability-t5-test-plan.md).
+   Remaining: production `decentralized-api` registers the same server interceptor and Init (T5c).
+7. **T6** — Grafana forensics dashboards + citest C1–C9.

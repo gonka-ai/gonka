@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
+	"gopkg.in/yaml.v3"
 )
 
 func TestIsPlaceholderKey(t *testing.T) {
@@ -330,6 +331,34 @@ func TestWriteCompose_MLNodesPool(t *testing.T) {
 	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort, cfg.MockOpenAI.HTTPPort))
 	require.Contains(t, text, fmt.Sprintf("%d:%d", cfg.MockOpenAI.HTTPPort+1, cfg.MockOpenAI.HTTPPort))
 	require.NotContains(t, text, "\n  mock-openai:\n")
+}
+
+// TestWriteCompose_MockDapiObservabilityEnv pins the T5 knobs on mock-dapi:
+// without them the dapi hop never exports spans or JSON logs, and C8 cannot
+// see a third service on the trace.
+func TestWriteCompose_MockDapiObservabilityEnv(t *testing.T) {
+	dir := t.TempDir()
+	cfg := defaultConfig()
+	require.NoError(t, fillConfig(cfg))
+
+	outPath := filepath.Join(dir, "docker-compose.yml")
+	require.NoError(t, writeCompose(cfg, outPath))
+
+	body, err := os.ReadFile(outPath)
+	require.NoError(t, err)
+
+	var compose struct {
+		Services map[string]struct {
+			Environment map[string]string `yaml:"environment"`
+		} `yaml:"services"`
+	}
+	require.NoError(t, yaml.Unmarshal(body, &compose))
+
+	env := compose.Services["mock-dapi"].Environment
+	require.NotEmpty(t, env, "mock-dapi service missing from generated compose")
+	require.Equal(t, "${TESTENV_OTEL_ENABLED:-false}", env["DEVSHARD_OTEL_ENABLED"])
+	require.Equal(t, "${TESTENV_OTEL_ENDPOINT:-}", env["OTEL_ENDPOINT"])
+	require.Equal(t, "${LOG_FORMAT:-json}", env["LOG_FORMAT"])
 }
 
 func TestWriteCompose_SingleMode_FilePayloadFallback(t *testing.T) {

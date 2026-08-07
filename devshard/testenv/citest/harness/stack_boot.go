@@ -52,7 +52,7 @@ func BootObservabilityStack(t *testing.T, prefix string) (*Stack, *config.File, 
 
 // BootObservabilityStackHASolo is the 3×versiond observability stack: HA pair
 // (versiond-0/1, one on-chain participant) plus a solo executor (versiond-2).
-// Stopping versiond-2 is the citest-reachable F8 path that produces ghost burns;
+// Stopping versiond-2 is the citest-reachable path that produces ghost burns;
 // a 2-host HA-only stack cannot, because both hosts share one participant.
 func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
@@ -67,8 +67,8 @@ func BootObservabilityStackHASolo(t *testing.T, prefix string) (*Stack, *config.
 }
 
 // BootPayloadCaptureStack boots an observability stack with DEVSHARD_LOG_PAYLOADS*
-// enabled for T4a / C5a citests. level should be "full" (testenv only) so partial
-// response bodies appear on the payload_captured line.
+// enabled for the payload-capture citests. level should be "full" (testenv only)
+// so partial response bodies appear on the payload_captured line.
 func BootPayloadCaptureStack(t *testing.T, prefix, level string) (*Stack, *config.File, Endpoints, ObservabilityEndpoints) {
 	t.Helper()
 	if level == "" {
@@ -85,7 +85,7 @@ func BootPayloadCaptureStack(t *testing.T, prefix, level string) (*Stack, *confi
 	return stack, cfg, stack.Endpoints(t, cfg), ObservabilityEndpointsFor(stack.ObsProfile)
 }
 
-// BootMLNodePoolStack boots a 2-host stack with N mock-openai instances (T7).
+// BootMLNodePoolStack boots a 2-host stack with N mock-openai instances.
 func BootMLNodePoolStack(t *testing.T, prefix string, mlNodes int) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	if mlNodes < 2 {

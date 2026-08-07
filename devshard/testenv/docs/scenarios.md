@@ -90,10 +90,10 @@ Full plan: [`chain-transport-consolidation.md`](./chain-transport-consolidation.
 
 | ID | Name | What we validate | Test | Status |
 |----|------|------------------|------|--------|
-| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestG1_GatewayEscrowCreateGRPC` | ✅ |
-| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestG2_GatewayEscrowReadGRPC` | ✅ |
-| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestG3_GatewayChatGRPCOnly` | ✅ |
-| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
+| **G1** | gRPC escrow create | devshardctl creates escrow via `common/chain/tx` + mock-chain gRPC; escrow visible on gRPC `DevshardEscrow` query | `TestGatewayEscrowCreateGRPC` | ✅ |
+| **G2** | gRPC escrow read | Gateway reads escrow fields via gRPC bridge (no `RESTBridge` / LCD) | `TestGatewayEscrowReadGRPC` | ✅ |
+| **G3** | Chat without LCD | Gateway chat with compose omitting `DEVSHARD_CHAIN_REST` and `DEVSHARD_TX_QUERY_REST` | `TestGatewayChatGRPCOnly` | ✅ |
+| **G4** | REST removed gate | Static test: no `NewRESTBridge` / `RESTChainTxClient` in devshardctl | `TestNoRESTChainClientsInGatewayProduction` | ✅ |
 
 Run: `make citest-grpc-transport` from `devshard/testenv/`.
 
@@ -383,7 +383,8 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 |-------|---------|-----------|
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
-| Observability | `make citest-observability` | O1 smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression — status table in [`observability-test-plan.md`](./observability-test-plan.md) §0 |
+| Observability | `make citest-observability` | O1 smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression, C8/C9 mock-dapi hop + shadow multi-host — status table in [`observability-test-plan.md`](./observability-test-plan.md) §0 |
+| Observability (T5 only) | `make citest-dapi-correlation` | C8/C9 subset of the above, for iterating on the node-selection hop |
 | ML node pool | `make citest-ml-nodes` | T7 per-node ML fault targeting (below) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
@@ -391,7 +392,7 @@ Observability scenario ids (C1–C9, S1–S17, the I invariants and the F fault 
 duplicated here — [`observability-test-plan.md`](./observability-test-plan.md) §0 is the single
 status page for what is landed, skipped or planned. Design rationale lives in
 [`observability-trace-correlation-plan.md`](./observability-trace-correlation-plan.md), and the
-next phase (mock-dapi hop, shadow multi-host) in
+mock-dapi hop and shadow multi-host cases (C8/C9) in
 [`observability-t5-test-plan.md`](./observability-t5-test-plan.md).
 
 See [`README.md`](../README.md) for adversarial and observability detail.
@@ -401,10 +402,10 @@ See [`README.md`](../README.md) for adversarial and observability detail.
 **What we test:** `common/chain/tx` creates a devshard escrow via mock-chain gRPC
 (`BroadcastTx` + `GetTx` + auth `Account` query) — no LCD for the tx path.
 
-**How:** `TestG1_GatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
+**How:** `TestGatewayEscrowCreateGRPC` boots the standard stack, dials mock-chain gRPC,
 calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG1_`).
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayEscrowCreateGRPC`).
 
 ---
 
@@ -412,7 +413,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Escrow read via `bridge.GRPCBridge` / `common/chain.Client` against dockerized mock-chain (no LCD).
 
-**Test:** `TestG2_GatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
+**Test:** `TestGatewayEscrowReadGRPC` — boots mock-chain only, reads escrow `1` via gRPC.
 
 ---
 
@@ -420,13 +421,13 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Gateway chat (non-stream + SSE) with gRPC-only chain transport.
 
-**How:** `TestG3_GatewayChatGRPCOnly` — full standard stack with
+**How:** `TestGatewayChatGRPCOnly` — full standard stack with
 `docker compose up --build`; the compose gate asserts that devshardctl has no
 `DEVSHARD_CHAIN_REST` or `DEVSHARD_TX_QUERY_REST`.
 
 **Pass criteria:** Non-stream + stream chat return 200.
 
-**Run:** `make citest-grpc-transport` (or `-run TestG3_`).
+**Run:** `make citest-grpc-transport` (or `-run TestGatewayChatGRPCOnly`).
 
 ---
 
@@ -434,7 +435,7 @@ calls `chaintx.CreateDevshardEscrow`, queries `DevshardEscrow` on gRPC.
 
 **What we test:** Production gateway code must not call REST chain clients.
 
-**How:** `TestG4_NoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
+**How:** `TestNoRESTChainClientsInGatewayProduction` scans non-test `.go` files in `devshard/cmd/devshardctl`.
 
 **Pass criteria:** Test fails if `NewRESTBridge` or `NewRESTChainTxClient` appear in production paths.
 

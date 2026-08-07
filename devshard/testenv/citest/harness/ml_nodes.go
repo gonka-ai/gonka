@@ -10,7 +10,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// MLNodeIDs returns the mock-openai pool ids from cfg (T7).
+// MLNodeIDs returns the mock-openai pool ids from cfg.
 func MLNodeIDs(cfg *config.File) []string {
 	if cfg == nil {
 		return []string{config.MLNodeID(0)}

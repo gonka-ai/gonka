@@ -123,17 +123,17 @@ Status key: ⬜ not started · 🟡 in progress · ✅ done
 
 | ID | Scenario | Test | Status |
 | --- | --- | --- | --- |
-| **G1** | gRPC escrow create | `TestG1_GatewayEscrowCreateGRPC` | ✅ |
-| **G2** | gRPC escrow read | `TestG2_GatewayEscrowReadGRPC` | ✅ |
-| **G3** | Chat without LCD | `TestG3_GatewayChatGRPCOnly` | ✅ |
-| **G4** | REST removed gate | `TestG4_NoRESTChainClientsInGatewayProduction` | ✅ |
+| **G1** | gRPC escrow create | `TestGatewayEscrowCreateGRPC` | ✅ |
+| **G2** | gRPC escrow read | `TestGatewayEscrowReadGRPC` | ✅ |
+| **G3** | Chat without LCD | `TestGatewayChatGRPCOnly` | ✅ |
+| **G4** | REST removed gate | `TestNoRESTChainClientsInGatewayProduction` | ✅ |
 
 Detail: [`scenarios.md`](./scenarios.md) § Phase 12 transport scenarios.
 
 ```makefile
 citest-grpc-transport:  ## G1–G4 gRPC-only gateway citest
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
-	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayEscrowCreateGRPC|TestGatewayEscrowReadGRPC|TestGatewayChatGRPCOnly' -count=1 -v -timeout 30m
+	cd .. && go test ./cmd/devshardctl/ -run TestNoRESTChainClientsInGatewayProduction -count=1 -v
 ```
 
 ---
@@ -177,7 +177,7 @@ Gateway was **not** forced onto file keyring — adapter keeps the hex-key deplo
 ## Exit criteria (definition of done)
 
 - [x] `devshardctl` has **zero** production **chain** `http.Client` calls (non-chain HTTP for `DEVSHARD_PUBLIC_API` / phase gate / versions cache is allowed).
-- [x] No production `NewRESTBridge` / `RESTChainTxClient` / `DEVSHARD_CHAIN_REST` usage in `devshard/cmd/devshardctl` (`TestG4_NoRESTChainClientsInGatewayProduction`).
+- [x] No production `NewRESTBridge` / `RESTChainTxClient` / `DEVSHARD_CHAIN_REST` usage in `devshard/cmd/devshardctl` (`TestNoRESTChainClientsInGatewayProduction`).
 - [x] gencompose devshardctl service: `DEVSHARD_CHAIN_GRPC` only (no REST chain env).
 - [x] **G1–G4** citest green; gateway chat runs without LCD.
 - [x] `make -C devshard ci-testenv-unit` / integration targets cover the gRPC path.

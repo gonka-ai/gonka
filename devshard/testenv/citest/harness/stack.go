@@ -28,7 +28,7 @@ type Stack struct {
 	Timeout       time.Duration
 	Observability bool
 	ObsProfile    ObsProfile
-	payloadEnv    map[string]string // merged into .env by PrepareObservabilityOverlay (T4a)
+	payloadEnv    map[string]string // merged into .env by PrepareObservabilityOverlay
 }
 
 // Endpoints are host-published URLs for health probes.

@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestG2_GatewayEscrowReadGRPC verifies escrow reads via bridge.GRPCBridge (no LCD).
-func TestG2_GatewayEscrowReadGRPC(t *testing.T) {
+// TestGatewayEscrowReadGRPC verifies escrow reads via bridge.GRPCBridge (no LCD).
+func TestGatewayEscrowReadGRPC(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, _, eps := harness.BootMockChainStack(t, "citest-g2-*")
+	stack, _, eps := harness.BootMockChainStack(t, "citest-escrow-read-grpc-*")
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack, "mock-chain")

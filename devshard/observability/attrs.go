@@ -37,6 +37,9 @@ const (
 	AttrAttemptIndex           = attribute.Key("devshard.attempt.index")
 	AttrAttemptTriggerNonce    = attribute.Key("devshard.attempt.trigger_nonce")
 	AttrHostID                 = attribute.Key("devshard.host.id")
+	AttrMLNodeID               = attribute.Key("mlnode.node.id")
+	AttrMLNodeEndpoint         = attribute.Key("mlnode.endpoint")
+	AttrMLNodeLockID           = attribute.Key("mlnode.lock_id")
 )
 
 // DispositionString returns the canonical string form of a disposition for

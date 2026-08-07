@@ -15,11 +15,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestC5a_PayloadCaptureHTTP503(t *testing.T) {
+func TestPayloadCaptureHTTP503(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-c5a-503-*", "full")
+	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-payload-capture-503-*", "full")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -37,15 +37,15 @@ func TestC5a_PayloadCaptureHTTP503(t *testing.T) {
 	harness.PatchMockOpenAIFault(t, client, mockOpenAI, mockopenai.FaultPatch{HTTPStatus: &status})
 	harness.PatchAdversarialFastTimeouts(t, client, eps.MockDapiHTTP)
 	harness.PatchAdversarialFastRedundancy(t, client, eps.GatewayHTTP)
-	// Threshold 1 so a single empty_stream strike produces a quarantine transition
-	// (and the size-only payload_quarantine line) on the F1 path.
+	// Threshold 1 so a single empty_stream strike produces a quarantine
+	// transition, and with it the size-only payload_quarantine line.
 	harness.PatchGatewayAdminSettings(t, client, eps.GatewayHTTP, map[string]any{
 		"participant_throttle": map[string]any{
 			"empty_stream_threshold": 1,
 		},
 	})
 
-	needle := fmt.Sprintf("citest-c5a-f1-%d", time.Now().UnixNano())
+	needle := fmt.Sprintf("citest-payload-capture-503-%d", time.Now().UnixNano())
 	req := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),
 		Messages: []harness.ChatMessage{
@@ -60,7 +60,8 @@ func TestC5a_PayloadCaptureHTTP503(t *testing.T) {
 	require.NotEmpty(t, line["devshard.prompt.sha256"])
 	require.NotEmpty(t, line["failed_at"])
 	require.NotNil(t, line["response_ms"])
-	// Body may be empty after host receipt; status/headers fallback is OK for F1.
+	// Body may be empty after host receipt; the status/headers fallback is
+	// enough to identify an upstream 503.
 	if rb, _ := line["response_bytes"].(float64); rb == 0 {
 		require.True(t, line["http_status"] != nil || line["response_headers"] != nil,
 			"empty body must include status/headers fallback: %v", line)
@@ -79,11 +80,11 @@ func TestC5a_PayloadCaptureHTTP503(t *testing.T) {
 	}
 }
 
-func TestC5a_PayloadCapturePartialStream(t *testing.T) {
+func TestPayloadCapturePartialStream(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-c5a-partial-*", "full")
+	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-payload-capture-partial-*", "full")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -102,7 +103,7 @@ func TestC5a_PayloadCapturePartialStream(t *testing.T) {
 	harness.PatchAdversarialFastTimeouts(t, client, eps.MockDapiHTTP)
 	harness.PatchAdversarialFastRedundancy(t, client, eps.GatewayHTTP)
 
-	needle := fmt.Sprintf("citest-c5a-partial-%d", time.Now().UnixNano())
+	needle := fmt.Sprintf("citest-payload-capture-partial-%d", time.Now().UnixNano())
 	req := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),
 		Messages: []harness.ChatMessage{
@@ -124,11 +125,11 @@ func TestC5a_PayloadCapturePartialStream(t *testing.T) {
 	require.True(t, hasResp && respField != "", "full level must include response body text for partial stream")
 }
 
-func TestC5a_PayloadCaptureSSEError(t *testing.T) {
+func TestPayloadCaptureSSEError(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-c5a-sse-*", "full")
+	stack, cfg, eps, obs := harness.BootPayloadCaptureStack(t, "citest-payload-capture-sse-*", "full")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -146,7 +147,7 @@ func TestC5a_PayloadCaptureSSEError(t *testing.T) {
 	harness.PatchMockOpenAIFault(t, client, mockOpenAI, mockopenai.FaultPatch{SSEErrorMessage: &msg})
 	harness.PatchAdversarialFastTimeouts(t, client, eps.MockDapiHTTP)
 
-	needle := fmt.Sprintf("citest-c5a-sse-%d", time.Now().UnixNano())
+	needle := fmt.Sprintf("citest-payload-capture-sse-%d", time.Now().UnixNano())
 	req := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),
 		Messages: []harness.ChatMessage{

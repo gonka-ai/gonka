@@ -11,7 +11,8 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestDispositionTraceGhost is C3.
+// TestDispositionTraceGhost asserts a ghost-burn disposition reaches both the
+// Prometheus counter and the trace for the request that caused it.
 //
 // A 2-host multi stack is HA-only: both versiond hosts share one on-chain
 // participant behind the router, so StopService("versiond-1") never produces
@@ -47,7 +48,7 @@ func TestDispositionTraceGhost(t *testing.T) {
 	})
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
-	harness.Step(t, "stop versiond-2 solo executor (F8) and drive traffic")
+	harness.Step(t, "stop versiond-2 solo executor and drive traffic")
 	stack.StopService(t, "versiond-2")
 
 	// EscrowSlots=4 with HA+solo identities → enough rounds for the dead
@@ -78,25 +79,25 @@ func TestDispositionTraceGhost(t *testing.T) {
 	harness.RequireLogsForTrace(t, obs, ids[0], []string{"devshardctl"}, 2*time.Minute)
 }
 
-// TestDispositionTraceUnfinishedRefused is the T3.10 late-path assertion
-// (T3.0 + T3.8). Skipped until gap G3: host-side refusal/execution timeout
-// env knobs are not plumbed through versiond→devshardd in testenv compose, so
-// PatchAdversarialFastTimeouts only updates mock-dapi params while the gateway
-// still waits ~32m of host ExecutionTimeout before emitting unfinished_*.
-// Per-node ML delay (G1) and receipt delay (G3) are also required for the
-// e2e LiveSendTimeout / NoReceiptTimeout patterns.
+// TestDispositionTraceUnfinishedRefused would assert the late-path dispositions
+// (unfinished_* and refused) on the trace. It stays skipped because host-side
+// refusal/execution timeout knobs are not plumbed through versiond→devshardd in
+// testenv compose: PatchAdversarialFastTimeouts only updates mock-dapi params
+// while the gateway still waits ~32m of host ExecutionTimeout before emitting
+// unfinished_*. A receipt-delay knob is required as well for the end-to-end
+// LiveSendTimeout / NoReceiptTimeout patterns.
 func TestDispositionTraceUnfinishedRefused(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
-	t.Skip("blocked on observability-test-plan gap G3 (host protocol timeout / receipt-delay knobs in testenv)")
+	t.Skip("blocked on missing testenv knobs: host protocol timeout / receipt delay (see docs/observability-test-plan.md)")
 }
 
-// TestDispositionLabelValuesMatchSpanAttrs is stack-level C4: every positive
-// Prometheus disposition label value is also present as a span attribute.
+// TestDispositionLabelValuesMatchSpanAttrs is the stack-level check that every
+// positive Prometheus disposition label value is also present as a span attribute.
 func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootObservabilityStackHASolo(t, "citest-disp-c4-*")
+	stack, cfg, eps, obs := harness.BootObservabilityStackHASolo(t, "citest-disp-label-attrs-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -121,7 +122,7 @@ func TestDispositionLabelValuesMatchSpanAttrs(t *testing.T) {
 	})
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 
-	harness.Step(t, "produce ghost via stopped solo host (F8)")
+	harness.Step(t, "produce ghost via stopped solo host")
 	stack.StopService(t, "versiond-2")
 	for i := 0; i < len(cfg.Hosts)*4; i++ {
 		req := harness.ChatCompletionRequest{

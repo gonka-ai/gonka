@@ -10,13 +10,13 @@ import (
 	"devshard/testenv/mockchain/adminface"
 )
 
-// TestA4_BadWarmKey verifies POST /testenv/grantees revokes the configured warm grantee
+// TestBadWarmKey verifies POST /testenv/grantees revokes the configured warm grantee
 // on mock-chain and that devshardd rejects warm-key transport auth via versiond-router afterward.
-func TestA4_BadWarmKey(t *testing.T) {
+func TestBadWarmKey(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a4-*")
+	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-bad-warm-key-*")
 	client := harness.HTTPClient()
 	chatClient := harness.GatewayChatClient()
 	mockDapi := harness.MockDAPIFromEndpoints(eps)
@@ -36,7 +36,7 @@ func TestA4_BadWarmKey(t *testing.T) {
 	baselineReq := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest a4 baseline before warm-key revoke"},
+			{Role: "user", Content: "citest bad-warm-key baseline before warm-key revoke"},
 		},
 		MaxTokens: 16,
 	}

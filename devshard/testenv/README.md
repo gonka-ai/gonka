@@ -295,7 +295,7 @@ curl -sf http://127.0.0.1:18080/v2/metrics | grep devshardd_request_duration_sec
 ```bash
 make citest-observability
 # or: TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
-#   -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -v
+#   -run 'TestObservabilitySmoke|TestTraceLogCorrelation|TestJaegerPromtailRegression' -v
 ```
 
 Compose images are reused by default (Makefile runs `citest-images` first). For local gateway-image iteration without a separate `make citest-images`, set `TESTENV_CITEST_BUILD=1` so `docker compose up` passes `--build`.
@@ -311,7 +311,7 @@ Full path: `devshardctl` → `versiond-router` → `devshardd` → `mock-openai`
 ```bash
 cd devshard/testenv
 make gen-compose && make build-devshardd
-TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewayPhase7_Smoke -count=1 -v
+TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewaySingleHostSmoke -count=1 -v
 ```
 
 Quick gateway checks after `make up`:

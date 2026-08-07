@@ -68,6 +68,9 @@ services:
       MOCK_ML_NODES: "{{ mockMLNodesEnv . }}"
       CHAIN_ID: "{{ .ChainID }}"
       MOCK_DAPI_BINARY_DIR: /testenv-binaries
+      DEVSHARD_OTEL_ENABLED: ${TESTENV_OTEL_ENABLED:-false}
+      OTEL_ENDPOINT: ${TESTENV_OTEL_ENDPOINT:-}
+      LOG_FORMAT: ${LOG_FORMAT:-json}
     volumes:
       - ./binaries:/testenv-binaries:ro
     ports:

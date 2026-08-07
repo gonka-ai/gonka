@@ -66,14 +66,16 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-ml-nodes citest-grpc-transport test-gateway-smoke
+.PHONY: citest-observability citest-dapi-correlation citest-ml-nodes citest-grpc-transport test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
+# citest-dapi-correlation is a focused subset of citest-observability — useful
+# while iterating, wasteful as a second matrix job.
 list-citest-targets: ## Print runnable citest suite targets (one per line) for the CI matrix.
 	@grep -hoE '^citest-[A-Za-z0-9_-]+:' $(firstword $(MAKEFILE_LIST)) \
 		| sed 's/://' \
-		| grep -vxE 'citest-images|citest-stack-build' \
+		| grep -vxE 'citest-images|citest-stack-build|citest-dapi-correlation' \
 		| sort -u
 .PHONY: obs-up obs-down
 # versiond-0 produces devshard-versiond:latest shared by all versiond-* hosts.
@@ -97,18 +99,22 @@ citest-escrow-longpoll: citest-images ## Escrow long-poll warm; first inference 
 citest-versiond-rolling-update: citest-images ## Same-version versiond rolling update and fallback.
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestVersiondRollingUpdate' -count=1 -v -timeout 30m
 
-citest-adversarial: citest-images ## Phase 9 adversarial citest (TESTENV_CITEST=1).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestA1_|TestA2_|TestA3_|TestA4_' -count=1 -v -timeout 30m
+citest-adversarial: citest-images
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestLostFirstChunk|TestMLUpstream5xx|TestStaleEscrow|TestBadWarmKey' -count=1 -v -timeout 30m
 
-citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m
-	cd .. && go test ./cmd/devshardctl/ -run TestG4_NoRESTChainClientsInGatewayProduction -count=1 -v
+citest-grpc-transport: citest-images
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayEscrowCreateGRPC|TestGatewayEscrowReadGRPC|TestGatewayChatGRPCOnly' -count=1 -v -timeout 30m
+	cd .. && go test ./cmd/devshardctl/ -run TestNoRESTChainClientsInGatewayProduction -count=1 -v
 
-citest-observability: citest-images ## T2/T3.10/T4a: O1 + correlation + disposition C3/C4 + C5a payload + jaeger-promtail C7.
+citest-observability: citest-images
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestO1_ObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestC5a_PayloadCapture' -count=1 -v -timeout 90m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestObservabilitySmoke|TestTraceLogCorrelation|TestDispositionTrace|TestDispositionLabelValues|TestJaegerPromtailRegression|TestPayloadCapture|TestShadowHostMultiAttemptSameTrace' -count=1 -v -timeout 90m
 
-citest-ml-nodes: citest-images ## T7: multi mock-openai pool + per-node fault (G1).
+citest-dapi-correlation: citest-images ## Gateway/host/mock-dapi trace + log correlation, incl. multi-host attempts.
+	$(MAKE) build-devshardd
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' -count=1 -v -timeout 45m
+
+citest-ml-nodes: citest-images ## Multi mock-openai pool with per-node fault targeting.
 	$(MAKE) build-devshardd
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestMLNodePool_' -count=1 -v -timeout 45m
 
@@ -149,7 +155,7 @@ citest-stack-build: dev-build ## Build dev images then run full stack citests.
 	$(MAKE) citest-stack
 
 test-gateway-smoke: ## Full-stack gateway smoke (TESTENV_GATEWAY_SMOKE=1; needs Docker + build-devshardd).
-	TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewayPhase7_Smoke -count=1 -v
+	TESTENV_GATEWAY_SMOKE=1 go test ./citest/ -run TestGatewaySingleHostSmoke -count=1 -v
 
 dev-restart-mock-chain: ## Restart mock-chain under dev overlay.
 	docker compose $(DEV_OVERLAY) restart mock-chain

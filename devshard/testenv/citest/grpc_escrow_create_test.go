@@ -17,13 +17,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestG1_GatewayEscrowCreateGRPC creates a devshard escrow via common/chain/tx gRPC
-// against the dockerized mock-chain (Track A + B). Gateway wiring migration is Track C.
-func TestG1_GatewayEscrowCreateGRPC(t *testing.T) {
+// TestGatewayEscrowCreateGRPC creates a devshard escrow via common/chain/tx gRPC
+// against the dockerized mock-chain: tx broadcast and the escrow query both go
+// over gRPC, with no LCD in the path.
+func TestGatewayEscrowCreateGRPC(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootMockChainStack(t, "citest-g1-*")
+	stack, cfg, eps := harness.BootMockChainStack(t, "citest-escrow-create-grpc-*")
 	t.Cleanup(func() {
 		if t.Failed() {
 			harness.DumpComposeLogs(t, stack, "mock-chain")

@@ -29,7 +29,7 @@ var restChainExcludedFiles = map[string]bool{
 	"transport_gate_test.go": true,
 }
 
-func TestG4_NoRESTChainClientsInGatewayProduction(t *testing.T) {
+func TestNoRESTChainClientsInGatewayProduction(t *testing.T) {
 	dir := "."
 	fset := token.NewFileSet()
 	var violations []string

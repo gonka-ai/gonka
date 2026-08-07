@@ -1,5 +1,8 @@
 # T5 test plan — dapi / ML-node hop correlation
 
+**Status:** landed for testenv (see §6.1). Sections 1–2 describe the state *before* the
+implementation slice; they are kept as the rationale for the shape that shipped.
+
 **Companion to:** [observability-trace-correlation-plan.md](./observability-trace-correlation-plan.md) §7 / §9,
 [gateway-tracing.md](../../docs/gateway-tracing.md) (build order T5),
 [observability-test-plan.md](./observability-test-plan.md).
@@ -24,7 +27,7 @@ under that same client `request_id` / parent `trace_id`.
 |----|----------|------------------|
 | **C1 / C2** — `TestTraceLogCorrelation` | Tempo spans `devshardctl` + `devshardd`; Loki `trace_id` on `devshardctl` + `versiond.*` | **No `mock-dapi`** in either assertion |
 | **T7** — `TestMLNodePool_*` | Real pool + exclusions via mock-dapi `AcquireMLNode` | No OTel / no log correlation |
-| **T4a** — `TestC5a_*` | Payload capture on ML failures | Orthogonal |
+| **T4a** — `TestPayloadCapture*` | Payload capture on ML failures | Orthogonal |
 
 `mock-dapi` already serves `common/nodemanager/gen.NodeManager` (via
 `chainoracle/params.Server` + host-events wrap). It does **not** today:
@@ -112,13 +115,13 @@ requirement for mock-dapi.
 
 ## 3. Citest cases
 
-Wire into `make citest-observability` (or a focused `citest-t5` target) under
+Wire into `make citest-observability` (or a focused `citest-dapi-correlation` target) under
 `devshard/testenv/citest/`.
 
 ### 3.1 **C8** — three-service log (+ span) correlation
 
-**File:** `citest/t5_dapi_trace_correlation_test.go`  
-**Name:** `TestT5_TraceLogCorrelationGatewayHostDapi`
+**File:** `citest/dapi_trace_correlation_test.go`  
+**Name:** `TestTraceLogCorrelationGatewayHostDapi`
 
 **Boot:** `BootObservabilityStack` (2 hosts, `tempo-alloy`), payload capture off.
 
@@ -155,8 +158,8 @@ Wire into `make citest-observability` (or a focused `citest-t5` target) under
 
 ### 3.2 **C9** — shadow host → multi-host attempts, one client identity
 
-**File:** same package or `citest/t5_shadow_multi_host_trace_test.go`  
-**Name:** `TestT5_ShadowHostMultiAttemptSameTrace`
+**File:** same package or `citest/shadow_multi_host_trace_test.go`  
+**Name:** `TestShadowHostMultiAttemptSameTrace`
 
 **Intent.** Shadow quarantine still sends **real** traffic (`ParticipantRequestLimiter` docs:
 probe = no-send; shadow = real send, no-winner). Combined with redundancy escalation, the gateway
@@ -200,13 +203,25 @@ multi-host real-send shape the test is meant to prove.
 
 | Helper | Purpose |
 |--------|---------|
-| Extend `WaitTraceCoveringServices` | Include `mock-dapi` / match `service.name` |
-| `RequireRequestIDOnTrace` | Loki: each `compose_service` has `request_id` |
-| `WaitLokiStages` | Optional: wait for `stage=mlnode_acquire` |
-| `ForceShadowQuarantine(t, …)` | Encapsulate threshold + fault drive or admin patch |
-| `CountGatewayAttemptsForRequest` | Parse Loki/Tempo for attempt count + host diversity |
+| `WaitTraceServices` | Trace-scoped service coverage, including `mock-dapi`. Pins the assertion to one trace, unlike `WaitTraceCoveringServices`, which any recent trace can satisfy |
+| `RequireRequestIDOnTrace` | Loki: each `compose_service` has a line with both `trace_id` and `request_id` |
+| `TryTraceIDsForRequest` / `RequireSingleTraceForRequest` | request_id → trace_id, with the "exactly one trace" negative case |
+| `RequireStagesForTrace` | Wait for `stage=mlnode_acquire` / `mlnode_release` on a trace |
+| `ForceShadowQuarantine` / `ForceOneShadowQuarantine` | Threshold + fault drive; the "one" variant clears the extra participants (see below) |
+| `GatewayAttemptParticipants` / `TryWaitMultiHostAttempts` | Attempt count + host diversity from `gateway.attempt` spans |
+| `PostGatewayChatSoftEx` | Chat that returns status + headers without failing, so C9 can skip a round |
 
 Reuse `RequireLogsForTrace` from T2; do not fork a second correlation helper family.
+
+### 4.1 Two things C9 learned the hard way
+
+- **The stack must be HA-solo.** `BootObservabilityStack` gives two hosts that are
+  *one* on-chain participant, so the picker reports "tried every host in escrow" after a single
+  attempt and no fan-out is possible. C9 uses `BootObservabilityStackHASolo` (HA pair + solo).
+- **Exactly one participant may stay quarantined.** The fault drive is stack-wide, so every
+  participant that takes an attempt is struck; with all of them quarantined no host may win and
+  the client request fails with `no non-empty response`. `ForceOneShadowQuarantine` clears the
+  rest via `POST /v1/admin/participants/unquarantine`.
 
 ---
 
@@ -214,12 +229,14 @@ Reuse `RequireLogsForTrace` from T2; do not fork a second correlation helper fam
 
 ```make
 # Option A — fold into existing suite
-citest-observability: … -run '…|TestT5_'
+citest-observability: … -run '…|TestTraceLogCorrelation|TestShadowHostMultiAttemptSameTrace'
 
-# Option B — focused (faster while iterating T5)
-citest-t5: citest-images
+# Option B — focused (faster while iterating)
+citest-dapi-correlation: citest-images
 	$(MAKE) build-devshardd
-	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run '^TestT5_' -count=1 -v -timeout 45m
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ \
+	  -run '^(TestTraceLogCorrelationGatewayHostDapi|TestShadowHostMultiAttemptSameTrace)$$' \
+	  -count=1 -v -timeout 45m
 ```
 
 Prefer **Option A** once green; keep Option B during implementation.
@@ -228,12 +245,29 @@ Prefer **Option A** once green; keep Option B during implementation.
 
 ## 6. Acceptance checklist
 
-- [ ] mock-dapi exports OTLP when `TESTENV_OTEL_ENABLED=true` and appears in Tempo as `mock-dapi`
-- [ ] `AcquireMLNode` / `ReleaseMLNode` log lines carry `trace_id` (+ `request_id` when metadata set)
-- [ ] `TestT5_TraceLogCorrelationGatewayHostDapi` green under `tempo-alloy`
-- [ ] `TestT5_ShadowHostMultiAttemptSameTrace` green: ≥2 hosts, one `request_id`, one parent `trace_id`
-- [ ] Unit tests: interceptor propagates context; params `AcquireMLNode` logs under cancelled ctx still safe
-- [ ] Docs: mark T5 test slice in correlation plan §9 (C8/C9) and gateway-tracing build order when landed
+- [x] mock-dapi exports OTLP when `TESTENV_OTEL_ENABLED=true` and appears in Tempo as `mock-dapi`
+- [x] `AcquireMLNode` / `ReleaseMLNode` log lines carry `trace_id` (+ `request_id` when metadata set)
+- [x] `TestTraceLogCorrelationGatewayHostDapi` green under `tempo-alloy`
+- [x] `TestShadowHostMultiAttemptSameTrace` green: ≥2 hosts, one `request_id`, one parent `trace_id`
+- [x] Unit tests: interceptor propagates context; params `AcquireMLNode` logs under cancelled ctx still safe
+- [x] Docs: mark T5 test slice in correlation plan §9 (C8/C9) and gateway-tracing build order when landed
+
+### 6.1 What landed
+
+| Piece | Where |
+|-------|-------|
+| Shared gRPC client/server trace interceptors (`traceparent` + `x-request-id`) | `common/observability/grpctrace.go` (+ `grpctrace_test.go`) |
+| NodeManager client dials with those interceptors | `common/nodemanager/client.go` (+ `client_trace_test.go`) |
+| ctx-aware `stage=mlnode_acquire` / `mlnode_release` logs | `devshard/chainoracle/params/server.go` (+ `mlnode_log_test.go`) |
+| mock-dapi Init + JSON logs + server interceptor | `devshard/testenv/cmd/mockdapi/main.go`, `devshard/testenv/mockdapi/service.go` (+ `trace_test.go`, a Docker-free C8) |
+| Host acquire/release/ML-call spans (T5a) | `devshard/cmd/devshardd/inference/engine.go`, `devshard/observability/service.go` (+ `engine_test.go`) |
+| `TESTENV_OTEL_*` / `LOG_FORMAT` on mock-dapi | `devshard/testenv/cmd/gencompose/compose.go` (+ `main_test.go`) |
+| Correlation + shadow-quarantine harness | `citest/harness/request_correlation.go`, `citest/harness/shadow_quarantine.go` |
+| C8 / C9 citests | `citest/dapi_trace_correlation_test.go`, `citest/shadow_multi_host_trace_test.go` |
+
+**Still open (T5c):** production `decentralized-api` node manager does not yet register the server
+interceptor or emit the acquire/release stages. The client side already propagates, so adopting it
+there is `observability.Init` + one `grpc.ChainUnaryInterceptor` line.
 
 ---
 

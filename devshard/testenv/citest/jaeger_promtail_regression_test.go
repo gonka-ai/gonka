@@ -10,7 +10,7 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestJaegerPromtailRegression keeps the legacy jaeger-promtail profile green (C7)
+// TestJaegerPromtailRegression keeps the legacy jaeger-promtail profile green
 // while tempo-alloy is the e2e default.
 func TestJaegerPromtailRegression(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
@@ -43,7 +43,7 @@ func TestJaegerPromtailRegression(t *testing.T) {
 		},
 		MaxTokens: 32,
 	}
-	harness.Step(t, "POST %s/v1/chat/completions (jaeger-promtail C7)", eps.GatewayHTTP)
+	harness.Step(t, "POST %s/v1/chat/completions (jaeger-promtail profile)", eps.GatewayHTTP)
 	resp, _ := harness.PostGatewayChatCompletionEx(t, client, eps.GatewayHTTP, harness.TestenvAdminAPIKey, req)
 	harness.RequireMockOpenAIContent(t, resp.Choices[0].Message.Content)
 

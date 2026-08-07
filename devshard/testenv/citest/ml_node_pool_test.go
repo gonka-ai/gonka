@@ -21,8 +21,9 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 )
 
-// TestMLNodePool_PerNodeFault is T7 / G1: two mock-openai instances, AcquireMLNode
-// returns distinct NodeIds, and /testenv/fault on one node does not affect the other.
+// TestMLNodePool_PerNodeFault runs two mock-openai instances behind mock-dapi:
+// AcquireMLNode returns distinct NodeIds, and /testenv/fault on one node does
+// not affect the other.
 func TestMLNodePool_PerNodeFault(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)

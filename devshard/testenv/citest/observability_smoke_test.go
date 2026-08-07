@@ -11,13 +11,13 @@ import (
 	"devshard/testenv/config"
 )
 
-// TestO1_ObservabilitySmoke starts the standard stack with observability services,
+// TestObservabilitySmoke starts the standard stack with observability services,
 // runs a gateway chat, and asserts devshardd spans and structured logs appear.
-func TestO1_ObservabilitySmoke(t *testing.T) {
+func TestObservabilitySmoke(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps, obs := harness.BootObservabilityStack(t, "citest-o1-*")
+	stack, cfg, eps, obs := harness.BootObservabilityStack(t, "citest-observability-smoke-*")
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {
 		if t.Failed() {
@@ -34,7 +34,7 @@ func TestO1_ObservabilitySmoke(t *testing.T) {
 	req := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest o1 observability smoke"},
+			{Role: "user", Content: "citest observability smoke"},
 		},
 		MaxTokens: 32,
 	}

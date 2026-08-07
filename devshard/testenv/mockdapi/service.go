@@ -12,6 +12,7 @@ import (
 
 	"common/chain"
 	"common/nodemanager/gen"
+	commonobs "common/observability"
 	commonruntimeconfig "common/runtimeconfig"
 	"devshard/chainoracle/blocks"
 	"devshard/chainoracle/blocks/observer"
@@ -26,6 +27,9 @@ import (
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/credentials/insecure"
 )
+
+// grpcTracerName is the instrumentation scope for mock-dapi server spans.
+const grpcTracerName = "mock-dapi.nodemanager"
 
 // Service runs mock-dapi gRPC + HTTP (chainoracle + /testenv fault proxy).
 type Service struct {
@@ -195,7 +199,11 @@ func (s *Service) runChainPoll(ctx context.Context) error {
 }
 
 func (s *Service) serveGRPCOn(ctx context.Context, lis net.Listener) error {
-	gs := grpc.NewServer()
+	// Continue the caller's trace so AcquireMLNode/ReleaseMLNode logs join the
+	// gateway → host → dapi chain on one trace_id / request_id.
+	gs := grpc.NewServer(
+		grpc.ChainUnaryInterceptor(commonobs.UnaryServerTraceInterceptor(grpcTracerName)),
+	)
 	gen.RegisterNodeManagerServer(gs, newNodeManagerServer(s.paramsSrv, s.hostEvents))
 	s.grpcServer = gs
 	go func() {

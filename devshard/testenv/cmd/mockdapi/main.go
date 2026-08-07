@@ -10,10 +10,17 @@ import (
 
 	"devshard/chainoracle/params"
 	cosrv "devshard/chainoracle/server"
+	"devshard/observability"
 	"devshard/testenv/mockdapi"
 )
 
+// ServiceName is the OTel service.name and matches the compose service label
+// Alloy/Promtail stamp, so Tempo and Loki filters use the same string.
+const ServiceName = "mock-dapi"
+
 func main() {
+	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+
 	cfg := mockdapi.DefaultConfig()
 	cfg.GRPCAddr = envOr("MOCK_DAPI_GRPC_ADDR", ":9400")
 	cfg.HTTPAddr = envOr("MOCK_DAPI_HTTP_ADDR", ":9100")
@@ -46,6 +53,22 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
+
+	// Init installs the W3C propagator even with OTel disabled, which is what
+	// lets inbound traceparent metadata reach the acquire/release log lines.
+	shutdownObs, err := observability.Init(ctx, observability.Config{ServiceName: ServiceName})
+	if err != nil {
+		log.Printf("mock-dapi: observability init: %v", err)
+	}
+	if shutdownObs != nil {
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := shutdownObs(shutdownCtx); err != nil {
+				log.Printf("mock-dapi: observability shutdown: %v", err)
+			}
+		}()
+	}
 
 	svc, err := mockdapi.New(ctx, cfg)
 	if err != nil {

@@ -13,12 +13,12 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestA1_LostFirstChunk verifies streaming chat survives mock-openai dropping the first SSE chunk.
-func TestA1_LostFirstChunk(t *testing.T) {
+// TestLostFirstChunk verifies streaming chat survives mock-openai dropping the first SSE chunk.
+func TestLostFirstChunk(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a1-*")
+	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-lost-first-chunk-*")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {

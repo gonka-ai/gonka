@@ -11,12 +11,12 @@ import (
 	"devshard/testenv/mockopenai"
 )
 
-// TestA2_MLUpstream5xx verifies gateway chat fails when mock-openai returns HTTP 503.
-func TestA2_MLUpstream5xx(t *testing.T) {
+// TestMLUpstream5xx verifies gateway chat fails when mock-openai returns HTTP 503.
+func TestMLUpstream5xx(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a2-*")
+	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-ml-upstream-5xx-*")
 	client := harness.GatewayChatClient()
 	mockOpenAI := eps.MockOpenAIHTTP
 	t.Cleanup(func() {
@@ -33,7 +33,7 @@ func TestA2_MLUpstream5xx(t *testing.T) {
 	req := harness.ChatCompletionRequest{
 		Model: config.PrimaryModelID(cfg),
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest a2 ml 503 unique prompt"},
+			{Role: "user", Content: "citest ml-upstream-5xx unique prompt"},
 		},
 		MaxTokens: 16,
 	}

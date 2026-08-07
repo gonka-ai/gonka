@@ -14,13 +14,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestA3_StaleEscrow verifies POST /testenv/escrow marks the active escrow settled on mock-chain
+// TestStaleEscrow verifies POST /testenv/escrow marks the active escrow settled on mock-chain
 // and that the gateway stack stops serving chat against the stale escrow.
-func TestA3_StaleEscrow(t *testing.T) {
+func TestStaleEscrow(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-a3-*")
+	stack, cfg, eps := harness.BootAdversarialStack(t, "citest-stale-escrow-*")
 	client := harness.HTTPClient()
 	chatClient := harness.GatewayChatClient()
 	mockDapi := harness.MockDAPIFromEndpoints(eps)
@@ -42,7 +42,7 @@ func TestA3_StaleEscrow(t *testing.T) {
 	baselineReq := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest a3 baseline before stale escrow"},
+			{Role: "user", Content: "citest stale-escrow baseline before stale escrow"},
 		},
 		MaxTokens: 16,
 	}
@@ -57,7 +57,7 @@ func TestA3_StaleEscrow(t *testing.T) {
 	staleReq := harness.ChatCompletionRequest{
 		Model: model,
 		Messages: []harness.ChatMessage{
-			{Role: "user", Content: "citest a3 stale escrow after forced settlement"},
+			{Role: "user", Content: "citest stale-escrow after forced settlement"},
 		},
 		MaxTokens: 32,
 	}

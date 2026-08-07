@@ -876,7 +876,7 @@ TraceQL via a span-not-exists filter.
 
 **T4a status:** ✅ landed — gateway `payload_captured` / `payload_quarantine` stages,
 `payload.captured` span event, mock-openai nested HTTP + `sse_error_message` faults,
-citest `TestC5a_PayloadCapture*` via `make citest-observability`. Capture emits as soon as a
+citest `TestPayloadCapture*` via `make citest-observability`. Capture emits as soon as a
 `host_response` classifier fires (empty/error/truncated send path) as well as at race terminal;
 content-bearing streams without `[DONE]` are `sse_truncated` even when a receipt was seen.
 T4b remains deferred.
@@ -1109,6 +1109,11 @@ spans, in either `broker/` or `nodemanager/`.
 
 ### 7.4 Three tiers, cheapest first
 
+**Landed so far:** T5a in full, and T5b's shared interceptors — registered on the
+`common/nodemanager` client (so every caller propagates) and on testenv's mock-dapi server.
+Production `decentralized-api` has not registered the server side yet, so T5c and dapi's own
+`observability.Init` remain open. C8/C9 in §9 cover the landed path end to end.
+
 **T5a — client-side span in devshardd. No dapi change at all.** ✅ recommended first
 
 devshardd already has OTel initialised, so wrap `Acquire`/`Release` in
@@ -1209,8 +1214,8 @@ func RequireSpanAttrs(t, obs, traceID string, want map[string]string)
 | **C5b** | Validation-failure e2e: a payload line exists for the invalidated `inference_id`, joinable by payload hash | T4b (does not gate T6) |
 | **C6** | `tempo-alloy` profile: Alloy UI shows OTLP receiver → exporter connected and Tempo returns the trace | T2 |
 | **C7** | `jaeger-promtail` remains green (no regression in the legacy profile) | T1, T2 |
-| **C8** | One chat → Loki (+ Tempo) from `devshardctl`, `devshardd`/`versiond.*`, **and** `mock-dapi` share `trace_id` (+ `request_id` when metadata lands) | T5 — see [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
-| **C9** | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id`; mock-dapi acquires stay on that trace | T5 — same doc |
+| **C8** ✅ | One chat → Loki (+ Tempo) from `devshardctl`, `devshardd`/`versiond.*`, **and** `mock-dapi` share `trace_id` **and** `request_id` (metadata landed: `x-request-id` rides the gRPC hop) | T5 — `TestTraceLogCorrelationGatewayHostDapi`, see [observability-t5-test-plan.md](./observability-t5-test-plan.md) |
+| **C9** ✅ | Shadow quarantine → ≥2 host attempts under one client `request_id` / parent `trace_id`; mock-dapi acquires stay on that trace | T5 — `TestShadowHostMultiAttemptSameTrace`, same doc |
 
 Wire the disposition assertions into the existing accounting e2e tests listed in §5 rather than
 writing new scenarios — those tests already force every disposition; they simply do not look at
@@ -1370,7 +1375,7 @@ flowchart TD
 | **T2** | `tempo-alloy` profile is the e2e default; Jaeger/Promtail stay green (compose split + harness landed) | ✅ for TraceQL queries (tier 3 only) |
 | **T3.0** | Classification sweep on its own 5–10 s ticker, off the persistence path | independent — also fixes stale metrics/API |
 | **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span — ✅ landed (T3.0–T3.8 + T3.10 citest C3/C4; unfinished late-path citest pending G3) | tiers are independently shippable |
-| **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` — ✅ landed (`TestC5a_PayloadCapture*`, `make citest-observability`) | — |
+| **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` — ✅ landed (`TestPayloadCapture*`, `make citest-observability`) | — |
 | **T4b** | Payload capture for validation failures | ⛔ needs `ak/gateway-v2-postgres` on the release branch (§6.5); can land last |
 | **T5.0** | dapi cleanup: delete the dead inference surface; add `*Ctx` variants to `common/logging` and thread `ctx` through broker/nodemanager (§7.2) | independent; prerequisite for T5b/T5c |
 | **T5** | T5a client-side acquire/release spans in devshardd (no dapi change); then shared gRPC interceptors in `common/`; dapi server-side selection span optional | — |

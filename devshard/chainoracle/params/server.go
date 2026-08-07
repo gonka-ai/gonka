@@ -11,6 +11,7 @@ import (
 
 	"common/nodemanager/gen"
 	commonruntimeconfig "common/runtimeconfig"
+	"devshard/logging"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -78,9 +79,42 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 	return s.runtimeConfig.Handle(ctx, req)
 }
 
-func (s *Server) AcquireMLNode(_ context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
-	excluded := make(map[string]struct{}, len(req.GetExcludedNodes()))
-	for _, id := range req.GetExcludedNodes() {
+// Stage names for the node-selection log lines. Citests join Loki on these to
+// prove the dapi hop shares the caller's trace_id / request_id (T5 / C8).
+const (
+	StageMLNodeAcquire = "mlnode_acquire"
+	StageMLNodeRelease = "mlnode_release"
+)
+
+func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
+	resp := s.acquire(req.GetModel(), req.GetExcludedNodes())
+	if resp == nil {
+		logging.Stage(ctx, StageMLNodeAcquire,
+			"outcome", "no_nodes_available",
+			"model", req.GetModel(),
+			"escrow_id", req.GetEscrowId(),
+			"excluded", strings.Join(req.GetExcludedNodes(), ","),
+			"pool_size", len(s.nodes),
+		)
+		return nil, status.Error(codes.ResourceExhausted, "no available ML nodes")
+	}
+	logging.Stage(ctx, StageMLNodeAcquire,
+		"outcome", "acquired",
+		"node_id", resp.NodeId,
+		"lock_id", resp.LockId,
+		"endpoint", resp.Endpoint,
+		"model", req.GetModel(),
+		"escrow_id", req.GetEscrowId(),
+		"excluded", strings.Join(req.GetExcludedNodes(), ","),
+	)
+	return resp, nil
+}
+
+// acquire picks the next eligible node. It returns nil when the pool is
+// exhausted so the caller can log and build the status outside the mutex.
+func (s *Server) acquire(model string, excludedNodes []string) *gen.AcquireMLNodeResponse {
+	excluded := make(map[string]struct{}, len(excludedNodes))
+	for _, id := range excludedNodes {
 		id = strings.TrimSpace(id)
 		if id != "" {
 			excluded[id] = struct{}{}
@@ -100,34 +134,47 @@ func (s *Server) AcquireMLNode(_ context.Context, req *gen.AcquireMLNodeRequest)
 		if node.MaxConcurrent > 0 && s.inUse[node.ID] >= node.MaxConcurrent {
 			continue
 		}
-		lockID := "mock-" + req.GetModel() + "-" + itoa(s.seq.Add(1))
+		lockID := "mock-" + model + "-" + itoa(s.seq.Add(1))
 		s.locks[lockID] = node.ID
 		s.inUse[node.ID]++
 		return &gen.AcquireMLNodeResponse{
 			LockId:   lockID,
 			Endpoint: node.Endpoint,
 			NodeId:   node.ID,
-		}, nil
+		}
 	}
-	return nil, status.Error(codes.ResourceExhausted, "no available ML nodes")
+	return nil
 }
 
-func (s *Server) ReleaseMLNode(_ context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
+func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
 	lockID := strings.TrimSpace(req.GetLockId())
+	nodeID, released := s.release(lockID)
+	logging.Stage(ctx, StageMLNodeRelease,
+		"lock_id", lockID,
+		"node_id", nodeID,
+		"outcome", req.GetOutcome().String(),
+		"released", released,
+	)
+	return &gen.ReleaseMLNodeResponse{}, nil
+}
+
+// release drops lockID and reports the node it held. released is false for an
+// unknown or empty lock, which stays a no-op the caller still logs.
+func (s *Server) release(lockID string) (string, bool) {
 	if lockID == "" {
-		return &gen.ReleaseMLNodeResponse{}, nil
+		return "", false
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	nodeID, ok := s.locks[lockID]
 	if !ok {
-		return &gen.ReleaseMLNodeResponse{}, nil
+		return "", false
 	}
 	delete(s.locks, lockID)
 	if s.inUse[nodeID] > 0 {
 		s.inUse[nodeID]--
 	}
-	return &gen.ReleaseMLNodeResponse{}, nil
+	return nodeID, true
 }
 
 func itoa(v uint64) string {

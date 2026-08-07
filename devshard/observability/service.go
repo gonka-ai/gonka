@@ -89,6 +89,63 @@ func (*RequestTracer) StartMLNodeCall(ctx context.Context, model, nodeURL string
 	)
 }
 
+// StartMLNodeAcquire opens the client-side span around the NodeManager
+// AcquireMLNode gRPC call. This is the parent of the dapi server span, so the
+// node-selection hop shows up on the request's trace (T5a).
+func (*RequestTracer) StartMLNodeAcquire(ctx context.Context, model string, excludedCount int) (context.Context, *Operation) {
+	attrs := []attribute.KeyValue{
+		attribute.Int("mlnode.excluded_count", excludedCount),
+	}
+	if model != "" {
+		attrs = append(attrs, AttrModel.String(model))
+	}
+	return StartOperation(
+		ctx,
+		tracerName.Host,
+		spanName.MLNodeAcquire,
+		trace.SpanKindClient,
+		attrs,
+		modelMetric(model),
+	)
+}
+
+// StartMLNodeRelease opens the client-side span around ReleaseMLNode.
+func (*RequestTracer) StartMLNodeRelease(ctx context.Context, nodeID, lockID, outcome string) (context.Context, *Operation) {
+	attrs := []attribute.KeyValue{}
+	if nodeID != "" {
+		attrs = append(attrs, AttrMLNodeID.String(nodeID))
+	}
+	if lockID != "" {
+		attrs = append(attrs, AttrMLNodeLockID.String(lockID))
+	}
+	if outcome != "" {
+		attrs = append(attrs, attribute.String("mlnode.release_outcome", outcome))
+	}
+	return StartOperation(
+		ctx,
+		tracerName.Host,
+		spanName.MLNodeRelease,
+		trace.SpanKindClient,
+		attrs,
+		nil,
+	)
+}
+
+// SetMLNode tags a span with the node dapi handed back.
+func (*RequestTracer) SetMLNode(op *Operation, nodeID, endpoint, lockID string) {
+	attrs := make([]attribute.KeyValue, 0, 3)
+	if nodeID != "" {
+		attrs = append(attrs, AttrMLNodeID.String(nodeID))
+	}
+	if endpoint != "" {
+		attrs = append(attrs, AttrMLNodeEndpoint.String(endpoint))
+	}
+	if lockID != "" {
+		attrs = append(attrs, AttrMLNodeLockID.String(lockID))
+	}
+	op.SetAttributes(attrs...)
+}
+
 // StartValidation opens the span around validation re-execution.
 func (*RequestTracer) StartValidation(ctx context.Context, inferenceID, model string) (context.Context, *Operation) {
 	attrs := []attribute.KeyValue{}

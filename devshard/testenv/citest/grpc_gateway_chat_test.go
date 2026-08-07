@@ -12,13 +12,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// TestG3_GatewayChatGRPCOnly exercises chat with a gRPC-only gateway
+// TestGatewayChatGRPCOnly exercises chat with a gRPC-only gateway
 // chain transport — compose must not wire DEVSHARD_CHAIN_REST / DEVSHARD_TX_QUERY_REST.
-func TestG3_GatewayChatGRPCOnly(t *testing.T) {
+func TestGatewayChatGRPCOnly(t *testing.T) {
 	harness.SkipUnlessEnv(t, "TESTENV_CITEST")
 	harness.RequireDocker(t)
 
-	stack, cfg, eps := harness.BootStack(t, "citest-g3-*")
+	stack, cfg, eps := harness.BootStack(t, "citest-gateway-chat-grpc-only-*")
 	harness.RequireGatewayGRPCOnlyCompose(t, stack.ComposePath)
 	client := harness.GatewayChatClient()
 	t.Cleanup(func() {

@@ -17,7 +17,7 @@ type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
-	MLNodes        int    // 0 = default (1); T7 multi mock-openai pool
+	MLNodes        int    // 0 = default (1); >1 boots a multi mock-openai pool
 }
 
 // WriteStackConfig writes the standard two-versiond stack config.
@@ -124,7 +124,7 @@ grantees:
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 
-// WriteSingleVersiondConfig writes a single-host config for gateway smoke (Phase 7).
+// WriteSingleVersiondConfig writes a single-host config for the gateway smoke test.
 func WriteSingleVersiondConfig(t *testing.T, dir string) {
 	t.Helper()
 	skeleton := strings.TrimPrefix(`chain_id: gonka-test
