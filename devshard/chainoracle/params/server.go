@@ -9,9 +9,10 @@ import (
 	"sync/atomic"
 	"time"
 
+	"common/nodemanager"
 	"common/nodemanager/gen"
+	commonobs "common/observability"
 	commonruntimeconfig "common/runtimeconfig"
-	"devshard/logging"
 
 	"google.golang.org/grpc/codes"
 	"google.golang.org/grpc/status"
@@ -79,17 +80,16 @@ func (s *Server) GetRuntimeConfig(ctx context.Context, req *gen.GetRuntimeConfig
 	return s.runtimeConfig.Handle(ctx, req)
 }
 
-// Stage names for the node-selection log lines. Citests join Loki on these to
-// prove the dapi hop shares the caller's trace_id / request_id (T5 / C8).
+// Stage names re-exported so existing tests keep compiling against params.
 const (
-	StageMLNodeAcquire = "mlnode_acquire"
-	StageMLNodeRelease = "mlnode_release"
+	StageMLNodeAcquire = nodemanager.StageMLNodeAcquire
+	StageMLNodeRelease = nodemanager.StageMLNodeRelease
 )
 
 func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeRequest) (*gen.AcquireMLNodeResponse, error) {
 	resp := s.acquire(req.GetModel(), req.GetExcludedNodes())
 	if resp == nil {
-		logging.Stage(ctx, StageMLNodeAcquire,
+		commonobs.Stage(ctx, StageMLNodeAcquire,
 			"outcome", "no_nodes_available",
 			"model", req.GetModel(),
 			"escrow_id", req.GetEscrowId(),
@@ -98,7 +98,7 @@ func (s *Server) AcquireMLNode(ctx context.Context, req *gen.AcquireMLNodeReques
 		)
 		return nil, status.Error(codes.ResourceExhausted, "no available ML nodes")
 	}
-	logging.Stage(ctx, StageMLNodeAcquire,
+	commonobs.Stage(ctx, StageMLNodeAcquire,
 		"outcome", "acquired",
 		"node_id", resp.NodeId,
 		"lock_id", resp.LockId,
@@ -149,7 +149,7 @@ func (s *Server) acquire(model string, excludedNodes []string) *gen.AcquireMLNod
 func (s *Server) ReleaseMLNode(ctx context.Context, req *gen.ReleaseMLNodeRequest) (*gen.ReleaseMLNodeResponse, error) {
 	lockID := strings.TrimSpace(req.GetLockId())
 	nodeID, released := s.release(lockID)
-	logging.Stage(ctx, StageMLNodeRelease,
+	commonobs.Stage(ctx, StageMLNodeRelease,
 		"lock_id", lockID,
 		"node_id", nodeID,
 		"outcome", req.GetOutcome().String(),

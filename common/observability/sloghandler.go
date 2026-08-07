@@ -12,8 +12,8 @@ import (
 )
 
 // ContextFieldsFunc extracts slog attributes from a request context. Each
-// service module can RegisterContextFields without common importing it —
-// e.g. devshard registers request_id.
+// service module can RegisterContextFields without common importing it.
+// request_id is registered once in this package (see requestid_fields.go).
 type ContextFieldsFunc func(context.Context) []slog.Attr
 
 var (

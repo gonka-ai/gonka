@@ -1110,9 +1110,11 @@ spans, in either `broker/` or `nodemanager/`.
 ### 7.4 Three tiers, cheapest first
 
 **Landed so far:** T5a in full, and T5b's shared interceptors — registered on the
-`common/nodemanager` client (so every caller propagates) and on testenv's mock-dapi server.
-Production `decentralized-api` has not registered the server side yet, so T5c and dapi's own
-`observability.Init` remain open. C8/C9 in §9 cover the landed path end to end.
+`common/nodemanager` client (so every caller propagates) and on both testenv's mock-dapi
+server and production `decentralized-api` (`observability.Init` +
+`UnaryServerTraceInterceptor`, plus shared `common/observability.Stage` /
+`mlnode_acquire`/`mlnode_release` stage names). Optional T5c (broker decision span attributes)
+remains open. C8/C9 in §9 cover the landed path end to end.
 
 **T5a — client-side span in devshardd. No dapi change at all.** ✅ recommended first
 
@@ -1335,7 +1337,7 @@ gap G2 without new fault verbs.
 | **Full-traffic payload retention (T4b)** | Gateway-side validation capture cannot know which inferences will be sampled, so it retains payloads for all traffic across the validation window — the reason T4b waits on `ak/gateway-v2-postgres`, and the reason validator-side capture (zero retention) is kept as a fallback. §6.5. |
 | **Sampling drops the interesting trace** | Run e2e at `AlwaysSample`. For production, prefer tail-based sampling in Alloy keyed on `devshard.disposition != finished_used` so failures are always kept. |
 | **`X-Request-Id` semantic split** | Fix in T1 before anything depends on it (§2). |
-| **Two log stacks** (`devshard/logging` vs `common/logging`) | T1 handles `devshard/logging`; `common/logging` gets the same handler in T5b. Until then dapi broker/nodemanager lines lack `trace_id` — tolerable, since T5a puts the selection *result* on a devshardd span. |
+| **Two log stacks** (`devshard/logging` vs `common/logging`) | T1 handles `devshard/logging`; `common/logging` has `*Ctx` variants and nodemanager emits shared `Stage` lines under the TraceHandler. Broader broker/`common/logging` migration remains optional. |
 | **Non-goal** | Changing production `deploy/join` defaults. testenv proves the stack; the join migration is a separate decision, as in the parent plan. |
 | **Non-goal** | Persisting per-nonce trace ids in the accounting SQLite store. Tempo is the per-request index; the tracker stays aggregate-only. |
 
@@ -1377,8 +1379,8 @@ flowchart TD
 | **T3** | Tier 1 attempt spans → tier 2 classification log line → tier 3 late disposition span — ✅ landed (T3.0–T3.8 + T3.10 citest C3/C4; unfinished late-path citest pending G3) | tiers are independently shippable |
 | **T4a** | Payload capture for ML-node failures + quarantine sizes, gated by `DEVSHARD_LOG_PAYLOADS*` — ✅ landed (`TestPayloadCapture*`, `make citest-observability`) | — |
 | **T4b** | Payload capture for validation failures | ⛔ needs `ak/gateway-v2-postgres` on the release branch (§6.5); can land last |
-| **T5.0** | dapi cleanup: delete the dead inference surface; add `*Ctx` variants to `common/logging` and thread `ctx` through broker/nodemanager (§7.2) | independent; prerequisite for T5b/T5c |
-| **T5** | T5a client-side acquire/release spans in devshardd (no dapi change); then shared gRPC interceptors in `common/`; dapi server-side selection span optional | — |
+| **T5.0** | dapi cleanup: delete the dead inference surface (§7.2A still open); `*Ctx` on `common/logging` + shared `Stage` + nodemanager stage lines ✅ | dead-surface delete remains independent |
+| **T5** | T5a client spans ✅; T5b shared interceptors on client + mock-dapi + production dapi (Init) ✅; T5c broker decision span optional | — |
 | **T7** | `MLNodes: N` in gencompose, real node pool in the params server (round-robin + exclusions + lock tracking), per-node fault helpers (§10) — ✅ landed (`make citest-ml-nodes`) | ✅ for the per-node scenarios in the test plan |
 | **T6** | Dashboards + C1–C7 in CI | last |
 
