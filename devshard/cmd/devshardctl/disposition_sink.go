@@ -9,8 +9,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 )
 
-// dispositionSink turns a terminal accounting event into the two artefacts
-// T3 promises: a structured nonce_disposition log line, and a
+// dispositionSink turns a terminal accounting event into the two artefacts:
+// a structured nonce_disposition log line, and a
 // devshard.nonce.disposition span. Both rebuild trace context from the stored
 // TraceRef, so a verdict is reachable from the request that caused it.
 type dispositionSink struct{}

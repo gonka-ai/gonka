@@ -946,7 +946,7 @@ type inflight struct {
 	emptyResponseBodySampleTruncated bool
 
 	// payloadResponseSample is a capped write-through copy of stream bytes for
-	// T4a failure capture (partial streams clear pendingBuf after content).
+	// failure capture (partial streams clear pendingBuf after content).
 	payloadResponseSample          []byte
 	payloadResponseSampleTruncated bool
 	payloadCaptured                atomic.Bool // once-guard for T4a ML payload log

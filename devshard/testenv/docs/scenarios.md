@@ -384,7 +384,7 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
 | Observability | `make citest-observability` | O1 smoke, C1/C2 trace↔log correlation, C3/C4 disposition, C5a payload capture, C7 jaeger-promtail regression, C8/C9 mock-dapi hop + shadow multi-host — status table in [`observability-test-plan.md`](./observability-test-plan.md) §0 |
-| Observability (T5 only) | `make citest-dapi-correlation` | C8/C9 subset of the above, for iterating on the node-selection hop |
+| Observability (node-selection hop only) | `make citest-dapi-correlation` | C8/C9 subset of the above, for iterating on the mock-dapi hop |
 | ML node pool | `make citest-ml-nodes` | T7 per-node ML fault targeting (below) |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 

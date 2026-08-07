@@ -38,11 +38,11 @@ type File struct {
 	VersiondRouter VersiondRouterCfg `yaml:"versiond_router"`
 	Devshardctl    DevshardctlCfg    `yaml:"devshardctl"`
 	Postgres       PostgresCfg       `yaml:"postgres"`
-	Escrow    EscrowMeta   `yaml:"escrow"`
-	Hosts     []HostCfg    `yaml:"hosts"`
-	User        UserCfg        `yaml:"user"`
-	WarmGrantee WarmGranteeCfg `yaml:"warm_grantee"`
-	Network     NetworkCfg     `yaml:"network"`
+	Escrow         EscrowMeta        `yaml:"escrow"`
+	Hosts          []HostCfg         `yaml:"hosts"`
+	User           UserCfg           `yaml:"user"`
+	WarmGrantee    WarmGranteeCfg    `yaml:"warm_grantee"`
+	Network        NetworkCfg        `yaml:"network"`
 }
 
 type Epoch struct {
@@ -104,7 +104,7 @@ type MockChainCfg struct {
 	GRPCPort    int    `yaml:"grpc_port"`
 	RPCPort     int    `yaml:"rpc_port"`
 	TestenvPort int    `yaml:"testenv_port"`
-	Host         string `yaml:"host"`
+	Host        string `yaml:"host"`
 }
 
 // MockDapiCfg is the listen addresses of cmd/mockdapi.
@@ -122,14 +122,14 @@ type MockOpenAICfg struct {
 
 // VersiondCfg holds versiond supervisor defaults for compose.
 type VersiondCfg struct {
-	Mode             string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
-	VersionName      string `yaml:"version_name"`
-	HostBinaryMount  string `yaml:"host_binary_mount"`
-	OverridePath     string `yaml:"override_path"`
-	PollInterval     string `yaml:"poll_interval"`
-	BinaryVersion    string `yaml:"binary_version"`
-	KeyringDir       string `yaml:"keyring_dir"`
-	KeyringPassword  string `yaml:"keyring_password"`
+	Mode            string `yaml:"mode"` // single | multi — see VersiondModeSingle/Multi
+	VersionName     string `yaml:"version_name"`
+	HostBinaryMount string `yaml:"host_binary_mount"`
+	OverridePath    string `yaml:"override_path"`
+	PollInterval    string `yaml:"poll_interval"`
+	BinaryVersion   string `yaml:"binary_version"`
+	KeyringDir      string `yaml:"keyring_dir"`
+	KeyringPassword string `yaml:"keyring_password"`
 }
 
 // VersiondRouterCfg is the sticky nginx router in front of versiond instances.
@@ -194,20 +194,20 @@ type WarmGranteeCfg struct {
 }
 
 const (
-	DefaultChainID           = "gonka-test"
-	DefaultBlockHeight       = int64(150)
-	DefaultMockChainGRPCPort = 9090
-	DefaultMockChainRPCPort  = 26657
+	DefaultChainID              = "gonka-test"
+	DefaultBlockHeight          = int64(150)
+	DefaultMockChainGRPCPort    = 9090
+	DefaultMockChainRPCPort     = 26657
 	DefaultMockChainTestenvPort = 9191
-	DefaultMockChainHost     = "mock-chain"
-	DefaultMockDapiGRPCPort  = 9400
-	DefaultMockDapiHTTPPort  = 9100
-	DefaultMockDapiHost      = "mock-dapi"
-	DefaultMockOpenAIHTTPPort = 8088
-	DefaultMockOpenAIHost     = "mock-openai-0"
-	DefaultMLNodes            = 1
+	DefaultMockChainHost        = "mock-chain"
+	DefaultMockDapiGRPCPort     = 9400
+	DefaultMockDapiHTTPPort     = 9100
+	DefaultMockDapiHost         = "mock-dapi"
+	DefaultMockOpenAIHTTPPort   = 8088
+	DefaultMockOpenAIHost       = "mock-openai-0"
+	DefaultMLNodes              = 1
 	// MLNodeIPBase is the first host octet offset for mock-openai-0 (BaseIP.40+i).
-	MLNodeIPBase = 40
+	MLNodeIPBase              = 40
 	DefaultVersionName        = "v2"
 	DefaultBinaryVersion      = "0.2.13-v2-r2"
 	VersiondModeSingle        = "single"
@@ -226,19 +226,19 @@ const (
 	DefaultPostgresDB         = "devshardd"
 	DefaultPostgresUser       = "devshardd"
 	DefaultPostgresPassword   = "devshardd"
-	DefaultEscrowSlots       = 4
+	DefaultEscrowSlots        = 4
 	// DefaultEscrowSlotURL is the versiond-router origin (no /devshard/<v> suffix).
 	// devshardctl transport clients append RoutePrefix separately.
-	DefaultEscrowSlotURL     = "http://versiond-router:8080"
-	DefaultEscrowAmount      = uint64(1_000_000)
-	DefaultTokenPrice        = uint64(100)
-	DefaultUserPort          = 8081
-	DefaultHostPort          = 8080
-	DefaultNetworkCIDR       = "172.30.0.0/24"
-	DefaultNetworkBaseIP     = "172.30.0"
-	DefaultModelID           = "test-model"
-	DefaultAdminAPIKey       = "testenv-citest-admin"
-	DefaultAppHash           = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
+	DefaultEscrowSlotURL = "http://versiond-router:8080"
+	DefaultEscrowAmount  = uint64(1_000_000)
+	DefaultTokenPrice    = uint64(100)
+	DefaultUserPort      = 8081
+	DefaultHostPort      = 8080
+	DefaultNetworkCIDR   = "172.30.0.0/24"
+	DefaultNetworkBaseIP = "172.30.0"
+	DefaultModelID       = "test-model"
+	DefaultAdminAPIKey   = "testenv-citest-admin"
+	DefaultAppHash       = "0102030405060708090a0b0c0d0e0f101112131415161718191a1b1c1d1e1f20"
 )
 
 // Load reads a YAML config file and applies defaults.
@@ -323,7 +323,7 @@ func (c *File) ApplyDefaults() {
 	if c.MLNodes <= 0 {
 		c.MLNodes = DefaultMLNodes
 	}
-	// Pre-T7 configs used host "mock-openai"; normalize to the primary pool id.
+
 	if c.MockOpenAI.Host == "" || c.MockOpenAI.Host == "mock-openai" {
 		c.MockOpenAI.Host = c.PrimaryMLNodeID()
 	}
