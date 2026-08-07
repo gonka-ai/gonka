@@ -128,6 +128,7 @@ const (
 	ReasonEpochConflict               Reason = "epoch_conflict"
 	ReasonBuildGroupErr               Reason = "build_group_err"
 	ReasonGetEscrowErr                Reason = "get_escrow_err"
+	ReasonEscrowSettled               Reason = "escrow_settled"
 	ReasonStorageErr                  Reason = "storage_err"
 	ReasonSessionResolveErr           Reason = "session_resolve_err"
 	ReasonModifyRequestErr            Reason = "modify_request_err"

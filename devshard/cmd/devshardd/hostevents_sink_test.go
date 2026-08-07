@@ -50,6 +50,20 @@ func TestEscrowWarmSink_WarmEscrowChainErrorDoesNotCache(t *testing.T) {
 	require.ErrorIs(t, err, devshardstorage.ErrEscrowCacheNotFound)
 }
 
+func TestEscrowWarmSink_WarmSettledEscrowDoesNotCache(t *testing.T) {
+	store := devshardstorage.NewMemory()
+	require.NoError(t, store.PutEscrowCache(devshardstorage.EscrowCacheInfo{EscrowID: "1", EpochID: 3}))
+	br := &sinkFakeBridge{escrow: &bridge.EscrowInfo{
+		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 3, Settled: true,
+	}}
+	sink := newEscrowWarmSink(br, store, nil)
+
+	require.NoError(t, sink.WarmEscrow("1"))
+
+	_, err := store.GetEscrowCache("1")
+	require.ErrorIs(t, err, devshardstorage.ErrEscrowCacheNotFound)
+}
+
 func TestEscrowWarmSink_OnEscrowSettledDropsCache(t *testing.T) {
 	store := devshardstorage.NewMemory()
 	require.NoError(t, store.PutEscrowCache(devshardstorage.EscrowCacheInfo{EscrowID: "1", EpochID: 1}))

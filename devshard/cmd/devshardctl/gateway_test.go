@@ -1054,7 +1054,7 @@ func TestEscrowCheckerUsesBridgeGetEscrow(t *testing.T) {
 	})
 
 	deactivated := false
-	ec.TriggerCheck("83", func() { deactivated = true })
+	ec.TriggerCheck("83", func(string) { deactivated = true })
 	require.Equal(t, "83", gotID)
 	require.True(t, deactivated)
 }

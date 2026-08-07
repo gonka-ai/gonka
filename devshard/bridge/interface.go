@@ -38,6 +38,7 @@ type EscrowInfo struct {
 	// EpochID is the chain epoch_index recorded on the on-chain DevshardEscrow.
 	// Storage uses it as the partition/pruning key.
 	EpochID uint64
+	Settled bool
 }
 
 type HostInfo struct {

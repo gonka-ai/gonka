@@ -14,6 +14,7 @@ const (
 	DevshardErrorInitializing     = "initializing"
 	DevshardErrorNotImplemented   = "not_implemented"
 	DevshardErrorChainUnavailable = "chain_unavailable"
+	DevshardErrorEscrowSettled    = "escrow_settled"
 )
 
 // HTTPError returns an echo HTTP error and sets X-Devshard-Error when devshardCode is non-empty.

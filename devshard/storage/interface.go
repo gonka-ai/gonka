@@ -122,6 +122,7 @@ type EscrowCacheInfo struct {
 	ValidationRate            uint32   `json:"validation_rate"`
 	VoteThresholdFactor       uint32   `json:"vote_threshold_factor"`
 	EpochID                   uint64   `json:"epoch_id"`
+	Settled                   bool     `json:"settled,omitempty"`
 }
 
 // ValidationObsEntry identifies one validation or validation-vote application

@@ -34,6 +34,10 @@ func (s *escrowWarmSink) WarmEscrow(escrowID string) error {
 	if err != nil {
 		return fmt.Errorf("warm escrow %s: %w", escrowID, err)
 	}
+	if info.Settled {
+		s.log.Debug("hostevents: skipping warm of settled escrow", "escrow_id", escrowID)
+		return s.OnEscrowSettled(escrowID)
+	}
 	if err := s.store.PutEscrowCache(devshardbridge.EscrowCacheFromInfo(info)); err != nil {
 		return fmt.Errorf("cache escrow %s: %w", escrowID, err)
 	}

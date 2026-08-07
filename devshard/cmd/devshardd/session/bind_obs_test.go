@@ -129,6 +129,25 @@ func TestOwnerChat_BindsSession(t *testing.T) {
 	require.Equal(t, user.Address(), meta.CreatorAddr)
 }
 
+func TestOwnerChat_SettledEscrow_DoesNotBindSession(t *testing.T) {
+	const escrowID = "owner-bind-settled"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	mgr.bridge.(*mockBridge).escrow.Settled = true
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+
+	_, err := store.GetSessionMeta(escrowID)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Empty(t, active)
+}
+
 type countingGetEscrowBridge struct {
 	bridge.MainnetBridge
 	calls int

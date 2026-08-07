@@ -67,17 +67,39 @@ func TestCachingEscrowBridge_ReturnsLiveErrOnCacheMiss(t *testing.T) {
 	require.ErrorIs(t, err, liveErr)
 }
 
+func TestCachingEscrowBridge_RefusesSettledCacheRow(t *testing.T) {
+	inner := &fakeBridge{err: errors.New("chain down")}
+	cache := &fakeCacheStore{info: &storage.EscrowCacheInfo{
+		EscrowID: "1", CreatorAddress: "gonka1owner", EpochID: 9, Settled: true,
+	}}
+	b := NewCachingEscrowBridge(inner, cache, nil)
+
+	_, err := b.GetEscrow("1")
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+}
+
+func TestCachingEscrowBridge_PassesThroughSettledFromChain(t *testing.T) {
+	inner := &fakeBridge{escrow: &bridge.EscrowInfo{EscrowID: "1", Settled: true}}
+	b := NewCachingEscrowBridge(inner, &fakeCacheStore{err: storage.ErrEscrowCacheNotFound}, nil)
+
+	got, err := b.GetEscrow("1")
+	require.NoError(t, err)
+	require.True(t, got.Settled)
+}
+
 func TestEscrowCacheRoundTrip(t *testing.T) {
 	in := &bridge.EscrowInfo{
 		EscrowID: "2", Amount: 1, CreatorAddress: "c", Slots: []string{"a", "b"},
-		TokenPrice: 3, ValidationRate: 4, VoteThresholdFactor: 5, EpochID: 6,
+		TokenPrice: 3, ValidationRate: 4, VoteThresholdFactor: 5, EpochID: 6, Settled: true,
 	}
 	cache := EscrowCacheFromInfo(in)
 	require.Equal(t, uint32(5), cache.VoteThresholdFactor)
+	require.True(t, cache.Settled)
 
 	out := EscrowInfoFromCache(&cache)
 	require.Equal(t, in.CreatorAddress, out.CreatorAddress)
 	require.Equal(t, in.Slots, out.Slots)
 	require.Equal(t, in.VoteThresholdFactor, out.VoteThresholdFactor)
 	require.Equal(t, in.EpochID, out.EpochID)
+	require.True(t, out.Settled)
 }

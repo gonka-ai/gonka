@@ -3940,10 +3940,10 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	modelID := rt.model
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
-			go g.escrowChecker.TriggerCheck(escrowID, func() {
+			go g.escrowChecker.TriggerCheck(escrowID, func(reason string) {
 				g.deactivateDevshardByID(escrowID)
-				// Escrow no longer exists on chain -- nothing to settle.
-				g.retireRuntime(escrowID, "escrow confirmed missing on chain")
+				// Escrow is terminal on chain (missing or settled) -- nothing to settle.
+				g.retireRuntime(escrowID, reason)
 			})
 		}
 	}

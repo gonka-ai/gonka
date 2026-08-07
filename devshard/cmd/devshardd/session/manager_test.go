@@ -2,6 +2,7 @@ package session
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 	"path/filepath"
@@ -256,6 +257,159 @@ func TestCreateSession_BindsConfiguredVersion(t *testing.T) {
 	require.Equal(t, standaloneVersion, meta.Version)
 }
 
+func TestCreate_RejectsSettledEscrow(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+			Settled:        true,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	_, err := mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, err = store.GetSessionMeta("1")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+}
+
+func TestHandleSettlementFinalized_NoLocalRow_BlocksColdBind(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	br := &mockBridge{
+		escrow: &bridge.EscrowInfo{
+			EscrowID:       "1",
+			Amount:         100000,
+			CreatorAddress: user.Address(),
+			Slots:          addresses,
+		},
+	}
+
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+	require.NoError(t, mgr.HandleSettlementFinalized("1"))
+
+	_, err := mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, err = store.GetSessionMeta("1")
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+// TestStoreSessionIfAbsent_RejectsSettlementRacingCreate covers the interleaving
+// where settlement lands after create() read an open escrow but before the built
+// server is installed: the tombstone must survive, no session may go live, and
+// the row create() already wrote must not stay active for RecoverSessions.
+func TestStoreSessionIfAbsent_RejectsSettlementRacingCreate(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	escrow := &bridge.EscrowInfo{
+		EscrowID:       "1",
+		EpochID:        7,
+		Amount:         100000,
+		CreatorAddress: user.Address(),
+		Slots:          addresses,
+	}
+	br := &mockBridge{escrow: escrow}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, br, nil, nil)
+
+	require.NoError(t, mgr.HandleSettlementFinalized("1"))
+
+	srv, err := mgr.create("1", escrow)
+	require.NoError(t, err)
+
+	_, err = mgr.storeSessionIfAbsent("1", srv)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
+
+	_, ok := mgr.existingServer("1")
+	require.False(t, ok, "settled escrow must not get a live session")
+
+	meta, err := store.GetSessionMeta("1")
+	require.NoError(t, err)
+	require.NotEqual(t, "active", meta.Status, "racing row must not stay active")
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Empty(t, active)
+
+	_, err = mgr.getOrCreate("1", nil)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled, "tombstone must survive the rejected install")
+}
+
+func TestInstallSession_IgnoresTransientAndExpiredFailures(t *testing.T) {
+	store := newManagerTestStore(t)
+	hosts := make([]*signing.Secp256k1Signer, 3)
+	for i := range hosts {
+		hosts[i] = mustGenerateKey(t)
+	}
+	user := mustGenerateKey(t)
+	group := makeGroup(hosts)
+	addresses := make([]string, len(group))
+	for i, s := range group {
+		addresses[i] = s.ValidatorAddress
+	}
+
+	escrow := &bridge.EscrowInfo{
+		EscrowID:       "1",
+		EpochID:        7,
+		Amount:         100000,
+		CreatorAddress: user.Address(),
+		Slots:          addresses,
+	}
+	mgr := NewHostManager(store, hosts[0], stub.NewInferenceEngine(), stub.NewValidationEngine(), nil, testutil.RuntimeTestVersion, &mockBridge{escrow: escrow}, nil, nil)
+
+	now := time.Now()
+	mgr.rememberResolutionFailure("1", bridge.ErrChainUnavailable, now)
+
+	srv, err := mgr.create("1", escrow)
+	require.NoError(t, err)
+	installed, err := mgr.storeSessionIfAbsent("1", srv)
+	require.NoError(t, err, "a transient failure must not block install")
+	require.Equal(t, srv, installed)
+
+	mgr.EvictBefore(8)
+	mgr.rememberResolutionFailure("2", bridge.ErrEscrowSettled, now)
+	_, settled := mgr.installSession("2", srv, now.Add(permanentFailureTTL+time.Second))
+	require.False(t, settled, "an expired settled tombstone must not block install")
+}
+
 func TestRecoverSessions_EmptyStore(t *testing.T) {
 	store := newManagerTestStore(t)
 	signer := mustGenerateKey(t)
@@ -298,11 +452,11 @@ func TestHandleSettlementFinalized_DoesNotResurrect(t *testing.T) {
 	require.False(t, ok, "settlement must drop the live session")
 
 	_, err := mgr.getOrCreate("1", nil)
-	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
 
 	// Permanent negative cache: a second bind must not re-read/rebuild.
 	_, err = mgr.getOrCreate("1", nil)
-	require.ErrorIs(t, err, storage.ErrSessionNotActive)
+	require.ErrorIs(t, err, bridge.ErrEscrowSettled)
 	_, ok = mgr.existingServer("1")
 	require.False(t, ok, "settled session must stay out of the live map")
 }

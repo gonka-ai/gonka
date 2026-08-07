@@ -112,6 +112,7 @@ type UpstreamStatusError struct {
 	Path       string
 	StatusCode int
 	Body       string
+	DevshardError string
 }
 
 func (e *UpstreamStatusError) Error() string {
@@ -133,6 +134,20 @@ func IsUpstreamEscrowNotFound(err error) bool {
 	}
 	return ue.StatusCode == http.StatusInternalServerError &&
 		strings.Contains(ue.Body, "escrow not found")
+}
+
+// IsUpstreamEscrowSettled returns true if err is an UpstreamStatusError whose
+// body indicates the host refused to serve an escrow already settled on chain.
+func IsUpstreamEscrowSettled(err error) bool {
+	var ue *UpstreamStatusError
+	if !errors.As(err, &ue) {
+		return false
+	}
+	if ue.DevshardError == DevshardErrorEscrowSettled {
+		return true
+	}
+	return ue.StatusCode == http.StatusConflict &&
+		strings.Contains(ue.Body, "escrow already settled")
 }
 
 func DefaultClientConfig() ClientConfig {
@@ -638,9 +653,10 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 		resp.Body.Close()
 		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       path,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          path,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -680,9 +696,10 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 		respBody, _ := io.ReadAll(resp.Body)
 		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
 		return nil, &UpstreamStatusError{
-			Path:       url,
-			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Path:          url,
+			StatusCode:    resp.StatusCode,
+			Body:          string(respBody),
+			DevshardError: resp.Header.Get(HeaderDevshardError),
 		}
 	}
 	c.observeResult(url, resp.StatusCode)
