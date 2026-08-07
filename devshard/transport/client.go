@@ -109,9 +109,9 @@ type requestAdmissionBodyObserver interface {
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
 type UpstreamStatusError struct {
-	Path       string
-	StatusCode int
-	Body       string
+	Path          string
+	StatusCode    int
+	Body          string
 	DevshardError string
 }
 

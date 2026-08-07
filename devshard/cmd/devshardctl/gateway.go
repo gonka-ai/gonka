@@ -280,6 +280,9 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: get escrow: %w", cfg.ID, err)
 	}
+	if escrow.Settled {
+		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, bridge.ErrEscrowSettled)
+	}
 	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
@@ -3941,7 +3944,7 @@ func (g *Gateway) attachEscrowChecker(rt *devshardRuntime) {
 	if g.escrowChecker != nil {
 		rt.proxy.redundancy.onEscrowMissing = func() {
 			go g.escrowChecker.TriggerCheck(escrowID, func(reason string) {
-				g.deactivateDevshardByID(escrowID)
+				g.deactivateDevshardByIDWithReason(escrowID, reason)
 				// Escrow is terminal on chain (missing or settled) -- nothing to settle.
 				g.retireRuntime(escrowID, reason)
 			})
@@ -4104,6 +4107,15 @@ func (g *Gateway) retireRotatedDevshard(ctx context.Context, id, reason string, 
 	}
 	log.Printf("escrow_rotation_settling escrow=%s reason=%q", id, reason)
 	if _, err := gatewaySettleDevshardOnChain(g, ctx, id, adminSettleEscrowRequest{}); err != nil {
+		// Already settled on chain: there is nothing left to broadcast, so
+		// retire instead of failing the rotation forever.
+		if errors.Is(err, bridge.ErrEscrowSettled) {
+			log.Printf("escrow_rotation_already_settled escrow=%s reason=%q", id, reason)
+			g.clearSettlementPending(id)
+			g.deactivateDevshardByIDWithReason(id, "escrow settled on chain")
+			g.retireRuntime(id, reason)
+			return true, nil
+		}
 		return false, err
 	}
 	g.retireRuntime(id, reason)
@@ -4222,6 +4234,15 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 				g.clearSettlementPending(id)
 				log.Printf("auto_settle_confirmed escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
+				g.retireRuntime(id, reason)
+				return
+			}
+			if errors.Is(err, bridge.ErrEscrowSettled) {
+				// Terminal: the chain already recorded settlement, so retrying
+				// can only fail. Clear the pending flag so restarts stop
+				// reconciling an escrow that is already done.
+				g.clearSettlementPending(id)
+				log.Printf("auto_settle_already_settled escrow=%s reason=%s", id, reason)
 				g.retireRuntime(id, reason)
 				return
 			}

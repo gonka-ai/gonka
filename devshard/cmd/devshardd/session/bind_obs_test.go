@@ -148,6 +148,25 @@ func TestOwnerChat_SettledEscrow_DoesNotBindSession(t *testing.T) {
 	require.Empty(t, active)
 }
 
+func TestOwnerChat_SettledLocalRow_ReturnsConflict(t *testing.T) {
+	const escrowID = "owner-bind-settled-row"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	meta, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "precondition: first chat must bind the session")
+	require.Equal(t, "active", meta.Status)
+
+	require.NoError(t, mgr.HandleSettlementFinalized(escrowID))
+
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	require.Equal(t, http.StatusConflict, rec.Code, "body: %s", rec.Body.String())
+	require.Equal(t, transport.DevshardErrorEscrowSettled, rec.Header().Get(transport.HeaderDevshardError))
+}
+
 type countingGetEscrowBridge struct {
 	bridge.MainnetBridge
 	calls int

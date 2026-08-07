@@ -502,12 +502,15 @@ func buildGatewayRuntimes(gatewayStore *GatewayStore, gatewayState *GatewayState
 				continue
 			}
 			brokenLocalState := errors.Is(res.err, user.ErrLocalStateUnrecoverable)
-			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
+			if brokenLocalState || errors.Is(res.err, bridge.ErrEscrowNotFound) ||
+				errors.Is(res.err, bridge.ErrEscrowSettled) || errors.Is(res.err, errRuntimePrivateKeyMissing) {
 				reason := "runtime could not be loaded"
 				if brokenLocalState {
 					reason = "local state unrecoverable"
 				} else if errors.Is(res.err, bridge.ErrEscrowNotFound) {
 					reason = "escrow missing on chain"
+				} else if errors.Is(res.err, bridge.ErrEscrowSettled) {
+					reason = "escrow settled on chain"
 				} else if errors.Is(res.err, errRuntimePrivateKeyMissing) {
 					reason = "private key missing"
 				}

@@ -2,10 +2,13 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/bridge"
 )
 
 // newRetireTestGateway builds a minimal Gateway holding a single active runtime
@@ -122,6 +125,24 @@ func TestRetireRotatedDevshardRetiresWithoutSettlement(t *testing.T) {
 
 	_, stillRegistered := g.runtimes["12"]
 	require.False(t, stillRegistered, "no-settle rotation must retire the runtime")
+}
+
+func TestRetireRotatedDevshardRetiresWhenAlreadySettled(t *testing.T) {
+	g, _ := newRetireTestGateway("12")
+	settings := GatewaySettings{EscrowRotation: EscrowRotationSettings{SettlementEnabled: true}}
+
+	oldSettle := gatewaySettleDevshardOnChain
+	gatewaySettleDevshardOnChain = func(_ *Gateway, _ context.Context, id string, _ adminSettleEscrowRequest) (*SettleDevshardEscrowResult, error) {
+		return nil, fmt.Errorf("rehydrate devshard %s for settlement: runtime %s: %w", id, id, bridge.ErrEscrowSettled)
+	}
+	t.Cleanup(func() { gatewaySettleDevshardOnChain = oldSettle })
+
+	settled, err := g.retireRotatedDevshard(context.Background(), "12", "rotated", settings)
+	require.NoError(t, err)
+	require.True(t, settled)
+
+	_, stillRegistered := g.runtimes["12"]
+	require.False(t, stillRegistered, "already-settled rotation must retire the runtime")
 }
 
 // TestRetireRotatedDevshardRetiresAfterSettlement covers the settle terminal

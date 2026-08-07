@@ -1,7 +1,6 @@
 package bridge
 
 import (
-	"fmt"
 	"log/slog"
 
 	"devshard/bridge"
@@ -51,11 +50,6 @@ func (b *CachingEscrowBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, er
 	if cacheErr != nil || cached == nil {
 		return nil, err
 	}
-	if cached.Settled {
-		b.log.Warn("escrow: warm cache row is settled, refusing fallback",
-			"escrow_id", escrowID, "live_err", err)
-		return nil, fmt.Errorf("%w: escrow %s", bridge.ErrEscrowSettled, escrowID)
-	}
 	b.log.Info("escrow: serving from long-poll warm cache (live fetch failed)",
 		"escrow_id", escrowID, "live_err", err)
 	return EscrowInfoFromCache(cached), nil
@@ -78,7 +72,6 @@ func EscrowCacheFromInfo(e *bridge.EscrowInfo) storage.EscrowCacheInfo {
 		ValidationRate:            e.ValidationRate,
 		VoteThresholdFactor:       e.VoteThresholdFactor,
 		EpochID:                   e.EpochID,
-		Settled:                   e.Settled,
 	}
 }
 
@@ -99,6 +92,5 @@ func EscrowInfoFromCache(c *storage.EscrowCacheInfo) *bridge.EscrowInfo {
 		ValidationRate:            c.ValidationRate,
 		VoteThresholdFactor:       c.VoteThresholdFactor,
 		EpochID:                   c.EpochID,
-		Settled:                   c.Settled,
 	}
 }
