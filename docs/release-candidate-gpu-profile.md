@@ -48,7 +48,8 @@ speculative decoding off/on in nonce/min:
 | 2× H200 | 1120 / 1104 | 1184 / 1184 | 1216 / 1215 |
 | 4× H100 80 GB | 1424 / 1408 | 1504 / 1504 | unavailable / unavailable |
 
-The matching files are in `deploy/join/node-config-release-candidate-*.json`.
+The matching files are in
+`deploy/join/node-config-deepseekv4flash0731-*.json`.
 All profiles pin the Hugging Face model and revision above and set 400k
 context and FP8 KV cache. MLNode injects the PoC worker extension into every
 vLLM launch. Validation requests select their logprobs mode, so the profiles
