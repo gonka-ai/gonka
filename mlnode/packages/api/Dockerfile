@@ -29,6 +29,8 @@ ENV PATH="/usr/local/openssl-1.1/bin:${PATH}" \
 
 RUN ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
         /usr/local/cuda/lib64/libnvrtc.so \
+    && ln -sf /usr/local/cuda/targets/x86_64-linux/lib/libnvrtc.so.13 \
+        /usr/local/lib/libnvrtc.so \
     && ldconfig \
     && python3 -c "import vllm; assert vllm.__version__.startswith('0.25.1')" \
     && python3 -c "from gonka_poc.worker import PoCWorkerExtension; from vllm.v1.worker.gpu.sample.replay import ReplayState"
