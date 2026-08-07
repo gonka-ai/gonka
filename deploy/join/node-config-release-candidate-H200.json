@@ -14,12 +14,10 @@
           "--max-model-len", "400000",
           "--max-num-batched-tokens", "32768",
           "--kv-cache-dtype", "fp8",
-          "--logprobs-mode", "processed_logprobs",
           "--tokenizer-mode", "deepseek_v4",
           "--enable-auto-tool-choice",
           "--tool-call-parser", "deepseek_v4",
           "--reasoning-parser", "deepseek_v4",
-          "--worker-extension-cls", "gonka_poc.worker.PoCWorkerExtension",
           "--trust-remote-code"
         ]
       }

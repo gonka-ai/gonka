@@ -146,6 +146,7 @@ class VLLMRunner(IVLLMRunner):
     VLLM_PYTHON_PATH = "/usr/bin/python3.12"
     VLLM_PORT = int(os.getenv("INFERENCE_PORT", 5000))
     VLLM_HOST = "0.0.0.0"
+    WORKER_EXTENSION_CLASS = "gonka_poc.worker.PoCWorkerExtension"
 
     MAX_INSTANCES = int(os.getenv("INFERENCE_MAX_INSTANCES", 128))
 
@@ -158,7 +159,11 @@ class VLLMRunner(IVLLMRunner):
         self.vllm_python_path = os.getenv("VLLM_PYTHON_PATH", self.VLLM_PYTHON_PATH)
         self.model = model
         self.dtype = dtype
-        self.additional_args = additional_args or []
+        self.additional_args = list(additional_args or [])
+        if "--worker-extension-cls" not in self.additional_args:
+            self.additional_args.extend(
+                ["--worker-extension-cls", self.WORKER_EXTENSION_CLASS]
+            )
         self.processes: List[subprocess.Popen] = []
         self._hb = {}
         self._hb_lock = threading.Lock()

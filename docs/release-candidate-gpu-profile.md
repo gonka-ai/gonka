@@ -50,8 +50,10 @@ speculative decoding off/on in nonce/min:
 
 The matching files are in `deploy/join/node-config-release-candidate-*.json`.
 All profiles pin the Hugging Face model and revision above and set 400k
-context, FP8 KV cache, processed logprobs, and the PoC worker extension. They
-also use `--tokenizer-mode deepseek_v4`, `--enable-auto-tool-choice`,
+context and FP8 KV cache. MLNode injects the PoC worker extension into every
+vLLM launch. Validation requests select their logprobs mode, so the profiles
+do not set a server-wide `--logprobs-mode`. They also use
+`--tokenizer-mode deepseek_v4`, `--enable-auto-tool-choice`,
 `--tool-call-parser deepseek_v4`, and `--reasoning-parser deepseek_v4`, matching
 the DeepSeek V4 encoding and parser implementations bundled with vLLM 0.25.1.
 Do not force an attention backend; use the runtime-selected default.
@@ -71,7 +73,8 @@ number of simultaneously running GPU sequences.
 The published MLNode image cold-started four independent TP2 vLLM instances
 on eight H200s in 555.6 seconds. The model cache was mounted on tmpfs. All four
 backends reached `/health`, remained healthy under simultaneous load, and
-used the pinned model revision and processed logprobs.
+used the pinned model revision. Validation requests explicitly selected
+processed logprobs.
 
 Inference validation replayed every source against every validator, including
 self-replay (16 directed pairs). All 16 similarities passed the provisional
