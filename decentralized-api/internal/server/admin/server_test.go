@@ -226,3 +226,27 @@ func TestPostVersionStatus(t *testing.T) {
 		assert.Equal(t, http.StatusBadRequest, rec.Code)
 	})
 }
+
+func TestCacheStatsEndpoints_Disabled(t *testing.T) {
+	s, _, _ := setupTestServer(t)
+
+	t.Run("get cache stats disabled", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodGet, "/admin/v1/cache/stats", nil)
+		rec := httptest.NewRecorder()
+
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.JSONEq(t, `{"enabled":false}`, rec.Body.String())
+	})
+
+	t.Run("reset cache stats disabled", func(t *testing.T) {
+		req := httptest.NewRequest(http.MethodPost, "/admin/v1/cache/stats/reset", nil)
+		rec := httptest.NewRecorder()
+
+		s.e.ServeHTTP(rec, req)
+
+		assert.Equal(t, http.StatusOK, rec.Code)
+		assert.JSONEq(t, `{"enabled":false}`, rec.Body.String())
+	})
+}

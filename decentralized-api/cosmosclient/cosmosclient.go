@@ -35,6 +35,7 @@ import (
 	blstypes "github.com/productscience/inference/x/bls/types"
 	inferencetypes "github.com/productscience/inference/x/inference/types"
 	restrictionstypes "github.com/productscience/inference/x/restrictions/types"
+	"google.golang.org/grpc"
 )
 
 type InferenceCosmosClient struct {
@@ -44,6 +45,7 @@ type InferenceCosmosClient struct {
 	manager         tx_manager.TxManager
 	batchConsumer   *tx_manager.BatchConsumer
 	batchingEnabled bool
+	queryCache      *QueryCache
 }
 
 func NewInferenceCosmosClientWithRetry(
@@ -219,11 +221,18 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		return nil, err
 	}
 
+	var queryCache *QueryCache
+	if nodeConfig.QueryCacheEnabled {
+		queryCache = NewQueryCacheWithLimits(nodeConfig.QueryCacheMaxEntries, nodeConfig.QueryCacheMaxBytes)
+		log.Printf("Query cache enabled (max_entries=%d, max_bytes=%d)", nodeConfig.QueryCacheMaxEntries, nodeConfig.QueryCacheMaxBytes)
+	}
+
 	client := &InferenceCosmosClient{
 		ctx:        ctx,
 		Address:    accAddress,
 		apiAccount: apiAccount,
 		manager:    mn,
+		queryCache: queryCache,
 	}
 
 	batchingCfg := config.GetTxBatchingConfig()
@@ -289,10 +298,43 @@ type CosmosMessageClient interface {
 	NewRestrictionsQueryClient() restrictionstypes.QueryClient
 	GetAddress() string
 	GetApiAccount() apiconfig.ApiAccount
+	SetQueryCacheHeightHint(height int64)
+	GetQueryCacheStats() *QueryCacheStats
+	ResetQueryCacheStats() bool
 }
 
 func (icc *InferenceCosmosClient) GetApiAccount() apiconfig.ApiAccount {
 	return icc.manager.GetApiAccount()
+}
+
+func (icc *InferenceCosmosClient) SetQueryCacheHeightHint(height int64) {
+	if icc.queryCache != nil {
+		icc.queryCache.SetHeightHint(height)
+	}
+}
+
+func (icc *InferenceCosmosClient) GetQueryCacheStats() *QueryCacheStats {
+	if icc.queryCache == nil {
+		return nil
+	}
+	stats := icc.queryCache.SnapshotStats()
+	return &stats
+}
+
+func (icc *InferenceCosmosClient) ResetQueryCacheStats() bool {
+	if icc.queryCache == nil {
+		return false
+	}
+	icc.queryCache.ResetStats()
+	return true
+}
+
+func (icc *InferenceCosmosClient) cachedConn() grpc.ClientConnInterface {
+	baseConn := grpc.ClientConnInterface(icc.manager.GetClientContext())
+	if icc.queryCache != nil {
+		baseConn = &CachingConn{inner: baseConn, cache: icc.queryCache}
+	}
+	return newObservedQueryClientConn(baseConn)
 }
 
 func (icc *InferenceCosmosClient) GetClientContext() sdkclient.Context {
@@ -508,15 +550,15 @@ func (icc *InferenceCosmosClient) GetPartialUpgrades() (*inferencetypes.QueryAll
 }
 
 func (icc *InferenceCosmosClient) NewUpgradeQueryClient() upgradetypes.QueryClient {
-	return upgradetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
+	return upgradetypes.NewQueryClient(icc.cachedConn())
 }
 
 func (icc *InferenceCosmosClient) NewInferenceQueryClient() inferencetypes.QueryClient {
-	return inferencetypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
+	return inferencetypes.NewQueryClient(icc.cachedConn())
 }
 
 func (icc *InferenceCosmosClient) NewCometQueryClient() cmtservice.ServiceClient {
-	return cmtservice.NewServiceClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
+	return cmtservice.NewServiceClient(icc.cachedConn())
 }
 
 func (icc *InferenceCosmosClient) SendTransactionSyncNoRetry(transaction proto.Message, dstMsg proto.Message) error {
@@ -573,9 +615,9 @@ func (icc *InferenceCosmosClient) SubmitPartialSignature(requestId []byte, slotI
 }
 
 func (icc *InferenceCosmosClient) NewBLSQueryClient() blstypes.QueryClient {
-	return blstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
+	return blstypes.NewQueryClient(icc.cachedConn())
 }
 
 func (icc *InferenceCosmosClient) NewRestrictionsQueryClient() restrictionstypes.QueryClient {
-	return restrictionstypes.NewQueryClient(newObservedQueryClientConn(icc.manager.GetClientContext()))
+	return restrictionstypes.NewQueryClient(icc.cachedConn())
 }
