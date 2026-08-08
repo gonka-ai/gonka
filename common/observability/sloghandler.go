@@ -2,6 +2,7 @@ package observability
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -61,9 +62,27 @@ func (h *TraceHandler) Handle(ctx context.Context, r slog.Record) error {
 	hooks := contextFieldHooks
 	contextFieldMu.RUnlock()
 	for _, fn := range hooks {
-		r.AddAttrs(fn(ctx)...)
+		if attrs := safeContextAttrs(fn, ctx); len(attrs) > 0 {
+			r.AddAttrs(attrs...)
+		}
 	}
 	return h.inner.Handle(ctx, r)
+}
+
+// safeContextAttrs runs a context-field hook and recovers panics so a bad hook
+// cannot take down request logging on the slog hot path. Reports to stderr
+// (not slog) to avoid re-entering TraceHandler.
+func safeContextAttrs(fn ContextFieldsFunc, ctx context.Context) (attrs []slog.Attr) {
+	if fn == nil {
+		return nil
+	}
+	defer func() {
+		if rec := recover(); rec != nil {
+			fmt.Fprintf(os.Stderr, "observability: context field hook panicked: %v\n", rec)
+			attrs = nil
+		}
+	}()
+	return fn(ctx)
 }
 
 func (h *TraceHandler) WithAttrs(attrs []slog.Attr) slog.Handler {
