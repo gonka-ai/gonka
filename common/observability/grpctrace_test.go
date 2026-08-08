@@ -3,6 +3,7 @@ package observability_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -155,4 +156,35 @@ func TestIncomingTraceContextIgnoresBlankRequestID(t *testing.T) {
 	ctx := observability.IncomingTraceContext(metadata.NewIncomingContext(context.Background(), md))
 	_, ok := observability.RequestID(ctx)
 	require.False(t, ok)
+}
+
+func TestIncomingTraceContextRejectsInvalidRequestID(t *testing.T) {
+	useTraceContextPropagator(t)
+
+	md := metadata.New(map[string]string{observability.RequestIDMetadataKey: "bad id\n"})
+	ctx := observability.IncomingTraceContext(metadata.NewIncomingContext(context.Background(), md))
+	_, ok := observability.RequestID(ctx)
+	require.False(t, ok, "invalid x-request-id must not be bound")
+}
+
+func TestIncomingTraceContextRejectsOversizedRequestID(t *testing.T) {
+	useTraceContextPropagator(t)
+
+	oversized := strings.Repeat("a", observability.MaxRequestIDLength+1)
+	md := metadata.New(map[string]string{observability.RequestIDMetadataKey: oversized})
+	ctx := observability.IncomingTraceContext(metadata.NewIncomingContext(context.Background(), md))
+	_, ok := observability.RequestID(ctx)
+	require.False(t, ok)
+}
+
+func TestIncomingTraceContextSkipsInvalidThenAcceptsValid(t *testing.T) {
+	useTraceContextPropagator(t)
+
+	md := metadata.MD{
+		observability.RequestIDMetadataKey: {"bad id", "req-good"},
+	}
+	ctx := observability.IncomingTraceContext(metadata.NewIncomingContext(context.Background(), md))
+	id, ok := observability.RequestID(ctx)
+	require.True(t, ok)
+	require.Equal(t, "req-good", id)
 }

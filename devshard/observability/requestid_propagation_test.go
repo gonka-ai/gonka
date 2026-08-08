@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/labstack/echo/v4"
@@ -11,6 +12,8 @@ import (
 	"go.opentelemetry.io/otel"
 	"go.opentelemetry.io/otel/propagation"
 	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+
+	commonobs "common/observability"
 
 	"devshard/logging"
 )
@@ -52,6 +55,33 @@ func TestBindRequestID_TrimsInbound(t *testing.T) {
 	got, ok := logging.RequestID(ctx)
 	require.True(t, ok)
 	require.Equal(t, "req-trimmed", got)
+}
+
+func TestBindRequestID_RejectsInvalidAndMints(t *testing.T) {
+	ctx := BindRequestID(context.Background(), "req id\nwith/control")
+	got, ok := logging.RequestID(ctx)
+	require.True(t, ok)
+	require.NotEqual(t, "req id\nwith/control", got)
+	require.Contains(t, got, "req-")
+	_, valid := commonobs.NormalizeRequestID(got)
+	require.True(t, valid, "minted id must itself be normalize-safe")
+}
+
+func TestBindRequestID_RejectsOversized(t *testing.T) {
+	oversized := strings.Repeat("a", commonobs.MaxRequestIDLength+1)
+	ctx := BindRequestID(context.Background(), oversized)
+	got, ok := logging.RequestID(ctx)
+	require.True(t, ok)
+	require.NotEqual(t, oversized, got)
+	require.LessOrEqual(t, len(got), commonobs.MaxRequestIDLength)
+}
+
+func TestBindRequestID_InvalidInboundKeepsExisting(t *testing.T) {
+	ctx, existing := logging.WithRequestID(context.Background(), "req-local")
+	ctx = BindRequestID(ctx, "bad\nid")
+	got, ok := logging.RequestID(ctx)
+	require.True(t, ok)
+	require.Equal(t, existing, got, "invalid inbound must not clobber an existing id")
 }
 
 func TestBindEchoRequestID_PrefersInboundAndEchoesResponse(t *testing.T) {

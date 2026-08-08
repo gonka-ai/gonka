@@ -5,8 +5,9 @@ import (
 	"errors"
 	"net/http"
 	"strconv"
-	"strings"
 	"sync/atomic"
+
+	commonobs "common/observability"
 
 	"devshard/logging"
 )
@@ -195,13 +196,13 @@ func SetRuntime(binary, version, mode string) {
 	currentRuntime.Store(runtimeInfo{binary: binary, version: version, mode: mode})
 }
 
-// BindRequestID stores the inbound X-Request-Id on ctx when present, preferring
-// it over any ID already on the context. When absent, a fresh id is minted.
-// Preferring the inbound header keeps gateway and host logs on one request_id.
+// BindRequestID stores the inbound X-Request-Id on ctx when present and valid,
+// preferring it over any ID already on the context. Invalid or absent inbound
+// values fall back to any existing ctx id, otherwise a fresh id is minted.
+// Preferring a valid inbound header keeps gateway and host logs on one request_id.
 func BindRequestID(ctx context.Context, inboundID string) context.Context {
-	inboundID = strings.TrimSpace(inboundID)
-	if inboundID != "" {
-		return logging.SetRequestID(ctx, inboundID)
+	if id, ok := commonobs.NormalizeRequestID(inboundID); ok {
+		return logging.SetRequestID(ctx, id)
 	}
 	ctx, _ = logging.WithRequestID(ctx)
 	return ctx

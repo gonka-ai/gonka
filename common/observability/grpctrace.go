@@ -74,7 +74,7 @@ func IncomingTraceContext(ctx context.Context) context.Context {
 	}
 	ctx = otel.GetTextMapPropagator().Extract(ctx, grpcMetadataCarrier{MD: md})
 	for _, raw := range md.Get(RequestIDMetadataKey) {
-		if id := strings.TrimSpace(raw); id != "" {
+		if id, ok := NormalizeRequestID(raw); ok {
 			return SetRequestID(ctx, id)
 		}
 	}
