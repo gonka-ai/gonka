@@ -346,6 +346,24 @@ func bodySampleForLog(p []byte, limit int) (string, bool) {
 	return string(bytes.ToValidUTF8(p, []byte("\uFFFD"))), truncated
 }
 
+// hostFailureLogFields says why a host was unreachable in fields that can be grouped on, and keeps
+// the body a host returned out of the error string, where nothing bounds its length.
+func hostFailureLogFields(inf *inflight, session nonceFinishedChecker) []any {
+	fields := []any{"failure_reason", gatewayAttemptFailureReason(inf, session)}
+	var upstreamErr *transport.UpstreamStatusError
+	if errors.As(inf.err, &upstreamErr) {
+		sample, truncated := bodySampleForLog([]byte(upstreamErr.Body), emptyStreamBodySampleLimit)
+		return append(fields,
+			"http_status", upstreamErr.StatusCode,
+			"host_path", upstreamErr.Path,
+			"error", fmt.Sprintf("http %s: status %d", upstreamErr.Path, upstreamErr.StatusCode),
+			"error_body_sample", sample,
+			"error_body_sample_truncated", truncated,
+		)
+	}
+	return append(fields, "error", inf.err)
+}
+
 func requestBodySampleForLog(params user.InferenceParams) (string, bool) {
 	return bodySampleForLog(params.Prompt, emptyStreamBodySampleLimit)
 }
@@ -876,6 +894,8 @@ type inflight struct {
 	contentChunks   atomic.Int64
 	outputBytes     atomic.Int64
 	lastChunkAt     atomic.Int64
+	maxChunkGap     atomic.Int64
+	maxChunkGapAt   atomic.Int64
 	stallMu         sync.Mutex
 	stallActive     bool
 	stalls          []attemptStall
@@ -1535,6 +1555,30 @@ func (rw *raceWriter) ctxErr() error {
 	return rw.group.writeCtx.Err()
 }
 
+// recordChunkGap runs on the single goroutine that drives Write for this attempt, so reading the
+// current maximum before storing cannot race with another writer.
+func (inf *inflight) recordChunkGap(gapNano int64) {
+	if gapNano <= inf.maxChunkGap.Load() {
+		return
+	}
+	inf.maxChunkGap.Store(gapNano)
+	inf.maxChunkGapAt.Store(inf.outputChunks.Load())
+}
+
+func (inf *inflight) longestChunkGap() time.Duration {
+	return time.Duration(inf.maxChunkGap.Load())
+}
+
+func (inf *inflight) meanChunkGap() time.Duration {
+	chunks := inf.outputChunks.Load()
+	firstNano := inf.firstTokenNano.Load()
+	lastNano := inf.lastChunkAt.Load()
+	if chunks < 2 || firstNano <= 0 || lastNano <= firstNano {
+		return 0
+	}
+	return time.Duration((lastNano - firstNano) / (chunks - 1))
+}
+
 func (rw *raceWriter) Write(p []byte) (int, error) {
 	now := time.Now()
 	rw.inf.finishActiveStall(now)
@@ -1548,7 +1592,12 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	})
 	rw.inf.outputChunks.Add(1)
 	rw.inf.outputBytes.Add(int64(len(p)))
-	rw.inf.lastChunkAt.Store(now.UnixNano())
+	nowNano := now.UnixNano()
+	previousChunkNano := rw.inf.lastChunkAt.Swap(nowNano)
+	// The silence before [DONE] is the end of the stream, not a host that went quiet.
+	if previousChunkNano > 0 && !bytes.HasPrefix(p, sseDoneMarker) {
+		rw.inf.recordChunkGap(nowNano - previousChunkNano)
+	}
 	rw.inf.captureShortContentResponseChunk(p)
 
 	// Detect whether this Write contains the first content-bearing event for
@@ -1924,12 +1973,15 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		}
 		if inf.err != nil {
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "send_failed",
-				"host", inf.hostID,
-				"output_chunks", inf.outputChunks.Load(),
-				"content_chunks", inf.contentChunks.Load(),
-				"output_bytes", inf.outputBytes.Load(),
-				"stream_bytes_read", streamBytes,
-				"error", inf.err,
+				append([]any{
+					"host", inf.hostID,
+					"output_chunks", inf.outputChunks.Load(),
+					"content_chunks", inf.contentChunks.Load(),
+					"output_bytes", inf.outputBytes.Load(),
+					"stream_bytes_read", streamBytes,
+					"poc_reason", currentPoCPhaseReason(),
+					"poc_generation", currentPoCGenerationActive(),
+				}, hostFailureLogFields(inf, e.session)...)...,
 			)
 			e.maybeRecordEscrowStateDivergence(ctx, inf, inf.err)
 			return
@@ -1940,6 +1992,9 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			"content_chunks", inf.contentChunks.Load(),
 			"output_bytes", inf.outputBytes.Load(),
 			"stream_bytes_read", streamBytes,
+			"max_gap_ms", inf.longestChunkGap().Milliseconds(),
+			"max_gap_at_chunk", inf.maxChunkGapAt.Load(),
+			"mean_gap_ms", inf.meanChunkGap().Milliseconds(),
 		)
 		// A receipt-backed transport-level success that produced zero content
 		// events and did not produce a normal OpenAI error event is true empty
@@ -1958,8 +2013,16 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			logInferenceStage(ctx, inf.escrowID, inf.nonce, "empty_stream",
 				"host", inf.hostID,
 				"output_chunks", inf.outputChunks.Load(),
+				"content_chunks", inf.contentChunks.Load(),
 				"output_bytes", inf.outputBytes.Load(),
+				"stream_bytes_read", streamBytes,
+				"usage_tokens", inf.usageComplTokens.Load(),
+				"max_gap_ms", inf.longestChunkGap().Milliseconds(),
+				"mean_gap_ms", inf.meanChunkGap().Milliseconds(),
 				"content_source", inf.contentSource,
+				"poc_reason", currentPoCPhaseReason(),
+				"poc_generation", currentPoCGenerationActive(),
+				"started_before_poc_generation", inf.startedBeforePoCGeneration,
 				"request_flags", requestFlagsForLog(params),
 			)
 		}
@@ -1975,6 +2038,8 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 				"error_message", inf.errorMessage,
 				"response_body_sample", responseBodySample,
 				"response_body_sample_truncated", responseSampleTruncated,
+				"poc_reason", currentPoCPhaseReason(),
+				"poc_generation", currentPoCGenerationActive(),
 				"request_flags", requestFlagsForLog(params),
 			)
 		}
@@ -4124,6 +4189,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveRequestSample(e.devshardID, sample)
+		e.metrics.ObserveStreamCadence(participantKey, sample.Model, inf.longestChunkGap(), inf.meanChunkGap())
 	}
 }
 

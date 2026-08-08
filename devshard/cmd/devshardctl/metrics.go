@@ -39,6 +39,8 @@ type DevshardMetrics struct {
 	participantFirstContent    *prometheus.HistogramVec
 	participantPrefillPerToken *prometheus.HistogramVec
 	participantTotalSeconds    *prometheus.HistogramVec
+	participantMaxChunkGap     *prometheus.HistogramVec
+	participantMeanChunkGap    *prometheus.HistogramVec
 
 	gatewayRequests       *prometheus.CounterVec
 	criticalUserFailures  *prometheus.CounterVec
@@ -238,6 +240,22 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model"},
 		),
+		participantMaxChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_max_inter_chunk_seconds",
+				Help:    "Longest silence between two streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
+		participantMeanChunkGap: prometheus.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_participant_inter_chunk_seconds",
+				Help:    "Mean silence between streamed chunks within one attempt, by participant and model.",
+				Buckets: prometheus.ExponentialBuckets(0.005, 2, 15),
+			},
+			[]string{"participant_key", "model"},
+		),
 		gatewayRequests: prometheus.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "devshard_gateway_requests_total",
@@ -336,6 +354,8 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.participantFirstContent,
 		m.participantPrefillPerToken,
 		m.participantTotalSeconds,
+		m.participantMaxChunkGap,
+		m.participantMeanChunkGap,
 		m.gatewayRequests,
 		m.criticalUserFailures,
 		m.hiddenFailures,
@@ -609,6 +629,21 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 	if sample.TotalTime > 0 {
 		m.hostTotalSeconds.WithLabelValues(labels...).Observe(sample.TotalTime.Seconds())
 		m.participantTotalSeconds.WithLabelValues(participantLabels...).Observe(sample.TotalTime.Seconds())
+	}
+}
+
+// ObserveStreamCadence separates a host that streams slowly from one that streams then stops: the
+// two are indistinguishable in a per-chunk distribution, where a single 60s gap sits below p99.9.
+func (m *DevshardMetrics) ObserveStreamCadence(participantKey, model string, maxGap, meanGap time.Duration) {
+	if m == nil {
+		return
+	}
+	labels := []string{metricLabel(participantKey, "unknown"), metricLabel(model, "unknown")}
+	if maxGap > 0 {
+		m.participantMaxChunkGap.WithLabelValues(labels...).Observe(maxGap.Seconds())
+	}
+	if meanGap > 0 {
+		m.participantMeanChunkGap.WithLabelValues(labels...).Observe(meanGap.Seconds())
 	}
 }
 
