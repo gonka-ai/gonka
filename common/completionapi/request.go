@@ -211,6 +211,11 @@ func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
 	return uint64(getMaxTokens(requestMap)), nil
 }
 
+// MinTokensOf returns the min_tokens the request carries (0 if unset).
+func MinTokensOf(requestMap map[string]interface{}) int {
+	return getMinTokens(requestMap)
+}
+
 func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
 	logprobsValue, ok := requestMap["logprobs"]
 	if !ok {

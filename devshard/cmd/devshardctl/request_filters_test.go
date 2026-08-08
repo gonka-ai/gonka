@@ -640,6 +640,21 @@ func TestNormalizeChatRequestFloorsSmallMaxTokensAndInjectsMinTokens(t *testing.
 	require.NotContains(t, raw, "max_completion_tokens")
 }
 
+// The signed prompt body's effective max_tokens must equal the declared MaxTokens the escrow
+// reserves against, so verifyPayloadWorkload (EffectiveMaxTokens(prompt) <= declared) holds and the
+// reservation matches what the node actually produces. Locks the floor-before-reservation fix so a
+// future change can't reintroduce the reserve-1/produce-64 gap.
+func TestNormalizedBodyMaxTokensMatchesDeclaredForAccounting(t *testing.T) {
+	body, req, err := normalizeChatRequest([]byte(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":1}`))
+	require.NoError(t, err)
+
+	effective, err := completionapi.EffectiveMaxTokens(body)
+	require.NoError(t, err)
+
+	require.EqualValues(t, completionapi.MinTokensFloor, req.MaxTokens)
+	require.EqualValues(t, req.MaxTokens, effective)
+}
+
 func TestNormalizeChatRequestStripsEmptyTools(t *testing.T) {
 	body, _, err := normalizeChatRequest([]byte(`{
 		"tool_choice": "auto",
