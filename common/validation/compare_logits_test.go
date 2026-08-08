@@ -77,6 +77,44 @@ func TestCustomDistancePaddingDoesNotPerturbFallbackEstimate(t *testing.T) {
 	require.Equal(t, distanceNarrow, distancePadded, "executor padding must not shift the fallback estimate")
 }
 
+// A malicious executor cannot erase real disagreements by planting a non-finite-inducing
+// logprob: a single -1e308 entry overflows the fallback extrapolation (2*min1-min2) to -Inf,
+// and the old code silently skipped the resulting NaN terms, scoring blatant disagreement as
+// zero distance (H1 #3853145 follow-up). Such garbage must count as maximum divergence.
+func TestPositionDistanceNonFiniteExecutorLogprobCannotHideDisagreement(t *testing.T) {
+	validator := []completionapi.TopLogprobs{tl("a", -0.1), tl("b", -0.2), tl("c", -0.3)}
+	poisoned := []completionapi.TopLogprobs{tl("m", -1e308), tl("n", -1.0)}
+
+	distance, err := positionDistance(poisoned, validator)
+	require.NoError(t, err)
+	require.Greater(t, distance, 0.4, "every validator token disagrees; distance must approach the per-term max, not be zeroed by NaN-skipping")
+}
+
+// Whatever adversarial logprobs the untrusted executor plants, positionDistance must stay finite and
+// bounded in [0, 0.5] (the per-term max) — never NaN/Inf, never silently zeroed.
+func TestPositionDistanceBoundedForAdversarialExecutorLogprobs(t *testing.T) {
+	validator := []completionapi.TopLogprobs{tl("a", -0.1), tl("b", -0.2), tl("c", -0.3)}
+	cases := []struct {
+		name     string
+		executor []completionapi.TopLogprobs
+	}{
+		{"fallback overflows to -Inf", []completionapi.TopLogprobs{tl("m", -1e308), tl("n", -1.0)}},
+		{"huge negative matched", []completionapi.TopLogprobs{tl("a", -1e308), tl("b", -0.2), tl("c", -0.3)}},
+		{"huge positive matched", []completionapi.TopLogprobs{tl("a", 1e308), tl("b", -0.2), tl("c", -0.3)}},
+		{"single extreme entry", []completionapi.TopLogprobs{tl("m", -1e308)}},
+		{"mixed extremes", []completionapi.TopLogprobs{tl("a", 1e308), tl("m", -1e308)}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			distance, err := positionDistance(tc.executor, validator)
+			require.NoError(t, err)
+			require.False(t, math.IsNaN(distance) || math.IsInf(distance, 0), "distance must be finite")
+			require.GreaterOrEqual(t, distance, 0.0)
+			require.LessOrEqual(t, distance, 0.5)
+		})
+	}
+}
+
 // Matching tokens but wildly disagreeing top_logprobs: padding changes neither the score nor the verdict.
 func TestCompareLogitsPaddingCannotRescueGarbage(t *testing.T) {
 	const positions = 100

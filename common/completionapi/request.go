@@ -15,9 +15,7 @@ import (
 const ForcedTopLogprobs = 5
 
 type ModifiedRequest struct {
-	NewBody                  []byte
-	OriginalLogprobsValue    *bool
-	OriginalTopLogprobsValue *int
+	NewBody []byte
 }
 
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
@@ -42,7 +40,6 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 		requestMap["logprobs"] = true
 	}
 
-	originalTopLogprobsValue := getOriginalTopLogprobs(requestMap)
 	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
@@ -83,9 +80,7 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	}
 
 	return &ModifiedRequest{
-		NewBody:                  modifiedRequestBytes,
-		OriginalLogprobsValue:    originalLogprobsValue,
-		OriginalTopLogprobsValue: originalTopLogprobsValue,
+		NewBody: modifiedRequestBytes,
 	}, nil
 }
 
@@ -208,33 +203,4 @@ func getOriginalLogprobs(requestMap map[string]interface{}) *bool {
 	log.Printf("Original request logprobs = %v", logprobsValue)
 	trueValue := true
 	return &trueValue
-}
-
-func getOriginalTopLogprobs(requestMap map[string]interface{}) *int {
-	topLogprobsValue, ok := requestMap["top_logprobs"]
-	if !ok {
-		return nil
-	}
-
-	if topLogprobsValue == nil {
-		return nil
-	}
-
-	if topLogprobsValueInt, ok := topLogprobsValue.(int); ok {
-		return &topLogprobsValueInt
-	}
-
-	if topLogprobsValueBool, ok := topLogprobsValue.(bool); ok {
-		if topLogprobsValueBool {
-			one := 1
-			return &one
-		} else {
-			zero := 0
-			return &zero
-		}
-	}
-
-	// Discard any non-integer value
-	log.Printf("Original request top_logprobs = %v", topLogprobsValue)
-	return nil
 }

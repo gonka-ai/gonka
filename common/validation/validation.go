@@ -230,6 +230,10 @@ func customDistance(
 	return distance / float64(totalLogprobs), nil
 }
 
+// maxPositionTerm is the supremum of a single token's contribution: |a-b|/(1e-6+|a|+|b|)/2 stays
+// below 0.5 for finite a,b, so a non-finite (untrusted) executor logprob is scored at this maximum.
+const maxPositionTerm = 0.5
+
 func positionDistance(
 	originalLogprobs []completionapi.TopLogprobs,
 	validationLogprobs []completionapi.TopLogprobs,
@@ -263,21 +267,19 @@ func positionDistance(
 	nextOriginalLogprob := minOriginalLogprob1 - (minOriginalLogprob2 - minOriginalLogprob1)
 
 	for _, v := range validationLogprobs {
-		var originalLogprob float64
-		if origProb, exists := originalLogprobMap[v.Token]; exists {
-			originalLogprob = origProb
-		} else {
+		originalLogprob, matched := originalLogprobMap[v.Token]
+		if !matched {
 			originalLogprob = nextOriginalLogprob
 		}
 
-		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
-		if math.IsNaN(denom) || denom == 0 {
+		if math.IsInf(originalLogprob, 0) || math.IsNaN(originalLogprob) ||
+			math.IsInf(v.Logprob, 0) || math.IsNaN(v.Logprob) {
+			distance += maxPositionTerm
 			continue
 		}
-		term := math.Abs(v.Logprob-originalLogprob) / denom / 2.0
-		if !math.IsNaN(term) {
-			distance += term
-		}
+
+		denom := 1e-6 + math.Abs(v.Logprob) + math.Abs(originalLogprob)
+		distance += math.Abs(v.Logprob-originalLogprob) / denom / 2.0
 	}
 
 	return distance / float64(len(validationLogprobs)), nil

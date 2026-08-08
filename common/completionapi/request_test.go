@@ -126,11 +126,13 @@ const (
     }`
 )
 
-func TestModifyRequestBody_NullLogprobsPreserved(t *testing.T) {
+func TestModifyRequestBody_NullLogprobsForcesLogprobsTrue(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyNullLogprobs), 7)
 	require.NoError(t, err)
-	require.Nil(t, r.OriginalLogprobsValue)
-	require.Nil(t, r.OriginalTopLogprobsValue)
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
+	require.Equal(t, true, raw["logprobs"])
 }
 
 func TestStreamOptions_NoOptions(t *testing.T) {
