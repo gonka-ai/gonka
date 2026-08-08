@@ -222,18 +222,19 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
+	// Upstream always streams, so every attempt escalates on the streaming clock.
 	params := user.InferenceParams{
 		Model:       model,
 		Prompt:      body,
 		InputLength: uint64(len(body)),
 		MaxTokens:   req.MaxTokens,
 		StartedAt:   time.Now().Unix(),
-		Stream:      req.Stream,
+		Stream:      true,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 
-	// Carry the client's original logprobs intent to the response strip boundary.
-	r = r.WithContext(withLogprobClientIntent(r.Context(), logprobClientIntentFromRequest(req)))
+	// Carry the client's original logprobs and usage intent to the response strip boundary.
+	r = r.WithContext(withClientResponseIntent(r.Context(), clientResponseIntentFromRequest(req)))
 
 	if req.Stream {
 		p.handleStreaming(w, r, params)
@@ -267,7 +268,7 @@ type deferredWriter struct {
 	escrow         string
 	requestID      string
 	clientFlag     *cancelFlag
-	logprobIntent  logprobClientIntent
+	clientIntent   clientResponseIntent
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -280,7 +281,7 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, logprobIntent: logprobClientIntentFromContext(ctx)}
+	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, clientIntent: clientResponseIntentFromContext(ctx)}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -307,7 +308,7 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p, d.logprobIntent)
+	rewritten := rewriteStreamingPayload(p, d.clientIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -321,8 +322,10 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 				"error", err,
 			)
 		})
+		return n, err
 	}
-	return n, err
+	// The rewrite drops bytes, and a short count would read as io.ErrShortWrite upstream.
+	return len(p), nil
 }
 
 func (d *deferredWriter) Flush() {
@@ -561,8 +564,8 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 
-	assembled := assembleSSEChunks(buf.String())
-	assembled = filterClientInternalFields(assembled, logprobClientIntentFromContext(r.Context()))
+	assembled := assembleSSEBody(buf.Bytes())
+	assembled = filterClientInternalFields(assembled, clientResponseIntentFromContext(r.Context()))
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
 	}
@@ -573,26 +576,6 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	}
 	writeJSONPayload(w, http.StatusOK, assembled)
 	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)
-}
-
-// assembleSSEChunks extracts the last data line from SSE output as the response.
-func assembleSSEChunks(raw string) []byte {
-	var lastData string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			continue
-		}
-		lastData = data
-	}
-	if lastData != "" {
-		return []byte(lastData)
-	}
-	return []byte(`{"error":{"message":"no response data"}}`)
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {

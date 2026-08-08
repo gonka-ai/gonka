@@ -360,7 +360,7 @@ func TestRaceWriterNonSuspiciousBeatsSuspiciousAttempt(t *testing.T) {
 
 func TestDeferredWriterRewritesCompletionPayloadToStreamingChunks(t *testing.T) {
 	rec := httptest.NewRecorder()
-	dw := &deferredWriter{ctx: context.Background(), w: rec, escrow: "escrow-proxy"}
+	dw := &deferredWriter{ctx: context.Background(), w: rec, escrow: "escrow-proxy", clientIntent: clientResponseIntent{keepUsage: true}}
 
 	payload := `data: {"id":"cmpl-1","object":"chat.completion","created":123,"model":"Qwen","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"bytes":[72,105],"top_logprobs":[{"token":"Hi","logprob":0,"bytes":[72,105]}]}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}` + "\n\n"
 	_, err := dw.Write([]byte(payload))
@@ -416,13 +416,13 @@ func TestDeferredWriterTracksForwardedDoneMarker(t *testing.T) {
 
 func TestRewriteStreamingPayload_PassthroughWhenNoConversionNeeded(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}` + "\n\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, clientResponseIntent{}))
 }
 
 func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]},"finish_reason":null}]}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{})
+	rewritten := rewriteStreamingPayload(payload, clientResponseIntent{})
 
 	require.NotContains(t, string(rewritten), "logprob")
 	require.Contains(t, string(rewritten), `"content":"Hi"`)
@@ -431,7 +431,7 @@ func TestRewriteStreamingPayload_FiltersLogprobsFromExistingChunks(t *testing.T)
 func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 	payload := []byte(`{"choices":[{"message":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":0,"top_logprobs":[{"token":"Hi","logprob":0}]}]}}]}`)
 
-	filtered := filterClientInternalFields(payload, logprobClientIntent{})
+	filtered := filterClientInternalFields(payload, clientResponseIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
@@ -439,14 +439,14 @@ func TestFilterClientInternalFields_RemovesNestedLogprobPayloads(t *testing.T) {
 func TestFilterClientInternalFields_RemovesTokenIDsAndPromptTokenIDs(t *testing.T) {
 	payload := []byte(`{"prompt_token_ids":[1,2,3],"choices":[{"message":{"content":"Hi"},"token_ids":[4,5,6]}]}`)
 
-	filtered := filterClientInternalFields(payload, logprobClientIntent{})
+	filtered := filterClientInternalFields(payload, clientResponseIntent{})
 
 	require.JSONEq(t, `{"choices":[{"message":{"content":"Hi"}}]}`, string(filtered))
 }
 
 func TestRewriteStreamingPayload_PreservesOriginalBytesWhenConvertibleRewriteFails(t *testing.T) {
 	payload := []byte("data: {\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"\"}}]}\r\n\r\n")
-	require.Equal(t, payload, rewriteStreamingPayload(payload, logprobClientIntent{}))
+	require.Equal(t, payload, rewriteStreamingPayload(payload, clientResponseIntent{}))
 }
 
 func TestHasMsgFinish(t *testing.T) {

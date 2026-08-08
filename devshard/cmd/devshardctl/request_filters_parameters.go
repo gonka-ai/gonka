@@ -374,7 +374,7 @@ func readChatRequestFields(doc *ChatRequestDocument, req *chatRequest) error {
 	// request; any other shape is treated as "not requested" so we never reject a
 	// request the gateway previously accepted -- the PostLimits ForceLiteral
 	// rules overwrite both fields regardless of incoming type. Cf.
-	// logprobClientIntent and conditional response stripping.
+	// clientResponseIntent and conditional response stripping.
 	if raw, ok := doc.Get("logprobs"); ok {
 		if b, isBool := raw.(bool); isBool {
 			req.Logprobs = b
@@ -383,6 +383,11 @@ func readChatRequestFields(doc *ChatRequestDocument, req *chatRequest) error {
 	if raw, ok := doc.Get("top_logprobs"); ok {
 		if n, isNum := devshard.JSONNumericUint64(raw); isNum {
 			req.TopLogprobs = n
+		}
+	}
+	if options, ok := doc.Object("stream_options"); ok {
+		if included, isBool := options["include_usage"].(bool); isBool {
+			req.IncludeUsage = included
 		}
 	}
 	return nil
