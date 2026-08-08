@@ -826,7 +826,7 @@ func defaultParams() user.InferenceParams {
 		Model:       "llama",
 		Prompt:      testutil.TestPrompt,
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   time.Now().Unix(),
 	}
 }
