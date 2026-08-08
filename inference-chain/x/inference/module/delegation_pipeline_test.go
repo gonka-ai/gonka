@@ -2,6 +2,7 @@ package inference
 
 import (
 	"context"
+	"math"
 	"strconv"
 	"testing"
 
@@ -1069,6 +1070,82 @@ func TestGetEffectiveValidationBaseState_ExcludesRemovedMembers(t *testing.T) {
 	stub.excludedMembers = nil
 }
 
+func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	params := dynamicPocParams(
+		dynamicModel("a", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
+		dynamicModel("b", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
+	)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 1,
+		DynamicCoefficientSnapshot: &types.DynamicCoefficientEpochSnapshot{
+			Models: []*types.DynamicCoefficientModelState{
+				{ModelId: "a", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
+				{ModelId: "b", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
+			},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex: 1,
+		ModelId:    "a",
+		ValidationWeights: []*types.ValidationWeight{
+			{MemberAddress: "live", Weight: 100},
+			// Removed SDK-group members remain in the immutable subgroup snapshot.
+			{MemberAddress: "removed", Weight: 800},
+		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:        1,
+		ModelId:           "b",
+		ValidationWeights: []*types.ValidationWeight{{MemberAddress: "live", Weight: 100}},
+	})
+	active := []*types.ActiveParticipant{{
+		Index:  "live",
+		Models: []string{"a", "b"},
+		MlNodes: []*types.ModelMLNodes{
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 900}}},
+			{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}},
+		},
+	}}
+
+	result, err := am.resolveEpochCoefficients(ctx, active, params, 2)
+	require.NoError(t, err)
+	require.Equal(t, "0.750000000000000000", result.effective["a"].String())
+	require.Equal(t, "1.050000000000000000", result.effective["b"].String())
+}
+
+func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
+	k, ctx := newMinimalInferenceKeeper(t)
+	am := NewAppModule(nil, k, nil, nil, nil, nil)
+	params := dynamicPocParams(
+		dynamicModel("a", dec(12, -1), dec(5, -1), dec(2, 0), dec(1, 0), 10000),
+	)
+	active := []*types.ActiveParticipant{{
+		Models:  []string{"a"},
+		MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}}},
+	}}
+	result, err := am.resolveEpochCoefficients(ctx, active, params, 1)
+	require.NoError(t, err)
+	require.Equal(t, "0.500000000000000000", result.effective["a"].String())
+	require.Equal(t, dec(5, -1), result.snapshot.Models[0].BaseCoefficient)
+}
+
+func TestCurrentModelRawTotalsRejectsOverflow(t *testing.T) {
+	participants := []*types.ActiveParticipant{
+		{
+			Models:  []string{"a"},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: math.MaxInt64}}}},
+		},
+		{
+			Models:  []string{"a"},
+			MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 1}}}},
+		},
+	}
+	_, _, err := currentModelRawTotals(participants)
+	require.ErrorContains(t, err, "raw weight overflow")
+}
+
 // --- Voting power cap tests ---
 
 // nopCapLogger satisfies votingPowerCapLogger without touching any real logger.
@@ -1194,4 +1271,3 @@ func TestCapPerModelVotingPowers_SingleHostNoOp(t *testing.T) {
 	capPerModelVotingPowers(vp, capPct, "model-test", nopCapLogger{})
 	require.Equal(t, int64(1000), vp["solo"])
 }
-

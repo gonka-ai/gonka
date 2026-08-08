@@ -754,6 +754,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		activeParticipants,
 		params,
 		upcomingEpoch.PocStartBlockHeight,
+		upcomingEpoch.Index,
 	)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
@@ -833,7 +834,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	confirmationWeightScales := buildConfirmationWeightScales(
 		participationState.eligibleModels,
 		activeParticipants,
-		params.PocParams,
+		participationState.coefficients,
 	)
 
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,
@@ -875,6 +876,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	}
 
 	upcomingEg.GroupData.ConfirmationWeightScales = confirmationWeightScales
+	upcomingEg.GroupData.DynamicCoefficientSnapshot = participationState.coefficients.snapshot
 	if err := am.keeper.SetDelegationRewardTransferSnapshot(ctx, types.DelegationRewardTransferSnapshot{
 		EpochIndex: upcomingEpoch.Index,
 		Transfers:  allRewardTransfers,

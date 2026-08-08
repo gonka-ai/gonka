@@ -29,6 +29,18 @@ func TestConfirmationWeightOfModelNodes(t *testing.T) {
 	require.Equal(t, int64(37), types.ConfirmationWeightOfModelNodes(modelNodes, scales))
 }
 
+func TestConfirmationWeightPrefersEffectiveCoefficient(t *testing.T) {
+	scales := []*types.ConfirmationWeightScale{{
+		ModelId:              "model-a",
+		WeightScaleFactor:    &types.Decimal{Value: 9, Exponent: 0},
+		EffectiveCoefficient: &types.Decimal{Value: 2, Exponent: 0},
+	}}
+	nodes := map[string][]*types.MLNodeInfo{
+		"model-a": {{PocWeight: 10}},
+	}
+	require.Equal(t, int64(20), types.ConfirmationWeightOfModelNodes(nodes, scales))
+}
+
 func TestConfirmationWeightOfParticipantMatchesModelNodes(t *testing.T) {
 	scales := []*types.ConfirmationWeightScale{
 		{ModelId: "model-a", WeightScaleFactor: &types.Decimal{Value: 15, Exponent: -1}},

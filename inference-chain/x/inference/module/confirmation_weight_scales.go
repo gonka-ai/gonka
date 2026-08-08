@@ -5,7 +5,7 @@ import "github.com/productscience/inference/x/inference/types"
 func buildConfirmationWeightScales(
 	eligibleModels []string,
 	activeParticipants []*types.ActiveParticipant,
-	pocParams *types.PocParams,
+	coefficients *epochCoefficientResult,
 ) []*types.ConfirmationWeightScale {
 	eligible := make(map[string]bool, len(eligibleModels))
 	for _, modelID := range eligibleModels {
@@ -25,10 +25,19 @@ func buildConfirmationWeightScales(
 
 	scales := make([]*types.ConfirmationWeightScale, 0, len(confirmable))
 	for _, modelID := range sortedKeys(confirmable) {
-		config, _ := pocParams.GetModelConfig(modelID)
+		scale := cloneDecimal(coefficients.effectiveDecimal[modelID])
+		if scale == nil {
+			encoded, _, err := quantizeCoefficient(coefficients.effective[modelID])
+			if err == nil {
+				scale = encoded
+			}
+		}
+		if scale == nil {
+			scale = &types.Decimal{Value: 0, Exponent: 0}
+		}
 		scales = append(scales, &types.ConfirmationWeightScale{
-			ModelId:           modelID,
-			WeightScaleFactor: config.GetWeightScaleFactor().CloneOrOne(),
+			ModelId:              modelID,
+			EffectiveCoefficient: scale,
 		})
 	}
 	return scales

@@ -37,11 +37,26 @@ message EpochGroupData {
   Model model_snapshot = 17;
   int64 total_throughput = 18;
   repeated ConfirmationWeightScale confirmation_weight_scales = 19;
+  DynamicCoefficientEpochSnapshot dynamic_coefficient_snapshot = 20;
 }
 
 message ConfirmationWeightScale {
   string model_id = 1;
-  Decimal weight_scale_factor = 2;
+  Decimal weight_scale_factor = 2 [deprecated = true]; // Historical snapshots only.
+  Decimal effective_coefficient = 3;
+}
+
+message DynamicCoefficientEpochSnapshot {
+  DynamicCoefficientParams params = 1;
+  repeated DynamicCoefficientModelState models = 2;
+}
+
+message DynamicCoefficientModelState {
+  string model_id = 1;
+  DynamicCoefficientModelConfig config = 2;
+  Decimal base_coefficient = 3;
+  Decimal adaptive_step = 4;
+  sint32 prev_sign = 5;
 }
 
 message ValidationWeight {
