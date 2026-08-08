@@ -27,6 +27,7 @@ import (
 	chaintx "common/chain/tx"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/internal/e2econfig"
 	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
@@ -286,14 +287,20 @@ func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, e
 	}
 	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
 	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
+	timeoutOverrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: session timeout overrides: %w", cfg.ID, err)
+	}
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
-		PrivateKeyHex:    keyHex,
-		EscrowID:         cfg.ID,
-		Bridge:           br,
-		StoragePath:      cfg.StoragePath,
-		RoutePrefix:      routePrefix,
-		RequestAdmission: sharedParticipantRequestLimiter,
-		Escrow:           escrow,
+		PrivateKeyHex:           keyHex,
+		EscrowID:                cfg.ID,
+		Bridge:                  br,
+		StoragePath:             cfg.StoragePath,
+		RoutePrefix:             routePrefix,
+		RequestAdmission:        sharedParticipantRequestLimiter,
+		Escrow:                  escrow,
+		RefusalTimeoutSeconds:   timeoutOverrides.RefusalTimeoutSeconds,
+		ExecutionTimeoutSeconds: timeoutOverrides.ExecutionTimeoutSeconds,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)

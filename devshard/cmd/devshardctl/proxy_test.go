@@ -1222,12 +1222,16 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 }
 
 func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) {
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	limiter := NewParticipantRequestLimiter(10, 10)
-	env.proxy.redundancy.participantLimiter = limiter
+	// Relaxed PoC intentionally suppresses empty-stream samples; this test is
+	// only about the long non-stream exemption path.
+	setPoCModeForTest(t, pocRequestModeOff)
 	oldWindow := ParticipantPerfWindow
 	ParticipantPerfWindow = 24 * time.Hour
 	t.Cleanup(func() { ParticipantPerfWindow = oldWindow })
+
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	limiter := NewParticipantRequestLimiter(10, 10)
+	env.proxy.redundancy.participantLimiter = limiter
 	participantKey := env.session.HostParticipantKey(0)
 	params := defaultParams()
 	params.Stream = false
@@ -1257,6 +1261,34 @@ func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) 
 	require.True(t, involvement.Responsive)
 	require.True(t, involvement.Finished)
 	require.GreaterOrEqual(t, involvement.TotalTimeMs, float64(longResponseFailureExemption.Milliseconds()))
+}
+
+func TestLongNonStreamEmptyResponseDoesNotRecordDuringRelaxedPoC(t *testing.T) {
+	setPoCModeForTest(t, pocRequestModeRelaxed)
+	setPoCPhaseState(true, "confirmation_poc")
+	oldWindow := ParticipantPerfWindow
+	ParticipantPerfWindow = 24 * time.Hour
+	t.Cleanup(func() { ParticipantPerfWindow = oldWindow })
+
+	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
+	limiter := NewParticipantRequestLimiter(10, 10)
+	env.proxy.redundancy.participantLimiter = limiter
+	params := defaultParams()
+	params.Stream = false
+
+	inf := &inflight{
+		hostIdx:  0,
+		nonce:    1,
+		sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
+	}
+	inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
+	require.True(t, longNonStreamEmptyFailureExempt(inf, params))
+
+	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, params, true)
+
+	stats := env.proxy.redundancy.perf.Stats(0)
+	require.Zero(t, stats.TotalSamples)
+	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
 }
 
 func TestFastNonStreamEmptyResponseRecordsParticipantFailure(t *testing.T) {

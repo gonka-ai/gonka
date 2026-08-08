@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/labstack/echo/v4"
 
 	devshardpkg "devshard"
 	"devshard/gossip"
 	"devshard/host"
+	"devshard/internal/e2econfig"
 	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
@@ -46,13 +48,20 @@ func main() {
 	if err != nil {
 		log.Fatalf("build server: %v", err)
 	}
+	stubInferenceHTTPStatus, hasStubInferenceHTTPStatus, err := e2econfig.IntFromEnv(e2econfig.StubInferenceHTTPStatusEnv)
+	if err != nil {
+		log.Fatalf("load %s: %v", e2econfig.StubInferenceHTTPStatusEnv, err)
+	}
+	if hasStubInferenceHTTPStatus && (stubInferenceHTTPStatus < http.StatusBadRequest || stubInferenceHTTPStatus > 599) {
+		log.Fatalf("invalid %s: must be an HTTP error status", e2econfig.StubInferenceHTTPStatusEnv)
+	}
 
 	e := echo.New()
 	e.HideBanner = true
 	e.GET("/health", func(c echo.Context) error {
 		return c.JSON(http.StatusOK, map[string]string{"status": "ok"})
 	})
-	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv)
+	registerServer(e.Group(devshardpkg.DefaultRoutePrefix()), srv, stubInferenceHTTPStatus)
 
 	addr := ":" + *port
 	log.Printf("devshard-host listening on %s slot=%d address=%s route_prefix=%s",
@@ -64,7 +73,7 @@ func main() {
 
 // registerServer mounts the transport handlers the same way production
 // RegisterLazySessionRoutes does, for a single pre-bound e2e host session.
-func registerServer(g *echo.Group, srv *transport.Server) {
+func registerServer(g *echo.Group, srv *transport.Server, stubInferenceHTTPStatus int) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
@@ -75,7 +84,22 @@ func registerServer(g *echo.Group, srv *transport.Server) {
 		}
 	}
 
-	g.POST("/sessions/:id/chat/completions", withAuth(true, srv.HandleInference))
+	inferenceHandler := srv.HandleInference
+	if stubInferenceHTTPStatus != 0 {
+		inferenceHandler = func(c echo.Context) error {
+			message := http.StatusText(stubInferenceHTTPStatus)
+			if message == "" {
+				message = fmt.Sprintf("stub inference HTTP status %d", stubInferenceHTTPStatus)
+			}
+			return c.JSON(stubInferenceHTTPStatus, map[string]any{
+				"error": map[string]string{
+					"message": message,
+				},
+			})
+		}
+	}
+
+	g.POST("/sessions/:id/chat/completions", withAuth(true, inferenceHandler))
 	g.POST("/sessions/:id/verify-timeout", withAuth(false, srv.HandleVerifyTimeout))
 	g.POST("/sessions/:id/challenge-receipt", withAuth(false, srv.HandleChallengeReceipt))
 	g.POST("/sessions/:id/gossip/nonce", withAuth(false, srv.HandleGossipNonce))
@@ -153,7 +177,10 @@ func loadConfig() (hostConfig, error) {
 
 func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error) {
 	verifier := signing.NewSecp256k1Verifier()
-	sessionConfig := sessionConfigFromEnv(len(cfg.group))
+	sessionConfig, err := sessionConfigFromEnv(len(cfg.group))
+	if err != nil {
+		return nil, err
+	}
 
 	store, err := storage.NewStorage(ctx, cfg.dataDir)
 	if err != nil {
@@ -190,10 +217,29 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 		return nil, err
 	}
 
+	inferenceEngine, err := stubInferenceEngineFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	sseErrorMessage, err := e2econfig.StringFromEnv(e2econfig.StubInferenceSSEErrorEnv)
+	if err != nil {
+		return nil, err
+	}
+	if sseErrorMessage != "" {
+		inferenceEngine = sseErrorInferenceEngine{message: sseErrorMessage}
+	}
+	inferenceDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.StubInferenceDelayMillisEnv)
+	if err != nil {
+		return nil, err
+	}
+	if inferenceDelay > 0 {
+		inferenceEngine = delayedInferenceEngine{inner: inferenceEngine, delay: inferenceDelay}
+	}
+
 	h, err := host.NewHost(
 		sm,
 		cfg.signer,
-		stub.NewInferenceEngine(),
+		inferenceEngine,
 		cfg.escrowID,
 		cfg.group,
 		nil,
@@ -207,7 +253,15 @@ func buildServer(ctx context.Context, cfg hostConfig) (*transport.Server, error)
 	}
 	h.Start()
 
-	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress)
+	serverOptions := []transport.ServerOption{}
+	receiptDelay, err := e2econfig.DurationMillisFromEnv(e2econfig.ReceiptDelayMillisEnv)
+	if err != nil {
+		return nil, err
+	}
+	if receiptDelay > 0 {
+		serverOptions = append(serverOptions, transport.WithReceiptDelay(receiptDelay))
+	}
+	srv, err := transport.NewServer(h, store, verifier, cfg.userAddress, serverOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -268,10 +322,41 @@ func recoverHostState(store storage.Storage, sm *state.StateMachine, escrowID st
 	return nil
 }
 
+type delayedInferenceEngine struct {
+	inner devshardpkg.InferenceEngine
+	delay time.Duration
+}
+
+func (e delayedInferenceEngine) Execute(ctx context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	timer := time.NewTimer(e.delay)
+	defer timer.Stop()
+
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-timer.C:
+		return e.inner.Execute(ctx, req)
+	}
+}
+
+type sseErrorInferenceEngine struct {
+	message string
+}
+
+func (e sseErrorInferenceEngine) Execute(_ context.Context, req devshardpkg.ExecuteRequest) (*devshardpkg.ExecuteResult, error) {
+	if req.ResponseWriter != nil {
+		fmt.Fprintf(req.ResponseWriter, "data: {\"error\":{\"code\":400,\"message\":%s,\"type\":\"BadRequestError\"}}\n\n", strconv.Quote(e.message))
+		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
+			rw.Flush()
+		}
+	}
+	return nil, errors.New(e.message)
+}
+
 // sessionConfigFromEnv mirrors bridge.SessionConfigAtBind so e2e hosts stay
 // aligned with devshardctl when escrow params come from mock-chain gRPC.
-func sessionConfigFromEnv(groupSize int) types.SessionConfig {
-	return types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
+func sessionConfigFromEnv(groupSize int) (types.SessionConfig, error) {
+	cfg := types.SessionConfigFromEscrow(groupSize, types.EscrowSessionFields{
 		TokenPrice:                uintEnv("DEVSHARD_TOKEN_PRICE", 1),
 		CreateDevshardFee:         uintEnv("DEVSHARD_CREATE_DEVSHARD_FEE", 0),
 		FeePerNonce:               uintEnv("DEVSHARD_FEE_PER_NONCE", 0),
@@ -281,6 +366,12 @@ func sessionConfigFromEnv(groupSize int) types.SessionConfig {
 		ValidationRate:            uint32(uintEnv("DEVSHARD_VALIDATION_RATE", 0)),
 		VoteThresholdFactor:       uint32(uintEnv("DEVSHARD_VOTE_THRESHOLD_FACTOR", 0)),
 	})
+	overrides, err := e2econfig.SessionTimeoutOverridesFromEnv()
+	if err != nil {
+		return types.SessionConfig{}, err
+	}
+	cfg = overrides.Apply(cfg)
+	return types.NormalizeSessionConfig(cfg, groupSize), nil
 }
 
 func groupFromKeys(keys []string) ([]types.SlotAssignment, error) {

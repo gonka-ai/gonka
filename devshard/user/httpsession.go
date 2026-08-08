@@ -14,6 +14,7 @@ import (
 	"devshard/state"
 	"devshard/storage"
 	"devshard/transport"
+	"devshard/types"
 )
 
 // HTTPSessionConfig holds the parameters needed to create an HTTP-backed user session.
@@ -28,6 +29,10 @@ type HTTPSessionConfig struct {
 	// Escrow is an optional pre-fetched chain escrow. When set, NewHTTPSession
 	// skips Bridge.GetEscrow and builds the group from this value.
 	Escrow *bridge.EscrowInfo
+	// Optional bind-time timeout overrides. These are mainly for integration
+	// harnesses that need protocol timeouts shorter than production defaults.
+	RefusalTimeoutSeconds   *int64
+	ExecutionTimeoutSeconds *int64
 }
 
 func deferredWarmKeyResolver(resolve state.WarmKeyResolver) (state.WarmKeyResolver, func()) {
@@ -135,6 +140,13 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	}
 
 	config := bridge.SessionConfigAtBind(len(group), escrow)
+	if cfg.RefusalTimeoutSeconds != nil {
+		config.RefusalTimeout = *cfg.RefusalTimeoutSeconds
+	}
+	if cfg.ExecutionTimeoutSeconds != nil {
+		config.ExecutionTimeout = *cfg.ExecutionTimeoutSeconds
+	}
+	config = types.NormalizeSessionConfig(config, len(group))
 
 	storagePath := resolveHTTPSessionStoragePath(cfg.EscrowID, cfg.StoragePath)
 	if err := os.MkdirAll(filepath.Dir(storagePath), 0755); err != nil {
