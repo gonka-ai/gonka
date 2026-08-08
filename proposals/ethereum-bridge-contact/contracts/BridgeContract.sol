@@ -127,9 +127,10 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // Efficient storage: only what's needed
     mapping(uint64 => GroupKey) public epochGroupKeys;  // epochId => 256-byte G2 public key (8 slots)
 
-    // Global request deduplication: keccak256(epochId ++ requestId) => processed.
-    // Using a flat key instead of a nested mapping prevents the same requestId from
-    // being replayed under a different (but still-valid) epoch key.
+    // Global request deduplication: requestId => processed.
+    // Using requestId alone as the key provides true cross-epoch deduplication:
+    // the same request cannot be replayed even if a different (still-valid) epoch
+    // key is used to sign it.
     mapping(bytes32 => bool) private _processedRequests;
 
     // Packed metadata (single 32-byte storage slot)
@@ -358,9 +359,9 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert EpochTooOld();
         }
 
-        // 2. Replay Protection: global dedup key prevents the same requestId from being
-        // replayed under a different (but still-valid) epoch key.
-        bytes32 reqKey = _requestKey(cmd.epochId, cmd.requestId);
+        // 2. Replay Protection: global dedup key is requestId alone so the same request
+        // cannot be replayed under any epoch key, including future valid epoch keys.
+        bytes32 reqKey = _requestKey(cmd.requestId);
         if (_processedRequests[reqKey]) {
             revert RequestAlreadyProcessed();
         }
@@ -430,8 +431,8 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
             revert EpochTooOld();
         }
 
-        // 2. Replay Protection: global dedup key (same scheme as withdraw).
-        bytes32 reqKey = _requestKey(cmd.epochId, cmd.requestId);
+        // 2. Replay Protection: global dedup key is requestId alone (same scheme as withdraw).
+        bytes32 reqKey = _requestKey(cmd.requestId);
         if (_processedRequests[reqKey]) {
             revert RequestAlreadyProcessed();
         }
@@ -533,10 +534,20 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     }
 
     /**
-     * @dev Check if a request has been processed (epoch + requestId pair)
+     * @dev Check if a request has been processed (global dedup — epoch-independent).
+     *      The `epochId` parameter is accepted for backward-compatible ABI compatibility
+     *      but is not used in the key derivation; deduplication is by requestId alone.
      */
-    function isRequestProcessed(uint64 epochId, bytes32 requestId) external view returns (bool) {
-        return _processedRequests[_requestKey(epochId, requestId)];
+    function isRequestProcessed(uint64 /*epochId*/, bytes32 requestId) external view returns (bool) {
+        return _processedRequests[_requestKey(requestId)];
+    }
+
+    /**
+     * @dev Backward-compatible view alias matching the old public mapping getter signature.
+     *      External integrators calling `processedRequests(epochId, requestId)` continue to work.
+     */
+    function processedRequests(uint64 /*epochId*/, bytes32 requestId) external view returns (bool) {
+        return _processedRequests[_requestKey(requestId)];
     }
 
     /**
@@ -603,12 +614,13 @@ contract BridgeContract is ERC20, Ownable, ReentrancyGuard {
     // =============================================================================
 
     /**
-     * @dev Derive a global deduplication key from (epochId, requestId).
-     *      Using a flat key instead of a nested mapping prevents the same requestId
-     *      from being replayed under a different (but still-valid) epoch key.
+     * @dev Derive a global deduplication key from requestId alone.
+     *      Keying on requestId only (not epochId) provides true cross-epoch deduplication:
+     *      a request that has been processed under epoch N cannot be replayed under
+     *      a different (but still-valid) epoch key.
      */
-    function _requestKey(uint64 epochId, bytes32 requestId) internal pure returns (bytes32) {
-        return keccak256(abi.encodePacked(epochId, requestId));
+    function _requestKey(bytes32 requestId) internal pure returns (bytes32) {
+        return requestId;
     }
 
     /**

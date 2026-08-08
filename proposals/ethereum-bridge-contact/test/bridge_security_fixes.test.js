@@ -124,7 +124,7 @@ describe("BridgeContract security fixes (#1080)", function () {
             expect(await bridge.isRequestProcessed(1n, requestId)).to.equal(false);
         });
 
-        it("reverts withdraw with RequestAlreadyProcessed on a replayed (epochId, requestId)", async function () {
+        it("withdraw fails on InvalidSignature (BLS) before replay check — dedup state stays false", async function () {
             // Setup: bring bridge to normal operation with epoch 1 key
             await bridge.connect(owner).setGroupKey(1, EXAMPLE_GROUP_KEY);
             await bridge.connect(owner).resetToNormalOperation();
@@ -151,7 +151,7 @@ describe("BridgeContract security fixes (#1080)", function () {
             expect(await bridge.isRequestProcessed(1n, requestId)).to.equal(false);
         });
 
-        it("isRequestProcessed uses epoch-scoped key (epoch 1 and epoch 2 are independent)", async function () {
+        it("isRequestProcessed is false for same requestId under different epochs (cross-epoch dedup uses requestId only)", async function () {
             const requestId = "0x" + "ab".repeat(32);
             // Both start as unprocessed
             expect(await bridge.isRequestProcessed(1n, requestId)).to.equal(false);
