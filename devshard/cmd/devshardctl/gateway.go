@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/e2econfig"
@@ -1443,7 +1443,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		limitModel := requestModel
 		if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
 			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
-			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
+			logRequestStage(ctx, "gateway_limiter_rejected", append([]any{"model", limitModel, "input_tokens", inputTokens}, limiterRejectionLogFields(err)...)...)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 			return
 		}
@@ -1580,7 +1580,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 				reason := limiterReasonLabel(err)
 				g.metrics.RecordLimitRejection(reason)
 				g.recordGatewayRequestOutcome(limitModel, "gateway_limited", reason)
-				logRequestStage(ctx, "gateway_devshard_limiter_rejected", "escrow", devshardID, "reason", reason, "input_tokens", inputTokens)
+				logRequestStage(ctx, "gateway_devshard_limiter_rejected", append([]any{"escrow", devshardID, "model", limitModel, "input_tokens", inputTokens}, limiterRejectionLogFields(err)...)...)
 				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 				return
 			}
@@ -2179,10 +2179,6 @@ func gatewayStatusCodeForError(err error) int {
 	if isParticipantRateLimitError(err) {
 		return http.StatusTooManyRequests
 	}
-	var reducedTokenTimeoutErr *nonStreamingReducedMaxTokensTimeoutError
-	if errors.As(err, &reducedTokenTimeoutErr) {
-		return http.StatusGatewayTimeout
-	}
 	var admissionErr *RequestAdmissionError
 	if errors.As(err, &admissionErr) {
 		return http.StatusServiceUnavailable
@@ -2419,11 +2415,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2434,17 +2430,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2497,9 +2493,6 @@ type adminRedundancyRequest struct {
 	PerInputTokenFirstTokenLagMS  *int64   `json:"per_input_token_first_token_lag_ms,omitempty"`
 	InterChunkStallTimeoutMS      *int64   `json:"inter_chunk_stall_timeout_ms,omitempty"`
 	StreamingAttemptHardTimeoutMS *int64   `json:"streaming_attempt_hard_timeout_ms,omitempty"`
-	NonStreamResponseFloorMS      *int64   `json:"non_stream_response_floor_ms,omitempty"`
-	NonStreamNoContentTimeoutMS   *int64   `json:"non_stream_no_content_timeout_ms,omitempty"`
-	NonStreamMaxAttemptWaitMS     *int64   `json:"non_stream_max_attempt_wait_ms,omitempty"`
 	PerInputTokenResponseLagMS    *int64   `json:"per_input_token_response_lag_ms,omitempty"`
 	SecondaryWaitAfterWinnerMS    *int64   `json:"secondary_wait_after_winner_ms,omitempty"`
 	ParallelAdvantageThreshold    *float64 `json:"parallel_advantage_threshold,omitempty"`
@@ -2801,15 +2794,6 @@ func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRe
 	if req.StreamingAttemptHardTimeoutMS != nil {
 		settings.StreamingAttemptHardTimeoutMS = *req.StreamingAttemptHardTimeoutMS
 	}
-	if req.NonStreamResponseFloorMS != nil {
-		settings.NonStreamResponseFloorMS = *req.NonStreamResponseFloorMS
-	}
-	if req.NonStreamNoContentTimeoutMS != nil {
-		settings.NonStreamNoContentTimeoutMS = *req.NonStreamNoContentTimeoutMS
-	}
-	if req.NonStreamMaxAttemptWaitMS != nil {
-		settings.NonStreamMaxAttemptWaitMS = *req.NonStreamMaxAttemptWaitMS
-	}
 	if req.PerInputTokenResponseLagMS != nil {
 		settings.PerInputTokenResponseLagMS = *req.PerInputTokenResponseLagMS
 	}
@@ -2915,14 +2899,6 @@ func validateGatewaySettings(settings GatewaySettings) error {
 		return fmt.Errorf("redundancy.inter_chunk_stall_timeout_ms must be >= 0")
 	case r.StreamingAttemptHardTimeoutMS <= 0:
 		return fmt.Errorf("redundancy.streaming_attempt_hard_timeout_ms must be > 0")
-	case r.NonStreamResponseFloorMS <= 0:
-		return fmt.Errorf("redundancy.non_stream_response_floor_ms must be > 0")
-	case r.NonStreamNoContentTimeoutMS <= 0:
-		return fmt.Errorf("redundancy.non_stream_no_content_timeout_ms must be > 0")
-	case r.NonStreamMaxAttemptWaitMS <= 0:
-		return fmt.Errorf("redundancy.non_stream_max_attempt_wait_ms must be > 0")
-	case r.NonStreamMaxAttemptWaitMS < r.NonStreamNoContentTimeoutMS:
-		return fmt.Errorf("redundancy.non_stream_max_attempt_wait_ms must be >= non_stream_no_content_timeout_ms")
 	case r.PerInputTokenResponseLagMS < 0:
 		return fmt.Errorf("redundancy.per_input_token_response_lag_ms must be >= 0")
 	case r.SecondaryWaitAfterWinnerMS <= 0:
@@ -3097,10 +3073,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3410,11 +3386,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,

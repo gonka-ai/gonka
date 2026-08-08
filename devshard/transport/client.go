@@ -108,6 +108,18 @@ type requestAdmissionBodyObserver interface {
 // distinguish from a normal end-of-response.
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
 
+// maxErrorBodyBytes bounds the body kept from a failed response. It reaches an error string, a
+// metric label and a log line, none of which a host's error page should be free to size.
+const maxErrorBodyBytes = 64 << 10
+
+func readErrorBody(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	read, _ := io.ReadAll(io.LimitReader(body, maxErrorBodyBytes))
+	return string(read)
+}
+
 type UpstreamStatusError struct {
 	Path       string
 	StatusCode int
@@ -634,13 +646,13 @@ func (c *HTTPClient) doPostRaw(ctx context.Context, path string, body []byte) (*
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
+		respBody := readErrorBody(resp.Body)
 		resp.Body.Close()
-		c.observeResultWithBody(path, resp.StatusCode, string(respBody))
+		c.observeResultWithBody(path, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       path,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(path, resp.StatusCode)
@@ -677,12 +689,12 @@ func (c *HTTPClient) doGet(ctx context.Context, url string) ([]byte, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		c.observeResultWithBody(url, resp.StatusCode, string(respBody))
+		respBody := readErrorBody(resp.Body)
+		c.observeResultWithBody(url, resp.StatusCode, respBody)
 		return nil, &UpstreamStatusError{
 			Path:       url,
 			StatusCode: resp.StatusCode,
-			Body:       string(respBody),
+			Body:       respBody,
 		}
 	}
 	c.observeResult(url, resp.StatusCode)

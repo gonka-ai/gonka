@@ -19,8 +19,6 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
-	"common/completionapi"
-
 	"devshard"
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -533,57 +531,6 @@ func (c *delayedResultClient) Send(ctx context.Context, _ host.HostRequest, _ io
 	}
 }
 
-type emptyNonStreamingRecorderClient struct {
-	sendCalls atomic.Int32
-	maxTokens []uint64
-	mu        sync.Mutex
-}
-
-func (c *emptyNonStreamingRecorderClient) Send(_ context.Context, req host.HostRequest, _ io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	c.sendCalls.Add(1)
-	if receiptHandler != nil {
-		receiptHandler()
-	}
-	if req.Payload != nil {
-		c.mu.Lock()
-		c.maxTokens = append(c.maxTokens, req.Payload.MaxTokens)
-		c.mu.Unlock()
-	}
-	return &host.HostResponse{Nonce: req.Nonce}, nil
-}
-
-func (c *emptyNonStreamingRecorderClient) MaxTokens() []uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]uint64(nil), c.maxTokens...)
-}
-
-type blockingNonStreamingRecorderClient struct {
-	sendCalls atomic.Int32
-	maxTokens []uint64
-	mu        sync.Mutex
-}
-
-func (c *blockingNonStreamingRecorderClient) Send(ctx context.Context, req host.HostRequest, _ io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	c.sendCalls.Add(1)
-	if receiptHandler != nil {
-		receiptHandler()
-	}
-	if req.Payload != nil {
-		c.mu.Lock()
-		c.maxTokens = append(c.maxTokens, req.Payload.MaxTokens)
-		c.mu.Unlock()
-	}
-	<-ctx.Done()
-	return nil, ctx.Err()
-}
-
-func (c *blockingNonStreamingRecorderClient) MaxTokens() []uint64 {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return append([]uint64(nil), c.maxTokens...)
-}
-
 func (c *verifierClient) VerifyTimeout(_ context.Context, inferenceID uint64, reason types.TimeoutReason, _ *host.InferencePayload, _ []types.Diff) (bool, []byte, uint32, error) {
 	if !c.accept {
 		return false, nil, 0, nil
@@ -660,36 +607,6 @@ func setSecondaryWaitAfterWinner(t *testing.T, d time.Duration) {
 	SecondaryWaitAfterWinner = d
 	t.Cleanup(func() {
 		SecondaryWaitAfterWinner = saved
-	})
-}
-
-func setNonStreamingTimeouts(t *testing.T, reducedFallback, noContent, maxAttemptWait time.Duration) {
-	t.Helper()
-	savedReducedFallback := nonStreamingReducedMaxTokensFallbackDelay
-	savedNoContent := nonStreamingNoContentTimeout
-	savedMaxAttemptWait := nonStreamingMaxAttemptWait
-	nonStreamingReducedMaxTokensFallbackDelay = reducedFallback
-	nonStreamingNoContentTimeout = noContent
-	nonStreamingMaxAttemptWait = maxAttemptWait
-	t.Cleanup(func() {
-		nonStreamingReducedMaxTokensFallbackDelay = savedReducedFallback
-		nonStreamingNoContentTimeout = savedNoContent
-		nonStreamingMaxAttemptWait = savedMaxAttemptWait
-	})
-}
-
-func disablePairwiseABSampling(t *testing.T) {
-	t.Helper()
-	savedABSampleRate := PairwiseABSampleRate
-	savedABSparseSampleRate := PairwiseABSparseSampleRate
-	savedMinDirectComparisons := PairwiseMinDirectComparisons
-	PairwiseABSampleRate = 0
-	PairwiseABSparseSampleRate = 0
-	PairwiseMinDirectComparisons = 0
-	t.Cleanup(func() {
-		PairwiseABSampleRate = savedABSampleRate
-		PairwiseABSparseSampleRate = savedABSparseSampleRate
-		PairwiseMinDirectComparisons = savedMinDirectComparisons
 	})
 }
 
@@ -1223,82 +1140,11 @@ func TestLongResponseAfterContentSkipsParticipantFailureAccounting(t *testing.T)
 	require.Equal(t, 0, env.proxy.redundancy.perf.Stats(0).TotalSamples)
 }
 
-func TestLongNonStreamEmptyResponseRecordsTimingWithoutQuarantine(t *testing.T) {
-	// Relaxed PoC intentionally suppresses empty-stream samples; this test is
-	// only about the long non-stream exemption path.
-	setPoCModeForTest(t, pocRequestModeOff)
-	oldWindow := ParticipantPerfWindow
-	ParticipantPerfWindow = 24 * time.Hour
-	t.Cleanup(func() { ParticipantPerfWindow = oldWindow })
-
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	limiter := NewParticipantRequestLimiter(10, 10)
-	env.proxy.redundancy.participantLimiter = limiter
-	participantKey := env.session.HostParticipantKey(0)
-	params := defaultParams()
-	params.Stream = false
-
-	for i := 0; i < 2; i++ {
-		inf := &inflight{
-			hostIdx:  0,
-			nonce:    uint64(i + 1),
-			sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
-		}
-		inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
-		env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, params, true)
-	}
-
-	require.False(t, limiter.IsBlocked(participantKey))
-	stats := env.proxy.redundancy.perf.Stats(0)
-	require.Equal(t, 2, stats.TotalSamples)
-	require.Equal(t, 1.0, stats.ResponsiveRate)
-
-	inf := &inflight{
-		hostIdx:  0,
-		nonce:    99,
-		sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
-	}
-	inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
-	involvement := env.proxy.redundancy.buildInvolvement(inf, 0, params)
-	require.True(t, involvement.Responsive)
-	require.True(t, involvement.Finished)
-	require.GreaterOrEqual(t, involvement.TotalTimeMs, float64(longResponseFailureExemption.Milliseconds()))
-}
-
-func TestLongNonStreamEmptyResponseDoesNotRecordDuringRelaxedPoC(t *testing.T) {
-	setPoCModeForTest(t, pocRequestModeRelaxed)
-	setPoCPhaseState(true, "confirmation_poc")
-	oldWindow := ParticipantPerfWindow
-	ParticipantPerfWindow = 24 * time.Hour
-	t.Cleanup(func() { ParticipantPerfWindow = oldWindow })
-
-	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
-	limiter := NewParticipantRequestLimiter(10, 10)
-	env.proxy.redundancy.participantLimiter = limiter
-	params := defaultParams()
-	params.Stream = false
-
-	inf := &inflight{
-		hostIdx:  0,
-		nonce:    1,
-		sendTime: time.Now().Add(-(longResponseFailureExemption + time.Second)),
-	}
-	inf.setReceiptAt(time.Now().Add(-(longResponseFailureExemption + 900*time.Millisecond)))
-	require.True(t, longNonStreamEmptyFailureExempt(inf, params))
-
-	env.proxy.redundancy.recordStartedAttemptSamples([]*inflight{inf}, params, true)
-
-	stats := env.proxy.redundancy.perf.Stats(0)
-	require.Zero(t, stats.TotalSamples)
-	require.False(t, limiter.IsBlocked(env.session.HostParticipantKey(0)))
-}
-
 func TestFastNonStreamEmptyResponseRecordsParticipantFailure(t *testing.T) {
 	env := setupTestProxyWithClients(t, []user.HostClient{streamContentThenStallClient{}})
 	limiter := NewParticipantRequestLimiter(10, 10)
 	env.proxy.redundancy.participantLimiter = limiter
 	params := defaultParams()
-	params.Stream = false
 
 	inf := &inflight{
 		hostIdx:  0,
@@ -1620,90 +1466,6 @@ func TestRunInference_CancelStillSettlesStartedAttempt(t *testing.T) {
 	require.Eventually(t, func() bool {
 		return env.session.IsNonceFinished(1)
 	}, time.Second, 10*time.Millisecond)
-}
-
-func TestRunInference_NonStreamingEarlyFailuresRetryNormalAttemptsBeforeReducedDelay(t *testing.T) {
-	setNonStreamingTimeouts(t, 20*time.Millisecond, 60*time.Millisecond, 80*time.Millisecond)
-	disablePairwiseABSampling(t)
-	client := &emptyNonStreamingRecorderClient{}
-	env := setupTestProxyWithClients(t, []user.HostClient{client, client})
-
-	params := defaultParams()
-	params.Stream = false
-	params.MaxTokens = 256
-	params.Prompt = []byte(`{"model":"llama","max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
-
-	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
-
-	require.Error(t, err)
-	var reducedTokenTimeoutErr *nonStreamingReducedMaxTokensTimeoutError
-	require.ErrorAs(t, err, &reducedTokenTimeoutErr)
-	require.Equal(t, []uint64{256, 256}, client.MaxTokens())
-	require.EqualValues(t, 2, client.sendCalls.Load())
-	env.proxy.perf.pairwise.mu.RLock()
-	pairwiseComparisons := len(env.proxy.perf.pairwise.pairs)
-	env.proxy.perf.pairwise.mu.RUnlock()
-	require.Zero(t, pairwiseComparisons)
-}
-
-func TestRunInference_NonStreamingResponseTimeoutRetriesOnceWithReducedMaxTokens(t *testing.T) {
-	setNonStreamingTimeouts(t, 20*time.Millisecond, 60*time.Millisecond, 80*time.Millisecond)
-	disablePairwiseABSampling(t)
-	client := &blockingNonStreamingRecorderClient{}
-	env := setupTestProxyWithClients(t, []user.HostClient{client, client})
-
-	params := defaultParams()
-	params.Stream = false
-	params.MaxTokens = 256
-	params.Prompt = []byte(`{"model":"llama","max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
-
-	var buf bytes.Buffer
-	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
-
-	require.Error(t, err)
-	var reducedTokenTimeoutErr *nonStreamingReducedMaxTokensTimeoutError
-	require.ErrorAs(t, err, &reducedTokenTimeoutErr)
-	require.Equal(t, []uint64{256, 128}, client.MaxTokens())
-	require.EqualValues(t, 2, client.sendCalls.Load())
-	env.proxy.perf.pairwise.mu.RLock()
-	pairwiseComparisons := len(env.proxy.perf.pairwise.pairs)
-	env.proxy.perf.pairwise.mu.RUnlock()
-	require.Zero(t, pairwiseComparisons)
-}
-
-func TestRunInference_NonStreamingResponseTimeoutReducesMaxCompletionTokensAndMinTokens(t *testing.T) {
-	params := user.InferenceParams{
-		Model:       "llama",
-		Prompt:      []byte(`{"model":"llama","max_completion_tokens":256,"min_tokens":256,"messages":[{"role":"user","content":"hello"}]}`),
-		InputLength: 100,
-		MaxTokens:   256,
-		StartedAt:   time.Now().Unix(),
-	}
-
-	reduced, ok := reducedMaxTokensParams(params)
-
-	require.True(t, ok)
-	require.EqualValues(t, 128, reduced.MaxTokens)
-	require.JSONEq(t, `{"model":"llama","max_completion_tokens":128,"min_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, string(reduced.Prompt))
-}
-
-func TestReducedMaxTokensParams_StopsAtFloor(t *testing.T) {
-	params := user.InferenceParams{
-		Model:       "llama",
-		Prompt:      []byte(`{"model":"llama","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`),
-		InputLength: 100,
-		MaxTokens:   100,
-		StartedAt:   time.Now().Unix(),
-	}
-
-	reduced, ok := reducedMaxTokensParams(params)
-	require.True(t, ok)
-	require.EqualValues(t, completionapi.MinTokensFloor, reduced.MaxTokens, "halving 100 lands under the floor and clamps to it")
-	require.JSONEq(t, `{"model":"llama","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, string(reduced.Prompt))
-
-	_, ok = reducedMaxTokensParams(reduced)
-	require.False(t, ok, "at the floor there is nothing left to give up")
 }
 
 func TestProxyHandleChatCompletionsRejectsWhenConfirmationPoCActive(t *testing.T) {
@@ -2067,21 +1829,6 @@ func TestWaitForFirstTokenUntilTimesOutWithoutToken(t *testing.T) {
 
 	ok := waitForFirstTokenUntil(context.Background(), inf, time.Now().Add(20*time.Millisecond))
 	require.False(t, ok)
-}
-
-func TestNonStreamingFallbackDelayUsesMaxThreshold(t *testing.T) {
-	setSpeculativeTiming(t, 50*time.Millisecond, time.Second, 10*time.Millisecond, time.Minute)
-	savedFloor := NonStreamResponseFloor
-	savedLag := PerInputTokenResponseLag
-	NonStreamResponseFloor = 20 * time.Second
-	PerInputTokenResponseLag = 20 * time.Millisecond
-	t.Cleanup(func() {
-		NonStreamResponseFloor = savedFloor
-		PerInputTokenResponseLag = savedLag
-	})
-
-	require.Equal(t, 20*time.Second, nonStreamingFallbackDelay(100))
-	require.Equal(t, 24*time.Second, nonStreamingFallbackDelay(1200))
 }
 
 func TestWaitForInflightDoneUntilReturnsWhenDoneArrives(t *testing.T) {

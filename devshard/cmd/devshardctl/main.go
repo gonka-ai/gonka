@@ -17,6 +17,7 @@ import (
 	"common/chain"
 	"devshard/accounting"
 	"devshard/bridge"
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -127,6 +128,7 @@ type bootstrapOptions struct {
 var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
+	logging.ConfigureFormat(os.Getenv("DEVSHARD_LOG_FORMAT"))
 	ConfigurePoCRequestMode(os.Getenv("DEVSHARD_POC_REQUEST_MODE"))
 	ConfigureCapacityAwareLimits(os.Getenv("DEVSHARD_CAPACITY_AWARE_LIMITS"))
 	flags := parseCLIFlags()

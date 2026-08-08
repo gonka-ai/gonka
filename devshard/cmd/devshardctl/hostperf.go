@@ -44,6 +44,7 @@ type RequestSample struct {
 	SendTime       time.Time
 	ReceiptTime    time.Time // zero if no receipt
 	FirstToken     time.Time // zero if no tokens
+	FirstContent   time.Time // zero if no content; live only, not persisted
 	TotalTime      time.Duration
 	InputTokens    uint64
 }

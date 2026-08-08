@@ -566,12 +566,12 @@ func TestGatewayAccountingAdapterRecordsRealSendPolicyDimensions(t *testing.T) {
 
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 	recorder.RealSend("e1", 1, time.Now(), "shadow")
-	recorder.Usage("e1", 1, 1)
+	recorder.Usage("e1", 1, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	require.NoError(t, tracker.RecordDiff("e1", 2, true))
 	recorder.RealSend("e1", 2, time.Now(), "probation")
-	recorder.Usage("e1", 2, 1)
+	recorder.Usage("e1", 2, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 2, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 4}))
@@ -596,7 +596,7 @@ func TestGatewayAccountingAdapterRecordsPoCRealSendPhaseContext(t *testing.T) {
 	require.NoError(t, tracker.RecordDiff("e1", 1, true))
 
 	recorder.RealSend("e1", 1, time.Now(), "none")
-	recorder.Usage("e1", 1, 1)
+	recorder.Usage("e1", 1, 1, "")
 	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, accounting.ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyGatewayAccountingRecord(t, tracker.Query(accounting.QueryFilter{EpochIndex: 5}))

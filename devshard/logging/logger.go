@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"log/slog"
+	"os"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -26,6 +27,8 @@ var current Logger = &slogLogger{}
 type requestIDKey struct{}
 
 var requestSeq uint64
+
+var structuredStages atomic.Bool
 
 func SetLogger(l Logger) { current = l }
 
@@ -112,23 +115,55 @@ func PropagateRequestID(dst, src context.Context) context.Context {
 // All layers (Proxy, Redundancy, Session) should use this so that logs
 // are uniform and grepable by request ID.
 func Stage(ctx context.Context, stage string, kv ...any) {
+	if structuredStages.Load() {
+		current.Info(stage, stageFields(ctx, stage, kv)...)
+		return
+	}
 	fields := make([]string, 0, 2+len(kv)/2)
 	if id, ok := RequestID(ctx); ok {
 		fields = append(fields, "request="+id)
 	}
 	fields = append(fields, "stage="+stage)
 	for i := 0; i < len(kv); i += 2 {
-		key := fmt.Sprintf("field_%d", i)
-		if s, ok := kv[i].(string); ok && s != "" {
-			key = s
-		}
-		value := "<missing>"
-		if i+1 < len(kv) {
-			value = fmt.Sprint(kv[i+1])
-		}
-		fields = append(fields, key+"="+sanitize(value))
+		fields = append(fields, stageKey(kv, i)+"="+sanitize(stageValue(kv, i)))
 	}
 	log.Print(strings.Join(fields, " "))
+}
+
+// ConfigureFormat switches stage lines to JSON, where a collector reads every field as a label
+// instead of re-parsing a line that carries log's own date prefix.
+func ConfigureFormat(raw string) {
+	if !strings.EqualFold(strings.TrimSpace(raw), "json") {
+		return
+	}
+	slog.SetDefault(slog.New(slog.NewJSONHandler(os.Stderr, nil)))
+	structuredStages.Store(true)
+}
+
+func stageFields(ctx context.Context, stage string, kv []any) []any {
+	fields := make([]any, 0, 4+len(kv))
+	if id, ok := RequestID(ctx); ok {
+		fields = append(fields, "request", id)
+	}
+	fields = append(fields, "stage", stage)
+	for i := 0; i < len(kv); i += 2 {
+		fields = append(fields, stageKey(kv, i), stageValue(kv, i))
+	}
+	return fields
+}
+
+func stageKey(kv []any, i int) string {
+	if s, ok := kv[i].(string); ok && s != "" {
+		return s
+	}
+	return fmt.Sprintf("field_%d", i)
+}
+
+func stageValue(kv []any, i int) string {
+	if i+1 >= len(kv) {
+		return "<missing>"
+	}
+	return fmt.Sprint(kv[i+1])
 }
 
 func sanitize(v string) string {

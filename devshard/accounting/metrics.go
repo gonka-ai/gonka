@@ -14,6 +14,7 @@ type Collector struct {
 	assigned              *prometheus.Desc
 	disposition           *prometheus.Desc
 	timeout               *prometheus.Desc
+	delivery              *prometheus.Desc
 	missed                *prometheus.Desc
 	invalid               *prometheus.Desc
 	challenges            *prometheus.Desc
@@ -41,6 +42,11 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 			"devshard_accounting_disposition",
 			"Terminal nonce dispositions in the current epoch.",
 			[]string{"participant", "model", "disposition", "dispatch_phase", "timeout_evaluation_phase", "quarantine_mode", "no_send_reason", "failure_origin"}, nil,
+		),
+		delivery: prometheus.NewDesc(
+			"devshard_accounting_delivery",
+			"Terminal nonces by what the host actually delivered, in the current epoch.",
+			[]string{"participant", "model", "disposition", "delivery_reason", "dispatch_phase"}, nil,
 		),
 		timeout: prometheus.NewDesc(
 			"devshard_accounting_timeout_outcome",
@@ -116,7 +122,7 @@ func NewPrometheusCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) pro
 
 func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 	for _, desc := range []*prometheus.Desc{
-		c.assigned, c.disposition, c.timeout, c.missed, c.invalid,
+		c.assigned, c.disposition, c.delivery, c.timeout, c.missed, c.invalid,
 		c.challenges, c.inFlight, c.timeoutPending, c.pendingClassification,
 		c.unclassified, c.overclassified, c.unknown, c.recordingErrors,
 		c.writerErrors, c.crossCheck,
@@ -151,6 +157,7 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		gauge(ch, c.crossCheck, record.CrossChecks.ErrorCount, base...)
 
 		dispositions := make(map[string]uint64)
+		deliveries := make(map[string]uint64)
 		timeouts := make(map[string]uint64)
 		for _, counter := range record.Counters {
 			labels := []string{
@@ -160,6 +167,13 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 				string(counter.Key.FailureOrigin),
 			}
 			dispositions[strings.Join(labels, "\x00")] += counter.Count
+			if counter.Key.DeliveryReason != "" {
+				deliveryLabels := []string{
+					record.Participant, record.Model, string(counter.Key.Disposition),
+					counter.Key.DeliveryReason, string(counter.Key.DispatchPhase),
+				}
+				deliveries[strings.Join(deliveryLabels, "\x00")] += counter.Count
+			}
 			if counter.Key.TimeoutOutcome != "" {
 				timeoutLabels := []string{
 					record.Participant, record.Model, string(counter.Key.TimeoutKind),
@@ -171,6 +185,9 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		}
 		for labels, count := range dispositions {
 			gauge(ch, c.disposition, count, strings.Split(labels, "\x00")...)
+		}
+		for labels, count := range deliveries {
+			gauge(ch, c.delivery, count, strings.Split(labels, "\x00")...)
 		}
 		for labels, count := range timeouts {
 			gauge(ch, c.timeout, count, strings.Split(labels, "\x00")...)

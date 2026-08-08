@@ -618,9 +618,12 @@ func (m *DevshardMetrics) ObserveRequestSample(devshardID string, sample Request
 		m.participantReceiptSeconds.WithLabelValues(participantLabels...).Observe(receiptSeconds)
 	}
 	if !sample.SendTime.IsZero() && !sample.FirstToken.IsZero() {
-		firstContentSeconds := sample.FirstToken.Sub(sample.SendTime).Seconds()
-		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(firstContentSeconds)
-		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(firstContentSeconds)
+		m.hostFirstTokenSeconds.WithLabelValues(labels...).Observe(sample.FirstToken.Sub(sample.SendTime).Seconds())
+	}
+	// Fed from the first CONTENT chunk, which is what this metric is named for: FirstToken fires on
+	// a role-only chunk and made it report a prefill no client ever waited for.
+	if !sample.SendTime.IsZero() && !sample.FirstContent.IsZero() {
+		m.participantFirstContent.WithLabelValues(participantLabels...).Observe(sample.FirstContent.Sub(sample.SendTime).Seconds())
 	}
 	if cttfl := sample.CTTFL() / 1000; cttfl > 0 {
 		m.hostCTTFLSecondsPerToken.WithLabelValues(labels...).Observe(cttfl)
@@ -1124,17 +1127,23 @@ func normalizeMetricsPath(path string) string {
 	}
 }
 
+// limiterRejectionLogFields says how full the gateway was, not only that it was full.
+func limiterRejectionLogFields(err error) []any {
+	fields := []any{"reason", limiterReasonLabel(err)}
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) {
+		return append(fields, "in_flight", rejection.InFlight, "limit", rejection.Limit)
+	}
+	return fields
+}
+
 func limiterReasonLabel(err error) string {
 	if err == nil {
 		return "unknown"
 	}
-	msg := err.Error()
-	switch {
-	case strings.Contains(msg, "concurrent requests"):
-		return "max_concurrent_requests"
-	case strings.Contains(msg, "input tokens in flight"):
-		return "max_input_tokens_in_flight"
-	default:
-		return "unknown"
+	var rejection *LimiterRejection
+	if errors.As(err, &rejection) && rejection.Kind != "" {
+		return rejection.Kind
 	}
+	return "unknown"
 }

@@ -26,7 +26,7 @@ var sseDoneMarker = []byte("data: [DONE]")
 
 // defaultMetaDrainTimeout is a last-resort backstop, not an active policy:
 // it must exceed every natural completion window (SecondaryWaitAfterWinner,
-// nonStreamingNoContentTimeout, nonStreamingMaxAttemptWait) so that hosts
+// StreamingAttemptHardTimeout) so that hosts
 // which are still legitimately generating after a client disconnect get to
 // finish and settle their nonce normally. Cutting a host early records it
 // as a timeout / empty stream through no fault of its own. The only thing
@@ -229,14 +229,12 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 	if model == "" {
 		model = p.model
 	}
-	// Upstream always streams, so every attempt escalates on the streaming clock.
 	params := user.InferenceParams{
 		Model:       model,
 		Prompt:      body,
 		InputLength: uint64(len(body)),
 		MaxTokens:   req.MaxTokens,
 		StartedAt:   time.Now().Unix(),
-		Stream:      true,
 	}
 	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
 

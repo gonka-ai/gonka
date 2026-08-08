@@ -99,3 +99,33 @@ func TestChunkCadence_ReportsNothingBeforeASecondChunk(t *testing.T) {
 	require.Zero(t, inf.longestChunkGap())
 	require.Zero(t, inf.meanChunkGap())
 }
+
+// A role-only chunk is a token, not content. Stamping first content on it is what made the
+// participant metric report a prefill no client ever waited for.
+func TestRaceWriterFirstContent_IgnoresARoleOnlyChunk(t *testing.T) {
+	ctx := context.Background()
+	group := newRaceGroup(ctx, ctx, "escrow-content", io.Discard)
+	inf := &inflight{
+		hostID:       "host-1",
+		escrowID:     "escrow-content",
+		nonce:        1,
+		done:         make(chan struct{}),
+		receiptCh:    make(chan struct{}),
+		firstTokenCh: make(chan struct{}),
+	}
+	writer := &raceWriter{group: group, nonce: 1, inf: inf}
+
+	_, err := writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"role\":\"assistant\"}}]}\n\n"))
+	require.NoError(t, err)
+	require.False(t, inf.firstTokenAt().IsZero(), "a role chunk is still a token")
+	require.True(t, inf.firstContentAt().IsZero(), "and it is not content")
+
+	_, err = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\"hi\"}}]}\n\n"))
+	require.NoError(t, err)
+	firstContent := inf.firstContentAt()
+	require.False(t, firstContent.IsZero())
+
+	_, err = writer.Write([]byte("data: {\"choices\":[{\"delta\":{\"content\":\" there\"}}]}\n\n"))
+	require.NoError(t, err)
+	require.Equal(t, firstContent, inf.firstContentAt(), "later content must not move the stamp")
+}

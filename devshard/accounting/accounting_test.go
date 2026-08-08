@@ -79,7 +79,7 @@ func TestTrackerRecordsFinishedUnused(t *testing.T) {
 	registerEscrow(t, tr, "e1", 11, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
 	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 11}), "p1")
@@ -95,7 +95,7 @@ func TestTrackerRecordsFinishedUsageUnknown(t *testing.T) {
 	registerEscrow(t, tr, "e1", 12, "m")
 	require.NoError(t, tr.RecordDiff("e1", 1, true))
 	require.NoError(t, tr.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageUnknownValue))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageUnknownValue, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	record := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 12}), "p1")
@@ -141,7 +141,7 @@ func TestTrackerMovesInFlightToFinishedUsed(t *testing.T) {
 	require.Equal(t, uint64(1), inFlight.InFlight)
 	require.Zero(t, inFlight.Dispositions[DispositionFinishedUsed])
 
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 14}), "p1")
@@ -162,7 +162,7 @@ func TestTrackerMovesInFlightToFinishedUnused(t *testing.T) {
 	require.Equal(t, uint64(1), inFlight.InFlight)
 	require.Zero(t, inFlight.Dispositions[DispositionFinishedUnused])
 
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageLoser, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 15}), "p1")
@@ -314,7 +314,7 @@ func TestTrackerReclassificationMovesCountAtomically(t *testing.T) {
 	unfinished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 22}), "p1")
 	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedRefused])
 
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 22}), "p1")
@@ -394,7 +394,7 @@ func TestTrackerFinishAfterNonAppliedTimeoutWins(t *testing.T) {
 	require.Equal(t, uint64(1), unfinished.Dispositions[DispositionUnfinishedRefused])
 	require.Equal(t, uint64(1), unfinished.TimeoutOutcomes[TimeoutVoteCollectionFailed])
 
-	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner))
+	require.NoError(t, tr.RecordUsage("e1", 1, UsageWinner, ""))
 	require.NoError(t, tr.RecordProtocol("e1", 1, 1, ProtocolFinishApplied, types.HostStats{}))
 
 	finished := onlyRecord(t, tr.Query(QueryFilter{EpochIndex: 25}), "p1")

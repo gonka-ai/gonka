@@ -227,7 +227,6 @@ type InferenceParams struct {
 	MaxTokens        uint64
 	ContextTotalHint uint64
 	StartedAt        int64
-	Stream           bool
 }
 
 // Session manages the user side of the devshard protocol.

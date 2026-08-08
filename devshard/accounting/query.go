@@ -210,7 +210,8 @@ func (r *SlotRecord) addCounter(key CounterKey, count uint64) {
 	if key.DeliveryReason != "" {
 		r.DeliveryReasons[key.DeliveryReason] += count
 	}
-	if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
+	if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" ||
+		key.DeliveryReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
 		r.UnknownReasonTotal += count
 	}
 }

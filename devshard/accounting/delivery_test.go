@@ -1,7 +1,11 @@
 package accounting
 
 import (
+	"context"
+	"strings"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/stretchr/testify/require"
 
@@ -62,4 +66,47 @@ func TestTrackerDelivery_CollapsesAReasonItDoesNotKnow(t *testing.T) {
 	}
 
 	require.Equal(t, map[string]uint64{"unknown": 1}, delivered)
+}
+
+// The collector is where an operator watches from, so the dimension has to reach it, not only the
+// HTTP view.
+func TestCollectorDelivery_ReachesPrometheus(t *testing.T) {
+	tracker := newTestTracker(t)
+	registerEscrow(t, tracker, "e1", 7, "m")
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	require.NoError(t, tracker.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
+	require.NoError(t, tracker.RecordUsage("e1", 1, UsageWinner, "empty_stream"))
+	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, ProtocolFinishApplied, types.HostStats{}))
+
+	collector := NewCollector(tracker, func(context.Context) (uint64, error) { return 7, nil })
+	emitted := make(chan prometheus.Metric, 64)
+	collector.Collect(emitted)
+	close(emitted)
+
+	delivered := 0
+	for metric := range emitted {
+		if strings.Contains(metric.Desc().String(), "devshard_accounting_delivery") {
+			delivered++
+		}
+	}
+	require.Equal(t, 1, delivered)
+}
+
+// A reason the vocabulary does not know must also register as accounting blindness.
+func TestTrackerDelivery_CountsAnUnknownReasonAsBlindness(t *testing.T) {
+	tracker := newTestTracker(t)
+	registerEscrow(t, tracker, "e1", 7, "m")
+	require.NoError(t, tracker.RecordDiff("e1", 1, true))
+	require.NoError(t, tracker.RecordRealSend("e1", 1, accountingTestNow, PhaseNormal, QuarantineNone))
+	require.NoError(t, tracker.RecordUsage("e1", 1, UsageWinner, "something-new"))
+	require.NoError(t, tracker.RecordProtocol("e1", 1, 0, ProtocolFinishApplied, types.HostStats{}))
+
+	blind := uint64(0)
+	for _, record := range tracker.Query(QueryFilter{EpochIndex: 7}) {
+		for _, slot := range record.Slots {
+			blind += slot.UnknownReasonTotal
+		}
+	}
+
+	require.Equal(t, uint64(1), blind)
 }

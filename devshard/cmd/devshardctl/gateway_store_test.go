@@ -130,9 +130,6 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 			PerInputTokenFirstTokenLagMS:  17,
 			InterChunkStallTimeoutMS:      1800,
 			StreamingAttemptHardTimeoutMS: 1810,
-			NonStreamResponseFloorMS:      1900,
-			NonStreamNoContentTimeoutMS:   2200,
-			NonStreamMaxAttemptWaitMS:     2600,
 			PerInputTokenResponseLagMS:    20,
 			SecondaryWaitAfterWinnerMS:    2100,
 			ParallelAdvantageThreshold:    0.4,
@@ -171,8 +168,6 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 	require.EqualValues(t, 1500, state.Settings.Redundancy.ReceiptTimeoutMS)
 	require.EqualValues(t, 17, state.Settings.Redundancy.PerInputTokenFirstTokenLagMS)
 	require.EqualValues(t, 1810, state.Settings.Redundancy.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 2200, state.Settings.Redundancy.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 2600, state.Settings.Redundancy.NonStreamMaxAttemptWaitMS)
 	require.Equal(t, 0.4, state.Settings.Redundancy.ParallelAdvantageThreshold)
 	require.True(t, state.Settings.EscrowRotation.Enabled)
 	require.True(t, state.Settings.EscrowRotation.SettlementEnabled)

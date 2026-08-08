@@ -16,9 +16,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	"common/completionapi"
-
-	"devshard"
 	"devshard/accounting"
 	"devshard/host"
 	"devshard/logging"
@@ -39,20 +36,11 @@ const emptyStreamBodySampleLimit = 256 * 1024
 const longResponseFailureExemption = 280 * time.Second
 
 var (
-	nonStreamingReducedMaxTokensFallbackDelay = 140 * time.Second
-	nonStreamingNoContentTimeout              = 30 * time.Minute
-	nonStreamingMaxAttemptWait                = 30 * time.Minute
-	InterChunkStallLogThreshold               = 30 * time.Second
-	StreamingAttemptHardTimeout               = 30 * time.Minute
+	InterChunkStallLogThreshold = 30 * time.Second
+	StreamingAttemptHardTimeout = 30 * time.Minute
 )
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
-
-type nonStreamingReducedMaxTokensTimeoutError struct{}
-
-func (e *nonStreamingReducedMaxTokensTimeoutError) Error() string {
-	return "inference: no non-empty response after retrying with reduced max_tokens"
-}
 
 // sseChunkHasContent reports whether the given bytes contain at least one SSE
 // data event carrying a non-empty payload that an OpenAI-compatible client can
@@ -440,7 +428,6 @@ var (
 	// InterChunkStallTimeout caps how long the crowned winner may go silent
 	// between forwarded chunks before we abort the stream as stalled.
 	InterChunkStallTimeout   = time.Minute
-	NonStreamResponseFloor   = 20 * time.Second
 	PerInputTokenResponseLag = 20 * time.Millisecond
 	SecondaryWaitAfterWinner = 5 * time.Minute
 )
@@ -452,9 +439,6 @@ func DefaultRedundancySettings() RedundancySettings {
 		PerInputTokenFirstTokenLagMS:  10,
 		InterChunkStallTimeoutMS:      60000,
 		StreamingAttemptHardTimeoutMS: 1800000,
-		NonStreamResponseFloorMS:      20000,
-		NonStreamNoContentTimeoutMS:   1800000,
-		NonStreamMaxAttemptWaitMS:     1800000,
 		PerInputTokenResponseLagMS:    20,
 		SecondaryWaitAfterWinnerMS:    600000,
 		ParallelAdvantageThreshold:    0.5,
@@ -485,15 +469,6 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	}
 	if settings.StreamingAttemptHardTimeoutMS <= 0 {
 		settings.StreamingAttemptHardTimeoutMS = defaults.StreamingAttemptHardTimeoutMS
-	}
-	if settings.NonStreamResponseFloorMS <= 0 {
-		settings.NonStreamResponseFloorMS = defaults.NonStreamResponseFloorMS
-	}
-	if settings.NonStreamNoContentTimeoutMS <= 0 {
-		settings.NonStreamNoContentTimeoutMS = defaults.NonStreamNoContentTimeoutMS
-	}
-	if settings.NonStreamMaxAttemptWaitMS <= 0 {
-		settings.NonStreamMaxAttemptWaitMS = defaults.NonStreamMaxAttemptWaitMS
 	}
 	if settings.PerInputTokenResponseLagMS < 0 {
 		settings.PerInputTokenResponseLagMS = defaults.PerInputTokenResponseLagMS
@@ -534,9 +509,6 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	PerInputTokenFirstTokenLag = time.Duration(settings.PerInputTokenFirstTokenLagMS) * time.Millisecond
 	InterChunkStallTimeout = time.Duration(settings.InterChunkStallTimeoutMS) * time.Millisecond
 	StreamingAttemptHardTimeout = time.Duration(settings.StreamingAttemptHardTimeoutMS) * time.Millisecond
-	NonStreamResponseFloor = time.Duration(settings.NonStreamResponseFloorMS) * time.Millisecond
-	nonStreamingNoContentTimeout = time.Duration(settings.NonStreamNoContentTimeoutMS) * time.Millisecond
-	nonStreamingMaxAttemptWait = time.Duration(settings.NonStreamMaxAttemptWaitMS) * time.Millisecond
 	PerInputTokenResponseLag = time.Duration(settings.PerInputTokenResponseLagMS) * time.Millisecond
 	SecondaryWaitAfterWinner = time.Duration(settings.SecondaryWaitAfterWinnerMS) * time.Millisecond
 	ParallelAdvantageThreshold = settings.ParallelAdvantageThreshold
@@ -887,25 +859,26 @@ type inflight struct {
 	receiptTimeNano atomic.Int64  // unix nano; 0 means not received
 	receiptCh       chan struct{} // closed when receipt arrives
 
-	tokenOnce       sync.Once
-	firstTokenNano  atomic.Int64 // unix nano; 0 means no content yet
-	firstTokenCh    chan struct{}
-	outputChunks    atomic.Int64
-	contentChunks   atomic.Int64
-	outputBytes     atomic.Int64
-	lastChunkAt     atomic.Int64
-	maxChunkGap     atomic.Int64
-	maxChunkGapAt   atomic.Int64
-	stallMu         sync.Mutex
-	stallActive     bool
-	stalls          []attemptStall
-	forwardedLog    sync.Once
-	suppressedLog   sync.Once
-	ctxCancelledLog sync.Once
-	hardTimeoutLog  sync.Once
-	sampleOnce      sync.Once
-	processOnce     sync.Once
-	processErr      error
+	tokenOnce        sync.Once
+	firstTokenNano   atomic.Int64 // unix nano; 0 means no chunk of any kind yet
+	firstTokenCh     chan struct{}
+	outputChunks     atomic.Int64
+	contentChunks    atomic.Int64
+	outputBytes      atomic.Int64
+	lastChunkAt      atomic.Int64
+	maxChunkGap      atomic.Int64
+	maxChunkGapAt    atomic.Int64
+	firstContentNano atomic.Int64
+	stallMu          sync.Mutex
+	stallActive      bool
+	stalls           []attemptStall
+	forwardedLog     sync.Once
+	suppressedLog    sync.Once
+	ctxCancelledLog  sync.Once
+	hardTimeoutLog   sync.Once
+	sampleOnce       sync.Once
+	processOnce      sync.Once
+	processErr       error
 
 	// pendingBuf holds bytes received before any content event was observed.
 	// Each attempt has at most one writer goroutine driving Write/Flush, so no
@@ -1565,6 +1538,16 @@ func (inf *inflight) recordChunkGap(gapNano int64) {
 	inf.maxChunkGapAt.Store(inf.outputChunks.Load())
 }
 
+// firstContentAt is the first chunk that carried content, unlike firstTokenAt, which is the first
+// chunk of any kind and fires on a role-only one.
+func (inf *inflight) firstContentAt() time.Time {
+	nano := inf.firstContentNano.Load()
+	if nano == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, nano)
+}
+
 func (inf *inflight) longestChunkGap() time.Duration {
 	return time.Duration(inf.maxChunkGap.Load())
 }
@@ -1620,6 +1603,7 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 	}
 	if chunkHasContent || chunkHasError {
 		rw.inf.contentChunks.Add(1)
+		rw.inf.firstContentNano.CompareAndSwap(0, nowNano)
 		rw.group.maybeHoldWinnerCandidate(rw.inf)
 	}
 	if chunkHasContent && !rw.inf.suspicious {
@@ -2104,45 +2088,6 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 	return next
 }
 
-func reducedMaxTokensParams(params user.InferenceParams) (user.InferenceParams, bool) {
-	// Halving below the floor buys a retry the state machine and the executor both refuse, so the
-	// reduction stops at the floor and declines once there is nothing left to give up.
-	if params.MaxTokens <= completionapi.MinTokensFloor {
-		return params, false
-	}
-	reducedMaxTokens := max(params.MaxTokens/2, uint64(completionapi.MinTokensFloor))
-	prompt, ok := rewritePromptMaxTokens(params.Prompt, reducedMaxTokens)
-	if !ok {
-		return params, false
-	}
-	params.Prompt = prompt
-	params.MaxTokens = reducedMaxTokens
-	return params, true
-}
-
-func rewritePromptMaxTokens(prompt []byte, maxTokens uint64) ([]byte, bool) {
-	var raw map[string]any
-	if err := json.Unmarshal(prompt, &raw); err != nil {
-		return nil, false
-	}
-	_, hasMaxCompletionTokens := raw["max_completion_tokens"]
-	_, hasMaxTokens := raw["max_tokens"]
-	if hasMaxCompletionTokens {
-		raw["max_completion_tokens"] = maxTokens
-	}
-	if hasMaxTokens || !hasMaxCompletionTokens {
-		raw["max_tokens"] = maxTokens
-	}
-	if minTokens, ok := devshard.JSONNumericUint64(raw["min_tokens"]); ok && minTokens > maxTokens {
-		raw["min_tokens"] = maxTokens
-	}
-	updated, err := json.Marshal(raw)
-	if err != nil {
-		return nil, false
-	}
-	return updated, true
-}
-
 func (e *Redundancy) maybeAddPairwiseWinnerHoldCandidate(race *raceGroup, params user.InferenceParams, trigger, next *inflight) {
 	if e == nil || e.perf == nil || e.perf.pairwise == nil || race == nil || trigger == nil || next == nil {
 		return
@@ -2197,14 +2142,6 @@ func receiptTimeoutForInput(inputTokens uint64) time.Duration {
 		return ReceiptTimeout * 2
 	}
 	return ReceiptTimeout
-}
-
-func nonStreamingFallbackDelay(inputTokens uint64) time.Duration {
-	delay := time.Duration(inputTokens) * PerInputTokenResponseLag
-	if delay < NonStreamResponseFloor {
-		return NonStreamResponseFloor
-	}
-	return delay
 }
 
 func interChunkStallDeadline(inf *inflight) (time.Time, bool) {
@@ -2348,11 +2285,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
-	requestStart := time.Now()
-	if len(attempts) > 0 && !attempts[0].sendTime.IsZero() {
-		requestStart = attempts[0].sendTime
-	}
-	reducedMaxTokensFallbackStarted := false
 
 	for {
 		winner := race.winnerNonce()
@@ -2406,26 +2338,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				"max_attempts", maxAttempts,
 			)
 		}
-		var reducedFallbackTimer *time.Timer
-		var reducedFallbackC <-chan time.Time
-		if !params.Stream && !reducedMaxTokensFallbackStarted && winner == 0 {
-			wait := time.Until(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay))
-			if wait < 0 {
-				wait = 0
-			}
-			reducedFallbackTimer = time.NewTimer(wait)
-			reducedFallbackC = reducedFallbackTimer.C
-		}
-		var nonStreamingTimeoutTimer *time.Timer
-		var nonStreamingTimeoutC <-chan time.Time
-		if !params.Stream && winner == 0 {
-			wait := time.Until(requestStart.Add(nonStreamingNoContentTimeout))
-			if wait < 0 {
-				wait = 0
-			}
-			nonStreamingTimeoutTimer = time.NewTimer(wait)
-			nonStreamingTimeoutC = nonStreamingTimeoutTimer.C
-		}
 		var stallInf *inflight
 		var stallTimer *time.Timer
 		var stallC <-chan time.Time
@@ -2453,40 +2365,21 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 		}
 		if allInflightsDone(attempts) && escalationC == nil {
-			if !params.Stream && winner == 0 && time.Now().Before(requestStart.Add(nonStreamingNoContentTimeout)) {
-				if !reducedMaxTokensFallbackStarted && time.Now().Before(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay)) && len(attempts) < maxAttempts {
-					trigger := attempts[len(attempts)-1]
-					trigger.escalated = true
-					if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_failed", trigger, "attempt_failed", triedParticipants, clientFlag); next != nil {
-						attempts = append(attempts, next)
-						e.watchInflightDone(next, doneCh)
-					}
-				}
-				// Wait until the request-level no-content deadline so a reduced
-				// max-token fallback can run even if earlier attempts ended empty.
-			} else {
-				if stallTimer != nil {
-					stopTimer(stallTimer)
-				}
-				if winnerHardTimeoutTimer != nil {
-					stopTimer(winnerHardTimeoutTimer)
-				}
-				if reducedFallbackTimer != nil {
-					stopTimer(reducedFallbackTimer)
-				}
-				if nonStreamingTimeoutTimer != nil {
-					stopTimer(nonStreamingTimeoutTimer)
-				}
-				if winner == 0 {
-					if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
-						if err := race.promoteFallbackWinner(fallback); err != nil {
-							return err
-						}
-						winner = fallback.nonce
-					}
-				}
-				return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
+			if stallTimer != nil {
+				stopTimer(stallTimer)
 			}
+			if winnerHardTimeoutTimer != nil {
+				stopTimer(winnerHardTimeoutTimer)
+			}
+			if winner == 0 {
+				if fallback := fallbackSuspiciousWinner(attempts); fallback != nil {
+					if err := race.promoteFallbackWinner(fallback); err != nil {
+						return err
+					}
+					winner = fallback.nonce
+				}
+			}
+			return e.finishRaceOutcome(settleCtx, attempts, params, decision, winner, raceFinishOptions{recordFailureSamples: true})
 		}
 
 		select {
@@ -2547,42 +2440,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					e.watchInflightDone(next, doneCh)
 				}
 			}
-		case <-reducedFallbackC:
-			if reducedMaxTokensFallbackStarted || race.winnerNonce() != 0 {
-				break
-			}
-			reducedMaxTokensFallbackStarted = true
-			reducedParams, ok := reducedMaxTokensParams(params)
-			if !ok {
-				break
-			}
-			trigger := attempts[len(attempts)-1]
-			trigger.escalated = true
-			if next := e.startAdditionalInflight(streamCtx, settleCtx, race, reducedParams, "response_timeout_wait_elapsed", trigger, "response_timeout_reduced_max_tokens", triedParticipants, clientFlag); next != nil {
-				next.excludePairwise = true
-				attempts = append(attempts, next)
-				e.watchInflightDone(next, doneCh)
-			}
-		case <-nonStreamingTimeoutC:
-			if race.winnerNonce() != 0 {
-				break
-			}
-			e.cancelPendingInflights(settleCtx, attempts, "non_stream_no_content_timeout")
-			e.waitForInflightsDoneUntil(settleCtx, attempts, requestStart.Add(nonStreamingMaxAttemptWait))
-			opts := raceFinishOptions{
-				recordFailureSamples:            true,
-				nonStreamingReducedTokenTimeout: true,
-			}
-			go func() {
-				if err := e.finishRaceOutcome(settleCtx, attempts, params, decision, 0, opts); err != nil {
-					var timeoutErr *nonStreamingReducedMaxTokensTimeoutError
-					if errors.As(err, &timeoutErr) {
-						return
-					}
-					logRequestStage(settleCtx, "background_finish_failed", "escrow", e.devshardID, "error", err)
-				}
-			}()
-			return &nonStreamingReducedMaxTokensTimeoutError{}
 		case <-stallC:
 			now := time.Now()
 			if stallInf == nil {
@@ -2659,12 +2516,6 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		if escalationTimer != nil {
 			stopTimer(escalationTimer)
 		}
-		if reducedFallbackTimer != nil {
-			stopTimer(reducedFallbackTimer)
-		}
-		if nonStreamingTimeoutTimer != nil {
-			stopTimer(nonStreamingTimeoutTimer)
-		}
 		if stallTimer != nil {
 			stopTimer(stallTimer)
 		}
@@ -2723,9 +2574,6 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 		if inflightFinished(inf) {
 			return escalationTrigger{}, false
 		}
-		if !params.Stream {
-			return escalationTrigger{}, false
-		}
 		return escalationTrigger{
 			inf:      inf,
 			deadline: time.Now(),
@@ -2744,9 +2592,6 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "receipt_timeout",
 		}, true
 	}
-	if !params.Stream {
-		return escalationTrigger{}, false
-	}
 	if inf.hasFirstToken() {
 		return escalationTrigger{}, false
 	}
@@ -2764,8 +2609,6 @@ func (e *Redundancy) escalationDelay(stage string, params user.InferenceParams) 
 		return receiptTimeoutForInput(params.InputLength)
 	case "first_token_timeout_wait_elapsed":
 		return e.firstTokenFallbackDelay(params)
-	case "response_timeout_wait_elapsed":
-		return nonStreamingFallbackDelay(params.InputLength)
 	case "attempt_failed":
 		return 0
 	default:
@@ -2818,9 +2661,8 @@ func (e *Redundancy) monitorInflight(ctx context.Context, inf *inflight, race *r
 }
 
 type raceFinishOptions struct {
-	forceTreatAsFailure             bool
-	recordFailureSamples            bool
-	nonStreamingReducedTokenTimeout bool
+	forceTreatAsFailure  bool
+	recordFailureSamples bool
 }
 
 // goTrackedRaceCleanup runs a background race cleanup detached while keeping the drain barrier aware of it; onRaceCleanupStart fires synchronously so the winning handler can never see the runtime as quiet mid-cleanup.
@@ -3163,58 +3005,6 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 	return false
 }
 
-func (e *Redundancy) cancelPendingInflights(ctx context.Context, attempts []*inflight, reason string) {
-	for _, inf := range pendingInflights(attempts) {
-		logInferenceStage(ctx, inf.escrowID, inf.nonce, "speculative_attempt_canceled",
-			"host", inf.hostID,
-			"reason", reason,
-		)
-		if inf.cancel != nil {
-			inf.cancel()
-		}
-	}
-}
-
-func (e *Redundancy) waitForInflightsDoneUntil(ctx context.Context, attempts []*inflight, deadline time.Time) {
-	pending := pendingInflights(attempts)
-	if len(pending) == 0 {
-		return
-	}
-	done := make(chan struct{}, len(pending))
-	for _, inf := range pending {
-		inf := inf
-		go func() {
-			<-inf.done
-			done <- struct{}{}
-		}()
-	}
-	remaining := len(pending)
-	for remaining > 0 {
-		wait := time.Until(deadline)
-		if wait <= 0 {
-			logRequestStage(ctx, "non_stream_attempt_wait_limit_reached",
-				"escrow", e.devshardID,
-				"pending", remaining,
-				"wait_limit_ms", nonStreamingMaxAttemptWait.Milliseconds(),
-			)
-			return
-		}
-		timer := time.NewTimer(wait)
-		select {
-		case <-done:
-			stopTimer(timer)
-			remaining--
-		case <-timer.C:
-			logRequestStage(ctx, "non_stream_attempt_wait_limit_reached",
-				"escrow", e.devshardID,
-				"pending", remaining,
-				"wait_limit_ms", nonStreamingMaxAttemptWait.Milliseconds(),
-			)
-			return
-		}
-	}
-}
-
 // waitForPendingLosers waits for all not-yet-done attempts to close their done
 // channel, giving them at most SecondaryWaitAfterWinner to finish naturally.
 // Anything still running at the deadline has its per-attempt context cancelled
@@ -3345,22 +3135,9 @@ func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
 	return longResponseFailureExempt(inf, e.session)
 }
 
-func longNonStreamEmptyFailureExempt(inf *inflight, params user.InferenceParams) bool {
-	if inf == nil || inf.probe || params.Stream || inf.sendTime.IsZero() {
-		return false
-	}
-	if !isEmptyStreamAttempt(inf) {
-		return false
-	}
-	return time.Since(inf.sendTime) >= longResponseFailureExemption
-}
-
 func attemptCountsAsSuccessfulForPerf(inf *inflight, params user.InferenceParams, session *user.Session) bool {
 	if inf == nil {
 		return false
-	}
-	if longNonStreamEmptyFailureExempt(inf, params) {
-		return true
 	}
 	return inf.resp != nil && inf.resp.ConfirmedAt > 0 && !isEmptyStreamAttempt(inf) && session != nil && session.IsNonceFinished(inf.nonce)
 }
@@ -3716,9 +3493,6 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 	if e.longResponseFailureExempt(inf) {
 		return
 	}
-	if longNonStreamEmptyFailureExempt(inf, params) {
-		return
-	}
 	inf.sampleOnce.Do(func() {
 		participantKey := e.participantKeyForHost(inf.hostIdx)
 		sample := RequestSample{
@@ -3729,6 +3503,7 @@ func (e *Redundancy) recordPostContentWinnerFailureOnce(inf *inflight, params us
 			SendTime:       inf.sendTime,
 			ReceiptTime:    inf.receiptAt(),
 			FirstToken:     inf.firstTokenAt(),
+			FirstContent:   inf.firstContentAt(),
 			InputTokens:    params.InputLength,
 		}
 		if !inf.sendTime.IsZero() {
@@ -3793,13 +3568,6 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 	}
 	if winner := inflightByNonce(attempts, winnerNonce); winner != nil {
 		winnerIdx = winner.hostIdx
-	}
-	if opts.nonStreamingReducedTokenTimeout {
-		for _, inf := range attempts {
-			if inf.excludePairwise {
-				inf.escalated = true
-			}
-		}
 	}
 
 	var (
@@ -3941,18 +3709,12 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 		if opts.forceTreatAsFailure && anySucceeded {
 			errMsg = "inference: winner failed after streaming started (alternate completion ignored)"
 		}
-		if opts.nonStreamingReducedTokenTimeout {
-			errMsg = (&nonStreamingReducedMaxTokensTimeoutError{}).Error()
-		}
 		captureAllAttemptsFailedRequest(ctx, e.devshardID, params, fmt.Errorf("%s", errMsg))
 		logRequestStage(ctx, "request_failed", "escrow", e.devshardID, "error", errMsg)
 		e.recordGatewayRequestOutcome(params.Model, "failed", gatewayRequestFailureReason(failed))
 		e.completeAccountingRequest(ctx, 0, decision, "failed")
 		e.logRequestSettled(ctx, 0, decision, "failed")
 		e.checkEscrowMissing(ctx, attempts)
-		if opts.nonStreamingReducedTokenTimeout {
-			return &nonStreamingReducedMaxTokensTimeoutError{}
-		}
 		return fmt.Errorf("%s", errMsg)
 	}
 
@@ -4164,16 +3926,12 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	if inf.phaseTransitionAborted {
 		return
 	}
-	// Long non-stream responses that end empty around the client timeout are
-	// still useful timing samples, but should not be treated like fast empty
-	// stream faults for participant quarantine.
-	longNonStreamEmptyExempt := longNonStreamEmptyFailureExempt(inf, params)
 	emptyStream := isEmptyStreamAttempt(inf)
 	if emptyStream && emptyStreamAccountingSuppressedByPoC() {
 		return
 	}
 	participantKey := e.participantKeyForHost(inf.hostIdx)
-	if emptyStream && !longNonStreamEmptyExempt && e.participantLimiter != nil {
+	if emptyStream && e.participantLimiter != nil {
 		if isModelBurnEmpty(inf, e.model) {
 			// Reasoning-burn outcome: the model emitted completion tokens but
 			// no content. Telemetry-only — not a host fault, no quarantine.
@@ -4194,6 +3952,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		SendTime:       inf.sendTime,
 		ReceiptTime:    inf.receiptAt(),
 		FirstToken:     inf.firstTokenAt(),
+		FirstContent:   inf.firstContentAt(),
 		InputTokens:    params.InputLength,
 	}
 	if !inf.sendTime.IsZero() {
@@ -4202,7 +3961,7 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 	e.perf.Record(sample)
 	if e.participantLimiter != nil {
 		switch {
-		case responsive && !longNonStreamEmptyExempt:
+		case responsive:
 			e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
 		}
 	}
