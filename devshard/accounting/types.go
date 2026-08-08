@@ -8,7 +8,7 @@ import (
 	"devshard/types"
 )
 
-const SchemaVersion = 4
+const SchemaVersion = 5
 
 type Disposition string
 
@@ -152,6 +152,7 @@ type CounterKey struct {
 	NoSendReason           NoSendReason   `json:"no_send_reason,omitempty"`
 	FailureOrigin          FailureOrigin  `json:"failure_origin,omitempty"`
 	DetailReason           string         `json:"detail_reason,omitempty"`
+	DeliveryReason         string         `json:"delivery_reason,omitempty"`
 	TimeoutKind            TimeoutKind    `json:"timeout_kind,omitempty"`
 	TimeoutOutcome         TimeoutOutcome `json:"timeout_outcome,omitempty"`
 	TimeoutReason          TimeoutReason  `json:"timeout_reason,omitempty"`
@@ -175,6 +176,7 @@ type SlotRecord struct {
 	AssignedNonces        uint64                    `json:"assigned_nonces"`
 	Dispositions          map[Disposition]uint64    `json:"dispositions"`
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
+	DeliveryReasons       map[string]uint64         `json:"delivery_reasons,omitempty"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`

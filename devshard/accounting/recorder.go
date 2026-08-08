@@ -202,7 +202,7 @@ func (r *Recorder) RealSend(escrowID string, nonce uint64, sentAt time.Time, qua
 	}
 }
 
-func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64) {
+func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryReason string) {
 	if r == nil || r.tracker == nil {
 		return
 	}
@@ -213,7 +213,7 @@ func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64) {
 	case nonce == winnerNonce:
 		usage = UsageWinner
 	}
-	if err := r.tracker.RecordUsage(escrowID, nonce, usage); err != nil {
+	if err := r.tracker.RecordUsage(escrowID, nonce, usage, deliveryReason); err != nil {
 		log.Printf("gateway accounting usage escrow=%s nonce=%d: %v", escrowID, nonce, err)
 	}
 }

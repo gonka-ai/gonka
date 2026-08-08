@@ -207,6 +207,9 @@ func (r *SlotRecord) addCounter(key CounterKey, count uint64) {
 		key.TimeoutOutcome == "" {
 		r.TimeoutPending += count
 	}
+	if key.DeliveryReason != "" {
+		r.DeliveryReasons[key.DeliveryReason] += count
+	}
 	if key.NoSendReason == NoSendUnknown || key.DetailReason == "unknown" || key.TimeoutReason == TimeoutReasonUnknown {
 		r.UnknownReasonTotal += count
 	}
@@ -220,6 +223,7 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 		AssignedNonces:  assigned,
 		Dispositions:    make(map[Disposition]uint64),
 		TimeoutOutcomes: make(map[TimeoutOutcome]uint64),
+		DeliveryReasons: make(map[string]uint64),
 	}
 	var accounted uint64
 	for key, count := range escrow.counters {

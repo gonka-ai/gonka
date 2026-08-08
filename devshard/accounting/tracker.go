@@ -53,6 +53,7 @@ type nonceState struct {
 	NoSendReason      NoSendReason
 	FailureOrigin     FailureOrigin
 	DetailReason      string
+	DeliveryReason    string
 	TimeoutKind       TimeoutKind
 	TimeoutPhase      Phase
 	TimeoutOutcome    TimeoutOutcome
@@ -326,13 +327,17 @@ func (t *Tracker) RecordRealSend(escrowID string, nonce uint64, sentAt time.Time
 	})
 }
 
-func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage) error {
+// RecordUsage also carries what the host delivered on this nonce: a settled nonce that streamed
+// nothing is one we paid for and could not use, and winner/loser alone cannot tell it from a
+// healthy one.
+func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, deliveryReason string) error {
 	return t.withEscrow(escrowID, func(e *escrowState) error {
 		s, err := e.liveNonce(nonce)
 		if err != nil {
 			return err
 		}
 		s.Usage = normalizeUsage(usage)
+		s.DeliveryReason = normalizeDetailReason(deliveryReason)
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -657,6 +662,7 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 		NoSendReason:           s.NoSendReason,
 		FailureOrigin:          s.FailureOrigin,
 		DetailReason:           s.DetailReason,
+		DeliveryReason:         s.DeliveryReason,
 		TimeoutKind:            s.TimeoutKind,
 		TimeoutOutcome:         s.TimeoutOutcome,
 		TimeoutReason:          s.TimeoutReason,

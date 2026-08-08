@@ -16,6 +16,7 @@ import (
 	"sync"
 	"time"
 
+	"devshard/logging"
 	"devshard/state"
 	"devshard/types"
 	"devshard/user"
@@ -195,6 +196,12 @@ type Proxy struct {
 	phaseGate               *ChainPhaseGate
 	defaultRequestMaxTokens uint64
 	requestMaxTokensCap     uint64
+}
+
+// detachedInferenceContext drops the client's cancellation but keeps its request id, so the
+// inference stages join to the id the client was handed instead of minting one of their own.
+func detachedInferenceContext(clientCtx context.Context) context.Context {
+	return logging.PropagateRequestID(context.Background(), clientCtx)
 }
 
 func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
@@ -388,7 +395,7 @@ func (p *Proxy) handleStreaming(w http.ResponseWriter, r *http.Request, params u
 	// metaDrainTimeout (via withMetaDrain in redundancy) bounds how long
 	// upstream may run after the client is gone.
 	var doneWriteErr error
-	err := p.redundancy.RunInference(context.Background(), params, dw, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, dw, flag)
 	if flag.Gone() {
 		logRequestStage(r.Context(), "proxy_stream_client_gone",
 			"escrow", p.escrowID,
@@ -549,7 +556,7 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	err := p.redundancy.RunInference(detachedInferenceContext(r.Context()), params, &buf, flag)
 	if flag.Gone() {
 		return
 	}

@@ -2986,7 +2986,11 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if e == nil || inf == nil || inf.probe {
 		return
 	}
-	e.accounting.Usage(inf.escrowID, inf.nonce, winnerNonce)
+	deliveryReason := ""
+	if !ok {
+		deliveryReason = gatewayAttemptFailureReason(inf, e.session)
+	}
+	e.accounting.Usage(inf.escrowID, inf.nonce, winnerNonce, deliveryReason)
 	if e.metrics == nil {
 		return
 	}
@@ -3824,21 +3828,36 @@ func (e *Redundancy) finishRaceOutcome(ctx context.Context, attempts []*inflight
 			confirmedAt = inf.resp.ConfirmedAt
 			hasReceipt = len(inf.resp.Receipt) > 0
 		}
+		attemptMs := int64(0)
+		if !inf.sendTime.IsZero() {
+			attemptMs = finishedAt.Sub(inf.sendTime).Milliseconds()
+		}
 		fields := []any{
 			"host", inf.hostID,
+			"host_idx", inf.hostIdx,
+			"participant", e.participantKeyForHost(inf.hostIdx),
+			"model", gatewayMetricModel(params, e.model),
+			"input_tokens", params.InputLength,
 			"winner", inf.nonce == winnerNonce,
 			"finished", ok,
 			"responsive", confirmedAt > 0,
 			"has_receipt", hasReceipt,
 			"confirmed_at", confirmedAt,
+			"attempt_ms", attemptMs,
 			"output_chunks", inf.outputChunks.Load(),
 			"content_chunks", inf.contentChunks.Load(),
 			"output_bytes", inf.outputBytes.Load(),
 			"stream_bytes_read", streamBytes,
+			"usage_tokens", inf.usageComplTokens.Load(),
+			"max_gap_ms", inf.longestChunkGap().Milliseconds(),
+			"mean_gap_ms", inf.meanChunkGap().Milliseconds(),
 			"content_source", inf.contentSource,
 			"error_source", inf.errorSource,
 			"probe", inf.probe,
 			"suspicious", inf.suspicious,
+		}
+		if !ok {
+			fields = append(fields, "failure_reason", gatewayAttemptFailureReason(inf, e.session))
 		}
 		fields = append(fields, inf.stallLogFields(finishedAt)...)
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "race_completed", fields...)

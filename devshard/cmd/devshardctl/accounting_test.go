@@ -141,7 +141,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	_, err = env.session.SendInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	recorder.RealSend("escrow-proxy", 1, time.Now(), "")
-	recorder.Usage("escrow-proxy", 1, 1)
+	recorder.Usage("escrow-proxy", 1, 1, "")
 	_, err = env.session.PrepareInference(defaultParams())
 	require.NoError(t, err)
 
