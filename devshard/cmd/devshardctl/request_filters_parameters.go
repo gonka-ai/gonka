@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 
+	"common/completionapi"
 	"devshard"
 	"devshard/cmd/devshardctl/filtercore"
 	"devshard/cmd/devshardctl/paramvalidators"
@@ -580,7 +581,7 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 			newParameter("logprobs").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
 			newParameter("top_logprobs").
-				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: TopLogprobsForcedValue}}),
+				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: completionapi.ForcedTopLogprobs}}),
 			newParameter("response_format").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.ResponseFormatValidator{
