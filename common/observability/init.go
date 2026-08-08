@@ -51,6 +51,11 @@ type Config struct {
 
 func noopShutdown(context.Context) error { return nil }
 
+func degradedInit(cfg Config, event, message string, err error, args ...any) InitResult {
+	_ = logError(cfg, event, message, err, args...)
+	return InitResult{Shutdown: noopShutdown, Ready: false}
+}
+
 // InitResult describes the outcome of Init.
 type InitResult struct {
 	// Shutdown flushes pending spans; safe to defer even when !Ready.
@@ -59,8 +64,22 @@ type InitResult struct {
 	Ready bool
 }
 
+// Test seams: production uses the OTel constructors; tests swap these to force
+// construction failures without depending on SDK URL-parse quirks.
+var (
+	newOTelResource = resource.New
+	newOTLPExporter = func(ctx context.Context, opts ...otlptracegrpc.Option) (sdktrace.SpanExporter, error) {
+		return otlptracegrpc.New(ctx, opts...)
+	}
+)
+
 // Init installs the W3C TraceContext propagator and, when enabled, an OTLP
-// gRPC tracer provider. Returns a result whose Shutdown is always non-nil.
+// gRPC tracer provider. Shutdown is always non-nil and safe to defer.
+//
+// Resource or exporter construction failures are logged and degrade to a no-op
+// tracer provider (Ready=false, err=nil) so a bad OTEL_* config cannot take
+// down the process. The propagator is still installed in that case so inbound
+// trace context continues to flow.
 func Init(ctx context.Context, cfg Config) (InitResult, error) {
 	otel.SetTextMapPropagator(propagation.TraceContext{})
 
@@ -81,14 +100,18 @@ func Init(ctx context.Context, cfg Config) (InitResult, error) {
 
 	res, err := buildResource(ctx, cfg)
 	if err != nil {
-		return InitResult{}, logError(cfg, "init.resource_failed", "Failed to build OTel resource", err, "endpoint", endpoint)
+		return degradedInit(cfg, "init.resource_failed",
+			"Failed to build OTel resource; observability will stay disabled", err,
+			"endpoint", endpoint), nil
 	}
 
 	headersEnv := valueOrDefault(strings.TrimSpace(cfg.HeadersEnv), defaultHeadersEnv)
 	headers := otelutil.ParseHeaders(os.Getenv(headersEnv), cfg.OnMalformedHeader)
-	exporter, err := otlptracegrpc.New(ctx, traceExporterOptions(endpoint, headers)...)
+	exporter, err := newOTLPExporter(ctx, traceExporterOptions(endpoint, headers)...)
 	if err != nil {
-		return InitResult{}, logError(cfg, "init.trace_exporter_failed", "Failed to create OTLP trace exporter", err, "endpoint", endpoint)
+		return degradedInit(cfg, "init.trace_exporter_failed",
+			"Failed to create OTLP trace exporter; observability will stay disabled", err,
+			"endpoint", endpoint), nil
 	}
 
 	tpOpts := []sdktrace.TracerProviderOption{
@@ -127,7 +150,7 @@ func buildResource(ctx context.Context, cfg Config) (*resource.Resource, error) 
 		attribute.String("service.version", valueOrDefault(cfg.ServiceVersion, "unknown")),
 	}
 	attrs = append(attrs, cfg.ExtraAttributes...)
-	return resource.New(
+	return newOTelResource(
 		ctx,
 		resource.WithFromEnv(),
 		resource.WithAttributes(attrs...),

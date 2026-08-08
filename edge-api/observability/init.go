@@ -25,7 +25,10 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		EnabledEnv:     envEnabled,
 	})
 	if err != nil {
-		return nil, err
+		if result.Shutdown == nil {
+			return func(context.Context) error { return nil }, err
+		}
+		return result.Shutdown, err
 	}
 	return result.Shutdown, nil
 }

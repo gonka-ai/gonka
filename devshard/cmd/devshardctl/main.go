@@ -129,13 +129,18 @@ var gatewayRuntimeBuilder = buildRuntime
 
 func main() {
 	observability.InstallLogger(os.Getenv("LOG_FORMAT"))
+	// Init degrades in-process on exporter/resource failure (Ready=false);
+	// never couple gateway availability to OTel config.
 	shutdownObs, err := observability.Init(context.Background(), observability.Config{
 		ServiceName: observability.GatewayServiceName,
 	})
 	if err != nil {
-		log.Fatalf("otel init: %v", err)
+		log.Printf("otel init: %v", err)
 	}
 	defer func() {
+		if shutdownObs == nil {
+			return
+		}
 		shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
 		_ = shutdownObs(shutdownCtx)

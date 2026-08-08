@@ -44,7 +44,11 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		LogError: logError,
 	})
 	if err != nil {
-		return nil, err
+		// common Init degrades in-process; keep a non-nil shutdown for callers.
+		if result.Shutdown == nil {
+			return func(context.Context) error { return nil }, err
+		}
+		return result.Shutdown, err
 	}
 	// Host lifecycle Prometheus series are only meaningful in devshardd.
 	if result.Ready && serviceName == ServiceName {
