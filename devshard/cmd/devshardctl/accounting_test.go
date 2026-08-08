@@ -53,7 +53,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("insufficient votes", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -72,7 +72,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 			timeoutErrorClient{},
 		}
 		env := setupTestProxyWithClients(t, clients)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		result, err := env.session.HandleTimeout(
 			context.Background(),
@@ -86,7 +86,7 @@ func TestHandleTimeoutClassifiesVoteFailuresWithoutExposingWeights(t *testing.T)
 
 	t.Run("canceled wait", func(t *testing.T) {
 		env := setupTestProxy(t, 3, nil, false)
-		prepared, err := env.session.PrepareInference(defaultParams())
+		prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 		require.NoError(t, err)
 		ctx, cancel := context.WithCancel(context.Background())
 		cancel()
@@ -142,7 +142,7 @@ func TestAccountingObserverTracksCommittedSessionDiffs(t *testing.T) {
 	require.NoError(t, err)
 	recorder.RealSend(context.Background(), "escrow-proxy", 1, time.Now(), "")
 	recorder.Usage(context.Background(), "escrow-proxy", 1, 1)
-	_, err = env.session.PrepareInference(defaultParams())
+	_, err = env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 
 	var finished uint64
@@ -168,7 +168,7 @@ func TestAccountingObserverSyncsActiveProtocolMisses(t *testing.T) {
 	user.TimeoutBuffer = 0
 	t.Cleanup(func() { user.TimeoutBuffer = oldBuffer })
 	params := defaultParams()
-	prepared, err := env.session.PrepareInference(params)
+	prepared, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	sentAt := time.Now().Add(-2 * time.Second)
 	recorder.RealSend(context.Background(), "escrow-proxy", prepared.Nonce(), sentAt, "")
@@ -208,7 +208,7 @@ func TestAccountingProductionPendingClassification(t *testing.T) {
 		TimeoutBuffer: user.TimeoutBuffer,
 	}, env.session, env.sm)
 
-	prepared, err := env.session.PrepareInference(defaultParams())
+	prepared, err := env.session.PrepareInference(context.Background(), defaultParams())
 	require.NoError(t, err)
 	record := accountingRecordForParticipant(t, tracker, 23, env.group[prepared.HostIdx()].ValidatorAddress)
 	require.Equal(t, uint64(1), record.PendingClassification)
@@ -308,7 +308,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	env.proxy.redundancy.accounting = recorder
 	params := defaultParams()
 
-	prepared1, err := env.session.PrepareInference(params)
+	prepared1, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt1 := &inflight{
 		escrowID: "escrow-proxy",
@@ -321,7 +321,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared1.HostIdx(), response1, prepared1.Nonce()))
 
-	prepared2, err := env.session.PrepareInference(params)
+	prepared2, err := env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	attempt2 := &inflight{
 		escrowID: "escrow-proxy",
@@ -333,7 +333,7 @@ func TestAccountingProductionUsedAndUnusedAttempts(t *testing.T) {
 	response2, err := env.session.SendOnly(context.Background(), prepared2, nil, nil)
 	require.NoError(t, err)
 	require.NoError(t, env.session.ProcessResponse(prepared2.HostIdx(), response2, prepared2.Nonce()))
-	_, err = env.session.PrepareInference(params)
+	_, err = env.session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 
 	env.proxy.redundancy.recordGatewayAttemptTerminal(attempt1, params, prepared1.Nonce(), true)

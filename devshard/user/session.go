@@ -593,12 +593,16 @@ type HostBinding struct {
 // decide, then call PrepareInference" pattern where the host could change
 // between peek and commit.
 //
+// persistCtx, when non-nil, is attached to the durable AppendDiff path so
+// storage/retry logs carry request_id/trace_id. Cancel is stripped before
+// persist (see persistDiffRetryLocked).
+//
 // If the chooser returns a non-nil error, PrepareInferenceFn aborts
 // without consuming the nonce and propagates the error to the caller.
 // This lets policy callers (queue picker, exclude lists) decline a
 // binding that is no longer useful (e.g. the queued request was canceled
 // in the gap between wakeup and lock acquisition).
-type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err error)
+type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, persistCtx context.Context, err error)
 
 // composeDiffLocked builds, persists, commits, and returns a new diff
 // (persist-first when a store is configured). extraTxs are prepended to
@@ -608,7 +612,7 @@ type ParamsForHost func(b HostBinding) (params InferenceParams, probe bool, err 
 // so this path does not race another writer on the same nonce. With a store,
 // PreviewLocalBestEffort leaves the SM unchanged until AppendDiff succeeds,
 // so persist failure cannot leave sequencer nonce/diffs ahead of durable state.
-func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, int, error) {
+func (s *Session) composeDiffLocked(ctx context.Context, extraTxs []*types.DevshardTx) (types.Diff, int, error) {
 	nonce := s.nonce + 1
 	hostIdx := int(nonce % uint64(len(s.group)))
 
@@ -632,7 +636,7 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 			return types.Diff{}, 0, err
 		}
 		delta := types.ComputeWarmKeyDelta(warmBefore, vd.WarmAfter)
-		if err := s.persistDiffRetryLocked(types.DiffRecord{
+		if err := s.persistDiffRetryLocked(ctx, types.DiffRecord{
 			Diff:         diff,
 			StateHash:    vd.Root,
 			WarmKeyDelta: delta,
@@ -670,8 +674,15 @@ func (s *Session) composeDiffLocked(extraTxs []*types.DevshardTx) (types.Diff, i
 // Unlocking during backoff would let a concurrent compose re-sign the same
 // next nonce and risk ErrDiffFork after a durable write. Persist-first means
 // sequencer state is not committed until this returns nil.
-func (s *Session) persistDiffRetryLocked(rec types.DiffRecord) error {
-	return storage.AppendDiffWithRetry(context.Background(), s.store, s.escrowID, rec)
+//
+// Cancel is detached via WithoutCancel so a client disconnect cannot abort
+// durable persist while s.mu is held; request_id/trace values still propagate
+// into storage retry logs.
+func (s *Session) persistDiffRetryLocked(ctx context.Context, rec types.DiffRecord) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return storage.AppendDiffWithRetry(context.WithoutCancel(ctx), s.store, s.escrowID, rec)
 }
 
 // maybeSaveSnapshotLocked schedules an asynchronous snapshot save when
@@ -777,8 +788,10 @@ func (s *Session) FlushSnapshot() error {
 // host. New callers that DO need a host-dependent decision (e.g. PoC probe
 // shaping, exclude-list handling) should use PrepareInferenceFn so the
 // decision and the nonce increment happen in the same critical section.
-func (s *Session) PrepareInference(params InferenceParams) (*PreparedInference, error) {
-	return s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, error) { return params, false, nil })
+func (s *Session) PrepareInference(ctx context.Context, params InferenceParams) (*PreparedInference, error) {
+	return s.PrepareInferenceFn(func(HostBinding) (InferenceParams, bool, context.Context, error) {
+		return params, false, ctx, nil
+	})
 }
 
 // PrepareInferenceFn is the atomic form of PrepareInference. The chooser is
@@ -804,7 +817,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		ParticipantKey: s.hostParticipantKeyLocked(hostIdx),
 		ValidatorAddr:  strings.TrimSpace(s.group[hostIdx].ValidatorAddress),
 	}
-	params, probe, err := chooser(binding)
+	params, probe, persistCtx, err := chooser(binding)
 	if err != nil {
 		// Chooser declined this binding (e.g. queue empty after dropping
 		// canceled requests). Bail without consuming the nonce so the next
@@ -827,7 +840,7 @@ func (s *Session) PrepareInferenceFn(chooser ParamsForHost) (*PreparedInference,
 		},
 	}}
 
-	diff, composedIdx, err := s.composeDiffLocked([]*types.DevshardTx{startTx})
+	diff, composedIdx, err := s.composeDiffLocked(persistCtx, []*types.DevshardTx{startTx})
 	if err != nil {
 		return nil, err
 	}
@@ -900,7 +913,7 @@ func (s *Session) logStateRootMismatchUserDiagnostic(p *PreparedInference) {
 
 // SendInference composes diff, sends to correct host, processes response.
 func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*host.HostResponse, error) {
-	p, err := s.PrepareInference(params)
+	p, err := s.PrepareInference(ctx, params)
 	if err != nil {
 		return nil, err
 	}
@@ -920,7 +933,7 @@ func (s *Session) SendInference(ctx context.Context, params InferenceParams) (*h
 // Returns non-nil only on compose or processResponse errors; dead hosts are silently skipped.
 func (s *Session) sendDiffRound(ctx context.Context, extraTxs []*types.DevshardTx) error {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLocked(extraTxs)
+	diff, hostIdx, err := s.composeDiffLocked(ctx, extraTxs)
 	if err != nil {
 		s.mu.Unlock()
 		return err
@@ -1749,7 +1762,7 @@ func (s *Session) SendPendingDiff(ctx context.Context) error {
 
 func (s *Session) sendPendingDiff(ctx context.Context) (types.Diff, error) {
 	s.mu.Lock()
-	diff, hostIdx, err := s.composeDiffLocked(nil)
+	diff, hostIdx, err := s.composeDiffLocked(ctx, nil)
 	if err != nil {
 		s.mu.Unlock()
 		return types.Diff{}, err

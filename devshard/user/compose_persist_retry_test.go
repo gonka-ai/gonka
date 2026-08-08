@@ -1,6 +1,7 @@
 package user
 
 import (
+	"context"
 	"errors"
 	"sync/atomic"
 	"testing"
@@ -81,7 +82,7 @@ func TestSession_ComposeDiff_PersistRetryThenSuccess(t *testing.T) {
 		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
 	}
 	beforeRetry := promtestutil.ToFloat64(observability.DiffPersistRetryForTest("success"))
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	require.NotNil(t, prepared)
 	require.Equal(t, uint64(1), session.Nonce())
@@ -91,6 +92,27 @@ func TestSession_ComposeDiff_PersistRetryThenSuccess(t *testing.T) {
 	meta, err := inner.GetSessionMeta("escrow-1")
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), meta.LatestNonce)
+}
+
+// Canceled caller ctx must not abort gateway persist retries (WithoutCancel):
+// s.mu is held across backoff, and durable append must finish.
+func TestSession_ComposeDiff_PersistIgnoresCallerCancel(t *testing.T) {
+	inner := storage.NewMemory()
+	store := &flakyUserAppendStore{Storage: inner}
+	store.failsLeft.Store(2)
+	session := setupStoredSession(t, store)
+
+	params := InferenceParams{
+		Model: "llama", Prompt: testutil.TestPrompt,
+		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	prepared, err := session.PrepareInference(ctx, params)
+	require.NoError(t, err)
+	require.NotNil(t, prepared)
+	require.Equal(t, uint64(1), session.Nonce())
+	require.Equal(t, int32(3), store.calls.Load())
 }
 
 func TestSession_ComposeDiff_PersistFirst_FailureLeavesSequencerUnchanged(t *testing.T) {
@@ -104,7 +126,7 @@ func TestSession_ComposeDiff_PersistFirst_FailureLeavesSequencerUnchanged(t *tes
 		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
 	}
 	beforeExhausted := promtestutil.ToFloat64(observability.DiffPersistRetryForTest("exhausted"))
-	_, err := session.PrepareInference(params)
+	_, err := session.PrepareInference(context.Background(), params)
 	require.Error(t, err)
 	require.ErrorIs(t, err, storage.ErrPersistExhausted)
 	require.Equal(t, uint64(0), session.Nonce(), "persist-first must not advance sequencer on persist fail")
@@ -118,7 +140,7 @@ func TestSession_ComposeDiff_PersistFirst_FailureLeavesSequencerUnchanged(t *tes
 	// Same session, heal store, re-compose allocates nonce 1 and persists — no reload.
 	store.failsLeft.Store(0)
 	store.calls.Store(0)
-	prepared, err := session.PrepareInference(params)
+	prepared, err := session.PrepareInference(context.Background(), params)
 	require.NoError(t, err)
 	require.Equal(t, uint64(1), prepared.diff.Nonce)
 	require.Equal(t, uint64(1), session.Nonce())

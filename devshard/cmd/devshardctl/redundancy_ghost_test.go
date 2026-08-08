@@ -23,8 +23,8 @@ import (
 // session_picker run loop racing with our explicit runGhostProbe call.
 func prepareForGhost(t *testing.T, session *user.Session, model string) *user.PreparedInference {
 	t.Helper()
-	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, error) {
-		return ghostProbeParams(model), true, nil
+	prepared, err := session.PrepareInferenceFn(func(user.HostBinding) (user.InferenceParams, bool, context.Context, error) {
+		return ghostProbeParams(model), true, context.Background(), nil
 	})
 	require.NoError(t, err)
 	require.NotNil(t, prepared)

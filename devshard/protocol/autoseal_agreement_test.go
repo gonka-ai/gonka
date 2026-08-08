@@ -245,7 +245,7 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Sequential(t *testing.T) {
 	params := defaultParams()
 
 	for i := 0; i < autoSealAgreementPipelinedCount; i++ {
-		prepared, err := env.session.PrepareInference(params)
+		prepared, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare inference %d", i+1)
 
 		resp, err := env.session.SendOnly(ctx, prepared, nil, nil)
@@ -273,10 +273,10 @@ func TestProtocol_UserHost_SessionAutoSealAgreement_Pipelined(t *testing.T) {
 
 	const pairs = autoSealAgreementPipelinedCount / 2
 	for i := 0; i < pairs; i++ {
-		first, err := env.session.PrepareInference(params)
+		first, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "prepare first inference pair %d", i+1)
 
-		second, err := env.session.PrepareInference(params)
+		second, err := env.session.PrepareInference(context.Background(), params)
 		require.NoError(t, err, "pipeline prepare second inference pair %d", i+1)
 
 		resp1, err := env.session.SendOnly(ctx, first, nil, nil)
