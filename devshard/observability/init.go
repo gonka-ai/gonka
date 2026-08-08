@@ -32,8 +32,12 @@ func Init(ctx context.Context, cfg Config) (func(context.Context) error, error) 
 		ServiceVersion: cfg.ServiceVersion,
 		EnabledEnv:     envEnabled,
 		BatchTimeout:   5 * time.Second,
-		OnMalformedHeader: func(pair string) {
-			logWarn("config.invalid_header", "Skipping malformed OTLP header", "raw", pair)
+		OnMalformedHeader: func(reason, key string) {
+			args := []any{"reason", reason}
+			if key != "" {
+				args = append(args, "key", key)
+			}
+			logWarn("config.invalid_header", "Skipping malformed OTLP header", args...)
 		},
 		LogInfo:  logInfo,
 		LogWarn:  logWarn,

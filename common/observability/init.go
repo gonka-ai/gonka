@@ -38,8 +38,11 @@ type Config struct {
 	ExtraAttributes []attribute.KeyValue
 	// BatchTimeout is passed to the span batcher; zero keeps the SDK default.
 	BatchTimeout time.Duration
-	// OnMalformedHeader reports a bad OTEL_HEADERS pair; nil ignores them.
-	OnMalformedHeader func(pair string)
+	// OnMalformedHeader reports a bad OTEL_HEADERS pair as (reason, key).
+	// key is set only when the '=' separator was present and the key side is
+	// non-empty; the raw segment and values are never passed (they may hold
+	// secrets). nil ignores malformed pairs.
+	OnMalformedHeader func(reason, key string)
 
 	LogInfo  func(event, message string, args ...any)
 	LogWarn  func(event, message string, args ...any)
