@@ -92,6 +92,18 @@ WORKDIR /app
 
 ENTRYPOINT ["/app/entrypoint.sh"]
 
+################################################################################
+FROM app AS release
+
+ARG MLNODE_VERSION
+
+RUN --mount=type=bind,source=packages/api/pyproject.toml,target=/tmp/pyproject.toml \
+    declared_version="$(python3 -c 'import tomllib; print(tomllib.load(open("/tmp/pyproject.toml", "rb"))["tool"]["poetry"]["version"])')" \
+    && if [ "$declared_version" != "$MLNODE_VERSION" ]; then \
+        echo "error: MLNode version $declared_version does not match image tag $MLNODE_VERSION"; \
+        exit 1; \
+    fi
+
 
 ################################################################################
 FROM builder AS test

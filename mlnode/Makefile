@@ -94,7 +94,8 @@ build-release:
 	docker build \
 		-t $(IMAGE_NAME) \
 		-f packages/api/Dockerfile \
-		--target app \
+		--target release \
+		--build-arg MLNODE_VERSION=$(VERSION) \
 		$(PROJECT_ROOT)
 
 	docker tag $(IMAGE_NAME) $(IMAGE_NAME_GITHUB)
