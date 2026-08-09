@@ -38,9 +38,9 @@ func TestGatewayStoreInitializeAndLoadState(t *testing.T) {
 				RotationEpoch: 7,
 			}}
 
-			require.NoError(t, store.Initialize(settings, devshards))
+			require.NoError(t, store.Initialize(context.Background(), settings, devshards))
 
-			state, ok, err := store.LoadState()
+			state, ok, err := store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, settings, state.Settings)
@@ -108,7 +108,7 @@ func TestGatewayStoreUpdateSettings(t *testing.T) {
 func assertGatewayStoreUpdateSettings(t *testing.T, store GatewayStore) {
 	t.Helper()
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -117,7 +117,7 @@ func assertGatewayStoreUpdateSettings(t *testing.T, store GatewayStore) {
 		MaxInputTokensInFlight:  200,
 	}, nil))
 
-	require.NoError(t, store.UpdateSettings(GatewaySettings{
+	require.NoError(t, store.UpdateSettings(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -168,7 +168,7 @@ func assertGatewayStoreUpdateSettings(t *testing.T, store GatewayStore) {
 		},
 	}))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.EqualValues(t, 2000, state.Settings.DefaultRequestMaxTokens)
@@ -217,16 +217,16 @@ func TestGatewayStorePersistsForceUpstreamStreaming(t *testing.T) {
 		MaxConcurrentRequests:   2,
 		MaxInputTokensInFlight:  200,
 	}
-	require.NoError(t, store.Initialize(settings, nil))
-	state, ok, err := store.LoadState()
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, state.Settings.Redundancy.ForceUpstreamStreaming)
 	require.True(t, *state.Settings.Redundancy.ForceUpstreamStreaming)
 
 	state.Settings.Redundancy.ForceUpstreamStreaming = boolPtr(false)
-	require.NoError(t, store.UpdateSettings(state.Settings))
-	reloaded, ok, err := store.LoadState()
+	require.NoError(t, store.UpdateSettings(context.Background(), state.Settings))
+	reloaded, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, reloaded.Settings.Redundancy.ForceUpstreamStreaming)
@@ -253,7 +253,7 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
@@ -275,7 +275,7 @@ func TestGatewayStoreLoadsLegacyModelAccessIntoModelLimits(t *testing.T) {
 	_, err = requireSQLiteGatewayStore(t, store).db.Exec(`UPDATE gateway_settings SET model_access_json = ? WHERE id = 1`, string(legacyAccess))
 	require.NoError(t, err)
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.Equal(t, []GatewayModelLimitSettings{{
@@ -290,7 +290,7 @@ func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
 	for _, backend := range gatewayStoreTestBackends {
 		t.Run(backend, func(t *testing.T) {
 			store := newTestGatewayStore(t, backend)
-			require.NoError(t, store.Initialize(GatewaySettings{
+			require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 				ChainREST:               "http://node:1317",
 				PublicAPI:               "http://api:9000",
 				DefaultModel:            "Qwen/Test",
@@ -299,19 +299,19 @@ func TestGatewayStorePersistsSuspiciousHosts(t *testing.T) {
 				MaxInputTokensInFlight:  200,
 			}, nil))
 
-			hosts, err := store.UpsertSuspiciousHosts([]string{" host-a ", "host-b", "host-a"}, "bad output")
+			hosts, err := store.UpsertSuspiciousHosts(context.Background(), []string{" host-a ", "host-b", "host-a"}, "bad output")
 			require.NoError(t, err)
 			require.Len(t, hosts, 2)
 			require.Equal(t, "host-a", hosts[0].ParticipantKey)
 			require.Equal(t, "bad output", hosts[0].Note)
 			require.Equal(t, "host-b", hosts[1].ParticipantKey)
 
-			state, ok, err := store.LoadState()
+			state, ok, err := store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Len(t, state.SuspiciousHosts, 2)
 
-			hosts, err = store.DeleteSuspiciousHosts([]string{"host-a"})
+			hosts, err = store.DeleteSuspiciousHosts(context.Background(), []string{"host-a"})
 			require.NoError(t, err)
 			require.Len(t, hosts, 1)
 			require.Equal(t, "host-b", hosts[0].ParticipantKey)
@@ -408,7 +408,7 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -444,7 +444,7 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	byID := gatewayDevshardsByID(state.Devshards)
@@ -478,7 +478,7 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleTemp,
@@ -539,7 +539,7 @@ func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
 	// serves; finishing rotation must NOT broadcast a regular create (which
 	// the chain rejects with ErrEpochGroupDataNotFound and still burns the
 	// gas fee) but MUST still settle the stranded temp escrow to recover funds.
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Removed"},
 		Active:        true,
 		RotationRole:  rotationRoleTemp,
@@ -604,7 +604,7 @@ func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleTemp,
@@ -665,7 +665,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleTemp,
@@ -694,7 +694,7 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 
 	require.Equal(t, 2, createAttempts)
 	require.Equal(t, []string{"12"}, settled)
-	statuses, err := store.LoadRotationStatuses(1)
+	statuses, err := store.LoadRotationStatuses(context.Background(), 1)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.Equal(t, "finish_regular", statuses[0].Stage)
@@ -728,7 +728,7 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -760,11 +760,11 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
 	require.False(t, rt.active.Load())
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
-	statuses, err := store.LoadRotationStatuses(1)
+	statuses, err := store.LoadRotationStatuses(context.Background(), 1)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.EqualValues(t, 0, statuses[0].SettledCount)
@@ -796,7 +796,7 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleTemp,
@@ -828,11 +828,11 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
 	require.False(t, rt.active.Load())
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.False(t, gatewayDevshardsByID(state.Devshards)["12"].Active)
-	statuses, err := store.LoadRotationStatuses(1)
+	statuses, err := store.LoadRotationStatuses(context.Background(), 1)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.EqualValues(t, 0, statuses[0].SettledCount)
@@ -870,7 +870,7 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -904,7 +904,7 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 	g.prepareBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, []string{"13"}, settled)
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	byID := gatewayDevshardsByID(state.Devshards)
@@ -938,7 +938,7 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 			}},
 		},
 	}.WithTuningDefaults()
-	require.NoError(t, store.Initialize(settings, []GatewayDevshardState{{
+	require.NoError(t, store.Initialize(context.Background(), settings, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "Qwen/Test"},
 		Active:        true,
 		RotationRole:  rotationRoleRegular,
@@ -984,9 +984,9 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 
 func TestGatewayStoreDeactivateDevshardIfActiveKeepsAnExistingSettlementMark(t *testing.T) {
 	store := newGatewayStoreWithActiveEscrow(t, "12")
-	require.NoError(t, store.SetDevshardSettlementPending("12", true))
+	require.NoError(t, store.SetDevshardSettlementPending(context.Background(), "12", true))
 
-	isDeactivated, err := store.DeactivateDevshardIfActive("12", false)
+	isDeactivated, err := store.DeactivateDevshardIfActive(context.Background(), "12", false)
 
 	require.NoError(t, err)
 	require.True(t, isDeactivated, "deactivating an active escrow did not report the change")
@@ -997,9 +997,9 @@ func TestGatewayStoreDeactivateDevshardIfActiveKeepsAnExistingSettlementMark(t *
 
 func TestGatewayStoreDeactivateDevshardIfActiveLeavesAnInactiveEscrowUntouched(t *testing.T) {
 	store := newGatewayStoreWithActiveEscrow(t, "12")
-	require.NoError(t, store.SetDevshardActive("12", false))
+	require.NoError(t, store.SetDevshardActive(context.Background(), "12", false))
 
-	isDeactivated, err := store.DeactivateDevshardIfActive("12", true)
+	isDeactivated, err := store.DeactivateDevshardIfActive(context.Background(), "12", true)
 
 	require.NoError(t, err)
 	require.False(t, isDeactivated, "deactivating an already inactive escrow reported a change")
@@ -1011,7 +1011,7 @@ func newGatewayStoreWithActiveEscrow(t *testing.T, escrowID string) *SQLiteGatew
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST: "http://node:1317", DefaultModel: "m", DefaultRequestMaxTokens: 1000,
 	}.WithTuningDefaults(), []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: escrowID, PrivateKeyHex: "secret", Model: "m"},
@@ -1025,7 +1025,7 @@ func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
 		t.Run(backend, func(t *testing.T) {
 			store := newTestGatewayStore(t, backend)
 
-			require.NoError(t, store.Initialize(GatewaySettings{
+			require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 				ChainREST: "http://node:1317", DefaultModel: "m", DefaultRequestMaxTokens: 1000,
 			}.WithTuningDefaults(), []GatewayDevshardState{{
 				RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
@@ -1033,34 +1033,34 @@ func TestGatewayStoreSetDevshardSettlementPending(t *testing.T) {
 			}}))
 
 			// Default is not pending.
-			state, ok, err := store.LoadState()
+			state, ok, err := store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
 
 			// Set pending → persisted and survives reload.
-			require.NoError(t, store.SetDevshardSettlementPending("12", true))
-			state, _, err = store.LoadState()
+			require.NoError(t, store.SetDevshardSettlementPending(context.Background(), "12", true))
+			state, _, err = store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
 
 			// An unrelated upsert must NOT wipe the pending marker.
-			require.NoError(t, store.UpsertDevshard(GatewayDevshardState{
+			require.NoError(t, store.UpsertDevshard(context.Background(), GatewayDevshardState{
 				RuntimeConfig: RuntimeConfig{ID: "12", PrivateKeyHex: "secret", Model: "m"},
 				Active:        false,
 			}))
-			state, _, err = store.LoadState()
+			state, _, err = store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
 
 			// Clear pending.
-			require.NoError(t, store.SetDevshardSettlementPending("12", false))
-			state, _, err = store.LoadState()
+			require.NoError(t, store.SetDevshardSettlementPending(context.Background(), "12", false))
+			state, _, err = store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.False(t, gatewayDevshardsByID(state.Devshards)["12"].SettlementPending)
 
 			// Unknown id errors.
-			require.Error(t, store.SetDevshardSettlementPending("nope", true))
+			require.Error(t, store.SetDevshardSettlementPending(context.Background(), "nope", true))
 		})
 	}
 }
@@ -1083,12 +1083,12 @@ func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, store.Close())
 	})
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		DefaultModel:                 "Qwen/Test",
 		LogprobsOptimizationOverride: boolPtr(false),
 	}, nil))
 
-	state, ok, err := store.LoadState()
+	state, ok, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, ok)
 	require.NotNil(t, state.Settings.LogprobsOptimizationOverride, "a bootstrapped override must survive the store")
@@ -1105,9 +1105,9 @@ func TestGatewayStorePersistsLogprobsOptimizationOverride(t *testing.T) {
 		t.Run(testCase.name, func(t *testing.T) {
 			settings := state.Settings
 			settings.LogprobsOptimizationOverride = testCase.write
-			require.NoError(t, store.UpdateSettings(settings))
+			require.NoError(t, store.UpdateSettings(context.Background(), settings))
 
-			reloaded, ok, err := store.LoadState()
+			reloaded, ok, err := store.LoadState(context.Background())
 			require.NoError(t, err)
 			require.True(t, ok)
 			require.Equal(t, testCase.write, reloaded.Settings.LogprobsOptimizationOverride)

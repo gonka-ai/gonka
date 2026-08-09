@@ -363,7 +363,7 @@ func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 
-	require.NoError(t, store.Initialize(GatewaySettings{
+	require.NoError(t, store.Initialize(context.Background(), GatewaySettings{
 		ChainREST:    "http://node:1317",
 		PublicAPI:    "http://api:9000",
 		DefaultModel: "Qwen/Test",
@@ -383,7 +383,7 @@ func TestScheduleAutoSettlementPersistsDeactivationWhenAlreadySettled(t *testing
 	g.scheduleAutoSettlement("12", "test")
 
 	require.Eventually(t, func() bool {
-		state, ok, err := store.LoadState()
+		state, ok, err := store.LoadState(context.Background())
 		if err != nil || !ok || len(state.Devshards) == 0 {
 			return false
 		}

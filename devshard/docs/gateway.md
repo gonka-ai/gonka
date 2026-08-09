@@ -48,49 +48,72 @@ All settings can be passed as flags or environment variables. Flags take precede
 | - | `DEVSHARD_ESCROW_ROTATION_PRE_POC_BLOCKS` | no | `300` | Blocks before the next epoch switch at `set_new_validators` to create temp bridge escrows |
 | - | `DEVSHARD_ESCROW_ROTATION_MODELS_JSON` | when rotation enabled | - | JSON array of per-model rotation configs: `model_id`, `temp_count`, `target_count`, `amount`, `private_key_env` |
 | - | `DEVSHARD_META_DRAIN_TIMEOUT_SECONDS` | no | `30` | After client disconnect, keep draining host SSE for protocol completion (`devshard_meta`, `ProcessResponse`, `MsgFinishInference`) up to this many seconds |
-| - | `PGHOST` | no | - | When set, gateway settings use Postgres as primary storage with SQLite fallback (`{baseStorageDir}/gateway.db`) |
+| - | `PGHOST` | no | - | When set (or `DEVSHARD_STORAGE_MODE` is `hybrid`/`postgres`), gateway settings and epoch accounting use Postgres only. Local `{baseStorageDir}/gateway.db` / `accounting.db` are migration sources, not runtime fallbacks |
 | - | `PGPORT` | when `PGHOST` set | `5432` | Postgres port |
 | - | `PGDATABASE` | when `PGHOST` set | - | Postgres database name |
 | - | `PGUSER` | when `PGHOST` set | - | Postgres user |
 | - | `PGPASSWORD` | when `PGHOST` set | - | Postgres password |
-| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | `15s` | Minimum interval between lazy Postgres reconnect attempts on writes (gateway default; dapi payload storage defaults to `240s` if unset) |
-| - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Timeout for each Postgres connect attempt |
-| - | `PG_TO_SQLITE_FALLBACK` | when `PGHOST` set | `true` | When enabled, Postgres failures fall back to SQLite and outage writes are journaled for replay on reconnect. When `false`, Postgres is required — failures return errors |
+| - | `PG_CONNECT_TIMEOUT` | when `PGHOST` set | `2s` | Dial/auth timeout for each new Postgres connection (`common/storage/pgtimeouts`) |
+| - | `PG_OPERATION_TIMEOUT` | when `PGHOST` set | `2s` | Per-call Go context deadline for gateway/accounting Postgres ops; `0` disables. Does **not** disable server-side `statement_timeout` / `lock_timeout` |
+| - | `PG_IMPORT_TIMEOUT` | when `PGHOST` set | `5m` | Boot-time SQLite→Postgres import (+ leftover journal drain) budget |
+| - | `PG_RETRY_INTERVAL` | when `PGHOST` set | session/payload defaults | Used by **session** / payload hybrid reconnect; gateway/accounting do not fall back to SQLite |
+| - | `DEVSHARD_ACCOUNTING_WRITER_ID` | no | hostname | Names this instance's epoch accounting rows in Postgres. Stable per instance (pod name) keeps one row set across restarts; an unstable value only leaves stale rows, it cannot double count |
+
+Postgres timeout defaults live in `common/storage/pgtimeouts` and are shared by
+gateway, epoch accounting, session storage, and payload reconnect. Two bounds
+are **not** env-tunable — they are applied as connection `RuntimeParams` on every
+pooled connection:
+
+| Server param | Default | Meaning |
+| --- | --- | --- |
+| `statement_timeout` | `5s` | Abort one SQL statement that runs too long |
+| `lock_timeout` | `3s` | Abort a statement waiting too long for a row/table lock |
 
 ### Gateway persistence backend
 
 Gateway settings, devshard topology, rotation status, escrow commitments, suspicious
-hosts, and participant throttle state are persisted under `{baseStorageDir}/gateway.db`
-(SQLite). This file is always opened.
+hosts, and participant throttle state are persisted in Postgres when `PGHOST` is
+set (or `DEVSHARD_STORAGE_MODE` is `hybrid` / `postgres`). Local
+`{baseStorageDir}/gateway.db` remains only as a one-shot migration source.
+Full design (including HA LWW-per-key semantics vs additive accounting) is in
+[storage-design.md](storage-design.md#gateway-store).
 
-When `PGHOST` is set:
+When Postgres is selected:
 
-- On startup, if Postgres is reachable, existing SQLite data is imported into
-  Postgres once (idempotent; skipped when Postgres already has settings or a
-  migration marker exists).
-- The gateway then uses **hybrid storage**: Postgres is primary; SQLite is a
-  fallback when Postgres is unavailable.
-- Writes try Postgres first (with lazy reconnect, rate-limited by
-  `PG_RETRY_INTERVAL` and bounded by `PG_CONNECT_TIMEOUT`). On failure they
-  fall back to SQLite.
-- Reads try Postgres first; on error or empty state they also check SQLite.
+- On startup Postgres must be reachable or open fails (no SQLite runtime fallback).
+- Existing SQLite data is imported once (idempotent; skipped when Postgres already
+  has settings or a migration marker exists).
+- Any leftover `gateway_sync_journal` rows from older hybrid builds are drained,
+  then the gateway serves **Postgres only**.
 
-When `PGHOST` is unset, only SQLite is used (same behavior as before hybrid
-support).
+When `PGHOST` is unset and mode is `sqlite`/`auto`, only SQLite is used.
 
-**Rollback:** unset `PGHOST` to run SQLite-only again. Writes that landed in
-Postgres after migration are not automatically copied back to SQLite.
+**Rollback:** unset `PGHOST` and use `DEVSHARD_STORAGE_MODE=sqlite` to run
+SQLite-only again. Writes that landed in Postgres after migration are not
+automatically copied back to SQLite.
 
-**Postgres outage:** when `PG_TO_SQLITE_FALLBACK=true` (default), writes during an
-outage are stored in SQLite and recorded in `gateway_pg_sync_journal`. When
-Postgres reconnects, those outage deltas are replayed into Postgres before it
-resumes as primary. Set `PG_TO_SQLITE_FALLBACK=false` for Postgres-only mode —
-writes and reads error when Postgres is unavailable (no SQLite fallback, no
-journal).
+**Postgres outage:** gateway store and epoch accounting fail closed (errors /
+boot failure). Session storage may still degrade to owner-only SQLite while
+reconnecting — that fallback is session-only.
 
 Gateway tables (`gateway_*`, `escrow_rotation_*`, `participant_throttle_state`)
 can share the same Postgres database as devshard session or payload tables; table
 names do not collide.
+
+### Epoch accounting backend
+
+Epoch accounting follows the same switch, with one difference: it is written to
+merge across instances rather than replaced wholesale. Counters live in
+`accounting_escrow_*` tables partitioned by `DEVSHARD_ACCOUNTING_WRITER_ID`, and
+totals are summed across writers on read, so two gateways that both hold an
+escrow add up instead of overwriting each other, and a retried flush cannot
+double count. Host stats and the nonce watermark merge with `GREATEST`, phases by
+rank, invalid nonces by set union. See
+[storage-design.md](storage-design.md#epoch-accounting).
+
+On first boot against a database written by an older build, the legacy
+`accounting_escrows` blob table is converted into these rows once (marker
+`blob_to_rows`) and then drained.
 
 
 ```bash

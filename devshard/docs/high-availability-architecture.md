@@ -509,6 +509,7 @@ highly-available edge-api.
 | `edge-api` | yes | **yes**, balanced directly by `proxy-router` | none |
 | `versiond-router` | yes | **yes**, independent fixed slots | none |
 | `versiond` + `devshardd` | per-escrow state | **yes**, sticky hash behind router fleet | **shared Postgres** |
+| `devshardctl` (gateway) | per-escrow state | operator-scaled | **shared Postgres** plus a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
 | `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
 
 ---

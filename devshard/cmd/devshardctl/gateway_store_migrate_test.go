@@ -69,10 +69,10 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		},
 	}
 
-	require.NoError(t, store.Initialize(settings, devshards))
-	_, err := store.UpsertSuspiciousHosts([]string{"host-a", "host-b"}, "suspicious")
+	require.NoError(t, store.Initialize(context.Background(), settings, devshards))
+	_, err := store.UpsertSuspiciousHosts(context.Background(), []string{"host-a", "host-b"}, "suspicious")
 	require.NoError(t, err)
-	require.NoError(t, store.SaveRotationStatus(GatewayRotationStatus{
+	require.NoError(t, store.SaveRotationStatus(context.Background(), GatewayRotationStatus{
 		ModelID:       "Qwen/Test",
 		Stage:         "prepare_temp",
 		Epoch:         10,
@@ -83,7 +83,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		Completed:     true,
 		UpdatedAt:     "2026-05-04T00:00:00Z",
 	}))
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash:        "TX-MIGRATE-1",
 		Model:         "Qwen/Test",
 		Role:          rotationRoleTemp,
@@ -92,7 +92,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		BlockHeight:   12345,
 		CreatedAt:     time.Date(2026, 5, 5, 0, 0, 0, 0, time.UTC),
 	}))
-	require.NoError(t, store.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, store.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash:        "TX-MIGRATE-2",
 		Model:         "Kimi/Rotate",
 		Role:          rotationRoleRegular,
@@ -102,7 +102,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		CreatedAt:     time.Date(2026, 5, 6, 0, 0, 0, 0, time.UTC),
 	}))
 	quarantine := time.Date(2026, 5, 7, 12, 0, 0, 0, time.UTC)
-	require.NoError(t, store.SaveParticipantThrottle(
+	require.NoError(t, store.SaveParticipantThrottle(context.Background(),
 		"participant-1",
 		[]string{"Qwen/Test", "Kimi/Rotate"},
 		12.5,
@@ -111,7 +111,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		quarantine,
 		2,
 	))
-	require.NoError(t, store.SaveParticipantThrottle(
+	require.NoError(t, store.SaveParticipantThrottle(context.Background(),
 		"participant-2",
 		nil,
 		0,
@@ -121,7 +121,7 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 		0,
 	))
 
-	state, has, err := store.LoadState()
+	state, has, err := store.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, has)
 	return state
@@ -130,32 +130,32 @@ func seedGatewayStoreForMigration(t *testing.T, store GatewayStore) GatewayState
 func assertGatewayStoresEqual(t *testing.T, want GatewayStore, got GatewayStore) {
 	t.Helper()
 
-	wantState, wantHas, err := want.LoadState()
+	wantState, wantHas, err := want.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, wantHas)
 
-	gotState, gotHas, err := got.LoadState()
+	gotState, gotHas, err := got.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, gotHas)
 	require.Equal(t, wantState.Settings, gotState.Settings)
 	require.ElementsMatch(t, wantState.Devshards, gotState.Devshards)
 	require.ElementsMatch(t, wantState.SuspiciousHosts, gotState.SuspiciousHosts)
 
-	wantStatuses, err := want.LoadRotationStatuses(0)
+	wantStatuses, err := want.LoadRotationStatuses(context.Background(), 0)
 	require.NoError(t, err)
-	gotStatuses, err := got.LoadRotationStatuses(0)
+	gotStatuses, err := got.LoadRotationStatuses(context.Background(), 0)
 	require.NoError(t, err)
 	require.ElementsMatch(t, wantStatuses, gotStatuses)
 
-	wantCommitments, err := want.LoadCommitments()
+	wantCommitments, err := want.LoadCommitments(context.Background())
 	require.NoError(t, err)
-	gotCommitments, err := got.LoadCommitments()
+	gotCommitments, err := got.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.ElementsMatch(t, wantCommitments, gotCommitments)
 
-	wantThrottles, err := want.LoadParticipantThrottles()
+	wantThrottles, err := want.LoadParticipantThrottles(context.Background())
 	require.NoError(t, err)
-	gotThrottles, err := got.LoadParticipantThrottles()
+	gotThrottles, err := got.LoadParticipantThrottles(context.Background())
 	require.NoError(t, err)
 	require.ElementsMatch(t, wantThrottles, gotThrottles)
 }
@@ -173,7 +173,7 @@ func TestMigrateGatewaySQLiteToPostgres_FullFidelity(t *testing.T) {
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
 	assertGatewayStoresEqual(t, sqlite, pg)
 
-	commitments, err := pg.LoadCommitments()
+	commitments, err := pg.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Len(t, commitments, 2)
 	require.ElementsMatch(t, []string{"TX-MIGRATE-1", "TX-MIGRATE-2"}, []string{commitments[0].TxHash, commitments[1].TxHash})
@@ -190,11 +190,11 @@ func TestMigrateGatewaySQLiteToPostgres_Idempotent(t *testing.T) {
 	pg := newTestPostgresGatewayStore(t)
 
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
-	firstState, _, err := pg.LoadState()
+	firstState, _, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
-	secondState, _, err := pg.LoadState()
+	secondState, _, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 	require.Equal(t, firstState, secondState)
 
@@ -220,11 +220,22 @@ func TestMigrateGatewaySQLiteToPostgres_EmptinessGuard(t *testing.T) {
 		MaxConcurrentRequests:   1,
 		MaxInputTokensInFlight:  50,
 	}.WithTuningDefaults()
-	require.NoError(t, pg.Initialize(existing, nil))
+	require.NoError(t, pg.Initialize(context.Background(), existing, nil))
 
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
 
-	state, has, err := pg.LoadState()
+	state, has, err := pg.LoadState(ctx)
+	require.NoError(t, err)
+	require.True(t, has)
+	require.Equal(t, existing, state.Settings)
+
+	migrated, err := pg.hasMigrationMarker(ctx, gatewaySQLiteImportMarker)
+	require.NoError(t, err)
+	require.True(t, migrated, "destination-already-populated must write the marker so later boots do not re-evaluate sqlite")
+
+	// Second call is a no-op once the marker exists.
+	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
+	state, has, err = pg.LoadState(ctx)
 	require.NoError(t, err)
 	require.True(t, has)
 	require.Equal(t, existing, state.Settings)
@@ -241,13 +252,13 @@ func TestMigrateGatewaySQLiteToPostgres_EmptySource(t *testing.T) {
 
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
 
-	_, has, err := pg.LoadState()
+	_, has, err := pg.LoadState(ctx)
 	require.NoError(t, err)
 	require.False(t, has)
 
 	migrated, err := pg.hasMigrationMarker(ctx, gatewaySQLiteImportMarker)
 	require.NoError(t, err)
-	require.False(t, migrated)
+	require.True(t, migrated, "empty source must write the marker so later boots skip re-checking")
 }
 
 func TestMigrateGatewaySQLiteToPostgres_RollbackLeavesNoPartialRows(t *testing.T) {
@@ -260,7 +271,7 @@ func TestMigrateGatewaySQLiteToPostgres_RollbackLeavesNoPartialRows(t *testing.T
 
 	pg := newTestPostgresGatewayStore(t)
 
-	srcState, _, err := sqlite.LoadState()
+	srcState, _, err := sqlite.LoadState(context.Background())
 	require.NoError(t, err)
 
 	tx, err := pg.pool.Begin(ctx)
@@ -273,7 +284,7 @@ func TestMigrateGatewaySQLiteToPostgres_RollbackLeavesNoPartialRows(t *testing.T
 	require.NoError(t, err)
 	require.NoError(t, tx.Rollback(ctx))
 
-	_, has, err := pg.LoadState()
+	_, has, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 	require.False(t, has)
 
@@ -296,7 +307,7 @@ func TestMigrateGatewaySQLiteToPostgres_CommitmentsPreserved(t *testing.T) {
 		MaxConcurrentRequests:   1,
 		MaxInputTokensInFlight:  100,
 	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
+	require.NoError(t, sqlite.Initialize(context.Background(), settings, nil))
 
 	seed := []GatewayEscrowCommitment{
 		{
@@ -319,15 +330,15 @@ func TestMigrateGatewaySQLiteToPostgres_CommitmentsPreserved(t *testing.T) {
 		},
 	}
 	for _, c := range seed {
-		require.NoError(t, sqlite.SaveCommitment(c))
+		require.NoError(t, sqlite.SaveCommitment(context.Background(), c))
 	}
 
 	pg := newTestPostgresGatewayStore(t)
 	require.NoError(t, MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg))
 
-	want, err := sqlite.LoadCommitments()
+	want, err := sqlite.LoadCommitments(context.Background())
 	require.NoError(t, err)
-	got, err := pg.LoadCommitments()
+	got, err := pg.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.ElementsMatch(t, want, got)
 	require.Len(t, got, 2)

@@ -78,7 +78,7 @@ func newGatewayMockEnv(t *testing.T, runtimes []*gatewayMockRuntime, opts ...gat
 	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
-	require.NoError(t, store.Initialize(cfg.settings, gatewayMockStates(runtimes, devshards)))
+	require.NoError(t, store.Initialize(context.Background(), cfg.settings, gatewayMockStates(runtimes, devshards)))
 	g.store = store
 	handler := buildGatewayHandler(g, runtimeOptions{
 		adminAPIKey: cfg.adminKey,

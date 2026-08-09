@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -26,7 +27,7 @@ func TestNewManagedGatewayChecksBalancesWithTheChainMaxNonceFromTheStart(t *test
 	require.NoError(t, err)
 	t.Cleanup(func() { require.NoError(t, store.Close()) })
 	settings := GatewaySettings{DefaultModel: "m", EscrowRotation: EscrowRotationSettings{Enabled: true}}
-	require.NoError(t, store.Initialize(settings, nil))
+	require.NoError(t, store.Initialize(context.Background(), settings, nil))
 	maxNonce := &signalingMaxNonce{read: make(chan struct{})}
 
 	gateway := NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, t.TempDir(), store, nil, nil, nil, maxNonce)

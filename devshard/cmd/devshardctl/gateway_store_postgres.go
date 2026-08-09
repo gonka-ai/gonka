@@ -3,44 +3,40 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"strings"
 	"time"
+
+	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
-
-const defaultGatewayPGOpTimeout = 2 * time.Second
 
 type PostgresGatewayStore struct {
 	pool      *pgxpool.Pool
 	opTimeout time.Duration
 }
 
-// gatewayPGOpTimeout reads PG_OPERATION_TIMEOUT (a Go duration). An invalid or
-// unset value uses the default; 0 disables per-operation deadlines.
-func gatewayPGOpTimeout() time.Duration {
-	v := strings.TrimSpace(os.Getenv("PG_OPERATION_TIMEOUT"))
-	if v == "" {
-		return defaultGatewayPGOpTimeout
+func (s *PostgresGatewayStore) opCtx(parent context.Context) (context.Context, context.CancelFunc) {
+	if parent == nil {
+		parent = context.Background()
 	}
-	d, err := time.ParseDuration(v)
-	if err != nil || d < 0 {
-		return defaultGatewayPGOpTimeout
-	}
-	return d
-}
-
-func (s *PostgresGatewayStore) opCtx() (context.Context, context.CancelFunc) {
 	if s == nil || s.opTimeout <= 0 {
-		return context.Background(), func() {}
+		return parent, func() {}
 	}
-	return context.WithTimeout(context.Background(), s.opTimeout)
+	return context.WithTimeout(parent, s.opTimeout)
 }
 
 func NewPostgresGatewayStore(ctx context.Context) (*PostgresGatewayStore, error) {
-	pool, err := pgxpool.New(ctx, "")
+	cfg, err := pgxpool.ParseConfig("") // reads libpq env vars (PGHOST, PGPORT, ...)
+	if err != nil {
+		return nil, fmt.Errorf("parse gateway postgres config: %w", err)
+	}
+	// Fail-closed open: a blackholed host must not hang boot; statement/lock
+	// timeouts are the server-side backstop when PG_OPERATION_TIMEOUT=0.
+	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
+
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect gateway postgres store: %w", err)
 	}
@@ -48,7 +44,7 @@ func NewPostgresGatewayStore(ctx context.Context) (*PostgresGatewayStore, error)
 		pool.Close()
 		return nil, fmt.Errorf("ping gateway postgres store: %w", err)
 	}
-	s := &PostgresGatewayStore{pool: pool, opTimeout: gatewayPGOpTimeout()}
+	s := &PostgresGatewayStore{pool: pool, opTimeout: pgtimeouts.OperationTimeout()}
 	if err := s.ensureSchema(ctx); err != nil {
 		pool.Close()
 		return nil, err
@@ -243,8 +239,8 @@ func (s *PostgresGatewayStore) Close() error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) LoadState() (GatewayState, bool, error) {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) LoadState(ctx context.Context) (GatewayState, bool, error) {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	var state GatewayState
 	row := s.pool.QueryRow(ctx, `
@@ -297,7 +293,7 @@ func (s *PostgresGatewayStore) LoadState() (GatewayState, bool, error) {
 	if err := rows.Err(); err != nil {
 		return GatewayState{}, false, fmt.Errorf("iterate gateway devshards: %w", err)
 	}
-	suspiciousHosts, err := s.LoadSuspiciousHosts()
+	suspiciousHosts, err := s.LoadSuspiciousHosts(ctx)
 	if err != nil {
 		return GatewayState{}, false, err
 	}
@@ -305,8 +301,8 @@ func (s *PostgresGatewayStore) LoadState() (GatewayState, bool, error) {
 	return state, true, nil
 }
 
-func (s *PostgresGatewayStore) Initialize(settings GatewaySettings, devshards []GatewayDevshardState) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) Initialize(ctx context.Context, settings GatewaySettings, devshards []GatewayDevshardState) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	settings = settings.WithTuningDefaults()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
@@ -342,8 +338,8 @@ func (s *PostgresGatewayStore) Initialize(settings GatewaySettings, devshards []
 	return tx.Commit(ctx)
 }
 
-func (s *PostgresGatewayStore) UpdateSettings(settings GatewaySettings) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) UpdateSettings(ctx context.Context, settings GatewaySettings) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	colCount := len(gatewaySettingsColumnNames())
@@ -363,11 +359,11 @@ func (s *PostgresGatewayStore) UpdateSettings(settings GatewaySettings) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) SaveRotationStatus(status GatewayRotationStatus) error {
+func (s *PostgresGatewayStore) SaveRotationStatus(ctx context.Context, status GatewayRotationStatus) error {
 	if s == nil || s.pool == nil {
 		return nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	if strings.TrimSpace(status.UpdatedAt) != "" {
@@ -409,11 +405,11 @@ func (s *PostgresGatewayStore) SaveRotationStatus(status GatewayRotationStatus) 
 	return nil
 }
 
-func (s *PostgresGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus, error) {
+func (s *PostgresGatewayStore) LoadRotationStatuses(ctx context.Context, limit int) ([]GatewayRotationStatus, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	query := `
 		SELECT model_id, stage, epoch, role, target_count, existing_count, created_count,
@@ -460,11 +456,11 @@ func (s *PostgresGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotatio
 	return statuses, nil
 }
 
-func (s *PostgresGatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
+func (s *PostgresGatewayStore) SaveCommitment(ctx context.Context, c GatewayEscrowCommitment) error {
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("gateway store unavailable")
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	createdAt := c.CreatedAt
 	if createdAt.IsZero() {
@@ -499,11 +495,11 @@ func (s *PostgresGatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
+func (s *PostgresGatewayStore) LoadCommitments(ctx context.Context) ([]GatewayEscrowCommitment, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
 		SELECT tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
@@ -526,11 +522,11 @@ func (s *PostgresGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, err
 	return commitments, rows.Err()
 }
 
-func (s *PostgresGatewayStore) DeleteCommitment(txHash string) error {
+func (s *PostgresGatewayStore) DeleteCommitment(ctx context.Context, txHash string) error {
 	if s == nil || s.pool == nil {
 		return fmt.Errorf("gateway store unavailable")
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	if _, err := s.pool.Exec(ctx, `DELETE FROM escrow_rotation_commitments WHERE tx_hash = $1`, strings.TrimSpace(txHash)); err != nil {
 		return fmt.Errorf("delete escrow commitment tx=%s: %w", txHash, err)
@@ -538,11 +534,11 @@ func (s *PostgresGatewayStore) DeleteCommitment(txHash string) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, error) {
+func (s *PostgresGatewayStore) LoadSuspiciousHosts(ctx context.Context) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
 		SELECT participant_key, note, created_at
@@ -567,11 +563,11 @@ func (s *PostgresGatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, e
 	return hosts, nil
 }
 
-func (s *PostgresGatewayStore) UpsertSuspiciousHosts(participantKeys []string, note string) ([]GatewaySuspiciousHost, error) {
+func (s *PostgresGatewayStore) UpsertSuspiciousHosts(ctx context.Context, participantKeys []string, note string) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	participantKeys = normalizeParticipantKeys(participantKeys)
 	if len(participantKeys) == 0 {
@@ -596,14 +592,14 @@ func (s *PostgresGatewayStore) UpsertSuspiciousHosts(participantKeys []string, n
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit suspicious host upsert: %w", err)
 	}
-	return s.LoadSuspiciousHosts()
+	return s.LoadSuspiciousHosts(ctx)
 }
 
-func (s *PostgresGatewayStore) DeleteSuspiciousHosts(participantKeys []string) ([]GatewaySuspiciousHost, error) {
+func (s *PostgresGatewayStore) DeleteSuspiciousHosts(ctx context.Context, participantKeys []string) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	participantKeys = normalizeParticipantKeys(participantKeys)
 	if len(participantKeys) == 0 {
@@ -622,11 +618,11 @@ func (s *PostgresGatewayStore) DeleteSuspiciousHosts(participantKeys []string) (
 	if err := tx.Commit(ctx); err != nil {
 		return nil, fmt.Errorf("commit suspicious host delete: %w", err)
 	}
-	return s.LoadSuspiciousHosts()
+	return s.LoadSuspiciousHosts(ctx)
 }
 
-func (s *PostgresGatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) UpsertDevshard(ctx context.Context, devshard GatewayDevshardState) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.pool.Begin(ctx)
@@ -689,11 +685,11 @@ func (s *PostgresGatewayStore) upsertDevshardTx(ctx context.Context, tx pgx.Tx, 
 // return value is false when no row exists for the id. It is used by lazy
 // hydration to look up the config of a non-resident devshard without loading
 // the entire registry.
-func (s *PostgresGatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+func (s *PostgresGatewayStore) GetDevshard(ctx context.Context, id string) (GatewayDevshardState, bool, error) {
 	if s == nil || s.pool == nil {
 		return GatewayDevshardState{}, false, fmt.Errorf("gateway store unavailable")
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	id = strings.TrimSpace(id)
 	var devshard GatewayDevshardState
@@ -729,8 +725,8 @@ func (s *PostgresGatewayStore) GetDevshard(id string) (GatewayDevshardState, boo
 	return devshard, true, nil
 }
 
-func (s *PostgresGatewayStore) SetDevshardActive(id string, active bool) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) SetDevshardActive(ctx context.Context, id string, active bool) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `
 		UPDATE gateway_devshards
@@ -749,8 +745,8 @@ func (s *PostgresGatewayStore) SetDevshardActive(id string, active bool) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) DeactivateDevshardIfActive(id string, settlementPending bool) (bool, error) {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) DeactivateDevshardIfActive(ctx context.Context, id string, settlementPending bool) (bool, error) {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `
 		UPDATE gateway_devshards
@@ -766,8 +762,8 @@ func (s *PostgresGatewayStore) DeactivateDevshardIfActive(id string, settlementP
 	return cmdTag.RowsAffected() == 1, nil
 }
 
-func (s *PostgresGatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `
 		UPDATE gateway_devshards
@@ -786,8 +782,8 @@ func (s *PostgresGatewayStore) SetDevshardSettlementPending(id string, pending b
 	return nil
 }
 
-func (s *PostgresGatewayStore) DeleteDevshard(id string) error {
-	ctx, cancel := s.opCtx()
+func (s *PostgresGatewayStore) DeleteDevshard(ctx context.Context, id string) error {
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	cmdTag, err := s.pool.Exec(ctx, `DELETE FROM gateway_devshards WHERE id = $1`, strings.TrimSpace(id))
 	if err != nil {
@@ -799,11 +795,11 @@ func (s *PostgresGatewayStore) DeleteDevshard(id string) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
+func (s *PostgresGatewayStore) SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
 	if s == nil || s.pool == nil {
 		return nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	quarStr := ""
 	if !quarantineUntil.IsZero() {
@@ -827,11 +823,11 @@ func (s *PostgresGatewayStore) SaveParticipantThrottle(key string, modelIDs []st
 	return nil
 }
 
-func (s *PostgresGatewayStore) DeleteParticipantThrottle(key string) error {
+func (s *PostgresGatewayStore) DeleteParticipantThrottle(ctx context.Context, key string) error {
 	if s == nil || s.pool == nil {
 		return nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	if _, err := s.pool.Exec(ctx, `DELETE FROM participant_throttle_state WHERE participant_key = $1`, key); err != nil {
 		return fmt.Errorf("delete participant throttle %s: %w", key, err)
@@ -839,11 +835,11 @@ func (s *PostgresGatewayStore) DeleteParticipantThrottle(key string) error {
 	return nil
 }
 
-func (s *PostgresGatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, error) {
+func (s *PostgresGatewayStore) LoadParticipantThrottles(ctx context.Context) ([]ParticipantThrottleRow, error) {
 	if s == nil || s.pool == nil {
 		return nil, nil
 	}
-	ctx, cancel := s.opCtx()
+	ctx, cancel := s.opCtx(ctx)
 	defer cancel()
 	rows, err := s.pool.Query(ctx, `
 		SELECT participant_key, tokens, last_refill_at, last_throttle_status,

@@ -32,7 +32,7 @@ func newInactiveDevshardGateway(t *testing.T) *Gateway {
 		},
 		Active: false,
 	}}
-	require.NoError(t, store.Initialize(settings, devshards))
+	require.NoError(t, store.Initialize(context.Background(), settings, devshards))
 
 	return NewManagedGateway(nil, NewGatewayLimiter(0, 0), settings, baseStorageDir, store, nil, nil, nil, nil)
 }

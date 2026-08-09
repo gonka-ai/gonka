@@ -3,15 +3,25 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const gatewaySQLiteImportMarker = "sqlite_import"
 
+type gatewayMigrationExecer interface {
+	Exec(ctx context.Context, sql string, arguments ...any) (pgconn.CommandTag, error)
+}
+
 // MigrateGatewaySQLiteToPostgres copies existing SQLite gateway data into Postgres
-// before hybrid serving. It is idempotent: a marker row prevents re-import.
+// once. Idempotency is the migration marker — not "Postgres already has a
+// settings row". A marker is written only after a successful import, when the
+// destination already holds gateway state (so we must not clobber it), or when
+// the source is empty (nothing to import). A crash mid-import rolls the
+// transaction back and leaves no marker, so the next boot retries.
 func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *PostgresGatewayStore) error {
 	if src == nil || dst == nil || dst.pool == nil {
 		return nil
@@ -28,31 +38,36 @@ func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *
 		return nil
 	}
 
-	_, hasDst, err := dst.LoadState()
+	_, hasDst, err := dst.LoadState(ctx)
 	if err != nil {
 		return fmt.Errorf("check destination gateway settings: %w", err)
 	}
 	if hasDst {
-		return nil
+		// Postgres already owns gateway state (another instance, a prior hybrid
+		// write, or Initialize). Importing would clobber it — claim the
+		// migration done so every subsequent boot does not re-evaluate the
+		// local sqlite file as a pending import.
+		log.Printf("gateway store: skipping sqlite import, postgres already holds gateway settings; writing %s marker and leaving local sqlite state unused", gatewaySQLiteImportMarker)
+		return dst.writeMigrationMarker(ctx, gatewaySQLiteImportMarker)
 	}
 
-	srcState, hasSrc, err := src.LoadState()
+	srcState, hasSrc, err := src.LoadState(ctx)
 	if err != nil {
 		return fmt.Errorf("load source gateway state: %w", err)
 	}
 	if !hasSrc {
-		return nil
+		return dst.writeMigrationMarker(ctx, gatewaySQLiteImportMarker)
 	}
 
-	rotationStatuses, err := src.LoadRotationStatuses(0)
+	rotationStatuses, err := src.LoadRotationStatuses(ctx, 0)
 	if err != nil {
 		return fmt.Errorf("load source rotation statuses: %w", err)
 	}
-	commitments, err := src.LoadCommitments()
+	commitments, err := src.LoadCommitments(ctx)
 	if err != nil {
 		return fmt.Errorf("load source commitments: %w", err)
 	}
-	throttles, err := src.LoadParticipantThrottles()
+	throttles, err := src.LoadParticipantThrottles(ctx)
 	if err != nil {
 		return fmt.Errorf("load source participant throttles: %w", err)
 	}
@@ -94,12 +109,7 @@ func MigrateGatewaySQLiteToPostgres(ctx context.Context, src GatewayStore, dst *
 		}
 	}
 
-	if _, err := tx.Exec(ctx, `
-		INSERT INTO gateway_migration (name, completed_at)
-		VALUES ($1, $2)
-		ON CONFLICT (name) DO UPDATE SET completed_at = EXCLUDED.completed_at`,
-		gatewaySQLiteImportMarker, now,
-	); err != nil {
+	if err := writeGatewayMigrationMarker(ctx, tx, gatewaySQLiteImportMarker, now); err != nil {
 		return fmt.Errorf("write gateway migration marker: %w", err)
 	}
 
@@ -128,4 +138,21 @@ func (s *PostgresGatewayStore) hasMigrationMarker(ctx context.Context, name stri
 		return false, err
 	}
 	return true, nil
+}
+
+func (s *PostgresGatewayStore) writeMigrationMarker(ctx context.Context, name string) error {
+	if err := s.ensureMigrationTable(ctx); err != nil {
+		return err
+	}
+	return writeGatewayMigrationMarker(ctx, s.pool, name, time.Now().UTC().Format(time.RFC3339Nano))
+}
+
+func writeGatewayMigrationMarker(ctx context.Context, exec gatewayMigrationExecer, name, completedAt string) error {
+	_, err := exec.Exec(ctx, `
+		INSERT INTO gateway_migration (name, completed_at)
+		VALUES ($1, $2)
+		ON CONFLICT (name) DO UPDATE SET completed_at = EXCLUDED.completed_at`,
+		name, completedAt,
+	)
+	return err
 }

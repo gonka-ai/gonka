@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"sync/atomic"
@@ -214,7 +215,7 @@ func withoutReplacementModel(settings *GatewaySettings) {
 
 func pendingCommitments(t *testing.T, store GatewayStore) []GatewayEscrowCommitment {
 	t.Helper()
-	commitments, err := store.LoadCommitments()
+	commitments, err := store.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	return commitments
 }
@@ -258,7 +259,7 @@ func waitForReplacementIdle(t *testing.T, gateway *Gateway, escrowID string) {
 func waitForSettlementFinished(t *testing.T, gateway *Gateway, escrowID string, settled *atomic.Int32) {
 	t.Helper()
 	require.Eventually(t, func() bool {
-		record, _, err := gateway.store.GetDevshard(escrowID)
+		record, _, err := gateway.store.GetDevshard(context.Background(), escrowID)
 		return settled.Load() == 1 && err == nil && !record.SettlementPending && !isSettlementInFlight(gateway, escrowID)
 	}, time.Second, 10*time.Millisecond, "settlement of escrow %s did not finish", escrowID)
 }
