@@ -33,3 +33,18 @@ func MissingUsageCounterForTest() prometheus.Counter {
 	ensureMetrics()
 	return missingUsageTotal
 }
+
+// InferenceClientDetachedDrainCounterForTest exposes the detach-drain counter for tests.
+func InferenceClientDetachedDrainCounterForTest() prometheus.Counter {
+	ensureMetrics()
+	return inferenceClientDetachedDrainTotal
+}
+
+// InferenceDrainOutcomeCounterForTest exposes a drain-outcome label for tests.
+func InferenceDrainOutcomeCounterForTest(outcome string) prometheus.Counter {
+	ensureMetrics()
+	if outcome == "" {
+		outcome = "unknown"
+	}
+	return inferenceDrainOutcomeTotal.WithLabelValues(outcome)
+}

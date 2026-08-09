@@ -61,6 +61,7 @@ const (
 	WhereEngineMLNodeCall           Where = "engine.mlnode_call"
 	WhereManagerPayloads            Where = "manager.payloads"
 	WhereRuntimeExecute             Where = "runtime.execute"
+	WhereRuntimeDrainML             Where = "runtime.drain_ml"
 	WhereRuntimeValidate            Where = "runtime.validate"
 )
 

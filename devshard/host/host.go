@@ -853,6 +853,9 @@ func (h *Host) ReleaseExecution(inferenceID uint64) {
 // RunExecution executes an inference job and adds MsgFinishInference to the mempool.
 // This is the deferred execution path -- used when DeferExecution=true in HandleRequest.
 // The caller typically streams results to the client before calling this.
+// Execution lifetime is detached from the gateway request context inside the
+// inference engine: a client disconnect stops proxying but does not abort ML
+// drain, payload store, or finish publication (bounded by the engine drain timeout).
 func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	// Find the internal job metadata for cleanup/mempool.
 	inferenceID := job.InferenceID

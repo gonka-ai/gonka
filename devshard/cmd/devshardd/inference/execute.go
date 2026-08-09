@@ -17,10 +17,13 @@ import (
 type mlRequestExecutor func(ctx context.Context, model string, body []byte) (*http.Response, error)
 
 type processedExecutionResponse struct {
-	responseHash []byte
-	inputTokens  uint64
-	outputTokens uint64
-	responseBody []byte
+	responseHash          []byte
+	inputTokens           uint64
+	outputTokens          uint64
+	responseBody          []byte
+	partialResponse       bool
+	partialResponseReason string
+	partialResponseWhere  string
 }
 
 func executeInference(
@@ -31,6 +34,11 @@ func executeInference(
 	execute mlRequestExecutor,
 	chainParams ChainParamsProvider,
 ) (*devshardpkg.ExecuteResult, error) {
+	// Detach from the gateway HTTP request: client disconnect must stop
+	// proxying only, not abort ML generation / payload persistence.
+	drainCtx, cancel := executionContext(ctx)
+	defer cancel()
+
 	seed := int32(req.InferenceID)
 	inferenceID := fmt.Sprintf("devshard-%s-%d", req.EscrowID, req.InferenceID)
 
@@ -39,7 +47,7 @@ func executeInference(
 		return nil, observability.Classify(observability.ReasonModifyRequestErr, observability.WhereRuntimeExecute, fmt.Errorf("modify request body: %w", err))
 	}
 
-	resp, err := execute(ctx, req.Model, modified.NewBody)
+	resp, err := execute(drainCtx, req.Model, modified.NewBody)
 	if err != nil {
 		return nil, err
 	}
@@ -58,7 +66,7 @@ func executeInference(
 	}
 
 	if err := store.Store(
-		ctx,
+		drainCtx,
 		req.EscrowID,
 		req.InferenceID,
 		payloadEpoch,
@@ -69,10 +77,13 @@ func executeInference(
 	}
 
 	return &devshardpkg.ExecuteResult{
-		ResponseHash: processed.responseHash,
-		InputTokens:  processed.inputTokens,
-		OutputTokens: processed.outputTokens,
-		ResponseBody: processed.responseBody,
+		ResponseHash:          processed.responseHash,
+		InputTokens:           processed.inputTokens,
+		OutputTokens:          processed.outputTokens,
+		ResponseBody:          processed.responseBody,
+		PartialResponse:       processed.partialResponse,
+		PartialResponseReason: processed.partialResponseReason,
+		PartialResponseWhere:  processed.partialResponseWhere,
 	}, nil
 }
 
@@ -86,12 +97,14 @@ func processExecutionHTTPResponse(
 	contentType := resp.Header.Get("Content-Type")
 	isSSE := strings.HasPrefix(contentType, "text/event-stream")
 
+	var proxyOutcome streamProxyOutcome
 	if req.ResponseWriter != nil && isSSE {
-		proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
+		proxyOutcome = proxyResponse(resp, req.ResponseWriter, true, processor, inferenceID)
 	} else {
 		if err := completionapi.ProcessHTTPResponse(resp, processor); err != nil {
 			return nil, fmt.Errorf("process response: %w", err)
 		}
+		proxyOutcome.sawDone = true
 	}
 
 	completionResp, err := processor.GetResponse()
@@ -130,12 +143,18 @@ func processExecutionHTTPResponse(
 		return nil, fmt.Errorf("get usage: %w", completionapi.ErrStreamedUsageMissing)
 	}
 
-	return &processedExecutionResponse{
+	out := &processedExecutionResponse{
 		responseHash: hash[:],
 		inputTokens:  usage.PromptTokens,
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,
-	}, nil
+	}
+	if isSSE && !proxyOutcome.sawDone {
+		out.partialResponse = true
+		out.partialResponseReason = string(observability.ReasonPartialResponseInterrupted)
+		out.partialResponseWhere = string(observability.WhereRuntimeDrainML)
+	}
+	return out, nil
 }
 
 // completionLooksNonEmpty reports whether the response carries any completion

@@ -402,7 +402,10 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
 			reason, where := observability.ErrorReason(execErr, observability.ReasonExecuteErr, observability.WhereHostExecute)
-			if errors.Is(ctx.Err(), context.Canceled) {
+			// Execution is detached from the request context (ML drain continues
+			// after client disconnect). Only treat as client-cancel when the
+			// execution itself was canceled — not merely because ctx was.
+			if errors.Is(execErr, context.Canceled) {
 				observability.RecordClientCancelledAfterReceipt(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, where)
 				return nil
 			}

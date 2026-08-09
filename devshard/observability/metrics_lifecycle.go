@@ -42,6 +42,10 @@ var (
 
 	// Streamed ML responses that finished without usable prompt-token usage.
 	missingUsageTotal prometheus.Counter
+
+	// Client writer failed mid-stream; host continued draining ML.
+	inferenceClientDetachedDrainTotal prometheus.Counter
+	inferenceDrainOutcomeTotal        *prometheus.CounterVec
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -160,6 +164,14 @@ func initRegistry() {
 		Name: "devshard_inference_missing_usage_total",
 		Help: "Inferences whose streamed ML response lacked usable prompt-token usage.",
 	})
+	inferenceClientDetachedDrainTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "devshard_inference_client_detached_drain_total",
+		Help: "Times the gateway/client writer failed mid-stream and ML drain continued.",
+	})
+	inferenceDrainOutcomeTotal = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "devshard_inference_drain_outcome_total",
+		Help: "Outcome of an ML stream drain after the client writer detached (completed, deadline, ml_error).",
+	}, []string{"outcome"})
 
 	registry.MustRegister(
 		inflight,
@@ -185,6 +197,8 @@ func initRegistry() {
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
 		missingUsageTotal,
+		inferenceClientDetachedDrainTotal,
+		inferenceDrainOutcomeTotal,
 	)
 }
 
@@ -361,6 +375,28 @@ func IncReconcileFastForward() {
 func IncMissingUsage() {
 	ensureMetrics()
 	missingUsageTotal.Inc()
+}
+
+// IncInferenceClientDetachedDrain records that proxying stopped while ML drain continued.
+func IncInferenceClientDetachedDrain() {
+	ensureMetrics()
+	inferenceClientDetachedDrainTotal.Inc()
+}
+
+// DrainOutcome labels for IncInferenceDrainOutcome.
+const (
+	DrainOutcomeCompleted = "completed"
+	DrainOutcomeDeadline  = "deadline"
+	DrainOutcomeMLError   = "ml_error"
+)
+
+// IncInferenceDrainOutcome records the result of draining ML after client detach.
+func IncInferenceDrainOutcome(outcome string) {
+	ensureMetrics()
+	if outcome == "" {
+		outcome = "unknown"
+	}
+	inferenceDrainOutcomeTotal.WithLabelValues(outcome).Inc()
 }
 
 

@@ -218,7 +218,7 @@ Tests: `transport/server_test.go` — reconnect to a completed streamed inferenc
 the gateway-side parse produces the same chunk sequence as the live stream; reconnect to a
 completed JSON inference and assert the single-event behavior is unchanged.
 
-### Step 3 — Drain the ML stream independently of the client connection
+### Step 3 — Drain the ML stream independently of the client connection ✅
 
 `devshard/cmd/devshardd/inference/proxy.go`, `inference/execute.go`, `devshard/host/host.go`.
 
@@ -254,12 +254,14 @@ should apply the same principle one hop down.
 6. Metrics: a counter for "client detached, drain continued" and one for drain outcome
    (`completed` / `deadline` / `ml_error`), so the retained work is visible.
 
-Tests (unit): a write-failing `ResponseWriter` does not stop event accumulation, and execution
-still yields a full body with usage; the drain deadline path terminates and is counted; a client
-disconnect no longer cancels the ML request. Tests (e2e, `testenv/citest`): drop the gateway↔host
-connection mid-stream (`mockopenai` `PartialStream` / delay faults plus a killable client), then
-assert the host published `MsgFinishInference` with non-zero input tokens and that a same-nonce
-reconnect returns the complete replay.
+Tests (unit, landed): a write-failing `ResponseWriter` does not stop event accumulation, and
+execution still yields a full body with usage; the drain deadline path terminates and is counted;
+a client disconnect no longer cancels the ML request; missing `[DONE]` sets `PartialResponse*`.
+Tests (e2e, `testenv/citest`): drop the gateway↔host connection mid-stream (`mockopenai`
+`PartialStream` / delay faults plus a killable client), then assert the host published
+`MsgFinishInference` with non-zero input tokens and that a same-nonce reconnect returns the
+complete replay — covered with reconnect E2E in
+[gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) Step 5.
 
 ### Step 4 — Reconnect the interrupted attempt before escalating to a new nonce
 
@@ -584,7 +586,7 @@ in `attrs_contract_test.go` / dashboard lint):
    `from_nonce`, `to_nonce`, `reason` (`reconnect_budget_expired` / `reconnect_failed` /
    `stream_reset`), and whether any content had already been delivered to the client.
 
-Also keep the Prometheus counters from the reconnect plan's Step 5
+Also keep the Prometheus counters from the reconnect plan's Step 6
 (`devshard_gateway_attempt_reconnect_total`, `winner_continuity_total`, …) labeled so they can be
 joined to these spans in Jaeger / Grafana.
 
@@ -643,7 +645,7 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
 
 - [x] Step 1 — streamed `usage` mandatory, counter + tests
 - [x] Step 2 — `replaySSEBody` unwraps `{"events":[…]}`
-- [ ] Step 3 — devshardd drains ML independently of the client connection
+- [x] Step 3 — devshardd drains ML independently of the client connection
 - [ ] Step 4 — same-nonce reconnect before escalation, gated to protocol ≥ v5 ([separate plan](./gateway-attempt-reconnect-plan.md))
 - [ ] Step 5 — `aggregateSSEStream` + unit tests
 - [ ] Step 6 — wire into `handleNonStreaming`, drop `assembleSSEChunks`
@@ -662,7 +664,8 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
 
 - [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) — the proposal
 - [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) — Step 4's reconnect and
-  winner-continuity design, which builds on Steps 2 and 3; Step 16 instruments that path
+  winner-continuity design, which builds on Steps 2 and 3; parent Step 16 feeds that plan's
+  Step 6 OTel work (after its Step 5 E2E)
 - [stream-resume-pre-proposal.md](./stream-resume-pre-proposal.md) — why client-facing stream resume
   is a separate, larger problem than Steps 2–4
 - [proposals/chat-stream-inflight-join.md](./proposals/chat-stream-inflight-join.md) — Step 15:
