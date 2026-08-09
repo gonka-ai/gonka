@@ -6,66 +6,82 @@ import (
 	"log"
 	"os"
 	"path/filepath"
-	"time"
+	"strings"
+
+	"common/storage/mode"
+	"common/storage/pgtimeouts"
 )
 
-const defaultGatewayPGConnectTimeout = 2 * time.Second
-
-// NewGatewayStore opens the gateway persistence layer based on environment configuration.
-// If PGHOST is unset, returns SQLiteGatewayStore only.
-// If PGHOST is set, runs one-shot migration from SQLite when Postgres is reachable,
-// then returns HybridGatewayStore (Postgres primary + SQLite fallback).
+// NewGatewayStore opens the gateway persistence layer for the mode selected by
+// DEVSHARD_STORAGE_MODE (via common/storage/mode.Resolve):
+//
+//   - sqlite: local gateway.db only; PGHOST is ignored
+//   - hybrid / postgres: Postgres is required (no SQLite runtime fallback).
+//     Local gateway.db is imported and any leftover sync-journal rows are
+//     drained before the store serves. Open fails when Postgres is unreachable.
+//
+// Session storage keeps its own degraded SQLite path; gateway management state
+// does not — when PGHOST selects Postgres, the gateway store is Postgres-only.
 func NewGatewayStore(ctx context.Context, baseStorageDir string) (GatewayStore, error) {
-	sqlite, err := NewSQLiteGatewayStore(filepath.Join(baseStorageDir, "gateway.db"))
+	storageMode, err := mode.Resolve()
 	if err != nil {
 		return nil, err
 	}
+	sqlitePath := filepath.Join(baseStorageDir, "gateway.db")
+	pgHost := strings.TrimSpace(os.Getenv("PGHOST"))
 
-	pgHost := os.Getenv("PGHOST")
+	if !storageMode.RequiresPGHOST() {
+		if pgHost != "" {
+			log.Printf("gateway store: %s=%s ignores PGHOST (%s)", mode.EnvStorageMode, storageMode, pgHost)
+		}
+		return NewSQLiteGatewayStore(sqlitePath)
+	}
 	if pgHost == "" {
-		return sqlite, nil
-	}
-
-	retryInterval, err := time.ParseDuration(os.Getenv("PG_RETRY_INTERVAL"))
-	if err != nil || retryInterval <= 0 {
-		retryInterval = defaultGatewayPGRetryInterval
-	}
-	connectTimeout, err := time.ParseDuration(os.Getenv("PG_CONNECT_TIMEOUT"))
-	if err != nil || connectTimeout <= 0 {
-		connectTimeout = defaultGatewayPGConnectTimeout
+		return nil, fmt.Errorf("gateway store: mode %s requires PGHOST", storageMode)
 	}
 
 	pg, pgErr := NewPostgresGatewayStore(ctx)
 	if pgErr != nil {
-		if !gatewayPGToSQLiteFallback() {
-			_ = sqlite.Close()
-			return nil, fmt.Errorf("gateway store: postgres required when PG_TO_SQLITE_FALLBACK=false (host=%s): %w", pgHost, pgErr)
-		}
-		log.Printf("gateway store: postgres connection failed, will retry lazily on write (host=%s): %v", pgHost, pgErr)
-		return NewHybridGatewayStore(nil, sqlite, retryInterval, connectTimeout), nil
+		return nil, fmt.Errorf("gateway store: postgres required (mode=%s, host=%s): %w", storageMode, pgHost, pgErr)
 	}
 
-	if err := MigrateGatewaySQLiteToPostgres(ctx, sqlite, pg); err != nil {
+	if err := importGatewaySQLite(ctx, sqlitePath, pg); err != nil {
 		_ = pg.Close()
-		_ = sqlite.Close()
 		return nil, err
 	}
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, retryInterval, connectTimeout)
-	if err := hybrid.ReconcileSyncJournal(ctx, pg); err != nil {
-		_ = pg.Close()
-		if !gatewayPGToSQLiteFallback() {
-			_ = sqlite.Close()
-			return nil, fmt.Errorf("gateway store: sync journal drain failed: %w", err)
+	log.Printf("gateway store: using postgres only (mode=%s, host=%s)", storageMode, pgHost)
+	return pg, nil
+}
+
+// importGatewaySQLite migrates a pre-existing local gateway.db into Postgres and
+// replays sync-journal rows left by an earlier hybrid deployment. SQLite is only
+// a migration source here: it is opened read-write for the journal drain, then
+// closed so runtime never writes locally. A missing file means nothing to import.
+func importGatewaySQLite(ctx context.Context, sqlitePath string, pg *PostgresGatewayStore) error {
+	if _, err := os.Stat(sqlitePath); err != nil {
+		if os.IsNotExist(err) {
+			return nil
 		}
-		log.Printf("gateway store: sync journal drain failed at startup, staying on sqlite fallback: %v", err)
-		return hybrid, nil
+		return fmt.Errorf("gateway store: stat %s: %w", sqlitePath, err)
 	}
 
-	if gatewayPGToSQLiteFallback() {
-		log.Printf("gateway store: using postgres with sqlite fallback (host=%s)", pgHost)
-	} else {
-		log.Printf("gateway store: using postgres only (host=%s, PG_TO_SQLITE_FALLBACK=false)", pgHost)
+	sqlite, err := NewSQLiteGatewayStore(sqlitePath)
+	if err != nil {
+		return err
 	}
-	return hybrid, nil
+	defer func() { _ = sqlite.Close() }()
+
+	// Bounded so a slow Postgres cannot hang boot forever, but generous: a large
+	// journal or commitment history is replayed row by row.
+	importCtx, cancel := context.WithTimeout(ctx, pgtimeouts.ImportTimeout())
+	defer cancel()
+
+	if err := MigrateGatewaySQLiteToPostgres(importCtx, sqlite, pg); err != nil {
+		return err
+	}
+	if err := drainGatewaySyncJournalUntilEmpty(importCtx, sqlite, pg); err != nil {
+		return fmt.Errorf("gateway store: sync journal drain failed: %w", err)
+	}
+	return nil
 }

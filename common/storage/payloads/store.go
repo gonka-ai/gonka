@@ -7,6 +7,7 @@ import (
 	"sync"
 
 	"common/logging"
+	"common/storage/pgtimeouts"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -43,7 +44,12 @@ func New(ctx context.Context, pool *pgxpool.Pool) (*Store, error) {
 }
 
 func newPostgresStorage(ctx context.Context) (*postgresStorage, error) {
-	pool, err := pgxpool.New(ctx, "")
+	cfg, err := pgxpool.ParseConfig("")
+	if err != nil {
+		return nil, fmt.Errorf("parse postgres config: %w", err)
+	}
+	pgtimeouts.ApplyConnConfig(cfg.ConnConfig)
+	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
 		return nil, fmt.Errorf("connect to postgres: %w", err)
 	}

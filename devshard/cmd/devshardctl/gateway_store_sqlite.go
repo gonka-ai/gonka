@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"strings"
@@ -267,7 +268,7 @@ func (s *SQLiteGatewayStore) Close() error {
 	return s.db.Close()
 }
 
-func (s *SQLiteGatewayStore) LoadState() (GatewayState, bool, error) {
+func (s *SQLiteGatewayStore) LoadState(ctx context.Context) (GatewayState, bool, error) {
 	var state GatewayState
 	row := s.db.QueryRow(`
 		SELECT ` + gatewaySettingsSelectColumns() + `
@@ -319,7 +320,7 @@ func (s *SQLiteGatewayStore) LoadState() (GatewayState, bool, error) {
 	if err := rows.Err(); err != nil {
 		return GatewayState{}, false, fmt.Errorf("iterate gateway devshards: %w", err)
 	}
-	suspiciousHosts, err := s.LoadSuspiciousHosts()
+	suspiciousHosts, err := s.LoadSuspiciousHosts(ctx)
 	if err != nil {
 		return GatewayState{}, false, err
 	}
@@ -327,7 +328,7 @@ func (s *SQLiteGatewayStore) LoadState() (GatewayState, bool, error) {
 	return state, true, nil
 }
 
-func (s *SQLiteGatewayStore) Initialize(settings GatewaySettings, devshards []GatewayDevshardState) error {
+func (s *SQLiteGatewayStore) Initialize(ctx context.Context, settings GatewaySettings, devshards []GatewayDevshardState) error {
 	settings = settings.WithTuningDefaults()
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
@@ -361,7 +362,7 @@ func (s *SQLiteGatewayStore) Initialize(settings GatewaySettings, devshards []Ga
 	return tx.Commit()
 }
 
-func (s *SQLiteGatewayStore) UpdateSettings(settings GatewaySettings) error {
+func (s *SQLiteGatewayStore) UpdateSettings(ctx context.Context, settings GatewaySettings) error {
 	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
 	res, err := s.db.Exec(fmt.Sprintf(`
 		UPDATE gateway_settings
@@ -383,7 +384,7 @@ func (s *SQLiteGatewayStore) UpdateSettings(settings GatewaySettings) error {
 	return nil
 }
 
-func (s *SQLiteGatewayStore) SaveRotationStatus(status GatewayRotationStatus) error {
+func (s *SQLiteGatewayStore) SaveRotationStatus(ctx context.Context, status GatewayRotationStatus) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -416,7 +417,7 @@ func (s *SQLiteGatewayStore) SaveRotationStatus(status GatewayRotationStatus) er
 	return nil
 }
 
-func (s *SQLiteGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus, error) {
+func (s *SQLiteGatewayStore) LoadRotationStatuses(ctx context.Context, limit int) ([]GatewayRotationStatus, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -466,7 +467,7 @@ func (s *SQLiteGatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationS
 }
 
 // SaveCommitment records a create intent, keyed by tx hash.
-func (s *SQLiteGatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
+func (s *SQLiteGatewayStore) SaveCommitment(ctx context.Context, c GatewayEscrowCommitment) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("gateway store unavailable")
 	}
@@ -496,7 +497,7 @@ func (s *SQLiteGatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 }
 
 // LoadCommitments returns all pending commitments (oldest first).
-func (s *SQLiteGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error) {
+func (s *SQLiteGatewayStore) LoadCommitments(ctx context.Context) ([]GatewayEscrowCommitment, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -522,7 +523,7 @@ func (s *SQLiteGatewayStore) LoadCommitments() ([]GatewayEscrowCommitment, error
 }
 
 // DeleteCommitment clears a commitment once its escrow is persisted (or proven absent).
-func (s *SQLiteGatewayStore) DeleteCommitment(txHash string) error {
+func (s *SQLiteGatewayStore) DeleteCommitment(ctx context.Context, txHash string) error {
 	if s == nil || s.db == nil {
 		return fmt.Errorf("gateway store unavailable")
 	}
@@ -532,30 +533,15 @@ func (s *SQLiteGatewayStore) DeleteCommitment(txHash string) error {
 	return nil
 }
 
-func (s *SQLiteGatewayStore) LoadSuspiciousHosts() ([]GatewaySuspiciousHost, error) {
+func (s *SQLiteGatewayStore) LoadSuspiciousHosts(ctx context.Context) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
 	return scanGatewaySuspiciousHosts(s.db)
 }
 
-// loadSuspiciousHostsTx reads the suspicious hosts within an open transaction.
-// It must be used instead of LoadSuspiciousHosts inside writeWithSyncJournal:
-// the SQLite handle is capped at one connection (SetMaxOpenConns(1)), so a
-// separate s.db.Query while the tx holds that connection would deadlock.
-func (s *SQLiteGatewayStore) loadSuspiciousHostsTx(tx *sql.Tx) ([]GatewaySuspiciousHost, error) {
-	if tx == nil {
-		return nil, fmt.Errorf("nil transaction")
-	}
-	return scanGatewaySuspiciousHosts(tx)
-}
-
-type gatewayRowQueryer interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-}
-
-func scanGatewaySuspiciousHosts(q gatewayRowQueryer) ([]GatewaySuspiciousHost, error) {
-	rows, err := q.Query(`
+func scanGatewaySuspiciousHosts(db *sql.DB) ([]GatewaySuspiciousHost, error) {
+	rows, err := db.Query(`
 		SELECT participant_key, note, created_at
 		FROM gateway_suspicious_hosts
 		ORDER BY participant_key`)
@@ -578,7 +564,7 @@ func scanGatewaySuspiciousHosts(q gatewayRowQueryer) ([]GatewaySuspiciousHost, e
 	return hosts, nil
 }
 
-func (s *SQLiteGatewayStore) UpsertSuspiciousHosts(participantKeys []string, note string) ([]GatewaySuspiciousHost, error) {
+func (s *SQLiteGatewayStore) UpsertSuspiciousHosts(ctx context.Context, participantKeys []string, note string) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -605,10 +591,10 @@ func (s *SQLiteGatewayStore) UpsertSuspiciousHosts(participantKeys []string, not
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit suspicious host upsert: %w", err)
 	}
-	return s.LoadSuspiciousHosts()
+	return s.LoadSuspiciousHosts(ctx)
 }
 
-func (s *SQLiteGatewayStore) DeleteSuspiciousHosts(participantKeys []string) ([]GatewaySuspiciousHost, error) {
+func (s *SQLiteGatewayStore) DeleteSuspiciousHosts(ctx context.Context, participantKeys []string) ([]GatewaySuspiciousHost, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}
@@ -629,10 +615,10 @@ func (s *SQLiteGatewayStore) DeleteSuspiciousHosts(participantKeys []string) ([]
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("commit suspicious host delete: %w", err)
 	}
-	return s.LoadSuspiciousHosts()
+	return s.LoadSuspiciousHosts(ctx)
 }
 
-func (s *SQLiteGatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
+func (s *SQLiteGatewayStore) UpsertDevshard(ctx context.Context, devshard GatewayDevshardState) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	tx, err := s.db.Begin()
 	if err != nil {
@@ -681,7 +667,7 @@ func (s *SQLiteGatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevsha
 // return value is false when no row exists for the id. It is used by lazy
 // hydration to look up the config of a non-resident devshard without loading
 // the entire registry.
-func (s *SQLiteGatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+func (s *SQLiteGatewayStore) GetDevshard(ctx context.Context, id string) (GatewayDevshardState, bool, error) {
 	id = strings.TrimSpace(id)
 	var devshard GatewayDevshardState
 	var active int
@@ -716,7 +702,7 @@ func (s *SQLiteGatewayStore) GetDevshard(id string) (GatewayDevshardState, bool,
 	return devshard, true, nil
 }
 
-func (s *SQLiteGatewayStore) SetDevshardActive(id string, active bool) error {
+func (s *SQLiteGatewayStore) SetDevshardActive(ctx context.Context, id string, active bool) error {
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards
 		SET active = ?, updated_at = ?
@@ -738,7 +724,7 @@ func (s *SQLiteGatewayStore) SetDevshardActive(id string, active bool) error {
 	return nil
 }
 
-func (s *SQLiteGatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
+func (s *SQLiteGatewayStore) SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error {
 	res, err := s.db.Exec(`
 		UPDATE gateway_devshards
 		SET settlement_pending = ?, updated_at = ?
@@ -760,7 +746,7 @@ func (s *SQLiteGatewayStore) SetDevshardSettlementPending(id string, pending boo
 	return nil
 }
 
-func (s *SQLiteGatewayStore) DeleteDevshard(id string) error {
+func (s *SQLiteGatewayStore) DeleteDevshard(ctx context.Context, id string) error {
 	res, err := s.db.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, strings.TrimSpace(id))
 	if err != nil {
 		return fmt.Errorf("delete devshard %s: %w", id, err)
@@ -795,7 +781,7 @@ func normalizeParticipantKeys(keys []string) []string {
 	return normalized
 }
 
-func (s *SQLiteGatewayStore) SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
+func (s *SQLiteGatewayStore) SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -814,7 +800,7 @@ func (s *SQLiteGatewayStore) SaveParticipantThrottle(key string, modelIDs []stri
 	return nil
 }
 
-func (s *SQLiteGatewayStore) DeleteParticipantThrottle(key string) error {
+func (s *SQLiteGatewayStore) DeleteParticipantThrottle(ctx context.Context, key string) error {
 	if s == nil || s.db == nil {
 		return nil
 	}
@@ -825,7 +811,7 @@ func (s *SQLiteGatewayStore) DeleteParticipantThrottle(key string) error {
 	return nil
 }
 
-func (s *SQLiteGatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, error) {
+func (s *SQLiteGatewayStore) LoadParticipantThrottles(ctx context.Context) ([]ParticipantThrottleRow, error) {
 	if s == nil || s.db == nil {
 		return nil, nil
 	}

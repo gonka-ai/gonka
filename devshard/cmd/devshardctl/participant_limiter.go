@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -35,7 +36,7 @@ const (
 	eofTransportFailureThreshold      = participantFailureStrikeThreshold
 	// participantStrikesAfterQuarantine keeps recently recovered hosts one bad
 	// signal away from re-quarantine while they prove they can finish normally.
-	participantStrikesAfterQuarantine = participantFailureStrikeThreshold - 1
+	participantStrikesAfterQuarantine            = participantFailureStrikeThreshold - 1
 	participantProbationSuccessesAfterQuarantine = participantStrikesAfterQuarantine
 	// participantStatusTransport is persisted in last_throttle_status when
 	// the last signal was a transport failure (not an HTTP 429/503).
@@ -225,8 +226,8 @@ func (e *EscrowParticipantRateLimitError) Error() string {
 
 // ParticipantThrottleStore is the persistence interface for reactive throttle state.
 type ParticipantThrottleStore interface {
-	SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
-	DeleteParticipantThrottle(key string) error
+	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
+	DeleteParticipantThrottle(ctx context.Context, key string) error
 }
 
 // ParticipantRequestLimiter is a reactive, per-host limiter. Probe quarantine
@@ -392,7 +393,7 @@ func (l *ParticipantRequestLimiter) LoadStateWithQuarantine(key string, modelIDs
 	}
 	if tokens >= l.burst && failureStrikes == 0 {
 		if l.store != nil {
-			if err := l.store.DeleteParticipantThrottle(key); err != nil {
+			if err := l.store.DeleteParticipantThrottle(context.Background(), key); err != nil {
 				log.Printf("participant_throttle_cleanup_failed participant_key=%s error=%v", key, err)
 			}
 		}
@@ -961,14 +962,14 @@ func (l *ParticipantRequestLimiter) persistThrottledStateLocked(key string, stat
 	if !state.quarantineUntil.IsZero() {
 		quar = state.quarantineUntil
 	}
-	if err := l.store.SaveParticipantThrottle(key, modelIDsFromSet(state.modelIDs), state.tokens, state.lastRefill, status, quar, state.failureStrikes); err != nil {
+	if err := l.store.SaveParticipantThrottle(context.Background(), key, modelIDsFromSet(state.modelIDs), state.tokens, state.lastRefill, status, quar, state.failureStrikes); err != nil {
 		log.Printf("participant_throttle_persist_failed participant_key=%s error=%v", key, err)
 	}
 }
 
 func (l *ParticipantRequestLimiter) persistDeleteLocked(key string) {
 	if l.store != nil {
-		if err := l.store.DeleteParticipantThrottle(key); err != nil {
+		if err := l.store.DeleteParticipantThrottle(context.Background(), key); err != nil {
 			log.Printf("participant_throttle_cleanup_failed participant_key=%s error=%v", key, err)
 		}
 	}

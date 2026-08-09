@@ -16,16 +16,20 @@ import (
 const DefaultSnapshotInterval = 5 * time.Minute
 
 type Tracker struct {
-	mu       sync.RWMutex
-	store    *Store
-	escrows  map[string]*escrowState
-	updated  time.Time
-	stop     context.CancelFunc
-	done     chan struct{}
-	once     sync.Once
-	now      func() time.Time
-	errCount uint64
-	wrCount  uint64
+	mu      sync.RWMutex
+	store   *Store
+	escrows map[string]*escrowState
+	dirty   map[string]struct{} // escrow IDs mutated since last successful persist
+	// pendingDeletes are pruned escrow IDs whose deletion has not been persisted
+	// yet, so a failed persist still removes them on the next attempt.
+	pendingDeletes map[string]struct{}
+	updated        time.Time
+	stop           context.CancelFunc
+	done           chan struct{}
+	once           sync.Once
+	now            func() time.Time
+	errCount       uint64
+	wrCount        uint64
 }
 
 type escrowState struct {
@@ -162,6 +166,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			if phaseRank(meta.Phase) > phaseRank(existing.Meta.Phase) {
 				existing.Meta.Phase = meta.Phase
 			}
+			t.markDirtyLocked(meta.EscrowID)
 			return nil
 		}
 		t.escrows[meta.EscrowID] = &escrowState{
@@ -174,6 +179,7 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			InvalidNonce:    make(map[uint64]struct{}),
 			Live:            make(map[uint64]*nonceState),
 		}
+		t.markDirtyLocked(meta.EscrowID)
 		return nil
 	})
 }
@@ -380,6 +386,113 @@ func (t *Tracker) withWrite(fn func() error) error {
 	return err
 }
 
+func (t *Tracker) markDirtyLocked(escrowID string) {
+	escrowID = strings.TrimSpace(escrowID)
+	if escrowID == "" {
+		return
+	}
+	if t.dirty == nil {
+		t.dirty = make(map[string]struct{})
+	}
+	t.dirty[escrowID] = struct{}{}
+}
+
+// restorePersistState re-arms the work a failed persist consumed so the next
+// snapshot retries it instead of silently dropping the changes.
+func (t *Tracker) restorePersistState(dirtyIDs, deletedIDs []string) {
+	if t == nil || (len(dirtyIDs) == 0 && len(deletedIDs) == 0) {
+		return
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	for _, id := range dirtyIDs {
+		t.markDirtyLocked(id)
+	}
+	for _, id := range deletedIDs {
+		if t.pendingDeletes == nil {
+			t.pendingDeletes = make(map[string]struct{}, len(deletedIDs))
+		}
+		t.pendingDeletes[id] = struct{}{}
+	}
+}
+
+// takePersistSnapshot refreshes derived state, prunes by retention, and returns
+// the rows to persist. dirtyIDs are escrows mutated since the last persist that
+// still exist; deletedIDs were removed by prune (including deletions a previous
+// failed persist did not land). Clears the dirty and pending-delete sets;
+// restorePersistState puts them back when the persist fails.
+func (t *Tracker) takePersistSnapshot(retention uint64) (storeSnapshot, []string, []string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	now := t.nowUTC()
+	for _, escrow := range t.escrows {
+		escrow.refreshDerived(now)
+	}
+	t.updated = now
+	before := make(map[string]struct{}, len(t.escrows))
+	for id := range t.escrows {
+		before[id] = struct{}{}
+	}
+	t.pruneLocked(retention)
+
+	deleted := t.pendingDeletes
+	if deleted == nil {
+		deleted = make(map[string]struct{})
+	}
+	t.pendingDeletes = nil
+	for id := range before {
+		if _, ok := t.escrows[id]; !ok {
+			deleted[id] = struct{}{}
+			delete(t.dirty, id)
+		}
+	}
+	deletedIDs := sortedKeys(deleted)
+
+	dirtyIDs := make([]string, 0, len(t.dirty))
+	for id := range t.dirty {
+		if _, ok := t.escrows[id]; ok {
+			dirtyIDs = append(dirtyIDs, id)
+		}
+	}
+	sort.Strings(dirtyIDs)
+	t.dirty = nil
+
+	out := storeSnapshot{UpdatedAt: t.updated, WriterErrors: t.wrCount}
+	for _, escrow := range t.escrows {
+		out.Escrows = append(out.Escrows, blobFromEscrow(escrow))
+	}
+	return out, dirtyIDs, deletedIDs
+}
+
+func (t *Tracker) pruneLocked(retention uint64) {
+	if retention == 0 {
+		return
+	}
+	var maxEpoch uint64
+	complete := make(map[uint64]bool)
+	for _, escrow := range t.escrows {
+		epoch := escrow.Meta.CreationEpoch
+		if epoch > maxEpoch {
+			maxEpoch = epoch
+		}
+		if _, ok := complete[epoch]; !ok {
+			complete[epoch] = true
+		}
+		if escrow.Meta.Phase != EscrowSettled {
+			complete[epoch] = false
+		}
+	}
+	var cutoff uint64
+	if maxEpoch+1 > retention {
+		cutoff = maxEpoch + 1 - retention
+	}
+	for id, escrow := range t.escrows {
+		if escrow.Meta.CreationEpoch < cutoff && complete[escrow.Meta.CreationEpoch] {
+			delete(t.escrows, id)
+		}
+	}
+}
+
 func (t *Tracker) nowUTC() time.Time {
 	if t.now == nil {
 		return time.Now().UTC()
@@ -406,7 +519,11 @@ func (t *Tracker) withEscrow(escrowID string, fn func(*escrowState) error) error
 		if e == nil {
 			return fmt.Errorf("escrow %q not registered", escrowID)
 		}
-		return fn(e)
+		if err := fn(e); err != nil {
+			return err
+		}
+		t.markDirtyLocked(escrowID)
+		return nil
 	})
 }
 

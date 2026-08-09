@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -306,25 +307,25 @@ type GatewayState struct {
 // GatewayStore persists gateway management state (settings, devshards, throttle, rotation).
 type GatewayStore interface {
 	Close() error
-	LoadState() (GatewayState, bool, error)
-	Initialize(settings GatewaySettings, devshards []GatewayDevshardState) error
-	UpdateSettings(settings GatewaySettings) error
-	SaveRotationStatus(status GatewayRotationStatus) error
-	LoadRotationStatuses(limit int) ([]GatewayRotationStatus, error)
-	SaveCommitment(c GatewayEscrowCommitment) error
-	LoadCommitments() ([]GatewayEscrowCommitment, error)
-	DeleteCommitment(txHash string) error
-	LoadSuspiciousHosts() ([]GatewaySuspiciousHost, error)
-	UpsertSuspiciousHosts(participantKeys []string, note string) ([]GatewaySuspiciousHost, error)
-	DeleteSuspiciousHosts(participantKeys []string) ([]GatewaySuspiciousHost, error)
-	UpsertDevshard(devshard GatewayDevshardState) error
-	GetDevshard(id string) (GatewayDevshardState, bool, error)
-	SetDevshardActive(id string, active bool) error
-	SetDevshardSettlementPending(id string, pending bool) error
-	DeleteDevshard(id string) error
-	SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
-	DeleteParticipantThrottle(key string) error
-	LoadParticipantThrottles() ([]ParticipantThrottleRow, error)
+	LoadState(ctx context.Context) (GatewayState, bool, error)
+	Initialize(ctx context.Context, settings GatewaySettings, devshards []GatewayDevshardState) error
+	UpdateSettings(ctx context.Context, settings GatewaySettings) error
+	SaveRotationStatus(ctx context.Context, status GatewayRotationStatus) error
+	LoadRotationStatuses(ctx context.Context, limit int) ([]GatewayRotationStatus, error)
+	SaveCommitment(ctx context.Context, c GatewayEscrowCommitment) error
+	LoadCommitments(ctx context.Context) ([]GatewayEscrowCommitment, error)
+	DeleteCommitment(ctx context.Context, txHash string) error
+	LoadSuspiciousHosts(ctx context.Context) ([]GatewaySuspiciousHost, error)
+	UpsertSuspiciousHosts(ctx context.Context, participantKeys []string, note string) ([]GatewaySuspiciousHost, error)
+	DeleteSuspiciousHosts(ctx context.Context, participantKeys []string) ([]GatewaySuspiciousHost, error)
+	UpsertDevshard(ctx context.Context, devshard GatewayDevshardState) error
+	GetDevshard(ctx context.Context, id string) (GatewayDevshardState, bool, error)
+	SetDevshardActive(ctx context.Context, id string, active bool) error
+	SetDevshardSettlementPending(ctx context.Context, id string, pending bool) error
+	DeleteDevshard(ctx context.Context, id string) error
+	SaveParticipantThrottle(ctx context.Context, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error
+	DeleteParticipantThrottle(ctx context.Context, key string) error
+	LoadParticipantThrottles(ctx context.Context) ([]ParticipantThrottleRow, error)
 }
 
 type GatewayRotationStatus struct {
@@ -654,4 +655,3 @@ func mustMarshalGatewayModelLimits(limits []GatewayModelLimitSettings) string {
 	}
 	return string(b)
 }
-

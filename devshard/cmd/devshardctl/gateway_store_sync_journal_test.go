@@ -2,14 +2,59 @@ package main
 
 import (
 	"context"
-	"database/sql"
-	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"common/storage/mode"
+
 	"github.com/stretchr/testify/require"
 )
+
+// seedLegacySyncJournalRow appends a journal row the way a pre-Postgres-only
+// build did when a write fell back to SQLite. Nothing writes the journal
+// anymore, so the drain is exercised against rows left on disk by an older
+// deployment: the caller writes the data row through the normal SQLite API and
+// records the matching journal entry here.
+func seedLegacySyncJournalRow(t *testing.T, sqlite *SQLiteGatewayStore, tableName, rowKey, op string) {
+	t.Helper()
+	_, err := sqlite.db.Exec(`
+		INSERT INTO gateway_pg_sync_journal (table_name, row_key, op, enqueued_at)
+		VALUES (?, ?, ?, ?)`,
+		tableName, rowKey, op, time.Now().UTC().Format(time.RFC3339Nano))
+	require.NoError(t, err)
+}
+
+func baseSyncJournalSettings() GatewaySettings {
+	return GatewaySettings{
+		ChainREST:               "http://node:1317",
+		PublicAPI:               "http://api:9000",
+		DefaultModel:            "Qwen/Test",
+		DefaultRequestMaxTokens: 1000,
+		MaxConcurrentRequests:   1,
+		MaxInputTokensInFlight:  100,
+	}.WithTuningDefaults()
+}
+
+func TestSyncJournalDrainNamesBadRowInError(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	t.Cleanup(cleanup)
+
+	ctx := context.Background()
+	pg, err := NewPostgresGatewayStore(ctx)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, pg.Close()) })
+
+	sqlite := newTestSQLiteGatewayStoreOnly(t)
+	require.NoError(t, sqlite.Initialize(ctx, baseSyncJournalSettings(), nil))
+	seedLegacySyncJournalRow(t, sqlite, "not_a_gateway_table", "bad-key", gatewaySyncOpUpsert)
+
+	err = drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), `table="not_a_gateway_table"`)
+	require.Contains(t, err.Error(), `row_key="bad-key"`)
+	require.Contains(t, err.Error(), `op="upsert"`)
+}
 
 func TestCoalesceSyncJournalRows(t *testing.T) {
 	rows := []gatewaySyncJournalRow{
@@ -22,6 +67,30 @@ func TestCoalesceSyncJournalRows(t *testing.T) {
 	coalesced := coalesceSyncJournalRows(rows)
 	require.Equal(t, gatewaySyncOpDelete, coalesced[gatewaySyncKey{tableName: gatewayTableDevshards, rowKey: "a"}])
 	require.Equal(t, gatewaySyncOpUpsert, coalesced[gatewaySyncKey{tableName: gatewayTableDevshards, rowKey: "b"}])
+}
+
+func TestSyncJournalRowShapePersistsAcrossRestart(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "gateway.db")
+	sqlite, err := NewSQLiteGatewayStore(path)
+	require.NoError(t, err)
+	require.NoError(t, sqlite.Initialize(context.Background(), baseSyncJournalSettings(), nil))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableSettings, gatewaySettingsRowKey, gatewaySyncOpUpsert)
+	require.NoError(t, sqlite.Close())
+
+	reopened, err := NewSQLiteGatewayStore(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+
+	count, err := reopened.countSyncJournalEntries()
+	require.NoError(t, err)
+	require.Equal(t, 1, count)
+
+	rows, err := reopened.loadSyncJournalChunk(0, 10)
+	require.NoError(t, err)
+	require.Len(t, rows, 1)
+	require.Equal(t, gatewayTableSettings, rows[0].tableName)
+	require.Equal(t, gatewaySettingsRowKey, rows[0].rowKey)
+	require.Equal(t, gatewaySyncOpUpsert, rows[0].op)
 }
 
 func TestSyncJournalDrainProcessesInChunks(t *testing.T) {
@@ -38,35 +107,26 @@ func TestSyncJournalDrainProcessesInChunks(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 
 	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	base := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, pg.Initialize(base, nil))
-	require.NoError(t, sqlite.Initialize(base, nil))
+	base := baseSyncJournalSettings()
+	require.NoError(t, pg.Initialize(context.Background(), base, nil))
+	require.NoError(t, sqlite.Initialize(context.Background(), base, nil))
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
+	// Five journaled updates to the same row: the drain must span three chunks
+	// and replay the row's final value once per chunk.
 	for i := 0; i < 5; i++ {
 		updated := base
 		updated.DefaultRequestMaxTokens = uint64(2000 + i)
-		require.NoError(t, hybrid.UpdateSettings(updated))
+		require.NoError(t, sqlite.UpdateSettings(context.Background(), updated))
+		seedLegacySyncJournalRow(t, sqlite, gatewayTableSettings, gatewaySettingsRowKey, gatewaySyncOpUpsert)
 	}
 
 	count, err := sqlite.countSyncJournalEntries()
 	require.NoError(t, err)
 	require.Equal(t, 5, count)
 
-	drainHybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
 
-	pgState, has, err := pg.LoadState()
+	pgState, has, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, has)
 	require.EqualValues(t, 2004, pgState.Settings.DefaultRequestMaxTokens)
@@ -90,172 +150,35 @@ func TestSyncJournalDrainUpsertDeleteAcrossChunks(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 
 	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	base := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, pg.Initialize(base, nil))
-	require.NoError(t, sqlite.Initialize(base, nil))
+	base := baseSyncJournalSettings()
+	require.NoError(t, pg.Initialize(context.Background(), base, nil))
+	require.NoError(t, sqlite.Initialize(context.Background(), base, nil))
 
-	// Seed PG with a commitment that outage-era SQLite save+delete should remove.
-	require.NoError(t, pg.SaveCommitment(GatewayEscrowCommitment{
+	// Seed PG with a commitment that the outage-era save+delete should remove.
+	require.NoError(t, pg.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TX-CHUNK-1", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 7,
 	}))
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	require.NoError(t, hybrid.SaveCommitment(GatewayEscrowCommitment{
+	require.NoError(t, sqlite.SaveCommitment(context.Background(), GatewayEscrowCommitment{
 		TxHash: "TX-CHUNK-1", Model: "Qwen/Test", Role: rotationRoleTemp, Epoch: 7,
 	}))
-	require.NoError(t, hybrid.DeleteCommitment("TX-CHUNK-1"))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableCommitments, "TX-CHUNK-1", gatewaySyncOpUpsert)
+	require.NoError(t, sqlite.DeleteCommitment(context.Background(), "TX-CHUNK-1"))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableCommitments, "TX-CHUNK-1", gatewaySyncOpDelete)
 
 	count, err := sqlite.countSyncJournalEntries()
 	require.NoError(t, err)
 	require.Equal(t, 2, count)
 
-	drainHybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
 
-	commitments, err := pg.LoadCommitments()
+	commitments, err := pg.LoadCommitments(context.Background())
 	require.NoError(t, err)
 	require.Empty(t, commitments)
 
 	count, err = sqlite.countSyncJournalEntries()
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
-}
-
-func TestHybridSyncJournalOnFallback(t *testing.T) {
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   2,
-		MaxInputTokensInFlight:  200,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
-
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	t.Cleanup(func() { require.NoError(t, hybrid.Close()) })
-
-	updated := settings
-	updated.DefaultRequestMaxTokens = 2222
-	require.NoError(t, hybrid.UpdateSettings(updated))
-
-	count, err := sqlite.countSyncJournalEntries()
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
-
-	rows, err := sqlite.loadSyncJournalUpTo(10)
-	require.NoError(t, err)
-	require.Len(t, rows, 1)
-	require.Equal(t, gatewayTableSettings, rows[0].tableName)
-	require.Equal(t, gatewaySettingsRowKey, rows[0].rowKey)
-	require.Equal(t, gatewaySyncOpUpsert, rows[0].op)
-}
-
-func TestHybridSyncJournalAtomicWrite(t *testing.T) {
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   2,
-		MaxInputTokensInFlight:  200,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
-
-	err := sqlite.writeWithSyncJournal(
-		[]gatewaySyncEntry{{tableName: gatewayTableSettings, rowKey: gatewaySettingsRowKey, op: gatewaySyncOpUpsert}},
-		func(tx *sql.Tx) error { return fmt.Errorf("forced sqlite write failure") },
-	)
-	require.Error(t, err)
-
-	count, err := sqlite.countSyncJournalEntries()
-	require.NoError(t, err)
-	require.Equal(t, 0, count)
-}
-
-func TestHybridPGToSQLiteFallbackDisabled(t *testing.T) {
-	t.Setenv("PG_TO_SQLITE_FALLBACK", "false")
-
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   2,
-		MaxInputTokensInFlight:  200,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
-
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	t.Cleanup(func() { require.NoError(t, hybrid.Close()) })
-
-	updated := settings
-	updated.DefaultRequestMaxTokens = 3333
-	err := hybrid.UpdateSettings(updated)
-	require.Error(t, err)
-
-	count, err := sqlite.countSyncJournalEntries()
-	require.NoError(t, err)
-	require.Equal(t, 0, count)
-
-	_, has, err := sqlite.LoadState()
-	require.NoError(t, err)
-	require.True(t, has)
-	sqliteState, _, err := sqlite.LoadState()
-	require.NoError(t, err)
-	require.EqualValues(t, 1000, sqliteState.Settings.DefaultRequestMaxTokens)
-}
-
-func TestSyncJournalRestartPersistence(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "gateway.db")
-
-	sqlite, err := NewSQLiteGatewayStore(path)
-	require.NoError(t, err)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
-
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	require.NoError(t, hybrid.UpdateSettings(settings))
-	require.NoError(t, hybrid.Close())
-	require.NoError(t, sqlite.Close())
-
-	reopened, err := NewSQLiteGatewayStore(path)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
-
-	count, err := reopened.countSyncJournalEntries()
-	require.NoError(t, err)
-	require.Equal(t, 1, count)
 }
 
 func TestSyncJournalDrainRestoresOutageDeltas(t *testing.T) {
@@ -268,43 +191,34 @@ func TestSyncJournalDrainRestoresOutageDeltas(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 
 	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	base := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   2,
-		MaxInputTokensInFlight:  200,
-	}.WithTuningDefaults()
-	require.NoError(t, pg.Initialize(base, []GatewayDevshardState{{
+	base := baseSyncJournalSettings()
+	require.NoError(t, pg.Initialize(context.Background(), base, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "keep-me", Model: "Qwen/Test", StoragePath: "/data/keep"},
 		Active:        true,
 	}}))
-
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	require.NoError(t, sqlite.Initialize(base, []GatewayDevshardState{{
+	require.NoError(t, sqlite.Initialize(context.Background(), base, []GatewayDevshardState{{
 		RuntimeConfig: RuntimeConfig{ID: "keep-me", Model: "Qwen/Test", StoragePath: "/data/keep"},
 		Active:        true,
 	}, {
 		RuntimeConfig: RuntimeConfig{ID: "outage-only", Model: "Kimi/Rotate", StoragePath: "/data/outage"},
 		Active:        true,
 	}}))
+
 	outageSettings := base
 	outageSettings.DefaultRequestMaxTokens = 5555
-	require.NoError(t, hybrid.UpdateSettings(outageSettings))
-	require.NoError(t, hybrid.UpsertDevshard(GatewayDevshardState{
+	require.NoError(t, sqlite.UpdateSettings(context.Background(), outageSettings))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableSettings, gatewaySettingsRowKey, gatewaySyncOpUpsert)
+	require.NoError(t, sqlite.UpsertDevshard(context.Background(), GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{ID: "outage-only", Model: "Kimi/Rotate", StoragePath: "/data/outage-new"},
 		Active:        true,
 	}))
-	require.NoError(t, hybrid.DeleteDevshard("keep-me"))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableDevshards, "outage-only", gatewaySyncOpUpsert)
+	require.NoError(t, sqlite.DeleteDevshard(context.Background(), "keep-me"))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableDevshards, "keep-me", gatewaySyncOpDelete)
 
-	drainHybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
 
-	pgState, has, err := pg.LoadState()
+	pgState, has, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, has)
 	require.EqualValues(t, 5555, pgState.Settings.DefaultRequestMaxTokens)
@@ -335,7 +249,7 @@ func TestSyncJournalDrainNoClobberPGOnlyRows(t *testing.T) {
 		MaxConcurrentRequests:   9,
 		MaxInputTokensInFlight:  900,
 	}.WithTuningDefaults()
-	require.NoError(t, pg.Initialize(pgOnly, nil))
+	require.NoError(t, pg.Initialize(context.Background(), pgOnly, nil))
 
 	staleSQLite := GatewaySettings{
 		ChainREST:               "http://stale:1317",
@@ -345,25 +259,23 @@ func TestSyncJournalDrainNoClobberPGOnlyRows(t *testing.T) {
 		MaxConcurrentRequests:   1,
 		MaxInputTokensInFlight:  1,
 	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(staleSQLite, nil))
+	require.NoError(t, sqlite.Initialize(context.Background(), staleSQLite, nil))
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	require.NoError(t, hybrid.SaveRotationStatus(GatewayRotationStatus{
-		ModelID: "Qwen/Test", Stage: "prepare_temp", Epoch: 3, Completed: true,
-	}))
+	// Only the rotation status was journaled, so the stale SQLite settings row
+	// must not travel with it.
+	status := GatewayRotationStatus{ModelID: "Qwen/Test", Stage: "prepare_temp", Epoch: 3, Completed: true}
+	require.NoError(t, sqlite.SaveRotationStatus(context.Background(), status))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableRotationStatus,
+		gatewayRotationStatusRowKey(status.ModelID, status.Stage, status.Epoch), gatewaySyncOpUpsert)
 
-	drainHybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
 
-	pgState, has, err := pg.LoadState()
+	pgState, has, err := pg.LoadState(context.Background())
 	require.NoError(t, err)
 	require.True(t, has)
 	require.Equal(t, pgOnly, pgState.Settings)
 
-	statuses, err := pg.LoadRotationStatuses(0)
+	statuses, err := pg.LoadRotationStatuses(context.Background(), 0)
 	require.NoError(t, err)
 	require.Len(t, statuses, 1)
 	require.Equal(t, "prepare_temp", statuses[0].Stage)
@@ -379,186 +291,61 @@ func TestSyncJournalDrainIdempotent(t *testing.T) {
 	t.Cleanup(func() { require.NoError(t, pg.Close()) })
 
 	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
+	settings := baseSyncJournalSettings()
+	require.NoError(t, sqlite.Initialize(context.Background(), settings, nil))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableSettings, gatewaySettingsRowKey, gatewaySyncOpUpsert)
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	require.NoError(t, hybrid.UpdateSettings(settings))
-
-	drainHybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
-	require.NoError(t, drainHybrid.ReconcileSyncJournal(ctx, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
+	require.NoError(t, drainGatewaySyncJournalUntilEmpty(ctx, sqlite, pg))
 
 	count, err := sqlite.countSyncJournalEntries()
 	require.NoError(t, err)
 	require.Equal(t, 0, count)
 }
 
-// TestHybridSuspiciousHostsFallbackNoDeadlock guards against reading the
-// suspicious hosts via a fresh s.db query inside writeWithSyncJournal's open
-// transaction. SQLite is capped at one connection, so that would deadlock.
-func TestHybridSuspiciousHostsFallbackNoDeadlock(t *testing.T) {
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
+// TestNewGatewayStoreDrainsLegacySyncJournal covers the production path: a
+// gateway upgraded from a hybrid build boots with unreplayed journal rows in
+// gateway.db and must publish them to Postgres before serving.
+func TestNewGatewayStoreDrainsLegacySyncJournal(t *testing.T) {
+	cleanup := setupPostgresContainer(t)
+	t.Cleanup(cleanup)
+	t.Setenv(mode.EnvStorageMode, "postgres")
 
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.connectPG = func(context.Context) (*PostgresGatewayStore, error) {
-		return nil, errGatewayStoreUnavailable
-	}
-	t.Cleanup(func() { require.NoError(t, hybrid.Close()) })
+	ctx := context.Background()
+	base := baseSyncJournalSettings()
 
-	runWithTimeout(t, "UpsertSuspiciousHosts", func() {
-		hosts, err := hybrid.UpsertSuspiciousHosts([]string{"pk1", "pk2"}, "flagged")
-		require.NoError(t, err)
-		require.Len(t, hosts, 2)
-	})
-
-	count, err := sqlite.countSyncJournalEntries()
+	// Postgres already holds gateway settings, so the bulk migration is skipped
+	// and only the journal drain can carry the outage-era update across.
+	seed, err := NewPostgresGatewayStore(ctx)
 	require.NoError(t, err)
-	require.Equal(t, 2, count)
+	require.NoError(t, seed.Initialize(context.Background(), base, nil))
+	require.NoError(t, seed.Close())
 
-	runWithTimeout(t, "DeleteSuspiciousHosts", func() {
-		hosts, err := hybrid.DeleteSuspiciousHosts([]string{"pk1"})
-		require.NoError(t, err)
-		require.Len(t, hosts, 1)
-	})
-}
-
-func runWithTimeout(t *testing.T, name string, fn func()) {
-	t.Helper()
-	done := make(chan struct{})
-	go func() {
-		defer close(done)
-		fn()
-	}()
-	select {
-	case <-done:
-	case <-time.After(10 * time.Second):
-		t.Fatalf("%s deadlocked in SQLite fallback", name)
-	}
-}
-
-// TestHybridDropPgClearsCachedConnection verifies a failed Postgres write drops
-// the cached connection so subsequent writes journal and the next reconnect
-// re-drains the journal before republishing Postgres as primary.
-func TestHybridDropPgClearsCachedConnection(t *testing.T) {
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	t.Cleanup(func() { require.NoError(t, hybrid.Close()) })
-
-	pg := &PostgresGatewayStore{}
-	hybrid.mu.Lock()
-	hybrid.pg = pg
-	hybrid.mu.Unlock()
-
-	// Dropping a stale pointer must not clear a newer connection.
-	hybrid.dropPg(&PostgresGatewayStore{})
-	require.Equal(t, pg, hybrid.currentPg())
-
-	// Dropping the live connection clears it and is idempotent.
-	hybrid.dropPg(pg)
-	require.Nil(t, hybrid.currentPg())
-	hybrid.dropPg(pg)
-	require.Nil(t, hybrid.currentPg())
-}
-
-// TestHybridPGWriteRetrySurvivesBlip verifies a transient Postgres failure is
-// retried within the budget and succeeds without dropping to SQLite.
-func TestHybridPGWriteRetrySurvivesBlip(t *testing.T) {
-	prev := gatewayPGWriteRetryBaseBackoff
-	gatewayPGWriteRetryBaseBackoff = time.Millisecond
-	t.Cleanup(func() { gatewayPGWriteRetryBaseBackoff = prev })
-
-	hybrid := NewHybridGatewayStore(nil, nil, timeHour, gatewayPGConnectTimeout)
-	hybrid.writeRetryBudget = time.Second
-
-	pg := &PostgresGatewayStore{}
-	attempts := 0
-	err := hybrid.attemptPGWrite(context.Background(), pg, func(*PostgresGatewayStore) error {
-		attempts++
-		if attempts < 3 {
-			return fmt.Errorf("blip")
-		}
-		return nil
-	})
+	baseDir := t.TempDir()
+	sqlitePath := filepath.Join(baseDir, "gateway.db")
+	sqlite, err := NewSQLiteGatewayStore(sqlitePath)
 	require.NoError(t, err)
-	require.Equal(t, 3, attempts)
-}
+	require.NoError(t, sqlite.Initialize(context.Background(), base, nil))
+	journaled := base
+	journaled.DefaultRequestMaxTokens = 3300
+	require.NoError(t, sqlite.UpdateSettings(context.Background(), journaled))
+	seedLegacySyncJournalRow(t, sqlite, gatewayTableSettings, gatewaySettingsRowKey, gatewaySyncOpUpsert)
+	require.NoError(t, sqlite.Close())
 
-// TestHybridPGWriteRetryBudgetDisabled verifies a zero budget makes a single
-// attempt with no retry.
-func TestHybridPGWriteRetryBudgetDisabled(t *testing.T) {
-	hybrid := NewHybridGatewayStore(nil, nil, timeHour, gatewayPGConnectTimeout)
-	hybrid.writeRetryBudget = 0
-
-	pg := &PostgresGatewayStore{}
-	attempts := 0
-	err := hybrid.attemptPGWrite(context.Background(), pg, func(*PostgresGatewayStore) error {
-		attempts++
-		return fmt.Errorf("down")
-	})
-	require.Error(t, err)
-	require.Equal(t, 1, attempts)
-}
-
-// TestHybridWriteFallsBackAfterRetryBudget verifies that once the retry budget
-// is exhausted the write drops Postgres, routes to SQLite, and journals.
-func TestHybridWriteFallsBackAfterRetryBudget(t *testing.T) {
-	sqlite := newTestSQLiteGatewayStoreOnly(t)
-	settings := GatewaySettings{
-		ChainREST:               "http://node:1317",
-		PublicAPI:               "http://api:9000",
-		DefaultModel:            "Qwen/Test",
-		DefaultRequestMaxTokens: 1000,
-		MaxConcurrentRequests:   1,
-		MaxInputTokensInFlight:  100,
-	}.WithTuningDefaults()
-	require.NoError(t, sqlite.Initialize(settings, nil))
-
-	hybrid := NewHybridGatewayStore(nil, sqlite, timeHour, gatewayPGConnectTimeout)
-	hybrid.writeRetryBudget = 0
-	t.Cleanup(func() { require.NoError(t, hybrid.Close()) })
-
-	pgAttempts := 0
-	failingPG := &PostgresGatewayStore{}
-	hybrid.mu.Lock()
-	hybrid.pg = failingPG
-	hybrid.mu.Unlock()
-
-	err := hybrid.write(context.Background(),
-		func(*PostgresGatewayStore) error {
-			pgAttempts++
-			return fmt.Errorf("pg down")
-		},
-		func(sqlite *SQLiteGatewayStore) error { return sqlite.UpdateSettings(settings) },
-		[]gatewaySyncEntry{{tableName: gatewayTableSettings, rowKey: gatewaySettingsRowKey, op: gatewaySyncOpUpsert}},
-		func(tx *sql.Tx) error { return sqlite.updateSettingsTx(tx, settings) },
-	)
+	store, err := NewGatewayStore(ctx, baseDir)
 	require.NoError(t, err)
-	require.Equal(t, 1, pgAttempts)
-	require.Nil(t, hybrid.currentPg())
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	require.IsType(t, &PostgresGatewayStore{}, store)
 
-	count, err := sqlite.countSyncJournalEntries()
+	pgState, has, err := store.LoadState(context.Background())
 	require.NoError(t, err)
-	require.Equal(t, 1, count)
-}
+	require.True(t, has)
+	require.EqualValues(t, 3300, pgState.Settings.DefaultRequestMaxTokens)
 
-const timeHour = time.Hour
+	reopened, err := NewSQLiteGatewayStore(sqlitePath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, reopened.Close()) })
+	count, err := reopened.countSyncJournalEntries()
+	require.NoError(t, err)
+	require.Equal(t, 0, count, "boot must drain the legacy journal")
+}

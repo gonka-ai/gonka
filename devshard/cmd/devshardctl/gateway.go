@@ -22,9 +22,9 @@ import (
 	"sync/atomic"
 	"time"
 
-	devshardpkg "devshard"
 	"common/chain"
 	chaintx "common/chain/tx"
+	devshardpkg "devshard"
 	"devshard/accounting"
 	"devshard/bridge"
 	"devshard/internal/e2econfig"
@@ -484,11 +484,11 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 // lazyRuntimeConfig resolves a non-resident devshard's runtime config from the
 // registry store, applying the same finalization (storage path, default
 // model) used at boot. It returns false when the devshard is unknown.
-func (g *Gateway) lazyRuntimeConfig(id string) (RuntimeConfig, bool, error) {
+func (g *Gateway) lazyRuntimeConfig(ctx context.Context, id string) (RuntimeConfig, bool, error) {
 	if g.store == nil {
 		return RuntimeConfig{}, false, fmt.Errorf("gateway state store unavailable")
 	}
-	record, ok, err := g.store.GetDevshard(id)
+	record, ok, err := g.store.GetDevshard(ctx, id)
 	if err != nil {
 		return RuntimeConfig{}, false, err
 	}
@@ -509,8 +509,8 @@ func (g *Gateway) lazyRuntimeConfig(id string) (RuntimeConfig, bool, error) {
 // hydrateReadOnlyRuntime builds a transient read-only runtime for a
 // non-resident devshard, serving from local storage only (no chain). Returns
 // (nil, false, nil) when the devshard is unknown to the registry.
-func (g *Gateway) hydrateReadOnlyRuntime(id string) (*devshardRuntime, bool, error) {
-	cfg, ok, err := g.lazyRuntimeConfig(id)
+func (g *Gateway) hydrateReadOnlyRuntime(ctx context.Context, id string) (*devshardRuntime, bool, error) {
+	cfg, ok, err := g.lazyRuntimeConfig(ctx, id)
 	if err != nil || !ok {
 		return nil, ok, err
 	}
@@ -769,7 +769,7 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		g.attachEscrowChecker(rt)
 	}
 	if g.store != nil {
-		if hosts, err := g.store.LoadSuspiciousHosts(); err != nil {
+		if hosts, err := g.store.LoadSuspiciousHosts(context.Background()); err != nil {
 			log.Printf("gateway: load suspicious hosts: %v", err)
 		} else {
 			g.replaceSuspiciousHosts(hosts)
@@ -1619,7 +1619,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 		capture := &gatewayStatusResponseWriter{ResponseWriter: w}
 		rt.handler.ServeHTTP(capture, req)
 		if status := capture.statusCode(); status >= 200 && status < 300 {
-			g.markDevshardInactiveAfterFinalize(devshardID, rt)
+			g.markDevshardInactiveAfterFinalize(ctx, devshardID, rt)
 		}
 		return
 	}
@@ -1660,7 +1660,7 @@ func (w *gatewayStatusResponseWriter) statusCode() int {
 // runtimes over the same on-disk storage.
 func (g *Gateway) serveReadOnlyDevshard(w http.ResponseWriter, r *http.Request, devshardID, innerPath string) {
 	ctx := r.Context()
-	rt, known, err := g.hydrateReadOnlyRuntime(devshardID)
+	rt, known, err := g.hydrateReadOnlyRuntime(ctx, devshardID)
 	if err != nil {
 		logRequestStage(ctx, "gateway_devshard_readonly_hydrate_failed", "escrow", devshardID, "error", err)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s could not be loaded: %s"}}`, devshardID, err.Error()), http.StatusBadGateway)
@@ -1705,7 +1705,7 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 	if g.store == nil {
 		return false
 	}
-	record, ok, err := g.store.GetDevshard(devshardID)
+	record, ok, err := g.store.GetDevshard(r.Context(), devshardID)
 	if err != nil || !ok {
 		return false
 	}
@@ -1738,7 +1738,7 @@ func (g *Gateway) serveInactiveDevshardMetadata(w http.ResponseWriter, r *http.R
 	return true
 }
 
-func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRuntime) {
+func (g *Gateway) markDevshardInactiveAfterFinalize(ctx context.Context, id string, rt *devshardRuntime) {
 	rt.active.Store(false)
 	if g.accounting != nil && rt.proxy != nil && rt.proxy.sm != nil {
 		g.accounting.Finalize(id)
@@ -1746,7 +1746,7 @@ func (g *Gateway) markDevshardInactiveAfterFinalize(id string, rt *devshardRunti
 	if g.store == nil {
 		return
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
+	if err := g.store.SetDevshardActive(ctx, id, false); err != nil {
 		log.Printf("finalize: persist deactivation for devshard %s: %v", id, err)
 	}
 }
@@ -2419,11 +2419,11 @@ func legacyPerfSourcePath(storagePath string) string {
 }
 
 type adminDevshardRequest struct {
-	ID              string `json:"id"`
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Model           string `json:"model,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
+	ID            string `json:"id"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Model         string `json:"model,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
 	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
@@ -2434,17 +2434,17 @@ type adminImportDevshardRequest struct {
 }
 
 type adminCreateEscrowRequest struct {
-	PrivateKey      string `json:"private_key,omitempty"`
-	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
-	Amount          uint64 `json:"amount"`
-	ModelID         string `json:"model_id,omitempty"`
-	Register        *bool  `json:"register,omitempty"`
-	StoragePath     string `json:"storage_path,omitempty"`
-	RoutePrefix     string `json:"route_prefix,omitempty"`
-	ChainID         string `json:"chain_id,omitempty"`
-	FeeDenom        string `json:"fee_denom,omitempty"`
-	FeeAmount       uint64 `json:"fee_amount,omitempty"`
-	GasLimit        uint64 `json:"gas_limit,omitempty"`
+	PrivateKey    string `json:"private_key,omitempty"`
+	PrivateKeyEnv string `json:"private_key_env,omitempty"`
+	Amount        uint64 `json:"amount"`
+	ModelID       string `json:"model_id,omitempty"`
+	Register      *bool  `json:"register,omitempty"`
+	StoragePath   string `json:"storage_path,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
+	ChainID       string `json:"chain_id,omitempty"`
+	FeeDenom      string `json:"fee_denom,omitempty"`
+	FeeAmount     uint64 `json:"fee_amount,omitempty"`
+	GasLimit      uint64 `json:"gas_limit,omitempty"`
 }
 
 type adminSettleEscrowRequest struct {
@@ -2535,7 +2535,7 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
 		return
 	}
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -2654,7 +2654,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
 		}
-		if err := g.store.UpdateSettings(settings); err != nil {
+		if err := g.store.UpdateSettings(r.Context(), settings); err != nil {
 			g.mu.Unlock()
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -2722,7 +2722,7 @@ func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	statuses, err := g.store.LoadRotationStatuses(100)
+	statuses, err := g.store.LoadRotationStatuses(r.Context(), 100)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3096,10 +3096,10 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              strconv.FormatUint(result.EscrowID, 10),
-			Model:           modelID,
-			StoragePath:     strings.TrimSpace(req.StoragePath),
-			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
+			ID:          strconv.FormatUint(result.EscrowID, 10),
+			Model:       modelID,
+			StoragePath: strings.TrimSpace(req.StoragePath),
+			RoutePrefix: strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3108,7 +3108,7 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 	} else {
 		record.PrivateKeyEnv = privateKeyEnv
 	}
-	record, err = g.addCreatedEscrowRuntime(record)
+	record, err = g.addCreatedEscrowRuntime(r.Context(), record)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q,"escrow_id":%q,"tx_hash":%q}}`, err.Error(), record.ID, result.TxHash), http.StatusInternalServerError)
 		return
@@ -3128,11 +3128,11 @@ func firstNonZeroUint64(values ...uint64) uint64 {
 	return 0
 }
 
-func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayDevshardState, error) {
+func (g *Gateway) addCreatedEscrowRuntime(ctx context.Context, record GatewayDevshardState) (GatewayDevshardState, error) {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(ctx)
 	if err != nil {
 		return record, err
 	}
@@ -3165,7 +3165,7 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 		return record, err
 	}
 	record.Model = rt.model
-	if err := g.store.UpsertDevshard(record); err != nil {
+	if err := g.store.UpsertDevshard(ctx, record); err != nil {
 		rt.close()
 		return record, err
 	}
@@ -3389,7 +3389,7 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3409,11 +3409,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 
 	record := GatewayDevshardState{
 		RuntimeConfig: RuntimeConfig{
-			ID:              req.ID,
-			PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-			Model:           strings.TrimSpace(req.Model),
-			StoragePath:     req.StoragePath,
+			ID:            req.ID,
+			PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+			PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+			Model:         strings.TrimSpace(req.Model),
+			StoragePath:   req.StoragePath,
 			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
@@ -3427,7 +3427,7 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	record.Model = rt.model
-	if err := g.store.UpsertDevshard(record); err != nil {
+	if err := g.store.UpsertDevshard(r.Context(), record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3460,11 +3460,11 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 	})
 }
 
-func (g *Gateway) resolveDevshardSettlementKey(id string, req adminSettleEscrowRequest) (string, string, error) {
+func (g *Gateway) resolveDevshardSettlementKey(ctx context.Context, id string, req adminSettleEscrowRequest) (string, string, error) {
 	if strings.TrimSpace(req.PrivateKey) != "" || strings.TrimSpace(req.PrivateKeyEnv) != "" {
 		return req.PrivateKey, req.PrivateKeyEnv, nil
 	}
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(ctx)
 	if err != nil {
 		return "", "", err
 	}
@@ -3500,7 +3500,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3564,7 +3564,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 			http.Error(w, `{"error":{"message":"devshard already active"}}`, http.StatusConflict)
 			return
 		}
-		if err := g.store.UpsertDevshard(record); err != nil {
+		if err := g.store.UpsertDevshard(r.Context(), record); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
 		}
@@ -3594,7 +3594,7 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 		return
 	}
 	record.Model = rt.model
-	if err := g.store.UpsertDevshard(record); err != nil {
+	if err := g.store.UpsertDevshard(r.Context(), record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3623,7 +3623,7 @@ func (g *Gateway) handleAdminDeactivateDevshard(w http.ResponseWriter, r *http.R
 		http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is not active"}}`, id), http.StatusNotFound)
 		return
 	}
-	if err := g.store.SetDevshardActive(id, false); err != nil {
+	if err := g.store.SetDevshardActive(r.Context(), id, false); err != nil {
 		g.mu.Unlock()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3662,7 +3662,7 @@ func (g *Gateway) handleAdminActivateDevshard(w http.ResponseWriter, r *http.Req
 
 	g.mu.Lock()
 	if rt, ok := g.runtimes[id]; ok {
-		if err := g.store.SetDevshardActive(id, true); err != nil {
+		if err := g.store.SetDevshardActive(r.Context(), id, true); err != nil {
 			g.mu.Unlock()
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -3678,7 +3678,7 @@ func (g *Gateway) handleAdminActivateDevshard(w http.ResponseWriter, r *http.Req
 	}
 	g.mu.Unlock()
 
-	record, ok, err := g.store.GetDevshard(id)
+	record, ok, err := g.store.GetDevshard(r.Context(), id)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3688,7 +3688,7 @@ func (g *Gateway) handleAdminActivateDevshard(w http.ResponseWriter, r *http.Req
 		return
 	}
 	record.Active = true
-	record, err = g.addCreatedEscrowRuntime(record)
+	record, err = g.addCreatedEscrowRuntime(r.Context(), record)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
 		return
@@ -3709,7 +3709,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 	g.mu.Lock()
 	defer g.mu.Unlock()
 
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(r.Context())
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
@@ -3741,7 +3741,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 			log.Printf("close devshard %s: %v", id, err)
 		}
 	}
-	if err := g.store.DeleteDevshard(id); err != nil {
+	if err := g.store.DeleteDevshard(r.Context(), id); err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 		return
 	}
@@ -3841,7 +3841,7 @@ func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Requ
 	}
 	switch r.Method {
 	case http.MethodGet:
-		hosts, err := g.store.LoadSuspiciousHosts()
+		hosts, err := g.store.LoadSuspiciousHosts(r.Context())
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return
@@ -3854,7 +3854,7 @@ func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Requ
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
 		}
-		hosts, err := g.store.UpsertSuspiciousHosts(adminSuspiciousParticipantKeys(req), req.Note)
+		hosts, err := g.store.UpsertSuspiciousHosts(r.Context(), adminSuspiciousParticipantKeys(req), req.Note)
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
@@ -3867,7 +3867,7 @@ func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Requ
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
 		}
-		hosts, err := g.store.DeleteSuspiciousHosts(adminSuspiciousParticipantKeys(req))
+		hosts, err := g.store.DeleteSuspiciousHosts(r.Context(), adminSuspiciousParticipantKeys(req))
 		if err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 			return
@@ -4016,7 +4016,7 @@ func (g *Gateway) deactivateDevshardByIDWithReason(id, reason string) bool {
 	}
 	rt.active.Store(false)
 	if g.store != nil {
-		if err := g.store.SetDevshardActive(id, false); err != nil {
+		if err := g.store.SetDevshardActive(context.Background(), id, false); err != nil {
 			log.Printf("escrow checker: persist deactivation for %s: %v", id, err)
 		}
 	}
@@ -4060,7 +4060,7 @@ func (g *Gateway) markSettlementPending(id, reason string) {
 	}
 	g.mu.Unlock()
 	if g.store != nil {
-		if err := g.store.SetDevshardSettlementPending(id, true); err != nil {
+		if err := g.store.SetDevshardSettlementPending(context.Background(), id, true); err != nil {
 			log.Printf("settlement_pending_persist_failed escrow=%s reason=%q error=%v", id, reason, err)
 		}
 	}
@@ -4079,7 +4079,7 @@ func (g *Gateway) clearSettlementPending(id string) {
 	}
 	g.mu.Unlock()
 	if g.store != nil {
-		if err := g.store.SetDevshardSettlementPending(id, false); err != nil {
+		if err := g.store.SetDevshardSettlementPending(context.Background(), id, false); err != nil {
 			log.Printf("settlement_pending_clear_failed escrow=%s error=%v", id, err)
 		}
 	}
@@ -4092,7 +4092,7 @@ func (g *Gateway) reconcilePendingSettlements() {
 	if g == nil || g.store == nil {
 		return
 	}
-	state, ok, err := g.store.LoadState()
+	state, ok, err := g.store.LoadState(context.Background())
 	if err != nil || !ok {
 		if err != nil {
 			log.Printf("settlement_reconcile_load_failed error=%v", err)
@@ -4340,12 +4340,12 @@ func resolveRuntimeModel(configured, chainModelID, defaultModel, escrowID string
 
 // persistRuntimeModel updates gateway.db when buildRuntime reconciled the model
 // from chain. Best-effort: failures are logged and do not abort startup.
-func persistRuntimeModel(store GatewayStore, state *GatewayState, escrowID, model string) {
+func persistRuntimeModel(ctx context.Context, store GatewayStore, state *GatewayState, escrowID, model string) {
 	if store == nil || strings.TrimSpace(escrowID) == "" {
 		return
 	}
 	model = strings.TrimSpace(model)
-	record, ok, err := store.GetDevshard(escrowID)
+	record, ok, err := store.GetDevshard(ctx, escrowID)
 	if err != nil {
 		log.Printf("runtime %s: load devshard to persist model %q: %v", escrowID, model, err)
 		return
@@ -4357,7 +4357,7 @@ func persistRuntimeModel(store GatewayStore, state *GatewayState, escrowID, mode
 		return
 	}
 	record.Model = model
-	if err := store.UpsertDevshard(record); err != nil {
+	if err := store.UpsertDevshard(ctx, record); err != nil {
 		log.Printf("runtime %s: persist on-chain model %q: %v", escrowID, model, err)
 		return
 	}

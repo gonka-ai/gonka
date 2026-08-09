@@ -30,6 +30,14 @@ func newTestGatewayStore(t *testing.T, backend string) GatewayStore {
 	}
 }
 
+func newTestSQLiteGatewayStoreOnly(t *testing.T) *SQLiteGatewayStore {
+	t.Helper()
+	store, err := NewSQLiteGatewayStore(filepath.Join(t.TempDir(), "gateway.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, store.Close()) })
+	return store
+}
+
 func requireSQLiteGatewayStore(t *testing.T, store GatewayStore) *SQLiteGatewayStore {
 	t.Helper()
 	sqliteStore, ok := store.(*SQLiteGatewayStore)

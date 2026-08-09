@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"log"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,12 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// The sync journal is read-only history: it was written by the removed
+// Postgres-primary/SQLite-fallback gateway store to record rows that a fallback
+// write had to publish later. Nothing writes it anymore — the gateway store is
+// either SQLite-only or Postgres-only — but a deployment upgraded from a hybrid
+// build can still boot with unreplayed rows in gateway.db, so open drains them
+// into Postgres before serving.
 const (
 	gatewayTableSettings         = "gateway_settings"
 	gatewayTableDevshards        = "gateway_devshards"
@@ -26,12 +33,6 @@ const (
 // gatewaySyncJournalDrainChunkSize bounds how many raw journal rows are loaded
 // and coalesced per drain round. A var so tests can shrink it.
 var gatewaySyncJournalDrainChunkSize = 1000
-
-type gatewaySyncEntry struct {
-	tableName string
-	rowKey    string
-	op        string
-}
 
 type gatewaySyncKey struct {
 	tableName string
@@ -67,35 +68,6 @@ func coalesceSyncJournalRows(rows []gatewaySyncJournalRow) map[gatewaySyncKey]st
 		out[gatewaySyncKey{tableName: row.tableName, rowKey: row.rowKey}] = row.op
 	}
 	return out
-}
-
-func (s *SQLiteGatewayStore) writeWithSyncJournal(entries []gatewaySyncEntry, fn func(*sql.Tx) error) error {
-	if s == nil || s.db == nil {
-		return fmt.Errorf("gateway store unavailable")
-	}
-	if len(entries) == 0 {
-		return fmt.Errorf("sync journal entries required")
-	}
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin sync journal write: %w", err)
-	}
-	defer tx.Rollback()
-
-	if err := fn(tx); err != nil {
-		return err
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	for _, entry := range entries {
-		if _, err := tx.Exec(`
-			INSERT INTO gateway_pg_sync_journal (table_name, row_key, op, enqueued_at)
-			VALUES (?, ?, ?, ?)`,
-			entry.tableName, entry.rowKey, entry.op, now,
-		); err != nil {
-			return fmt.Errorf("enqueue sync journal %s/%s: %w", entry.tableName, entry.rowKey, err)
-		}
-	}
-	return tx.Commit()
 }
 
 func (s *SQLiteGatewayStore) countSyncJournalEntries() (int, error) {
@@ -138,33 +110,29 @@ func (s *SQLiteGatewayStore) loadSyncJournalChunk(afterSeq int64, limit int) ([]
 	return result, rows.Err()
 }
 
-func (s *SQLiteGatewayStore) loadSyncJournalUpTo(maxSeq int64) ([]gatewaySyncJournalRow, error) {
-	rows, err := s.db.Query(`
-		SELECT seq, table_name, row_key, op
-		FROM gateway_pg_sync_journal
-		WHERE seq <= ?
-		ORDER BY seq ASC`, maxSeq)
-	if err != nil {
-		return nil, fmt.Errorf("load sync journal up to %d: %w", maxSeq, err)
-	}
-	defer rows.Close()
-
-	var result []gatewaySyncJournalRow
-	for rows.Next() {
-		var row gatewaySyncJournalRow
-		if err := rows.Scan(&row.seq, &row.tableName, &row.rowKey, &row.op); err != nil {
-			return nil, fmt.Errorf("scan sync journal row: %w", err)
-		}
-		result = append(result, row)
-	}
-	return result, rows.Err()
-}
-
 func (s *SQLiteGatewayStore) deleteSyncJournalUpTo(maxSeq int64) error {
 	if _, err := s.db.Exec(`DELETE FROM gateway_pg_sync_journal WHERE seq <= ?`, maxSeq); err != nil {
 		return fmt.Errorf("delete sync journal up to %d: %w", maxSeq, err)
 	}
 	return nil
+}
+
+// drainGatewaySyncJournalUntilEmpty replays every journal row into Postgres.
+// drainGatewaySyncJournal reports whether the journal was empty when it
+// finished, so this repeats until it is; ctx bounds the whole replay.
+func drainGatewaySyncJournalUntilEmpty(ctx context.Context, sqlite *SQLiteGatewayStore, pg *PostgresGatewayStore) error {
+	for {
+		empty, err := drainGatewaySyncJournal(ctx, sqlite, pg)
+		if err != nil {
+			// Boot is fail-closed on drain errors; surface the bad journal row so
+			// an operator can DELETE it from gateway_pg_sync_journal by hand.
+			log.Printf("gateway store: FATAL sync journal drain failed (boot blocked until the bad row is removed from gateway.db gateway_pg_sync_journal): %v", err)
+			return err
+		}
+		if empty {
+			return nil
+		}
+	}
 }
 
 func drainGatewaySyncJournal(ctx context.Context, sqlite *SQLiteGatewayStore, pg *PostgresGatewayStore) (empty bool, err error) {
@@ -217,17 +185,17 @@ func applyCoalescedSyncJournalToPG(ctx context.Context, pg *PostgresGatewayStore
 	defer tx.Rollback(ctx)
 
 	for key, op := range coalesced {
+		var err error
 		switch op {
 		case gatewaySyncOpDelete:
-			if err := deleteGatewayRowFromPG(ctx, tx, key.tableName, key.rowKey); err != nil {
-				return err
-			}
+			err = deleteGatewayRowFromPG(ctx, tx, key.tableName, key.rowKey)
 		case gatewaySyncOpUpsert:
-			if err := applyGatewaySyncUpsertToPG(ctx, tx, sqlite, key.tableName, key.rowKey); err != nil {
-				return err
-			}
+			err = applyGatewaySyncUpsertToPG(ctx, tx, sqlite, key.tableName, key.rowKey)
 		default:
-			return fmt.Errorf("unknown sync journal op %q for %s/%s", op, key.tableName, key.rowKey)
+			err = fmt.Errorf("unknown sync journal op %q", op)
+		}
+		if err != nil {
+			return fmt.Errorf("sync journal row table=%q row_key=%q op=%q: %w", key.tableName, key.rowKey, op, err)
 		}
 	}
 	if err := tx.Commit(ctx); err != nil {
@@ -681,176 +649,4 @@ func (s *SQLiteGatewayStore) loadGatewayCommitmentRow(txHash string) (GatewayEsc
 	}
 	c.CreatedAt = scanGatewayDBTime(createdAt)
 	return c, true, nil
-}
-
-func (s *SQLiteGatewayStore) updateSettingsTx(tx *sql.Tx, settings GatewaySettings) error {
-	updatedAt := time.Now().UTC().Format(time.RFC3339Nano)
-	res, err := tx.Exec(fmt.Sprintf(`
-		UPDATE gateway_settings
-		SET %s,
-		    updated_at = ?
-		WHERE id = 1`, gatewaySettingsUpdateAssignments("?")),
-		settingsUpdateArgs(settings, updatedAt)...,
-	)
-	if err != nil {
-		return fmt.Errorf("update gateway settings: %w", err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected for gateway settings update: %w", err)
-	}
-	if n == 0 {
-		return fmt.Errorf("gateway settings not initialized")
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) saveRotationStatusTx(tx *sql.Tx, status GatewayRotationStatus) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	if strings.TrimSpace(status.UpdatedAt) != "" {
-		now = strings.TrimSpace(status.UpdatedAt)
-	}
-	_, err := tx.Exec(`
-		INSERT OR REPLACE INTO gateway_rotation_status (
-			model_id, stage, epoch, role, target_count, existing_count, created_count,
-			promoted_count, settled_count, settle_failed_count, create_error, completed, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(status.ModelID), strings.TrimSpace(status.Stage), status.Epoch,
-		strings.TrimSpace(status.Role), status.TargetCount, status.ExistingCount, status.CreatedCount,
-		status.PromotedCount, status.SettledCount, status.SettleFailedCount,
-		strings.TrimSpace(status.CreateError), gatewayBoolToInt(status.Completed), now,
-	)
-	return err
-}
-
-func (s *SQLiteGatewayStore) saveCommitmentTx(tx *sql.Tx, c GatewayEscrowCommitment) error {
-	createdAt := c.CreatedAt
-	if createdAt.IsZero() {
-		createdAt = time.Now().UTC()
-	} else {
-		createdAt = createdAt.UTC()
-	}
-	_, err := tx.Exec(`
-		INSERT OR REPLACE INTO escrow_rotation_commitments (
-			tx_hash, model, role, epoch, private_key_env, protocol_version, block_height, created_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(c.TxHash), strings.TrimSpace(c.Model), strings.TrimSpace(c.Role),
-		c.Epoch, c.PrivateKeyEnv, strings.TrimSpace(c.ProtocolVersion), c.BlockHeight,
-		createdAt.Format(time.RFC3339Nano),
-	)
-	return err
-}
-
-func (s *SQLiteGatewayStore) deleteCommitmentTx(tx *sql.Tx, txHash string) error {
-	_, err := tx.Exec(`DELETE FROM escrow_rotation_commitments WHERE tx_hash = ?`, strings.TrimSpace(txHash))
-	return err
-}
-
-func (s *SQLiteGatewayStore) upsertSuspiciousHostsTx(tx *sql.Tx, participantKeys []string, note string) error {
-	participantKeys = normalizeParticipantKeys(participantKeys)
-	if len(participantKeys) == 0 {
-		return fmt.Errorf("participant_keys must contain at least one key")
-	}
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	note = strings.TrimSpace(note)
-	for _, key := range participantKeys {
-		if _, err := tx.Exec(`
-			INSERT INTO gateway_suspicious_hosts (participant_key, note, created_at)
-			VALUES (?, ?, ?)
-			ON CONFLICT(participant_key) DO UPDATE SET note = excluded.note`,
-			key, note, now); err != nil {
-			return fmt.Errorf("upsert suspicious host %s: %w", key, err)
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) deleteSuspiciousHostsTx(tx *sql.Tx, participantKeys []string) error {
-	for _, key := range normalizeParticipantKeys(participantKeys) {
-		if _, err := tx.Exec(`DELETE FROM gateway_suspicious_hosts WHERE participant_key = ?`, key); err != nil {
-			return fmt.Errorf("delete suspicious host %s: %w", key, err)
-		}
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) setDevshardActiveTx(tx *sql.Tx, id string, active bool) error {
-	res, err := tx.Exec(`UPDATE gateway_devshards SET active = ?, updated_at = ? WHERE id = ?`,
-		gatewayBoolToInt(active), time.Now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(id))
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) setDevshardSettlementPendingTx(tx *sql.Tx, id string, pending bool) error {
-	res, err := tx.Exec(`UPDATE gateway_devshards SET settlement_pending = ?, updated_at = ? WHERE id = ?`,
-		gatewayBoolToInt(pending), time.Now().UTC().Format(time.RFC3339Nano), strings.TrimSpace(id))
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) deleteDevshardTx(tx *sql.Tx, id string) error {
-	res, err := tx.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, strings.TrimSpace(id))
-	if err != nil {
-		return err
-	}
-	n, _ := res.RowsAffected()
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
-func (s *SQLiteGatewayStore) saveParticipantThrottleTx(tx *sql.Tx, key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
-	quarStr := ""
-	if !quarantineUntil.IsZero() {
-		quarStr = quarantineUntil.UTC().Format(time.RFC3339Nano)
-	}
-	_, err := tx.Exec(`
-		INSERT OR REPLACE INTO participant_throttle_state
-			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, failure_strikes, model_ids)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, failureStrikes,
-		strings.Join(normalizeModelIDs(modelIDs), ","),
-	)
-	return err
-}
-
-func (s *SQLiteGatewayStore) deleteParticipantThrottleTx(tx *sql.Tx, key string) error {
-	_, err := tx.Exec(`DELETE FROM participant_throttle_state WHERE participant_key = ?`, key)
-	return err
-}
-
-func (s *SQLiteGatewayStore) initializeFallbackTx(tx *sql.Tx, settings GatewaySettings, devshards []GatewayDevshardState) error {
-	settings = settings.WithTuningDefaults()
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	var count int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM gateway_settings WHERE id = 1`).Scan(&count); err != nil {
-		return err
-	}
-	if count == 0 {
-		if _, err := tx.Exec(fmt.Sprintf(`INSERT INTO gateway_settings (%s) VALUES (%s)`,
-			gatewaySettingsInsertColumnNames(),
-			sqlitePlaceholderList(len(settingsInsertArgs(settings, now))),
-		), settingsInsertArgs(settings, now)...); err != nil {
-			return err
-		}
-	}
-	for _, devshard := range devshards {
-		if err := s.upsertDevshardTx(tx, devshard, now); err != nil {
-			return err
-		}
-	}
-	return nil
 }

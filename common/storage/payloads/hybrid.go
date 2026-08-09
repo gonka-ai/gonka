@@ -7,11 +7,10 @@ import (
 	"time"
 
 	"common/logging"
+	"common/storage/pgtimeouts"
 
 	"github.com/productscience/inference/x/inference/types"
 )
-
-const pgConnectTimeout = 2 * time.Second
 
 // HybridStorage uses PostgreSQL as primary storage with file-based fallback.
 // Store: tries PG first (with lazy reconnection), falls back to file on error.
@@ -56,7 +55,7 @@ func (h *HybridStorage) getOrConnectPg(ctx context.Context) *postgresStorage {
 		return pg
 	}
 
-	connectCtx, cancel := context.WithTimeout(ctx, pgConnectTimeout)
+	connectCtx, cancel := context.WithTimeout(ctx, pgtimeouts.ConnectTimeout())
 	defer cancel()
 
 	newPg, err := newPostgresStorage(connectCtx)
