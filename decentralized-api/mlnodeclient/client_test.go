@@ -60,7 +60,9 @@ func TestClient_InferenceUpChecksStatus(t *testing.T) {
 				if r.URL.Path != inferenceUpPath {
 					t.Errorf("path = %s, want %s", r.URL.Path, inferenceUpPath)
 				}
-				// FastAPI cannot parse a JSON body without the content type.
+				// We now declare the body we send. FastAPI would parse it either
+				// way (it falls back to JSON when no content-type header is
+				// present), so this pins the header, not a behavior change.
 				if ct := r.Header.Get("Content-Type"); ct != "application/json" {
 					t.Errorf("Content-Type = %q, want application/json", ct)
 				}
@@ -125,6 +127,49 @@ func TestClient_StopChecksStatus(t *testing.T) {
 		}
 		if statusErr.StatusCode != http.StatusInternalServerError {
 			t.Errorf("StatusCode = %d, want 500", statusErr.StatusCode)
+		}
+	})
+}
+
+// TestReadErrorBodyExcerpt pins the two properties the excerpt promises, since
+// the body comes from an endpoint we do not control: it stays on one log line,
+// and it stays bounded.
+func TestReadErrorBodyExcerpt(t *testing.T) {
+	t.Run("multi-line body is folded onto one line", func(t *testing.T) {
+		// A Python traceback or an HTML error page from something that is not an
+		// MLnode. Trimming the ends would leave the interior newlines and spread
+		// one error across several log lines.
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusBadGateway)
+			_, _ = io.WriteString(w, "\n<html>\n  <body>\n\tBad Gateway\n  </body>\n</html>\n")
+		}))
+		defer srv.Close()
+
+		err := newTestClient(srv).Stop(context.Background())
+		if err == nil {
+			t.Fatal("expected an error for a 502")
+		}
+		if msg := err.Error(); strings.ContainsAny(msg, "\n\r\t") {
+			t.Errorf("error message is not single-line: %q", msg)
+		}
+		if !strings.Contains(err.Error(), "Bad Gateway") {
+			t.Errorf("error %q lost the body content", err)
+		}
+	})
+
+	t.Run("oversized body is capped", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_, _ = io.WriteString(w, strings.Repeat("x", maxErrorBodyBytes*4))
+		}))
+		defer srv.Close()
+
+		var statusErr *StatusError
+		if err := newTestClient(srv).Stop(context.Background()); !errors.As(err, &statusErr) {
+			t.Fatalf("error %v is not a StatusError", err)
+		}
+		if len(statusErr.Body) > maxErrorBodyBytes {
+			t.Errorf("excerpt is %d bytes, want at most %d", len(statusErr.Body), maxErrorBodyBytes)
 		}
 	})
 }

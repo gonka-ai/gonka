@@ -62,12 +62,13 @@ func (api *Client) Stop(ctx context.Context) error {
 	return nil
 }
 
-// maxErrorBodyBytes caps how much of an error response body is read into an
-// error message, so a misbehaving or non-MLnode endpoint cannot make us buffer
-// an unbounded response.
+// maxErrorBodyBytes caps how much of a response body we read: both the excerpt
+// kept in an error message and the remainder discarded before close. It keeps a
+// misbehaving or non-MLnode endpoint from making us buffer or drain an
+// unbounded response.
 const maxErrorBodyBytes = 4 << 10
 
-// readErrorBody returns a bounded, single-line excerpt of resp.Body for use in
+// readErrorBody returns a bounded single-line excerpt of resp.Body for use in
 // error messages. Never returns an error: a body we cannot read simply yields
 // an empty excerpt.
 func readErrorBody(resp *http.Response) string {
@@ -78,11 +79,19 @@ func readErrorBody(resp *http.Response) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(body))
+	// Fold every whitespace run into a single space. Trimming the ends is not
+	// enough: an excerpt from an arbitrary endpoint (an HTML error page, a
+	// Python traceback) would otherwise spread one error over several log lines.
+	return strings.Join(strings.Fields(string(body)), " ")
 }
 
-// drainAndClose closes resp.Body after discarding any remainder, so the
-// underlying connection can be reused instead of being torn down.
+// drainAndClose closes resp.Body, first discarding up to maxErrorBodyBytes of
+// whatever the caller left unread, so the underlying connection can go back to
+// the idle pool instead of being torn down. An MLnode error body is a short
+// JSON object, so in practice the remainder is fully consumed and the
+// connection is kept. A body past the cap is deliberately left unread: losing
+// one pooled connection is cheaper than draining an endpoint that may not be an
+// MLnode at all.
 func drainAndClose(resp *http.Response) {
 	if resp == nil || resp.Body == nil {
 		return
