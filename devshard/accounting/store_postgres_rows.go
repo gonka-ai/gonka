@@ -6,7 +6,9 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/jackc/pgx/v5"
@@ -16,26 +18,45 @@ import (
 
 // The Postgres ledger stores one escrow as a set of rows instead of a single
 // JSON blob, so two gateways writing the same escrow merge instead of
-// overwriting each other. Every field has an explicit merge rule:
+// overwriting each other.
 //
-//   - counters and per-slot challenge/invalid counts are additive: each writer
-//     owns its own rows (escrow_id, writer_id, ...) holding its own contribution,
-//     and a reader sums across writers. A writer only ever rewrites its own rows,
-//     so a retry is idempotent and a peer's counts are never touched.
+// Which merge rule is correct depends on whether two instances can observe the
+// same event, so the fields split in two:
+//
+//   - Request-local facts — every disposition that needs a live nonceState
+//     (ghost, finished, unfinished): only the instance that dispatched the nonce
+//     ever sees them, so writers hold disjoint sets and a reader SUMs across
+//     them. Each writer owns rows keyed (escrow_id, writer_id, counter_id) and
+//     publishes its own share, computed as (in-memory total) - (peer
+//     contribution observed at Load) and clamped at zero, so peer counts folded
+//     into the in-memory total stay attributed to the peer.
+//   - Replicated facts — everything read off the committed diff stream:
+//     protocol-only nonces and the challenge/invalidation verdicts. Every
+//     instance attached to the escrow sees the same diffs, so no arithmetic
+//     merge works: summing counts one chain event once per instance, and taking
+//     the max drops what a writer with a stale view never saw. These are
+//     therefore persisted by identity, one row per nonce with no writer_id, and
+//     merged as a set: insert-if-absent for membership and a monotonic OR for
+//     the resolved flag. Per-slot totals are counted from the rows on read.
+//
+// The remaining fields were never additive:
+//
 //   - host stats mirror absolute on-chain per-host numbers (the tracker merges
 //     them with max, see maxHostStats), so they are shared rows merged with
 //     GREATEST.
 //   - latest_nonce is a watermark merged with GREATEST; phase is monotonic and
 //     merged by rank.
-//   - invalid nonces are a set, merged by union (INSERT ... ON CONFLICT DO NOTHING).
 //   - escrow metadata (epoch, model, slots, timeouts) is identity written at
 //     registration; RegisterEscrow rejects conflicting metadata, so writers agree
 //     and last-write is harmless.
 //
-// A writer's own contribution is derived at flush time as
-// (in-memory total) - (peer contribution observed at Load), clamped at zero.
-// Peer counts already folded into the in-memory total therefore stay attributed
-// to the peer, and a writer never publishes a number it did not observe.
+// Under every rule a writer only ever rewrites its own rows with absolute values
+// or adds set members, so a retried or replayed flush is a no-op.
+//
+// accounting_escrow_slot_counts is the one exception: it holds per-slot totals
+// from the layout that predates the sets, and only the frozen legacy writer
+// writes it. It is read as a baseline the derived counts add to, and it ages out
+// with retention.
 
 const (
 	// accountingWriterIDEnv names this process's ledger rows. A stable value
@@ -69,8 +90,9 @@ type escrowContribution struct {
 	slots    map[uint32]slotCounts
 }
 
-// slotCounts are the per-slot additive counts: unresolved challenges and
-// invalidated inferences.
+// slotCounts are the per-slot totals left behind by the pre-set layout. Nothing
+// writes them any more except the legacy blob conversion, which owns them under
+// a frozen writer id, so they need no merge rule beyond their own writer's sum.
 type slotCounts struct {
 	openChallenges uint64
 	invalidNonces  uint64
@@ -100,6 +122,7 @@ func (c *escrowContribution) addSlot(slot uint32, openChallenges, invalidNonces 
 	c.slots[slot] = current
 }
 
+// empty reports whether this contribution holds a peer baseline worth keeping.
 func (c *escrowContribution) empty() bool {
 	return c == nil || (len(c.counters) == 0 && len(c.slots) == 0)
 }
@@ -144,7 +167,8 @@ func saturatingSub(a, b uint64) uint64 {
 	return a - b
 }
 
-// contributionFromBlob reads the additive fields out of a snapshot blob.
+// contributionFromBlob reads the per-writer fields out of a snapshot blob,
+// routing each counter to its merge rule.
 func contributionFromBlob(blob escrowBlob) *escrowContribution {
 	out := newEscrowContribution()
 	for _, counter := range blob.Counters {
@@ -223,6 +247,24 @@ CREATE TABLE IF NOT EXISTS accounting_escrow_invalid_nonces (
 	nonce BIGINT NOT NULL,
 	PRIMARY KEY (escrow_id, nonce)
 );
+-- slot_id was added with the per-nonce sets. Rows written before it exists are
+-- already counted in accounting_escrow_slot_counts, and the sentinel keeps them
+-- out of the derived totals while still deduplicating repeated verdicts.
+ALTER TABLE accounting_escrow_invalid_nonces
+	ADD COLUMN IF NOT EXISTS slot_id BIGINT NOT NULL DEFAULT -1;
+CREATE TABLE IF NOT EXISTS accounting_escrow_protocol_nonces (
+	escrow_id TEXT NOT NULL,
+	nonce BIGINT NOT NULL,
+	slot_id BIGINT NOT NULL,
+	PRIMARY KEY (escrow_id, nonce)
+);
+CREATE TABLE IF NOT EXISTS accounting_escrow_challenges (
+	escrow_id TEXT NOT NULL,
+	nonce BIGINT NOT NULL,
+	slot_id BIGINT NOT NULL,
+	resolved BOOLEAN NOT NULL DEFAULT FALSE,
+	PRIMARY KEY (escrow_id, nonce)
+);
 CREATE TABLE IF NOT EXISTS accounting_writers (
 	writer_id TEXT PRIMARY KEY,
 	updated_at TEXT NOT NULL,
@@ -235,12 +277,16 @@ CREATE TABLE IF NOT EXISTS accounting_writers (
 type loadedLedger struct {
 	blobs map[string]*escrowBlob
 	peers map[string]*escrowContribution
+	// states records which escrows have a state row. Rows in the other tables
+	// without one are orphans and cannot be reconstructed.
+	states map[string]struct{}
 }
 
 func newLoadedLedger() *loadedLedger {
 	return &loadedLedger{
-		blobs: make(map[string]*escrowBlob),
-		peers: make(map[string]*escrowContribution),
+		blobs:  make(map[string]*escrowBlob),
+		peers:  make(map[string]*escrowContribution),
+		states: make(map[string]struct{}),
 	}
 }
 
@@ -271,6 +317,7 @@ func (l *loadedLedger) peer(escrowID string) *escrowContribution {
 // writers for the additive fields, plus the peer-only share of those sums.
 func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedger, error) {
 	out := newLoadedLedger()
+	var orphans []string
 
 	stateRows, err := q.Query(ctx, `
 		SELECT escrow_id, creation_epoch, model, meta_json, phase, latest_nonce
@@ -302,6 +349,7 @@ func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedg
 		blob := out.blob(escrowID)
 		blob.Meta = meta
 		blob.Latest = uint64(latest)
+		out.states[escrowID] = struct{}{}
 	}
 	if err := stateRows.Err(); err != nil {
 		stateRows.Close()
@@ -345,6 +393,9 @@ func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedg
 	}
 	counterRows.Close()
 
+	// Only the frozen legacy writer has rows here. writer_id still matters: the
+	// baseline has to land in the peer contribution so this writer subtracts it
+	// and does not republish the legacy counts under its own id.
 	slotRows, err := q.Query(ctx, `
 		SELECT escrow_id, writer_id, slot_id, open_challenges, invalid_nonces
 		FROM accounting_escrow_slot_counts`)
@@ -407,21 +458,27 @@ func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedg
 	}
 	hostRows.Close()
 
-	nonceRows, err := q.Query(ctx, `SELECT escrow_id, nonce FROM accounting_escrow_invalid_nonces`)
+	nonceRows, err := q.Query(ctx, `SELECT escrow_id, nonce, slot_id FROM accounting_escrow_invalid_nonces`)
 	if err != nil {
 		return nil, fmt.Errorf("load accounting invalid nonces: %w", err)
 	}
 	for nonceRows.Next() {
 		var (
-			escrowID string
-			nonce    int64
+			escrowID      string
+			nonce, slotID int64
 		)
-		if err := nonceRows.Scan(&escrowID, &nonce); err != nil {
+		if err := nonceRows.Scan(&escrowID, &nonce, &slotID); err != nil {
 			nonceRows.Close()
 			return nil, err
 		}
 		blob := out.blob(escrowID)
-		blob.InvalidNonces = append(blob.InvalidNonces, uint64(nonce))
+		if slotID < 0 {
+			// Written before slot_id existed, so it is already counted in the
+			// per-slot baseline; keep it for deduplication only.
+			blob.InvalidNonces = append(blob.InvalidNonces, uint64(nonce))
+			continue
+		}
+		blob.Invalid = append(blob.Invalid, nonceSlot{Nonce: uint64(nonce), Slot: uint32(slotID)})
 	}
 	if err := nonceRows.Err(); err != nil {
 		nonceRows.Close()
@@ -429,10 +486,73 @@ func readLedger(ctx context.Context, q pgxQuerier, writerID string) (*loadedLedg
 	}
 	nonceRows.Close()
 
+	protocolRows, err := q.Query(ctx, `SELECT escrow_id, nonce, slot_id FROM accounting_escrow_protocol_nonces`)
+	if err != nil {
+		return nil, fmt.Errorf("load accounting protocol nonces: %w", err)
+	}
+	for protocolRows.Next() {
+		var (
+			escrowID      string
+			nonce, slotID int64
+		)
+		if err := protocolRows.Scan(&escrowID, &nonce, &slotID); err != nil {
+			protocolRows.Close()
+			return nil, err
+		}
+		blob := out.blob(escrowID)
+		blob.ProtocolOnly = append(blob.ProtocolOnly, nonceSlot{Nonce: uint64(nonce), Slot: uint32(slotID)})
+	}
+	if err := protocolRows.Err(); err != nil {
+		protocolRows.Close()
+		return nil, err
+	}
+	protocolRows.Close()
+
+	challengeRows, err := q.Query(ctx, `SELECT escrow_id, nonce, slot_id, resolved FROM accounting_escrow_challenges`)
+	if err != nil {
+		return nil, fmt.Errorf("load accounting challenges: %w", err)
+	}
+	for challengeRows.Next() {
+		var (
+			escrowID      string
+			nonce, slotID int64
+			resolved      bool
+		)
+		if err := challengeRows.Scan(&escrowID, &nonce, &slotID, &resolved); err != nil {
+			challengeRows.Close()
+			return nil, err
+		}
+		blob := out.blob(escrowID)
+		blob.Challenges = append(blob.Challenges, challengeBlob{
+			Nonce:    uint64(nonce),
+			Slot:     uint32(slotID),
+			Resolved: resolved,
+		})
+	}
+	if err := challengeRows.Err(); err != nil {
+		challengeRows.Close()
+		return nil, err
+	}
+	challengeRows.Close()
+
+	// Rows in the per-writer tables whose escrow has no state row cannot be
+	// turned into an escrow (there is no model or slot list to validate against),
+	// so they are dropped rather than allowed to fail the whole load.
+	for id := range out.blobs {
+		if _, ok := out.states[id]; !ok {
+			delete(out.blobs, id)
+			delete(out.peers, id)
+			orphans = append(orphans, id)
+		}
+	}
 	for id, peer := range out.peers {
 		if peer.empty() {
 			delete(out.peers, id)
 		}
+	}
+	if len(orphans) > 0 {
+		sort.Strings(orphans)
+		log.Printf("accounting store: WARNING skipped %d escrow(s) with rows but no state row: %s", len(orphans), strings.Join(orphans, ","))
 	}
 	return out, nil
 }
@@ -525,16 +645,58 @@ func writeEscrowRows(ctx context.Context, tx pgx.Tx, writerID string, blob escro
 		)
 	}
 
+	// The per-nonce sets carry no writer id and are never rewritten, only added
+	// to, so two writers publishing the same nonce agree by construction.
+	if len(blob.Invalid) > 0 {
+		nonces, slots := nonceSlotArrays(blob.Invalid)
+		batch.Queue(`
+			INSERT INTO accounting_escrow_invalid_nonces (escrow_id, nonce, slot_id)
+			SELECT $1, * FROM unnest($2::bigint[], $3::bigint[])
+			ON CONFLICT (escrow_id, nonce) DO NOTHING`,
+			escrowID, nonces, slots,
+		)
+	}
 	if len(blob.InvalidNonces) > 0 {
 		nonces := make([]int64, 0, len(blob.InvalidNonces))
 		for _, nonce := range blob.InvalidNonces {
 			nonces = append(nonces, int64(nonce))
 		}
+		// Carried from the pre-set layout with the sentinel slot: counted already
+		// in accounting_escrow_slot_counts, kept so a repeated verdict does not
+		// count the nonce a second time.
 		batch.Queue(`
-			INSERT INTO accounting_escrow_invalid_nonces (escrow_id, nonce)
-			SELECT $1, unnest($2::bigint[])
+			INSERT INTO accounting_escrow_invalid_nonces (escrow_id, nonce, slot_id)
+			SELECT $1, unnest($2::bigint[]), -1
 			ON CONFLICT (escrow_id, nonce) DO NOTHING`,
 			escrowID, nonces,
+		)
+	}
+	if len(blob.ProtocolOnly) > 0 {
+		nonces, slots := nonceSlotArrays(blob.ProtocolOnly)
+		batch.Queue(`
+			INSERT INTO accounting_escrow_protocol_nonces (escrow_id, nonce, slot_id)
+			SELECT $1, * FROM unnest($2::bigint[], $3::bigint[])
+			ON CONFLICT (escrow_id, nonce) DO NOTHING`,
+			escrowID, nonces, slots,
+		)
+	}
+	if len(blob.Challenges) > 0 {
+		nonces := make([]int64, 0, len(blob.Challenges))
+		slots := make([]int64, 0, len(blob.Challenges))
+		resolved := make([]bool, 0, len(blob.Challenges))
+		for _, entry := range blob.Challenges {
+			nonces = append(nonces, int64(entry.Nonce))
+			slots = append(slots, int64(entry.Slot))
+			resolved = append(resolved, entry.Resolved)
+		}
+		// resolved only ever goes false to true, so ORing it converges no matter
+		// which writer lands first or how often a flush is replayed.
+		batch.Queue(`
+			INSERT INTO accounting_escrow_challenges (escrow_id, nonce, slot_id, resolved)
+			SELECT $1, * FROM unnest($2::bigint[], $3::bigint[], $4::boolean[])
+			ON CONFLICT (escrow_id, nonce) DO UPDATE SET
+				resolved = accounting_escrow_challenges.resolved OR EXCLUDED.resolved`,
+			escrowID, nonces, slots, resolved,
 		)
 	}
 
@@ -563,6 +725,8 @@ func deleteEscrowRows(ctx context.Context, tx pgx.Tx, ids []string) error {
 		`DELETE FROM accounting_escrow_slot_counts WHERE escrow_id = ANY($1)`,
 		`DELETE FROM accounting_escrow_host_stats WHERE escrow_id = ANY($1)`,
 		`DELETE FROM accounting_escrow_invalid_nonces WHERE escrow_id = ANY($1)`,
+		`DELETE FROM accounting_escrow_protocol_nonces WHERE escrow_id = ANY($1)`,
+		`DELETE FROM accounting_escrow_challenges WHERE escrow_id = ANY($1)`,
 		`DELETE FROM accounting_escrow_state WHERE escrow_id = ANY($1)`,
 	} {
 		batch.Queue(stmt, ids)
@@ -578,6 +742,16 @@ func deleteEscrowRows(ctx context.Context, tx pgx.Tx, ids []string) error {
 		return fmt.Errorf("delete pruned accounting escrows: %w", err)
 	}
 	return nil
+}
+
+func nonceSlotArrays(in []nonceSlot) (nonces, slots []int64) {
+	nonces = make([]int64, 0, len(in))
+	slots = make([]int64, 0, len(in))
+	for _, entry := range in {
+		nonces = append(nonces, int64(entry.Nonce))
+		slots = append(slots, int64(entry.Slot))
+	}
+	return nonces, slots
 }
 
 // pgxQuerier is the read surface shared by *pgxpool.Pool and pgx.Tx.
