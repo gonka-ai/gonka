@@ -3,7 +3,9 @@ package inference
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"strings"
 
@@ -112,7 +114,20 @@ func processExecutionHTTPResponse(
 	hash := sha256.Sum256(bodyBytes)
 	usage, err := completionResp.GetUsage()
 	if err != nil {
+		if errors.Is(err, completionapi.ErrStreamedUsageMissing) {
+			observability.IncMissingUsage()
+			slog.Error("streamed response missing usage chunk",
+				"inference_id", inferenceID,
+				"error", err)
+		}
 		return nil, fmt.Errorf("get usage: %w", err)
+	}
+	if usage.PromptTokens == 0 && completionLooksNonEmpty(completionResp, usage) {
+		observability.IncMissingUsage()
+		slog.Error("streamed response reported zero prompt tokens on non-empty completion",
+			"inference_id", inferenceID,
+			"completion_tokens", usage.CompletionTokens)
+		return nil, fmt.Errorf("get usage: %w", completionapi.ErrStreamedUsageMissing)
 	}
 
 	return &processedExecutionResponse{
@@ -121,4 +136,39 @@ func processExecutionHTTPResponse(
 		outputTokens: usage.CompletionTokens,
 		responseBody: bodyBytes,
 	}, nil
+}
+
+// completionLooksNonEmpty reports whether the response carries any completion
+// output (token counts, content, or logprobs). Used to refuse finishing with
+// InputTokens=0 when the model clearly produced something.
+func completionLooksNonEmpty(resp completionapi.CompletionResponse, usage *completionapi.Usage) bool {
+	if usage != nil && usage.CompletionTokens > 0 {
+		return true
+	}
+	switch r := resp.(type) {
+	case *completionapi.StreamedCompletionResponse:
+		for _, d := range r.Resp.Data {
+			for _, c := range d.Choices {
+				if len(c.Logprobs.Content) > 0 {
+					return true
+				}
+				if c.Delta != nil && c.Delta.Content != nil && *c.Delta.Content != "" {
+					return true
+				}
+				if c.Message != nil && c.Message.Content != "" {
+					return true
+				}
+			}
+		}
+	case *completionapi.JsonCompletionResponse:
+		for _, c := range r.Resp.Choices {
+			if len(c.Logprobs.Content) > 0 {
+				return true
+			}
+			if c.Message != nil && c.Message.Content != "" {
+				return true
+			}
+		}
+	}
+	return false
 }

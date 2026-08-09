@@ -8,7 +8,10 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
+
+	"common/completionapi"
 
 	json "github.com/goccy/go-json"
 	"google.golang.org/protobuf/proto"
@@ -443,15 +446,87 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 }
 
 // replaySSEBody writes cached ML response bytes as SSE data lines.
-// The cached bytes are the raw response body (JSON). Wrap as a single SSE data event.
+//
+// Streamed inferences are stored as completionapi.SerializedStreamedResponse
+// ({"events":[…]}), where each event is already a full "data: …" line. Replay
+// those as individual SSE events so a reconnect looks like the live stream.
+// A non-envelope body (JSON chat.completion) keeps the historical single-event
+// wrap. Always ends with data: [DONE] when the stored events did not already
+// include one.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
-	if _, err := fmt.Fprintf(w, "data: %s\n\n", body); err != nil {
+	if events, ok := streamedReplayEvents(body); ok {
+		sawDone := false
+		for _, event := range events {
+			line := normalizeReplaySSEEvent(event)
+			if line == "" {
+				continue
+			}
+			if isSSEDoneDataLine(line) {
+				sawDone = true
+			}
+			if err := writeSSEDataLine(w, line); err != nil {
+				return err
+			}
+		}
+		if !sawDone {
+			if err := writeSSEDataLine(w, "data: [DONE]"); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	if err := writeSSEDataLine(w, "data: "+string(body)); err != nil {
 		return err
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	return writeSSEDataLine(w, "data: [DONE]")
+}
+
+// streamedReplayEvents reports whether body is a SerializedStreamedResponse
+// envelope and returns its events. Malformed JSON or a body without an
+// "events" key is treated as a single JSON completion payload.
+func streamedReplayEvents(body []byte) ([]string, bool) {
+	var generic map[string]json.RawMessage
+	if err := json.Unmarshal(body, &generic); err != nil {
+		return nil, false
 	}
-	if _, err := fmt.Fprintf(w, "data: [DONE]\n\n"); err != nil {
+	if _, exists := generic["events"]; !exists {
+		return nil, false
+	}
+	var serialized completionapi.SerializedStreamedResponse
+	if err := json.Unmarshal(body, &serialized); err != nil {
+		return nil, false
+	}
+	return serialized.Events, true
+}
+
+// normalizeReplaySSEEvent returns a single "data: …" line for a stored event.
+// Stored streamed events usually already include the prefix; raw JSON payloads
+// get one added. Blank lines are dropped.
+func normalizeReplaySSEEvent(event string) string {
+	line := strings.TrimRight(event, "\r\n")
+	if strings.TrimSpace(line) == "" {
+		return ""
+	}
+	if strings.HasPrefix(line, completionapi.DataPrefix) {
+		return line
+	}
+	if strings.HasPrefix(line, "data:") {
+		return completionapi.DataPrefix + strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	}
+	return completionapi.DataPrefix + line
+}
+
+func isSSEDoneDataLine(line string) bool {
+	if !strings.HasPrefix(line, "data:") {
+		return false
+	}
+	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+	return payload == "[DONE]"
+}
+
+func writeSSEDataLine(w http.ResponseWriter, line string) error {
+	if _, err := fmt.Fprintf(w, "%s\n\n", line); err != nil {
 		return err
 	}
 	if f, ok := w.(http.Flusher); ok {

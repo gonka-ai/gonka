@@ -623,3 +623,77 @@ func TestServer_NonExecutor_SSE(t *testing.T) {
 	require.Nil(t, receipt.Receipt, "non-executor should not have receipt")
 	require.False(t, hasInferenceData, "non-executor should not have inference data")
 }
+
+func TestReplaySSEBody_StreamedEnvelopeUnwrapsEvents(t *testing.T) {
+	events := []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"role":"assistant","content":""}}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}`,
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1}}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, events, got, "reconnect replay must emit the same data-line sequence as the live stream")
+}
+
+func TestReplaySSEBody_StreamedEnvelopeAppendsDoneWhenMissing(t *testing.T) {
+	events := []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, append(append([]string{}, events...), "data: [DONE]"), got)
+}
+
+func TestReplaySSEBody_JSONCompletionKeepsSingleEvent(t *testing.T) {
+	body := []byte(`{"id":"chatcmpl-1","object":"chat.completion","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}],"usage":{"prompt_tokens":3,"completion_tokens":1}}`)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		"data: " + string(body),
+		"data: [DONE]",
+	}, got)
+}
+
+func TestReplaySSEBody_NormalizesDataPrefixWithoutSpace(t *testing.T) {
+	events := []string{
+		`data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
+		"data: [DONE]",
+	}, got)
+}
+
+func sseDataLines(t *testing.T, raw string) []string {
+	t.Helper()
+	var out []string
+	for _, line := range strings.Split(raw, "\n") {
+		line = strings.TrimRight(line, "\r")
+		if strings.HasPrefix(line, "data:") {
+			out = append(out, line)
+		}
+	}
+	return out
+}

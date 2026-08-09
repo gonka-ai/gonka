@@ -1,7 +1,7 @@
 # Gateway Always-Stream Upstream — implementation plan
 
 Status: proposal / plan.
-Proposal: [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md)
+Proposal (design only, includes reconnect): [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md)
 
 ## Goal
 
@@ -47,7 +47,7 @@ Two pre-existing defects that this work would amplify from "streaming traffic on
 
 - No change to the transport protocol, the `devshard_receipt` / `devshard_meta` envelopes,
   or any chain message.
-- No change to what devshardd hashes or stores (deferred to Step 11, explicitly optional).
+- No change to what devshardd hashes or stores (deferred to Step 14, explicitly optional).
 - No shape-agnostic response cache; stream/non-stream stay separate cache entries.
 - No change to `/v1/completions`, embeddings, or rerank paths.
 
@@ -154,8 +154,8 @@ Host error payloads keep flowing through untouched so `jsonErrorPayloadDetails`
 
 Add `ForceUpstreamStreaming bool` to `RedundancySettings` (`redundancy.go:428`), persisted
 and admin-settable like the other knobs (`gateway.go:2488`, `3018`). It gates D1's forcing,
-D3's escalation flip, and the usage-chunk suppression in Step 8 together, so a single toggle
-reverts the whole behavior change without a redeploy. The aggregator itself (Steps 3–4) ships
+D3's escalation flip, and the usage-chunk suppression in Step 10 together, so a single toggle
+reverts the whole behavior change without a redeploy. The aggregator itself (Steps 5–6) ships
 unconditionally, because it is strictly more correct than `assembleSSEChunks` on both inputs.
 
 ### D6. Cache-key isolation must become explicit
@@ -173,16 +173,20 @@ Every inference's stored payload becomes `{"events":[…]}`: one JSON-escaped SS
 token, each repeating `id` / `object` / `created` / `model` plus a choice wrapper, on top of
 the forced `logprobs` with `top_logprobs: 5` and `return_token_ids`. Expect roughly
 1.5–2× the bytes of the equivalent single JSON. This is a real cost of the change and is
-measured in Step 10, with the optional Step 11 as the fix.
+measured in Step 13, with the optional Step 14 as the fix.
 
 ---
 
 ## Step-by-step implementation plan
 
-Steps 1 and 2 are independent bug fixes worth shipping on their own. Steps 3–9 are the
-change proper. Steps 10–11 are rollout and optional follow-up.
+Steps 1 and 2 are independent bug fixes worth shipping on their own. Steps 3 and 4 make an
+interrupted stream survivable, which matters much more once every request streams. Steps 5–11 are
+the change proper. Step 12 is an independent availability fix on the gateway↔host SSE parser
+(unbounded line buffering). Steps 13–14 are rollout and optional follow-up. Step 15 is a later
+gateway UX/efficiency follow-up: let a duplicate client request join an in-flight stream. Step 16
+adds reconnect / winner-continuity OTel spans once the observability e2e branch has landed.
 
-### Step 1 — Make streamed `usage` mandatory (fixes B2)
+### Step 1 — Make streamed `usage` mandatory (fixes B2) ✅
 
 `devshard/cmd/devshardd/inference/execute.go`, `common/completionapi/completionresponse.go`.
 
@@ -200,7 +204,7 @@ Tests: unit test in `completionapi` for a streamed response with and without a u
 devshardd unit test that an execution whose stream carries no usage does not publish a finish
 message with zero input tokens.
 
-### Step 2 — Fix reconnect replay of streamed payloads (fixes B1)
+### Step 2 — Fix reconnect replay of streamed payloads (fixes B1) ✅
 
 `devshard/transport/server.go`.
 
@@ -214,7 +218,75 @@ Tests: `transport/server_test.go` — reconnect to a completed streamed inferenc
 the gateway-side parse produces the same chunk sequence as the live stream; reconnect to a
 completed JSON inference and assert the single-event behavior is unchanged.
 
-### Step 3 — Add the SSE aggregator (no wiring yet)
+### Step 3 — Drain the ML stream independently of the client connection
+
+`devshard/cmd/devshardd/inference/proxy.go`, `inference/execute.go`, `devshard/host/host.go`.
+
+Step 2 only fixes the *format* of a replay; it does nothing unless a completed body actually
+exists. Today it usually does not, because generation is bound to the gateway's HTTP request:
+`HandleInference` passes the Echo request context into `RunExecution`
+(`transport/server.go:274-277`, `379-381`), the host hands that same context to the ML POST
+(`host/host.go:863` → `inference/engine.go:89`, `NewRequestWithContext`), and
+`proxyTextStreamResponse` closes the upstream body on the first client write error
+(`inference/proxy.go:86-95`). So a gateway↔host drop aborts vLLM mid-generation,
+`completedResponses` (`host/host.go:903`) is never populated, and — after Step 1 — the truncated
+stream carries no usage chunk, so no `MsgFinishInference` is published either. The work is paid
+for in GPU time and then thrown away.
+
+Note the asymmetry this fixes: the gateway already refuses to bind upstream reads to the end
+user's connection (`proxy.go:54-57`, `383-388`) precisely so the protocol can complete. devshardd
+should apply the same principle one hop down.
+
+1. Detach execution lifetime from the request context: run the ML call under a context derived
+   from the host's own lifecycle, with its own deadline, and treat client cancellation as
+   "stop proxying", not "stop generating".
+2. In `proxyTextStreamResponse`, on a write error mark the writer dead and stop touching it, but
+   keep scanning the ML body through `[DONE]` so `ExecutorResponseProcessor` still accumulates
+   every event. Do not close `resp.Body` early.
+3. Let the normal tail run on the drained stream: usage validation (Step 1), `ResponseHash`,
+   payload store, `MsgFinishInference`, and `completedResponses[inferenceID]` — which is exactly
+   what makes a later same-nonce reconnect replayable via Step 2.
+4. Bound the orphan work: an absolute drain deadline plus the existing graceful-drain state
+   (`SetLifecycleInflight`) so a hung vLLM cannot pin a node indefinitely.
+5. Set the `PartialResponse` / `PartialResponseReason` / `PartialResponseWhere` fields on
+   `ExecuteResult` (`devshard/types.go:27-29`) when the drain ends without `[DONE]`. They exist
+   and are already logged by `RunExecution` (`host/host.go:893-902`) but are never set today.
+6. Metrics: a counter for "client detached, drain continued" and one for drain outcome
+   (`completed` / `deadline` / `ml_error`), so the retained work is visible.
+
+Tests (unit): a write-failing `ResponseWriter` does not stop event accumulation, and execution
+still yields a full body with usage; the drain deadline path terminates and is counted; a client
+disconnect no longer cancels the ML request. Tests (e2e, `testenv/citest`): drop the gateway↔host
+connection mid-stream (`mockopenai` `PartialStream` / delay faults plus a killable client), then
+assert the host published `MsgFinishInference` with non-zero input tokens and that a same-nonce
+reconnect returns the complete replay.
+
+### Step 4 — Reconnect the interrupted attempt before escalating to a new nonce
+
+Separate plan: [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md).
+
+With Steps 2 and 3 in place a broken attempt is *resumable*, but the gateway still throws it away:
+a mid-stream failure either escalates straight to a **new nonce on a different host**
+(`startAdditionalInflight`, `redundancy.go:1990`) — a completely independent generation — or, if
+the attempt had already streamed content, fails the request outright with
+`winner_failed_after_content` (`redundancy.go:2448`) while the secondary's tokens are suppressed
+and never reach the user.
+
+Step 4 makes that path fault-tolerant: try a **same-nonce reconnect to the same host** first,
+escalate only after a bounded budget (default 1s), and keep the original attempt as the winner
+while it can still be resumed — continuing from the delivered prefix rather than restarting the
+text. The linked plan carries the design decisions, the protocol hazards (duplicate
+`MsgConfirmStart`, double `ProcessResponse`), the settings, and its own unit/e2e test matrix.
+
+**Protocol gate:** the reconnect code ships in the **gateway-v4** binary, but is applied only to
+sessions bound to protocol **≥ `v5`**. On ≤v4 escrows (hosts that abort ML on disconnect and lack
+Steps 2–3), the gateway keeps today's escalate-to-new-nonce behavior. See R0 in the linked plan.
+
+This step is independent of the `ForceUpstreamStreaming` flag, but it becomes materially more
+valuable once every request streams: with a streamed upstream, every request has a delivered
+prefix worth preserving.
+
+### Step 5 — Add the SSE aggregator (no wiring yet)
 
 New `devshard/cmd/devshardctl/stream_aggregate.go`.
 
@@ -231,7 +303,7 @@ indices, logprob concatenation, `finish_reason` / `stop_reason`, the trailing us
 single-`chat.completion` passthrough, `{"events":[…]}`-shaped input, host error payload
 passthrough, and a truncated stream with no `[DONE]`.
 
-### Step 4 — Wire the aggregator into the non-streaming path
+### Step 6 — Wire the aggregator into the non-streaming path
 
 `devshard/cmd/devshardctl/proxy.go`.
 
@@ -248,7 +320,7 @@ Tests: existing `TestE2E_NonStreamingHappyPath`, `TestE2E_NonStreamingChatComple
 `non_streaming_corner_cases_test.go` must pass with no edits — that is the signal that the
 aggregator is a faithful superset.
 
-### Step 5 — Capture client stream intent
+### Step 7 — Capture client stream intent
 
 `devshard/cmd/devshardctl/request_filters.go`, `request_filters_parameters.go`,
 `stream_rewrite.go` (or a new `stream_intent.go`), `proxy.go`.
@@ -267,7 +339,7 @@ aggregator is a faithful superset.
 Tests: `request_filters_test.go` for the new decode; a proxy unit test that the intent
 survives to the handler branch.
 
-### Step 6 — Make cache keying and capture read intent, not the body
+### Step 8 — Make cache keying and capture read intent, not the body
 
 `devshard/cmd/devshardctl/response_cache.go`, `request_capture.go`, `gateway.go`.
 
@@ -278,7 +350,7 @@ survives to the handler branch.
 3. `cachedChatResponse.Stream` keeps driving replay headers (`response_cache.go:181-198`)
    with no change.
 
-Do this **before** Step 7. Landing Step 7 first would collapse the two cache entries and
+Do this **before** Step 9. Landing Step 9 first would collapse the two cache entries and
 serve an SSE body to a JSON client.
 
 Tests: `TestE2E_StreamingThenNonStreamingCacheIsolation` and
@@ -286,7 +358,7 @@ Tests: `TestE2E_StreamingThenNonStreamingCacheIsolation` and
 requests differing only in client `stream` produce different cache keys even when their
 normalized bodies are byte-identical.
 
-### Step 7 — Force `stream: true` + `include_usage` upstream, behind the setting
+### Step 9 — Force `stream: true` + `include_usage` upstream, behind the setting
 
 `devshard/cmd/devshardctl/request_filters_parameters.go`, `redundancy.go`, `gateway.go`.
 
@@ -298,7 +370,7 @@ normalized bodies are byte-identical.
 3. Log the effective upstream stream value in `proxy_request_started`
    (`proxy.go:233`) alongside the client value so the two are distinguishable in logs.
 
-Now `stream: false` clients get a real streamed upstream and the Step 3 aggregator does real
+Now `stream: false` clients get a real streamed upstream and the Step 5 aggregator does real
 work. Note that the on-chain prompt hash (`CanonicalPromptHash`, `user/session.go:815`) now
 covers `"stream": true`; that is consistent for new inferences, needs no migration, and does
 not affect validation, which forces `stream: false` on replay
@@ -310,7 +382,7 @@ Tests: pipeline test asserting the forced body; an integration test with the moc
 request; a differential test asserting the aggregated JSON for a fixed seed matches the
 mock's own non-streaming JSON field-for-field.
 
-### Step 8 — Suppress the forced usage chunk for streaming clients
+### Step 10 — Suppress the forced usage chunk for streaming clients
 
 `devshard/cmd/devshardctl/stream_rewrite.go`, `proxy.go`.
 
@@ -327,7 +399,7 @@ logprobs.
 Tests: streaming client without `include_usage` sees no usage chunk; with `include_usage`
 sees exactly one; the aggregated JSON path always carries `usage` regardless.
 
-### Step 9 — Unify escalation policy on the streaming timeouts
+### Step 11 — Unify escalation policy on the streaming timeouts
 
 `devshard/cmd/devshardctl/redundancy.go`.
 
@@ -353,7 +425,62 @@ Tests: a redundancy unit test that a `stream: false` client request against a ho
 sends a first token escalates within the first-token budget rather than at 140s; assert no
 test still depends on the reduced-`max_tokens` path when the flag is on.
 
-### Step 10 — Enable by default, soak, dashboards
+### Step 12 — Cap gateway SSE event size (unbounded `ReadBytes` DoS)
+
+`devshard/transport/client.go` (`HTTPClient.parseSSEResponse`).
+
+A selected executor can return HTTP 200 + `Content-Type: text/event-stream`, begin a line with
+`data: `, and then stream attacker-controlled bytes **without ever sending `\n`**, `[DONE]`, or
+`devshard_receipt`. Today's parser does:
+
+```go
+br := bufio.NewReaderSize(r, 64<<10)
+raw, readErr := br.ReadBytes('\n')
+```
+
+The 64 KiB reader size is only the internal buffer; `ReadBytes` grows the returned slice until
+it sees the delimiter (the file comment already notes "ReadBytes is bounded only by memory",
+`client.go:286-290`). The allocation can grow for up to the inference timeout (default tens of
+minutes), and concurrent inferences against the same malicious participant amplify it into a
+gateway OOM. PR #1240 capped the *gateway* `raceWriter` classify reassembly
+(`redundancy.go:1313+`); it does **not** bound this transport-layer read, which is the root cause.
+
+This is independent of `ForceUpstreamStreaming`, but always-stream makes every chat request hit
+the SSE path between gateway and host, so the blast radius grows with Step 13's default-on.
+
+1. Introduce an explicit max SSE event / line size (default **1 MiB**, matching the historical
+   `bufio.Scanner` cap this code deliberately left and the per-attempt classify cap from
+   PR #1240). Make it configurable via env / `ClientConfig` if useful, but ship a hard default —
+   do not leave it unbounded behind a unset-zero.
+2. Replace the unbounded `ReadBytes('\n')` with a bounded read that aborts as soon as the
+   accumulated line exceeds the limit (e.g. loop on `br.ReadSlice('\n')` / incremental reads,
+   or check `len(raw)` and return a typed error such as `ErrSSEEventTooLarge` without retaining
+   the oversized buffer). **Do not silently truncate** — that is why Scanner was abandoned;
+   truncate-and-continue would mis-parse protocol events.
+3. On oversize: close/cancel the upstream body, return a clear error to `Send` so redundancy
+   records an attempt failure (`eof_transport` / a dedicated reason like `sse_event_too_large`)
+   and can escalate to another host. Count
+   `devshard_gateway_sse_event_too_large_total{participant_key}` (or reuse
+   `participant_transport_errors_total` with a distinct reason).
+4. Keep legitimate large chunks working under the cap: a single chat-completion chunk with
+   forced logprobs / `top_logprobs: 5` / `return_token_ids` must stay well below 1 MiB; add a
+   unit fixture at the high end of a real chunk to lock that in. If soak ever hits false
+   positives, raise the limit — do not remove it.
+5. Optional follow-up (same PR or a sibling): bound the JSON compatibility `io.ReadAll` path in
+   `HTTPClient.Send` (`client.go:272`) with the same budget. Out of the critical path for this
+   report, but the same participant could abuse it if any non-SSE response is still accepted.
+
+Tests (`transport/client_test.go`):
+- regression: a stream that sends `data: ` + >limit bytes without `\n` aborts with
+  `ErrSSEEventTooLarge` after at most `limit+ε` bytes buffered (not the full attacker payload);
+- a well-formed stream with a near-limit but legal event still parses receipt / `[DONE]`;
+- oversize mid-stream after a valid receipt still fails the send (no silent success);
+- existing `parseSSEResponse` tests keep passing.
+
+This step can land before or after Steps 5–11; it should land **before** Step 13's default-on
+flip so the soak does not widen the attack window.
+
+### Step 13 — Enable by default, soak, dashboards
 
 1. Flip `ForceUpstreamStreaming` default to `true`.
 2. Confirm on the soak environment:
@@ -362,12 +489,13 @@ test still depends on the reduced-`max_tokens` path when the flag is on.
    - `devshard_gateway_timeout_actions_total` shows no `response_timeout_reduced_max_tokens`
      actions,
    - `devshard_inference_missing_usage_total` stays at zero,
+   - `devshard_gateway_sse_event_too_large_total` stays at zero outside intentional fault tests,
    - p50/p95 end-to-end latency for `stream: false` clients does not regress,
    - payload-store growth rate against the D7 estimate.
 3. Update the gateway dashboard so the TTFT panels are no longer implicitly
    streaming-only (`gateway_dashboard_test.go` guards the metric aliases).
 
-### Step 11 — devshardd streaming-only (optional, after Step 10 is stable)
+### Step 14 — devshardd streaming-only (optional, after Step 13 is stable)
 
 1. Add a devshardd counter for executions whose upstream ML response was **not**
    `text/event-stream` (`inference/execute.go:84-85`). Watch it reach zero.
@@ -382,6 +510,88 @@ would undo the D7 storage growth. This changes `ResponseHash` inputs, so it need
 proposal, its own rollout, and a compatibility story for
 `NewCompletionResponseFromLinesFromResponsePayload` (`completionresponse.go:339`) reading
 older payloads.
+
+### Step 15 — In-flight chat stream join (optional, after Step 13)
+
+Proposal: [proposals/chat-stream-inflight-join.md](./proposals/chat-stream-inflight-join.md).
+
+Today the gateway chat cache is **post-completion only**: `chatCache.Set` runs after
+`ServeHTTP` returns (`gateway.go:1461-1465`). While request A is still streaming, an identical
+request B (same `chatCacheKey`) always misses and starts a **second** ML path. A completed-cache
+hit dumps the entire body at once (`serveCachedChatResponse`, `response_cache.go:176-198`) —
+there is no “replay prefix, then follow the live tail.”
+
+Step 15 closes that gap for concurrent / retried identical clients:
+
+1. Keep an **in-flight registry** keyed by the same cache key as Step 8
+   (`chatCacheKey(model, body, clientStream)`), so stream and non-stream shapes stay isolated.
+2. First miss creates a `liveStream` (capture buffer + subscribers + completion). Later same-key
+   requests **join**: replay bytes already flushed to subscribers, then follow the live tail —
+   without a second `RunInference` / host execution.
+3. On completion, promote the full body into the normal TTL `chatResponseCache` so a third
+   identical request hits today's completed-entry path.
+4. Non-stream (`stream: false`): coalesce by waiting for the primary and serving one aggregated
+   JSON (no tail).
+5. Define disconnect policy when the primary client leaves but joiners remain (keep draining via
+   existing meta-drain vs cancel when no subscribers). Attribution for joiners follows
+   [chat-cache-attribution.md](./proposals/chat-cache-attribution.md) (joining request's escrow /
+   request ids, not the primary's).
+
+Depends on Steps 5–8 (aggregator + intent-aware cache key) and benefits from always-stream
+upstream (one streamed shape to fan out). Distinct from Step 4 (same-nonce **gateway↔host**
+reconnect for one request) and from client-facing `Last-Event-ID` resume
+([stream-resume-pre-proposal.md](./stream-resume-pre-proposal.md)).
+
+Tests / acceptance (from the proposal): two overlapping identical streaming requests → one ML
+generation; the second client gets already-sent prefix + live tail; after completion a third hit
+uses the normal cache; joiners do not inherit another request's accounting.
+
+### Step 16 — Reconnect / winner-continuity observability spans
+
+**Prerequisite:** merge of branch `ak/devshard-observability-e2e` (and any follow-ups it depends
+on). That branch introduces the gateway attempt span tree used here:
+
+- `gateway.attempt` (`StartGatewayAttempt`)
+- phase children `attempt.dispatch` → `attempt.prefill` → `attempt.stream`
+  (`attempt_spans.go`, `observability/gateway_attempt.go`)
+- stall events on the innermost open phase (`AddStallDetected` / `AddStallRecovered`)
+
+Do **not** invent a parallel tracing stack. Extend that model after Step 4's reconnect ladder
+exists, so soak can measure whether same-nonce resume is winning vs escalating to a new nonce.
+
+Instrument the reconnect / winner-continuity path with the following (names illustrative; keep
+them in `devshard/observability` next to the existing `SpanNameAttempt*` constants and cover them
+in `attrs_contract_test.go` / dashboard lint):
+
+1. **Reconnects** — open a child span `attempt.reconnect` under the interrupted
+   `gateway.attempt` for each same-nonce resend try. Attributes: try index, drop reason
+   (`eof_transport` / …), `delivered_events` / `delivered_partial` at drop, protocol version,
+   result (`resumed` / `budget_expired` / `receipt_only` / `error` / `skipped_protocol`). End the
+   span when that try finishes (resume starts forwarding, or the try fails).
+2. **Time to first byte after reconnect** — on the reconnect span (or a linked histogram
+   `devshard_gateway_attempt_reconnect_ttfb_seconds`), record the duration from reconnect send
+   start until the first byte of the resumed upstream stream is observed (including skipped
+   prefix bytes that are read but not forwarded).
+3. **Time to first *new* chunk after reconnect** — duration from reconnect send start until the
+   first upstream event **past** the delivered offset is forwarded to the client (the first
+   byte the user would not have already seen). Distinct from (2) when the host replays from
+   event 0 and the gateway skips `deliveredEvents`.
+4. **Switch to another nonce attempt** — when the reconnect reservation is released and a
+   **different** nonce crowns or is started after the reconnect budget
+   (`startAdditionalInflight` / secondary crown), emit a clear signal on the parent
+   `gateway.request` / original `gateway.attempt`: either a span event
+   `attempt.winner_switched` or a short child span `attempt.failover`, with
+   `from_nonce`, `to_nonce`, `reason` (`reconnect_budget_expired` / `reconnect_failed` /
+   `stream_reset`), and whether any content had already been delivered to the client.
+
+Also keep the Prometheus counters from the reconnect plan's Step 5
+(`devshard_gateway_attempt_reconnect_total`, `winner_continuity_total`, …) labeled so they can be
+joined to these spans in Jaeger / Grafana.
+
+Tests: unit tests with an OTel span recorder (same style as `attempt_span_test.go` on the
+observability branch) asserting the four signals fire on resume, on budget-expired failover, and
+do **not** fire for ≤v4 / `skipped_protocol` paths. Extend the gateway observability dashboard
+panels once the spans exist.
 
 ---
 
@@ -398,6 +608,12 @@ older payloads.
 | Escalation | Non-streaming client, dead host → first-token escalation, not 140s | `cmd/devshardctl/redundancy_*_test.go` |
 | Reconnect replay | Streamed inference replay parses as a normal stream | `transport/server_test.go` |
 | Usage strictness | Streamed response without usage does not finish with zero input tokens | `completionapi`, devshardd inference tests |
+| ML drain | Dead client writer does not stop event accumulation; drain deadline is bounded and counted | `cmd/devshardd/inference/*_test.go` |
+| ML drain (e2e) | Mid-stream disconnect still publishes finish with non-zero tokens; reconnect replays in full | `testenv/citest` |
+| Attempt reconnect | Same-nonce resume, winner continuity, fallback after budget | [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) |
+| SSE event size cap | Oversize no-newline stream aborts under limit; legal near-limit event still parses | `transport/client_test.go` |
+| In-flight join | Concurrent identical streams share one ML path; joiner gets prefix + live tail | [proposals/chat-stream-inflight-join.md](./proposals/chat-stream-inflight-join.md) |
+| Reconnect spans | `attempt.reconnect`, TTFB, first-new-chunk, winner-switched; skipped on ≤v4 | `cmd/devshardctl/attempt_span_test.go` (after observability e2e merge) |
 | Corner cases | Malformed JSON, host down, post-finalize (existing) | `e2e/non_streaming_corner_cases_test.go` |
 
 Run with the workspace Go cache prefix:
@@ -411,32 +627,46 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
 
 | Risk | Mitigation |
 |---|---|
-| Aggregated JSON differs subtly from vLLM's own non-streaming output (tool calls, `stop_reason`, unusual fields) | Differential test in Step 7; single revertible flag; manual diff against a real vLLM node before Step 10 |
+| Aggregated JSON differs subtly from vLLM's own non-streaming output (tool calls, `stop_reason`, unusual fields) | Differential test in Step 9; single revertible flag; manual diff against a real vLLM node before Step 13 |
 | Token accounting now always depends on the final usage chunk | Step 1 makes a missing usage chunk a hard failure with a counter, landed before the flip |
-| Payload-store growth (D7) | Measured in Step 10; Step 11's optional aggregation is the fix |
-| Larger upstream traffic from per-chunk forced logprobs / `top_logprobs: 5` | Measured in Step 10; the alternative is reducing `TopLogprobsForcedValue`, which is a validation decision, not a streaming one |
-| Escalation flip makes the gateway more aggressive on previously-quiet requests | Step 9 is behind the same flag; watch `devshard_gateway_timeout_actions_total` and per-participant attempt counts during soak |
-| Cache-entry collapse serving the wrong content type | Step 6 lands before Step 7; guarded by the two existing E2E isolation tests |
+| Payload-store growth (D7) | Measured in Step 13; Step 14's optional aggregation is the fix |
+| Larger upstream traffic from per-chunk forced logprobs / `top_logprobs: 5` | Measured in Step 13; the alternative is reducing `TopLogprobsForcedValue`, which is a validation decision, not a streaming one |
+| Escalation flip makes the gateway more aggressive on previously-quiet requests | Step 11 is behind the same flag; watch `devshard_gateway_timeout_actions_total` and per-participant attempt counts during soak |
+| Cache-entry collapse serving the wrong content type | Step 8 lands before Step 9; guarded by the two existing E2E isolation tests |
+| Step 3's drain keeps ML work running after a host loses its client | Absolute drain deadline plus graceful-drain state; counted so retained work is visible |
+| Malicious executor grows unbounded SSE lines in `parseSSEResponse` | Step 12 hard-caps event size (default 1 MiB), aborts with typed error, counters; land before Step 13 default-on |
+| In-flight join fans out a failed primary or wrong escrow attribution | Step 15: explicit disconnect policy + H6 attribution tests; optional until after Step 13 soak |
+| Reconnect span work races the observability e2e branch | Step 16 waits for `ak/devshard-observability-e2e` merge; reuse its attempt/phase APIs only |
 | Older devshardd hosts | No protocol change; the aggregator's passthrough branch handles a host that still answers with a single `chat.completion` |
 
 ## Task checklist
 
-- [ ] Step 1 — streamed `usage` mandatory, counter + tests
-- [ ] Step 2 — `replaySSEBody` unwraps `{"events":[…]}`
-- [ ] Step 3 — `aggregateSSEStream` + unit tests
-- [ ] Step 4 — wire into `handleNonStreaming`, drop `assembleSSEChunks`
-- [ ] Step 5 — `streamClientIntent` + `chatRequest.StreamOptions`
-- [ ] Step 6 — cache key and capture read intent
-- [ ] Step 7 — force `stream` / `stream_options` upstream behind `ForceUpstreamStreaming`
-- [ ] Step 8 — suppress forced usage chunk for streaming clients
-- [ ] Step 9 — unify escalation on streaming timeouts (+ separate `InterChunkStallTimeout` cleanup)
-- [ ] Step 10 — default on, soak, dashboards
-- [ ] Step 11 — devshardd streaming-only deprecation (optional)
+- [x] Step 1 — streamed `usage` mandatory, counter + tests
+- [x] Step 2 — `replaySSEBody` unwraps `{"events":[…]}`
+- [ ] Step 3 — devshardd drains ML independently of the client connection
+- [ ] Step 4 — same-nonce reconnect before escalation, gated to protocol ≥ v5 ([separate plan](./gateway-attempt-reconnect-plan.md))
+- [ ] Step 5 — `aggregateSSEStream` + unit tests
+- [ ] Step 6 — wire into `handleNonStreaming`, drop `assembleSSEChunks`
+- [ ] Step 7 — `streamClientIntent` + `chatRequest.StreamOptions`
+- [ ] Step 8 — cache key and capture read intent
+- [ ] Step 9 — force `stream` / `stream_options` upstream behind `ForceUpstreamStreaming`
+- [ ] Step 10 — suppress forced usage chunk for streaming clients
+- [ ] Step 11 — unify escalation on streaming timeouts (+ separate `InterChunkStallTimeout` cleanup)
+- [ ] Step 12 — cap gateway SSE event size (`parseSSEResponse` unbounded `ReadBytes`)
+- [ ] Step 13 — default on, soak, dashboards
+- [ ] Step 14 — devshardd streaming-only deprecation (optional)
+- [ ] Step 15 — in-flight chat stream join (optional; [proposal](./proposals/chat-stream-inflight-join.md))
+- [ ] Step 16 — reconnect / winner-continuity OTel spans (after `ak/devshard-observability-e2e` merge)
 
 ## Related
 
 - [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) — the proposal
-- [proposals/chat-stream-inflight-join.md](./proposals/chat-stream-inflight-join.md) —
-  joining an in-flight stream; benefits from a single always-streaming upstream path
+- [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) — Step 4's reconnect and
+  winner-continuity design, which builds on Steps 2 and 3; Step 16 instruments that path
+- [stream-resume-pre-proposal.md](./stream-resume-pre-proposal.md) — why client-facing stream resume
+  is a separate, larger problem than Steps 2–4
+- [proposals/chat-stream-inflight-join.md](./proposals/chat-stream-inflight-join.md) — Step 15:
+  duplicate clients join an in-flight stream (prefix + live tail)
 - [proposals/chat-cache-attribution.md](./proposals/chat-cache-attribution.md) — response
-  cache attribution, touches the same cache keyed in Step 6
+  cache attribution, touches the same cache keyed in Step 8 / Step 15
+- Branch `ak/devshard-observability-e2e` — gateway.attempt / phase spans that Step 16 extends

@@ -186,6 +186,11 @@ type StreamedCompletionResponse struct {
 
 var ErrorNoDataAvailableInStreamedResponse = errors.New("no data available in streamed response")
 
+// ErrStreamedUsageMissing is returned by GetUsage when a streamed response has
+// events but no chunk carries a non-empty usage object. Callers that need a
+// best-effort token estimate should use GetUsageOrEstimate instead.
+var ErrStreamedUsageMissing = errors.New("streamed response: usage chunk missing")
+
 func (r *StreamedCompletionResponse) GetModel() (string, error) {
 	if len(r.Resp.Data) > 0 {
 		return r.Resp.Data[0].Model, nil
@@ -203,25 +208,39 @@ func (r *StreamedCompletionResponse) GetInferenceId() (string, error) {
 }
 
 func (r *StreamedCompletionResponse) GetUsage() (*Usage, error) {
-	backupLength := 0
-	if len(r.Resp.Data) > 0 {
-		for _, d := range r.Resp.Data {
-			if len(d.Choices) != 0 {
-				backupLength += len(d.Choices[0].Logprobs.Content)
-			}
-			if d.Usage.IsEmpty() {
-				continue
-			}
-			return &d.Usage, nil
-		}
-		usage := &Usage{
-			PromptTokens:     0,
-			CompletionTokens: uint64(backupLength),
-		}
-		return usage, nil
-	} else {
+	if len(r.Resp.Data) == 0 {
 		return nil, ErrorNoDataAvailableInStreamedResponse
 	}
+	for _, d := range r.Resp.Data {
+		if d.Usage.IsEmpty() {
+			continue
+		}
+		return &d.Usage, nil
+	}
+	return nil, ErrStreamedUsageMissing
+}
+
+// GetUsageOrEstimate returns the streamed usage chunk when present, otherwise a
+// best-effort estimate with PromptTokens=0 and CompletionTokens derived from
+// logprob content length. Prefer GetUsage for billing-critical paths.
+func (r *StreamedCompletionResponse) GetUsageOrEstimate() (*Usage, error) {
+	usage, err := r.GetUsage()
+	if err == nil {
+		return usage, nil
+	}
+	if !errors.Is(err, ErrStreamedUsageMissing) {
+		return nil, err
+	}
+	backupLength := 0
+	for _, d := range r.Resp.Data {
+		if len(d.Choices) != 0 {
+			backupLength += len(d.Choices[0].Logprobs.Content)
+		}
+	}
+	return &Usage{
+		PromptTokens:     0,
+		CompletionTokens: uint64(backupLength),
+	}, nil
 }
 
 func (r *StreamedCompletionResponse) GetBodyBytes() ([]byte, error) {

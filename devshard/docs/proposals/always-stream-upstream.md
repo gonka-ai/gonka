@@ -1,101 +1,404 @@
-# Proposal: Always stream between gateway and devshardd
+# Proposal: Always stream upstream + attempt reconnect
 
-**Status:** Draft / proposal
-**Scope:** `devshardctl` request filters + proxy response path + redundancy escalation policy; `devshardd` streamed-usage strictness and reconnect replay. No protocol/message-format change, no chain change.
-**Plan:** [../gateway-always-stream-upstream-plan.md](../gateway-always-stream-upstream-plan.md)
+**Status:** Draft / proposal  
+**Scope:** Gateway request filters, proxy response shape, redundancy escalation; host ML drain and same-nonce reconnect; streamed-usage strictness and well-formed streamed replay. No chain message or transport-envelope change.  
+**Implementation plans:**  
+[../gateway-always-stream-upstream-plan.md](../gateway-always-stream-upstream-plan.md),  
+[../gateway-attempt-reconnect-plan.md](../gateway-attempt-reconnect-plan.md)
 
-This is a design note; the step-by-step implementation lives in the linked plan.
+This document is **design only**. Step-by-step implementation, test matrices, and rollout checklists live in the linked plans.
 
 ---
 
 ## Problem
 
+### Client `stream` is forwarded all the way to the ML node
+
 The OpenAI API lets a client choose `stream: true` or `stream: false`. Today the gateway
-forwards that choice verbatim all the way to the ML node: `chatRequest.Stream` is parsed in
-`request_filters_parameters.go:355`, `stream` is registered as a pass-through vLLM
-parameter (`request_filters_parameters.go:668`), and the normalized body — including
-`"stream": false` — becomes `InferenceParams.Prompt`, which devshardd hands to vLLM.
+forwards that choice verbatim into the normalized prompt that reaches vLLM. The
+gateway↔devshardd hop is already SSE-framed either way, so `stream: false` does not
+simplify the transport — it only hides progress:
 
-The gateway↔devshardd hop is already SSE-framed in both cases (`transport/server.go:343`
-always sets `text/event-stream`), so `stream: false` does not simplify the transport. It only
-degrades it: vLLM buffers the whole completion, devshardd emits it as one
-`data: {…}\n\ndata: [DONE]\n\n` event (`inference/execute.go:106`), and the gateway learns
-nothing about the request until the very end. Concretely:
+- **No liveness signal.** A non-streaming attempt looks hung until it finishes.
+  First-token escalation is disabled; the gateway falls back to a long
+  reduced-`max_tokens` retry (~140s) and a 30-minute no-content timeout.
+- **No TTFT for that traffic.** First-content and CTTFL metrics only work when chunks
+  arrive incrementally.
+- **Weaker winner selection.** The speculative race can only crown a non-streaming
+  attempt once it has fully finished.
+- **Worse client latency for no gain.** Aggregating at the gateway is cheap; first
+  byte need not wait for the full completion.
 
-- **No liveness signal.** A non-streaming attempt is indistinguishable from a hung host
-  until it completes. `escalationForInflight` explicitly disables first-token escalation for
-  these requests (`redundancy.go:2681`) and falls back to a hardcoded 140s
-  reduced-`max_tokens` retry (`redundancy.go:40`, `2484`) plus a 30-minute no-content
-  timeout (`redundancy.go:2355`). A dead host burns minutes instead of ~1s.
-- **No TTFT.** `devshard_gateway_participant_first_content_seconds` and the CTTFL
-  per-input-token gauge are only meaningful when chunks arrive incrementally, so a large
-  slice of traffic contributes nothing to the metrics used for participant selection.
-- **Worse latency for the client anyway.** Aggregating chunks at the gateway is cheap;
-  the client's first byte arrives no later than under `stream: false`, and the speculative
-  race can crown a winner as soon as real content appears rather than at the end.
-- **Winner selection is weaker.** `sseChunkContentSource` has a special branch for the
-  non-streaming `message.content` shape (`redundancy.go:162`); the race can only pick a
-  winner once an attempt has fully finished.
+Two latent defects become universal once every request streams:
 
-Two latent defects make the current split worse than it looks. `replaySSEBody`
-(`transport/server.go:429`) wraps a cached body in a single `data:` line, but a streamed
-inference is stored as `{"events":[…]}` (`completionapi/responseprocessor.go:82`), so a
-reconnect replay of a streamed inference sends a non-OpenAI envelope to the client. And
-`StreamedCompletionResponse.GetUsage` silently returns `PromptTokens: 0` when no usage
-chunk is present (`completionapi/completionresponse.go:217`), which under-bills
-`MsgFinishInference`.
+- **B1 — streamed reconnect replay is malformed.** A streamed inference is stored as
+  `{"events":[…]}`; today's replay emits that wrapper as a single `data:` line.
+- **B2 — streamed usage is silently zeroed.** Missing usage chunks become
+  `PromptTokens: 0` on `MsgFinishInference`, under-billing the inference.
 
-## Proposed change
+### Mid-stream drops throw away a resumable generation
 
-The gateway should decide the response shape for the **client** and always ask **upstream**
-for a stream:
+When a participant SSE stream breaks mid-request:
 
-1. **Force streaming upstream.** Add `stream` → `ForceLiteralParameter{Value: true}` and
-   `stream_options` → `ForceLiteralParameter{Value: {"include_usage": true}}` at
-   `RequestFilterStagePostLimits`, exactly as `logprobs` / `top_logprobs` /
-   `return_token_ids` are already forced (`request_filters_parameters.go:578-583`). The
-   client's original intent is captured earlier by `ctx.DecodeRequest()`, so it survives.
-2. **Aggregate for non-streaming clients.** Replace `assembleSSEChunks`
-   (`proxy.go:579`, "take the last `data:` line") with a real aggregator that folds
-   `chat.completion.chunk` deltas into one `chat.completion`: per-choice content,
-   reasoning, refusal, tool-call argument fragments, concatenated logprobs, terminal
-   `finish_reason`, and `usage` from the final chunk.
-3. **Carry client stream intent explicitly**, mirroring `logprobClientIntent`
-   (`stream_rewrite.go:15`), so the cache key, the request capture, and the decision to
-   forward or suppress the final `usage` chunk all read intent rather than the rewritten
-   body.
-4. **Unify escalation policy** on the streaming timeouts, retiring the non-streaming-only
-   140s reduced-`max_tokens` timer and the 30-minute no-content timeout.
-5. **Fix the two latent defects** first, since forcing streaming takes them from
-   "affects streaming traffic" to "affects all traffic".
+- Escalation starts a **new nonce on another host** — an independent generation.
+- If the attempt had **already streamed content**, the request fails with
+  `winner_failed_after_content`; a secondary may keep running for protocol settlement
+  but its tokens never reach the client.
+- On the host, a gateway disconnect often **aborts ML mid-generation**, so there is
+  nothing durable to reconnect to (`completedResponses` never populated, no finish).
 
-Once the gateway never sends `stream: false`, devshardd can drop non-streaming ML support
-entirely (deprecation metric first, rejection later).
+So a transient TCP drop either costs a full regeneration or a truncated user-visible
+failure — even when the same generation is still alive on the host.
+
+---
+
+## Goals
+
+1. **Always stream upstream.** The client's `stream` flag is only a response-shape
+   decision at the gateway↔client boundary:
+   - client `stream: true` → forward SSE chunks,
+   - client `stream: false` → aggregate chunks into one `chat.completion` JSON.
+   Upstream (gateway → devshardd → vLLM) is always streamed with `include_usage`.
+2. **Survivable mid-stream drops.** Before escalating to a new nonce, try a
+   **same-nonce reconnect** to the same host and continue from the delivered prefix
+   (including a partial last chunk). Keep the interrupted attempt as winner while it
+   is resumable.
+3. **Host drain independent of the client writer.** Losing the gateway↔host HTTP
+   connection must not abort ML; drain to completion, persist, then serve reconnects
+   from memory (live) or storage (after finish).
+
+---
 
 ## Out of scope
 
-- Changing the devshardd↔gateway wire protocol, the `devshard_receipt` / `devshard_meta`
-  envelopes, or anything on chain.
-- Changing what devshardd stores and hashes. The stored payload becomes `{"events":[…]}`
-  for every inference; `ExtractLogits` already handles both shapes and validation forces
-  `stream: false` on replay (`common/validation/validation.go:345`). Storing an aggregated
-  canonical body instead would change `ResponseHash` inputs and is deferred.
-- Shape-agnostic response caching (one cached entry rendered as either SSE or JSON). The
-  plan keeps today's stream/non-stream cache isolation.
-- `/v1/completions` and the embeddings/rerank surfaces.
+- Changing the gateway↔devshardd wire protocol, `devshard_receipt` / `devshard_meta`,
+  or any chain message.
+- Changing what is hashed/stored as the canonical response body (optional later;
+  would change `ResponseHash`).
+- Shape-agnostic response cache (one entry rendered as SSE or JSON). Stream and
+  non-stream client shapes stay separate cache entries.
+- Mid-generation resume inside vLLM (no KV reattach).
+- Client-facing resume API (`Last-Event-ID` / `starting_after`) — see
+  [stream-resume-pre-proposal.md](../stream-resume-pre-proposal.md).
+- Fan-out of one in-flight generation to a *different* end-user request — see
+  [chat-stream-inflight-join.md](./chat-stream-inflight-join.md).
+- `/v1/completions`, embeddings, or rerank paths.
+- Changing nonce allocation, picker/exclude logic for *new* attempts, or the diff chain.
+
+---
+
+## Design — always stream upstream
+
+### D1. Force `stream` upstream in the filter pipeline
+
+Force at `RequestFilterStagePostLimits` (same idiom as forced logprobs):
+
+- `stream` → `true`
+- `stream_options` → `{"include_usage": true}`
+
+PreValidation still type-checks `stream` and sanitizes `stream_options`. Forcing at
+PostLimits cannot smuggle client values through. `include_usage` is forced at the
+gateway so the on-chain prompt hash matches what ran and redundancy's usage-chunk
+heuristics always see a usage event.
+
+### D2. Client intent travels separately (`streamClientIntent`)
+
+Mirror `logprobClientIntent`:
+
+```go
+type streamClientIntent struct {
+    wantsStream bool // original request had stream:true
+    wantsUsage  bool // original stream_options.include_usage
+}
+```
+
+Captured before rewrite; used for handler branch (SSE vs aggregate), cache key,
+request capture, and suppressing a forced trailing usage chunk for streaming clients
+that did not ask for it. Aggregated JSON always includes `usage` (OpenAI non-stream
+shape).
+
+### D3. Decouple response shape from escalation policy
+
+`InferenceParams.Stream` keeps meaning “client asked for SSE.” Escalation sites use
+the **unconditional streaming policy** once upstream is always streamed (first-token
+budget, inter-chunk stall) — not the long non-stream timers. Behind the same rollout
+flag as D5.
+
+### D4. Real SSE aggregator, with passthrough
+
+Replace “last `data:` line” aggregation. Fold `chat.completion.chunk` deltas into one
+`chat.completion`:
+
+- group by `choices[].index` (`n > 1` supported),
+- concatenate `delta.content` / `reasoning_content` / `refusal`,
+- first non-empty `delta.role` (default `assistant`),
+- merge `tool_calls` by index (id/type/name + concatenated arguments),
+- concatenate logprobs; last non-null `finish_reason` / `stop_reason`,
+- `usage` from the last event that carries it; `id` / `created` / `model` /
+  `system_fingerprint` from the first,
+- emit `object: "chat.completion"` with `message`.
+
+**Passthrough** any stream that is already a single `chat.completion` (old host,
+cache replay, in-process synthetic stream). Host error payloads pass through
+unchanged.
+
+### D5. Single rollback setting
+
+`ForceUpstreamStreaming` gates forcing (D1), escalation flip (D3), and usage-chunk
+suppression together. The aggregator ships unconditionally (strictly more correct
+on both inputs).
+
+### D6. Explicit cache-key isolation by client shape
+
+After forcing `stream: true`, normalized bodies of stream and non-stream clients
+collide. The cache key (and capture logging) must take **client intent** as a
+separate input so an SSE body is never served to a JSON client.
+
+### D7. Storage growth is accepted here
+
+Every stored payload becomes `{"events":[…]}` (~1.5–2× a single JSON completion with
+forced logprobs). Measured in soak; optional later work can store an aggregated
+canonical body (separate proposal — changes `ResponseHash`).
+
+### Prerequisites that become universal
+
+**Streamed usage mandatory (B2).** Missing or zero `PromptTokens` on a non-empty
+streamed completion must not publish a zero-input finish. Strict `GetUsage` with an
+explicit sentinel; lenient estimate only for non-critical readers. Counter + log.
+
+**Well-formed streamed replay (B1).** Replaying `{"events":[…]}` emits each stored
+event as its own SSE `data:` line (plus `[DONE]` if needed). Non-envelope bodies keep
+single-event behavior. Wire-format only — no re-hash.
+
+### Host: drain ML independently of the client connection
+
+Same principle the gateway already applies to the end user: losing the writer must
+not abort generation.
+
+- Execution lifetime is detached from the gateway HTTP request context; client
+  cancel means “stop proxying,” not “stop generating.”
+- On write failure, stop touching that writer but keep reading ML through `[DONE]`
+  so the executor still accumulates every event.
+- Normal finish path still runs: usage validation, `ResponseHash`, payload store,
+  `MsgFinishInference`, `completedResponses`.
+- Bound orphan work with an absolute drain deadline + graceful-drain lifecycle so a
+  hung vLLM cannot pin the node forever. Partial-response fields are set when drain
+  ends without `[DONE]`. Metrics for detach and drain outcome
+  (`completed` / `deadline` / `ml_error`).
+
+This is what makes same-nonce reconnect (below) useful.
+
+### Cap gateway SSE event size
+
+The transport SSE parser must not grow unboundedly on a line without `\n` (DoS /
+OOM). Hard default max event size (e.g. 1 MiB); oversize aborts with a typed error
+and attempt failure / escalation — never silent truncate. Always-stream makes every
+chat request hit this path.
+
+---
+
+## Design — attempt reconnect and winner continuity
+
+Depends on well-formed streamed replay and independent ML drain. Ship reconnect code
+in the gateway-v4 binary; activate only on sessions bound to protocol **≥ v5**.
+
+### R0. Protocol gate (≥ v5)
+
+Effective predicate:
+
+```text
+AttemptReconnectEnabled
+AND ProtocolVersionAtLeast(sessionVersion, ProtocolV5)
+```
+
+≤v4 sessions keep today's escalate-to-new-nonce / `winner_failed_after_content`
+behavior. The gate is per-session (homogeneous escrow protocol version), not
+per-host. Not a setting an operator can override into an incompatible host set.
+
+### R1. Same-nonce resend is a reconnect, not a new inference
+
+Re-issue the existing `PreparedInference` (same nonce, catch-up, payload). Host
+`signReceipt` already branches on executing vs cached.
+
+Protocol hazards:
+
+- **Duplicate `MsgConfirmStart`.** A second receipt must not become a second mempool
+  entry; repeat confirm for an already-confirmed inference is a no-op (or the first
+  receipt is reused).
+- **Double `ProcessResponse`.** Merge reconnect `HostResponse` into the same
+  inflight — one `ProcessResponse` per nonce (prefer the response that carries
+  receipt / mempool).
+
+### R2. Resume offset = upstream events + partial bytes
+
+On the winning inflight:
+
+```go
+deliveredEvents  int64 // complete upstream data events already forwarded
+deliveredPartial int64 // bytes of event N already forwarded
+```
+
+Upstream-side, not client-side (rewrites and framing differ). Aggregating clients
+need none of this — nothing was written yet.
+
+On resume the host continues from that cursor. If the host ever re-emits a prefix,
+the gateway still drops the already-delivered events/partial as a safety net.
+
+### R3. Reconnect ladder, then escalate
+
+On mid-stream transport failure (or EOF before `devshard_meta`):
+
+1. Immediately same-nonce reconnect to the **same host**.
+2. Budget `AttemptReconnectBudget` (default **1s**), up to
+   `AttemptReconnectMaxTries` (default 2) with short backoff.
+3. Fail a try on error, disconnect, receipt-only when neither executing nor cached,
+   or no content before budget ends.
+4. When the budget expires, escalate as today (**new nonce**, next participant) **and
+   keep the reconnect ladder running** — they race under R4.
+
+Pre-content drops keep today's timing: reconnect and `attempt_failed` escalation can
+start together (no delivered prefix to protect).
+
+### R4. Winner continuity
+
+While a reservation is held (`reservedWinner` / `reservedUntil`):
+
+- No other nonce may crown; secondaries buffer in `pendingBuf` as today.
+- Reservation releases on resume, ladder exhaustion, or confirmed-dead with nothing
+  to resume from.
+- After release, a secondary may take over only if nothing was delivered yet, or
+  (opt-in R5) it has strictly more content than the winner delivered **and** stream
+  reset is enabled.
+
+A winner transport failure with a resumable nonce enters reservation instead of
+immediately becoming terminal `winner_failed_after_content`.
+
+### R5. Switching generations after bytes were delivered is opt-in
+
+Default: streaming client with delivered prefix and exhausted resume → fail
+(truncated stream / resume-exhausted reason). Optional `AllowStreamResetOnFailover`
+writes a stream reset and continues from the secondary. Aggregating clients may
+always switch (nothing delivered).
+
+### R6. Live attach from offset; then drain → disk → forget
+
+**Not** wait-for-ML-completion before tokens resume.
+
+```text
+Before drop (gateway → client):
+  event 0 … event N-1   (complete)
+  event N               (partial: deliveredPartial bytes already streamed)
+
+Reconnect WHILE still draining ML:
+  event N               (remaining: payload[deliveredPartial:])
+  event N+1 …           (live as ML produces)
+  … [DONE] / meta
+
+Reconnect AFTER drain finished (body in payload storage):
+  stream from storage from the resume cursor
+```
+
+Host buffer lifecycle:
+
+```text
+ML producing  →  in-memory event buffer (live attach)
+      ↓ drain completes
+persist        →  payload storage + completedResponses
+      ↓
+forget RAM     →  drop live buffer; later reconnects use storage only
+```
+
+Rules:
+
+1. Reconnecting HTTP request **joins** the in-flight execution; first post-reconnect
+   byte must not wait for `[DONE]`.
+2. Per-inference buffer holds complete SSE events + the currently forming event
+   while draining.
+3. Resume cursor `(deliveredEvents, deliveredPartial)` on transport / `HostRequest`
+   only (not a chain message). Cursor past buffer → resume failure → escalate.
+4. On drain complete: normal finish path, then drop the live buffer. Later reconnects
+   use `hasCached` / payload storage + well-formed `replaySSEBody`.
+5. **`InflightReplayBufferTTL`** (aligned with drain deadline): prune stranded live
+   buffers from RAM if drain never persists. After prune: storage if present,
+   otherwise resume failure. Prefer drain→persist→forget; TTL is a safety net.
+6. No second vLLM call for the same nonce.
+
+Same fan-out shape as in-flight chat join, scoped to one reconnecting gateway
+connection.
+
+### R7. Settings (AND R0)
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ForceUpstreamStreaming` | `false` → `true` after soak | Always-stream flip (D1/D3/usage suppress) |
+| `AttemptReconnectEnabled` | `false` → `true` after soak | Master switch for R3/R4; still ANDed with R0 |
+| `AttemptReconnectBudgetMS` | `1000` | Ladder budget before escalating |
+| `AttemptReconnectMaxTries` | `2` | Reconnect sends per drop |
+| `AllowStreamResetOnFailover` | `false` | R5 opt-in |
+| `InflightReplayBufferTTL` (host) | align with drain deadline | Max RAM lifetime for live per-nonce buffer |
+
+### R8. Accounting
+
+A reconnect must not look like a new attempt (no second `recordGatewayAttemptStarted`
+/ `RealSend`). It is a transport try on the existing inflight: separate counters /
+latency, same nonce, one terminal record.
+
+---
+
+## Observability (design intent)
+
+- Counters for missing usage, drain detach/outcome, SSE oversize, reconnect results
+  (`resumed` / `budget_expired` / `receipt_only` / `error` / `skipped_protocol`),
+  winner-continuity outcomes.
+- After the gateway attempt-span model lands: child `attempt.reconnect` (try index,
+  delivered offset, result), reconnect TTFB, time-to-first-*new*-chunk past the
+  delivered offset, and a clear signal when the race moves to another nonce
+  (`attempt.winner_switched` / `attempt.failover`).
+
+---
+
+## Optional follow-ups (separate)
+
+- **devshardd streaming-only** — reject non-stream ML payloads after traffic is
+  always streamed.
+- **Canonical aggregated storage** — undo D7 growth; changes `ResponseHash` (own
+  proposal).
+- **In-flight chat stream join** — duplicate clients join one live stream
+  ([chat-stream-inflight-join.md](./chat-stream-inflight-join.md)); distinct from
+  same-nonce gateway↔host reconnect.
+
+---
 
 ## Acceptance sketch
 
-- A client request with `stream: false` produces a byte-comparable `chat.completion` for
-  the same seed whether the upstream streamed or not — asserted by a differential test
-  against the mock ML node and reviewed against a real vLLM node.
-- `devshard_gateway_participant_first_content_seconds` is populated for 100% of chat
-  requests; no request reaches the 140s reduced-`max_tokens` path.
-- A dead host on a `stream: false` client request is escalated within the first-token
-  budget (~1s + per-input-token lag), not after 140s.
-- `MsgFinishInference.InputTokens` is non-zero for every finished inference; devshardd
-  refuses to finish an inference whose streamed response carries no `usage`.
-- Reconnect replay of a streamed inference yields a valid OpenAI stream, and the same
-  aggregated JSON for a non-streaming client.
-- Existing cache-isolation tests (`TestE2E_StreamingThenNonStreamingCacheIsolation`,
-  `TestE2E_NonStreamingThenStreamingCacheIsolation`) still pass unchanged.
+- `stream: false` client → correct `chat.completion`; upstream saw a streaming
+  request. Differential match vs mock (and reviewed vs real vLLM) for a fixed seed.
+- First-content / TTFT metrics populated for essentially all chat traffic; no
+  reliance on the 140s reduced-`max_tokens` path when always-stream is on.
+- Dead host on a non-stream client escalates within the first-token budget (~1s),
+  not after minutes.
+- Streamed finish never publishes zero `InputTokens` on a non-empty completion.
+- Streamed reconnect replay is a valid OpenAI SSE sequence (and aggregates correctly
+  for non-stream clients).
+- Mid-stream drop on a **v5** session: same-nonce resume yields one continuous,
+  non-duplicated client stream (including mid-event break); at most one paid
+  finish for that nonce when resume wins. Live attach does not wait for ML
+  completion; post-drain reconnect streams from storage after the live buffer is
+  forgotten.
+- Same drop on **v4** (or reconnect disabled): today's escalation / failure
+  contract; no same-nonce ladder.
+- Cache isolation: stream vs non-stream client shapes remain separate entries.
+- Streaming client without `include_usage` does not see a forced trailing usage
+  chunk; aggregated path always has `usage`.
+- Oversize SSE line without newline fails bounded, without retaining the attacker
+  payload.
+
+---
+
+## Related
+
+- [../gateway-always-stream-upstream-plan.md](../gateway-always-stream-upstream-plan.md) — implementation plan (always-stream, drain, aggregator, SSE cap, rollout)
+- [../gateway-attempt-reconnect-plan.md](../gateway-attempt-reconnect-plan.md) — implementation plan (reconnect ladder, winner continuity, R6 lifecycle)
+- [../stream-resume-pre-proposal.md](../stream-resume-pre-proposal.md) — client-facing resume (larger, separate)
+- [chat-stream-inflight-join.md](./chat-stream-inflight-join.md) — duplicate clients join an in-flight stream
+- [chat-cache-attribution.md](./chat-cache-attribution.md) — cache attribution for joiners / cache keys

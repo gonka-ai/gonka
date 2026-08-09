@@ -27,3 +27,9 @@ func DiffPersistRetryForTest(result string) prometheus.Counter {
 	}
 	return diffPersistRetryTotal.WithLabelValues(result)
 }
+
+// MissingUsageCounterForTest exposes the missing-usage counter for unit tests.
+func MissingUsageCounterForTest() prometheus.Counter {
+	ensureMetrics()
+	return missingUsageTotal
+}

@@ -39,6 +39,9 @@ var (
 	diffPersistRetryTotal     *prometheus.CounterVec
 	diffForkDetectedTotal     *prometheus.CounterVec
 	reconcileFastForwardTotal prometheus.Counter
+
+	// Streamed ML responses that finished without usable prompt-token usage.
+	missingUsageTotal prometheus.Counter
 )
 
 var durationBuckets = []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10}
@@ -153,6 +156,10 @@ func initRegistry() {
 		Name: "devshard_reconcile_fast_forward_total",
 		Help: "Times a host fast-forwarded in-memory state from durable diffs (HA stale standby).",
 	})
+	missingUsageTotal = prometheus.NewCounter(prometheus.CounterOpts{
+		Name: "devshard_inference_missing_usage_total",
+		Help: "Inferences whose streamed ML response lacked usable prompt-token usage.",
+	})
 
 	registry.MustRegister(
 		inflight,
@@ -177,6 +184,7 @@ func initRegistry() {
 		diffPersistRetryTotal,
 		diffForkDetectedTotal,
 		reconcileFastForwardTotal,
+		missingUsageTotal,
 	)
 }
 
@@ -347,6 +355,12 @@ func IncDiffForkDetected(escrowID string) {
 func IncReconcileFastForward() {
 	ensureMetrics()
 	reconcileFastForwardTotal.Inc()
+}
+
+// IncMissingUsage records a streamed inference that could not report prompt tokens.
+func IncMissingUsage() {
+	ensureMetrics()
+	missingUsageTotal.Inc()
 }
 
 
