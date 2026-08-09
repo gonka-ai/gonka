@@ -55,12 +55,16 @@ func (t *Tracker) viewsFor(filter QueryFilter) ([]escrowView, time.Time) {
 // view copies everything a query reads. Meta.Slots is shared because it is
 // copied once at registration and never mutated after. nonceState.Counted is
 // only tested for nil, never dereferenced.
+//
+// The per-nonce sets are folded into per-slot totals here, on top of whatever
+// the pre-set layout left behind, so the rest of the query path sees one shape
+// regardless of which layout the escrow was loaded from.
 func (e *escrowState) view(id string) escrowView {
 	out := escrowView{
 		id:              id,
 		meta:            e.Meta,
 		latest:          e.Latest,
-		counters:        make(map[CounterKey]uint64, len(e.Counters)),
+		counters:        make(map[CounterKey]uint64, len(e.Counters)+len(e.ProtocolOnly)),
 		hostStats:       make(map[uint32]types.HostStats, len(e.HostStats)),
 		challengeBySlot: copyUint32Map(e.ChallengeBySlot),
 		invalidBySlot:   copyUint32Map(e.InvalidBySlot),
@@ -68,6 +72,17 @@ func (e *escrowState) view(id string) escrowView {
 	}
 	for key, count := range e.Counters {
 		out.counters[key] = count
+	}
+	for _, slot := range e.ProtocolOnly {
+		out.counters[CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly}]++
+	}
+	for _, rec := range e.Challenge {
+		if !rec.Resolved {
+			out.challengeBySlot[rec.Slot]++
+		}
+	}
+	for _, slot := range e.Invalid {
+		out.invalidBySlot[slot]++
 	}
 	for slot, stats := range e.HostStats {
 		out.hostStats[slot] = stats

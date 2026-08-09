@@ -8,7 +8,8 @@ rollout mechanics see [rolling-update.md](./rolling-update.md).
 
 Related: [merge-plan.md](./merge-plan.md) (runtime topology),
 [pixelplex-changes.md](./pixelplex-changes.md) (edge-api extraction),
-[storage-design.md](./storage-design.md) (storage-mode selection).
+[storage-design.md](./storage-design.md) (storage-mode selection),
+[gateway.md](./gateway.md) (gateway + epoch-accounting HA merge framework).
 
 ---
 
@@ -237,6 +238,64 @@ Compose: `local-test-net/docker-compose.devshard-postgres.yml`,
 `deploy/join/docker-compose.versiond.yml` bring up one shared `devshard-postgres`
 for all versiond children.
 
+### Gateway + epoch accounting under HA
+
+`devshardctl` (gateway) is a separate process from `devshardd`. When several
+gateway replicas share Postgres, two persistence planes matter:
+
+| Plane | Merge | HA requirement |
+|-------|-------|----------------|
+| Gateway store (settings, devshards, throttles, …) | Last-writer-wins per primary key | Shared Postgres; configuration, not additive traffic |
+| Epoch accounting | Per-field merge (below) | Shared Postgres **and** a unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
+
+**`DEVSHARD_ACCOUNTING_WRITER_ID` is required for HA gateways.** It partitions
+request-local accounting rows. Resolution is env → hostname → `"default"`.
+Defaulting is only safe when hostnames are unique and stable. Two replicas that
+share an id overwrite each other's request-local shares. SQLite mode has a
+single writer and ignores the variable.
+
+Full operator env table: [gateway.md](./gateway.md#configuration). Field table
+and factory markers: [storage-design.md](./storage-design.md#epoch-accounting).
+
+#### How accounting fields are stored (merge framework)
+
+There is no single merge rule. Each field is classified by: *if two instances
+are live on the same escrow, do both produce this value?*
+
+| Class | Test | Merge | Storage |
+| --- | --- | --- | --- |
+| Request-local | Needs a local dispatch signal (`RecordGhost` / `RecordRealSend` / `RecordUsage`) | `SUM` across `writer_id` | `(escrow_id, writer_id, key)` absolute share |
+| Replicated | Read off the committed diff / verdict — every instance derives it | Set union; flags with monotonic `OR` | One row per nonce, **no** `writer_id` |
+| Absolute mirror | Chain already publishes the total | `GREATEST` | Shared row |
+| Ordered / identity | Fixed rank or registration identity | Highest rank / identity write | Shared row |
+
+Worked examples:
+
+- `finished_used` → request-local (passive replica never learns usage).
+- Protocol-only nonce, challenge, invalidation → replicated sets (never store a
+  *count* of these; sum double-counts overlap, max drops disjoint observations).
+  Challenges keep resolved nonces (`Resolved` flag) rather than deleting them;
+  `ChallengeBySlot` is only a legacy carry — see
+  [gateway.md](./gateway.md#challenges-and-the-legacy-challengebyslot-carry).
+- Host stats / `latest` → absolute mirrors.
+- Escrow phase → ordered; slots / timeouts → identity.
+
+Invariants on every class: flush is replay-safe (absolute values or
+insert-if-absent, never `count = count + delta`); a writer never updates a
+peer’s rows; values are monotonic (resolved challenges are flagged, not deleted).
+
+**Migration of older data.** Pre-row Postgres blobs (`accounting_escrows`) convert
+once under frozen writer `_legacy_blob` (marker `blob_to_rows`). Local SQLite
+imports once when Postgres is empty (marker `sqlite_import`). Old blobs had no
+producer tag — that is why conversion invents `_legacy_blob`. Live writers treat
+those rows as a peer baseline and only publish their own share on top.
+
+**SQLite-only evolution** (no HA): new fields are new JSON keys inside the blob
+payload; missing keys decode as zero and the next flush rewrites the file. No
+`writer_id`, no SQL column migration. Checklist:
+[gateway.md](./gateway.md#ha-merge-framework) and
+[gateway.md](./gateway.md#staying-on-sqlite-how-new-fields-appear).
+
 ---
 
 ## 5. decentralized-api (dapi) — current responsibilities
@@ -284,6 +343,7 @@ highly-available edge-api.
 | `proxy` | yes | yes (immutable) | — |
 | `edge-api` | yes | **yes** (+ `edge-api-router`, round-robin) | none |
 | `versiond` + `devshardd` | per-escrow state | **yes** (+ `versiond-router`, sticky hash) | **shared Postgres** |
+| `devshardctl` (gateway) | config + accounting | yes (operator-scaled) | **shared Postgres** + unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica |
 | `decentralized-api` | no (event loop, NATS, keyring) | **no** (single-instance) | NATS, Redis, Postgres + leader election (proposed) |
 
 ---

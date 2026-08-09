@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"devshard/types"
@@ -18,6 +19,11 @@ type Store struct {
 	backend   storeBackend
 	retention uint64
 	path      string // sqlite path (migration source / sqlite mode)
+	// saveMu serializes taking a snapshot with writing it. Flush runs from the
+	// snapshot ticker and from settle/retire concurrently, and the Postgres
+	// backend persists counters as absolute values, so a save that started from
+	// an older snapshot must never land after a newer one.
+	saveMu sync.Mutex
 }
 
 type storeBackend interface {
@@ -30,18 +36,38 @@ type storeBackend interface {
 }
 
 type escrowBlob struct {
-	Meta            EscrowMetadata             `json:"meta"`
-	Latest          uint64                     `json:"latest"`
-	HostStats       map[uint32]types.HostStats `json:"host_stats"`
-	Counters        []counterBlob              `json:"counters"`
-	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
-	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
-	InvalidNonces   []uint64                   `json:"invalid_nonces,omitempty"`
+	Meta      EscrowMetadata             `json:"meta"`
+	Latest    uint64                     `json:"latest"`
+	HostStats map[uint32]types.HostStats `json:"host_stats"`
+	Counters  []counterBlob              `json:"counters"`
+	// The per-nonce sets: replicated facts are persisted by identity so they can
+	// be merged by union rather than by arithmetic.
+	ProtocolOnly []nonceSlot     `json:"protocol_only,omitempty"`
+	Challenges   []challengeBlob `json:"challenges,omitempty"`
+	Invalid      []nonceSlot     `json:"invalid,omitempty"`
+	// Written by the pre-set layout only; carried forward, never regrown.
+	ChallengeBySlot map[uint32]uint64 `json:"challenge_by_slot,omitempty"`
+	InvalidBySlot   map[uint32]uint64 `json:"invalid_by_slot,omitempty"`
+	InvalidNonces   []uint64          `json:"invalid_nonces,omitempty"`
 }
 
 type counterBlob struct {
 	Key   CounterKey `json:"key"`
 	Count uint64     `json:"count"`
+}
+
+// nonceSlot is one member of a per-nonce set, with the slot it was attributed
+// to. Invalidations and challenges land on the executor slot from the verdict,
+// which is not derivable from the nonce, so the slot is stored with it.
+type nonceSlot struct {
+	Nonce uint64 `json:"nonce"`
+	Slot  uint32 `json:"slot"`
+}
+
+type challengeBlob struct {
+	Nonce    uint64 `json:"nonce"`
+	Slot     uint32 `json:"slot"`
+	Resolved bool   `json:"resolved,omitempty"`
 }
 
 type storeSnapshot struct {
@@ -75,6 +101,11 @@ func (s *Store) Save(ctx context.Context, t *Tracker) error {
 	if s == nil || s.backend == nil || t == nil {
 		return nil
 	}
+	// Held across both calls: takePersistSnapshot clears the dirty set, so an
+	// interleaved older write would be lost permanently rather than corrected on
+	// the next tick.
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
 	snap, dirtyIDs, deletedIDs := t.takePersistSnapshot(s.retention)
 	if err := s.backend.Save(ctx, snap, dirtyIDs, deletedIDs); err != nil {
 		t.restorePersistState(dirtyIDs, deletedIDs)
@@ -93,20 +124,29 @@ func applyLoadedEscrow(t *Tracker, blob escrowBlob) error {
 		Latest:          blob.Latest,
 		HostStats:       make(map[uint32]types.HostStats, len(blob.HostStats)),
 		Counters:        make(map[CounterKey]uint64, len(blob.Counters)),
-		OpenChallenge:   make(map[uint64]uint32),
+		ProtocolOnly:    make(map[uint64]uint32, len(blob.ProtocolOnly)),
+		Challenge:       make(map[uint64]challengeRecord, len(blob.Challenges)),
+		Invalid:         make(map[uint64]uint32, len(blob.Invalid)),
 		ChallengeBySlot: blob.ChallengeBySlot,
 		InvalidBySlot:   blob.InvalidBySlot,
-		InvalidNonce:    make(map[uint64]struct{}, len(blob.InvalidNonces)),
 		Live:            make(map[uint64]*nonceState),
 	}
-	for _, nonce := range blob.InvalidNonces {
-		escrow.InvalidNonce[nonce] = struct{}{}
+	for _, entry := range blob.ProtocolOnly {
+		escrow.ProtocolOnly[entry.Nonce] = entry.Slot
 	}
-	if escrow.ChallengeBySlot == nil {
-		escrow.ChallengeBySlot = make(map[uint32]uint64)
+	for _, entry := range blob.Challenges {
+		escrow.Challenge[entry.Nonce] = challengeRecord{Slot: entry.Slot, Resolved: entry.Resolved}
 	}
-	if escrow.InvalidBySlot == nil {
-		escrow.InvalidBySlot = make(map[uint32]uint64)
+	for _, entry := range blob.Invalid {
+		escrow.Invalid[entry.Nonce] = entry.Slot
+	}
+	// Pre-set invalid nonces are kept for deduplication only: their counts live in
+	// InvalidBySlot, so promoting them into the set would count them twice.
+	if len(blob.InvalidNonces) > 0 {
+		escrow.InvalidLegacy = make(map[uint64]struct{}, len(blob.InvalidNonces))
+		for _, nonce := range blob.InvalidNonces {
+			escrow.InvalidLegacy[nonce] = struct{}{}
+		}
 	}
 	for slot, stats := range blob.HostStats {
 		escrow.HostStats[slot] = stats
@@ -138,9 +178,12 @@ func blobFromEscrow(escrow *escrowState) escrowBlob {
 		Meta:            escrow.Meta,
 		Latest:          escrow.Latest,
 		HostStats:       make(map[uint32]types.HostStats, len(escrow.HostStats)),
+		ProtocolOnly:    sortedNonceSlots(escrow.ProtocolOnly),
+		Invalid:         sortedNonceSlots(escrow.Invalid),
+		Challenges:      sortedChallenges(escrow.Challenge),
 		ChallengeBySlot: copyUint32Map(escrow.ChallengeBySlot),
 		InvalidBySlot:   copyUint32Map(escrow.InvalidBySlot),
-		InvalidNonces:   sortedNonces(escrow.InvalidNonce),
+		InvalidNonces:   sortedNonces(escrow.InvalidLegacy),
 	}
 	for slot, stats := range escrow.HostStats {
 		blob.HostStats[slot] = stats
@@ -177,6 +220,30 @@ func sortedKeys(in map[string]struct{}) []string {
 		out = append(out, key)
 	}
 	sort.Strings(out)
+	return out
+}
+
+func sortedNonceSlots(in map[uint64]uint32) []nonceSlot {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]nonceSlot, 0, len(in))
+	for nonce, slot := range in {
+		out = append(out, nonceSlot{Nonce: nonce, Slot: slot})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Nonce < out[j].Nonce })
+	return out
+}
+
+func sortedChallenges(in map[uint64]challengeRecord) []challengeBlob {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]challengeBlob, 0, len(in))
+	for nonce, rec := range in {
+		out = append(out, challengeBlob{Nonce: nonce, Slot: rec.Slot, Resolved: rec.Resolved})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Nonce < out[j].Nonce })
 	return out
 }
 

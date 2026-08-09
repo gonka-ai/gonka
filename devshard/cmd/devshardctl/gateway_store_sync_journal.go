@@ -19,15 +19,15 @@ import (
 // build can still boot with unreplayed rows in gateway.db, so open drains them
 // into Postgres before serving.
 const (
-	gatewayTableSettings         = "gateway_settings"
-	gatewayTableDevshards        = "gateway_devshards"
-	gatewayTableThrottle         = "participant_throttle_state"
-	gatewayTableRotationStatus   = "gateway_rotation_status"
-	gatewayTableSuspiciousHosts  = "gateway_suspicious_hosts"
-	gatewayTableCommitments      = "escrow_rotation_commitments"
-	gatewaySettingsRowKey        = "1"
-	gatewaySyncOpUpsert          = "upsert"
-	gatewaySyncOpDelete          = "delete"
+	gatewayTableSettings        = "gateway_settings"
+	gatewayTableDevshards       = "gateway_devshards"
+	gatewayTableThrottle        = "participant_throttle_state"
+	gatewayTableRotationStatus  = "gateway_rotation_status"
+	gatewayTableSuspiciousHosts = "gateway_suspicious_hosts"
+	gatewayTableCommitments     = "escrow_rotation_commitments"
+	gatewaySettingsRowKey       = "1"
+	gatewaySyncOpUpsert         = "upsert"
+	gatewaySyncOpDelete         = "delete"
 )
 
 // gatewaySyncJournalDrainChunkSize bounds how many raw journal rows are loaded

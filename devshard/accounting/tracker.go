@@ -33,15 +33,41 @@ type Tracker struct {
 }
 
 type escrowState struct {
-	Meta            EscrowMetadata             `json:"meta"`
-	Latest          uint64                     `json:"latest"`
-	HostStats       map[uint32]types.HostStats `json:"host_stats"`
-	Counters        map[CounterKey]uint64      `json:"counters"`
-	OpenChallenge   map[uint64]uint32          `json:"-"`
-	ChallengeBySlot map[uint32]uint64          `json:"challenge_by_slot"`
-	InvalidBySlot   map[uint32]uint64          `json:"invalid_by_slot"`
-	InvalidNonce    map[uint64]struct{}        `json:"-"`
-	Live            map[uint64]*nonceState     `json:"-"`
+	Meta      EscrowMetadata             `json:"meta"`
+	Latest    uint64                     `json:"latest"`
+	HostStats map[uint32]types.HostStats `json:"host_stats"`
+	// Counters holds the dispositions derived from a local nonceState. Only the
+	// instance that dispatched a nonce can produce one, so writers hold disjoint
+	// sets and the persisted rows are summed across them.
+	Counters map[CounterKey]uint64 `json:"counters"`
+
+	// ProtocolOnly, Challenge and Invalid record facts every instance reads off
+	// the same committed diffs. They are kept as per-nonce sets rather than
+	// counts because a count cannot be merged across writers: summing turns one
+	// chain event into two, and taking the max drops an observation a writer with
+	// a stale view never saw. A set merges by union, which is exact and
+	// idempotent. Per-slot totals are derived when a view is built.
+	ProtocolOnly map[uint64]uint32          `json:"protocol_only,omitempty"`
+	Challenge    map[uint64]challengeRecord `json:"challenges,omitempty"`
+	Invalid      map[uint64]uint32          `json:"invalid,omitempty"`
+
+	// The next three carry state written by the pre-set layout, which cannot be
+	// reconstructed as nonces. They are never incremented again, only folded into
+	// derived totals on read, and they age out with retention.
+	ChallengeBySlot map[uint32]uint64   `json:"challenge_by_slot,omitempty"`
+	InvalidBySlot   map[uint32]uint64   `json:"invalid_by_slot,omitempty"`
+	InvalidLegacy   map[uint64]struct{} `json:"invalid_nonces,omitempty"`
+
+	Live map[uint64]*nonceState `json:"-"`
+}
+
+// challengeRecord tracks one challenged nonce. Resolved only ever goes false to
+// true, so two instances that both see the verdict converge, and the flag
+// replaces deleting the entry: a resolved challenge has to stay recorded or a
+// repeated verdict would open it again.
+type challengeRecord struct {
+	Slot     uint32 `json:"slot"`
+	Resolved bool   `json:"resolved,omitempty"`
 }
 
 type nonceState struct {
@@ -170,14 +196,13 @@ func (t *Tracker) RegisterEscrow(meta EscrowMetadata) error {
 			return nil
 		}
 		t.escrows[meta.EscrowID] = &escrowState{
-			Meta:            meta,
-			HostStats:       make(map[uint32]types.HostStats),
-			Counters:        make(map[CounterKey]uint64),
-			OpenChallenge:   make(map[uint64]uint32),
-			ChallengeBySlot: make(map[uint32]uint64),
-			InvalidBySlot:   make(map[uint32]uint64),
-			InvalidNonce:    make(map[uint64]struct{}),
-			Live:            make(map[uint64]*nonceState),
+			Meta:         meta,
+			HostStats:    make(map[uint32]types.HostStats),
+			Counters:     make(map[CounterKey]uint64),
+			ProtocolOnly: make(map[uint64]uint32),
+			Challenge:    make(map[uint64]challengeRecord),
+			Invalid:      make(map[uint64]uint32),
+			Live:         make(map[uint64]*nonceState),
 		}
 		t.markDirtyLocked(meta.EscrowID)
 		return nil
@@ -255,12 +280,9 @@ func (t *Tracker) RecordProtocol(escrowID string, nonce uint64, slot uint32, kin
 				e.reclassify(nonce, s, t.nowUTC())
 			}
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[nonce]; !ok {
-				e.OpenChallenge[nonce] = slot
-				e.ChallengeBySlot[slot]++
-			}
+			e.openChallenge(nonce, slot)
 		case ProtocolValidated:
-			e.closeChallenge(nonce, slot)
+			e.resolveChallenge(nonce, slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(nonce, slot)
 		default:
@@ -607,12 +629,9 @@ func (e *escrowState) recordCommittedDiff(diff types.Diff, verdicts []VerdictRec
 	for _, verdict := range verdicts {
 		switch verdict.Kind {
 		case ProtocolChallenged:
-			if _, ok := e.OpenChallenge[verdict.Nonce]; !ok {
-				e.OpenChallenge[verdict.Nonce] = verdict.Slot
-				e.ChallengeBySlot[verdict.Slot]++
-			}
+			e.openChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolValidated:
-			e.closeChallenge(verdict.Nonce, verdict.Slot)
+			e.resolveChallenge(verdict.Nonce, verdict.Slot)
 		case ProtocolInvalidated:
 			e.recordInvalid(verdict.Nonce, verdict.Slot)
 		}
@@ -664,7 +683,12 @@ func (e *escrowState) recordDiff(nonce uint64, hasStart bool) {
 	e.Latest = nonce
 	slot := AssignedNonceSlot(nonce, uint64(len(e.Meta.Slots)))
 	if !hasStart {
-		e.add(CounterKey{SlotID: slot, Disposition: DispositionProtocolOnly}, 1)
+		// Recorded by nonce, not as a count: every instance following this escrow
+		// sees the same diff and would otherwise count it once each.
+		if e.ProtocolOnly == nil {
+			e.ProtocolOnly = make(map[uint64]uint32)
+		}
+		e.ProtocolOnly[nonce] = slot
 		return
 	}
 	if _, exists := e.Live[nonce]; !exists {
@@ -718,34 +742,52 @@ func (e *escrowState) remove(key CounterKey) {
 	e.Counters[key]--
 }
 
-// closeChallenge returns the challenged slot, or fallback when no challenge was
-// open. A repeated verdict must not consume another slot's unresolved count, so
-// nothing is decremented in the fallback case.
-func (e *escrowState) closeChallenge(nonce uint64, fallback uint32) uint32 {
-	slot, open := e.OpenChallenge[nonce]
-	if !open {
-		return fallback
+// openChallenge records a challenged nonce against its executor slot. A repeated
+// challenge verdict is a no-op, and one that arrives after the challenge was
+// resolved does not reopen it.
+func (e *escrowState) openChallenge(nonce uint64, slot uint32) {
+	if _, seen := e.Challenge[nonce]; seen {
+		return
 	}
-	delete(e.OpenChallenge, nonce)
-	if e.ChallengeBySlot[slot] > 0 {
-		e.ChallengeBySlot[slot]--
+	if e.Challenge == nil {
+		e.Challenge = make(map[uint64]challengeRecord)
 	}
-	return slot
+	e.Challenge[nonce] = challengeRecord{Slot: slot}
 }
 
-// recordInvalid counts each invalidated inference once. Verdicts come from a
+// resolveChallenge marks a challenge resolved and returns the slot it was
+// challenged on, or fallback when this instance never saw the challenge. A
+// repeated verdict must not consume another slot's unresolved count, so nothing
+// changes in the fallback case.
+func (e *escrowState) resolveChallenge(nonce uint64, fallback uint32) uint32 {
+	rec, seen := e.Challenge[nonce]
+	if !seen {
+		return fallback
+	}
+	if !rec.Resolved {
+		rec.Resolved = true
+		e.Challenge[nonce] = rec
+	}
+	return rec.Slot
+}
+
+// recordInvalid records each invalidated inference once. Verdicts come from a
 // record's current status, so validations landing after an invalidation repeat
 // it, while HostStats.Invalid moves only once.
 func (e *escrowState) recordInvalid(nonce uint64, fallback uint32) {
-	slot := e.closeChallenge(nonce, fallback)
-	if _, counted := e.InvalidNonce[nonce]; counted {
+	slot := e.resolveChallenge(nonce, fallback)
+	// A nonce counted under the pre-set layout is already in InvalidBySlot;
+	// adding it to the set would count it a second time.
+	if _, legacy := e.InvalidLegacy[nonce]; legacy {
 		return
 	}
-	if e.InvalidNonce == nil {
-		e.InvalidNonce = make(map[uint64]struct{})
+	if _, counted := e.Invalid[nonce]; counted {
+		return
 	}
-	e.InvalidNonce[nonce] = struct{}{}
-	e.InvalidBySlot[slot]++
+	if e.Invalid == nil {
+		e.Invalid = make(map[uint64]uint32)
+	}
+	e.Invalid[nonce] = slot
 }
 
 func (s *nonceState) markFinished() {

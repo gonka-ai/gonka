@@ -32,10 +32,10 @@ func protocolOnlyTotal(t *testing.T, tr *Tracker, epoch uint64) uint64 {
 	return total
 }
 
-// TestPostgresAccountingConcurrentWritersMergeCounters is the regression test
-// for the last-writer-wins hazard: two instances holding the same escrow must
-// add up in Postgres instead of overwriting each other's counts.
-func TestPostgresAccountingConcurrentWritersMergeCounters(t *testing.T) {
+// TestPostgresAccountingDisjointWritersKeepEveryNonce covers two instances that
+// each observe a different part of the diff stream: every nonce has to survive,
+// so nothing may overwrite or drop a peer's observation.
+func TestPostgresAccountingDisjointWritersKeepEveryNonce(t *testing.T) {
 	setupAccountingPostgres(t)
 	ctx := context.Background()
 
@@ -44,14 +44,14 @@ func TestPostgresAccountingConcurrentWritersMergeCounters(t *testing.T) {
 	require.NoError(t, a.RecordDiff("e-ha", 1, false))
 	require.NoError(t, a.Flush(ctx))
 
-	// B loads the escrow A already published, then counts its own nonce.
+	// B loads the escrow A already published, then observes its own nonce.
 	b := openWriterTracker(t, "writer-b")
 	require.NoError(t, b.RecordDiff("e-ha", 3, false))
 	require.NoError(t, b.Flush(ctx))
-	require.Equal(t, uint64(2), protocolOnlyTotal(t, b, 11), "B should see A's count plus its own")
+	require.Equal(t, uint64(2), protocolOnlyTotal(t, b, 11), "B should see A's nonce plus its own")
 
-	// A flushes again after B: its snapshot still only knows its own nonce, and
-	// it must not restate the escrow over B's rows.
+	// A flushes again after B. Its snapshot still knows only its own nonces, so a
+	// rule that published a total instead of a set would drop B's nonce here.
 	require.NoError(t, a.RecordDiff("e-ha", 5, false))
 	require.NoError(t, a.Flush(ctx))
 	require.NoError(t, a.Close())
@@ -59,11 +59,68 @@ func TestPostgresAccountingConcurrentWritersMergeCounters(t *testing.T) {
 
 	merged := openWriterTracker(t, "writer-c")
 	defer merged.Close()
-	require.Equal(t, uint64(3), protocolOnlyTotal(t, merged, 11), "every writer's counts must survive")
+	require.Equal(t, uint64(3), protocolOnlyTotal(t, merged, 11), "every observation must survive")
+	require.Equal(t, []uint64{1, 3, 5}, protocolNonces(t, ctx, "e-ha"))
+}
 
-	// The totals survive because each instance owns its own rows, which is what
-	// a reader sums; assert the partitioning itself, not just the sum.
-	require.Equal(t, map[string]int64{"writer-a": 2, "writer-b": 1}, counterTotalsByWriter(t, ctx, "e-ha"))
+// TestPostgresAccountingOverlappingWritersCountNonceOnce is the other half: a
+// protocol-only nonce is read off the committed diff, so two live instances both
+// see the same one. It must be counted once, not once per instance.
+func TestPostgresAccountingOverlappingWritersCountNonceOnce(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	a := openWriterTracker(t, "writer-a")
+	registerEscrow(t, a, "e-overlap", 21, "m")
+	require.NoError(t, a.RecordDiff("e-overlap", 1, false))
+	require.NoError(t, a.Flush(ctx))
+
+	// B picks the escrow up from the ledger rather than registering it again.
+	b := openWriterTracker(t, "writer-b")
+
+	// Nonce 3 commits on chain while both are live: each observes it once.
+	require.NoError(t, a.RecordDiff("e-overlap", 3, false))
+	require.NoError(t, b.RecordDiff("e-overlap", 3, false))
+	require.NoError(t, a.Flush(ctx))
+	require.NoError(t, b.Flush(ctx))
+	require.NoError(t, a.Close())
+	require.NoError(t, b.Close())
+
+	merged := openWriterTracker(t, "writer-c")
+	defer merged.Close()
+	require.Equal(t, uint64(2), protocolOnlyTotal(t, merged, 21),
+		"nonces 1 and 3 were consumed, so the total is 2 no matter how many instances saw them")
+	require.Equal(t, []uint64{1, 3}, protocolNonces(t, ctx, "e-overlap"))
+}
+
+// TestPostgresAccountingRequestLocalCountersSum pins the other merge rule: a
+// disposition needs a local dispatch, so two instances hold disjoint sets by
+// construction and their per-writer rows are summed.
+func TestPostgresAccountingRequestLocalCountersSum(t *testing.T) {
+	setupAccountingPostgres(t)
+	ctx := context.Background()
+
+	a := openWriterTracker(t, "writer-a")
+	registerEscrow(t, a, "e-local", 31, "m")
+	require.NoError(t, a.RecordDiff("e-local", 1, true))
+	require.NoError(t, a.RecordGhost("e-local", 1, PhaseNormal, QuarantineNone, NoSendParticipantThrottled, ""))
+	require.NoError(t, a.Flush(ctx))
+
+	b := openWriterTracker(t, "writer-b")
+	require.NoError(t, b.RecordDiff("e-local", 3, true))
+	require.NoError(t, b.RecordGhost("e-local", 3, PhaseNormal, QuarantineNone, NoSendParticipantThrottled, ""))
+	require.NoError(t, b.Flush(ctx))
+	require.NoError(t, a.Close())
+	require.NoError(t, b.Close())
+
+	merged := openWriterTracker(t, "writer-c")
+	defer merged.Close()
+	var ghosts uint64
+	for _, record := range merged.Query(QueryFilter{EpochIndex: 31}) {
+		ghosts += record.Dispositions[DispositionGhost]
+	}
+	require.Equal(t, uint64(2), ghosts, "each instance ghosted a different nonce")
+	require.Equal(t, map[string]int64{"writer-a": 1, "writer-b": 1}, counterTotalsByWriter(t, ctx, "e-local"))
 }
 
 func counterTotalsByWriter(t *testing.T, ctx context.Context, escrowID string) map[string]int64 {
@@ -84,6 +141,27 @@ func counterTotalsByWriter(t *testing.T, ctx context.Context, escrowID string) m
 		)
 		require.NoError(t, rows.Scan(&writerID, &total))
 		out[writerID] = total
+	}
+	require.NoError(t, rows.Err())
+	return out
+}
+
+// protocolNonces returns the persisted protocol-only nonce set, which carries no
+// writer id: the row is the observation, however many instances saw it.
+func protocolNonces(t *testing.T, ctx context.Context, escrowID string) []uint64 {
+	t.Helper()
+	pool, err := pgxpool.New(ctx, "")
+	require.NoError(t, err)
+	defer pool.Close()
+	rows, err := pool.Query(ctx,
+		`SELECT nonce FROM accounting_escrow_protocol_nonces WHERE escrow_id = $1 ORDER BY nonce`, escrowID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var out []uint64
+	for rows.Next() {
+		var nonce int64
+		require.NoError(t, rows.Scan(&nonce))
+		out = append(out, uint64(nonce))
 	}
 	require.NoError(t, rows.Err())
 	return out
@@ -188,6 +266,8 @@ func TestPostgresAccountingPruneRemovesEveryWriterRow(t *testing.T) {
 		"accounting_escrow_slot_counts",
 		"accounting_escrow_host_stats",
 		"accounting_escrow_invalid_nonces",
+		"accounting_escrow_protocol_nonces",
+		"accounting_escrow_challenges",
 	} {
 		var n int
 		require.NoError(t, pool.QueryRow(ctx,
@@ -247,7 +327,16 @@ func TestPostgresAccountingImportsLegacyBlobLedger(t *testing.T) {
 	require.Equal(t, uint64(7), escrow.Latest)
 	require.Equal(t, uint32(2), escrow.HostStats[0].Missed)
 	require.Equal(t, uint64(1), escrow.ChallengeBySlot[1])
-	require.Contains(t, escrow.InvalidNonce, uint64(3))
+	// The blob's invalid nonces are kept for deduplication only: their count is
+	// already in InvalidBySlot, so promoting them into the set would double it.
+	require.Contains(t, escrow.InvalidLegacy, uint64(3))
+	require.NotContains(t, escrow.Invalid, uint64(3))
+
+	// A verdict repeating that invalidation after the conversion must not count
+	// it a second time.
+	require.NoError(t, imported.RecordProtocol("e-legacy", 3, 1, ProtocolInvalidated, types.HostStats{}))
+	require.Empty(t, escrow.Invalid, "a legacy invalid nonce must not be re-counted into the set")
+	require.Equal(t, uint64(1), invalidTotal(t, imported, 15))
 
 	// The blob table is drained, and the writer that comes next adds to the
 	// imported numbers instead of restating them.
@@ -258,4 +347,14 @@ func TestPostgresAccountingImportsLegacyBlobLedger(t *testing.T) {
 	reopened := openWriterTracker(t, "writer-import")
 	defer reopened.Close()
 	require.Equal(t, uint64(5), protocolOnlyTotal(t, reopened, 15))
+	require.Equal(t, uint64(1), invalidTotal(t, reopened, 15))
+}
+
+func invalidTotal(t *testing.T, tr *Tracker, epoch uint64) uint64 {
+	t.Helper()
+	var total uint64
+	for _, record := range tr.Query(QueryFilter{EpochIndex: epoch}) {
+		total += record.CrossChecks.RecordedInvalid
+	}
+	return total
 }

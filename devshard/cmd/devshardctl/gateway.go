@@ -3564,6 +3564,21 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 			http.Error(w, `{"error":{"message":"devshard already active"}}`, http.StatusConflict)
 			return
 		}
+		// A devshard deactivated for settlement keeps its pending marker until it
+		// settles. Re-activating it means the operator wants it serving again, so
+		// the marker has to go before traffic resumes: the drain hook in
+		// releaseRuntime settles the escrow as soon as the first request finishes.
+		// Clearing the persisted flag first also keeps UpsertDevshard, which
+		// preserves the stored value, from writing it back.
+		if existing.settlementPending.Load() {
+			if err := g.store.SetDevshardSettlementPending(r.Context(), req.ID, false); err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+				return
+			}
+			existing.settlementPending.Store(false)
+			existing.settlementReason = ""
+			record.SettlementPending = false
+		}
 		if err := g.store.UpsertDevshard(r.Context(), record); err != nil {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
 			return

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -120,58 +121,92 @@ func (s *postgresBackend) Load(ctx context.Context, t *Tracker) error {
 	if s == nil || s.pool == nil || t == nil {
 		return nil
 	}
-	opCtx, cancel := s.opCtx(ctx)
+	// Load scans five whole tables, so it gets the boot budget rather than the
+	// per-operation timeout: capping it at 2s fails the open, and a failed open
+	// leaves the process with accounting off until it restarts.
+	loadCtx, cancel := context.WithTimeout(ctx, pgtimeouts.ImportTimeout())
 	defer cancel()
 
-	if err := s.loadWriterMeta(opCtx, t); err != nil {
-		return err
+	// One snapshot for all five reads. Read table by table, a peer committing an
+	// escrow mid-load shows up as counter rows whose state row is not there yet.
+	tx, err := s.pool.BeginTx(loadCtx, pgx.TxOptions{IsoLevel: pgx.RepeatableRead, AccessMode: pgx.ReadOnly})
+	if err != nil {
+		return fmt.Errorf("open accounting load snapshot: %w", err)
 	}
+	defer tx.Rollback(loadCtx)
 
-	ledger, err := readLedger(opCtx, s.pool, s.writerID)
+	updated, writerErrors, err := loadWriterMeta(loadCtx, tx, s.writerID)
 	if err != nil {
 		return err
 	}
+	ledger, err := readLedger(loadCtx, tx, s.writerID)
+	if err != nil {
+		return err
+	}
+
+	var skipped []string
+	t.mu.Lock()
+	if updated.After(t.updated) {
+		t.updated = updated
+	}
+	if writerErrors > 0 {
+		t.wrCount = writerErrors
+	}
+	for id, blob := range ledger.blobs {
+		if err := applyLoadedEscrow(t, *blob); err != nil {
+			// One unusable escrow must not take the ledger with it: failing here
+			// disables accounting for the whole process, and every later boot
+			// would fail on the same row.
+			skipped = append(skipped, fmt.Sprintf("%s: %v", id, err))
+			delete(ledger.peers, id)
+			continue
+		}
+	}
+	t.dirty = nil
+	t.mu.Unlock()
 
 	s.mu.Lock()
 	s.peers = ledger.peers
 	s.mu.Unlock()
 
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	for _, blob := range ledger.blobs {
-		if err := applyLoadedEscrow(t, *blob); err != nil {
-			return err
-		}
+	if len(skipped) > 0 {
+		sort.Strings(skipped)
+		log.Printf("accounting store: WARNING skipped %d unusable escrow(s), their counts are missing from reporting until the rows are repaired or dropped: %s",
+			len(skipped), strings.Join(skipped, "; "))
 	}
-	t.dirty = nil
 	return nil
 }
 
-// loadWriterMeta restores this writer's error count and the ledger's freshness.
+// loadWriterMeta reads this writer's error count and the ledger's freshness.
 // writer_errors is per writer (it counts this process's failed persists), while
-// updated_at is the newest write by any writer.
-func (s *postgresBackend) loadWriterMeta(ctx context.Context, t *Tracker) error {
-	rows, err := s.pool.Query(ctx, `SELECT writer_id, updated_at, writer_errors FROM accounting_writers`)
+// the returned timestamp is the newest write by any writer. The caller applies
+// them to the tracker so this does not touch tracker state unlocked.
+func loadWriterMeta(ctx context.Context, q pgxQuerier, writerID string) (time.Time, uint64, error) {
+	var (
+		newest       time.Time
+		writerErrors uint64
+	)
+	rows, err := q.Query(ctx, `SELECT writer_id, updated_at, writer_errors FROM accounting_writers`)
 	if err != nil {
-		return fmt.Errorf("load accounting writers: %w", err)
+		return newest, 0, fmt.Errorf("load accounting writers: %w", err)
 	}
 	defer rows.Close()
 	for rows.Next() {
 		var (
-			writerID, updatedAt string
-			writerErrors        int64
+			rowWriter, updatedAt string
+			errCount             int64
 		)
-		if err := rows.Scan(&writerID, &updatedAt, &writerErrors); err != nil {
-			return err
+		if err := rows.Scan(&rowWriter, &updatedAt, &errCount); err != nil {
+			return newest, 0, err
 		}
-		if updated, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil && updated.After(t.updated) {
-			t.updated = updated
+		if updated, err := time.Parse(time.RFC3339Nano, updatedAt); err == nil && updated.After(newest) {
+			newest = updated
 		}
-		if writerID == s.writerID && writerErrors > 0 {
-			t.wrCount = uint64(writerErrors)
+		if rowWriter == writerID && errCount > 0 {
+			writerErrors = uint64(errCount)
 		}
 	}
-	return rows.Err()
+	return newest, writerErrors, rows.Err()
 }
 
 func (s *postgresBackend) Save(ctx context.Context, snap storeSnapshot, dirtyIDs, deletedIDs []string) error {

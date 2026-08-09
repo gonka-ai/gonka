@@ -544,14 +544,27 @@ For each registered escrow the tracker keeps:
 | `latest` | highest assigned nonce watermark |
 | Counters | counts keyed by slot + disposition (+ timeout / quarantine / no-send / failure detail) |
 | Host stats | per-slot missed / invalid / cost / required & completed validations (mirrors absolute chain numbers) |
-| Challenge / invalid by slot | unresolved challenges and invalidated inferences per executor slot |
-| Invalid nonce set | which nonces have already been counted as invalid (idempotent `recordInvalid`) |
+| Protocol-only nonce set | nonces consumed without starting an inference, with the slot each was assigned to |
+| Challenge set | challenged nonces, their executor slot, and whether the challenge has been resolved |
+| Invalid nonce set | invalidated nonces and their executor slot (idempotent `recordInvalid`) |
 
 Dispositions classify a nonce's outcome (`protocol_only`, `ghost`,
 `finished_used` / `unused` / `usage_unknown`, `unfinished_refused` /
 `unfinished_execution`, …). Live in-memory nonce state is **not** persisted;
 only the folded counters and the compact sets above are. The recorder feeds the
 tracker from committed diffs, protocol events, timeouts, and host-stats sync.
+
+Per-slot unresolved-challenge and invalid totals are **derived from the sets**
+when a view is built, not stored as counts. Protocol-only nonces likewise fold
+into a `protocol_only` counter at read time. The ledger's denominator is
+arithmetic on the watermark — `AssignedNoncesForSlot` says how many nonces in
+`1..latest` belong to a slot — so every consumed nonce must be explained by
+exactly one counter or it surfaces as `Unclassified`.
+
+Challenge lifecycle, why `ChallengeBySlot` was a precomputed report counter, the
+legacy carry, and when it can leave the codebase are documented with the gateway
+accounting merge framework in
+[gateway.md](gateway.md#challenges-and-the-legacy-challengebyslot-carry).
 
 #### How multiple gateways conflict
 
@@ -580,34 +593,69 @@ do not stop two instances from clobbering the **same** escrow.
 Postgres accounting stores an escrow as **rows with an explicit merge rule per
 field**, not as one JSON blob.
 
+Which merge rule is correct depends on **whether two instances can observe the
+same event**, so the fields fall into two groups.
+
+*Request-local facts* are produced by the instance that dispatched the nonce.
+`counterKey` only yields a disposition when a local signal is present — `Ghost`,
+`Sent`, or `Usage`, set by the gateway calling `RecordGhost`, `RecordRealSend`,
+or `RecordUsage`. A passive instance sees the start and the finish on chain but
+never learns whether the result was used, so it classifies nothing. Writers
+therefore hold **disjoint** sets and a reader sums them.
+
+*Replicated facts* are read straight off the committed diff stream, so every
+instance attached to the escrow derives them identically. No arithmetic merge
+works here: summing turns one chain event into one count per instance, and
+taking the max drops what an instance with a stale view never saw. They are
+persisted **by identity** — one row per nonce, no `writer_id` — and merged as a
+set.
+
 | Field | Table | Merge rule |
 | --- | --- | --- |
-| Counters (per slot / disposition) | `accounting_escrow_counters` | Additive: `SUM` across `writer_id` |
-| Unresolved challenges, invalidated inferences per slot | `accounting_escrow_slot_counts` | Additive: `SUM` across `writer_id` |
+| Counters (per slot / disposition) | `accounting_escrow_counters` | Request-local: `SUM` across `writer_id` |
+| Protocol-only nonces | `accounting_escrow_protocol_nonces` | Replicated: set union (`ON CONFLICT DO NOTHING`) |
+| Invalid nonces | `accounting_escrow_invalid_nonces` | Replicated: set union |
+| Challenges | `accounting_escrow_challenges` | Replicated: set union, `resolved` merged with monotonic `OR` |
 | Host stats | `accounting_escrow_host_stats` | `GREATEST` per column (absolute chain numbers; tracker also merges with max) |
 | `latest` nonce watermark | `accounting_escrow_state` | `GREATEST` |
 | Escrow phase | `accounting_escrow_state` | Highest rank wins (phases only move forward) |
-| Invalid nonces | `accounting_escrow_invalid_nonces` | Set union (`ON CONFLICT DO NOTHING`) |
 | Metadata (epoch, model, slots, timeouts) | `accounting_escrow_state` | Identity at registration; `RegisterEscrow` rejects conflicting metadata |
 | Flush timestamp, writer error count | `accounting_writers` | Per writer row |
+| Pre-set per-slot totals | `accounting_escrow_slot_counts` | Frozen legacy baseline, written only by the `blob_to_rows` conversion |
 
-The additive fields are **partitioned by writer instead of incremented in SQL**.
+The summed counters are **partitioned by writer instead of incremented in SQL**.
 Each instance owns rows keyed `(escrow_id, writer_id, …)` holding its own
 contribution, computed at flush time as
-`in-memory total − peer contribution observed at Load` (clamped at zero). A
-reader sums across writers. Two operational consequences:
+`in-memory total − peer contribution observed at Load` (clamped at zero). Three
+operational consequences:
 
-- A flush is **idempotent**. It writes absolute values for rows only that
-  instance owns, so replaying a flush whose commit was reported as failed (the
-  classic ambiguous timeout) cannot double count — which a bare
-  `count = count + delta` would.
+- A flush is **idempotent**. Summed rows are written as absolute values the
+  instance alone owns, and set rows are insert-if-absent, so replaying a flush
+  whose commit was reported as failed (the classic ambiguous timeout) cannot
+  double count — which a bare `count = count + delta` would.
 - An instance **never touches a peer's rows**, so the ledger stays correct
   without a lease, fencing token, or exclusive escrow ownership.
+- A challenge is never deleted on resolution, only flagged. Deleting it would let
+  a repeated verdict from another instance reopen it, and would lose the record a
+  restart needs to recognise the nonce.
 
-`DEVSHARD_ACCOUNTING_WRITER_ID` names the row set (default: hostname). A stable
-value keeps one row set per instance across restarts; an unstable one only leaves
-stale rows behind — it cannot double count, because earlier incarnations are
-read back as a peer contribution.
+`Store.Save` holds one mutex across taking the snapshot **and** writing it.
+Because `takePersistSnapshot` clears the dirty set and counters are absolute, an
+interleaved older write would otherwise be lost permanently rather than corrected
+on the next tick — and `Flush` runs from the snapshot ticker as well as from
+settle and retire.
+
+`DEVSHARD_ACCOUNTING_WRITER_ID` names the request-local row set. Resolution:
+env → hostname → `"default"`.
+
+> **HA requirement.** Multi-instance gateway against shared Postgres **must**
+> set a stable, unique `DEVSHARD_ACCOUNTING_WRITER_ID` per replica. Colliding
+> ids make two processes rewrite the same `(escrow_id, writer_id, …)` rows and
+> lose request-local contributions. An *unstable* unique value (new pod name
+> every restart) does not double-count — earlier rows are read as peer
+> contributions — but leaves stale writer partitions until retention prunes the
+> escrow. Prefer a StatefulSet ordinal / persistent pod name. SQLite ignores
+> the variable.
 
 **Factory.** Same mode switch as the gateway store: `sqlite` → local
 `accounting.db`; `hybrid` / `postgres` → Postgres-only (fail-closed), with a
@@ -618,17 +666,40 @@ marker. A second marker, `blob_to_rows`, converts any pre-additive
 older build after conversion are **not** re-imported (that would double count);
 boot logs a warning instead.
 
+**SQLite field evolution (no HA merge).** Staying on SQLite keeps the one-blob
+layout. New fields are new JSON keys inside `payload`; there is no SQL column
+migration and no `writer_id`. Missing keys decode as zero, and the next flush
+rewrites the blob. Representation changes keep old tags as read-only carries.
+The operator checklist for classifying fields and for Postgres DDL lives in
+[gateway.md](gateway.md#ha-merge-framework); the SQLite-only path is
+[gateway.md](gateway.md#staying-on-sqlite-how-new-fields-appear).
+
 **Read model.** In-memory `/accounting/*` stays per instance: an instance sees
 peer counts as of its last Load, not live. Postgres holds the merged truth; the
-aggregate is what a reload, a settlement job, or `SUM` over the tables produces.
+aggregate is what a reload, a settlement job, or an aggregate over the tables
+produces.
+
+`Load` reads all tables inside one `REPEATABLE READ` read-only transaction. Read
+table by table, a peer committing an escrow mid-load would appear as counter rows
+whose state row is not there yet; such an escrow cannot be reconstructed, so it is
+logged and skipped rather than failing the load — a failed `Load` disables
+accounting for the whole process lifetime, and every later boot would fail on the
+same row. The same applies to an escrow whose metadata does not validate. `Load`
+runs under the import budget, not the 2 s per-operation timeout, for the same
+reason.
 
 **Deliberate limits.** Retention pruning deletes the escrow for *all* writers,
-matching the previous blob behavior. If two instances independently invalidate
-the same nonce, the nonce set keeps it once while the per-slot invalid count may
-add both — merging cannot reconstruct which observations were the same event.
+matching the previous blob behavior, and it is computed from the pruning
+instance's own epoch horizon. Per-slot totals carried from the pre-set layout
+cannot be attributed to nonces, so they stay a frozen baseline the derived counts
+add to, and they age out with retention.
 
 Code: `devshard/accounting/store_postgres.go`, `store_postgres_rows.go`,
 `factory.go`. SQLite remains a single-writer blob store for local/dev mode.
+
+Adding a field to the ledger means picking a class and a merge rule first; the
+decision procedure and the touch-point checklist are in
+[gateway.md](gateway.md#ha-merge-framework).
 
 ## Load Readiness
 
