@@ -267,13 +267,13 @@ func DefaultPocParams() *PocParams {
 		DefaultDifficulty:            5,
 		ValidationSampleSize:         200,
 		PocDataPruningEpochThreshold: 1,
-		WeightScaleFactor:            DecimalFromFloat(1.0),
 		ModelParams:                  DefaultPoCModelParams(), // Deprecated, kept for backward compatibility
 		ModelId:                      "",                      // Model identifier for PoC
 		SeqLen:                       256,                     // Sequence length for PoC
 		StatTest:                     DefaultPoCStatTestParams(),
 		Models:                       []*PoCModelConfig{DefaultPoCModelConfig()},
 		ValidationVoteThresholdBps:   DefaultPocValidationVoteThresholdBps,
+		DynamicCoefficientParams:     DefaultDynamicCoefficientParams(),
 	}
 }
 
@@ -290,8 +290,23 @@ func DefaultPoCModelConfig() *PoCModelConfig {
 		ModelId:           "",
 		SeqLen:            256,
 		StatTest:          DefaultPoCStatTestParams(),
-		WeightScaleFactor: DecimalFromFloat(1.0),
 		PenaltyStartEpoch: 0,
+		DynamicCoefficient: &DynamicCoefficientModelConfig{
+			CoeffMin:           DecimalFromFloat(1.0),
+			CoeffMax:           DecimalFromFloat(1.0),
+			RelativeDifficulty: DecimalFromFloat(1.0),
+			TargetShareBps:     10000,
+		},
+	}
+}
+
+func DefaultDynamicCoefficientParams() *DynamicCoefficientParams {
+	return &DynamicCoefficientParams{
+		TargetZoneBps:     500,
+		StepMin:           DecimalFromFloat(0.005),
+		StepMax:           DecimalFromFloat(0.05),
+		BootstrapStepMax:  DecimalFromFloat(0.25),
+		BootstrapShareBps: 100,
 	}
 }
 
@@ -567,7 +582,6 @@ func validateParamDecimalExponents(p Params) error {
 		{"validation_params.downtime_reputation_preserve", p.ValidationParams.GetDowntimeReputationPreserve()},
 		{"validation_params.quick_failure_threshold", p.ValidationParams.GetQuickFailureThreshold()},
 		{"validation_params.binom_test_p0", p.ValidationParams.GetBinomTestP0()},
-		{"poc_params.weight_scale_factor", p.PocParams.GetWeightScaleFactor()},
 		{"poc_params.model_params.ffn_dim_multiplier", p.PocParams.GetModelParams().GetFfnDimMultiplier()},
 		{"poc_params.model_params.norm_eps", p.PocParams.GetModelParams().GetNormEps()},
 		{"poc_params.model_params.r_target", p.PocParams.GetModelParams().GetRTarget()},
@@ -610,12 +624,42 @@ func validateParamDecimalExponents(p Params) error {
 			name  string
 			value *Decimal
 		}{
-			{fmt.Sprintf("poc_params.models[%d].weight_scale_factor", i), model.GetWeightScaleFactor()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.dist_threshold", i), model.GetStatTest().GetDistThreshold()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_mismatch", i), model.GetStatTest().GetPMismatch()},
 			{fmt.Sprintf("poc_params.models[%d].stat_test.p_value_threshold", i), model.GetStatTest().GetPValueThreshold()},
 		}
+		if dynamic := model.GetDynamicCoefficient(); dynamic != nil {
+			modelFields = append(modelFields,
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i), dynamic.GetCoeffMin()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i), dynamic.GetCoeffMax()},
+				struct {
+					name  string
+					value *Decimal
+				}{fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i), dynamic.GetRelativeDifficulty()},
+			)
+		}
 		for _, field := range modelFields {
+			if err := check(field.name, field.value); err != nil {
+				return err
+			}
+		}
+	}
+	if dynamic := p.PocParams.GetDynamicCoefficientParams(); dynamic != nil {
+		dynamicFields := []struct {
+			name  string
+			value *Decimal
+		}{
+			{"poc_params.dynamic_coefficient_params.step_min", dynamic.GetStepMin()},
+			{"poc_params.dynamic_coefficient_params.step_max", dynamic.GetStepMax()},
+			{"poc_params.dynamic_coefficient_params.bootstrap_step_max", dynamic.GetBootstrapStepMax()},
+		}
+		for _, field := range dynamicFields {
 			if err := check(field.name, field.value); err != nil {
 				return err
 			}
@@ -879,7 +923,119 @@ func (p *PocParams) Validate() error {
 			return fmt.Errorf("poc_params.models.seq_len cannot be negative")
 		}
 	}
+	if p.DynamicCoefficientParams != nil {
+		if err := p.validateDynamicCoefficientParams(); err != nil {
+			return err
+		}
+	} else {
+		for i, model := range p.Models {
+			if model.WeightScaleFactor == nil {
+				return fmt.Errorf(
+					"poc_params.dynamic_coefficient_params cannot be nil after deprecated weight_scale_factor was removed from model %d",
+					i,
+				)
+			}
+		}
+	}
 	return nil
+}
+
+func (p *PocParams) validateDynamicCoefficientParams() error {
+	params := p.DynamicCoefficientParams
+	if params.TargetZoneBps == 0 || params.TargetZoneBps > 10000 {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.target_zone_bps must be in [1, 10000]")
+	}
+	if params.BootstrapShareBps > 10000 {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.bootstrap_share_bps must be <= 10000")
+	}
+
+	stepMin, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.step_min",
+		params.StepMin,
+	)
+	if err != nil {
+		return err
+	}
+	stepMax, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.step_max",
+		params.StepMax,
+	)
+	if err != nil {
+		return err
+	}
+	bootstrapStepMax, err := validatePositiveDecimal(
+		"poc_params.dynamic_coefficient_params.bootstrap_step_max",
+		params.BootstrapStepMax,
+	)
+	if err != nil {
+		return err
+	}
+	if stepMin.GT(stepMax) {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_min must be <= step_max")
+	}
+	if stepMax.GT(bootstrapStepMax) {
+		return fmt.Errorf("poc_params.dynamic_coefficient_params.step_max must be <= bootstrap_step_max")
+	}
+
+	var targetTotal uint64
+	for i, model := range p.Models {
+		config := model.GetDynamicCoefficient()
+		if config == nil {
+			continue
+		}
+
+		coeffMin, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i),
+			config.CoeffMin,
+		)
+		if err != nil {
+			return err
+		}
+		coeffMax, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i),
+			config.CoeffMax,
+		)
+		if err != nil {
+			return err
+		}
+		if coeffMin.GT(coeffMax) {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.coeff_min must be <= coeff_max", i)
+		}
+		if _, err := validatePositiveDecimal(
+			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i),
+			config.RelativeDifficulty,
+		); err != nil {
+			return err
+		}
+		if config.TargetShareBps > 10000 {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be <= 10000", i)
+		}
+		if config.TargetShareBps > 0 && config.TargetShareBps <= params.TargetZoneBps {
+			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.target_share_bps must be greater than target_zone_bps", i)
+		}
+		targetTotal += uint64(config.TargetShareBps)
+	}
+	if targetTotal != 10000 {
+		return fmt.Errorf("poc_params dynamic target shares must sum to 10000 bps, got %d", targetTotal)
+	}
+	return nil
+}
+
+func validatePositiveDecimal(name string, value *Decimal) (sdkmath.LegacyDec, error) {
+	if value == nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s cannot be nil", name)
+	}
+	if err := value.Validate(); err != nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s: %w", name, err)
+	}
+	dec, err := value.ToLegacyDec()
+	if err != nil {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s: %w", name, err)
+	}
+	if !dec.IsPositive() {
+		return sdkmath.LegacyDec{}, fmt.Errorf("%s must be positive", name)
+	}
+	return dec, nil
 }
 
 func (p *ValidationParams) Validate() error {
@@ -1476,17 +1632,6 @@ func (p *PocParams) GetModelConfig(modelID string) (*PoCModelConfig, bool) {
 		}
 	}
 	return nil, false
-}
-
-func (p *PocParams) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	return p.GetPrimaryModelConfig().GetWeightScaleFactorDec()
-}
-
-func (p *PoCModelConfig) GetWeightScaleFactorDec() sdkmath.LegacyDec {
-	if p == nil {
-		return sdkmath.LegacyOneDec()
-	}
-	return p.WeightScaleFactor.LegacyDecOrOne()
 }
 
 var (

@@ -120,6 +120,15 @@ func (am AppModule) AutoCLIOptions() *autocliv1.ModuleOptions {
 				},
 
 				{
+					RpcMethod: "DynamicCoefficients",
+					Use:       "dynamic-coefficients [epoch-index]",
+					Short:     "Query computed dynamic coefficients (0 = current epoch)",
+					PositionalArgs: []*autocliv1.PositionalArgDescriptor{
+						{ProtoField: "epoch_index"},
+					},
+				},
+
+				{
 					RpcMethod:      "ModelsAll",
 					Use:            "models-all",
 					Short:          "Query modelsAll",

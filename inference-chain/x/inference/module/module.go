@@ -33,6 +33,7 @@ import (
 	"github.com/grpc-ecosystem/grpc-gateway/runtime"
 	"github.com/productscience/inference/testenv"
 	"github.com/productscience/inference/x/inference/calculations"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/epochgroup"
 	"github.com/shopspring/decimal"
 	"github.com/spf13/cobra"
@@ -533,6 +534,14 @@ func (am AppModule) EndBlock(ctx context.Context) error {
 			am.LogError("Unable to initialize epoch sub-groups", types.EpochGroup, "error", err.Error())
 			return err
 		}
+		frozenCoefficients, err := coefficient.Freeze(params.PocParams)
+		if err != nil {
+			am.LogError("Unable to freeze dynamic coefficient config", types.PoC, "error", err.Error())
+			return err
+		}
+		newGroup.GroupData.DynamicCoefficientParams = frozenCoefficients.Params
+		newGroup.GroupData.ConfirmationWeightScales = frozenCoefficients.Scales
+		am.keeper.SetEpochGroupData(ctx, *newGroup.GroupData)
 
 		modelAssigner := NewModelAssigner(am.keeper, am.keeper)
 		preservedSnapshot, err := modelAssigner.SamplePreservedForEpisode(ctx, *currentEpoch, upcomingEpoch.PocStartBlockHeight)
@@ -754,6 +763,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 		activeParticipants,
 		params,
 		upcomingEpoch.PocStartBlockHeight,
+		upcomingEpoch.Index,
 	)
 	if err != nil {
 		am.LogError("onEndOfPoCValidationStage: failed to prepare participation state", types.PoC, "error", err)
@@ -833,7 +843,7 @@ func (am AppModule) onEndOfPoCValidationStage(ctx context.Context, blockHeight i
 	confirmationWeightScales := buildConfirmationWeightScales(
 		participationState.eligibleModels,
 		activeParticipants,
-		params.PocParams,
+		participationState.coefficients,
 	)
 
 	emitWeightPipelineLogs(am, upcomingEpoch.Index, groupSummaries,

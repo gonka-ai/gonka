@@ -178,6 +178,11 @@ service Query {
 
   }
 
+  // Queries computed dynamic coefficients for an epoch. Epoch 0 means current.
+  rpc DynamicCoefficients (QueryDynamicCoefficientsRequest) returns (QueryDynamicCoefficientsResponse) {
+    option (google.api.http).get = "/productscience/inference/inference/dynamic_coefficients/{epoch_index}";
+  }
+
   // Queries a list of ModelsAll items.
   rpc ModelsAll (QueryModelsAllRequest) returns (QueryModelsAllResponse) {
     option (google.api.http).get = "/productscience/inference/inference/models_all";
@@ -741,6 +746,16 @@ message QueryCurrentEpochGroupDataRequest {}
 
 message QueryCurrentEpochGroupDataResponse {
   EpochGroupData epoch_group_data = 1 [(gogoproto.nullable) = false];
+}
+
+message QueryDynamicCoefficientsRequest {
+  uint64 epoch_index = 1;
+}
+
+message QueryDynamicCoefficientsResponse {
+  uint64 epoch_index = 1;
+  DynamicCoefficientParams params = 2;
+  repeated ConfirmationWeightScale coefficients = 3;
 }
 
 message QueryPreviousEpochGroupDataRequest {}

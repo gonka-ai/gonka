@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"errors"
 
 	"cosmossdk.io/collections"
 	"github.com/productscience/inference/x/inference/types"
@@ -18,12 +19,24 @@ func (k Keeper) GetEpochGroupData(
 	epochIndex uint64,
 	modelId string,
 ) (val types.EpochGroupData, found bool) {
-	val, err := k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
+	val, found, _ = k.GetEpochGroupDataWithError(ctx, epochIndex, modelId)
+	return val, found
+}
 
+// GetEpochGroupDataWithError distinguishes a missing record from a store error.
+func (k Keeper) GetEpochGroupDataWithError(
+	ctx context.Context,
+	epochIndex uint64,
+	modelId string,
+) (val types.EpochGroupData, found bool, err error) {
+	val, err = k.EpochGroupDataMap.Get(ctx, collections.Join(epochIndex, modelId))
 	if err != nil {
-		return val, false
+		if errors.Is(err, collections.ErrNotFound) {
+			return val, false, nil
+		}
+		return val, false, err
 	}
-	return val, true
+	return val, true, nil
 }
 
 // RemoveEpochGroupData removes a epochGroupData from the store

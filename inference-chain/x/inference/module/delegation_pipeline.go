@@ -12,11 +12,11 @@ import (
 
 	mathsdk "cosmossdk.io/math"
 	sdk "github.com/cosmos/cosmos-sdk/types"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/types"
 )
 
 // protoDecToLegacy converts a proto Decimal to LegacyDec, returning zero on nil or error.
-// Follows the pattern from GetWeightScaleFactorDec in params.go.
 func protoDecToLegacy(d *types.Decimal) mathsdk.LegacyDec {
 	if d == nil || (d.Value == 0 && d.Exponent == 0) {
 		return mathsdk.LegacyZeroDec()
@@ -68,6 +68,7 @@ type epochParticipationState struct {
 	eligibleModels          []string
 	participationByModel    map[string]map[string]ParticipationMode
 	bootstrapPenaltyByModel map[string]map[string]BootstrapPenaltyMode
+	coefficients            *coefficient.Result
 }
 
 func buildParticipationByModel(
@@ -81,14 +82,138 @@ func buildParticipationByModel(
 	return participationByModel
 }
 
+func (am AppModule) resolveEpochCoefficients(
+	ctx context.Context,
+	activeParticipants []*types.ActiveParticipant,
+	upcomingEpochIndex uint64,
+) (*coefficient.Result, error) {
+	currentRawTotals, participantModelIDs, err := currentModelRawTotals(activeParticipants)
+	if err != nil {
+		return nil, err
+	}
+	upcomingRoot, found, err := am.keeper.GetEpochGroupDataWithError(ctx, upcomingEpochIndex, "")
+	if err != nil {
+		return nil, fmt.Errorf("dynamic coefficients: read upcoming root epoch %d: %w", upcomingEpochIndex, err)
+	}
+	if !found {
+		return nil, fmt.Errorf("dynamic coefficients: upcoming root epoch group data not found for epoch %d", upcomingEpochIndex)
+	}
+
+	previousRawTotals := make(map[string]int64)
+	var previousScales []*types.ConfirmationWeightScale
+	hasPriorTotals := upcomingEpochIndex > 1
+	if hasPriorTotals {
+		previousEpochIndex := upcomingEpochIndex - 1
+		root, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, "")
+		if err != nil {
+			return nil, fmt.Errorf("dynamic coefficients: read root epoch %d: %w", previousEpochIndex, err)
+		}
+		if !found {
+			return nil, fmt.Errorf("dynamic coefficients: root epoch group data not found for epoch %d", previousEpochIndex)
+		}
+		previousScales = root.ConfirmationWeightScales
+		for _, scale := range upcomingRoot.ConfirmationWeightScales {
+			if scale == nil || scale.ModelId == "" {
+				continue
+			}
+			subgroup, found, err := am.keeper.GetEpochGroupDataWithError(ctx, previousEpochIndex, scale.ModelId)
+			if err != nil {
+				return nil, fmt.Errorf("dynamic coefficients: read model %q for epoch %d: %w", scale.ModelId, previousEpochIndex, err)
+			}
+			if !found {
+				previousRawTotals[scale.ModelId] = 0
+				continue
+			}
+			total := int64(0)
+			for _, weight := range subgroup.ValidationWeights {
+				if weight != nil && weight.Weight > 0 {
+					total, err = checkedRawWeightAdd(total, weight.Weight)
+					if err != nil {
+						return nil, fmt.Errorf("dynamic coefficients: prior raw total for model %q: %w", scale.ModelId, err)
+					}
+				}
+			}
+			previousRawTotals[scale.ModelId] = total
+		}
+	}
+
+	return coefficient.Calculate(
+		upcomingRoot.DynamicCoefficientParams,
+		upcomingRoot.ConfirmationWeightScales,
+		previousScales,
+		previousRawTotals,
+		currentRawTotals,
+		participantModelIDs,
+		hasPriorTotals,
+	)
+}
+
+func currentModelRawTotals(
+	activeParticipants []*types.ActiveParticipant,
+) (map[string]int64, []string, error) {
+	totals := make(map[string]int64)
+	modelSet := make(map[string]bool)
+	for _, participant := range activeParticipants {
+		if participant == nil {
+			continue
+		}
+		for i, modelID := range participant.Models {
+			if modelID == "" {
+				continue
+			}
+			modelSet[modelID] = true
+			if i < len(participant.MlNodes) && participant.MlNodes[i] != nil {
+				for _, node := range participant.MlNodes[i].MlNodes {
+					if node == nil || node.PocWeight <= 0 {
+						continue
+					}
+					var err error
+					totals[modelID], err = checkedRawWeightAdd(totals[modelID], node.PocWeight)
+					if err != nil {
+						return nil, nil, fmt.Errorf("dynamic coefficients: current raw total for model %q: %w", modelID, err)
+					}
+				}
+			}
+		}
+	}
+	modelIDs := make([]string, 0, len(modelSet))
+	for modelID := range modelSet {
+		modelIDs = append(modelIDs, modelID)
+	}
+	slices.Sort(modelIDs)
+	return totals, modelIDs, nil
+}
+
+func checkedRawWeightAdd(total, value int64) (int64, error) {
+	if value < 0 {
+		return 0, fmt.Errorf("negative raw weight %d", value)
+	}
+	if total > math.MaxInt64-value {
+		return 0, fmt.Errorf("raw weight overflow")
+	}
+	return total + value, nil
+}
+
 func (am AppModule) prepareEpochParticipationState(
 	ctx context.Context,
 	activeParticipants []*types.ActiveParticipant,
 	params types.Params,
 	pocStageStartHeight int64,
+	upcomingEpochIndex uint64,
 ) (*epochParticipationState, error) {
-	coefficients := modelCoefficients(params.PocParams)
-	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients, params)
+	coefficients, err := am.resolveEpochCoefficients(
+		ctx,
+		activeParticipants,
+		upcomingEpochIndex,
+	)
+	if err != nil {
+		return nil, err
+	}
+	for _, modelID := range coefficients.ClampedModels {
+		am.LogInfo("dynamic coefficient clamped to current governance bounds", types.PoC,
+			"model_id", modelID, "upcoming_epoch", upcomingEpochIndex)
+	}
+	calculator := am.buildDelegationWeightCalculator(ctx, activeParticipants, coefficients.Effective, params)
 	eligibleModels := calculator.EligibleGroups()
 	participationByModel := buildParticipationByModel(calculator, eligibleModels)
 
@@ -97,6 +222,7 @@ func (am AppModule) prepareEpochParticipationState(
 		eligibleModels:          eligibleModels,
 		participationByModel:    participationByModel,
 		bootstrapPenaltyByModel: map[string]map[string]BootstrapPenaltyMode{},
+		coefficients:            coefficients,
 	}
 
 	bootstrapInputs, found := am.loadBootstrapPenaltyInputs(ctx)
@@ -551,7 +677,7 @@ func buildBootstrapPreEligibilityCalculator(
 	bootstrapIntents map[string]map[string]bool,
 	params types.Params,
 ) *DelegationWeightCalculator {
-	coefficients := modelCoefficients(params.PocParams)
+	coefficients := coefficient.GovernanceCoefficients(params.PocParams)
 	groups := make(map[string]*GroupData, len(bootstrapModelIDs))
 	for _, modelID := range bootstrapModelIDs {
 		memberSet := bootstrapIntents[modelID]

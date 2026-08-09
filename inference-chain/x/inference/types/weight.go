@@ -66,7 +66,7 @@ func ConfirmationWeightOfModelNodesWithCoefficients(
 func confirmationCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	coefficients := make(map[string]mathsdk.LegacyDec, len(scales))
 	for _, scale := range scales {
-		if scale == nil || scale.ModelId == "" {
+		if scale == nil || scale.ModelId == "" || scale.ExcludeFromConfirmation {
 			continue
 		}
 		coefficients[scale.ModelId] = confirmationScaleFactor(scale)
@@ -78,5 +78,17 @@ func confirmationScaleFactor(scale *ConfirmationWeightScale) mathsdk.LegacyDec {
 	if scale == nil {
 		return mathsdk.LegacyOneDec()
 	}
-	return scale.WeightScaleFactor.LegacyDecOrOne()
+	coefficient := scale.EffectiveCoefficient
+	if coefficient == nil {
+		// Deprecated fallback for the single transition epoch formed before v0.2.16.
+		coefficient = scale.WeightScaleFactor
+	}
+	if coefficient == nil {
+		return mathsdk.LegacyOneDec()
+	}
+	dec, err := coefficient.ToLegacyDec()
+	if err != nil {
+		return mathsdk.LegacyOneDec()
+	}
+	return dec
 }
