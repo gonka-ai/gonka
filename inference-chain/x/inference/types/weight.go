@@ -66,7 +66,7 @@ func ConfirmationWeightOfModelNodesWithCoefficients(
 func confirmationCoefficients(scales []*ConfirmationWeightScale) map[string]mathsdk.LegacyDec {
 	coefficients := make(map[string]mathsdk.LegacyDec, len(scales))
 	for _, scale := range scales {
-		if scale == nil || scale.ModelId == "" {
+		if scale == nil || scale.ModelId == "" || scale.ExcludeFromConfirmation {
 			continue
 		}
 		coefficients[scale.ModelId] = confirmationScaleFactor(scale)

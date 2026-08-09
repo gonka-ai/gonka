@@ -1,0 +1,65 @@
+{
+  "name": "mainnet epoch 352 hardware distribution",
+  "base_model": "minimax-m2.7-fp8",
+  "epsilon": "0.01",
+  "max_passes": 100,
+  "hosts": 12,
+  "gpu_counts": {
+    "H100": 16,
+    "H200": 27,
+    "B200": 16,
+    "B300": 2
+  },
+  "seed": 0,
+  "epochs": 100,
+  "controller": {
+    "target_zone_bps": 500,
+    "step_min": "0.005",
+    "step_max": "0.05",
+    "bootstrap_step_max": "0.25",
+    "bootstrap_share_bps": 100
+  },
+  "models": [
+    {
+      "id": "kimi-k2.6",
+      "coeff_min": "2.231292517006",
+      "coeff_max": "7.155107913669",
+      "relative_difficulty": "6.814388489208",
+      "target_share_bps": 3333
+    },
+    {
+      "id": "minimax-m2.7-fp8",
+      "coeff_min": "1",
+      "coeff_max": "1",
+      "relative_difficulty": "1",
+      "target_share_bps": 3334
+    },
+    {
+      "id": "deepseek-v4-flash",
+      "coeff_min": "0.606060606060",
+      "coeff_max": "1.61875",
+      "relative_difficulty": "1.541666666666",
+      "target_share_bps": 3333
+    }
+  ],
+  "throughput": {
+    "kimi-k2.6": {
+      "H100": 695,
+      "H200": 1216,
+      "B200": 4480,
+      "B300": 4864
+    },
+    "minimax-m2.7-fp8": {
+      "H100": 4736,
+      "H200": 6912,
+      "B200": 10496,
+      "B300": 14336
+    },
+    "deepseek-v4-flash": {
+      "H100": 3072,
+      "H200": 4864,
+      "B200": 12800,
+      "B300": 22528
+    }
+  }
+}

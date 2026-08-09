@@ -3,7 +3,7 @@ package inference
 import (
 	"testing"
 
-	mathsdk "cosmossdk.io/math"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"
 )
@@ -15,19 +15,24 @@ func TestBuildConfirmationWeightScalesUsesEpochEffectiveCoefficient(t *testing.T
 			VotingPower: 10,
 		}},
 	}}
-	result := &epochCoefficientResult{
-		effective:        map[string]mathsdk.LegacyDec{"model-a": mathsdk.LegacyMustNewDecFromStr("1.25")},
-		effectiveDecimal: map[string]*types.Decimal{"model-a": {Value: 125, Exponent: -2}},
-		snapshot:         &types.DynamicCoefficientEpochSnapshot{},
+	result := &coefficient.Result{
+		Scales: []*types.ConfirmationWeightScale{
+			{ModelId: "model-a", EffectiveCoefficient: &types.Decimal{Value: 125, Exponent: -2}},
+			{ModelId: "model-b", EffectiveCoefficient: &types.Decimal{Value: 2, Exponent: 0}},
+		},
 	}
 
 	scales := buildConfirmationWeightScales(
-		[]string{"model-a"},
+		[]string{"model-a", "model-b"},
 		participants,
 		result,
 	)
 	require.Equal(t, []*types.ConfirmationWeightScale{{
 		ModelId:              "model-a",
 		EffectiveCoefficient: &types.Decimal{Value: 125, Exponent: -2},
+	}, {
+		ModelId:                 "model-b",
+		EffectiveCoefficient:    &types.Decimal{Value: 2, Exponent: 0},
+		ExcludeFromConfirmation: true,
 	}}, scales)
 }

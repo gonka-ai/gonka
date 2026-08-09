@@ -2220,6 +2220,56 @@ func TestCalculateParticipantBitcoinRewards_CollateralWeightAdjustment(t *testin
 	})
 }
 
+func TestCalculateParticipantBitcoinRewards_SkipsExcludedCoefficientState(t *testing.T) {
+	bitcoinParams := &types.BitcoinRewardParams{
+		GenesisEpoch:       1,
+		InitialEpochReward: 1000,
+		DecayRate:          types.DecimalFromFloat(0),
+	}
+	epochGroupData := &types.EpochGroupData{
+		EpochIndex: 1,
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{
+				ModelId:              "included",
+				EffectiveCoefficient: types.DecimalFromFloat(1),
+			},
+			{
+				ModelId:                 "excluded",
+				EffectiveCoefficient:    types.DecimalFromFloat(1),
+				ExcludeFromConfirmation: true,
+			},
+		},
+		ValidationWeights: []*types.ValidationWeight{{
+			MemberAddress:      "participant",
+			Weight:             100,
+			ConfirmationWeight: 100,
+		}},
+	}
+	participants := []types.Participant{{
+		Address: "participant",
+		Status:  types.ParticipantStatus_ACTIVE,
+		CurrentEpochStats: &types.CurrentEpochStats{
+			InferenceCount: 100,
+		},
+	}}
+	modelNodes := map[string]map[string][]*types.MLNodeInfo{
+		"participant": {
+			"included": {{PocWeight: 100}},
+			"excluded": {{PocWeight: 1000}},
+		},
+	}
+	results, _, err := CalculateParticipantBitcoinRewards(
+		participants,
+		epochGroupData,
+		bitcoinParams,
+		nil,
+		modelNodes,
+		createTestLogger(t),
+	)
+	require.NoError(t, err)
+	require.Equal(t, uint64(1000), results[0].Settle.RewardCoins)
+}
+
 func TestGetDynamicP0(t *testing.T) {
 	logger := createTestLogger(t)
 

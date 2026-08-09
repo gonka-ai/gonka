@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/productscience/inference/testutil"
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -1077,14 +1078,19 @@ func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
 		dynamicModel("a", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 		dynamicModel("b", dec(1, 0), dec(5, -1), dec(2, 0), dec(1, 0), 5000),
 	)
+	frozen, err := coefficient.Freeze(params)
+	require.NoError(t, err)
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 1,
-		DynamicCoefficientSnapshot: &types.DynamicCoefficientEpochSnapshot{
-			Models: []*types.DynamicCoefficientModelState{
-				{ModelId: "a", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
-				{ModelId: "b", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
-			},
+		ConfirmationWeightScales: []*types.ConfirmationWeightScale{
+			{ModelId: "a", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
+			{ModelId: "b", BaseCoefficient: dec(1, 0), AdaptiveStep: dec(25, -3)},
 		},
+	})
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:               2,
+		DynamicCoefficientParams: frozen.Params,
+		ConfirmationWeightScales: frozen.Scales,
 	})
 	k.SetEpochGroupData(ctx, types.EpochGroupData{
 		EpochIndex: 1,
@@ -1109,10 +1115,10 @@ func TestResolveEpochCoefficients_IncludesAllSnapshottedHosts(t *testing.T) {
 		},
 	}}
 
-	result, err := am.resolveEpochCoefficients(ctx, active, params, 2)
+	result, err := am.resolveEpochCoefficients(ctx, active, 2)
 	require.NoError(t, err)
-	require.Equal(t, "0.750000000000000000", result.effective["a"].String())
-	require.Equal(t, "1.050000000000000000", result.effective["b"].String())
+	require.Equal(t, "0.750000000000000000", result.Effective["a"].String())
+	require.Equal(t, "1.050000000000000000", result.Effective["b"].String())
 }
 
 func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
@@ -1121,14 +1127,21 @@ func TestResolveEpochCoefficients_EpochOneSkipsPriorRead(t *testing.T) {
 	params := dynamicPocParams(
 		dynamicModel("a", dec(12, -1), dec(5, -1), dec(2, 0), dec(1, 0), 10000),
 	)
+	frozen, err := coefficient.Freeze(params)
+	require.NoError(t, err)
+	k.SetEpochGroupData(ctx, types.EpochGroupData{
+		EpochIndex:               1,
+		DynamicCoefficientParams: frozen.Params,
+		ConfirmationWeightScales: frozen.Scales,
+	})
 	active := []*types.ActiveParticipant{{
 		Models:  []string{"a"},
 		MlNodes: []*types.ModelMLNodes{{MlNodes: []*types.MLNodeInfo{{PocWeight: 100}}}},
 	}}
-	result, err := am.resolveEpochCoefficients(ctx, active, params, 1)
+	result, err := am.resolveEpochCoefficients(ctx, active, 1)
 	require.NoError(t, err)
-	require.Equal(t, "0.500000000000000000", result.effective["a"].String())
-	require.Equal(t, dec(5, -1), result.snapshot.Models[0].BaseCoefficient)
+	require.Equal(t, "0.500000000000000000", result.Effective["a"].String())
+	require.Equal(t, dec(5, -1), result.Scales[0].BaseCoefficient)
 }
 
 func TestCurrentModelRawTotalsRejectsOverflow(t *testing.T) {

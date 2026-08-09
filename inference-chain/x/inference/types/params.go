@@ -940,8 +940,6 @@ func (p *PocParams) Validate() error {
 	return nil
 }
 
-const dynamicCoefficientDecimalPlaces int32 = 12
-
 func (p *PocParams) validateDynamicCoefficientParams() error {
 	params := p.DynamicCoefficientParams
 	if params.TargetZoneBps == 0 || params.TargetZoneBps > 10000 {
@@ -951,21 +949,21 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 		return fmt.Errorf("poc_params.dynamic_coefficient_params.bootstrap_share_bps must be <= 10000")
 	}
 
-	stepMin, err := validateCanonicalPositiveDecimal(
+	stepMin, err := validatePositiveDecimal(
 		"poc_params.dynamic_coefficient_params.step_min",
 		params.StepMin,
 	)
 	if err != nil {
 		return err
 	}
-	stepMax, err := validateCanonicalPositiveDecimal(
+	stepMax, err := validatePositiveDecimal(
 		"poc_params.dynamic_coefficient_params.step_max",
 		params.StepMax,
 	)
 	if err != nil {
 		return err
 	}
-	bootstrapStepMax, err := validateCanonicalPositiveDecimal(
+	bootstrapStepMax, err := validatePositiveDecimal(
 		"poc_params.dynamic_coefficient_params.bootstrap_step_max",
 		params.BootstrapStepMax,
 	)
@@ -986,14 +984,14 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 			continue
 		}
 
-		coeffMin, err := validateCanonicalPositiveDecimal(
+		coeffMin, err := validatePositiveDecimal(
 			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_min", i),
 			config.CoeffMin,
 		)
 		if err != nil {
 			return err
 		}
-		coeffMax, err := validateCanonicalPositiveDecimal(
+		coeffMax, err := validatePositiveDecimal(
 			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.coeff_max", i),
 			config.CoeffMax,
 		)
@@ -1003,7 +1001,7 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 		if coeffMin.GT(coeffMax) {
 			return fmt.Errorf("poc_params.models[%d].dynamic_coefficient.coeff_min must be <= coeff_max", i)
 		}
-		if _, err := validateCanonicalPositiveDecimal(
+		if _, err := validatePositiveDecimal(
 			fmt.Sprintf("poc_params.models[%d].dynamic_coefficient.relative_difficulty", i),
 			config.RelativeDifficulty,
 		); err != nil {
@@ -1023,15 +1021,12 @@ func (p *PocParams) validateDynamicCoefficientParams() error {
 	return nil
 }
 
-func validateCanonicalPositiveDecimal(name string, value *Decimal) (sdkmath.LegacyDec, error) {
+func validatePositiveDecimal(name string, value *Decimal) (sdkmath.LegacyDec, error) {
 	if value == nil {
 		return sdkmath.LegacyDec{}, fmt.Errorf("%s cannot be nil", name)
 	}
 	if err := value.Validate(); err != nil {
 		return sdkmath.LegacyDec{}, fmt.Errorf("%s: %w", name, err)
-	}
-	if decimalFractionalPlaces(value) > dynamicCoefficientDecimalPlaces {
-		return sdkmath.LegacyDec{}, fmt.Errorf("%s must have at most %d fractional decimal places", name, dynamicCoefficientDecimalPlaces)
 	}
 	dec, err := value.ToLegacyDec()
 	if err != nil {
@@ -1041,22 +1036,6 @@ func validateCanonicalPositiveDecimal(name string, value *Decimal) (sdkmath.Lega
 		return sdkmath.LegacyDec{}, fmt.Errorf("%s must be positive", name)
 	}
 	return dec, nil
-}
-
-func decimalFractionalPlaces(value *Decimal) int32 {
-	if value == nil || value.Exponent >= 0 {
-		return 0
-	}
-	coefficient := value.Value
-	exponent := value.Exponent
-	for coefficient != 0 && coefficient%10 == 0 {
-		coefficient /= 10
-		exponent++
-	}
-	if exponent >= 0 {
-		return 0
-	}
-	return -exponent
 }
 
 func (p *ValidationParams) Validate() error {

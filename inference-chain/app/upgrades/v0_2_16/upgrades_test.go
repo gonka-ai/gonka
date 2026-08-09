@@ -65,7 +65,7 @@ func TestMigrateDynamicCoefficientParams(t *testing.T) {
 	require.Equal(t, got.PocParams, again.PocParams)
 }
 
-func TestMigrateDynamicCoefficientParamsRejectsUnrepresentableScale(t *testing.T) {
+func TestMigrateDynamicCoefficientParamsPreservesLegacyPrecision(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 	params, err := k.GetParams(ctx)
 	require.NoError(t, err)
@@ -76,13 +76,16 @@ func TestMigrateDynamicCoefficientParamsRejectsUnrepresentableScale(t *testing.T
 	}}
 	require.NoError(t, k.SetParams(ctx, params))
 
-	err = migrateDynamicCoefficientParams(ctx, k)
-	require.ErrorContains(t, err, "at most 12 fractional decimal places")
+	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
 
 	got, getErr := k.GetParams(ctx)
 	require.NoError(t, getErr)
-	require.Nil(t, got.PocParams.DynamicCoefficientParams)
-	require.Equal(t, params.PocParams.Models[0].WeightScaleFactor, got.PocParams.Models[0].WeightScaleFactor)
+	require.NotNil(t, got.PocParams.DynamicCoefficientParams)
+	require.Nil(t, got.PocParams.Models[0].WeightScaleFactor)
+	require.Equal(t,
+		&inferencetypes.Decimal{Value: 1234567890123, Exponent: -13},
+		got.PocParams.Models[0].DynamicCoefficient.CoeffMin,
+	)
 }
 
 func TestMigrateCurrentEffectiveCoefficients(t *testing.T) {
@@ -102,4 +105,29 @@ func TestMigrateCurrentEffectiveCoefficients(t *testing.T) {
 	require.True(t, found)
 	require.Nil(t, data.ConfirmationWeightScales[0].WeightScaleFactor)
 	require.Equal(t, inferencetypes.DecimalFromFloat(2), data.ConfirmationWeightScales[0].EffectiveCoefficient)
+}
+
+func TestFreezeUpcomingCoefficientConfigDuringUpgrade(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	require.NoError(t, k.SetEffectiveEpochIndex(ctx, 1))
+	require.NoError(t, k.SetEpoch(ctx, &inferencetypes.Epoch{Index: 2, PocStartBlockHeight: 100}))
+	k.SetEpochGroupData(ctx, inferencetypes.EpochGroupData{EpochIndex: 2})
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.PocParams.DynamicCoefficientParams = nil
+	params.PocParams.Models = []*inferencetypes.PoCModelConfig{{
+		ModelId:           "model-a",
+		WeightScaleFactor: inferencetypes.DecimalFromFloat(2),
+	}}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	require.NoError(t, migrateDynamicCoefficientParams(ctx, k))
+	require.NoError(t, freezeUpcomingCoefficientConfig(ctx, k))
+
+	data, found := k.GetEpochGroupData(ctx, 2, "")
+	require.True(t, found)
+	require.NotNil(t, data.DynamicCoefficientParams)
+	require.Len(t, data.ConfirmationWeightScales, 1)
+	require.Equal(t, inferencetypes.DecimalFromFloat(2), data.ConfirmationWeightScales[0].Config.CoeffMin)
+	require.Nil(t, data.ConfirmationWeightScales[0].BaseCoefficient)
 }

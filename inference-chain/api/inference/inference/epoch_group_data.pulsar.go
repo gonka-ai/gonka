@@ -212,26 +212,26 @@ func (x *_EpochGroupData_19_list) IsValid() bool {
 }
 
 var (
-	md_EpochGroupData                              protoreflect.MessageDescriptor
-	fd_EpochGroupData_poc_start_block_height       protoreflect.FieldDescriptor
-	fd_EpochGroupData_epoch_group_id               protoreflect.FieldDescriptor
-	fd_EpochGroupData_epoch_policy                 protoreflect.FieldDescriptor
-	fd_EpochGroupData_effective_block_height       protoreflect.FieldDescriptor
-	fd_EpochGroupData_last_block_height            protoreflect.FieldDescriptor
-	fd_EpochGroupData_member_seed_signatures       protoreflect.FieldDescriptor
-	fd_EpochGroupData_validation_weights           protoreflect.FieldDescriptor
-	fd_EpochGroupData_unit_of_compute_price        protoreflect.FieldDescriptor
-	fd_EpochGroupData_number_of_requests           protoreflect.FieldDescriptor
-	fd_EpochGroupData_previous_epoch_requests      protoreflect.FieldDescriptor
-	fd_EpochGroupData_validation_params            protoreflect.FieldDescriptor
-	fd_EpochGroupData_total_weight                 protoreflect.FieldDescriptor
-	fd_EpochGroupData_model_id                     protoreflect.FieldDescriptor
-	fd_EpochGroupData_sub_group_models             protoreflect.FieldDescriptor
-	fd_EpochGroupData_epoch_index                  protoreflect.FieldDescriptor
-	fd_EpochGroupData_model_snapshot               protoreflect.FieldDescriptor
-	fd_EpochGroupData_total_throughput             protoreflect.FieldDescriptor
-	fd_EpochGroupData_confirmation_weight_scales   protoreflect.FieldDescriptor
-	fd_EpochGroupData_dynamic_coefficient_snapshot protoreflect.FieldDescriptor
+	md_EpochGroupData                            protoreflect.MessageDescriptor
+	fd_EpochGroupData_poc_start_block_height     protoreflect.FieldDescriptor
+	fd_EpochGroupData_epoch_group_id             protoreflect.FieldDescriptor
+	fd_EpochGroupData_epoch_policy               protoreflect.FieldDescriptor
+	fd_EpochGroupData_effective_block_height     protoreflect.FieldDescriptor
+	fd_EpochGroupData_last_block_height          protoreflect.FieldDescriptor
+	fd_EpochGroupData_member_seed_signatures     protoreflect.FieldDescriptor
+	fd_EpochGroupData_validation_weights         protoreflect.FieldDescriptor
+	fd_EpochGroupData_unit_of_compute_price      protoreflect.FieldDescriptor
+	fd_EpochGroupData_number_of_requests         protoreflect.FieldDescriptor
+	fd_EpochGroupData_previous_epoch_requests    protoreflect.FieldDescriptor
+	fd_EpochGroupData_validation_params          protoreflect.FieldDescriptor
+	fd_EpochGroupData_total_weight               protoreflect.FieldDescriptor
+	fd_EpochGroupData_model_id                   protoreflect.FieldDescriptor
+	fd_EpochGroupData_sub_group_models           protoreflect.FieldDescriptor
+	fd_EpochGroupData_epoch_index                protoreflect.FieldDescriptor
+	fd_EpochGroupData_model_snapshot             protoreflect.FieldDescriptor
+	fd_EpochGroupData_total_throughput           protoreflect.FieldDescriptor
+	fd_EpochGroupData_confirmation_weight_scales protoreflect.FieldDescriptor
+	fd_EpochGroupData_dynamic_coefficient_params protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -255,7 +255,7 @@ func init() {
 	fd_EpochGroupData_model_snapshot = md_EpochGroupData.Fields().ByName("model_snapshot")
 	fd_EpochGroupData_total_throughput = md_EpochGroupData.Fields().ByName("total_throughput")
 	fd_EpochGroupData_confirmation_weight_scales = md_EpochGroupData.Fields().ByName("confirmation_weight_scales")
-	fd_EpochGroupData_dynamic_coefficient_snapshot = md_EpochGroupData.Fields().ByName("dynamic_coefficient_snapshot")
+	fd_EpochGroupData_dynamic_coefficient_params = md_EpochGroupData.Fields().ByName("dynamic_coefficient_params")
 }
 
 var _ protoreflect.Message = (*fastReflection_EpochGroupData)(nil)
@@ -431,9 +431,9 @@ func (x *fastReflection_EpochGroupData) Range(f func(protoreflect.FieldDescripto
 			return
 		}
 	}
-	if x.DynamicCoefficientSnapshot != nil {
-		value := protoreflect.ValueOfMessage(x.DynamicCoefficientSnapshot.ProtoReflect())
-		if !f(fd_EpochGroupData_dynamic_coefficient_snapshot, value) {
+	if x.DynamicCoefficientParams != nil {
+		value := protoreflect.ValueOfMessage(x.DynamicCoefficientParams.ProtoReflect())
+		if !f(fd_EpochGroupData_dynamic_coefficient_params, value) {
 			return
 		}
 	}
@@ -488,8 +488,8 @@ func (x *fastReflection_EpochGroupData) Has(fd protoreflect.FieldDescriptor) boo
 		return x.TotalThroughput != int64(0)
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		return len(x.ConfirmationWeightScales) != 0
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		return x.DynamicCoefficientSnapshot != nil
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		return x.DynamicCoefficientParams != nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -542,8 +542,8 @@ func (x *fastReflection_EpochGroupData) Clear(fd protoreflect.FieldDescriptor) {
 		x.TotalThroughput = int64(0)
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		x.ConfirmationWeightScales = nil
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		x.DynamicCoefficientSnapshot = nil
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		x.DynamicCoefficientParams = nil
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -626,8 +626,8 @@ func (x *fastReflection_EpochGroupData) Get(descriptor protoreflect.FieldDescrip
 		}
 		listValue := &_EpochGroupData_19_list{list: &x.ConfirmationWeightScales}
 		return protoreflect.ValueOfList(listValue)
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		value := x.DynamicCoefficientSnapshot
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		value := x.DynamicCoefficientParams
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
 	default:
 		if descriptor.IsExtension() {
@@ -693,8 +693,8 @@ func (x *fastReflection_EpochGroupData) Set(fd protoreflect.FieldDescriptor, val
 		lv := value.List()
 		clv := lv.(*_EpochGroupData_19_list)
 		x.ConfirmationWeightScales = *clv.list
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		x.DynamicCoefficientSnapshot = value.Message().Interface().(*DynamicCoefficientEpochSnapshot)
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		x.DynamicCoefficientParams = value.Message().Interface().(*DynamicCoefficientParams)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.EpochGroupData"))
@@ -749,11 +749,11 @@ func (x *fastReflection_EpochGroupData) Mutable(fd protoreflect.FieldDescriptor)
 		}
 		value := &_EpochGroupData_19_list{list: &x.ConfirmationWeightScales}
 		return protoreflect.ValueOfList(value)
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		if x.DynamicCoefficientSnapshot == nil {
-			x.DynamicCoefficientSnapshot = new(DynamicCoefficientEpochSnapshot)
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		if x.DynamicCoefficientParams == nil {
+			x.DynamicCoefficientParams = new(DynamicCoefficientParams)
 		}
-		return protoreflect.ValueOfMessage(x.DynamicCoefficientSnapshot.ProtoReflect())
+		return protoreflect.ValueOfMessage(x.DynamicCoefficientParams.ProtoReflect())
 	case "inference.inference.EpochGroupData.poc_start_block_height":
 		panic(fmt.Errorf("field poc_start_block_height of message inference.inference.EpochGroupData is not mutable"))
 	case "inference.inference.EpochGroupData.epoch_group_id":
@@ -833,8 +833,8 @@ func (x *fastReflection_EpochGroupData) NewField(fd protoreflect.FieldDescriptor
 	case "inference.inference.EpochGroupData.confirmation_weight_scales":
 		list := []*ConfirmationWeightScale{}
 		return protoreflect.ValueOfList(&_EpochGroupData_19_list{list: &list})
-	case "inference.inference.EpochGroupData.dynamic_coefficient_snapshot":
-		m := new(DynamicCoefficientEpochSnapshot)
+	case "inference.inference.EpochGroupData.dynamic_coefficient_params":
+		m := new(DynamicCoefficientParams)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
 	default:
 		if fd.IsExtension() {
@@ -975,8 +975,8 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				n += 2 + l + runtime.Sov(uint64(l))
 			}
 		}
-		if x.DynamicCoefficientSnapshot != nil {
-			l = options.Size(x.DynamicCoefficientSnapshot)
+		if x.DynamicCoefficientParams != nil {
+			l = options.Size(x.DynamicCoefficientParams)
 			n += 2 + l + runtime.Sov(uint64(l))
 		}
 		if x.unknownFields != nil {
@@ -1008,8 +1008,8 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
 		}
-		if x.DynamicCoefficientSnapshot != nil {
-			encoded, err := options.Marshal(x.DynamicCoefficientSnapshot)
+		if x.DynamicCoefficientParams != nil {
+			encoded, err := options.Marshal(x.DynamicCoefficientParams)
 			if err != nil {
 				return protoiface.MarshalOutput{
 					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
@@ -1692,7 +1692,7 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				iNdEx = postIndex
 			case 20:
 				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DynamicCoefficientSnapshot", wireType)
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field DynamicCoefficientParams", wireType)
 				}
 				var msglen int
 				for shift := uint(0); ; shift += 7 {
@@ -1719,10 +1719,10 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 				if postIndex > l {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
 				}
-				if x.DynamicCoefficientSnapshot == nil {
-					x.DynamicCoefficientSnapshot = &DynamicCoefficientEpochSnapshot{}
+				if x.DynamicCoefficientParams == nil {
+					x.DynamicCoefficientParams = &DynamicCoefficientParams{}
 				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.DynamicCoefficientSnapshot); err != nil {
+				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.DynamicCoefficientParams); err != nil {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
@@ -1762,10 +1762,15 @@ func (x *fastReflection_EpochGroupData) ProtoMethods() *protoiface.Methods {
 }
 
 var (
-	md_ConfirmationWeightScale                       protoreflect.MessageDescriptor
-	fd_ConfirmationWeightScale_model_id              protoreflect.FieldDescriptor
-	fd_ConfirmationWeightScale_weight_scale_factor   protoreflect.FieldDescriptor
-	fd_ConfirmationWeightScale_effective_coefficient protoreflect.FieldDescriptor
+	md_ConfirmationWeightScale                           protoreflect.MessageDescriptor
+	fd_ConfirmationWeightScale_model_id                  protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_weight_scale_factor       protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_effective_coefficient     protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_config                    protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_base_coefficient          protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_adaptive_step             protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_prev_sign                 protoreflect.FieldDescriptor
+	fd_ConfirmationWeightScale_exclude_from_confirmation protoreflect.FieldDescriptor
 )
 
 func init() {
@@ -1774,6 +1779,11 @@ func init() {
 	fd_ConfirmationWeightScale_model_id = md_ConfirmationWeightScale.Fields().ByName("model_id")
 	fd_ConfirmationWeightScale_weight_scale_factor = md_ConfirmationWeightScale.Fields().ByName("weight_scale_factor")
 	fd_ConfirmationWeightScale_effective_coefficient = md_ConfirmationWeightScale.Fields().ByName("effective_coefficient")
+	fd_ConfirmationWeightScale_config = md_ConfirmationWeightScale.Fields().ByName("config")
+	fd_ConfirmationWeightScale_base_coefficient = md_ConfirmationWeightScale.Fields().ByName("base_coefficient")
+	fd_ConfirmationWeightScale_adaptive_step = md_ConfirmationWeightScale.Fields().ByName("adaptive_step")
+	fd_ConfirmationWeightScale_prev_sign = md_ConfirmationWeightScale.Fields().ByName("prev_sign")
+	fd_ConfirmationWeightScale_exclude_from_confirmation = md_ConfirmationWeightScale.Fields().ByName("exclude_from_confirmation")
 }
 
 var _ protoreflect.Message = (*fastReflection_ConfirmationWeightScale)(nil)
@@ -1859,6 +1869,36 @@ func (x *fastReflection_ConfirmationWeightScale) Range(f func(protoreflect.Field
 			return
 		}
 	}
+	if x.Config != nil {
+		value := protoreflect.ValueOfMessage(x.Config.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_config, value) {
+			return
+		}
+	}
+	if x.BaseCoefficient != nil {
+		value := protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_base_coefficient, value) {
+			return
+		}
+	}
+	if x.AdaptiveStep != nil {
+		value := protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
+		if !f(fd_ConfirmationWeightScale_adaptive_step, value) {
+			return
+		}
+	}
+	if x.PrevSign != int32(0) {
+		value := protoreflect.ValueOfInt32(x.PrevSign)
+		if !f(fd_ConfirmationWeightScale_prev_sign, value) {
+			return
+		}
+	}
+	if x.ExcludeFromConfirmation != false {
+		value := protoreflect.ValueOfBool(x.ExcludeFromConfirmation)
+		if !f(fd_ConfirmationWeightScale_exclude_from_confirmation, value) {
+			return
+		}
+	}
 }
 
 // Has reports whether a field is populated.
@@ -1880,6 +1920,16 @@ func (x *fastReflection_ConfirmationWeightScale) Has(fd protoreflect.FieldDescri
 		return x.WeightScaleFactor != nil
 	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
 		return x.EffectiveCoefficient != nil
+	case "inference.inference.ConfirmationWeightScale.config":
+		return x.Config != nil
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		return x.BaseCoefficient != nil
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		return x.AdaptiveStep != nil
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		return x.PrevSign != int32(0)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		return x.ExcludeFromConfirmation != false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1902,6 +1952,16 @@ func (x *fastReflection_ConfirmationWeightScale) Clear(fd protoreflect.FieldDesc
 		x.WeightScaleFactor = nil
 	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
 		x.EffectiveCoefficient = nil
+	case "inference.inference.ConfirmationWeightScale.config":
+		x.Config = nil
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		x.BaseCoefficient = nil
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		x.AdaptiveStep = nil
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		x.PrevSign = int32(0)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		x.ExcludeFromConfirmation = false
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1927,6 +1987,21 @@ func (x *fastReflection_ConfirmationWeightScale) Get(descriptor protoreflect.Fie
 	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
 		value := x.EffectiveCoefficient
 		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		value := x.Config
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		value := x.BaseCoefficient
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		value := x.AdaptiveStep
+		return protoreflect.ValueOfMessage(value.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		value := x.PrevSign
+		return protoreflect.ValueOfInt32(value)
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		value := x.ExcludeFromConfirmation
+		return protoreflect.ValueOfBool(value)
 	default:
 		if descriptor.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1953,6 +2028,16 @@ func (x *fastReflection_ConfirmationWeightScale) Set(fd protoreflect.FieldDescri
 		x.WeightScaleFactor = value.Message().Interface().(*Decimal)
 	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
 		x.EffectiveCoefficient = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.config":
+		x.Config = value.Message().Interface().(*DynamicCoefficientModelConfig)
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		x.BaseCoefficient = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		x.AdaptiveStep = value.Message().Interface().(*Decimal)
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		x.PrevSign = int32(value.Int())
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		x.ExcludeFromConfirmation = value.Bool()
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -1983,8 +2068,27 @@ func (x *fastReflection_ConfirmationWeightScale) Mutable(fd protoreflect.FieldDe
 			x.EffectiveCoefficient = new(Decimal)
 		}
 		return protoreflect.ValueOfMessage(x.EffectiveCoefficient.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		if x.Config == nil {
+			x.Config = new(DynamicCoefficientModelConfig)
+		}
+		return protoreflect.ValueOfMessage(x.Config.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		if x.BaseCoefficient == nil {
+			x.BaseCoefficient = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		if x.AdaptiveStep == nil {
+			x.AdaptiveStep = new(Decimal)
+		}
+		return protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
 	case "inference.inference.ConfirmationWeightScale.model_id":
 		panic(fmt.Errorf("field model_id of message inference.inference.ConfirmationWeightScale is not mutable"))
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		panic(fmt.Errorf("field prev_sign of message inference.inference.ConfirmationWeightScale is not mutable"))
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		panic(fmt.Errorf("field exclude_from_confirmation of message inference.inference.ConfirmationWeightScale is not mutable"))
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -2006,6 +2110,19 @@ func (x *fastReflection_ConfirmationWeightScale) NewField(fd protoreflect.FieldD
 	case "inference.inference.ConfirmationWeightScale.effective_coefficient":
 		m := new(Decimal)
 		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.config":
+		m := new(DynamicCoefficientModelConfig)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.base_coefficient":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.adaptive_step":
+		m := new(Decimal)
+		return protoreflect.ValueOfMessage(m.ProtoReflect())
+	case "inference.inference.ConfirmationWeightScale.prev_sign":
+		return protoreflect.ValueOfInt32(int32(0))
+	case "inference.inference.ConfirmationWeightScale.exclude_from_confirmation":
+		return protoreflect.ValueOfBool(false)
 	default:
 		if fd.IsExtension() {
 			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.ConfirmationWeightScale"))
@@ -2087,6 +2204,24 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 			l = options.Size(x.EffectiveCoefficient)
 			n += 1 + l + runtime.Sov(uint64(l))
 		}
+		if x.Config != nil {
+			l = options.Size(x.Config)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.BaseCoefficient != nil {
+			l = options.Size(x.BaseCoefficient)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.AdaptiveStep != nil {
+			l = options.Size(x.AdaptiveStep)
+			n += 1 + l + runtime.Sov(uint64(l))
+		}
+		if x.PrevSign != 0 {
+			n += 1 + runtime.Soz(uint64(x.PrevSign))
+		}
+		if x.ExcludeFromConfirmation {
+			n += 2
+		}
 		if x.unknownFields != nil {
 			n += len(x.unknownFields)
 		}
@@ -2115,6 +2250,63 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 		if x.unknownFields != nil {
 			i -= len(x.unknownFields)
 			copy(dAtA[i:], x.unknownFields)
+		}
+		if x.ExcludeFromConfirmation {
+			i--
+			if x.ExcludeFromConfirmation {
+				dAtA[i] = 1
+			} else {
+				dAtA[i] = 0
+			}
+			i--
+			dAtA[i] = 0x40
+		}
+		if x.PrevSign != 0 {
+			i = runtime.EncodeVarint(dAtA, i, uint64((uint32(x.PrevSign)<<1)^uint32((x.PrevSign>>31))))
+			i--
+			dAtA[i] = 0x38
+		}
+		if x.AdaptiveStep != nil {
+			encoded, err := options.Marshal(x.AdaptiveStep)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x32
+		}
+		if x.BaseCoefficient != nil {
+			encoded, err := options.Marshal(x.BaseCoefficient)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x2a
+		}
+		if x.Config != nil {
+			encoded, err := options.Marshal(x.Config)
+			if err != nil {
+				return protoiface.MarshalOutput{
+					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
+					Buf:               input.Buf,
+				}, err
+			}
+			i -= len(encoded)
+			copy(dAtA[i:], encoded)
+			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
+			i--
+			dAtA[i] = 0x22
 		}
 		if x.EffectiveCoefficient != nil {
 			encoded, err := options.Marshal(x.EffectiveCoefficient)
@@ -2304,1158 +2496,7 @@ func (x *fastReflection_ConfirmationWeightScale) ProtoMethods() *protoiface.Meth
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var _ protoreflect.List = (*_DynamicCoefficientEpochSnapshot_2_list)(nil)
-
-type _DynamicCoefficientEpochSnapshot_2_list struct {
-	list *[]*DynamicCoefficientModelState
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) Len() int {
-	if x.list == nil {
-		return 0
-	}
-	return len(*x.list)
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) Get(i int) protoreflect.Value {
-	return protoreflect.ValueOfMessage((*x.list)[i].ProtoReflect())
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) Set(i int, value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*DynamicCoefficientModelState)
-	(*x.list)[i] = concreteValue
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) Append(value protoreflect.Value) {
-	valueUnwrapped := value.Message()
-	concreteValue := valueUnwrapped.Interface().(*DynamicCoefficientModelState)
-	*x.list = append(*x.list, concreteValue)
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) AppendMutable() protoreflect.Value {
-	v := new(DynamicCoefficientModelState)
-	*x.list = append(*x.list, v)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) Truncate(n int) {
-	for i := n; i < len(*x.list); i++ {
-		(*x.list)[i] = nil
-	}
-	*x.list = (*x.list)[:n]
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) NewElement() protoreflect.Value {
-	v := new(DynamicCoefficientModelState)
-	return protoreflect.ValueOfMessage(v.ProtoReflect())
-}
-
-func (x *_DynamicCoefficientEpochSnapshot_2_list) IsValid() bool {
-	return x.list != nil
-}
-
-var (
-	md_DynamicCoefficientEpochSnapshot        protoreflect.MessageDescriptor
-	fd_DynamicCoefficientEpochSnapshot_params protoreflect.FieldDescriptor
-	fd_DynamicCoefficientEpochSnapshot_models protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_epoch_group_data_proto_init()
-	md_DynamicCoefficientEpochSnapshot = File_inference_inference_epoch_group_data_proto.Messages().ByName("DynamicCoefficientEpochSnapshot")
-	fd_DynamicCoefficientEpochSnapshot_params = md_DynamicCoefficientEpochSnapshot.Fields().ByName("params")
-	fd_DynamicCoefficientEpochSnapshot_models = md_DynamicCoefficientEpochSnapshot.Fields().ByName("models")
-}
-
-var _ protoreflect.Message = (*fastReflection_DynamicCoefficientEpochSnapshot)(nil)
-
-type fastReflection_DynamicCoefficientEpochSnapshot DynamicCoefficientEpochSnapshot
-
-func (x *DynamicCoefficientEpochSnapshot) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_DynamicCoefficientEpochSnapshot)(x)
-}
-
-func (x *DynamicCoefficientEpochSnapshot) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[2]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_DynamicCoefficientEpochSnapshot_messageType fastReflection_DynamicCoefficientEpochSnapshot_messageType
-var _ protoreflect.MessageType = fastReflection_DynamicCoefficientEpochSnapshot_messageType{}
-
-type fastReflection_DynamicCoefficientEpochSnapshot_messageType struct{}
-
-func (x fastReflection_DynamicCoefficientEpochSnapshot_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_DynamicCoefficientEpochSnapshot)(nil)
-}
-func (x fastReflection_DynamicCoefficientEpochSnapshot_messageType) New() protoreflect.Message {
-	return new(fastReflection_DynamicCoefficientEpochSnapshot)
-}
-func (x fastReflection_DynamicCoefficientEpochSnapshot_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_DynamicCoefficientEpochSnapshot
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Descriptor() protoreflect.MessageDescriptor {
-	return md_DynamicCoefficientEpochSnapshot
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Type() protoreflect.MessageType {
-	return _fastReflection_DynamicCoefficientEpochSnapshot_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) New() protoreflect.Message {
-	return new(fastReflection_DynamicCoefficientEpochSnapshot)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Interface() protoreflect.ProtoMessage {
-	return (*DynamicCoefficientEpochSnapshot)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.Params != nil {
-		value := protoreflect.ValueOfMessage(x.Params.ProtoReflect())
-		if !f(fd_DynamicCoefficientEpochSnapshot_params, value) {
-			return
-		}
-	}
-	if len(x.Models) != 0 {
-		value := protoreflect.ValueOfList(&_DynamicCoefficientEpochSnapshot_2_list{list: &x.Models})
-		if !f(fd_DynamicCoefficientEpochSnapshot_models, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		return x.Params != nil
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		return len(x.Models) != 0
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		x.Params = nil
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		x.Models = nil
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		value := x.Params
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		if len(x.Models) == 0 {
-			return protoreflect.ValueOfList(&_DynamicCoefficientEpochSnapshot_2_list{})
-		}
-		listValue := &_DynamicCoefficientEpochSnapshot_2_list{list: &x.Models}
-		return protoreflect.ValueOfList(listValue)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		x.Params = value.Message().Interface().(*DynamicCoefficientParams)
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		lv := value.List()
-		clv := lv.(*_DynamicCoefficientEpochSnapshot_2_list)
-		x.Models = *clv.list
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		if x.Params == nil {
-			x.Params = new(DynamicCoefficientParams)
-		}
-		return protoreflect.ValueOfMessage(x.Params.ProtoReflect())
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		if x.Models == nil {
-			x.Models = []*DynamicCoefficientModelState{}
-		}
-		value := &_DynamicCoefficientEpochSnapshot_2_list{list: &x.Models}
-		return protoreflect.ValueOfList(value)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientEpochSnapshot.params":
-		m := new(DynamicCoefficientParams)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.DynamicCoefficientEpochSnapshot.models":
-		list := []*DynamicCoefficientModelState{}
-		return protoreflect.ValueOfList(&_DynamicCoefficientEpochSnapshot_2_list{list: &list})
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientEpochSnapshot"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientEpochSnapshot does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.DynamicCoefficientEpochSnapshot", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_DynamicCoefficientEpochSnapshot) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*DynamicCoefficientEpochSnapshot)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		if x.Params != nil {
-			l = options.Size(x.Params)
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if len(x.Models) > 0 {
-			for _, e := range x.Models {
-				l = options.Size(e)
-				n += 1 + l + runtime.Sov(uint64(l))
-			}
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*DynamicCoefficientEpochSnapshot)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if len(x.Models) > 0 {
-			for iNdEx := len(x.Models) - 1; iNdEx >= 0; iNdEx-- {
-				encoded, err := options.Marshal(x.Models[iNdEx])
-				if err != nil {
-					return protoiface.MarshalOutput{
-						NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-						Buf:               input.Buf,
-					}, err
-				}
-				i -= len(encoded)
-				copy(dAtA[i:], encoded)
-				i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-				i--
-				dAtA[i] = 0x12
-			}
-		}
-		if x.Params != nil {
-			encoded, err := options.Marshal(x.Params)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
-			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0xa
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*DynamicCoefficientEpochSnapshot)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DynamicCoefficientEpochSnapshot: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DynamicCoefficientEpochSnapshot: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Params", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if x.Params == nil {
-					x.Params = &DynamicCoefficientParams{}
-				}
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Params); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			case 2:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Models", wireType)
-				}
-				var msglen int
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					msglen |= int(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				if msglen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + msglen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.Models = append(x.Models, &DynamicCoefficientModelState{})
-				if err := options.Unmarshal(dAtA[iNdEx:postIndex], x.Models[len(x.Models)-1]); err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				iNdEx = postIndex
-			default:
-				iNdEx = preIndex
-				skippy, err := runtime.Skip(dAtA[iNdEx:])
-				if err != nil {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
-				}
-				if (skippy < 0) || (iNdEx+skippy) < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if (iNdEx + skippy) > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				if !options.DiscardUnknown {
-					x.unknownFields = append(x.unknownFields, dAtA[iNdEx:iNdEx+skippy]...)
-				}
-				iNdEx += skippy
-			}
-		}
-
-		if iNdEx > l {
-			return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-		}
-		return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, nil
-	}
-	return &protoiface.Methods{
-		NoUnkeyedLiterals: struct{}{},
-		Flags:             protoiface.SupportMarshalDeterministic | protoiface.SupportUnmarshalDiscardUnknown,
-		Size:              size,
-		Marshal:           marshal,
-		Unmarshal:         unmarshal,
-		Merge:             nil,
-		CheckInitialized:  nil,
-	}
-}
-
-var (
-	md_DynamicCoefficientModelState                  protoreflect.MessageDescriptor
-	fd_DynamicCoefficientModelState_model_id         protoreflect.FieldDescriptor
-	fd_DynamicCoefficientModelState_config           protoreflect.FieldDescriptor
-	fd_DynamicCoefficientModelState_base_coefficient protoreflect.FieldDescriptor
-	fd_DynamicCoefficientModelState_adaptive_step    protoreflect.FieldDescriptor
-	fd_DynamicCoefficientModelState_prev_sign        protoreflect.FieldDescriptor
-)
-
-func init() {
-	file_inference_inference_epoch_group_data_proto_init()
-	md_DynamicCoefficientModelState = File_inference_inference_epoch_group_data_proto.Messages().ByName("DynamicCoefficientModelState")
-	fd_DynamicCoefficientModelState_model_id = md_DynamicCoefficientModelState.Fields().ByName("model_id")
-	fd_DynamicCoefficientModelState_config = md_DynamicCoefficientModelState.Fields().ByName("config")
-	fd_DynamicCoefficientModelState_base_coefficient = md_DynamicCoefficientModelState.Fields().ByName("base_coefficient")
-	fd_DynamicCoefficientModelState_adaptive_step = md_DynamicCoefficientModelState.Fields().ByName("adaptive_step")
-	fd_DynamicCoefficientModelState_prev_sign = md_DynamicCoefficientModelState.Fields().ByName("prev_sign")
-}
-
-var _ protoreflect.Message = (*fastReflection_DynamicCoefficientModelState)(nil)
-
-type fastReflection_DynamicCoefficientModelState DynamicCoefficientModelState
-
-func (x *DynamicCoefficientModelState) ProtoReflect() protoreflect.Message {
-	return (*fastReflection_DynamicCoefficientModelState)(x)
-}
-
-func (x *DynamicCoefficientModelState) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[3]
-	if protoimpl.UnsafeEnabled && x != nil {
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		if ms.LoadMessageInfo() == nil {
-			ms.StoreMessageInfo(mi)
-		}
-		return ms
-	}
-	return mi.MessageOf(x)
-}
-
-var _fastReflection_DynamicCoefficientModelState_messageType fastReflection_DynamicCoefficientModelState_messageType
-var _ protoreflect.MessageType = fastReflection_DynamicCoefficientModelState_messageType{}
-
-type fastReflection_DynamicCoefficientModelState_messageType struct{}
-
-func (x fastReflection_DynamicCoefficientModelState_messageType) Zero() protoreflect.Message {
-	return (*fastReflection_DynamicCoefficientModelState)(nil)
-}
-func (x fastReflection_DynamicCoefficientModelState_messageType) New() protoreflect.Message {
-	return new(fastReflection_DynamicCoefficientModelState)
-}
-func (x fastReflection_DynamicCoefficientModelState_messageType) Descriptor() protoreflect.MessageDescriptor {
-	return md_DynamicCoefficientModelState
-}
-
-// Descriptor returns message descriptor, which contains only the protobuf
-// type information for the message.
-func (x *fastReflection_DynamicCoefficientModelState) Descriptor() protoreflect.MessageDescriptor {
-	return md_DynamicCoefficientModelState
-}
-
-// Type returns the message type, which encapsulates both Go and protobuf
-// type information. If the Go type information is not needed,
-// it is recommended that the message descriptor be used instead.
-func (x *fastReflection_DynamicCoefficientModelState) Type() protoreflect.MessageType {
-	return _fastReflection_DynamicCoefficientModelState_messageType
-}
-
-// New returns a newly allocated and mutable empty message.
-func (x *fastReflection_DynamicCoefficientModelState) New() protoreflect.Message {
-	return new(fastReflection_DynamicCoefficientModelState)
-}
-
-// Interface unwraps the message reflection interface and
-// returns the underlying ProtoMessage interface.
-func (x *fastReflection_DynamicCoefficientModelState) Interface() protoreflect.ProtoMessage {
-	return (*DynamicCoefficientModelState)(x)
-}
-
-// Range iterates over every populated field in an undefined order,
-// calling f for each field descriptor and value encountered.
-// Range returns immediately if f returns false.
-// While iterating, mutating operations may only be performed
-// on the current field descriptor.
-func (x *fastReflection_DynamicCoefficientModelState) Range(f func(protoreflect.FieldDescriptor, protoreflect.Value) bool) {
-	if x.ModelId != "" {
-		value := protoreflect.ValueOfString(x.ModelId)
-		if !f(fd_DynamicCoefficientModelState_model_id, value) {
-			return
-		}
-	}
-	if x.Config != nil {
-		value := protoreflect.ValueOfMessage(x.Config.ProtoReflect())
-		if !f(fd_DynamicCoefficientModelState_config, value) {
-			return
-		}
-	}
-	if x.BaseCoefficient != nil {
-		value := protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
-		if !f(fd_DynamicCoefficientModelState_base_coefficient, value) {
-			return
-		}
-	}
-	if x.AdaptiveStep != nil {
-		value := protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
-		if !f(fd_DynamicCoefficientModelState_adaptive_step, value) {
-			return
-		}
-	}
-	if x.PrevSign != int32(0) {
-		value := protoreflect.ValueOfInt32(x.PrevSign)
-		if !f(fd_DynamicCoefficientModelState_prev_sign, value) {
-			return
-		}
-	}
-}
-
-// Has reports whether a field is populated.
-//
-// Some fields have the property of nullability where it is possible to
-// distinguish between the default value of a field and whether the field
-// was explicitly populated with the default value. Singular message fields,
-// member fields of a oneof, and proto2 scalar fields are nullable. Such
-// fields are populated only if explicitly set.
-//
-// In other cases (aside from the nullable cases above),
-// a proto3 scalar field is populated if it contains a non-zero value, and
-// a repeated field is populated if it is non-empty.
-func (x *fastReflection_DynamicCoefficientModelState) Has(fd protoreflect.FieldDescriptor) bool {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		return x.ModelId != ""
-	case "inference.inference.DynamicCoefficientModelState.config":
-		return x.Config != nil
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		return x.BaseCoefficient != nil
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		return x.AdaptiveStep != nil
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		return x.PrevSign != int32(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", fd.FullName()))
-	}
-}
-
-// Clear clears the field such that a subsequent Has call reports false.
-//
-// Clearing an extension field clears both the extension type and value
-// associated with the given field number.
-//
-// Clear is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientModelState) Clear(fd protoreflect.FieldDescriptor) {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		x.ModelId = ""
-	case "inference.inference.DynamicCoefficientModelState.config":
-		x.Config = nil
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		x.BaseCoefficient = nil
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		x.AdaptiveStep = nil
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		x.PrevSign = int32(0)
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", fd.FullName()))
-	}
-}
-
-// Get retrieves the value for a field.
-//
-// For unpopulated scalars, it returns the default value, where
-// the default value of a bytes scalar is guaranteed to be a copy.
-// For unpopulated composite types, it returns an empty, read-only view
-// of the value; to obtain a mutable reference, use Mutable.
-func (x *fastReflection_DynamicCoefficientModelState) Get(descriptor protoreflect.FieldDescriptor) protoreflect.Value {
-	switch descriptor.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		value := x.ModelId
-		return protoreflect.ValueOfString(value)
-	case "inference.inference.DynamicCoefficientModelState.config":
-		value := x.Config
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		value := x.BaseCoefficient
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		value := x.AdaptiveStep
-		return protoreflect.ValueOfMessage(value.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		value := x.PrevSign
-		return protoreflect.ValueOfInt32(value)
-	default:
-		if descriptor.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", descriptor.FullName()))
-	}
-}
-
-// Set stores the value for a field.
-//
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType.
-// When setting a composite type, it is unspecified whether the stored value
-// aliases the source's memory in any way. If the composite value is an
-// empty, read-only value, then it panics.
-//
-// Set is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientModelState) Set(fd protoreflect.FieldDescriptor, value protoreflect.Value) {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		x.ModelId = value.Interface().(string)
-	case "inference.inference.DynamicCoefficientModelState.config":
-		x.Config = value.Message().Interface().(*DynamicCoefficientModelConfig)
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		x.BaseCoefficient = value.Message().Interface().(*Decimal)
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		x.AdaptiveStep = value.Message().Interface().(*Decimal)
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		x.PrevSign = int32(value.Int())
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", fd.FullName()))
-	}
-}
-
-// Mutable returns a mutable reference to a composite type.
-//
-// If the field is unpopulated, it may allocate a composite value.
-// For a field belonging to a oneof, it implicitly clears any other field
-// that may be currently set within the same oneof.
-// For extension fields, it implicitly stores the provided ExtensionType
-// if not already stored.
-// It panics if the field does not contain a composite type.
-//
-// Mutable is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientModelState) Mutable(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.config":
-		if x.Config == nil {
-			x.Config = new(DynamicCoefficientModelConfig)
-		}
-		return protoreflect.ValueOfMessage(x.Config.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		if x.BaseCoefficient == nil {
-			x.BaseCoefficient = new(Decimal)
-		}
-		return protoreflect.ValueOfMessage(x.BaseCoefficient.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		if x.AdaptiveStep == nil {
-			x.AdaptiveStep = new(Decimal)
-		}
-		return protoreflect.ValueOfMessage(x.AdaptiveStep.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		panic(fmt.Errorf("field model_id of message inference.inference.DynamicCoefficientModelState is not mutable"))
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		panic(fmt.Errorf("field prev_sign of message inference.inference.DynamicCoefficientModelState is not mutable"))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", fd.FullName()))
-	}
-}
-
-// NewField returns a new value that is assignable to the field
-// for the given descriptor. For scalars, this returns the default value.
-// For lists, maps, and messages, this returns a new, empty, mutable value.
-func (x *fastReflection_DynamicCoefficientModelState) NewField(fd protoreflect.FieldDescriptor) protoreflect.Value {
-	switch fd.FullName() {
-	case "inference.inference.DynamicCoefficientModelState.model_id":
-		return protoreflect.ValueOfString("")
-	case "inference.inference.DynamicCoefficientModelState.config":
-		m := new(DynamicCoefficientModelConfig)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.base_coefficient":
-		m := new(Decimal)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.adaptive_step":
-		m := new(Decimal)
-		return protoreflect.ValueOfMessage(m.ProtoReflect())
-	case "inference.inference.DynamicCoefficientModelState.prev_sign":
-		return protoreflect.ValueOfInt32(int32(0))
-	default:
-		if fd.IsExtension() {
-			panic(fmt.Errorf("proto3 declared messages do not support extensions: inference.inference.DynamicCoefficientModelState"))
-		}
-		panic(fmt.Errorf("message inference.inference.DynamicCoefficientModelState does not contain field %s", fd.FullName()))
-	}
-}
-
-// WhichOneof reports which field within the oneof is populated,
-// returning nil if none are populated.
-// It panics if the oneof descriptor does not belong to this message.
-func (x *fastReflection_DynamicCoefficientModelState) WhichOneof(d protoreflect.OneofDescriptor) protoreflect.FieldDescriptor {
-	switch d.FullName() {
-	default:
-		panic(fmt.Errorf("%s is not a oneof field in inference.inference.DynamicCoefficientModelState", d.FullName()))
-	}
-	panic("unreachable")
-}
-
-// GetUnknown retrieves the entire list of unknown fields.
-// The caller may only mutate the contents of the RawFields
-// if the mutated bytes are stored back into the message with SetUnknown.
-func (x *fastReflection_DynamicCoefficientModelState) GetUnknown() protoreflect.RawFields {
-	return x.unknownFields
-}
-
-// SetUnknown stores an entire list of unknown fields.
-// The raw fields must be syntactically valid according to the wire format.
-// An implementation may panic if this is not the case.
-// Once stored, the caller must not mutate the content of the RawFields.
-// An empty RawFields may be passed to clear the fields.
-//
-// SetUnknown is a mutating operation and unsafe for concurrent use.
-func (x *fastReflection_DynamicCoefficientModelState) SetUnknown(fields protoreflect.RawFields) {
-	x.unknownFields = fields
-}
-
-// IsValid reports whether the message is valid.
-//
-// An invalid message is an empty, read-only value.
-//
-// An invalid message often corresponds to a nil pointer of the concrete
-// message type, but the details are implementation dependent.
-// Validity is not part of the protobuf data model, and may not
-// be preserved in marshaling or other operations.
-func (x *fastReflection_DynamicCoefficientModelState) IsValid() bool {
-	return x != nil
-}
-
-// ProtoMethods returns optional fastReflectionFeature-path implementations of various operations.
-// This method may return nil.
-//
-// The returned methods type is identical to
-// "google.golang.org/protobuf/runtime/protoiface".Methods.
-// Consult the protoiface package documentation for details.
-func (x *fastReflection_DynamicCoefficientModelState) ProtoMethods() *protoiface.Methods {
-	size := func(input protoiface.SizeInput) protoiface.SizeOutput {
-		x := input.Message.Interface().(*DynamicCoefficientModelState)
-		if x == nil {
-			return protoiface.SizeOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Size:              0,
-			}
-		}
-		options := runtime.SizeInputToOptions(input)
-		_ = options
-		var n int
-		var l int
-		_ = l
-		l = len(x.ModelId)
-		if l > 0 {
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.Config != nil {
-			l = options.Size(x.Config)
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.BaseCoefficient != nil {
-			l = options.Size(x.BaseCoefficient)
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.AdaptiveStep != nil {
-			l = options.Size(x.AdaptiveStep)
-			n += 1 + l + runtime.Sov(uint64(l))
-		}
-		if x.PrevSign != 0 {
-			n += 1 + runtime.Soz(uint64(x.PrevSign))
-		}
-		if x.unknownFields != nil {
-			n += len(x.unknownFields)
-		}
-		return protoiface.SizeOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Size:              n,
-		}
-	}
-
-	marshal := func(input protoiface.MarshalInput) (protoiface.MarshalOutput, error) {
-		x := input.Message.Interface().(*DynamicCoefficientModelState)
-		if x == nil {
-			return protoiface.MarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Buf:               input.Buf,
-			}, nil
-		}
-		options := runtime.MarshalInputToOptions(input)
-		_ = options
-		size := options.Size(x)
-		dAtA := make([]byte, size)
-		i := len(dAtA)
-		_ = i
-		var l int
-		_ = l
-		if x.unknownFields != nil {
-			i -= len(x.unknownFields)
-			copy(dAtA[i:], x.unknownFields)
-		}
-		if x.PrevSign != 0 {
-			i = runtime.EncodeVarint(dAtA, i, uint64((uint32(x.PrevSign)<<1)^uint32((x.PrevSign>>31))))
-			i--
-			dAtA[i] = 0x28
-		}
-		if x.AdaptiveStep != nil {
-			encoded, err := options.Marshal(x.AdaptiveStep)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
-			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x22
-		}
-		if x.BaseCoefficient != nil {
-			encoded, err := options.Marshal(x.BaseCoefficient)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
-			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x1a
-		}
-		if x.Config != nil {
-			encoded, err := options.Marshal(x.Config)
-			if err != nil {
-				return protoiface.MarshalOutput{
-					NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-					Buf:               input.Buf,
-				}, err
-			}
-			i -= len(encoded)
-			copy(dAtA[i:], encoded)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(encoded)))
-			i--
-			dAtA[i] = 0x12
-		}
-		if len(x.ModelId) > 0 {
-			i -= len(x.ModelId)
-			copy(dAtA[i:], x.ModelId)
-			i = runtime.EncodeVarint(dAtA, i, uint64(len(x.ModelId)))
-			i--
-			dAtA[i] = 0xa
-		}
-		if input.Buf != nil {
-			input.Buf = append(input.Buf, dAtA...)
-		} else {
-			input.Buf = dAtA
-		}
-		return protoiface.MarshalOutput{
-			NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-			Buf:               input.Buf,
-		}, nil
-	}
-	unmarshal := func(input protoiface.UnmarshalInput) (protoiface.UnmarshalOutput, error) {
-		x := input.Message.Interface().(*DynamicCoefficientModelState)
-		if x == nil {
-			return protoiface.UnmarshalOutput{
-				NoUnkeyedLiterals: input.NoUnkeyedLiterals,
-				Flags:             input.Flags,
-			}, nil
-		}
-		options := runtime.UnmarshalInputToOptions(input)
-		_ = options
-		dAtA := input.Buf
-		l := len(dAtA)
-		iNdEx := 0
-		for iNdEx < l {
-			preIndex := iNdEx
-			var wire uint64
-			for shift := uint(0); ; shift += 7 {
-				if shift >= 64 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-				}
-				if iNdEx >= l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				b := dAtA[iNdEx]
-				iNdEx++
-				wire |= uint64(b&0x7F) << shift
-				if b < 0x80 {
-					break
-				}
-			}
-			fieldNum := int32(wire >> 3)
-			wireType := int(wire & 0x7)
-			if wireType == 4 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DynamicCoefficientModelState: wiretype end group for non-group")
-			}
-			if fieldNum <= 0 {
-				return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: DynamicCoefficientModelState: illegal tag %d (wire type %d)", fieldNum, wire)
-			}
-			switch fieldNum {
-			case 1:
-				if wireType != 2 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ModelId", wireType)
-				}
-				var stringLen uint64
-				for shift := uint(0); ; shift += 7 {
-					if shift >= 64 {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
-					}
-					if iNdEx >= l {
-						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-					}
-					b := dAtA[iNdEx]
-					iNdEx++
-					stringLen |= uint64(b&0x7F) << shift
-					if b < 0x80 {
-						break
-					}
-				}
-				intStringLen := int(stringLen)
-				if intStringLen < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				postIndex := iNdEx + intStringLen
-				if postIndex < 0 {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrInvalidLength
-				}
-				if postIndex > l {
-					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
-				}
-				x.ModelId = string(dAtA[iNdEx:postIndex])
-				iNdEx = postIndex
-			case 2:
+			case 4:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field Config", wireType)
 				}
@@ -3491,7 +2532,7 @@ func (x *fastReflection_DynamicCoefficientModelState) ProtoMethods() *protoiface
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 3:
+			case 5:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field BaseCoefficient", wireType)
 				}
@@ -3527,7 +2568,7 @@ func (x *fastReflection_DynamicCoefficientModelState) ProtoMethods() *protoiface
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 4:
+			case 6:
 				if wireType != 2 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field AdaptiveStep", wireType)
 				}
@@ -3563,7 +2604,7 @@ func (x *fastReflection_DynamicCoefficientModelState) ProtoMethods() *protoiface
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, err
 				}
 				iNdEx = postIndex
-			case 5:
+			case 7:
 				if wireType != 0 {
 					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field PrevSign", wireType)
 				}
@@ -3584,6 +2625,26 @@ func (x *fastReflection_DynamicCoefficientModelState) ProtoMethods() *protoiface
 				}
 				v = int32((uint32(v) >> 1) ^ uint32(((v&1)<<31)>>31))
 				x.PrevSign = v
+			case 8:
+				if wireType != 0 {
+					return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, fmt.Errorf("proto: wrong wireType = %d for field ExcludeFromConfirmation", wireType)
+				}
+				var v int
+				for shift := uint(0); ; shift += 7 {
+					if shift >= 64 {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, runtime.ErrIntOverflow
+					}
+					if iNdEx >= l {
+						return protoiface.UnmarshalOutput{NoUnkeyedLiterals: input.NoUnkeyedLiterals, Flags: input.Flags}, io.ErrUnexpectedEOF
+					}
+					b := dAtA[iNdEx]
+					iNdEx++
+					v |= int(b&0x7F) << shift
+					if b < 0x80 {
+						break
+					}
+				}
+				x.ExcludeFromConfirmation = bool(v != 0)
 			default:
 				iNdEx = preIndex
 				skippy, err := runtime.Skip(dAtA[iNdEx:])
@@ -3700,7 +2761,7 @@ func (x *ValidationWeight) ProtoReflect() protoreflect.Message {
 }
 
 func (x *ValidationWeight) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[4]
+	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[2]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4391,7 +3452,7 @@ func (x *SeedSignature) ProtoReflect() protoreflect.Message {
 }
 
 func (x *SeedSignature) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[5]
+	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[3]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -4925,7 +3986,7 @@ func (x *MLNodeInfo) ProtoReflect() protoreflect.Message {
 }
 
 func (x *MLNodeInfo) slowProtoReflect() protoreflect.Message {
-	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[6]
+	mi := &file_inference_inference_epoch_group_data_proto_msgTypes[4]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -5614,12 +4675,12 @@ type EpochGroupData struct {
 	// If model_id is set, this is a sub EpochGroup for that specific model
 	ModelId string `protobuf:"bytes,14,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
 	// List of model IDs for sub EpochGroups, only used in parent EpochGroup
-	SubGroupModels             []string                         `protobuf:"bytes,15,rep,name=sub_group_models,json=subGroupModels,proto3" json:"sub_group_models,omitempty"`
-	EpochIndex                 uint64                           `protobuf:"varint,16,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
-	ModelSnapshot              *Model                           `protobuf:"bytes,17,opt,name=model_snapshot,json=modelSnapshot,proto3" json:"model_snapshot,omitempty"`
-	TotalThroughput            int64                            `protobuf:"varint,18,opt,name=total_throughput,json=totalThroughput,proto3" json:"total_throughput,omitempty"`
-	ConfirmationWeightScales   []*ConfirmationWeightScale       `protobuf:"bytes,19,rep,name=confirmation_weight_scales,json=confirmationWeightScales,proto3" json:"confirmation_weight_scales,omitempty"`
-	DynamicCoefficientSnapshot *DynamicCoefficientEpochSnapshot `protobuf:"bytes,20,opt,name=dynamic_coefficient_snapshot,json=dynamicCoefficientSnapshot,proto3" json:"dynamic_coefficient_snapshot,omitempty"`
+	SubGroupModels           []string                   `protobuf:"bytes,15,rep,name=sub_group_models,json=subGroupModels,proto3" json:"sub_group_models,omitempty"`
+	EpochIndex               uint64                     `protobuf:"varint,16,opt,name=epoch_index,json=epochIndex,proto3" json:"epoch_index,omitempty"`
+	ModelSnapshot            *Model                     `protobuf:"bytes,17,opt,name=model_snapshot,json=modelSnapshot,proto3" json:"model_snapshot,omitempty"`
+	TotalThroughput          int64                      `protobuf:"varint,18,opt,name=total_throughput,json=totalThroughput,proto3" json:"total_throughput,omitempty"`
+	ConfirmationWeightScales []*ConfirmationWeightScale `protobuf:"bytes,19,rep,name=confirmation_weight_scales,json=confirmationWeightScales,proto3" json:"confirmation_weight_scales,omitempty"`
+	DynamicCoefficientParams *DynamicCoefficientParams  `protobuf:"bytes,20,opt,name=dynamic_coefficient_params,json=dynamicCoefficientParams,proto3" json:"dynamic_coefficient_params,omitempty"`
 }
 
 func (x *EpochGroupData) Reset() {
@@ -5768,9 +4829,9 @@ func (x *EpochGroupData) GetConfirmationWeightScales() []*ConfirmationWeightScal
 	return nil
 }
 
-func (x *EpochGroupData) GetDynamicCoefficientSnapshot() *DynamicCoefficientEpochSnapshot {
+func (x *EpochGroupData) GetDynamicCoefficientParams() *DynamicCoefficientParams {
 	if x != nil {
-		return x.DynamicCoefficientSnapshot
+		return x.DynamicCoefficientParams
 	}
 	return nil
 }
@@ -5782,8 +4843,13 @@ type ConfirmationWeightScale struct {
 
 	ModelId string `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
 	// Deprecated: Do not use.
-	WeightScaleFactor    *Decimal `protobuf:"bytes,2,opt,name=weight_scale_factor,json=weightScaleFactor,proto3" json:"weight_scale_factor,omitempty"` // Historical snapshots only.
-	EffectiveCoefficient *Decimal `protobuf:"bytes,3,opt,name=effective_coefficient,json=effectiveCoefficient,proto3" json:"effective_coefficient,omitempty"`
+	WeightScaleFactor       *Decimal                       `protobuf:"bytes,2,opt,name=weight_scale_factor,json=weightScaleFactor,proto3" json:"weight_scale_factor,omitempty"` // Historical snapshots only.
+	EffectiveCoefficient    *Decimal                       `protobuf:"bytes,3,opt,name=effective_coefficient,json=effectiveCoefficient,proto3" json:"effective_coefficient,omitempty"`
+	Config                  *DynamicCoefficientModelConfig `protobuf:"bytes,4,opt,name=config,proto3" json:"config,omitempty"`
+	BaseCoefficient         *Decimal                       `protobuf:"bytes,5,opt,name=base_coefficient,json=baseCoefficient,proto3" json:"base_coefficient,omitempty"`
+	AdaptiveStep            *Decimal                       `protobuf:"bytes,6,opt,name=adaptive_step,json=adaptiveStep,proto3" json:"adaptive_step,omitempty"`
+	PrevSign                int32                          `protobuf:"zigzag32,7,opt,name=prev_sign,json=prevSign,proto3" json:"prev_sign,omitempty"`
+	ExcludeFromConfirmation bool                           `protobuf:"varint,8,opt,name=exclude_from_confirmation,json=excludeFromConfirmation,proto3" json:"exclude_from_confirmation,omitempty"`
 }
 
 func (x *ConfirmationWeightScale) Reset() {
@@ -5828,114 +4894,39 @@ func (x *ConfirmationWeightScale) GetEffectiveCoefficient() *Decimal {
 	return nil
 }
 
-type DynamicCoefficientEpochSnapshot struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	Params *DynamicCoefficientParams       `protobuf:"bytes,1,opt,name=params,proto3" json:"params,omitempty"`
-	Models []*DynamicCoefficientModelState `protobuf:"bytes,2,rep,name=models,proto3" json:"models,omitempty"`
-}
-
-func (x *DynamicCoefficientEpochSnapshot) Reset() {
-	*x = DynamicCoefficientEpochSnapshot{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[2]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *DynamicCoefficientEpochSnapshot) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DynamicCoefficientEpochSnapshot) ProtoMessage() {}
-
-// Deprecated: Use DynamicCoefficientEpochSnapshot.ProtoReflect.Descriptor instead.
-func (*DynamicCoefficientEpochSnapshot) Descriptor() ([]byte, []int) {
-	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{2}
-}
-
-func (x *DynamicCoefficientEpochSnapshot) GetParams() *DynamicCoefficientParams {
-	if x != nil {
-		return x.Params
-	}
-	return nil
-}
-
-func (x *DynamicCoefficientEpochSnapshot) GetModels() []*DynamicCoefficientModelState {
-	if x != nil {
-		return x.Models
-	}
-	return nil
-}
-
-type DynamicCoefficientModelState struct {
-	state         protoimpl.MessageState
-	sizeCache     protoimpl.SizeCache
-	unknownFields protoimpl.UnknownFields
-
-	ModelId         string                         `protobuf:"bytes,1,opt,name=model_id,json=modelId,proto3" json:"model_id,omitempty"`
-	Config          *DynamicCoefficientModelConfig `protobuf:"bytes,2,opt,name=config,proto3" json:"config,omitempty"`
-	BaseCoefficient *Decimal                       `protobuf:"bytes,3,opt,name=base_coefficient,json=baseCoefficient,proto3" json:"base_coefficient,omitempty"`
-	AdaptiveStep    *Decimal                       `protobuf:"bytes,4,opt,name=adaptive_step,json=adaptiveStep,proto3" json:"adaptive_step,omitempty"`
-	PrevSign        int32                          `protobuf:"zigzag32,5,opt,name=prev_sign,json=prevSign,proto3" json:"prev_sign,omitempty"`
-}
-
-func (x *DynamicCoefficientModelState) Reset() {
-	*x = DynamicCoefficientModelState{}
-	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[3]
-		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
-		ms.StoreMessageInfo(mi)
-	}
-}
-
-func (x *DynamicCoefficientModelState) String() string {
-	return protoimpl.X.MessageStringOf(x)
-}
-
-func (*DynamicCoefficientModelState) ProtoMessage() {}
-
-// Deprecated: Use DynamicCoefficientModelState.ProtoReflect.Descriptor instead.
-func (*DynamicCoefficientModelState) Descriptor() ([]byte, []int) {
-	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{3}
-}
-
-func (x *DynamicCoefficientModelState) GetModelId() string {
-	if x != nil {
-		return x.ModelId
-	}
-	return ""
-}
-
-func (x *DynamicCoefficientModelState) GetConfig() *DynamicCoefficientModelConfig {
+func (x *ConfirmationWeightScale) GetConfig() *DynamicCoefficientModelConfig {
 	if x != nil {
 		return x.Config
 	}
 	return nil
 }
 
-func (x *DynamicCoefficientModelState) GetBaseCoefficient() *Decimal {
+func (x *ConfirmationWeightScale) GetBaseCoefficient() *Decimal {
 	if x != nil {
 		return x.BaseCoefficient
 	}
 	return nil
 }
 
-func (x *DynamicCoefficientModelState) GetAdaptiveStep() *Decimal {
+func (x *ConfirmationWeightScale) GetAdaptiveStep() *Decimal {
 	if x != nil {
 		return x.AdaptiveStep
 	}
 	return nil
 }
 
-func (x *DynamicCoefficientModelState) GetPrevSign() int32 {
+func (x *ConfirmationWeightScale) GetPrevSign() int32 {
 	if x != nil {
 		return x.PrevSign
 	}
 	return 0
+}
+
+func (x *ConfirmationWeightScale) GetExcludeFromConfirmation() bool {
+	if x != nil {
+		return x.ExcludeFromConfirmation
+	}
+	return false
 }
 
 type ValidationWeight struct {
@@ -5959,7 +4950,7 @@ type ValidationWeight struct {
 func (x *ValidationWeight) Reset() {
 	*x = ValidationWeight{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[4]
+		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[2]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -5973,7 +4964,7 @@ func (*ValidationWeight) ProtoMessage() {}
 
 // Deprecated: Use ValidationWeight.ProtoReflect.Descriptor instead.
 func (*ValidationWeight) Descriptor() ([]byte, []int) {
-	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{4}
+	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{2}
 }
 
 func (x *ValidationWeight) GetMemberAddress() string {
@@ -6030,7 +5021,7 @@ type SeedSignature struct {
 func (x *SeedSignature) Reset() {
 	*x = SeedSignature{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[5]
+		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[3]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -6044,7 +5035,7 @@ func (*SeedSignature) ProtoMessage() {}
 
 // Deprecated: Use SeedSignature.ProtoReflect.Descriptor instead.
 func (*SeedSignature) Descriptor() ([]byte, []int) {
-	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{5}
+	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{3}
 }
 
 func (x *SeedSignature) GetMemberAddress() string {
@@ -6080,7 +5071,7 @@ type MLNodeInfo struct {
 func (x *MLNodeInfo) Reset() {
 	*x = MLNodeInfo{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[6]
+		mi := &file_inference_inference_epoch_group_data_proto_msgTypes[4]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -6094,7 +5085,7 @@ func (*MLNodeInfo) ProtoMessage() {}
 
 // Deprecated: Use MLNodeInfo.ProtoReflect.Descriptor instead.
 func (*MLNodeInfo) Descriptor() ([]byte, []int) {
-	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{6}
+	return file_inference_inference_epoch_group_data_proto_rawDescGZIP(), []int{4}
 }
 
 func (x *MLNodeInfo) GetNodeId() string {
@@ -6139,7 +5130,7 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x70, 0x61,
 	0x72, 0x61, 0x6d, 0x73, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x1a, 0x1f, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0x82, 0x09, 0x0a, 0x0e,
+	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x2e, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x22, 0xf7, 0x08, 0x0a, 0x0e,
 	0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70, 0x44, 0x61, 0x74, 0x61, 0x12, 0x33,
 	0x0a, 0x16, 0x70, 0x6f, 0x63, 0x5f, 0x73, 0x74, 0x61, 0x72, 0x74, 0x5f, 0x62, 0x6c, 0x6f, 0x63,
 	0x6b, 0x5f, 0x68, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x01, 0x20, 0x01, 0x28, 0x04, 0x52, 0x13,
@@ -6202,108 +5193,96 @@ var file_inference_inference_epoch_group_data_proto_rawDesc = []byte{
 	0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x43, 0x6f, 0x6e,
 	0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53,
 	0x63, 0x61, 0x6c, 0x65, 0x52, 0x18, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x73, 0x12, 0x76,
-	0x0a, 0x1c, 0x64, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69,
-	0x63, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x73, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x18, 0x14,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x34, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d,
-	0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f,
-	0x63, 0x68, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x52, 0x1a, 0x64, 0x79, 0x6e, 0x61,
-	0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x53, 0x6e,
-	0x61, 0x70, 0x73, 0x68, 0x6f, 0x74, 0x4a, 0x04, 0x08, 0x07, 0x10, 0x08, 0x52, 0x12, 0x66, 0x69,
-	0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x73,
-	0x22, 0xd9, 0x01, 0x0a, 0x17, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f,
-	0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x12, 0x19, 0x0a, 0x08,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07,
-	0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x50, 0x0a, 0x13, 0x77, 0x65, 0x69, 0x67, 0x68,
-	0x74, 0x5f, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x5f, 0x66, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x18, 0x02,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d,
-	0x61, 0x6c, 0x42, 0x02, 0x18, 0x01, 0x52, 0x11, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63,
-	0x61, 0x6c, 0x65, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x51, 0x0a, 0x15, 0x65, 0x66, 0x66,
-	0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65,
-	0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44,
-	0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x14, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76,
-	0x65, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x22, 0xb3, 0x01, 0x0a,
-	0x1f, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69,
-	0x65, 0x6e, 0x74, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x53, 0x6e, 0x61, 0x70, 0x73, 0x68, 0x6f, 0x74,
-	0x12, 0x45, 0x0a, 0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b,
-	0x32, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f,
-	0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x52,
-	0x06, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x12, 0x49, 0x0a, 0x06, 0x6d, 0x6f, 0x64, 0x65, 0x6c,
-	0x73, 0x18, 0x02, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x31, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
-	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79,
-	0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74,
-	0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x53, 0x74, 0x61, 0x74, 0x65, 0x52, 0x06, 0x6d, 0x6f, 0x64, 0x65,
-	0x6c, 0x73, 0x22, 0xae, 0x02, 0x0a, 0x1c, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f,
-	0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x53, 0x74,
-	0x61, 0x74, 0x65, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18,
-	0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x4a,
-	0x0a, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x32,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66,
-	0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x43, 0x6f, 0x6e, 0x66,
-	0x69, 0x67, 0x52, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x47, 0x0a, 0x10, 0x62, 0x61,
-	0x73, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x18, 0x03,
-	0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d,
-	0x61, 0x6c, 0x52, 0x0f, 0x62, 0x61, 0x73, 0x65, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69,
-	0x65, 0x6e, 0x74, 0x12, 0x41, 0x0a, 0x0d, 0x61, 0x64, 0x61, 0x70, 0x74, 0x69, 0x76, 0x65, 0x5f,
-	0x73, 0x74, 0x65, 0x70, 0x18, 0x04, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66,
-	0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0c, 0x61, 0x64, 0x61, 0x70, 0x74, 0x69,
-	0x76, 0x65, 0x53, 0x74, 0x65, 0x70, 0x12, 0x1b, 0x0a, 0x09, 0x70, 0x72, 0x65, 0x76, 0x5f, 0x73,
-	0x69, 0x67, 0x6e, 0x18, 0x05, 0x20, 0x01, 0x28, 0x11, 0x52, 0x08, 0x70, 0x72, 0x65, 0x76, 0x53,
-	0x69, 0x67, 0x6e, 0x22, 0x81, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69,
-	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62,
-	0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12,
-	0x16, 0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52,
-	0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74,
-	0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x72, 0x65, 0x70,
-	0x75, 0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x3a, 0x0a, 0x08, 0x6d, 0x6c, 0x5f, 0x6e, 0x6f,
-	0x64, 0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65,
+	0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x73, 0x12, 0x6b,
+	0x0a, 0x1a, 0x64, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69,
+	0x63, 0x69, 0x65, 0x6e, 0x74, 0x5f, 0x70, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x18, 0x14, 0x20, 0x01,
+	0x28, 0x0b, 0x32, 0x2d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69,
+	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63,
+	0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x72, 0x61, 0x6d,
+	0x73, 0x52, 0x18, 0x64, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69,
+	0x63, 0x69, 0x65, 0x6e, 0x74, 0x50, 0x61, 0x72, 0x61, 0x6d, 0x73, 0x4a, 0x04, 0x08, 0x07, 0x10,
+	0x08, 0x52, 0x12, 0x66, 0x69, 0x6e, 0x69, 0x73, 0x68, 0x65, 0x64, 0x49, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x73, 0x22, 0x8a, 0x04, 0x0a, 0x17, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72,
+	0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c,
+	0x65, 0x12, 0x19, 0x0a, 0x08, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20,
+	0x01, 0x28, 0x09, 0x52, 0x07, 0x6d, 0x6f, 0x64, 0x65, 0x6c, 0x49, 0x64, 0x12, 0x50, 0x0a, 0x13,
+	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x5f, 0x73, 0x63, 0x61, 0x6c, 0x65, 0x5f, 0x66, 0x61, 0x63,
+	0x74, 0x6f, 0x72, 0x18, 0x02, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65,
 	0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e,
-	0x4d, 0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x07, 0x6d, 0x6c, 0x4e, 0x6f,
-	0x64, 0x65, 0x73, 0x12, 0x2f, 0x0a, 0x13, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74,
-	0x69, 0x6f, 0x6e, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03,
-	0x52, 0x12, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x70,
-	0x6f, 0x77, 0x65, 0x72, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x76, 0x6f, 0x74, 0x69,
-	0x6e, 0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53,
-	0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62,
-	0x65, 0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09,
-	0x52, 0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12,
-	0x1c, 0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01,
-	0x28, 0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x99, 0x01,
-	0x0a, 0x0a, 0x4d, 0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07,
-	0x6e, 0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e,
-	0x6f, 0x64, 0x65, 0x49, 0x64, 0x12, 0x1e, 0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68,
-	0x70, 0x75, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75,
-	0x67, 0x68, 0x70, 0x75, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69,
-	0x67, 0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65,
-	0x69, 0x67, 0x68, 0x74, 0x12, 0x33, 0x0a, 0x13, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74,
-	0x5f, 0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x03, 0x28,
-	0x08, 0x42, 0x02, 0x18, 0x01, 0x52, 0x12, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x41,
-	0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2a, 0x2e, 0x0a, 0x0c, 0x54, 0x69, 0x6d,
-	0x65, 0x73, 0x6c, 0x6f, 0x74, 0x54, 0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x0c, 0x50, 0x52, 0x45,
-	0x5f, 0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x50,
-	0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x01, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f,
-	0x6d, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65,
-	0x72, 0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75,
-	0x70, 0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f,
-	0x73, 0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69,
-	0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02,
-	0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72,
-	0x65, 0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65,
-	0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65,
-	0x74, 0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e,
-	0x63, 0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70,
-	0x72, 0x6f, 0x74, 0x6f, 0x33,
+	0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x42, 0x02, 0x18, 0x01, 0x52, 0x11, 0x77, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x53, 0x63, 0x61, 0x6c, 0x65, 0x46, 0x61, 0x63, 0x74, 0x6f, 0x72, 0x12, 0x51,
+	0x0a, 0x15, 0x65, 0x66, 0x66, 0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66,
+	0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x14, 0x65, 0x66, 0x66,
+	0x65, 0x63, 0x74, 0x69, 0x76, 0x65, 0x43, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e,
+	0x74, 0x12, 0x4a, 0x0a, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x18, 0x04, 0x20, 0x01, 0x28,
+	0x0b, 0x32, 0x32, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x79, 0x6e, 0x61, 0x6d, 0x69, 0x63, 0x43,
+	0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x4d, 0x6f, 0x64, 0x65, 0x6c, 0x43,
+	0x6f, 0x6e, 0x66, 0x69, 0x67, 0x52, 0x06, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x67, 0x12, 0x47, 0x0a,
+	0x10, 0x62, 0x61, 0x73, 0x65, 0x5f, 0x63, 0x6f, 0x65, 0x66, 0x66, 0x69, 0x63, 0x69, 0x65, 0x6e,
+	0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65,
+	0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0f, 0x62, 0x61, 0x73, 0x65, 0x43, 0x6f, 0x65, 0x66, 0x66,
+	0x69, 0x63, 0x69, 0x65, 0x6e, 0x74, 0x12, 0x41, 0x0a, 0x0d, 0x61, 0x64, 0x61, 0x70, 0x74, 0x69,
+	0x76, 0x65, 0x5f, 0x73, 0x74, 0x65, 0x70, 0x18, 0x06, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x1c, 0x2e,
+	0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x44, 0x65, 0x63, 0x69, 0x6d, 0x61, 0x6c, 0x52, 0x0c, 0x61, 0x64, 0x61,
+	0x70, 0x74, 0x69, 0x76, 0x65, 0x53, 0x74, 0x65, 0x70, 0x12, 0x1b, 0x0a, 0x09, 0x70, 0x72, 0x65,
+	0x76, 0x5f, 0x73, 0x69, 0x67, 0x6e, 0x18, 0x07, 0x20, 0x01, 0x28, 0x11, 0x52, 0x08, 0x70, 0x72,
+	0x65, 0x76, 0x53, 0x69, 0x67, 0x6e, 0x12, 0x3a, 0x0a, 0x19, 0x65, 0x78, 0x63, 0x6c, 0x75, 0x64,
+	0x65, 0x5f, 0x66, 0x72, 0x6f, 0x6d, 0x5f, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74,
+	0x69, 0x6f, 0x6e, 0x18, 0x08, 0x20, 0x01, 0x28, 0x08, 0x52, 0x17, 0x65, 0x78, 0x63, 0x6c, 0x75,
+	0x64, 0x65, 0x46, 0x72, 0x6f, 0x6d, 0x43, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x22, 0x81, 0x02, 0x0a, 0x10, 0x56, 0x61, 0x6c, 0x69, 0x64, 0x61, 0x74, 0x69, 0x6f,
+	0x6e, 0x57, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65,
+	0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x16,
+	0x0a, 0x06, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x06,
+	0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x12, 0x1e, 0x0a, 0x0a, 0x72, 0x65, 0x70, 0x75, 0x74, 0x61,
+	0x74, 0x69, 0x6f, 0x6e, 0x18, 0x03, 0x20, 0x01, 0x28, 0x05, 0x52, 0x0a, 0x72, 0x65, 0x70, 0x75,
+	0x74, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x12, 0x3a, 0x0a, 0x08, 0x6d, 0x6c, 0x5f, 0x6e, 0x6f, 0x64,
+	0x65, 0x73, 0x18, 0x04, 0x20, 0x03, 0x28, 0x0b, 0x32, 0x1f, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x4d,
+	0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x52, 0x07, 0x6d, 0x6c, 0x4e, 0x6f, 0x64,
+	0x65, 0x73, 0x12, 0x2f, 0x0a, 0x13, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69,
+	0x6f, 0x6e, 0x5f, 0x77, 0x65, 0x69, 0x67, 0x68, 0x74, 0x18, 0x05, 0x20, 0x01, 0x28, 0x03, 0x52,
+	0x12, 0x63, 0x6f, 0x6e, 0x66, 0x69, 0x72, 0x6d, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x57, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x21, 0x0a, 0x0c, 0x76, 0x6f, 0x74, 0x69, 0x6e, 0x67, 0x5f, 0x70, 0x6f,
+	0x77, 0x65, 0x72, 0x18, 0x06, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0b, 0x76, 0x6f, 0x74, 0x69, 0x6e,
+	0x67, 0x50, 0x6f, 0x77, 0x65, 0x72, 0x22, 0x54, 0x0a, 0x0d, 0x53, 0x65, 0x65, 0x64, 0x53, 0x69,
+	0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x12, 0x25, 0x0a, 0x0e, 0x6d, 0x65, 0x6d, 0x62, 0x65,
+	0x72, 0x5f, 0x61, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52,
+	0x0d, 0x6d, 0x65, 0x6d, 0x62, 0x65, 0x72, 0x41, 0x64, 0x64, 0x72, 0x65, 0x73, 0x73, 0x12, 0x1c,
+	0x0a, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x18, 0x02, 0x20, 0x01, 0x28,
+	0x09, 0x52, 0x09, 0x73, 0x69, 0x67, 0x6e, 0x61, 0x74, 0x75, 0x72, 0x65, 0x22, 0x99, 0x01, 0x0a,
+	0x0a, 0x4d, 0x4c, 0x4e, 0x6f, 0x64, 0x65, 0x49, 0x6e, 0x66, 0x6f, 0x12, 0x17, 0x0a, 0x07, 0x6e,
+	0x6f, 0x64, 0x65, 0x5f, 0x69, 0x64, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x06, 0x6e, 0x6f,
+	0x64, 0x65, 0x49, 0x64, 0x12, 0x1e, 0x0a, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67, 0x68, 0x70,
+	0x75, 0x74, 0x18, 0x02, 0x20, 0x01, 0x28, 0x03, 0x52, 0x0a, 0x74, 0x68, 0x72, 0x6f, 0x75, 0x67,
+	0x68, 0x70, 0x75, 0x74, 0x12, 0x1d, 0x0a, 0x0a, 0x70, 0x6f, 0x63, 0x5f, 0x77, 0x65, 0x69, 0x67,
+	0x68, 0x74, 0x18, 0x03, 0x20, 0x01, 0x28, 0x03, 0x52, 0x09, 0x70, 0x6f, 0x63, 0x57, 0x65, 0x69,
+	0x67, 0x68, 0x74, 0x12, 0x33, 0x0a, 0x13, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x5f,
+	0x61, 0x6c, 0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x18, 0x04, 0x20, 0x03, 0x28, 0x08,
+	0x42, 0x02, 0x18, 0x01, 0x52, 0x12, 0x74, 0x69, 0x6d, 0x65, 0x73, 0x6c, 0x6f, 0x74, 0x41, 0x6c,
+	0x6c, 0x6f, 0x63, 0x61, 0x74, 0x69, 0x6f, 0x6e, 0x2a, 0x2e, 0x0a, 0x0c, 0x54, 0x69, 0x6d, 0x65,
+	0x73, 0x6c, 0x6f, 0x74, 0x54, 0x79, 0x70, 0x65, 0x12, 0x10, 0x0a, 0x0c, 0x50, 0x52, 0x45, 0x5f,
+	0x50, 0x4f, 0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x00, 0x12, 0x0c, 0x0a, 0x08, 0x50, 0x4f,
+	0x43, 0x5f, 0x53, 0x4c, 0x4f, 0x54, 0x10, 0x01, 0x42, 0xc1, 0x01, 0x0a, 0x17, 0x63, 0x6f, 0x6d,
+	0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2e, 0x69, 0x6e, 0x66, 0x65, 0x72,
+	0x65, 0x6e, 0x63, 0x65, 0x42, 0x13, 0x45, 0x70, 0x6f, 0x63, 0x68, 0x47, 0x72, 0x6f, 0x75, 0x70,
+	0x44, 0x61, 0x74, 0x61, 0x50, 0x72, 0x6f, 0x74, 0x6f, 0x50, 0x01, 0x5a, 0x24, 0x63, 0x6f, 0x73,
+	0x6d, 0x6f, 0x73, 0x73, 0x64, 0x6b, 0x2e, 0x69, 0x6f, 0x2f, 0x61, 0x70, 0x69, 0x2f, 0x69, 0x6e,
+	0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x2f, 0x69, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0xa2, 0x02, 0x03, 0x49, 0x49, 0x58, 0xaa, 0x02, 0x13, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0x2e, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0xca, 0x02, 0x13,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65,
+	0x6e, 0x63, 0x65, 0xe2, 0x02, 0x1f, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c,
+	0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x5c, 0x47, 0x50, 0x42, 0x4d, 0x65, 0x74,
+	0x61, 0x64, 0x61, 0x74, 0x61, 0xea, 0x02, 0x14, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63,
+	0x65, 0x3a, 0x3a, 0x49, 0x6e, 0x66, 0x65, 0x72, 0x65, 0x6e, 0x63, 0x65, 0x62, 0x06, 0x70, 0x72,
+	0x6f, 0x74, 0x6f, 0x33,
 }
 
 var (
@@ -6319,42 +5298,38 @@ func file_inference_inference_epoch_group_data_proto_rawDescGZIP() []byte {
 }
 
 var file_inference_inference_epoch_group_data_proto_enumTypes = make([]protoimpl.EnumInfo, 1)
-var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 7)
+var file_inference_inference_epoch_group_data_proto_msgTypes = make([]protoimpl.MessageInfo, 5)
 var file_inference_inference_epoch_group_data_proto_goTypes = []interface{}{
-	(TimeslotType)(0),                       // 0: inference.inference.TimeslotType
-	(*EpochGroupData)(nil),                  // 1: inference.inference.EpochGroupData
-	(*ConfirmationWeightScale)(nil),         // 2: inference.inference.ConfirmationWeightScale
-	(*DynamicCoefficientEpochSnapshot)(nil), // 3: inference.inference.DynamicCoefficientEpochSnapshot
-	(*DynamicCoefficientModelState)(nil),    // 4: inference.inference.DynamicCoefficientModelState
-	(*ValidationWeight)(nil),                // 5: inference.inference.ValidationWeight
-	(*SeedSignature)(nil),                   // 6: inference.inference.SeedSignature
-	(*MLNodeInfo)(nil),                      // 7: inference.inference.MLNodeInfo
-	(*ValidationParams)(nil),                // 8: inference.inference.ValidationParams
-	(*Model)(nil),                           // 9: inference.inference.Model
-	(*Decimal)(nil),                         // 10: inference.inference.Decimal
-	(*DynamicCoefficientParams)(nil),        // 11: inference.inference.DynamicCoefficientParams
-	(*DynamicCoefficientModelConfig)(nil),   // 12: inference.inference.DynamicCoefficientModelConfig
+	(TimeslotType)(0),                     // 0: inference.inference.TimeslotType
+	(*EpochGroupData)(nil),                // 1: inference.inference.EpochGroupData
+	(*ConfirmationWeightScale)(nil),       // 2: inference.inference.ConfirmationWeightScale
+	(*ValidationWeight)(nil),              // 3: inference.inference.ValidationWeight
+	(*SeedSignature)(nil),                 // 4: inference.inference.SeedSignature
+	(*MLNodeInfo)(nil),                    // 5: inference.inference.MLNodeInfo
+	(*ValidationParams)(nil),              // 6: inference.inference.ValidationParams
+	(*Model)(nil),                         // 7: inference.inference.Model
+	(*DynamicCoefficientParams)(nil),      // 8: inference.inference.DynamicCoefficientParams
+	(*Decimal)(nil),                       // 9: inference.inference.Decimal
+	(*DynamicCoefficientModelConfig)(nil), // 10: inference.inference.DynamicCoefficientModelConfig
 }
 var file_inference_inference_epoch_group_data_proto_depIdxs = []int32{
-	6,  // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
-	5,  // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
-	8,  // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
-	9,  // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
+	4,  // 0: inference.inference.EpochGroupData.member_seed_signatures:type_name -> inference.inference.SeedSignature
+	3,  // 1: inference.inference.EpochGroupData.validation_weights:type_name -> inference.inference.ValidationWeight
+	6,  // 2: inference.inference.EpochGroupData.validation_params:type_name -> inference.inference.ValidationParams
+	7,  // 3: inference.inference.EpochGroupData.model_snapshot:type_name -> inference.inference.Model
 	2,  // 4: inference.inference.EpochGroupData.confirmation_weight_scales:type_name -> inference.inference.ConfirmationWeightScale
-	3,  // 5: inference.inference.EpochGroupData.dynamic_coefficient_snapshot:type_name -> inference.inference.DynamicCoefficientEpochSnapshot
-	10, // 6: inference.inference.ConfirmationWeightScale.weight_scale_factor:type_name -> inference.inference.Decimal
-	10, // 7: inference.inference.ConfirmationWeightScale.effective_coefficient:type_name -> inference.inference.Decimal
-	11, // 8: inference.inference.DynamicCoefficientEpochSnapshot.params:type_name -> inference.inference.DynamicCoefficientParams
-	4,  // 9: inference.inference.DynamicCoefficientEpochSnapshot.models:type_name -> inference.inference.DynamicCoefficientModelState
-	12, // 10: inference.inference.DynamicCoefficientModelState.config:type_name -> inference.inference.DynamicCoefficientModelConfig
-	10, // 11: inference.inference.DynamicCoefficientModelState.base_coefficient:type_name -> inference.inference.Decimal
-	10, // 12: inference.inference.DynamicCoefficientModelState.adaptive_step:type_name -> inference.inference.Decimal
-	7,  // 13: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
-	14, // [14:14] is the sub-list for method output_type
-	14, // [14:14] is the sub-list for method input_type
-	14, // [14:14] is the sub-list for extension type_name
-	14, // [14:14] is the sub-list for extension extendee
-	0,  // [0:14] is the sub-list for field type_name
+	8,  // 5: inference.inference.EpochGroupData.dynamic_coefficient_params:type_name -> inference.inference.DynamicCoefficientParams
+	9,  // 6: inference.inference.ConfirmationWeightScale.weight_scale_factor:type_name -> inference.inference.Decimal
+	9,  // 7: inference.inference.ConfirmationWeightScale.effective_coefficient:type_name -> inference.inference.Decimal
+	10, // 8: inference.inference.ConfirmationWeightScale.config:type_name -> inference.inference.DynamicCoefficientModelConfig
+	9,  // 9: inference.inference.ConfirmationWeightScale.base_coefficient:type_name -> inference.inference.Decimal
+	9,  // 10: inference.inference.ConfirmationWeightScale.adaptive_step:type_name -> inference.inference.Decimal
+	5,  // 11: inference.inference.ValidationWeight.ml_nodes:type_name -> inference.inference.MLNodeInfo
+	12, // [12:12] is the sub-list for method output_type
+	12, // [12:12] is the sub-list for method input_type
+	12, // [12:12] is the sub-list for extension type_name
+	12, // [12:12] is the sub-list for extension extendee
+	0,  // [0:12] is the sub-list for field type_name
 }
 
 func init() { file_inference_inference_epoch_group_data_proto_init() }
@@ -6391,30 +5366,6 @@ func file_inference_inference_epoch_group_data_proto_init() {
 			}
 		}
 		file_inference_inference_epoch_group_data_proto_msgTypes[2].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DynamicCoefficientEpochSnapshot); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_epoch_group_data_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
-			switch v := v.(*DynamicCoefficientModelState); i {
-			case 0:
-				return &v.state
-			case 1:
-				return &v.sizeCache
-			case 2:
-				return &v.unknownFields
-			default:
-				return nil
-			}
-		}
-		file_inference_inference_epoch_group_data_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*ValidationWeight); i {
 			case 0:
 				return &v.state
@@ -6426,7 +5377,7 @@ func file_inference_inference_epoch_group_data_proto_init() {
 				return nil
 			}
 		}
-		file_inference_inference_epoch_group_data_proto_msgTypes[5].Exporter = func(v interface{}, i int) interface{} {
+		file_inference_inference_epoch_group_data_proto_msgTypes[3].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*SeedSignature); i {
 			case 0:
 				return &v.state
@@ -6438,7 +5389,7 @@ func file_inference_inference_epoch_group_data_proto_init() {
 				return nil
 			}
 		}
-		file_inference_inference_epoch_group_data_proto_msgTypes[6].Exporter = func(v interface{}, i int) interface{} {
+		file_inference_inference_epoch_group_data_proto_msgTypes[4].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*MLNodeInfo); i {
 			case 0:
 				return &v.state
@@ -6457,7 +5408,7 @@ func file_inference_inference_epoch_group_data_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_inference_inference_epoch_group_data_proto_rawDesc,
 			NumEnums:      1,
-			NumMessages:   7,
+			NumMessages:   5,
 			NumExtensions: 0,
 			NumServices:   0,
 		},

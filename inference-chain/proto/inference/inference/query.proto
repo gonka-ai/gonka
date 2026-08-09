@@ -754,8 +754,8 @@ message QueryDynamicCoefficientsRequest {
 
 message QueryDynamicCoefficientsResponse {
   uint64 epoch_index = 1;
-  DynamicCoefficientEpochSnapshot snapshot = 2;
-  repeated ConfirmationWeightScale effective_coefficients = 3;
+  DynamicCoefficientParams params = 2;
+  repeated ConfirmationWeightScale coefficients = 3;
 }
 
 message QueryPreviousEpochGroupDataRequest {}

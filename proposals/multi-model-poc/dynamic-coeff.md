@@ -41,6 +41,7 @@ This proposal introduces a transitional approach:
 
 TODO:
 - ADJUST TO REWARD ~ relative weight
+- Improve the adaptive step for faster convergence
 
 
 ### Formalization

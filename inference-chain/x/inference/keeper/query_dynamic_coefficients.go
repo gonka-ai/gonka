@@ -34,8 +34,8 @@ func (k Keeper) DynamicCoefficients(
 		return nil, status.Error(codes.NotFound, "epoch group data not found")
 	}
 	return &types.QueryDynamicCoefficientsResponse{
-		EpochIndex:            epochIndex,
-		Snapshot:              data.DynamicCoefficientSnapshot,
-		EffectiveCoefficients: data.ConfirmationWeightScales,
+		EpochIndex:   epochIndex,
+		Params:       data.DynamicCoefficientParams,
+		Coefficients: data.ConfirmationWeightScales,
 	}, nil
 }

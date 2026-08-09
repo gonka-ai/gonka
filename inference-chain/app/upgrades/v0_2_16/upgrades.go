@@ -16,6 +16,7 @@ import (
 	upgradetypes "cosmossdk.io/x/upgrade/types"
 	"github.com/cosmos/cosmos-sdk/types/module"
 
+	coefficient "github.com/productscience/inference/x/inference/coefficients"
 	"github.com/productscience/inference/x/inference/keeper"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -36,6 +37,9 @@ func CreateUpgradeHandler(
 
 		// Future v0.2.16 migration steps land below this line.
 		if err := migrateDynamicCoefficientParams(ctx, k); err != nil {
+			return fromVM, err
+		}
+		if err := freezeUpcomingCoefficientConfig(ctx, k); err != nil {
 			return fromVM, err
 		}
 		if err := migrateCurrentEffectiveCoefficients(ctx, k); err != nil {
@@ -166,9 +170,6 @@ func canonicalMigrationDecimal(value *types.Decimal) (*types.Decimal, error) {
 		coefficient /= 10
 		exponent++
 	}
-	if exponent < -12 {
-		return nil, fmt.Errorf("weight_scale_factor must be exactly representable with at most 12 fractional decimal places")
-	}
 	return &types.Decimal{Value: coefficient, Exponent: exponent}, nil
 }
 
@@ -203,5 +204,28 @@ func migrateCurrentEffectiveCoefficients(ctx context.Context, k keeper.Keeper) e
 	if changed {
 		k.SetEpochGroupData(ctx, data)
 	}
+	return nil
+}
+
+func freezeUpcomingCoefficientConfig(ctx context.Context, k keeper.Keeper) error {
+	upcoming, found := k.GetUpcomingEpoch(ctx)
+	if !found || upcoming == nil {
+		return nil
+	}
+	data, found, err := k.GetEpochGroupDataWithError(ctx, upcoming.Index, "")
+	if err != nil || !found {
+		return err
+	}
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return err
+	}
+	frozen, err := coefficient.Freeze(params.PocParams)
+	if err != nil {
+		return err
+	}
+	data.DynamicCoefficientParams = frozen.Params
+	data.ConfirmationWeightScales = frozen.Scales
+	k.SetEpochGroupData(ctx, data)
 	return nil
 }
