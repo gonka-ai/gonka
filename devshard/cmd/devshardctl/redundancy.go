@@ -892,6 +892,16 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
+	// deliveredEvents / deliveredPartial track the upstream SSE prefix actually
+	// forwarded to the client (race.w). Used by same-nonce reconnect (R2/R6).
+	// Counted only on successful client writes — not pendingBuf, probes, or losers.
+	// Blank SSE separators (empty lines from "\n\n" framing) are not events.
+	// deliveredPartial is bytes of the currently incomplete event (0 on a
+	// newline boundary). Updated on the attempt's writer goroutine only.
+	deliveredEvents  int64
+	deliveredPartial int64
+	deliveredForming []byte // incomplete line for delivered-prefix accounting
+
 	// classifyPartial keeps the tail after the last '\n' from prior Writes;
 	// used to reassemble fragmented SSE events for the classifier.
 	classifyPartial []byte
@@ -935,6 +945,10 @@ type inflight struct {
 	resp *host.HostResponse
 	err  error
 	done chan struct{}
+
+	// reconnectTries counts same-nonce transport retries (R8). Distinct from
+	// attempt accounting — reconnect must not call RealSend again.
+	reconnectTries atomic.Int64
 
 	// cancel unwinds the per-attempt context used by SendOnly. The background
 	// finalizer invokes it on losers that are still running SecondaryWaitAfterWinner
@@ -1193,8 +1207,34 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 		inf.pendingBuf = nil
 		return err
 	}
+	inf.recordDeliveredForward(inf.pendingBuf)
 	inf.pendingBuf = nil
 	return nil
+}
+
+// recordDeliveredForward updates deliveredEvents/deliveredPartial for bytes
+// successfully written to the client. Non-empty newline-terminated lines count
+// as complete upstream events; blank separator lines are skipped; a trailing
+// fragment without '\n' is tracked in deliveredPartial.
+func (inf *inflight) recordDeliveredForward(p []byte) {
+	if len(p) == 0 {
+		return
+	}
+	inf.deliveredForming = append(inf.deliveredForming, p...)
+	for {
+		nl := bytes.IndexByte(inf.deliveredForming, '\n')
+		if nl == -1 {
+			inf.deliveredPartial = int64(len(inf.deliveredForming))
+			return
+		}
+		line := inf.deliveredForming[:nl]
+		inf.deliveredForming = inf.deliveredForming[nl+1:]
+		if len(bytes.TrimSpace(line)) == 0 {
+			continue
+		}
+		inf.deliveredEvents++
+		inf.deliveredPartial = 0
+	}
 }
 
 func (rg *raceGroup) addWinnerHoldCandidate(inf *inflight) {
@@ -1636,12 +1676,17 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 				rw.inf.pendingBuf = nil
 				return 0, err
 			}
+			rw.inf.recordDeliveredForward(rw.inf.pendingBuf)
 		}
 		rw.inf.pendingBuf = nil
 		if rw.group.w == nil {
 			return len(p), nil
 		}
-		return rw.group.w.Write(p)
+		n, err := rw.group.w.Write(p)
+		if n > 0 {
+			rw.inf.recordDeliveredForward(p[:n])
+		}
+		return n, err
 
 	case winnerNonce != 0:
 		// Another attempt has already won; suppress this attempt's stream
@@ -1983,6 +2028,336 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 			)
 		}
 	}()
+}
+
+// reconnectInflight re-issues the same PreparedInference with a resume cursor.
+// It does not allocate a new nonce, call the picker, mutate triedParticipants,
+// or record RealSend (R8). The first SendOnly must already have finished
+// (inflightDone). On success, inf.err is cleared and inf.resp is merged so a
+// single later processInflightOnce still runs (R1).
+//
+// Step 4 wires this into the reconnect ladder; Step 3 exposes the primitive.
+func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams) error {
+	if e == nil || inf == nil || inf.prepared == nil {
+		return fmt.Errorf("reconnect: missing inflight")
+	}
+	if !inflightDone(inf) {
+		return fmt.Errorf("reconnect: first send still in flight")
+	}
+	if race == nil {
+		race = newRaceGroup(ctx, ctx, inf.escrowID, io.Discard)
+	}
+
+	events := inf.deliveredEvents
+	partial := inf.deliveredPartial
+	hadPriorContent := inf.contentChunks.Load() > 0 || events > 0
+	try := inf.reconnectTries.Add(1)
+	e.recordGatewayReconnectTry(inf, try)
+
+	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
+	// Primary resume is host-side (cursor on HostRequest). prefixSkipWriter is
+	// an R2 safety net that activates only when the host appears to re-emit
+	// from event 0 despite the cursor (see probe logic in Write).
+	stream := &prefixSkipWriter{
+		w:           rw,
+		skipEvents:  events,
+		skipPartial: partial,
+		probeResume: events > 0 || partial > 0,
+	}
+	receiptHandler := func() {
+		inf.receiptOnce.Do(func() {
+			now := time.Now()
+			inf.setReceiptAt(now)
+			logInferenceStage(ctx, inf.escrowID, inf.nonce, "receipt_received", "host", inf.hostID, "elapsed_ms", now.Sub(inf.sendTime).Milliseconds(), "reconnect_try", try)
+			close(inf.receiptCh)
+		})
+	}
+
+	logInferenceStage(ctx, inf.escrowID, inf.nonce, "reconnect_started",
+		"host", inf.hostID,
+		"reconnect_try", try,
+		"delivered_events", events,
+		"delivered_partial", partial,
+	)
+	resp, err := e.session.SendOnlyWithCursor(ctx, inf.prepared, stream, receiptHandler, events, partial)
+	mergeInflightHostResponse(inf, resp, err)
+
+	if err != nil {
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "reconnect_failed",
+			"host", inf.hostID,
+			"reconnect_try", try,
+			"error", err,
+		)
+		return err
+	}
+	logInferenceStage(ctx, inf.escrowID, inf.nonce, "reconnect_completed",
+		"host", inf.hostID,
+		"reconnect_try", try,
+		"output_chunks", inf.outputChunks.Load(),
+		"content_chunks", inf.contentChunks.Load(),
+		"delivered_events", inf.deliveredEvents,
+		"delivered_partial", inf.deliveredPartial,
+	)
+	// Mid-event resume often forwards a JSON fragment that does not re-classify
+	// as a content event. If the client already received content before the
+	// drop, do not treat that as empty_stream.
+	if rw.flushClassifyAndCheckEmpty() && !hadPriorContent && inf.contentChunks.Load() == 0 {
+		inf.pendingBuf = nil
+		inf.err = errEmptyStream
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "empty_stream",
+			"host", inf.hostID,
+			"reconnect_try", try,
+		)
+		return inf.err
+	}
+	_ = params // reserved for future reconnect-specific empty-stream logging
+	return nil
+}
+
+// mergeInflightHostResponse folds a reconnect HostResponse into the inflight.
+// Prefers the response that carries receipt / mempool txs (R1). Transport
+// success (err==nil) clears a prior transport error so settlement can proceed.
+func mergeInflightHostResponse(inf *inflight, resp *host.HostResponse, err error) {
+	if inf == nil {
+		return
+	}
+	if resp != nil {
+		inf.resp = preferRicherHostResponse(inf.resp, resp)
+	}
+	if err == nil {
+		inf.err = nil
+		return
+	}
+	// Keep a prior nil err only if we somehow got err with no resp change;
+	// reconnect outcome is authoritative for the latest transport try.
+	inf.err = err
+}
+
+func preferRicherHostResponse(prev, next *host.HostResponse) *host.HostResponse {
+	if prev == nil {
+		return next
+	}
+	if next == nil {
+		return prev
+	}
+	out := *prev
+	if len(next.Receipt) > 0 {
+		out.Receipt = next.Receipt
+		out.ConfirmedAt = next.ConfirmedAt
+	}
+	if len(next.Mempool) > 0 {
+		out.Mempool = next.Mempool
+	}
+	if len(next.StateSig) > 0 {
+		out.StateSig = next.StateSig
+	}
+	if len(next.StateHash) > 0 {
+		out.StateHash = next.StateHash
+	}
+	if next.CachedResponseBody != nil {
+		out.CachedResponseBody = next.CachedResponseBody
+	}
+	if next.LiveAttach {
+		out.LiveAttach = true
+	}
+	if next.StreamBytesRead > out.StreamBytesRead {
+		out.StreamBytesRead = next.StreamBytesRead
+	}
+	if next.Nonce != 0 {
+		out.Nonce = next.Nonce
+	}
+	if next.InferenceID != 0 {
+		out.InferenceID = next.InferenceID
+	}
+	out.DeliveredEvents = next.DeliveredEvents
+	out.DeliveredPartial = next.DeliveredPartial
+	return &out
+}
+
+// recordGatewayReconnectTry records a same-nonce transport retry without
+// treating it as a new attempt (no RealSend).
+func (e *Redundancy) recordGatewayReconnectTry(inf *inflight, try int64) {
+	if e == nil || inf == nil {
+		return
+	}
+	logInferenceStage(context.Background(), inf.escrowID, inf.nonce, "reconnect_try",
+		"host", inf.hostID,
+		"reconnect_try", try,
+		"delivered_events", inf.deliveredEvents,
+		"delivered_partial", inf.deliveredPartial,
+	)
+}
+
+// prefixSkipWriter drops an already-delivered upstream prefix before forwarding
+// to the underlying writer. Safety net if a host re-emits from event 0 on
+// reconnect (R2). Blank SSE separator lines are not counted as events.
+//
+// When probeResume is set (same-nonce reconnect that also passed a cursor to
+// the host), the writer first decides whether the stream looks like a full
+// restart. A correct host emits only the remainder — which for a mid-event
+// break does not start a new "data:" line — and must not be event-skipped.
+// Event-boundary resumes are ambiguous without a content fingerprint, so the
+// probe trusts the host cursor and forwards as-is unless a mid-event restart
+// is detected.
+type prefixSkipWriter struct {
+	w            io.Writer
+	skipEvents   int64
+	skipPartial  int64
+	eventsSeen   int64
+	forming      []byte
+	doneSkipping bool
+	probeResume  bool
+	probed       bool
+	emitted      bool // true after forwarding a non-blank line
+}
+
+func (p *prefixSkipWriter) Write(b []byte) (int, error) {
+	if p == nil || p.w == nil {
+		return len(b), nil
+	}
+	if p.doneSkipping {
+		return p.w.Write(b)
+	}
+	if !p.probeResume && p.skipEvents == 0 && p.skipPartial == 0 && len(p.forming) == 0 {
+		p.doneSkipping = true
+		return p.w.Write(b)
+	}
+	p.forming = append(p.forming, b...)
+	if p.probeResume && !p.probed {
+		if decided, applySkip := p.decideProbe(); !decided {
+			return len(b), nil
+		} else if !applySkip {
+			// Host honored the cursor — forward the buffered remainder as-is.
+			p.probed = true
+			p.doneSkipping = true
+			out := p.forming
+			p.forming = nil
+			if len(out) == 0 {
+				return len(b), nil
+			}
+			if _, err := p.w.Write(out); err != nil {
+				return 0, err
+			}
+			return len(b), nil
+		}
+		p.probed = true
+		// applySkip: fall through and run event/partial skip on forming.
+	}
+	var forward []byte
+	for {
+		nl := bytes.IndexByte(p.forming, '\n')
+		if nl == -1 {
+			break
+		}
+		line := p.forming[:nl]
+		p.forming = p.forming[nl+1:]
+		if len(bytes.TrimSpace(line)) == 0 {
+			// Drop separators until we have forwarded real content so a skipped
+			// event's trailing blank does not become a leading "\n".
+			if p.emitted {
+				forward = append(forward, '\n')
+			}
+			continue
+		}
+		if p.eventsSeen < p.skipEvents {
+			p.eventsSeen++
+			continue
+		}
+		// First event past skipEvents: apply skipPartial into this line.
+		if p.skipPartial > 0 {
+			if p.skipPartial >= int64(len(line)) {
+				p.skipPartial = 0
+				p.eventsSeen++
+				continue
+			}
+			line = line[p.skipPartial:]
+			p.skipPartial = 0
+			p.eventsSeen++
+			forward = append(forward, line...)
+			forward = append(forward, '\n')
+			p.emitted = true
+			continue
+		}
+		p.eventsSeen++
+		forward = append(forward, line...)
+		forward = append(forward, '\n')
+		p.emitted = true
+	}
+	// Incomplete trailing fragment.
+	if len(p.forming) > 0 {
+		if p.eventsSeen < p.skipEvents {
+			// Still inside skipped prefix; hold in forming.
+		} else if p.skipPartial > 0 {
+			if p.skipPartial >= int64(len(p.forming)) {
+				p.skipPartial -= int64(len(p.forming))
+				p.forming = nil
+			} else {
+				rem := p.forming[p.skipPartial:]
+				p.forming = nil
+				p.skipPartial = 0
+				p.doneSkipping = true
+				forward = append(forward, rem...)
+				p.emitted = true
+			}
+		} else {
+			p.doneSkipping = true
+			forward = append(forward, p.forming...)
+			p.forming = nil
+			p.emitted = true
+		}
+	}
+	if p.eventsSeen >= p.skipEvents && p.skipPartial == 0 && len(p.forming) == 0 {
+		p.doneSkipping = true
+	}
+	if len(forward) == 0 {
+		return len(b), nil
+	}
+	if _, err := p.w.Write(forward); err != nil {
+		return 0, err
+	}
+	return len(b), nil
+}
+
+// decideProbe returns (decided, applySkip). applySkip means the host appears
+// to have restarted from event 0 and the event/partial skip should run.
+func (p *prefixSkipWriter) decideProbe() (decided, applySkip bool) {
+	if p.skipPartial > 0 {
+		// Need enough bytes to see whether this is a fresh SSE line or the
+		// mid-event remainder the cursor asked for.
+		nl := bytes.IndexByte(p.forming, '\n')
+		if nl == -1 && int64(len(p.forming)) <= p.skipPartial {
+			return false, false
+		}
+		line := p.forming
+		if nl >= 0 {
+			line = p.forming[:nl]
+		}
+		line = bytes.TrimSpace(line)
+		if len(line) == 0 {
+			return false, false
+		}
+		// Mid-event remainder must not look like a new SSE field line.
+		if isSSEFieldLine(line) {
+			return true, true
+		}
+		return true, false
+	}
+	// Event-boundary resume: host cursor is authoritative. A full restart
+	// also starts with "data:", so we cannot distinguish without a content
+	// fingerprint — trust the host (Step 2 cursor path).
+	return true, false
+}
+
+func isSSEFieldLine(line []byte) bool {
+	switch {
+	case bytes.HasPrefix(line, []byte("data:")),
+		bytes.HasPrefix(line, []byte("event:")),
+		bytes.HasPrefix(line, []byte("id:")),
+		bytes.HasPrefix(line, []byte("retry:")):
+		return true
+	default:
+		return false
+	}
 }
 
 // startDelayed waits for receipt or timeout, then starts a secondary if needed.

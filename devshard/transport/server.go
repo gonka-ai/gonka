@@ -390,14 +390,24 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	var finishFailureWhere observability.Where
 
 	// Event 2+: inference result.
-	// If reconnecting to a completed inference, replay cached response.
-	// Otherwise run deferred execution with live streaming.
-	if resp.CachedResponseBody != nil && resp.ExecutionJob == nil {
-		if werr := replaySSEBody(w, resp.CachedResponseBody); werr != nil {
+	// Cached replay, live-attach reconnect, or deferred first-path execution.
+	switch {
+	case resp.CachedResponseBody != nil && resp.ExecutionJob == nil:
+		if werr := replaySSEBodyFromCursor(w, resp.CachedResponseBody, resp.DeliveredEvents, resp.DeliveredPartial); werr != nil {
 			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
 			return nil
 		}
-	} else if resp.ExecutionJob != nil {
+	case resp.LiveAttach:
+		if aerr := s.host.AttachLiveStream(resp.InferenceID, w, resp.DeliveredEvents, resp.DeliveredPartial); aerr != nil {
+			reason := observability.ReasonExecuteErr
+			if errors.Is(aerr, host.ErrResumeCursorPast) || errors.Is(aerr, host.ErrLiveStreamGone) || errors.Is(aerr, host.ErrLiveStreamPruned) {
+				reason = observability.ReasonCachedReplayErr
+			}
+			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, observability.WhereRuntimeWriteClientResponse)
+			logging.Error("live attach failed", "subsystem", "server", "error", aerr)
+			return nil
+		}
+	case resp.ExecutionJob != nil:
 		resp.ExecutionJob.ResponseWriter = w
 		execResult, execErr := s.host.RunExecution(ctx, resp.ExecutionJob)
 		if execErr != nil {
@@ -437,7 +447,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	}
 
 	switch {
-	case resp.ExecutionExpected && resp.ExecutionJob != nil:
+	case resp.ExecutionExpected && (resp.ExecutionJob != nil || resp.LiveAttach):
 		observability.RecordFinishPublished(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, finishReason, finishFailureWhere)
 	case resp.Receipt != nil:
 		observability.RecordReceiptNoExecutionExpected(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, resp.ReceiptReason, observability.WhereHostSignReceipt)
@@ -457,8 +467,16 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 // wrap. Always ends with data: [DONE] when the stored events did not already
 // include one.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
+	return replaySSEBodyFromCursor(w, body, 0, 0)
+}
+
+// replaySSEBodyFromCursor replays a cached body starting at the resume cursor.
+// deliveredEvents indexes complete upstream data events; deliveredPartial is a
+// byte offset into the next event (0 on an event boundary).
+func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents, deliveredPartial int64) error {
 	if events, ok := streamedReplayEvents(body); ok {
 		sawDone := false
+		idx := int64(0)
 		for _, event := range events {
 			line := normalizeReplaySSEEvent(event)
 			if line == "" {
@@ -467,9 +485,29 @@ func replaySSEBody(w http.ResponseWriter, body []byte) error {
 			if isSSEDoneDataLine(line) {
 				sawDone = true
 			}
-			if err := writeSSEDataLine(w, line); err != nil {
+			if idx < deliveredEvents {
+				idx++
+				continue
+			}
+			out := line
+			if idx == deliveredEvents && deliveredPartial > 0 {
+				// Stored events are "data: …" lines without a trailing newline.
+				if deliveredPartial > int64(len(out)) {
+					return host.ErrResumeCursorPast
+				}
+				if deliveredPartial == int64(len(out)) {
+					idx++
+					continue
+				}
+				out = out[deliveredPartial:]
+			}
+			if err := writeSSEDataLine(w, out); err != nil {
 				return err
 			}
+			idx++
+		}
+		if deliveredEvents > idx {
+			return host.ErrResumeCursorPast
 		}
 		if !sawDone {
 			if err := writeSSEDataLine(w, "data: [DONE]"); err != nil {
@@ -477,6 +515,26 @@ func replaySSEBody(w http.ResponseWriter, body []byte) error {
 			}
 		}
 		return nil
+	}
+
+	if deliveredEvents > 0 || deliveredPartial > 0 {
+		// Single-event JSON body: only event 0 exists.
+		if deliveredEvents > 1 || (deliveredEvents == 1 && deliveredPartial > 0) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredEvents == 1 {
+			return writeSSEDataLine(w, "data: [DONE]")
+		}
+		payload := "data: " + string(body)
+		if deliveredPartial > int64(len(payload)) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredPartial < int64(len(payload)) {
+			if err := writeSSEDataLine(w, payload[deliveredPartial:]); err != nil {
+				return err
+			}
+		}
+		return writeSSEDataLine(w, "data: [DONE]")
 	}
 
 	if err := writeSSEDataLine(w, "data: "+string(body)); err != nil {

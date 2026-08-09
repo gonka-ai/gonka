@@ -646,7 +646,7 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
 - [x] Step 1 — streamed `usage` mandatory, counter + tests
 - [x] Step 2 — `replaySSEBody` unwraps `{"events":[…]}`
 - [x] Step 3 — devshardd drains ML independently of the client connection
-- [ ] Step 4 — same-nonce reconnect before escalation, gated to protocol ≥ v5 ([separate plan](./gateway-attempt-reconnect-plan.md))
+- [ ] Step 4 — same-nonce reconnect before escalation, gated to protocol ≥ v5 ([separate plan](./gateway-attempt-reconnect-plan.md); host Steps 1–2 landed)
 - [ ] Step 5 — `aggregateSSEStream` + unit tests
 - [ ] Step 6 — wire into `handleNonStreaming`, drop `assembleSSEChunks`
 - [ ] Step 7 — `streamClientIntent` + `chatRequest.StreamOptions`

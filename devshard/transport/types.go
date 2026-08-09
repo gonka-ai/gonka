@@ -33,6 +33,10 @@ type InferenceRequest struct {
 	Nonce   uint64       `json:"nonce"`
 	Payload *PayloadJSON `json:"payload,omitempty"`
 	Stream  bool         `json:"stream,omitempty"` // hint: stream SSE deltas vs single JSON event
+
+	// Resume cursor for same-nonce reconnect (R2/R6). Transport-only.
+	DeliveredEvents  int64 `json:"delivered_events,omitempty"`
+	DeliveredPartial int64 `json:"delivered_partial,omitempty"`
 }
 
 // InferenceResponse is the JSON body returned by the inference endpoint.
@@ -133,8 +137,10 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 	}
 
 	ir := InferenceRequest{
-		Diffs: diffs,
-		Nonce: req.Nonce,
+		Diffs:            diffs,
+		Nonce:            req.Nonce,
+		DeliveredEvents:  req.DeliveredEvents,
+		DeliveredPartial: req.DeliveredPartial,
 	}
 	ir.Payload = PayloadToJSON(req.Payload)
 	return ir, nil
@@ -152,8 +158,10 @@ func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
 	}
 
 	req := host.HostRequest{
-		Diffs: diffs,
-		Nonce: ir.Nonce,
+		Diffs:            diffs,
+		Nonce:            ir.Nonce,
+		DeliveredEvents:  ir.DeliveredEvents,
+		DeliveredPartial: ir.DeliveredPartial,
 	}
 	req.Payload = PayloadFromJSON(ir.Payload)
 	return req, nil

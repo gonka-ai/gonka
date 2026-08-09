@@ -669,6 +669,33 @@ func TestReplaySSEBody_JSONCompletionKeepsSingleEvent(t *testing.T) {
 	}, got)
 }
 
+func TestReplaySSEBodyFromCursor_SkipsDeliveredPrefix(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0))
+	got := sseDataLines(t, rec.Body.String())
+	require.Equal(t, []string{
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+		`data: [DONE]`,
+	}, got)
+}
+
+func TestReplaySSEBodyFromCursor_PastCursorErrors(t *testing.T) {
+	events := []string{`data: {"choices":[{"delta":{"content":"one"}}]}`}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+	rec := httptest.NewRecorder()
+	err = replaySSEBodyFromCursor(rec, body, 5, 0)
+	require.ErrorIs(t, err, host.ErrResumeCursorPast)
+}
+
 func TestReplaySSEBody_NormalizesDataPrefixWithoutSpace(t *testing.T) {
 	events := []string{
 		`data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
