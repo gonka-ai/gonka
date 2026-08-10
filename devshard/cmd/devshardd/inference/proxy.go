@@ -13,6 +13,7 @@ import (
 	"common/completionapi"
 	"common/logging"
 	"devshard/observability"
+	devshardtypes "devshard/types"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -20,13 +21,15 @@ import (
 const (
 	defaultScannerBufferSize = 64 * 1024   // 64KB initial scanner buffer
 	maxScannerBufferSize     = 1024 * 1024 // 1MB max line size for SSE chunks
-
-	mlNodeHTTPTimeout = 5 * time.Minute
 )
 
-// executionDrainTimeout bounds ML generation + body drain after the gateway
-// HTTP request context is detached. Overridable in tests.
-var executionDrainTimeout = mlNodeHTTPTimeout
+// mlNodeHTTPTimeout / executionDrainTimeout derive from protocol
+// ExecutionTimeout (default 32m). They must not be shorter independent
+// product clocks — see gateway-attempt-reconnect-plan.md Step 5e.
+var (
+	mlNodeHTTPTimeout     = devshardtypes.DefaultExecutionTimeout()
+	executionDrainTimeout = mlNodeHTTPTimeout
+)
 
 // NewNoRedirectClient returns an HTTP client that does not follow redirects.
 func NewNoRedirectClient(timeout time.Duration) *http.Client {

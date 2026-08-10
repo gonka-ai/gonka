@@ -16,11 +16,13 @@ import (
 	"devshard/user"
 )
 
-func TestDefaultRedundancySettings_AllowsThirtyMinuteInference(t *testing.T) {
+func TestDefaultRedundancySettings_AllowExecutionTimeoutInference(t *testing.T) {
 	settings := DefaultRedundancySettings()
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.StreamingAttemptHardTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamNoContentTimeoutMS)
-	require.EqualValues(t, 30*time.Minute/time.Millisecond, settings.NonStreamMaxAttemptWaitMS)
+	wantMS := types.DefaultExecutionTimeout() / time.Millisecond
+	require.EqualValues(t, wantMS, settings.StreamingAttemptHardTimeoutMS)
+	require.EqualValues(t, wantMS, settings.NonStreamNoContentTimeoutMS)
+	require.EqualValues(t, wantMS, settings.NonStreamMaxAttemptWaitMS)
+	require.Equal(t, types.DefaultExecutionTimeout(), StreamingAttemptHardTimeout)
 }
 
 func TestSseChunkHasContent(t *testing.T) {

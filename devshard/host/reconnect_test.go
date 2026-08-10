@@ -3,14 +3,18 @@ package host
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"net/http"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/require"
 
+	"common/storage/payloads"
+
 	"devshard"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/stub"
@@ -170,6 +174,145 @@ func TestHost_PostDrainReconnectUsesCache(t *testing.T) {
 	require.False(t, resp2.LiveAttach)
 	require.Equal(t, body, resp2.CachedResponseBody)
 	require.Equal(t, int64(1), resp2.DeliveredEvents)
+}
+
+// memPayloadStore is a tiny in-memory PayloadRetriever for resume-tier tests.
+type memPayloadStore struct {
+	byKey map[string][]byte
+}
+
+func (m *memPayloadStore) key(escrowID string, inferenceID, epochID uint64) string {
+	return fmt.Sprintf("%s/%d/%d", escrowID, inferenceID, epochID)
+}
+
+func (m *memPayloadStore) Store(escrowID string, inferenceID, epochID uint64, response []byte) {
+	if m.byKey == nil {
+		m.byKey = make(map[string][]byte)
+	}
+	m.byKey[m.key(escrowID, inferenceID, epochID)] = append([]byte(nil), response...)
+}
+
+func (m *memPayloadStore) Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
+	body, ok := m.byKey[m.key(escrowID, inferenceID, epochID)]
+	if !ok {
+		return nil, nil, payloads.ErrNotFound
+	}
+	return []byte("prompt"), body, nil
+}
+
+func TestHost_PostEvictionReconnectUsesPayloadStore(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	body := []byte(`{"events":["data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}","data: [DONE]"]}`)
+	engine := &stub.ConfigurableEngine{
+		Default: devshard.ExecuteResult{
+			ResponseHash: []byte("hash"),
+			InputTokens:  3,
+			OutputTokens: 1,
+			ResponseBody: body,
+		},
+	}
+	store := &memPayloadStore{}
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10), WithPayloadRetriever(store), WithEpochID(7))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+
+	// Persist what the engine would have stored, then evict the RAM cache via Finish.
+	store.Store("escrow-1", 1, 7, body)
+	finishTx := findMempoolFinish(h.MempoolTxs())
+	require.NotNil(t, finishTx)
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	require.NotNil(t, confirmTx)
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTx})
+	_, err = h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff2, diff3},
+	})
+	require.NoError(t, err)
+	h.mu.Lock()
+	_, stillCached := h.completedResponses[1]
+	h.mu.Unlock()
+	require.False(t, stillCached, "RAM cache must be evicted after Finish")
+
+	resp2, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs:            []types.Diff{diff},
+		Nonce:            1,
+		Payload:          defaultPayload(),
+		DeliveredEvents:  1,
+		DeliveredPartial: 0,
+	})
+	require.NoError(t, err)
+	require.False(t, resp2.LiveAttach)
+	require.Equal(t, body, resp2.CachedResponseBody,
+		"post-eviction reconnect must resume from the payload store")
+	require.Equal(t, observability.ReasonCachedResponse, resp2.ReceiptReason)
+	require.Nil(t, resp2.ExecutionJob)
+}
+
+func TestRetrievePayloadResponse_TriesAdjacentEpochs(t *testing.T) {
+	store := &memPayloadStore{}
+	store.Store("escrow-1", 9, 4, []byte("from-adj"))
+	_, body, err := retrievePayloadResponse(context.Background(), store, "escrow-1", 9, 5)
+	require.NoError(t, err)
+	require.Equal(t, []byte("from-adj"), body)
+}
+
+func TestHost_PostEvictionWithoutPayloadStoreDisappears(t *testing.T) {
+	hosts := []*signing.Secp256k1Signer{testutil.MustGenerateKey(t), testutil.MustGenerateKey(t), testutil.MustGenerateKey(t)}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hosts)
+	config := testutil.DefaultConfig(len(hosts))
+	verifier := signing.NewSecp256k1Verifier()
+	sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000))
+	require.NoError(t, err)
+
+	body := []byte(`{"events":["data: {\"choices\":[{\"delta\":{\"content\":\"Hi\"}}]}","data: [DONE]"]}`)
+	engine := &stub.ConfigurableEngine{
+		Default: devshard.ExecuteResult{
+			ResponseHash: []byte("hash"),
+			InputTokens:  3,
+			OutputTokens: 1,
+			ResponseBody: body,
+		},
+	}
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	require.NoError(t, err)
+
+	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
+	resp, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	_, err = h.RunExecution(context.Background(), resp.ExecutionJob)
+	require.NoError(t, err)
+
+	finishTx := findMempoolFinish(h.MempoolTxs())
+	confirmTx := findMempoolConfirm(h.MempoolTxs())
+	diff2 := testutil.SignDiff(t, user, "escrow-1", 2, []*types.DevshardTx{confirmTx})
+	diff3 := testutil.SignDiff(t, user, "escrow-1", 3, []*types.DevshardTx{finishTx})
+	_, err = h.HandleRequest(context.Background(), HostRequest{Diffs: []types.Diff{diff2, diff3}})
+	require.NoError(t, err)
+
+	resp2, err := h.HandleRequest(context.Background(), HostRequest{
+		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
+	})
+	require.NoError(t, err)
+	require.Nil(t, resp2.CachedResponseBody)
+	require.False(t, resp2.LiveAttach)
+	require.Equal(t, observability.ReasonInferenceDisappeared, resp2.ReceiptReason)
 }
 
 func TestHost_ConfirmStartNotDuplicatedOnReconnect(t *testing.T) {

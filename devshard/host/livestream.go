@@ -7,13 +7,16 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"devshard/types"
 )
 
 // InflightReplayBufferTTL bounds how long a live per-inference SSE buffer may
-// stay registered for reconnect attach. Aligned with the gateway streaming
-// hard timeout so a long healthy generation remains attachable; prune detaches
-// the map entry without Closing an in-flight producer (see pruneLiveStreamLocked).
-var InflightReplayBufferTTL = 30 * time.Minute
+// stay registered for reconnect attach. Derived from protocol ExecutionTimeout
+// (same budget as host drain and gateway StreamingAttemptHardTimeout); prune
+// detaches the map entry without Closing an in-flight producer
+// (see pruneLiveStreamLocked).
+var InflightReplayBufferTTL = types.DefaultExecutionTimeout()
 
 // LiveStreamMaxRAMBytes soft-caps the in-RAM resume log. Past this, head-trim
 // drops bytes already consumed by every live reader, and new Subscribe/Attach

@@ -1,5 +1,7 @@
 package types
 
+import "time"
+
 const (
 	defaultInferenceSealGraceMultiplier = 1 // for tests
 	minInferenceSealGraceNonces         = 20
@@ -12,7 +14,18 @@ const (
 	DefaultAutoSealEveryNNonces uint32 = 150
 	// DefaultValidationRate matches inference-chain DefaultDevshardValidationRate.
 	DefaultValidationRate uint32 = 5000
+	// DefaultExecutionTimeoutSeconds is the protocol window after ConfirmedAt
+	// before a missing MsgFinishInference can start an execution-timeout /
+	// missed challenge. Ops clocks (host drain, LiveStream TTL, gateway attempt
+	// hard timeout) derive from this — see reconnect plan Step 5e.
+	DefaultExecutionTimeoutSeconds int64 = 32 * 60
 )
+
+// DefaultExecutionTimeout is the canonical default ExecutionTimeout as a
+// time.Duration (32m).
+func DefaultExecutionTimeout() time.Duration {
+	return time.Duration(DefaultExecutionTimeoutSeconds) * time.Second
+}
 
 // DefaultInferenceSealGraceNonces returns the canonical seal grace for a session group.
 // Phase 1 uses a nonce gate of 10 * groupSize with a floor of 20 so small
@@ -48,7 +61,7 @@ func NormalizeSessionConfig(cfg SessionConfig, groupSize int) SessionConfig {
 func DefaultSessionConfig(groupSize int) SessionConfig {
 	return NormalizeSessionConfig(SessionConfig{
 		RefusalTimeout:    60,
-		ExecutionTimeout:  32 * 60,
+		ExecutionTimeout:  DefaultExecutionTimeoutSeconds,
 		TokenPrice:        1,
 		CreateDevshardFee: 10_000,
 		FeePerNonce:       1_000,

@@ -411,10 +411,15 @@ When `ForceUpstreamStreaming` is on, every attempt is a streamed attempt, so:
    `!params.Stream`; first-token escalation and `attempt_failed` escalation apply to all
    requests.
 2. Stop arming the 140s reduced-`max_tokens` timer (`redundancy.go:2345`, `2484`) and the
-   30-minute no-content timer (`redundancy.go:2355`, `2500`) — the first-token budget plus
+   non-stream no-content timer (`redundancy.go:2355`, `2500`) — the first-token budget plus
    `InterChunkStall` now cover the same failure modes far faster. Keep
    `reducedMaxTokensParams` (`redundancy.go:2040`) in the tree for one release in case the
    flag is reverted.
+   Note (reconnect plan Step 5e): that no-content timer’s default is no longer a standalone
+   “30m” product constant — `NonStreamNoContentTimeout` / `NonStreamMaxAttemptWait` /
+   `StreamingAttemptHardTimeout` now derive from protocol `ExecutionTimeout` (default 32m).
+   Step 11 still removes the no-content arm under always-stream; only update docs/tests that
+   still say “30 minutes” to say `ExecutionTimeout`.
 3. Revisit `longNonStreamEmptyFailureExempt` (`redundancy.go:3279`): with a real stream the
    "long empty non-stream" shape it exempts should no longer occur, and keeping it would
    mask genuinely empty streams from the perf tracker.

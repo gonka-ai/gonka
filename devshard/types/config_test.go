@@ -2,12 +2,14 @@ package types
 
 import (
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/require"
 )
 
 func TestDefaultSessionConfig_ExecutionTimeout(t *testing.T) {
-	require.Equal(t, int64(32*60), DefaultSessionConfig(16).ExecutionTimeout)
+	require.Equal(t, DefaultExecutionTimeoutSeconds, DefaultSessionConfig(16).ExecutionTimeout)
+	require.Equal(t, 32*time.Minute, DefaultExecutionTimeout())
 }
 
 func TestDefaultInferenceSealGraceNonces(t *testing.T) {

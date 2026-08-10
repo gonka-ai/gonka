@@ -16,6 +16,8 @@ import (
 
 	"common/completionapi"
 
+	"common/storage/payloads"
+
 	"devshard"
 	"devshard/gossip"
 	"devshard/logging"
@@ -118,6 +120,7 @@ type Host struct {
 	mempool      *Mempool
 	checker      AcceptanceChecker
 	store        storage.Storage // optional, nil = no persistence
+	payloads     PayloadRetriever // optional, nil = no disk resume tier (5e)
 	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
 	availability devshard.AvailabilityProvider
 
@@ -275,6 +278,19 @@ func WithStorage(s storage.Storage) HostOption {
 	return func(h *Host) { h.store = s }
 }
 
+// PayloadRetriever is the optional disk resume tier consulted after
+// completedResponses is evicted (Step 5e). Matches session.PayloadStore /
+// common/storage/payloads.Storage.Retrieve.
+type PayloadRetriever interface {
+	Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) (prompt, response []byte, err error)
+}
+
+// WithPayloadRetriever enables same-nonce reconnect from the durable payload
+// store after the in-RAM completedResponses cache is gone.
+func WithPayloadRetriever(r PayloadRetriever) HostOption {
+	return func(h *Host) { h.payloads = r }
+}
+
 // WithEpochID pins the host to the mainnet epoch stored on its DevshardEscrow.
 // Payload storage and validation use this epoch to route across epoch changes.
 func WithEpochID(epochID uint64) HostOption {
@@ -420,8 +436,9 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		diffsApplied = true
 	}
 
-	// (b) Sign executor receipt (sync, under mutex).
-	receipt, confirmedAt, job, cachedBody, liveAttach, receiptOutcome, err := h.signReceipt(req)
+	// (b) Sign executor receipt (sync, under mutex; may briefly unlock for
+	// payload-store I/O on the post-eviction resume path).
+	receipt, confirmedAt, job, cachedBody, liveAttach, receiptOutcome, err := h.signReceipt(ctx, req)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -751,8 +768,8 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
-// Caller must hold h.mu.
-func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, bool, receiptOutcome, error) {
+// Caller must hold h.mu. May briefly unlock for payload-store I/O.
+func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, bool, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
@@ -791,12 +808,8 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 	_, alreadyExecuting := h.executing[inferenceID]
 	live := h.liveStreams[inferenceID]
 	cached, hasCached := h.completedResponses[inferenceID]
-	if rec.Status != types.StatusPending && !alreadyExecuting && !hasCached && live == nil {
-		outcome.reason = observability.ReasonInferenceDisappeared
-		return nil, 0, nil, nil, false, outcome, nil
-	}
 
-	// Prefer durable cache over a live buffer (drain→persist→forget).
+	// Prefer durable RAM cache over a live buffer (drain→persist→forget).
 	if hasCached {
 		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
 		if err != nil {
@@ -821,26 +834,92 @@ func (h *Host) signReceipt(req HostRequest) ([]byte, int64, *devshard.ExecuteReq
 		return sig, confirmedAt, nil, nil, false, outcome, nil
 	}
 
-	sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
-	if err != nil {
-		return nil, 0, nil, nil, false, outcome, err
+	// First-path execution for a still-pending inference.
+	if rec.Status == types.StatusPending {
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+
+		h.executing[inferenceID] = struct{}{}
+		outcome.executionExpected = true
+		outcome.reason = observability.ReasonOK
+
+		job := &devshard.ExecuteRequest{
+			InferenceID: inferenceID,
+			Model:       rec.Model,
+			Prompt:      req.Payload.Prompt,
+			PromptHash:  rec.PromptHash,
+			InputLength: rec.InputLength,
+			MaxTokens:   rec.MaxTokens,
+			EscrowID:    h.escrowID,
+			EpochID:     h.epochID,
+		}
+		return sig, confirmedAt, job, nil, false, outcome, nil
 	}
 
-	h.executing[inferenceID] = struct{}{}
-	outcome.executionExpected = true
-	outcome.reason = observability.ReasonOK
-
-	job := &devshard.ExecuteRequest{
-		InferenceID: inferenceID,
-		Model:       rec.Model,
-		Prompt:      req.Payload.Prompt,
-		PromptHash:  rec.PromptHash,
-		InputLength: rec.InputLength,
-		MaxTokens:   rec.MaxTokens,
-		EscrowID:    h.escrowID,
-		EpochID:     h.epochID,
+	// Terminal inference with no RAM cache: last resume tier is the payload store (5e).
+	if body, ok := h.lookupPayloadResponseLocked(ctx, inferenceID); ok {
+		rec, ok = h.sm.GetInference(inferenceID)
+		if !ok {
+			outcome.reason = observability.ReasonInferenceDisappeared
+			return nil, 0, nil, nil, false, outcome, nil
+		}
+		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
+		if err != nil {
+			return nil, 0, nil, nil, false, outcome, err
+		}
+		outcome.reason = observability.ReasonCachedResponse
+		return sig, confirmedAt, nil, body, false, outcome, nil
 	}
-	return sig, confirmedAt, job, nil, false, outcome, nil
+
+	outcome.reason = observability.ReasonInferenceDisappeared
+	return nil, 0, nil, nil, false, outcome, nil
+}
+
+// lookupPayloadResponseLocked loads a completed response body from the durable
+// payload store. Caller must hold h.mu; the method unlocks for I/O and re-locks.
+func (h *Host) lookupPayloadResponseLocked(ctx context.Context, inferenceID uint64) ([]byte, bool) {
+	if h.payloads == nil {
+		return nil, false
+	}
+	escrowID := h.escrowID
+	epochID := h.epochID
+	retriever := h.payloads
+	h.mu.Unlock()
+	_, body, err := retrievePayloadResponse(ctx, retriever, escrowID, inferenceID, epochID)
+	h.mu.Lock()
+	if err != nil || len(body) == 0 {
+		return nil, false
+	}
+	return body, true
+}
+
+// retrievePayloadResponse tries the primary epoch then adjacent epochs (epoch
+// boundary race), mirroring HostManager.retrievePayloadsWithAdjacentEpochs.
+func retrievePayloadResponse(ctx context.Context, r PayloadRetriever, escrowID string, inferenceID, epochID uint64) ([]byte, []byte, error) {
+	prompt, response, err := r.Retrieve(ctx, escrowID, inferenceID, epochID)
+	if err == nil {
+		return prompt, response, nil
+	}
+	if !errors.Is(err, payloads.ErrNotFound) {
+		return nil, nil, err
+	}
+	adjacent := make([]uint64, 0, 2)
+	if epochID > 0 {
+		adjacent = append(adjacent, epochID-1)
+	}
+	adjacent = append(adjacent, epochID+1)
+	for _, adj := range adjacent {
+		prompt, response, err = r.Retrieve(ctx, escrowID, inferenceID, adj)
+		if err == nil {
+			return prompt, response, nil
+		}
+		if !errors.Is(err, payloads.ErrNotFound) {
+			return nil, nil, err
+		}
+	}
+	return nil, nil, payloads.ErrNotFound
 }
 
 // ensureConfirmStartLocked returns an executor receipt, reusing an existing

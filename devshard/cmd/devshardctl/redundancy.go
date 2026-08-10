@@ -39,10 +39,12 @@ const longResponseFailureExemption = 280 * time.Second
 
 var (
 	nonStreamingReducedMaxTokensFallbackDelay = 140 * time.Second
-	nonStreamingNoContentTimeout              = 30 * time.Minute
-	nonStreamingMaxAttemptWait                = 30 * time.Minute
-	InterChunkStallLogThreshold               = 30 * time.Second
-	StreamingAttemptHardTimeout               = 30 * time.Minute
+	// Attempt budgets derive from protocol ExecutionTimeout (default 32m) so
+	// the gateway does not wait past the missed-challenge window. See Step 5e.
+	nonStreamingNoContentTimeout = types.DefaultExecutionTimeout()
+	nonStreamingMaxAttemptWait   = types.DefaultExecutionTimeout()
+	InterChunkStallLogThreshold  = 30 * time.Second
+	StreamingAttemptHardTimeout  = types.DefaultExecutionTimeout()
 )
 
 const toolChoiceUnsupportedMessage = "tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set"
@@ -435,15 +437,16 @@ var (
 )
 
 func DefaultRedundancySettings() RedundancySettings {
+	executionTimeoutMS := types.DefaultExecutionTimeoutSeconds * 1000
 	return RedundancySettings{
 		ReceiptTimeoutMS:              5000,
 		FirstTokenTimeoutFloorMS:      1000,
 		PerInputTokenFirstTokenLagMS:  10,
 		InterChunkStallTimeoutMS:      60000,
-		StreamingAttemptHardTimeoutMS: 1800000,
+		StreamingAttemptHardTimeoutMS: executionTimeoutMS,
 		NonStreamResponseFloorMS:      20000,
-		NonStreamNoContentTimeoutMS:   1800000,
-		NonStreamMaxAttemptWaitMS:     1800000,
+		NonStreamNoContentTimeoutMS:   executionTimeoutMS,
+		NonStreamMaxAttemptWaitMS:     executionTimeoutMS,
 		PerInputTokenResponseLagMS:    20,
 		SecondaryWaitAfterWinnerMS:    600000,
 		ParallelAdvantageThreshold:    0.5,

@@ -843,6 +843,9 @@ func (m *HostManager) hostOpts(epochID uint64) []host.HostOption {
 		host.WithEpochID(epochID),
 		host.WithAvailabilityProvider(m.availability),
 	}
+	if m.payloadStore != nil {
+		opts = append(opts, host.WithPayloadRetriever(m.payloadStore))
+	}
 	if m.maxNonce != nil {
 		opts = append(opts, host.WithMaxNonceProvider(m.maxNonce))
 	}

@@ -1,22 +1,17 @@
 package completionapi
 
-// Candidate implementations of the per-chunk inference-id rewrite, plus a
-// differential test proving they are interchangeable and a benchmark showing
-// what the current map round-trip costs.
+// Differential tests and benchmarks for the per-chunk inference-id rewrite.
 //
-// Production today is getUpdatedLine -> addOrReplaceIdValue: unmarshal the whole
-// chunk into map[string]interface{}, set "id", re-marshal. That allocates a map
-// and a boxed value for every key at every nesting level, which is expensive
-// once chunks carry logprobs/token-id arrays. The candidates here are kept local
-// to the test so nothing in the hot path changes until the numbers justify it.
+// Production streamed path is the memoized surgical patcher in idrewrite.go
+// (wired through ExecutorResponseProcessor). The stdlib / goccy map round-trips
+// remain here as reference candidates: same document semantically; goccy is
+// byte-identical to stdlib; surgical rewrite preserves upstream formatting and
+// therefore moves ResponseHash (documented migration cost).
 //
 // See devshard/docs/gateway-attempt-reconnect-plan.md, Step 5b.
 
 import (
-	"bytes"
 	stdjson "encoding/json"
-	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
@@ -24,12 +19,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-var (
-	dataPrefixBytes = []byte(DataPrefix)
-	doneMarkerBytes = []byte("[DONE]")
-)
-
-// --- candidate 1: today's path, verbatim ------------------------------------
+// --- reference candidates (map round-trip) --------------------------------
 
 func idRewriteStdlib(line, id string) (string, error) {
 	if !strings.HasPrefix(line, DataPrefix) {
@@ -51,8 +41,6 @@ func idRewriteStdlib(line, id string) (string, error) {
 	return DataPrefix + string(out), nil
 }
 
-// --- candidate 2: same logic, goccy/go-json --------------------------------
-
 func idRewriteGoccy(line, id string) (string, error) {
 	if !strings.HasPrefix(line, DataPrefix) {
 		return line, nil
@@ -71,241 +59,6 @@ func idRewriteGoccy(line, id string) (string, error) {
 		return line, err
 	}
 	return DataPrefix + string(out), nil
-}
-
-// --- candidate 3: depth-aware surgical splice ------------------------------
-
-var (
-	errNotJSONObject = errors.New("chunk body is not a JSON object")
-	errIDNotFound    = errors.New("no depth-1 \"id\" key")
-)
-
-// findTopLevelIDSpan returns the byte span of the depth-1 `"id":"…"` pair,
-// from the opening quote of the key through the closing quote of the value.
-// Nested "id" keys (e.g. choices[].delta.tool_calls[].id) are skipped.
-func findTopLevelIDSpan(body []byte) (int, int, error) {
-	i := skipJSONSpace(body, 0)
-	if i >= len(body) || body[i] != '{' {
-		return 0, 0, errNotJSONObject
-	}
-	i++
-	for {
-		i = skipJSONSpace(body, i)
-		if i >= len(body) || body[i] == '}' {
-			return 0, 0, errIDNotFound
-		}
-		if body[i] != '"' {
-			return 0, 0, fmt.Errorf("expected object key at %d", i)
-		}
-		keyStart := i
-		keyEnd, err := skipJSONString(body, i)
-		if err != nil {
-			return 0, 0, err
-		}
-		key := body[keyStart+1 : keyEnd-1]
-
-		i = skipJSONSpace(body, keyEnd)
-		if i >= len(body) || body[i] != ':' {
-			return 0, 0, fmt.Errorf("expected ':' at %d", i)
-		}
-		i = skipJSONSpace(body, i+1)
-		valStart := i
-		valEnd, err := skipJSONValue(body, i)
-		if err != nil {
-			return 0, 0, err
-		}
-		if string(key) == "id" {
-			if body[valStart] != '"' {
-				return 0, 0, fmt.Errorf("depth-1 id is not a string")
-			}
-			return keyStart, valEnd, nil
-		}
-
-		i = skipJSONSpace(body, valEnd)
-		if i >= len(body) {
-			return 0, 0, errIDNotFound
-		}
-		switch body[i] {
-		case ',':
-			i++
-		case '}':
-			return 0, 0, errIDNotFound
-		default:
-			return 0, 0, fmt.Errorf("unexpected byte %q at %d", body[i], i)
-		}
-	}
-}
-
-func skipJSONSpace(b []byte, i int) int {
-	for i < len(b) {
-		switch b[i] {
-		case ' ', '\t', '\r', '\n':
-			i++
-		default:
-			return i
-		}
-	}
-	return i
-}
-
-// skipJSONString expects b[i] == '"' and returns the index just past the
-// closing quote.
-func skipJSONString(b []byte, i int) (int, error) {
-	i++
-	for i < len(b) {
-		switch b[i] {
-		case '\\':
-			i += 2
-			continue
-		case '"':
-			return i + 1, nil
-		}
-		i++
-	}
-	return 0, errors.New("unterminated JSON string")
-}
-
-// skipJSONValue returns the index just past the value starting at i.
-func skipJSONValue(b []byte, i int) (int, error) {
-	if i >= len(b) {
-		return 0, errors.New("unexpected end of value")
-	}
-	switch b[i] {
-	case '"':
-		return skipJSONString(b, i)
-	case '{', '[':
-		depth := 0
-		for i < len(b) {
-			switch b[i] {
-			case '"':
-				next, err := skipJSONString(b, i)
-				if err != nil {
-					return 0, err
-				}
-				i = next
-				continue
-			case '{', '[':
-				depth++
-			case '}', ']':
-				depth--
-				if depth == 0 {
-					return i + 1, nil
-				}
-			}
-			i++
-		}
-		return 0, errors.New("unterminated JSON object/array")
-	default:
-		for i < len(b) {
-			switch b[i] {
-			case ',', '}', ']', ' ', '\t', '\r', '\n':
-				return i, nil
-			}
-			i++
-		}
-		return i, nil
-	}
-}
-
-// idRewriteSplice appends the rewritten line to dst, preserving upstream key
-// order and formatting outside the id span. Inserts the key when absent.
-func idRewriteSplice(dst, line []byte, id string) ([]byte, error) {
-	if !bytes.HasPrefix(line, dataPrefixBytes) {
-		return append(dst, line...), nil
-	}
-	body := bytes.TrimSpace(line[len(dataPrefixBytes):])
-	if bytes.HasPrefix(body, doneMarkerBytes) {
-		return append(dst, line...), nil
-	}
-
-	keyStart, valEnd, err := findTopLevelIDSpan(body)
-	if errors.Is(err, errIDNotFound) {
-		return insertTopLevelID(dst, body, id)
-	}
-	if err != nil {
-		return dst, err
-	}
-	dst = append(dst, dataPrefixBytes...)
-	dst = append(dst, body[:keyStart]...)
-	dst = appendIDPair(dst, id)
-	dst = append(dst, body[valEnd:]...)
-	return dst, nil
-}
-
-func insertTopLevelID(dst, body []byte, id string) ([]byte, error) {
-	open := skipJSONSpace(body, 0)
-	if open >= len(body) || body[open] != '{' {
-		return dst, errNotJSONObject
-	}
-	rest := body[open+1:]
-	dst = append(dst, dataPrefixBytes...)
-	dst = append(dst, body[:open+1]...)
-	dst = appendIDPair(dst, id)
-	if skipJSONSpace(rest, 0) < len(rest) && rest[skipJSONSpace(rest, 0)] != '}' {
-		dst = append(dst, ',')
-	}
-	dst = append(dst, rest...)
-	return dst, nil
-}
-
-func appendIDPair(dst []byte, id string) []byte {
-	dst = append(dst, `"id":"`...)
-	dst = append(dst, id...)
-	return append(dst, '"')
-}
-
-// --- candidate 4: memoized byte patch -------------------------------------
-
-// idPatcher exploits the fact that every chunk of one SSE stream carries the
-// same upstream id at the same offset. It learns the exact `"id":"…"` bytes once
-// via the depth-aware scan, then verifies that literal at the learned offset —
-// O(len(pattern)), no scan, no parse, and no possibility of matching an id
-// nested inside choices. Any deviation falls back to a re-learn.
-type idPatcher struct {
-	id     string
-	search []byte
-	repl   []byte
-	hint   int
-	hits   int
-	learns int
-}
-
-func (p *idPatcher) rewrite(dst, line []byte) ([]byte, error) {
-	if !bytes.HasPrefix(line, dataPrefixBytes) {
-		return append(dst, line...), nil
-	}
-	body := bytes.TrimSpace(line[len(dataPrefixBytes):])
-	if bytes.HasPrefix(body, doneMarkerBytes) {
-		return append(dst, line...), nil
-	}
-
-	if p.search != nil && p.hint+len(p.search) <= len(body) &&
-		bytes.Equal(body[p.hint:p.hint+len(p.search)], p.search) {
-		p.hits++
-		dst = append(dst, dataPrefixBytes...)
-		dst = append(dst, body[:p.hint]...)
-		dst = append(dst, p.repl...)
-		dst = append(dst, body[p.hint+len(p.search):]...)
-		return dst, nil
-	}
-
-	keyStart, valEnd, err := findTopLevelIDSpan(body)
-	if errors.Is(err, errIDNotFound) {
-		return insertTopLevelID(dst, body, p.id)
-	}
-	if err != nil {
-		return dst, err
-	}
-	p.learns++
-	p.hint = keyStart
-	p.search = append(p.search[:0], body[keyStart:valEnd]...)
-	p.repl = appendIDPair(p.repl[:0], p.id)
-
-	dst = append(dst, dataPrefixBytes...)
-	dst = append(dst, body[:keyStart]...)
-	dst = append(dst, p.repl...)
-	dst = append(dst, body[valEnd:]...)
-	return dst, nil
 }
 
 // --- fixtures -------------------------------------------------------------
@@ -637,6 +390,67 @@ func TestIDPatcherRelearnsWhenLayoutShifts(t *testing.T) {
 	require.Equal(t, benchInferenceID, semanticJSON(t, string(buf))["id"])
 	require.Equal(t, 2, patcher.learns, "layout change must force a re-learn")
 	require.Equal(t, 0, patcher.hits)
+}
+
+// Production processor must use the surgical path: same bytes as splice, not the
+// alphabetized map round-trip, and nested tool_call ids must survive.
+func TestProcessStreamedResponseUsesSurgicalRewrite(t *testing.T) {
+	chunks := dataChunks(t, "test_data/response_streamed.txt")
+	processor := NewExecutorResponseProcessor(benchInferenceID)
+	var buf []byte
+
+	for i, chunk := range chunks {
+		got, err := processor.ProcessStreamedResponse(chunk)
+		require.NoError(t, err, "chunk %d", i)
+
+		buf, err = idRewriteSplice(buf[:0], []byte(chunk), benchInferenceID)
+		require.NoError(t, err, "chunk %d", i)
+		require.Equal(t, string(buf), got, "processor must match surgical splice (chunk %d)", i)
+
+		stdlib, err := idRewriteStdlib(chunk, benchInferenceID)
+		require.NoError(t, err, "chunk %d", i)
+		require.NotEqual(t, stdlib, got,
+			"sanity: production path must not still be the map round-trip (chunk %d)", i)
+	}
+
+	require.Equal(t, 1, processor.patcher.learns)
+	require.Equal(t, len(chunks)-1, processor.patcher.hits)
+
+	line := `data: {"id":"upstream-1","choices":[{"delta":{"tool_calls":[{"id":"call_abc","index":0}]}}]}`
+	out, err := processor.ProcessStreamedResponse(line)
+	require.NoError(t, err)
+	require.Contains(t, out, `"id":"call_abc"`)
+	require.Equal(t, benchInferenceID, semanticJSON(t, out)["id"])
+}
+
+func TestIDPatcherRewriteAllocs(t *testing.T) {
+	chunks := dataChunks(t, "test_data/response_streamed_token_ids.txt")
+	raw := make([][]byte, len(chunks))
+	for i, c := range chunks {
+		raw[i] = []byte(c)
+	}
+
+	patcher := &idPatcher{id: benchInferenceID}
+	var buf []byte
+	var err error
+	// Warm the learn so the measured path is the memoized hit.
+	buf, err = patcher.rewrite(buf[:0], raw[0])
+	require.NoError(t, err)
+	require.Equal(t, 1, patcher.learns)
+
+	allocs := testing.AllocsPerRun(1000, func() {
+		for _, chunk := range raw[1:] {
+			if buf, err = patcher.rewrite(buf[:0], chunk); err != nil {
+				t.Fatal(err)
+			}
+		}
+	})
+	require.Equal(t, 0.0, allocs, "memoized rewrite must be allocation-free after learn")
+}
+
+func TestAppendIDPairEscapesUnsafeIDs(t *testing.T) {
+	out := appendIDPair(nil, `evil"id`)
+	require.Equal(t, `"id":"evil\"id"`, string(out))
 }
 
 // --- benchmarks -----------------------------------------------------------

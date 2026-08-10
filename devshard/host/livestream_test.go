@@ -11,6 +11,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
+
+	"devshard/types"
 )
 
 // flushRecorder is a ResponseRecorder that may be written by a subscriber
@@ -322,8 +324,8 @@ func TestLiveStream_SlowSubscriberDoesNotDrop(t *testing.T) {
 }
 
 func TestLiveStream_PruneTTL(t *testing.T) {
-	require.Equal(t, 30*time.Minute, InflightReplayBufferTTL,
-		"must stay aligned with gateway StreamingAttemptHardTimeout")
+	require.Equal(t, types.DefaultExecutionTimeout(), InflightReplayBufferTTL,
+		"must derive from protocol ExecutionTimeout (same budget as gateway hard timeout)")
 	stream := newLiveStream()
 	stream.createdAt = time.Now().Add(-InflightReplayBufferTTL - time.Second)
 	rec := httptest.NewRecorder()
