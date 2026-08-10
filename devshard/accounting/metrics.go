@@ -27,6 +27,7 @@ type Collector struct {
 	recordingErrors       *prometheus.Desc
 	writerErrors          *prometheus.Desc
 	crossCheck            *prometheus.Desc
+	finding               *prometheus.Desc
 }
 
 func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
@@ -113,6 +114,11 @@ func NewCollector(tracker *Tracker, currentEpoch CurrentEpochFunc) *Collector {
 			"Absolute protocol-to-gateway accounting cross-check difference.",
 			[]string{"participant", "model"}, nil,
 		),
+		finding: prometheus.NewDesc(
+			"devshard_accounting_finding",
+			"Findings raised against a participant in the current epoch, one per code and severity.",
+			[]string{"participant", "model", "code", "severity"}, nil,
+		),
 	}
 }
 
@@ -125,7 +131,7 @@ func (c *Collector) Describe(ch chan<- *prometheus.Desc) {
 		c.assigned, c.disposition, c.delivery, c.timeout, c.missed, c.invalid,
 		c.challenges, c.inFlight, c.timeoutPending, c.pendingClassification,
 		c.unclassified, c.overclassified, c.unknown, c.recordingErrors,
-		c.writerErrors, c.crossCheck,
+		c.writerErrors, c.crossCheck, c.finding,
 	} {
 		ch <- desc
 	}
@@ -155,6 +161,9 @@ func (c *Collector) Collect(ch chan<- prometheus.Metric) {
 		gauge(ch, c.overclassified, record.Overclassified, base...)
 		gauge(ch, c.unknown, record.UnknownReasonTotal, base...)
 		gauge(ch, c.crossCheck, record.CrossChecks.ErrorCount, base...)
+		for _, finding := range record.Findings {
+			gauge(ch, c.finding, 1, record.Participant, record.Model, finding.Code, string(finding.Severity))
+		}
 
 		dispositions := make(map[string]uint64)
 		deliveries := make(map[string]uint64)

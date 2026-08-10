@@ -183,6 +183,7 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			}
 			return record.Counters[i].EscrowID < record.Counters[j].EscrowID
 		})
+		record.Findings = findingsFor(*record)
 		out = append(out, *record)
 	}
 	sort.Slice(out, func(i, j int) bool {

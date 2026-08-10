@@ -218,6 +218,7 @@ type ParticipantRecord struct {
 	Overclassified        uint64                    `json:"overclassified"`
 	UnknownReasonTotal    uint64                    `json:"unknown_reason_total"`
 	CrossChecks           CrossChecks               `json:"cross_checks"`
+	Findings              []Finding                 `json:"findings"`
 	Counters              []CounterRecord           `json:"counters"`
 	Slots                 []SlotRecord              `json:"slots"`
 }
