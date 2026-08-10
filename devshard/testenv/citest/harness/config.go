@@ -13,10 +13,13 @@ import (
 // MultiConfigOpts customizes WriteMultiConfig skeletons.
 // ValidationRate 0 omits the field so gencompose/ApplyDefaults use the
 // testenv default (6000 bps). Pass a non-zero value (e.g. 10000) per scenario.
+// VersionName defaults to "v2" when empty; use "v5" for same-nonce reconnect
+// citest (requires a linux devshardd built with matching DEVSHARD_VERSION).
 type MultiConfigOpts struct {
 	Hosts          int
 	EscrowSlots    int
 	ValidationRate uint32 // 0 = default; else params + seed escrow snapshot
+	VersionName    string // e.g. "v2", "v5"
 }
 
 // WriteStackConfig writes the standard two-versiond stack config.
@@ -49,6 +52,11 @@ func WriteMultiConfig(t *testing.T, dir string, opts MultiConfigOpts) {
 	if opts.EscrowSlots <= 0 {
 		opts.EscrowSlots = opts.Hosts
 	}
+	versionName := strings.TrimSpace(opts.VersionName)
+	if versionName == "" {
+		versionName = "v2"
+	}
+	binaryVersion := "0.2.13-" + versionName + "-r2"
 
 	chainGRPC := pickFreePort(t)
 	chainRPC := pickFreePort(t)
@@ -90,8 +98,8 @@ mock_openai:
   http_port: %d
 versiond:
   mode: multi
-  version_name: v2
-  binary_version: 0.2.13-v2-r2
+  version_name: %s
+  binary_version: %s
 versiond_router:
   port: %d
 devshardctl:
@@ -115,7 +123,7 @@ grantees:
   - granter_address: ""
     message_type_url: /inference.inference.MsgStartInference
     grantees: [""]
-`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
+`, paramsRate, chainGRPC, chainRPC, chainTestenv, dapiGRPC, dapiHTTP, openAIHTTP, versionName, binaryVersion, routerPort, gatewayPort, opts.EscrowSlots, hosts.String(), escrowRate)
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "config.yaml"), []byte(skeleton), 0o644))
 }
 

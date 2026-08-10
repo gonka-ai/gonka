@@ -130,7 +130,7 @@ func TestDeliveredPrefix_ExpandingRewriteCountsUpstreamEvents(t *testing.T) {
 	// A `message`-shaped completion on the streaming path is expanded by
 	// rewriteStreamingPayload into several chunk events, so the client writer
 	// reports far more bytes than it was handed. The cursor is upstream-side
-	// (R2) and must not be derived from that count.
+	// and must not be derived from that count.
 	rw, inf, rec := mkDeferredWinnerWriter(t, nil)
 
 	upstream := []byte(`data: {"id":"x","model":"m","choices":[{"index":0,` +
@@ -488,7 +488,7 @@ func TestReconnectInflight_FinishStillProcessedWhenPriorRespHadNoMempool(t *test
 
 func TestReconnectInflight_ReceiptOnlyIsResumeFailure(t *testing.T) {
 	// Live attach failed host-side: the receipt was already written, so the
-	// parser sees a terminator and the transport read ends cleanly. R3 requires
+	// parser sees a terminator and the transport read ends cleanly. Policy requires
 	// this to count as a failed try, not a resume.
 	client := &reconnectScriptClient{
 		fullBody:        nil,
@@ -550,7 +550,7 @@ func TestReconnectInflight_TailOnlyResumeWithMempoolSucceeds(t *testing.T) {
 func TestWinningInflightTerminalFailure_KeepsProcessOnceForReconnect(t *testing.T) {
 	// A clean mid-stream close leaves err == nil with a receipt-only response.
 	// Spending the one ProcessResponse on it would strand the Finish that the
-	// reconnect is still able to merge (R1).
+	// reconnect is still able to merge.
 	client := &reconnectScriptClient{ignoreCursor: true}
 	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	enableAttemptReconnectForTest(t, 200*time.Millisecond, 2)
@@ -673,7 +673,7 @@ func TestReconnectInflight_DefensiveSkipEventBoundaryViaFingerprint(t *testing.T
 	clientHad := event1 + "\n\n"
 
 	// Event-boundary resume: without fingerprint, decideProbe would trust the
-	// host and duplicate event1. Fingerprint match forces the R2 skip.
+	// host and duplicate event1. Fingerprint match forces the resume skip.
 	client := &reconnectScriptClient{
 		fullBody:        []byte(full),
 		ignoreCursor:    true,
@@ -737,7 +737,7 @@ func TestReconnectInflight_ReusesPreparedInference(t *testing.T) {
 	require.Equal(t, nonce+1, next.Nonce())
 }
 
-// --- Step 4: protocol gate, reservation, reconnect-first ladder ---
+// --- Protocol gate, reservation, reconnect-first ladder ---
 
 func TestAttemptReconnectAllowed_RequiresSettingAndV5(t *testing.T) {
 	env := setupTestProxyWithProtocol(t, []user.HostClient{&reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}}, "v4")
@@ -855,7 +855,7 @@ func TestRunWinnerReconnectLadder_ResumesAndKeepsClientOnWinner(t *testing.T) {
 }
 
 func TestRunWinnerReconnectLadder_HedgeStartsWhileReconnectInFlight(t *testing.T) {
-	// R3: at budget expiry start secondary while same-nonce reconnect continues.
+	// At budget expiry start secondary while same-nonce reconnect continues.
 	// Nonce 1 → hostIdx 1 = slow resume; host 0 = hedge.
 	hedgeEntered := make(chan struct{})
 	hedge := &signalOnSendClient{
@@ -912,7 +912,7 @@ func TestRunWinnerReconnectLadder_HedgeStartsWhileReconnectInFlight(t *testing.T
 	case <-time.After(2 * time.Second):
 		t.Fatal("same-nonce reconnect never started")
 	}
-	// Hedge must start while reconnect is still blocked (R3 parallel race).
+	// Hedge must start while reconnect is still blocked (parallel race).
 	select {
 	case <-hedgeEntered:
 	case <-time.After(2 * time.Second):
@@ -1012,6 +1012,80 @@ func TestRunInference_V5ReconnectLadderRetriesSameNonce(t *testing.T) {
 	require.Contains(t, buf.String(), `"content":"x"`)
 	require.NotContains(t, buf.String(), "HEDGE")
 	close(releaseSlow)
+}
+
+func TestRunInference_V5SecondDropAfterResumeDoesNotRerunLadder(t *testing.T) {
+	// Ladder is one-shot per nonce. With MaxTries=1 the
+	// single resume delivers more bytes then fails; there is no second ladder /
+	// fresh 1s budget — request ends as winner_failed_after_content.
+	zeroReceiptTimeout(t)
+	client := &resumeOnceThenFailClient{
+		resumeBody: []byte(
+			`data: {"choices":[{"delta":{"content":"lo"}}]}` + "\n\n",
+		),
+		responseReceipt: []byte("r"),
+	}
+	releaseSlow := make(chan struct{})
+	slow := &releaseAfterClient{releaseCh: releaseSlow}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{slow, client}, "v5")
+	enableAttemptReconnectForTest(t, 200*time.Millisecond, 1)
+	for i := range 2 {
+		env.proxy.redundancy.perf.Record(RequestSample{HostIdx: i, Responsive: false})
+	}
+
+	params := defaultParams()
+	params.Stream = true
+	var buf bytes.Buffer
+	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
+	require.Error(t, err)
+	require.ErrorIs(t, err, errSimulatedWinnerTransport)
+	require.Equal(t, int64(1), client.failCalls.Load(), "initial send fails after content")
+	require.Equal(t, int64(1), client.resumeCalls.Load(), "exactly one same-nonce resume try")
+	require.Equal(t, int64(0), client.postResumeFailCalls.Load(),
+		"exhausted ladder must not open another reconnect window")
+	require.Contains(t, buf.String(), `"content":"x"`)
+	require.Contains(t, buf.String(), `"content":"lo"`, "resume prefix must reach the client")
+	close(releaseSlow)
+}
+
+// resumeOnceThenFailClient: first Send delivers content then transport-fails;
+// second Send (reconnect) resumes the tail then fails again; further Sends
+// count as post-resume failures (must stay 0 under one-shot ladder).
+type resumeOnceThenFailClient struct {
+	failCalls           atomic.Int64
+	resumeCalls         atomic.Int64
+	postResumeFailCalls atomic.Int64
+	resumeBody          []byte
+	responseReceipt     []byte
+}
+
+func (c *resumeOnceThenFailClient) Send(_ context.Context, req host.HostRequest, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
+	if receiptHandler != nil {
+		receiptHandler()
+	}
+	if req.DeliveredEvents == 0 && req.DeliveredPartial == 0 {
+		c.failCalls.Add(1)
+		if stream != nil {
+			_, _ = io.WriteString(stream, `data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n")
+		}
+		return &host.HostResponse{Nonce: req.Nonce, Receipt: append([]byte(nil), c.responseReceipt...)}, errSimulatedWinnerTransport
+	}
+	if c.resumeCalls.Add(1) == 1 {
+		if stream != nil && len(c.resumeBody) > 0 {
+			body, err := skipSSEPrefix(append([]byte(
+				`data: {"choices":[{"delta":{"content":"x"}}]}`+"\n\n"), c.resumeBody...),
+				req.DeliveredEvents, req.DeliveredPartial)
+			if err != nil {
+				return nil, err
+			}
+			if _, err := stream.Write(body); err != nil {
+				return nil, err
+			}
+		}
+		return &host.HostResponse{Nonce: req.Nonce, Receipt: append([]byte(nil), c.responseReceipt...)}, errSimulatedWinnerTransport
+	}
+	c.postResumeFailCalls.Add(1)
+	return nil, errSimulatedWinnerTransport
 }
 
 func TestReconnectInflight_AssignsCancelAndHonorsIt(t *testing.T) {
@@ -1276,7 +1350,7 @@ func TestReconnectBlips_TwoDoNotShadowQuarantine(t *testing.T) {
 	require.False(t, env.proxy.redundancy.perf.ParticipantFailureThresholdExceeded(key))
 }
 
-// --- Step 3/4 helpers ---
+// --- Reconnect test helpers ---
 
 func enableAttemptReconnectForTest(t *testing.T, budget time.Duration, maxTries int) {
 	t.Helper()
@@ -1352,7 +1426,7 @@ func (c *countingFailAfterContentClient) Send(_ context.Context, req host.HostRe
 }
 
 // blockThenResumeClient blocks in Send until release is closed, then writes fullBody.
-// Used to prove the R3 hedge starts while same-nonce reconnect is still in flight.
+// Used to prove the hedge starts while same-nonce reconnect is still in flight.
 type blockThenResumeClient struct {
 	entered         chan struct{}
 	release         chan struct{}

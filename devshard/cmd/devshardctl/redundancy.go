@@ -35,7 +35,7 @@ var errEmptyStream = errors.New("empty content stream")
 
 // errReconnectReceiptOnly marks a same-nonce reconnect that came back clean at
 // the transport layer but carried only a receipt: no live attach, no cached
-// body, no mempool. R3 counts that as a failed resume try.
+// body, no mempool. Counted as a failed resume try.
 var errReconnectReceiptOnly = errors.New("reconnect returned receipt only")
 
 const emptyStreamBodySampleLimit = 256 * 1024
@@ -45,7 +45,7 @@ const longResponseFailureExemption = 280 * time.Second
 var (
 	nonStreamingReducedMaxTokensFallbackDelay = 140 * time.Second
 	// Attempt budgets derive from protocol ExecutionTimeout (default 32m) so
-	// the gateway does not wait past the missed-challenge window. See Step 5e.
+	// the gateway does not wait past the missed-challenge window.
 	nonStreamingNoContentTimeout = types.DefaultExecutionTimeout()
 	nonStreamingMaxAttemptWait   = types.DefaultExecutionTimeout()
 	InterChunkStallLogThreshold  = 30 * time.Second
@@ -432,8 +432,8 @@ var (
 	PerInputTokenResponseLag = 20 * time.Millisecond
 	SecondaryWaitAfterWinner = 5 * time.Minute
 
-	// Same-nonce reconnect knobs (R3/R7). AttemptReconnectEnabled is also
-	// gated on session protocol ≥ v5 (R0) via attemptReconnectAllowed.
+	// Same-nonce reconnect knobs. AttemptReconnectEnabled is also
+	// gated on session protocol ≥ v5 via attemptReconnectAllowed.
 	AttemptReconnectEnabled    = false
 	AttemptReconnectBudget     = time.Second
 	AttemptReconnectMaxTries   = 2
@@ -682,7 +682,7 @@ func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
 		return Decision{RunSecondary: true, Delay: 0, Reason: "primary_unresponsive", ImmediateAttempts: 1}
 	}
 
-	// Reconnect blips are recorded for observability only (R8). They must not
+	// Reconnect blips are recorded for observability only. They must not
 	// change routing: forcing an immediate secondary would buy a second full
 	// generation and a second MsgStartInference for a transient TCP drop.
 
@@ -928,7 +928,7 @@ type inflight struct {
 	pendingBuf []byte
 
 	// deliveredEvents / deliveredPartial track the upstream SSE prefix actually
-	// forwarded to the client (race.w). Used by same-nonce reconnect (R2/R6).
+	// forwarded to the client (race.w). Used by same-nonce reconnect.
 	// Counted only on successful client writes — not pendingBuf, probes, or losers.
 	// Blank SSE separators (empty lines from "\n\n" framing) are not events.
 	// deliveredPartial is bytes of the currently incomplete event (0 on a
@@ -936,7 +936,7 @@ type inflight struct {
 	deliveredEvents       int64
 	deliveredPartial      int64
 	deliveredForming      []byte // incomplete line for delivered-prefix accounting
-	deliveredFirstEventFP uint64 // fnv of first delivered content line (R2 probe)
+	deliveredFirstEventFP uint64 // fnv of first delivered content line (resume skip probe)
 
 	// classifyPartial keeps the tail after the last '\n' from prior Writes;
 	// used to reassemble fragmented SSE events for the classifier.
@@ -982,12 +982,12 @@ type inflight struct {
 	err  error
 	done chan struct{}
 
-	// reconnectTries counts same-nonce transport retries (R8). Distinct from
+	// reconnectTries counts same-nonce transport retries. Distinct from
 	// attempt accounting — reconnect must not call RealSend again.
 	reconnectTries atomic.Int64
 	// reconnectLadderUsed ensures the post-content reconnect ladder runs at
 	// most once per attempt (further drops after a resume fall through to
-	// today's failure / R5 path).
+	// today's failure / opt-in stream-reset path).
 	reconnectLadderUsed  atomic.Bool
 	reconnectPenaltyOnce sync.Once
 	// resuming is set while a same-nonce reconnect ladder owns this attempt.
@@ -1237,7 +1237,7 @@ type raceGroup struct {
 	escrow         string
 
 	// reservedWinner holds the client stream for a resumable crowned attempt
-	// during the same-nonce reconnect ladder (R4). While set, setWinner refuses
+	// during the same-nonce reconnect ladder. While set, setWinner refuses
 	// any other nonce so a hedge secondary cannot splice a different generation
 	// onto an already-delivered prefix. Cleared explicitly when the ladder ends
 	// (not on a wall-clock expiry — the hedge may still be racing after budget).
@@ -1245,7 +1245,7 @@ type raceGroup struct {
 
 	// clientFlag is the request's client-disconnect signal. Once it fires the
 	// client writer swallows output, so the winner branch must stop counting
-	// those bytes into the R2 delivered prefix.
+	// those bytes into the delivered resume prefix.
 	clientFlag *cancelFlag
 }
 
@@ -2177,18 +2177,18 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 
 // reconnectInflight re-issues the same PreparedInference with a resume cursor.
 // It does not allocate a new nonce, call the picker, mutate triedParticipants,
-// or record RealSend (R8). The caller must ensure no prior SendOnly /
+// or record RealSend. The caller must ensure no prior SendOnly /
 // SendOnlyWithCursor is still running on this inflight (the reconnect ladder
 // serializes tries; awaitRace marks inf as resuming so the race loop treats the
 // resume as in-flight). On success, inf.err is cleared and inf.resp is merged
-// so a single later processInflightOnce still runs (R1).
+// so a single later processInflightOnce still runs.
 //
 // ctx should be the settle context (same parent startInflight uses). The send
 // runs under withMetaDrain so client disconnect still allows a bounded
 // meta/receipt drain, and setCancel republishes the cancel so winner hard-timeout
 // / loser finalizer can unwind the resumed stream.
 //
-// Step 4 wires this into the reconnect ladder; Step 3 exposes the primitive.
+// Wired into the reconnect ladder; this function is the reconnect primitive.
 func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) error {
 	if e == nil || inf == nil || inf.prepared == nil {
 		return fmt.Errorf("reconnect: missing inflight")
@@ -2209,7 +2209,7 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	// Primary resume is host-side (cursor on HostRequest). prefixSkipWriter is
-	// an R2 safety net that activates only when the host appears to re-emit
+	// a resume-cursor safety net that activates only when the host appears to re-emit
 	// from event 0 despite the cursor (see probe logic in Write).
 	stream := &prefixSkipWriter{
 		w:            rw,
@@ -2264,7 +2264,7 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 		)
 		return inf.err
 	}
-	// R3: a transport-clean response that carried nothing but a receipt has not
+	// A transport-clean response that carried nothing but a receipt has not
 	// resumed anything — the host had neither a live generation to attach to nor
 	// a cached body. The receipt alone sets sawTerminator on the parser, so this
 	// arrives as success; without this check the ladder would burn its one shot
@@ -2289,7 +2289,7 @@ func hostResponseCarriesSettlement(resp *host.HostResponse) bool {
 }
 
 // mergeInflightHostResponse folds a reconnect HostResponse into the inflight.
-// Prefers the response that carries receipt / mempool txs (R1). Transport
+// Prefers the response that carries receipt / mempool txs. Transport
 // success (err==nil) clears a prior transport error so settlement can proceed.
 func mergeInflightHostResponse(inf *inflight, resp *host.HostResponse, err error) {
 	if inf == nil {
@@ -2362,7 +2362,7 @@ func (e *Redundancy) recordGatewayReconnectTry(inf *inflight, try int64) {
 	)
 }
 
-// attemptReconnectAllowed is the R0+R7 gate: setting on AND session protocol ≥ v5.
+// attemptReconnectAllowed: setting on AND session protocol ≥ v5.
 func (e *Redundancy) attemptReconnectAllowed() bool {
 	if e == nil || e.session == nil || !AttemptReconnectEnabled {
 		return false
@@ -2384,7 +2384,7 @@ func (e *Redundancy) canAttemptWinnerReconnect(inf *inflight) bool {
 	if !e.attemptReconnectAllowed() {
 		return false
 	}
-	// Only protect a delivered client prefix (R4). Pre-content failures keep
+	// Only protect a delivered client prefix. Pre-content failures keep
 	// today's attempt_failed escalation.
 	if inf.deliveredEvents == 0 && inf.contentChunks.Load() == 0 {
 		return false
@@ -2452,9 +2452,9 @@ func (e *Redundancy) spawnWinnerReconnectLadder(
 
 // runWinnerReconnectLadder runs same-nonce reconnect tries under a reservation.
 //
-// R3: reconnect attempts run without blocking the budget timer. When
+// Reconnect attempts run without blocking the budget timer. When
 // AttemptReconnectBudget expires without a successful resume, startHedge fires
-// and the ladder keeps trying — hedge and reconnect race under R4 (hedge
+// and the ladder keeps trying — hedge and reconnect race (hedge
 // suppressed for client I/O while a delivered prefix exists).
 //
 // Hedge starts are requested via hedgeCh so awaitRace can append attempts on
@@ -2464,7 +2464,7 @@ func (e *Redundancy) spawnWinnerReconnectLadder(
 //
 // Returns nil when a reconnect try succeeds; otherwise a resume-exhausted
 // error. Never promotes the hedge onto the client when a prefix was already
-// delivered (R4/R5).
+// delivered (winner continuity / opt-in stream reset).
 func (e *Redundancy) runWinnerReconnectLadder(
 	streamCtx, settleCtx context.Context,
 	inf *inflight,
@@ -2575,7 +2575,7 @@ func (e *Redundancy) runWinnerReconnectLadderWithHedge(
 	}
 
 	// Budget timer runs independently of reconnectInflight so a slow/hanging
-	// same-nonce resume cannot delay the hedge (R3).
+	// same-nonce resume cannot delay the hedge.
 	var budgetTimer *time.Timer
 	if wait := time.Until(deadline); wait <= 0 {
 		startHedge()
@@ -2698,12 +2698,12 @@ func (e *Redundancy) runWinnerReconnectLadderWithHedge(
 		"hedge_started", hedgeStarted,
 		"error", lastErr,
 	)
-	_ = AllowStreamResetOnFailover // R5 opt-in wired in a later change; default remains fail.
+	_ = AllowStreamResetOnFailover // opt-in stream reset wired later; default remains fail.
 	return lastErr
 }
 
 // recordReconnectBlipOnce records that this participant needed a reconnect
-// ladder (R4/R8). Observability only: it does not write RequestSample failures,
+// ladder. Observability only: it does not write RequestSample failures,
 // call ObserveStalledWinner, or influence Decide / the picker.
 func (e *Redundancy) recordReconnectBlipOnce(inf *inflight) {
 	if e == nil || inf == nil {
@@ -2735,7 +2735,7 @@ const maxPrefixSkipProbeBytes = 64 << 10
 
 // prefixSkipWriter drops an already-delivered upstream prefix before forwarding
 // to the underlying writer. Safety net if a host re-emits from event 0 on
-// reconnect (R2). Blank SSE separator lines are not counted as events.
+// reconnect. Blank SSE separator lines are not counted as events.
 //
 // When probeResume is set (same-nonce reconnect that also passed a cursor to
 // the host), the writer first decides whether the stream looks like a full
@@ -2754,7 +2754,7 @@ type prefixSkipWriter struct {
 	probed       bool
 	emitted      bool   // true after forwarding a non-blank line
 	firstEventFP uint64 // fingerprint of first delivered content line; 0 = unset
-	forwarded    int64  // bytes handed to w past the resume cursor (R3 resume check)
+	forwarded    int64  // bytes handed to w past the resume cursor (resume check)
 }
 
 // passThrough forwards bytes and records that the resume actually delivered
@@ -2968,7 +2968,7 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 		return nil
 	}
 	// After a crown, refuse new attempts unless a reconnect reservation is
-	// holding the winner — then the secondary is a suppressed hedge only (R4).
+	// holding the winner — then the secondary is a suppressed hedge only.
 	if race.hasDecided() && !race.hasReservation() {
 		return nil
 	}
@@ -3241,7 +3241,7 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 	if inf.resp == nil {
 		return true, fmt.Errorf("inference: winner host returned no response")
 	}
-	// R1: exactly one ProcessResponse per nonce, using the last response that
+	// Exactly one ProcessResponse per nonce, using the last response that
 	// carries a receipt / mempool. A response with no mempool cannot settle the
 	// nonce, so spending the one-shot on it here would strand the finish that a
 	// reconnect is still able to merge.

@@ -1,6 +1,6 @@
 # Gateway Attempt Reconnect & Winner Continuity — implementation plan
 
-Status: proposal / plan.
+Status: core landed (Steps 1–5e + 7); deferred Steps 5f–5g / 6 / 8–10.
 Overview (flows / timeouts / observability / e2e): [gateway-streaming-ha-overview.md](./gateway-streaming-ha-overview.md)  
 Design (no steps): [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md)
 Parent: [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) — Step 4 references this
@@ -1200,21 +1200,26 @@ Only the operator-facing rolling soft state that survives restart.
 - `Decide` / shadow-quarantine unchanged after hydrate of a large blip count
   (reuse `TestDecision_ReconnectBlipsDoNotChangeRouting` shape).
 
-### Step 7 — E2E coverage
+### Step 7 — E2E coverage ✅
 
-**Deferred.** Test plan only for now; no e2e lands in this change. Two blockers, both
-outside this step:
+**Landed (partial; see scenarios).** Harness knob `MultiConfigOpts.VersionName` +
+`BootReconnectStack` stamps a v5 escrow without the full Step 9.2 rollout. Admin
+`POST /v1/admin/settings` accepts `attempt_reconnect_*` (in-memory apply; DB columns
+remain Step 8). Host test fault `DEVSHARD_TEST_DETACH_PRIMARY_AFTER_WRITES` /
+`TestDetachPrimaryAfterWrites` injects a gateway↔host drop while ML drain continues
+(env patched onto **every** versiond service). Run target:
+`make -C devshard/testenv citest-attempt-reconnect`.
 
-- **A v5-bound escrow is not reachable yet.** Scenarios 1, 3, 4, 6 and 7 all need a session whose
-  `StateRootAndProtocolVersion` is ≥ `v5`, but approving v5 hosts is Step 9.2 — *after* this step.
-  `ProtocolV5` and `ParseProtocolVersion("v5")` already exist (`types/domain.go:86,96`), and citest
-  binds versions through `cfg.Versiond.VersionName`, so the prerequisite is a harness knob that
-  stamps a v5 version name onto a stack without the full rollout. Decide that before writing the
-  tests; do not fake the gate by mutating `AttemptReconnectEnabled` alone, which would leave R0
-  untested.
-- **`skipped_protocol` does not exist.** The original scenario 2 asserted that counter, but it is
-  defined in Step 8, which is itself deferred. Assert the *behavior* (no same-nonce resend; today's
-  escalation contract) and leave the counter assertion to Step 8.
+Citest coverage landed:
+- `TestAttemptReconnect_AdminEnables` — admin knobs apply in-process
+- `TestAttemptReconnect_V2ProtocolSkipsSameNonce` — protocol gate: PartialStream fails cleanly on v2
+- `TestAttemptReconnect_V5MidStreamDetachResumesSameNonce` — mid-stream detach →
+  `winner_reconnect_resumed`, one continuous completion, one finished inference
+
+- **`skipped_protocol` does not exist yet.** Scenario 2 asserts *behavior* only; counter
+  waits on Step 8.
+- Scenarios 3–4, 6, 8 remain unit-covered / follow-up citest; scenario 7 unit-landed
+  (`TestRunInference_V5SecondDropAfterResumeDoesNotRerunLadder`).
 
 `devshard/testenv/citest`, `devshard/cmd/devshardctl/e2e`.
 
@@ -1536,9 +1541,10 @@ verified to fail without them.
   sidecar phase 2); per-connection `w` at emit; gateway local recv; `: devshard-ts` comments out of
   cursor/hash space. Full path gateway↔host↔ML; no protocol bump; mixed-version compatible
 - [ ] Step 6 — **deferred** until `ak/gateway-v4-postgres` merges; then persist soft signals (blips + rolling stream bps) to gateway store on a 1m ticker; hydrate on boot; additive schema via gateway-store interface / PG + SQLite / D5–D6 HA rules
-- [ ] Step 7 — **deferred** (test plan written, no e2e landed): needs a v5-bound escrow in citest,
-  which Step 9.2 gates; `skipped_protocol` assertions wait on Step 8. Scenarios 6–8 (winner
-  continuity, second drop after resume, reconnect after client disconnect) added by the audit below
+- [x] Step 7 — E2E: admin reconnect settings; citest v2 protocol gate + v5 mid-stream resume
+  (`TestAttemptReconnect_*`, `make citest-attempt-reconnect`); scenario 7 unit
+  (`TestRunInference_V5SecondDropAfterResumeDoesNotRerunLadder`); `skipped_protocol`
+  counter still Step 8; scenarios 3–4/6/8 citest follow-up
 - [ ] Step 8 — **deferred** until `ak/devshard-observability-e2e` merges; then settings, metrics (incl. `skipped_protocol`, R9 live-log, blip counter + in-window gauge, stream bytes/sec histogram + bytes counter), dashboards; OTel via parent Step 16 APIs
 - [ ] Step 9 — ship in gateway-v4 (dormant on ≤v4); enable on v5 soak; default-on
 - [ ] Step 10 — **deferred** until after `ak/devshard-observability-e2e` (separated mock MLNodes)

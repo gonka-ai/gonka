@@ -77,7 +77,7 @@ type RedundancySettings struct {
 	PairwiseWinnerHoldMS          int64   `json:"pairwise_winner_hold_ms"`
 	PairwiseWinnerHoldMinSpeedup  float64 `json:"pairwise_winner_hold_min_speedup"`
 	PairwiseWinnerHoldMinSamples  int     `json:"pairwise_winner_hold_min_samples"`
-	// Same-nonce reconnect (gateway-attempt-reconnect-plan.md R7). Still ANDed
+	// Same-nonce reconnect (gateway-attempt-reconnect-plan.md). Still ANDed
 	// with the v5 protocol gate — enabling this alone does not activate ≤v4.
 	AttemptReconnectEnabled    bool  `json:"attempt_reconnect_enabled"`
 	AttemptReconnectBudgetMS   int64 `json:"attempt_reconnect_budget_ms"`

@@ -2511,6 +2511,10 @@ type adminRedundancyRequest struct {
 	PairwiseWinnerHoldMS          *int64   `json:"pairwise_winner_hold_ms,omitempty"`
 	PairwiseWinnerHoldMinSpeedup  *float64 `json:"pairwise_winner_hold_min_speedup,omitempty"`
 	PairwiseWinnerHoldMinSamples  *int     `json:"pairwise_winner_hold_min_samples,omitempty"`
+	AttemptReconnectEnabled       *bool    `json:"attempt_reconnect_enabled,omitempty"`
+	AttemptReconnectBudgetMS      *int64   `json:"attempt_reconnect_budget_ms,omitempty"`
+	AttemptReconnectMaxTries      *int     `json:"attempt_reconnect_max_tries,omitempty"`
+	AllowStreamResetOnFailover    *bool    `json:"allow_stream_reset_on_failover,omitempty"`
 }
 
 type adminPerfRequest struct {
@@ -2842,6 +2846,18 @@ func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRe
 	}
 	if req.PairwiseWinnerHoldMinSamples != nil {
 		settings.PairwiseWinnerHoldMinSamples = *req.PairwiseWinnerHoldMinSamples
+	}
+	if req.AttemptReconnectEnabled != nil {
+		settings.AttemptReconnectEnabled = *req.AttemptReconnectEnabled
+	}
+	if req.AttemptReconnectBudgetMS != nil {
+		settings.AttemptReconnectBudgetMS = *req.AttemptReconnectBudgetMS
+	}
+	if req.AttemptReconnectMaxTries != nil {
+		settings.AttemptReconnectMaxTries = *req.AttemptReconnectMaxTries
+	}
+	if req.AllowStreamResetOnFailover != nil {
+		settings.AllowStreamResetOnFailover = *req.AllowStreamResetOnFailover
 	}
 }
 

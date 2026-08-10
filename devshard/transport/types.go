@@ -34,7 +34,7 @@ type InferenceRequest struct {
 	Payload *PayloadJSON `json:"payload,omitempty"`
 	Stream  bool         `json:"stream,omitempty"` // hint: stream SSE deltas vs single JSON event
 
-	// Resume cursor for same-nonce reconnect (R2/R6). Transport-only.
+	// Resume cursor for same-nonce reconnect. Transport-only.
 	DeliveredEvents  int64 `json:"delivered_events,omitempty"`
 	DeliveredPartial int64 `json:"delivered_partial,omitempty"`
 }

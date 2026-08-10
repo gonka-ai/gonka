@@ -17,7 +17,7 @@ const (
 	// DefaultExecutionTimeoutSeconds is the protocol window after ConfirmedAt
 	// before a missing MsgFinishInference can start an execution-timeout /
 	// missed challenge. Ops clocks (host drain, LiveStream TTL, gateway attempt
-	// hard timeout) derive from this — see reconnect plan Step 5e.
+	// hard timeout) derive from this — see gateway-attempt-reconnect-plan.md.
 	DefaultExecutionTimeoutSeconds int64 = 32 * 60
 )
 

@@ -4,12 +4,30 @@ import (
 	"bytes"
 	"errors"
 	"net/http"
+	"os"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
 	"devshard/types"
 )
+
+func init() {
+	// Citest: force a primary-writer detach after N successful drain
+	// writes so the gateway sees a mid-stream drop while the producer keeps
+	// draining ML. Zero (default) disables the hook.
+	if v := os.Getenv("DEVSHARD_TEST_DETACH_PRIMARY_AFTER_WRITES"); v != "" {
+		if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+			TestDetachPrimaryAfterWrites.Store(n)
+		}
+	}
+}
+
+// TestDetachPrimaryAfterWrites, when > 0, makes each LiveStream's primary
+// drain fail after that many successful writeReplay calls (ClientDetached).
+// Used by reconnect e2e to inject a gateway↔host drop without killing ML.
+var TestDetachPrimaryAfterWrites atomic.Int64
 
 // InflightReplayBufferTTL bounds how long a live per-inference SSE buffer may
 // stay registered for reconnect attach. Derived from protocol ExecutionTimeout
@@ -63,8 +81,8 @@ var (
 	ErrLiveStreamFormingOversize = errors.New("live stream forming line oversize")
 )
 
-// LiveStream is a per-inference append-only byte log with independent readers
-// (R6 / R9). The ML producer only appends under a short lock and never performs
+// LiveStream is a per-inference append-only byte log with independent readers.
+// The ML producer only appends under a short lock and never performs
 // gateway network I/O. Each gateway connection (primary or reconnect) is a
 // reader with its own absolute byte offset into the log.
 //
@@ -96,6 +114,10 @@ type LiveStream struct {
 	// proxyTextStreamResponse so IncInferenceClientDetachedDrain still fires
 	// even though Write to the hub always succeeds.
 	clientDetached atomic.Bool
+
+	// testPrimaryWrites counts successful primary writeReplay calls when
+	// TestDetachPrimaryAfterWrites is set (citest reconnect fault injection).
+	testPrimaryWrites int64
 }
 
 // liveSubscriber is an independent reader of the byte log. Payload always comes
@@ -490,6 +512,24 @@ func (s *LiveStream) drainSubscriber(w http.ResponseWriter, sub *liveSubscriber)
 				s.recomputeOverCapLocked()
 			}
 			s.mu.Unlock()
+			if isPrimary {
+				if limit := TestDetachPrimaryAfterWrites.Load(); limit > 0 {
+					n := atomic.AddInt64(&s.testPrimaryWrites, 1)
+					if n >= limit {
+						// Bytes above already counted as delivered. Tear down
+						// the TCP so the gateway sees a mid-stream drop and
+						// can same-nonce reconnect to this still-live log.
+						s.clientDetached.Store(true)
+						s.unsubscribe(sub)
+						if hj, ok := w.(http.Hijacker); ok {
+							if conn, _, err := hj.Hijack(); err == nil {
+								_ = conn.Close()
+							}
+						}
+						return nil
+					}
+				}
+			}
 			continue
 		}
 		// Caught up and stream is done.

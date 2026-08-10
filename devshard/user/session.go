@@ -870,8 +870,8 @@ func (s *Session) SendOnly(ctx context.Context, p *PreparedInference, stream io.
 	return s.SendOnlyWithCursor(ctx, p, stream, receiptHandler, 0, 0)
 }
 
-// SendOnlyWithCursor is SendOnly plus a resume cursor for same-nonce reconnect
-// (R2/R6). deliveredEvents/deliveredPartial are transport-only fields on
+// SendOnlyWithCursor is SendOnly plus a resume cursor for same-nonce reconnect.
+// deliveredEvents/deliveredPartial are transport-only fields on
 // HostRequest — not chain messages. Reusing the same PreparedInference keeps
 // nonce, catch-up diffs, and payload identical to the original attempt.
 func (s *Session) SendOnlyWithCursor(

@@ -25,7 +25,7 @@ const (
 
 // mlNodeHTTPTimeout / executionDrainTimeout derive from protocol
 // ExecutionTimeout (default 32m). They must not be shorter independent
-// product clocks — see gateway-attempt-reconnect-plan.md Step 5e.
+// product clocks — see gateway-attempt-reconnect-plan.md.
 var (
 	mlNodeHTTPTimeout     = devshardtypes.DefaultExecutionTimeout()
 	executionDrainTimeout = mlNodeHTTPTimeout

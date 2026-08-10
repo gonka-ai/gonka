@@ -57,7 +57,7 @@ type HostRequest struct {
 	Payload *InferencePayload // nil if no new inference (e.g., Finalize, empty diffs)
 
 	// Resume cursor for same-nonce reconnect (transport only; not a chain message).
-	// See gateway-attempt-reconnect-plan.md R2/R6.
+	// See gateway-attempt-reconnect-plan.md (resume cursor / live attach).
 	DeliveredEvents  int64
 	DeliveredPartial int64
 }
@@ -136,7 +136,7 @@ type Host struct {
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	liveStreams        map[uint64]*LiveStream // in-flight SSE fan-out hubs (R6)
+	liveStreams        map[uint64]*LiveStream // in-flight SSE fan-out hubs
 	ownSeed            int64                  // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
@@ -279,7 +279,7 @@ func WithStorage(s storage.Storage) HostOption {
 }
 
 // PayloadRetriever is the optional disk resume tier consulted after
-// completedResponses is evicted (Step 5e). Matches session.PayloadStore /
+// completedResponses is evicted. Matches session.PayloadStore /
 // common/storage/payloads.Storage.Retrieve.
 type PayloadRetriever interface {
 	Retrieve(ctx context.Context, escrowID string, inferenceID, epochID uint64) (prompt, response []byte, err error)
@@ -763,7 +763,7 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // signReceipt verifies the payload and signs the executor receipt (sync, under mutex).
 // Returns the receipt sig, confirmed_at timestamp, an ExecuteRequest if this host is the executor,
 // cached response body if the inference already completed, and liveAttach when a reconnect
-// should join an in-flight LiveStream (R6).
+// should join an in-flight LiveStream.
 //
 // Authorization comes from applied escrow state for req.Nonce, not from MsgStartInference
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
@@ -923,7 +923,7 @@ func retrievePayloadResponse(ctx context.Context, r PayloadRetriever, escrowID s
 }
 
 // ensureConfirmStartLocked returns an executor receipt, reusing an existing
-// mempool MsgConfirmStart for this inference when present (R1 no-op on reconnect).
+// mempool MsgConfirmStart for this inference when present (no-op on reconnect).
 // Caller must hold h.mu.
 func (h *Host) ensureConfirmStartLocked(inferenceID uint64, rec types.InferenceRecord) ([]byte, int64, error) {
 	if sig, confirmedAt, ok := h.findConfirmStartLocked(inferenceID); ok {
@@ -1003,7 +1003,7 @@ func (h *Host) ReleaseExecution(inferenceID uint64) {
 // drain, payload store, or finish publication (bounded by the engine drain timeout).
 //
 // While executing, a LiveStream hub is registered so same-nonce reconnects can
-// attach from a resume cursor (R6). On success the body is persisted to
+// attach from a resume cursor. On success the body is persisted to
 // completedResponses and the live buffer is forgotten.
 func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	// Find the internal job metadata for cleanup/mempool.

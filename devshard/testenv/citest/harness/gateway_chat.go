@@ -153,6 +153,81 @@ func RequireMockOpenAIContent(t *testing.T, content string) {
 	require.True(t, strings.HasPrefix(content, "mock-openai:"), "expected mock-openai echo, got %q", content)
 }
 
+// TryPostGatewayChatCompletionStream is like PostGatewayChatCompletionStream but
+// returns an error instead of failing the test (for expected-failure paths).
+func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) (content string, err error) {
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	req.Stream = true
+	data, err := json.Marshal(req)
+	if err != nil {
+		return "", err
+	}
+	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	if err != nil {
+		return "", err
+	}
+	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "text/event-stream")
+	if adminAPIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	resp, err := client.Do(httpReq)
+	if err != nil {
+		return "", err
+	}
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return "", err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return "", fmt.Errorf("stream chat: %d %s", resp.StatusCode, string(body))
+	}
+	var assembled strings.Builder
+	var sawDone bool
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "data: [DONE]" {
+			sawDone = true
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			continue
+		}
+		if s, ok := delta["content"].(string); ok {
+			assembled.WriteString(s)
+		}
+	}
+	if err := scanner.Err(); err != nil {
+		return assembled.String(), err
+	}
+	content = assembled.String()
+	if !sawDone {
+		return content, fmt.Errorf("stream missing data: [DONE]")
+	}
+	if content == "" {
+		return content, fmt.Errorf("stream assembled empty content")
+	}
+	return content, nil
+}
+
 func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
 	data, err := json.Marshal(payload)
 	if err != nil {

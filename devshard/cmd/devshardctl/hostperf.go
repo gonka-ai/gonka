@@ -18,7 +18,7 @@ var (
 
 	// Reconnect blips are timed degradation signals (not RequestSample failures)
 	// and are recorded without affecting routing.
-	// See proposals/always-stream-upstream.md R8.
+	// See proposals/always-stream-upstream.md (reconnect blip accounting).
 	ReconnectBlipWindow = 5 * time.Minute
 )
 
@@ -622,7 +622,7 @@ func (t *PerfTracker) ParticipantFailureThresholdExceeded(participantKey string)
 
 // RecordReconnectBlip notes that a participant needed a same-nonce reconnect
 // ladder. Blips age out after ReconnectBlipWindow, never touch FailureSamples,
-// and never feed Decide or the picker — they exist so operators (and Step 7
+// and never feed Decide or the picker — they exist so operators (and
 // metrics) can see which participants drop mid-stream.
 func (t *PerfTracker) RecordReconnectBlip(participantKey string) {
 	if t == nil || participantKey == "" {

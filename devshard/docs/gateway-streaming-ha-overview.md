@@ -33,7 +33,8 @@ Two complementary motivations:
 | Same-nonce reconnect, winner continuity, LiveStream resume tiers | Done (reconnect Steps 1–5e); **default-off**, gated to protocol ≥ `v5` |
 | Gateway SSE event size cap (1 MiB) | Done (parent Step 12) |
 | Force upstream `stream` / client aggregator / intent | **Not yet** (parent Steps 5–11) |
-| Soft-signal persist, full Prometheus/OTel, citest e2e | **Deferred** (reconnect Steps 6–8 / 5f–5g) |
+| Citest e2e (admin + v2 gate + v5 mid-stream resume) | Done (reconnect Step 7; `make citest-attempt-reconnect`) |
+| Soft-signal persist, full Prometheus/OTel | **Deferred** (reconnect Steps 6 / 8 / 5f–5g) |
 | Cross-instance `devshardd` HA / ML reattach on host reboot | **Deferred** (reconnect Step 10; needs separated mock MLNodes from `ak/devshard-observability-e2e` + MLNode keep-alive) |
 
 ---
@@ -325,7 +326,7 @@ Carrier: SSE **comment** lines injected at the subscriber writer (`: devshard-ts
 
 ## 7. E2E scenarios — connection reattempts (`testenv` / citest)
 
-**Status:** Plan written; citest landing waits on a v5-bound escrow harness (reconnect plan Step 7). Unit coverage lives in `redundancy_reconnect_test.go` and host `livestream_*_test.go`.
+**Status:** Citest landed (`TestAttemptReconnect_*`, `make citest-attempt-reconnect`). Unit coverage in `redundancy_reconnect_test.go` and host `livestream_*_test.go`. Soft-signal persist / full Prometheus+OTel / default-on soak remain deferred in the reconnect plan.
 
 | # | Scenario | Assert |
 |---|---|---|
