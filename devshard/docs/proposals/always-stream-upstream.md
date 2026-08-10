@@ -2,6 +2,8 @@
 
 **Status:** Draft / proposal  
 **Scope:** Gateway request filters, proxy response shape, redundancy escalation; host ML drain and same-nonce reconnect; streamed-usage strictness and well-formed streamed replay. No chain message or transport-envelope change.  
+**Overview (flows / timeouts / observability / e2e):**  
+[../gateway-streaming-ha-overview.md](../gateway-streaming-ha-overview.md)  
 **Implementation plans:**  
 [../gateway-always-stream-upstream-plan.md](../gateway-always-stream-upstream-plan.md),  
 [../gateway-attempt-reconnect-plan.md](../gateway-attempt-reconnect-plan.md)
