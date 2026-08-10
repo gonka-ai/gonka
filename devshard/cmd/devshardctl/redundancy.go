@@ -38,6 +38,12 @@ var errEmptyStream = errors.New("empty content stream")
 // body, no mempool. Counted as a failed resume try.
 var errReconnectReceiptOnly = errors.New("reconnect returned receipt only")
 
+// errStreamResetFailover is returned by the reconnect ladder when it has
+// exhausted same-nonce resume and AllowStreamResetOnFailover is on: a
+// stream_reset was written to the client and the race winner was cleared so a
+// hedge/secondary may take over from scratch.
+var errStreamResetFailover = errors.New("inference: stream reset failover")
+
 const emptyStreamBodySampleLimit = 256 * 1024
 
 const longResponseFailureExemption = 280 * time.Second
@@ -927,6 +933,16 @@ type inflight struct {
 	// different attempt wins or the attempt ends with no content.
 	pendingBuf []byte
 
+	// stream mirrors InferenceParams.Stream for this attempt. Same-nonce
+	// reconnect is streaming-only: non-streaming requests write into an
+	// in-memory buffer and must remain free to switch nonce.
+	stream bool
+	// trackDelivered enables deliveredEvents / deliveredPartial accounting.
+	// Captured at startInflight when reconnect is allowed for a streaming
+	// attempt — otherwise every winner Write would pay the forming-scan cost
+	// for a cursor that can never be used.
+	trackDelivered bool
+
 	// deliveredEvents / deliveredPartial track the upstream SSE prefix actually
 	// forwarded to the client (race.w). Used by same-nonce reconnect.
 	// Counted only on successful client writes — not pendingBuf, probes, or losers.
@@ -990,6 +1006,11 @@ type inflight struct {
 	// today's failure / opt-in stream-reset path).
 	reconnectLadderUsed  atomic.Bool
 	reconnectPenaltyOnce sync.Once
+	// streamResetFailover is set when the reconnect ladder exhausted and
+	// AllowStreamResetOnFailover wrote a stream_reset, clearing the race
+	// winner so a hedge/secondary may take over. awaitRace must not treat
+	// this attempt as a terminal client failure.
+	streamResetFailover atomic.Bool
 	// resuming is set while a same-nonce reconnect ladder owns this attempt.
 	// done is already closed by then, so inflightDone consults this flag to
 	// keep the attempt "pending" for the race loop. Never mutate done itself:
@@ -1300,6 +1321,27 @@ func (rg *raceGroup) clearReservation() {
 	logInferenceStage(rg.logCtx, rg.escrow, nonce, "winner_reservation_cleared")
 }
 
+// resetWinnerForStreamFailover clears the crowned winner after an opt-in
+// stream_reset so a hedge/secondary can become the new client writer. The
+// previous winnerCh is already closed; waiters wake and observe winner==0 /
+// a fresh channel on the next hold loop. Call only under AllowStreamResetOnFailover.
+func (rg *raceGroup) resetWinnerForStreamFailover() {
+	if rg == nil {
+		return
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	prev := rg.winner
+	if prev == 0 && rg.reservedWinner == 0 {
+		return
+	}
+	rg.winner = 0
+	rg.reservedWinner = 0
+	rg.decided.Store(false)
+	rg.winnerCh = make(chan struct{})
+	logInferenceStage(rg.logCtx, rg.escrow, prev, "winner_reset_for_stream_failover")
+}
+
 func (rg *raceGroup) hasReservation() bool {
 	if rg == nil {
 		return false
@@ -1348,8 +1390,12 @@ func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
 // successfully written to the client. Non-empty newline-terminated lines count
 // as complete upstream events; blank separator lines are skipped; a trailing
 // fragment without '\n' is tracked in deliveredPartial.
+//
+// No-op unless trackDelivered was set at start: reconnect cursors are only
+// meaningful for streaming attempts with attempt-reconnect allowed, and the
+// forming scan otherwise costs every winner Write for nothing.
 func (inf *inflight) recordDeliveredForward(p []byte) {
-	if len(p) == 0 {
+	if inf == nil || !inf.trackDelivered || len(p) == 0 {
 		return
 	}
 	inf.deliveredForming = append(inf.deliveredForming, p...)
@@ -2061,6 +2107,14 @@ func (e *Redundancy) prepareInflight(ctx context.Context, params user.InferenceP
 }
 
 func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) {
+	// Capture stream + delivered-cursor eligibility once. Admin retunes of
+	// AttemptReconnectEnabled must not resize the hot path of an in-flight
+	// attempt, and non-streaming requests must never grow a resume cursor
+	// against an in-memory aggregate buffer.
+	if inf != nil {
+		inf.stream = params.Stream
+		inf.trackDelivered = params.Stream && e.attemptReconnectAllowed()
+	}
 	// Per-attempt context derived from the settle context so the background
 	// finalizer can cut off stragglers after the winner's grace window expires
 	// without disturbing the settle context itself (which is shared across all
@@ -2192,6 +2246,15 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) error {
 	if e == nil || inf == nil || inf.prepared == nil {
 		return fmt.Errorf("reconnect: missing inflight")
+	}
+	// Defense in depth: production enters via shouldAttemptWinnerReconnect,
+	// which already gates on stream + protocol, but direct callers must not
+	// bypass R0 / the streaming-only contract.
+	if !params.Stream {
+		return fmt.Errorf("reconnect: refused for non-streaming request")
+	}
+	if !e.attemptReconnectAllowed() {
+		return fmt.Errorf("reconnect: refused (disabled or protocol < v5)")
 	}
 	if race == nil {
 		race = newRaceGroup(ctx, ctx, inf.escrowID, io.Discard)
@@ -2381,12 +2444,24 @@ func (e *Redundancy) canAttemptWinnerReconnect(inf *inflight) bool {
 	if e == nil || inf == nil || inf.probe {
 		return false
 	}
+	// Offset/winner-continuity is an SSE contract. Non-streaming aggregates
+	// into an in-memory buffer and must stay free to switch nonce.
+	if !inf.stream {
+		return false
+	}
 	if !e.attemptReconnectAllowed() {
 		return false
 	}
-	// Only protect a delivered client prefix. Pre-content failures keep
-	// today's attempt_failed escalation.
-	if inf.deliveredEvents == 0 && inf.contentChunks.Load() == 0 {
+	// Only protect a prefix that actually reached the client. contentChunks
+	// alone is not enough: on disconnect, raceWriter still classifies/crowns
+	// but does not advance the delivered cursor — starting the ladder then
+	// would reserve the winner and block secondaries for no client benefit.
+	// Require trackDelivered so an admin enabling reconnect mid-flight cannot
+	// invent a cursor of 0 against a client that already received untracked bytes.
+	if !inf.trackDelivered {
+		return false
+	}
+	if inf.deliveredEvents == 0 && inf.deliveredPartial == 0 {
 		return false
 	}
 	return !inf.reconnectLadderUsed.Load()
@@ -2437,15 +2512,30 @@ func (e *Redundancy) spawnWinnerReconnectLadder(
 		// this goroutine is still touching inf.
 		defer close(resumeDone)
 		err := e.runWinnerReconnectLadder(streamCtx, settleCtx, inf, race, params, triedParticipants, clientFlag, hedgeCh)
-		if err != nil && inf.err == nil {
+		switch {
+		case errors.Is(err, errStreamResetFailover):
+			inf.streamResetFailover.Store(true)
+			// Abandon this generation for the client; do not leave a
+			// resume-exhausted error that awaitRace would treat as terminal.
+			if inf.err == nil || errors.Is(inf.err, errStreamResetFailover) {
+				inf.err = nil
+			}
+		case err != nil && inf.err == nil:
 			inf.err = err
 		}
 		inf.resuming.Store(false)
 		// Re-signal the race loop; the channel send publishes inf.err/inf.resp.
-		// If awaitRace has already given up, its finalizer waits on resumeDone.
+		// On stream cancel still attempt a non-blocking send — dropping the
+		// signal entirely made the notification path brittle. If awaitRace has
+		// already exited, resumeDone (deferred close) is what finalizers wait
+		// on, so we must not block forever on a full/unattended channel.
 		select {
 		case doneCh <- inf:
 		case <-streamCtx.Done():
+			select {
+			case doneCh <- inf:
+			default:
+			}
 		}
 	}()
 }
@@ -2698,7 +2788,20 @@ func (e *Redundancy) runWinnerReconnectLadderWithHedge(
 		"hedge_started", hedgeStarted,
 		"error", lastErr,
 	)
-	_ = AllowStreamResetOnFailover // opt-in stream reset wired later; default remains fail.
+	if AllowStreamResetOnFailover && race != nil && race.w != nil && !race.isClientDetached() {
+		// R5 opt-in: tell the client the stream is restarting, clear the crown
+		// so a hedge/secondary may write from scratch, and signal awaitRace
+		// not to treat this as winner_failed_after_content.
+		writeStreamReset(race.w)
+		race.resetWinnerForStreamFailover()
+		logRequestStage(settleCtx, "winner_stream_reset_failover",
+			"escrow", e.devshardID,
+			"winner_nonce", inf.nonce,
+			"host", inf.hostID,
+			"hedge_started", hedgeStarted,
+		)
+		return errStreamResetFailover
+	}
 	return lastErr
 }
 
@@ -2741,8 +2844,11 @@ const maxPrefixSkipProbeBytes = 64 << 10
 // the host), the writer first decides whether the stream looks like a full
 // restart. A correct host emits only the remainder — which for a mid-event
 // break does not start a new "data:" line — and must not be event-skipped.
-// Event-boundary resumes compare the first content line to firstEventFP (hash
+// Event-boundary resumes compare the first content line to firstEventFP (FNV-64
 // of the first delivered event); a match means the host restarted from event 0.
+// The fingerprint is a best-effort safety net, not a hard guarantee: a hash
+// collision could over-skip (negligible), and a host that replays event 0 with
+// a different first line fails open and may duplicate the prefix.
 type prefixSkipWriter struct {
 	w            io.Writer
 	skipEvents   int64
@@ -3418,6 +3524,16 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 				if total := parseContextTotalRequested(inf.errorMessage); total > params.ContextTotalHint {
 					params.ContextTotalHint = total
 				}
+			}
+			if inf != nil && inf.streamResetFailover.Load() {
+				// Opt-in stream_reset already cleared the race winner; keep
+				// racing so a hedge/secondary can crown itself.
+				logRequestStage(settleCtx, "winner_stream_reset_continue",
+					"escrow", e.devshardID,
+					"abandoned_nonce", inf.nonce,
+					"host", inf.hostID,
+				)
+				break
 			}
 			w := race.winnerNonce()
 			if w != 0 && inf != nil && inf.nonce == w {

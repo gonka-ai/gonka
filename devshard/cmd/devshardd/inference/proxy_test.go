@@ -3,6 +3,7 @@ package inference
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -135,6 +136,58 @@ func TestProxyTextStreamResponse_ClientDetachedKeepsBuffering(t *testing.T) {
 	require.NoError(t, outcome.err)
 	require.Equal(t, 4, w.writes, "must keep writing into the hub after detach")
 	require.Equal(t, beforeDetach+1, testutil.ToFloat64(observability.InferenceClientDetachedDrainCounterForTest()))
+}
+
+// failRewriteProcessor fails ProcessStreamedResponse for one configured line
+// and retains every line in Events (mirrors ExecutorResponseProcessor's
+// "keep the original on rewrite failure" contract).
+type failRewriteProcessor struct {
+	failOn string
+	Events []string
+}
+
+func (p *failRewriteProcessor) ProcessJsonResponse(b []byte) ([]byte, error) { return b, nil }
+
+func (p *failRewriteProcessor) ProcessStreamedResponse(line string) (string, error) {
+	p.Events = append(p.Events, line)
+	if line == p.failOn {
+		return line, errors.New("rewrite failed")
+	}
+	return line, nil
+}
+
+func (p *failRewriteProcessor) GetResponseBytes() ([]byte, error) {
+	return json.Marshal(map[string]any{"events": p.Events})
+}
+
+func TestProxyTextStreamResponse_RewriteFailureStillFeedsHub(t *testing.T) {
+	// A rewrite glitch must not omit the event from the live log while the
+	// durable body still keeps it — that desyncs same-nonce resume cursors
+	// after drain→persist→forget.
+	bad := `data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"BAD"},"finish_reason":null}]}`
+	good1 := `data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`
+	good2 := `data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}`
+	done := `data: [DONE]`
+	body := sseBody(good1, bad, good2, done)
+
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	w := &failAfterWriter{failAfter: -1}
+	processor := &failRewriteProcessor{failOn: bad}
+
+	outcome := proxyTextStreamResponse(resp, w, processor, "inf-rewrite")
+	require.True(t, outcome.sawDone)
+	require.False(t, outcome.clientDetached)
+	require.NoError(t, outcome.err)
+
+	got := strings.Split(strings.TrimSuffix(w.buf.String(), "\n"), "\n")
+	require.Equal(t, []string{good1, bad, good2, done}, got,
+		"hub must receive the raw fallback line so live log matches durable body")
+	require.Equal(t, []string{good1, bad, good2, done}, processor.Events,
+		"processor retention and hub delivery must stay event-aligned")
 }
 
 func TestProxyTextStreamResponse_DrainDeadlineCounted(t *testing.T) {

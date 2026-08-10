@@ -137,6 +137,7 @@ type Host struct {
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
 	liveStreams        map[uint64]*LiveStream // in-flight SSE fan-out hubs
+	liveStreamSpoolDir string                 // "" = no mid-flight resume tier
 	ownSeed            int64                  // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
@@ -295,6 +296,14 @@ func WithPayloadRetriever(r PayloadRetriever) HostOption {
 // Payload storage and validation use this epoch to route across epoch changes.
 func WithEpochID(epochID uint64) HostOption {
 	return func(h *Host) { h.epochID = epochID }
+}
+
+// WithLiveStreamSpoolDir points in-flight live streams at a scratch directory
+// used as their resume tier. Without it a generation still runs and persists,
+// but a mid-flight reconnect is refused (ErrLiveStreamResumeUnavailable),
+// because only a small RAM window would be left to resume from.
+func WithLiveStreamSpoolDir(dir string) HostOption {
+	return func(h *Host) { h.liveStreamSpoolDir = dir }
 }
 
 // WithVerifier sets the signature verifier for gossip sig accumulation.
@@ -1012,6 +1021,15 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	diffNonce := h.LatestNonce()
 
 	stream := newLiveStream()
+	// Enable the disk tier before the first Write so no producer byte is only
+	// ever in RAM. A spool failure degrades reconnect for this generation; it
+	// must never stop the generation itself.
+	if h.liveStreamSpoolDir != "" {
+		if err := stream.enableSpool(h.liveStreamSpoolDir, h.escrowID, inferenceID); err != nil {
+			logging.Warn("live stream spool unavailable; mid-flight reconnect disabled",
+				"subsystem", "host", "escrow_id", h.escrowID, "inference_id", inferenceID, "error", err)
+		}
+	}
 	if job.ResponseWriter != nil {
 		stream.SetPrimary(job.ResponseWriter)
 		job.ResponseWriter = stream
@@ -1029,6 +1047,8 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		// The caller writes devshard_meta to the same ResponseWriter, so the
 		// primary reader must be finished with it before we return.
 		stream.WaitPrimary()
+		// Frees the spool once any still-draining reconnect reader is done.
+		stream.Release()
 	}()
 
 	result, err := h.engine.Execute(ctx, *job)
@@ -1244,7 +1264,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1291,8 +1311,11 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		h.validationLifecycleMu.RLock()
+		q := h.validationQueue
+		h.validationLifecycleMu.RUnlock()
+		if q != nil {
+			observability.SetValidationQueueDepth(h.escrowID, len(q))
 		}
 	}()
 

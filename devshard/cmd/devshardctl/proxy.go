@@ -819,13 +819,12 @@ func (p *Proxy) handleStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	cfg := p.sm.Config()
-	st := p.sm.SnapshotState()
 	status := statusResponse{
 		EscrowID:       p.escrowID,
 		Nonce:          p.session.Nonce(),
 		Phase:          phaseStr,
 		Balance:        p.sm.Balance(),
-		SessionVersion: st.StateRootAndProtocolVersion,
+		SessionVersion: p.sm.ProtocolVersion(),
 		Config: statusSessionConfig{
 			RefusalTimeout:            cfg.RefusalTimeout,
 			ExecutionTimeout:          cfg.ExecutionTimeout,

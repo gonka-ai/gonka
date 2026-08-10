@@ -30,7 +30,7 @@ Two complementary motivations:
 |---|---|
 | Streamed usage mandatory + well-formed streamed replay | Done (parent Steps 1–2) |
 | Host ML drain independent of the gateway writer | Done (parent Step 3) |
-| Same-nonce reconnect, winner continuity, LiveStream resume tiers | Done (reconnect Steps 1–5e); **default-off**, gated to protocol ≥ `v5` |
+| Same-nonce reconnect, winner continuity, spool-backed LiveStream resume tiers | Done (reconnect Steps 1–5e); **default-off**, gated to protocol ≥ `v5` |
 | Gateway SSE event size cap (1 MiB) | Done (parent Step 12) |
 | Force upstream `stream` / client aggregator / intent | **Not yet** (parent Steps 5–11) |
 | Citest e2e (admin + v2 gate + v5 mid-stream resume) | Done (reconnect Step 7; `make citest-attempt-reconnect`) |
@@ -178,55 +178,86 @@ A reconnect is **not** a new attempt for accounting: same inflight / nonce / one
 
 ## 4. Live buffers (reconnect plan Step 5)
 
-Host-side buffering makes resume possible without a second vLLM call. `LiveStream` is an **append-only byte log with independent readers**; the producer never does network I/O under the append lock.
+Host-side buffering makes resume possible without a second vLLM call. `LiveStream` is an **append-only byte log with independent readers**; the producer never does network *or disk* I/O under the append lock.
 
-### 4.1 Tier lifecycle
+The log lives on disk in a per-generation **spool**, and RAM holds only a small trailing window of it. The two are not a mode switch and not a fallback: the spool file *is* the log, and the RAM window is a cache of its tail. That is what makes hot RAM independent of reader behaviour — a reader that stops consuming falls out of the window and is served from disk instead of pinning it.
+
+### 4.1 Storage tiers
+
+```text
+mid-flight:  RAM window (LiveStreamRingBytes, 256 KiB)  ← cache of the tail
+             spool .log + .idx (scratch, per generation) ← the log; resume reads here
+at finish:   payload store + completedResponses          ← durable, hash-bound
+             spool deleted
+```
+
+The spool is deliberately **not** durable state: no `fsync`, deleted on release, and the whole directory is emptied at startup. Losing it costs at most one reconnect — exactly what losing the RAM log cost before it existed. The durable artifact is still the payload store entry written at finish, and it is still written once, whole, at finish; a partial body is never published (see below).
+
+`.idx` is a flat array of `int64`: entry *k* is the `.log` offset where content event *k* starts. That is what lets a reconnect resolve a wire cursor older than the RAM window — the resume horizon is disk retention, not hot RAM. Reads are `pread`; the producer never waits on them.
+
+### 4.2 Tier lifecycle
 
 ```mermaid
 flowchart TD
-  ML[ML producing chunks] --> LS[LiveStream RAM log<br/>AttachLiveStream]
+  ML[ML producing chunks] --> LS[LiveStream.Write<br/>append to RAM window]
+  LS --> Pump[Spool pump goroutine<br/>writes .log + .idx]
+  Pump --> Trim[Head-trim RAM to<br/>LiveStreamRingBytes]
+  LS --> Attach[AttachLiveStream<br/>cursor → byte offset]
+  Attach -->|cursor in window| FromRAM[Serve from RAM]
+  Attach -->|cursor older| FromDisk[Resolve via .idx<br/>serve from .log]
   LS --> Drain{Drain complete?}
   Drain -->|yes| Persist[Payload store + completedResponses<br/>MsgFinishInference]
-  Persist --> Forget[Forget LiveStream RAM]
-  Forget --> StoreTier[Later reconnect → storage / hasCached]
+  Persist --> Release[Release spool<br/>delete .log/.idx]
+  Release --> StoreTier[Later reconnect → storage / hasCached]
   Drain -->|TTL detach| Detach[Detach attach-map<br/>producer may still buffer]
   Detach --> Persist
-  LS --> Trim{Over LiveStreamMaxRAMBytes?}
-  Trim -->|head-trim| Window[Keep trailing resume window]
-  Window -->|cursor older than window| Past[ErrResumeCursorPast → escalate]
-  Trim -->|optional spill| Spill[Disk spill of trimmed slabs]
 ```
 
-### 4.2 Readers and backpressure
+Head-trim's only barrier is **what the spool already holds**. Reader offsets are irrelevant to it, which is the whole point: a pinned reader can no longer grow the window.
+
+### 4.3 Readers and backpressure
 
 ```mermaid
 flowchart LR
-  Prod[LiveStream.Write<br/>non-blocking append] --> Log[(events + forming)]
+  Prod[LiveStream.Write<br/>non-blocking append] --> Log[(RAM window + spool)]
   Log --> P[Primary sub #0]
   Log --> R[Reconnect subs]
   P -->|write deadline breach| DetachP[ClientDetached<br/>keep producing]
   R -->|no offset progress<br/>while bytes pending| Lag[ErrSubscriberLagged]
-  R -->|still advancing| Keep[Keep — even if lag MiB]
+  R -->|behind the window| Disk[Read from spool — never dropped for lag]
 ```
 
-| Reader | Slow but advancing | Frozen offset | Soft-cap exceeded |
+| Reader | Slow but advancing | Frozen offset | Behind the RAM window |
 |---|---|---|---|
-| **Primary** | Kept (never `ErrSubscriberLagged`) | Per-write deadline → detach reader, keep producing | Trim/spill once primary past trim point or dropped |
-| **Reconnect** | Kept (byte lag alone never kills it) | `LiveStreamReaderStallTimeout` → `ErrSubscriberLagged` | Prefer `ErrResumeCursorPast` if head trimmed |
+| **Primary** | Kept (never `ErrSubscriberLagged`) | Per-write deadline → detach reader, keep producing | Served from spool; trim proceeds regardless |
+| **Reconnect** | Kept (byte lag alone never kills it) | `LiveStreamReaderStallTimeout` → `ErrSubscriberLagged` | Served from spool; `ErrResumeCursorPast` only past the spool tip |
 
-**Never** publish a mid-flight partial body as the durable `completedResponses` entry — replay would synthesize `[DONE]` and silently truncate.
+Every write to a reader is capped at `LiveStreamWriteChunkBytes` (256 KiB). A far-behind reconnect is a sequence of bounded writes, each with its own deadline and each advancing the progress clock — so a healthy-but-slow link is never mistaken for a stalled one. The write runs **inline on the drain goroutine**, bounded by `SetWriteDeadline` through `http.ResponseController`: handing it to a helper goroutine and abandoning it on timeout leaked that goroutine on a black-holed socket and let `WaitPrimary` return while another goroutine could still write to the same response.
 
-### 4.3 Step 5 sub-steps (status)
+**Never** publish a mid-flight partial body as the durable `completedResponses` entry — it would be served to the client as a finished completion and its hash would not match the finish message. Replay of a streamed envelope with no `[DONE]` closes with an explicit `incomplete_stream` error event rather than a synthesized terminator.
+
+### 4.4 When the spool is unavailable
+
+If the spool cannot be created (or fails mid-stream), the generation still runs and still persists normally — only resume is affected:
+
+- `AttachLiveStream` is refused with `ErrLiveStreamResumeUnavailable`; the gateway escalates as for any other resume failure.
+- Head-trim falls back to the slowest live reader, so a stalled reader *can* grow RAM. Past `LiveStreamMaxRAMBytes` that reader is dropped (`ErrSubscriberLagged`, or `ClientDetached` for the primary) so the ceiling always holds.
+- A reconnect that arrives after finish is served from `completedResponses` / the payload store as usual.
+
+### 4.5 Step 5 sub-steps (status)
 
 | Sub-step | Role | Status |
 |---|---|---|
-| **5a** | Reader stall policy (reconnect no-progress; primary write deadline) | Done |
-| **5b** | Cut per-chunk id-rewrite cost; slab sharing deferred (conflicts with trim) | Done (rewrite); slab deferred |
-| **5c** | Head-trim to RAM cap (`eventsBase` / `bytesBase`); no partial durable publish | Done |
-| **5d** | Defensive forming-event cap | Done |
+| **5a** | Reader stall policy (reconnect no-progress; primary write deadline, enforced inline) | Done |
+| **5b** | Cut per-chunk id-rewrite cost; slab sharing deferred | Done (rewrite); slab deferred |
+| **5c** | Spool-backed log + ring-bounded RAM window; chunked reader writes; no partial durable publish | Done |
+| **5d** | Defensive forming-event cap (loud on breach: resume disabled + warn) | Done |
 | **5e** | Payload store as last resume tier; clocks from `ExecutionTimeout` | Done (init defaults; session-dynamic clock follow-up noted in plan) |
-| **5f** | Trim/lag metrics → Step 8 dashboards | Deferred |
+| **5f** | Trim/lag/spool metrics → Step 8 dashboards | Deferred |
 | **5g** | Per-chunk hop timestamps (`: devshard-ts` comments) | Deferred |
+| **5h** | Build the durable envelope by streaming the spool (drop the processor's per-line retention) | Not started — hash-sensitive, separate change |
+
+Per-generation RAM is now `O(LiveStreamRingBytes)` for the **live log**. The remaining per-generation term is the response processor, which still retains every rewritten line for the whole generation and materialises the body again at finish (`GetResponse` → `GetBodyBytes` → `PayloadStore.Store`). Folding that into the spool is 5h.
 
 ---
 
@@ -247,8 +278,8 @@ Clocks that bound producing / holding a winner derive from protocol **`Execution
 | Non-stream no-content / max wait | `ExecutionTimeout` today | Gateway | Pre–always-stream path | Long wait / reduced-`max_tokens` retry — **removed when always-stream forces streaming escalation** |
 | Host ML / drain deadline | `ExecutionTimeout` | Host | Detached client still generating | Stop drain; set `PartialResponse*`; no unbounded orphan GPU |
 | `InflightReplayBufferTTL` | `ExecutionTimeout` | Host | Live attach map entry aged out | **Detach** attachability (do not abort finish); reconnect uses storage or fails cleanly |
-| LiveStream primary write deadline | ~30s | Host | Black-holed primary TCP | `ClientDetached`; keep producing into durable body |
-| LiveStream reader stall (reconnect) | ~30s (> reconnect budget) | Host | Reconnect sub makes zero progress with pending bytes | `ErrSubscriberLagged` → gateway ladder / escalate |
+| LiveStream write deadline (per chunk) | 30s | Host | One ≤256 KiB reader write does not complete | Primary: `ClientDetached`, keep producing. Reconnect: `ErrSubscriberLagged` |
+| LiveStream reader stall (reconnect) | 60s (> reconnect budget) | Host | Reconnect sub makes zero progress with pending bytes | `ErrSubscriberLagged` → gateway ladder / escalate |
 | SSE event size | 1 MiB / line | Gateway transport | Line grows without `\n` | `ErrSSEEventTooLarge` → attempt failure / escalate |
 
 ### 5.2 Decision sketch on a drop
@@ -301,7 +332,7 @@ stream_bps = outputBytes / max(elapsed_since_first_content, ε)
 | `devshard_gateway_reconnect_blips_total` + in-window gauge | Blip pressure per participant |
 | `devshard_gateway_stream_bytes_per_second` / `_total` | Sustained throughput |
 | `sse_event_too_large` attempt reason | Transport DoS abort (landed classifier) |
-| Host 5f: live-log bytes, trim, `cursor_past_after_trim`, `subscriber_lagged`, `reader_lag_bytes` | RAM / stall health |
+| Host 5f: RAM window bytes, spool bytes/lag, `spool_unavailable`, `subscriber_lagged`, `reader_lag_bytes`, reads served from spool vs RAM | RAM / stall / disk-tier health |
 
 ### 6.3 Hop timestamps (Step 5g — deferred)
 
@@ -330,7 +361,7 @@ Carrier: SSE **comment** lines injected at the subscriber writer (`: devshard-ts
 
 | # | Scenario | Assert |
 |---|---|---|
-| 1 | Mid-stream drop, **v5**, reconnect on | One complete non-duplicated completion; exactly one `MsgFinishInference`. Variants: resume from **storage** after drain+forget; head-trim cursor **inside** window; cursor **older** than window → clean escalate |
+| 1 | Mid-stream drop, **v5**, reconnect on | One complete non-duplicated completion; exactly one `MsgFinishInference`. Variants: resume from **storage** after drain+forget; cursor **inside** the RAM window; cursor **older** than the window → served from the spool, byte-identical; spool disabled → clean escalate |
 | 2 | Mid-stream drop, **v4**, reconnect on | No same-nonce resend; today’s escalate / `winner_failed_after_content` contract |
 | 3 | Host permanently down after drop, v5 | Escalation after budget; outcome matches today’s failure contract |
 | 4 | Streaming **and** non-streaming clients, fixed seed | Resumed vs uninterrupted agree on aggregated **content + usage** (not raw bytes — chunk ids rewrite) |

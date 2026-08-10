@@ -277,6 +277,9 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
+	if err := manager.SetLiveStreamSpoolDir(filepath.Join(cfg.DataDir, "livestream-spool")); err != nil {
+		slog.Warn("live stream spool unavailable; mid-flight reconnect disabled", "error", err)
+	}
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)
 	chainBridge.OnSettlementFinalizedHandler(manager.HandleSettlementFinalized)
 

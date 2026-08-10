@@ -26,6 +26,12 @@ func BootReconnectStack(t *testing.T, prefix, versionName string) (*Stack, *conf
 
 // BootReconnectStackWithPrimaryDetach is BootReconnectStack plus
 // DEVSHARD_TEST_DETACH_PRIMARY_AFTER_WRITES patched before the first Up.
+//
+// The env var only does anything in a devshardd built with -tags testenvci; a
+// release binary compiles the fault injector out entirely. Build the stack via
+// `make build-devshardd DEVSHARD_BUILD_TAGS=testenvci` (the
+// citest-attempt-reconnect target already does), or the detach never fires and
+// the resume assertion fails with no visible cause.
 func BootReconnectStackWithPrimaryDetach(t *testing.T, prefix, versionName string, detachAfterWrites int) (*Stack, *config.File, Endpoints) {
 	t.Helper()
 	return bootReconnectStack(t, prefix, versionName, detachAfterWrites)

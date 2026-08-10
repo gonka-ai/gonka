@@ -58,7 +58,8 @@ func TestHost_LiveAttach_SameNonceReconnect(t *testing.T) {
 	require.NoError(t, err)
 
 	engine := &blockingStreamEngine{started: make(chan struct{}), release: make(chan struct{})}
-	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10))
+	h, err := NewHost(sm, hosts[1], engine, "escrow-1", group, nil, WithGrace(10),
+		WithLiveStreamSpoolDir(t.TempDir()))
 	require.NoError(t, err)
 
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
@@ -335,7 +336,7 @@ func TestHost_ConfirmStartNotDuplicatedOnReconnect(t *testing.T) {
 	firstSig := append([]byte(nil), resp.Receipt...)
 
 	// Mark executing with a live stream so reconnect hits alreadyExecuting path.
-	stream := newLiveStream()
+	stream := newSpooledLiveStream(t)
 	h.mu.Lock()
 	h.executing[1] = struct{}{}
 	h.liveStreams[1] = stream

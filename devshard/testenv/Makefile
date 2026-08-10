@@ -18,12 +18,16 @@ clean-keyring: ## Delete generated ./keyring (then run make gen-compose).
 DEVSHARD_VERSION ?= v2
 DEVSHARD_BINARY_VERSION ?= 0.2.13-$(DEVSHARD_VERSION)-r2
 
+# Extra devshardd build tags; set to testenvci only for citests that need a
+# host fault injector (see devshard/host/livestream_fault.go).
+DEVSHARD_BUILD_TAGS ?=
+
 build-devshardd: ## Build linux devshardd for containers (requires Docker). Override DEVSHARD_VERSION=v5 for reconnect citest.
-	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=$(DEVSHARD_VERSION) DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION)
+	$(MAKE) -C ../.. devshardd-build DEVSHARD_VERSION=$(DEVSHARD_VERSION) DEVSHARD_BINARY_VERSION=$(DEVSHARD_BINARY_VERSION) DEVSHARD_BUILD_TAGS=$(DEVSHARD_BUILD_TAGS)
 
 build-devshardd-local: ## Build host devshardd for --print-* checks (no Docker).
 	@mkdir -p ../../build
-	cd .. && go build -ldflags "-X main.Version=$(DEVSHARD_VERSION) -X main.BinaryVersion=$(DEVSHARD_BINARY_VERSION) -X devshard/types.buildStateRootProtocolVersion=$(DEVSHARD_VERSION)" -o ../build/devshardd ./cmd/devshardd/
+	cd .. && go build -tags "$(DEVSHARD_BUILD_TAGS)" -ldflags "-X main.Version=$(DEVSHARD_VERSION) -X main.BinaryVersion=$(DEVSHARD_BINARY_VERSION) -X devshard/types.buildStateRootProtocolVersion=$(DEVSHARD_VERSION)" -o ../build/devshardd ./cmd/devshardd/
 	@echo "Built ../../build/devshardd for this host ($(shell uname -s)/$(shell uname -m)) version=$(DEVSHARD_VERSION)"
 	@echo "For Docker stack use: make build-devshardd (requires Docker daemon)"
 
@@ -109,7 +113,7 @@ citest-attempt-reconnect: ## Same-nonce reconnect citest (admin + v2 protocol ga
 	$(MAKE) build-devshardd DEVSHARD_VERSION=v2
 	$(MAKE) citest-images
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestAttemptReconnect_AdminEnables|TestAttemptReconnect_V2ProtocolSkipsSameNonce' -count=1 -v -timeout 30m
-	$(MAKE) build-devshardd DEVSHARD_VERSION=v5
+	$(MAKE) build-devshardd DEVSHARD_VERSION=v5 DEVSHARD_BUILD_TAGS=testenvci
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestAttemptReconnect_V5MidStreamDetachResumesSameNonce' -count=1 -v -timeout 30m
 	$(MAKE) build-devshardd DEVSHARD_VERSION=v2
 

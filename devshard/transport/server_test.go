@@ -644,7 +644,9 @@ func TestReplaySSEBody_StreamedEnvelopeUnwrapsEvents(t *testing.T) {
 	require.Equal(t, events, got, "reconnect replay must emit the same data-line sequence as the live stream")
 }
 
-func TestReplaySSEBody_StreamedEnvelopeAppendsDoneWhenMissing(t *testing.T) {
+func TestReplaySSEBody_StreamedEnvelopeMarksPartialInsteadOfSynthesizingDone(t *testing.T) {
+	// A post-drain partial is stored without a real [DONE]. Synthesizing one
+	// would make a truncated stream look finished to the client.
 	events := []string{
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
 	}
@@ -655,7 +657,77 @@ func TestReplaySSEBody_StreamedEnvelopeAppendsDoneWhenMissing(t *testing.T) {
 	require.NoError(t, replaySSEBody(rec, body))
 
 	got := sseDataLines(t, rec.Body.String())
-	require.Equal(t, append(append([]string{}, events...), "data: [DONE]"), got)
+	require.Equal(t, append(append([]string{}, events...), partialStreamErrorLine), got)
+	require.NotContains(t, got, "data: [DONE]")
+}
+
+func TestReplaySSEBody_PartialMarkerIsMachineReadableError(t *testing.T) {
+	var payload struct {
+		Error struct {
+			Message string `json:"message"`
+			Type    string `json:"type"`
+			Code    string `json:"code"`
+		} `json:"error"`
+	}
+	raw := strings.TrimPrefix(partialStreamErrorLine, "data: ")
+	require.NoError(t, json.Unmarshal([]byte(raw), &payload))
+	require.NotEmpty(t, payload.Error.Message)
+	require.Equal(t, "incomplete_stream", payload.Error.Type)
+	require.Equal(t, "stream_incomplete", payload.Error.Code)
+}
+
+func TestReplaySSEBodyFromCursor_PartialMarkerCursorAccounting(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"two"}}]}`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	// Cursor inside the stored events: remaining events, then the marker.
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0))
+	require.Equal(t, []string{events[1], partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
+
+	// Cursor exactly at the marker slot: only the marker is owed.
+	rec = httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 2, 0))
+	require.Equal(t, []string{partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
+
+	// Marker already delivered: fully replayed, not cursor-past.
+	rec = httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 3, 0))
+	require.Empty(t, sseDataLines(t, rec.Body.String()))
+
+	// Past the marker: genuinely cursor-past.
+	rec = httptest.NewRecorder()
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, body, 4, 0), host.ErrResumeCursorPast)
+}
+
+func TestReplaySSEBodyFromCursor_PartialMarkerResumesMidMarker(t *testing.T) {
+	events := []string{`data: {"choices":[{"delta":{"content":"one"}}]}`}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	// A mid-event resume emits the remainder verbatim, so it does not start
+	// with "data:" — same shape as any other partial-event resume.
+	partial := int64(10)
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial))
+	require.Equal(t, partialStreamErrorLine[partial:]+"\n\n", rec.Body.String())
+}
+
+func TestReplaySSEBody_CompleteEnvelopeHasNoPartialMarker(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"Hi"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBody(rec, body))
+	require.Equal(t, events, sseDataLines(t, rec.Body.String()))
 }
 
 func TestReplaySSEBody_JSONCompletionKeepsSingleEvent(t *testing.T) {
@@ -707,8 +779,10 @@ func TestLiveAttachFailureReason_MapsResumePathErrors(t *testing.T) {
 		{host.ErrInvalidResumeCursor, observability.ReasonCachedReplayErr},
 		{host.ErrLiveStreamGone, observability.ReasonCachedReplayErr},
 		{host.ErrLiveStreamPruned, observability.ReasonCachedReplayErr},
-		{host.ErrLiveStreamOverCap, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamResumeUnavailable, observability.ReasonCachedReplayErr},
 		{host.ErrSubscriberLagged, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamFormingOversize, observability.ReasonCachedReplayErr},
+		{host.ErrSpoolClosed, observability.ReasonCachedReplayErr},
 		{errors.New("ml exploded"), observability.ReasonExecuteErr},
 	}
 	for _, tc := range cases {
@@ -742,7 +816,7 @@ func TestReplaySSEBody_NormalizesDataPrefixWithoutSpace(t *testing.T) {
 	got := sseDataLines(t, rec.Body.String())
 	require.Equal(t, []string{
 		`data: {"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,
-		"data: [DONE]",
+		partialStreamErrorLine,
 	}, got)
 }
 

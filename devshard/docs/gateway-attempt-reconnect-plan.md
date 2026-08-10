@@ -337,11 +337,12 @@ admin endpoint like the existing knobs:
 | `AttemptReconnectMaxTries` | `2` | Reconnect sends per attempt (total, across all drops of that nonce) |
 | `AllowStreamResetOnFailover` | `false` | R5 opt-in |
 | `InflightReplayBufferTTL` (host) | `ExecutionTimeout` (default 32m) = gateway hard timeout | How long a live per-nonce buffer stays **attachable**; on expiry it is detached, not closed (R6 §5 / R9) |
-| `LiveStreamMaxRAMBytes` (host) | soft cap (e.g. 16–64 MiB) | Hot RAM bound for the live log; also the retained resume window once head-trim lands, and the refuse-new-attach threshold (R9 / Step 5) |
-| `LiveStreamMaxSpillBytes` (host) | `0` initially (spill off) | Optional disk spill for trimmed slabs; `0` = head-trim only, old cursors get `ErrResumeCursorPast` (Step 5) |
-| `LiveStreamReaderStallTimeout` (host) | reconnect-only, must exceed `AttemptReconnectBudget` (e.g. 30s) | How long a **non-primary** subscriber may make **zero** offset progress while bytes are pending before it is closed with `ErrSubscriberLagged` (Step 5a). Progress, however slow, keeps the reader alive |
-| `LiveStreamPrimaryWriteTimeout` (host) | e.g. 30s | Per-write deadline for subscriber #0; breach = client detach (drop reader, keep producing) so a black-holed primary cannot block head-trim (Step 5a) |
-| `LiveStreamMaxLagBytes` (host) | e.g. 4 MiB | **Signal only** (Step 5a): a reader this far behind the tip is reported (`reader_lag_bytes`) and counts toward trim urgency / refuse-new-attach. It never closes a reader that is still advancing |
+| `LiveStreamRingBytes` (host) | `256 KiB` | Trailing RAM window kept per generation. A cache of the spool's tail, **not** the resume horizon — sized for one reader write stall (Step 5c) |
+| `LiveStreamMaxRAMBytes` (host) | `4 MiB` | Hard ceiling, reached only in degraded mode (no usable spool). Past it, readers below the trim point are dropped so the ceiling holds (Step 5c) |
+| `LiveStreamWriteChunkBytes` (host) | `256 KiB` | Max bytes per subscriber write, so a large backlog is many bounded writes rather than one write racing one deadline (Step 5a) |
+| Live-stream spool dir (host) | `{DataDir}/livestream-spool` | Scratch `.log` + `.idx` per generation; emptied at startup, removed on release. Absent ⇒ mid-flight reconnect refused with `ErrLiveStreamResumeUnavailable` (Step 5c) |
+| `LiveStreamReaderStallTimeout` (host) | `60s`, must exceed `AttemptReconnectBudget` | How long a **non-primary** subscriber may make **zero** offset progress while bytes are pending before it is closed with `ErrSubscriberLagged` (Step 5a). Progress, however slow, keeps the reader alive |
+| `LiveStreamPrimaryWriteTimeout` (host) | `30s` | Per-write deadline for **every** reader, enforced inline via `SetWriteDeadline`. Breach on the primary = client detach (drop reader, keep producing); on a reconnect = `ErrSubscriberLagged` (Step 5a) |
 | `SoftSignalPersistIntervalMS` | `60000` | How often gateway soft signals (reconnect blips, rolling stream bps) are flushed to the gateway store (Step 6). `0` disables persist |
 | `ReconnectBlipWindowMS` | `300000` | Sliding window for in-memory + persisted blip timestamps (R8) |
 
@@ -409,56 +410,58 @@ ML.Execute
          └─ reconnect readers (offset C)  ──► AttachLiveStream / Subscribe
 ```
 
-**What is still wrong today (Step 5 scope):**
+**What Step 5 had to close:**
 
 1. **Triple retention.** During drain the same tokens live in the response
    processor body, in `LiveStream.events` (one alloc per line), and then again in
-   `completedResponses` / payload store. Soft cap only refuses new attaches.
-2. **Soft cap is not a RAM bound.** Past `LiveStreamMaxRAMBytes` the producer
-   keeps appending. TTL detach also does not free the log. A stuck or very long
-   generation pins RAM until `RunExecution` returns.
-3. **No subscriber stall policy.** A reconnect whose socket has stopped
-   consuming pins its offset forever while the log grows; there is no
-   `ErrSubscriberLagged`.
-4. **No trim / spill.** The only escape from a large live log is finish →
-   persist → forget, and a stalled primary reader can block even that.
+   `completedResponses` / payload store. Soft cap only refused new attaches.
+   *Status: the live-log copy is now `O(ring)`; the processor copy is 5h.*
+2. **Soft cap was not a RAM bound.** Past `LiveStreamMaxRAMBytes` the producer
+   kept appending, and head-trim could only drop bytes every reader had already
+   consumed — so one pinned reader disabled the bound entirely. *Status: fixed by
+   5c; trim now answers to the spool, not to readers.*
+3. **No subscriber stall policy.** A reconnect whose socket stopped consuming
+   pinned its offset forever while the log grew. *Status: fixed by 5a.*
+4. **No escape from a large live log** other than finish → persist → forget, and
+   a stalled primary reader could block even that. *Status: fixed by 5c.*
 
-**Storage tiers (target):**
+**Storage tiers:**
 
-1. **Hot RAM** — prefer contiguous / slab segments over one `[]byte` per SSE
-   line; soft cap sized for “reconnect blackout × token rate,” not the full
-   hard-timeout generation.
-2. **Head-trim (default escape)** — past the soft cap, drop the oldest bytes the
-   slowest live reader has already consumed, keeping a trailing resume window of
-   at most `LiveStreamMaxRAMBytes`. A reconnect whose cursor is older than the
-   window gets `ErrResumeCursorPast`, which the gateway already treats as a
-   resume failure → escalate. No new durable machinery, no new error contract.
-3. **Spill to disk** (optional, default off) — temp file / mmap keyed by
-   escrow+nonce, so trimming does not cost resumability. Logical cursor stays a
-   **byte offset**. Spill I/O must never run under the producer lock (async /
-   off-path), or R9's non-blocking invariant collapses.
-4. **Durable RAM cache** `completedResponses` (already exists) — populated
+1. **Hot RAM window** (`LiveStreamRingBytes`) — a bounded cache of the spool's
+   tail, sized for one reader write stall. Not the resume horizon.
+2. **Spool on disk** (`.log` + `.idx`, per generation) — the log itself. Head-trim
+   answers only to how much of it is written, so no reader can pin RAM, and a
+   cursor older than the window still resolves. Scratch: no `fsync`, removed on
+   release, swept at startup. Spool I/O never runs under the producer lock.
+3. **Durable RAM cache** `completedResponses` (already exists) — populated
    **only on ML completion**, then the live log is forgotten. Mid-flight
    publishing is **forbidden**: see the partial-publish hazard below. Note this
    tier is short-lived: it is evicted as soon as `MsgFinishInference` /
    `MsgTimeoutInference` lands in an applied diff (`reconcile.go:118-125`).
-5. **Payload store on disk** (exists, **not yet a resume source**) — the engine
-   already persists prompt + response body for validation, retained until the
-   inference is sealed (`InferenceSealGraceSeconds`, default 3600s /
-   `InferenceSealGraceNonces` = 10×groupSize). The `host` package has no read
-   path, so today a reconnect after `completedResponses` eviction fails with
-   `ReasonInferenceDisappeared` even though the bytes are on disk. Step 5e wires
-   this in, which is what makes trimming (and eviction) safe.
+4. **Payload store on disk** — the engine persists prompt + response body for
+   validation, retained until the inference is sealed
+   (`InferenceSealGraceSeconds`, default 3600s / `InferenceSealGraceNonces` =
+   10×groupSize). Wired as a resume source in Step 5e, which is what makes cache
+   eviction safe. **Write-once and hash-bound**: never the mid-flight tier — that
+   is the spool's job (5c §6).
 
 **Never publish a partial body as the durable one.** `completedResponses[id]` is
 consumed by `signReceipt`'s `hasCached` branch *before* the live branch, and
-transport replays it with `replaySSEBodyFromCursor`, which **synthesizes a
-trailing `data: [DONE]` when the body lacks one**. A partial body published
-mid-flight would therefore be replayed to the client as a complete, well-formed
-completion — silent truncation, strictly worse than a clean resume failure. The
-payload-store copy must also hash-match `MsgFinishInference.ResponseHash`, so a
-partial store breaks validation. Mid-flight RAM relief is trim and/or spill; the
-durable body stays a completion-time artifact.
+transport replays it with `replaySSEBodyFromCursor`. A partial body published
+mid-flight would therefore be replayed to a client that has no way to tell it
+apart from a finished one. Replay no longer synthesizes a trailing `data:
+[DONE]` for a streamed envelope that lacks one — it emits
+`partialStreamErrorLine` (`type: incomplete_stream`) instead, so truncation is
+explicit — but that is a last line of defence, not a licence to publish
+partials: the payload-store copy must also hash-match
+`MsgFinishInference.ResponseHash`, so a partial store breaks validation.
+Mid-flight RAM relief is head-trim against the spool; the durable body stays a
+completion-time artifact.
+
+The marker occupies exactly **one event slot past the stored events** in cursor
+space (the gateway counts it like any forwarded event), so a reconnect whose
+cursor already covers it replays as fully-delivered rather than
+`ErrResumeCursorPast`.
 
 **Backpressure (retain + stall error, with primary asymmetry):**
 
@@ -470,30 +473,29 @@ merely slow is a healthy reader: it is still delivering bytes the client needs
 and it will still finish. Only a reader whose offset does not move at all is
 unrecoverable, and only that case has to be converted into a drop.
 
-| Reader | When it is slow but still advancing | When it stops advancing | When soft cap exceeded |
+| Reader | When it is slow but still advancing | When it stops advancing | When it falls behind the RAM window |
 |---|---|---|---|
-| **Primary (sub #0)** | Kept. Never failed with `ErrSubscriberLagged` — that would turn a slow client TCP into a reconnect ladder on a healthy generation. | Per-write deadline (`LiveStreamPrimaryWriteTimeout`) breached → treat exactly as today's write error: set `ClientDetached`, drop the reader, keep producing into the durable body. | Producer keeps appending; trim/spill proceed once the primary is past the trim point or has been dropped |
-| **Reconnect** | Kept. Byte lag alone never closes it — a resume that is behind by tens of MiB but still draining is exactly the case reconnect exists to serve. | No offset progress for `LiveStreamReaderStallTimeout` while bytes are pending → close that sub with `ErrSubscriberLagged` (gateway escalates / retries). Generation stays available. | Refuse new `AttachLiveStream`; if the head was trimmed, prefer `ErrResumeCursorPast` (accurate) over a sticky `ErrLiveStreamOverCap` |
+| **Primary (sub #0)** | Kept. Never failed with `ErrSubscriberLagged` — that would turn a slow client TCP into a reconnect ladder on a healthy generation. | Per-write deadline (`LiveStreamPrimaryWriteTimeout`) breached → treat exactly as today's write error: set `ClientDetached`, drop the reader, keep producing into the durable body. | Served from the spool. Head-trim proceeds regardless of where it sits. Degraded (no spool): dropped at `LiveStreamMaxRAMBytes` |
+| **Reconnect** | Kept. Byte lag alone never closes it — a resume that is behind by tens of MiB but still draining is exactly the case reconnect exists to serve. | No offset progress for `LiveStreamReaderStallTimeout` while bytes are pending → close that sub with `ErrSubscriberLagged` (gateway escalates / retries). Generation stays available. | Served from the spool; `ErrResumeCursorPast` only past the spool tip. Degraded (no spool): attach refused with `ErrLiveStreamResumeUnavailable` |
 
 `ErrSubscriberLagged` means: “this generation is still available, but this TCP
 client has stopped consuming.” Same class as cursor-past for the gateway ladder.
 Prefer failing one dead reconnect over corrupting the stream or stalling ML.
 
-**Why every reader needs a stall bound.** Trimming can only drop bytes below the
-slowest live reader, and the primary starts at offset 0. `writeReplay` does a
-plain `w.Write` with no deadline, so a black-holed client socket can park a
-reader indefinitely and pin the entire log — the unbounded case this step exists
-to remove. A write deadline (`http.NewResponseController().SetWriteDeadline`,
-already used in this codebase for Flush) converts that into an ordinary detach.
+**Why every reader still needs a stall bound.** RAM is no longer the reason —
+5c's spool decouples the window from reader offsets — but a reader parked on a
+black-holed socket is still a liveness problem: it holds a gateway connection and
+a ladder slot while delivering nothing. A write deadline
+(`http.NewResponseController().SetWriteDeadline`, already used in this codebase
+for Flush) converts that into an ordinary detach.
 
-**What a stall bound does *not* bound.** A reader that keeps advancing, just
-slower than ML produces, keeps `[reader.offset, tip)` alive by definition — those
-bytes are still undelivered, so head-trim may not touch them. Hot RAM for that
-generation is therefore only bounded by finish, by that reader catching up, or by
-paging the unread window out of RAM (5c spill). Closing a still-advancing reader
-to reclaim RAM is explicitly rejected: it trades a working stream for a resume
-failure. If slow-but-alive readers turn out to drive RAM in practice, the answer
-is enabling spill, not lowering a lag threshold.
+**A stall bound is not a RAM bound, and must not be used as one.** A reader that
+keeps advancing, just slower than ML produces, keeps `[reader.offset, tip)`
+undelivered by definition. Before 5c that pinned hot RAM; now those bytes live in
+the spool and the reader reads them from disk, so the answer to "RAM is high
+because a healthy reader is behind" is *nothing* — it no longer happens. Closing
+a still-advancing reader to reclaim RAM stays explicitly rejected: it trades a
+working stream for a resume failure.
 
 **Two-copy reality (not three).** For a streamed inference the durable body is a
 `{"events":[…]}` envelope built by the response processor, i.e. essentially the
@@ -520,14 +522,13 @@ reconnect will desync. That is a hard acceptance criterion.
   **detach, do not close** the log. Prune means “live attach unavailable,” not
   “abort finish.” Attach surfaces `ErrLiveStreamGone`; `ErrLiveStreamPruned`
   remains `Subscribe`'s defensive check for direct holders. Transport maps both
-  (plus `OverCap` / cursor errors) to `ReasonCachedReplayErr`.
-- TTL alone does **not** bound RAM — Step 5's head-trim (plus the reader stall
-  bounds that make trimming possible) does, and only for readers that have
-  consumed the head.
-- Caps: `LiveStreamMaxRAMBytes`, `LiveStreamMaxSpillBytes` (default 0),
-  `LiveStreamReaderStallTimeout` (reconnect-only),
-  `LiveStreamPrimaryWriteTimeout`, max subscribers (1–2).
-  `LiveStreamMaxLagBytes` is a reporting/urgency signal, not a close threshold.
+  (plus resume-unavailable / lagged / cursor errors) to `ReasonCachedReplayErr`.
+- TTL alone does **not** bound RAM — 5c's head-trim against the spool does, and
+  unlike the earlier head-trim it does so regardless of reader behaviour.
+- Caps: `LiveStreamRingBytes` (RAM window), `LiveStreamMaxRAMBytes` (degraded-mode
+  ceiling), `LiveStreamWriteChunkBytes`, `LiveStreamReaderStallTimeout`
+  (reconnect-only), `LiveStreamPrimaryWriteTimeout` (all readers), max
+  subscribers (1–2).
 
 ---
 
@@ -643,30 +644,35 @@ earlier) session, a mid-stream drop must **not** same-nonce resend and must foll
 escalation / `winner_failed_after_content` contract; the same drop on a `v5` session enters the
 reconnect ladder.
 
-### Step 5 — Host: bound the live log (R9 finish)
+### Step 5 — Host: bound the live log (R9 finish) ✅ (5a–5e; 5f–5h open)
 
-`devshard/host/livestream.go`, `devshard/host/host.go`,
-`devshard/cmd/devshardd/inference/{proxy,execute}.go`, transport error mapping.
+`devshard/host/livestream.go`, `devshard/host/spool.go`, `devshard/host/host.go`,
+`devshard/cmd/devshardd/session/manager.go`, `devshard/cmd/devshardd/app.go`,
+transport error mapping.
 
 **Status of the original Step 5 list:** the append-only log, “never Write under
 `mu`,” primary-as-subscriber-#0, wire→byte-offset conversion, TTL align, and
 refuse-attach soft cap are **already landed** in Steps 2–4. Do not rebuild them.
 
 This step closes the gaps those landings left open: unbounded / duplicated RAM,
-missing stall policy, and no escape hatch when the soft cap is hit mid-flight.
+missing stall policy, and no escape hatch when the cap is hit mid-flight. 5c in
+particular replaced the original head-trim-plus-optional-spill plan, whose bound
+collapsed whenever a reader stopped consuming — see the rewrite below.
 
 #### Goals
 
-1. Hot RAM per in-flight generation is **bounded** by `LiveStreamMaxRAMBytes`,
-   not merely "attach-refused past it".
+1. Hot RAM per in-flight generation is `O(LiveStreamRingBytes)` **independent of
+   reader behaviour** — not merely "attach-refused past a soft cap", and not
+   contingent on every reader having consumed the head.
 2. No mid-flight partial body is ever published as the durable one.
 3. A **stalled** reconnect (zero progress) is failed with `ErrSubscriberLagged`;
-   a merely slow one is kept. The primary is never failed that way, but is
-   droppable as a reader on a hard write stall so it cannot pin the log forever.
+   a merely slow or far-behind one is kept and served from disk. The primary is
+   never failed for lag, but is droppable as a reader on a hard write stall.
    No reader is ever closed for being behind while it is still advancing.
-4. Trim / spill never run under `LiveStream.mu` in a way that blocks ML `Write`.
-5. Resume cursor semantics stay identical to `replaySSEBodyFromCursor` after
-   trimming, spilling, and finish.
+4. Trim and disk I/O never run under `LiveStream.mu` in a way that blocks ML
+   `Write`.
+5. Resume cursor semantics stay identical to `replaySSEBodyFromCursor` whether
+   the cursor resolves against RAM, the spool, or a finished body.
 
 #### Incremental path
 
@@ -688,22 +694,28 @@ which is the opposite of what R3/R4 are for.
   (`ReasonCachedReplayErr`). A sub that is caught up and idle-waiting on the
   producer is **not** stalled — the clock only runs while there is undelivered
   data.
-- **Byte lag never closes a reader.** `LiveStreamMaxLagBytes` stays as a metric /
-  trim-urgency and refuse-new-attach input only. A reconnect that is 50 MiB
-  behind but still advancing is exactly the blackout case reconnect exists to
-  serve; killing it burns a ladder try and truncates the client for no gain.
+- **Byte lag never closes a reader.** A reconnect that is 50 MiB behind but still
+  advancing is exactly the blackout case reconnect exists to serve; killing it
+  burns a ladder try and truncates the client for no gain. With 5c's spool such a
+  reader is simply reading from disk and costs no hot RAM at all.
 - **Primary (sub #0) is never failed with `ErrSubscriberLagged`** — that would
-  force a reconnect ladder for a healthy generation. Instead give the primary
-  write a **deadline** (`http.NewResponseController(w).SetWriteDeadline`, the
-  same controller pattern already used for Flush). On breach, treat it exactly
-  like today's write error: set `ClientDetached`, drop the reader, keep
-  producing. Without this the primary can park at offset 0 on a black-holed
-  socket and block all trimming (5c).
-- The two mechanisms are the same policy at different layers: the primary's
-  deadline catches a stall inside one blocked `Write`, the reconnect's stall
-  timeout catches a socket that accepts bytes so slowly that the offset never
-  moves. Consider applying the write deadline to reconnect subs too, so a stall
-  is detected inside the write rather than after it.
+  force a reconnect ladder for a healthy generation. Instead give the write a
+  **deadline** (`http.NewResponseController(w).SetWriteDeadline`, the same
+  controller pattern already used for Flush). On breach, treat it exactly like
+  today's write error: set `ClientDetached`, drop the reader, keep producing.
+- **The deadline applies to every reader, and the write runs inline on the drain
+  goroutine.** An earlier shape raced the write in a helper goroutine against a
+  timer; on breach the subscriber was dropped while that goroutine stayed blocked
+  on the dead socket, holding its chunk — a goroutine/buffer leak under reconnect
+  churn, and worse, a second writer that could still touch the primary response
+  after `WaitPrimary` had released it. Inline + `SetWriteDeadline` is the fix:
+  the transport aborts the write, `WaitPrimary` is exact, and nothing is
+  abandoned. A writer that does not implement `SetWriteDeadline` is logged once —
+  it is genuinely un-interruptible, and pretending otherwise was the bug.
+- The two mechanisms are the same policy at different layers: the per-write
+  deadline catches a stall inside one blocked `Write`; the stall timeout catches
+  a socket that accepts bytes so slowly that the offset never moves between
+  writes.
 - Threshold sizing: `LiveStreamReaderStallTimeout` must exceed
   `AttemptReconnectBudget` (and should be in the same range as the gateway's
   `InterChunkStallTimeout`, not the 1s ladder budget), otherwise a transient
@@ -711,9 +723,13 @@ which is the opposite of what R3/R4 are for.
   admin.
 - **Explicit non-goal:** 5a does not bound hot RAM for a slow-but-alive reader —
   its unread window is undeliverable-yet-needed by construction. That is 5c's
-  job (head-trim below the slowest reader, spill if trims start costing real
-  reconnects), and it must not be worked around by lowering a stall threshold
-  until it starts hitting healthy readers.
+  job, and it must not be worked around by lowering a stall threshold until it
+  starts hitting healthy readers.
+- **Chunk the writes.** One wakeup must not turn a large backlog into a single
+  multi-MiB write racing one deadline: a reconnect on a healthy-but-slow link
+  would breach it and be failed as lagged even though it was progressing fine.
+  Cap each write at `LiveStreamWriteChunkBytes` so the progress clock advances
+  per chunk.
 
 **5b — Remove the duplicate event copy (only if provably safe)**
 
@@ -730,7 +746,7 @@ two retained sequences diverge in both directions:
 | `data: {…}`, rewrite OK | `updatedLine`, no `\n` | `updatedLine` + `"\n"` |
 | `data: [DONE]` / non-data | `line`, no `\n` | `line` + `"\n"` |
 | Blank separator (`line == ""`) | **nothing** (processor is skipped by the `line != ""` guard) | `"\n"`, merged into the previous event |
-| Rewrite error | `line` (appended *before* the error returns) | **nothing** (proxy `continue`s before `Fprintln`) |
+| Rewrite error | `line` (appended *before* the error returns) | same raw `line` + `"\n"` (proxy forwards the fallback so live log and durable body stay event-aligned for resume cursors) |
 
 Also note `updatedLine` is not the upstream text: `addOrReplaceIdValue`
 round-trips through `map[string]interface{}`, so keys come back alphabetically
@@ -740,8 +756,8 @@ overwhelming majority of volume — with each structure keeping its own framing.
 
 - Share via a **slab**: write the rewritten line once, have `LiveStream.events[i]`
   index `slab[start:end+1]` (with `\n`) and the processor's element be a string
-  view of `slab[start:end]` (without). Blank separators are a log-only byte; error
-  lines are processor-only and rare.
+  view of `slab[start:end]` (without). Blank separators are a log-only byte;
+  rewrite-error lines are forwarded raw into both sides and are rare.
 - **Ordering conflict with 5c.** Go strings are immutable and `[]byte(s)` copies,
   so a string view over slab bytes requires `unsafe.String` and a slab that is
   never re-sliced, compacted, or reused — which is exactly what head-trim wants
@@ -802,48 +818,101 @@ rewrite as a coordinated byte-form change, not a drop-in.
   same document, and nested `tool_calls[].id` / id-like text inside content must
   be left untouched.
 
-**5c — Bound hot RAM: head-trim (default), spill (opt-in)**
+**5c — Bound hot RAM: spool-backed log with a RAM window**
 
-When `totalBytes - bytesBase` crosses `LiveStreamMaxRAMBytes`:
+The earlier plan here was "head-trim below the slowest reader, spill later if
+trims start costing reconnects". That shape has a structural flaw: trim may only
+drop bytes *every* live reader has consumed, so a single reader that stops
+consuming pins the window for as long as it is pinned, and the cap degrades from
+a bound into a hope. Sizing around that is what pushed `LiveStreamMaxRAMBytes` to
+tens of MiB — the cap was really a *resume horizon* (how long a blackout can last
+before a reconnect has to buy a whole new generation), and paying for a resume
+horizon in hot RAM is the wrong trade.
 
-1. Refuse new `AttachLiveStream` — already landed.
-2. **Head-trim (default, `LiveStreamMaxSpillBytes == 0`).** Drop whole events
-   from the head as long as they are below the offset of every live reader,
-   keeping a trailing resume window of at most `LiveStreamMaxRAMBytes`. The cap
-   *is* the window; no extra knob. A reconnect whose cursor predates the window
-   gets `ErrResumeCursorPast` → gateway escalates, which is the contract that
-   already exists for a too-old cursor.
-3. **Requires explicit bases.** `deliveredAbsOffsetLocked` and
-   `copyPendingLocked` currently assume `events[0]` starts at absolute 0. Trim
-   must introduce `eventsBase` / `bytesBase`, translate cursors against them,
-   and return `ErrResumeCursorPast` below `bytesBase`. Also recompute the
-   sticky `overCap` flag after a trim instead of latching it forever.
-4. **Spill (opt-in later)** if metrics show trims are costing real reconnects:
-   `LiveStreamMaxSpillBytes > 0` pages trimmed slabs to a host-local temp file
-   keyed by escrow+nonce, so an old cursor still resolves. Disk I/O happens
-   **off** the producer lock; `Write` only appends / queues.
-   Spill is also the **only** way to bound hot RAM against a slow-but-alive
-   reader, since 5a deliberately keeps such a reader and head-trim may not touch
-   its unread window. When `reader_lag_bytes` is what drives the RAM gauge (as
-   opposed to a fast tip and a caught-up reader), spill is the lever — not a
-   tighter stall timeout.
-5. Never block ML `Write` on disk, on a subscriber, or on trimming.
-6. **Never** relieve pressure by publishing a partial body into
+**Invert it: disk is the log, RAM is a cache of its tail.** Not a fallback tier
+and not an opt-in mode — the single storage layout, with no "spill" branch to
+reason about.
+
+```text
+LiveStream.Write ──► RAM window (events + forming)      ← bounded cache of the tail
+                          │
+                          └─► spool pump goroutine ──► <escrow>-<inference>.log
+                                                       <escrow>-<inference>.idx
+readers: offset ≥ bytesBase → RAM;  offset < bytesBase → pread the .log
+```
+
+1. **`LiveStreamRingBytes` (256 KiB) is the RAM window**, sized for "one write
+   stall of the fastest reader", not for a generation. `LiveStreamMaxRAMBytes`
+   demotes to a hard ceiling that only matters in the degraded case below.
+2. **Head-trim's only barrier is the spool offset.** Reader offsets do not enter
+   into it. A reader that has fallen behind the window is served by `pread` on
+   the next iteration, re-evaluated per chunk, so there is no mode latch and no
+   reader can pin RAM. This is the property the old design could not provide.
+3. **The pump is a separate goroutine.** `Write` appends to RAM and wakes it;
+   the pump copies the complete-event tail out from under the lock and writes it.
+   A stalled disk costs RAM window, never ML progress — the R9 non-blocking
+   invariant is structural rather than a review rule.
+4. **`.idx` is what makes disk retention the resume horizon.** Entry *k* is the
+   `.log` offset where content event *k* starts, so a cursor older than the RAM
+   window resolves with one `pread` instead of `ErrResumeCursorPast`. Blank SSE
+   separators are merged into the preceding event exactly as in RAM, so event
+   numbering matches the gateway cursor and `replaySSEBodyFromCursor` in every
+   tier. The lookup runs **off** `LiveStream.mu` — index entries are immutable
+   once written, so the producer never waits on a file read.
+5. **The spool is scratch, not state.** No `fsync`, removed on release, whole
+   directory emptied at startup. Losing it costs at most one resume, exactly like
+   losing the RAM log did. It is *not* the durable artifact and must never be
+   confused with one.
+6. **Payload storage is not usable for this** and must not be extended to be.
+   Its interface is whole-blob write-once (`Store(...prompt, response []byte)`,
+   one `BYTEA` row or one JSON file), and its contents are hash-bound:
+   validators re-fetch the stored payload and require
+   `sha256(stored) == MsgFinishInference.ResponseHash`. A row in a partial state
+   would be replayed to a client as a complete completion (R9's partial-publish
+   hazard) and would fail validation. Two artifacts, two jobs: spool mid-flight,
+   payload store at finish.
+7. **Degraded mode (no spool).** If the spool cannot be created or fails
+   mid-stream, the generation still runs and still persists; only resume is lost.
+   `AttachLiveStream` is refused with `ErrLiveStreamResumeUnavailable`, trim falls
+   back to the slowest live reader, and past `LiveStreamMaxRAMBytes` that reader
+   is dropped (`ErrSubscriberLagged`, or `ClientDetached` for the primary) so the
+   ceiling always holds. Deliberately *not* a silent fallback to a large RAM
+   window: a reconnect that cannot be served correctly should fail fast and let
+   the gateway escalate.
+8. **Never** relieve pressure by publishing a partial body into
    `completedResponses` / payload store — see the partial-publish hazard in R9
-   (`replaySSEBodyFromCursor` would synthesize `[DONE]` and silently truncate
-   the client, and the stored hash would not match the finish message).
+   (the stored hash would not match the finish message, and the client would be
+   served a truncated completion; replay now closes such a body with
+   `partialStreamErrorLine` rather than a synthesized `[DONE]`, which makes the
+   truncation visible but does not make publishing one acceptable).
 
-Trim/spill must preserve cursor identity: a reconnect at
-`(delivered_events, delivered_partial)` inside the retained window must yield
-byte-identical output to an untrimmed log.
+Cursor identity is the acceptance bar: a reconnect at
+`(delivered_events, delivered_partial)` must yield byte-identical output whether
+it resolves against RAM, against the spool index, or against a finished body.
+
+**What this does not fix.** Per-generation RAM is now `O(ring)` for the *live
+log* only. `ExecutorResponseProcessor` still retains every rewritten line for the
+whole generation, and finish still materialises the body twice more
+(`GetResponse` parses all lines into typed structs; `GetBodyBytes` marshals the
+envelope; `PayloadStore.Store` takes a `[]byte`). Folding that into the spool —
+streaming the envelope out of the record-framed log — is **5h**, and it is
+hash-sensitive: the streamed encoding must be byte-identical to
+`json.Marshal(SerializedStreamedResponse{...})` or `ResponseHash` moves.
 
 **5d — Forming-line bound (defensive only)**
 
 The real producer cannot grow `forming` without bound: the proxy writes
 newline-terminated lines (`fmt.Fprintln`) and upstream lines are already capped
-at `maxScannerBufferSize` (1 MiB). Keep a defensive cap for non-line writers,
-count `forming` toward the RAM cap (it already is), and treat breach as a stream
-error — **not** as a trigger to publish a durable body.
+at `maxScannerBufferSize` (1 MiB). Keep a defensive cap for non-line writers and
+treat breach as a stream error — **not** as a trigger to publish a durable body.
+
+Breach must be **loud**. `Write` still returns success, deliberately: failing it
+would abort an ML drain that still owes us a durable body, and the proxy would
+mis-record the failure as a client detach. But the live log is now truncated
+while the durable body continues, and that divergence has to be visible rather
+than hidden behind a successful return — so breach also disables resume for the
+generation (attach returns `ErrLiveStreamFormingOversize`) and logs a warning
+naming the truncation.
 
 **5e — Payload store as the last resume tier**
 
@@ -852,7 +921,8 @@ are not connected:
 
 | Tier | Lives until | Readable by reconnect? |
 |---|---|---|
-| `LiveStream` log | `RunExecution` returns (≤ host drain cap) | yes, `AttachLiveStream` |
+| `LiveStream` RAM window | trimmed to `LiveStreamRingBytes` continuously | yes, `AttachLiveStream` |
+| `LiveStream` spool (disk) | `Release` after `RunExecution` returns | yes, `AttachLiveStream` via `.idx` |
 | `completedResponses` | the finish tx appears in an applied diff | yes, `hasCached` |
 | payload store (disk) | inference sealed (~1h via seal grace) | **no read path** |
 
@@ -861,12 +931,11 @@ are not connected:
   `completedResponses` misses, before declaring `ReasonInferenceDisappeared`.
 - Replay it through `replaySSEBodyFromCursor` exactly like the RAM cache, so the
   resume cursor behaves identically across all three tiers.
-- This is what makes 5c's head-trim and the existing cache eviction safe: a
-  trimmed or evicted prefix is no longer a resume cliff for a *completed*
-  generation; only a still-producing generation past its window degrades to
-  `ErrResumeCursorPast` (mid-flight there is no disk copy yet — the engine
-  stores payloads only after the drain finishes, which is why spill remains the
-  opt-in answer for very long mid-flight blackouts).
+- This is what makes cache eviction safe for a *completed* generation: an evicted
+  prefix is no longer a resume cliff. Mid-flight the equivalent role is played by
+  5c's spool, which is why the two must not be conflated — the payload store is
+  written once, whole, at finish, and is hash-bound; the spool is scratch and
+  exists only while the generation is producing.
 
 **Timeout alignment (single source of truth):** do **not** keep independent
 5m / 30m ops clocks. Derive host drain, LiveStream TTL, and gateway attempt hard
@@ -887,17 +956,29 @@ inference the chain may already mark missed. Prefer deriving from
 
 **5f — Metrics (feeds Step 8)**
 
-Emit at least: live-log bytes gauge, soft-cap hits, **trimmed bytes / trimmed
-events**, resume failures caused by trim (`cursor_past_after_trim` — the signal
-that decides whether spill is worth enabling), spill bytes (if enabled),
-`subscriber_lagged` (reconnect only, stall-triggered), and primary
-write-deadline detaches.
+Emit at least: RAM window bytes gauge, **trimmed bytes / trimmed events**, spool
+bytes written and spool lag (`tip - spoolOffset` — the only thing that can now
+push the window over its target), reads served from spool vs RAM,
+`spool_unavailable` / spool failures, resume failures past the spool tip,
+`subscriber_lagged` (reconnect only, stall-triggered), and write-deadline
+detaches by role.
 
-Because 5a no longer closes readers for depth, `reader_lag_bytes` (max over live
-subs, by role) becomes a first-class gauge rather than a threshold: it is how we
-tell "RAM is high because a healthy reader is behind" (→ consider spill) from
-"RAM is high because nobody has consumed the head" (→ trim is working). Alerting
-on it must not be wired to any close action. Dashboard / lint in Step 8.
+Because 5a never closes readers for depth and 5c makes depth free, `reader_lag_bytes`
+(max over live subs, by role) is a pure client-health gauge: it says how far
+behind a client is, not how much RAM is at risk. Alerting on it must not be wired
+to any close action. Dashboard / lint in Step 8.
+
+**5h — Stream the durable envelope from the spool (not started)**
+
+With a record-framed spool the finish path could build `{"events":[…]}` by
+streaming the log instead of from a second full in-RAM copy, retiring
+`ExecutorResponseProcessor`'s per-line retention and making per-generation RAM
+`O(ring)` end to end. Two hard constraints: the streamed encoding must be
+byte-identical to `json.Marshal(SerializedStreamedResponse{...})` or
+`ResponseHash` moves, and `PayloadStore.Store` takes a `[]byte`, so one full-body
+materialisation at finish remains until the storage interface grows a streaming
+write. Even so the win is real: full-body exposure drops from *every in-flight
+generation* to *every finishing generation*.
 
 **5g — Hop timestamps (gateway ↔ host ↔ ML)**
 
@@ -1050,9 +1131,11 @@ plus a coverage counter for events missing stamps while hosts roll out.
 - Replacing the append-only log or primary-as-#0 design (done).
 - Client-facing resume / Last-Event-ID (separate proposal).
 - Making blips affect routing (R8 — observability only).
-- Spill as a rollout blocker — head-trim is enough for v1; spill is a
-  metrics-gated follow-up behind `LiveStreamMaxSpillBytes`.
+- Retiring the response processor's per-line retention — that is 5h, and it
+  changes hash-critical code.
 - Any mid-flight write to `completedResponses` / payload store.
+- Making the spool durable (`fsync`, crash recovery, cross-instance sharing).
+  It is scratch by design; surviving a host restart is Step 10's problem.
 
 #### Tests (unit)
 
@@ -1063,18 +1146,26 @@ plus a coverage counter for events missing stamps while hosts roll out.
   keeps appending and finish still publishes.
 - **Slow-but-alive reader is never closed:** a reconnect draining far slower than
   the producer, ending far behind the tip in bytes, runs to completion with
-  byte-identical output and no `ErrSubscriberLagged` — including when it crosses
-  `LiveStreamMaxLagBytes` and when the RAM soft cap is exceeded (which may refuse
-  *new* attaches but must not touch this reader).
+  byte-identical output and no `ErrSubscriberLagged` — including once it has
+  fallen out of the RAM window and is being served from the spool.
 - A caught-up sub parked in `cond.Wait()` for longer than the stall timeout,
   because the producer itself is slow, is **not** closed.
-- Head-trim: log stays within `LiveStreamMaxRAMBytes` across a long stream; a
-  reconnect **inside** the retained window is byte-identical to an untrimmed
-  control; a reconnect **older** than the window gets `ErrResumeCursorPast`
-  (not a truncated success).
-- Trim never crosses a live reader's offset: slow-but-alive reconnect keeps
-  receiving contiguous bytes while the head is trimmed behind it.
-- `overCap` clears after a trim (attach refusal is not permanent).
+- **Head-trim is independent of readers:** with a reader pinned at offset 0 for a
+  long burst, the RAM window still converges to `LiveStreamRingBytes` and
+  `bytesBase` advances past that reader — and when it unblocks it receives every
+  produced byte, contiguously, from the spool.
+- Cursor **older** than the RAM window resolves through `.idx` and is
+  byte-identical to an untrimmed control, at an event boundary and mid-event;
+  only a cursor past the spool tip gets `ErrResumeCursorPast`.
+- A large backlog is delivered as multiple bounded writes, none exceeding
+  `LiveStreamWriteChunkBytes`.
+- No body byte reaches a writer after `WaitPrimary` returns, including when the
+  primary was dropped by a write-deadline breach (regression test for the
+  abandoned-write leak).
+- Degraded mode: with no spool, `Subscribe` is refused with
+  `ErrLiveStreamResumeUnavailable`, and a pinned reader is dropped so the RAM
+  window stays within `LiveStreamMaxRAMBytes`.
+- `Release` removes both spool files; a startup sweep empties the directory.
 - No partial body ever appears in `completedResponses` / payload store while
   executing — assert the map is empty for that nonce until finish, and that a
   mid-flight reconnect never takes the `hasCached` branch.
@@ -1083,11 +1174,10 @@ plus a coverage counter for events missing stamps while hosts roll out.
   instead of failing `ReasonInferenceDisappeared` (5e).
 - Retained bytes for a large stream stay within the 5b bound; no per-line alloc
   blow-up.
-- Spill (when enabled in test): reconnect resumes from disk-backed offset;
-  producer `Write` does not perform disk I/O under the lock (hook asserting
-  unlock-before-disk).
+- Producer `Write` performs no disk I/O: with the spool pump blocked, `Write`
+  still returns promptly.
 - Cursor: blank SSE separators do not desync wire event/partial across live,
-  trimmed, and finished replay.
+  spooled, and finished replay.
 - 5g cursor isolation: a stream carrying `: devshard-ts` comments produces
   **byte-identical** log contents and an identical resume cursor to the same stream
   without them; a reconnect at the same cursor yields the same bytes either way.
@@ -1205,10 +1295,12 @@ Only the operator-facing rolling soft state that survives restart.
 **Landed (partial; see scenarios).** Harness knob `MultiConfigOpts.VersionName` +
 `BootReconnectStack` stamps a v5 escrow without the full Step 9.2 rollout. Admin
 `POST /v1/admin/settings` accepts `attempt_reconnect_*` (in-memory apply; DB columns
-remain Step 8). Host test fault `DEVSHARD_TEST_DETACH_PRIMARY_AFTER_WRITES` /
-`TestDetachPrimaryAfterWrites` injects a gateway↔host drop while ML drain continues
-(env patched onto **every** versiond service). Run target:
-`make -C devshard/testenv citest-attempt-reconnect`.
+remain Step 8). Host test fault `DEVSHARD_TEST_DETACH_PRIMARY_AFTER_WRITES` injects a
+gateway↔host drop while ML drain continues (env patched onto **every** versiond
+service). The injector lives in `host/livestream_fault_testenvci.go` behind
+`//go:build testenvci` and is compiled out of release binaries, so the v5 leg builds
+with `DEVSHARD_BUILD_TAGS=testenvci`; `host/livestream_fault.go` is the production
+no-op. Run target: `make -C devshard/testenv citest-attempt-reconnect`.
 
 Citest coverage landed:
 - `TestAttemptReconnect_AdminEnables` — admin knobs apply in-process
@@ -1285,8 +1377,8 @@ gateway still shows recent pressure without waiting for new traffic.
    `budget_expired`, `receipt_only`, `error`, and `skipped_protocol` when R0 refuses),
    `devshard_gateway_attempt_reconnect_seconds`,
    `devshard_gateway_winner_continuity_total{outcome}` (`resumed`, `reset`, `failed`), and a counter
-   for reservations that blocked a secondary crown. Host-side (Step 5f): live-log bytes gauge,
-   soft-cap hits, trimmed bytes/events, `cursor_past_after_trim`, spill bytes (if enabled),
+   for reservations that blocked a secondary crown. Host-side (Step 5f): RAM window bytes gauge,
+   trimmed bytes/events, spool bytes and spool lag, spool-vs-RAM read split, `spool_unavailable`,
    reconnect-only `subscriber_lagged` (stall-triggered), `reader_lag_bytes`, and primary
    write-deadline detaches.
 3. **Blip observability (R8).** Today a blip only reaches a `reconnect_blip` log line, so nothing
@@ -1439,7 +1531,7 @@ land on its own schedule; citest stays red-gated until both harness and MLNode s
 | Live log / no-drop (R9) | Contiguous bytes to readers; producer never blocks on client Write *(landed)* | `host/livestream_test.go` |
 | Live log stall (R9 / 5a) | Stalled **reconnect** (no offset progress) → `ErrSubscriberLagged`; slow-but-advancing reconnect runs to completion; stalled **primary** stays open (`ClientDetached` only) | `host/livestream_test.go` |
 | Live log soft cap + trim (R9 / 5c) | Past RAM soft cap → attach refused and head trimmed below the slowest reader; cursor inside window is byte-identical, older cursor → `ErrResumeCursorPast`; no partial body in `completedResponses` | `host/livestream_test.go`, `host/host_test.go` |
-| Duplicate-copy RAM (R9 / 5b) | Retained bytes ≤ RAM cap + one processor copy; no per-line alloc blow-up. Hub lines are **not** byte-identical to the processor's (blank separators are log-only, rewrite-error lines are processor-only, hub lines carry `\n`), so sharing is per-line payload + separate framing | `host/livestream_test.go`, `cmd/devshardd/inference/proxy_test.go`, `common/completionapi/idrewrite_test.go` |
+| Duplicate-copy RAM (R9 / 5b) | Retained bytes ≤ RAM cap + one processor copy; no per-line alloc blow-up. Hub lines are **not** byte-identical to the processor's (blank separators are log-only, hub lines carry `\n`; on rewrite failure the proxy still forwards the processor's raw fallback so live log and durable body stay event-aligned), so sharing is per-line payload + separate framing | `host/livestream_test.go`, `cmd/devshardd/inference/proxy_test.go`, `common/completionapi/idrewrite_test.go` |
 | Per-chunk id rewrite dominates drain CPU (5b) | Rewrite candidates agree semantically; `goccy` keeps `ResponseHash` stable; surgical rewrite is allocation-free and leaves nested `tool_calls[].id` and id-like content untouched | `common/completionapi/idrewrite_test.go` |
 | Cursor byte-offset (R9) | Wire event/partial → absolute offset; blank SSE separators do not desync across live, **trimmed**, and finished replay | `host/livestream_test.go` |
 | Protocol safety | Repeat `MsgConfirmStart` is a no-op; one `ProcessResponse` per nonce | `host/`, `user/session_test.go` |
@@ -1467,22 +1559,25 @@ GOMODCACHE="$HOME/go/pkg/mod" GOCACHE="$HOME/Library/Caches/go-build" \
 | Reservation blocks a secondary while the winner is actually dead | Budget-bounded reservation with explicit release on confirmed-dead; deadlock test with both attempts failing |
 | Secondary "ahead" splices a different generation onto A's prefix | R4 hard rule: delivered prefix owns the client; no contentChunks takeover; only R5 reset may switch |
 | Live attach races the forming event buffer | Host buffer owns the currently forming event; single producer (ML drain), multi-subscriber readers; unit-test partial-event handoff |
-| Live buffer pins RAM after drain or forever on stuck ML | Drain→persist→forget happy path; TTL detaches attachability only; Step 5c head-trims to `LiveStreamMaxRAMBytes` so even a stuck ML cannot grow the hot log |
+| Live buffer pins RAM after drain or forever on stuck ML | Drain→persist→forget happy path; TTL detaches attachability only; Step 5c trims the RAM window to `LiveStreamRingBytes` against the spool, so neither a stuck ML nor a pinned reader can grow the hot log |
 | Slow reconnect silently drops live fan-out chunks | Already mitigated: append-only log + offset readers (Steps 2–4). Step 5a adds reconnect-only `ErrSubscriberLagged`, triggered by a frozen offset only |
 | Stalled primary reader blocks trimming → RAM still unbounded | Step 5a: primary write deadline; breach = ordinary client detach (drop reader, keep producing), which unblocks trim |
 | Lag-close of primary forces reconnect on healthy gen | Step 5a: `ErrSubscriberLagged` applies only to non-primary subscribers |
 | Stall policy kills a healthy-but-slow reconnect → truncated client + wasted ladder try | Step 5a: closes only on **zero** offset progress while bytes are pending; byte lag is a metric, never a close threshold; stall timeout sized above `AttemptReconnectBudget` |
-| RAM pressure "solved" by closing a slow reader | Forbidden by 5a. A slow reader's unread window is undeliverable-yet-needed; the levers are 5c head-trim and opt-in spill, and `reader_lag_bytes` is the signal that says which one applies |
-| Partial body published mid-flight is replayed as a complete completion | Forbidden by R9 / Step 5c: `replaySSEBodyFromCursor` synthesizes `[DONE]`, so a partial `completedResponses` entry would silently truncate the client and break the finish hash. Test asserts the cache stays empty until finish |
-| Trim discards bytes a live reader still needs | Trim only below the slowest live reader's offset; contiguity test with a slow-but-alive reconnect |
+| RAM pressure "solved" by closing a slow reader | Forbidden by 5a. A slow reader's unread window is undeliverable-yet-needed; 5c moves it to the spool so it costs no hot RAM at all. The only case where a reader is dropped for RAM is degraded mode (no spool), where nothing can be reclaimed from disk |
+| Partial body published mid-flight is replayed as a complete completion | Forbidden by R9 / Step 5c (cache stays empty until finish, asserted by test). Defence in depth: `replaySSEBodyFromCursor` no longer synthesizes `[DONE]` for a streamed envelope without one — it closes the replay with `partialStreamErrorLine` so the client sees the truncation |
+| Trim discards bytes a live reader still needs | Trim only below what the spool already holds, so trimmed bytes are always re-readable; contiguity test with a reader pinned at offset 0 through a long burst |
+| Spool file leaks or outlives its generation | `Release` (after `Close` + `WaitPrimary`) removes both files once no reader is draining them; the whole directory is emptied at startup, so a crash leaves nothing behind |
 | Resume horizon much shorter than durable retention | Step 5e: payload store (retained to seal, ~1h) becomes a resume tier, so `completedResponses` eviction / head-trim is no longer a cliff for a completed generation |
 | Host / gateway / TTL clocks diverge | Step 5e derives drain, LiveStream TTL, and gateway hard timeout from protocol `ExecutionTimeout` |
-| Trim breaks absolute-offset cursor math | Explicit `eventsBase` / `bytesBase`; cursors below the base return `ErrResumeCursorPast`; `overCap` recomputed after trim |
+| Trim breaks absolute-offset cursor math | Explicit `eventsBase` / `bytesBase` for the RAM window and a `.idx` lookup below it; only cursors past the spool tip return `ErrResumeCursorPast` |
+| Abandoned reader write leaks a goroutine or races the response | Step 5a: the write runs inline on the drain goroutine bounded by `SetWriteDeadline`; nothing is left blocked on a dead socket and `WaitPrimary` stays an exact fence |
 | Chunk timestamps change the hashed body and fail every validation | Step 5g keeps them out of `streamedResponse` / `response_payload` entirely: parallel array in RAM, sidecar column in the store; test asserts `ResponseHash` is unchanged with the feature on |
 | Chunk timestamps shift the resume cursor against a mixed-version peer | Step 5g emits them as SSE comments at the writer, never into the counted log; test asserts byte-identical log and cursor with the feature on and off |
 | A new protocol event leaks devshard JSON into end-user streams on old gateways | Step 5g uses the `:` comment channel, which today's parser already drops silently; a new `devshard_*` envelope would instead be forwarded to the client |
 | Host-reported timestamps are trusted and gamed | Step 5g: unverifiable half is informational only (same R8 rule as blips), never feeds `Decide` / picker / quarantine; parser bounds line and array length |
-| Spill under producer lock stalls ML | Step 5c: disk I/O off-lock / async; `Write` only appends + queues |
+| Spool I/O under the producer lock stalls ML | Step 5c: the pump is a separate goroutine and copies out from under `mu` before writing; cursor `.idx` lookups also run off-lock. `Write` only appends and wakes |
+| Spool disk fills or fails mid-stream | Resume is disabled for that generation (`ErrLiveStreamResumeUnavailable`), readers below the window are dropped, and the generation still finishes and persists normally |
 | Reconnect masks a genuinely bad host from the perf tracker | Reconnect tries are recorded separately (R8), so per-participant failure rates still reflect drops |
 | More host-side work retained after a drop | Depends on the parent plan's Step 3 drain, which is bounded and counted there |
 | Soft-signal DB writes amplify under blip storms | Step 6: 1m batch upsert of dirty keys only; no write on each blip; empty windows deleted |
@@ -1514,12 +1609,17 @@ verified to fail without them.
   `parseSSEResponse` → `readBoundedSSELine` / `ErrSSEEventTooLarge`, default 1 MiB). Reconnect
   still widens the exposure window relative to no-reconnect; keep the cap on through this
   plan's Step 9 default-on.
-- **Host live-log resource bounds.** Closed subscribers are never removed from `LiveStream.subs` and
-  there is no max-subscriber cap, so repeated reconnect attempts accumulate reader state for the
-  life of a generation; `WriteHeader` also does network I/O under the producer lock, which the body
-  path deliberately avoids. Fold into Step 5f.
-- **`AllowStreamResetOnFailover` is a no-op setting** (`redundancy.go`, referenced but unwired).
-  Correct per R5's default-off, but an operator can flip it today and get nothing.
+- **Host live-log resource bounds.** `unsubscribe` now compacts closed readers out of
+  `LiveStream.subs`, and `WriteHeader` does its primary network I/O outside `s.mu` (fenced against
+  subscriber #0 by `hdrInFlight`, so the two never write one response concurrently). What remains
+  for Step 5f is a **max-subscriber cap**: nothing bounds how many reconnect attempts may attach to
+  one generation. Byte retention itself is bounded by 5c.
+- **Per-generation RAM is `O(ring)` for the live log only.** `ExecutorResponseProcessor` still holds
+  every rewritten line for the whole generation, and finish materialises the body twice more. That
+  is Step 5h.
+- **`AllowStreamResetOnFailover` is wired (default off).** On reconnect-ladder exhaust with the
+  setting on, the gateway writes `writeStreamReset`, clears the race crown, and keeps racing so a
+  hedge/secondary may take over from scratch. Default-off behavior is unchanged.
 - **Cross-instance HA / ML reattach (issue #1466 §4) is not in Steps 1–9.** Multi-replica
   topology and HA citest exist, but a mid-stream `devshardd` reboot still loses the ML stream
   until Step 10 (blocked on separated mock MLNodes from `ak/devshard-observability-e2e` plus
@@ -1531,15 +1631,16 @@ verified to fail without them.
 - [x] Step 2 — host live-attach from resume cursor; drain→persist→forget; storage reconnect + buffer TTL prune; repeat receipt is a no-op
 - [x] Step 3 — same-nonce reconnect send path passing `(deliveredEvents, deliveredPartial)`
 - [x] Step 4 — `ProtocolV5` + `ProtocolVersionAtLeast`; winner reservation + reconnect-first escalation; R0 gate; no mid-stream splice when B is ahead; reconnect blip recorded (no routing effect) for slow/reconnect A
-- [x] Step 5a — reader stall policy: reconnect **no-progress** → `ErrSubscriberLagged`; primary write deadline → `ClientDetached`; byte lag signal only
-- [x] Step 5b — cut per-chunk id-rewrite cost via memoized surgical splice (`idrewrite.go`); slab/alias sharing deferred (conflicts with 5c head-trim)
-- [x] Step 5c — head-trim to the RAM cap with `eventsBase`/`bytesBase` (no spill yet); never publish a partial durable body
-- [x] Step 5d — defensive forming cap (`LiveStreamMaxFormingBytes`)
+- [x] Step 5a — reader stall policy: reconnect **no-progress** → `ErrSubscriberLagged`; write deadline enforced inline for all readers (no abandoned helper goroutine); chunked reader writes; byte lag signal only
+- [x] Step 5b — cut per-chunk id-rewrite cost via memoized surgical splice (`idrewrite.go`); slab/alias sharing deferred
+- [x] Step 5c — spool-backed log (`.log` + `.idx`) with a `LiveStreamRingBytes` RAM window; trim answers to the spool, not to readers; cursors older than the window resolve via the index; degraded mode refuses attach; never publish a partial durable body
+- [x] Step 5d — defensive forming cap (`LiveStreamMaxFormingBytes`), loud on breach
 - [x] Step 5e — payload store as the last resume tier; derive drain / LiveStream TTL / gateway hard timeout from `ExecutionTimeout`
-- [ ] Step 5f — trim/lag metrics (with Step 8)
+- [ ] Step 5f — window/spool/lag metrics (with Step 8)
 - [ ] Step 5g — hop timestamps: absolute `req_ms` on receipt; per-chunk `ml`/`v` in RAM (+ payload
   sidecar phase 2); per-connection `w` at emit; gateway local recv; `: devshard-ts` comments out of
   cursor/hash space. Full path gateway↔host↔ML; no protocol bump; mixed-version compatible
+- [ ] Step 5h — build the durable envelope by streaming the spool; retire the response processor's per-line retention (hash-sensitive; needs a byte-identical encoder)
 - [ ] Step 6 — **deferred** until `ak/gateway-v4-postgres` merges; then persist soft signals (blips + rolling stream bps) to gateway store on a 1m ticker; hydrate on boot; additive schema via gateway-store interface / PG + SQLite / D5–D6 HA rules
 - [x] Step 7 — E2E: admin reconnect settings; citest v2 protocol gate + v5 mid-stream resume
   (`TestAttemptReconnect_*`, `make citest-attempt-reconnect`); scenario 7 unit

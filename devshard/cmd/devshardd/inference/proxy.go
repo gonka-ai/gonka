@@ -99,14 +99,19 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			var err error
 			lineToProxy, err = responseProcessor.ProcessStreamedResponse(line)
 			if err != nil {
-				logging.Error("Failed to process streamed response line", types.Inferences,
+				// ExecutorResponseProcessor already retained the original line
+				// in its durable body and returns it as the fallback. Still
+				// forward that fallback into the hub: skipping the write would
+				// omit the event from the live log / first-connection delivery
+				// while keeping it in completedResponses, so a same-nonce
+				// reconnect cursor after finish would index a different event
+				// list than the one the gateway counted.
+				logging.Error("Failed to process streamed response line; forwarding raw line", types.Inferences,
 					"inferenceId", inferenceId, "error", err, "line", line,
 				)
-				// Keep draining ML so the executor can still accumulate a body.
-				if isSSEDoneLine(line) {
-					outcome.sawDone = true
+				if lineToProxy == "" {
+					lineToProxy = line
 				}
-				continue
 			}
 		}
 		if isSSEDoneLine(line) || isSSEDoneLine(lineToProxy) {

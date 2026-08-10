@@ -455,14 +455,25 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	return nil
 }
 
+// partialStreamErrorLine terminates the replay of a stored body that never
+// received the upstream terminator (ML drain ended early). Shaped like the
+// gateway's own mid-stream error event so existing clients and the gateway's
+// SSE error classification both understand it.
+const partialStreamErrorLine = `data: {"error":{"message":"upstream stream ended before completion; response is incomplete","type":"incomplete_stream","code":"stream_incomplete"}}`
+
 // replaySSEBody writes cached ML response bytes as SSE data lines.
 //
 // Streamed inferences are stored as completionapi.SerializedStreamedResponse
 // ({"events":[…]}), where each event is already a full "data: …" line. Replay
 // those as individual SSE events so a reconnect looks like the live stream.
 // A non-envelope body (JSON chat.completion) keeps the historical single-event
-// wrap. Always ends with data: [DONE] when the stored events did not already
-// include one.
+// wrap and is terminated with data: [DONE] — that wrap is how a complete
+// non-SSE body is presented as SSE.
+//
+// Streamed envelopes are different: a post-drain partial is stored without a
+// real [DONE], and synthesizing one would make a truncated stream look finished
+// to the client. Replay emits exactly the stored events and then an explicit
+// error event, so truncation is visible rather than disguised as success.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
 	return replaySSEBodyFromCursor(w, body, 0, 0)
 }
@@ -506,13 +517,11 @@ func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents
 			}
 			idx++
 		}
+		if !sawDone {
+			return writePartialStreamMarker(w, deliveredEvents, deliveredPartial, idx)
+		}
 		if deliveredEvents > idx {
 			return host.ErrResumeCursorPast
-		}
-		if !sawDone {
-			if err := writeSSEDataLine(w, "data: [DONE]"); err != nil {
-				return err
-			}
 		}
 		return nil
 	}
@@ -544,12 +553,14 @@ func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents
 }
 
 // liveAttachFailureReason maps host live-attach errors to the terminal reason
-// recorded for reconnect failures. Cursor / availability / soft-cap / lag errors
-// are resume-path failures (cached_replay_err); anything else stays execute_err.
+// recorded for reconnect failures. Cursor / availability / resume-tier / lag
+// errors are resume-path failures (cached_replay_err); anything else stays
+// execute_err.
 func liveAttachFailureReason(err error) observability.Reason {
 	if errors.Is(err, host.ErrResumeCursorPast) || errors.Is(err, host.ErrInvalidResumeCursor) ||
 		errors.Is(err, host.ErrLiveStreamGone) || errors.Is(err, host.ErrLiveStreamPruned) ||
-		errors.Is(err, host.ErrLiveStreamOverCap) || errors.Is(err, host.ErrSubscriberLagged) {
+		errors.Is(err, host.ErrLiveStreamResumeUnavailable) || errors.Is(err, host.ErrSubscriberLagged) ||
+		errors.Is(err, host.ErrLiveStreamFormingOversize) || errors.Is(err, host.ErrSpoolClosed) {
 		return observability.ReasonCachedReplayErr
 	}
 	return observability.ReasonExecuteErr
@@ -590,12 +601,39 @@ func normalizeReplaySSEEvent(event string) string {
 	return completionapi.DataPrefix + line
 }
 
+// writePartialStreamMarker emits the incomplete-stream error event that closes
+// a stored body with no terminator. The marker occupies exactly one event slot
+// past the stored events, so a reconnect whose cursor already covers it is
+// fully delivered rather than cursor-past — the gateway counts it like any
+// other forwarded event.
+func writePartialStreamMarker(w http.ResponseWriter, deliveredEvents, deliveredPartial, storedEvents int64) error {
+	if deliveredEvents > storedEvents+1 {
+		return host.ErrResumeCursorPast
+	}
+	if deliveredEvents == storedEvents+1 {
+		if deliveredPartial > 0 {
+			return host.ErrResumeCursorPast
+		}
+		return nil
+	}
+	out := partialStreamErrorLine
+	if deliveredEvents == storedEvents && deliveredPartial > 0 {
+		if deliveredPartial > int64(len(out)) {
+			return host.ErrResumeCursorPast
+		}
+		if deliveredPartial == int64(len(out)) {
+			return nil
+		}
+		out = out[deliveredPartial:]
+	}
+	return writeSSEDataLine(w, out)
+}
+
 func isSSEDoneDataLine(line string) bool {
 	if !strings.HasPrefix(line, "data:") {
 		return false
 	}
-	payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
-	return payload == "[DONE]"
+	return strings.TrimSpace(strings.TrimPrefix(line, "data:")) == "[DONE]"
 }
 
 func writeSSEDataLine(w http.ResponseWriter, line string) error {

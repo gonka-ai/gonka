@@ -170,10 +170,12 @@ func TestDeliveredPrefix_ClientGoneDoesNotAdvanceCursor(t *testing.T) {
 	require.Zero(t, rec.Body.Len(), "nothing reaches a disconnected client")
 	require.Equal(t, int64(0), inf.deliveredEvents, "swallowed bytes are not a delivered prefix")
 	require.Equal(t, int64(0), inf.deliveredPartial)
+	require.Greater(t, inf.contentChunks.Load(), int64(0),
+		"classification still sees content after disconnect — that must not count as a resume prefix")
 }
 
 func TestRecordDeliveredForward_EmptyAndMultiEvent(t *testing.T) {
-	inf := &inflight{}
+	inf := &inflight{trackDelivered: true}
 	inf.recordDeliveredForward(nil)
 	require.Equal(t, int64(0), inf.deliveredEvents)
 
@@ -324,6 +326,7 @@ func TestMergeInflightHostResponse_PrefersReceiptAndClearsErr(t *testing.T) {
 }
 
 func TestReconnectInflight_MidEventResumeNoDuplication(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	event1 := `data: {"choices":[{"delta":{"content":"Hel"}}]}`
 	event2 := `data: {"choices":[{"delta":{"content":"lo"}}]}`
 	full := event1 + "\n\n" + event2 + "\n\n" + "data: [DONE]\n\n"
@@ -338,7 +341,7 @@ func TestReconnectInflight_MidEventResumeNoDuplication(t *testing.T) {
 		expectPartial:   deliveredPartial,
 		responseReceipt: []byte("receipt-1"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 
@@ -366,6 +369,7 @@ func TestReconnectInflight_MidEventResumeNoDuplication(t *testing.T) {
 }
 
 func TestReconnectInflight_FinishInferenceProcessedAfterResume(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	// Transport drop before meta: receipt only, no Finish. Reconnect returns
 	// meta with MsgFinishInference; processInflightOnce must still queue it.
 	event1 := `data: {"choices":[{"delta":{"content":"Hel"}}]}`
@@ -454,6 +458,7 @@ func TestRunWinnerReconnectLadder_FinishInferenceProcessedAfterResume(t *testing
 }
 
 func TestReconnectInflight_FinishStillProcessedWhenPriorRespHadNoMempool(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	// processOnce must not be consumed on the truncated first response (err != nil
 	// short-circuits winningInflightTerminalFailure). Reconnect Finish is the
 	// first ProcessResponse and must mark the nonce finished.
@@ -487,6 +492,7 @@ func TestReconnectInflight_FinishStillProcessedWhenPriorRespHadNoMempool(t *test
 }
 
 func TestReconnectInflight_ReceiptOnlyIsResumeFailure(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	// Live attach failed host-side: the receipt was already written, so the
 	// parser sees a terminator and the transport read ends cleanly. Policy requires
 	// this to count as a failed try, not a resume.
@@ -517,6 +523,7 @@ func TestReconnectInflight_ReceiptOnlyIsResumeFailure(t *testing.T) {
 }
 
 func TestReconnectInflight_TailOnlyResumeWithMempoolSucceeds(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	// The client already had every event and only devshard_meta was missing.
 	// No stream bytes come back, but the response can still settle the nonce,
 	// so this is a successful resume rather than a receipt-only failure.
@@ -584,6 +591,7 @@ func TestWinningInflightTerminalFailure_KeepsProcessOnceForReconnect(t *testing.
 }
 
 func TestReconnectInflight_EventBoundary(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	event1 := `data: {"choices":[{"delta":{"content":"one"}}]}`
 	event2 := `data: {"choices":[{"delta":{"content":"two"}}]}`
 	full := event1 + "\n\n" + event2 + "\n\n" + "data: [DONE]\n\n"
@@ -594,7 +602,7 @@ func TestReconnectInflight_EventBoundary(t *testing.T) {
 		expectPartial:   0,
 		responseReceipt: []byte("r"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 	prepared, err := env.session.PrepareInference(params)
@@ -613,11 +621,12 @@ func TestReconnectInflight_EventBoundary(t *testing.T) {
 }
 
 func TestReconnectInflight_DoesNotRecordRealSend(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	client := &reconnectScriptClient{
 		fullBody:        []byte(`data: {"choices":[{"delta":{"content":"x"}}]}` + "\n\n" + "data: [DONE]\n\n"),
 		responseReceipt: []byte("r"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 	prepared, err := env.session.PrepareInference(params)
@@ -635,6 +644,7 @@ func TestReconnectInflight_DoesNotRecordRealSend(t *testing.T) {
 }
 
 func TestReconnectInflight_DefensiveSkipWhenHostReplaysPrefix(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	event1 := `data: {"choices":[{"delta":{"content":"Hel"}}]}`
 	event2 := `data: {"choices":[{"delta":{"content":"lo"}}]}`
 	full := event1 + "\n\n" + event2 + "\n\n" + "data: [DONE]\n\n"
@@ -648,7 +658,7 @@ func TestReconnectInflight_DefensiveSkipWhenHostReplaysPrefix(t *testing.T) {
 		ignoreCursor:    true,
 		responseReceipt: []byte("r"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 	prepared, err := env.session.PrepareInference(params)
@@ -667,6 +677,7 @@ func TestReconnectInflight_DefensiveSkipWhenHostReplaysPrefix(t *testing.T) {
 }
 
 func TestReconnectInflight_DefensiveSkipEventBoundaryViaFingerprint(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	event1 := `data: {"choices":[{"delta":{"content":"Hel"}}]}`
 	event2 := `data: {"choices":[{"delta":{"content":"lo"}}]}`
 	full := event1 + "\n\n" + event2 + "\n\n" + "data: [DONE]\n\n"
@@ -679,7 +690,7 @@ func TestReconnectInflight_DefensiveSkipEventBoundaryViaFingerprint(t *testing.T
 		ignoreCursor:    true,
 		responseReceipt: []byte("r"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 	prepared, err := env.session.PrepareInference(params)
@@ -713,11 +724,12 @@ func TestSendOnlyWithCursor_PassesResumeFields(t *testing.T) {
 }
 
 func TestReconnectInflight_ReusesPreparedInference(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	client := &reconnectScriptClient{
 		fullBody:        []byte(`data: {"choices":[{"delta":{"content":"x"}}]}` + "\n\n" + "data: [DONE]\n\n"),
 		responseReceipt: []byte("r"),
 	}
-	env := setupTestProxyWithClients(t, []user.HostClient{client})
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
 	params := defaultParams()
 	params.Stream = true
 	prepared, err := env.session.PrepareInference(params)
@@ -803,12 +815,138 @@ func TestRaceGroup_SecondaryAheadStaysSuppressedUnderReservation(t *testing.T) {
 func TestShouldAttemptWinnerReconnect_OnceAndNeedsPrefix(t *testing.T) {
 	env := setupTestProxyWithProtocol(t, []user.HostClient{&reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}}, "v5")
 	enableAttemptReconnectForTest(t, time.Second, 2)
-	inf := &inflight{}
+	inf := &inflight{stream: true, trackDelivered: true}
 	require.False(t, env.proxy.redundancy.shouldAttemptWinnerReconnect(inf), "no delivered prefix")
 
 	inf.deliveredEvents = 1
 	require.True(t, env.proxy.redundancy.shouldAttemptWinnerReconnect(inf))
 	require.False(t, env.proxy.redundancy.shouldAttemptWinnerReconnect(inf), "ladder once only")
+}
+
+func TestShouldAttemptWinnerReconnect_RequiresDeliveredPrefixNotJustContentChunks(t *testing.T) {
+	env := setupTestProxyWithProtocol(t, []user.HostClient{&reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}}, "v5")
+	enableAttemptReconnectForTest(t, time.Second, 2)
+
+	// The client-gone path: classification crowned content, nothing on the wire.
+	inf := &inflight{stream: true, trackDelivered: true}
+	inf.contentChunks.Store(2)
+	require.False(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf),
+		"contentChunks without a delivered cursor must not start the ladder")
+
+	inf.deliveredPartial = 10
+	require.True(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf),
+		"a mid-event delivered partial is a real resume prefix")
+
+	inf.deliveredPartial = 0
+	inf.deliveredEvents = 1
+	require.True(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf))
+}
+
+func TestShouldAttemptWinnerReconnect_ClientGoneDoesNotStartLadder(t *testing.T) {
+	// Join the two halves: disconnect leaves contentChunks>0 and delivered=0,
+	// and that state must refuse reconnect so reservedWinner is not held.
+	env := setupTestProxyWithProtocol(t, []user.HostClient{&reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}}, "v5")
+	enableAttemptReconnectForTest(t, time.Second, 2)
+
+	flag := newCancelFlag()
+	rw, inf, rec := mkDeferredWinnerWriter(t, flag)
+	inf.stream = true
+	inf.trackDelivered = true
+	flag.Trigger()
+
+	_, err := rw.Write([]byte(`data: {"choices":[{"delta":{"content":"unseen"}}]}` + "\n\n"))
+	require.NoError(t, err)
+	require.Zero(t, rec.Body.Len())
+	require.Equal(t, int64(0), inf.deliveredEvents)
+	require.Equal(t, int64(0), inf.deliveredPartial)
+	require.Greater(t, inf.contentChunks.Load(), int64(0))
+	require.False(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf))
+	require.False(t, env.proxy.redundancy.shouldAttemptWinnerReconnect(inf))
+}
+
+func TestShouldAttemptWinnerReconnect_RequiresStreaming(t *testing.T) {
+	env := setupTestProxyWithProtocol(t, []user.HostClient{&reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}}, "v5")
+	enableAttemptReconnectForTest(t, time.Second, 2)
+
+	inf := &inflight{
+		stream:          false,
+		trackDelivered:  false,
+		deliveredEvents: 3,
+	}
+	inf.contentChunks.Store(2)
+	require.False(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf),
+		"non-streaming must not enter same-nonce reconnect")
+
+	inf.stream = true
+	inf.trackDelivered = true
+	require.True(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf))
+}
+
+func TestReconnectInflight_ReChecksProtocolAndStreamGates(t *testing.T) {
+	client := &reconnectScriptClient{fullBody: []byte("data: [DONE]\n\n")}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
+	params := defaultParams()
+	params.Stream = true
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+	inf := newDoneInflight(prepared, 1, 0)
+	rg := newRaceGroup(context.Background(), context.Background(), "escrow", io.Discard)
+
+	// Setting off / protocol gate (AttemptReconnectEnabled defaults false).
+	require.ErrorContains(t, env.proxy.redundancy.reconnectInflight(context.Background(), inf, rg, params, nil),
+		"disabled or protocol")
+
+	enableAttemptReconnectForTest(t, time.Second, 2)
+	params.Stream = false
+	require.ErrorContains(t, env.proxy.redundancy.reconnectInflight(context.Background(), inf, rg, params, nil),
+		"non-streaming")
+}
+
+func TestRecordDeliveredForward_SkippedWhenNotTracking(t *testing.T) {
+	inf := mkRaceWriterInflight(t)
+	inf.trackDelivered = false
+	rw := mkRaceWriter(t, inf)
+	rg := rw.group
+	rg.setWinner(inf.nonce)
+
+	_, err := rw.Write([]byte(`data: {"choices":[{"delta":{"content":"x"}}]}` + "\n"))
+	require.NoError(t, err)
+	require.Equal(t, int64(0), inf.deliveredEvents)
+	require.Equal(t, int64(0), inf.deliveredPartial)
+	require.Nil(t, inf.deliveredForming)
+}
+
+func TestAllowStreamResetOnFailover_ResetsWinner(t *testing.T) {
+	// Cursor demands a resume the host cannot satisfy → ladder exhausts.
+	client := &reconnectScriptClient{
+		fullBody:      []byte(`data: {"choices":[{"delta":{"content":"Hi"}}]}` + "\n\ndata: [DONE]\n\n"),
+		expectEvents:  99, // force cursor-mismatch failure on every resume try
+		expectPartial: 0,
+	}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
+	enableAttemptReconnectForTest(t, 50*time.Millisecond, 1)
+
+	savedReset := AllowStreamResetOnFailover
+	AllowStreamResetOnFailover = true
+	t.Cleanup(func() { AllowStreamResetOnFailover = savedReset })
+
+	params := defaultParams()
+	params.Stream = true
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+	var sink bytes.Buffer
+	rg := newRaceGroup(context.Background(), context.Background(), env.proxy.redundancy.devshardID, &sink)
+	inf := newDoneInflight(prepared, 1, 0)
+	rg.setWinner(inf.nonce)
+	require.Equal(t, inf.nonce, rg.winnerNonce())
+
+	err = env.proxy.redundancy.runWinnerReconnectLadderSync(
+		context.Background(), context.Background(),
+		inf, rg, params, nil, map[string]bool{}, nil, nil,
+	)
+	require.ErrorIs(t, err, errStreamResetFailover)
+	require.Contains(t, sink.String(), `devshard_stream_reset`)
+	require.Equal(t, uint64(0), rg.winnerNonce(), "crown must clear so a hedge can take over")
 }
 
 func TestRunWinnerReconnectLadder_ResumesAndKeepsClientOnWinner(t *testing.T) {
@@ -1089,6 +1227,7 @@ func (c *resumeOnceThenFailClient) Send(_ context.Context, req host.HostRequest,
 }
 
 func TestReconnectInflight_AssignsCancelAndHonorsIt(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	entered := make(chan struct{})
 	release := make(chan struct{})
 	t.Cleanup(func() { close(release) })
@@ -1129,6 +1268,7 @@ func TestReconnectInflight_AssignsCancelAndHonorsIt(t *testing.T) {
 }
 
 func TestReconnectInflight_ClientDisconnectUsesMetaDrain(t *testing.T) {
+	enableAttemptReconnectForTest(t, time.Second, 2)
 	saved := metaDrainTimeout
 	metaDrainTimeout = 30 * time.Millisecond
 	t.Cleanup(func() { metaDrainTimeout = saved })
@@ -1503,6 +1643,8 @@ func newDoneInflight(prepared *user.PreparedInference, events, partial int64) *i
 		nonce:            prepared.Nonce(),
 		escrowID:         "escrow-proxy",
 		sendTime:         time.Now(),
+		stream:           true,
+		trackDelivered:   true,
 		done:             done,
 		receiptCh:        make(chan struct{}),
 		firstTokenCh:     make(chan struct{}),
