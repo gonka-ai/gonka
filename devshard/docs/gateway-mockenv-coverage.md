@@ -149,8 +149,8 @@ Mock coverage:
 | Excludes inactive runtimes from pooled routing | `TestGatewayMockEnvInactiveRuntimeExcludedFromPooledChat` |
 | Applies gateway concurrency limiter before runtime call | `TestGatewayMockEnvConcurrencyLimitRejectsBeforeRuntime` |
 | Passes OpenAI-style SSE streaming responses through | `TestGatewayMockEnvStreamingChatPassthrough` |
-| Cache miss and cache store on successful responses | indirectly covered by routed chat tests through real logs, but not asserted as a primary outcome |
-| Cache hit response replay | not covered by mockenv yet |
+| Cache miss and cache store on successful pooled responses | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
+| Cache hit response replay for pooled chat | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
 | Runtime selection failure when all runtimes are unavailable | not covered by mockenv yet |
 | Participant limiter rejecting all candidate runtimes | not covered by mockenv yet |
 
@@ -221,7 +221,7 @@ Mock coverage:
 | Direct route access control for `api_key` models | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
 | Direct route access control for `admin_only` models | `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
 | Direct route limiter rejection | not covered by mockenv yet |
-| Direct route cache hit | not covered by mockenv yet |
+| Direct route cache hit | `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
 | Runtime unavailable or inactive direct chat conflict | not covered by mockenv yet |
 | Direct non-chat pass-through paths | not covered by mockenv yet |
 | Direct finalize path and post-finalize deactivation | not covered by mockenv yet |
@@ -337,7 +337,7 @@ Mock coverage:
 | Direct unknown devshard | Yes | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Multi-runtime status aggregation | Yes | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Admin state auth and redaction | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminStateDoesNotExposePrivateKey` |
-| Response cache hit path | No | Not covered by mockenv yet |
+| Response cache hit path | Yes | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
 | Single-runtime `/v1/status` proxy mode | No | Not covered by mockenv yet |
 | Direct non-chat pass-through and finalize | No | Not covered by mockenv yet |
 | Non-resident read-only metadata and admin hydration | No | Not covered by mockenv yet |

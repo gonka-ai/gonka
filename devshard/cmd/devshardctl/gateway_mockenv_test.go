@@ -184,6 +184,66 @@ func TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess(t *testing.T) 
 }
 
 // Steps:
+// - Send a pooled chat request that stores a cacheable runtime response.
+// - Send the identical pooled chat request again.
+// - Assert the second response is replayed from cache without another runtime call.
+func TestGatewayMockEnvPooledChatCacheHitSkipsRuntime(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	rt.handler = func(w http.ResponseWriter, r *http.Request) {
+		require.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated pooled runtime call")
+		writeMockenvChatJSON(w, "12", "Qwen/Test")
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+	body := mockenvChatBody("Qwen/Test", "cache me")
+
+	first := env.postChat(body)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, "12", first.Header().Get("X-Devshard-ID"))
+	require.Contains(t, first.Body.String(), "from 12")
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	second := env.postChat(body)
+	require.Equal(t, http.StatusOK, second.Code)
+	require.Equal(t, "12", second.Header().Get("X-Devshard-ID"))
+	require.Equal(t, first.Body.String(), second.Body.String())
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
+// - Send a direct devshard chat request that stores a cacheable runtime response.
+// - Send the identical direct devshard chat request again.
+// - Assert the direct-route cache branch replays the response without forwarding.
+func TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	rt.handler = func(w http.ResponseWriter, r *http.Request) {
+		require.EqualValues(t, 1, rt.calls.Load(), "cache hit should skip repeated direct runtime call")
+		writeMockenvChatJSON(w, "12", "Qwen/Test")
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+	body := mockenvChatBody("Qwen/Test", "direct cache me")
+
+	first := env.postDirectChat("12", body)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, "12", first.Header().Get("X-Devshard-ID"))
+	require.Contains(t, first.Body.String(), "from 12")
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	second := env.postDirectChat("12", body)
+	require.Equal(t, http.StatusOK, second.Code)
+	require.Equal(t, "12", second.Header().Get("X-Devshard-ID"))
+	require.Equal(t, first.Body.String(), second.Body.String())
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
 // - Create an active runtime for one model.
 // - Send direct devshard chat with a different requested model.
 // - Assert the gateway rejects before forwarding to the runtime handler.
