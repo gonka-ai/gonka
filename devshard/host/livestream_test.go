@@ -337,12 +337,34 @@ func TestLiveStream_OverCapRefusesNewSubscribe(t *testing.T) {
 	t.Cleanup(func() { LiveStreamMaxRAMBytes = prev })
 
 	stream := newLiveStream()
-	_, err := stream.Write([]byte("data: " + strings.Repeat("x", 80) + "\n"))
+	// Pin a reader at offset 0 so head-trim cannot clear the soft-cap latch.
+	w := &gateWriter{
+		onFirstWrite: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(w, 0, 0)
+	}()
+	_, err := stream.Write([]byte("data: pin\n"))
 	require.NoError(t, err)
-	require.True(t, stream.TotalBytes() > LiveStreamMaxRAMBytes)
+	select {
+	case <-w.onFirstWrite:
+	case <-time.After(time.Second):
+		t.Fatal("pinned reader never started writing")
+	}
+
+	_, err = stream.Write([]byte("data: " + strings.Repeat("x", 80) + "\n"))
+	require.NoError(t, err)
+	require.True(t, stream.RetainedBytes() > LiveStreamMaxRAMBytes)
+	require.True(t, stream.OverCap())
 
 	err = stream.Subscribe(httptest.NewRecorder(), 0, 0)
 	require.ErrorIs(t, err, ErrLiveStreamOverCap)
+
+	close(w.release)
+	stream.Close(nil)
+	<-subDone
 }
 
 func TestPruneLiveStreamLocked_DetachesWithoutClose(t *testing.T) {
@@ -457,6 +479,306 @@ func TestLiveStream_PrimaryDoesNotBlockProducer(t *testing.T) {
 	close(w.release)
 	stream.Close(nil)
 	waitBodyContains(t, w.String, "data: two", time.Second)
+}
+
+func TestLiveStream_ReconnectStallReturnsLagged(t *testing.T) {
+	prevStall := LiveStreamReaderStallTimeout
+	prevWrite := LiveStreamPrimaryWriteTimeout
+	LiveStreamReaderStallTimeout = 40 * time.Millisecond
+	LiveStreamPrimaryWriteTimeout = time.Hour // stall clock should win for reconnect
+	t.Cleanup(func() {
+		LiveStreamReaderStallTimeout = prevStall
+		LiveStreamPrimaryWriteTimeout = prevWrite
+	})
+
+	stream := newLiveStream()
+	w := &gateWriter{
+		onFirstWrite: make(chan struct{}),
+		release:      make(chan struct{}), // never released
+	}
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(w, 0, 0)
+	}()
+	_, err := stream.Write([]byte("data: stuck\n"))
+	require.NoError(t, err)
+	select {
+	case <-w.onFirstWrite:
+	case <-time.After(time.Second):
+		t.Fatal("reconnect never entered Write")
+	}
+
+	select {
+	case err := <-subDone:
+		require.ErrorIs(t, err, ErrSubscriberLagged)
+	case <-time.After(time.Second):
+		t.Fatal("expected ErrSubscriberLagged")
+	}
+	require.False(t, stream.ClientDetached())
+}
+
+func TestLiveStream_PrimaryStallIsClientDetachedNotLagged(t *testing.T) {
+	prevStall := LiveStreamReaderStallTimeout
+	prevWrite := LiveStreamPrimaryWriteTimeout
+	LiveStreamReaderStallTimeout = 40 * time.Millisecond
+	LiveStreamPrimaryWriteTimeout = 40 * time.Millisecond
+	t.Cleanup(func() {
+		LiveStreamReaderStallTimeout = prevStall
+		LiveStreamPrimaryWriteTimeout = prevWrite
+	})
+
+	stream := newLiveStream()
+	w := &gateWriter{
+		onFirstWrite: make(chan struct{}),
+		release:      make(chan struct{}), // never released
+	}
+	stream.SetPrimary(w)
+	_, err := stream.Write([]byte("data: stuck\n"))
+	require.NoError(t, err)
+	select {
+	case <-w.onFirstWrite:
+	case <-time.After(time.Second):
+		t.Fatal("primary never entered Write")
+	}
+
+	deadline := time.After(time.Second)
+	for !stream.ClientDetached() {
+		select {
+		case <-deadline:
+			t.Fatal("primary write deadline did not detach")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+
+	// Producer continues after primary detach.
+	_, err = stream.Write([]byte("data: after\n"))
+	require.NoError(t, err)
+	require.Equal(t, 2, stream.EventCount())
+	stream.Close(nil)
+	stream.WaitPrimary()
+}
+
+func TestLiveStream_SlowButAliveReconnectCompletes(t *testing.T) {
+	prevStall := LiveStreamReaderStallTimeout
+	prevCap := LiveStreamMaxRAMBytes
+	LiveStreamReaderStallTimeout = 200 * time.Millisecond
+	LiveStreamMaxRAMBytes = 64
+	t.Cleanup(func() {
+		LiveStreamReaderStallTimeout = prevStall
+		LiveStreamMaxRAMBytes = prevCap
+	})
+
+	stream := newLiveStream()
+	w := &slowWriter{delay: 15 * time.Millisecond}
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(w, 0, 0)
+	}()
+
+	for i := 0; i < 8; i++ {
+		_, err := stream.Write([]byte(fmt.Sprintf("data: chunk-%d-%s\n", i, strings.Repeat("x", 20))))
+		require.NoError(t, err)
+		time.Sleep(5 * time.Millisecond)
+	}
+	stream.Close(nil)
+
+	select {
+	case err := <-subDone:
+		require.NoError(t, err)
+	case <-time.After(2 * time.Second):
+		t.Fatal("slow-but-alive subscribe did not finish")
+	}
+	require.Contains(t, w.String(), "chunk-0")
+	require.Contains(t, w.String(), "chunk-7")
+}
+
+func TestLiveStream_CaughtUpIdleWaitNotStalled(t *testing.T) {
+	prevStall := LiveStreamReaderStallTimeout
+	LiveStreamReaderStallTimeout = 30 * time.Millisecond
+	t.Cleanup(func() { LiveStreamReaderStallTimeout = prevStall })
+
+	stream := newLiveStream()
+	rec := newFlushRecorder()
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(rec, 0, 0)
+	}()
+
+	time.Sleep(80 * time.Millisecond) // longer than stall timeout while caught up
+	_, err := stream.Write([]byte("data: late\n"))
+	require.NoError(t, err)
+	stream.Close(nil)
+
+	select {
+	case err := <-subDone:
+		require.NoError(t, err)
+	case <-time.After(time.Second):
+		t.Fatal("caught-up idle sub was closed or hung")
+	}
+	require.Contains(t, rec.body(), "data: late")
+}
+
+func TestLiveStream_HeadTrimBoundsRetainedAndCursor(t *testing.T) {
+	prevCap := LiveStreamMaxRAMBytes
+	LiveStreamMaxRAMBytes = 64
+	t.Cleanup(func() { LiveStreamMaxRAMBytes = prevCap })
+
+	stream := newLiveStream()
+	control := newLiveStream()
+	var wrote [][]byte
+	for i := 0; i < 10; i++ {
+		ev := []byte(fmt.Sprintf("data: e%d-%s\n", i, strings.Repeat("y", 12)))
+		wrote = append(wrote, ev)
+		_, err := stream.Write(ev)
+		require.NoError(t, err)
+		_, err = control.Write(ev)
+		require.NoError(t, err)
+	}
+	require.LessOrEqual(t, stream.RetainedBytes(), LiveStreamMaxRAMBytes)
+	require.Greater(t, stream.BytesBase(), int64(0))
+
+	// Cursor inside the retained window: byte-identical to an untrimmed control.
+	inWindowEvents := int64(0)
+	stream.mu.Lock()
+	base := stream.eventsBase
+	stream.mu.Unlock()
+	inWindowEvents = base // first retained content event index
+
+	rec := httptest.NewRecorder()
+	ctrlRec := httptest.NewRecorder()
+	stream.Close(nil)
+	control.Close(nil)
+	require.NoError(t, stream.Subscribe(rec, inWindowEvents, 0))
+	require.NoError(t, control.Subscribe(ctrlRec, inWindowEvents, 0))
+	require.Equal(t, ctrlRec.Body.String(), rec.Body.String())
+
+	// Cursor older than the trimmed prefix.
+	require.ErrorIs(t, stream.Subscribe(httptest.NewRecorder(), 0, 0), ErrResumeCursorPast)
+}
+
+func TestLiveStream_TrimNeverCrossesLiveReader(t *testing.T) {
+	prevCap := LiveStreamMaxRAMBytes
+	LiveStreamMaxRAMBytes = 32
+	t.Cleanup(func() { LiveStreamMaxRAMBytes = prevCap })
+
+	stream := newLiveStream()
+	w := &gateWriter{
+		onFirstWrite: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(w, 0, 0)
+	}()
+	first := []byte("data: head\n")
+	_, err := stream.Write(first)
+	require.NoError(t, err)
+	select {
+	case <-w.onFirstWrite:
+	case <-time.After(time.Second):
+		t.Fatal("reader never started")
+	}
+	for i := 0; i < 20; i++ {
+		_, err := stream.Write([]byte(fmt.Sprintf("data: t%d\n", i)))
+		require.NoError(t, err)
+	}
+	require.Equal(t, int64(0), stream.BytesBase(), "must not trim past a live reader at offset 0")
+	require.True(t, stream.RetainedBytes() > LiveStreamMaxRAMBytes)
+
+	close(w.release)
+	stream.Close(nil)
+	require.NoError(t, <-subDone)
+}
+
+func TestLiveStream_OverCapClearsAfterTrim(t *testing.T) {
+	prevCap := LiveStreamMaxRAMBytes
+	LiveStreamMaxRAMBytes = 64
+	t.Cleanup(func() { LiveStreamMaxRAMBytes = prevCap })
+
+	stream := newLiveStream()
+	w := &gateWriter{
+		onFirstWrite: make(chan struct{}),
+		release:      make(chan struct{}),
+	}
+	subDone := make(chan error, 1)
+	go func() {
+		subDone <- stream.Subscribe(w, 0, 0)
+	}()
+	_, err := stream.Write([]byte("data: " + strings.Repeat("a", 40) + "\n"))
+	require.NoError(t, err)
+	select {
+	case <-w.onFirstWrite:
+	case <-time.After(time.Second):
+		t.Fatal("reader never started")
+	}
+	_, err = stream.Write([]byte("data: " + strings.Repeat("b", 40) + "\n"))
+	require.NoError(t, err)
+	require.True(t, stream.OverCap())
+
+	close(w.release)
+	// Reader advances and unsubscribes on Close; trim should clear overCap.
+	stream.Close(nil)
+	require.NoError(t, <-subDone)
+
+	deadline := time.After(time.Second)
+	for stream.OverCap() {
+		select {
+		case <-deadline:
+			t.Fatal("overCap did not clear after reader drained and trimmed")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	require.LessOrEqual(t, stream.RetainedBytes(), LiveStreamMaxRAMBytes)
+	require.NoError(t, stream.Subscribe(httptest.NewRecorder(), stream.eventsBaseOrZero(), 0))
+}
+
+func (s *LiveStream) eventsBaseOrZero() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.eventsBase
+}
+
+func TestLiveStream_FormingOversizeClosesStream(t *testing.T) {
+	prev := LiveStreamMaxFormingBytes
+	LiveStreamMaxFormingBytes = 32
+	t.Cleanup(func() { LiveStreamMaxFormingBytes = prev })
+
+	stream := newLiveStream()
+	_, err := stream.Write([]byte("data: " + strings.Repeat("z", 64))) // no newline
+	require.NoError(t, err)
+	require.Greater(t, int64(stream.FormingLen()), LiveStreamMaxFormingBytes)
+	require.ErrorIs(t, stream.Subscribe(httptest.NewRecorder(), 0, 0), ErrLiveStreamFormingOversize)
+
+	// Further writes must not grow forming without bound.
+	before := stream.FormingLen()
+	_, err = stream.Write([]byte(strings.Repeat("z", 1024)))
+	require.NoError(t, err)
+	require.Equal(t, before, stream.FormingLen())
+	require.Equal(t, 0, stream.EventCount(), "oversize forming must not publish a durable event")
+}
+
+// slowWriter sleeps before accepting each Write, then succeeds.
+type slowWriter struct {
+	delay time.Duration
+	mu    sync.Mutex
+	buf   bytes.Buffer
+}
+
+func (w *slowWriter) Header() http.Header { return make(http.Header) }
+func (w *slowWriter) WriteHeader(int)     {}
+func (w *slowWriter) Flush()              {}
+func (w *slowWriter) Write(p []byte) (int, error) {
+	time.Sleep(w.delay)
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.Write(p)
+}
+func (w *slowWriter) String() string {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.buf.String()
 }
 
 var _ http.ResponseWriter = (*LiveStream)(nil)

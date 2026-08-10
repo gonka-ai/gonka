@@ -79,6 +79,10 @@ func TestHost_LiveAttach_SameNonceReconnect(t *testing.T) {
 		t.Fatal("engine never started")
 	}
 	require.NotNil(t, h.LiveStreamForTest(1))
+	h.mu.Lock()
+	_, midFlightCached := h.completedResponses[1]
+	h.mu.Unlock()
+	require.False(t, midFlightCached, "must not publish completedResponses mid-flight")
 
 	resp2, err := h.HandleRequest(context.Background(), HostRequest{
 		Diffs: []types.Diff{diff}, Nonce: 1, Payload: defaultPayload(),
@@ -86,6 +90,10 @@ func TestHost_LiveAttach_SameNonceReconnect(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, resp2.LiveAttach)
 	require.NotNil(t, resp2.Receipt)
+	h.mu.Lock()
+	_, stillMidFlight := h.completedResponses[1]
+	h.mu.Unlock()
+	require.False(t, stillMidFlight, "live-attach reconnect must not publish completedResponses")
 
 	confirmCount := 0
 	for _, tx := range h.MempoolTxs() {

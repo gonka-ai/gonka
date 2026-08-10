@@ -15,10 +15,26 @@ import (
 // the map entry without Closing an in-flight producer (see pruneLiveStreamLocked).
 var InflightReplayBufferTTL = 30 * time.Minute
 
-// LiveStreamMaxRAMBytes soft-caps the in-RAM resume log. Past this, new
-// Subscribe/Attach calls fail with ErrLiveStreamOverCap while the producer and
-// existing readers continue (primary path must not lose bytes).
+// LiveStreamMaxRAMBytes soft-caps the in-RAM resume log. Past this, head-trim
+// drops bytes already consumed by every live reader, and new Subscribe/Attach
+// calls fail with ErrLiveStreamOverCap while retained size stays over the cap.
 var LiveStreamMaxRAMBytes int64 = 32 << 20 // 32 MiB
+
+// LiveStreamMaxFormingBytes caps a single incomplete SSE line. Upstream lines
+// are already bounded by the inference proxy scanner (~1 MiB); this is a
+// defensive bound for non-line writers.
+var LiveStreamMaxFormingBytes int64 = 1 << 20 // 1 MiB
+
+// LiveStreamReaderStallTimeout is how long a non-primary subscriber may sit
+// with undelivered bytes and a frozen offset before Subscribe returns
+// ErrSubscriberLagged. Must exceed AttemptReconnectBudget; sized like the
+// gateway InterChunkStallTimeout, not the 1s ladder budget.
+var LiveStreamReaderStallTimeout = 60 * time.Second
+
+// LiveStreamPrimaryWriteTimeout is the per-Write deadline for every live
+// reader (primary and reconnect). Breach is treated as a write error: drop
+// the reader, keep producing. For the primary this surfaces as ClientDetached.
+var LiveStreamPrimaryWriteTimeout = 30 * time.Second
 
 var (
 	// ErrResumeCursorPast is returned when the reconnect cursor is beyond the
@@ -36,6 +52,12 @@ var (
 	// ErrLiveStreamOverCap is returned when the RAM soft cap is exceeded and
 	// new reconnect attaches are refused.
 	ErrLiveStreamOverCap = errors.New("live stream over ram cap")
+	// ErrSubscriberLagged is returned when a non-primary reader stops advancing
+	// while bytes are pending. The generation stays available for other attaches.
+	ErrSubscriberLagged = errors.New("live stream subscriber lagged")
+	// ErrLiveStreamFormingOversize is returned when a single incomplete line
+	// exceeds LiveStreamMaxFormingBytes.
+	ErrLiveStreamFormingOversize = errors.New("live stream forming line oversize")
 )
 
 // LiveStream is a per-inference append-only byte log with independent readers
@@ -47,9 +69,11 @@ var (
 type LiveStream struct {
 	mu         sync.Mutex
 	cond       *sync.Cond
-	events     [][]byte // complete newline-terminated SSE lines
+	events     [][]byte // complete newline-terminated SSE lines (retained window)
 	forming    []byte   // bytes of the currently incomplete event
-	totalBytes int64    // sum(len(events))+len(forming)
+	totalBytes int64    // absolute tip: bytesBase + retained
+	bytesBase  int64    // absolute byte offset of events[0]
+	eventsBase int64    // wire content-event count trimmed before events[0]
 	overCap    bool
 	subs       []*liveSubscriber
 	primary    http.ResponseWriter // header target only; body via subscriber #0
@@ -78,11 +102,12 @@ type LiveStream struct {
 // rescans the log from event 0: each event is visited once over the reader's
 // lifetime, making a wakeup cost O(undelivered bytes) instead of O(all events).
 type liveSubscriber struct {
-	offset    int64 // absolute producer bytes already delivered to this reader
-	evIdx     int   // index of the event holding offset (never past the last event)
-	evAbs     int64 // absolute start offset of events[evIdx]
-	closed    bool
-	isPrimary bool
+	offset         int64 // absolute producer bytes already delivered to this reader
+	evIdx          int   // index into events holding offset (never past last event)
+	evAbs          int64 // absolute start offset of events[evIdx]
+	closed         bool
+	isPrimary      bool
+	lastProgressAt time.Time // last successful offset advance; not refreshed by Append
 }
 
 func newLiveStream() *LiveStream {
@@ -132,9 +157,15 @@ func (s *LiveStream) Write(p []byte) (int, error) {
 		return len(p), nil
 	}
 	s.bufferLocked(p)
-	if LiveStreamMaxRAMBytes > 0 && s.totalBytes > LiveStreamMaxRAMBytes {
-		s.overCap = true
+	if LiveStreamMaxFormingBytes > 0 && int64(len(s.forming)) > LiveStreamMaxFormingBytes {
+		s.done = true
+		s.err = ErrLiveStreamFormingOversize
+		s.primary = nil
+		s.cond.Broadcast()
+		return len(p), nil
 	}
+	s.trimHeadLocked()
+	s.recomputeOverCapLocked()
 	s.cond.Broadcast()
 	return len(p), nil
 }
@@ -159,7 +190,8 @@ func (s *LiveStream) SetPrimary(w http.ResponseWriter) {
 	}
 	s.mu.Lock()
 	s.primary = w
-	sub := &liveSubscriber{offset: 0, isPrimary: true}
+	now := time.Now()
+	sub := &liveSubscriber{offset: 0, evAbs: s.bytesBase, isPrimary: true, lastProgressAt: now}
 	s.subs = append(s.subs, sub)
 	primaryDone := make(chan struct{})
 	s.primaryDone = primaryDone
@@ -215,6 +247,88 @@ func isBlankSSELine(line []byte) bool {
 	return len(bytes.TrimSpace(line)) == 0
 }
 
+func (s *LiveStream) retainedBytesLocked() int64 {
+	return s.totalBytes - s.bytesBase
+}
+
+func (s *LiveStream) recomputeOverCapLocked() {
+	if LiveStreamMaxRAMBytes <= 0 {
+		s.overCap = false
+		return
+	}
+	s.overCap = s.retainedBytesLocked() > LiveStreamMaxRAMBytes
+}
+
+// trimHeadLocked drops whole events already consumed by every live reader
+// until retained size is within LiveStreamMaxRAMBytes (or no further safe
+// trim is possible). Caller must hold s.mu.
+func (s *LiveStream) trimHeadLocked() {
+	if LiveStreamMaxRAMBytes <= 0 || s.retainedBytesLocked() <= LiveStreamMaxRAMBytes {
+		return
+	}
+	minOff := s.minLiveReaderOffsetLocked()
+	for len(s.events) > 0 && s.retainedBytesLocked() > LiveStreamMaxRAMBytes {
+		ev := s.events[0]
+		oldBase := s.bytesBase
+		evEnd := oldBase + int64(len(ev))
+		if evEnd > minOff {
+			break
+		}
+		if !isBlankSSELine(ev) {
+			s.eventsBase++
+		}
+		s.bytesBase = evEnd
+		s.events = s.events[1:]
+		for _, sub := range s.subs {
+			if sub.closed {
+				continue
+			}
+			// Absolute tip of the hint is unchanged for later events; only the
+			// slice index shifts. Hints that pointed at the removed event reseed.
+			if sub.evIdx > 0 && sub.evAbs > oldBase {
+				sub.evIdx--
+			} else {
+				s.reseedSubscriberHintLocked(sub)
+			}
+		}
+	}
+}
+
+func (s *LiveStream) minLiveReaderOffsetLocked() int64 {
+	minOff := s.totalBytes
+	any := false
+	for _, sub := range s.subs {
+		if sub.closed {
+			continue
+		}
+		any = true
+		if sub.offset < minOff {
+			minOff = sub.offset
+		}
+	}
+	if !any {
+		// No live readers: trim freely (whole events) until under the RAM cap.
+		return s.totalBytes
+	}
+	return minOff
+}
+
+func (s *LiveStream) reseedSubscriberHintLocked(sub *liveSubscriber) {
+	sub.evIdx = 0
+	sub.evAbs = s.bytesBase
+	if sub.offset < s.bytesBase {
+		return
+	}
+	for sub.evIdx+1 < len(s.events) {
+		evEnd := sub.evAbs + int64(len(s.events[sub.evIdx]))
+		if evEnd > sub.offset {
+			break
+		}
+		sub.evAbs = evEnd
+		sub.evIdx++
+	}
+}
+
 // Expired reports whether the live buffer should be detached from the attach map.
 func (s *LiveStream) Expired(now time.Time) bool {
 	s.mu.Lock()
@@ -253,11 +367,32 @@ func (s *LiveStream) FormingLen() int {
 	return len(s.forming)
 }
 
-// TotalBytes returns the resume-log size (test helper).
+// TotalBytes returns the absolute tip of the resume log (test helper).
 func (s *LiveStream) TotalBytes() int64 {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.totalBytes
+}
+
+// RetainedBytes returns hot-RAM size of the resume window (test helper).
+func (s *LiveStream) RetainedBytes() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.retainedBytesLocked()
+}
+
+// BytesBase returns the absolute offset of the first retained event (test helper).
+func (s *LiveStream) BytesBase() int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.bytesBase
+}
+
+// OverCap reports whether new attaches are refused (test helper).
+func (s *LiveStream) OverCap() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.overCap
 }
 
 // Subscribe replays from the resume cursor then follows the live tail until
@@ -280,6 +415,9 @@ func (s *LiveStream) Subscribe(w http.ResponseWriter, deliveredEvents, delivered
 	if s.expiredLocked(time.Now()) {
 		return ErrLiveStreamPruned
 	}
+	if s.err != nil && errors.Is(s.err, ErrLiveStreamFormingOversize) {
+		return ErrLiveStreamFormingOversize
+	}
 	if s.overCap {
 		return ErrLiveStreamOverCap
 	}
@@ -293,7 +431,11 @@ func (s *LiveStream) Subscribe(w http.ResponseWriter, deliveredEvents, delivered
 		held = false
 		return streamErr
 	}
-	sub := &liveSubscriber{offset: offset}
+	sub := &liveSubscriber{
+		offset:         offset,
+		lastProgressAt: time.Now(),
+	}
+	s.reseedSubscriberHintLocked(sub)
 	s.subs = append(s.subs, sub)
 	s.mu.Unlock()
 	held = false
@@ -302,31 +444,47 @@ func (s *LiveStream) Subscribe(w http.ResponseWriter, deliveredEvents, delivered
 }
 
 // drainSubscriber reads [sub.offset, totalBytes) from the log at the client's
-// pace until the stream completes or the writer fails.
+// pace until the stream completes or the writer fails / stalls.
 func (s *LiveStream) drainSubscriber(w http.ResponseWriter, sub *liveSubscriber) error {
 	for {
 		s.mu.Lock()
 		for !sub.closed && !s.done && sub.offset >= s.totalBytes {
 			s.cond.Wait()
+			// Stall clock starts when undelivered data appears — not while idle.
+			sub.lastProgressAt = time.Now()
 		}
 		if sub.closed {
 			s.mu.Unlock()
 			return nil
 		}
 		if sub.offset < s.totalBytes {
+			if !sub.isPrimary && LiveStreamReaderStallTimeout > 0 {
+				if time.Since(sub.lastProgressAt) >= LiveStreamReaderStallTimeout {
+					s.mu.Unlock()
+					s.unsubscribe(sub)
+					return ErrSubscriberLagged
+				}
+			}
 			chunk := s.copyPendingLocked(sub)
 			next := s.totalBytes
+			lastProgress := sub.lastProgressAt
+			isPrimary := sub.isPrimary
 			s.mu.Unlock()
-			if err := writeReplay(w, chunk); err != nil {
-				if sub.isPrimary {
+			if err := writeReplay(w, chunk, lastProgress, isPrimary); err != nil {
+				if isPrimary {
 					s.clientDetached.Store(true)
+					s.unsubscribe(sub)
+					return nil // client gone; producer keeps draining
 				}
 				s.unsubscribe(sub)
-				return nil // client gone; producer keeps draining
+				return ErrSubscriberLagged
 			}
 			s.mu.Lock()
 			if !sub.closed && sub.offset < next {
 				sub.offset = next
+				sub.lastProgressAt = time.Now()
+				s.trimHeadLocked()
+				s.recomputeOverCapLocked()
 			}
 			s.mu.Unlock()
 			continue
@@ -342,6 +500,8 @@ func (s *LiveStream) unsubscribe(sub *liveSubscriber) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	sub.closed = true
+	s.trimHeadLocked()
+	s.recomputeOverCapLocked()
 	s.cond.Broadcast()
 }
 
@@ -363,9 +523,12 @@ func (s *LiveStream) deliveredAbsOffsetLocked(deliveredEvents, deliveredPartial 
 	if err := validateResumeCursor(deliveredEvents, deliveredPartial); err != nil {
 		return 0, err
 	}
+	if deliveredEvents < s.eventsBase {
+		return 0, ErrResumeCursorPast
+	}
 
-	var abs int64
-	var contentSeen int64
+	abs := s.bytesBase
+	contentSeen := s.eventsBase
 	i := 0
 	for i < len(s.events) && contentSeen < deliveredEvents {
 		ev := s.events[i]
@@ -387,6 +550,9 @@ func (s *LiveStream) deliveredAbsOffsetLocked(deliveredEvents, deliveredPartial 
 			abs += int64(len(s.events[i]))
 			i++
 		}
+		if abs < s.bytesBase {
+			return 0, ErrResumeCursorPast
+		}
 		return abs, nil
 	}
 
@@ -399,13 +565,21 @@ func (s *LiveStream) deliveredAbsOffsetLocked(deliveredEvents, deliveredPartial 
 		if deliveredPartial > evLen {
 			return 0, ErrResumeCursorPast
 		}
-		return abs + deliveredPartial, nil
+		out := abs + deliveredPartial
+		if out < s.bytesBase {
+			return 0, ErrResumeCursorPast
+		}
+		return out, nil
 	}
 	formingLen := int64(len(s.forming))
 	if deliveredPartial > formingLen {
 		return 0, ErrResumeCursorPast
 	}
-	return abs + deliveredPartial, nil
+	out := abs + deliveredPartial
+	if out < s.bytesBase {
+		return 0, ErrResumeCursorPast
+	}
+	return out, nil
 }
 
 // copyPendingLocked copies [sub.offset, totalBytes) out of the log and advances
@@ -415,6 +589,11 @@ func (s *LiveStream) deliveredAbsOffsetLocked(deliveredEvents, deliveredPartial 
 func (s *LiveStream) copyPendingLocked(sub *liveSubscriber) []byte {
 	if sub.offset >= s.totalBytes {
 		return nil
+	}
+	if sub.offset < s.bytesBase {
+		// Should not happen for live readers; trim never crosses min offset.
+		sub.offset = s.bytesBase
+		s.reseedSubscriberHintLocked(sub)
 	}
 	// The final event can still grow — bufferLocked merges blank SSE separators
 	// into it — so the hint stops there and re-reads its tail next wakeup.
@@ -453,15 +632,49 @@ func (s *LiveStream) copyPendingLocked(sub *liveSubscriber) []byte {
 	return out
 }
 
-func writeReplay(w http.ResponseWriter, replay []byte) error {
+func writeReplay(w http.ResponseWriter, replay []byte, lastProgressAt time.Time, isPrimary bool) error {
 	if len(replay) == 0 {
 		return nil
 	}
-	if _, err := w.Write(replay); err != nil {
-		return err
+	deadline := time.Time{}
+	if LiveStreamPrimaryWriteTimeout > 0 {
+		deadline = time.Now().Add(LiveStreamPrimaryWriteTimeout)
 	}
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	if !isPrimary && LiveStreamReaderStallTimeout > 0 && !lastProgressAt.IsZero() {
+		stallAt := lastProgressAt.Add(LiveStreamReaderStallTimeout)
+		if deadline.IsZero() || stallAt.Before(deadline) {
+			deadline = stallAt
+		}
 	}
-	return nil
+	if !deadline.IsZero() {
+		if rc := http.NewResponseController(w); rc != nil {
+			_ = rc.SetWriteDeadline(deadline)
+		}
+	}
+
+	// Race Write against the deadline so test writers (and stacks that ignore
+	// ResponseController deadlines) still surface stalls. A late Write result
+	// after timeout is ignored; the reader has already been dropped.
+	type writeResult struct{ err error }
+	ch := make(chan writeResult, 1)
+	go func() {
+		_, err := w.Write(replay)
+		if err == nil {
+			if f, ok := w.(http.Flusher); ok {
+				f.Flush()
+			}
+		}
+		ch <- writeResult{err: err}
+	}()
+	if deadline.IsZero() {
+		return (<-ch).err
+	}
+	timer := time.NewTimer(time.Until(deadline))
+	defer timer.Stop()
+	select {
+	case r := <-ch:
+		return r.err
+	case <-timer.C:
+		return errors.New("live stream write deadline exceeded")
+	}
 }

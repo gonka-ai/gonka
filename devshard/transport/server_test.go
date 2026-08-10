@@ -3,6 +3,7 @@ package transport
 import (
 	"context"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -18,6 +19,7 @@ import (
 	"devshard"
 	"devshard/host"
 	"devshard/internal/testutil"
+	"devshard/observability"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
@@ -694,6 +696,24 @@ func TestReplaySSEBodyFromCursor_PastCursorErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
 	err = replaySSEBodyFromCursor(rec, body, 5, 0)
 	require.ErrorIs(t, err, host.ErrResumeCursorPast)
+}
+
+func TestLiveAttachFailureReason_MapsResumePathErrors(t *testing.T) {
+	cases := []struct {
+		err  error
+		want observability.Reason
+	}{
+		{host.ErrResumeCursorPast, observability.ReasonCachedReplayErr},
+		{host.ErrInvalidResumeCursor, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamGone, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamPruned, observability.ReasonCachedReplayErr},
+		{host.ErrLiveStreamOverCap, observability.ReasonCachedReplayErr},
+		{host.ErrSubscriberLagged, observability.ReasonCachedReplayErr},
+		{errors.New("ml exploded"), observability.ReasonExecuteErr},
+	}
+	for _, tc := range cases {
+		require.Equal(t, tc.want, liveAttachFailureReason(tc.err), "%v", tc.err)
+	}
 }
 
 func TestReplaySSEBodyFromCursor_NegativeCursorErrors(t *testing.T) {

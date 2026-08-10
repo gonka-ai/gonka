@@ -399,12 +399,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		}
 	case resp.LiveAttach:
 		if aerr := s.host.AttachLiveStream(resp.InferenceID, w, resp.DeliveredEvents, resp.DeliveredPartial); aerr != nil {
-			reason := observability.ReasonExecuteErr
-			if errors.Is(aerr, host.ErrResumeCursorPast) || errors.Is(aerr, host.ErrInvalidResumeCursor) ||
-				errors.Is(aerr, host.ErrLiveStreamGone) || errors.Is(aerr, host.ErrLiveStreamPruned) ||
-				errors.Is(aerr, host.ErrLiveStreamOverCap) {
-				reason = observability.ReasonCachedReplayErr
-			}
+			reason := liveAttachFailureReason(aerr)
 			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, observability.WhereRuntimeWriteClientResponse)
 			logging.Error("live attach failed", "subsystem", "server", "error", aerr)
 			return nil
@@ -546,6 +541,18 @@ func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents
 		return err
 	}
 	return writeSSEDataLine(w, "data: [DONE]")
+}
+
+// liveAttachFailureReason maps host live-attach errors to the terminal reason
+// recorded for reconnect failures. Cursor / availability / soft-cap / lag errors
+// are resume-path failures (cached_replay_err); anything else stays execute_err.
+func liveAttachFailureReason(err error) observability.Reason {
+	if errors.Is(err, host.ErrResumeCursorPast) || errors.Is(err, host.ErrInvalidResumeCursor) ||
+		errors.Is(err, host.ErrLiveStreamGone) || errors.Is(err, host.ErrLiveStreamPruned) ||
+		errors.Is(err, host.ErrLiveStreamOverCap) || errors.Is(err, host.ErrSubscriberLagged) {
+		return observability.ReasonCachedReplayErr
+	}
+	return observability.ReasonExecuteErr
 }
 
 // streamedReplayEvents reports whether body is a SerializedStreamedResponse
