@@ -7,11 +7,11 @@ import (
 	"path/filepath"
 
 	"devshard/bridge"
+	"devshard/internal/testutil"
 	"devshard/signing"
 	"devshard/state"
 	"devshard/storage"
 	"devshard/stub"
-	"devshard/internal/testutil"
 	"devshard/types"
 	"google.golang.org/protobuf/proto"
 )
@@ -79,7 +79,7 @@ func startTx(inferenceID uint64) *types.DevshardTx {
 		InferenceId: inferenceID,
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}}}
 }

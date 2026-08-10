@@ -695,7 +695,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 	h := newTestHost(t, 1, hosts, user, 10000, 10)
 
 	// Large prompt signed/reported with underreported input_length.
-	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":50}`)
+	largePrompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"A very large prompt / context goes here..."}],"max_tokens":64}`)
 	promptHash, err := devshard.CanonicalPromptHash(largePrompt)
 	require.NoError(t, err)
 	start := &types.MsgStartInference{
@@ -703,7 +703,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 		PromptHash:  promptHash,
 		Model:       "llama",
 		InputLength: 0,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
@@ -716,7 +716,7 @@ func TestHost_PayloadMismatch_InputLengthWorkload(t *testing.T) {
 			Prompt:      largePrompt,
 			Model:       "llama",
 			InputLength: 0,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	})
@@ -729,7 +729,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 	user := testutil.MustGenerateKey(t)
 	h := newTestHost(t, 1, hosts, user, 10000, 10)
 
-	// Body asks for 1000 tokens while signed reserve only covers 1.
+	// Body asks for 1000 tokens while signed reserve only covers the floor.
 	prompt := []byte(`{"model":"llama","messages":[{"role":"user","content":"hi"}],"max_tokens":1000}`)
 	promptHash, err := devshard.CanonicalPromptHash(prompt)
 	require.NoError(t, err)
@@ -738,7 +738,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 		PromptHash:  promptHash,
 		Model:       "llama",
 		InputLength: uint64(len(prompt)),
-		MaxTokens:   1,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	diff := testutil.SignDiff(t, user, "escrow-1", 1, []*types.DevshardTx{
@@ -751,7 +751,7 @@ func TestHost_PayloadMismatch_MaxTokensWorkload(t *testing.T) {
 			Prompt:      prompt,
 			Model:       "llama",
 			InputLength: uint64(len(prompt)),
-			MaxTokens:   1,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	})

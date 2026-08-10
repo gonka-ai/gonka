@@ -19,6 +19,8 @@ import (
 	"github.com/stretchr/testify/require"
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/host"
 	"devshard/internal/statetest"
@@ -1628,8 +1630,8 @@ func TestRunInference_NonStreamingEarlyFailuresRetryNormalAttemptsBeforeReducedD
 
 	params := defaultParams()
 	params.Stream = false
-	params.MaxTokens = 50
-	params.Prompt = []byte(`{"model":"llama","max_tokens":50,"messages":[{"role":"user","content":"hello"}]}`)
+	params.MaxTokens = 256
+	params.Prompt = []byte(`{"model":"llama","max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
@@ -1637,7 +1639,7 @@ func TestRunInference_NonStreamingEarlyFailuresRetryNormalAttemptsBeforeReducedD
 	require.Error(t, err)
 	var reducedTokenTimeoutErr *nonStreamingReducedMaxTokensTimeoutError
 	require.ErrorAs(t, err, &reducedTokenTimeoutErr)
-	require.Equal(t, []uint64{50, 50}, client.MaxTokens())
+	require.Equal(t, []uint64{256, 256}, client.MaxTokens())
 	require.EqualValues(t, 2, client.sendCalls.Load())
 	env.proxy.perf.pairwise.mu.RLock()
 	pairwiseComparisons := len(env.proxy.perf.pairwise.pairs)
@@ -1653,8 +1655,8 @@ func TestRunInference_NonStreamingResponseTimeoutRetriesOnceWithReducedMaxTokens
 
 	params := defaultParams()
 	params.Stream = false
-	params.MaxTokens = 50
-	params.Prompt = []byte(`{"model":"llama","max_tokens":50,"messages":[{"role":"user","content":"hello"}]}`)
+	params.MaxTokens = 256
+	params.Prompt = []byte(`{"model":"llama","max_tokens":256,"messages":[{"role":"user","content":"hello"}]}`)
 
 	var buf bytes.Buffer
 	err := env.proxy.redundancy.RunInference(context.Background(), params, &buf, nil)
@@ -1662,7 +1664,7 @@ func TestRunInference_NonStreamingResponseTimeoutRetriesOnceWithReducedMaxTokens
 	require.Error(t, err)
 	var reducedTokenTimeoutErr *nonStreamingReducedMaxTokensTimeoutError
 	require.ErrorAs(t, err, &reducedTokenTimeoutErr)
-	require.Equal(t, []uint64{50, 25}, client.MaxTokens())
+	require.Equal(t, []uint64{256, 128}, client.MaxTokens())
 	require.EqualValues(t, 2, client.sendCalls.Load())
 	env.proxy.perf.pairwise.mu.RLock()
 	pairwiseComparisons := len(env.proxy.perf.pairwise.pairs)
@@ -1673,17 +1675,35 @@ func TestRunInference_NonStreamingResponseTimeoutRetriesOnceWithReducedMaxTokens
 func TestRunInference_NonStreamingResponseTimeoutReducesMaxCompletionTokensAndMinTokens(t *testing.T) {
 	params := user.InferenceParams{
 		Model:       "llama",
-		Prompt:      []byte(`{"model":"llama","max_completion_tokens":50,"min_tokens":50,"messages":[{"role":"user","content":"hello"}]}`),
+		Prompt:      []byte(`{"model":"llama","max_completion_tokens":256,"min_tokens":256,"messages":[{"role":"user","content":"hello"}]}`),
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   256,
 		StartedAt:   time.Now().Unix(),
 	}
 
 	reduced, ok := reducedMaxTokensParams(params)
 
 	require.True(t, ok)
-	require.EqualValues(t, 25, reduced.MaxTokens)
-	require.JSONEq(t, `{"model":"llama","max_completion_tokens":25,"min_tokens":25,"messages":[{"role":"user","content":"hello"}]}`, string(reduced.Prompt))
+	require.EqualValues(t, 128, reduced.MaxTokens)
+	require.JSONEq(t, `{"model":"llama","max_completion_tokens":128,"min_tokens":128,"messages":[{"role":"user","content":"hello"}]}`, string(reduced.Prompt))
+}
+
+func TestReducedMaxTokensParams_StopsAtFloor(t *testing.T) {
+	params := user.InferenceParams{
+		Model:       "llama",
+		Prompt:      []byte(`{"model":"llama","max_tokens":100,"messages":[{"role":"user","content":"hello"}]}`),
+		InputLength: 100,
+		MaxTokens:   100,
+		StartedAt:   time.Now().Unix(),
+	}
+
+	reduced, ok := reducedMaxTokensParams(params)
+	require.True(t, ok)
+	require.EqualValues(t, completionapi.MinTokensFloor, reduced.MaxTokens, "halving 100 lands under the floor and clamps to it")
+	require.JSONEq(t, `{"model":"llama","max_tokens":64,"messages":[{"role":"user","content":"hello"}]}`, string(reduced.Prompt))
+
+	_, ok = reducedMaxTokensParams(reduced)
+	require.False(t, ok, "at the floor there is nothing left to give up")
 }
 
 func TestProxyHandleChatCompletionsRejectsWhenConfirmationPoCActive(t *testing.T) {
@@ -1745,11 +1765,11 @@ func TestHandleDebugInferences_IncludesSealedInferences(t *testing.T) {
 	require.NoError(t, err)
 
 	start := &types.MsgStartInference{
-		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InferenceId: 1, PromptHash: []byte("prompt"), Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	_, err = sm.ApplyLocal(1, []*types.DevshardTx{{Tx: &types.DevshardTx_StartInference{StartInference: start}}})
 	require.NoError(t, err)
-	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, 50, 1000, 2000)
+	execSig := testutil.SignExecutorReceipt(t, hosts[1], escrowID, 1, []byte("prompt"), "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	_, err = sm.ApplyLocal(2, []*types.DevshardTx{{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: 1, ExecutorSig: execSig, ConfirmedAt: 2000,
 	}}}})

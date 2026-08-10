@@ -16,6 +16,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"common/completionapi"
+
 	"devshard"
 	"devshard/accounting"
 	"devshard/host"
@@ -2038,13 +2040,12 @@ func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Contex
 }
 
 func reducedMaxTokensParams(params user.InferenceParams) (user.InferenceParams, bool) {
-	if params.MaxTokens <= 1 {
+	// Halving below the floor buys a retry the state machine and the executor both refuse, so the
+	// reduction stops at the floor and declines once there is nothing left to give up.
+	if params.MaxTokens <= completionapi.MinTokensFloor {
 		return params, false
 	}
-	reducedMaxTokens := params.MaxTokens / 2
-	if reducedMaxTokens == 0 {
-		reducedMaxTokens = 1
-	}
+	reducedMaxTokens := max(params.MaxTokens/2, uint64(completionapi.MinTokensFloor))
 	prompt, ok := rewritePromptMaxTokens(params.Prompt, reducedMaxTokens)
 	if !ok {
 		return params, false
