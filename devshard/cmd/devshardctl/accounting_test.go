@@ -388,7 +388,7 @@ func TestAccountingObserverSyncsActiveInvalidation(t *testing.T) {
 		PromptHash:  []byte("prompt"),
 		Model:       "llama",
 		InputLength: 100,
-		MaxTokens:   50,
+		MaxTokens:   testutil.TestMaxTokens,
 		StartedAt:   1000,
 	}
 	apply(1, &types.DevshardTx{Tx: &types.DevshardTx_StartInference{StartInference: start}})

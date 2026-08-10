@@ -87,7 +87,7 @@ func newTimeoutVoteFixture(t *testing.T) *timeoutVoteFixture {
 
 	_, err = session.SendInference(context.Background(), InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	})
 	require.NoError(t, err)
 	require.Equal(t, types.StatusPending, userSM.SnapshotState().Inferences[1].Status)
@@ -107,7 +107,7 @@ func (f *timeoutVoteFixture) collect(t *testing.T, verifiers map[int]TimeoutVeri
 		types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	return votes
@@ -263,7 +263,7 @@ func TestApplyTimeout_SingleSpoofedVoteRejectsWholeTx(t *testing.T) {
 	seed := func(sm *state.StateMachine) {
 		_, applied, err := sm.ApplyLocalBestEffort(1, []*types.DevshardTx{{
 			Tx: &types.DevshardTx_StartInference{StartInference: &types.MsgStartInference{
-				InferenceId: 1, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+				InferenceId: 1, Model: "llama", InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 			}},
 		}})
 		require.NoError(t, err)
@@ -357,7 +357,7 @@ func TestCollectTimeoutVotes_WarmKeySignedVotesAccepted(t *testing.T) {
 	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 
@@ -389,7 +389,7 @@ func TestCollectTimeoutVotes_UnauthorizedWarmKeyRejected(t *testing.T) {
 	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	require.Empty(t, votes, "a key the resolver does not authorize must not be counted")
@@ -449,7 +449,7 @@ func TestCollectTimeoutVotes_WarmKeyFromCachedBindingWhenResolverFails(t *testin
 	votes, err := session.CollectTimeoutVotes(ctx, 1, types.TimeoutReason_TIMEOUT_REASON_REFUSED,
 		&host.InferencePayload{
 			Prompt: testutil.TestPrompt, Model: "llama",
-			InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+			InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 		}, verifiers, nil)
 	require.NoError(t, err)
 	require.True(t, session.HasSufficientTimeoutVotes(votes),
