@@ -186,6 +186,17 @@ func (env *gatewayMockEnv) get(path string, opts ...func(*http.Request)) *httpte
 	return rec
 }
 
+func (env *gatewayMockEnv) do(method, path, body string, opts ...func(*http.Request)) *httptest.ResponseRecorder {
+	env.t.Helper()
+	req := httptest.NewRequest(method, path, strings.NewReader(body))
+	for _, opt := range opts {
+		opt(req)
+	}
+	rec := httptest.NewRecorder()
+	env.handler.ServeHTTP(rec, req)
+	return rec
+}
+
 func withBearer(token string) func(*http.Request) {
 	return func(req *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+token)

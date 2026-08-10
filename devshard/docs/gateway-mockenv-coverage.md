@@ -35,8 +35,10 @@ Mock coverage:
 | Process | Mockenv test |
 | --- | --- |
 | Public traffic is blocked when the gateway is disabled | `TestGatewayMockEnvDisabledGatewayStillAllowsAdminState` |
+| Direct devshard chat is also blocked when the gateway is disabled | `TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat` |
 | Admin traffic still reaches the gateway when disabled | `TestGatewayMockEnvDisabledGatewayStillAllowsAdminState` |
 | Admin paths require the configured admin bearer key | `TestGatewayMockEnvAdminStateRequiresAdminKey` |
+| Direct operational paths require the configured admin bearer key | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | User API keys can satisfy model `api_key` access | `TestGatewayMockEnvAPIKeyModelAccess` |
 | Admin key can satisfy model `admin_only` access | `TestGatewayMockEnvAdminOnlyModelAccess` |
 | Direct devshard routes enforce model `api_key` access | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
@@ -59,7 +61,7 @@ a real devshard runtime.
 | `/v1/admin/devshards*` | Admin-only add/import/activate/deactivate/settle/participants operations | Not covered by mockenv yet |
 | `/v1/admin/escrows` | Admin-only escrow creation path | Not covered by mockenv yet |
 | `/v1/admin/suspicious-hosts` | Admin-only suspicious-host list/update path | Not covered by mockenv yet |
-| `/v1/finalize`, `/v1/state`, `/v1/debug/*` | Single-runtime or direct-devshard operational/debug paths | Not covered by mockenv yet |
+| `/v1/finalize`, `/v1/state`, `/v1/debug/*` | Single-runtime or direct-devshard operational/debug paths | Direct admin auth and pass-through covered |
 | `/metrics` | Gateway metrics scrape | Not covered by mockenv yet |
 
 ## Mock Environment Harness
@@ -151,7 +153,7 @@ Mock coverage:
 | Passes OpenAI-style SSE streaming responses through | `TestGatewayMockEnvStreamingChatPassthrough` |
 | Cache miss and cache store on successful pooled responses | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
 | Cache hit response replay for pooled chat | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
-| Runtime selection failure when all runtimes are unavailable | not covered by mockenv yet |
+| Runtime selection failure when all runtimes are unavailable | `TestGatewayMockEnvAllRuntimesUnavailableReturnsSelectionError` |
 | Participant limiter rejecting all candidate runtimes | not covered by mockenv yet |
 
 ## Direct Devshard Flow
@@ -220,11 +222,12 @@ Mock coverage:
 | Returns 404 for unknown direct devshard chat | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Direct route access control for `api_key` models | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
 | Direct route access control for `admin_only` models | `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
-| Direct route limiter rejection | not covered by mockenv yet |
+| Direct route limiter rejection | `TestGatewayMockEnvDirectDevshardLimiterRejectsBeforeRuntime` |
 | Direct route cache hit | `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
-| Runtime unavailable or inactive direct chat conflict | not covered by mockenv yet |
-| Direct non-chat pass-through paths | not covered by mockenv yet |
-| Direct finalize path and post-finalize deactivation | not covered by mockenv yet |
+| Runtime unavailable or inactive direct chat conflict | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict` |
+| Direct operational paths require admin auth before pass-through | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
+| Direct non-chat pass-through paths | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
+| Direct finalize post-success deactivation | `TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive` |
 | Non-resident read-only metadata path | not covered by mockenv yet |
 | Non-resident admin read-only hydration path | not covered by mockenv yet |
 
@@ -322,24 +325,27 @@ Mock coverage:
 
 | Gateway area | Covered by mockenv | Current tests |
 | --- | --- | --- |
-| Handler stack: disabled gateway | Yes | `TestGatewayMockEnvDisabledGatewayStillAllowsAdminState` |
-| Handler stack: admin auth | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey` |
+| Handler stack: disabled gateway | Yes | `TestGatewayMockEnvDisabledGatewayStillAllowsAdminState`, `TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat` |
+| Handler stack: admin auth | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Pooled chat routing | Yes | `TestGatewayMockEnvPooledChatRoutesByModel` |
 | Pooled default model | Yes | `TestGatewayMockEnvPooledChatUsesDefaultModel` |
 | Pooled model access modes | Yes | `TestGatewayMockEnvAPIKeyModelAccess`, `TestGatewayMockEnvAdminOnlyModelAccess` |
 | Pooled validation before runtime | Yes | `TestGatewayMockEnvUnsupportedModelRejectedBeforeRuntime`, `TestGatewayMockEnvMalformedJSONRejectedBeforeRuntime` |
 | Pooled inactive runtime exclusion | Yes | `TestGatewayMockEnvInactiveRuntimeExcludedFromPooledChat` |
+| Pooled runtime selection failure | Yes | `TestGatewayMockEnvAllRuntimesUnavailableReturnsSelectionError` |
 | Pooled gateway limiter | Yes | `TestGatewayMockEnvConcurrencyLimitRejectsBeforeRuntime` |
 | Pooled streaming pass-through | Yes | `TestGatewayMockEnvStreamingChatPassthrough` |
 | Direct devshard routing | Yes | `TestGatewayMockEnvDirectDevshardRouteByID` |
 | Direct devshard model validation | Yes | `TestGatewayMockEnvDirectDevshardRejectsWrongModel` |
 | Direct devshard model access modes | Yes | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess`, `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
+| Direct devshard limiter | Yes | `TestGatewayMockEnvDirectDevshardLimiterRejectsBeforeRuntime` |
+| Direct devshard unavailable conflict | Yes | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict` |
 | Direct unknown devshard | Yes | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
+| Direct operational path admin auth and pass-through | Yes | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Multi-runtime status aggregation | Yes | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Admin state auth and redaction | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminStateDoesNotExposePrivateKey` |
 | Response cache hit path | Yes | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
 | Single-runtime `/v1/status` proxy mode | No | Not covered by mockenv yet |
-| Direct non-chat pass-through and finalize | No | Not covered by mockenv yet |
+| Direct finalize post-success deactivation | Yes | `TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive` |
 | Non-resident read-only metadata and admin hydration | No | Not covered by mockenv yet |
-| Runtime selection failure when no runtime accepts new inference | No | Not covered by mockenv yet |
 | Participant limiter all-host rejection | No | Not covered by mockenv yet |

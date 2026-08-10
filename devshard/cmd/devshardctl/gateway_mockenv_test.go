@@ -244,6 +244,52 @@ func TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime(t *testing.T) {
 }
 
 // Steps:
+// - Create an inactive but resident runtime for a supported model.
+// - Send direct devshard chat to that runtime.
+// - Assert the gateway returns conflict before forwarding to the runtime.
+func TestGatewayMockEnvInactiveDirectDevshardReturnsConflict(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: false,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("inactive direct runtime should not receive chat")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+	rec := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "inactive direct"))
+
+	require.Equal(t, http.StatusConflict, rec.Code)
+	require.Contains(t, rec.Body.String(), "unavailable for new inferences")
+	require.Contains(t, rec.Body.String(), "inactive")
+	require.EqualValues(t, 0, rt.calls.Load())
+}
+
+// Steps:
+// - Configure only inactive runtimes for a supported pooled model.
+// - Send pooled chat for that model.
+// - Assert runtime selection fails before any runtime is called.
+func TestGatewayMockEnvAllRuntimesUnavailableReturnsSelectionError(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: false,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("pooled chat should not reach unavailable runtimes")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+	rec := env.postChat(mockenvChatBody("Qwen/Test", "no available runtime"))
+
+	require.Equal(t, http.StatusBadGateway, rec.Code)
+	require.Contains(t, rec.Body.String(), "no devshard runtimes available for new inferences")
+	require.Contains(t, rec.Body.String(), "inactive=1")
+	require.EqualValues(t, 0, rt.calls.Load())
+}
+
+// Steps:
 // - Create an active runtime for one model.
 // - Send direct devshard chat with a different requested model.
 // - Assert the gateway rejects before forwarding to the runtime handler.
@@ -420,6 +466,35 @@ func TestGatewayMockEnvConcurrencyLimitRejectsBeforeRuntime(t *testing.T) {
 }
 
 // Steps:
+// - Pre-fill the gateway limiter for the direct route target model.
+// - Send direct devshard chat for that model.
+// - Assert the gateway returns 429 before calling the runtime.
+func TestGatewayMockEnvDirectDevshardLimiterRejectsBeforeRuntime(t *testing.T) {
+	ConfigureCapacityAwareLimits("true")
+	t.Cleanup(func() { ConfigureCapacityAwareLimits("") })
+
+	limiter := NewGatewayLimiter(1, 0)
+	require.NoError(t, limiter.AcquireForModelWithCapacity("Qwen/Test", 1, LimiterModelCapacity{ScaleFactor: 1}))
+	t.Cleanup(func() { limiter.ReleaseForModel("Qwen/Test", 1) })
+
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("limited direct request should not reach runtime")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvLimiter(limiter))
+
+	rec := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "direct limited"))
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "rate limit exceeded")
+	require.EqualValues(t, 0, rt.calls.Load())
+}
+
+// Steps:
 // - Enable the gateway disabled response.
 // - Send public chat and assert the replacement response is returned.
 // - Send authenticated admin state and assert admin paths still work.
@@ -444,6 +519,32 @@ func TestGatewayMockEnvDisabledGatewayStillAllowsAdminState(t *testing.T) {
 	admin := env.get("/v1/admin/state", withBearer(mockenvAdminKey))
 	require.Equal(t, http.StatusOK, admin.Code)
 	require.Contains(t, admin.Body.String(), `"settings"`)
+}
+
+// Steps:
+// - Enable the gateway disabled response.
+// - Send direct devshard chat through the real gateway handler.
+// - Assert the disabled gateway response cannot be bypassed through the direct route.
+func TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:      "12",
+		model:   "Qwen/Test",
+		active:  true,
+		handler: func(w http.ResponseWriter, r *http.Request) { t.Fatal("disabled direct chat should not reach runtime") },
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.Disabled = GatewayDisabledSettings{
+			Enabled: true,
+			Message: "direct route is disabled too",
+			NewURL:  "https://example.test/v1/chat/completions",
+		}
+	}))
+
+	rec := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "disabled direct"))
+
+	require.Equal(t, http.StatusPermanentRedirect, rec.Code)
+	require.Contains(t, rec.Body.String(), "direct route is disabled too")
+	require.EqualValues(t, 0, rt.calls.Load())
 }
 
 // Steps:
@@ -501,6 +602,113 @@ func TestGatewayMockEnvAdminStateRequiresAdminKey(t *testing.T) {
 	ok := env.get("/v1/admin/state", withBearer(mockenvAdminKey))
 	require.Equal(t, http.StatusOK, ok.Code)
 	require.Contains(t, ok.Body.String(), `"devshards"`)
+}
+
+// Steps:
+// - Exercise direct operational paths that are admin-gated by middleware.
+// - Send each path without credentials, with a wrong key, and with the admin key.
+// - Assert only admin-authenticated requests reach the runtime handler.
+func TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths(t *testing.T) {
+	tests := []struct {
+		name      string
+		method    string
+		path      string
+		innerPath string
+	}{
+		{
+			name:      "finalize",
+			method:    http.MethodPost,
+			path:      "/devshard/12/v1/finalize",
+			innerPath: "/v1/finalize",
+		},
+		{
+			name:      "state",
+			method:    http.MethodGet,
+			path:      "/devshard/12/v1/state",
+			innerPath: "/v1/state",
+		},
+		{
+			name:      "debug_state",
+			method:    http.MethodGet,
+			path:      "/devshard/12/v1/debug/state",
+			innerPath: "/v1/debug/state",
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			rt := &gatewayMockRuntime{
+				id:     "12",
+				model:  "Qwen/Test",
+				active: true,
+				handler: func(w http.ResponseWriter, r *http.Request) {
+					require.Equal(t, tc.innerPath, r.URL.Path)
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusOK)
+					_, _ = w.Write([]byte(`{"ok":true}`))
+				},
+			}
+			env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+			missing := env.do(tc.method, tc.path, "")
+			require.Equal(t, http.StatusUnauthorized, missing.Code)
+			require.Contains(t, missing.Body.String(), "Invalid admin API key")
+			require.EqualValues(t, 0, rt.calls.Load())
+
+			wrong := env.do(tc.method, tc.path, "", withBearer("wrong-key"))
+			require.Equal(t, http.StatusUnauthorized, wrong.Code)
+			require.EqualValues(t, 0, rt.calls.Load())
+
+			ok := env.do(tc.method, tc.path, "", withBearer(mockenvAdminKey))
+			require.Equal(t, http.StatusOK, ok.Code)
+			require.Equal(t, "12", ok.Header().Get("X-Devshard-ID"))
+			require.Contains(t, ok.Body.String(), `"ok":true`)
+			require.EqualValues(t, 1, rt.calls.Load())
+		})
+	}
+}
+
+// Steps:
+// - Send authenticated direct finalize to an active runtime.
+// - Assert the gateway rewrites the request to /v1/finalize and forwards it.
+// - Assert a successful finalize marks both in-memory runtime and stored state inactive.
+func TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, http.MethodPost, r.Method)
+			require.Equal(t, "/v1/finalize", r.URL.Path)
+			require.Equal(t, "/v1/finalize", r.RequestURI)
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusOK)
+			_, _ = w.Write([]byte(`{"finalized":true}`))
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+	finalize := env.do(http.MethodPost, "/devshard/12/v1/finalize", "", withBearer(mockenvAdminKey))
+	require.Equal(t, http.StatusOK, finalize.Code)
+	require.Equal(t, "12", finalize.Header().Get("X-Devshard-ID"))
+	require.Contains(t, finalize.Body.String(), `"finalized":true`)
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	env.gateway.mu.Lock()
+	resident := env.gateway.runtimes["12"]
+	env.gateway.mu.Unlock()
+	require.NotNil(t, resident)
+	require.False(t, resident.active.Load())
+
+	record, ok, err := env.gateway.store.GetDevshard("12")
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.False(t, record.Active)
+
+	chat := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "after finalize"))
+	require.Equal(t, http.StatusConflict, chat.Code)
+	require.Contains(t, chat.Body.String(), "unavailable for new inferences")
+	require.EqualValues(t, 1, rt.calls.Load())
 }
 
 // Steps:
