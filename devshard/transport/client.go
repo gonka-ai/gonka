@@ -315,12 +315,13 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
+	hops := hopParseState{obs: hopObserverFromContext(ctx)}
 
 	for {
 		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
 			line := string(bytes.TrimRight(raw, "\r\n"))
-			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
+			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator, &hops)
 		}
 		if readErr != nil {
 			if errors.Is(readErr, ErrSSEEventTooLarge) {
@@ -396,9 +397,18 @@ func (c *HTTPClient) handleSSELine(
 	receiptHandler func(),
 	result *host.HostResponse,
 	writeErrLogged, unexpectedLineLogged, sawTerminator *bool,
+	hops *hopParseState,
 ) {
 	if !strings.HasPrefix(line, "data: ") {
-		if line != "" && !strings.HasPrefix(line, ":") && !*unexpectedLineLogged {
+		if strings.HasPrefix(line, ":") {
+			// SSE comments: hop stamps (5g) or other ignored noise. Never
+			// forward, never warn, never touch deliveredEvents.
+			if hops != nil {
+				hops.onComment(line)
+			}
+			return
+		}
+		if line != "" && !*unexpectedLineLogged {
 			lineLen, lineHex := sseLineBytesForLog(line)
 			if strings.HasPrefix(line, "data:") {
 				logging.Warn("sse_data_line_missing_space", "subsystem", "transport", "escrow", c.escrowID, "line_prefix", truncate(line, 120), "line_len", lineLen, "line_hex", lineHex)
@@ -425,6 +435,9 @@ func (c *HTTPClient) handleSSELine(
 	var envelope map[string]json.RawMessage
 	if err := json.Unmarshal([]byte(data), &envelope); err != nil {
 		// Not JSON -- forward as-is.
+		if hops != nil {
+			hops.onDataLine()
+		}
 		if werr := writeSSELine(stream, line); werr != nil && !*writeErrLogged {
 			*writeErrLogged = true
 			logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", werr)
@@ -455,12 +468,17 @@ func (c *HTTPClient) handleSSELine(
 				"has_executor_receipt", len(receipt.Receipt) > 0,
 				"executor_receipt_bytes", len(receipt.Receipt),
 				"confirmed_at", receipt.ConfirmedAt,
+				"req_ms", receipt.ReqMs,
 			)
 			result.StateSig = receipt.StateSig
 			result.StateHash = receipt.StateHash
 			result.Nonce = receipt.Nonce
 			result.Receipt = receipt.Receipt
 			result.ConfirmedAt = receipt.ConfirmedAt
+			result.ReqMs = receipt.ReqMs
+			if hops != nil {
+				hops.onReqMs(receipt.ReqMs)
+			}
 		}
 		if receiptHandler != nil {
 			receiptHandler()
@@ -483,7 +501,10 @@ func (c *HTTPClient) handleSSELine(
 		return
 	}
 
-	// Inference data line -- forward to callback.
+	// Inference data line -- pair hop stamps, then forward to callback.
+	if hops != nil {
+		hops.onDataLine()
+	}
 	if err := writeSSELine(stream, line); err != nil && !*writeErrLogged {
 		*writeErrLogged = true
 		logging.Warn("sse_write_failed", "subsystem", "transport", "escrow", c.escrowID, "event", "data", "error", err)

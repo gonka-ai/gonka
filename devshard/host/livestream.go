@@ -120,10 +120,15 @@ type LiveStream struct {
 	mu         sync.Mutex
 	cond       *sync.Cond
 	events     [][]byte // complete newline-terminated SSE lines (retained window)
-	forming    []byte   // bytes of the currently incomplete event
-	totalBytes int64    // absolute tip: bytesBase + retained
-	bytesBase  int64    // absolute byte offset of events[0]
-	eventsBase int64    // wire content-event count trimmed before events[0]
+	// ml[i] is host wall-ms when content-event i was appended (absolute wire
+	// index). Append-only and never trimmed: int64/event is cheap vs event
+	// bytes, and finish→cache replay needs the full series (phase 1). Live
+	// drain looks up ml[eventsBase+i] for events[i] (blanks have no entry).
+	ml         []int64
+	forming    []byte // bytes of the currently incomplete event
+	totalBytes int64  // absolute tip: bytesBase + retained
+	bytesBase  int64  // absolute byte offset of events[0]
+	eventsBase int64  // wire content-event count trimmed before events[0]
 	subs       []*liveSubscriber
 	primary    http.ResponseWriter // header target only; body via subscriber #0
 	done       bool
@@ -179,6 +184,15 @@ type liveSubscriber struct {
 	dropErr        error // why the producer side closed this reader, if it did
 	isPrimary      bool
 	lastProgressAt time.Time // last successful offset advance; not refreshed by Append
+
+	// stampOpen* is a one-shot mid-event attach hop stamp. Set only at
+	// Subscribe when the resume cursor lands inside a RAM content event that
+	// already has ml[]. The first RAM write prepends a 1-entry :devshard-ts
+	// for that event before the remainder so a fresh gateway parse can pair
+	// it. Never set for same-connection continuations (pending already held).
+	stampOpen   bool
+	stampOpenB  int64
+	stampOpenML int64
 }
 
 func newLiveStream() *LiveStream {
@@ -357,7 +371,23 @@ func (s *LiveStream) bufferLocked(p []byte) {
 			continue
 		}
 		s.events = append(s.events, event)
+		if !isBlankSSELine(event) {
+			s.ml = append(s.ml, time.Now().UnixMilli())
+		}
 	}
+}
+
+// MLTimes returns a copy of absolute per-content-event host read times (ms).
+// Safe after Close; used to attach hop stamps to the in-RAM completed cache.
+func (s *LiveStream) MLTimes() []int64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if len(s.ml) == 0 {
+		return nil
+	}
+	out := make([]int64, len(s.ml))
+	copy(out, s.ml)
+	return out
 }
 
 // isBlankSSELine reports whether line is an SSE separator (whitespace/empty
@@ -726,6 +756,13 @@ func (s *LiveStream) Subscribe(w http.ResponseWriter, deliveredEvents, delivered
 		lastProgressAt: time.Now(),
 	}
 	s.reseedSubscriberHintLocked(sub)
+	if deliveredPartial > 0 {
+		if b, mlMs, ok := s.openEventStampLocked(deliveredEvents, offset); ok {
+			sub.stampOpen = true
+			sub.stampOpenB = b
+			sub.stampOpenML = mlMs
+		}
+	}
 	s.subs = append(s.subs, sub)
 	s.mu.Unlock()
 
@@ -844,16 +881,27 @@ func (s *LiveStream) drainSubscriber(w http.ResponseWriter, sub *liveSubscriber)
 		}
 
 		var chunk []byte
+		var hopPrefix []byte
 		var spoolAt, spoolLen int64
 		if sub.offset < s.bytesBase {
 			if !s.spoolActiveLocked() {
 				s.mu.Unlock()
 				return s.readerLost(sub)
 			}
+			// Phase 1: spool has no ml[] — emit data only.
 			spoolAt = sub.offset
 			spoolLen = min(s.lim.chunkBytes, s.spoolOffset-sub.offset)
 		} else {
 			chunk = s.copyPendingLocked(sub, s.lim.chunkBytes)
+			hopPrefix = s.hopCommentPrefixLocked(sub.offset, int64(len(chunk)), HopTierLive)
+			// Fresh mid-event attach: stamp the open event before its remainder.
+			// Mid-event cap keeps this chunk remainder-only, so this cannot
+			// stack with hopPrefix (which only covers events that *start* here).
+			if sub.stampOpen && len(chunk) > 0 {
+				open := AppendDevshardTSComment(nil, sub.stampOpenB, []int64{sub.stampOpenML}, FreshWriteTimes(1), HopTierLive)
+				hopPrefix = append(open, hopPrefix...)
+				sub.stampOpen = false
+			}
 		}
 		spool := s.spool
 		lastProgress := sub.lastProgressAt
@@ -878,7 +926,13 @@ func (s *LiveStream) drainSubscriber(w http.ResponseWriter, sub *liveSubscriber)
 			continue
 		}
 
-		if err := writeReplay(w, chunk, s.lim.writeDeadline(lastProgress, isPrimary)); err != nil {
+		deadline := s.lim.writeDeadline(lastProgress, isPrimary)
+		dataLen := int64(len(chunk))
+		// One wire write: comment (if any) then the ≤N content events it describes.
+		if len(hopPrefix) > 0 {
+			chunk = append(hopPrefix, chunk...)
+		}
+		if err := writeReplay(w, chunk, deadline); err != nil {
 			if isPrimary {
 				s.clientDetached.Store(true)
 				return nil // client gone; producer keeps draining
@@ -888,7 +942,7 @@ func (s *LiveStream) drainSubscriber(w http.ResponseWriter, sub *liveSubscriber)
 
 		s.mu.Lock()
 		if !sub.closed {
-			sub.offset += int64(len(chunk))
+			sub.offset += dataLen
 			sub.lastProgressAt = time.Now()
 			s.trimHeadLocked()
 			s.cond.Broadcast()
@@ -994,11 +1048,82 @@ func (s *LiveStream) deliveredAbsOffsetLocked(deliveredEvents, deliveredPartial 
 	return abs + deliveredPartial, nil
 }
 
+// openEventStampLocked returns the absolute content-event index and ml time
+// for a mid-event resume offset inside the RAM window. ok is false for spool
+// offsets, event-boundary offsets, or events not yet stamped into ml[]
+// (still forming). Caller must hold s.mu.
+func (s *LiveStream) openEventStampLocked(deliveredEvents, offset int64) (b int64, mlMs int64, ok bool) {
+	if offset < s.bytesBase || deliveredEvents < s.eventsBase {
+		return 0, 0, false
+	}
+	if int(deliveredEvents) >= len(s.ml) {
+		return 0, 0, false
+	}
+	start, err := s.deliveredAbsOffsetLocked(deliveredEvents, 0)
+	if err != nil || offset <= start {
+		return 0, 0, false
+	}
+	// Bound against the end of this content event (next content event start,
+	// or totalBytes if this is the last / still-forming tail).
+	end, err := s.deliveredAbsOffsetLocked(deliveredEvents+1, 0)
+	if err != nil {
+		// deliveredEvents is the last complete content event index; the open
+		// event may extend through forming.
+		end = s.totalBytes
+	}
+	if offset >= end {
+		return 0, 0, false
+	}
+	return deliveredEvents, s.ml[deliveredEvents], true
+}
+
+// hopCommentPrefixLocked builds `: devshard-ts` comment bytes for content
+// events that *begin* in [start, start+length). Mid-event continuations must
+// not get a leading comment — that would splice `: …` into the middle of a
+// `data:` line on the wire. Caller must hold s.mu. Safe after unlock.
+func (s *LiveStream) hopCommentPrefixLocked(start, length int64, tier string) []byte {
+	if length <= 0 || start < s.bytesBase {
+		return nil
+	}
+	end := start + length
+	var (
+		ml    []int64
+		baseB int64 = -1
+		abs   int64 = s.bytesBase
+	)
+	contentIdx := s.eventsBase
+	for i := 0; i < len(s.events) && abs < end; i++ {
+		ev := s.events[i]
+		evEnd := abs + int64(len(ev))
+		blank := isBlankSSELine(ev)
+		if !blank {
+			// Only events whose first byte is in this write.
+			if abs >= start && abs < end && int(contentIdx) < len(s.ml) {
+				if baseB < 0 {
+					baseB = contentIdx
+				}
+				ml = append(ml, s.ml[contentIdx])
+			}
+			contentIdx++
+		}
+		abs = evEnd
+	}
+	if len(ml) == 0 || baseB < 0 {
+		return nil
+	}
+	return AppendDevshardTSComment(nil, baseB, ml, FreshWriteTimes(len(ml)), tier)
+}
+
 // copyPendingLocked copies at most limit bytes of [sub.offset, totalBytes) out
 // of the RAM window and advances sub's cursor hint. Caller must hold s.mu; the
 // returned slice is safe after unlock. Runs under the producer's lock, so it
 // must not walk already-delivered events: the hint keeps the scan proportional
 // to the undelivered tail, and limit keeps the copy bounded.
+//
+// Content events that *begin* in the chunk are also capped at
+// MaxDevshardTSEventsPerComment so each RAM write pairs with one `:devshard-ts`
+// comment (gateway hop pairing replaces pending; stacked comments would drop
+// earlier batches).
 func (s *LiveStream) copyPendingLocked(sub *liveSubscriber, limit int64) []byte {
 	if sub.offset >= s.totalBytes {
 		return nil
@@ -1025,6 +1150,32 @@ func (s *LiveStream) copyPendingLocked(sub *liveSubscriber, limit int64) []byte 
 	end := s.totalBytes
 	if limit > 0 && end-sub.offset > limit {
 		end = sub.offset + limit
+	}
+	// Mid-event resume/continuation must not pull following events into the
+	// same write: Step 5g injects `: devshard-ts` before events that *start*
+	// in the write, and a mixed continuation+next-event chunk would place that
+	// comment in front of the leftover bytes of the current event.
+	if sub.evIdx < len(s.events) {
+		evEnd := sub.evAbs + int64(len(s.events[sub.evIdx]))
+		if sub.offset > sub.evAbs && sub.offset < evEnd && end > evEnd {
+			end = evEnd
+		}
+	}
+	// Bound content events that begin in [sub.offset, end).
+	if maxEv := MaxDevshardTSEventsPerComment; maxEv > 0 {
+		contentStarts := 0
+		abs := sub.evAbs
+		for i := sub.evIdx; i < len(s.events) && abs < end; i++ {
+			ev := s.events[i]
+			if !isBlankSSELine(ev) && abs >= sub.offset && abs < end {
+				if contentStarts >= maxEv {
+					end = abs
+					break
+				}
+				contentStarts++
+			}
+			abs += int64(len(ev))
+		}
 	}
 	out := make([]byte, 0, end-sub.offset)
 	abs := sub.evAbs

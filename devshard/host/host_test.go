@@ -1582,7 +1582,7 @@ func TestHost_ResponseCache_Lifecycle(t *testing.T) {
 	cached, ok := h.completedResponses[1]
 	h.mu.Unlock()
 	require.True(t, ok, "response should be cached after execution")
-	require.Equal(t, result.ResponseBody, cached)
+	require.Equal(t, result.ResponseBody, cached.Body)
 
 	// Reconnect: same request again should return cached body, no execution job.
 	resp2, err := h.HandleRequest(context.Background(), HostRequest{

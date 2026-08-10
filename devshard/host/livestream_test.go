@@ -89,6 +89,27 @@ func (f *flushRecorder) bodyLen() int {
 	return f.ResponseRecorder.Body.Len()
 }
 
+// stripDevshardTSComments drops Step 5g writer-only hop comments so tests can
+// assert on the cursor-counted log bytes independently of timestamp injection.
+func stripDevshardTSComments(s string) string {
+	var b strings.Builder
+	for _, line := range strings.SplitAfter(s, "\n") {
+		if strings.HasPrefix(line, DevshardTSCommentPrefix) || strings.HasPrefix(strings.TrimSuffix(line, "\n"), strings.TrimSpace(DevshardTSCommentPrefix)) {
+			continue
+		}
+		// SplitAfter keeps the newline on each piece; a bare ": devshard-ts …\n"
+		// is skipped above. Also skip when the prefix matches without relying on
+		// SplitAfter edge cases.
+		trimmed := strings.TrimSuffix(line, "\n")
+		trimmed = strings.TrimSuffix(trimmed, "\r")
+		if strings.HasPrefix(trimmed, ": devshard-ts") {
+			continue
+		}
+		b.WriteString(line)
+	}
+	return b.String()
+}
+
 func waitBodyContains(t *testing.T, get func() string, want string, timeout time.Duration) {
 	t.Helper()
 	deadline := time.After(timeout)
@@ -690,7 +711,7 @@ func TestLiveStream_SlowButAliveReconnectCompletes(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("slow-but-alive subscribe did not finish")
 	}
-	require.Equal(t, want.String(), w.String(),
+	require.Equal(t, want.String(), stripDevshardTSComments(w.String()),
 		"a reader that falls out of the RAM window must be served from the spool without gaps")
 }
 
@@ -766,7 +787,7 @@ func TestLiveStream_RAMBoundedWhileReaderIsPinned(t *testing.T) {
 	close(w.release)
 	stream.Close(nil)
 	require.NoError(t, <-subDone)
-	require.Equal(t, want.String(), w.String(),
+	require.Equal(t, want.String(), stripDevshardTSComments(w.String()),
 		"pinned reader must still receive every byte, from the spool")
 }
 
@@ -916,16 +937,17 @@ func TestLiveStream_BacklogIsWrittenInChunks(t *testing.T) {
 
 	w := &countingWriter{}
 	require.NoError(t, stream.Subscribe(w, 0, 0))
-	require.Equal(t, want.String(), w.String())
+	require.Equal(t, want.String(), stripDevshardTSComments(w.String()))
 	require.Greater(t, w.writes(), 1, "backlog must not be one write")
-	require.LessOrEqual(t, w.maxWrite(), 64)
+	require.LessOrEqual(t, w.maxDataWrite(), 64, "data chunks must respect LiveStreamWriteChunkBytes; hop comments are separate")
 }
 
 type countingWriter struct {
-	mu    sync.Mutex
-	buf   bytes.Buffer
-	n     int
-	maxSz int
+	mu       sync.Mutex
+	buf      bytes.Buffer
+	n        int
+	maxSz    int
+	maxData  int
 }
 
 func (w *countingWriter) Header() http.Header { return make(http.Header) }
@@ -937,6 +959,11 @@ func (w *countingWriter) Write(p []byte) (int, error) {
 	w.n++
 	if len(p) > w.maxSz {
 		w.maxSz = len(p)
+	}
+	if !bytes.HasPrefix(p, []byte(DevshardTSCommentPrefix)) && !bytes.HasPrefix(p, []byte(": devshard-ts")) {
+		if len(p) > w.maxData {
+			w.maxData = len(p)
+		}
 	}
 	return w.buf.Write(p)
 }
@@ -954,6 +981,11 @@ func (w *countingWriter) maxWrite() int {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	return w.maxSz
+}
+func (w *countingWriter) maxDataWrite() int {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	return w.maxData
 }
 
 func (s *LiveStream) eventsBaseOrZero() int64 {
@@ -1114,7 +1146,7 @@ func TestLiveStream_WriteHeaderDoesNotHoldLockDuringPrimaryIO(t *testing.T) {
 	stream.WaitPrimary()
 
 	require.False(t, w.interleaved(), "body write interleaved with WriteHeader")
-	require.Equal(t, line, w.bodyString(), "body must land after the header write")
+	require.Equal(t, line, stripDevshardTSComments(w.bodyString()), "body must land after the header write")
 	select {
 	case <-done:
 	case <-time.After(time.Second):
@@ -1135,7 +1167,7 @@ func TestLiveStream_PrimaryDrainNotBlockedWhenHeaderNeverWritten(t *testing.T) {
 	stream.Close(nil)
 	stream.WaitPrimary()
 
-	require.Equal(t, "data: no-header\n", rec.body())
+	require.Equal(t, "data: no-header\n", stripDevshardTSComments(rec.body()))
 }
 
 func TestLiveStream_ClosedSubscribersAreRemoved(t *testing.T) {

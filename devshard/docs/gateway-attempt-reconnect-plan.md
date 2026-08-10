@@ -1,6 +1,6 @@
 # Gateway Attempt Reconnect & Winner Continuity — implementation plan
 
-Status: core landed (Steps 1–5e + 7); deferred Steps 5f–5g / 6 / 8–10.
+Status: core landed (Steps 1–5e + 5g phase 1 + 7); deferred Steps 5f / 5g phase 2 / 6 / 8–10.
 Overview (flows / timeouts / observability / e2e): [gateway-streaming-ha-overview.md](./gateway-streaming-ha-overview.md)  
 Design (no steps): [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md)
 Parent: [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) — Step 4 references this
@@ -985,17 +985,17 @@ generation* to *every finishing generation*.
 Goal: measure **full path latency** across gateway → host (`devshardd`) → ML node →
 host → gateway, not only in-host buffer residency. Existing signals are one-sided: the
 host has aggregate ML call duration; the gateway has `firstTokenNano` / `lastChunkAt` in
-`raceWriter.Write` (`redundancy.go`); vLLM often embeds its own chunk time — but nothing
-today joins those clocks on one stream.
+`raceWriter.Write` (`redundancy.go`) — but nothing today joins those clocks on one stream.
+vLLM's chunk `created` is a once-per-request Unix second reused on every line, not a
+per-chunk emit time, so it is not part of this design.
 
-**What travels on the wire (absolute host / ML times).** Gateway consume time does **not**
+**What travels on the wire (absolute host times).** Gateway consume time does **not**
 — the gateway stamps that locally when it reads each `data:` line.
 
 | Stamp | Where | Absolute? | Stored in RAM/store? |
 |---|---|---|---|
 | `req_ms` | Host saw the inference HTTP request (before / as execution starts) | Yes (host wall ms) | Once per generation (receipt) |
 | `ml[]` | Host read that chunk from the ML node (`scanner.Scan` in `proxy.go`) | Yes (host wall ms) | Parallel array next to `LiveStream.events`; sidecar at finish |
-| `v[]` | vLLM / ML chunk timestamp when present in the upstream line | Yes (as reported) | Same parallel storage; `0` / omit if absent — **extract only**, never rewrite the hashed `data:` line |
 | `w[]` | Host **started writing** that chunk to *this* gateway connection | Yes (host wall ms) | **Not** stored in the log — stamped at emit time per subscriber write (fresh on reconnect) |
 | gateway recv | Gateway SSE parser saw the `data:` line | Yes (gateway wall ms) | Local only |
 
@@ -1003,13 +1003,13 @@ That yields the hop chain operators care about:
 
 ```text
 gateway_send  →  req_ms          (gateway → host)          [cross-clock]
-req_ms        →  v[i] / ml[i]    (host → ML → host)        [host / ML clocks]
+req_ms        →  ml[i]           (host → ML → host)        [same host clock]
 ml[i]         →  w[i]            (host buffer residency)   [same host clock]
 w[i]          →  gateway_recv[i] (host → gateway)          [cross-clock]
 ```
 
 `req_ms` is the minimum absolute anchor the host must report: without it, gateway→host
-cannot be measured from the response stream. Per-chunk `ml` / `v` / `w` extend that to
+cannot be measured from the response stream. Per-chunk `ml` / `w` extend that to
 TTFT and inter-chunk hops.
 
 **Three constraints rule out the obvious designs.** Establish these first, because each
@@ -1024,8 +1024,8 @@ one silently breaks something that has no test today:
    appends the *same* string it returns for proxying
    (`common/completionapi/responseprocessor.go`), so "mutate on the way out" is not
    available there either. **Timestamps must never enter `streamedResponse` /
-   `responseBody`.** vLLM fields used for `v[]` are **read** from the upstream line
-   before/alongside id rewrite; the stored/proxied `data:` bytes stay unchanged.
+   `responseBody`.** Host stamps are captured alongside the line (and id rewrite);
+   the stored/proxied `data:` bytes stay unchanged.
 2. **A new `devshard_*` event leaks to end users on today's gateways.** An envelope that
    is neither `devshard_receipt` nor `devshard_meta` falls through to the
    forward-to-client branch (`transport/client.go`), so a pre-patch gateway would write
@@ -1046,7 +1046,7 @@ for a leading `:`. That gives a channel which is invisible to old gateways, neve
 reaches end users, and costs nothing to ignore.
 
 ```text
-: devshard-ts {"b":128,"ml":[1712345678901,1712345678936],"v":[1712345678890,0],"w":[1712345678940,1712345678975]}
+: devshard-ts {"b":128,"ml":[1712345678901,1712345678936],"w":[1712345678940,1712345678975]}
 data: {"choices":[{"delta":{"content":"one"}}]}
 
 data: {"choices":[{"delta":{"content":" two"}}]}
@@ -1055,17 +1055,24 @@ data: {"choices":[{"delta":{"content":" two"}}]}
 - `b` — absolute wire event index of the first event described (same counting rule as
   `deliveredEvents`: non-blank data lines; blank separators skipped).
 - `ml` — host wall-clock ms when each event was read from the ML node (original times,
-  including on reconnect replay).
-- `v` — optional parallel array of ML-reported times (`0` if that event had none).
+  including on reconnect replay). Parallel array: one entry per following `data:` event
+  in this batch.
 - `w` — host wall-clock ms when this subscriber write began for those events (**this
-  connection**; different on a reconnect catch-up).
+  connection**; different on a reconnect catch-up). Same length as `ml`.
 - `req_ms` — absolute host wall-clock ms when the inference request was seen, sent
   **once** as an additive field on `devshard_receipt` (same compatibility story as any
   unknown receipt field).
 
 The comment is emitted **immediately before the byte range it describes**, inside the
-same subscriber write. Cap indices per comment and split across several lines — a
-reconnect catching up on thousands of buffered events must not emit one enormous line.
+same subscriber write. Cap content events per write (and thus per comment) at N —
+one comment ↔ one write ↔ ≤N events. A reconnect catching up on thousands of
+buffered events uses multiple short writes, never one enormous comment or stacked
+comments before the data (gateway pairing keeps a single pending batch).
+
+**Mid-event attach:** a fresh `Subscribe` / cache replay whose cursor lands inside a
+content event that already has `ml[]` prepends a 1-entry `:devshard-ts` for that
+open event before the remainder (new HTTP body — safe). Same-connection
+continuations stay data-only so a comment cannot splice into an open SSE line.
 
 Critically, the comment is generated **at the writer**, not appended to `LiveStream`.
 The log keeps holding exactly the ML data lines it holds today, so cursor arithmetic,
@@ -1073,11 +1080,13 @@ The log keeps holding exactly the ML data lines it holds today, so cursor arithm
 
 **Storage: parallel arrays in RAM; one-shot sidecar at finish (not a disk stream).**
 
-`LiveStream.events` is a `[][]byte`; add parallel `[]int64` for `ml` (and optional `v`)
-appended in `bufferLocked` only where `s.events = append(...)` runs — a blank separator
-merged into `events[last]` inherits the parent entry. `trimHeadLocked` drops both slices
-in lockstep. Capture: `scanner.Scan()` success in `cmd/devshardd/inference/proxy.go`,
-before id rewrite; parse `v` from the upstream line without mutating it.
+`LiveStream.events` is a `[][]byte`; add an append-only `[]int64` for `ml` (absolute
+content-event index) whenever a new content event is appended — a blank separator merged
+into `events[last]` inherits the parent entry and does not grow `ml`. Phase 1 keeps `ml`
+untrimmed so finish→cache replay still has early-event times after the RAM window moves;
+live drain looks up `ml[eventsBase+i]`. Capture: host wall ms at `LiveStream` append
+(same goroutine as `scanner.Scan` → `Fprintln` → `Write`; do not parse or mutate the
+line for timestamps).
 
 Do **not** stream the live buffer to disk per chunk. Keep timestamps in RAM while
 draining; on finish, write them once next to the existing payload persist (same place
@@ -1091,7 +1100,7 @@ hour-old store replays do not dominate hop histograms.
 
 **Both connection types, all three tiers.** Injection belongs in the subscriber drain
 path (primary = subscriber #0 and every reconnect) plus `replaySSEBodyFromCursor` for
-cache/store. Reconnect must re-emit stored `ml`/`v` and fresh `w`.
+cache/store. Reconnect must re-emit stored `ml` and fresh `w`.
 
 **Clock skew.** Absolute cross-machine hops (`gateway_send → req_ms`, `w → gateway_recv`)
 include NTP/clock skew; document that and prefer distributions / comparisons under the
@@ -1117,7 +1126,7 @@ No protocol version bump; not gated on `v5`.
 gateway request-send time so `gateway_send → req_ms` is available. Keep this pairing
 **separate from `deliveredEvents`** (client-forwarded bytes; zero for suppressed losers).
 
-**Security.** Host/ML timestamps are unverifiable. Same R8 rule as blips: metrics/logs
+**Security.** Host timestamps are unverifiable. Same R8 rule as blips: metrics/logs
 only, never `Decide` / picker / quarantine. Bound comment line and array length; treat
 malformed comments as absent, not stream errors.
 
@@ -1184,7 +1193,7 @@ plus a coverage counter for events missing stamps while hosts roll out.
 - 5g timestamp/trim alignment: after head-trim, the timestamp of a surviving event is
   still the one captured for *that* event (assert against a pre-trim control); a blank
   separator merged into the previous event adds no entry and shifts nothing.
-- 5g resume fidelity: a mid-flight reconnect reports the **original** `ml`/`v` for
+- 5g resume fidelity: a mid-flight reconnect reports the **original** `ml` for
   replayed events, not the replay time, and a **fresh** `w` for this connection; cache
   and store tiers tagged with `tier`.
 - 5g hop anchors: `req_ms` is present on receipt; gateway can form
@@ -1637,9 +1646,10 @@ verified to fail without them.
 - [x] Step 5d — defensive forming cap (`LiveStreamMaxFormingBytes`), loud on breach
 - [x] Step 5e — payload store as the last resume tier; derive drain / LiveStream TTL / gateway hard timeout from `ExecutionTimeout`
 - [ ] Step 5f — window/spool/lag metrics (with Step 8)
-- [ ] Step 5g — hop timestamps: absolute `req_ms` on receipt; per-chunk `ml`/`v` in RAM (+ payload
-  sidecar phase 2); per-connection `w` at emit; gateway local recv; `: devshard-ts` comments out of
-  cursor/hash space. Full path gateway↔host↔ML; no protocol bump; mixed-version compatible
+- [x] Step 5g — hop timestamps (phase 1): absolute `req_ms` on receipt; per-chunk `ml` in RAM (+
+  in-memory cache); per-connection `w` at emit; gateway local recv; `: devshard-ts` comments out of
+  cursor/hash space; hop histograms + coverage. Spool-trimmed ranges and payload-store tier omit
+  comments until phase 2 sidecar.
 - [ ] Step 5h — build the durable envelope by streaming the spool; retire the response processor's per-line retention (hash-sensitive; needs a byte-identical encoder)
 - [ ] Step 6 — **deferred** until `ak/gateway-v4-postgres` merges; then persist soft signals (blips + rolling stream bps) to gateway store on a 1m ticker; hydrate on boot; additive schema via gateway-store interface / PG + SQLite / D5–D6 HA rules
 - [x] Step 7 — E2E: admin reconnect settings; citest v2 protocol gate + v5 mid-stream resume

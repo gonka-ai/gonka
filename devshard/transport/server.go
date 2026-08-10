@@ -364,6 +364,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 		Nonce:       resp.Nonce,
 		Receipt:     resp.Receipt,
 		ConfirmedAt: resp.ConfirmedAt,
+		ReqMs:       resp.ReqMs,
 	}
 	if s.receiptDelay > 0 {
 		timer := time.NewTimer(s.receiptDelay)
@@ -393,7 +394,7 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	// Cached replay, live-attach reconnect, or deferred first-path execution.
 	switch {
 	case resp.CachedResponseBody != nil && resp.ExecutionJob == nil:
-		if werr := replaySSEBodyFromCursor(w, resp.CachedResponseBody, resp.DeliveredEvents, resp.DeliveredPartial); werr != nil {
+		if werr := replaySSEBodyFromCursor(w, resp.CachedResponseBody, resp.DeliveredEvents, resp.DeliveredPartial, resp.CachedResponseML); werr != nil {
 			observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
 			return nil
 		}
@@ -475,19 +476,52 @@ const partialStreamErrorLine = `data: {"error":{"message":"upstream stream ended
 // to the client. Replay emits exactly the stored events and then an explicit
 // error event, so truncation is visible rather than disguised as success.
 func replaySSEBody(w http.ResponseWriter, body []byte) error {
-	return replaySSEBodyFromCursor(w, body, 0, 0)
+	return replaySSEBodyFromCursor(w, body, 0, 0, nil)
 }
 
 // replaySSEBodyFromCursor replays a cached body starting at the resume cursor.
 // deliveredEvents indexes complete upstream data events; deliveredPartial is a
 // byte offset into the next event (0 on an event boundary).
-func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents, deliveredPartial int64) error {
+// ml is the optional absolute per-content-event host read times (Step 5g); when
+// present, `: devshard-ts` comments are injected before each batch (tier=cache).
+func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents, deliveredPartial int64, ml []int64) error {
 	if deliveredEvents < 0 || deliveredPartial < 0 {
 		return host.ErrInvalidResumeCursor
 	}
 	if events, ok := streamedReplayEvents(body); ok {
 		sawDone := false
 		idx := int64(0)
+		var (
+			batchML  []int64
+			batchOut []string
+			batchB   int64 = -1
+		)
+		flush := func() error {
+			if len(batchOut) == 0 {
+				return nil
+			}
+			// One write: single :devshard-ts comment then ≤N data events.
+			var buf []byte
+			if len(batchML) == len(batchOut) {
+				buf = host.AppendDevshardTSComment(nil, batchB, batchML, host.FreshWriteTimes(len(batchML)), host.HopTierCache)
+			}
+			for _, out := range batchOut {
+				buf = append(buf, out...)
+				buf = append(buf, '\n', '\n')
+			}
+			if len(buf) > 0 {
+				if _, err := w.Write(buf); err != nil {
+					return err
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+			}
+			batchML = batchML[:0]
+			batchOut = batchOut[:0]
+			batchB = -1
+			return nil
+		}
 		for _, event := range events {
 			line := normalizeReplaySSEEvent(event)
 			if line == "" {
@@ -511,11 +545,51 @@ func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents
 					continue
 				}
 				out = out[deliveredPartial:]
+				// Fresh mid-event attach: stamp the open event before its
+				// remainder (same rule as LiveStream Subscribe). Do not batch
+				// with following events — this line does not *start* here.
+				if err := flush(); err != nil {
+					return err
+				}
+				var buf []byte
+				if int(idx) < len(ml) {
+					buf = host.AppendDevshardTSComment(nil, idx, []int64{ml[idx]}, host.FreshWriteTimes(1), host.HopTierCache)
+				}
+				buf = append(buf, out...)
+				buf = append(buf, '\n', '\n')
+				if _, err := w.Write(buf); err != nil {
+					return err
+				}
+				if f, ok := w.(http.Flusher); ok {
+					f.Flush()
+				}
+				idx++
+				continue
+			}
+			if int(idx) < len(ml) {
+				if len(batchOut) == 0 {
+					batchB = idx
+				}
+				batchML = append(batchML, ml[idx])
+				batchOut = append(batchOut, out)
+				idx++
+				if len(batchOut) >= host.MaxDevshardTSEventsPerComment {
+					if err := flush(); err != nil {
+						return err
+					}
+				}
+				continue
+			}
+			if err := flush(); err != nil {
+				return err
 			}
 			if err := writeSSEDataLine(w, out); err != nil {
 				return err
 			}
 			idx++
+		}
+		if err := flush(); err != nil {
+			return err
 		}
 		if !sawDone {
 			return writePartialStreamMarker(w, deliveredEvents, deliveredPartial, idx)

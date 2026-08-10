@@ -686,22 +686,22 @@ func TestReplaySSEBodyFromCursor_PartialMarkerCursorAccounting(t *testing.T) {
 
 	// Cursor inside the stored events: remaining events, then the marker.
 	rec := httptest.NewRecorder()
-	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0))
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0, nil))
 	require.Equal(t, []string{events[1], partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
 
 	// Cursor exactly at the marker slot: only the marker is owed.
 	rec = httptest.NewRecorder()
-	require.NoError(t, replaySSEBodyFromCursor(rec, body, 2, 0))
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 2, 0, nil))
 	require.Equal(t, []string{partialStreamErrorLine}, sseDataLines(t, rec.Body.String()))
 
 	// Marker already delivered: fully replayed, not cursor-past.
 	rec = httptest.NewRecorder()
-	require.NoError(t, replaySSEBodyFromCursor(rec, body, 3, 0))
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 3, 0, nil))
 	require.Empty(t, sseDataLines(t, rec.Body.String()))
 
 	// Past the marker: genuinely cursor-past.
 	rec = httptest.NewRecorder()
-	require.ErrorIs(t, replaySSEBodyFromCursor(rec, body, 4, 0), host.ErrResumeCursorPast)
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, body, 4, 0, nil), host.ErrResumeCursorPast)
 }
 
 func TestReplaySSEBodyFromCursor_PartialMarkerResumesMidMarker(t *testing.T) {
@@ -713,8 +713,37 @@ func TestReplaySSEBodyFromCursor_PartialMarkerResumesMidMarker(t *testing.T) {
 	// with "data:" — same shape as any other partial-event resume.
 	partial := int64(10)
 	rec := httptest.NewRecorder()
-	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial))
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial, nil))
 	require.Equal(t, partialStreamErrorLine[partial:]+"\n\n", rec.Body.String())
+}
+
+func TestReplaySSEBodyFromCursor_MidEventStampsOpenEvent(t *testing.T) {
+	events := []string{
+		`data: {"choices":[{"delta":{"content":"one"}}]}`,
+		`data: {"choices":[{"delta":{"content":"hello-world"}}]}`,
+		`data: [DONE]`,
+	}
+	body, err := json.Marshal(map[string]any{"events": events})
+	require.NoError(t, err)
+	ml := []int64{100, 200, 300}
+
+	const partial = int64(10)
+	rec := httptest.NewRecorder()
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, partial, ml))
+	raw := rec.Body.String()
+
+	require.True(t, strings.HasPrefix(raw, host.DevshardTSCommentPrefix))
+	firstLine, rest, ok := strings.Cut(raw, "\n")
+	require.True(t, ok)
+	batch, ok := host.ParseDevshardTSComment(firstLine)
+	require.True(t, ok)
+	require.Equal(t, int64(1), batch.B)
+	require.Equal(t, []int64{200}, batch.ML)
+	require.Equal(t, host.HopTierCache, batch.T)
+
+	// Remainder of event 1, then DONE — comments stripped from data path.
+	require.True(t, strings.HasPrefix(rest, events[1][partial:]+"\n\n"))
+	require.Contains(t, rest, "data: [DONE]\n\n")
 }
 
 func TestReplaySSEBody_CompleteEnvelopeHasNoPartialMarker(t *testing.T) {
@@ -753,7 +782,7 @@ func TestReplaySSEBodyFromCursor_SkipsDeliveredPrefix(t *testing.T) {
 	require.NoError(t, err)
 
 	rec := httptest.NewRecorder()
-	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0))
+	require.NoError(t, replaySSEBodyFromCursor(rec, body, 1, 0, nil))
 	got := sseDataLines(t, rec.Body.String())
 	require.Equal(t, []string{
 		`data: {"choices":[{"delta":{"content":"two"}}]}`,
@@ -766,7 +795,7 @@ func TestReplaySSEBodyFromCursor_PastCursorErrors(t *testing.T) {
 	body, err := json.Marshal(map[string]any{"events": events})
 	require.NoError(t, err)
 	rec := httptest.NewRecorder()
-	err = replaySSEBodyFromCursor(rec, body, 5, 0)
+	err = replaySSEBodyFromCursor(rec, body, 5, 0, nil)
 	require.ErrorIs(t, err, host.ErrResumeCursorPast)
 }
 
@@ -792,8 +821,8 @@ func TestLiveAttachFailureReason_MapsResumePathErrors(t *testing.T) {
 
 func TestReplaySSEBodyFromCursor_NegativeCursorErrors(t *testing.T) {
 	rec := httptest.NewRecorder()
-	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), -1, 0), host.ErrInvalidResumeCursor)
-	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), 0, -1), host.ErrInvalidResumeCursor)
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), -1, 0, nil), host.ErrInvalidResumeCursor)
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), 0, -1, nil), host.ErrInvalidResumeCursor)
 }
 
 func TestHostRequestFromJSON_RejectsNegativeResumeCursor(t *testing.T) {

@@ -69,11 +69,13 @@ type HostResponse struct {
 	Nonce              uint64 // current nonce after applying diffs
 	Receipt            []byte // executor receipt sig, nil if not executor
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
+	ReqMs              int64  // host wall-ms when this request was seen (5g); 0 if unset
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	LiveAttach         bool   // true when reconnecting to an in-flight live stream
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte   // non-nil when reconnecting to a completed inference
+	CachedResponseML   []int64  // parallel ml[] for CachedResponseBody (5g); may be nil
+	LiveAttach         bool     // true when reconnecting to an in-flight live stream
+	StreamBytesRead    int64    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -82,6 +84,13 @@ type HostResponse struct {
 	// Resume cursor echoed from the request for live/cached attach.
 	DeliveredEvents  int64
 	DeliveredPartial int64
+}
+
+// CachedInferenceResponse is the in-RAM finish cache: hashed body plus optional
+// hop-timestamp sidecar (outside response_payload / ResponseHash).
+type CachedInferenceResponse struct {
+	Body []byte
+	ML   []int64
 }
 
 type receiptOutcome struct {
@@ -135,8 +144,8 @@ type Host struct {
 	executing          map[uint64]struct{} // inference IDs with in-flight execution
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
-	completedResponses map[uint64][]byte // inference ID -> cached ML response body
-	liveStreams        map[uint64]*LiveStream // in-flight SSE fan-out hubs
+	completedResponses map[uint64]CachedInferenceResponse // inference ID -> cached body + ml
+	liveStreams        map[uint64]*LiveStream             // in-flight SSE fan-out hubs
 	liveStreamSpoolDir string                 // "" = no mid-flight resume tier
 	ownSeed            int64                  // deterministic seed derived from signer + escrowID
 
@@ -224,7 +233,7 @@ func NewHost(
 		sortedSlots:           sortedSlots,
 		executing:             make(map[uint64]struct{}),
 		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
+		completedResponses:    make(map[uint64]CachedInferenceResponse),
 		liveStreams:           make(map[uint64]*LiveStream),
 		ownSeed:               ownSeed,
 	}
@@ -447,7 +456,8 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 
 	// (b) Sign executor receipt (sync, under mutex; may briefly unlock for
 	// payload-store I/O on the post-eviction resume path).
-	receipt, confirmedAt, job, cachedBody, liveAttach, receiptOutcome, err := h.signReceipt(ctx, req)
+	reqMs := time.Now().UnixMilli()
+	receipt, confirmedAt, job, cached, liveAttach, receiptOutcome, err := h.signReceipt(ctx, req)
 	if err != nil {
 		h.mu.Unlock()
 		return nil, err
@@ -499,9 +509,11 @@ func (h *Host) HandleRequest(ctx context.Context, req HostRequest) (*HostRespons
 		Nonce:              nonce,
 		Receipt:            receipt,
 		ConfirmedAt:        confirmedAt,
+		ReqMs:              reqMs,
 		Mempool:            h.mempool.Txs(),
 		ExecutionJob:       job,
-		CachedResponseBody: cachedBody,
+		CachedResponseBody: cached.Body,
+		CachedResponseML:   cached.ML,
 		LiveAttach:         liveAttach,
 		InferenceID:        receiptOutcome.inferenceID,
 		ReceiptExpected:    receiptOutcome.receiptExpected,
@@ -778,15 +790,16 @@ func (h *Host) findDiff(diffs []types.Diff, nonce uint64) *types.Diff {
 // bytes in the request. applyAndPersist may skip stale diffs without verifying them; those
 // skipped bytes must never authorize execution.
 // Caller must hold h.mu. May briefly unlock for payload-store I/O.
-func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, []byte, bool, receiptOutcome, error) {
+func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64, *devshard.ExecuteRequest, CachedInferenceResponse, bool, receiptOutcome, error) {
 	outcome := receiptOutcome{reason: observability.ReasonNotExecutor}
+	var noCache CachedInferenceResponse
 	if req.Payload == nil {
 		outcome.reason = observability.ReasonPayloadAbsent
-		return nil, 0, nil, nil, false, outcome, nil
+		return nil, 0, nil, noCache, false, outcome, nil
 	}
 	if h.findDiff(req.Diffs, req.Nonce) == nil {
 		outcome.reason = observability.ReasonTargetDiffAbsent
-		return nil, 0, nil, nil, false, outcome, nil
+		return nil, 0, nil, noCache, false, outcome, nil
 	}
 
 	// Protocol: inference_id == nonce. Authorize only from applied state.
@@ -795,7 +808,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 	executorSlot := h.group[inferenceID%uint64(len(h.group))].SlotID
 	if !h.slotIDs[executorSlot] {
 		// Here reason is default observability.ReasonNotExecutor
-		return nil, 0, nil, nil, false, outcome, nil
+		return nil, 0, nil, noCache, false, outcome, nil
 	}
 	outcome.receiptExpected = true
 
@@ -805,12 +818,12 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 	rec, ok := h.sm.GetInference(inferenceID)
 	if !ok {
 		outcome.reason = observability.ReasonInferenceDisappeared
-		return nil, 0, nil, nil, false, outcome, nil
+		return nil, 0, nil, noCache, false, outcome, nil
 	}
 
 	// Verify payload against the applied record (not unverified request-diff fields).
 	if err := VerifyPayload(req.Payload, rec.PromptHash, rec.Model, rec.InputLength, rec.MaxTokens, rec.StartedAt); err != nil {
-		return nil, 0, nil, nil, false, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
+		return nil, 0, nil, noCache, false, outcome, observability.Classify(observability.ReasonPayloadVerifyErr, observability.WhereHostSignReceipt, err)
 	}
 
 	h.pruneLiveStreamLocked(inferenceID)
@@ -822,7 +835,7 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 	if hasCached {
 		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
 		if err != nil {
-			return nil, 0, nil, nil, false, outcome, err
+			return nil, 0, nil, noCache, false, outcome, err
 		}
 		outcome.reason = observability.ReasonCachedResponse
 		return sig, confirmedAt, nil, cached, false, outcome, nil
@@ -832,22 +845,22 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 	if alreadyExecuting || live != nil {
 		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
 		if err != nil {
-			return nil, 0, nil, nil, false, outcome, err
+			return nil, 0, nil, noCache, false, outcome, err
 		}
 		outcome.reason = observability.ReasonAlreadyExecuting
 		if live != nil {
 			outcome.executionExpected = true
-			return sig, confirmedAt, nil, nil, true, outcome, nil
+			return sig, confirmedAt, nil, noCache, true, outcome, nil
 		}
 		// Marked executing but no live buffer (race / pruned): receipt-only resume failure.
-		return sig, confirmedAt, nil, nil, false, outcome, nil
+		return sig, confirmedAt, nil, noCache, false, outcome, nil
 	}
 
 	// First-path execution for a still-pending inference.
 	if rec.Status == types.StatusPending {
 		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
 		if err != nil {
-			return nil, 0, nil, nil, false, outcome, err
+			return nil, 0, nil, noCache, false, outcome, err
 		}
 
 		h.executing[inferenceID] = struct{}{}
@@ -864,26 +877,27 @@ func (h *Host) signReceipt(ctx context.Context, req HostRequest) ([]byte, int64,
 			EscrowID:    h.escrowID,
 			EpochID:     h.epochID,
 		}
-		return sig, confirmedAt, job, nil, false, outcome, nil
+		return sig, confirmedAt, job, noCache, false, outcome, nil
 	}
 
 	// Terminal inference with no RAM cache: last resume tier is the payload store (5e).
+	// Phase 1: store tier has no ml[] sidecar — hop comments omitted on replay.
 	if body, ok := h.lookupPayloadResponseLocked(ctx, inferenceID); ok {
 		rec, ok = h.sm.GetInference(inferenceID)
 		if !ok {
 			outcome.reason = observability.ReasonInferenceDisappeared
-			return nil, 0, nil, nil, false, outcome, nil
+			return nil, 0, nil, noCache, false, outcome, nil
 		}
 		sig, confirmedAt, err := h.ensureConfirmStartLocked(inferenceID, rec)
 		if err != nil {
-			return nil, 0, nil, nil, false, outcome, err
+			return nil, 0, nil, noCache, false, outcome, err
 		}
 		outcome.reason = observability.ReasonCachedResponse
-		return sig, confirmedAt, nil, body, false, outcome, nil
+		return sig, confirmedAt, nil, CachedInferenceResponse{Body: body}, false, outcome, nil
 	}
 
 	outcome.reason = observability.ReasonInferenceDisappeared
-	return nil, 0, nil, nil, false, outcome, nil
+	return nil, 0, nil, noCache, false, outcome, nil
 }
 
 // lookupPayloadResponseLocked loads a completed response body from the durable
@@ -1094,7 +1108,10 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	}
 	if len(result.ResponseBody) > 0 {
 		h.mu.Lock()
-		h.completedResponses[inferenceID] = result.ResponseBody
+		h.completedResponses[inferenceID] = CachedInferenceResponse{
+			Body: result.ResponseBody,
+			ML:   stream.MLTimes(),
+		}
 		// Drain complete → persist → forget live RAM buffer.
 		delete(h.liveStreams, inferenceID)
 		h.mu.Unlock()

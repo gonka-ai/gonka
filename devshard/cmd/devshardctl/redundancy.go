@@ -2159,7 +2159,11 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 		// Sole owner of classifyPartial: release on every exit path (incl. the early error return); content is classified synchronously via flushClassifyAndCheckEmpty below.
 		defer inf.releaseClassifyPartial()
 		logInferenceStage(ctx, inf.escrowID, inf.nonce, "started", "host", inf.hostID)
-		inf.resp, inf.err = e.session.SendOnly(attemptCtx, inf.prepared, rw, receiptHandler)
+		sendCtx := attemptCtx
+		if obs := newGatewayHopObserver(e.metrics, e.participantKeyForHost(inf.hostIdx), gatewayMetricModel(params, e.model), inf.sendTime); obs != nil {
+			sendCtx = transport.ContextWithHopObserver(attemptCtx, obs)
+		}
+		inf.resp, inf.err = e.session.SendOnly(sendCtx, inf.prepared, rw, receiptHandler)
 		streamBytes := int64(0)
 		if inf.resp != nil {
 			streamBytes = inf.resp.StreamBytesRead
@@ -2296,7 +2300,11 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 		"delivered_events", events,
 		"delivered_partial", partial,
 	)
-	resp, err := e.session.SendOnlyWithCursor(attemptCtx, inf.prepared, stream, receiptHandler, events, partial)
+	sendCtx := attemptCtx
+	if obs := newGatewayHopObserver(e.metrics, e.participantKeyForHost(inf.hostIdx), gatewayMetricModel(params, e.model), inf.sendTime); obs != nil {
+		sendCtx = transport.ContextWithHopObserver(attemptCtx, obs)
+	}
+	resp, err := e.session.SendOnlyWithCursor(sendCtx, inf.prepared, stream, receiptHandler, events, partial)
 	mergeInflightHostResponse(inf, resp, err)
 
 	if err != nil {

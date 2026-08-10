@@ -254,7 +254,7 @@ If the spool cannot be created (or fails mid-stream), the generation still runs 
 | **5d** | Defensive forming-event cap (loud on breach: resume disabled + warn) | Done |
 | **5e** | Payload store as last resume tier; clocks from `ExecutionTimeout` | Done (init defaults; session-dynamic clock follow-up noted in plan) |
 | **5f** | Trim/lag/spool metrics → Step 8 dashboards | Deferred |
-| **5g** | Per-chunk hop timestamps (`: devshard-ts` comments) | Deferred |
+| **5g** | Per-chunk hop timestamps (`: devshard-ts` comments) | Phase 1 done (RAM + live/cache; spool/store sidecar deferred) |
 | **5h** | Build the durable envelope by streaming the spool (drop the processor's per-line retention) | Not started — hash-sensitive, separate change |
 
 Per-generation RAM is now `O(LiveStreamRingBytes)` for the **live log**. The remaining per-generation term is the response processor, which still retains every rewritten line for the whole generation and materialises the body again at finish (`GetResponse` → `GetBodyBytes` → `PayloadStore.Store`). Folding that into the spool is 5h.
@@ -334,18 +334,18 @@ stream_bps = outputBytes / max(elapsed_since_first_content, ε)
 | `sse_event_too_large` attempt reason | Transport DoS abort (landed classifier) |
 | Host 5f: RAM window bytes, spool bytes/lag, `spool_unavailable`, `subscriber_lagged`, `reader_lag_bytes`, reads served from spool vs RAM | RAM / stall / disk-tier health |
 
-### 6.3 Hop timestamps (Step 5g — deferred)
+### 6.3 Hop timestamps (Step 5g — phase 1)
 
 Goal: join gateway → host → ML → host → gateway latency **without** changing `ResponseHash` or the resume cursor.
 
 ```text
 gateway_send  →  req_ms           (gateway → host)        [cross-clock]
-req_ms        →  v[i] / ml[i]     (host → ML → host)
-ml[i]         →  w[i]             (host buffer residency)
+req_ms        →  ml[i]            (host → ML → host)      [same host clock]
+ml[i]         →  w[i]             (host buffer residency) [same host clock]
 w[i]          →  gateway_recv[i]  (host → gateway)        [cross-clock]
 ```
 
-Carrier: SSE **comment** lines injected at the subscriber writer (`: devshard-ts {…}`), invisible to old gateways and outside cursor-counted `LiveStream` events. Absolute `ml`/`v` arrays live in parallel RAM (+ finish sidecar); `w` is per-connection emit time. Metrics carry `tier` ∈ `live|cache|store`. Same R8 rule: metrics only, never `Decide` / quarantine.
+Carrier: SSE **comment** lines injected at the subscriber writer (`: devshard-ts {…}`), invisible to old gateways and outside cursor-counted `LiveStream` events. Emit rule: **one comment ↔ one write ↔ ≤N content events** (N = `MaxDevshardTSEventsPerComment`). Mid-event **attach** (new body) also stamps the open event before its remainder when `ml[]` is available; same-connection continuations do not. Absolute `ml[]` lives in RAM (+ in-memory finish cache); `w` is per-connection emit time. Phase 1: spool-trimmed ranges and payload-store reconnect omit comments (no sidecar yet). Metrics: `devshard_gateway_hop_seconds{hop,participant_key,model,tier}` with `tier` ∈ `live|cache`. Same R8 rule: metrics only, never `Decide` / quarantine.
 
 ### 6.4 OTel (parent Step 16 — after observability e2e merge)
 

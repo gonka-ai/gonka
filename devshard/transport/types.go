@@ -296,6 +296,9 @@ type DevshardReceiptEvent struct {
 	Nonce       uint64 `json:"nonce"`
 	Receipt     []byte `json:"receipt,omitempty"`
 	ConfirmedAt int64  `json:"confirmed_at,omitempty"`
+	// ReqMs is host wall-clock ms when the inference HTTP request was seen
+	// (Step 5g hop anchor). Omitted by old hosts; unknown to old gateways.
+	ReqMs int64 `json:"req_ms,omitempty"`
 }
 
 // DevshardMetaEvent is the final SSE event, sent after execution completes.
