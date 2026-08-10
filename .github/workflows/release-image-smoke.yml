@@ -50,6 +50,10 @@ on:
         description: 'Published upgrade deadline (UTC RFC3339)'
         required: true
         type: string
+  schedule:
+    # Published immutable tags are checked continuously after release, not only
+    # when an operator remembers to dispatch the workflow.
+    - cron: '17 3 * * *'
 
 permissions:
   contents: read
@@ -83,8 +87,11 @@ jobs:
             deploy/join/versiond-router-fleet.sh \
             deploy/join/versiond-router-fleet_test.sh \
             deploy/join/versiond-compose-config_test.sh \
+            router-runtime/catalog-cache \
+            router-runtime/catalog-cache_test.sh \
             router-runtime/catalog-reconciler \
             router-runtime/catalog-status
+          router-runtime/catalog-cache_test.sh
           deploy/join/legacy-router-upgrade-barrier_test.sh
           deploy/join/devshard-v5-release-contract_test.sh
           deploy/join/devshard-v5-release-gate_test.sh
@@ -95,7 +102,7 @@ jobs:
   registry-smoke:
     name: Published image endpoints
     needs: compose-contract
-    if: github.event_name == 'workflow_dispatch'
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
@@ -107,6 +114,7 @@ jobs:
         run: deploy/join/release-image-smoke_test.sh
 
       - name: Verify published host update contract
+        if: github.event_name == 'workflow_dispatch'
         env:
           NETWORK_UPDATE_URL: ${{ inputs.network_update_url }}
           UPGRADE_DEADLINE_UTC: ${{ inputs.upgrade_deadline_utc }}

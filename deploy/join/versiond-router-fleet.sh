@@ -17,6 +17,8 @@ declare -A legacy_env_defaults=(
     [VERSIOND_ROUTING_CATALOG_URL]=''
     [VERSIOND_ROUTING_CATALOG_POLL_SECONDS]=5
     [VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]=3
+    [VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]=86400
+    [VERSIOND_ROUTER_ALLOW_COARSE_READINESS]=false
     [VERSIOND_ROUTER_VERSION_CAPACITY]=32
 )
 maintenance_required_routes=()
@@ -30,6 +32,7 @@ maintenance_keys=(
     VERSIOND_ROUTING_CATALOG_URL
     VERSIOND_ROUTING_CATALOG_POLL_SECONDS
     VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS
+    VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS
     VERSIOND_ROUTER_VERSION_CAPACITY
 )
 
@@ -141,16 +144,19 @@ normalize_versions() {
 
 placement_contract() {
     local pool_host=$1 back_network=$2 legacy_host=$3 legacy_versions=$4
-    local ha_versions=$5 normalized routing_mode
+    local ha_versions=$5 catalog_url=$6 coarse_readiness=$7 normalized routing_mode
     normalized=$(normalize_versions "$legacy_versions")
     [[ -n $normalized ]] || legacy_host=
-    if [[ -n $(normalize_versions "$ha_versions") ]]; then
-        routing_mode=per-version
+    if [[ -n $catalog_url ]]; then
+        routing_mode=catalog
+    elif [[ -n $(normalize_versions "$ha_versions") ]]; then
+        routing_mode=static-per-version
     else
         routing_mode=coarse
     fi
-    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s;routing-mode=%s\n' \
-        "$pool_host" "$back_network" "$legacy_host" "$normalized" "$routing_mode"
+    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s;routing-mode=%s;catalog-url=%s;coarse-readiness=%s\n' \
+        "$pool_host" "$back_network" "$legacy_host" "$normalized" \
+        "$routing_mode" "$catalog_url" "$coarse_readiness"
 }
 
 candidate_placement_contract() {
@@ -159,7 +165,9 @@ candidate_placement_contract() {
         "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
         "${VERSIOND_LEGACY_HOST:-versiond}" \
         "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}"
+        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+        "${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}" \
+        "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}"
 }
 
 slot_compose() {
@@ -182,6 +190,12 @@ slot_ids() {
 fleet_ids() {
     "$docker_bin" ps -aq --no-trunc \
         --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id"
+}
+
+fleet_volume_ids() {
+    "$docker_bin" volume ls -q \
+        --filter label=ai.gonka.component=versiond-router-state \
         --filter "label=ai.gonka.fleet=$fleet_id"
 }
 
@@ -542,26 +556,27 @@ require_ready_reserve() {
 
 wait_slot_routes() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
-    local route missing
-    for route in "${!expected_routes[@]}"; do
-        slot_route_declared "$slot" "$route" || {
-            echo "versiond-router-fleet: slot $slot does not declare expected route $route; run rollout" >&2
-            return 1
-        }
-    done
+    local route missing reason
     while ((SECONDS < deadline)); do
         missing=
+        reason=
         for route in "${!expected_routes[@]}"; do
+            if ! slot_route_declared "$slot" "$route"; then
+                missing=$route
+                reason="does not declare"
+                break
+            fi
             if (( $(route_ready_count "$route" "$slot") > 0 )) && \
                 ! slot_route_ready "$slot" "$route"; then
                 missing=$route
+                reason="did not converge"
                 break
             fi
         done
         [[ -z $missing ]] && return 0
         sleep 1
     done
-    echo "versiond-router-fleet: slot $slot did not converge route $missing to the fleet view within ${wait_timeout}s" >&2
+    echo "versiond-router-fleet: slot $slot $reason expected route $missing within ${wait_timeout}s" >&2
     return 1
 }
 
@@ -675,13 +690,16 @@ container_env_value_or_legacy_default() {
 
 running_placement_contract() {
     local id=$1 pool_host back_network legacy_host legacy_versions ha_versions
+    local catalog_url coarse_readiness
     pool_host=$(container_env_value "$id" VERSIOND_POOL_HOST) || return 1
     back_network=$(container_env_value "$id" VERSIOND_ROUTER_BACK_NETWORK_NAME) || return 1
     legacy_host=$(container_env_value "$id" VERSIOND_LEGACY_HOST) || return 1
     legacy_versions=$(container_env_value "$id" VERSIOND_NON_HA_VERSIONS) || return 1
     ha_versions=$(container_env_value "$id" VERSIOND_VERSIONS) || return 1
+    catalog_url=$(container_env_value_or_legacy_default "$id" VERSIOND_ROUTING_CATALOG_URL) || return 1
+    coarse_readiness=$(container_env_value_or_legacy_default "$id" VERSIOND_ROUTER_ALLOW_COARSE_READINESS) || return 1
     placement_contract "$pool_host" "$back_network" "$legacy_host" \
-        "$legacy_versions" "$ha_versions"
+        "$legacy_versions" "$ha_versions" "$catalog_url" "$coarse_readiness"
 }
 
 require_placement_compatible() {
@@ -704,8 +722,8 @@ require_placement_compatible() {
     done
 }
 
-require_complete_healthy_inventory() {
-    local id slot seen_slot
+validate_inventory_structure() {
+    local id slot
     local -A seen=()
 
     while IFS= read -r id; do
@@ -720,11 +738,35 @@ require_complete_healthy_inventory() {
         seen[$slot]=$id
     done < <(fleet_ids)
 
-    for seen_slot in "${slots[@]}"; do
-        [[ -n ${seen[$seen_slot]-} ]] || fail \
-            "router fleet is partially present: slot $seen_slot is absent; run up to recover capacity before apply"
-        slot_ready "$seen_slot" || fail \
-            "router fleet is not healthy: slot $seen_slot is not ready; recover it before apply"
+}
+
+repair_fleet_capacity() {
+    local slot id state
+    for slot in "${slots[@]}"; do
+        if ! id=$(slot_id "$slot"); then
+            echo "Recovering absent versiond-router slot $slot"
+            start_slot "$slot"
+        elif slot_ready "$slot"; then
+            continue
+        else
+            state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+                "router slot $slot disappeared during recovery"
+            echo "Recovering non-ready versiond-router slot $slot (state $state)"
+            case $state in
+                running | restarting | paused)
+                    # This slot is already outside the ready reserve, but it may
+                    # still own accepted SSE responses. Drain it without
+                    # consuming any healthy peer.
+                    slot_compose "$slot" stop --timeout "$drain_timeout" router
+                    ;;
+                created | exited | dead) ;;
+                *) fail "slot $slot cannot be recovered from container state '$state'" ;;
+            esac
+            slot_compose "$slot" up -d --force-recreate --wait \
+                --wait-timeout "$wait_timeout" router
+        fi
+        wait_slot_routes "$slot"
+        wait_parent_admission "$slot"
     done
 }
 
@@ -805,6 +847,7 @@ maintenance_rollback() {
                 VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
                 VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
                 VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+                VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
                 VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
                 slot_compose "$slot" up -d --wait \
                     --wait-timeout "$wait_timeout" router; then
@@ -835,6 +878,7 @@ rollback_current() {
             VERSIOND_ROUTING_CATALOG_URL="${rollback_env[VERSIOND_ROUTING_CATALOG_URL]}" \
             VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
             VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
             VERSIOND_ROUTER_VERSION_CAPACITY="${rollback_env[VERSIOND_ROUTER_VERSION_CAPACITY]}" \
             slot_compose "$current_slot" up -d --wait \
                 --wait-timeout "$wait_timeout" router && \
@@ -982,13 +1026,17 @@ require_networks_detached_from_main_stack() {
 
 fleet_down() {
     local network
-    local -a ids=()
+    local -a ids=() volumes=()
     collect_cleanup_networks
     require_networks_detached_from_main_stack
     stop_fleet_containers
     mapfile -t ids < <(fleet_ids)
     if ((${#ids[@]} > 0)); then
         "$docker_bin" rm "${ids[@]}" >/dev/null
+    fi
+    mapfile -t volumes < <(fleet_volume_ids)
+    if ((${#volumes[@]} > 0)); then
+        "$docker_bin" volume rm "${volumes[@]}" >/dev/null
     fi
     for network in "${cleanup_networks[@]}"; do
         echo "Removing versiond-router fleet network $network"
@@ -1074,10 +1122,15 @@ fleet_apply() {
         return
     fi
 
-    # A partially present or unhealthy fleet needs an explicit recovery first.
-    # Treating it as an update could consume the last known-good router while
-    # trying to repair unrelated capacity loss.
-    require_complete_healthy_inventory
+    # Repair missing capacity before touching a known-good slot. Retries
+    # converge a partial fleet, while duplicates and unknown slots still fail
+    # before the first mutation.
+    validate_inventory_structure
+    prepare_networks
+    pull_router_image
+    candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    require_placement_compatible "$candidate_image"
+    repair_fleet_capacity
     fleet_rollout
 }
 

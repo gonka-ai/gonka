@@ -95,9 +95,22 @@ Membership and eligibility are derived from runtime state:
 - `VERSIOND_VERSIONS` is only a bootstrap floor. New approved names are added to
   both tiers through local Unix Runtime API sockets without a container reload;
   a map entry is published only after its backend health checks are enabled;
+- each tier atomically persists its last fully projected governance snapshot;
+  replacement processes validate and pre-render a fresh snapshot before
+  listening, while stale or corrupt cache data falls back to the bootstrap floor;
+  cached additions continue to consume their bounded dynamic slots after a
+  restart, and a capacity reduction below that fresh state fails startup;
 - consistent hashing with `hash-key addr` keeps escrow placement stable across
   DNS answer order and inner-router restarts, while top-level router and
   `edge-api` selection use `leastconn` for long requests;
+
+HAProxy and the catalog reconciler inside one router container intentionally run
+as the same unprivileged Unix user. They therefore form one container-level trust
+domain: mode `0600` on the Runtime API socket protects it from outside the
+container, not from sibling processes inside it. The shipped Compose services
+drop Linux capabilities and enable `no-new-privileges`. Strong process-to-process
+isolation would require a separate sidecar or a narrow privileged broker and is
+not part of this deployment model.
 - marking a backend unready affects new selections but does not move or close
   an established stream.
 

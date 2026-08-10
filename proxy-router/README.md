@@ -115,8 +115,13 @@ host-level outage. Multi-host ingress belongs in a later layer above this one
 
 The diagnostic Runtime API is a Unix socket with `operator` privileges, which
 are sufficient for status inspection but cannot change server state. A separate
-mode-600 admin socket is owned only by the in-container catalog reconciler. The
-loopback admin HTTP listener reports readiness and cannot mutate routing.
+mode-600 admin socket is used by the in-container catalog reconciler. The mode
+protects the container boundary; it is not process isolation because HAProxy,
+entrypoint, and reconciler intentionally run as the same unprivileged Unix user.
+They are one trust domain, additionally constrained by dropped capabilities and
+`no-new-privileges`. Strong per-process isolation would require a sidecar or a
+narrow privileged broker. The loopback admin HTTP listener reports readiness
+and cannot mutate routing.
 
 ## Configuration
 
@@ -133,6 +138,7 @@ loopback admin HTTP listener reports readiness and cannot mutate routing.
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; join Compose uses `http://api:9100/versions` |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | governance-name discovery interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | one catalog request timeout |
+| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog loaded before startup |
 | `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
 | `EDGE_API_POOL_HOST` | `edge-api-pool` | edge-api DNS alias |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
@@ -143,9 +149,16 @@ loopback admin HTTP listener reports readiness and cannot mutate routing.
 inner router. Runtime additions come from the same catalog on both tiers and do
 not change escrow placement.
 
-Invalid catalog URL, timing, or capacity values fail startup. A transient fetch
-failure preserves admitted routes, and the entrypoint restarts an unexpectedly
-exited reconciler without restarting HAProxy.
+Invalid catalog URL, timing, or capacity values fail startup. Every fully
+projected snapshot is atomically persisted. A replacement renders a fresh
+snapshot before HAProxy starts, so a transient dapi failure does not erase
+learned routes; stale, corrupt, and future-dated snapshots fail closed to the
+bootstrap floor. Cached additions remain assigned to bounded dynamic slots, so
+a restart never resets capacity usage; startup fails if a reduced capacity
+cannot represent a fresh cache. `catalog-status --state` exposes a persistent
+machine-readable projection state, including `capacity-exhausted`, for log and
+host monitoring. The entrypoint restarts an unexpectedly exited reconciler
+without restarting HAProxy.
 
 ## Operations
 

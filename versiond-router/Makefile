@@ -104,11 +104,13 @@ test-version-routing:
 	@set -eu; \
 	tmpdir=$$(mktemp -d); \
 	net=gonka-version-probe; \
+	state=gonka-version-probe-state; \
 	cleanup() { \
 		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
 			gonka-vp-catalog \
 			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
+		docker volume rm $$state >/dev/null 2>&1 || true; \
 		rm -rf "$$tmpdir"; \
 	}; \
 	trap cleanup EXIT; \
@@ -161,6 +163,7 @@ test-version-routing:
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
 		> "$$tmpdir/catalog.py"; \
 	docker network create $$net >/dev/null; \
+	docker volume create $$state >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe \
 		-f Dockerfile .. >/dev/null; \
 	docker run -d --name gonka-vp-catalog --network $$net \
@@ -185,6 +188,7 @@ test-version-routing:
 		python:3.12-alpine python /app.py >/dev/null; \
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
@@ -279,6 +283,27 @@ test-version-routing:
 		|| fail "learning v9 replaced the router container"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v4/sessions/still-live/chat)" = b ] \
 		|| fail "learning v9 disrupted the existing v4 route"; \
+	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
+		|| fail "inner router did not persist its learned catalog"; \
+	docker stop gonka-vp-catalog >/dev/null; \
+	docker rm -f gonka-vp-router >/dev/null; \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
+		-v $$state:/var/lib/gonka-router \
+		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=2 \
+		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
+		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
+		gonka-versiond-router-probe >/dev/null; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null; then break; fi; \
+		sleep 0.5; \
+	done; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
+		|| fail "inner router lost a learned route when restarted without dapi"; \
+	docker start gonka-vp-catalog >/dev/null; \
 	printf '%s\n' '{"versions":[{"name":"v10"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
@@ -306,11 +331,22 @@ test-version-routing:
 	printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v9"},{"name":"v9;hotfix"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
-	sleep 3; \
+	for i in $$(seq 30); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 2' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -qx v10; then \
 		fail "catalog capacity exhaustion silently published v10"; \
 	fi; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 2' \
+			>/dev/null || { \
+			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
+			fail "catalog capacity exhaustion is not exposed as persistent degraded state"; \
+		}; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		http://127.0.0.1:18132/v10/sessions/capacity/chat)" = 503 ] \
 		|| fail "capacity-exhausted v10 was routed without an assigned backend"; \

@@ -208,6 +208,58 @@ container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
 }
 
+service_instances_match_release() {
+    local service=$1 expected_image=$2 id details actual_image running health
+    local -a ids=()
+
+    mapfile -t ids < <("${GONKA_COMPOSE_COMMAND[@]}" ps --all --quiet "$service")
+    ((${#ids[@]} > 0)) || {
+        warn "release verification found no $service container"
+        return 1
+    }
+    for id in "${ids[@]}"; do
+        details=$("$docker_bin" inspect --format \
+            '{{.Config.Image}}|{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}' \
+            "$id") || return 1
+        IFS='|' read -r actual_image running health <<<"$details"
+        if [[ -n $expected_image && $actual_image != "$expected_image" ]]; then
+            warn "$service container $id uses $actual_image, expected $expected_image"
+            return 1
+        fi
+        if [[ $running != true || $health != healthy ]]; then
+            warn "$service container $id is running=$running health=$health"
+            return 1
+        fi
+    done
+}
+
+verify_release_application_state() {
+    service_instances_match_release versiond "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
+    service_instances_match_release edge-api "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
+    if [[ $versiond_mode == ha ]]; then
+        service_instances_match_release versiond2 "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
+        if [[ $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+            service_instances_match_release devshard-postgres '' || return 1
+        fi
+    fi
+    if [[ $edge_mode == multi ]]; then
+        service_instances_match_release edge-api2 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
+        service_instances_match_release edge-api3 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
+    fi
+}
+
+verify_release_ingress_state() {
+    service_instances_match_release proxy "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" || return 1
+    service_instances_match_release proxy-policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE"
+}
+
+write_upgrade_marker() {
+    local marker_tmp=$upgrade_marker.tmp.$$
+    mkdir -p "$(dirname -- "$upgrade_marker")"
+    printf '%s\n' "$release_id" >"$marker_tmp"
+    mv -f "$marker_tmp" "$upgrade_marker"
+}
+
 if [[ $versiond_mode == auto ]]; then
     if container_exists devshard-postgres ||
         container_exists versiond-router ||
@@ -305,8 +357,23 @@ if [[ $existing_proxy_component != proxy-router && $maintenance_ack != true ]]; 
     fail "the one-time v5 cutover restarts shared PostgreSQL when local HA storage is used and replaces the public listener, terminating existing ingress connections; schedule the maintenance window, run --preflight-only, then rerun with --acknowledge-maintenance"
 fi
 if [[ $existing_proxy_component == proxy-router ]]; then
-    if [[ ! -f $upgrade_marker || $(<"$upgrade_marker") != "$release_id" ]]; then
-        fail "router HA is active, but application/storage upgrade $release_id has no commit marker at $upgrade_marker; the proxy label alone does not prove that versiond, edge-api, and PostgreSQL were migrated"
+    if [[ -f $upgrade_marker && $(<"$upgrade_marker") != "$release_id" ]]; then
+        fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
+    fi
+    if [[ ! -f $upgrade_marker ]]; then
+        warn "router HA is active without its commit marker; verifying the complete release state before recovery"
+        verify_release_application_state || fail \
+            "cannot recover the missing commit marker: application or storage state does not match $release_id"
+        "$enable_router_bin" \
+            --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+            "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
+        if ! verify_release_application_state || \
+            ! verify_release_ingress_state; then
+            fail "cannot recover the missing commit marker: the converged serving tier does not match $release_id"
+        fi
+        write_upgrade_marker
+        echo "Recovered the verified $release_id upgrade commit marker"
+        exit 0
     fi
     echo "The v5 router HA topology is already active; converging it idempotently"
     "$enable_router_bin" \
@@ -1047,8 +1114,5 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
         ;;
     *) fail "UPGRADE_ENABLE_ROUTER_HA must be true or false" ;;
 esac
-marker_tmp=$upgrade_marker.tmp.$$
-mkdir -p "$(dirname -- "$upgrade_marker")"
-printf '%s\n' "$release_id" >"$marker_tmp"
-mv -f "$marker_tmp" "$upgrade_marker"
+write_upgrade_marker
 echo "Devshard v5 upgrade completed"

@@ -279,6 +279,7 @@ services:
       - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
       - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
       - PROXY_ROUTER_PUBLIC_IDLE_SECONDS=${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - PROXY_VERSIOND_PORT=18081
       - PROXY_EDGE_API_PORT=18082
       - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
@@ -288,7 +289,15 @@ services:
       proxy-policy-front:
         aliases:
           - proxy-policy-ingress
+    volumes:
+      - proxy-router-state:/var/lib/gonka-router
     restart: unless-stopped
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
     healthcheck:
       test:
         [
@@ -361,3 +370,6 @@ networks:
   proxy-policy-front:
     name: ${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
     internal: true
+
+volumes:
+  proxy-router-state:

@@ -87,6 +87,19 @@ assert_environment() {
         "$description resolves to $actual, expected $expected"
 }
 
+assert_hardened() {
+    local description=$1 service=$2
+    shift 2
+
+    DEVSHARD_POSTGRES_PASSWORD=compose-contract \
+        VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:-0} \
+        docker compose "$@" config --format json 2>/dev/null | \
+        jq -e --arg service "$service" '
+            (.services[$service].cap_drop | index("ALL") != null) and
+            (.services[$service].security_opt | index("no-new-privileges:true") != null)
+        ' >/dev/null || fail "$description lacks container capability hardening"
+}
+
 check_compose_contract() {
     assert_image "base edge-api" "$edge_image" \
         "$(compose_image edge-api -f "$base")"
@@ -104,6 +117,7 @@ check_compose_contract() {
         "$(compose_image proxy -f "$base")"
     assert_healthcheck_url "public proxy readiness" proxy \
         "http://127.0.0.1:8404/readyz" -f "$base"
+    assert_hardened "public proxy router" proxy -f "$base"
     assert_environment "public proxy router fleet" proxy \
         VERSIOND_ROUTER_POOL_HOST versiond-router-fleet \
         -f "$base" -f "$versiond_overlay"
@@ -119,6 +133,8 @@ check_compose_contract() {
     VERSIOND_ROUTER_SLOT=0 assert_healthcheck_url \
         "versiond router slot healthcheck" router \
         "http://127.0.0.1:8404/readyz" -f "$slot_compose"
+    VERSIOND_ROUTER_SLOT=0 assert_hardened \
+        "versiond router slot" router -f "$slot_compose"
 
     assert_image "versiond migration router" "$versiond_router_image" \
         "$(compose_image versiond-router -f "$base" -f "$versiond_overlay" -f "$versiond_compat")"
@@ -178,6 +194,7 @@ edge_image_id=$(docker image inspect "$edge_image" --format '{{.Id}}')
 versiond_image_id=$(docker image inspect "$versiond_image" --format '{{.Id}}')
 edge_router_image_id=$(docker image inspect "$edge_router_image" --format '{{.Id}}')
 versiond_router_image_id=$(docker image inspect "$versiond_router_image" --format '{{.Id}}')
+proxy_policy_image_id=$(docker image inspect "$proxy_policy_image" --format '{{.Id}}')
 proxy_router_image_id=$(docker image inspect "$proxy_router_image" --format '{{.Id}}')
 
 # Router images are release artifacts too. Render-only mode executes their real
@@ -191,6 +208,22 @@ docker run --rm -e PROXY_ROUTER_RENDER_ONLY=true \
     -e VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
     -e VERSIOND_VERSIONS='v4 v5' \
     "$proxy_router_image_id"
+# The private policy image has no render-only shortcut. Run its real entrypoint
+# with explicit loopback PROXY trust, then execute nginx -t as its final command.
+# This catches an image that pulls successfully but cannot boot the shipped
+# deployment contract.
+docker run --rm \
+    -e NGINX_MODE=http \
+    -e PROXY_PROTOCOL=true \
+    -e PROXY_PROTOCOL_BIND_ADDRESS=127.0.0.1 \
+    -e PROXY_PROTOCOL_TRUSTED_FROM=127.0.0.1/32 \
+    -e VERSIOND_SERVICE_NAME=proxy \
+    -e VERSIOND_SERVICE_IS_ABSOLUTE=true \
+    -e VERSIOND_PORT=18081 \
+    -e EDGE_API_SERVICE_NAME=proxy \
+    -e EDGE_API_SERVICE_IS_ABSOLUTE=true \
+    -e EDGE_API_PORT=18082 \
+    "$proxy_policy_image_id" nginx -t
 
 suffix=$$
 edge_container="gonka-release-edge-$suffix"

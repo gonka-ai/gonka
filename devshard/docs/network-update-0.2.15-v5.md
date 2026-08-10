@@ -36,8 +36,9 @@ cd deploy/join
 The preflight is mandatory and does not pull release application/router images
 or recreate, start, stop, or remove deployment services. Its PostgreSQL space
 probe may fetch a short-lived helper image. It verifies the immutable updater,
-the effective Compose topology, host capacity, public ports, dependencies, and
-PostgreSQL copy space.
+the effective Compose topology, CPU/RAM capacity, public ports, dependencies,
+and PostgreSQL copy space. Disk safety is based on the actual PostgreSQL source
+size and target filesystem free bytes, not a nominal disk-size threshold.
 If the checkout contains tracked local Compose edits, preserve them on a local
 branch and merge the release tag; do not reset them. The updater accepts and
 reports those files while requiring its own migration code to match the tag.

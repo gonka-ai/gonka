@@ -16,6 +16,7 @@ services:
       - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}
       - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
       - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - VERSIOND_ROUTER_VERSION_CAPACITY=${VERSIOND_ROUTER_VERSION_CAPACITY:-32}
     labels:
       ai.gonka.component: versiond-router
@@ -28,6 +29,8 @@ services:
           # singleton used by the reversible v4 -> v5 ingress cutover.
           - versiond-router-fleet
       back: {}
+    volumes:
+      - router-state:/var/lib/gonka-router
     healthcheck:
       test:
         [
@@ -48,6 +51,10 @@ services:
     # longer SSE drain budget to `docker compose stop --timeout`.
     stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
     restart: always
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
 
 networks:
   front:
@@ -56,3 +63,10 @@ networks:
   back:
     external: true
     name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+
+volumes:
+  router-state:
+    labels:
+      ai.gonka.component: versiond-router-state
+      ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
+      ai.gonka.slot: ${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}

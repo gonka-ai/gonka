@@ -11,7 +11,6 @@ export DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE=true
 export DEVSHARD_V5_MAINTENANCE_ACK=true
 export DEVSHARD_V5_PREFLIGHT_CPUS=16
 export DEVSHARD_V5_PREFLIGHT_MEMORY_MIB=65536
-export DEVSHARD_V5_PREFLIGHT_DISK_GIB=1000
 
 fail() {
     echo "upgrade-devshard-v5_test: $*" >&2
@@ -68,7 +67,8 @@ if [[ ${1:-} == inspect ]]; then
                 $container == "$INCOMPATIBLE_COMPOSE_CONTAINER" ]]; then
                 files=$JOIN_DIR/docker-compose.observability.yml
             fi
-            jq -cn --arg files "$files" --arg workdir "$JOIN_DIR" \
+            jq -cn --arg files "$files" \
+                --arg workdir "${RUNTIME_COMPOSE_WORKDIR:-$JOIN_DIR}" \
                 '{"com.docker.compose.project":"gonka-test",
                   "com.docker.compose.project.config_files":$files,
                   "com.docker.compose.project.working_dir":$workdir}'
@@ -84,6 +84,20 @@ if [[ ${1:-} == inspect ]]; then
                   "443/tcp":[{"HostIp":"0.0.0.0","HostPort":$https}]}'
             ;;
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
+        '{{.Config.Image}}|{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
+            service=${4#cid-}
+            image=old-$service
+            if [[ ${ASSUME_RELEASE_STATE-} == true ]]; then
+                case $service in
+                    versiond | versiond2) image=$VERSIOND_IMAGE ;;
+                    edge-api | edge-api2 | edge-api3) image=$EDGE_API_IMAGE ;;
+                    proxy) image=$PROXY_ROUTER_IMAGE ;;
+                    proxy-policy) image=$PROXY_POLICY_IMAGE ;;
+                    devshard-postgres) image=postgres:16-alpine ;;
+                esac
+            fi
+            printf '%s|true|healthy\n' "$image"
+            ;;
         '{{.State.Running}}')
             service=${4#cid-}
             if [[ $service == "${STOPPED_VERSIOND_SERVICE-}" && \
@@ -383,6 +397,7 @@ run_upgrade() {
         UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         RUNTIME_COMPOSE_FILES="${RUNTIME_COMPOSE_FILES-}" \
+        RUNTIME_COMPOSE_WORKDIR="${RUNTIME_COMPOSE_WORKDIR-}" \
         RUNTIME_PGHOST="${RUNTIME_PGHOST-}" \
         RENDERED_PGHOST="${RENDERED_PGHOST-}" \
         RENDERED_POLICY_NETWORK="${RENDERED_POLICY_NETWORK-}" \
@@ -416,6 +431,7 @@ run_auto_upgrade() {
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
         RUNTIME_COMPOSE_FILES="${RUNTIME_COMPOSE_FILES-}" \
+        RUNTIME_COMPOSE_WORKDIR="${RUNTIME_COMPOSE_WORKDIR-}" \
         RUNTIME_PGHOST="${RUNTIME_PGHOST-}" \
         RENDERED_PGHOST="${RENDERED_PGHOST-}" \
         RENDERED_POLICY_NETWORK="${RENDERED_POLICY_NETWORK-}" \
@@ -625,7 +641,6 @@ undersized_log=$tmpdir/undersized.log
 : >"$undersized_log"
 if DEVSHARD_V5_PREFLIGHT_CPUS=1 \
     DEVSHARD_V5_PREFLIGHT_MEMORY_MIB=1024 \
-    DEVSHARD_V5_PREFLIGHT_DISK_GIB=10 \
     DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$undersized_log" \
     EXISTING_CONTAINERS="proxy versiond edge-api" \
@@ -740,6 +755,19 @@ assert_contains "$tmpdir/observability.log" \
     "-f $script_dir/docker-compose.observability.yml"
 grep -q 'source=COMPOSE_FILE' "$tmpdir/observability.stdout" || fail \
     "updater did not accept the complete COMPOSE_FILE model"
+
+# Explicit recovery must not be vetoed by paths recorded from a checkout that
+# no longer exists. The current explicit model remains subject to full Compose
+# rendering and service-contract validation.
+COMPOSE_FILE="$script_dir/docker-compose.yml" \
+RUNTIME_COMPOSE_FILES=./removed-docker-compose.yml \
+RUNTIME_COMPOSE_WORKDIR="$tmpdir/removed-checkout" \
+    run_auto_upgrade "versiond edge-api" \
+        "$tmpdir/stale-label.log" "$tmpdir/stale-label.stdout"
+grep -q 'source=COMPOSE_FILE' "$tmpdir/stale-label.stdout" || fail \
+    "explicit topology did not recover from stale runtime paths"
+grep -q 'records stale Compose file metadata' "$tmpdir/stderr" || fail \
+    "stale runtime metadata was not reported to the operator"
 
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/missing-override.log" \
@@ -913,10 +941,33 @@ if DOCKER_BIN="$tmpdir/docker" \
     2>"$tmpdir/active-without-marker.stderr"; then
     fail "proxy-router label was accepted as an upgrade commit"
 fi
-grep -q 'has no commit marker' "$tmpdir/active-without-marker.stderr" || {
+grep -q 'cannot recover the missing commit marker' "$tmpdir/active-without-marker.stderr" || {
     cat "$tmpdir/active-without-marker.stderr" >&2
     fail "incomplete cutover did not explain the missing upgrade commit"
 }
+
+# A crash after the irreversible router cutover but before the atomic marker
+# write is recoverable only after exact images and health have been proven.
+rm -f "$tmpdir/upgrade-complete"
+ASSUME_RELEASE_STATE=true \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/recovered-marker.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/recovered-marker.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/recovered-marker.stdout" \
+    2>"$tmpdir/recovered-marker.stderr"
+[[ $(<"$tmpdir/upgrade-complete") == 0.2.15-devshard-v5 ]] || fail \
+    "verified cutover did not reconstruct the missing commit marker"
+assert_contains "$tmpdir/recovered-marker.log" \
+    "enable-router --versiond-mode ha --edge-mode single"
+grep -q 'Recovered the verified' "$tmpdir/recovered-marker.stdout" || fail \
+    "marker recovery was not reported"
+
 printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
 DOCKER_BIN="$tmpdir/docker" \
 DOCKER_LOG="$tmpdir/active-with-marker.log" \

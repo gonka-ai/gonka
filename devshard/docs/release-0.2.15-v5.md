@@ -64,8 +64,8 @@ cd deploy/join
 ```
 
 The first command validates the immutable updater source, Docker/Compose and
-tool versions, the actual running Compose topology, CPU/RAM/filesystem capacity,
-public port ownership, and PostgreSQL migration space. It does not run Compose
+tool versions, the actual running Compose topology, CPU/RAM capacity, public
+port ownership, and PostgreSQL migration space. It does not run Compose
 pull or recreate, start, stop, or remove a deployment service, and it does not
 pull release application/router images. The PostgreSQL space probe uses a short
 read-only helper container (whose helper image Docker may fetch) and may create
@@ -207,8 +207,14 @@ topology:
 ```
 
 The preflight requires Docker Compose 2.20 or newer, `jq`, `curl`, `flock`,
-`sha256sum`, and Git. It checks them before changing the deployment. Existing
-v4 nginx and singleton-router containers remain the
+`sha256sum`, Python 3, and Git. It checks them before changing the deployment.
+The Quickstart's 1 TB NVMe recommendation remains operational guidance, not a
+numeric upgrade gate: marketed capacity and formatted filesystem capacity are
+not interchangeable, and the checkout may be on a different filesystem from
+PostgreSQL. For HA migration the blocking check measures the actual source
+cluster and requires its full byte size plus 10% on the actual target mount.
+
+Existing v4 nginx and singleton-router containers remain the
 rollback path while application replicas are replaced. At the final step the
 script starts the independent router fleet and private policy workers, captures
 the exact old public nginx image, and switches the public listener to
@@ -588,15 +594,20 @@ advertising the new protocol as generally available. A
 true pre-approval gate would require a separate signed staged-version feed; it
 cannot be inferred from `approved_versions`.
 
-Catalog additions are monotonic until a router process is replaced, which makes
-temporary stale or empty dapi snapshots harmless. Removed versions lose healthy
-children and fail closed, but do not immediately free their slot. The defaults
-allow 32 additions between router releases; capacity exhaustion is logged and
-the new name remains `503` instead of using the coarse pool.
-
-If dapi is temporarily unavailable at router startup, the shipped `v4` through
-`v8` bootstrap floor remains routable. It is capacity insurance, not an operator
-allowlist that must track future governance names.
+Catalog additions are monotonic within a running process, and each router tier
+atomically persists its last fully projected snapshot. A replacement validates
+and pre-renders a snapshot no older than
+`VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` (24 hours by default), so a
+temporary dapi outage at startup does not erase versions learned after the
+image was built. Stale, corrupt, or future-dated cache data is ignored and the
+shipped `v4` through `v8` bootstrap floor remains routable. Removed versions
+lose healthy children and fail closed without immediately freeing their runtime
+slot; they disappear from the next valid cache and therefore from the next
+render. Cached additions retain dynamic-slot assignments across restarts, so a
+restart cannot silently replenish capacity; reducing capacity below a fresh
+cache fails startup. The defaults allow 32 additions between router releases;
+capacity exhaustion is a persistent degraded projection state and the new name
+remains `503` instead of using the coarse pool.
 
 Coarse mode is an explicit two-part opt-in and changes the placement-readiness
 source. Persist both lines in `config.env`, then apply it in a maintenance

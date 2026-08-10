@@ -1,0 +1,96 @@
+#!/bin/sh
+
+# Persistent, validated cache for the approved-version routing catalog.
+# HAProxy maps are process-local; this snapshot lets a replacement process
+# render the last known-good routes before the catalog endpoint is reachable.
+set -eu
+
+fail() {
+    echo "catalog-cache: $*" >&2
+    exit 1
+}
+
+validate_version() {
+    case "$1" in
+        '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            return 1
+            ;;
+    esac
+}
+
+validate_names() {
+    names=$1
+    duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p')
+    [ -z "$duplicate" ] || fail "snapshot declares version '$duplicate' more than once"
+    while IFS= read -r version; do
+        validate_version "$version" || fail "snapshot contains unroutable version '$version'"
+    done < "$names"
+}
+
+read_cache() {
+    cache=$1 max_age=$2
+    case "$max_age" in
+        '' | *[!0-9]* | 0) fail "MAX_AGE_SECONDS must be a positive integer" ;;
+    esac
+    [ -f "$cache" ] || exit 1
+
+    tmp=$(mktemp)
+    trap 'rm -f "$tmp"' EXIT
+    if ! jq -er '
+        select(.schema == 1)
+        | select((.fetched_at_unix | type) == "number")
+        | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
+        | select((.versions | type) == "array")
+        | .fetched_at_unix, (.versions[] | select(type == "string"))
+    ' "$cache" > "$tmp"; then
+        fail "invalid snapshot $cache"
+    fi
+    expected=$(jq -er '.versions | length' "$cache") || fail "invalid snapshot $cache"
+    actual=$(( $(wc -l < "$tmp") - 1 ))
+    [ "$actual" -eq "$expected" ] || fail "snapshot contains a non-string version name"
+
+    fetched_at=$(sed -n '1p' "$tmp")
+    sed '1d' "$tmp" > "$tmp.names"
+    trap 'rm -f "$tmp" "$tmp.names"' EXIT
+    validate_names "$tmp.names"
+    now=$(date +%s)
+    age=$((now - fetched_at))
+    [ "$age" -ge 0 ] || fail "snapshot timestamp is in the future"
+    if [ "$age" -gt "$max_age" ]; then
+        echo "catalog-cache: snapshot is stale (age ${age}s, maximum ${max_age}s)" >&2
+        exit 2
+    fi
+    LC_ALL=C sort -u "$tmp.names"
+}
+
+write_cache() {
+    names=$1 cache=$2
+    [ -f "$names" ] || fail "names file does not exist: $names"
+    validate_names "$names"
+    directory=$(dirname -- "$cache")
+    [ -d "$directory" ] || fail "cache directory does not exist: $directory"
+    tmp=$(mktemp "$directory/.catalog-cache.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT
+    now=$(date +%s)
+    if ! jq -Rn --argjson now "$now" '
+        [inputs] | sort | unique
+        | {schema: 1, fetched_at_unix: $now, versions: .}
+    ' < "$names" > "$tmp"; then
+        fail "cannot encode snapshot"
+    fi
+    chmod 600 "$tmp"
+    mv -f "$tmp" "$cache"
+    trap - EXIT
+}
+
+case ${1:-} in
+    read)
+        [ "$#" -eq 3 ] || fail "usage: catalog-cache read FILE MAX_AGE_SECONDS"
+        read_cache "$2" "$3"
+        ;;
+    write)
+        [ "$#" -eq 3 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE"
+        write_cache "$2" "$3"
+        ;;
+    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE" ;;
+esac

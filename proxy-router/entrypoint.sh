@@ -30,6 +30,10 @@ VERSION_CAPACITY="${PROXY_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
 CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
 CATALOG_FETCH_TIMEOUT="${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}"
+CATALOG_CACHE_FILE="${VERSIOND_ROUTING_CATALOG_CACHE_FILE:-/var/lib/gonka-router/catalog.json}"
+CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
+CATALOG_STATUS_FILE="${VERSIOND_ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-router/catalog-status.json}"
+CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
 NGINX_MODE="${NGINX_MODE:-http}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
 
@@ -74,7 +78,8 @@ for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$EDGE_POOL_SLOTS" "$EDGE_API_PORT" \
     "$VERSIOND_FRONTEND_PORT" "$EDGE_FRONTEND_PORT" "$ADMIN_PORT" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
-    "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT"; do
+    "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
+    "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         '' | *[!0-9]*)
             echo "proxy-router: invalid numeric setting '$value'" >&2
@@ -83,7 +88,7 @@ for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     esac
 done
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
-    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ]; then
+    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ]; then
     echo "proxy-router: catalog capacity and timing values must be positive" >&2
     exit 1
 fi
@@ -142,12 +147,34 @@ backend_name() {
 BACKENDS_FILE=$(mktemp)
 ADMIN_RULES_FILE=$(mktemp)
 VERSION_READY_RULES_FILE=$(mktemp)
-trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE"' EXIT
+STATIC_VERSIONS_FILE=$(mktemp)
+CACHED_VERSIONS_FILE=$(mktemp)
+CACHED_DYNAMIC_VERSIONS_FILE=$(mktemp)
+trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
 : > "$VERSION_MAP"
 : > "$READY_VERSION_MAP"
 : > "$SLOT_MAP"
 : > "$BACKENDS_FILE"
 : > "$VERSION_READY_RULES_FILE"
+printf '%s\n%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" "${VERSIOND_VERSIONS:-}" \
+    | tr ',;' '  ' | tr -s ' ' '\n' > "$STATIC_VERSIONS_FILE"
+: > "$CACHED_VERSIONS_FILE"
+if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
+    cache_status=0
+    "$CATALOG_CACHE_BIN" read "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" \
+        > "$CACHED_VERSIONS_FILE" || cache_status=$?
+    case "$cache_status" in
+        0) echo "proxy-router: loaded the fresh routing catalog cache" >&2 ;;
+        2)
+            echo "proxy-router: ignoring stale routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+        *)
+            echo "proxy-router: ignoring invalid routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+    esac
+fi
 
 render_router_backend() {
     backend=$1
@@ -167,9 +194,9 @@ render_router_backend() {
 render_router_backend versiond_router_coarse \
     'http-check send meth GET uri /readyz' ''
 
-printf '%s\n%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" "${VERSIOND_VERSIONS:-}" \
-    | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
-        [ -n "$version" ] || continue
+declare_version() {
+        version=$1
+        [ -n "$version" ] || return 0
         validate_version "$version"
         if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSION_MAP"; then
             echo "proxy-router: version '$version' is declared more than once" >&2
@@ -185,15 +212,51 @@ printf '%s\n%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" "${VERSIOND_VERSIONS:-}" \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded } { nbsrv($backend) gt 0 }" \
             "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded }" \
             >> "$VERSION_READY_RULES_FILE"
-    done
+}
+
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    declare_version "$version"
+done < "$STATIC_VERSIONS_FILE"
+
+# Keep learned names in the bounded dynamic-slot namespace across restarts.
+# Promoting them to static backends here would silently reset capacity usage.
+: > "$CACHED_DYNAMIC_VERSIONS_FILE"
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSION_MAP"; then
+        continue
+    fi
+    printf '%s\n' "$version" >> "$CACHED_DYNAMIC_VERSIONS_FILE"
+done < "$CACHED_VERSIONS_FILE"
+cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
+if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
+    echo "proxy-router: fresh catalog cache needs $cached_dynamic_count dynamic slots," >&2
+    echo "  but PROXY_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
+    exit 1
+fi
 
 index=1
 while [ "$index" -le "$VERSION_CAPACITY" ]; do
     backend="versiond_routers_dynamic_$index"
-    printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    cached_version=$(sed -n "${index}p" "$CACHED_DYNAMIC_VERSIONS_FILE")
+    server_state=disabled
+    if [ -n "$cached_version" ]; then
+        encoded=$(urlencode "$cached_version")
+        printf '%s %s\n' "$backend" "$encoded" >> "$SLOT_MAP"
+        printf '%s %s\n' "$cached_version" "$backend" >> "$VERSION_MAP"
+        printf 'version=%s %s\n' "$encoded" "$backend" >> "$READY_VERSION_MAP"
+        printf '%s\n' \
+            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded } { nbsrv($backend) gt 0 }" \
+            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded }" \
+            >> "$VERSION_READY_RULES_FILE"
+        server_state=
+    else
+        printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    fi
     render_router_backend "$backend" \
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
-        disabled
+        "$server_state"
     index=$((index + 1))
 done
 
@@ -285,6 +348,9 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_SERVER_CAPACITY="$ROUTER_POOL_SLOTS" \
         ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
         ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
+        ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
+        ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
+        ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
             /usr/local/lib/router-runtime/catalog-reconciler || status=$?
         echo "proxy-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1

@@ -19,6 +19,9 @@ backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAP
 server_prefix=${ROUTING_CATALOG_SERVER_PREFIX:?ROUTING_CATALOG_SERVER_PREFIX is required}
 server_capacity=${ROUTING_CATALOG_SERVER_CAPACITY:?ROUTING_CATALOG_SERVER_CAPACITY is required}
 excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
+cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
+cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
+status_file=${ROUTING_CATALOG_STATUS_FILE:-}
 
 log() {
     printf '%s\n' "$component: $*" >&2
@@ -57,12 +60,37 @@ cleanup() {
 }
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
-last_error=
+last_state=starting
 
-warn_once() {
-    if [ "$last_error" != "$1" ]; then
-        log "catalog reconciliation deferred: $1"
-        last_error=$1
+set_state() {
+    state=$1 detail=$2 used=${3:-0}
+    if [ "$state" != "$last_state" ]; then
+        case "$state" in
+            ready)
+                [ "$last_state" = starting ] || log "catalog reconciliation recovered"
+                ;;
+            *) log "catalog reconciliation degraded: $detail" ;;
+        esac
+        last_state=$state
+    fi
+    [ -n "$status_file" ] || return 0
+    directory=$(dirname -- "$status_file")
+    [ -d "$directory" ] || return 0
+    status_tmp=$(mktemp "$directory/.catalog-status.XXXXXX") || return 0
+    if jq -n \
+        --arg state "$state" \
+        --arg detail "$detail" \
+        --argjson observed_at_unix "$(date +%s)" \
+        --argjson used "$used" \
+        --argjson capacity "$backend_capacity" \
+        '{schema: 1, state: $state, detail: $detail,
+          observed_at_unix: $observed_at_unix,
+          dynamic_slots_used: $used, dynamic_slots_capacity: $capacity}' \
+        > "$status_tmp"; then
+        chmod 600 "$status_tmp"
+        mv -f "$status_tmp" "$status_file"
+    else
+        rm -f "$status_tmp"
     fi
 }
 
@@ -126,6 +154,12 @@ fetch_catalog() {
         validate_version "$version" || return 1
     done < "$names"
     LC_ALL=C sort -u "$names" -o "$names"
+}
+
+persist_catalog() {
+    [ -n "$cache_file" ] || return 0
+    [ -x "$cache_bin" ] || return 1
+    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file"
 }
 
 map_snapshot() {
@@ -201,6 +235,31 @@ reconcile_catalog() {
     ready_state=$(map_snapshot "$ready_map") || return 1
     slot_state=$(map_snapshot "$slot_map") || return 1
 
+    # Capacity is checked before the first Runtime API mutation. Without this
+    # preflight a snapshot with N+1 new names and N free slots would publish a
+    # prefix, report exhaustion, and then lose that uncommitted prefix after a
+    # restart because the cache correctly retained the previous full snapshot.
+    free_capacity=$(printf '%s\n' "$slot_state" | awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 == "__unassigned__" {n++}
+        END {print n + 0}
+    ')
+    required_capacity=0
+    capacity_missing=
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        version_excluded "$version" && continue
+        encoded=$(urlencode "$version")
+        backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+        [ -n "$backend" ] || \
+            backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+        [ -n "$backend" ] && continue
+        required_capacity=$((required_capacity + 1))
+        if [ "$required_capacity" -gt "$free_capacity" ] && [ -z "$capacity_missing" ]; then
+            capacity_missing=$version
+        fi
+    done < "$tmpdir/catalog.names"
+    [ -z "$capacity_missing" ] || return 2
+
     while IFS= read -r version; do
         [ -n "$version" ] || continue
         version_excluded "$version" && continue
@@ -219,8 +278,8 @@ reconcile_catalog() {
         if [ -z "$backend" ]; then
             backend=$(printf '%s\n' "$slot_state" | free_slot)
             if [ -z "$backend" ]; then
-                warn_once "no free backend slot for governance version '$version' (capacity $backend_capacity)"
-                continue
+                capacity_missing=$version
+                return 2
             fi
             assign_slot "$backend" "$encoded" || return 1
             slot_state=$(map_snapshot "$slot_map") || return 1
@@ -237,16 +296,25 @@ reconcile_catalog() {
 
 while :; do
     if [ ! -S "$runtime_socket" ]; then
-        warn_once "HAProxy Runtime API is not ready"
+        set_state runtime-unavailable "HAProxy Runtime API is not ready"
     elif ! fetch_catalog; then
-        warn_once "cannot fetch or validate $catalog_url"
-    elif ! reconcile_catalog; then
-        warn_once "HAProxy rejected a catalog projection"
+        set_state fetch-error "cannot fetch or validate $catalog_url"
     else
-        if [ -n "$last_error" ]; then
-            log "catalog reconciliation recovered"
+        reconcile_status=0
+        reconcile_catalog || reconcile_status=$?
+        used=$(map_snapshot "$slot_map" 2>/dev/null | \
+            awk -v prefix="$backend_prefix" \
+                'index($2, prefix) == 1 && $3 != "__unassigned__" {n++} END {print n + 0}')
+        if [ "$reconcile_status" -eq 2 ]; then
+            set_state capacity-exhausted \
+                "no free backend slot for governance version '$capacity_missing'" "$used"
+        elif [ "$reconcile_status" -ne 0 ]; then
+            set_state runtime-error "HAProxy rejected a catalog projection" "$used"
+        elif ! persist_catalog; then
+            set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
+        else
+            set_state ready "catalog and runtime maps are current" "$used"
         fi
-        last_error=
     fi
     sleep "$poll_seconds"
 done

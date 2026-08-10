@@ -76,8 +76,10 @@ case ${DEVSHARD_V5_RELEASE_GATE_ALLOW_UNTAGGED:-false} in
     *) fail "DEVSHARD_V5_RELEASE_GATE_ALLOW_UNTAGGED must be true or false" ;;
 esac
 
-document=$(mktemp)
-trap 'rm -f "$document"' EXIT
+tmpdir=$(mktemp -d)
+document=$tmpdir/document
+normalized=$tmpdir/normalized
+trap 'rm -rf "$tmpdir"' EXIT
 if [[ -n $network_update_url ]]; then
     [[ $network_update_url == https://gonka.ai/docs/network-updates/* || \
         $network_update_url == https://gonka.ai/docs/network-updates/ ]] || \
@@ -90,15 +92,60 @@ else
     cp -- "$network_update_file" "$document"
 fi
 
+# gonka.ai serves rendered HTML whose syntax highlighter can split one command
+# across nested spans. Compare against normalized visible text, not raw markup.
+python3 - "$document" "$normalized" <<'PY'
+import html
+import re
+import sys
+from html.parser import HTMLParser
+
+
+class VisibleText(HTMLParser):
+    blocks = {
+        "address", "article", "aside", "blockquote", "br", "div", "footer",
+        "h1", "h2", "h3", "h4", "h5", "h6", "header", "li", "main", "nav",
+        "ol", "p", "pre", "section", "table", "td", "th", "tr", "ul",
+    }
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.parts = []
+
+    def handle_starttag(self, tag, _attrs):
+        if tag in self.blocks:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag):
+        if tag in self.blocks:
+            self.parts.append("\n")
+
+    def handle_data(self, data):
+        self.parts.append(data)
+
+
+source, destination = sys.argv[1:]
+raw = open(source, encoding="utf-8").read()
+if re.search(r"<!doctype\s+html|<html(?:\s|>)", raw, re.IGNORECASE):
+    parser = VisibleText()
+    parser.feed(raw)
+    visible = "".join(parser.parts)
+else:
+    visible = html.unescape(raw)
+visible = re.sub(r"\s+", " ", visible).strip()
+with open(destination, "w", encoding="utf-8") as output:
+    output.write(visible + "\n")
+PY
+
 for required in \
     "$DEVSHARD_V5_RELEASE_GIT_TAG" \
     "$deadline_utc" \
     './upgrade-devshard-v5.sh --preflight-only --strict-capacity' \
     './upgrade-devshard-v5.sh --acknowledge-maintenance'; do
-    grep -Fq -- "$required" "$document" || fail \
+    grep -Fq -- "$required" "$normalized" || fail \
         "Network Updates entry is missing required release contract: $required"
 done
-if grep -Eq '<(PUBLICATION_DATE_UTC|UPGRADE_DEADLINE_UTC)>' "$document"; then
+if grep -Eq '<(PUBLICATION_DATE_UTC|UPGRADE_DEADLINE_UTC)>' "$normalized"; then
     fail "Network Updates entry still contains publication placeholders"
 fi
 

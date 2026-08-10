@@ -4,6 +4,7 @@ set -Eeuo pipefail
 
 network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
+state=gonka-proxy-router-state-$$
 containers=(
     gonka-pr-proxy gonka-pr-probe gonka-pr-catalog
     gonka-pr-policy-a gonka-pr-policy-b
@@ -16,6 +17,7 @@ tmpdir=$(mktemp -d)
 cleanup() {
     docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
+    docker volume rm "$state" >/dev/null 2>&1 || true
     docker image rm "$image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
 }
@@ -143,6 +145,15 @@ cat >"$tmpdir/policy.conf" <<'EOF'
 events {}
 http {
     access_log off;
+    resolver 127.0.0.11 valid=1s ipv6=off;
+    upstream versiond_distributor {
+        zone versiond_distributor 64k;
+        server proxy-router:18081 resolve;
+    }
+    upstream edge_distributor {
+        zone edge_distributor 64k;
+        server proxy-router:18082 resolve;
+    }
     server {
         listen 80 proxy_protocol;
         set_real_ip_from 0.0.0.0/0;
@@ -150,12 +161,12 @@ http {
         location /devshard/ {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_pass http://proxy-router:18081/;
+            proxy_pass http://versiond_distributor/;
         }
         location /tier-a/ {
             proxy_set_header X-Real-IP $remote_addr;
             proxy_set_header X-Forwarded-Proto $scheme;
-            proxy_pass http://proxy-router:18082/;
+            proxy_pass http://edge_distributor/;
         }
         location / { return 200 "$hostname:$remote_addr\n"; }
     }
@@ -163,6 +174,7 @@ http {
 EOF
 
 docker network create "$network" >/dev/null
+docker volume create "$state" >/dev/null
 docker build -q -t "$image" -f Dockerfile .. >/dev/null
 
 docker run -d --name gonka-pr-catalog --network "$network" \
@@ -205,6 +217,7 @@ done
 
 docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
+    -v "$state:/var/lib/gonka-router" \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
@@ -247,6 +260,26 @@ unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null 
     "unknown governance version readiness did not fail closed"
 
 proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
+printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+    >"$tmpdir/catalog/versions.next"
+mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+for _ in $(seq 30); do
+    if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+        | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 0' \
+            >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+    | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 0' \
+        >/dev/null || fail "catalog capacity preflight did not report atomic exhaustion"
+for version in v9 v10; do
+    unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
+        "http://127.0.0.1:8404/readyz?version=$version" 2>&1 || true)
+    [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
+        "capacity preflight partially published $version"
+done
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
@@ -267,6 +300,71 @@ docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \
     || fail "learning v9 replaced the top distributor"
 [[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b)$ ]] \
     || fail "learning v9 disrupted the existing v4 route"
+docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
+    || fail "top distributor did not persist its learned catalog"
+docker stop gonka-pr-catalog >/dev/null
+docker rm -f gonka-pr-proxy >/dev/null
+docker run -d --name gonka-pr-proxy --network "$network" \
+    --network-alias proxy-router \
+    -v "$state:/var/lib/gonka-router" \
+    -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+    -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    "$image" >/dev/null
+for _ in $(seq 40); do
+    if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+proxy_admin '/readyz?version=v9' >/dev/null \
+    || fail "top distributor lost a learned route when restarted without dapi"
+[[ $(probe http://proxy-router:18081/v9/sessions/cache/healthz) == b ]] \
+    || fail "cached top-level v9 did not reach its route-ready router"
+docker start gonka-pr-catalog >/dev/null
+for _ in $(seq 60); do
+    if proxy_admin /readyz >/dev/null 2>&1 &&
+        proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
+        proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+proxy_admin /readyz >/dev/null \
+    || fail "public policy pool did not recover after cached-route restart"
+for worker in a b; do
+    worker_route=
+    for _ in $(seq 40); do
+        worker_route=$(probe --haproxy-protocol \
+            "http://gonka-pr-policy-$worker/devshard/v5/sessions/dns-refresh/healthz" \
+            2>/dev/null || true)
+        [[ $worker_route == b ]] && break
+        sleep 0.25
+    done
+    [[ $worker_route == b ]] || fail \
+        "policy worker $worker did not re-resolve the replaced proxy-router"
+done
+printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+    >"$tmpdir/catalog/versions.next"
+mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+for _ in $(seq 30); do
+    if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+        | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 1' \
+            >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.5
+done
+docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+    | jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 1' \
+        >/dev/null || fail "top distributor did not expose catalog capacity exhaustion"
+unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
+    'http://127.0.0.1:8404/readyz?version=v10' 2>&1 || true)
+[[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
+    "capacity-exhausted top distributor published v10"
+[[ $(probe http://proxy-router:18081/v9/sessions/after-capacity/healthz) == b ]] \
+    || fail "capacity exhaustion disrupted the last admitted top-level route"
 
 policy=$(probe http://proxy-router/)
 case "$policy" in policy-a:* | policy-b:*) ;; *) fail "public TCP frontend returned '$policy'" ;; esac

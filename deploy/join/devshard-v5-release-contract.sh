@@ -32,8 +32,7 @@ devshard_v5_load_release_contract() {
         DEVSHARD_V5_PROXY_ROUTER_IMAGE \
         DEVSHARD_V5_MIN_COMPOSE_VERSION \
         DEVSHARD_V5_RECOMMENDED_CPUS \
-        DEVSHARD_V5_RECOMMENDED_MEMORY_MIB \
-        DEVSHARD_V5_RECOMMENDED_DISK_GIB; do
+        DEVSHARD_V5_RECOMMENDED_MEMORY_MIB; do
         [[ -n ${!name:-} ]] || devshard_v5_contract_error \
             "release contract has no $name" || return
     done
@@ -73,7 +72,7 @@ devshard_v5_version_at_least() {
 devshard_v5_verify_dependencies() {
     local docker_bin=$1 command compose_version
 
-    for command in jq curl flock sha256sum git getconf awk df timeout; do
+    for command in jq curl flock sha256sum git getconf awk df timeout python3; do
         command -v "$command" >/dev/null 2>&1 || \
             devshard_v5_contract_error "$command is required" || return
     done
@@ -111,6 +110,7 @@ deploy/join/docker-compose.proxy-v4-compat.yml
 deploy/join/versiond-router-slot/docker-compose.yml
 router-runtime/catalog-reconciler
 router-runtime/catalog-status
+router-runtime/catalog-cache
 EOF
 }
 
@@ -207,31 +207,26 @@ devshard_v5_memory_mib() {
     awk '/^MemTotal:/ {print int($2 / 1024)}' /proc/meminfo
 }
 
-devshard_v5_disk_gib() {
-    df -Pk -- "$1" | awk 'NR == 2 {print int($2 / 1048576)}'
-}
-
 devshard_v5_verify_capacity() {
     local config_dir=$1 strict=$2
-    local cpus memory_mib disk_gib failures=0
+    local cpus memory_mib failures=0
+
+    # Disk migration safety is checked against the actual PostgreSQL target
+    # later, using source bytes plus reserve. The checkout filesystem is not a
+    # valid proxy for that requirement.
+    : "$config_dir"
 
     cpus=$(devshard_v5_capacity_value \
         "${DEVSHARD_V5_PREFLIGHT_CPUS:-}" getconf _NPROCESSORS_ONLN)
     memory_mib=$(devshard_v5_capacity_value \
         "${DEVSHARD_V5_PREFLIGHT_MEMORY_MIB:-}" \
         devshard_v5_memory_mib)
-    disk_gib=$(devshard_v5_capacity_value \
-        "${DEVSHARD_V5_PREFLIGHT_DISK_GIB:-}" \
-        devshard_v5_disk_gib "$config_dir")
     [[ $cpus =~ ^[1-9][0-9]*$ ]] || devshard_v5_contract_error \
         "cannot determine online CPU count" || return
     [[ $memory_mib =~ ^[1-9][0-9]*$ ]] || devshard_v5_contract_error \
         "cannot determine host memory" || return
-    [[ $disk_gib =~ ^[1-9][0-9]*$ ]] || devshard_v5_contract_error \
-        "cannot determine deployment filesystem size" || return
-
-    printf 'Release preflight: host capacity cpu=%s memory=%sMiB filesystem=%sGiB\n' \
-        "$cpus" "$memory_mib" "$disk_gib"
+    printf 'Release preflight: host compute capacity cpu=%s memory=%sMiB\n' \
+        "$cpus" "$memory_mib"
     if ((cpus < DEVSHARD_V5_RECOMMENDED_CPUS)); then
         devshard_v5_contract_warn \
             "host has $cpus CPUs; Quickstart recommends $DEVSHARD_V5_RECOMMENDED_CPUS"
@@ -240,11 +235,6 @@ devshard_v5_verify_capacity() {
     if ((memory_mib < DEVSHARD_V5_RECOMMENDED_MEMORY_MIB)); then
         devshard_v5_contract_warn \
             "host has ${memory_mib}MiB RAM; Quickstart recommends ${DEVSHARD_V5_RECOMMENDED_MEMORY_MIB}MiB"
-        failures=$((failures + 1))
-    fi
-    if ((disk_gib < DEVSHARD_V5_RECOMMENDED_DISK_GIB)); then
-        devshard_v5_contract_warn \
-            "deployment filesystem is ${disk_gib}GiB; Quickstart recommends ${DEVSHARD_V5_RECOMMENDED_DISK_GIB}GiB"
         failures=$((failures + 1))
     fi
     if [[ $strict == true && $failures -gt 0 ]]; then

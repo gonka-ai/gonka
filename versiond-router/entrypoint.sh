@@ -52,6 +52,10 @@ VERSION_CAPACITY="${VERSIOND_ROUTER_VERSION_CAPACITY:-32}"
 CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
 CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
 CATALOG_FETCH_TIMEOUT="${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}"
+CATALOG_CACHE_FILE="${VERSIOND_ROUTING_CATALOG_CACHE_FILE:-/var/lib/gonka-router/catalog.json}"
+CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
+CATALOG_STATUS_FILE="${VERSIOND_ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-router/catalog-status.json}"
+CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
 
 # Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
 # 1/true/yes are on, empty/0/false/no are off, anything else refuses to start.
@@ -89,7 +93,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT" "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" "$CATALOG_CACHE_MAX_AGE"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -98,7 +102,7 @@ for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_I
     esac
 done
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
-    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ]; then
+    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ]; then
     echo "versiond-router: catalog capacity and timing values must be positive" >&2
     exit 1
 fi
@@ -196,14 +200,44 @@ render_backend() {
 : > "$READY_VERSIONS_MAP"
 : > "$SLOT_MAP"
 POOL_BACKENDS_FILE="$(mktemp)"
-trap 'rm -f "$POOL_BACKENDS_FILE"' EXIT
+STATIC_VERSIONS_FILE="$(mktemp)"
+LEGACY_VERSIONS_FILE="$(mktemp)"
+CACHED_VERSIONS_FILE="$(mktemp)"
+CACHED_DYNAMIC_VERSIONS_FILE="$(mktemp)"
+trap 'rm -f "$POOL_BACKENDS_FILE" "$STATIC_VERSIONS_FILE" "$LEGACY_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
+
+printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' > "$STATIC_VERSIONS_FILE"
+printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' > "$LEGACY_VERSIONS_FILE"
+: > "$CACHED_VERSIONS_FILE"
+if [ -n "$CATALOG_URL" ] && [ -f "$CATALOG_CACHE_FILE" ]; then
+    cache_status=0
+    "$CATALOG_CACHE_BIN" read "$CATALOG_CACHE_FILE" "$CATALOG_CACHE_MAX_AGE" \
+        > "$CACHED_VERSIONS_FILE" || cache_status=$?
+    case "$cache_status" in
+        0) echo "versiond-router: loaded the fresh routing catalog cache" >&2 ;;
+        2)
+            echo "versiond-router: ignoring stale routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+        *)
+            echo "versiond-router: ignoring invalid routing catalog cache" >&2
+            : > "$CACHED_VERSIONS_FILE"
+            ;;
+    esac
+fi
+
+name_in_file() {
+    awk -v v="$1" '$0 "" == v "" { found = 1 } END { exit !found }' "$2"
+}
+
 render_backend versiond_ha_pool \
     'http-check send meth GET uri /readyz' \
     'http-check send meth GET uri /healthz' \
     "$POOL_HOST" "$SLOTS" "$(ha_header_for versiond_ha_pool)" \
     versiond_ha_pool '' > "$POOL_BACKENDS_FILE"
-printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
-    [ -n "$version" ] || continue
+declare_ha_version() {
+    version=$1
+    [ -n "$version" ] || return 0
     # A version name is whatever governance approved. Three things are derived
     # from it and each has its own rules:
     #
@@ -234,7 +268,32 @@ printf '%s\n' "${VERSIOND_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while r
         "http-check send meth GET uri /$encoded_version/healthz" \
         "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" '' \
         >> "$POOL_BACKENDS_FILE"
-done
+}
+
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    declare_ha_version "$version"
+done < "$STATIC_VERSIONS_FILE"
+
+# Restore only names that still require dynamic capacity. Rendering cached names
+# as new static backends would free their old slots on every restart and make the
+# configured capacity grow without bound. Static and legacy declarations remain
+# authoritative when an operator intentionally changes a version's ownership.
+: > "$CACHED_DYNAMIC_VERSIONS_FILE"
+while IFS= read -r version; do
+    [ -n "$version" ] || continue
+    name_in_file "$version" "$LEGACY_VERSIONS_FILE" && continue
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
+        continue
+    fi
+    printf '%s\n' "$version" >> "$CACHED_DYNAMIC_VERSIONS_FILE"
+done < "$CACHED_VERSIONS_FILE"
+cached_dynamic_count=$(wc -l < "$CACHED_DYNAMIC_VERSIONS_FILE")
+if [ "$cached_dynamic_count" -gt "$VERSION_CAPACITY" ]; then
+    echo "versiond-router: fresh catalog cache needs $cached_dynamic_count dynamic slots," >&2
+    echo "  but VERSIOND_ROUTER_VERSION_CAPACITY is $VERSION_CAPACITY" >&2
+    exit 1
+fi
 
 # Reserve inert backends for governance names that appear after this container
 # starts. The reconciler assigns a check URI, enables the slot, and only then
@@ -243,11 +302,21 @@ done
 index=1
 while [ "$index" -le "$VERSION_CAPACITY" ]; do
     backend="versiond_dynamic_$index"
-    printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    cached_version=$(sed -n "${index}p" "$CACHED_DYNAMIC_VERSIONS_FILE")
+    server_state=disabled
+    if [ -n "$cached_version" ]; then
+        encoded_version=$(urlencode "$cached_version")
+        printf '%s %s\n' "$backend" "$encoded_version" >> "$SLOT_MAP"
+        printf '%s %s\n' "$cached_version" "$backend" >> "$VERSIONS_MAP"
+        printf 'version=%s %s\n' "$encoded_version" "$backend" >> "$READY_VERSIONS_MAP"
+        server_state=
+    else
+        printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    fi
     render_backend "$backend" \
         "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
         "http-check send meth GET uri-lf /%[be_name,map($SLOT_MAP)]/healthz" \
-        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" disabled \
+        "$POOL_HOST" "$SLOTS" "$(ha_header_for "$backend")" "$backend" "$server_state" \
         >> "$POOL_BACKENDS_FILE"
     index=$((index + 1))
 done
@@ -256,7 +325,7 @@ done
 # backend per version lets a missing archive take only that version out of
 # rotation; a generic /readyz failure must not hide the owner's healthy children.
 # Trailing newline is load-bearing: without it `read` swallows the last field.
-printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
+while IFS= read -r version; do
     [ -n "$version" ] || continue
     validate_version "$version"
     if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$MAP"; then
@@ -277,7 +346,7 @@ printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | 
         "$LEGACY_HOST" 1 'http-request del-header Devshard-Ha' \
         versiond_legacy '' \
         >> "$POOL_BACKENDS_FILE"
-done
+done < "$LEGACY_VERSIONS_FILE"
 
 # Versions pinned to the legacy host exist because exactly one host owns their
 # SQLite data dirs. Defaulting that owner to the pool alias would resolve "the
@@ -389,6 +458,9 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_EXCLUDE="${VERSIOND_NON_HA_VERSIONS:-}" \
         ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
         ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
+        ROUTING_CATALOG_CACHE_FILE="$CATALOG_CACHE_FILE" \
+        ROUTING_CATALOG_CACHE_BIN="$CATALOG_CACHE_BIN" \
+        ROUTING_CATALOG_STATUS_FILE="$CATALOG_STATUS_FILE" \
             /usr/local/lib/router-runtime/catalog-reconciler || status=$?
         echo "versiond-router: catalog reconciler exited with status $status; restarting" >&2
         sleep 1

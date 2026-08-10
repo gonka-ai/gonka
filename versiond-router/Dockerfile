@@ -17,8 +17,10 @@ LABEL ai.gonka.component="versiond-router" \
 # directory — none of the shipped compose files do.)
 USER root
 RUN apk add --no-cache jq socat \
-    && mkdir -p /etc/haproxy /var/run/haproxy /usr/local/lib/router-runtime \
-    && chown -R haproxy:haproxy /etc/haproxy /var/run/haproxy
+    && mkdir -p /etc/haproxy /var/run/haproxy /var/lib/gonka-router \
+       /usr/local/lib/router-runtime \
+    && chown -R haproxy:haproxy /etc/haproxy /var/run/haproxy \
+       /var/lib/gonka-router
 
 COPY versiond-router/haproxy.cfg.template /etc/haproxy/haproxy.cfg.template
 COPY versiond-router/pool-backend.cfg.template /etc/haproxy/pool-backend.cfg.template
@@ -26,9 +28,10 @@ COPY versiond-router/entrypoint.sh /usr/local/bin/entrypoint.sh
 # Internal diagnostic, deliberately off PATH: it is a formatter over the
 # Runtime API that the citest harness parses, not an operator CLI.
 COPY versiond-router/pool-status /usr/local/lib/versiond-router/pool-status
-COPY router-runtime/catalog-reconciler router-runtime/catalog-status /usr/local/lib/router-runtime/
+COPY router-runtime/catalog-cache router-runtime/catalog-reconciler router-runtime/catalog-status /usr/local/lib/router-runtime/
 RUN chmod +x /usr/local/bin/entrypoint.sh \
     /usr/local/lib/versiond-router/pool-status \
+    /usr/local/lib/router-runtime/catalog-cache \
     /usr/local/lib/router-runtime/catalog-reconciler \
     /usr/local/lib/router-runtime/catalog-status
 

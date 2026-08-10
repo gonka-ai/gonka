@@ -161,15 +161,25 @@ aggregate this per-host result. A future pre-approval gate would require a
 separate signed staged-version feed; the approved-version endpoint cannot expose
 information governance has not published yet.
 
-Catalog additions are monotonic for one router process. Removing a name from
-governance makes its child and health capacity disappear, so requests fail
-closed, but the local map slot is retained until the next router replacement.
-This avoids route churn from a transient stale/empty dapi snapshot.
+Catalog additions are monotonic for one router process. Every fully projected
+snapshot is also committed atomically to the slot's persistent state volume.
+On replacement, a fresh snapshot is validated and rendered before HAProxy
+starts, so names learned after the image was built do not disappear merely
+because dapi is temporarily unavailable. The default maximum age is 24 hours;
+a stale, corrupt, or future-dated snapshot is ignored and startup falls back to
+the static bootstrap floor. Cached non-bootstrap names are restored into the
+same bounded `versiond_dynamic_<n>` namespace; restarting a router does not
+replenish consumed capacity. Startup fails loudly if a fresh cache needs more
+dynamic slots than the configured capacity. Removing a name makes its child and health capacity
+disappear immediately; the runtime slot is retained until replacement, while
+the next valid cache snapshot no longer contains it.
 
 Catalog URL, poll interval, fetch timeout, and capacity are validated before
 HAProxy starts. Transient fetch failures preserve the last admitted map and are
 logged once per failure episode. If the reconciler itself exits unexpectedly,
 the entrypoint restarts it without interrupting established proxy connections.
+`catalog-status --state` exposes the reconciler projection state, including an
+explicit `capacity-exhausted` condition, from the persistent state directory.
 
 `VERSIOND_ROUTER_VERSION_CAPACITY` bounds additions between router software
 rollouts (default 32). Exhaustion is logged and the unassigned name remains 503;
@@ -360,6 +370,7 @@ Run `prepare-networks` before the next main-project `up`, then run
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint. The join fleet uses `http://versiond-routing-oracle:9100/versions` |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | interval for discovering governance names |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
+| `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog used at process start |
 | `VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS` | `2100` | fleet `wait-version` deadline; a host workflow setting, not a router-container setting |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | inert per-version backends reserved for names added after process start |
 | `VERSIOND_ROUTER_ALLOW_COARSE_READINESS` | *(unset)* | allow an HA deployment with neither bootstrap versions nor a catalog, accepting that a host with one unready version keeps receiving its traffic. Same boolean grammar |
@@ -405,14 +416,18 @@ would then not match the name at all.
 | `/readyz` | private admin port `8404` | coarse backend has capacity |
 | `/readyz?version=<v>` | private admin port `8404` | the matching version backend has capacity |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | operator socket, no TCP bind; diagnostics only |
-| Catalog writer | `/var/run/haproxy/reconciler.sock` | mode-600 admin socket used only by the in-container reconciler |
+| Catalog writer | `/var/run/haproxy/reconciler.sock` | mode-600 admin socket shared by HAProxy and its in-container reconciler trust domain |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
 Neither the metrics endpoint nor the admin socket is reachable from outside the
-container, and the container runs as the unprivileged `haproxy` user from the
-base image — root is used only at build time to install `jq`/`socat` and hand over
-the config and socket directories. Scrape metrics with a sidecar or
+container, and the container runs as the unprivileged `haproxy` user with all
+Linux capabilities dropped and `no-new-privileges`. Root is used only at build
+time to install `jq`/`socat` and hand over writable directories. Socket mode
+`0600` protects the container boundary, not one process from another: HAProxy,
+the entrypoint, and the reconciler intentionally share one Unix user and form
+one trust domain. Strong per-process isolation would require a separate sidecar
+or a narrow privileged broker. Scrape metrics with a sidecar or
 `docker compose exec`.
 
 ## Tests

@@ -26,7 +26,7 @@ cleanup() {
             docker compose --project-directory "$script_dir" \
                 --project-name "$prefix-$slot" \
                 -f "$script_dir/versiond-router-slot/docker-compose.yml" \
-                down --timeout 1 --remove-orphans >/dev/null 2>&1 || true
+                down --timeout 1 --remove-orphans -v >/dev/null 2>&1 || true
     done
     docker rm -f gonka-router-fleet-backend-$suffix \
         gonka-router-fleet-proxy-$suffix \
@@ -175,6 +175,53 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
 "${fleet[@]}" up >/dev/null
 "${fleet[@]}" status >/dev/null
 
+# `apply` is also the recovery path. It restores absent and non-ready capacity
+# before considering any healthy slot for replacement.
+healthy_0=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=0)
+healthy_1=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=1)
+missing_id=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=2)
+docker rm -f "$missing_id" >/dev/null
+"${fleet[@]}" apply >/dev/null
+[[ $(docker ps -q --filter "id=$healthy_0") == "$healthy_0" ]] || fail \
+    "repairing an absent slot replaced healthy slot 0"
+[[ $(docker ps -q --filter "id=$healthy_1") == "$healthy_1" ]] || fail \
+    "repairing an absent slot replaced healthy slot 1"
+recovered_2=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=2)
+[[ -n $recovered_2 && $recovered_2 != "$missing_id" ]] || fail \
+    "apply did not recreate the absent slot"
+
+docker network disconnect "$back" "$recovered_2"
+for _ in $(seq 45); do
+    health=$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{end}}' \
+        "$recovered_2")
+    [[ $health == unhealthy ]] && break
+    sleep 1
+done
+[[ ${health:-} == unhealthy ]] || fail "disconnected slot did not become unhealthy"
+"${fleet[@]}" apply >/dev/null
+[[ $(docker ps -q --filter "id=$healthy_0") == "$healthy_0" ]] || fail \
+    "repairing an unhealthy slot replaced healthy slot 0"
+[[ $(docker ps -q --filter "id=$healthy_1") == "$healthy_1" ]] || fail \
+    "repairing an unhealthy slot replaced healthy slot 1"
+repaired_2=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=2)
+[[ -n $repaired_2 && $repaired_2 != "$recovered_2" ]] || fail \
+    "apply did not recreate the unhealthy slot"
+
 # The standard updater calls `apply` on every run. An unchanged fleet must not
 # pay a drain/recreate cycle merely because the updater is idempotently rerun.
 declare -A initial_ids=()
@@ -307,7 +354,6 @@ docker run -d --name "gonka-router-fleet-proxy-$suffix" \
     "$proxy_image" >/dev/null
 docker run -d --name "gonka-router-fleet-probe-$suffix" \
     --network "$front" curlimages/curl:8.12.1 sleep 300 >/dev/null
-
 probe=(docker exec "gonka-router-fleet-probe-$suffix" curl -fsS \
     --connect-timeout 2 --max-time 10)
 for _ in $(seq 60); do
@@ -320,6 +366,40 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     -q -O /dev/null 'http://127.0.0.1:8404/readyz?version=v4' \
     >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
+
+# The catalog endpoint is part of the routing contract: two routers learning
+# approved names from different authorities must never coexist in one ring. The
+# rejection happens before any slot mutation, while live traffic remains usable.
+declare -A before_catalog_change=()
+for slot in "${slots[@]}"; do
+    before_catalog_change[$slot]=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+done
+printf '%s\n' 'VERSIOND_ROUTING_CATALOG_URL=http://different-catalog:9100/versions' \
+    >> "$tmpdir/config.env"
+if "${fleet[@]}" rollout >"$tmpdir/catalog-contract.out" 2>&1; then
+    fail "ordinary rollout accepted divergent governance catalog authorities"
+fi
+grep -q 'use maintenance-rollout to avoid mixed escrow placement' \
+    "$tmpdir/catalog-contract.out" || fail \
+    "catalog authority mismatch was not reported as a placement change"
+sed -i '/^VERSIOND_ROUTING_CATALOG_URL=http:\/\/different-catalog:9100\/versions$/d' \
+    "$tmpdir/config.env"
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ $current_id == "${before_catalog_change[$slot]}" ]] || fail \
+        "catalog-authority guard mutated slot $slot before rejecting rollout"
+done
+for i in $(seq 10); do
+    [[ $("${probe[@]}" -X POST -d "request=$i" \
+        "http://proxy-router:18081/v4/sessions/catalog-guard-$i/chat") == ok ]] \
+        || fail "catalog-authority rejection disrupted live request $i"
+done
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "strict admission rejected the complete live v4 fleet"
 "${fleet[@]}" wait-version v4 >/dev/null || fail \
@@ -425,7 +505,7 @@ sed -i 's/^VERSIOND_VERSIONS=v4$/VERSIOND_VERSIONS="v4 v5"/' "$tmpdir/config.env
 if "${fleet[@]}" up >"$tmpdir/config-drift.out" 2>&1; then
     fail "fleet up accepted existing slots without the newly declared route"
 fi
-grep -q 'does not declare expected route v5; run rollout' \
+grep -q 'does not declare expected route v5' \
     "$tmpdir/config-drift.out" || fail \
     "fleet up did not explain that route declarations require rollout"
 if "${fleet[@]}" status >"$tmpdir/config-drift-status.out" 2>&1; then
@@ -544,6 +624,7 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_IMAGE=$image \
     VERSIOND_NON_HA_VERSIONS='' \
     VERSIOND_VERSIONS=v4 \
+    VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
     docker compose --project-directory "$script_dir" \
         --project-name "$prefix-0" \
         -f "$script_dir/versiond-router-slot/docker-compose.yml" \

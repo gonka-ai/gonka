@@ -144,6 +144,55 @@ gonka_compose_runtime_metadata() {
     files_out=("${parsed_files[@]}")
 }
 
+# Explicit files are the recovery authority when a deployment checkout moved or
+# an old override was deleted intentionally. Docker labels still prove project
+# ownership, and every label path that remains readable is enforced as a
+# required subsequence. Stale paths are reported but cannot veto the explicit
+# model before Compose itself validates it.
+gonka_compose_runtime_metadata_for_explicit() {
+    local docker_bin=$1 container=$2 script_dir=$3
+    # shellcheck disable=SC2178,SC2034 # Outputs are assigned through namerefs.
+    local -n project_out=$4 working_dir_out=$5 files_out=$6
+    local labels files_label raw_working file path directory filename
+    local -a raw=()
+    local versiond_compat="$script_dir/docker-compose.versiond-v5-compat.yml"
+    local edge_compat="$script_dir/docker-compose.edge-api-v5-compat.yml"
+    local proxy_compat="$script_dir/docker-compose.proxy-v4-compat.yml"
+
+    labels=$("$docker_bin" inspect --format '{{json .Config.Labels}}' "$container") ||
+        fail "cannot inspect Compose metadata for container $container"
+    # shellcheck disable=SC2034 # Assign through the project_out nameref.
+    project_out=$(jq -er \
+        '.["com.docker.compose.project"] | strings | select(length > 0)' \
+        <<<"$labels") || fail \
+        "container $container has no com.docker.compose.project label; refusing to mutate a container not owned by a verifiable Compose project"
+    raw_working=$(jq -er \
+        '.["com.docker.compose.project.working_dir"] | strings | select(length > 0)' \
+        <<<"$labels") || return 2
+    [[ -d $raw_working ]] || return 2
+    working_dir_out=$(cd -- "$raw_working" && pwd -P) || return 2
+    files_label=$(jq -er \
+        '.["com.docker.compose.project.config_files"] | strings | select(length > 0)' \
+        <<<"$labels") || return 2
+    IFS=',' read -r -a raw <<<"$files_label"
+    ((${#raw[@]} > 0)) || return 2
+    files_out=()
+    for file in "${raw[@]}"; do
+        [[ -n $file && $file != *$'\n'* && $file != *$'\x1f'* ]] || return 2
+        path=$file
+        [[ $path == /* ]] || path=$working_dir_out/$path
+        [[ -f $path ]] || return 2
+        directory=$(cd -- "$(dirname -- "$path")" && pwd -P) || return 2
+        filename=$(basename -- "$path")
+        path=$directory/$filename
+        case $path in
+            "$versiond_compat" | "$edge_compat" | "$proxy_compat") continue ;;
+        esac
+        gonka_compose_append_unique files_out "$path"
+    done
+    ((${#files_out[@]} > 0)) || return 2
+}
+
 gonka_compose_container_env() {
     local docker_bin=$1 container=$2 name=$3 line
 
@@ -231,32 +280,12 @@ gonka_compose_resolve() {
     local project_override=$5 directory_override=$6
     local -n explicit_file_args=$7 runtime_container_args=$8
     local invocation_dir=$PWD
-    local container project working_dir encoded candidate required
+    local container project working_dir encoded candidate required metadata_status
     local runtime_project='' runtime_working_dir='' selected_encoded='' source=''
     local best_count=-1 all_match count
     local -a runtime_files=() observed=() requested=() selected=()
     local -a raw_requested=()
     local file separator config config_project
-
-    for container in "${runtime_container_args[@]}"; do
-        "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue
-        gonka_compose_runtime_metadata \
-            "$docker_bin" "$container" "$script_dir" \
-            project working_dir runtime_files
-        if [[ -z $runtime_project ]]; then
-            runtime_project=$project
-            runtime_working_dir=$working_dir
-        else
-            [[ $project == "$runtime_project" ]] || fail \
-                "containers in the upgrade scope belong to different Compose projects: $runtime_project and $project"
-            [[ $working_dir == "$runtime_working_dir" ]] || fail \
-                "containers in Compose project $project record different working directories; pass a verified complete topology explicitly"
-        fi
-        encoded=$(gonka_compose_encode_files runtime_files)
-        observed+=("$encoded")
-    done
-    ((${#observed[@]} > 0)) || fail \
-        "cannot recover Compose topology from running containers; pass --compose-file for every file in the deployment model"
 
     if ((${#explicit_file_args[@]} > 0)); then
         raw_requested=("${explicit_file_args[@]}")
@@ -268,7 +297,6 @@ gonka_compose_resolve() {
         IFS=$separator read -r -a raw_requested <<<"$COMPOSE_FILE"
         source='COMPOSE_FILE'
     fi
-
     if ((${#raw_requested[@]} > 0)); then
         for file in "${raw_requested[@]}"; do
             [[ -n $file ]] || fail "explicit Compose file list contains an empty entry"
@@ -276,12 +304,48 @@ gonka_compose_resolve() {
                 "$(gonka_compose_canonical_file "$file" "$invocation_dir")"
         done
         selected=("${requested[@]}")
+    fi
+
+    for container in "${runtime_container_args[@]}"; do
+        "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue
+        metadata_status=0
+        if ((${#selected[@]} > 0)); then
+            gonka_compose_runtime_metadata_for_explicit \
+                "$docker_bin" "$container" "$script_dir" \
+                project working_dir runtime_files || metadata_status=$?
+        else
+            gonka_compose_runtime_metadata \
+                "$docker_bin" "$container" "$script_dir" \
+                project working_dir runtime_files
+        fi
+        if [[ -z $runtime_project ]]; then
+            runtime_project=$project
+        else
+            [[ $project == "$runtime_project" ]] || fail \
+                "containers in the upgrade scope belong to different Compose projects: $runtime_project and $project"
+        fi
+        if ((metadata_status != 0)); then
+            warn "container $container records stale Compose file metadata; validating the explicit topology instead"
+            continue
+        fi
+        if [[ -z $runtime_working_dir ]]; then
+            runtime_working_dir=$working_dir
+        elif [[ $working_dir != "$runtime_working_dir" && ${#selected[@]} -eq 0 ]]; then
+            fail "containers in Compose project $project record different working directories; pass a verified complete topology explicitly"
+        fi
+        encoded=$(gonka_compose_encode_files runtime_files)
+        observed+=("$encoded")
+    done
+
+    if ((${#selected[@]} > 0)); then
         selected_encoded=$(gonka_compose_encode_files selected)
         for required in "${observed[@]}"; do
             gonka_compose_contains_sequence "$selected_encoded" "$required" || fail \
                 "explicit Compose topology omits or reorders a file recorded by running containers; include the complete existing model before adding overrides"
         done
     else
+        ((${#observed[@]} > 0)) || fail \
+            "cannot recover Compose topology from running containers; pass --compose-file for every file in the deployment model"
         for candidate in "${observed[@]}"; do
             all_match=true
             for required in "${observed[@]}"; do
@@ -315,10 +379,14 @@ gonka_compose_resolve() {
     if [[ -n $directory_override ]]; then
         GONKA_COMPOSE_PROJECT_DIRECTORY=$(gonka_compose_canonical_directory \
             "$directory_override" "$invocation_dir")
-        [[ $GONKA_COMPOSE_PROJECT_DIRECTORY == "$runtime_working_dir" ]] || fail \
-            "Compose project-directory override '$GONKA_COMPOSE_PROJECT_DIRECTORY' does not match running project directory '$runtime_working_dir'"
-    else
+        if ((${#selected[@]} == 0)); then
+            [[ $GONKA_COMPOSE_PROJECT_DIRECTORY == "$runtime_working_dir" ]] || fail \
+                "Compose project-directory override '$GONKA_COMPOSE_PROJECT_DIRECTORY' does not match running project directory '$runtime_working_dir'"
+        fi
+    elif [[ -n $runtime_working_dir ]]; then
         GONKA_COMPOSE_PROJECT_DIRECTORY=$runtime_working_dir
+    else
+        GONKA_COMPOSE_PROJECT_DIRECTORY=$(dirname -- "${selected[0]}")
     fi
     GONKA_COMPOSE_FILES=("${selected[@]}")
     GONKA_COMPOSE_SOURCE=$source
