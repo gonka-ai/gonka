@@ -271,9 +271,10 @@ Operator signals (versiond / host logs and Prometheus):
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
 
-Gateway catch-up and sticky failover remain independent: router
-`proxy_next_upstream` moves the HTTP request; host reconcile heals RAM from
-shared Postgres when the request arrives.
+Gateway catch-up and sticky failover remain independent. HAProxy redispatches
+connection failures for every method and permits L7 retries only for
+`GET`/`HEAD`/`OPTIONS`; host reconcile heals RAM from shared Postgres when the
+request reaches another replica.
 
 ---
 
