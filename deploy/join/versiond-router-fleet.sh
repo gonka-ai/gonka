@@ -39,6 +39,7 @@ Usage: versiond-router-fleet.sh COMMAND [ARGS]
 Commands:
   prepare-networks   Create or validate the fleet-owned front/back networks.
   up                 Create missing slots or start existing containers unchanged.
+  apply              Bootstrap an absent fleet or roll changed slots one at a time.
   rollout            Replace slots one at a time, preserving the ready reserve.
   maintenance-rollout
                      Drain the old fleet before a placement-contract change.
@@ -48,6 +49,10 @@ Commands:
   status             Show the expected fleet and reject duplicate/orphan slots.
   stop SLOT          Gracefully stop one slot after checking the ready reserve.
   start SLOT         Start an existing container unchanged, or create it if absent.
+  stop-all --maintenance
+                     Gracefully stop every fleet container for host maintenance.
+  down --maintenance Remove all fleet containers, including orphan slots, and
+                     remove fleet-owned networks after the main stack is down.
 
 Configuration comes from config.env. VERSIOND_ROUTER_FLEET_SLOTS defaults to
 "0 1 2" and identifies independent Compose projects, not replicas in one model.
@@ -155,6 +160,12 @@ slot_ids() {
         --filter label=ai.gonka.component=versiond-router \
         --filter "label=ai.gonka.fleet=$fleet_id" \
         --filter "label=ai.gonka.slot=$slot"
+}
+
+fleet_ids() {
+    "$docker_bin" ps -aq --no-trunc \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id"
 }
 
 slot_id() {
@@ -503,6 +514,25 @@ pull_router_image() {
         slot_compose "${slots[0]}" pull --policy "$pull_policy" router
 }
 
+desired_slot_config_hash() {
+    local slot=$1 service hash
+    read -r service hash < <(slot_compose "$slot" config --hash router)
+    [[ $service == router && -n $hash ]] || fail \
+        "cannot calculate the desired Compose configuration hash for slot $slot"
+    printf '%s\n' "$hash"
+}
+
+slot_needs_replacement() {
+    local slot=$1 candidate_image_id=$2 id running_image running_hash desired_hash
+    id=$(slot_id "$slot") || return 2
+    running_image=$($docker_bin inspect --format '{{.Image}}' "$id") || return 2
+    running_hash=$($docker_bin inspect --format \
+        '{{or (index .Config.Labels "com.docker.compose.config-hash") ""}}' \
+        "$id") || return 2
+    desired_hash=$(desired_slot_config_hash "$slot") || return 2
+    [[ $running_image != "$candidate_image_id" || $running_hash != "$desired_hash" ]]
+}
+
 placement_version_for_image() {
     "$docker_bin" image inspect --format \
         '{{index .Config.Labels "ai.gonka.placement-protocol-version"}}' "$1"
@@ -547,6 +577,30 @@ require_placement_compatible() {
             "slot $slot does not expose its placement contract"
         [[ $running_contract == "$candidate_contract" ]] || fail \
             "placement contract differs on slot $slot; use maintenance-rollout to avoid mixed escrow placement"
+    done
+}
+
+require_complete_healthy_inventory() {
+    local id slot seen_slot
+    local -A seen=()
+
+    while IFS= read -r id; do
+        [[ -n $id ]] || continue
+        slot=$($docker_bin inspect --format \
+            '{{or (index .Config.Labels "ai.gonka.slot") ""}}' "$id") || fail \
+            "router container $id disappeared while inventory was collected"
+        [[ -n ${expected[$slot]-} ]] || fail \
+            "orphan router container $id declares unknown slot '$slot'; use down --maintenance to clean the fleet"
+        [[ -z ${seen[$slot]-} ]] || fail \
+            "duplicate containers claim router slot '$slot'"
+        seen[$slot]=$id
+    done < <(fleet_ids)
+
+    for seen_slot in "${slots[@]}"; do
+        [[ -n ${seen[$seen_slot]-} ]] || fail \
+            "router fleet is partially present: slot $seen_slot is absent; run up to recover capacity before apply"
+        slot_ready "$seen_slot" || fail \
+            "router fleet is not healthy: slot $seen_slot is not ready; recover it before apply"
     done
 }
 
@@ -696,6 +750,117 @@ stop_slot() {
     slot_compose "$slot" stop --timeout "$drain_timeout" router
 }
 
+stop_fleet_containers() {
+    local id state pid failed=0
+    local -a ids=() pids=()
+    mapfile -t ids < <(fleet_ids)
+    if ((${#ids[@]} == 0)); then
+        echo "No versiond-router fleet containers are present"
+        return 0
+    fi
+
+    # All routers receive their soft-stop together. The maintenance deadline is
+    # therefore one fleet-wide wall-clock budget rather than N sequential waits.
+    for id in "${ids[@]}"; do
+        state=$($docker_bin inspect --format '{{.State.Status}}' "$id") || fail \
+            "router container $id disappeared before maintenance stop"
+        case $state in
+            running | restarting | paused)
+                "$docker_bin" stop --time "$drain_timeout" "$id" >/dev/null &
+                pids+=("$!")
+                ;;
+            created | exited | dead) ;;
+            *) fail "router container $id has unsupported state '$state'" ;;
+        esac
+    done
+    for pid in "${pids[@]}"; do
+        wait "$pid" || failed=1
+    done
+    ((failed == 0)) || fail "one or more router containers did not stop cleanly"
+}
+
+declare -a cleanup_networks=()
+
+add_cleanup_network() {
+    local network=$1 role=${2:-} legacy_key=${3:-} ownership
+    local existing
+    "$docker_bin" network inspect "$network" >/dev/null 2>&1 || return 0
+    for existing in "${cleanup_networks[@]}"; do
+        [[ $existing != "$network" ]] || return 0
+    done
+    ownership=$($docker_bin network inspect --format \
+        '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}' \
+        "$network")
+    case $ownership in
+        "versiond-router-network|$fleet_id|"*)
+            if [[ -n $role && $ownership != "versiond-router-network|$fleet_id|$role|"* ]]; then
+                fail "network $network has unexpected ownership '$ownership'"
+            fi
+            ;;
+        "|||$legacy_key")
+            [[ -n $role && -n $legacy_key ]] || fail \
+                "network $network has legacy ownership outside the current fleet topology"
+            ;;
+        *) fail "network $network has unexpected ownership '$ownership'" ;;
+    esac
+    cleanup_networks+=("$network")
+}
+
+collect_cleanup_networks() {
+    local network_id network
+    cleanup_networks=()
+    add_cleanup_network \
+        "${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
+        front versiond-router-front
+    add_cleanup_network \
+        "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
+        back versiond-router-back
+    while IFS= read -r network_id; do
+        [[ -n $network_id ]] || continue
+        network=$($docker_bin network inspect --format '{{.Name}}' "$network_id") || fail \
+            "fleet network $network_id disappeared while cleanup was prepared"
+        add_cleanup_network "$network"
+    done < <("$docker_bin" network ls -q \
+        --filter label=ai.gonka.component=versiond-router-network \
+        --filter "label=ai.gonka.fleet=$fleet_id")
+}
+
+require_networks_detached_from_main_stack() {
+    local id network attachment name
+    local -A fleet_containers=()
+    while IFS= read -r id; do
+        [[ -n $id ]] && fleet_containers[$id]=1
+    done < <(fleet_ids)
+    for network in "${cleanup_networks[@]}"; do
+        # Docker's Go template variables are literals for the Docker CLI.
+        # shellcheck disable=SC2016
+        while IFS= read -r attachment; do
+            [[ -n $attachment ]] || continue
+            [[ -n ${fleet_containers[$attachment]-} ]] && continue
+            name=$($docker_bin inspect --format '{{.Name}}' "$attachment" 2>/dev/null || printf '%s' "$attachment")
+            fail "network $network is still attached to non-fleet container ${name#/}; run the main Compose down before fleet down"
+        done < <("$docker_bin" network inspect --format \
+            '{{range $id, $container := .Containers}}{{println $id}}{{end}}' \
+            "$network")
+    done
+}
+
+fleet_down() {
+    local network
+    local -a ids=()
+    collect_cleanup_networks
+    require_networks_detached_from_main_stack
+    stop_fleet_containers
+    mapfile -t ids < <(fleet_ids)
+    if ((${#ids[@]} > 0)); then
+        "$docker_bin" rm "${ids[@]}" >/dev/null
+    fi
+    for network in "${cleanup_networks[@]}"; do
+        echo "Removing versiond-router fleet network $network"
+        "$docker_bin" network rm "$network" >/dev/null
+    done
+}
+
 fleet_status() {
     local id slot state health image seen_slot route details
     local -A seen=()
@@ -765,16 +930,44 @@ fleet_up() {
     fleet_status
 }
 
+fleet_apply() {
+    local -a ids=()
+    mapfile -t ids < <(fleet_ids)
+    if ((${#ids[@]} == 0)); then
+        echo "Bootstrapping absent versiond-router fleet"
+        fleet_up
+        return
+    fi
+
+    # A partially present or unhealthy fleet needs an explicit recovery first.
+    # Treating it as an update could consume the last known-good router while
+    # trying to repair unrelated capacity loss.
+    require_complete_healthy_inventory
+    fleet_rollout
+}
+
 fleet_rollout() {
-    local slot id old_image rollback_tag key route
+    local slot id old_image rollback_tag key route candidate_image_id replacement_status
     prepare_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$candidate_image") || fail \
+        "candidate router image is not available: $candidate_image"
     require_placement_compatible "$candidate_image"
     trap rollback_current ERR INT TERM HUP
     for slot in "${slots[@]}"; do
-        require_ready_reserve "$slot"
         id=$(slot_id "$slot") || fail "slot $slot has no unique existing container"
+        replacement_status=0
+        slot_needs_replacement "$slot" "$candidate_image_id" || replacement_status=$?
+        if ((replacement_status == 1)); then
+            echo "Versiond-router slot $slot already matches the requested image and configuration"
+            wait_slot_routes "$slot"
+            wait_parent_admission "$slot"
+            continue
+        fi
+        ((replacement_status == 0)) || fail \
+            "cannot compare the running and requested contracts for slot $slot"
+        require_ready_reserve "$slot"
         old_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         rollback_tag="gonka/versiond-router-rollback:$operation_id-$slot"
         "$docker_bin" tag "$old_image" "$rollback_tag"
@@ -850,6 +1043,7 @@ command=${1:-}
 case $command in
     prepare-networks) prepare_networks ;;
     up) fleet_up ;;
+    apply) fleet_apply ;;
     rollout) fleet_rollout ;;
     maintenance-rollout) fleet_maintenance_rollout ;;
     verify-admission)
@@ -860,6 +1054,16 @@ case $command in
     stop)
         [[ $# == 2 ]] || fail "stop requires exactly one SLOT"
         stop_slot "$2"
+        ;;
+    stop-all)
+        [[ $# == 2 && $2 == --maintenance ]] || fail \
+            "stop-all requires the explicit --maintenance acknowledgement"
+        stop_fleet_containers
+        ;;
+    down)
+        [[ $# == 2 && $2 == --maintenance ]] || fail \
+            "down requires the explicit --maintenance acknowledgement"
+        fleet_down
         ;;
     start)
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"

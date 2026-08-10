@@ -4,7 +4,9 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 suffix=$$
-image=gonka-versiond-router-fleet-test:$suffix
+base_image=gonka-versiond-router-fleet-test:$suffix
+updated_image=gonka-versiond-router-fleet-updated-test:$suffix
+image=$base_image
 bad_image=gonka-versiond-router-fleet-bad-test:$suffix
 proxy_image=gonka-proxy-router-fleet-test:$suffix
 front=gonka-versiond-router-front-$suffix
@@ -30,11 +32,14 @@ cleanup() {
         gonka-router-fleet-proxy-$suffix \
         gonka-router-fleet-probe-$suffix \
         gonka-router-fleet-duplicate-$suffix \
+        gonka-router-fleet-orphan-$suffix \
         gonka-router-fleet-foreign-$suffix >/dev/null 2>&1 || true
     docker compose -p "gonka-router-fleet-main-$suffix" \
         -f "$tmpdir/main.yml" down --timeout 1 >/dev/null 2>&1 || true
-    docker network rm "$front" "$back" >/dev/null 2>&1 || true
-    docker image rm "$image" "$bad_image" "$proxy_image" >/dev/null 2>&1 || true
+    docker network rm "$front" "$back" \
+        "gonka-versiond-router-orphan-$suffix" >/dev/null 2>&1 || true
+    docker image rm "$base_image" "$updated_image" "$bad_image" \
+        "$proxy_image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -141,6 +146,10 @@ FROM $image
 COPY bad-router-entrypoint.sh /usr/local/bin/bad-router-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/bad-router-entrypoint.sh"]
 EOF
+cat >"$tmpdir/updated-router.Dockerfile" <<EOF
+FROM $image
+LABEL ai.gonka.test-revision="updated"
+EOF
 
 "${fleet[@]}" prepare-networks
 [[ $(docker network inspect --format \
@@ -152,6 +161,8 @@ EOF
     "$back") == "versiond-router-network|$fleet_id|back" ]] || fail \
     "back network does not carry stable fleet ownership"
 docker build -q -t "$image" "$script_dir/../../versiond-router" >/dev/null
+docker build -q -t "$updated_image" \
+    -f "$tmpdir/updated-router.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$bad_image" -f "$tmpdir/bad-router.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$proxy_image" "$script_dir/../../proxy-router" >/dev/null
 docker run -d --name "gonka-router-fleet-backend-$suffix" \
@@ -161,6 +172,40 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
 
 "${fleet[@]}" up >/dev/null
 "${fleet[@]}" status >/dev/null
+
+# The standard updater calls `apply` on every run. An unchanged fleet must not
+# pay a drain/recreate cycle merely because the updater is idempotently rerun.
+declare -A initial_ids=()
+for slot in "${slots[@]}"; do
+    initial_ids[$slot]=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+done
+"${fleet[@]}" apply >/dev/null
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ $current_id == "${initial_ids[$slot]}" ]] || fail \
+        "idempotent fleet apply recreated unchanged slot $slot"
+done
+
+# A tag update with the same rendered environment is detected from the pulled
+# image ID, not from the textual Compose image reference alone.
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$updated_image|" \
+    "$tmpdir/config.env"
+"${fleet[@]}" apply >/dev/null
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ -n $current_id && $current_id != "${initial_ids[$slot]}" ]] || fail \
+        "fleet apply did not replace slot $slot after an image update"
+done
+image=$updated_image
 
 # The default lock is tied to the deployment config, not to a caller's
 # per-user XDG runtime directory. A second user context must see the same lock.
@@ -281,6 +326,26 @@ grep -q 'cannot serve required route v5' \
     "route-dead admission failure did not identify the missing baseline route"
 sed -i 's/^VERSIOND_VERSIONS="v4 v5"$/VERSIOND_VERSIONS=v4/' \
     "$tmpdir/config.env"
+
+# The same command used by the standard updater must notice a rendered Compose
+# contract change and roll every slot through the reserve-protected path.
+declare -A before_apply=()
+for slot in "${slots[@]}"; do
+    before_apply[$slot]=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+done
+printf 'VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true\n' >>"$tmpdir/config.env"
+"${fleet[@]}" apply >/dev/null
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ -n $current_id && $current_id != "${before_apply[$slot]}" ]] || fail \
+        "fleet apply did not replace changed slot $slot"
+done
 
 # Start a response that remains attached to one inner router. Its response
 # header identifies the selected slot before the body completes.
@@ -481,5 +546,74 @@ if "${fleet[@]}" status >"$tmpdir/duplicate.out" 2>&1; then
 fi
 grep -q "duplicate containers claim router slot '0'" "$tmpdir/duplicate.out" \
     || fail "duplicate slot failure did not identify the slot"
+
+# A removed slot and a renamed network remain discoverable through fleet
+# ownership labels even though neither appears in today's desired slot list.
+docker run -d --name "gonka-router-fleet-orphan-$suffix" \
+    --label ai.gonka.component=versiond-router \
+    --label "ai.gonka.fleet=$fleet_id" \
+    --label ai.gonka.slot=retired alpine:3.21 sleep 300 >/dev/null
+docker network create \
+    --label ai.gonka.component=versiond-router-network \
+    --label "ai.gonka.fleet=$fleet_id" \
+    --label ai.gonka.network-role=retired \
+    "gonka-versiond-router-orphan-$suffix" >/dev/null
+
+if "${fleet[@]}" stop-all >"$tmpdir/stop-all-unacked.out" 2>&1; then
+    fail "fleet-wide stop did not require explicit maintenance acknowledgement"
+fi
+grep -q 'stop-all requires the explicit --maintenance acknowledgement' \
+    "$tmpdir/stop-all-unacked.out" || fail \
+    "unacknowledged fleet stop did not explain the safety gate"
+if "${fleet[@]}" down >"$tmpdir/down-unacked.out" 2>&1; then
+    fail "fleet down did not require explicit maintenance acknowledgement"
+fi
+grep -q 'down requires the explicit --maintenance acknowledgement' \
+    "$tmpdir/down-unacked.out" || fail \
+    "unacknowledged fleet down did not explain the safety gate"
+if "${fleet[@]}" down --maintenance >"$tmpdir/down-attached.out" 2>&1; then
+    fail "fleet down removed networks still used by the main topology"
+fi
+grep -q 'run the main Compose down before fleet down' \
+    "$tmpdir/down-attached.out" || fail \
+    "attached-network rejection did not explain the required shutdown order"
+slot_zero=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=0 | head -n1)
+[[ $(docker inspect --format '{{.State.Status}}' "$slot_zero") == running ]] || fail \
+    "failed fleet down mutated routers before its network preflight committed"
+
+"${fleet[@]}" stop-all --maintenance >/dev/null
+while IFS= read -r id; do
+    [[ -n $id ]] || continue
+    [[ $(docker inspect --format '{{.State.Status}}' "$id") == exited ]] || fail \
+        "fleet-wide maintenance stop left router $id running"
+done < <(docker ps -aq --no-trunc \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id")
+
+# `down` is intentionally ordered after the main Compose project: it refuses
+# to delete shared external networks while any non-fleet endpoint remains.
+docker rm -f "gonka-router-fleet-backend-$suffix" \
+    "gonka-router-fleet-proxy-$suffix" \
+    "gonka-router-fleet-probe-$suffix" >/dev/null
+"${fleet[@]}" down --maintenance >/dev/null
+if docker ps -aq --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" | grep -q .; then
+    fail "fleet down left expected, duplicate, or orphan router containers"
+fi
+for network in "$front" "$back" "gonka-versiond-router-orphan-$suffix"; do
+    if docker network inspect "$network" >/dev/null 2>&1; then
+        fail "fleet down left owned network $network"
+    fi
+done
+docker inspect "gonka-router-fleet-foreign-$suffix" >/dev/null || fail \
+    "fleet down removed a router owned by another installation"
+
+# A later cold start has an explicit way to recreate the external substrate
+# before the main Compose project is brought back.
+"${fleet[@]}" prepare-networks
+docker network inspect "$front" "$back" >/dev/null
 
 echo "versiond-router-fleet_test: ok"

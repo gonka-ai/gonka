@@ -20,12 +20,33 @@ managed by the fleet script:
 | Evacuate / stop temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
 | Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
 | Inspect router fleet | `source ./config.env && ./versiond-router-fleet.sh status` | rejects missing, duplicate, or orphan slot ownership |
-| Apply router image or route declarations | persist `config.env`, run `./versiond-router-fleet.sh rollout`, then idempotent `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | replaces one independent slot at a time, rolls back a failed slot, then refreshes the top route map only after the fleet converges |
+| Apply router image or route declarations | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | its idempotent fleet `apply` bootstraps an absent fleet or replaces only changed slots one at a time, rolls back a failed slot, then refreshes the top route map |
 | Change legacy pins, placement pool, or coarse/per-version mode | prefix `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` to `./versiond-router-fleet.sh maintenance-rollout`, then refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told
 about the change, so nothing can be told about it incorrectly.
+
+### Whole-node maintenance
+
+The main Compose project consumes the router fleet's external networks but does
+not own its independent slot containers. A full node shutdown must therefore
+include the fleet lifecycle explicitly:
+
+```bash
+source ./config.env
+./versiond-router-fleet.sh stop-all --maintenance
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
+./versiond-router-fleet.sh down --maintenance
+```
+
+Run `stop-all` first so accepted router streams receive the configured drain
+budget. Run `down` only after the main project has detached from the external
+networks; it fails before deleting anything when another container is still
+attached. It removes every container owned by the configured fleet ID, including
+orphan/duplicate slots, and its current or renamed owned networks. On the next
+start, run `prepare-networks` before the main `up -d`, then run
+`enable-router-ha.sh` after versiond is available.
 
 ### Legacy owner cannot be evacuated
 
@@ -118,11 +139,14 @@ failure accounting and command completion.
 10. Router replacement preserves at least `VERSIOND_ROUTER_MIN_READY` peers for
     the coarse pool and for every declared version that currently has capacity.
     Router slots are separate Compose projects, so a normal main-stack `up -d`
-    cannot replace the entire fleet. Fleet `up` and `start` also preserve any
-    existing slot's image and configuration; only `rollout` may replace it.
+    cannot replace the entire fleet. Fleet `up` and `start` preserve any existing
+    slot's image and configuration; `apply`/`rollout` compare the requested image
+    ID and Compose config hash, then replace only changed slots.
 11. The main Compose project consumes, but does not own, the fleet's front/back
     networks. `versiond-router-fleet.sh prepare-networks` creates them with a
-    stable fleet identity, so main-stack `down` cannot strand stopped slots.
+    stable fleet identity. Whole-node teardown uses the explicit fleet `down`
+    after main-stack `down`, so independent `restart: always` slots and stale
+    fleet-owned networks cannot survive unnoticed.
 
 Earlier revisions promised that the last active upstream could not be drained
 away. Nothing enforces that now: stopping a container is a Docker operation and

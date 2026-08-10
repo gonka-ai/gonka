@@ -473,7 +473,7 @@ admits only one.
 | Container stop / start | The whole host lifecycle. Membership is DNS; health is measured |
 | `pool-status` (in the router image, off PATH) | Read-only view of what the router believes; there is no router-side drain |
 | `GET :8404/readyz?version=<v>` | Private answer consumed by the top distributor: this router currently has capacity for `<v>` |
-| `versiond-router-fleet.sh` | Owns fixed, independent Compose slots; status, start/stop reserve checks, and one-at-a-time rollout with image rollback |
+| `versiond-router-fleet.sh` | Owns fixed, independent Compose slots; idempotent update reconciliation, start/stop reserve checks, one-at-a-time rollout with image rollback, and explicit whole-fleet maintenance teardown |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
 | `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |

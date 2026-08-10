@@ -133,9 +133,8 @@ run_cutover() {
 }
 
 run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
-grep -q '^fleet prepare-networks$' "$tmpdir/success.log" || fail \
-    "router fleet networks were not prepared"
-grep -q '^fleet up$' "$tmpdir/success.log" || fail "router fleet was not converged"
+grep -q '^fleet apply$' "$tmpdir/success.log" || fail \
+    "router fleet was not reconciled through its update lifecycle"
 grep -q '^fleet verify-admission v1 v4$' "$tmpdir/success.log" || fail \
     "cutover did not verify every route served by the migration singleton"
 grep -q 'network create .*com.docker.compose.network=proxy-policy-front' \
@@ -187,11 +186,13 @@ grep -q 'docker rm -f versiond-router' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence left the migration singleton behind"
 grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence skipped strict parent admission verification"
+grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
+    "idempotent convergence did not apply router fleet image/config updates"
 
 if run_cutover "$tmpdir/wrong-network.log" env WRONG_NETWORK_OWNERSHIP=true; then
     fail "cutover accepted an existing network owned by another Compose model"
 fi
-if grep -q '^fleet up$' "$tmpdir/wrong-network.log"; then
+if grep -q '^fleet apply$' "$tmpdir/wrong-network.log"; then
     fail "router fleet started before network ownership was validated"
 fi
 

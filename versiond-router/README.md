@@ -142,10 +142,10 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
    `v4`;
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
 
-Persist the changed environment in `config.env`, then apply it one slot at a
-time with `deploy/join/versiond-router-fleet.sh rollout`. The fleet command
-loads the same file for every slot, verifies the placement-protocol image label,
-checks the ready reserve for every live declared version, and waits for the
+Persist the changed environment in `config.env`, then run the topology command
+shown below. It invokes `versiond-router-fleet.sh apply`, which loads the same
+file for every slot, verifies the placement-protocol image label, checks the
+ready reserve for every live declared version, and waits for each changed
 replacement to converge before moving on.
 
 When the declared version set changes, refresh the top distributor only after
@@ -154,14 +154,13 @@ all inner slots have converged:
 ```bash
 cd deploy/join
 source ./config.env
-./versiond-router-fleet.sh rollout
 ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
 ```
 
-The final command is idempotent. Its internal fleet `up` does not apply config
-changes to existing slots; it only verifies or starts the exact containers
-already created by the guarded rollout. Approve the new protocol version only
-after the top `/readyz?version=<v>` probe succeeds.
+The final command is idempotent. Its internal fleet `apply` bootstraps an absent
+fleet, compares each existing slot's actual image ID and Compose config hash,
+and rolls only changed slots. Approve the new protocol version only after the
+top `/readyz?version=<v>` probe succeeds.
 
 `VERSIOND_LEGACY_HOST`, `VERSIOND_NON_HA_VERSIONS`, `VERSIOND_POOL_HOST`, and
 the router backend network define the placement function itself. Mixing old and
@@ -334,6 +333,22 @@ it stops accepting. Permanent decommission is different: it persists the new
 desired replica count and removes the container so `restart: always` cannot add
 the host back later.
 
+The router fleet itself has a separate lifecycle because every slot is an
+independent Compose project. `enable-router-ha.sh` invokes idempotent `apply` on
+normal upgrades: an absent fleet is bootstrapped, an unchanged slot is left
+alone, and a changed image or Compose config is rolled with the ready reserve.
+A main-project `docker compose pull/up` cannot update containers it does not
+own.
+
+For whole-node maintenance, `versiond-router-fleet.sh stop-all --maintenance`
+soft-stops all fleet-owned containers concurrently. After the main Compose
+project is down, `versiond-router-fleet.sh down --maintenance` removes expected,
+duplicate, and orphan fleet containers plus current or renamed fleet-owned
+networks. It rejects the operation before mutation while a non-fleet endpoint is
+still attached, and resources belonging to another fleet ID are never selected.
+Run `prepare-networks` before the next main-project `up`, then run
+`enable-router-ha.sh` after versiond is available.
+
 ## Configuration
 
 | Variable | Default | Meaning |
@@ -424,12 +439,13 @@ template and it fails, naming the sessions that moved.
 Both require Docker.
 
 `test-fleet` starts three router slots as separate Compose projects, proves the
-main stack cannot recreate them, drains one while an accepted stream completes
-through it and new requests use peers, enforces generic and per-version reserve,
-proves unguarded `up` cannot apply config to live slots, rolls all slots, and
-rejects duplicate slot ownership. It also proves mixed placement is rejected,
-full-fleet placement changes never overlap generations, and failed maintenance
-restores the exact previous image, environment, and live routes.
+main stack cannot recreate them, proves idempotent `apply` leaves current slots
+untouched, drains one while an accepted stream completes through it and new
+requests use peers, and enforces generic and per-version reserve. It also proves
+mixed placement is rejected, full-fleet placement changes never overlap
+generations, failed maintenance restores the exact previous image/environment/
+routes, and acknowledged full teardown removes duplicate/orphan fleet resources
+without crossing fleet ownership.
 
 End-to-end routing, draining and host evacuation are covered by
 `devshard/testenv`: `make -C devshard/testenv citest-versiond-host-evacuation`.

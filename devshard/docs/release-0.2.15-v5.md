@@ -59,7 +59,10 @@ consequences for operators:
    leaves only the affected pool and rejoins after recovery.
 3. **The router is a fleet.** Fixed slots run as independent Compose projects.
    The main node project cannot recreate them all, and the fleet rollout refuses
-   to stop a slot unless the coarse and per-version ready reserve remains.
+   to stop a slot unless the coarse and per-version ready reserve remains. The
+   topology-aware updater calls the fleet's idempotent `apply`: it bootstraps an
+   absent fleet and replaces only slots whose image or rendered Compose contract
+   changed.
 
 Removed with the old model:
 
@@ -96,6 +99,12 @@ Successful completion writes `.gonka-devshard-v5-upgrade-complete` next to
 router cutover together. A later run accepts an already-active `proxy-router`
 only with that marker; the proxy container label alone is not evidence that
 PostgreSQL, versiond, and edge-api were migrated.
+
+Rerunning the same upgrade is also the normal reconciliation path for this
+release. When router HA is already active, it pulls the requested inner-router
+image, rolls changed slots one at a time, and leaves image/config-current slots
+untouched before reconverging the public route map. A main-project `pull` or
+`up -d` alone cannot update slot projects that it does not own.
 
 The one-time public-listener replacement cannot preserve connections owned by
 the old nginx container because both implementations own the same host ports.
@@ -416,13 +425,13 @@ new version is therefore two-phase:
 
    ```bash
    source ./config.env
-   ./versiond-router-fleet.sh rollout
    ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
    ```
 
-   A plain `restart` keeps the old environment. The fleet rollout replaces one
-   independent slot at a time and waits until its route view matches the ready
-   peers before touching another slot.
+   A plain `restart` keeps the old environment. `enable-router-ha.sh` invokes the
+   fleet's idempotent `apply`, which replaces one changed independent slot at a
+   time and waits until its route view matches the ready peers before touching
+   another slot.
 2. Approve it in governance; each host joins that pool as it installs it.
 
 Router replacement is not a public listener maintenance operation. The top
@@ -538,8 +547,39 @@ Day-to-day operations:
 | Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` |
 | Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
 | Inspect the router fleet | `source ./config.env && ./versiond-router-fleet.sh status` |
-| Roll router image or configuration | persist `config.env`, run `./versiond-router-fleet.sh rollout`, then refresh the top map with idempotent `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` |
+| Roll router image or configuration | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto`; its fleet `apply` rolls changed slots and refreshes the top map |
 | Change legacy pins / placement pool | schedule devshard maintenance and use the runbook's acknowledged `maintenance-rollout`; mixed placement is rejected |
+
+### Full host stop and cleanup
+
+The router slots are independent Compose projects with `restart: always`.
+Therefore the main project's `docker compose down` cannot stop or remove them.
+For an HA deployment, use this ordered maintenance sequence from `deploy/join`
+(add the edge-api multi overlay when that topology is enabled):
+
+```bash
+source ./config.env
+./versiond-router-fleet.sh stop-all --maintenance
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml down
+./versiond-router-fleet.sh down --maintenance
+```
+
+`stop-all` sends every router its configured soft-stop concurrently and waits
+for accepted streams up to the fleet drain timeout. After the main project has
+detached, `down` removes all containers carrying this fleet ID, including stale
+or duplicate slot records, and removes current or renamed fleet-owned networks.
+It refuses before mutation if a non-fleet container is still attached, and it
+never touches containers or networks carrying another fleet ID.
+
+After a full cleanup, recreate the external network substrate before the main
+Compose model, then reconcile the routers after versiond has started:
+
+```bash
+source ./config.env
+./versiond-router-fleet.sh prepare-networks
+docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+./enable-router-ha.sh --versiond-mode ha --edge-mode auto
+```
 
 Taking a host out of rotation is stopping it — there is no router-side drain,
 because HAProxy reuses server slots and a drain would be inherited by whichever

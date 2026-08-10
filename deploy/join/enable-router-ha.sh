@@ -242,8 +242,11 @@ compose_project=$("${compose[@]}" config --format json | jq -er '.name')
 policy_network=${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
-    run_fleet prepare-networks
-    run_fleet up
+    # `apply` is the lifecycle bridge between the main Compose project and the
+    # independent router projects. It bootstraps an absent fleet, but on an
+    # existing deployment it pulls and rolls only slots whose image or rendered
+    # Compose contract changed.
+    run_fleet apply
 fi
 
 # During the one-time cutover the old public nginx still owns the `proxy`
