@@ -106,6 +106,7 @@ test-version-routing:
 	net=gonka-version-probe; \
 	cleanup() { \
 		docker rm -f gonka-vp-router gonka-vp-a gonka-vp-b gonka-vp-legacy \
+			gonka-vp-catalog \
 			>/dev/null 2>&1 || true; \
 		docker network rm $$net >/dev/null 2>&1 || true; \
 		rm -rf "$$tmpdir"; \
@@ -134,7 +135,7 @@ test-version-routing:
 		'            v = urllib.parse.parse_qs(u.query).get("version", [""])[0]' \
 		'            ready = v in SERVES if v else GENERIC_READY' \
 		'            return self._r(200 if ready else 503, "x")' \
-		'        fields = u.path.strip("/").split("/")' \
+		'        fields = urllib.parse.unquote(u.path).strip("/").split("/")' \
 		'        if len(fields) == 2 and fields[1] == "healthz":' \
 		'            return self._r(200 if fields[0] in SERVES else 404, "x")' \
 		'        if u.path.endswith("/ha-header"):' \
@@ -143,9 +144,30 @@ test-version-routing:
 		'    def log_message(self, *a): pass' \
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
 		> "$$tmpdir/upstream.py"; \
+	mkdir "$$tmpdir/catalog"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
+		> "$$tmpdir/catalog/versions.json"; \
+	printf '%s\n' \
+		'import http.server, json' \
+		'class H(http.server.BaseHTTPRequestHandler):' \
+		'    def do_GET(self):' \
+		'        if self.path != "/versions": self.send_error(404); return' \
+		'        body = open("/data/versions.json", "rb").read()' \
+		'        self.send_response(200)' \
+		'        self.send_header("Content-Type", "application/json")' \
+		'        self.send_header("Content-Length", str(len(body)))' \
+		'        self.end_headers(); self.wfile.write(body)' \
+		'    def log_message(self, *a): pass' \
+		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
+		> "$$tmpdir/catalog.py"; \
 	docker network create $$net >/dev/null; \
-	docker build -q -t gonka-versiond-router-probe . >/dev/null; \
-	for spec in "a:v4:false:false" "b:v4 v5:true:true"; do \
+	docker build -q -t gonka-versiond-router-probe \
+		-f Dockerfile .. >/dev/null; \
+	docker run -d --name gonka-vp-catalog --network $$net \
+		--network-alias routing-catalog \
+		-v "$$tmpdir/catalog:/data:ro" -v "$$tmpdir/catalog.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
+	for spec in "a:v4:false:false" "b:v4 v5 v9 v9;hotfix v10:true:true"; do \
 		name=$${spec%%:*}; rest=$${spec#*:}; \
 		serves=$${rest%%:*}; rest=$${rest#*:}; \
 		generic_ready=$${rest%%:*}; readyz_supported=$${rest##*:}; \
@@ -164,6 +186,9 @@ test-version-routing:
 	docker run -d --name gonka-vp-router --network $$net \
 		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
+		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=2 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -172,7 +197,7 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	sleep 4; \
-	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:404'; do \
+	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:503'; do \
 		version=$${spec%%:*}; want=$${spec##*:}; \
 		got=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 			"http://127.0.0.1:18134/readyz?version=$$version"); \
@@ -229,11 +254,68 @@ test-version-routing:
 		http://127.0.0.1:18132/v9/sessions/a/chat); \
 	[ "$$undeclared" = 503 ] \
 		|| fail "an undeclared version answered $$undeclared; it must be refused, not routed by luck"; \
-	curl -s -m 3 http://127.0.0.1:18132/v9/sessions/a/chat | grep -q VERSIOND_VERSIONS \
-		|| fail "the refusal does not name the setting that fixes it"; \
+	curl -s -m 3 http://127.0.0.1:18132/v9/sessions/a/chat \
+		| grep -q 'governance routing catalog' \
+		|| fail "the refusal does not identify the authoritative catalog"; \
 	health=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 http://127.0.0.1:18132/healthz); \
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
+	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null; then break; fi; \
+		sleep 0.5; \
+	done; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
+		|| fail "governance v9 never became an admitted inner-router route"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/dynamic/chat)" = b ] \
+		|| fail "dynamically learned v9 did not reach its ready host"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v9 \
+		|| fail "runtime catalog does not report dynamically learned v9"; \
+	[ "$$(docker inspect -f '{{.Id}}' gonka-vp-router)" = "$$router_id" ] \
+		|| fail "learning v9 replaced the router container"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v4/sessions/still-live/chat)" = b ] \
+		|| fail "learning v9 disrupted the existing v4 route"; \
+	printf '%s\n' '{"versions":[{"name":"v10"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	sleep 2; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10; then \
+		fail "an invalid duplicate catalog snapshot changed the route map"; \
+	fi; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-invalid/chat)" = b ] \
+		|| fail "an invalid catalog snapshot removed the last valid route view"; \
+	printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v9"},{"name":"v9;hotfix"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%3Bhotfix' >/dev/null; then break; fi; \
+		sleep 0.5; \
+	done; \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%3Bhotfix' >/dev/null \
+		|| fail "encoded admin readiness did not follow the dynamic governance map"; \
+	[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9;hotfix/sessions/escaped/chat')" = b ] \
+		|| fail "a routable governance name requiring Runtime API escaping was corrupted"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -Fqx 'v9;hotfix' \
+		|| fail "runtime catalog lost the literal semicolon in a governance name"; \
+	printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v9"},{"name":"v9;hotfix"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	sleep 3; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -qx v10; then \
+		fail "catalog capacity exhaustion silently published v10"; \
+	fi; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		http://127.0.0.1:18132/v10/sessions/capacity/chat)" = 503 ] \
+		|| fail "capacity-exhausted v10 was routed without an assigned backend"; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/persisted/chat)" = b ] \
+		|| fail "a later catalog snapshot removed an already admitted route"; \
 	echo "test-version-routing: ok"
 
 test-render: test-compose-contract test-hash-ring test-version-routing
@@ -297,6 +379,18 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "declared versions lack the pre-v5 route-health fallback"; \
 	grep -q '^backend versiond_pool_v5$$' "$$tmpdir/mixed.cfg" \
 		|| fail "no backend for declared version v5"; \
+	[ "$$(grep -c '^backend versiond_dynamic_' "$$tmpdir/mixed.cfg")" -eq 32 ] \
+		|| fail "the default dynamic governance capacity is not pre-rendered"; \
+	[ "$$(grep -c '^versiond_dynamic_.* __unassigned__$$' \
+		"$$tmpdir/mixed.cfg.version-slots.map")" -eq 32 ] \
+		|| fail "dynamic backend slots are not initialized as unassigned"; \
+	awk '/^backend versiond_dynamic_1$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /server-template .* disabled$$/{found=1} END{exit !found}' \
+		"$$tmpdir/mixed.cfg" \
+		|| fail "unused dynamic slots are performing health checks"; \
+	grep -q 'stats socket /var/run/haproxy/reconciler.sock mode 600 level admin' \
+		"$$tmpdir/mixed.cfg" \
+		|| fail "the catalog writer does not have a dedicated restricted socket"; \
 	for version in v1 v2 v3; do \
 		backend=versiond_legacy_$$version; \
 		grep -q "^backend $$backend$$" "$$tmpdir/mixed.cfg" \
@@ -368,6 +462,33 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/bad.versions.map" \
 		./entrypoint.sh 2>/dev/null; then \
 		fail "an HA deployment with no declared versions was accepted"; \
+	fi; \
+	HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		GONKA_HA=true VERSIOND_ROUTING_CATALOG_URL=http://catalog:8080/versions \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/catalog-only.cfg" \
+		VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/catalog-only.map" \
+		VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/catalog-only.versions.map" \
+		./entrypoint.sh \
+		|| fail "the governance catalog cannot bootstrap an HA router without a static version list"; \
+	grep -q 'governance routing catalog' "$$tmpdir/catalog-only.cfg" \
+		|| fail "catalog mode does not fail closed for names absent from governance"; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTING_CATALOG_URL=ftp://catalog/versions \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unsupported catalog URL scheme was accepted"; \
+	fi; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTING_CATALOG_POLL_SECONDS=typo \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-catalog.cfg" \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an invalid catalog poll interval was accepted"; \
 	fi; \
 	for off in 0 false NO; do \
 		if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
@@ -527,7 +648,7 @@ define DOCKER_BUILD
 	@$(DOCKER_BUILD_PREFIX) \
 		--platform $(PLATFORM) \
 		-f $(DOCKER_FILE) \
-		. \
+		.. \
 		-t $(DOCKER_TAG)
 endef
 
@@ -552,4 +673,4 @@ release:
 		-f $(DOCKER_FILE) \
 		-t ghcr.io/product-science/versiond-router:$(VERSION) \
 		--push \
-		.
+		..

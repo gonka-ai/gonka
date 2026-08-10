@@ -109,6 +109,8 @@ deploy/join/docker-compose.versiond-v5-compat.yml
 deploy/join/docker-compose.edge-api-v5-compat.yml
 deploy/join/docker-compose.proxy-v4-compat.yml
 deploy/join/versiond-router-slot/docker-compose.yml
+router-runtime/catalog-reconciler
+router-runtime/catalog-status
 EOF
 }
 

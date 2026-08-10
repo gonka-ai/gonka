@@ -32,6 +32,18 @@ test-render:
 		|| fail "declared versions are not mapped to route-aware router pools"; \
 	grep -q '^backend versiond_routers_v5$$' "$$tmpdir/proxy.cfg" \
 		|| fail "v5 router backend was not rendered"; \
+	[ "$$(grep -c '^backend versiond_routers_dynamic_' "$$tmpdir/proxy.cfg")" -eq 32 ] \
+		|| fail "the default dynamic governance capacity is not pre-rendered"; \
+	[ "$$(grep -c '^versiond_routers_dynamic_.* __unassigned__$$' \
+		"$$tmpdir/proxy.cfg.version-slots.map")" -eq 32 ] \
+		|| fail "dynamic distributor slots are not initialized as unassigned"; \
+	awk '/^backend versiond_routers_dynamic_1$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /server-template .* disabled$$/{found=1} END{exit !found}' \
+		"$$tmpdir/proxy.cfg" \
+		|| fail "unused distributor slots are performing health checks"; \
+	grep -q 'stats socket /var/run/haproxy/reconciler.sock mode 600 level admin' \
+		"$$tmpdir/proxy.cfg" \
+		|| fail "the catalog writer does not have a dedicated restricted socket"; \
 	grep -q 'http-check send meth GET uri /readyz?version=v5' "$$tmpdir/proxy.cfg" \
 		|| fail "router health is not version-aware"; \
 	grep -q 'query -m str version=v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
@@ -64,6 +76,22 @@ test-render:
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "duplicate version declaration was accepted"; \
 	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/invalid-catalog.cfg" \
+		VERSIOND_ROUTING_CATALOG_URL=unix:///tmp/catalog \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unsupported catalog URL scheme was accepted"; \
+	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/invalid-catalog.cfg" \
+		VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=0 \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "a zero catalog fetch timeout was accepted"; \
+	fi; \
 	HAPROXY_BIN=true \
 	PROXY_ROUTER_RENDER_ONLY=1 \
 	PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
@@ -92,7 +120,7 @@ build-docker:
 	@DOCKER_BUILDKIT=1 docker build \
 		--platform $(DOCKER_PLATFORM) \
 		-f Dockerfile \
-		-t ghcr.io/product-science/proxy-router:$(VERSION) .
+		-t ghcr.io/product-science/proxy-router:$(VERSION) ..
 	@if [ "$(SET_LATEST)" = "1" ]; then \
 		docker tag ghcr.io/product-science/proxy-router:$(VERSION) \
 			ghcr.io/product-science/proxy-router:latest; \
@@ -105,4 +133,4 @@ release:
 		--platform $(PLATFORMS) \
 		-f Dockerfile \
 		-t ghcr.io/product-science/proxy-router:$(VERSION) \
-		--push .
+		--push ..

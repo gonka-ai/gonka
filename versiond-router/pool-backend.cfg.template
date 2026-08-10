@@ -2,7 +2,8 @@
 #
 #   versiond_ha_pool  — "are you able to serve?", the host-level fallback for a
 #                       version the router has not been told about
-#   versiond_pool_<v> — "are you able to serve <v>?", one per declared version
+#   versiond_pool_<v> / versiond_dynamic_<n> — "are you able to serve <v>?",
+#                            one per bootstrap or governance version
 #   versiond_legacy_<v> — the same per-version question, asked of the one host
 #                         that owns this pinned version's SQLite data
 #
@@ -24,10 +25,10 @@ backend ${BACKEND_NAME}
     # The second request is required in both cases, so accepting 404 never
     # admits a legacy process that cannot actually serve this backend.
     http-check connect
-    http-check send meth GET uri ${READYZ_URI}
+    ${READY_CHECK_SEND}
     http-check expect status 200,404
     http-check connect
-    http-check send meth GET uri ${ROUTE_HEALTH_URI}
+    ${ROUTE_CHECK_SEND}
     http-check expect status 200
 
     # safe never reuses a pooled connection for a request that could not be
@@ -59,4 +60,4 @@ backend ${BACKEND_NAME}
     # init-state fully-down: a freshly resolved address is not assumed healthy.
     # Without it a host entering DNS is selectable before its first check has
     # run, which is a window straight onto a versiond that is still starting.
-    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr
+    server-template versiond ${BACKEND_SLOTS} ${BACKEND_HOST}:${VERSIOND_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}

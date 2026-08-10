@@ -5,7 +5,7 @@ set -Eeuo pipefail
 network=gonka-proxy-router-test-$$
 image=gonka-proxy-router-test:$$
 containers=(
-    gonka-pr-proxy gonka-pr-probe
+    gonka-pr-proxy gonka-pr-probe gonka-pr-catalog
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
     gonka-pr-router-migration
@@ -112,6 +112,33 @@ if data_enabled:
 threading.Event().wait()
 PY
 
+mkdir "$tmpdir/catalog"
+printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
+    >"$tmpdir/catalog/versions.json"
+cat >"$tmpdir/catalog.py" <<'PY'
+import http.server
+
+
+class H(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/versions":
+            self.send_error(404)
+            return
+        with open("/data/versions.json", "rb") as source:
+            body = source.read()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def log_message(self, *_):
+        pass
+
+
+http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
+PY
+
 cat >"$tmpdir/policy.conf" <<'EOF'
 events {}
 http {
@@ -136,9 +163,14 @@ http {
 EOF
 
 docker network create "$network" >/dev/null
-docker build -q -t "$image" . >/dev/null
+docker build -q -t "$image" -f Dockerfile .. >/dev/null
 
-for spec in 'a:v4:true:true' 'b:v4 v5:true:true' 'bad:v4:true:false'; do
+docker run -d --name gonka-pr-catalog --network "$network" \
+    --network-alias routing-catalog \
+    -v "$tmpdir/catalog:/data:ro" -v "$tmpdir/catalog.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
+
+for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:false'; do
     name=${spec%%:*}
     rest=${spec#*:}
     serves=${rest%%:*}
@@ -174,6 +206,9 @@ done
 docker run -d --name gonka-pr-proxy --network "$network" \
     --network-alias proxy-router \
     -e 'VERSIOND_VERSIONS=v4 v5' -e 'VERSIOND_NON_HA_VERSIONS=' \
+    -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
+    -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
+    -e PROXY_ROUTER_VERSION_CAPACITY=1 \
     "$image" >/dev/null
 for name in a b; do
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
@@ -208,8 +243,30 @@ proxy_admin '/readyz?version=v5' >/dev/null \
     || fail "top-level v5 readiness did not follow the router pool"
 unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
     'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
-[[ $unknown_response == *'404 Not Found'* ]] || fail \
-    "unknown top-level version readiness did not return 404"
+[[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
+    "unknown governance version readiness did not fail closed"
+
+proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
+printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+    >"$tmpdir/catalog/versions.next"
+mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+for _ in $(seq 40); do
+    if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+proxy_admin '/readyz?version=v9' >/dev/null \
+    || fail "top distributor did not admit governance v9"
+[[ $(probe http://proxy-router:18081/v9/sessions/dynamic/healthz) == b ]] \
+    || fail "dynamically learned v9 did not reach its route-ready router"
+docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \
+    /etc/haproxy/version-router.map | grep -qx v9 \
+    || fail "top distributor runtime catalog does not report v9"
+[[ $(docker inspect -f '{{.Id}}' gonka-pr-proxy) == "$proxy_id" ]] \
+    || fail "learning v9 replaced the top distributor"
+[[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b)$ ]] \
+    || fail "learning v9 disrupted the existing v4 route"
 
 policy=$(probe http://proxy-router/)
 case "$policy" in policy-a:* | policy-b:*) ;; *) fail "public TCP frontend returned '$policy'" ;; esac

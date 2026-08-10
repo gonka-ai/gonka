@@ -1,0 +1,252 @@
+#!/bin/sh
+
+# Monotonically projects governance version names into pre-rendered HAProxy
+# backend slots. The data plane remains fail-closed: a version is published in
+# the request map only after its slot has been assigned and its servers have
+# been enabled for active health checks.
+set -eu
+
+component=${ROUTING_CATALOG_COMPONENT:-router}
+catalog_url=${ROUTING_CATALOG_URL:-}
+poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
+fetch_timeout=${ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+runtime_socket=${ROUTING_CATALOG_RUNTIME_SOCKET:-/var/run/haproxy/reconciler.sock}
+version_map=${ROUTING_CATALOG_VERSION_MAP:?ROUTING_CATALOG_VERSION_MAP is required}
+ready_map=${ROUTING_CATALOG_READY_MAP:?ROUTING_CATALOG_READY_MAP is required}
+slot_map=${ROUTING_CATALOG_SLOT_MAP:?ROUTING_CATALOG_SLOT_MAP is required}
+backend_prefix=${ROUTING_CATALOG_BACKEND_PREFIX:?ROUTING_CATALOG_BACKEND_PREFIX is required}
+backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAPACITY is required}
+server_prefix=${ROUTING_CATALOG_SERVER_PREFIX:?ROUTING_CATALOG_SERVER_PREFIX is required}
+server_capacity=${ROUTING_CATALOG_SERVER_CAPACITY:?ROUTING_CATALOG_SERVER_CAPACITY is required}
+excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
+
+log() {
+    printf '%s\n' "$component: $*" >&2
+}
+
+for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" "$server_capacity"; do
+    case "$value" in
+        '' | *[!0-9]* | 0)
+            log "catalog timing and capacity values must be positive integers"
+            exit 1
+            ;;
+    esac
+done
+
+case "$catalog_url" in
+    '') exit 0 ;;
+    http://* | https://*) ;;
+    *)
+        log "ROUTING_CATALOG_URL must use http or https"
+        exit 1
+        ;;
+esac
+
+command -v jq >/dev/null 2>&1 || {
+    log "jq is required for the routing catalog"
+    exit 1
+}
+command -v socat >/dev/null 2>&1 || {
+    log "socat is required for the HAProxy Runtime API"
+    exit 1
+}
+
+tmpdir=$(mktemp -d)
+cleanup() {
+    rm -rf "$tmpdir"
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+last_error=
+
+warn_once() {
+    if [ "$last_error" != "$1" ]; then
+        log "catalog reconciliation deferred: $1"
+        last_error=$1
+    fi
+}
+
+runtime() {
+    printf '%s\n' "$1" | socat - "UNIX-CONNECT:$runtime_socket"
+}
+
+# HAProxy's Runtime API treats a semicolon followed by whitespace as a command
+# separator. Version names cannot contain whitespace or backslashes, and an
+# escaped semicolon preserves the remaining basename characters literally.
+runtime_key() {
+    printf '%s' "$1" | sed 's/;/\\;/g'
+}
+
+urlencode() {
+    printf '%s' "$1" | awk '
+        BEGIN { for (i = 0; i < 256; i++) ord[sprintf("%c", i)] = i }
+        {
+            n = split($0, c, "")
+            for (i = 1; i <= n; i++) {
+                if (c[i] ~ /[A-Za-z0-9._~-]/) printf "%s", c[i]
+                else printf "%%%02X", ord[c[i]]
+            }
+        }'
+}
+
+validate_version() {
+    case "$1" in
+        '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            return 1
+            ;;
+    esac
+}
+
+version_excluded() {
+    version=$1
+    printf '%s\n' "$excluded_versions" | tr ',;' '  ' | tr -s ' ' '\n' | \
+        awk -v version="$version" '$0 "" == version "" { found = 1 } END { exit !found }'
+}
+
+fetch_catalog() {
+    body=$tmpdir/catalog.json
+    names=$tmpdir/catalog.names
+    if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
+        return 1
+    fi
+    # A valid empty snapshot is not an error: static bootstrap routes keep
+    # working while dapi warms its governance cache.
+    if ! jq -r '
+        .versions as $versions
+        | if ($versions | type) != "array" then error("versions is not an array") else $versions end
+        | .[]
+        | if (.name | type) != "string" then error("version name is not a string") else .name end
+    ' "$body" > "$names"; then
+        return 1
+    fi
+    if duplicate=$(LC_ALL=C sort "$names" | uniq -d | sed -n '1p') && [ -n "$duplicate" ]; then
+        return 1
+    fi
+    while IFS= read -r version; do
+        validate_version "$version" || return 1
+    done < "$names"
+    LC_ALL=C sort -u "$names" -o "$names"
+}
+
+map_snapshot() {
+    runtime "show map $1" 2>/dev/null
+}
+
+mapped_backend() {
+    version=$1
+    awk -v version="$version" '$2 "" == version "" { print $3; exit }'
+}
+
+slot_for_encoded_version() {
+    encoded=$1
+    awk -v encoded="$encoded" -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 "" == encoded "" { print $2; exit }
+    '
+}
+
+free_slot() {
+    awk -v prefix="$backend_prefix" '
+        index($2, prefix) == 1 && $3 == "__unassigned__" { print $2; exit }
+    '
+}
+
+map_value_is() {
+    map=$1 key=$2 expected=$3
+    map_snapshot "$map" | awk -v key="$key" -v expected="$expected" '
+        $2 "" == key "" && $3 "" == expected "" { found = 1 }
+        END { exit !found }
+    '
+}
+
+assign_slot() {
+    backend=$1 encoded=$2
+    escaped_backend=$(runtime_key "$backend")
+    escaped_encoded=$(runtime_key "$encoded")
+    response=$(runtime "set map $slot_map $escaped_backend $escaped_encoded" 2>&1) || return 1
+    [ -z "$response" ] || return 1
+    map_value_is "$slot_map" "$backend" "$encoded"
+}
+
+enable_slot() {
+    backend=$1
+    index=1
+    while [ "$index" -le "$server_capacity" ]; do
+        response=$(runtime "enable server $backend/$server_prefix$index" 2>&1) || return 1
+        [ -z "$response" ] || return 1
+        index=$((index + 1))
+    done
+}
+
+publish_version() {
+    version=$1 backend=$2
+    escaped_version=$(runtime_key "$version")
+    escaped_backend=$(runtime_key "$backend")
+    response=$(runtime "add map $version_map $escaped_version $escaped_backend" 2>&1) || return 1
+    [ -z "$response" ] || map_value_is "$version_map" "$version" "$backend"
+    map_value_is "$version_map" "$version" "$backend"
+}
+
+publish_readiness() {
+    encoded=$1 backend=$2
+    key="version=$encoded"
+    escaped_key=$(runtime_key "$key")
+    escaped_backend=$(runtime_key "$backend")
+    response=$(runtime "add map $ready_map $escaped_key $escaped_backend" 2>&1) || return 1
+    [ -z "$response" ] || map_value_is "$ready_map" "$key" "$backend"
+    map_value_is "$ready_map" "$key" "$backend"
+}
+
+reconcile_catalog() {
+    version_state=$(map_snapshot "$version_map") || return 1
+    ready_state=$(map_snapshot "$ready_map") || return 1
+    slot_state=$(map_snapshot "$slot_map") || return 1
+
+    while IFS= read -r version; do
+        [ -n "$version" ] || continue
+        version_excluded "$version" && continue
+        encoded=$(urlencode "$version")
+        backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+        if [ -n "$backend" ]; then
+            if ! printf '%s\n' "$ready_state" | mapped_backend "version=$encoded" \
+                | grep -Fqx "$backend"; then
+                publish_readiness "$encoded" "$backend" || return 1
+                ready_state=$(map_snapshot "$ready_map") || return 1
+            fi
+            continue
+        fi
+
+        backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+        if [ -z "$backend" ]; then
+            backend=$(printf '%s\n' "$slot_state" | free_slot)
+            if [ -z "$backend" ]; then
+                warn_once "no free backend slot for governance version '$version' (capacity $backend_capacity)"
+                continue
+            fi
+            assign_slot "$backend" "$encoded" || return 1
+            slot_state=$(map_snapshot "$slot_map") || return 1
+        fi
+
+        enable_slot "$backend" || return 1
+        publish_version "$version" "$backend" || return 1
+        publish_readiness "$encoded" "$backend" || return 1
+        version_state=$(map_snapshot "$version_map") || return 1
+        ready_state=$(map_snapshot "$ready_map") || return 1
+        log "declared governance version '$version' in backend $backend"
+    done < "$tmpdir/catalog.names"
+}
+
+while :; do
+    if [ ! -S "$runtime_socket" ]; then
+        warn_once "HAProxy Runtime API is not ready"
+    elif ! fetch_catalog; then
+        warn_once "cannot fetch or validate $catalog_url"
+    elif ! reconcile_catalog; then
+        warn_once "HAProxy rejected a catalog projection"
+    else
+        if [ -n "$last_error" ]; then
+            log "catalog reconciliation recovered"
+        fi
+        last_error=
+    fi
+    sleep "$poll_seconds"
+done

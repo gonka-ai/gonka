@@ -215,13 +215,28 @@ capture_migration_route_baseline() {
             >/dev/null 2>&1; then
             migration_routes+=("$route")
         fi
-    done < <(printf '%s\n%s\n' \
-        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
-        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
-        | tr ',;' '  ' | tr -s ' ' '\n')
+    done < <(migration_router_routes)
     ((${#migration_routes[@]} > 0)) || fail \
         "the transitional versiond-router serves none of the declared routes; refusing to commit an unverified fleet"
     echo "Captured migration route baseline: ${migration_routes[*]}"
+}
+
+migration_router_routes() {
+    local diagnostic=/usr/local/lib/router-runtime/catalog-status map
+    if "$docker_bin" exec versiond-router test -x "$diagnostic" \
+        >/dev/null 2>&1; then
+        for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
+            "$docker_bin" exec versiond-router "$diagnostic" "$map"
+        done
+        return
+    fi
+
+    # Transitional images from before runtime catalog projection expose only
+    # their startup environment.
+    printf '%s\n%s\n' \
+        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
+        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+        | tr ',;' '  ' | tr -s ' ' '\n'
 }
 
 remove_migration_container() {

@@ -53,7 +53,9 @@ HAProxy frontends:
 `versiond-router` independently computes the same consistent-hash placement
 from the escrow ID and the same DNS-discovered `versiond` pool. Router replicas
 hold no shared routing state and do not need Redis, leader election, or
-replica-to-replica communication.
+replica-to-replica communication. Both router tiers independently project
+protocol names from dapi's existing governance `/versions` feed into local
+pre-rendered backend slots.
 
 The public `proxy-router` process is still a **single host-level failure
 domain**. This deployment protects against failure or replacement of an inner
@@ -90,6 +92,9 @@ Membership and eligibility are derived from runtime state:
 - the top HAProxy asks each inner router `GET /readyz?version=<v>` on its private
   admin port, and each inner router asks every `versiond` the same route-specific
   question;
+- `VERSIOND_VERSIONS` is only a bootstrap floor. New approved names are added to
+  both tiers through local Unix Runtime API sockets without a container reload;
+  a map entry is published only after its backend health checks are enabled;
 - consistent hashing with `hash-key addr` keeps escrow placement stable across
   DNS answer order and inner-router restarts, while top-level router and
   `edge-api` selection use `leastconn` for long requests;
@@ -209,6 +214,10 @@ HAProxy with **consistent hashing on escrow/session ID**, so all requests for on
 escrow stick to the same versiond host. Pool membership comes from the
 `versiond-pool` DNS alias and health from active `/readyz` checks, so hosts can
 be added, drained or removed with no router config change and no reload.
+Protocol names come from the same governance `/versions` endpoint used by
+`versiond`; approving a new name needs no host-side environment edit or router
+rollout. `versiond-router-fleet.sh wait-version <v>` is the machine-readable
+post-approval gate for per-host end-to-end capacity.
 Streaming responses are not buffered. SSE inactivity is bounded by
 `VERSIOND_ROUTER_STREAM_IDLE_SECONDS`; the separate tunnel timeout applies only
 after an HTTP Upgrade or CONNECT. Request path:

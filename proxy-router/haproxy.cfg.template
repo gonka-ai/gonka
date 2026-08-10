@@ -6,13 +6,15 @@
 #   :18081 -> versiond-router fleet -> versiond
 #   :18082 -> edge-api pool
 #
-# The process is intentionally stateless. DNS is membership, active checks are
-# availability, and every versiond-router independently computes the same
-# escrow placement.
+# The tier has no shared state. DNS is membership, active checks are availability,
+# and dapi's governance catalog supplies protocol names. Each process projects
+# additions into its own pre-rendered backends, while every versiond-router
+# independently computes the same escrow placement.
 
 global
     log stdout format raw local0 info
     stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
+    stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
 
 defaults
@@ -83,6 +85,7 @@ frontend versiond_router_in
     # Preserve them; src here is only the policy container.
 
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
+    ${UNDECLARED_VERSION_GUARD}
     use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
     default_backend versiond_router_coarse
 
@@ -113,6 +116,11 @@ frontend admin
     bind 127.0.0.1:${ADMIN_PORT}
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
 ${ADMIN_READY_RULES}
+    ${DYNAMIC_READY_GUARD}
+    use_backend %[query,map_str(${READY_VERSION_BACKEND_MAP})] if { path /readyz } { query,map_str(${READY_VERSION_BACKEND_MAP}) -m found }
+    default_backend admin_not_found
+
+backend admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
 
 frontend metrics

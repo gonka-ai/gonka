@@ -13,6 +13,12 @@ declare -A rollback_env=()
 declare -A rollback_routes=()
 declare -A maintenance_images=()
 declare -A maintenance_env=()
+declare -A legacy_env_defaults=(
+    [VERSIOND_ROUTING_CATALOG_URL]=''
+    [VERSIOND_ROUTING_CATALOG_POLL_SECONDS]=5
+    [VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]=3
+    [VERSIOND_ROUTER_VERSION_CAPACITY]=32
+)
 maintenance_required_routes=()
 maintenance_keys=(
     VERSIOND_POOL_HOST
@@ -21,6 +27,10 @@ maintenance_keys=(
     VERSIOND_NON_HA_VERSIONS
     VERSIOND_VERSIONS
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS
+    VERSIOND_ROUTING_CATALOG_URL
+    VERSIOND_ROUTING_CATALOG_POLL_SECONDS
+    VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS
+    VERSIOND_ROUTER_VERSION_CAPACITY
 )
 
 fail() {
@@ -46,6 +56,10 @@ Commands:
   verify-admission [ROUTE ...]
                      Require every slot, and every listed live route, to be
                      admitted by the active parent proxy.
+  wait-version VERSION
+                     Wait until every slot has learned VERSION and the configured
+                     ready reserve is admitted end to end. This is the
+                     post-approval acceptance gate for release automation.
   status             Show the expected fleet and reject duplicate/orphan slots.
   stop SLOT          Gracefully stop one slot after checking the ready reserve.
   start SLOT         Start an existing container unchanged, or create it if absent.
@@ -83,6 +97,7 @@ slot_list=${VERSIOND_ROUTER_FLEET_SLOTS:-0 1 2}
 min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
+version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 lock_file=${VERSIOND_ROUTER_FLEET_LOCK:-$config_dir/.gonka-versiond-router-$fleet_id.lock}
@@ -94,7 +109,7 @@ command -v flock >/dev/null 2>&1 || fail "flock is required"
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
 case $fleet_id in '' | *[!A-Za-z0-9._-]*) fail "invalid VERSIOND_ROUTER_FLEET_ID '$fleet_id'" ;; esac
-for value in "$drain_timeout" "$wait_timeout"; do
+for value in "$drain_timeout" "$wait_timeout" "$version_wait_timeout"; do
     case $value in '' | *[!0-9]* | 0) fail "router timeouts must be positive integer seconds" ;; esac
 done
 
@@ -108,9 +123,11 @@ for slot in "${slots[@]}"; do
 done
 ((min_ready < ${#slots[@]})) || fail "VERSIOND_ROUTER_MIN_READY must be smaller than the fleet"
 
+declare -A candidate_routes=()
 declare -A expected_routes=()
 while read -r route; do
     [[ -n $route ]] || continue
+    candidate_routes[$route]=1
     expected_routes[$route]=1
 done < <(printf '%s\n' \
     "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
@@ -210,18 +227,70 @@ slot_route_ready() {
         "http://127.0.0.1:8404/readyz?version=$encoded" 2>/dev/null
 }
 
-slot_route_declared() {
-    local slot=$1 route=$2 id legacy_versions ha_versions configured
-    id=$(slot_id "$slot") || return 1
+slot_catalog_routes() {
+    local id map
+    id=$(slot_id "$1") || return 1
+    if "$docker_bin" exec "$id" test -x \
+        /usr/local/lib/router-runtime/catalog-status >/dev/null 2>&1; then
+        for map in /etc/haproxy/non_ha.map /etc/haproxy/versions.map; do
+            "$docker_bin" exec "$id" \
+                /usr/local/lib/router-runtime/catalog-status "$map"
+        done
+        return
+    fi
+
+    # Mixed-image rollout fallback. Old images know only their container env.
+    local legacy_versions ha_versions
     legacy_versions=$(container_env_value "$id" VERSIOND_NON_HA_VERSIONS) || return 1
     ha_versions=$(container_env_value "$id" VERSIOND_VERSIONS) || return 1
-    configured=$(printf '%s\n%s\n' \
-        "$legacy_versions" "$ha_versions" \
-        | tr ',;' '  ' | tr -s ' ' '\n')
+    printf '%s\n%s\n' "$legacy_versions" "$ha_versions" | \
+        tr ',;' '  ' | tr -s ' ' '\n' | sed '/^$/d'
+}
+
+slot_route_declared() {
+    local slot=$1 route=$2 configured
+    configured=$(slot_catalog_routes "$slot") || return 1
     while IFS= read -r declared; do
         [[ $declared != "$route" ]] || return 0
     done <<<"$configured"
     return 1
+}
+
+discover_expected_routes() {
+    local slot route routes
+    for slot in "${slots[@]}"; do
+        slot_id "$slot" >/dev/null 2>&1 || continue
+        routes=$(slot_catalog_routes "$slot") || fail \
+            "cannot read the effective route catalog from slot $slot"
+        while IFS= read -r route; do
+            [[ -n $route ]] || continue
+            # A removed governance version remains in the monotonic runtime map
+            # until replacement. Protect routes that still carry traffic, not
+            # stale declarations whose children have already drained.
+            slot_route_ready "$slot" "$route" && expected_routes[$route]=1
+        done <<<"$routes"
+    done
+    return 0
+}
+
+route_in_static_environment() {
+    local route=$1 versions declared
+    shift
+    for versions in "$@"; do
+        while IFS= read -r declared; do
+            [[ $declared != "$route" ]] || return 0
+        done < <(printf '%s\n' "$versions" | tr ',;' '  ' | tr -s ' ' '\n')
+    done
+    return 1
+}
+
+select_candidate_route_view() {
+    local route
+    expected_routes=()
+    for route in "${!candidate_routes[@]}"; do
+        expected_routes[$route]=1
+    done
+    discover_expected_routes
 }
 
 slot_front_ip() {
@@ -376,6 +445,52 @@ verify_parent_fleet_admission() {
     done
     echo "versiond-router-fleet: admission verification timed out: $missing" >&2
     return 1
+}
+
+wait_version() {
+    local route=$1 deadline missing slot ready parent_ready
+    case $route in
+        '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+            fail "version '$route' cannot be represented as a routed path segment"
+            ;;
+    esac
+    expected_routes[$route]=1
+    deadline=$((SECONDS + version_wait_timeout))
+    while ((SECONDS < deadline)); do
+        missing=
+        for slot in "${slots[@]}"; do
+            if ! slot_route_declared "$slot" "$route"; then
+                missing="slot $slot has not learned version $route"
+                break
+            fi
+        done
+        if [[ -z $missing ]]; then
+            ready=$(route_ready_count "$route")
+            if ((ready < min_ready)); then
+                missing="only $ready router slots can serve version $route; need $min_ready"
+            fi
+        fi
+        if [[ -z $missing ]]; then
+            if ! parent_proxy_active; then
+                missing="active parent is not proxy-router"
+            else
+                require_parent_diagnostic
+                parent_ready=$(parent_admitted_count "$route")
+                if [[ $parent_ready == unknown ]]; then
+                    missing="parent proxy has not learned version $route"
+                elif ((parent_ready < min_ready)); then
+                    missing="parent proxy admits only $parent_ready router slots for version $route; need $min_ready"
+                fi
+            fi
+        fi
+        if [[ -z $missing ]]; then
+            printf 'versiond-router-fleet: version %s is ready on %s router slots and admitted end to end\n' \
+                "$route" "$ready"
+            return 0
+        fi
+        sleep 1
+    done
+    fail "version $route did not become ready within ${version_wait_timeout}s: $missing"
 }
 
 ready_count_except() {
@@ -549,6 +664,15 @@ container_env_value() {
     return 1
 }
 
+container_env_value_or_legacy_default() {
+    local id=$1 key=$2
+    if container_env_value "$id" "$key"; then
+        return 0
+    fi
+    [[ -v legacy_env_defaults[$key] ]] || return 1
+    printf '%s\n' "${legacy_env_defaults[$key]}"
+}
+
 running_placement_contract() {
     local id=$1 pool_host back_network legacy_host legacy_versions ha_versions
     pool_host=$(container_env_value "$id" VERSIOND_POOL_HOST) || return 1
@@ -621,15 +745,18 @@ capture_maintenance_state() {
         maintenance_images[$slot]="gonka/versiond-router-maintenance-rollback:$operation_id-$slot"
         "$docker_bin" tag "$image" "${maintenance_images[$slot]}"
         for key in "${maintenance_keys[@]}"; do
-            maintenance_env["$slot:$key"]=$(container_env_value "$id" "$key") || fail \
+            maintenance_env["$slot:$key"]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
         done
         while read -r route; do
-            [[ -n $route && -n ${expected_routes[$route]-} ]] && routes[$route]=1
-        done < <(printf '%s\n%s\n' \
-            "${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
-            "${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
-            | tr ',;' '  ' | tr -s ' ' '\n')
+            [[ -n $route ]] || continue
+            if [[ -n ${candidate_routes[$route]-} ]] || \
+                ! route_in_static_environment "$route" \
+                    "${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
+                    "${maintenance_env[$slot:VERSIOND_VERSIONS]}"; then
+                routes[$route]=1
+            fi
+        done < <(slot_catalog_routes "$slot")
     done
     for route in "${!routes[@]}"; do
         if (( $(route_ready_count "$route") > 0 )); then
@@ -675,6 +802,10 @@ maintenance_rollback() {
                 VERSIOND_NON_HA_VERSIONS="${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
                 VERSIOND_VERSIONS="${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
                 VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${maintenance_env[$slot:VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
+                VERSIOND_ROUTING_CATALOG_URL="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_URL]}" \
+                VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+                VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+                VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
                 slot_compose "$slot" up -d --wait \
                     --wait-timeout "$wait_timeout" router; then
                 ok=false
@@ -701,6 +832,10 @@ rollback_current() {
             VERSIOND_NON_HA_VERSIONS="${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
             VERSIOND_VERSIONS="${rollback_env[VERSIOND_VERSIONS]}" \
             VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${rollback_env[VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
+            VERSIOND_ROUTING_CATALOG_URL="${rollback_env[VERSIOND_ROUTING_CATALOG_URL]}" \
+            VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+            VERSIOND_ROUTER_VERSION_CAPACITY="${rollback_env[VERSIOND_ROUTER_VERSION_CAPACITY]}" \
             slot_compose "$current_slot" up -d --wait \
                 --wait-timeout "$wait_timeout" router && \
             wait_rollback_routes "$current_slot"; then
@@ -974,15 +1109,12 @@ fleet_rollout() {
         rollback_env=()
         rollback_routes=()
         for key in "${maintenance_keys[@]}"; do
-            rollback_env[$key]=$(container_env_value "$id" "$key") || fail \
+            rollback_env[$key]=$(container_env_value_or_legacy_default "$id" "$key") || fail \
                 "slot $slot is missing environment $key"
         done
         while IFS= read -r route; do
             [[ -n $route ]] && rollback_routes[$route]=1
-        done < <(printf '%s\n%s\n' \
-            "${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
-            "${rollback_env[VERSIOND_VERSIONS]}" \
-            | tr ',;' '  ' | tr -s ' ' '\n')
+        done < <(slot_catalog_routes "$slot")
         current_slot=$slot
         rollback_image=$rollback_tag
         echo "Draining versiond-router slot $slot"
@@ -1025,12 +1157,17 @@ fleet_maintenance_rollout() {
     done
     wait_required_routes_all
 
+    # Validate the candidate's complete live view before crossing the commit
+    # point. This catches partial catalog convergence while exact rollback
+    # images and environments are still available.
+    select_candidate_route_view
+    fleet_status
+
     maintenance_active=false
     trap - ERR INT TERM HUP
     for slot in "${slots[@]}"; do
         "$docker_bin" image rm "${maintenance_images[$slot]}" >/dev/null 2>&1 || true
     done
-    fleet_status
 }
 
 if [[ ! -e $lock_file ]]; then
@@ -1038,6 +1175,10 @@ if [[ ! -e $lock_file ]]; then
 fi
 exec 9<"$lock_file"
 flock -n 9 || fail "another fleet operation holds $lock_file"
+
+# Runtime-discovered versions are part of the safety reserve even though they
+# are intentionally absent from the host-managed bootstrap environment.
+discover_expected_routes
 
 command=${1:-}
 case $command in
@@ -1049,6 +1190,10 @@ case $command in
     verify-admission)
         shift
         verify_parent_fleet_admission "$@"
+        ;;
+    wait-version)
+        [[ $# == 2 ]] || fail "wait-version requires exactly one VERSION"
+        wait_version "$2"
         ;;
     status) fleet_status ;;
     stop)

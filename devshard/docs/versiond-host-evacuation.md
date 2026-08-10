@@ -137,7 +137,8 @@ failure accounting and command completion.
    route each version the host already serves — so a host mid-install takes
    traffic for what it has and nothing else.
 10. Router replacement preserves at least `VERSIOND_ROUTER_MIN_READY` peers for
-    the coarse pool and for every declared version that currently has capacity.
+    the coarse pool and for every effective bootstrap or governance version that
+    currently has capacity.
     Router slots are separate Compose projects, so a normal main-stack `up -d`
     cannot replace the entire fleet. Fleet `up` and `start` preserve any existing
     slot's image and configuration; `apply`/`rollout` compare the requested image
@@ -241,7 +242,7 @@ Endpoints, all on the traffic listener (`:8080`):
 | --- | --- | --- |
 | `GET /healthz` | the legacy JSON array of per-version child state | operators, dashboards, existing clients |
 | `GET /readyz?version=<v>` | `200` when a running child serves `<v>` **and** still reports itself ready | the router's per-version health check |
-| `GET /readyz` | `200` when this host should receive new work at all | the router's check for non-version paths, and for every version when none is declared |
+| `GET /readyz` | `200` when this host should receive new work at all | the router's coarse check for non-version paths |
 
 `/readyz` is on the public listener on purpose. It is not a private admin
 control: it is the contract the load balancer reads, and there is nothing in it a

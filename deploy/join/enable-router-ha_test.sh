@@ -117,6 +117,14 @@ if [[ ${1:-} == compose ]]; then
     exit 0
 fi
 
+if [[ ${1:-} == exec && ${2:-} == versiond-router && \
+    ${3:-} == test && ${4:-} == -x && \
+    ${5:-} == /usr/local/lib/router-runtime/catalog-status ]]; then
+    # The migration singleton represents the pre-catalog image. The cutover
+    # must retain its mixed-image fallback until that reversible path is gone.
+    exit 1
+fi
+
 case ${1:-} in
     exec | tag | rm) exit 0 ;;
     image) exit 0 ;;

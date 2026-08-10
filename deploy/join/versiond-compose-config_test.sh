@@ -117,6 +117,7 @@ if "versiond-router" in defaults_config["services"]:
 
 proxy = defaults_config["services"]["proxy"]
 policy = defaults_config["services"]["proxy-policy"]
+api = defaults_config["services"]["api"]
 if "versiond-router-front" not in proxy["networks"]:
     raise SystemExit("public HAProxy is not attached to the router front network")
 if policy["environment"].get("VERSIOND_SERVICE_NAME") != "proxy-policy-ingress":
@@ -130,6 +131,12 @@ if "proxy-policy-front" not in policy["networks"] or "proxy-policy-front" not in
 for network in ("versiond-router-front", "versiond-router-back"):
     if not defaults_config["networks"][network].get("external"):
         raise SystemExit(f"router fleet network {network} is still owned by main Compose")
+if "versiond-router-back" not in api["networks"]:
+    raise SystemExit("dapi governance catalog is not reachable from the inner router fleet")
+if "versiond-routing-oracle" not in api["networks"]["versiond-router-back"].get(
+    "aliases", []
+):
+    raise SystemExit("dapi has no stable governance-catalog alias on the router back network")
 
 defaults = proxy["environment"]
 cleared = cleared_config["services"]["proxy"]["environment"]
@@ -147,6 +154,20 @@ require(defaults, "VERSIOND_NON_HA_VERSIONS", "v1 v2 v3", "unset")
 require(defaults, "VERSIOND_VERSIONS", "v4 v5 v6 v7 v8", "unset")
 require(
     defaults,
+    "VERSIOND_ROUTING_CATALOG_URL",
+    "http://api:9100/versions",
+    "parent governance catalog",
+)
+require(defaults, "PROXY_ROUTER_VERSION_CAPACITY", "32", "parent dynamic capacity")
+require(defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "parent catalog poll")
+require(
+    defaults,
+    "VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS",
+    "3",
+    "parent catalog timeout",
+)
+require(
+    defaults,
     "VERSIOND_ROUTER_POOL_HOST",
     "versiond-router-fleet",
     "steady-state fleet DNS",
@@ -157,6 +178,20 @@ require(cleared, "VERSIOND_VERSIONS", "", "explicit empty")
 require(slot_defaults, "VERSIOND_NON_HA_VERSIONS", "v1 v2 v3", "slot unset")
 require(slot_defaults, "VERSIOND_VERSIONS", "v4 v5 v6 v7 v8", "slot unset")
 require(slot_defaults, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "false", "slot unset")
+require(
+    slot_defaults,
+    "VERSIOND_ROUTING_CATALOG_URL",
+    "http://versiond-routing-oracle:9100/versions",
+    "slot governance catalog",
+)
+require(slot_defaults, "VERSIOND_ROUTER_VERSION_CAPACITY", "32", "slot dynamic capacity")
+require(slot_defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "slot catalog poll")
+require(
+    slot_defaults,
+    "VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS",
+    "3",
+    "slot catalog timeout",
+)
 require(slot_cleared, "VERSIOND_NON_HA_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "true", "slot coarse")

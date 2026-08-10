@@ -554,49 +554,49 @@ including the single-instance one: without it Docker's 10-second default would
 ### Routing is per version, not per host
 
 The router asks each host about the version it is about to route to
-(`/readyz?version=<v>`), and keeps one pool per version listed in
-`VERSIOND_VERSIONS`. A host that cannot run one version leaves that version's
-pool and keeps serving every other — no eviction, no reload, no config change.
+(`/readyz?version=<v>`) and keeps one pool per protocol name. A host that cannot
+run one version leaves that version's pool and keeps serving every other — no
+eviction and no reload.
 
-Once a version is declared this also makes its rollout safe: until a host has it
-running it is not in that version's pool, so the new version's traffic goes only
-where it can be served while everything else carries on.
+`VERSIOND_VERSIONS` now supplies only a static bootstrap floor. Both the inner
+router fleet and the top `proxy-router` continuously consume dapi's existing
+read-only governance `GET /versions` endpoint. Each process has 32 inert backend
+slots by default. When governance adds a name, the local reconciler assigns a
+slot, enables that version's health checks, and publishes the request-map entry
+only after the assignment succeeds.
 
-**Declaring a version is a prerequisite for routing it.** While any version is
-declared, a request for one that is not gets `503` from the router naming the
-setting to fix, instead of being sent to a host that may not run it. Approving a
-new version is therefore two-phase:
+Therefore a normal new version requires **no host-side `config.env` edit and no
+router replacement**. Until a host has the child running, it is not in that
+version's pool; existing versions continue unchanged. A same-name SHA update
+uses the existing backend and remains entirely inside `versiond`'s blue/green
+child update.
 
-1. Add it to `VERSIOND_VERSIONS` and replace the router container from
-   `deploy/join`:
+The approved catalog cannot announce a name before governance approves it. A
+release coordinator must therefore treat approval as the start of convergence,
+not as proof that every host is already ready. The per-host machine-readable
+acceptance check is:
 
-   ```bash
-   source ./config.env
-   ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
-   ```
+```bash
+source ./config.env
+./versiond-router-fleet.sh wait-version v9
+```
 
-   A plain `restart` keeps the old environment. `enable-router-ha.sh` invokes the
-   fleet's idempotent `apply`, which replaces one changed independent slot at a
-   time and waits until its route view matches the ready peers before touching
-   another slot.
-2. Approve it in governance; each host joins that pool as it installs it.
+It requires every configured inner slot to have learned the name, at least
+`VERSIOND_ROUTER_MIN_READY` slots to serve it, and the active parent to admit the
+same reserve. Network automation can aggregate this result across hosts before
+advertising the new protocol as generally available. A
+true pre-approval gate would require a separate signed staged-version feed; it
+cannot be inferred from `approved_versions`.
 
-Router replacement is not a public listener maintenance operation. The top
-HAProxy removes the old slot from new selection while its connections drain, and
-continues through the ready peers. The default fleet is three slots with a
-two-slot reserve.
-**Declare the versions you expect ahead of time** and governance approval needs
-step 2 only: a pool for a version nobody runs yet has no healthy members and costs
-nothing.
+Catalog additions are monotonic until a router process is replaced, which makes
+temporary stale or empty dapi snapshots harmless. Removed versions lose healthy
+children and fail closed, but do not immediately free their slot. The defaults
+allow 32 additions between router releases; capacity exhaustion is logged and
+the new name remains `503` instead of using the coarse pool.
 
-Leaving `VERSIOND_VERSIONS` empty disables the mechanism entirely and keeps the
-previous host-level behaviour — and an HA deployment refuses to start that way,
-because the host-level check would keep routing a version whose child went
-unready wherever another version is still healthy
-(`VERSIOND_ROUTER_ALLOW_COARSE_READINESS=1` overrides, for stacks that cannot
-declare versions up front). The join overlay declares `v4` through `v8`, so an
-approval inside that window needs no router change; extend the list before
-governance moves past it.
+If dapi is temporarily unavailable at router startup, the shipped `v4` through
+`v8` bootstrap floor remains routable. It is capacity insurance, not an operator
+allowlist that must track future governance names.
 
 Coarse mode is an explicit two-part opt-in and changes the placement-readiness
 source. Persist both lines in `config.env`, then apply it in a maintenance
@@ -604,14 +604,15 @@ window rather than mixing coarse and per-version routers:
 
 ```bash
 export VERSIOND_VERSIONS=""
+export VERSIOND_ROUTING_CATALOG_URL=""
 export VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
 VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
   ./versiond-router-fleet.sh maintenance-rollout
 ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
 ```
 
-An empty value is different from an unset value. Removing the first export
-restores the join overlay's `v4 v5 v6 v7 v8` default. Likewise, after migrating
+An empty value is different from an unset value. Removing the first two exports
+restores the join overlay's bootstrap list and governance catalog. Likewise, after migrating
 all legacy versions to Postgres, clear their pins with
 `export VERSIOND_NON_HA_VERSIONS=""`; removing that export restores the
 `v1 v2 v3` default. Legacy pins and the pool hostname define escrow placement
@@ -746,9 +747,10 @@ daemon restart. Persist the corresponding replica count as `0` first.
       maintenance deadline; update one host at a time within that window
 - [ ] Preserve tracked host-local Compose changes on a local branch; keep the
       generated binary patch until the upgrade and rollback window are closed
-- [ ] For HA, set `VERSIOND_VERSIONS` to every version this deployment serves — an
-      undeclared version is refused, and the list must be updated *before*
-      governance approves a new one
+- [ ] For HA, keep `VERSIOND_ROUTING_CATALOG_URL` enabled on both router tiers and
+      size `VERSIOND_ROUTER_VERSION_CAPACITY` / `PROXY_ROUTER_VERSION_CAPACITY`
+      for additions between releases; hosters do not edit `VERSIOND_VERSIONS`
+      for each governance name
 - [ ] For HA or multi-edge, replace `VERSIOND_HOSTS` / `EDGE_API_HOSTS` with
       `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`, or drop them and take the
       shipped defaults

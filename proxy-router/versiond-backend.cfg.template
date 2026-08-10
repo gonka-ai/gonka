@@ -2,7 +2,7 @@ backend ${BACKEND_NAME}
     balance leastconn
 
     option httpchk
-    http-check send meth GET uri ${READYZ_URI}
+    ${READY_CHECK_SEND}
     http-check expect status 200
 
     http-reuse safe
@@ -14,4 +14,4 @@ backend ${BACKEND_NAME}
 
     http-response set-header X-Versiond-Router-Addr %[bc_dst]:%[bc_dst_port]
 
-    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} check port ${ROUTER_ADMIN_PORT} inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr
+    server-template router ${ROUTER_POOL_SLOTS} ${ROUTER_POOL_HOST}:${ROUTER_PORT} check port ${ROUTER_ADMIN_PORT} inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr ${SERVER_STATE}

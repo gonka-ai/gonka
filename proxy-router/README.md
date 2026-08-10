@@ -36,8 +36,9 @@ its own internal network.
 
 ## Versiond-router selection
 
-Every declared protocol version gets a separate HAProxy backend. A router is
-eligible for version `v` only while its private admin endpoint answers:
+Every bootstrap or governance protocol version gets a separate HAProxy backend.
+A router is eligible for version `v` only while its private admin endpoint
+answers:
 
 ```text
 GET http://versiond-router:8404/readyz?version=v
@@ -71,8 +72,10 @@ restarting it interrupts connections crossing that process.
 
 ## Membership and state
 
-All pools use Docker DNS plus HAProxy active checks. The process has no routing
-database, leader, or peer protocol. It does not need Redis:
+All pools use Docker DNS plus HAProxy active checks. Protocol names are projected
+from dapi's read-only governance `/versions` feed into pre-rendered inactive
+backends through a local Unix Runtime API socket. The process has no shared
+routing database, leader, or peer protocol. It does not need Redis:
 
 - `proxy-policy` resolves to private nginx workers;
 - `versiond-router-fleet` resolves only to the independently managed router
@@ -80,8 +83,9 @@ database, leader, or peer protocol. It does not need Redis:
   fleet readiness during the one-time upgrade;
 - `edge-api-pool` resolves to edge-api replicas.
 
-`server-template` reserves capacity without requiring a reload when addresses
-appear or disappear. Application and inner-router addresses become eligible
+`server-template` reserves host capacity and `PROXY_ROUTER_VERSION_CAPACITY`
+reserves version-backend capacity. Neither a new address nor a new governance
+name requires a reload. Application and inner-router addresses become eligible
 only after successful readiness checks. Long-lived policy workers start as
 connect candidates immediately; TCP redispatch moves a connection to another
 worker if the selected address is not listening yet.
@@ -105,13 +109,14 @@ host-level outage. Multi-host ingress belongs in a later layer above this one
 | `127.0.0.1:8404/readyz` | active policy-worker availability |
 | `127.0.0.1:8404/readyz?component=versiond` | coarse router-fleet availability |
 | `127.0.0.1:8404/readyz?component=edge-api` | edge-api availability |
-| `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one declared version |
+| `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
 | `127.0.0.1:8405/metrics` | HAProxy Prometheus exporter |
 | `/var/run/haproxy/haproxy.sock` | local Runtime API |
 
-The Runtime API is a Unix socket only and has `operator` privileges, which are
-sufficient for status inspection but cannot change server state. The loopback
-admin HTTP listener reports readiness and cannot mutate routing.
+The diagnostic Runtime API is a Unix socket with `operator` privileges, which
+are sufficient for status inspection but cannot change server state. A separate
+mode-600 admin socket is owned only by the in-container catalog reconciler. The
+loopback admin HTTP listener reports readiness and cannot mutate routing.
 
 ## Configuration
 
@@ -123,13 +128,24 @@ admin HTTP listener reports readiness and cannot mutate routing.
 | `VERSIOND_ROUTER_FLEET_CAPACITY` | `16` | reserved router slots |
 | `VERSIOND_ROUTER_PORT` | `8080` | router data port |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | router health port |
+| `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor; day-2 governance names are learned automatically |
+| `VERSIOND_NON_HA_VERSIONS` | *(empty)* | static legacy pins; these still define placement and must match every inner router |
+| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; join Compose uses `http://api:9100/versions` |
+| `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | governance-name discovery interval |
+| `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | one catalog request timeout |
+| `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
 | `EDGE_API_POOL_HOST` | `edge-api-pool` | edge-api DNS alias |
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 
-`VERSIOND_NON_HA_VERSIONS` and `VERSIOND_VERSIONS` must match every inner
-router. They determine the generated version map and route-specific backends.
+`VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
+inner router. Runtime additions come from the same catalog on both tiers and do
+not change escrow placement.
+
+Invalid catalog URL, timing, or capacity values fail startup. A transient fetch
+failure preserves admitted routes, and the entrypoint restarts an unexpectedly
+exited reconciler without restarting HAProxy.
 
 ## Operations
 
@@ -146,11 +162,23 @@ deploy/join/versiond-router-fleet.sh status
 deploy/join/versiond-router-fleet.sh rollout
 ```
 
-The rollout checks both each slot's local route view and the parent proxy's
-actual admission state for the coarse route and every currently available
-declared version. It replaces one slot only after that reserve is visible at
+The rollout checks both each slot's effective runtime route view and the parent
+proxy's actual admission state for the coarse route and every currently
+available version. It replaces one slot only after that reserve is visible at
 both levels. A failed slot is restored from the exact pre-rollout image and
 environment.
+
+For a newly approved protocol, hosters do not edit `config.env` or roll either
+router tier. Network activation automation can use the local end-to-end gate:
+
+```bash
+deploy/join/versiond-router-fleet.sh wait-version v6
+```
+
+It requires every slot to have learned the name and at least the configured
+ready reserve to be admitted by this parent. The approved catalog cannot provide
+a pre-approval signal; a staged pre-approval workflow would need a separate
+signed candidate feed.
 
 Every fleet command locks the same deployment-local file next to `config.env`.
 The lock is opened read-only after creation, so invocations by the deployment

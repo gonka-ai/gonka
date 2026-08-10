@@ -473,11 +473,13 @@ admits only one.
 | Container stop / start | The whole host lifecycle. Membership is DNS; health is measured |
 | `pool-status` (in the router image, off PATH) | Read-only view of what the router believes; there is no router-side drain |
 | `GET :8404/readyz?version=<v>` | Private answer consumed by the top distributor: this router currently has capacity for `<v>` |
-| `versiond-router-fleet.sh` | Owns fixed, independent Compose slots; idempotent update reconciliation, start/stop reserve checks, one-at-a-time rollout with image rollback, and explicit whole-fleet maintenance teardown |
+| `versiond-router-fleet.sh` | Owns fixed, independent Compose slots; idempotent update reconciliation, start/stop reserve checks, one-at-a-time rollout with image rollback, explicit whole-fleet maintenance teardown, and `wait-version` end-to-end activation gate |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
-| `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |
-| `VERSIOND_VERSIONS` | Versions the router can route. Add a version here *before* governance approves it; undeclared versions are refused |
+| `GET :8080/readyz` | Coarse check for non-version paths: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |
+| `VERSIOND_VERSIONS` | Static bootstrap floor used while dapi is unavailable; it is not a day-2 allowlist |
+| `VERSIOND_ROUTING_CATALOG_URL` | Existing governance `/versions` feed consumed by both router tiers; new names are projected into pre-rendered backends without reload |
+| `VERSIOND_ROUTER_VERSION_CAPACITY` / `PROXY_ROUTER_VERSION_CAPACITY` | Maximum governance names that can be learned between router replacements, default `32` on each tier |
 | `VERSIOND_DRAIN_ANNOUNCE` | How long the host stays accepting after it starts failing `/readyz`, default `5s` |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | One internal deadline for graceful versiond shutdown before forced escalation, default `25m` |
 | `VERSIOND_STOP_GRACE_PERIOD` | Compose `stop_grace_period`; the outer `SIGKILL` backstop, default `30m` |
@@ -608,12 +610,14 @@ consumes unchanged, which is the point of putting it on the traffic listener.
   validates each result with the HAProxy the router ships; `make test-hash-ring`
   proves the sticky ring follows which hosts are in the pool rather than the
   order DNS returned them; `make test-version-routing` proves a host missing one
-  version leaves that version's pool and keeps serving the rest, and that an
-  undeclared version is refused rather than routed by luck.
+  version leaves that version's pool and keeps serving the rest; it also changes
+  a governance catalog live, proves the new route appears without replacing the
+  router, preserves existing routes, and fails closed on capacity exhaustion.
 - **router fleet / top distributor:** `make -C versiond-router test-fleet`
   proves independent Compose ownership, reserve enforcement, rolling replace,
-  and duplicate-slot rejection. `make -C proxy-router test-routing` exercises
-  real HAProxy and Docker DNS, route-aware router selection, policy-worker
+  duplicate-slot rejection, and the end-to-end `wait-version` gate.
+  `make -C proxy-router test-routing` exercises real HAProxy and Docker DNS,
+  live governance route projection, route-aware router selection, policy-worker
   failover, edge-api distribution, and no duplicate POST execution when one
   router data port is unavailable.
 - **full stack (`devshard/testenv`):**

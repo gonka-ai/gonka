@@ -160,11 +160,13 @@ EOF
     '{{index .Labels "ai.gonka.component"}}|{{index .Labels "ai.gonka.fleet"}}|{{index .Labels "ai.gonka.network-role"}}' \
     "$back") == "versiond-router-network|$fleet_id|back" ]] || fail \
     "back network does not carry stable fleet ownership"
-docker build -q -t "$image" "$script_dir/../../versiond-router" >/dev/null
+docker build -q -t "$image" -f "$script_dir/../../versiond-router/Dockerfile" \
+    "$script_dir/../.." >/dev/null
 docker build -q -t "$updated_image" \
     -f "$tmpdir/updated-router.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$bad_image" -f "$tmpdir/bad-router.Dockerfile" "$tmpdir" >/dev/null
-docker build -q -t "$proxy_image" "$script_dir/../../proxy-router" >/dev/null
+docker build -q -t "$proxy_image" -f "$script_dir/../../proxy-router/Dockerfile" \
+    "$script_dir/../.." >/dev/null
 docker run -d --name "gonka-router-fleet-backend-$suffix" \
     --network "$back" --network-alias versiond-pool \
     -v "$tmpdir/backend.py:/app.py:ro" \
@@ -191,6 +193,12 @@ for slot in "${slots[@]}"; do
     [[ $current_id == "${initial_ids[$slot]}" ]] || fail \
         "idempotent fleet apply recreated unchanged slot $slot"
 done
+if VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS=1 \
+    "${fleet[@]}" wait-version v4 >"$tmpdir/no-parent-gate.out" 2>&1; then
+    fail "version activation gate succeeded without the parent proxy"
+fi
+grep -q 'active parent is not proxy-router' "$tmpdir/no-parent-gate.out" || fail \
+    "version activation gate did not identify the missing parent"
 
 # A tag update with the same rendered environment is detected from the pulled
 # image ID, not from the textual Compose image reference alone.
@@ -241,6 +249,7 @@ sed -i 's/^VERSIOND_NON_HA_VERSIONS=$/VERSIOND_NON_HA_VERSIONS="v4 v5"/' \
 sed -i 's/^VERSIOND_VERSIONS=v4$/VERSIOND_VERSIONS=/' "$tmpdir/config.env"
 cat >>"$tmpdir/config.env" <<'EOF'
 VERSIOND_LEGACY_HOST=versiond-pool
+VERSIOND_ROUTING_CATALOG_URL=
 EOF
 if "${fleet[@]}" rollout >"$tmpdir/placement-rollout.out" 2>&1; then
     fail "ordinary rollout accepted a mixed placement contract"
@@ -259,8 +268,11 @@ if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
     fail "invalid maintenance candidate unexpectedly started"
 fi
 grep -q 'the exact previous router fleet was restored' \
-    "$tmpdir/maintenance-rollback.out" || fail \
-    "failed maintenance candidate did not restore the previous fleet"
+    "$tmpdir/maintenance-rollback.out" || {
+    cat "$tmpdir/maintenance-rollback.out" >&2
+    fail "failed maintenance candidate did not restore the previous fleet"
+}
+sed -i '/^VERSIOND_ROUTING_CATALOG_URL=$/d' "$tmpdir/config.env"
 cat >>"$tmpdir/config.env" <<'EOF'
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
 EOF
@@ -310,6 +322,14 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     || fail "top HAProxy did not observe the router fleet"
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "strict admission rejected the complete live v4 fleet"
+"${fleet[@]}" wait-version v4 >/dev/null || fail \
+    "machine activation gate rejected end-to-end ready v4"
+if VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS=2 \
+    "${fleet[@]}" wait-version v5 >"$tmpdir/missing-version-gate.out" 2>&1; then
+    fail "version activation gate accepted a version absent from the fleet catalog"
+fi
+grep -q 'has not learned version v5' "$tmpdir/missing-version-gate.out" || fail \
+    "version activation gate did not identify the slot missing v5"
 
 # The commit gate receives the migration singleton's live-route baseline. A
 # coarse-healthy fleet that cannot serve one of those routes must not be allowed
@@ -501,7 +521,8 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_BACK_NETWORK=$back \
     VERSIOND_ROUTER_IMAGE=$image \
     VERSIOND_NON_HA_VERSIONS='' \
-    VERSIOND_VERSIONS=v5 \
+    VERSIOND_VERSIONS='' \
+    VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
     docker compose --project-directory "$script_dir" \
         --project-name "$prefix-0" \
         -f "$script_dir/versiond-router-slot/docker-compose.yml" \
@@ -510,8 +531,10 @@ if "${fleet[@]}" stop 1 >"$tmpdir/route-reserve.out" 2>&1; then
     fail "the fleet allowed the v4 route reserve to fall below two"
 fi
 grep -q 'version v4 has only 1 other ready routers, need 2' \
-    "$tmpdir/route-reserve.out" || fail \
-    "route-specific reserve failure did not identify v4"
+    "$tmpdir/route-reserve.out" || {
+    cat "$tmpdir/route-reserve.out" >&2
+    fail "route-specific reserve failure did not identify v4"
+}
 # This test deliberately manufactured config drift outside the fleet API.
 # Restore the fixture explicitly; production callers must use guarded rollout.
 VERSIOND_ROUTER_SLOT=0 \

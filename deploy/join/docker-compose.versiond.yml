@@ -86,6 +86,16 @@ x-versiond: &versiond
   restart: always
 
 services:
+  # Expose only the existing read-only approved-versions endpoint to the inner
+  # router fleet. Routers consume the same governance snapshot as versiond and
+  # need no host-side allowlist update when a new name appears.
+  api:
+    networks:
+      default: {}
+      versiond-router-back:
+        aliases:
+          - versiond-routing-oracle
+
   devshard-postgres:
     container_name: devshard-postgres
     image: postgres:16-alpine
@@ -162,6 +172,10 @@ services:
       - VERSIOND_ROUTER_FLEET_CAPACITY=${VERSIOND_ROUTER_FLEET_CAPACITY:-16}
       - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTING_CATALOG_URL=${VERSIOND_ROUTING_CATALOG_URL-http://api:9100/versions}
+      - VERSIOND_ROUTING_CATALOG_POLL_SECONDS=${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}
+      - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
+      - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
     networks:
       default: {}
       proxy-policy-front: {}

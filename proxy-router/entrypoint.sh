@@ -6,6 +6,8 @@ TEMPLATE="${PROXY_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 BACKEND_TEMPLATE="${PROXY_ROUTER_BACKEND_TEMPLATE:-/etc/haproxy/versiond-backend.cfg.template}"
 OUT="${PROXY_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 VERSION_MAP="${PROXY_ROUTER_VERSION_MAP:-/etc/haproxy/version-router.map}"
+READY_VERSION_MAP="${PROXY_ROUTER_READY_VERSION_MAP:-${OUT}.ready-versions.map}"
+SLOT_MAP="${PROXY_ROUTER_SLOT_MAP:-${OUT}.version-slots.map}"
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POLICY_POOL_HOST="${PROXY_POLICY_POOL_HOST:-proxy-policy}"
@@ -24,6 +26,10 @@ MAX_CONNECTIONS="${PROXY_ROUTER_MAX_CONNECTIONS:-8192}"
 CONNECT_TIMEOUT="${PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS:-2}"
 STREAM_IDLE="${PROXY_ROUTER_STREAM_IDLE_SECONDS:-1200}"
 PUBLIC_IDLE="${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}"
+VERSION_CAPACITY="${PROXY_ROUTER_VERSION_CAPACITY:-32}"
+CATALOG_URL="${VERSIOND_ROUTING_CATALOG_URL:-}"
+CATALOG_POLL="${VERSIOND_ROUTING_CATALOG_POLL_SECONDS:-5}"
+CATALOG_FETCH_TIMEOUT="${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}"
 NGINX_MODE="${NGINX_MODE:-http}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
 
@@ -64,11 +70,11 @@ for host in "$POLICY_POOL_HOST" "$ROUTER_POOL_HOST" "$EDGE_POOL_HOST"; do
             ;;
     esac
 done
-
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$EDGE_POOL_SLOTS" "$EDGE_API_PORT" \
     "$VERSIOND_FRONTEND_PORT" "$EDGE_FRONTEND_PORT" "$ADMIN_PORT" \
-    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE"; do
+    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
+    "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT"; do
     case "$value" in
         '' | *[!0-9]*)
             echo "proxy-router: invalid numeric setting '$value'" >&2
@@ -76,6 +82,18 @@ for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
             ;;
     esac
 done
+if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
+    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ]; then
+    echo "proxy-router: catalog capacity and timing values must be positive" >&2
+    exit 1
+fi
+case "$CATALOG_URL" in
+    '' | http://* | https://*) ;;
+    *)
+        echo "proxy-router: VERSIOND_ROUTING_CATALOG_URL must use http or https" >&2
+        exit 1
+        ;;
+esac
 
 case "$NGINX_MODE" in
     http | https | both) ;;
@@ -126,23 +144,28 @@ ADMIN_RULES_FILE=$(mktemp)
 VERSION_READY_RULES_FILE=$(mktemp)
 trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE"' EXIT
 : > "$VERSION_MAP"
+: > "$READY_VERSION_MAP"
+: > "$SLOT_MAP"
 : > "$BACKENDS_FILE"
 : > "$VERSION_READY_RULES_FILE"
 
 render_router_backend() {
     backend=$1
-    ready_uri=$2
+    ready_check=$2
+    server_state=$3
     sed \
         -e "s|\${BACKEND_NAME}|$backend|g" \
-        -e "s|\${READYZ_URI}|$ready_uri|g" \
+        -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
         -e "s|\${ROUTER_POOL_SLOTS}|$ROUTER_POOL_SLOTS|g" \
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_PORT}|$ROUTER_PORT|g" \
         -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
+        -e "s|\${SERVER_STATE}|$server_state|g" \
         "$BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
 
-render_router_backend versiond_router_coarse /readyz
+render_router_backend versiond_router_coarse \
+    'http-check send meth GET uri /readyz' ''
 
 printf '%s\n%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" "${VERSIOND_VERSIONS:-}" \
     | tr ',;' '  ' | tr -s ' ' '\n' | while read -r version; do
@@ -155,12 +178,35 @@ printf '%s\n%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" "${VERSIOND_VERSIONS:-}" \
         backend=$(backend_name "$version")
         encoded=$(urlencode "$version")
         printf '%s %s\n' "$version" "$backend" >> "$VERSION_MAP"
-        render_router_backend "$backend" "/readyz?version=$encoded"
+        printf 'version=%s %s\n' "$encoded" "$backend" >> "$READY_VERSION_MAP"
+        render_router_backend "$backend" \
+            "http-check send meth GET uri /readyz?version=$encoded" ''
         printf '%s\n' \
             "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded } { nbsrv($backend) gt 0 }" \
             "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded }" \
             >> "$VERSION_READY_RULES_FILE"
     done
+
+index=1
+while [ "$index" -le "$VERSION_CAPACITY" ]; do
+    backend="versiond_routers_dynamic_$index"
+    printf '%s %s\n' "$backend" __unassigned__ >> "$SLOT_MAP"
+    render_router_backend "$backend" \
+        "http-check send meth GET uri-lf /readyz?version=%[be_name,map($SLOT_MAP)]" \
+        disabled
+    index=$((index + 1))
+done
+
+if [ -n "$CATALOG_URL" ]; then
+    UNDECLARED_VERSION_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-in-governance-catalog\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($VERSION_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSION_MAP) -m found }"
+elif [ -s "$VERSION_MAP" ]; then
+    UNDECLARED_VERSION_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared\" if { var(txn.ver) -m reg . } !versionless_request !{ var(txn.ver),map_str($VERSION_MAP) -m found }"
+    DYNAMIC_READY_GUARD="http-request return status 503 content-type \"text/plain\" string \"version-is-not-declared-or-ready\" if { path /readyz } { url_param(version) -m found } !{ query,map_str($READY_VERSION_MAP) -m found }"
+else
+    UNDECLARED_VERSION_GUARD="# No version catalog: use the coarse router pool."
+    DYNAMIC_READY_GUARD="# Dynamic version readiness is disabled."
+fi
 
 case "$NGINX_MODE" in
     http)
@@ -194,6 +240,9 @@ sed \
     -e "s|\${POLICY_POOL_HOST}|$POLICY_POOL_HOST|g" \
     -e "s|\${POLICY_POOL_SLOTS}|$POLICY_POOL_SLOTS|g" \
     -e "s|\${VERSION_BACKEND_MAP}|$VERSION_MAP|g" \
+    -e "s|\${READY_VERSION_BACKEND_MAP}|$READY_VERSION_MAP|g" \
+    -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_VERSION_GUARD|g" \
+    -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${VERSIOND_FRONTEND_PORT}|$VERSIOND_FRONTEND_PORT|g" \
     -e "s|\${EDGE_FRONTEND_PORT}|$EDGE_FRONTEND_PORT|g" \
     -e "s|\${POLICY_BIND_ADDRESS}|$POLICY_BIND_ADDRESS|g" \
@@ -219,6 +268,31 @@ sed \
 
 if [ -n "$RENDER_ONLY" ]; then
     exit 0
+fi
+
+run_catalog_reconciler() {
+    while :; do
+        status=0
+        ROUTING_CATALOG_COMPONENT=proxy-router \
+        ROUTING_CATALOG_URL="$CATALOG_URL" \
+        ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
+        ROUTING_CATALOG_VERSION_MAP="$VERSION_MAP" \
+        ROUTING_CATALOG_READY_MAP="$READY_VERSION_MAP" \
+        ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
+        ROUTING_CATALOG_BACKEND_PREFIX=versiond_routers_dynamic_ \
+        ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \
+        ROUTING_CATALOG_SERVER_PREFIX=router \
+        ROUTING_CATALOG_SERVER_CAPACITY="$ROUTER_POOL_SLOTS" \
+        ROUTING_CATALOG_POLL_SECONDS="$CATALOG_POLL" \
+        ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="$CATALOG_FETCH_TIMEOUT" \
+            /usr/local/lib/router-runtime/catalog-reconciler || status=$?
+        echo "proxy-router: catalog reconciler exited with status $status; restarting" >&2
+        sleep 1
+    done
+}
+
+if [ -n "$CATALOG_URL" ]; then
+    run_catalog_reconciler &
 fi
 
 exec "$HAPROXY_BIN" -W -db -f "$OUT"

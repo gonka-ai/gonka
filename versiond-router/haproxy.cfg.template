@@ -1,19 +1,20 @@
 # Sticky router for N versiond instances.
 #
 # Backends:
-#   versiond_pool_<v> — one per version in VERSIOND_VERSIONS. Membership is the
-#                      whole pool; health is "can you serve <v>", asked of each
-#                      host. A host missing one version leaves that version's
-#                      ring and keeps serving the rest.
+#   versiond_pool_<v> / versiond_dynamic_<n> — bootstrap and governance
+#                      versions. Membership is the whole pool; health is "can
+#                      you serve <v>", asked of each host. A host missing one
+#                      version leaves that ring and keeps serving the rest.
 #   versiond_ha_pool — the same pool asked the coarse "can you serve at all",
 #                      used for versions the router has not been told about
 #   versiond_legacy_<v> — one per version listed in non_ha.map; each asks the
 #                         per-version question of the single host that owns its
 #                         pre-HA SQLite session data
 #
-# Pool membership comes from DNS, health comes from active checks. Neither
-# requires a reload: adding a replica publishes another A record, and a draining
-# host fails /readyz. There is no router-side state to keep in sync.
+# Pool membership comes from DNS, version names from governance, and health from
+# active checks. None requires a reload: adding a replica publishes another A
+# record, a new version is projected into an inert backend, and a draining host
+# fails /readyz. No state is shared between router replicas.
 #
 # Failover: retry on connect failure, empty response, or upstream 502. Never on
 # 503 — that is the drain and HA-storage-guard answer, and retrying it would hit
@@ -24,6 +25,9 @@ global
     log stdout format raw local0 info
     # Admin socket only; no TCP bind, so it cannot be published by accident.
     stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
+    # The catalog reconciler is the only writer. Keeping a distinct mode-600
+    # socket preserves the read-only contract of the diagnostic Runtime API.
+    stats socket /var/run/haproxy/reconciler.sock mode 600 level admin
     stats timeout 30s
 
 defaults
@@ -140,6 +144,11 @@ frontend router_admin
     mode http
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
 ${ROUTER_READY_RULES}
+    ${DYNAMIC_READY_GUARD}
+    use_backend %[query,map_str(${READY_VERSIONS_MAP})] if { path /readyz } { query,map_str(${READY_VERSIONS_MAP}) -m found }
+    default_backend router_admin_not_found
+
+backend router_admin_not_found
     http-request return status 404 content-type text/plain string "not found\n"
 
 frontend metrics

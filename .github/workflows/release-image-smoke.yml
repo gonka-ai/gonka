@@ -35,6 +35,7 @@ on:
       - proxy/entrypoint.sh
       - proxy/nginx.unified.conf.template
       - proxy-router/**
+      - router-runtime/**
       - versiond-router/Dockerfile
       - versiond-router/entrypoint.sh
       - versiond-router/haproxy.cfg.template
@@ -81,7 +82,9 @@ jobs:
             deploy/join/enable-router-ha_test.sh \
             deploy/join/versiond-router-fleet.sh \
             deploy/join/versiond-router-fleet_test.sh \
-            deploy/join/versiond-compose-config_test.sh
+            deploy/join/versiond-compose-config_test.sh \
+            router-runtime/catalog-reconciler \
+            router-runtime/catalog-status
           deploy/join/legacy-router-upgrade-barrier_test.sh
           deploy/join/devshard-v5-release-contract_test.sh
           deploy/join/devshard-v5-release-gate_test.sh
