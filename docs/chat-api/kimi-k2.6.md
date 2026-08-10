@@ -53,7 +53,7 @@ Accepted values for `thinking.type`:
 
 Sibling `display` field (Claude Code UI hint, e.g. `"summarized"`) is silent-stripped because it has no vLLM semantics — the value never reaches the chat template.
 
-Pre-existing `chat_template_kwargs.thinking` wins on conflict (no overwrite of explicit caller intent).
+Pre-existing `chat_template_kwargs.thinking` wins on conflict (no overwrite of explicit caller intent) — with one exception: `max_tokens < 256` force-zeroes the budget and overwrites the kwarg to `false`, the same force the budget itself is set with. A template still asking to think with a zero budget produces the empty-content burn the force-zero exists to prevent, so the two must move together ([why](troubleshooting.md#kimi-empty-content-think-burn)).
 
 **`thinking:disabled` does NOT zero out `thinking_token_budget`.** Kimi-K2.6 empirically ignores the disable hint on hard prompts (math, code) and still emits a `<think>` block ([PR #1202 live measurements](https://github.com/gonka-ai/gonka/pull/1202)), so the validator keeps `ttb = max_tokens / 2` as a safety net — without it, the model burns the entire `max_tokens` on hidden reasoning and the client gets empty content. If the model ever honors the disable hint cleanly, the unused budget has no downside. To genuinely opt out of thinking, send `thinking_token_budget: 0` explicitly — the validator preserves client-set zero. Sending `max_tokens < 256` also force-zeroes ttb (see [troubleshooting](troubleshooting.md#kimi-empty-content-think-burn)).
 </details>

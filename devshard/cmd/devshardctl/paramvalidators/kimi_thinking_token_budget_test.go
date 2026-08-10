@@ -41,10 +41,16 @@ func TestKimiThinkingTokenBudgetValidator(t *testing.T) {
 		require.Equal(t, map[string]any{"thinking": false}, doc["chat_template_kwargs"])
 	})
 
-	t.Run("a client that asked to think keeps its own template answer", func(t *testing.T) {
+	t.Run("force-zero overrules a client that asked to think", func(t *testing.T) {
 		doc := parseDocument(t, `{"max_tokens":144,"chat_template_kwargs":{"thinking":true}}`)
 		require.NoError(t, v.Validate(ctx(doc)))
-		require.Equal(t, map[string]any{"thinking": true}, doc["chat_template_kwargs"])
+		require.Equal(t, map[string]any{"thinking": false}, doc["chat_template_kwargs"])
+	})
+
+	t.Run("force-zero leaves the caller's other template kwargs alone", func(t *testing.T) {
+		doc := parseDocument(t, `{"max_tokens":144,"chat_template_kwargs":{"thinking":true,"enable_thinking":true}}`)
+		require.NoError(t, v.Validate(ctx(doc)))
+		require.Equal(t, map[string]any{"thinking": false, "enable_thinking": true}, doc["chat_template_kwargs"])
 	})
 
 	t.Run("above the threshold the template is left alone", func(t *testing.T) {

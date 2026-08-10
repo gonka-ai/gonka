@@ -22,9 +22,9 @@ func (v KimiThinkingTokenBudgetValidator) Validate(vctx ValidatorContext) error 
 	}
 	if v.ForceZeroBelowMaxTokens > 0 && maxTokens < v.ForceZeroBelowMaxTokens {
 		vctx.Document["thinking_token_budget"] = uint64(0)
-		// The budget alone is a vLLM logits processor, which speculative decoding discards; the
-		// template branch does not depend on one.
-		return mirrorThinkingToTemplateKwargs(vctx.Document, false)
+		// The budget alone is a logits processor that speculative decoding discards, so the template
+		// has to be silenced too — and with the same force, or a caller's thinking:true survives it.
+		return silenceThinkingInTemplateKwargs(vctx.Document)
 	}
 	if _, exists := vctx.Document["thinking_token_budget"]; !exists && v.DefaultDivisor > 0 {
 		vctx.Document["thinking_token_budget"] = maxTokens / v.DefaultDivisor

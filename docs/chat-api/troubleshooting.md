@@ -463,7 +463,7 @@ Every parameter that is stripped / rejected / normalized at the gateway is docum
 **What**: on Kimi-K2.6, small `max_tokens` requests can return `finish_reason=length` with `content=null`. The gateway also reshapes inbound requests:
 - `max_tokens` and `max_completion_tokens` are floored to **16** ([PR #1227](https://github.com/gonka-ai/gonka/pull/1227)).
 - `thinking_token_budget` is resolved by a single validator with this precedence:
-  1. `max_tokens < 256` → force `thinking_token_budget = 0` (bypass thinking entirely), overriding the client value, **and** set `chat_template_kwargs.thinking = false` unless the client set it. A client that asked to think keeps its own answer.
+  1. `max_tokens < 256` → force `thinking_token_budget = 0` (bypass thinking entirely), overriding the client value, **and** overwrite `chat_template_kwargs.thinking = false` with the same force. A client that asked to think is overruled on both: a zero budget with a template still asking to think is exactly the burn this rule prevents, and under speculative decoding the template is the only half that survives.
   2. Otherwise, if `thinking_token_budget` is absent, default to `max_tokens / 2`.
   3. Cap at `96_000` (Moonshot HLE/AIME budget).
   4. Clamp to `max_tokens − 64` so visible content always has headroom after `</think>`.
