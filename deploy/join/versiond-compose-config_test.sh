@@ -78,10 +78,17 @@ proxy = defaults_config["services"]["proxy"]
 policy = defaults_config["services"]["proxy-policy"]
 if "versiond-router-front" not in proxy["networks"]:
     raise SystemExit("public HAProxy is not attached to the router front network")
-if policy["environment"].get("VERSIOND_SERVICE_NAME") != "proxy":
+if policy["environment"].get("VERSIOND_SERVICE_NAME") != "proxy-policy-ingress":
     raise SystemExit("nginx policy workers do not use the public HAProxy distributor")
 if policy["environment"].get("VERSIOND_SERVICE_IS_ABSOLUTE") != "true":
     raise SystemExit("the internal HAProxy service name can still receive KEY_NAME prefixing")
+if policy["environment"].get("PROXY_PROTOCOL_PEER") != "proxy-policy-ingress":
+    raise SystemExit("nginx policy workers do not derive trust from the private ingress peer")
+if "proxy-policy-front" not in policy["networks"] or "proxy-policy-front" not in proxy["networks"]:
+    raise SystemExit("public HAProxy and policy workers do not share the isolated front network")
+for network in ("versiond-router-front", "versiond-router-back"):
+    if not defaults_config["networks"][network].get("external"):
+        raise SystemExit(f"router fleet network {network} is still owned by main Compose")
 
 defaults = proxy["environment"]
 cleared = cleared_config["services"]["proxy"]["environment"]

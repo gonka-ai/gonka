@@ -23,7 +23,7 @@
 global
     log stdout format raw local0 info
     # Admin socket only; no TCP bind, so it cannot be published by accident.
-    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
     stats timeout 30s
 
 defaults
@@ -100,9 +100,11 @@ frontend versiond_in
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 
-    http-request set-header X-Forwarded-Proto %[ssl_fc,iif(https,http)]
-    # Overwritten, never trusted from the client: it names the immediate peer.
-    http-request set-header X-Real-IP %[src]
+    # The private parent distributor accepts only traffic returned by the nginx
+    # policy tier. Preserve its client-derived headers and provide conservative
+    # defaults only for direct private-network probes.
+    http-request set-header X-Forwarded-Proto http if !{ req.hdr(X-Forwarded-Proto) -m found }
+    http-request set-header X-Real-IP %[src] if !{ req.hdr(X-Real-IP) -m found }
 
     # Reject an advertised oversize body before opening an upstream connection.
     # HAProxy streams rather than buffers bodies, so devshardd independently

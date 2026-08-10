@@ -12,7 +12,7 @@
 
 global
     log stdout format raw local0 info
-    stats socket /var/run/haproxy/haproxy.sock mode 660 level admin
+    stats socket /var/run/haproxy/haproxy.sock mode 660 level operator
     stats timeout 30s
 
 defaults
@@ -44,35 +44,43 @@ frontend public_http
     mode tcp
     option tcplog
     bind :80
+    timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_http
 
 frontend public_https
     mode tcp
     option tcplog
     bind :443
+    timeout client ${PUBLIC_IDLE_SECONDS}s
     default_backend policy_https
 
 backend policy_http
     mode tcp
     balance source
     hash-type consistent
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2
+    option redispatch
+    retries 2
+    timeout server ${PUBLIC_IDLE_SECONDS}s
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:80 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 backend policy_https
     mode tcp
     balance source
     hash-type consistent
-    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr send-proxy-v2
+    option redispatch
+    retries 2
+    timeout server ${PUBLIC_IDLE_SECONDS}s
+    server-template policy ${POLICY_POOL_SLOTS} ${POLICY_POOL_HOST}:443 check inter 1s fall 2 rise 2 resolvers docker init-addr none init-state up hash-key addr send-proxy-v2
 
 frontend versiond_router_in
     option httplog
-    bind :${VERSIOND_FRONTEND_PORT}
+    bind ${POLICY_BIND_ADDRESS}:${VERSIOND_FRONTEND_PORT}
     maxconn ${MAX_CONNECTIONS}
 
     http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
-    http-request set-header X-Forwarded-Proto %[req.hdr(X-Forwarded-Proto),lower]
-    http-request set-header X-Real-IP %[src]
+    # The policy worker has already derived these from its trusted PROXY peer.
+    # Preserve them; src here is only the policy container.
 
     acl versionless_request var(txn.canonpath) -m reg ^/(healthz|readyz|metrics)$|^/stats(/|$)|^/sessions/[^/]+/(diffs|mempool|signatures)$
     use_backend %[var(txn.ver),map_str(${VERSION_BACKEND_MAP})] if !versionless_request { var(txn.ver),map_str(${VERSION_BACKEND_MAP}) -m found }
@@ -82,9 +90,9 @@ ${VERSIOND_ROUTER_BACKENDS}
 
 frontend edge_api_in
     option httplog
-    bind :${EDGE_FRONTEND_PORT}
+    bind ${POLICY_BIND_ADDRESS}:${EDGE_FRONTEND_PORT}
     maxconn ${MAX_CONNECTIONS}
-    http-request set-header X-Real-IP %[src]
+    # Preserve X-Real-IP and X-Forwarded-Proto set by the policy worker.
     default_backend edge_api_pool
 
 backend edge_api_pool
@@ -102,11 +110,9 @@ backend edge_api_pool
 
 frontend admin
     option httplog
-    bind :${ADMIN_PORT}
+    bind 127.0.0.1:${ADMIN_PORT}
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
 ${ADMIN_READY_RULES}
-    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(policy_http) gt 0 }
-    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
     http-request return status 404 content-type text/plain string "not found\n"
 
 frontend metrics

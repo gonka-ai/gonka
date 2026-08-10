@@ -23,7 +23,25 @@ ADMIN_PORT="${PROXY_ROUTER_ADMIN_PORT:-8404}"
 MAX_CONNECTIONS="${PROXY_ROUTER_MAX_CONNECTIONS:-8192}"
 CONNECT_TIMEOUT="${PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS:-2}"
 STREAM_IDLE="${PROXY_ROUTER_STREAM_IDLE_SECONDS:-1200}"
+PUBLIC_IDLE="${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}"
 NGINX_MODE="${NGINX_MODE:-http}"
+POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
+
+resolve_ipv4() {
+    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+}
+
+if [ -n "$POLICY_BIND_HOST" ]; then
+    POLICY_BIND_ADDRESS=$(resolve_ipv4 "$POLICY_BIND_HOST")
+    case "$POLICY_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "proxy-router: cannot resolve policy bind host '$POLICY_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+else
+    POLICY_BIND_ADDRESS=0.0.0.0
+fi
 
 bool_env() {
     raw=$(eval "printf '%s' \"\${$1:-}\"")
@@ -50,7 +68,7 @@ done
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$EDGE_POOL_SLOTS" "$EDGE_API_PORT" \
     "$VERSIOND_FRONTEND_PORT" "$EDGE_FRONTEND_PORT" "$ADMIN_PORT" \
-    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE"; do
+    "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE"; do
     case "$value" in
         '' | *[!0-9]*)
             echo "proxy-router: invalid numeric setting '$value'" >&2
@@ -148,16 +166,19 @@ case "$NGINX_MODE" in
     http)
         cat > "$ADMIN_RULES_FILE" <<'EOF'
     http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(policy_http) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
 EOF
         ;;
     https)
         cat > "$ADMIN_RULES_FILE" <<'EOF'
     http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(policy_https) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
 EOF
         ;;
     both)
         cat > "$ADMIN_RULES_FILE" <<'EOF'
     http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(policy_http) gt 0 } { nbsrv(policy_https) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
 EOF
         ;;
 esac
@@ -175,6 +196,7 @@ sed \
     -e "s|\${VERSION_BACKEND_MAP}|$VERSION_MAP|g" \
     -e "s|\${VERSIOND_FRONTEND_PORT}|$VERSIOND_FRONTEND_PORT|g" \
     -e "s|\${EDGE_FRONTEND_PORT}|$EDGE_FRONTEND_PORT|g" \
+    -e "s|\${POLICY_BIND_ADDRESS}|$POLICY_BIND_ADDRESS|g" \
     -e "s|\${EDGE_POOL_HOST}|$EDGE_POOL_HOST|g" \
     -e "s|\${EDGE_POOL_SLOTS}|$EDGE_POOL_SLOTS|g" \
     -e "s|\${EDGE_API_PORT}|$EDGE_API_PORT|g" \
@@ -182,6 +204,7 @@ sed \
     -e "s|\${MAX_CONNECTIONS}|$MAX_CONNECTIONS|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
+    -e "s|\${PUBLIC_IDLE_SECONDS}|$PUBLIC_IDLE|g" \
     -e "/\${VERSIOND_ROUTER_BACKENDS}/{
         r $BACKENDS_FILE
         d

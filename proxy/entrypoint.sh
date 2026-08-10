@@ -99,13 +99,50 @@ export PROXY_REAL_IP_FROM=${PROXY_REAL_IP_FROM:-""}
 export PROXY_REAL_IP_HEADER=${PROXY_REAL_IP_HEADER:-"X-Forwarded-For"}
 export PROXY_REAL_IP_RECURSIVE=${PROXY_REAL_IP_RECURSIVE:-"off"}
 export PROXY_PROTOCOL="${PROXY_PROTOCOL:-false}"
-export PROXY_PROTOCOL_TRUSTED_FROM="${PROXY_PROTOCOL_TRUSTED_FROM:-0.0.0.0/0}"
+export PROXY_PROTOCOL_TRUSTED_FROM="${PROXY_PROTOCOL_TRUSTED_FROM:-}"
+export PROXY_PROTOCOL_PEER="${PROXY_PROTOCOL_PEER:-}"
+export PROXY_PROTOCOL_BIND_ADDRESS="${PROXY_PROTOCOL_BIND_ADDRESS:-}"
 REAL_IP_CONFIG=""
 
 if [ "$PROXY_PROTOCOL" = "true" ]; then
-    # This listener is private and reachable only through proxy-router. HAProxy
-    # carries the original peer in PROXY v2, avoiding an X-Forwarded-For trust
-    # decision at the public boundary.
+    if [ -n "$PROXY_PROTOCOL_PEER" ]; then
+        peer_ip=
+        attempt=0
+        while [ "$attempt" -lt 30 ] && [ -z "$peer_ip" ]; do
+            peer_ip=$(getent ahostsv4 "$PROXY_PROTOCOL_PEER" 2>/dev/null | awk 'NR == 1 { print $1 }')
+            [ -n "$peer_ip" ] || sleep 1
+            attempt=$((attempt + 1))
+        done
+        [ -n "$peer_ip" ] || {
+            echo "cannot resolve PROXY_PROTOCOL_PEER=$PROXY_PROTOCOL_PEER" >&2
+            exit 1
+        }
+        peer_route=$(ip -4 route get "$peer_ip")
+        peer_interface=$(printf '%s\n' "$peer_route" | awk '{ for (i = 1; i <= NF; i++) if ($i == "dev") { print $(i + 1); exit } }')
+        peer_source=$(printf '%s\n' "$peer_route" | awk '{ for (i = 1; i <= NF; i++) if ($i == "src") { print $(i + 1); exit } }')
+        [ -n "$peer_interface" ] && [ -n "$peer_source" ] || {
+            echo "cannot derive the private PROXY route for $PROXY_PROTOCOL_PEER ($peer_ip)" >&2
+            exit 1
+        }
+        peer_network=$(ip -4 route show dev "$peer_interface" scope link | awk '$1 ~ /\// { print $1; exit }')
+        [ -n "$peer_network" ] || {
+            echo "cannot derive the private PROXY network for $PROXY_PROTOCOL_PEER ($peer_ip)" >&2
+            exit 1
+        }
+        : "${PROXY_PROTOCOL_BIND_ADDRESS:=$peer_source}"
+        : "${PROXY_PROTOCOL_TRUSTED_FROM:=$peer_network}"
+        export PROXY_PROTOCOL_BIND_ADDRESS PROXY_PROTOCOL_TRUSTED_FROM
+    fi
+    [ -n "$PROXY_PROTOCOL_BIND_ADDRESS" ] || {
+        echo "PROXY_PROTOCOL_BIND_ADDRESS or PROXY_PROTOCOL_PEER is required when PROXY_PROTOCOL=true" >&2
+        exit 1
+    }
+    [ -n "$PROXY_PROTOCOL_TRUSTED_FROM" ] || {
+        echo "PROXY_PROTOCOL_TRUSTED_FROM or PROXY_PROTOCOL_PEER is required when PROXY_PROTOCOL=true" >&2
+        exit 1
+    }
+    # Bind only to the private policy-front interface. The trusted CIDR is that
+    # same Docker network, whose only non-policy member is proxy-router.
     REAL_IP_CONFIG="set_real_ip_from ${PROXY_PROTOCOL_TRUSTED_FROM};
         real_ip_header proxy_protocol;"
 elif [ -n "$PROXY_REAL_IP_FROM" ]; then
@@ -449,7 +486,7 @@ fi
 # Prepare template vars for unified config
 if [ "$ENABLE_HTTP" = "true" ]; then
     if [ "$PROXY_PROTOCOL" = "true" ]; then
-        export LISTEN_HTTP="listen 80 proxy_protocol;"
+        export LISTEN_HTTP="listen ${PROXY_PROTOCOL_BIND_ADDRESS}:80 proxy_protocol;"
     else
         export LISTEN_HTTP="listen 80;"
     fi
@@ -459,7 +496,7 @@ fi
 
 if [ "$ENABLE_HTTPS" = "true" ]; then
     if [ "$PROXY_PROTOCOL" = "true" ]; then
-        HTTPS_LISTEN="listen 443 ssl proxy_protocol;"
+        HTTPS_LISTEN="listen ${PROXY_PROTOCOL_BIND_ADDRESS}:443 ssl proxy_protocol;"
     else
         HTTPS_LISTEN="listen 443 ssl;"
     fi

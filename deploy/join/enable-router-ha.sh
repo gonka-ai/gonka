@@ -4,12 +4,11 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
-docker_bin=${DOCKER_BIN:-docker}
-fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 versiond_mode=auto
 edge_mode=auto
 rollback_pending=false
 rollback_image=
+declare -A inherited_env=()
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -56,10 +55,23 @@ done
 case $versiond_mode in auto | single | ha) ;; *) fail "invalid versiond mode" ;; esac
 case $edge_mode in auto | single | multi) ;; *) fail "invalid edge-api mode" ;; esac
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
+while IFS= read -r name; do
+    case $name in
+        GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+            inherited_env[$name]=${!name}
+            ;;
+    esac
+done < <(compgen -e)
 set -a
 # shellcheck disable=SC1090
 source "$config_env"
 set +a
+for name in "${!inherited_env[@]}"; do
+    printf -v "$name" '%s' "${inherited_env[$name]}"
+    export "${name?}"
+done
+docker_bin=${DOCKER_BIN:-docker}
+fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
@@ -94,40 +106,47 @@ compose=(
 if [[ $versiond_mode == ha ]]; then
     compose+=(-f "$script_dir/docker-compose.versiond.yml")
 fi
-if [[ $edge_mode == multi ]]; then
-    compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
-fi
 
 ensure_compose_network() {
     local key=$1 name=$2 project=$3 ownership
     if "$docker_bin" network inspect "$name" >/dev/null 2>&1; then
         ownership=$("$docker_bin" network inspect --format \
-            '{{index .Labels "com.docker.compose.network"}}|{{index .Labels "com.docker.compose.project"}}' \
+            '{{or (index .Labels "com.docker.compose.network") ""}}|{{or (index .Labels "com.docker.compose.project") ""}}' \
             "$name")
         [[ $ownership == "$key|$project" ]] || fail \
             "network $name exists with ownership '$ownership', expected '$key|$project'"
         return 0
     fi
-    "$docker_bin" network create \
+    "$docker_bin" network create --internal \
         --label "com.docker.compose.network=$key" \
         --label "com.docker.compose.project=$project" \
         "$name" >/dev/null
 }
+if [[ $edge_mode == multi ]]; then
+    compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
+fi
 
 pull_policy=${ROUTER_HA_PULL_POLICY:-always}
 case $pull_policy in always | missing | never) ;; *) fail "ROUTER_HA_PULL_POLICY must be always, missing, or never" ;; esac
 cutover_timeout=${ROUTER_HA_CUTOVER_TIMEOUT_SECONDS:-60}
 case $cutover_timeout in '' | *[!0-9]* | 0) fail "ROUTER_HA_CUTOVER_TIMEOUT_SECONDS must be positive" ;; esac
-lock_file=${ROUTER_HA_CUTOVER_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/gonka-router-ha-cutover.lock}
+config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
+lock_file=${ROUTER_HA_CUTOVER_LOCK:-$config_dir/.gonka-router-ha-cutover.lock}
 
 proxy_component() {
     "$docker_bin" inspect --format '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 }
 
 wait_component() {
-    local component=$1
-    "$docker_bin" exec proxy /bin/busybox wget -q -T 3 -O /dev/null \
-        "http://127.0.0.1:8404/readyz?component=$component"
+    local component=$1 deadline=$((SECONDS + cutover_timeout))
+    while ((SECONDS < deadline)); do
+        if "$docker_bin" exec proxy /bin/busybox wget -q -T 3 -O /dev/null \
+            "http://127.0.0.1:8404/readyz?component=$component"; then
+            return 0
+        fi
+        sleep 1
+    done
+    return 1
 }
 
 remove_migration_routers() {
@@ -160,19 +179,36 @@ restore_v4_proxy() {
     exit "$status"
 }
 
-exec 9>"$lock_file"
+if [[ ! -e $lock_file ]]; then
+    (umask 000; : >"$lock_file") || fail "cannot create router HA lock $lock_file"
+fi
+exec 9<"$lock_file"
 flock -n 9 || fail "another router HA cutover holds $lock_file"
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
+compose_project=$("${compose[@]}" config --format json | jq -er '.name')
+policy_network=${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
+ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
-    compose_project=$("${compose[@]}" config --format json | jq -er '.name')
-    ensure_compose_network versiond-router-front \
-        "${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
-        "$compose_project"
-    ensure_compose_network versiond-router-back \
-        "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
-        "$compose_project"
+    GONKA_CONFIG_ENV=$config_env "$fleet_bin" prepare-networks
     GONKA_CONFIG_ENV=$config_env "$fleet_bin" up
+fi
+
+# During the one-time cutover the old public nginx still owns the `proxy`
+# container name. Attach it to the private policy network before starting the
+# workers so they can derive a stable trusted subnet from the future ingress
+# alias. Recreating `proxy` below replaces this endpoint with proxy-router.
+if container_exists proxy; then
+    policy_aliases=$("$docker_bin" inspect --format \
+        "{{with index .NetworkSettings.Networks \"$policy_network\"}}{{range .Aliases}}{{println .}}{{end}}{{end}}" \
+        proxy)
+    if ! grep -Fxq proxy-policy-ingress <<<"$policy_aliases"; then
+        if [[ -n $policy_aliases ]]; then
+            "$docker_bin" network disconnect "$policy_network" proxy
+        fi
+        "$docker_bin" network connect --alias proxy-policy-ingress \
+            "$policy_network" proxy
+    fi
 fi
 
 if [[ $pull_policy != never ]]; then

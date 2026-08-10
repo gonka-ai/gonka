@@ -41,6 +41,7 @@ prod-local/
 /logdy
 /inference-chain/junit-report.xml
 /deploy/**/config.env
+/deploy/**/.gonka-devshard-v5-upgrade-complete
 /deploy/join/devshards/postgres/
 /testermint/reboot.txt
 /local-test-net/node_payload_2.json

@@ -91,6 +91,12 @@ the exact old public nginx image, and switches the public listener to
 singletons. If that cutover fails or is interrupted, the old public nginx is
 recreated from the captured image and the script exits non-zero.
 
+Successful completion writes `.gonka-devshard-v5-upgrade-complete` next to
+`config.env`. That marker is the commit record for application, storage, and
+router cutover together. A later run accepts an already-active `proxy-router`
+only with that marker; the proxy container label alone is not evidence that
+PostgreSQL, versiond, and edge-api were migrated.
+
 The one-time public-listener replacement cannot preserve connections owned by
 the old nginx container because both implementations own the same host ports.
 It is therefore a short, explicit ingress cutover after every application pool
@@ -436,12 +442,16 @@ declare versions up front). The join overlay declares `v4` through `v8`, so an
 approval inside that window needs no router change; extend the list before
 governance moves past it.
 
-Coarse mode is an explicit two-part opt-in. Persist both lines in `config.env`,
-then roll the router fleet:
+Coarse mode is an explicit two-part opt-in and changes the placement-readiness
+source. Persist both lines in `config.env`, then apply it in a maintenance
+window rather than mixing coarse and per-version routers:
 
 ```bash
 export VERSIOND_VERSIONS=""
 export VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+  ./versiond-router-fleet.sh maintenance-rollout
+./enable-router-ha.sh --versiond-mode ha --edge-mode auto
 ```
 
 An empty value is different from an unset value. Removing the first export
@@ -497,10 +507,14 @@ above when upgrading a running v4 node:
 ```bash
 # HA versiond and shared PostgreSQL, with one edge-api.
 source ./config.env && \
+./versiond-router-fleet.sh prepare-networks
+source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
 ./enable-router-ha.sh --versiond-mode ha --edge-mode single
 
 # HA versiond plus the optional multi-instance edge-api pool.
+source ./config.env && \
+./versiond-router-fleet.sh prepare-networks
 source ./config.env && \
 docker compose \
   -f docker-compose.yml \

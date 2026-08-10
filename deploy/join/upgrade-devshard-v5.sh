@@ -4,7 +4,6 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
-docker_bin=${DOCKER_BIN:-docker}
 release_tag=0.2.15-devshard-v5
 operation_id="$(date +%s%N)-$$"
 versiond_mode=auto
@@ -66,6 +65,11 @@ esac
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
 # shellcheck disable=SC1090
 source "$config_env"
+config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
+docker_bin=${DOCKER_BIN:-docker}
+fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
+enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
+upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
@@ -152,8 +156,11 @@ existing_proxy_component=$(
         '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 )
 if [[ $existing_proxy_component == proxy-router ]]; then
+    if [[ ! -f $upgrade_marker || $(<"$upgrade_marker") != "$release_tag" ]]; then
+        fail "router HA is active, but application/storage upgrade $release_tag has no commit marker at $upgrade_marker; the proxy label alone does not prove that versiond, edge-api, and PostgreSQL were migrated"
+    fi
     echo "The v5 router HA topology is already active; converging it idempotently"
-    "$script_dir/enable-router-ha.sh" \
+    "$enable_router_bin" \
         --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
     echo "Devshard v5 upgrade already completed"
     exit 0
@@ -171,6 +178,10 @@ fi
 if [[ $edge_mode == multi ]]; then
     compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
     compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
+fi
+
+if [[ $versiond_mode == ha ]]; then
+    GONKA_CONFIG_ENV=$config_env "$fleet_bin" prepare-networks
 fi
 
 declare -A image_variables=(
@@ -896,7 +907,7 @@ fi
 cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
-        run_interruptible "$script_dir/enable-router-ha.sh" \
+        run_interruptible "$enable_router_bin" \
             --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
         ;;
     false | 0 | no)
@@ -904,4 +915,8 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
         ;;
     *) fail "UPGRADE_ENABLE_ROUTER_HA must be true or false" ;;
 esac
+marker_tmp=$upgrade_marker.tmp.$$
+mkdir -p "$(dirname -- "$upgrade_marker")"
+printf '%s\n' "$release_tag" >"$marker_tmp"
+mv -f "$marker_tmp" "$upgrade_marker"
 echo "Devshard v5 upgrade completed"

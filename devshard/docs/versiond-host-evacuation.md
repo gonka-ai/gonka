@@ -21,7 +21,7 @@ managed by the fleet script:
 | Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
 | Inspect router fleet | `source ./config.env && ./versiond-router-fleet.sh status` | rejects missing, duplicate, or orphan slot ownership |
 | Apply router image or route declarations | persist `config.env`, run `./versiond-router-fleet.sh rollout`, then idempotent `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | replaces one independent slot at a time, rolls back a failed slot, then refreshes the top route map only after the fleet converges |
-| Change legacy pins or placement pool | set `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` for `./versiond-router-fleet.sh maintenance-rollout`, then unset it and refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
+| Change legacy pins, placement pool, or coarse/per-version mode | prefix `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` to `./versiond-router-fleet.sh maintenance-rollout`, then refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told
@@ -120,6 +120,9 @@ failure accounting and command completion.
     Router slots are separate Compose projects, so a normal main-stack `up -d`
     cannot replace the entire fleet. Fleet `up` and `start` also preserve any
     existing slot's image and configuration; only `rollout` may replace it.
+11. The main Compose project consumes, but does not own, the fleet's front/back
+    networks. `versiond-router-fleet.sh prepare-networks` creates them with a
+    stable fleet identity, so main-stack `down` cannot strand stopped slots.
 
 Earlier revisions promised that the last active upstream could not be drained
 away. Nothing enforces that now: stopping a container is a Docker operation and

@@ -53,6 +53,12 @@ class Data(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/readyz":
             return self.reply(200, "ready")
+        if self.path.endswith("/headers"):
+            return self.reply(
+                200,
+                f'{self.headers.get("X-Real-IP", "")}|'
+                f'{self.headers.get("X-Forwarded-Proto", "")}',
+            )
         self.reply(200, name)
 
     def do_POST(self):
@@ -114,9 +120,13 @@ http {
         set_real_ip_from 0.0.0.0/0;
         real_ip_header proxy_protocol;
         location /devshard/ {
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_pass http://proxy-router:18081/;
         }
         location /tier-a/ {
+            proxy_set_header X-Real-IP $remote_addr;
+            proxy_set_header X-Forwarded-Proto $scheme;
             proxy_pass http://proxy-router:18082/;
         }
         location / { return 200 "$hostname:$remote_addr\n"; }
@@ -167,28 +177,45 @@ probe() {
     docker exec gonka-pr-probe curl -fsS --connect-timeout 2 --max-time 5 "$@"
 }
 
+proxy_admin() {
+    docker exec gonka-pr-proxy /bin/busybox wget -q -T 3 -O - \
+        "http://127.0.0.1:8404$1"
+}
+
 for _ in $(seq 60); do
-    if probe http://proxy-router:8404/readyz >/dev/null 2>&1 &&
-        probe 'http://proxy-router:8404/readyz?component=versiond' >/dev/null 2>&1 &&
-        probe 'http://proxy-router:8404/readyz?component=edge-api' >/dev/null 2>&1; then
+    if proxy_admin /readyz >/dev/null 2>&1 &&
+        proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
+        proxy_admin '/readyz?component=edge-api' >/dev/null 2>&1; then
         break
     fi
     sleep 0.25
 done
-probe http://proxy-router:8404/readyz >/dev/null || fail "public policy pool did not become ready"
-probe 'http://proxy-router:8404/readyz?version=v4' >/dev/null \
+proxy_admin /readyz >/dev/null || fail "public policy pool did not become ready"
+proxy_admin '/readyz?version=v4' >/dev/null \
     || fail "top-level v4 readiness did not follow the router pool"
-probe 'http://proxy-router:8404/readyz?version=v5' >/dev/null \
+proxy_admin '/readyz?version=v5' >/dev/null \
     || fail "top-level v5 readiness did not follow the router pool"
-unknown_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
-    -w '%{http_code}' 'http://proxy-router:8404/readyz?version=v9')
-[[ $unknown_status == 404 ]] || fail \
-    "unknown top-level version readiness returned $unknown_status, want 404"
+unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
+    'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
+[[ $unknown_response == *'404 Not Found'* ]] || fail \
+    "unknown top-level version readiness did not return 404"
 
 policy=$(probe http://proxy-router/)
 case "$policy" in policy-a:* | policy-b:*) ;; *) fail "public TCP frontend returned '$policy'" ;; esac
 selected=${policy%%:*}
 docker stop "gonka-pr-$selected" >/dev/null
+
+# The first request after a worker disappears reaches HAProxy before the active
+# check necessarily updates. TCP redispatch must move this non-idempotent POST
+# before any application bytes are accepted, and execute it exactly once.
+failover_before=$(probe http://gonka-pr-router-b:8404/count)
+failover_response=$(probe -X POST -H 'Content-Type: application/json' \
+    -d request=first-after-stop \
+    http://proxy-router/devshard/v5/sessions/policy-failover/chat)
+failover_after=$(probe http://gonka-pr-router-b:8404/count)
+[[ $failover_response == b:* && $((failover_after - failover_before)) == 1 ]] \
+    || fail "first POST after policy loss was dropped or replayed"
+
 for _ in $(seq 30); do
     next=$(probe http://proxy-router/ 2>/dev/null || true)
     if [[ -n $next && $next != "$policy" ]]; then
@@ -209,6 +236,11 @@ full_response=$(probe -X POST -H 'Content-Type: application/json' -d request=ful
 full_after=$(probe http://gonka-pr-router-b:8404/count)
 [[ $full_response == b:* && $((full_after - full_before)) == 1 ]] \
     || fail "public POST was not executed exactly once through both HAProxy layers"
+probe_ip=$(docker inspect -f \
+    "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-probe)
+[[ $(probe http://proxy-router/devshard/v5/sessions/full-path/headers) == "$probe_ip|http" ]] \
+    || fail "client IP or forwarded protocol was overwritten after nginx policy"
 case $(probe http://proxy-router/tier-a/status) in
     edge-a | edge-b) ;;
     *) fail "public Tier A path did not reach the direct edge-api pool" ;;

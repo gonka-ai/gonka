@@ -94,17 +94,24 @@ VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
 VERSIOND_ROUTER_MIN_READY=2
 VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS=10
 VERSIOND_ROUTER_START_TIMEOUT_SECONDS=30
-VERSIOND_ROUTER_FLEET_LOCK=$tmpdir/fleet.lock
 VERSIOND_ROUTER_PULL_POLICY=missing
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=false
+PROXY_ROUTER_CONTAINER=gonka-router-fleet-proxy-$suffix
 VERSIOND_NON_HA_VERSIONS=
 VERSIOND_VERSIONS=v4
 EOF
+fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
 
-cat >"$tmpdir/main.yml" <<'EOF'
+cat >"$tmpdir/main.yml" <<EOF
 services:
   unrelated:
     image: alpine:3.21
     command: ["sleep", "300"]
+    networks: [front]
+networks:
+  front:
+    name: $front
+    external: true
 EOF
 
 cat >"$tmpdir/bad-router-entrypoint.sh" <<'EOF'
@@ -135,8 +142,15 @@ COPY bad-router-entrypoint.sh /usr/local/bin/bad-router-entrypoint.sh
 ENTRYPOINT ["/usr/local/bin/bad-router-entrypoint.sh"]
 EOF
 
-docker network create "$front" >/dev/null
-docker network create "$back" >/dev/null
+"${fleet[@]}" prepare-networks
+[[ $(docker network inspect --format \
+    '{{index .Labels "ai.gonka.component"}}|{{index .Labels "ai.gonka.fleet"}}|{{index .Labels "ai.gonka.network-role"}}' \
+    "$front") == "versiond-router-network|$fleet_id|front" ]] || fail \
+    "front network does not carry stable fleet ownership"
+[[ $(docker network inspect --format \
+    '{{index .Labels "ai.gonka.component"}}|{{index .Labels "ai.gonka.fleet"}}|{{index .Labels "ai.gonka.network-role"}}' \
+    "$back") == "versiond-router-network|$fleet_id|back" ]] || fail \
+    "back network does not carry stable fleet ownership"
 docker build -q -t "$image" "$script_dir/../../versiond-router" >/dev/null
 docker build -q -t "$bad_image" -f "$tmpdir/bad-router.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$proxy_image" "$script_dir/../../proxy-router" >/dev/null
@@ -145,14 +159,39 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
     -v "$tmpdir/backend.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
 
-fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
 "${fleet[@]}" up >/dev/null
 "${fleet[@]}" status >/dev/null
+
+# The default lock is tied to the deployment config, not to a caller's
+# per-user XDG runtime directory. A second user context must see the same lock.
+lock_file=$tmpdir/.gonka-versiond-router-$fleet_id.lock
+lock_ready=$tmpdir/lock-ready
+lock_release=$tmpdir/lock-release
+chmod 0444 "$lock_file"
+mkfifo "$lock_release"
+(
+    exec 8<"$lock_file"
+    flock 8
+    touch "$lock_ready"
+    read -r _ <"$lock_release"
+) &
+lock_pid=$!
+while [[ ! -f $lock_ready ]]; do sleep 0.05; done
+if XDG_RUNTIME_DIR="$tmpdir/another-user" "${fleet[@]}" status \
+    >"$tmpdir/lock.out" 2>&1; then
+    printf 'release\n' >"$lock_release"
+    wait "$lock_pid"
+    fail "different XDG runtime directories acquired independent fleet locks"
+fi
+printf 'release\n' >"$lock_release"
+wait "$lock_pid"
+grep -q 'another fleet operation holds' "$tmpdir/lock.out" || fail \
+    "contended deployment lock did not identify the active operation"
 
 # Legacy pinning changes the escrow placement function. A mixed rolling fleet
 # is invalid; the explicit maintenance path drains every old router before any
 # router with the new contract becomes visible.
-sed -i 's/^VERSIOND_NON_HA_VERSIONS=$/VERSIOND_NON_HA_VERSIONS=v4/' \
+sed -i 's/^VERSIOND_NON_HA_VERSIONS=$/VERSIOND_NON_HA_VERSIONS="v4 v5"/' \
     "$tmpdir/config.env"
 sed -i 's/^VERSIOND_VERSIONS=v4$/VERSIOND_VERSIONS=/' "$tmpdir/config.env"
 cat >>"$tmpdir/config.env" <<'EOF'
@@ -162,15 +201,16 @@ if "${fleet[@]}" rollout >"$tmpdir/placement-rollout.out" 2>&1; then
     fail "ordinary rollout accepted a mixed placement contract"
 fi
 grep -q 'use maintenance-rollout to avoid mixed escrow placement' \
-    "$tmpdir/placement-rollout.out" || fail \
-    "placement-contract rejection did not explain the safe operation"
+    "$tmpdir/placement-rollout.out" || {
+    cat "$tmpdir/placement-rollout.out" >&2
+    fail "placement-contract rejection did not explain the safe operation"
+}
 if "${fleet[@]}" maintenance-rollout >"$tmpdir/unacked-maintenance.out" 2>&1; then
     fail "maintenance outage was accepted without explicit acknowledgement"
 fi
-cat >>"$tmpdir/config.env" <<'EOF'
-VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true
-EOF
-if "${fleet[@]}" maintenance-rollout >"$tmpdir/maintenance-rollback.out" 2>&1; then
+if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout \
+    >"$tmpdir/maintenance-rollback.out" 2>&1; then
     fail "invalid maintenance candidate unexpectedly started"
 fi
 grep -q 'the exact previous router fleet was restored' \
@@ -179,7 +219,14 @@ grep -q 'the exact previous router fleet was restored' \
 cat >>"$tmpdir/config.env" <<'EOF'
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
 EOF
-"${fleet[@]}" maintenance-rollout >/dev/null
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >/dev/null
+# Removing a route is a valid maintenance target. Only routes declared by the
+# candidate remain postconditions; the removed v5 route must not force rollback.
+sed -i 's/^VERSIOND_NON_HA_VERSIONS="v4 v5"$/VERSIOND_NON_HA_VERSIONS=v4/' \
+    "$tmpdir/config.env"
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >/dev/null
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \
@@ -192,9 +239,9 @@ done
 sed -i 's/^VERSIOND_NON_HA_VERSIONS=v4$/VERSIOND_NON_HA_VERSIONS=/' \
     "$tmpdir/config.env"
 sed -i 's/^VERSIOND_VERSIONS=$/VERSIOND_VERSIONS=v4/' "$tmpdir/config.env"
-"${fleet[@]}" maintenance-rollout >/dev/null
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+    "${fleet[@]}" maintenance-rollout >/dev/null
 sed -i '/^VERSIOND_LEGACY_HOST=versiond-pool$/d' "$tmpdir/config.env"
-sed -i '/^VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true$/d' "$tmpdir/config.env"
 sed -i '/^VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true$/d' "$tmpdir/config.env"
 
 docker run -d --name "gonka-router-fleet-proxy-$suffix" \
@@ -207,11 +254,14 @@ docker run -d --name "gonka-router-fleet-probe-$suffix" \
 probe=(docker exec "gonka-router-fleet-probe-$suffix" curl -fsS \
     --connect-timeout 2 --max-time 10)
 for _ in $(seq 60); do
-    "${probe[@]}" 'http://proxy-router:8404/readyz?version=v4' \
+    docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
+        -q -O /dev/null 'http://127.0.0.1:8404/readyz?version=v4' \
         >/dev/null 2>&1 && break
     sleep 0.25
 done
-"${probe[@]}" 'http://proxy-router:8404/readyz?version=v4' >/dev/null \
+docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
+    -q -O /dev/null 'http://127.0.0.1:8404/readyz?version=v4' \
+    >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
 
 # Start a response that remains attached to one inner router. Its response
@@ -303,6 +353,10 @@ for slot in "${slots[@]}"; do
     [[ $after == "${before[$slot]}" ]] \
         || fail "main Compose convergence recreated router slot $slot"
 done
+docker compose -p "gonka-router-fleet-main-$suffix" \
+    -f "$tmpdir/main.yml" down --timeout 1 >/dev/null
+docker network inspect "$front" >/dev/null || fail \
+    "main Compose down deleted the external router-fleet network"
 
 "${fleet[@]}" stop 0 >/dev/null
 if "${fleet[@]}" status >"$tmpdir/stopped-status.out" 2>&1; then
@@ -320,6 +374,8 @@ grep -q 'only 1 other routers are ready, need 2' "$tmpdir/unsafe.out" \
 # route view after automatic rollback.
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$bad_image|" \
     "$tmpdir/config.env"
+sed -i 's/^VERSIOND_VERSIONS=v4$/VERSIOND_VERSIONS="v4 v5"/' \
+    "$tmpdir/config.env"
 sed -i 's/^VERSIOND_ROUTER_START_TIMEOUT_SECONDS=30$/VERSIOND_ROUTER_START_TIMEOUT_SECONDS=10/' \
     "$tmpdir/config.env"
 if "${fleet[@]}" rollout >"$tmpdir/rollback.out" 2>&1; then
@@ -329,6 +385,17 @@ if ! grep -q 'slot 0 restored; rollout stopped' "$tmpdir/rollback.out"; then
     cat "$tmpdir/rollback.out" >&2
     fail "failed candidate did not complete route-aware automatic rollback"
 fi
+sed -i 's/^VERSIOND_VERSIONS="v4 v5"$/VERSIOND_VERSIONS=v4/' \
+    "$tmpdir/config.env"
+slot_zero=$(docker ps -q \
+    --filter label=ai.gonka.component=versiond-router \
+    --filter "label=ai.gonka.fleet=$fleet_id" \
+    --filter label=ai.gonka.slot=0)
+restored_versions=$(docker inspect --format \
+    '{{range .Config.Env}}{{println .}}{{end}}' "$slot_zero" | \
+    sed -n 's/^VERSIOND_VERSIONS=//p')
+[[ $restored_versions == v4 ]] || fail \
+    "ordinary rollback restored the old image with candidate env '$restored_versions'"
 for slot in "${slots[@]}"; do
     id=$(docker ps -q \
         --filter label=ai.gonka.component=versiond-router \

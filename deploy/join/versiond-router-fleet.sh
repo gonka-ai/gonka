@@ -4,11 +4,13 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
-docker_bin=${DOCKER_BIN:-docker}
 slot_file=$script_dir/versiond-router-slot/docker-compose.yml
 current_slot=
 rollback_image=
 maintenance_active=false
+declare -A inherited_env=()
+declare -A rollback_env=()
+declare -A rollback_routes=()
 declare -A maintenance_images=()
 declare -A maintenance_env=()
 maintenance_required_routes=()
@@ -35,6 +37,7 @@ usage() {
 Usage: versiond-router-fleet.sh COMMAND [ARGS]
 
 Commands:
+  prepare-networks   Create or validate the fleet-owned front/back networks.
   up                 Create missing slots or start existing containers unchanged.
   rollout            Replace slots one at a time, preserving the ready reserve.
   maintenance-rollout
@@ -49,10 +52,22 @@ EOF
 }
 
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
+while IFS= read -r name; do
+    case $name in
+        GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+            inherited_env[$name]=${!name}
+            ;;
+    esac
+done < <(compgen -e)
 set -a
 # shellcheck disable=SC1090
 source "$config_env"
 set +a
+for name in "${!inherited_env[@]}"; do
+    printf -v "$name" '%s' "${inherited_env[$name]}"
+    export "${name?}"
+done
+docker_bin=${DOCKER_BIN:-docker}
 
 project_prefix=${VERSIOND_ROUTER_PROJECT_PREFIX:-gonka-versiond-router}
 fleet_id=${VERSIOND_ROUTER_FLEET_ID:-$project_prefix}
@@ -61,7 +76,8 @@ min_ready=${VERSIOND_ROUTER_MIN_READY:-2}
 drain_timeout=${VERSIOND_ROUTER_DRAIN_TIMEOUT_SECONDS:-1800}
 wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
-lock_file=${VERSIOND_ROUTER_FLEET_LOCK:-${XDG_RUNTIME_DIR:-/tmp}/gonka-versiond-router-$fleet_id.lock}
+config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
+lock_file=${VERSIOND_ROUTER_FLEET_LOCK:-$config_dir/.gonka-versiond-router-$fleet_id.lock}
 operation_id="$(date +%s%N)-$$"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
@@ -99,11 +115,17 @@ normalize_versions() {
 }
 
 placement_contract() {
-    local pool_host=$1 back_network=$2 legacy_host=$3 legacy_versions=$4 normalized
+    local pool_host=$1 back_network=$2 legacy_host=$3 legacy_versions=$4
+    local ha_versions=$5 normalized routing_mode
     normalized=$(normalize_versions "$legacy_versions")
     [[ -n $normalized ]] || legacy_host=
-    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s\n' \
-        "$pool_host" "$back_network" "$legacy_host" "$normalized"
+    if [[ -n $(normalize_versions "$ha_versions") ]]; then
+        routing_mode=per-version
+    else
+        routing_mode=coarse
+    fi
+    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s;routing-mode=%s\n' \
+        "$pool_host" "$back_network" "$legacy_host" "$normalized" "$routing_mode"
 }
 
 candidate_placement_contract() {
@@ -111,7 +133,8 @@ candidate_placement_contract() {
         "${VERSIOND_POOL_HOST:-versiond-pool}" \
         "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
         "${VERSIOND_LEGACY_HOST:-versiond}" \
-        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}"
+        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
+        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}"
 }
 
 slot_compose() {
@@ -187,6 +210,98 @@ slot_route_declared() {
     return 1
 }
 
+slot_front_ip() {
+    local id network
+    id=$(slot_id "$1") || return 1
+    network=${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+    "$docker_bin" inspect --format \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "$id"
+}
+
+parent_proxy_active() {
+    local parent=${PROXY_ROUTER_CONTAINER:-proxy} component
+    component=$("$docker_bin" inspect --format \
+        '{{or (index .Config.Labels "ai.gonka.component") ""}}' \
+        "$parent" 2>/dev/null) || return 1
+    [[ $component == proxy-router ]]
+}
+
+parent_diagnostic_available() {
+    local parent=${PROXY_ROUTER_CONTAINER:-proxy}
+    parent_proxy_active || return 1
+    "$docker_bin" exec "$parent" test -x \
+        /usr/local/lib/proxy-router/route-status >/dev/null 2>&1
+}
+
+require_parent_diagnostic() {
+    parent_proxy_active || return 1
+    parent_diagnostic_available || fail \
+        "active parent proxy has no route-status diagnostic; update proxy-router before rolling the inner fleet"
+}
+
+parent_route_admitted() {
+    local route=$1 address=$2 parent=${PROXY_ROUTER_CONTAINER:-proxy}
+    if "$docker_bin" exec "$parent" \
+        /usr/local/lib/proxy-router/route-status "$route" "$address" \
+        >/dev/null 2>&1; then
+        return 0
+    else
+        return $?
+    fi
+}
+
+parent_admitted_count() {
+    local route=$1 excluded=${2:-} slot address status count=0
+    for slot in "${slots[@]}"; do
+        [[ $slot == "$excluded" ]] && continue
+        if [[ $route == --coarse ]]; then
+            slot_ready "$slot" || continue
+        else
+            slot_route_ready "$slot" "$route" || continue
+        fi
+        address=$(slot_front_ip "$slot") || continue
+        if parent_route_admitted "$route" "$address"; then
+            ((count += 1))
+        else
+            status=$?
+            if ((status == 3)); then
+                printf 'unknown\n'
+                return 0
+            fi
+        fi
+    done
+    printf '%s\n' "$count"
+}
+
+wait_parent_admission() {
+    local slot=$1 deadline route address state missing
+    parent_proxy_active || return 0
+    require_parent_diagnostic
+    address=$(slot_front_ip "$slot") || return 1
+    deadline=$((SECONDS + wait_timeout))
+    while ((SECONDS < deadline)); do
+        missing=
+        for route in --coarse "${!expected_routes[@]}"; do
+            if [[ $route != --coarse ]] && ! slot_route_ready "$slot" "$route"; then
+                continue
+            fi
+            if parent_route_admitted "$route" "$address"; then
+                continue
+            else
+                state=$?
+            fi
+            ((state == 3)) && continue
+            missing=$route
+            break
+        done
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    echo "versiond-router-fleet: parent proxy did not admit slot $slot for route $missing within ${wait_timeout}s" >&2
+    return 1
+}
+
 ready_count_except() {
     local excluded=${1:-}
     local slot count=0
@@ -208,7 +323,7 @@ route_ready_count() {
 }
 
 require_ready_reserve() {
-    local excluded=$1 route total reserve
+    local excluded=$1 route total reserve parent_reserve
     reserve=$(ready_count_except "$excluded")
     ((reserve >= min_ready)) || fail \
         "refusing to stop slot $excluded: only $reserve other routers are ready, need $min_ready"
@@ -218,6 +333,19 @@ require_ready_reserve() {
         reserve=$(route_ready_count "$route" "$excluded")
         ((reserve >= min_ready)) || fail \
             "refusing to stop slot $excluded: version $route has only $reserve other ready routers, need $min_ready"
+    done
+    parent_proxy_active || return 0
+    require_parent_diagnostic
+    parent_reserve=$(parent_admitted_count --coarse "$excluded")
+    [[ $parent_reserve == unknown ]] || ((parent_reserve >= min_ready)) || fail \
+        "refusing to stop slot $excluded: parent proxy admits only $parent_reserve other coarse routers, need $min_ready"
+    for route in "${!expected_routes[@]}"; do
+        total=$(route_ready_count "$route")
+        ((total > 0)) || continue
+        parent_reserve=$(parent_admitted_count "$route" "$excluded")
+        [[ $parent_reserve == unknown ]] && continue
+        ((parent_reserve >= min_ready)) || fail \
+            "refusing to stop slot $excluded: parent proxy admits only $parent_reserve other routers for version $route, need $min_ready"
     done
 }
 
@@ -246,6 +374,24 @@ wait_slot_routes() {
     return 1
 }
 
+wait_rollback_routes() {
+    local slot=$1 deadline=$((SECONDS + wait_timeout)) route missing
+    while ((SECONDS < deadline)); do
+        missing=
+        for route in "${!rollback_routes[@]}"; do
+            if (( $(route_ready_count "$route" "$slot") > 0 )) && \
+                ! slot_route_ready "$slot" "$route"; then
+                missing=$route
+                break
+            fi
+        done
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    echo "versiond-router-fleet: restored slot $slot did not recover route $missing within ${wait_timeout}s" >&2
+    return 1
+}
+
 wait_slot_ready() {
     local slot=$1 deadline=$((SECONDS + wait_timeout))
     while ((SECONDS < deadline)); do
@@ -256,14 +402,35 @@ wait_slot_ready() {
     return 1
 }
 
-require_networks() {
-    local network
-    for network in \
+ensure_network() {
+    local role=$1 network=$2 legacy_key=$3 ownership
+    if "$docker_bin" network inspect "$network" >/dev/null 2>&1; then
+        ownership=$("$docker_bin" network inspect --format \
+            '{{or (index .Labels "ai.gonka.component") ""}}|{{or (index .Labels "ai.gonka.fleet") ""}}|{{or (index .Labels "ai.gonka.network-role") ""}}|{{or (index .Labels "com.docker.compose.network") ""}}' \
+            "$network")
+        case $ownership in
+            "versiond-router-network|$fleet_id|$role|"*) return 0 ;;
+            "|||$legacy_key")
+                warn "adopting legacy Compose network $network as an external fleet resource"
+                return 0
+                ;;
+            *) fail "network $network has unexpected ownership '$ownership'" ;;
+        esac
+    fi
+    "$docker_bin" network create \
+        --label ai.gonka.component=versiond-router-network \
+        --label "ai.gonka.fleet=$fleet_id" \
+        --label "ai.gonka.network-role=$role" \
+        "$network" >/dev/null
+}
+
+prepare_networks() {
+    ensure_network front \
         "${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
-        "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}"; do
-        "$docker_bin" network inspect "$network" >/dev/null 2>&1 || fail \
-            "network $network does not exist; start the main HA Compose model first"
-    done
+        versiond-router-front
+    ensure_network back \
+        "${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
+        versiond-router-back
 }
 
 pull_router_image() {
@@ -288,12 +455,14 @@ container_env_value() {
 }
 
 running_placement_contract() {
-    local id=$1 pool_host back_network legacy_host legacy_versions
+    local id=$1 pool_host back_network legacy_host legacy_versions ha_versions
     pool_host=$(container_env_value "$id" VERSIOND_POOL_HOST) || return 1
     back_network=$(container_env_value "$id" VERSIOND_ROUTER_BACK_NETWORK_NAME) || return 1
     legacy_host=$(container_env_value "$id" VERSIOND_LEGACY_HOST) || return 1
     legacy_versions=$(container_env_value "$id" VERSIOND_NON_HA_VERSIONS) || return 1
-    placement_contract "$pool_host" "$back_network" "$legacy_host" "$legacy_versions"
+    ha_versions=$(container_env_value "$id" VERSIOND_VERSIONS) || return 1
+    placement_contract "$pool_host" "$back_network" "$legacy_host" \
+        "$legacy_versions" "$ha_versions"
 }
 
 require_placement_compatible() {
@@ -337,7 +506,7 @@ capture_maintenance_state() {
                 "slot $slot is missing environment $key"
         done
         while read -r route; do
-            [[ -n $route ]] && routes[$route]=1
+            [[ -n $route && -n ${expected_routes[$route]-} ]] && routes[$route]=1
         done < <(printf '%s\n%s\n' \
             "${maintenance_env[$slot:VERSIOND_NON_HA_VERSIONS]}" \
             "${maintenance_env[$slot:VERSIOND_VERSIONS]}" \
@@ -406,9 +575,16 @@ rollback_current() {
     trap - ERR INT TERM HUP
     if [[ -n $current_slot && -n $rollback_image ]]; then
         warn "restoring slot $current_slot from $rollback_image"
-        if VERSIOND_ROUTER_IMAGE=$rollback_image slot_compose "$current_slot" \
-            up -d --wait --wait-timeout "$wait_timeout" router && \
-            wait_slot_routes "$current_slot"; then
+        if VERSIOND_ROUTER_IMAGE=$rollback_image \
+            VERSIOND_POOL_HOST="${rollback_env[VERSIOND_POOL_HOST]}" \
+            VERSIOND_ROUTER_BACK_NETWORK="${rollback_env[VERSIOND_ROUTER_BACK_NETWORK_NAME]}" \
+            VERSIOND_LEGACY_HOST="${rollback_env[VERSIOND_LEGACY_HOST]}" \
+            VERSIOND_NON_HA_VERSIONS="${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
+            VERSIOND_VERSIONS="${rollback_env[VERSIOND_VERSIONS]}" \
+            VERSIOND_ROUTER_ALLOW_COARSE_READINESS="${rollback_env[VERSIOND_ROUTER_ALLOW_COARSE_READINESS]}" \
+            slot_compose "$current_slot" up -d --wait \
+                --wait-timeout "$wait_timeout" router && \
+            wait_rollback_routes "$current_slot"; then
             warn "slot $current_slot restored; rollout stopped"
         else
             warn "automatic rollback of slot $current_slot did not restore the fleet route view"
@@ -456,13 +632,18 @@ stop_slot() {
 }
 
 fleet_status() {
-    local id slot state health image seen_slot route
+    local id slot state health image seen_slot route details
     local -A seen=()
     local bad=0
     printf '%-16s %-12s %-10s %s\n' SLOT STATE HEALTH IMAGE
     while read -r id; do
         [[ -n $id ]] || continue
-        slot=$($docker_bin inspect --format '{{index .Config.Labels "ai.gonka.slot"}}' "$id")
+        if ! slot=$($docker_bin inspect --format \
+            '{{index .Config.Labels "ai.gonka.slot"}}' "$id" 2>/dev/null); then
+            warn "router container $id disappeared while status was collected"
+            bad=1
+            continue
+        fi
         if [[ -z ${expected[$slot]-} ]]; then
             warn "orphan router container $id declares unknown slot '$slot'"
             bad=1
@@ -472,8 +653,14 @@ fleet_status() {
             bad=1
         fi
         seen[$slot]=$id
-        read -r state health image < <($docker_bin inspect --format \
-            '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Config.Image}}' "$id")
+        details=$($docker_bin inspect --format \
+            '{{.State.Status}} {{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}} {{.Config.Image}}' \
+            "$id" 2>/dev/null) || {
+                warn "router container $id disappeared while status was collected"
+                bad=1
+                continue
+            }
+        read -r state health image <<<"$details"
         printf '%-16s %-12s %-10s %s\n' "$slot" "$state" "$health" "$image"
         if [[ $state != running || $health != healthy ]]; then
             bad=1
@@ -500,7 +687,7 @@ fleet_status() {
 
 fleet_up() {
     local slot
-    require_networks
+    prepare_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -508,13 +695,14 @@ fleet_up() {
         echo "Ensuring versiond-router slot $slot is running"
         start_existing_or_create_slot "$slot"
         wait_slot_routes "$slot"
+        wait_parent_admission "$slot"
     done
     fleet_status
 }
 
 fleet_rollout() {
-    local slot id old_image rollback_tag
-    require_networks
+    local slot id old_image rollback_tag key route
+    prepare_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -525,6 +713,18 @@ fleet_rollout() {
         old_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         rollback_tag="gonka/versiond-router-rollback:$operation_id-$slot"
         "$docker_bin" tag "$old_image" "$rollback_tag"
+        rollback_env=()
+        rollback_routes=()
+        for key in "${maintenance_keys[@]}"; do
+            rollback_env[$key]=$(container_env_value "$id" "$key") || fail \
+                "slot $slot is missing environment $key"
+        done
+        while IFS= read -r route; do
+            [[ -n $route ]] && rollback_routes[$route]=1
+        done < <(printf '%s\n%s\n' \
+            "${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
+            "${rollback_env[VERSIOND_VERSIONS]}" \
+            | tr ',;' '  ' | tr -s ' ' '\n')
         current_slot=$slot
         rollback_image=$rollback_tag
         echo "Draining versiond-router slot $slot"
@@ -533,6 +733,7 @@ fleet_rollout() {
         start_slot "$slot"
         slot_ready "$slot" || false
         wait_slot_routes "$slot"
+        wait_parent_admission "$slot"
         current_slot=
         rollback_image=
         "$docker_bin" image rm "$rollback_tag" >/dev/null 2>&1 || true
@@ -547,7 +748,7 @@ fleet_maintenance_rollout() {
         1 | true | yes) ;;
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
-    require_networks
+    prepare_networks
     pull_router_image
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     [[ -n $(placement_version_for_image "$image") ]] || fail \
@@ -574,11 +775,15 @@ fleet_maintenance_rollout() {
     fleet_status
 }
 
-exec 9>"$lock_file"
+if [[ ! -e $lock_file ]]; then
+    (umask 000; : >"$lock_file") || fail "cannot create fleet lock $lock_file"
+fi
+exec 9<"$lock_file"
 flock -n 9 || fail "another fleet operation holds $lock_file"
 
 command=${1:-}
 case $command in
+    prepare-networks) prepare_networks ;;
     up) fleet_up ;;
     rollout) fleet_rollout ;;
     maintenance-rollout) fleet_maintenance_rollout ;;
@@ -589,12 +794,13 @@ case $command in
         ;;
     start)
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"
-        require_networks
+        prepare_networks
         pull_router_image
         candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
         require_placement_compatible "$candidate_image"
         start_existing_or_create_slot "$2"
         wait_slot_routes "$2"
+        wait_parent_admission "$2"
         ;;
     -h | --help | help) usage ;;
     *) usage; fail "unknown command '${command:-}'" ;;

@@ -1,0 +1,31 @@
+#!/bin/sh
+# Read-only admission probe used by the fleet rollout coordinator.
+set -eu
+
+SOCK=${HAPROXY_SOCKET:-/var/run/haproxy/haproxy.sock}
+VERSION_MAP=${PROXY_ROUTER_VERSION_MAP:-/etc/haproxy/version-router.map}
+
+if [ "$#" -ne 2 ]; then
+    echo "usage: route-status VERSION|--coarse ADDRESS" >&2
+    exit 2
+fi
+
+if [ "$1" = --coarse ]; then
+    backend=versiond_router_coarse
+else
+    backend=$(awk -v version="$1" '$1 "" == version "" { print $2; found = 1; exit } END { if (!found) exit 3 }' "$VERSION_MAP") || {
+        status=$?
+        [ "$status" -eq 3 ] && exit 3
+        exit "$status"
+    }
+fi
+
+printf 'show servers state %s\n' "$backend" | socat stdio "$SOCK" | \
+    awk -v address="$2" '
+        NR > 2 && $5 == address {
+            found = 1
+            if ($6 == 2 && $7 == 0) exit 0
+            exit 1
+        }
+        END { if (!found) exit 1 }
+    '

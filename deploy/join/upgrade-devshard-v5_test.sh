@@ -33,6 +33,9 @@ if [[ ${1:-} == inspect ]]; then
         esac
     fi
     case ${3:-} in
+        '{{index .Config.Labels "ai.gonka.component"}}')
+            printf '%s\n' "${EXISTING_PROXY_COMPONENT-}"
+            ;;
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
         '{{.State.Running}}')
             service=${4#cid-}
@@ -445,8 +448,20 @@ line_number_regex() {
 }
 
 write_fake_docker
-printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\n' \
-    "$tmpdir/postgres" >"$tmpdir/config.env"
+cat >"$tmpdir/fleet" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
+EOF
+cat >"$tmpdir/enable-router" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
+EOF
+chmod +x "$tmpdir/fleet" "$tmpdir/enable-router"
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\n' \
+    "$tmpdir/postgres" "$tmpdir/fleet" "$tmpdir/enable-router" \
+    "$tmpdir/upgrade-complete" >"$tmpdir/config.env"
 
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/unknown.log" \
@@ -515,6 +530,39 @@ versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
     $versiond2_up_line -lt $versiond_router_up_line && \
     $versiond_router_up_line -lt $versiond_up_line ]] ||
     fail "versiond traffic barrier or HAProxy cutover order is wrong"
+
+# A public proxy-router label proves only that ingress cutover happened. It
+# must not suppress an unfinished application or PostgreSQL migration.
+rm -f "$tmpdir/upgrade-complete"
+if DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/active-without-marker.log" \
+    EXISTING_PROXY_COMPONENT=proxy-router \
+    EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy" \
+    FAKE_STATE_DIR="$tmpdir/active-without-marker.state" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/active-without-marker.stdout" \
+    2>"$tmpdir/active-without-marker.stderr"; then
+    fail "proxy-router label was accepted as an upgrade commit"
+fi
+grep -q 'has no commit marker' "$tmpdir/active-without-marker.stderr" || {
+    cat "$tmpdir/active-without-marker.stderr" >&2
+    fail "incomplete cutover did not explain the missing upgrade commit"
+}
+printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/active-with-marker.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy" \
+FAKE_STATE_DIR="$tmpdir/active-with-marker.state" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/active-with-marker.stdout" \
+    2>"$tmpdir/active-with-marker.stderr"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "enable-router --versiond-mode ha --edge-mode single"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"

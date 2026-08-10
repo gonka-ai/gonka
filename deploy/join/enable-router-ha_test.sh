@@ -43,10 +43,8 @@ if [[ ${1:-} == network ]]; then
             name=${5:-unknown}
             if [[ ${WRONG_NETWORK_OWNERSHIP:-false} == true ]]; then
                 printf 'wrong-key|wrong-project\n'
-            elif [[ $name == *front ]]; then
-                printf 'versiond-router-front|gonka-test\n'
             else
-                printf 'versiond-router-back|gonka-test\n'
+                printf 'proxy-policy-front|gonka-test\n'
             fi
             exit 0
         fi
@@ -127,11 +125,15 @@ run_cutover() {
 }
 
 run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
+grep -q '^fleet prepare-networks$' "$tmpdir/success.log" || fail \
+    "router fleet networks were not prepared"
 grep -q '^fleet up$' "$tmpdir/success.log" || fail "router fleet was not converged"
-grep -q 'network create .*com.docker.compose.network=versiond-router-front' \
-    "$tmpdir/success.log" || fail "missing front network was not created with Compose ownership"
-grep -q 'network create .*com.docker.compose.network=versiond-router-back' \
-    "$tmpdir/success.log" || fail "missing back network was not created with Compose ownership"
+grep -q 'network create .*com.docker.compose.network=proxy-policy-front' \
+    "$tmpdir/success.log" || fail \
+    "missing private policy network was not created with Compose ownership"
+grep -q 'network connect --alias proxy-policy-ingress' \
+    "$tmpdir/success.log" || fail \
+    "legacy public proxy was not attached to the private policy network"
 policy_line=$(grep -n ' up .*proxy-policy' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 proxy_line=$(grep -n ' up .*proxy$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 [[ -n $policy_line && -n $proxy_line && $policy_line -lt $proxy_line ]] || fail \

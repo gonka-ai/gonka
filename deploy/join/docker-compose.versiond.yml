@@ -150,7 +150,7 @@ services:
 
   proxy-policy:
     environment:
-      - VERSIOND_SERVICE_NAME=proxy
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
@@ -164,10 +164,13 @@ services:
       - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
     networks:
       default: {}
+      proxy-policy-front: {}
       versiond-router-front: {}
 
 networks:
   versiond-router-front:
     name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+    external: true
   versiond-router-back:
     name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+    external: true

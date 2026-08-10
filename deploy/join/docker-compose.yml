@@ -209,7 +209,7 @@ services:
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
       - PROXY_PROTOCOL=true
-      - PROXY_PROTOCOL_TRUSTED_FROM=${PROXY_PROTOCOL_TRUSTED_FROM:-0.0.0.0/0}
+      - PROXY_PROTOCOL_PEER=proxy-policy-ingress
       - SERVER_NAME=${SERVER_NAME:-}
       - GONKA_API_PORT=9000
       - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
@@ -235,6 +235,11 @@ services:
       - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
+    networks:
+      default: {}
+      proxy-policy-front:
+        aliases:
+          - proxy-policy-front
     depends_on:
       node:
         condition: service_started
@@ -270,15 +275,19 @@ services:
       - "${API_SSL_PORT:-8443}:443"
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
-      - PROXY_POLICY_POOL_HOST=proxy-policy
+      - PROXY_POLICY_POOL_HOST=proxy-policy-front
       - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
+      - PROXY_ROUTER_POLICY_BIND_HOST=proxy-policy-ingress
+      - PROXY_ROUTER_PUBLIC_IDLE_SECONDS=${PROXY_ROUTER_PUBLIC_IDLE_SECONDS:-86400}
       - PROXY_VERSIOND_PORT=18081
       - PROXY_EDGE_API_PORT=18082
       - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
       - EDGE_API_PORT=${EDGE_API_PORT:-18080}
-    depends_on:
-      proxy-policy:
-        condition: service_healthy
+    networks:
+      default: {}
+      proxy-policy-front:
+        aliases:
+          - proxy-policy-ingress
     restart: unless-stopped
     healthcheck:
       test:
@@ -347,3 +356,8 @@ services:
     expose:
       - "5173"
     restart: unless-stopped
+
+networks:
+  proxy-policy-front:
+    name: ${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
+    internal: true
