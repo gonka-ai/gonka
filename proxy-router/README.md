@@ -75,7 +75,9 @@ All pools use Docker DNS plus HAProxy active checks. The process has no routing
 database, leader, or peer protocol. It does not need Redis:
 
 - `proxy-policy` resolves to private nginx workers;
-- `versiond-router` resolves to the independently managed router slots;
+- `versiond-router-fleet` resolves only to the independently managed router
+  slots; the distinct name prevents a transitional singleton from satisfying
+  fleet readiness during the one-time upgrade;
 - `edge-api-pool` resolves to edge-api replicas.
 
 `server-template` reserves capacity without requiring a reload when addresses
@@ -117,7 +119,7 @@ admin HTTP listener reports readiness and cannot mutate routing.
 | --- | --- | --- |
 | `PROXY_POLICY_POOL_HOST` | `proxy-policy` | policy-worker DNS alias; Compose uses the private `proxy-policy-front` alias |
 | `PROXY_POLICY_POOL_SLOTS` | `4` | reserved policy-worker slots |
-| `VERSIOND_ROUTER_POOL_HOST` | `versiond-router` | router-fleet DNS alias |
+| `VERSIOND_ROUTER_POOL_HOST` | `versiond-router-fleet` | router-fleet DNS alias |
 | `VERSIOND_ROUTER_FLEET_CAPACITY` | `16` | reserved router slots |
 | `VERSIOND_ROUTER_PORT` | `8080` | router data port |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | router health port |

@@ -9,6 +9,7 @@ edge_mode=auto
 rollback_pending=false
 rollback_image=
 declare -A inherited_env=()
+declare -a migration_routes=()
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -149,11 +150,62 @@ wait_component() {
     return 1
 }
 
+run_fleet() {
+    GONKA_CONFIG_ENV=$config_env "$fleet_bin" "$@"
+}
+
+urlencode() {
+    local input=$1 output='' char hex i
+    local LC_ALL=C
+    for ((i = 0; i < ${#input}; i++)); do
+        char=${input:i:1}
+        case $char in
+            [A-Za-z0-9.~_-]) output+=$char ;;
+            *)
+                printf -v hex '%%%02X' "'$char"
+                output+=$hex
+                ;;
+        esac
+    done
+    printf '%s\n' "$output"
+}
+
+capture_migration_route_baseline() {
+    local route encoded
+    local -A seen=()
+
+    container_exists versiond-router || fail \
+        "the transitional versiond-router is missing; refusing a cutover whose v4 rollback would have no upstream"
+    migration_routes=()
+    while IFS= read -r route; do
+        [[ -n $route && -z ${seen[$route]-} ]] || continue
+        seen[$route]=1
+        encoded=$(urlencode "$route")
+        if "$docker_bin" exec versiond-router /bin/busybox wget -q -T 3 \
+            -O /dev/null "http://127.0.0.1:8404/readyz?version=$encoded" \
+            >/dev/null 2>&1; then
+            migration_routes+=("$route")
+        fi
+    done < <(printf '%s\n%s\n' \
+        "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
+        "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
+        | tr ',;' '  ' | tr -s ' ' '\n')
+    ((${#migration_routes[@]} > 0)) || fail \
+        "the transitional versiond-router serves none of the declared routes; refusing to commit an unverified fleet"
+    echo "Captured migration route baseline: ${migration_routes[*]}"
+}
+
+remove_migration_container() {
+    local container=$1 output
+    container_exists "$container" || return 0
+    if ! output=$("$docker_bin" rm -f "$container" 2>&1); then
+        warn "could not remove migration container $container: $output"
+    fi
+}
+
 remove_migration_routers() {
-    [[ $versiond_mode != ha ]] || \
-        "$docker_bin" rm -f versiond-router >/dev/null 2>&1 || true
-    [[ $edge_mode != multi ]] || \
-        "$docker_bin" rm -f edge-api-router >/dev/null 2>&1 || true
+    [[ $versiond_mode != ha ]] || remove_migration_container versiond-router
+    [[ $edge_mode != multi ]] || remove_migration_container edge-api-router
 }
 
 restore_v4_proxy() {
@@ -190,8 +242,8 @@ compose_project=$("${compose[@]}" config --format json | jq -er '.name')
 policy_network=${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
-    GONKA_CONFIG_ENV=$config_env "$fleet_bin" prepare-networks
-    GONKA_CONFIG_ENV=$config_env "$fleet_bin" up
+    run_fleet prepare-networks
+    run_fleet up
 fi
 
 # During the one-time cutover the old public nginx still owns the `proxy`
@@ -222,7 +274,7 @@ fi
 if [[ $(proxy_component) == proxy-router ]]; then
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
-    [[ $versiond_mode != ha ]] || wait_component versiond
+    [[ $versiond_mode != ha ]] || run_fleet verify-admission
     [[ $edge_mode != multi ]] || wait_component edge-api
     remove_migration_routers
     echo "Router HA topology is already active"
@@ -230,6 +282,7 @@ if [[ $(proxy_component) == proxy-router ]]; then
 fi
 
 container_exists proxy || fail "the existing public proxy container is missing"
+[[ $versiond_mode != ha ]] || capture_migration_route_baseline
 old_image=$($docker_bin inspect --format '{{.Image}}' proxy)
 rollback_image="gonka/router-ha-proxy-rollback:$(date +%s%N)-$$"
 "$docker_bin" tag "$old_image" "$rollback_image"
@@ -241,8 +294,9 @@ if ! "${compose[@]}" up -d --no-deps --force-recreate --wait \
     --wait-timeout "$cutover_timeout" proxy; then
     fail "proxy-router did not become ready"
 fi
-[[ $versiond_mode != ha ]] || wait_component versiond || fail \
-    "proxy-router cannot reach a ready versiond-router"
+[[ $versiond_mode != ha ]] || \
+    run_fleet verify-admission "${migration_routes[@]}" || fail \
+        "proxy-router did not admit the complete router fleet and migration route baseline"
 [[ $edge_mode != multi ]] || wait_component edge-api || fail \
     "proxy-router cannot reach a ready edge-api"
 

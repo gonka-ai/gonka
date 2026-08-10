@@ -70,6 +70,12 @@ slot_cleared = load(sys.argv[4])["services"]["router"]["environment"]
 
 if slot_defaults_config["labels"].get("ai.gonka.fleet") != "gonka-versiond-router":
     raise SystemExit("router slot has no stable fleet ownership label")
+if "versiond-router-fleet" not in slot_defaults_config["networks"]["front"].get(
+    "aliases", []
+):
+    raise SystemExit("router slot does not publish the dedicated fleet DNS alias")
+if "versiond-router" in slot_defaults_config["networks"]["front"].get("aliases", []):
+    raise SystemExit("router slot still shares the migration singleton DNS alias")
 
 if "versiond-router" in defaults_config["services"]:
     raise SystemExit("the main Compose project still owns a versiond-router replica")
@@ -104,6 +110,12 @@ def require(environment, key, expected, case):
 
 require(defaults, "VERSIOND_NON_HA_VERSIONS", "v1 v2 v3", "unset")
 require(defaults, "VERSIOND_VERSIONS", "v4 v5 v6 v7 v8", "unset")
+require(
+    defaults,
+    "VERSIOND_ROUTER_POOL_HOST",
+    "versiond-router-fleet",
+    "steady-state fleet DNS",
+)
 require(cleared, "VERSIOND_NON_HA_VERSIONS", "", "explicit empty")
 require(cleared, "VERSIOND_VERSIONS", "", "explicit empty")
 

@@ -20,7 +20,9 @@ services:
     networks:
       front:
         aliases:
-          - versiond-router
+          # Keep the steady-state fleet distinct from the transitional
+          # singleton used by the reversible v4 -> v5 ingress cutover.
+          - versiond-router-fleet
       back: {}
     healthcheck:
       test:

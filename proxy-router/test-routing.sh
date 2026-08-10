@@ -8,6 +8,7 @@ containers=(
     gonka-pr-proxy gonka-pr-probe
     gonka-pr-policy-a gonka-pr-policy-b
     gonka-pr-router-a gonka-pr-router-b gonka-pr-router-bad
+    gonka-pr-router-migration
     gonka-pr-edge-a gonka-pr-edge-b
 )
 tmpdir=$(mktemp -d)
@@ -145,12 +146,22 @@ for spec in 'a:v4:true:true' 'b:v4 v5:true:true' 'bad:v4:true:false'; do
     generic=${rest%%:*}
     enabled=${rest##*:}
     docker run -d --name "gonka-pr-router-$name" --network "$network" \
-        --network-alias versiond-router \
+        --network-alias versiond-router-fleet \
         -e "NAME=$name" -e "SERVES=$serves" \
         -e "GENERIC_READY=$generic" -e "DATA_ENABLED=$enabled" \
         -v "$tmpdir/upstream.py:/app.py:ro" \
         python:3.12-alpine python /app.py >/dev/null
 done
+
+# The reversible upgrade keeps a healthy singleton for v4 nginx rollback. Its
+# historical DNS name must never enter the steady-state fleet pool, otherwise
+# it can mask a route-dead fleet at the cutover commit boundary.
+docker run -d --name gonka-pr-router-migration --network "$network" \
+    --network-alias versiond-router \
+    -e NAME=migration -e 'SERVES=v4 v5' \
+    -e GENERIC_READY=true -e DATA_ENABLED=true \
+    -v "$tmpdir/upstream.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
 
 for name in a b; do
     docker run -d --name "gonka-pr-edge-$name" --hostname "edge-$name" \

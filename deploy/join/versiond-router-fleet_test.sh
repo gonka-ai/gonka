@@ -263,6 +263,24 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     -q -O /dev/null 'http://127.0.0.1:8404/readyz?version=v4' \
     >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "strict admission rejected the complete live v4 fleet"
+
+# The commit gate receives the migration singleton's live-route baseline. A
+# coarse-healthy fleet that cannot serve one of those routes must not be allowed
+# to replace the reversible singleton-backed path.
+sed -i 's/^VERSIOND_VERSIONS=v4$/VERSIOND_VERSIONS="v4 v5"/' \
+    "$tmpdir/config.env"
+if VERSIOND_ROUTER_START_TIMEOUT_SECONDS=2 \
+    "${fleet[@]}" verify-admission v5 \
+    >"$tmpdir/admission-missing-route.out" 2>&1; then
+    fail "strict admission accepted a route-dead fleet"
+fi
+grep -q 'cannot serve required route v5' \
+    "$tmpdir/admission-missing-route.out" || fail \
+    "route-dead admission failure did not identify the missing baseline route"
+sed -i 's/^VERSIOND_VERSIONS="v4 v5"$/VERSIOND_VERSIONS=v4/' \
+    "$tmpdir/config.env"
 
 # Start a response that remains attached to one inner router. Its response
 # header identifies the selected slot before the body completes.

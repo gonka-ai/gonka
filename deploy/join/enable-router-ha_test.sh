@@ -76,6 +76,8 @@ if [[ ${1:-} == compose ]]; then
     fi
     if [[ $action == up && $service == proxy ]]; then
         if [[ $compat == true ]]; then
+            printf 'rollback-versiond %s\n' \
+                "${PROXY_V4_VERSIOND_SERVICE_NAME:-}" >>"$DOCKER_LOG"
             printf 'proxy-policy\n' >"$STATE_DIR/current"
             exit 0
         fi
@@ -99,12 +101,18 @@ cat >"$tmpdir/fleet" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
+if [[ ${1:-} == verify-admission && \
+    ${FLEET_ADMISSION_FAIL:-false} == true ]]; then
+    exit 1
+fi
 EOF
 chmod +x "$tmpdir/fleet"
 
 cat >"$tmpdir/config.env" <<EOF
 ROUTER_HA_PULL_POLICY=missing
 ROUTER_HA_CUTOVER_LOCK=$tmpdir/cutover.lock
+VERSIOND_NON_HA_VERSIONS=v1
+VERSIOND_VERSIONS=v4
 EOF
 
 run_cutover() {
@@ -128,6 +136,8 @@ run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
 grep -q '^fleet prepare-networks$' "$tmpdir/success.log" || fail \
     "router fleet networks were not prepared"
 grep -q '^fleet up$' "$tmpdir/success.log" || fail "router fleet was not converged"
+grep -q '^fleet verify-admission v1 v4$' "$tmpdir/success.log" || fail \
+    "cutover did not verify every route served by the migration singleton"
 grep -q 'network create .*com.docker.compose.network=proxy-policy-front' \
     "$tmpdir/success.log" || fail \
     "missing private policy network was not created with Compose ownership"
@@ -142,6 +152,10 @@ grep -q 'docker rm -f versiond-router' "$tmpdir/success.log" || fail \
     "singleton versiond-router was not removed after commit"
 grep -q 'docker rm -f edge-api-router' "$tmpdir/success.log" || fail \
     "singleton edge-api-router was not removed after commit"
+verify_line=$(grep -n '^fleet verify-admission ' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+remove_line=$(grep -n 'docker rm -f versiond-router' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+[[ -n $verify_line && -n $remove_line && $verify_line -lt $remove_line ]] || fail \
+    "migration singleton was removed before fleet admission was committed"
 
 if run_cutover "$tmpdir/failure.log" env FAIL_CUTOVER=true; then
     fail "failed public proxy replacement was reported as successful"
@@ -151,6 +165,19 @@ grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/failure.log" || fail \
 grep -q ' up .*proxy$' "$tmpdir/failure.log" || fail \
     "failed cutover did not recreate the public nginx"
 
+if run_cutover "$tmpdir/admission-failure.log" env FLEET_ADMISSION_FAIL=true; then
+    fail "cutover committed while the parent did not admit the router fleet"
+fi
+grep -q '^fleet verify-admission v1 v4$' \
+    "$tmpdir/admission-failure.log" || fail \
+    "failed admission scenario did not reach the commit gate"
+grep -q '^rollback-versiond versiond-router$' \
+    "$tmpdir/admission-failure.log" || fail \
+    "admission failure did not preserve the singleton-backed v4 rollback"
+if grep -q 'docker rm -f versiond-router' "$tmpdir/admission-failure.log"; then
+    fail "admission failure removed the upstream required by v4 rollback"
+fi
+
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env
 if grep -q '^docker tag ' "$tmpdir/idempotent.log"; then
@@ -158,6 +185,8 @@ if grep -q '^docker tag ' "$tmpdir/idempotent.log"; then
 fi
 grep -q 'docker rm -f versiond-router' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence left the migration singleton behind"
+grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
+    "idempotent convergence skipped strict parent admission verification"
 
 if run_cutover "$tmpdir/wrong-network.log" env WRONG_NETWORK_OWNERSHIP=true; then
     fail "cutover accepted an existing network owned by another Compose model"

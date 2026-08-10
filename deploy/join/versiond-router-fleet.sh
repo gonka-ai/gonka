@@ -42,6 +42,9 @@ Commands:
   rollout            Replace slots one at a time, preserving the ready reserve.
   maintenance-rollout
                      Drain the old fleet before a placement-contract change.
+  verify-admission [ROUTE ...]
+                     Require every slot, and every listed live route, to be
+                     admitted by the active parent proxy.
   status             Show the expected fleet and reject duplicate/orphan slots.
   stop SLOT          Gracefully stop one slot after checking the ready reserve.
   start SLOT         Start an existing container unchanged, or create it if absent.
@@ -299,6 +302,68 @@ wait_parent_admission() {
         sleep 1
     done
     echo "versiond-router-fleet: parent proxy did not admit slot $slot for route $missing within ${wait_timeout}s" >&2
+    return 1
+}
+
+verify_parent_fleet_admission() {
+    local route slot address state missing deadline
+    local -A required=()
+
+    for route in "$@"; do
+        [[ -n ${expected_routes[$route]-} ]] || fail \
+            "required admission route '$route' is not declared by this fleet"
+        required[$route]=1
+    done
+    # Preserve every route the fleet already serves even when the caller has no
+    # external baseline (for example, an idempotent cutover retry). Completely
+    # inactive declarations remain optional because VERSIOND_VERSIONS may list
+    # protocol versions ahead of governance activation.
+    for route in "${!expected_routes[@]}"; do
+        if (( $(route_ready_count "$route") > 0 )); then
+            required[$route]=1
+        fi
+    done
+
+    parent_proxy_active || fail \
+        "cannot verify fleet admission: the active parent is not proxy-router"
+    require_parent_diagnostic
+    deadline=$((SECONDS + wait_timeout))
+    while ((SECONDS < deadline)); do
+        missing=
+        for slot in "${slots[@]}"; do
+            if ! slot_ready "$slot"; then
+                missing="slot $slot is not healthy"
+                break
+            fi
+            if ! address=$(slot_front_ip "$slot"); then
+                missing="slot $slot has no front-network address"
+                break
+            fi
+            if parent_route_admitted --coarse "$address"; then
+                :
+            else
+                state=$?
+                missing="parent does not admit slot $slot for coarse routing (status $state)"
+                break
+            fi
+            for route in "${!required[@]}"; do
+                if ! slot_route_ready "$slot" "$route"; then
+                    missing="slot $slot cannot serve required route $route"
+                    break 2
+                fi
+                if parent_route_admitted "$route" "$address"; then
+                    continue
+                else
+                    state=$?
+                fi
+                missing="parent does not admit slot $slot for required route $route (status $state)"
+                break 2
+            done
+        done
+        [[ -z $missing ]] && return 0
+        sleep 1
+    done
+    echo "versiond-router-fleet: admission verification timed out: $missing" >&2
     return 1
 }
 
@@ -787,6 +852,10 @@ case $command in
     up) fleet_up ;;
     rollout) fleet_rollout ;;
     maintenance-rollout) fleet_maintenance_rollout ;;
+    verify-admission)
+        shift
+        verify_parent_fleet_admission "$@"
+        ;;
     status) fleet_status ;;
     stop)
         [[ $# == 2 ]] || fail "stop requires exactly one SLOT"

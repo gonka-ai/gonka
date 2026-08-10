@@ -102,6 +102,9 @@ check_compose_contract() {
         "$(compose_image proxy -f "$base")"
     assert_healthcheck_url "public proxy readiness" proxy \
         "http://127.0.0.1:8404/readyz" -f "$base"
+    assert_environment "public proxy router fleet" proxy \
+        VERSIOND_ROUTER_POOL_HOST versiond-router-fleet \
+        -f "$base" -f "$versiond_overlay"
     assert_healthcheck_url "private policy healthcheck" proxy-policy \
         "http://127.0.0.1:8081/health" -f "$base"
     assert_service_absent "steady-state versiond model" versiond-router \

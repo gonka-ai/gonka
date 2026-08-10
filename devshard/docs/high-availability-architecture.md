@@ -82,7 +82,7 @@ replica* of that service receives it.
 
 Membership and eligibility are derived from runtime state:
 
-- `server-template` follows the `proxy-policy`, `versiond-router`,
+- `server-template` follows the `proxy-policy`, `versiond-router-fleet`,
   `versiond-pool`, and `edge-api-pool` DNS aliases;
 - a TCP listener check gates private nginx policy workers, while active
   `/readyz` checks gate application and router pools; `init-state fully-down`

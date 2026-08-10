@@ -36,7 +36,7 @@ test-render:
 		|| fail "router health is not version-aware"; \
 	grep -q 'query -m str version=v5.*nbsrv(versiond_routers_v5)' "$$tmpdir/proxy.cfg" \
 		|| fail "top-level version readiness is not route-aware"; \
-	grep -q 'server-template router 16 versiond-router:8080 check port 8404' "$$tmpdir/proxy.cfg" \
+	grep -q 'server-template router 16 versiond-router-fleet:8080 check port 8404' "$$tmpdir/proxy.cfg" \
 		|| fail "router data and admin ports are not separated"; \
 	grep -q '^ *balance leastconn$$' "$$tmpdir/proxy.cfg" \
 		|| fail "long streams are not distributed with leastconn"; \
