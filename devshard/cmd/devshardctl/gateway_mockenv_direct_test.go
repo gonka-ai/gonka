@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"net/http"
 	"testing"
 
@@ -400,6 +401,67 @@ func TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat(t *testing.T) {
 	require.Equal(t, http.StatusPermanentRedirect, rec.Code)
 	require.Contains(t, rec.Body.String(), "direct route is disabled too")
 	require.EqualValues(t, 0, rt.calls.Load())
+}
+
+// Steps:
+// - Register an inactive devshard only in the gateway store, not in memory.
+// - Request its public direct `/v1/status` path through the real handler stack.
+// - Assert the gateway serves only cheap metadata and does not hydrate runtime state.
+func TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly(t *testing.T) {
+	env := newGatewayMockEnv(t, nil)
+	require.NoError(t, env.gateway.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{
+			ID:          "77",
+			Model:       "Qwen/Test",
+			StoragePath: t.TempDir(),
+		},
+		Active:            false,
+		SettlementPending: true,
+		RotationRole:      "candidate",
+		RotationEpoch:     9,
+	}))
+
+	rec := env.get("/devshard/77/v1/status")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "77", rec.Header().Get("X-Devshard-ID"))
+	require.Equal(t, "1", rec.Header().Get("X-Devshard-Readonly"))
+	require.Equal(t, "1", rec.Header().Get("X-Devshard-Metadata-Only"))
+
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body))
+	require.Equal(t, "77", body["id"])
+	require.Equal(t, "Qwen/Test", body["model"])
+	require.Equal(t, false, body["active"])
+	require.Equal(t, false, body["resident"])
+	require.Equal(t, true, body["metadata_only"])
+	require.Equal(t, true, body["settlement_pending"])
+	require.Equal(t, "candidate", body["rotation_role"])
+	require.Equal(t, float64(9), body["rotation_epoch"])
+	require.NotContains(t, body, "nonce")
+	require.NotContains(t, body, "balance")
+	require.NotContains(t, body, "phase")
+}
+
+// Steps:
+// - Register an inactive devshard only in the gateway store, not in memory.
+// - Request its direct `/v1/status` path with admin auth through the real handler stack.
+// - Assert admin reads do not fall back to the public metadata-only response.
+func TestGatewayMockEnvNonResidentDevshardAdminReadHydratesOrFailsWithoutMetadataFallback(t *testing.T) {
+	env := newGatewayMockEnv(t, nil)
+	require.NoError(t, env.gateway.store.UpsertDevshard(GatewayDevshardState{
+		RuntimeConfig: RuntimeConfig{
+			ID:          "77",
+			Model:       "Qwen/Test",
+			StoragePath: t.TempDir(),
+		},
+		Active: false,
+	}))
+
+	rec := env.get("/devshard/77/v1/status", withBearer(mockenvAdminKey))
+
+	require.Empty(t, rec.Header().Get("X-Devshard-Metadata-Only"))
+	require.NotContains(t, rec.Body.String(), `"metadata_only"`)
 }
 
 // Steps:

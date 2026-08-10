@@ -63,7 +63,7 @@ a real devshard runtime.
 | `/v1/admin/devshards*` | Admin-only add/import/activate/deactivate/settle/participants operations | Not covered by mockenv yet |
 | `/v1/admin/escrows` | Admin-only escrow creation path | Not covered by mockenv yet |
 | `/v1/admin/suspicious-hosts` | Admin-only suspicious-host list/update path | Not covered by mockenv yet |
-| `/v1/finalize`, `/v1/state`, `/v1/debug/*` | Single-runtime or direct-devshard operational/debug paths | Direct admin auth and pass-through covered |
+| `/v1/finalize`, `/v1/state`, `/v1/debug/*` | Single-runtime or direct-devshard operational/debug paths | Direct admin auth, metadata-only guard, and pass-through covered |
 | `/metrics` | Gateway metrics scrape | Not covered by mockenv yet |
 
 ## Mock Environment Harness
@@ -236,8 +236,8 @@ Mock coverage:
 | Direct operational paths require admin auth before pass-through | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Direct non-chat pass-through paths | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Direct finalize post-success deactivation | `TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive` |
-| Non-resident read-only metadata path | not covered by mockenv yet |
-| Non-resident admin read-only hydration path | not covered by mockenv yet |
+| Non-resident read-only metadata path | `TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly` |
+| Non-resident admin read-only hydration path | `TestGatewayMockEnvNonResidentDevshardAdminReadHydratesOrFailsWithoutMetadataFallback` |
 
 ## Status Flow
 
@@ -264,7 +264,7 @@ Mock coverage:
 | --- | --- |
 | Multi-runtime status returns aggregate gateway status | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Multi-runtime status does not proxy fake runtime handlers | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
-| Single-runtime status proxies runtime handler | not covered by mockenv yet |
+| Single-runtime status proxies runtime handler | `TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime` |
 
 ## Admin State Flow
 
@@ -353,10 +353,10 @@ Mock coverage:
 | Direct devshard unavailable conflict | Yes | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict` |
 | Direct unknown devshard | Yes | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Direct operational path admin auth and pass-through | Yes | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
+| Single-runtime `/v1/status` proxy mode | Yes | `TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime` |
 | Multi-runtime status aggregation | Yes | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Admin state auth and redaction | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminStateDoesNotExposePrivateKey` |
 | Response cache hit path | Yes | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
-| Single-runtime `/v1/status` proxy mode | No | Not covered by mockenv yet |
 | Direct finalize post-success deactivation | Yes | `TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive` |
-| Non-resident read-only metadata and admin hydration | No | Not covered by mockenv yet |
+| Non-resident read-only metadata and admin hydration | Yes | `TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly`, `TestGatewayMockEnvNonResidentDevshardAdminReadHydratesOrFailsWithoutMetadataFallback` |
 | Participant limiter all-host rejection | No | Not covered by mockenv yet |

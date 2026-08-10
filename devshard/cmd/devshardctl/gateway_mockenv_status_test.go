@@ -8,6 +8,33 @@ import (
 )
 
 // Steps:
+// - Create one active runtime with a status handler.
+// - Request pooled gateway status.
+// - Assert single-runtime status is proxied to that runtime instead of aggregated.
+func TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			require.Equal(t, "/v1/status", r.URL.Path)
+			writeJSON(w, map[string]any{
+				"mode": "runtime",
+				"id":   "12",
+			})
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+
+	rec := env.get("/v1/status")
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	requireMockenvJSONField(t, rec.Body, "mode", "runtime")
+	requireMockenvJSONField(t, rec.Body, "id", "12")
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
 // - Create two active runtimes.
 // - Request pooled gateway status.
 // - Assert the gateway returns aggregate status instead of proxying a runtime.
