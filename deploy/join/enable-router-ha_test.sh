@@ -22,15 +22,30 @@ printf '\n' >>"$DOCKER_LOG"
 if [[ ${1:-} == inspect ]]; then
     if [[ ${2:-} == --format ]]; then
         case ${3:-} in
+            '{{json .Config.Labels}}')
+                jq -cn --arg workdir "$JOIN_DIR" \
+                    --arg files "$JOIN_DIR/docker-compose.yml,$JOIN_DIR/docker-compose.versiond.yml,$JOIN_DIR/docker-compose.edge-api-multi.yml" \
+                    '{"com.docker.compose.project":"gonka-test",
+                      "com.docker.compose.project.config_files":$files,
+                      "com.docker.compose.project.working_dir":$workdir}'
+                ;;
             *ai.gonka.component*)
                 [[ -f $STATE_DIR/current ]] && cat "$STATE_DIR/current"
                 ;;
             '{{.Image}}') printf 'sha256:old-proxy\n' ;;
+            '{{range .Config.Env}}{{println .}}{{end}}')
+                case ${4:-} in
+                    versiond | versiond2)
+                        printf 'PGHOST=devshard-postgres\nPGDATABASE=devshardd\nPGUSER=devshardd\n'
+                        ;;
+                esac
+                ;;
         esac
         exit 0
     fi
     case ${2:-} in
-        proxy | versiond-router | edge-api-router | versiond2 | edge-api2)
+        proxy | versiond | versiond2 | devshard-postgres | versiond-router | \
+        edge-api | edge-api2 | edge-api3 | edge-api-router)
             exit 0
             ;;
         *) exit 1 ;;
@@ -71,7 +86,20 @@ if [[ ${1:-} == compose ]]; then
         case $arg in proxy | proxy-policy) service=$arg ;; esac
     done
     if [[ $action == config ]]; then
-        printf '{"name":"gonka-test"}\n'
+        jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
+            "proxy-policy-front":{name:"gonka-proxy-policy-front"},
+            "versiond-router-front":{name:"gonka-versiond-router-front"},
+            "versiond-router-back":{name:"gonka-versiond-router-back"}
+        },services:{
+            proxy:{container_name:"proxy"},
+            "proxy-policy":{},
+            versiond:{container_name:"versiond",environment:{PGHOST:"devshard-postgres",PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+            versiond2:{container_name:"versiond2",environment:{PGHOST:"devshard-postgres",PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+            "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
+            "edge-api":{container_name:"edge-api"},
+            "edge-api2":{container_name:"edge-api2"},
+            "edge-api3":{container_name:"edge-api3"}
+        }}'
         exit 0
     fi
     if [[ $action == up && $service == proxy ]]; then
@@ -126,6 +154,7 @@ run_cutover() {
     env DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         STATE_DIR="$tmpdir" \
+        JOIN_DIR="$script_dir" \
         VERSIOND_ROUTER_FLEET_BIN="$tmpdir/fleet" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         "$@" "$script_dir/enable-router-ha.sh" \

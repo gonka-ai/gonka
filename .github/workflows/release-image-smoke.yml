@@ -6,6 +6,7 @@ on:
       - deploy/join/docker-compose.yml
       - deploy/join/docker-compose.versiond.yml
       - deploy/join/docker-compose.edge-api-multi.yml
+      - deploy/join/docker-compose.observability.yml
       - deploy/join/docker-compose.versiond-v5-compat.yml
       - deploy/join/docker-compose.edge-api-v5-compat.yml
       - deploy/join/docker-compose.proxy-v4-compat.yml
@@ -17,8 +18,10 @@ on:
       - deploy/join/legacy-router-upgrade-barrier_test.sh
       - deploy/join/upgrade-devshard-v5.sh
       - deploy/join/upgrade-devshard-v5_test.sh
+      - deploy/join/compose-topology.sh
       - deploy/join/enable-router-ha.sh
       - deploy/join/enable-router-ha_test.sh
+      - deploy/join/versiond-compose-config_test.sh
       - deploy/join/versiond-router-fleet.sh
       - deploy/join/versiond-router-fleet_test.sh
       - proxy/Dockerfile
@@ -51,15 +54,18 @@ jobs:
             deploy/join/devshard-postgres-migration-preflight.sh \
             deploy/join/legacy-router-upgrade-barrier.sh \
             deploy/join/legacy-router-upgrade-barrier_test.sh \
+            deploy/join/compose-topology.sh \
             deploy/join/upgrade-devshard-v5.sh \
             deploy/join/upgrade-devshard-v5_test.sh \
             deploy/join/enable-router-ha.sh \
             deploy/join/enable-router-ha_test.sh \
             deploy/join/versiond-router-fleet.sh \
-            deploy/join/versiond-router-fleet_test.sh
+            deploy/join/versiond-router-fleet_test.sh \
+            deploy/join/versiond-compose-config_test.sh
           deploy/join/legacy-router-upgrade-barrier_test.sh
           deploy/join/upgrade-devshard-v5_test.sh
           deploy/join/enable-router-ha_test.sh
+          deploy/join/versiond-compose-config_test.sh
 
   registry-smoke:
     name: Published image endpoints

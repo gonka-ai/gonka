@@ -1,18 +1,24 @@
+x-observability-proxy-environment: &observability-proxy-environment
+  # Optional Jaeger UI proxying (requires JAEGER_BASIC_AUTH_* when enabled)
+  JAEGER_ENABLED: ${JAEGER_ENABLED:-false}
+  JAEGER_PORT: ${JAEGER_PORT:-16686}
+  JAEGER_BASE_PATH: ${JAEGER_BASE_PATH:-/jaeger}
+  JAEGER_BASIC_AUTH_USER: ${JAEGER_BASIC_AUTH_USER:-}
+  JAEGER_BASIC_AUTH_PASSWORD: ${JAEGER_BASIC_AUTH_PASSWORD:-}
+  # Grafana UI proxying (requires GRAFANA_ADMIN_PASSWORD when enabled)
+  GRAFANA_ENABLED: ${GRAFANA_ENABLED:-false}
+  GRAFANA_PORT: ${GRAFANA_PORT:-3000}
+  GRAFANA_BASE_PATH: ${GRAFANA_BASE_PATH:-/grafana}
+  GRAFANA_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-}
+
 services:
-  # Extend the existing services with Jaeger environment variables
+  # Keep the variables on proxy for the v4 nginx rollback model. In v5 proxy is
+  # HAProxy and the private proxy-policy replicas own these HTTP routes.
   proxy:
-    environment:
-      # Optional Jaeger UI proxying (requires JAEGER_BASIC_AUTH_* when enabled)
-      - JAEGER_ENABLED=${JAEGER_ENABLED:-false}
-      - JAEGER_PORT=${JAEGER_PORT:-16686}
-      - JAEGER_BASE_PATH=${JAEGER_BASE_PATH:-/jaeger}
-      - JAEGER_BASIC_AUTH_USER=${JAEGER_BASIC_AUTH_USER:-}
-      - JAEGER_BASIC_AUTH_PASSWORD=${JAEGER_BASIC_AUTH_PASSWORD:-}
-      # Grafana UI proxying (requires GRAFANA_ADMIN_PASSWORD when enabled)
-      - GRAFANA_ENABLED=${GRAFANA_ENABLED:-false}
-      - GRAFANA_PORT=${GRAFANA_PORT:-3000}
-      - GRAFANA_BASE_PATH=${GRAFANA_BASE_PATH:-/grafana}
-      - GRAFANA_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-}
+    environment: *observability-proxy-environment
+
+  proxy-policy:
+    environment: *observability-proxy-environment
 
   jaeger:
     container_name: jaeger

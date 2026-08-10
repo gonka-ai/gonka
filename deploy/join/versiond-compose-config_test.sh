@@ -18,6 +18,12 @@ slot_compose=(
     --project-name gonka-versiond-router-test
     -f "$script_dir/versiond-router-slot/docker-compose.yml"
 )
+observability_compose=(
+    docker compose
+    --project-directory "$script_dir"
+    -f "$script_dir/docker-compose.yml"
+    -f "$script_dir/docker-compose.observability.yml"
+)
 
 render_defaults() {
     unset VERSIOND_NON_HA_VERSIONS
@@ -50,9 +56,35 @@ VERSIOND_ROUTER_SLOT=test VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
 VERSIOND_ROUTER_SLOT=test VERSIOND_NON_HA_VERSIONS='' VERSIOND_VERSIONS='' \
     VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true \
     "${slot_compose[@]}" config --format json >"$tmpdir/slot-cleared.json"
+JAEGER_ENABLED=true JAEGER_BASIC_AUTH_USER=test \
+JAEGER_BASIC_AUTH_PASSWORD=test-secret GRAFANA_ENABLED=true \
+GRAFANA_ADMIN_PASSWORD=test-secret \
+    "${observability_compose[@]}" config --format json \
+    >"$tmpdir/observability.json"
+JAEGER_ENABLED=true JAEGER_BASIC_AUTH_USER=test \
+JAEGER_BASIC_AUTH_PASSWORD=test-secret GRAFANA_ENABLED=true \
+GRAFANA_ADMIN_PASSWORD=test-secret PROXY_V4_IMAGE=test/proxy:v4 \
+    "${observability_compose[@]}" \
+        -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
+        config --format json >"$tmpdir/observability-rollback.json"
+
+cat >"$tmpdir/managed-postgres.yml" <<'EOF'
+services:
+  versiond:
+    environment:
+      PGHOST: managed-postgres.internal
+  versiond2:
+    environment:
+      PGHOST: managed-postgres.internal
+EOF
+env DEVSHARD_POSTGRES_PASSWORD=test \
+    "${compose[@]}" -f "$tmpdir/managed-postgres.yml" config --format json \
+    >"$tmpdir/managed-postgres.json"
 
 python3 - "$tmpdir/defaults.json" "$tmpdir/cleared.json" \
-    "$tmpdir/slot-defaults.json" "$tmpdir/slot-cleared.json" <<'PY'
+    "$tmpdir/slot-defaults.json" "$tmpdir/slot-cleared.json" \
+    "$tmpdir/observability.json" "$tmpdir/managed-postgres.json" \
+    "$tmpdir/observability-rollback.json" <<'PY'
 import json
 import sys
 
@@ -67,6 +99,9 @@ cleared_config = load(sys.argv[2])
 slot_defaults_config = load(sys.argv[3])["services"]["router"]
 slot_defaults = slot_defaults_config["environment"]
 slot_cleared = load(sys.argv[4])["services"]["router"]["environment"]
+observability = load(sys.argv[5])["services"]
+managed_postgres = load(sys.argv[6])["services"]
+observability_rollback = load(sys.argv[7])["services"]["proxy"]
 
 if slot_defaults_config["labels"].get("ai.gonka.fleet") != "gonka-versiond-router":
     raise SystemExit("router slot has no stable fleet ownership label")
@@ -125,6 +160,38 @@ require(slot_defaults, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "false", "slot 
 require(slot_cleared, "VERSIOND_NON_HA_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "true", "slot coarse")
+
+for service in ("proxy", "proxy-policy"):
+    environment = observability[service]["environment"]
+    require(environment, "JAEGER_ENABLED", "true", f"{service} observability")
+    require(environment, "GRAFANA_ENABLED", "true", f"{service} observability")
+    require(
+        environment,
+        "JAEGER_BASIC_AUTH_PASSWORD",
+        "test-secret",
+        f"{service} observability",
+    )
+
+require(
+    observability_rollback["environment"],
+    "JAEGER_ENABLED",
+    "true",
+    "v4 proxy rollback observability",
+)
+require(
+    observability_rollback["environment"],
+    "GRAFANA_ENABLED",
+    "true",
+    "v4 proxy rollback observability",
+)
+
+for service in ("versiond", "versiond2"):
+    require(
+        managed_postgres[service]["environment"],
+        "PGHOST",
+        "managed-postgres.internal",
+        f"{service} managed PostgreSQL override",
+    )
 PY
 
 echo "versiond-compose-config_test: ok"

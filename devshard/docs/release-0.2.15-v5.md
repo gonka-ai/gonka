@@ -113,8 +113,11 @@ is ready, not a zero-interruption router rollout. Subsequent inner-router and
 policy-worker replacements are rolling; the remaining single public HAProxy is
 the documented host-level failure domain for this release.
 
-The script sources `config.env` and detects two independent axes from the
-existing containers:
+The script sources `config.env`, detects two independent axes from the existing
+containers, and recovers the actual Compose project from Docker's
+`com.docker.compose.project.*` labels. The recovered contract includes the
+ordered Compose file list and project working directory; replacement, rollback,
+and final router cutover all use that same contract:
 
 | Axis | Standard mode | HA / multi mode |
 | --- | --- | --- |
@@ -122,12 +125,25 @@ existing containers:
 | `edge-api` | only `edge-api` | `edge-api2`, `edge-api3`, or `edge-api-router` exists |
 
 The standard Host Quickstart therefore selects `versiond=single` and
-`edge-api=single` automatically. It loads only `docker-compose.yml`, does not
-require `DEVSHARD_POSTGRES_PASSWORD`, and does not create PostgreSQL or either
-router. The ML services from `docker-compose.mlnode.yml` are not recreated. HA
-and multi-edge installations add only their detected overlay files. Explicit
-`--versiond-mode` and `--edge-mode` overrides exist for recovery diagnostics;
-normal upgrades should not need them.
+`edge-api=single` automatically. Its existing ML, observability, and local
+override files remain in the model even though only services owned by this
+upgrade are targeted. In particular, the observability overlay supplies Jaeger
+and Grafana routing variables to both the v4 rollback proxy and the v5
+`proxy-policy` nginx replicas.
+
+Normally no Compose arguments are needed. For a deliberately changed or
+ambiguous deployment, pass the complete model through `COMPOSE_FILE` (and
+`COMPOSE_PATH_SEPARATOR` when needed) or repeat `--compose-file` in the original
+order. `--compose-project-name` and `--compose-project-directory` are also
+available. An explicit list may append an override, but may not omit or reorder
+files recorded by running containers. If services record incompatible file
+sets, a file is missing, the project identity changes, or required service and
+`container_name` contracts are absent, the script exits before pull, stop, or
+recreate. The exact resolved model is passed to `enable-router-ha.sh`; the final
+cutover cannot silently fall back to stock files.
+
+Explicit `--versiond-mode` and `--edge-mode` overrides exist for recovery
+diagnostics; normal upgrades should not need them.
 
 Before pulling, the script records the immutable image ID of every application
 or router service it may roll back. For each existing versiond replica, it also
@@ -194,12 +210,21 @@ and preserves both locations for diagnosis or another restart. It does not
 automatically switch back to the source volume: the new database may already
 have accepted writes, so doing that could fork the storage history.
 
-The first HA v4-to-v5 cutover is a **devshard maintenance operation**, not a
-rolling update. It restarts the one shared PostgreSQL instance, replaces the
-router process, and temporarily takes the only pre-HA SQLite owner out of
-service. Schedule it outside PoC/cPoC, make sure no long inference or SSE request
-is still in flight, and update multiple network nodes one at a time. This
-matches the maintenance guidance in
+The local migration runs only when the effective Compose model gives both
+`versiond` replicas `PGHOST=devshard-postgres`. A custom model may point both
+replicas at the same managed PostgreSQL host; in that case the updater preserves
+the override and does not pull, recreate, or preflight the local
+`devshard-postgres` service. Before any mutation it compares `PGHOST`, `PGPORT`,
+`PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
+identity change, disagreement between replicas, or non-Postgres HA storage is a
+hard failure rather than an attempted migration.
+
+The first stock local-PostgreSQL HA v4-to-v5 cutover is a **devshard maintenance
+operation**, not a rolling update. It restarts the one shared PostgreSQL
+instance, replaces the router process, and temporarily takes the only pre-HA
+SQLite owner out of service. Schedule it outside PoC/cPoC, make sure no long
+inference or SSE request is still in flight, and update multiple network nodes
+one at a time. This matches the maintenance guidance in
 [Network Updates](https://gonka.ai/docs/network-updates/).
 
 Do not stop the whole node for this cutover. The script names every service it

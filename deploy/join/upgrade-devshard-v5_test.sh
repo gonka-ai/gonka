@@ -33,6 +33,31 @@ if [[ ${1:-} == inspect ]]; then
         esac
     fi
     case ${3:-} in
+        '{{json .Config.Labels}}')
+            container=${4:-unknown}
+            files=${RUNTIME_COMPOSE_FILES-}
+            if [[ -z $files ]]; then
+                files=$JOIN_DIR/docker-compose.yml
+                case " ${EXISTING_CONTAINERS-} " in
+                    *' versiond2 '* | *' devshard-postgres '*)
+                        files+=",$JOIN_DIR/docker-compose.versiond.yml"
+                        ;;
+                esac
+                case " ${EXISTING_CONTAINERS-} " in
+                    *' edge-api2 '* | *' edge-api3 '*)
+                        files+=",$JOIN_DIR/docker-compose.edge-api-multi.yml"
+                        ;;
+                esac
+            fi
+            if [[ -n ${INCOMPATIBLE_COMPOSE_CONTAINER-} && \
+                $container == "$INCOMPATIBLE_COMPOSE_CONTAINER" ]]; then
+                files=$JOIN_DIR/docker-compose.observability.yml
+            fi
+            jq -cn --arg files "$files" --arg workdir "$JOIN_DIR" \
+                '{"com.docker.compose.project":"gonka-test",
+                  "com.docker.compose.project.config_files":$files,
+                  "com.docker.compose.project.working_dir":$workdir}'
+            ;;
         '{{index .Config.Labels "ai.gonka.component"}}')
             printf '%s\n' "${EXISTING_PROXY_COMPONENT-}"
             ;;
@@ -49,6 +74,10 @@ if [[ ${1:-} == inspect ]]; then
             ;;
         '{{range .Config.Env}}{{println .}}{{end}}')
             case ${4:-} in
+                versiond | versiond2)
+                    printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\n' \
+                        "${RUNTIME_PGHOST:-devshard-postgres}"
+                    ;;
                 versiond-router)
                     printf 'VERSIOND_HOSTS=versiond versiond2\n'
                     ;;
@@ -185,6 +214,31 @@ fi
 
 [[ ${1:-} == compose ]] || exit 1
 
+for arg in "$@"; do
+    if [[ $arg == config ]]; then
+        pg_host=${RENDERED_PGHOST:-devshard-postgres}
+        jq -cn --arg pg "$pg_host" --arg join "$JOIN_DIR" \
+            --arg policy "${RENDERED_POLICY_NETWORK:-gonka-proxy-policy-front}" \
+            --arg front "${RENDERED_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
+            --arg back "${RENDERED_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
+            '{name:"gonka-test",networks:{
+                "proxy-policy-front":{name:$policy},
+                "versiond-router-front":{name:$front},
+                "versiond-router-back":{name:$back}
+            },services:{
+                proxy:{container_name:"proxy"},
+                "proxy-policy":{},
+                versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+                versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+                "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
+                "edge-api":{container_name:"edge-api"},
+                "edge-api2":{container_name:"edge-api2"},
+                "edge-api3":{container_name:"edge-api3"}
+            }}'
+        exit 0
+    fi
+done
+
 service=${!#}
 for arg in "$@"; do
     if [[ $arg == ps ]]; then
@@ -283,8 +337,9 @@ run_upgrade() {
         FAIL_SERVICE="$failed_service" \
         BLOCK_SERVICE=none \
         BLOCK_SIGNAL=none \
-        EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
+        EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api edge-api2 edge-api3 edge-api-router" \
         FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         INTERRUPT_TARGET_BASELINE_SERVICE="${INTERRUPT_TARGET_BASELINE_SERVICE-}" \
         ROLLBACK_EMPTY_VERSIOND_SERVICE="${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" \
@@ -300,6 +355,13 @@ run_upgrade() {
         UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
         UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        RUNTIME_COMPOSE_FILES="${RUNTIME_COMPOSE_FILES-}" \
+        RUNTIME_PGHOST="${RUNTIME_PGHOST-}" \
+        RENDERED_PGHOST="${RENDERED_PGHOST-}" \
+        RENDERED_POLICY_NETWORK="${RENDERED_POLICY_NETWORK-}" \
+        RENDERED_ROUTER_FRONT_NETWORK="${RENDERED_ROUTER_FRONT_NETWORK-}" \
+        RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
+        INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
         "$script_dir/upgrade-devshard-v5.sh" \
         --versiond-mode "$versiond_mode" --edge-mode "$mode" \
         >"$tmpdir/stdout" 2>"$tmpdir/stderr"; then
@@ -321,10 +383,18 @@ run_auto_upgrade() {
         FAIL_SERVICE=none \
         BLOCK_SERVICE=none \
         BLOCK_SIGNAL=none \
-        EXISTING_CONTAINERS="$containers" \
+        EXISTING_CONTAINERS="$containers proxy" \
         FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         UPGRADE_ROUTER_RELOAD_SETTLE=0 \
+        RUNTIME_COMPOSE_FILES="${RUNTIME_COMPOSE_FILES-}" \
+        RUNTIME_PGHOST="${RUNTIME_PGHOST-}" \
+        RENDERED_PGHOST="${RENDERED_PGHOST-}" \
+        RENDERED_POLICY_NETWORK="${RENDERED_POLICY_NETWORK-}" \
+        RENDERED_ROUTER_FRONT_NETWORK="${RENDERED_ROUTER_FRONT_NETWORK-}" \
+        RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
+        INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
         "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
         cat "$tmpdir/stderr" >&2
         fail "automatic topology upgrade failed"
@@ -348,8 +418,9 @@ run_postcondition_interrupted_upgrade() {
         FAIL_SERVICE=none \
         BLOCK_SERVICE=none \
         BLOCK_SIGNAL=none \
-        EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
+        EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
         FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         INTERRUPT_TARGET_BASELINE_SERVICE=versiond2 \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT=5 \
@@ -396,8 +467,9 @@ run_interrupted_upgrade() {
         FAIL_SERVICE=none \
         BLOCK_SERVICE=versiond2 \
         BLOCK_SIGNAL="$signal" \
-        EXISTING_CONTAINERS="versiond versiond2 versiond-router devshard-postgres edge-api" \
+        EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
         FAKE_STATE_DIR="$state_dir" \
+        JOIN_DIR="$script_dir" \
         GONKA_CONFIG_ENV="$tmpdir/config.env" \
         ROLLBACK_EMPTY_VERSIOND_SERVICE='' \
         ROLLBACK_MISSING_VERSION_SERVICE='' \
@@ -433,6 +505,16 @@ assert_not_contains() {
     fi
 }
 
+assert_no_compose_mutation() {
+    local file=$1
+
+    if grep -E -- ' :: compose .* (pull|up|stop|start|rm)($| )' "$file" \
+        >/dev/null; then
+        cat "$file" >&2
+        fail "topology validation performed a Compose mutation"
+    fi
+}
+
 line_number() {
     local file=$1
     local pattern=$2
@@ -452,6 +534,9 @@ cat >"$tmpdir/fleet" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
+printf 'fleet-networks %s %s\n' \
+    "${VERSIOND_ROUTER_FRONT_NETWORK-}" \
+    "${VERSIOND_ROUTER_BACK_NETWORK-}" >>"$DOCKER_LOG"
 EOF
 cat >"$tmpdir/enable-router" <<'EOF'
 #!/usr/bin/env bash
@@ -489,6 +574,80 @@ if ! grep -E -- '--wait-timeout 2100 versiond$' "$tmpdir/base.log" >/dev/null; t
     cat "$tmpdir/base.log" >&2
     fail "base-only versiond was not replaced"
 fi
+
+runtime_with_observability="$script_dir/docker-compose.yml,$script_dir/docker-compose.observability.yml"
+COMPOSE_FILE="$script_dir/docker-compose.yml:$script_dir/docker-compose.observability.yml" \
+RUNTIME_COMPOSE_FILES=$runtime_with_observability \
+    run_auto_upgrade "versiond edge-api" \
+        "$tmpdir/observability.log" "$tmpdir/observability.stdout"
+assert_contains "$tmpdir/observability.log" \
+    "-f $script_dir/docker-compose.observability.yml"
+grep -q 'source=COMPOSE_FILE' "$tmpdir/observability.stdout" || fail \
+    "updater did not accept the complete COMPOSE_FILE model"
+
+if DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/missing-override.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/missing-override.state" \
+    JOIN_DIR="$script_dir" \
+    RUNTIME_COMPOSE_FILES="$runtime_with_observability" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        --compose-file "$script_dir/docker-compose.yml" \
+        >"$tmpdir/missing-override.stdout" \
+        2>"$tmpdir/missing-override.stderr"; then
+    fail "upgrade accepted an explicit model that omitted a runtime override"
+fi
+grep -q 'omits or reorders a file recorded by running containers' \
+    "$tmpdir/missing-override.stderr" || {
+    cat "$tmpdir/missing-override.stderr" >&2
+    fail "missing runtime override did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/missing-override.log"
+
+if DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/wrong-project.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/wrong-project.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        --compose-project-name another-project \
+        >"$tmpdir/wrong-project.stdout" \
+        2>"$tmpdir/wrong-project.stderr"; then
+    fail "upgrade accepted a Compose project-name change"
+fi
+grep -q "does not match running project 'gonka-test'" \
+    "$tmpdir/wrong-project.stderr" || {
+    cat "$tmpdir/wrong-project.stderr" >&2
+    fail "project-name mismatch did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/wrong-project.log"
+
+if INCOMPATIBLE_COMPOSE_CONTAINER=versiond \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/incompatible-metadata.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/incompatible-metadata.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        >"$tmpdir/incompatible-metadata.stdout" \
+        2>"$tmpdir/incompatible-metadata.stderr"; then
+    fail "upgrade guessed an order for incompatible runtime Compose metadata"
+fi
+grep -q 'record incompatible Compose file sets' \
+    "$tmpdir/incompatible-metadata.stderr" || {
+    cat "$tmpdir/incompatible-metadata.stderr" >&2
+    fail "incompatible runtime metadata did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/incompatible-metadata.log"
 if ! grep -E -- '--wait-timeout 180 edge-api$' "$tmpdir/base.log" >/dev/null; then
     cat "$tmpdir/base.log" >&2
     fail "base-only edge-api was not replaced"
@@ -512,6 +671,57 @@ grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
 assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
 assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
+
+cat >"$tmpdir/managed-postgres.yml" <<'EOF'
+services:
+  versiond:
+    environment:
+      PGHOST: managed-postgres.internal
+  versiond2:
+    environment:
+      PGHOST: managed-postgres.internal
+EOF
+managed_files="$script_dir/docker-compose.yml,$script_dir/docker-compose.versiond.yml,$tmpdir/managed-postgres.yml"
+RUNTIME_COMPOSE_FILES=$managed_files \
+RUNTIME_PGHOST=managed-postgres.internal \
+RENDERED_PGHOST=managed-postgres.internal \
+RENDERED_ROUTER_FRONT_NETWORK=custom-router-front \
+RENDERED_ROUTER_BACK_NETWORK=custom-router-back \
+    run_auto_upgrade \
+        "versiond versiond2 versiond-router edge-api" \
+        "$tmpdir/managed-postgres.log" "$tmpdir/managed-postgres.stdout"
+assert_contains "$tmpdir/managed-postgres.log" \
+    "-f $tmpdir/managed-postgres.yml"
+assert_not_contains "$tmpdir/managed-postgres.log" " pull devshard-postgres"
+assert_not_contains "$tmpdir/managed-postgres.log" \
+    "--wait-timeout 2100 devshard-postgres"
+assert_not_contains "$tmpdir/managed-postgres.log" \
+    "--volumes-from cid-devshard-postgres:ro"
+assert_contains "$tmpdir/managed-postgres.log" \
+    "fleet-networks custom-router-front custom-router-back"
+
+if RUNTIME_COMPOSE_FILES=$managed_files \
+    RUNTIME_PGHOST=managed-postgres.internal \
+    RENDERED_PGHOST=other-postgres.internal \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/postgres-switch.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+    FAKE_STATE_DIR="$tmpdir/postgres-switch.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$tmpdir/postgres-switch.stdout" \
+        2>"$tmpdir/postgres-switch.stderr"; then
+    fail "upgrade accepted an implicit PostgreSQL endpoint change"
+fi
+grep -q 'refuse an implicit PostgreSQL identity change' \
+    "$tmpdir/postgres-switch.stderr" || {
+    cat "$tmpdir/postgres-switch.stderr" >&2
+    fail "PostgreSQL endpoint change did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/postgres-switch.log"
 versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")
 versiond2_up_line=$(line_number "$tmpdir/ha.log" \
@@ -539,6 +749,7 @@ if DOCKER_BIN="$tmpdir/docker" \
     EXISTING_PROXY_COMPONENT=proxy-router \
     EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy" \
     FAKE_STATE_DIR="$tmpdir/active-without-marker.state" \
+    JOIN_DIR="$script_dir" \
     GONKA_CONFIG_ENV="$tmpdir/config.env" \
     "$script_dir/upgrade-devshard-v5.sh" \
     --versiond-mode ha --edge-mode single \
@@ -556,6 +767,7 @@ DOCKER_LOG="$tmpdir/active-with-marker.log" \
 EXISTING_PROXY_COMPONENT=proxy-router \
 EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy" \
 FAKE_STATE_DIR="$tmpdir/active-with-marker.state" \
+JOIN_DIR="$script_dir" \
 GONKA_CONFIG_ENV="$tmpdir/config.env" \
     "$script_dir/upgrade-devshard-v5.sh" \
     --versiond-mode ha --edge-mode single \
@@ -563,6 +775,10 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
     2>"$tmpdir/active-with-marker.stderr"
 assert_contains "$tmpdir/active-with-marker.log" \
     "enable-router --versiond-mode ha --edge-mode single"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--compose-project-name gonka-test"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--compose-file $script_dir/docker-compose.versiond.yml"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"

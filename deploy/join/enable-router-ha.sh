@@ -6,10 +6,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
 versiond_mode=auto
 edge_mode=auto
+compose_project_name=
+compose_project_directory=
 rollback_pending=false
 rollback_image=
 declare -A inherited_env=()
 declare -a migration_routes=()
+declare -a compose_file_args=()
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -30,6 +33,12 @@ to the public HAProxy, private nginx policy workers, and versiond-router fleet.
 Options:
   --versiond-mode auto|single|ha
   --edge-mode     auto|single|multi
+  --compose-file FILE              repeat for the complete ordered model
+  --compose-project-name NAME      must match the running Compose project
+  --compose-project-directory DIR  must match the running Compose project
+
+Without --compose-file or COMPOSE_FILE, the script recovers the ordered file
+list and project identity from Docker Compose labels on the running services.
 EOF
 }
 
@@ -45,6 +54,22 @@ while (($# > 0)); do
             edge_mode=$2
             shift 2
             ;;
+        --compose-file)
+            (($# >= 2)) || fail "--compose-file requires a value"
+            compose_file_args+=("$2")
+            shift 2
+            ;;
+        --compose-project-name)
+            (($# >= 2)) || fail "--compose-project-name requires a value"
+            compose_project_name=$2
+            shift 2
+            ;;
+        --compose-project-directory)
+            (($# >= 2)) || fail \
+                "--compose-project-directory requires a value"
+            compose_project_directory=$2
+            shift 2
+            ;;
         -h | --help)
             usage
             exit 0
@@ -58,7 +83,7 @@ case $edge_mode in auto | single | multi) ;; *) fail "invalid edge-api mode" ;; 
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
 while IFS= read -r name; do
     case $name in
-        GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+        COMPOSE_* | GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
             inherited_env[$name]=${!name}
             ;;
     esac
@@ -77,6 +102,8 @@ fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
+# shellcheck source=deploy/join/compose-topology.sh
+source "$script_dir/compose-topology.sh"
 
 container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
@@ -99,14 +126,17 @@ if [[ $edge_mode == auto ]]; then
     fi
 fi
 
-compose=(
-    "$docker_bin" compose
-    --project-directory "$script_dir"
-    -f "$script_dir/docker-compose.yml"
-)
-if [[ $versiond_mode == ha ]]; then
-    compose+=(-f "$script_dir/docker-compose.versiond.yml")
-fi
+container_exists proxy || fail \
+    "cannot recover the deployment Compose topology: public proxy container is missing"
+runtime_compose_containers=(proxy versiond edge-api)
+for container in versiond2 devshard-postgres edge-api2 edge-api3; do
+    container_exists "$container" && runtime_compose_containers+=("$container")
+done
+gonka_compose_resolve \
+    "$docker_bin" "$script_dir" "$versiond_mode" "$edge_mode" \
+    "$compose_project_name" "$compose_project_directory" \
+    compose_file_args runtime_compose_containers
+compose=("${GONKA_COMPOSE_COMMAND[@]}")
 
 ensure_compose_network() {
     local key=$1 name=$2 project=$3 ownership
@@ -123,10 +153,6 @@ ensure_compose_network() {
         --label "com.docker.compose.project=$project" \
         "$name" >/dev/null
 }
-if [[ $edge_mode == multi ]]; then
-    compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
-fi
-
 pull_policy=${ROUTER_HA_PULL_POLICY:-always}
 case $pull_policy in always | missing | never) ;; *) fail "ROUTER_HA_PULL_POLICY must be always, missing, or never" ;; esac
 cutover_timeout=${ROUTER_HA_CUTOVER_TIMEOUT_SECONDS:-60}
@@ -151,7 +177,10 @@ wait_component() {
 }
 
 run_fleet() {
-    GONKA_CONFIG_ENV=$config_env "$fleet_bin" "$@"
+    GONKA_CONFIG_ENV=$config_env \
+    VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
+    VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
+        "$fleet_bin" "$@"
 }
 
 urlencode() {
@@ -238,8 +267,8 @@ exec 9<"$lock_file"
 flock -n 9 || fail "another router HA cutover holds $lock_file"
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
-compose_project=$("${compose[@]}" config --format json | jq -er '.name')
-policy_network=${PROXY_POLICY_FRONT_NETWORK:-gonka-proxy-policy-front}
+compose_project=$GONKA_COMPOSE_PROJECT
+policy_network=$GONKA_COMPOSE_POLICY_NETWORK
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the

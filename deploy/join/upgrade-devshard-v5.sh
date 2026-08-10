@@ -8,6 +8,10 @@ release_tag=0.2.15-devshard-v5
 operation_id="$(date +%s%N)-$$"
 versiond_mode=auto
 edge_mode=auto
+compose_project_name=
+compose_project_directory=
+declare -a compose_file_args=()
+declare -A inherited_env=()
 
 fail() {
     echo "upgrade-devshard-v5: $*" >&2
@@ -27,6 +31,12 @@ Normally run without options. The script detects the existing deployment.
 Options:
   --versiond-mode auto|single|ha
   --edge-mode     auto|single|multi
+  --compose-file FILE              repeat for the complete ordered model
+  --compose-project-name NAME      must match the running Compose project
+  --compose-project-directory DIR  must match the running Compose project
+
+Without --compose-file or COMPOSE_FILE, the script recovers the ordered file
+list and project identity from Docker Compose labels on the running services.
 EOF
 }
 
@@ -40,6 +50,22 @@ while [[ $# -gt 0 ]]; do
         --edge-mode)
             [[ $# -ge 2 ]] || fail "--edge-mode requires a value"
             edge_mode=$2
+            shift 2
+            ;;
+        --compose-file)
+            [[ $# -ge 2 ]] || fail "--compose-file requires a value"
+            compose_file_args+=("$2")
+            shift 2
+            ;;
+        --compose-project-name)
+            [[ $# -ge 2 ]] || fail "--compose-project-name requires a value"
+            compose_project_name=$2
+            shift 2
+            ;;
+        --compose-project-directory)
+            [[ $# -ge 2 ]] || fail \
+                "--compose-project-directory requires a value"
+            compose_project_directory=$2
             shift 2
             ;;
         -h | --help)
@@ -63,8 +89,21 @@ case $edge_mode in
 esac
 
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
+while IFS= read -r name; do
+    case $name in
+        COMPOSE_* | GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+            inherited_env[$name]=${!name}
+            ;;
+    esac
+done < <(compgen -e)
+set -a
 # shellcheck disable=SC1090
 source "$config_env"
+set +a
+for name in "${!inherited_env[@]}"; do
+    printf -v "$name" '%s' "${inherited_env[$name]}"
+    export "${name?}"
+done
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 docker_bin=${DOCKER_BIN:-docker}
 fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
@@ -73,6 +112,8 @@ upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgr
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
+# shellcheck source=deploy/join/compose-topology.sh
+source "$script_dir/compose-topology.sh"
 
 # A rollback gets the same startup budget as the corresponding forward
 # replacement. UPGRADE_ROLLBACK_VERIFY_TIMEOUT remains an emergency override
@@ -151,6 +192,24 @@ export VERSIOND_ROUTER_IMAGE="ghcr.io/product-science/versiond-router:$release_t
 export PROXY_POLICY_IMAGE="ghcr.io/product-science/proxy:$release_tag"
 export PROXY_ROUTER_IMAGE="ghcr.io/product-science/proxy-router:$release_tag"
 
+container_exists proxy || fail \
+    "cannot recover the deployment Compose topology: public proxy container is missing"
+runtime_compose_containers=(proxy versiond edge-api)
+for container in versiond2 devshard-postgres edge-api2 edge-api3; do
+    container_exists "$container" && runtime_compose_containers+=("$container")
+done
+gonka_compose_resolve \
+    "$docker_bin" "$script_dir" "$versiond_mode" "$edge_mode" \
+    "$compose_project_name" "$compose_project_directory" \
+    compose_file_args runtime_compose_containers
+compose=("${GONKA_COMPOSE_COMMAND[@]}")
+if [[ $versiond_mode == ha ]]; then
+    compose+=(-f "$script_dir/docker-compose.versiond-v5-compat.yml")
+fi
+if [[ $edge_mode == multi ]]; then
+    compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
+fi
+
 existing_proxy_component=$(
     "$docker_bin" inspect --format \
         '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
@@ -161,27 +220,17 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     fi
     echo "The v5 router HA topology is already active; converging it idempotently"
     "$enable_router_bin" \
-        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
+        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+        "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
     echo "Devshard v5 upgrade already completed"
     exit 0
 fi
 
-compose=(
-    "$docker_bin" compose
-    --project-directory "$script_dir"
-    -f "$script_dir/docker-compose.yml"
-)
 if [[ $versiond_mode == ha ]]; then
-    compose+=(-f "$script_dir/docker-compose.versiond.yml")
-    compose+=(-f "$script_dir/docker-compose.versiond-v5-compat.yml")
-fi
-if [[ $edge_mode == multi ]]; then
-    compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
-    compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
-fi
-
-if [[ $versiond_mode == ha ]]; then
-    GONKA_CONFIG_ENV=$config_env "$fleet_bin" prepare-networks
+    GONKA_CONFIG_ENV=$config_env \
+    VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
+    VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
+        "$fleet_bin" prepare-networks
 fi
 
 declare -A image_variables=(
@@ -815,22 +864,20 @@ done
 
 pull_services=(versiond edge-api)
 if [[ $versiond_mode == ha ]]; then
-    pull_services+=(devshard-postgres versiond2 versiond-router)
+    pull_services+=(versiond2 versiond-router)
+    [[ $GONKA_COMPOSE_POSTGRES_MODE != local ]] || \
+        pull_services+=(devshard-postgres)
 fi
 if [[ $edge_mode == multi ]]; then
     pull_services+=(edge-api2 edge-api3 edge-api-router)
 fi
 run_interruptible "${compose[@]}" pull "${pull_services[@]}"
 
-if [[ $versiond_mode == ha ]]; then
+if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
     postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
     [[ -n $postgres_container ]] || fail \
         "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
-    postgres_target_dir=${DEVSHARD_POSTGRES_DATA_DIR:-./devshards/postgres}
-    case $postgres_target_dir in
-        /*) ;;
-        *) postgres_target_dir="$script_dir/$postgres_target_dir" ;;
-    esac
+    postgres_target_dir=$GONKA_COMPOSE_POSTGRES_DATA_DIR
     run_interruptible env DOCKER_BIN="$docker_bin" \
         "$script_dir/devshard-postgres-migration-preflight.sh" \
         --source-container "$postgres_container" \
@@ -848,6 +895,9 @@ if [[ $versiond_mode == ha ]]; then
     active_service=
     active_failure_strategy=
 
+fi
+
+if [[ $versiond_mode == ha ]]; then
     # Remove the first replacement from the v4 nginx config before Docker gives
     # its new container the old DNS name. Once one v5 replica is ready, install
     # HAProxy so active checks protect the remaining replacement.
@@ -908,7 +958,8 @@ cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
         run_interruptible "$enable_router_bin" \
-            --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
+            --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+            "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
         ;;
     false | 0 | no)
         warn "router HA cutover was skipped by UPGRADE_ENABLE_ROUTER_HA"
