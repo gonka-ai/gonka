@@ -266,6 +266,39 @@ func TestGatewayMockEnvPooledChatUsesDefaultModel(t *testing.T) {
 }
 
 // Steps:
+// - Configure the gateway default model to require a user API key.
+// - Send pooled chat without a `model` field and without credentials.
+// - Assert effective default-model access is enforced before runtime forwarding.
+func TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+			writeMockenvChatJSON(w, "12", "Qwen/Test")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{{
+			ModelID:    "Qwen/Test",
+			AccessMode: string(gatewayAccessModeAPIKey),
+		}}
+	}))
+	body := `{"messages":[{"role":"user","content":"default model still private"}]}`
+
+	denied := env.postChat(body)
+	require.Equal(t, http.StatusUnauthorized, denied.Code)
+	require.Contains(t, denied.Body.String(), "requires an API key")
+	require.EqualValues(t, 0, rt.calls.Load())
+
+	allowed := env.postChat(body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, allowed.Code)
+	require.Equal(t, "12", allowed.Header().Get("X-Devshard-ID"))
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
 // - Create an active runtime for a supported model.
 // - Send malformed JSON to pooled chat.
 // - Assert the gateway rejects before calling the runtime.
@@ -337,4 +370,45 @@ func TestGatewayMockEnvConcurrencyLimitRejectsBeforeRuntime(t *testing.T) {
 	require.Equal(t, http.StatusTooManyRequests, rec.Code)
 	require.Contains(t, rec.Body.String(), "rate limit exceeded")
 	require.EqualValues(t, 0, rt.calls.Load())
+}
+
+// Steps:
+// - Configure two pooled runtimes whose participant host is probe-quarantined.
+// - Send pooled chat for their model through the full gateway handler.
+// - Assert participant capacity rejection returns 429 before any runtime call.
+func TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime(t *testing.T) {
+	limiter := NewParticipantRequestLimiter(1, 10)
+	limiter.ObserveResult("shared-host", "/sessions/12/chat/completions", http.StatusServiceUnavailable)
+
+	alpha := &gatewayMockRuntime{
+		id:                    "12",
+		model:                 "Qwen/Test",
+		active:                true,
+		participantKeys:       []string{"shared-host"},
+		participantSlotCounts: map[string]int{"shared-host": 1},
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("participant-limited pooled request should not reach first runtime")
+		},
+	}
+	beta := &gatewayMockRuntime{
+		id:                    "22",
+		model:                 "Qwen/Test",
+		active:                true,
+		participantKeys:       []string{"shared-host"},
+		participantSlotCounts: map[string]int{"shared-host": 1},
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			t.Fatal("participant-limited pooled request should not reach second runtime")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{alpha, beta})
+	env.gateway.participantLimiter = limiter
+	limiter.SetMetrics(env.gateway.metrics)
+	env.gateway.attachCapacityLiveAvailability()
+
+	rec := env.postChat(mockenvChatBody("Qwen/Test", "all hosts quarantined"))
+
+	require.Equal(t, http.StatusTooManyRequests, rec.Code)
+	require.Contains(t, rec.Body.String(), "participant request budget exhausted")
+	require.EqualValues(t, 0, alpha.calls.Load())
+	require.EqualValues(t, 0, beta.calls.Load())
 }

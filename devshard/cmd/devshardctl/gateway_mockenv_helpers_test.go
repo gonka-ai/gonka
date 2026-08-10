@@ -28,13 +28,15 @@ type gatewayMockEnv struct {
 }
 
 type gatewayMockRuntime struct {
-	id            string
-	model         string
-	active        bool
-	privateKeyHex string
-	privateKeyEnv string
-	handler       http.HandlerFunc
-	calls         atomic.Int64
+	id                    string
+	model                 string
+	active                bool
+	privateKeyHex         string
+	privateKeyEnv         string
+	participantKeys       []string
+	participantSlotCounts map[string]int
+	handler               http.HandlerFunc
+	calls                 atomic.Int64
 }
 
 type gatewayMockOption func(*gatewayMockConfig)
@@ -144,13 +146,32 @@ func (rt *gatewayMockRuntime) runtime(t *testing.T) *devshardRuntime {
 		handler(w, r)
 	})
 	devshard := &devshardRuntime{
-		id:      rt.id,
-		model:   rt.model,
-		handler: wrapped,
+		id:                    rt.id,
+		model:                 rt.model,
+		handler:               wrapped,
+		participantKeys:       append([]string(nil), rt.participantKeys...),
+		participantSlotCounts: copyMockenvParticipantSlotCounts(rt.participantSlotCounts),
+	}
+	if len(devshard.participantSlotCounts) == 0 && len(devshard.participantKeys) > 0 {
+		devshard.participantSlotCounts = make(map[string]int, len(devshard.participantKeys))
+		for _, key := range devshard.participantKeys {
+			devshard.participantSlotCounts[key]++
+		}
 	}
 	devshard.active.Store(active)
 	devshard.activeConfigured = true
 	return devshard
+}
+
+func copyMockenvParticipantSlotCounts(slotCounts map[string]int) map[string]int {
+	if len(slotCounts) == 0 {
+		return nil
+	}
+	out := make(map[string]int, len(slotCounts))
+	for key, count := range slotCounts {
+		out[key] = count
+	}
+	return out
 }
 
 func (env *gatewayMockEnv) postChat(body string, opts ...func(*http.Request)) *httptest.ResponseRecorder {

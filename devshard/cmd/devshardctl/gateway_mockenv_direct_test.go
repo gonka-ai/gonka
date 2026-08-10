@@ -120,6 +120,43 @@ func TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime(t *testing.T) {
 }
 
 // Steps:
+// - Store a direct chat cache entry while the runtime is active.
+// - Mark the resident runtime inactive before sending the identical request again.
+// - Assert the direct cache path does not bypass runtime availability checks.
+func TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	rt.handler = func(w http.ResponseWriter, r *http.Request) {
+		require.EqualValues(t, 1, rt.calls.Load(), "only the initial active request should reach runtime")
+		writeMockenvChatJSON(w, "12", "Qwen/Test")
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt})
+	body := mockenvChatBody("Qwen/Test", "cached before inactive")
+
+	first := env.postDirectChat("12", body)
+	require.Equal(t, http.StatusOK, first.Code)
+	require.Equal(t, "12", first.Header().Get("X-Devshard-ID"))
+	require.EqualValues(t, 1, rt.calls.Load())
+
+	env.gateway.mu.Lock()
+	resident := env.gateway.runtimes["12"]
+	env.gateway.mu.Unlock()
+	require.NotNil(t, resident)
+	resident.active.Store(false)
+	require.NoError(t, env.gateway.store.SetDevshardActive("12", false))
+
+	cached := env.postDirectChat("12", body)
+	require.Equal(t, http.StatusConflict, cached.Code)
+	require.Contains(t, cached.Body.String(), "unavailable for new inferences")
+	require.Contains(t, cached.Body.String(), "inactive")
+	require.NotEqual(t, first.Body.String(), cached.Body.String())
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
 // - Configure an `api_key` model and store a direct chat response with a valid key.
 // - Send the identical direct chat request without credentials.
 // - Assert the direct-route cache lookup does not bypass model access checks.
@@ -303,6 +340,39 @@ func TestGatewayMockEnvDirectDevshardUsesDefaultRuntimeModelWhenModelMissing(t *
 	require.Equal(t, http.StatusOK, rec.Code)
 	require.Equal(t, "12", rec.Header().Get("X-Devshard-ID"))
 	require.Contains(t, rec.Body.String(), "from 12")
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
+// - Configure the runtime model to require a user API key.
+// - Send direct devshard chat without a `model` field and without credentials.
+// - Assert effective runtime-model access is enforced before runtime forwarding.
+func TestGatewayMockEnvDirectDevshardMissingModelEnforcesRuntimeModelAccess(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+		handler: func(w http.ResponseWriter, r *http.Request) {
+			require.NotContains(t, readRequestBodyForTest(t, r), `"model"`)
+			writeMockenvChatJSON(w, "12", "Qwen/Test")
+		},
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{{
+			ModelID:    "Qwen/Test",
+			AccessMode: string(gatewayAccessModeAPIKey),
+		}}
+	}))
+	body := `{"messages":[{"role":"user","content":"runtime model still private"}]}`
+
+	denied := env.postDirectChat("12", body)
+	require.Equal(t, http.StatusUnauthorized, denied.Code)
+	require.Contains(t, denied.Body.String(), "requires an API key")
+	require.EqualValues(t, 0, rt.calls.Load())
+
+	allowed := env.postDirectChat("12", body, withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, allowed.Code)
+	require.Equal(t, "12", allowed.Header().Get("X-Devshard-ID"))
 	require.EqualValues(t, 1, rt.calls.Load())
 }
 

@@ -146,6 +146,7 @@ Mock coverage:
 | Routes pooled chat by requested model | `TestGatewayMockEnvPooledChatRoutesByModel` |
 | Uses gateway default model when request omits `model` | `TestGatewayMockEnvPooledChatUsesDefaultModel` |
 | Does not inject the default model back into the forwarded body | `TestGatewayMockEnvPooledChatUsesDefaultModel` |
+| Enforces default-model access when request omits `model` | `TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess` |
 | Rejects unsupported pooled model before runtime call | `TestGatewayMockEnvUnsupportedModelRejectedBeforeRuntime` |
 | Rejects malformed JSON before runtime call | `TestGatewayMockEnvMalformedJSONRejectedBeforeRuntime` |
 | Enforces `api_key` model access | `TestGatewayMockEnvAPIKeyModelAccess` |
@@ -157,7 +158,7 @@ Mock coverage:
 | Cache miss and cache store on successful pooled responses | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
 | Cache hit response replay for pooled chat | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime` |
 | Runtime selection failure when all runtimes are unavailable | `TestGatewayMockEnvAllRuntimesUnavailableReturnsSelectionError` |
-| Participant limiter rejecting all candidate runtimes | not covered by mockenv yet |
+| Participant limiter rejecting all candidate runtimes | `TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime` |
 
 ## Direct Devshard Flow
 
@@ -224,6 +225,7 @@ Mock coverage:
 | Rejects direct chat when request model does not match runtime model | `TestGatewayMockEnvDirectDevshardRejectsWrongModel` |
 | Rejects malformed direct chat JSON before runtime call | `TestGatewayMockEnvDirectDevshardRejectsMalformedJSONBeforeRuntime` |
 | Uses the selected runtime model when direct chat omits `model` | `TestGatewayMockEnvDirectDevshardUsesDefaultRuntimeModelWhenModelMissing` |
+| Enforces selected runtime-model access when direct chat omits `model` | `TestGatewayMockEnvDirectDevshardMissingModelEnforcesRuntimeModelAccess` |
 | Returns 404 for unknown direct devshard chat | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Direct route access control for `api_key` models | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
 | Direct route access control for `admin_only` models | `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
@@ -232,6 +234,7 @@ Mock coverage:
 | Direct route cache hit | `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
 | Direct route cache hits do not bypass model access checks | `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassAccessMode` |
 | Direct route cache entries are scoped by effective model | `TestGatewayMockEnvDirectDevshardCacheIsScopedByModel` |
+| Direct route cache hits do not bypass inactive runtime checks | `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime` |
 | Runtime unavailable or inactive direct chat conflict | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict` |
 | Direct operational paths require admin auth before pass-through | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Direct non-chat pass-through paths | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
@@ -336,8 +339,8 @@ Mock coverage:
 | Handler stack: disabled gateway | Yes | `TestGatewayMockEnvDisabledGatewayStillAllowsAdminState`, `TestGatewayMockEnvDisabledGatewayBlocksDirectDevshardChat`, `TestGatewayMockEnvDirectDevshardDisabledGatewayAllowsAdminOperationalPathOnly` |
 | Handler stack: admin auth | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths`, `TestGatewayMockEnvDirectDevshardDisabledGatewayAllowsAdminOperationalPathOnly` |
 | Pooled chat routing | Yes | `TestGatewayMockEnvPooledChatRoutesByModel` |
-| Pooled default model | Yes | `TestGatewayMockEnvPooledChatUsesDefaultModel` |
-| Pooled model access modes | Yes | `TestGatewayMockEnvAPIKeyModelAccess`, `TestGatewayMockEnvAdminOnlyModelAccess` |
+| Pooled default model | Yes | `TestGatewayMockEnvPooledChatUsesDefaultModel`, `TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess` |
+| Pooled model access modes | Yes | `TestGatewayMockEnvAPIKeyModelAccess`, `TestGatewayMockEnvAdminOnlyModelAccess`, `TestGatewayMockEnvPooledChatMissingModelEnforcesDefaultModelAccess` |
 | Pooled cache access ordering | Yes | `TestGatewayMockEnvPooledChatCacheDoesNotBypassAccessMode` |
 | Pooled validation before runtime | Yes | `TestGatewayMockEnvUnsupportedModelRejectedBeforeRuntime`, `TestGatewayMockEnvMalformedJSONRejectedBeforeRuntime` |
 | Pooled inactive runtime exclusion | Yes | `TestGatewayMockEnvInactiveRuntimeExcludedFromPooledChat` |
@@ -346,11 +349,11 @@ Mock coverage:
 | Pooled streaming pass-through | Yes | `TestGatewayMockEnvStreamingChatPassthrough` |
 | Direct devshard routing | Yes | `TestGatewayMockEnvDirectDevshardRouteByID` |
 | Direct devshard model validation | Yes | `TestGatewayMockEnvDirectDevshardRejectsWrongModel`, `TestGatewayMockEnvDirectDevshardRejectsMalformedJSONBeforeRuntime` |
-| Direct devshard default model | Yes | `TestGatewayMockEnvDirectDevshardUsesDefaultRuntimeModelWhenModelMissing` |
-| Direct devshard model access modes | Yes | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess`, `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
+| Direct devshard default model | Yes | `TestGatewayMockEnvDirectDevshardUsesDefaultRuntimeModelWhenModelMissing`, `TestGatewayMockEnvDirectDevshardMissingModelEnforcesRuntimeModelAccess` |
+| Direct devshard model access modes | Yes | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess`, `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess`, `TestGatewayMockEnvDirectDevshardMissingModelEnforcesRuntimeModelAccess` |
 | Direct devshard limiter | Yes | `TestGatewayMockEnvDirectDevshardLimiterRejectsBeforeRuntime`, `TestGatewayMockEnvDirectDevshardLimiterRunsBeforeCacheMissForward` |
-| Direct devshard cache isolation and access ordering | Yes | `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassAccessMode`, `TestGatewayMockEnvDirectDevshardCacheIsScopedByModel` |
-| Direct devshard unavailable conflict | Yes | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict` |
+| Direct devshard cache isolation and access ordering | Yes | `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassAccessMode`, `TestGatewayMockEnvDirectDevshardCacheIsScopedByModel`, `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime` |
+| Direct devshard unavailable conflict | Yes | `TestGatewayMockEnvInactiveDirectDevshardReturnsConflict`, `TestGatewayMockEnvDirectDevshardCacheDoesNotBypassInactiveRuntime` |
 | Direct unknown devshard | Yes | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Direct operational path admin auth and pass-through | Yes | `TestGatewayMockEnvAdminAuthRequiredForDirectOperationalPaths` |
 | Single-runtime `/v1/status` proxy mode | Yes | `TestGatewayMockEnvSingleRuntimeStatusProxiesRuntime` |
@@ -359,4 +362,4 @@ Mock coverage:
 | Response cache hit path | Yes | `TestGatewayMockEnvPooledChatCacheHitSkipsRuntime`, `TestGatewayMockEnvDirectDevshardCacheHitSkipsRuntime` |
 | Direct finalize post-success deactivation | Yes | `TestGatewayMockEnvDirectFinalizeMarksRuntimeInactive` |
 | Non-resident read-only metadata and admin hydration | Yes | `TestGatewayMockEnvNonResidentDevshardServesPublicMetadataOnly`, `TestGatewayMockEnvNonResidentDevshardAdminReadHydratesOrFailsWithoutMetadataFallback` |
-| Participant limiter all-host rejection | No | Not covered by mockenv yet |
+| Participant limiter all-host rejection | Yes | `TestGatewayMockEnvPooledChatParticipantLimiterAllHostsRejectedBeforeRuntime` |
