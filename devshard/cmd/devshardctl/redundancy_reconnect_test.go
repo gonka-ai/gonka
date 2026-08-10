@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -108,6 +109,67 @@ func TestDeliveredPrefix_LosersAndProbesCountNothing(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, int64(0), probe.deliveredEvents)
 	require.Equal(t, int64(0), probe.deliveredPartial)
+}
+
+// mkDeferredWinnerWriter builds the production writer chain (raceWriter ->
+// deferredWriter -> ResponseWriter) so payload rewriting is in the path.
+func mkDeferredWinnerWriter(t testing.TB, flag *cancelFlag) (*raceWriter, *inflight, *httptest.ResponseRecorder) {
+	t.Helper()
+	ctx := context.Background()
+	rec := httptest.NewRecorder()
+	dw := newDeferredWriter(ctx, rec, "fixture-escrow", flag)
+	rg := newRaceGroup(ctx, ctx, "fixture-escrow", dw)
+	rg.clientFlag = flag
+	inf := mkRaceWriterInflight(t)
+	rw := &raceWriter{group: rg, nonce: inf.nonce, inf: inf}
+	rg.setWinner(inf.nonce)
+	return rw, inf, rec
+}
+
+func TestDeliveredPrefix_ExpandingRewriteCountsUpstreamEvents(t *testing.T) {
+	// A `message`-shaped completion on the streaming path is expanded by
+	// rewriteStreamingPayload into several chunk events, so the client writer
+	// reports far more bytes than it was handed. The cursor is upstream-side
+	// (R2) and must not be derived from that count.
+	rw, inf, rec := mkDeferredWinnerWriter(t, nil)
+
+	upstream := []byte(`data: {"id":"x","model":"m","choices":[{"index":0,` +
+		`"message":{"role":"assistant","content":"Hi"},"finish_reason":"stop"}]}` + "\n\n")
+
+	n, err := rw.Write(upstream)
+	require.NoError(t, err)
+	require.Equal(t, len(upstream), n, "must report progress in upstream bytes")
+	require.Greater(t, rec.Body.Len(), len(upstream), "rewrite is expected to expand here")
+	require.Equal(t, int64(1), inf.deliveredEvents, "one upstream event was forwarded")
+	require.Equal(t, int64(0), inf.deliveredPartial)
+}
+
+func TestDeliveredPrefix_ShrinkingRewriteCountsUpstreamEvents(t *testing.T) {
+	rw, inf, rec := mkDeferredWinnerWriter(t, nil)
+
+	upstream := []byte(`data: {"choices":[{"delta":{"content":"Hi"},` +
+		`"token_ids":[1,2,3,4,5,6,7,8,9,10,11,12]}]}` + "\n\n")
+
+	n, err := rw.Write(upstream)
+	require.NoError(t, err)
+	require.Equal(t, len(upstream), n)
+	require.Less(t, rec.Body.Len(), len(upstream), "internal-field filtering is expected to shrink here")
+	require.Equal(t, int64(1), inf.deliveredEvents, "a shrunk chunk is still one whole upstream event")
+	require.Equal(t, int64(0), inf.deliveredPartial, "cursor must not land mid-event")
+}
+
+func TestDeliveredPrefix_ClientGoneDoesNotAdvanceCursor(t *testing.T) {
+	flag := newCancelFlag()
+	rw, inf, rec := mkDeferredWinnerWriter(t, flag)
+	flag.Trigger()
+
+	upstream := []byte(`data: {"choices":[{"delta":{"content":"unseen"}}]}` + "\n\n")
+	n, err := rw.Write(upstream)
+	require.NoError(t, err)
+	require.Equal(t, len(upstream), n)
+	require.Zero(t, rec.Body.Len(), "nothing reaches a disconnected client")
+	require.Equal(t, int64(0), inf.deliveredEvents, "swallowed bytes are not a delivered prefix")
+	require.Equal(t, int64(0), inf.deliveredPartial)
 }
 
 func TestRecordDeliveredForward_EmptyAndMultiEvent(t *testing.T) {
@@ -422,6 +484,103 @@ func TestReconnectInflight_FinishStillProcessedWhenPriorRespHadNoMempool(t *test
 	require.NoError(t, env.proxy.redundancy.processInflightOnce(inf))
 	require.True(t, env.session.IsNonceFinished(inf.nonce))
 	require.True(t, user.HasMsgFinish(env.session.PendingTxs(), inf.nonce))
+}
+
+func TestReconnectInflight_ReceiptOnlyIsResumeFailure(t *testing.T) {
+	// Live attach failed host-side: the receipt was already written, so the
+	// parser sees a terminator and the transport read ends cleanly. R3 requires
+	// this to count as a failed try, not a resume.
+	client := &reconnectScriptClient{
+		fullBody:        nil,
+		expectEvents:    1,
+		responseReceipt: []byte("receipt-1"),
+	}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
+	params := defaultParams()
+	params.Stream = true
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+
+	var sink bytes.Buffer
+	sink.WriteString(`data: {"choices":[{"delta":{"content":"Hel"}}]}` + "\n\n")
+	rg := newRaceGroup(context.Background(), context.Background(), "escrow-proxy", &sink)
+	inf := newDoneInflight(prepared, 1, 0)
+	inf.contentChunks.Store(1)
+	inf.err = transport.ErrSSEStreamTruncated
+	inf.resp = &host.HostResponse{Receipt: []byte("receipt-1")}
+	rg.setWinner(inf.nonce)
+
+	rerr := env.proxy.redundancy.reconnectInflight(context.Background(), inf, rg, params, nil)
+	require.ErrorIs(t, rerr, errReconnectReceiptOnly)
+	require.ErrorIs(t, inf.err, errReconnectReceiptOnly,
+		"a resume that delivered nothing must leave the attempt failed")
+}
+
+func TestReconnectInflight_TailOnlyResumeWithMempoolSucceeds(t *testing.T) {
+	// The client already had every event and only devshard_meta was missing.
+	// No stream bytes come back, but the response can still settle the nonce,
+	// so this is a successful resume rather than a receipt-only failure.
+	body := `data: {"choices":[{"delta":{"content":"Hi"}}]}` + "\n\n"
+	client := &reconnectScriptClient{
+		fullBody:        []byte(body),
+		expectEvents:    1,
+		responseReceipt: []byte("receipt-1"),
+		includeFinish:   true,
+	}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
+	params := defaultParams()
+	params.Stream = true
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+
+	var sink bytes.Buffer
+	sink.WriteString(body)
+	rg := newRaceGroup(context.Background(), context.Background(), "escrow-proxy", &sink)
+	inf := newDoneInflight(prepared, 1, 0)
+	inf.contentChunks.Store(1)
+	inf.err = transport.ErrSSEStreamTruncated
+	inf.resp = &host.HostResponse{Receipt: []byte("receipt-1")}
+	rg.setWinner(inf.nonce)
+
+	require.NoError(t, env.proxy.redundancy.reconnectInflight(context.Background(), inf, rg, params, nil))
+	require.NoError(t, inf.err)
+	require.True(t, user.HasMsgFinish(inf.resp.Mempool, prepared.Nonce()))
+}
+
+func TestWinningInflightTerminalFailure_KeepsProcessOnceForReconnect(t *testing.T) {
+	// A clean mid-stream close leaves err == nil with a receipt-only response.
+	// Spending the one ProcessResponse on it would strand the Finish that the
+	// reconnect is still able to merge (R1).
+	client := &reconnectScriptClient{ignoreCursor: true}
+	env := setupTestProxyWithProtocol(t, []user.HostClient{client}, "v5")
+	enableAttemptReconnectForTest(t, 200*time.Millisecond, 2)
+
+	params := defaultParams()
+	params.Stream = true
+	prepared, err := env.session.PrepareInference(params)
+	require.NoError(t, err)
+
+	inf := newDoneInflight(prepared, 1, 0)
+	inf.contentChunks.Store(1)
+	inf.err = nil
+	inf.resp = &host.HostResponse{Receipt: []byte("receipt-1")} // no mempool
+
+	require.True(t, env.proxy.redundancy.canAttemptWinnerReconnect(inf))
+	failed, ferr := env.proxy.redundancy.winningInflightTerminalFailure(inf)
+	require.True(t, failed, "a winner that cannot settle is a terminal failure for now")
+	require.Error(t, ferr)
+	require.False(t, env.session.IsNonceFinished(prepared.Nonce()))
+
+	// The ladder later merges a response carrying Finish; it must still be
+	// processed, which is only possible if processOnce was left unspent.
+	inf.resp = &host.HostResponse{
+		Receipt: []byte("receipt-1"),
+		Mempool: []*types.DevshardTx{finishInferenceTx(prepared.Nonce())},
+	}
+	inf.reconnectLadderUsed.Store(true)
+	require.NoError(t, env.proxy.redundancy.processInflightOnce(inf))
+	require.True(t, env.session.IsNonceFinished(prepared.Nonce()),
+		"Finish merged by the reconnect must still reach ProcessResponse")
 }
 
 func TestReconnectInflight_EventBoundary(t *testing.T) {

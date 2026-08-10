@@ -321,8 +321,15 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 				"error", err,
 			)
 		})
+		return 0, err
 	}
-	return n, err
+	if n < len(rewritten) {
+		return 0, io.ErrShortWrite
+	}
+	// Report progress in the caller's byte space, not the rewritten one:
+	// rewriteStreamingPayload can shrink or grow a chunk, and callers use the
+	// returned count to advance the R2 resume cursor over upstream bytes.
+	return len(p), nil
 }
 
 func (d *deferredWriter) Flush() {

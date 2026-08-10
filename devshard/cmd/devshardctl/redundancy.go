@@ -33,6 +33,11 @@ import (
 // offending host is recorded as non-responsive in the local PerfTracker.
 var errEmptyStream = errors.New("empty content stream")
 
+// errReconnectReceiptOnly marks a same-nonce reconnect that came back clean at
+// the transport layer but carried only a receipt: no live attach, no cached
+// body, no mempool. R3 counts that as a failed resume try.
+var errReconnectReceiptOnly = errors.New("reconnect returned receipt only")
+
 const emptyStreamBodySampleLimit = 256 * 1024
 
 const longResponseFailureExemption = 280 * time.Second
@@ -1237,6 +1242,11 @@ type raceGroup struct {
 	// onto an already-delivered prefix. Cleared explicitly when the ladder ends
 	// (not on a wall-clock expiry — the hedge may still be racing after budget).
 	reservedWinner uint64
+
+	// clientFlag is the request's client-disconnect signal. Once it fires the
+	// client writer swallows output, so the winner branch must stop counting
+	// those bytes into the R2 delivered prefix.
+	clientFlag *cancelFlag
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -1463,7 +1473,10 @@ func (rg *raceGroup) detachClient() {
 }
 
 func (rg *raceGroup) isClientDetached() bool {
-	return rg != nil && rg.clientDetached.Load()
+	if rg == nil {
+		return false
+	}
+	return rg.clientDetached.Load() || rg.clientFlag.Gone()
 }
 
 const (
@@ -1808,10 +1821,16 @@ func (rw *raceWriter) Write(p []byte) (int, error) {
 			return len(p), nil
 		}
 		n, err := rw.group.w.Write(p)
-		if n > 0 {
-			rw.inf.recordDeliveredForward(p[:n])
+		if err != nil {
+			if n > len(p) {
+				n = len(p)
+			}
+			// A short/failed write cannot be mapped back onto upstream bytes,
+			// so leave the cursor where it is rather than guessing an offset.
+			return n, err
 		}
-		return n, err
+		rw.inf.recordDeliveredForward(p)
+		return len(p), nil
 
 	case winnerNonce != 0:
 		// Another attempt has already won; suppress this attempt's stream
@@ -1931,6 +1950,7 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	}
 	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made", decisionFields...)
 	race := newRaceGroup(settleCtx, ctx, e.devshardID, w)
+	race.clientFlag = clientFlag
 	attempts := []*inflight{primary}
 
 	// Always start the primary.
@@ -2244,8 +2264,28 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 		)
 		return inf.err
 	}
+	// R3: a transport-clean response that carried nothing but a receipt has not
+	// resumed anything — the host had neither a live generation to attach to nor
+	// a cached body. The receipt alone sets sawTerminator on the parser, so this
+	// arrives as success; without this check the ladder would burn its one shot
+	// and report a resume that never delivered a byte.
+	if stream.forwarded == 0 && !hostResponseCarriesSettlement(resp) {
+		inf.err = errReconnectReceiptOnly
+		logInferenceStage(ctx, inf.escrowID, inf.nonce, "reconnect_receipt_only",
+			"host", inf.hostID,
+			"reconnect_try", try,
+		)
+		return inf.err
+	}
 	_ = params // reserved for future reconnect-specific empty-stream logging
 	return nil
+}
+
+// hostResponseCarriesSettlement reports whether a response can still move the
+// nonce forward on-chain even though it delivered no stream bytes (e.g. the
+// client already had every event and only devshard_meta was missing).
+func hostResponseCarriesSettlement(resp *host.HostResponse) bool {
+	return resp != nil && len(resp.Mempool) > 0
 }
 
 // mergeInflightHostResponse folds a reconnect HostResponse into the inflight.
@@ -2334,7 +2374,10 @@ func (e *Redundancy) attemptReconnectAllowed() bool {
 	return types.ProtocolVersionAtLeast(ver, types.ProtocolV5)
 }
 
-func (e *Redundancy) shouldAttemptWinnerReconnect(inf *inflight) bool {
+// canAttemptWinnerReconnect reports ladder eligibility without consuming the
+// one-shot marker, so callers can sequence work around a ladder that has not
+// started yet.
+func (e *Redundancy) canAttemptWinnerReconnect(inf *inflight) bool {
 	if e == nil || inf == nil || inf.probe {
 		return false
 	}
@@ -2344,6 +2387,13 @@ func (e *Redundancy) shouldAttemptWinnerReconnect(inf *inflight) bool {
 	// Only protect a delivered client prefix (R4). Pre-content failures keep
 	// today's attempt_failed escalation.
 	if inf.deliveredEvents == 0 && inf.contentChunks.Load() == 0 {
+		return false
+	}
+	return !inf.reconnectLadderUsed.Load()
+}
+
+func (e *Redundancy) shouldAttemptWinnerReconnect(inf *inflight) bool {
+	if !e.canAttemptWinnerReconnect(inf) {
 		return false
 	}
 	return inf.reconnectLadderUsed.CompareAndSwap(false, true)
@@ -2704,6 +2754,17 @@ type prefixSkipWriter struct {
 	probed       bool
 	emitted      bool   // true after forwarding a non-blank line
 	firstEventFP uint64 // fingerprint of first delivered content line; 0 = unset
+	forwarded    int64  // bytes handed to w past the resume cursor (R3 resume check)
+}
+
+// passThrough forwards bytes and records that the resume actually delivered
+// something past the cursor.
+func (p *prefixSkipWriter) passThrough(b []byte) (int, error) {
+	n, err := p.w.Write(b)
+	if n > 0 {
+		p.forwarded += int64(n)
+	}
+	return n, err
 }
 
 func (p *prefixSkipWriter) Write(b []byte) (int, error) {
@@ -2711,11 +2772,11 @@ func (p *prefixSkipWriter) Write(b []byte) (int, error) {
 		return len(b), nil
 	}
 	if p.doneSkipping {
-		return p.w.Write(b)
+		return p.passThrough(b)
 	}
 	if !p.probeResume && p.skipEvents == 0 && p.skipPartial == 0 && len(p.forming) == 0 {
 		p.doneSkipping = true
-		return p.w.Write(b)
+		return p.passThrough(b)
 	}
 	p.forming = append(p.forming, b...)
 	undecidable := p.boundProbeForming()
@@ -2738,7 +2799,7 @@ func (p *prefixSkipWriter) Write(b []byte) (int, error) {
 			if len(out) == 0 {
 				return len(b), nil
 			}
-			if _, err := p.w.Write(out); err != nil {
+			if _, err := p.passThrough(out); err != nil {
 				return 0, err
 			}
 			return len(b), nil
@@ -2814,7 +2875,7 @@ func (p *prefixSkipWriter) Write(b []byte) (int, error) {
 	if len(forward) == 0 {
 		return len(b), nil
 	}
-	if _, err := p.w.Write(forward); err != nil {
+	if _, err := p.passThrough(forward); err != nil {
 		return 0, err
 	}
 	return len(b), nil
@@ -3179,6 +3240,13 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 	}
 	if inf.resp == nil {
 		return true, fmt.Errorf("inference: winner host returned no response")
+	}
+	// R1: exactly one ProcessResponse per nonce, using the last response that
+	// carries a receipt / mempool. A response with no mempool cannot settle the
+	// nonce, so spending the one-shot on it here would strand the finish that a
+	// reconnect is still able to merge.
+	if len(inf.resp.Mempool) == 0 && !e.session.IsNonceFinished(inf.nonce) && e.canAttemptWinnerReconnect(inf) {
+		return true, fmt.Errorf("inference: winner stream incomplete before reconnect")
 	}
 	if err := e.processInflightOnce(inf); err != nil {
 		return true, err

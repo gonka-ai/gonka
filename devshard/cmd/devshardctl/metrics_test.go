@@ -9,6 +9,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 	"github.com/stretchr/testify/require"
+
+	"devshard/transport"
 )
 
 func TestGatewayCoreV1MetricsRecordBoundedLabels(t *testing.T) {
@@ -237,6 +239,7 @@ func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	require.Equal(t, "empty_stream", gatewayAttemptFailureReason(emptyStreamAttempt, nil))
 	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil))
 	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil))
+	require.Equal(t, "sse_event_too_large", gatewayAttemptFailureReason(&inflight{err: transport.ErrSSEEventTooLarge}, nil))
 	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil))
 
 	require.Equal(t, "user_visible_winner", gatewayAttemptVisibility(&inflight{nonce: 7}, 7, true))

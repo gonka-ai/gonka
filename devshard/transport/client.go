@@ -60,6 +60,16 @@ func transportAddress(baseURL string) string {
 	return strings.TrimSpace(baseURL)
 }
 
+// DefaultMaxSSEEventBytes is the hard default cap for a single SSE line/event
+// read by the gateway transport client (1 MiB). Matches the historical
+// bufio.Scanner ceiling and the gateway raceWriter classify attempt cap.
+const DefaultMaxSSEEventBytes = 1 << 20
+
+// sseReaderBufferSize is the bufio.Reader size used by parseSSEResponse.
+// Oversize aborts after at most DefaultMaxSSEEventBytes + this much unread
+// data in the reader buffer (not the full attacker payload).
+const sseReaderBufferSize = 64 << 10
+
 // ClientConfig holds per-endpoint timeout settings.
 type ClientConfig struct {
 	InferenceTimeout time.Duration                   // /chat/completions, default 20m
@@ -68,6 +78,10 @@ type ClientConfig struct {
 	QueryTimeout     time.Duration                   // diffs, mempool GETs, default 30s
 	StreamCallback   func(nonce uint64, line string) // if set, receives raw SSE data lines during inference
 	RoutePrefix      string                          // path prefix for all session routes; default /devshard/<version>
+	// MaxSSEEventBytes caps a single SSE line (including the trailing newline).
+	// Zero means DefaultMaxSSEEventBytes. Oversize lines abort with
+	// ErrSSEEventTooLarge; they are never silently truncated.
+	MaxSSEEventBytes int
 	// ParticipantKey is the canonical participant identifier passed to
 	// the admission controller for both AllowRequest and ObserveResult.
 	// Callers MUST use the participant's gonka validator address
@@ -107,6 +121,11 @@ type requestAdmissionBodyObserver interface {
 // HTTP/2 END_STREAM, idle-timeout on a proxy, etc.) which bufio readers cannot
 // distinguish from a normal end-of-response.
 var ErrSSEStreamTruncated = errors.New("sse stream ended without [DONE] or devshard_receipt")
+
+// ErrSSEEventTooLarge is returned when an SSE line exceeds the configured
+// MaxSSEEventBytes before a newline arrives. The oversize payload is discarded;
+// callers should treat this as a transport failure and escalate.
+var ErrSSEEventTooLarge = errors.New("sse event exceeds size limit")
 
 type UpstreamStatusError struct {
 	Path       string
@@ -284,29 +303,30 @@ func (c *HTTPClient) Send(ctx context.Context, req host.HostRequest, stream io.W
 // parseSSEResponse reads an SSE stream and extracts protocol receipt/meta events.
 // Non-protocol data lines are forwarded to stream if configured.
 //
-// Uses bufio.Reader (not bufio.Scanner) for two reasons:
-//  1. bufio.Scanner imposes a hard token-size cap (we previously raised it to 1MB);
-//     a single oversized SSE line -- e.g. a large devshard_meta with a base64 mempool,
-//     or a non-streaming server inlining a giant JSON on one line -- would trip
-//     bufio.ErrTooLong and silently truncate. ReadBytes is bounded only by memory.
-//  2. We need to distinguish a clean EOF that arrives *after* a terminator
-//     ([DONE] or devshard_receipt) from a clean EOF that arrives *before* one.
-//     bufio.Scanner squashes io.EOF into a nil error, so the caller cannot tell
-//     a successful completion from a peer / middlebox closing the body early.
+// Uses bufio.Reader (not bufio.Scanner) so a clean EOF after a terminator
+// ([DONE] / devshard_receipt) can be distinguished from a clean EOF before one
+// — Scanner squashes io.EOF into a nil Scan error. Line size is hard-capped by
+// MaxSSEEventBytes (default 1 MiB): oversize aborts with ErrSSEEventTooLarge
+// rather than growing unbounded or silently truncating the way Scanner would.
 func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream io.Writer, receiptHandler func()) (*host.HostResponse, error) {
-	br := bufio.NewReaderSize(r, 64<<10)
+	br := bufio.NewReaderSize(r, sseReaderBufferSize)
+	maxLine := c.maxSSEEventBytes()
 	var result host.HostResponse
 	var writeErrLogged bool
 	var unexpectedLineLogged bool
 	var sawTerminator bool // true once we observe [DONE] or a devshard_receipt event
 
 	for {
-		raw, readErr := br.ReadBytes('\n')
+		raw, readErr := readBoundedSSELine(br, maxLine)
 		if len(raw) > 0 {
 			line := string(bytes.TrimRight(raw, "\r\n"))
 			c.handleSSELine(line, stream, receiptHandler, &result, &writeErrLogged, &unexpectedLineLogged, &sawTerminator)
 		}
 		if readErr != nil {
+			if errors.Is(readErr, ErrSSEEventTooLarge) {
+				logging.Warn("sse_event_too_large", "subsystem", "transport", "escrow", c.escrowID, "limit_bytes", maxLine)
+				return &result, readErr
+			}
 			if readErr == io.EOF {
 				// A cancelled context (client disconnect, race resolved, drain)
 				// can surface as a clean EOF once the peer closes the body after
@@ -324,6 +344,45 @@ func (c *HTTPClient) parseSSEResponse(ctx context.Context, r io.Reader, stream i
 				return &result, nil
 			}
 			return &result, fmt.Errorf("read SSE stream: %w", readErr)
+		}
+	}
+}
+
+func (c *HTTPClient) maxSSEEventBytes() int {
+	if c != nil && c.config.MaxSSEEventBytes > 0 {
+		return c.config.MaxSSEEventBytes
+	}
+	return DefaultMaxSSEEventBytes
+}
+
+// readBoundedSSELine reads up to and including the next '\n', aborting if the
+// accumulated line would exceed max bytes. On oversize it returns
+// ErrSSEEventTooLarge without retaining the oversized buffer.
+func readBoundedSSELine(br *bufio.Reader, max int) ([]byte, error) {
+	if max <= 0 {
+		max = DefaultMaxSSEEventBytes
+	}
+	var buf []byte
+	for {
+		fragment, err := br.ReadSlice('\n')
+		if len(fragment) > 0 {
+			if len(buf)+len(fragment) > max {
+				return nil, fmt.Errorf("%w: %d byte limit", ErrSSEEventTooLarge, max)
+			}
+			buf = append(buf, fragment...)
+		}
+		switch {
+		case err == nil:
+			return buf, nil
+		case errors.Is(err, bufio.ErrBufferFull):
+			continue
+		case errors.Is(err, io.EOF):
+			if len(buf) == 0 {
+				return nil, io.EOF
+			}
+			return buf, io.EOF
+		default:
+			return nil, err
 		}
 	}
 }
