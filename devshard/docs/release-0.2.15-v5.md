@@ -8,15 +8,13 @@ Host evacuation: [versiond-host-evacuation.md](./versiond-host-evacuation.md).
 Rolling updates: [rolling-update.md](./rolling-update.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
 
-The base and HA Compose models use the v5 `edge-api`, `versiond`,
-`edge-api-router`, and `versiond-router` images under
-`ghcr.io/product-science`, all tagged `0.2.15-devshard-v5`. Before making this
-guide available to operators, publish all four images and run the **Release
-image smoke** workflow manually. It pulls those exact registry artifacts,
-validates both router configurations, and requires `/healthz` to answer `200`
-and `/readyz` to answer `503` while a deliberately unavailable dependency keeps
-each service out of rotation. A `404` therefore blocks the release instead of
-failing later in `up --wait`.
+The base and HA Compose models use the v5 `edge-api`, `versiond`, `proxy`,
+`proxy-router`, and `versiond-router` images under `ghcr.io/product-science`,
+all tagged `0.2.15-devshard-v5`. The old `edge-api-router` image is retained only
+for the one-time v4 migration bridge. Before publishing this guide, run the
+**Release image smoke** workflow. It validates the exact Compose image contract,
+the steady-state and migration models, both router configurations, and the
+application readiness endpoints.
 
 ---
 
@@ -31,8 +29,12 @@ _TBD as v5 scope settles._
   replica counts; see
   [versiond-host-evacuation.md](./versiond-host-evacuation.md) and
   [rolling-update.md §1.8](./rolling-update.md#18-versiond-router-draining-versiond-hosts-ha).
-- **Both routers moved from nginx to HAProxy** with active health checks and
-  DNS-based membership (below).
+- **Replicated `versiond-router` tier** behind a stable public HAProxy. Router
+  replicas are stateless, use active route-aware checks, and roll one slot at a
+  time.
+- **Replicated private nginx policy workers** retain TLS and HTTP policy, while
+  public and service-pool balancing moves to `proxy-router`. The dedicated
+  `edge-api-router` hop is no longer needed in steady state.
 - **Graceful `versiond` shutdown budgets** for both the single-instance join
   stack and the HA overlay (below).
 - **`edge-api` readiness and graceful shutdown** — an instance that cannot reach
@@ -41,20 +43,23 @@ _TBD as v5 scope settles._
 
 ## Breaking / operator-facing changes
 
-### Routers are HAProxy, and the pool is a DNS name
+### Service pools use HAProxy and DNS membership
 
-`versiond-router` and `edge-api-router` are now HAProxy. Two consequences for
-operators:
+`proxy-router` and every `versiond-router` replica are HAProxy. Three
+consequences for operators:
 
 1. **The pool is no longer a host list.** `VERSIOND_HOSTS` and `EDGE_API_HOSTS`
    are replaced by `VERSIOND_POOL_HOST` / `EDGE_API_POOL_HOST`: one DNS name that
    resolves to every instance. In Compose that is a network alias
    (`versiond-pool`, `edge-api-pool`), which the shipped overlays set for you.
    Starting or stopping an instance changes the pool; nothing else has to.
-2. **Health is measured, not declared.** Each router polls `GET /readyz` on every
-   instance once a second and routes only to hosts that answer `200`. A host that
-   is draining, still converging on a new binary, or cut off from the chain takes
-   no traffic, and starts taking it again on its own when it recovers.
+2. **Health is measured, not declared.** Each inner router polls `GET /readyz`
+   on every versiond once a second. The top HAProxy also polls every router for
+   the exact requested version. A starting, draining, or unavailable member
+   leaves only the affected pool and rejoins after recovery.
+3. **The router is a fleet.** Fixed slots run as independent Compose projects.
+   The main node project cannot recreate them all, and the fleet rollout refuses
+   to stop a slot unless the coarse and per-version ready reserve remains.
 
 Removed with the old model:
 
@@ -62,13 +67,12 @@ Removed with the old model:
 | --- | --- |
 | `gonka-routerctl`, `gonka-hostctl` | `docker compose stop` / `start`; a read-only pool diagnostic ships inside the router image |
 | Router state volume (`/var/lib/gonka/versiond-router`) | nothing — the router holds no durable state |
-| `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
+| `VERSIOND_HOSTS`, `EDGE_API_HOSTS` | DNS aliases `VERSIOND_POOL_HOST`, `EDGE_API_POOL_HOST` |
 | `VERSIOND_ADMIN_LISTEN_ADDR` (loopback readiness listener) | `GET :8080/readyz` on the traffic listener |
 
-Sticky routing keys its hash ring on each versiond's address, so the mapping
-survives a router restart. Moving onto the new router does re-home sessions once,
-because the ring is not the one nginx computed; HA sessions recover from shared
-Postgres, so this costs a lookup rather than a session.
+Sticky routing keys its hash ring on each versiond's address, so every router
+replica computes the same mapping regardless of DNS answer order. HA sessions
+recover from shared Postgres if their selected versiond host leaves the pool.
 
 ### Topology-aware upgrade
 
@@ -79,7 +83,20 @@ Run one command from `deploy/join` for every supported join topology:
 ```
 
 The command requires Docker Compose and `jq`. It checks both before changing
-the deployment.
+the deployment. Existing v4 nginx and singleton-router containers remain the
+rollback path while application replicas are replaced. At the final step the
+script starts the independent router fleet and private policy workers, captures
+the exact old public nginx image, and switches the public listener to
+`proxy-router`. It verifies component readiness before deleting the migration
+singletons. If that cutover fails or is interrupted, the old public nginx is
+recreated from the captured image and the script exits non-zero.
+
+The one-time public-listener replacement cannot preserve connections owned by
+the old nginx container because both implementations own the same host ports.
+It is therefore a short, explicit ingress cutover after every application pool
+is ready, not a zero-interruption router rollout. Subsequent inner-router and
+policy-worker replacements are rolling; the remaining single public HAProxy is
+the documented host-level failure domain for this release.
 
 The script sources `config.env` and detects two independent axes from the
 existing containers:
@@ -141,11 +158,11 @@ For multi-edge, the script replaces `edge-api2` first and waits for its v5
 replicas, so each later replacement either joins after `/readyz` passes or is
 stopped without poisoning the live pool.
 
-For versiond HA, the equivalent order is `versiond2`, `versiond-router`, then
-the legacy owner `versiond`. The first replica is protected by the nginx
-barrier; after HAProxy is active, its per-version health checks protect the
-legacy-owner replacement. Requests pinned to pre-HA SQLite versions still need
-the maintenance window described below because only `versiond` owns that data.
+For versiond HA, the migration order is `versiond2`, a temporary v5 singleton
+router, then the legacy owner `versiond`. Once application replacement is
+complete, the final cutover starts the replicated router tier and public
+distributor. Requests pinned to pre-HA SQLite versions still need the
+maintenance window described below because only `versiond` owns that data.
 
 #### HA-only PostgreSQL migration
 
@@ -392,21 +409,20 @@ new version is therefore two-phase:
    `deploy/join`:
 
    ```bash
-   source ./config.env && \
-   docker compose -f docker-compose.yml -f docker-compose.versiond.yml \
-     up -d --force-recreate versiond-router
+   source ./config.env
+   ./versiond-router-fleet.sh rollout
+   ./enable-router-ha.sh --versiond-mode ha --edge-mode auto
    ```
 
-   A plain `restart` keeps the old environment. Recreating it adds an empty pool,
-   which changes nothing for the versions already running.
+   A plain `restart` keeps the old environment. The fleet rollout replaces one
+   independent slot at a time and waits until its route view matches the ready
+   peers before touching another slot.
 2. Approve it in governance; each host joins that pool as it installs it.
 
-Replacing the single shipped router service is a short maintenance operation:
-Compose will not start the new container until the old one exits. HAProxy uses a
-soft stop, but `VERSIOND_ROUTER_STOP_GRACE_PERIOD` defaults to 10 seconds so one
-long SSE stream cannot leave the listener absent for minutes; a stream still open
-at that bound is closed. A deployment that requires seamless router upgrades
-must run redundant routers behind a stable frontend and roll them one at a time.
+Router replacement is not a public listener maintenance operation. The top
+HAProxy removes the old slot from new selection while its connections drain, and
+continues through the ready peers. The default fleet is three slots with a
+two-slot reserve.
 **Declare the versions you expect ahead of time** and governance approval needs
 step 2 only: a pool for a version nobody runs yet has no healthy members and costs
 nothing.
@@ -421,8 +437,7 @@ approval inside that window needs no router change; extend the list before
 governance moves past it.
 
 Coarse mode is an explicit two-part opt-in. Persist both lines in `config.env`,
-then recreate `versiond-router` using the complete Compose model for the
-installation:
+then roll the router fleet:
 
 ```bash
 export VERSIOND_VERSIONS=""
@@ -433,7 +448,10 @@ An empty value is different from an unset value. Removing the first export
 restores the join overlay's `v4 v5 v6 v7 v8` default. Likewise, after migrating
 all legacy versions to Postgres, clear their pins with
 `export VERSIOND_NON_HA_VERSIONS=""`; removing that export restores the
-`v1 v2 v3` default.
+`v1 v2 v3` default. Legacy pins and the pool hostname define escrow placement
+and must not diverge across router replicas. Apply those changes only with the
+acknowledged `maintenance-rollout` path from the host-evacuation runbook;
+ordinary `rollout` rejects them.
 
 ### A failed version poll no longer takes hosts out of rotation
 
@@ -480,6 +498,7 @@ above when upgrading a running v4 node:
 # HA versiond and shared PostgreSQL, with one edge-api.
 source ./config.env && \
 docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d
+./enable-router-ha.sh --versiond-mode ha --edge-mode single
 
 # HA versiond plus the optional multi-instance edge-api pool.
 source ./config.env && \
@@ -488,7 +507,14 @@ docker compose \
   -f docker-compose.versiond.yml \
   -f docker-compose.edge-api-multi.yml \
   up -d
+./enable-router-ha.sh --versiond-mode ha --edge-mode multi
 ```
+
+On a cold start, the first `up -d` may expose an unready public proxy while the
+application pool is still starting; no existing traffic exists yet. The second
+command converges the independently owned router slots and verifies the final
+public path. On an existing installation, use `upgrade-devshard-v5.sh`, which
+performs the cutover and rollback automatically.
 
 Day-to-day operations:
 
@@ -497,7 +523,9 @@ Day-to-day operations:
 | Take `versiond2` out of service temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
 | Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` |
 | Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
-| Inspect the router's live view | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` (read-only) |
+| Inspect the router fleet | `source ./config.env && ./versiond-router-fleet.sh status` |
+| Roll router image or configuration | persist `config.env`, run `./versiond-router-fleet.sh rollout`, then refresh the top map with idempotent `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` |
+| Change legacy pins / placement pool | schedule devshard maintenance and use the runbook's acknowledged `maintenance-rollout`; mixed placement is rejected |
 
 Taking a host out of rotation is stopping it — there is no router-side drain,
 because HAProxy reuses server slots and a drain would be inherited by whichever
@@ -539,23 +567,24 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Use `upgrade-devshard-v5.sh` so a failed versiond replacement is rolled
       back before the legacy owner or router is touched
 - [ ] For edge-api-multi, confirm auto-detection reports `edge-api=multi`; the
-      script replaces `edge-api2`, switches to HAProxy, and then replaces the
-      remaining replicas one at a time
+      script replaces every replica behind the migration barrier, then the
+      final ingress cutover connects the ready pool directly to `proxy-router`
 - [ ] Confirm `EDGE_API_STOP_GRACE_PERIOD` exceeds
       `EDGE_API_DRAIN_ANNOUNCE + EDGE_API_SHUTDOWN_BUDGET` if any of them is
       overridden
-- [ ] For HA, use the targeted `--no-deps` cutover above: migrate PostgreSQL,
-      isolate and replace `versiond2`, install the readiness-aware router, then
-      replace the legacy owner `versiond`; do not reconcile the whole base
-      Compose model as part of this devshard-only release
-- [ ] For HA, check that the pool diagnostic lists every versiond as
-      `UP` using the read-only `pool-status` command above
+- [ ] For HA, use the targeted upgrade script: it migrates PostgreSQL, replaces
+      the supervisors behind the compatibility router, starts the independent
+      router slots, and commits the public cutover only after component checks
+- [ ] For HA, require `versiond-router-fleet.sh status` to report every expected
+      slot healthy and no duplicate or orphan owner
 
 ## Known follow-ups
 
-- Kubernetes: the readiness contract is on the traffic listener specifically so a
-  `readinessProbe` and `preStop` can replace the router's role unchanged. Not in
-  this release.
+- Kubernetes: the application and route-readiness contracts carry over, while
+  slot projects and the Compose rollout script do not. Kubernetes deployment is
+  not in this release.
+- Public ingress: one host-local `proxy-router` remains a failure domain. A
+  provider LB, VIP, or Kubernetes Service above multiple hosts is a later layer.
 - Version names: the router now routes any name that can appear literally in a
   path segment, but one containing `/`, `?`, `#`, `%` or whitespace cannot be
   routed at all, because the request path would no longer match the name.

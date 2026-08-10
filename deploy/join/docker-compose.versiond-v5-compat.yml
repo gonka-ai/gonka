@@ -1,0 +1,42 @@
+# Transitional singleton used only by upgrade-devshard-v5.sh while a v4
+# installation still has the old public nginx. New deployments and steady-state
+# operation use versiond-router-slot/docker-compose.yml instead.
+services:
+  versiond-router:
+    container_name: versiond-router
+    image: >-
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    environment:
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
+      - VERSIOND_PORT=8080
+      - VERSIOND_HOSTS=${VERSIOND_HOSTS:-versiond versiond2}
+      - GONKA_HA=true
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+    depends_on:
+      versiond:
+        condition: service_started
+        required: false
+      versiond2:
+        condition: service_started
+        required: false
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8080/healthz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    stop_signal: SIGUSR1
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    restart: always

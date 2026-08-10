@@ -198,14 +198,18 @@ services:
     depends_on:
       - api
 
-  proxy:
-    container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.15
-    ports:
-      - "${API_PORT:-8000}:80"
-      - "${API_SSL_PORT:-8443}:443"
+  # Private nginx policy workers retain the established TLS, CORS, rate-limit,
+  # rewrite and on-chain routing contract. They do not publish host ports. The
+  # public HAProxy below sends PROXY v2 so both replicas see the real client IP.
+  proxy-policy:
+    image: >-
+      ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+    deploy:
+      replicas: ${PROXY_POLICY_REPLICAS:-2}
     environment:
       - NGINX_MODE=${NGINX_MODE:-http}
+      - PROXY_PROTOCOL=true
+      - PROXY_PROTOCOL_TRUSTED_FROM=${PROXY_PROTOCOL_TRUSTED_FROM:-0.0.0.0/0}
       - SERVER_NAME=${SERVER_NAME:-}
       - GONKA_API_PORT=9000
       - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
@@ -215,7 +219,6 @@ services:
       - CHAIN_API_PORT=1317
       - CHAIN_GRPC_PORT=9090
       - DASHBOARD_PORT=5173
-      - PROXY_REAL_IP_FROM=172.18.0.1
       # SSL enablement (entrypoint enables SSL if CERT_ISSUER_DOMAIN is set)
       - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
       - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
@@ -249,11 +252,49 @@ services:
         required: false
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/health"]
       interval: 30s
       timeout: 10s
       retries: 3
       start_period: 10s
+
+  # The only public listener. It balances the policy workers in TCP mode and
+  # owns the active, route-aware versiond-router and edge-api pools on private
+  # ports consumed by those workers.
+  proxy:
+    container_name: proxy
+    image: >-
+      ${PROXY_ROUTER_IMAGE:-ghcr.io/product-science/proxy-router:0.2.15-devshard-v5}
+    ports:
+      - "${API_PORT:-8000}:80"
+      - "${API_SSL_PORT:-8443}:443"
+    environment:
+      - NGINX_MODE=${NGINX_MODE:-http}
+      - PROXY_POLICY_POOL_HOST=proxy-policy
+      - PROXY_POLICY_POOL_SLOTS=${PROXY_POLICY_POOL_SLOTS:-4}
+      - PROXY_VERSIOND_PORT=18081
+      - PROXY_EDGE_API_PORT=18082
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+    depends_on:
+      proxy-policy:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8404/readyz",
+        ]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
 
   proxy-ssl:
     container_name: proxy-ssl

@@ -1,6 +1,7 @@
 # versiond-router
 
-HAProxy in front of N `versiond` instances. It has two jobs:
+HAProxy in front of N `versiond` instances. Multiple identical instances run as
+an independent fleet behind `proxy-router`; each has two jobs:
 
 1. **Stickiness** — every request for one session lands on the same `versiond`,
    so the instance holding that session's hot state keeps serving it.
@@ -11,6 +12,10 @@ HAProxy in front of N `versiond` instances. It has two jobs:
 There is no router-side state and no control plane. Membership comes from DNS
 and health from active health checks, so **adding, removing, or replacing a
 `versiond` requires no router config change and no reload.**
+
+Router replicas do not coordinate. Given the same version declarations, legacy
+pins, DNS pool and healthy addresses, each builds the same consistent-hash
+placement. The top distributor may therefore choose any route-ready replica.
 
 ---
 
@@ -137,19 +142,42 @@ version v6 is not declared in VERSIOND_VERSIONS on this router
    `v4`;
 2. approve `v6` in governance. Each host joins `v6`'s pool as it installs it.
 
-Apply the changed environment with the **Apply router configuration** command in
-the canonical [versiond host evacuation
-runbook](../devshard/docs/versiond-host-evacuation.md). That command loads
-`config.env` and uses the complete HA Compose model.
+Persist the changed environment in `config.env`, then apply it one slot at a
+time with `deploy/join/versiond-router-fleet.sh rollout`. The fleet command
+loads the same file for every slot, verifies the placement-protocol image label,
+checks the ready reserve for every live declared version, and waits for the
+replacement to converge before moving on.
+
+When the declared version set changes, refresh the top distributor only after
+all inner slots have converged:
+
+```bash
+cd deploy/join
+source ./config.env
+./versiond-router-fleet.sh rollout
+./enable-router-ha.sh --versiond-mode ha --edge-mode auto
+```
+
+The final command is idempotent. Its internal fleet `up` does not apply config
+changes to existing slots; it only verifies or starts the exact containers
+already created by the guarded rollout. Approve the new protocol version only
+after the top `/readyz?version=<v>` probe succeeds.
+
+`VERSIOND_LEGACY_HOST`, `VERSIOND_NON_HA_VERSIONS`, `VERSIOND_POOL_HOST`, and
+the router backend network define the placement function itself. Mixing old and
+new values would let two routers place the same escrow on different hosts. Ordinary
+`rollout` therefore refuses such a change. Schedule a devshard maintenance
+window, set `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` only for the command,
+and use `maintenance-rollout`. It soft-stops every old slot before exposing any
+new-placement slot. If the candidate fleet fails its old live-route contract,
+the command drains it and recreates every previous slot from its exact image and
+captured environment.
 
 There is no in-place way to declare a version: the backends are rendered from the
-environment when the container starts, so the environment has to change and the
-container has to be replaced. Compose does not start the replacement until the
-old container exits. HAProxy soft-stops first, but the shipped
-`VERSIOND_ROUTER_STOP_GRACE_PERIOD=10s` bounds that listener gap; brief requests
-can finish, while a longer SSE stream may be closed at the bound. A deployment
-that requires seamless upgrades of the router itself must run redundant router
-instances behind a stable frontend and replace them one at a time.
+environment when the container starts. Redundant slots make replacement an
+ordinary rolling operation: the public distributor stops selecting the old
+slot after its admin check fails, while established connections drain under
+HAProxy's soft stop.
 
 **So declare the versions you expect before you need them.** A pool for a version
 nobody runs yet has no healthy members and costs nothing but its health checks;
@@ -268,7 +296,9 @@ deployment declaration.
 
 ## Looking at the pool
 
-The canonical runbook contains the full command for inspecting the pool. Its
+Fleet status is inspected with
+`deploy/join/versiond-router-fleet.sh status`. To inspect one router's measured
+versiond pool, run its internal `pool-status` formatter with `docker exec`. Its
 output looks like this:
 
 ```text
@@ -321,7 +351,9 @@ the host back later.
 | `VERSIOND_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | connect and header timeouts |
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
-| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | Compose-only soft-stop ceiling for replacing the single shipped router service |
+| `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private route-readiness listener consumed by `proxy-router` and fleet health checks |
+| `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its explicit longer drain timeout |
+| `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | one-command acknowledgement required by `maintenance-rollout`; do not persist `true` |
 
 The entrypoint validates every numeric setting, renders `haproxy.cfg` and
 `non_ha.map`, runs `haproxy -c` on the result, and only then execs HAProxy. A bad
@@ -350,6 +382,9 @@ would then not match the name at all.
 | Endpoint | Where | Notes |
 | --- | --- | --- |
 | `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
+| `/livez` | private admin port `8404` | HAProxy process is serving the admin listener |
+| `/readyz` | private admin port `8404` | coarse backend has capacity |
+| `/readyz?version=<v>` | private admin port `8404` | the matching version backend has capacity |
 | Runtime API | `/var/run/haproxy/haproxy.sock` | admin socket, no TCP bind |
 | `X-Upstream-Addr` | response header | which instance served the request |
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
@@ -366,6 +401,8 @@ the config and socket directories. Scrape metrics with a sidecar or
 $ make test-render
 test-hash-ring: ok
 test-render: ok
+$ make test-fleet
+versiond-router-fleet_test: ok
 ```
 
 `test-render` renders the mixed (legacy pinning) and all-HA shapes, asserts on
@@ -385,6 +422,14 @@ escrow to reach the same address each time. Remove `hash-key addr` from the
 template and it fails, naming the sessions that moved.
 
 Both require Docker.
+
+`test-fleet` starts three router slots as separate Compose projects, proves the
+main stack cannot recreate them, drains one while an accepted stream completes
+through it and new requests use peers, enforces generic and per-version reserve,
+proves unguarded `up` cannot apply config to live slots, rolls all slots, and
+rejects duplicate slot ownership. It also proves mixed placement is rejected,
+full-fleet placement changes never overlap generations, and failed maintenance
+restores the exact previous image, environment, and live routes.
 
 End-to-end routing, draining and host evacuation are covered by
 `devshard/testenv`: `make -C devshard/testenv citest-versiond-host-evacuation`.

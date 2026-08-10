@@ -1,10 +1,13 @@
 # Nginx Reverse Proxy
 
-This directory contains the nginx reverse proxy configuration that consolidates all services behind a single entry point.
+This directory contains the nginx HTTP policy worker. In the shipped Compose
+topology, `proxy-router/` owns the public ports and distributes TCP connections
+across multiple private instances of this image. The workers retain TLS, HTTP/2,
+CORS, rate limits, rewrites, and service routing.
 
 ## Overview
 
-The nginx proxy routes requests to different backend services based on URL paths:
+Each nginx policy worker routes requests to backend services by URL path:
 
 - `/api/v1/` → Main application API v1 (proxies to backend `/v1/`)
 - `/v1/` → Direct API v1 (without `/api/` prefix)
@@ -73,6 +76,9 @@ Key runtime environment variables:
 | `PROXY_REAL_IP_FROM` | - | Space-separated trusted proxy CIDRs/IPs for nginx `set_real_ip_from` (for example `172.18.0.1/32`). Empty by default (real IP parsing disabled). |
 | `PROXY_REAL_IP_HEADER` | `X-Forwarded-For` | Header used by nginx `real_ip_header` when trusted proxies are configured. |
 | `PROXY_REAL_IP_RECURSIVE` | off | Value for nginx `real_ip_recursive`. Keep `off` unless you explicitly trust a multi-hop proxy chain. |
+| `PROXY_PROTOCOL` | false | Require PROXY v2 on the traffic listeners. The shipped `proxy-policy` service sets this to true; do not expose those listeners directly. |
+| `PROXY_PROTOCOL_TRUSTED_FROM` | `0.0.0.0/0` | Trusted source range on the private container network. Narrow it when the deployment has a stable ingress subnet. |
+| `PROXY_CERT_RELOAD_POLL_SECONDS` | `30` | How often sibling policy workers check the shared certificate files and reload after another replica renews them. |
 | `DISABLE_GONKA_API` | false | Set to `true` to disable `/api/v1/` and `/v1/` routes |
 | `DISABLE_CHAIN_RPC` | false | Set to `true` to disable `/chain-rpc/` routes |
 | `DISABLE_CHAIN_API` | false | Set to `true` to disable `/chain-api/` routes |
@@ -106,13 +112,13 @@ Key runtime environment variables:
 | `CHAIN_GRPC_RATE_LIMIT_RPS` | 20 | Rate limit for `/chain-grpc/` (default: 20). |
 | `CHAIN_GRPC_RATE_UNIT` | m | Unit for chain gRPC (`s` or `m`). Default `m`. |
 | `CHAIN_GRPC_BURST` | 200 | Burst for chain gRPC. |
-| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes (status, models, epochs, participants, BLS, bridge addresses, etc.) served by **edge-api**. Empty (default) sends all `/v1/` traffic to dapi. Set to `edge-api` to enable, or `edge-api-router` when using the multi-instance overlay. |
-| `EDGE_API_PORT` | 18080 | Port on the edge-api (or edge-api-router) upstream. |
+| `EDGE_API_SERVICE_NAME` | (empty) | Upstream for read-only `/v1/` query routes served by **edge-api**. Empty sends all `/v1/` traffic to dapi. The shipped multi-instance topology sets the absolute service `proxy` on its private edge-api frontend. |
+| `EDGE_API_PORT` | 18080 | Port on the selected edge-api upstream; `18082` for the shipped internal distributor. |
 | `EDGE_API_ROUTE_PATHS` | (18 public paths) | Space-separated public Tier A `/v1/` paths steered to edge-api before the catch-all `/v1/` → dapi block. Defaults: `EDGE_API_ROUTE_PATHS_DEFAULT` in `proxy/entrypoint.sh`. |
 | `EDGE_API_OPTIONAL_ROUTE_PATHS` | verify/debug (4) | CPU-heavy helpers (`/v1/verify-proof`, `/v1/verify-block`, `/v1/debug/...`). **Not published by default.** |
 | `EDGE_API_EXPOSE_OPTIONAL_ROUTES` | false | Set `true` to publish optional verify/debug routes to edge-api. Keep `false` and put auth (basic/mTLS/IP allowlist) on nginx if you expose them. When private, proxy returns **403** for those paths. |
-| `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). Set to `versiond-router` for sticky multi-versiond overlay. |
-| `VERSIOND_PORT` | 8080 | Port on the versiond (or versiond-router) upstream. |
+| `VERSIOND_SERVICE_NAME` | versiond | Upstream for `/devshard/` (and legacy `/v1/devshard/` after rewrite). The shipped HA topology sets the absolute service `proxy` on its private versiond-router frontend. |
+| `VERSIOND_PORT` | 8080 | Port on the selected versiond upstream; `18081` for the shipped internal distributor. |
 | `DISABLE_DEVSHARD_PROXY` | false | Set to `true` to disable `/devshard/` and `/v1/devshard/` routing to versiond. |
 | `DEVSHARD_OBS_RATE_LIMIT_RPS` | 10 | Per-IP rate limit for public observability GETs (`/devshard/sessions|stats|metrics|healthz` and rewritten legacy obs URLs). Protocol chat/gossip/payloads stay on the exempt zone. |
 | `DEVSHARD_OBS_RATE_UNIT` | s | Unit for obs rate (`s` or `m`). |
@@ -170,9 +176,10 @@ Grafana dashboards in `deploy/join/observability/` scrape Prometheus metrics fro
 devshardd `/metrics` via service discovery — they do not call HTTP diffs URLs.
 For ad-hoc HTTP debugging of a shard, use the versionless paths above.
 
-When `VERSIOND_SERVICE_NAME=versiond-router`, this proxy still has a **single**
-upstream. Multi-host stickiness and **legacy SQLite pinning** are configured on
-**versiond-router** itself:
+In the shipped HA topology this worker has one upstream, `proxy:18081`. The
+public `proxy-router` selects any route-ready inner router; every
+**versiond-router** independently applies the same multi-host stickiness and
+legacy SQLite pinning:
 
 | Router env | Role |
 | --- | --- |
@@ -203,13 +210,14 @@ export EDGE_API_EXPOSE_OPTIONAL_ROUTES=true
 # Optional: front with nginx basic auth / allowlist before this container.
 ```
 
-Multi-instance edge-api (local-test-net or `deploy/join/docker-compose.edge-api-multi.yml`):
+Multi-instance edge-api (`deploy/join/docker-compose.edge-api-multi.yml`):
 
 ```text
-Client → proxy → edge-api-router:18080 → edge-api-N:18080
+Client -> proxy-router -> proxy-policy -> proxy-router:18082 -> edge-api-N:18080
 ```
 
-This mirrors the `versiond-router` pattern but uses round-robin (read-only queries are stateless).
+The top HAProxy uses least-connections and active `/readyz` checks. There is no
+dedicated edge-api-router in the steady-state Compose model.
 
 ### Observability UI security
 
@@ -425,16 +433,16 @@ ${PUBLIC_URL}/grafana/
 
 ```
 source ./config.env && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-ssl && \
-docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy proxy-ssl
+docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy proxy-ssl && \
+docker compose --profile "ssl" -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy proxy-ssl
 ```
 
   - With manual certs (no proxy-ssl):
 
 ```
 source ./config.env && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy && \
-docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy
+docker compose -f docker-compose.yml -f docker-compose.mlnode.yml pull proxy proxy-policy && \
+docker compose -f docker-compose.yml -f docker-compose.mlnode.yml up -d proxy-policy proxy
 ```
 
 Notes:
@@ -449,14 +457,14 @@ The proxy includes a health check endpoint at `/health` that returns HTTP 200 wi
 
 ### TLS/SSL issues
 1. Ensure `NGINX_MODE` is `https` or `both` and `CERT_ISSUER_DOMAIN` is set.
-2. Verify `proxy-ssl` is running and reachable from `proxy` (see `proxy-ssl/README.md`).
-3. Check logs of `proxy` for "SSL setup failed" or config validation errors.
+2. Verify `proxy-ssl` is running and reachable from `proxy-policy` (see `proxy-ssl/README.md`).
+3. Check logs of `proxy-policy` for "SSL setup failed" or config validation errors.
 4. Confirm DNS for `SERVER_NAME`/`CERT_ISSUER_DOMAIN` points to your proxy.
 
 ### Service Not Reachable
 1. Check if the backend service is running: `docker compose ps`
 2. Verify service names match the upstream definitions in nginx.conf
-3. Check nginx logs: `docker compose logs nginx-proxy`
+3. Check nginx logs: `docker compose logs proxy-policy`
 
 ### WebSocket Issues
 WebSocket support is configured for RPC connections and dashboard hot-reloading. If you have issues:
@@ -485,4 +493,4 @@ If you're upgrading from a previous version with hardcoded ports:
 3. **Add** environment variables to your docker-compose.yml
 4. **Rebuild** your nginx container
 
-The entrypoint script provides sensible defaults, so existing setups will continue to work without changes. 
+The entrypoint script provides sensible defaults, so existing setups will continue to work without changes.

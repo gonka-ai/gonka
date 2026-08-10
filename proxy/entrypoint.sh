@@ -81,8 +81,16 @@ export FINAL_API_SERVICE="${KEY_NAME_PREFIX}${API_SERVICE_NAME}"
 export FINAL_NODE_SERVICE="${KEY_NAME_PREFIX}${NODE_SERVICE_NAME}"
 export FINAL_EXPLORER_SERVICE="${KEY_NAME_PREFIX}${EXPLORER_SERVICE_NAME}"
 export FINAL_PROXY_SSL_SERVICE="${KEY_NAME_PREFIX}${PROXY_SSL_SERVICE_NAME}"
-export FINAL_VERSIOND_SERVICE="${KEY_NAME_PREFIX}${VERSIOND_SERVICE_NAME}"
-export FINAL_EDGE_API_SERVICE="${KEY_NAME_PREFIX}${EDGE_API_SERVICE_NAME}"
+if [ "${VERSIOND_SERVICE_IS_ABSOLUTE:-false}" = "true" ]; then
+    export FINAL_VERSIOND_SERVICE="${VERSIOND_SERVICE_NAME}"
+else
+    export FINAL_VERSIOND_SERVICE="${KEY_NAME_PREFIX}${VERSIOND_SERVICE_NAME}"
+fi
+if [ "${EDGE_API_SERVICE_IS_ABSOLUTE:-false}" = "true" ]; then
+    export FINAL_EDGE_API_SERVICE="${EDGE_API_SERVICE_NAME}"
+else
+    export FINAL_EDGE_API_SERVICE="${KEY_NAME_PREFIX}${EDGE_API_SERVICE_NAME}"
+fi
 
 
 # Real IP Configuration (Access Control List for trusted proxy hops)
@@ -90,9 +98,17 @@ export FINAL_EDGE_API_SERVICE="${KEY_NAME_PREFIX}${EDGE_API_SERVICE_NAME}"
 export PROXY_REAL_IP_FROM=${PROXY_REAL_IP_FROM:-""}
 export PROXY_REAL_IP_HEADER=${PROXY_REAL_IP_HEADER:-"X-Forwarded-For"}
 export PROXY_REAL_IP_RECURSIVE=${PROXY_REAL_IP_RECURSIVE:-"off"}
+export PROXY_PROTOCOL="${PROXY_PROTOCOL:-false}"
+export PROXY_PROTOCOL_TRUSTED_FROM="${PROXY_PROTOCOL_TRUSTED_FROM:-0.0.0.0/0}"
 REAL_IP_CONFIG=""
 
-if [ -n "$PROXY_REAL_IP_FROM" ]; then
+if [ "$PROXY_PROTOCOL" = "true" ]; then
+    # This listener is private and reachable only through proxy-router. HAProxy
+    # carries the original peer in PROXY v2, avoiding an X-Forwarded-For trust
+    # decision at the public boundary.
+    REAL_IP_CONFIG="set_real_ip_from ${PROXY_PROTOCOL_TRUSTED_FROM};
+        real_ip_header proxy_protocol;"
+elif [ -n "$PROXY_REAL_IP_FROM" ]; then
     # Loop through space-separated CIDRs/IPs and generate directives
     for ip in $PROXY_REAL_IP_FROM; do
         REAL_IP_CONFIG="${REAL_IP_CONFIG}
@@ -373,9 +389,17 @@ export STREAMING_CONFIG='
 
 # If SSL is intended, ensure certificates are present (attempt issuance if missing)
 if [ "$SSL_ENABLED" = "true" ]; then
+    run_ssl_setup() (
+        # Multiple private policy workers share the certificate volume. Serialize
+        # issuance/renewal so they cannot publish competing orders or partial
+        # files. flock is tied to this process and cannot leave a stale lock.
+        flock 9
+        /setup-ssl.sh "$@"
+    ) 9>/etc/nginx/ssl/.gonka-ssl.lock
+
     if [ ! -f "/etc/nginx/ssl/cert.pem" ] || [ ! -f "/etc/nginx/ssl/private.key" ]; then
         echo "SSL enabled but certificates not found; requesting via proxy-ssl"
-        /setup-ssl.sh || echo "WARNING: SSL setup failed; will attempt to continue"
+        run_ssl_setup || echo "WARNING: SSL setup failed; will attempt to continue"
     fi
 
     # Start background renewal loop if order.id exists (indicates auto issuance)
@@ -384,7 +408,7 @@ if [ "$SSL_ENABLED" = "true" ]; then
         echo "Starting background renewal loop (every ${RENEW_INTERVAL_HOURS}h)"
         (
             while true; do
-                if /setup-ssl.sh renew-if-needed; then
+                if run_ssl_setup renew-if-needed; then
                     echo "No renewal needed"
                 else
                     if [ "$?" -eq 10 ]; then
@@ -398,17 +422,48 @@ if [ "$SSL_ENABLED" = "true" ]; then
             done
         ) &
     fi
+
+    # Every policy worker loads the same files into memory. The worker that wins
+    # the renewal lock reloads immediately above; its siblings observe the new
+    # fingerprint and reload themselves without any cross-container control API.
+    CERT_RELOAD_POLL_SECONDS=${PROXY_CERT_RELOAD_POLL_SECONDS:-30}
+    case "$CERT_RELOAD_POLL_SECONDS" in
+        '' | *[!0-9]* | 0)
+            echo "PROXY_CERT_RELOAD_POLL_SECONDS must be a positive integer" >&2
+            exit 1
+            ;;
+    esac
+    (
+        fingerprint=$(cksum /etc/nginx/ssl/cert.pem /etc/nginx/ssl/private.key 2>/dev/null || true)
+        while sleep "$CERT_RELOAD_POLL_SECONDS"; do
+            next=$(cksum /etc/nginx/ssl/cert.pem /etc/nginx/ssl/private.key 2>/dev/null || true)
+            if [ -n "$next" ] && [ "$next" != "$fingerprint" ]; then
+                echo "TLS certificate changed; reloading nginx policy worker"
+                nginx -s reload || true
+                fingerprint=$next
+            fi
+        done
+    ) &
 fi
 
 # Prepare template vars for unified config
 if [ "$ENABLE_HTTP" = "true" ]; then
-    export LISTEN_HTTP="listen 80;"
+    if [ "$PROXY_PROTOCOL" = "true" ]; then
+        export LISTEN_HTTP="listen 80 proxy_protocol;"
+    else
+        export LISTEN_HTTP="listen 80;"
+    fi
 else
     export LISTEN_HTTP="# HTTP disabled"
 fi
 
 if [ "$ENABLE_HTTPS" = "true" ]; then
-    export LISTEN_HTTPS="listen 443 ssl;
+    if [ "$PROXY_PROTOCOL" = "true" ]; then
+        HTTPS_LISTEN="listen 443 ssl proxy_protocol;"
+    else
+        HTTPS_LISTEN="listen 443 ssl;"
+    fi
+    export LISTEN_HTTPS="${HTTPS_LISTEN}
         http2 on;
         http2_max_concurrent_streams 128;"
     export SSL_CONFIG="ssl_certificate /etc/nginx/ssl/cert.pem;
@@ -425,6 +480,10 @@ else
     export LISTEN_HTTPS="# HTTPS disabled"
     export SSL_CONFIG="# SSL disabled"
 fi
+
+# Docker health checks originate inside the container and do not carry a PROXY
+# header. Keep this listener loopback-only; it is not a second ingress path.
+export LISTEN_HEALTH="listen 127.0.0.1:8081;"
 
 # Route Disabling Logic
 # If DISABLE_* env vars are set to true, inject a "return 404" into the location block
@@ -1212,7 +1271,7 @@ ENVSUBST_VARS="${ENVSUBST_VARS},\$GONKA_API_PORT,\$CHAIN_RPC_PORT,\$CHAIN_API_PO
 ENVSUBST_VARS="${ENVSUBST_VARS},\$FINAL_API_SERVICE,\$FINAL_NODE_SERVICE,\$FINAL_EXPLORER_SERVICE,\$FINAL_JAEGER_SERVICE,\$FINAL_GRAFANA_SERVICE"
 
 # Group 3: HTTP/SSL & Status
-ENVSUBST_VARS="${ENVSUBST_VARS},\$LISTEN_HTTP,\$LISTEN_HTTPS,\$SSL_CONFIG"
+ENVSUBST_VARS="${ENVSUBST_VARS},\$LISTEN_HTTP,\$LISTEN_HTTPS,\$LISTEN_HEALTH,\$SSL_CONFIG"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$LIMIT_REQ_ZONE_METRICS,\$LIMIT_CONN_ZONE_METRICS,\$LIMIT_REQ_RULE_METRICS,\$LIMIT_CONN_RULE_METRICS"
 ENVSUBST_VARS="${ENVSUBST_VARS},\$API_STATUS,\$CHAIN_RPC_STATUS,\$CHAIN_API_STATUS,\$CHAIN_GRPC_STATUS"
 

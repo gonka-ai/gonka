@@ -1,0 +1,52 @@
+services:
+  router:
+    image: >-
+      ${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
+    environment:
+      - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+      - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
+      - VERSIOND_ROUTER_BACK_NETWORK_NAME=${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+      - VERSIOND_PORT=8080
+      - VERSIOND_ROUTER_ADMIN_PORT=8404
+      - GONKA_HA=true
+      - VERSIOND_LEGACY_HOST=${VERSIOND_LEGACY_HOST:-versiond}
+      - VERSIOND_NON_HA_VERSIONS=${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}
+      - VERSIOND_VERSIONS=${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}
+      - VERSIOND_ROUTER_ALLOW_COARSE_READINESS=${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}
+    labels:
+      ai.gonka.component: versiond-router
+      ai.gonka.fleet: ${VERSIOND_ROUTER_FLEET_ID:-gonka-versiond-router}
+      ai.gonka.slot: ${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
+    networks:
+      front:
+        aliases:
+          - versiond-router
+      back: {}
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "/bin/busybox",
+          "wget",
+          "-q",
+          "-O",
+          "/dev/null",
+          "http://127.0.0.1:8404/readyz",
+        ]
+      interval: 1s
+      timeout: 3s
+      retries: 10
+      start_period: 15s
+    stop_signal: SIGUSR1
+    # Routine cleanup stays bounded. The fleet rollout passes its explicit,
+    # longer SSE drain budget to `docker compose stop --timeout`.
+    stop_grace_period: ${VERSIOND_ROUTER_STOP_GRACE_PERIOD:-10s}
+    restart: always
+
+networks:
+  front:
+    external: true
+    name: ${VERSIOND_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}
+  back:
+    external: true
+    name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}

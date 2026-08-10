@@ -8,9 +8,11 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar main.go
 # Final Stage
 FROM nginx:1.28-alpine3.21
 
+LABEL ai.gonka.component="proxy-policy"
+
 # Install curl, gettext (for envsubst), jq, bash (for setup-ssl.sh), and
 # apache2-utils (htpasswd for observability UI basic auth).
-RUN apk add --no-cache curl gettext jq bash apache2-utils
+RUN apk add --no-cache curl gettext jq bash apache2-utils util-linux-misc
 
 # Copy sidecar binary
 COPY --from=builder /app/sidecar /usr/local/bin/sidecar
@@ -34,4 +36,4 @@ EXPOSE 80 443
 ENTRYPOINT ["/entrypoint.sh"]
 
 # Start nginx
-CMD ["nginx", "-g", "daemon off;"] 
+CMD ["nginx", "-g", "daemon off;"]

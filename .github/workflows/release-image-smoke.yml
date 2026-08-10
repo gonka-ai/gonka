@@ -6,6 +6,10 @@ on:
       - deploy/join/docker-compose.yml
       - deploy/join/docker-compose.versiond.yml
       - deploy/join/docker-compose.edge-api-multi.yml
+      - deploy/join/docker-compose.versiond-v5-compat.yml
+      - deploy/join/docker-compose.edge-api-v5-compat.yml
+      - deploy/join/docker-compose.proxy-v4-compat.yml
+      - deploy/join/versiond-router-slot/docker-compose.yml
       - deploy/join/release-image-smoke_test.sh
       - deploy/join/devshard-postgres-migration-preflight.sh
       - deploy/join/devshard-postgres-migration-preflight_test.sh
@@ -13,6 +17,17 @@ on:
       - deploy/join/legacy-router-upgrade-barrier_test.sh
       - deploy/join/upgrade-devshard-v5.sh
       - deploy/join/upgrade-devshard-v5_test.sh
+      - deploy/join/enable-router-ha.sh
+      - deploy/join/enable-router-ha_test.sh
+      - deploy/join/versiond-router-fleet.sh
+      - deploy/join/versiond-router-fleet_test.sh
+      - proxy/Dockerfile
+      - proxy/entrypoint.sh
+      - proxy/nginx.unified.conf.template
+      - proxy-router/**
+      - versiond-router/Dockerfile
+      - versiond-router/entrypoint.sh
+      - versiond-router/haproxy.cfg.template
       - .github/workflows/release-image-smoke.yml
   workflow_dispatch:
 
@@ -37,9 +52,14 @@ jobs:
             deploy/join/legacy-router-upgrade-barrier.sh \
             deploy/join/legacy-router-upgrade-barrier_test.sh \
             deploy/join/upgrade-devshard-v5.sh \
-            deploy/join/upgrade-devshard-v5_test.sh
+            deploy/join/upgrade-devshard-v5_test.sh \
+            deploy/join/enable-router-ha.sh \
+            deploy/join/enable-router-ha_test.sh \
+            deploy/join/versiond-router-fleet.sh \
+            deploy/join/versiond-router-fleet_test.sh
           deploy/join/legacy-router-upgrade-barrier_test.sh
           deploy/join/upgrade-devshard-v5_test.sh
+          deploy/join/enable-router-ha_test.sh
 
   registry-smoke:
     name: Published image endpoints

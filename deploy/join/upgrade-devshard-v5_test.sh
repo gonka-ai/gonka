@@ -16,9 +16,10 @@ write_fake_docker() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-printf 'EDGE_API_IMAGE=%s VERSIOND_IMAGE=%s EDGE_API_ROUTER_IMAGE=%s VERSIOND_ROUTER_IMAGE=%s' \
+printf 'EDGE_API_IMAGE=%s VERSIOND_IMAGE=%s EDGE_API_ROUTER_IMAGE=%s VERSIOND_ROUTER_IMAGE=%s PROXY_POLICY_IMAGE=%s PROXY_ROUTER_IMAGE=%s' \
     "${EDGE_API_IMAGE-}" "${VERSIOND_IMAGE-}" \
-    "${EDGE_API_ROUTER_IMAGE-}" "${VERSIOND_ROUTER_IMAGE-}" >>"$DOCKER_LOG"
+    "${EDGE_API_ROUTER_IMAGE-}" "${VERSIOND_ROUTER_IMAGE-}" \
+    "${PROXY_POLICY_IMAGE-}" "${PROXY_ROUTER_IMAGE-}" >>"$DOCKER_LOG"
 printf ' ::' >>"$DOCKER_LOG"
 printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
@@ -444,8 +445,8 @@ line_number_regex() {
 }
 
 write_fake_docker
-printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\n' "$tmpdir/postgres" \
-    >"$tmpdir/config.env"
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\n' \
+    "$tmpdir/postgres" >"$tmpdir/config.env"
 
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/unknown.log" \

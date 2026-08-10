@@ -1,12 +1,12 @@
-# Multi edge-api + round-robin router overlay for deploy/join.
+# Multi edge-api overlay for deploy/join.
 #
-# Requires base docker-compose.yml (single edge-api). Adds edge-api2,
-# edge-api3, and edge-api-router in front of all three. Sets proxy
-# EDGE_API_SERVICE_NAME=edge-api-router.
+# Requires base docker-compose.yml (single edge-api). Adds edge-api2 and
+# edge-api3. Private policy workers send Tier A requests to proxy-router, whose
+# internal HAProxy pool balances the three replicas directly.
 #
 #   docker compose -f docker-compose.yml -f docker-compose.edge-api-multi.yml up -d
 #
-# edge-api is stateless and read-only, so the router round-robins. Membership
+# edge-api is stateless and read-only, so proxy-router uses leastconn. Membership
 # comes from the edge-api-pool DNS alias and health from active /readyz checks:
 # an instance that cannot reach the chain reports unready and leaves the
 # rotation without being restarted, then rejoins on its own.
@@ -69,40 +69,13 @@ services:
     <<: *edge-api
     container_name: edge-api3
 
-  edge-api-router:
-    container_name: edge-api-router
-    image: >-
-      ${EDGE_API_ROUTER_IMAGE:-ghcr.io/product-science/edge-api-router:0.2.15-devshard-v5}
+  proxy-policy:
     environment:
-      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
-      - EDGE_API_PORT=18080
-      # Kept for rollback compatibility with the v4 nginx image. The v5
-      # HAProxy entrypoint ignores this static list and discovers the pool via
-      # EDGE_API_POOL_HOST instead.
-      - EDGE_API_HOSTS=${EDGE_API_HOSTS:-edge-api edge-api2 edge-api3}
-    depends_on:
-      - edge-api
-      - edge-api2
-      - edge-api3
-    # /readyz is proxied to the pool, so this proves both that HAProxy started
-    # and that at least one already-upgraded replica passed its active check.
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "/bin/busybox",
-          "wget",
-          "-q",
-          "-O",
-          "/dev/null",
-          "http://127.0.0.1:18080/readyz",
-        ]
-      interval: 1s
-      timeout: 3s
-      retries: 10
-      start_period: 15s
-    restart: always
+      - EDGE_API_SERVICE_NAME=proxy
+      - EDGE_API_SERVICE_IS_ABSOLUTE=true
+      - EDGE_API_PORT=18082
 
   proxy:
     environment:
-      - EDGE_API_SERVICE_NAME=edge-api-router
+      - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}
+      - EDGE_API_PORT=18080

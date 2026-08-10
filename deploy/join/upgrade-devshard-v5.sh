@@ -144,6 +144,20 @@ export EDGE_API_IMAGE="ghcr.io/product-science/edge-api:$release_tag"
 export VERSIOND_IMAGE="ghcr.io/product-science/versiond:$release_tag"
 export EDGE_API_ROUTER_IMAGE="ghcr.io/product-science/edge-api-router:$release_tag"
 export VERSIOND_ROUTER_IMAGE="ghcr.io/product-science/versiond-router:$release_tag"
+export PROXY_POLICY_IMAGE="ghcr.io/product-science/proxy:$release_tag"
+export PROXY_ROUTER_IMAGE="ghcr.io/product-science/proxy-router:$release_tag"
+
+existing_proxy_component=$(
+    "$docker_bin" inspect --format \
+        '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
+)
+if [[ $existing_proxy_component == proxy-router ]]; then
+    echo "The v5 router HA topology is already active; converging it idempotently"
+    "$script_dir/enable-router-ha.sh" \
+        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
+    echo "Devshard v5 upgrade already completed"
+    exit 0
+fi
 
 compose=(
     "$docker_bin" compose
@@ -152,9 +166,11 @@ compose=(
 )
 if [[ $versiond_mode == ha ]]; then
     compose+=(-f "$script_dir/docker-compose.versiond.yml")
+    compose+=(-f "$script_dir/docker-compose.versiond-v5-compat.yml")
 fi
 if [[ $edge_mode == multi ]]; then
     compose+=(-f "$script_dir/docker-compose.edge-api-multi.yml")
+    compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
 fi
 
 declare -A image_variables=(
@@ -878,4 +894,14 @@ else
 fi
 
 cleanup_rollback_tags
+case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
+    true | 1 | yes)
+        run_interruptible "$script_dir/enable-router-ha.sh" \
+            --versiond-mode "$versiond_mode" --edge-mode "$edge_mode"
+        ;;
+    false | 0 | no)
+        warn "router HA cutover was skipped by UPGRADE_ENABLE_ROUTER_HA"
+        ;;
+    *) fail "UPGRADE_ENABLE_ROUTER_HA must be true or false" ;;
+esac
 echo "Devshard v5 upgrade completed"

@@ -12,6 +12,11 @@ on:
       - 'decentralized-api/nodemanager/**'
       - 'versioned/**'
       - 'versiond-router/**'
+      - 'proxy-router/**'
+      - 'proxy/**'
+      - 'deploy/join/docker-compose.yml'
+      - 'deploy/join/docker-compose.versiond.yml'
+      - 'deploy/join/docker-compose.edge-api-multi.yml'
       - '.github/workflows/devshard-testenv.yml'
   workflow_dispatch:
     inputs:

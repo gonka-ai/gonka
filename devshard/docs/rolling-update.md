@@ -390,16 +390,20 @@ versiond kills its in-process proxy and all devshardd children regardless of
 
 ### 1.8 versiond-router: draining versiond hosts (HA)
 
-When N versiond instances sit behind `versiond-router` (HAProxy consistent hash
-on escrow ID — see `versiond-router/haproxy.cfg.template`), **removal or
-replacement of a versiond host** happens at the router layer. This is a separate
-operational track from §1.1; it does not replace and is not required for
-devshardd binary swaps.
+When N versiond instances sit behind the replicated `versiond-router` tier
+(HAProxy consistent hash on escrow ID — see
+`versiond-router/haproxy.cfg.template`), **removal or replacement of a versiond
+host** is observed by every router replica. This is a separate operational
+track from §1.1; it does not replace and is not required for devshardd binary
+swaps.
 
 The router holds no state about the pool. It learns membership from DNS
 (`VERSIOND_POOL_HOST` resolves to every instance) and health from an active
 `GET /readyz` check on each host, once a second. Consequently there is nothing
-to reconfigure, reload, or keep in sync when a host comes or goes.
+to reconfigure, reload, or keep in sync when a host comes or goes. The public
+`proxy-router` actively checks each router's private, route-aware readiness
+endpoint and may send a request through any healthy replica; each replica
+computes the same inner placement independently.
 
 #### Target flow (evacuate one versiond host)
 
@@ -468,6 +472,8 @@ admits only one.
 |---|---|
 | Container stop / start | The whole host lifecycle. Membership is DNS; health is measured |
 | `pool-status` (in the router image, off PATH) | Read-only view of what the router believes; there is no router-side drain |
+| `GET :8404/readyz?version=<v>` | Private answer consumed by the top distributor: this router currently has capacity for `<v>` |
+| `versiond-router-fleet.sh` | Owns fixed, independent Compose slots; status, start/stop reserve checks, and one-at-a-time rollout with image rollback |
 | `GET /healthz` | Compatibility health response; unchanged JSON array contract |
 | `GET :8080/readyz?version=<v>` | The router's per-version health check: `200` when a running child serves `<v>` here and still reports itself ready |
 | `GET :8080/readyz` | Check for non-version paths, and for every version when none is declared: `200` for a serving, accepting host that has converged at least once and has a child still reporting itself ready |
@@ -604,6 +610,12 @@ consumes unchanged, which is the point of putting it on the traffic listener.
   order DNS returned them; `make test-version-routing` proves a host missing one
   version leaves that version's pool and keeps serving the rest, and that an
   undeclared version is refused rather than routed by luck.
+- **router fleet / top distributor:** `make -C versiond-router test-fleet`
+  proves independent Compose ownership, reserve enforcement, rolling replace,
+  and duplicate-slot rejection. `make -C proxy-router test-routing` exercises
+  real HAProxy and Docker DNS, route-aware router selection, policy-worker
+  failover, edge-api distribution, and no duplicate POST execution when one
+  router data port is unavailable.
 - **full stack (`devshard/testenv`):**
   `TestVersiondRollingUpdateSameVersionSHA` covers Postgres overlap and SSE
   continuity, and `TestVersiondRollingUpdateHybridFallback` covers the

@@ -1,0 +1,167 @@
+#!/usr/bin/env bash
+
+set -Eeuo pipefail
+
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+tmpdir=$(mktemp -d)
+trap 'rm -rf "$tmpdir"' EXIT
+
+fail() {
+    echo "enable-router-ha_test: $*" >&2
+    exit 1
+}
+
+cat >"$tmpdir/docker" <<'EOF'
+#!/usr/bin/env bash
+set -Eeuo pipefail
+
+printf 'docker' >>"$DOCKER_LOG"
+printf ' %q' "$@" >>"$DOCKER_LOG"
+printf '\n' >>"$DOCKER_LOG"
+
+if [[ ${1:-} == inspect ]]; then
+    if [[ ${2:-} == --format ]]; then
+        case ${3:-} in
+            *ai.gonka.component*)
+                [[ -f $STATE_DIR/current ]] && cat "$STATE_DIR/current"
+                ;;
+            '{{.Image}}') printf 'sha256:old-proxy\n' ;;
+        esac
+        exit 0
+    fi
+    case ${2:-} in
+        proxy | versiond-router | edge-api-router | versiond2 | edge-api2)
+            exit 0
+            ;;
+        *) exit 1 ;;
+    esac
+fi
+
+if [[ ${1:-} == network ]]; then
+    if [[ ${2:-} == inspect ]]; then
+        if [[ ${3:-} == --format ]]; then
+            name=${5:-unknown}
+            if [[ ${WRONG_NETWORK_OWNERSHIP:-false} == true ]]; then
+                printf 'wrong-key|wrong-project\n'
+            elif [[ $name == *front ]]; then
+                printf 'versiond-router-front|gonka-test\n'
+            else
+                printf 'versiond-router-back|gonka-test\n'
+            fi
+            exit 0
+        fi
+        if [[ ${MISSING_NETWORKS:-false} == true ]]; then
+            [[ -f $STATE_DIR/network-${3:-unknown} ]]
+            exit
+        fi
+        exit 0
+    fi
+    if [[ ${2:-} == create ]]; then
+        name=${!#}
+        : >"$STATE_DIR/network-$name"
+    fi
+    exit 0
+fi
+
+if [[ ${1:-} == compose ]]; then
+    compat=false
+    action=
+    service=
+    for arg in "$@"; do
+        [[ $arg == *docker-compose.proxy-v4-compat.yml ]] && compat=true
+        case $arg in config | pull | up) action=$arg ;; esac
+        case $arg in proxy | proxy-policy) service=$arg ;; esac
+    done
+    if [[ $action == config ]]; then
+        printf '{"name":"gonka-test"}\n'
+        exit 0
+    fi
+    if [[ $action == up && $service == proxy ]]; then
+        if [[ $compat == true ]]; then
+            printf 'proxy-policy\n' >"$STATE_DIR/current"
+            exit 0
+        fi
+        if [[ ${FAIL_CUTOVER:-false} == true ]]; then
+            exit 1
+        fi
+        printf 'proxy-router\n' >"$STATE_DIR/current"
+    fi
+    exit 0
+fi
+
+case ${1:-} in
+    exec | tag | rm) exit 0 ;;
+    image) exit 0 ;;
+esac
+exit 0
+EOF
+chmod +x "$tmpdir/docker"
+
+cat >"$tmpdir/fleet" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
+EOF
+chmod +x "$tmpdir/fleet"
+
+cat >"$tmpdir/config.env" <<EOF
+ROUTER_HA_PULL_POLICY=missing
+ROUTER_HA_CUTOVER_LOCK=$tmpdir/cutover.lock
+EOF
+
+run_cutover() {
+    local log=$1
+    shift
+    : >"$log"
+    rm -f "$tmpdir/current"
+    if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
+        printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
+    fi
+    env DOCKER_BIN="$tmpdir/docker" \
+        DOCKER_LOG="$log" \
+        STATE_DIR="$tmpdir" \
+        VERSIOND_ROUTER_FLEET_BIN="$tmpdir/fleet" \
+        GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$@" "$script_dir/enable-router-ha.sh" \
+        --versiond-mode ha --edge-mode multi
+}
+
+run_cutover "$tmpdir/success.log" env MISSING_NETWORKS=true
+grep -q '^fleet up$' "$tmpdir/success.log" || fail "router fleet was not converged"
+grep -q 'network create .*com.docker.compose.network=versiond-router-front' \
+    "$tmpdir/success.log" || fail "missing front network was not created with Compose ownership"
+grep -q 'network create .*com.docker.compose.network=versiond-router-back' \
+    "$tmpdir/success.log" || fail "missing back network was not created with Compose ownership"
+policy_line=$(grep -n ' up .*proxy-policy' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+proxy_line=$(grep -n ' up .*proxy$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+[[ -n $policy_line && -n $proxy_line && $policy_line -lt $proxy_line ]] || fail \
+    "policy workers were not ready before the public cutover"
+grep -q 'docker rm -f versiond-router' "$tmpdir/success.log" || fail \
+    "singleton versiond-router was not removed after commit"
+grep -q 'docker rm -f edge-api-router' "$tmpdir/success.log" || fail \
+    "singleton edge-api-router was not removed after commit"
+
+if run_cutover "$tmpdir/failure.log" env FAIL_CUTOVER=true; then
+    fail "failed public proxy replacement was reported as successful"
+fi
+grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/failure.log" || fail \
+    "failed cutover did not use the v4 rollback model"
+grep -q ' up .*proxy$' "$tmpdir/failure.log" || fail \
+    "failed cutover did not recreate the public nginx"
+
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/idempotent.log" env
+if grep -q '^docker tag ' "$tmpdir/idempotent.log"; then
+    fail "idempotent convergence manufactured a public proxy rollback tag"
+fi
+grep -q 'docker rm -f versiond-router' "$tmpdir/idempotent.log" || fail \
+    "idempotent convergence left the migration singleton behind"
+
+if run_cutover "$tmpdir/wrong-network.log" env WRONG_NETWORK_OWNERSHIP=true; then
+    fail "cutover accepted an existing network owned by another Compose model"
+fi
+if grep -q '^fleet up$' "$tmpdir/wrong-network.log"; then
+    fail "router fleet started before network ownership was validated"
+fi
+
+echo "enable-router-ha_test: ok"

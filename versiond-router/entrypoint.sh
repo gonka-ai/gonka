@@ -27,12 +27,14 @@ TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
+READY_RULES="${VERSIOND_ROUTER_READY_RULES:-${OUT}.ready.rules}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
 # Overridable so `make test-render` can render without a local HAProxy.
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
 POOL_HOST="${VERSIOND_POOL_HOST:-versiond-pool}"
 PORT="${VERSIOND_PORT:-8080}"
+ADMIN_PORT="${VERSIOND_ROUTER_ADMIN_PORT:-8404}"
 LEGACY_HOST="${VERSIOND_LEGACY_HOST:-$POOL_HOST}"
 SLOTS="${VERSIOND_ROUTER_POOL_SLOTS:-64}"
 MAXCONN="${VERSIOND_ROUTER_MAX_CONNECTIONS:-4096}"
@@ -80,7 +82,7 @@ for name in "$POOL_HOST" "$LEGACY_HOST"; do
     esac
 done
 
-for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT"; do
+for value in "$SLOTS" "$MAXCONN" "$MAX_BODY_BYTES" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$TUNNEL_TIMEOUT" "$PORT" "$ADMIN_PORT"; do
     case "$value" in
         ''|*[!0-9]*)
             echo "versiond-router: invalid numeric setting '$value'" >&2
@@ -218,6 +220,10 @@ printf '%s\n' "${VERSIOND_NON_HA_VERSIONS:-}" | tr ',;' '  ' | tr -s ' ' '\n' | 
         echo "versiond-router: legacy version '$version' is declared twice" >&2
         exit 1
     fi
+    if awk -v v="$version" '$1 "" == v "" { found = 1 } END { exit !found }' "$VERSIONS_MAP"; then
+        echo "versiond-router: version '$version' is declared as both HA and legacy" >&2
+        exit 1
+    fi
     backend=$(backend_name versiond_legacy "$version")
     echo "$version $backend" >> "$MAP"
     encoded_version=$(urlencode "$version")
@@ -237,6 +243,29 @@ if [ -s "$MAP" ] && [ -z "${VERSIOND_LEGACY_HOST:-}" ]; then
     echo "  is one specific host and must be named explicitly." >&2
     exit 1
 fi
+
+# Render one static readiness rule per route. HAProxy's nbsrv() argument is a
+# configuration-time backend name, so trying to feed it a map result would turn
+# this safety decision into unsupported dynamic configuration. The generated
+# table is explicit, auditable, and uses the same maps as data-plane routing.
+: > "$READY_RULES"
+cat >> "$READY_RULES" <<'EOF'
+    http-request return status 200 content-type text/plain string "ready\n" if { path /readyz } !{ query -m found } { nbsrv(versiond_ha_pool) gt 0 }
+    http-request return status 503 content-type text/plain string "not ready\n" if { path /readyz } !{ query -m found }
+EOF
+render_ready_rules() {
+    source_map=$1
+    while read -r version backend; do
+        [ -n "$version" ] || continue
+        encoded_version=$(urlencode "$version")
+        printf '%s\n' \
+            "    http-request return status 200 content-type text/plain string \"ready\\n\" if { path /readyz } { query -m str version=$encoded_version } { nbsrv($backend) gt 0 }" \
+            "    http-request return status 503 content-type text/plain string \"not ready\\n\" if { path /readyz } { query -m str version=$encoded_version }" \
+            >> "$READY_RULES"
+    done < "$source_map"
+}
+render_ready_rules "$MAP"
+render_ready_rules "$VERSIONS_MAP"
 
 # An HA deployment must declare its versions. The host-level check the coarse
 # mode falls back to answers "can this host serve anything", so a host whose v5
@@ -273,10 +302,15 @@ sed \
     -e "s|\${VERSIONS_MAP}|$VERSIONS_MAP|g" \
     -e "s|\${UNDECLARED_VERSION_GUARD}|$UNDECLARED_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
+    -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
     -e "s|\${MAX_BODY_BYTES}|$MAX_BODY_BYTES|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "/\${ROUTER_READY_RULES}/{
+        r $READY_RULES
+        d
+    }" \
     "$TEMPLATE" > "$OUT"
 
 "$HAPROXY_BIN" -c -f "$OUT" >/dev/null

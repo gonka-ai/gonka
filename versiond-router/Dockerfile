@@ -1,5 +1,9 @@
 FROM haproxy:3.2-alpine
 
+ARG PLACEMENT_PROTOCOL_VERSION=1
+LABEL ai.gonka.component="versiond-router" \
+      ai.gonka.placement-protocol-version="${PLACEMENT_PROTOCOL_VERSION}"
+
 # Sticky reverse-proxy in front of N versiond instances. Hashes by escrow id
 # from the URL so the same session always lands on the same versiond, and takes
 # a host out of rotation from active /readyz checks rather than from router-side

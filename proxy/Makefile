@@ -1,4 +1,4 @@
-.PHONY: all build-docker release
+.PHONY: all build-docker release test-render
 
 include ../scripts/blst-portable.mk
 
@@ -27,6 +27,41 @@ define DOCKER_BUILD
 endef
 
 all: build-docker
+
+test-render:
+	@set -eu; \
+	tmpdir=$$(mktemp -d); \
+	image=gonka-proxy-render-test:$$$$; \
+	trap 'docker image rm "$$image" >/dev/null 2>&1 || true; rm -rf "$$tmpdir"' EXIT; \
+	fail() { echo "test-render: $$1" >&2; exit 1; }; \
+	touch "$$tmpdir/nginx.conf"; \
+	docker build -q -t "$$image" . >/dev/null; \
+	docker run --rm \
+		-e NGINX_MODE=http \
+		-e PROXY_PROTOCOL=true \
+		-e KEY_NAME=node-a \
+		-e VERSIOND_SERVICE_NAME=proxy \
+		-e VERSIOND_SERVICE_IS_ABSOLUTE=true \
+		-e VERSIOND_PORT=18081 \
+		-e EDGE_API_SERVICE_NAME=proxy \
+		-e EDGE_API_SERVICE_IS_ABSOLUTE=true \
+		-e EDGE_API_PORT=18082 \
+		-v "$$tmpdir/nginx.conf:/etc/nginx/nginx.conf" \
+		"$$image" true >/dev/null; \
+	grep -q 'listen 80 proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "private policy listener does not require PROXY protocol"; \
+	grep -q 'listen 127.0.0.1:8081;' "$$tmpdir/nginx.conf" \
+		|| fail "loopback health listener is absent"; \
+	grep -q 'real_ip_header proxy_protocol;' "$$tmpdir/nginx.conf" \
+		|| fail "PROXY client address is not restored"; \
+	grep -q 'server proxy:18081 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "versiond policy route does not return to the HA distributor"; \
+	grep -q 'server proxy:18082 resolve;' "$$tmpdir/nginx.conf" \
+		|| fail "edge-api policy route does not return to the HA distributor"; \
+	if grep -q 'node-a-proxy:1808' "$$tmpdir/nginx.conf"; then \
+		fail "internal distributor received the external KEY_NAME prefix"; \
+	fi; \
+	echo "test-render: ok"
 
 build-docker:
 	$(eval PLATFORM=$(DOCKER_PLATFORM))

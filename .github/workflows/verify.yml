@@ -261,12 +261,29 @@ jobs:
     name: Test router config rendering
     strategy:
       matrix:
-        router: [versiond-router, edge-api-router]
+        router: [versiond-router, edge-api-router, proxy-router]
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
       - name: Render and validate ${{ matrix.router }} config
         run: make -C ${{ matrix.router }} test-render
+
+      - name: Exercise proxy-router HA routing
+        if: matrix.router == 'proxy-router'
+        run: make -C proxy-router test-routing
+
+      - name: Exercise isolated versiond-router slots
+        if: matrix.router == 'versiond-router'
+        run: make -C versiond-router test-fleet
+
+  test-proxy-policy-config:
+    runs-on: ubuntu-latest
+    name: Test nginx policy rendering
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Render and validate private nginx policy config
+        run: make -C proxy test-render
 
   build-and-test-edge-api:
     runs-on: ubuntu-latest

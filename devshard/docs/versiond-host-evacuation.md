@@ -10,16 +10,18 @@ updates remain a separate operation managed inside one live `versiond`
 
 ## The operator contract
 
-There are no evacuation commands. The lifecycle of a host is the lifecycle of
-its container. Run every command from `deploy/join` with the complete HA Compose
-model; the base file alone does not define `versiond2` or `versiond-router`:
+There are no host-evacuation commands. The lifecycle of a host is the lifecycle
+of its container. Run host commands from `deploy/join` with the complete HA
+Compose model. Router slots are deliberately outside that project and are
+managed by the fleet script:
 
 | Intent | Command | What makes it safe |
 | --- | --- | --- |
 | Evacuate / stop temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` | versiond fails `/readyz` first, then stops accepting; the router removes it before it stops taking work |
 | Replace / restart | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` | Compose waits for the same `/readyz` contract as the router; a failed reconcile returns an error instead of silently continuing |
-| Inspect what the router believes | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml exec versiond-router /usr/local/lib/versiond-router/pool-status` | read-only; the router keeps no other state |
-| Apply router configuration | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --force-recreate versiond-router` | Re-renders validated HAProxy configuration from the persisted environment without recreating the node or versiond hosts |
+| Inspect router fleet | `source ./config.env && ./versiond-router-fleet.sh status` | rejects missing, duplicate, or orphan slot ownership |
+| Apply router image or route declarations | persist `config.env`, run `./versiond-router-fleet.sh rollout`, then idempotent `./enable-router-ha.sh --versiond-mode ha --edge-mode auto` | replaces one independent slot at a time, rolls back a failed slot, then refreshes the top route map only after the fleet converges |
+| Change legacy pins or placement pool | set `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true` for `./versiond-router-fleet.sh maintenance-rollout`, then unset it and refresh the top map | drains the complete old fleet before any new-placement router is visible; exact image+env rollback preserves the old live routes on failure |
 
 This works because the router derives everything it needs by observation:
 membership from DNS, health from active `/readyz` checks. Nothing has to be told
@@ -34,8 +36,19 @@ defaults this means `versiond` cannot be evacuated while `v1 v2 v3` are pinned;
 only `versiond2` is an eligible evacuation target.
 
 Before evacuating the owner, migrate every pinned version to shared Postgres,
-persist `export VERSIOND_NON_HA_VERSIONS=""` in `config.env`, recreate
-`versiond-router`, and verify that requests use a `versiond_pool_<v>` backend.
+persist `export VERSIOND_NON_HA_VERSIONS=""` in `config.env`, schedule a
+devshard maintenance window, and run:
+
+```bash
+source ./config.env
+VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
+  ./versiond-router-fleet.sh maintenance-rollout
+./enable-router-ha.sh --versiond-mode ha --edge-mode auto
+```
+
+The maintenance command drains accepted streams before the all-router gap,
+then starts only the new placement generation. Verify that requests use a
+`versiond_pool_<v>` backend.
 Keep the empty export: deleting or unsetting it restores the safe `v1 v2 v3`
 default. Stopping the owner first is an outage, not failover.
 
@@ -102,6 +115,11 @@ failure accounting and command completion.
    having finished booting. Per-version pools are narrower on purpose — they
    route each version the host already serves — so a host mid-install takes
    traffic for what it has and nothing else.
+10. Router replacement preserves at least `VERSIOND_ROUTER_MIN_READY` peers for
+    the coarse pool and for every declared version that currently has capacity.
+    Router slots are separate Compose projects, so a normal main-stack `up -d`
+    cannot replace the entire fleet. Fleet `up` and `start` also preserve any
+    existing slot's image and configuration; only `rollout` may replace it.
 
 Earlier revisions promised that the last active upstream could not be drained
 away. Nothing enforces that now: stopping a container is a Docker operation and
@@ -163,7 +181,8 @@ hide the force path.
 passing checks (taking traffic), resolved and failing checks (not taking
 traffic), administratively drained, or unresolved. All four are derived, none
 are stored, and a router restart rebuilds the full picture within a couple of
-seconds.
+seconds. The fleet script is an external ordered rollout, not a routing control
+plane: it cannot mutate a server slot and it persists no membership database.
 
 ## Context ownership
 

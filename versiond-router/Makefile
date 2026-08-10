@@ -1,5 +1,5 @@
 .PHONY: all build-docker release test-render test-compose-contract
-.PHONY: test-hash-ring test-version-routing
+.PHONY: test-hash-ring test-version-routing test-fleet
 
 # Renders both the mixed (legacy pinning) and the all-HA shapes, asserts on the
 # result, then runs the real HAProxy from the production image over each one.
@@ -8,6 +8,9 @@ HAPROXY_IMAGE ?= haproxy:3.2-alpine
 
 test-compose-contract:
 	@../deploy/join/versiond-compose-config_test.sh
+
+test-fleet:
+	@../deploy/join/versiond-router-fleet_test.sh
 
 # Which versiond serves an escrow must depend on who is in the pool, not on the
 # order DNS happened to hand the addresses to server-template. That is invisible
@@ -158,7 +161,8 @@ test-version-routing:
 		-e READYZ_SUPPORTED=false \
 		-v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	docker run -d --name gonka-vp-router --network $$net -p 127.0.0.1:18132:8080 \
+	docker run -d --name gonka-vp-router --network $$net \
+		-p 127.0.0.1:18132:8080 -p 127.0.0.1:18134:8404 \
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
@@ -168,6 +172,13 @@ test-version-routing:
 		sleep 0.5; \
 	done; \
 	sleep 4; \
+	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:404'; do \
+		version=$${spec%%:*}; want=$${spec##*:}; \
+		got=$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			"http://127.0.0.1:18134/readyz?version=$$version"); \
+		[ "$$got" = "$$want" ] \
+			|| fail "router admin readiness for $$version returned $$got, want $$want"; \
+	done; \
 	legacy=$$(curl -sS -D "$$tmpdir/legacy.headers" -m 3 \
 		http://127.0.0.1:18132/v1/sessions/legacy/chat) \
 		|| fail "healthy v1 was hidden by its legacy host's failing generic readiness"; \
@@ -242,6 +253,7 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 	VERSIOND_ROUTER_OUT="$$tmpdir/mixed.cfg" \
 	VERSIOND_ROUTER_NON_HA_MAP="$$tmpdir/mixed.map" \
 	VERSIOND_ROUTER_VERSIONS_MAP="$$tmpdir/mixed.versions.map" \
+	VERSIOND_ROUTER_READY_RULES="$$tmpdir/mixed.ready.rules" \
 	./entrypoint.sh; \
 	grep -q '^[[:space:]]*server-template versiond 64 versiond-pool:8080' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool is not a DNS-resolved server-template"; \
@@ -251,6 +263,10 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
 		|| fail "active health checks are not configured"; \
+	grep -q '^[[:space:]]*bind :8404' "$$tmpdir/mixed.cfg" \
+		|| fail "internal router readiness is not on its dedicated admin port"; \
+	grep -q 'query -m str version=v5.*nbsrv(versiond_pool_v5) gt 0' "$$tmpdir/mixed.cfg" \
+		|| fail "router readiness does not use the selected version backend"; \
 	grep -q '^[[:space:]]*http-check expect status 200,404' "$$tmpdir/mixed.cfg" \
 		|| fail "pre-v5 readiness capability fallback is not configured"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /healthz' "$$tmpdir/mixed.cfg" \

@@ -130,6 +130,16 @@ frontend versiond_in
 
 ${POOL_BACKENDS}
 
+# Internal control surface for the parent load balancer. It is deliberately on
+# a separate port: public requests must never be able to turn readiness into a
+# routing oracle or bypass the data-plane policy on :8080.
+frontend router_admin
+    bind :${ADMIN_PORT}
+    mode http
+    http-request return status 200 content-type text/plain string "live\n" if { path /livez }
+${ROUTER_READY_RULES}
+    http-request return status 404 content-type text/plain string "not found\n"
+
 frontend metrics
     bind 127.0.0.1:8405
     http-request use-service prometheus-exporter if { path /metrics }
