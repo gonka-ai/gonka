@@ -39,6 +39,8 @@ Mock coverage:
 | Admin paths require the configured admin bearer key | `TestGatewayMockEnvAdminStateRequiresAdminKey` |
 | User API keys can satisfy model `api_key` access | `TestGatewayMockEnvAPIKeyModelAccess` |
 | Admin key can satisfy model `admin_only` access | `TestGatewayMockEnvAdminOnlyModelAccess` |
+| Direct devshard routes enforce model `api_key` access | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
+| Direct devshard routes enforce model `admin_only` access | `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
 
 ## Route Map
 
@@ -216,7 +218,8 @@ Mock coverage:
 | Rewrites direct route inner path before forwarding | `TestGatewayMockEnvDirectDevshardRouteByID` |
 | Rejects direct chat when request model does not match runtime model | `TestGatewayMockEnvDirectDevshardRejectsWrongModel` |
 | Returns 404 for unknown direct devshard chat | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
-| Direct route access control for `api_key` or `admin_only` models | not covered by mockenv yet |
+| Direct route access control for `api_key` models | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess` |
+| Direct route access control for `admin_only` models | `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
 | Direct route limiter rejection | not covered by mockenv yet |
 | Direct route cache hit | not covered by mockenv yet |
 | Runtime unavailable or inactive direct chat conflict | not covered by mockenv yet |
@@ -330,6 +333,7 @@ Mock coverage:
 | Pooled streaming pass-through | Yes | `TestGatewayMockEnvStreamingChatPassthrough` |
 | Direct devshard routing | Yes | `TestGatewayMockEnvDirectDevshardRouteByID` |
 | Direct devshard model validation | Yes | `TestGatewayMockEnvDirectDevshardRejectsWrongModel` |
+| Direct devshard model access modes | Yes | `TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess`, `TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess` |
 | Direct unknown devshard | Yes | `TestGatewayMockEnvUnknownDirectDevshardReturnsNotFound` |
 | Multi-runtime status aggregation | Yes | `TestGatewayMockEnvMultiRuntimeStatusIsAggregate` |
 | Admin state auth and redaction | Yes | `TestGatewayMockEnvAdminStateRequiresAdminKey`, `TestGatewayMockEnvAdminStateDoesNotExposePrivateKey` |

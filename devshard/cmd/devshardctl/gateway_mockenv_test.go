@@ -128,6 +128,62 @@ func TestGatewayMockEnvAdminOnlyModelAccess(t *testing.T) {
 }
 
 // Steps:
+// - Configure the model to require a gateway API key.
+// - Send direct devshard chat without a key and then with a user API key.
+// - Assert the direct route does not bypass model access checks.
+func TestGatewayMockEnvDirectDevshardEnforcesAPIKeyModelAccess(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{{
+			ModelID:    "Qwen/Test",
+			AccessMode: string(gatewayAccessModeAPIKey),
+		}}
+	}))
+
+	denied := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "direct private"))
+	require.Equal(t, http.StatusUnauthorized, denied.Code)
+	require.Contains(t, denied.Body.String(), "requires an API key")
+	require.EqualValues(t, 0, rt.calls.Load())
+
+	allowed := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "direct private"), withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusOK, allowed.Code)
+	require.Equal(t, "12", allowed.Header().Get("X-Devshard-ID"))
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
+// - Configure the model to require an admin API key.
+// - Send direct devshard chat with a user key and then with the admin key.
+// - Assert only the admin-authenticated direct request reaches the runtime.
+func TestGatewayMockEnvDirectDevshardEnforcesAdminOnlyModelAccess(t *testing.T) {
+	rt := &gatewayMockRuntime{
+		id:     "12",
+		model:  "Qwen/Test",
+		active: true,
+	}
+	env := newGatewayMockEnv(t, []*gatewayMockRuntime{rt}, withMockenvSettings(func(settings *GatewaySettings) {
+		settings.ModelLimits = []GatewayModelLimitSettings{{
+			ModelID:    "Qwen/Test",
+			AccessMode: string(gatewayAccessModeAdminOnly),
+		}}
+	}))
+
+	denied := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "direct admin only"), withBearer(mockenvUserKey))
+	require.Equal(t, http.StatusUnauthorized, denied.Code)
+	require.Contains(t, denied.Body.String(), "requires an admin API key")
+	require.EqualValues(t, 0, rt.calls.Load())
+
+	allowed := env.postDirectChat("12", mockenvChatBody("Qwen/Test", "direct admin only"), withBearer(mockenvAdminKey))
+	require.Equal(t, http.StatusOK, allowed.Code)
+	require.Equal(t, "12", allowed.Header().Get("X-Devshard-ID"))
+	require.EqualValues(t, 1, rt.calls.Load())
+}
+
+// Steps:
 // - Create an active runtime for one model.
 // - Send direct devshard chat with a different requested model.
 // - Assert the gateway rejects before forwarding to the runtime handler.
