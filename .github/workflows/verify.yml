@@ -362,6 +362,10 @@ jobs:
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: go test ./... -v 2>&1 | go-junit-report -set-exit-code > junit-report.xml
 
+      - name: Run MockEnv Tests and Generate JUnit Report
+        if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
+        run: go test ./cmd/devshardctl -run GatewayMockEnv -count=1 -v 2>&1 | go-junit-report -set-exit-code > mockenv-junit-report.xml
+
       - name: Verify Docker Installation
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
         run: |
@@ -385,6 +389,21 @@ jobs:
         with:
           name: Devshard Tests
           path: devshard/junit-report.xml
+          reporter: java-junit
+
+      - name: Publish MockEnv Test Results
+        uses: actions/upload-artifact@v4
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        with:
+          name: devshard-mockenv-junit-report
+          path: devshard/mockenv-junit-report.xml
+
+      - name: Report MockEnv Test Results in GitHub
+        if: always() && (github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork)
+        uses: dorny/test-reporter@v1
+        with:
+          name: Devshard MockEnv Tests
+          path: devshard/mockenv-junit-report.xml
           reporter: java-junit
 
       - name: Publish E2E Test Results
