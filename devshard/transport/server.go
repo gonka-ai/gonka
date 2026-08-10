@@ -400,7 +400,9 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 	case resp.LiveAttach:
 		if aerr := s.host.AttachLiveStream(resp.InferenceID, w, resp.DeliveredEvents, resp.DeliveredPartial); aerr != nil {
 			reason := observability.ReasonExecuteErr
-			if errors.Is(aerr, host.ErrResumeCursorPast) || errors.Is(aerr, host.ErrLiveStreamGone) || errors.Is(aerr, host.ErrLiveStreamPruned) {
+			if errors.Is(aerr, host.ErrResumeCursorPast) || errors.Is(aerr, host.ErrInvalidResumeCursor) ||
+				errors.Is(aerr, host.ErrLiveStreamGone) || errors.Is(aerr, host.ErrLiveStreamPruned) ||
+				errors.Is(aerr, host.ErrLiveStreamOverCap) {
 				reason = observability.ReasonCachedReplayErr
 			}
 			observability.RecordExecutionNoFinish(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, reason, observability.WhereRuntimeWriteClientResponse)
@@ -474,6 +476,9 @@ func replaySSEBody(w http.ResponseWriter, body []byte) error {
 // deliveredEvents indexes complete upstream data events; deliveredPartial is a
 // byte offset into the next event (0 on an event boundary).
 func replaySSEBodyFromCursor(w http.ResponseWriter, body []byte, deliveredEvents, deliveredPartial int64) error {
+	if deliveredEvents < 0 || deliveredPartial < 0 {
+		return host.ErrInvalidResumeCursor
+	}
 	if events, ok := streamedReplayEvents(body); ok {
 		sawDone := false
 		idx := int64(0)

@@ -1316,6 +1316,15 @@ func (s *Session) PendingTxs() []*types.DevshardTx {
 
 func (s *Session) StateMachine() *state.StateMachine { return s.sm }
 
+// ProtocolVersion returns the escrow bind tag stamped on the session state
+// machine (StateRootAndProtocolVersion). Empty when the session is nil.
+func (s *Session) ProtocolVersion() string {
+	if s == nil || s.sm == nil {
+		return ""
+	}
+	return s.sm.ProtocolVersion()
+}
+
 // sigWeight computes the slot-weighted signature count for a set of slot signatures,
 // deduplicating by validator address. Caller must hold s.mu.
 func (s *Session) sigWeight(sigs map[uint32][]byte) uint32 {

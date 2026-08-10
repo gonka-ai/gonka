@@ -125,6 +125,17 @@ func proxyTextStreamResponse(resp *http.Response, w http.ResponseWriter, respons
 			observability.IncInferenceClientDetachedDrain()
 			continue
 		}
+		// LiveStream.Write always succeeds (append-only hub). Primary detach is
+		// reported via ClientDetached(); keep writing into the hub so resume /
+		// finish retain the full body — only count the metric once.
+		if d, ok := w.(interface{ ClientDetached() bool }); ok && d.ClientDetached() {
+			if !outcome.clientDetached {
+				logging.Warn("Client writer detached; continuing ML drain into live buffer", types.Inferences,
+					"inferenceId", inferenceId)
+				outcome.clientDetached = true
+				observability.IncInferenceClientDetachedDrain()
+			}
+		}
 		if flusher, ok := w.(http.Flusher); ok {
 			flusher.Flush()
 		}

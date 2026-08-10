@@ -148,6 +148,10 @@ func HostRequestToJSON(req host.HostRequest) (InferenceRequest, error) {
 
 // HostRequestFromJSON converts an InferenceRequest back to HostRequest.
 func HostRequestFromJSON(ir InferenceRequest) (host.HostRequest, error) {
+	if ir.DeliveredEvents < 0 || ir.DeliveredPartial < 0 {
+		return host.HostRequest{}, fmt.Errorf("%w: delivered_events=%d delivered_partial=%d",
+			host.ErrInvalidResumeCursor, ir.DeliveredEvents, ir.DeliveredPartial)
+	}
 	diffs := make([]types.Diff, len(ir.Diffs))
 	for i, dj := range ir.Diffs {
 		d, err := DiffFromJSON(dj)

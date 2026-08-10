@@ -696,6 +696,19 @@ func TestReplaySSEBodyFromCursor_PastCursorErrors(t *testing.T) {
 	require.ErrorIs(t, err, host.ErrResumeCursorPast)
 }
 
+func TestReplaySSEBodyFromCursor_NegativeCursorErrors(t *testing.T) {
+	rec := httptest.NewRecorder()
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), -1, 0), host.ErrInvalidResumeCursor)
+	require.ErrorIs(t, replaySSEBodyFromCursor(rec, []byte(`{}`), 0, -1), host.ErrInvalidResumeCursor)
+}
+
+func TestHostRequestFromJSON_RejectsNegativeResumeCursor(t *testing.T) {
+	_, err := HostRequestFromJSON(InferenceRequest{Nonce: 1, DeliveredEvents: -1})
+	require.ErrorIs(t, err, host.ErrInvalidResumeCursor)
+	_, err = HostRequestFromJSON(InferenceRequest{Nonce: 1, DeliveredPartial: -1})
+	require.ErrorIs(t, err, host.ErrInvalidResumeCursor)
+}
+
 func TestReplaySSEBody_NormalizesDataPrefixWithoutSpace(t *testing.T) {
 	events := []string{
 		`data:{"id":"chatcmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"}}]}`,

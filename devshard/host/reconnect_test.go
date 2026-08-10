@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"net/http"
-	"net/http/httptest"
 	"testing"
 	"time"
 
@@ -103,7 +102,7 @@ func TestHost_LiveAttach_SameNonceReconnect(t *testing.T) {
 	}()
 	// First post-reconnect bytes before ML finishes.
 	deadline := time.After(500 * time.Millisecond)
-	for rec.Body.Len() == 0 {
+	for rec.bodyLen() == 0 {
 		select {
 		case <-deadline:
 			t.Fatal("expected live attach bytes before ML completion")
@@ -211,7 +210,7 @@ func TestHost_ConfirmStartNotDuplicatedOnReconnect(t *testing.T) {
 		_, _ = stream.Write([]byte("data: hi\n"))
 		stream.Close(nil)
 	}()
-	rec := httptest.NewRecorder()
+	rec := newFlushRecorder()
 	require.NoError(t, h.AttachLiveStream(1, rec, 0, 0))
-	require.Contains(t, rec.Body.String(), "data: hi")
+	require.Contains(t, rec.body(), "data: hi")
 }

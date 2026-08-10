@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"hash/fnv"
 	"io"
 	"log"
 	"math/rand"
@@ -423,6 +424,14 @@ var (
 	NonStreamResponseFloor   = 20 * time.Second
 	PerInputTokenResponseLag = 20 * time.Millisecond
 	SecondaryWaitAfterWinner = 5 * time.Minute
+
+	// Same-nonce reconnect knobs (R3/R7). AttemptReconnectEnabled is also
+	// gated on session protocol ≥ v5 (R0) via attemptReconnectAllowed.
+	AttemptReconnectEnabled    = false
+	AttemptReconnectBudget     = time.Second
+	AttemptReconnectMaxTries   = 2
+	AllowStreamResetOnFailover = false
+	reconnectTryBackoff        = 50 * time.Millisecond
 )
 
 func DefaultRedundancySettings() RedundancySettings {
@@ -446,6 +455,10 @@ func DefaultRedundancySettings() RedundancySettings {
 		PairwiseWinnerHoldMS:          500,
 		PairwiseWinnerHoldMinSpeedup:  0.10,
 		PairwiseWinnerHoldMinSamples:  6,
+		AttemptReconnectEnabled:       false,
+		AttemptReconnectBudgetMS:      1000,
+		AttemptReconnectMaxTries:      2,
+		AllowStreamResetOnFailover:    false,
 	}
 }
 
@@ -509,6 +522,12 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	if settings.PairwiseWinnerHoldMinSamples <= 0 {
 		settings.PairwiseWinnerHoldMinSamples = defaults.PairwiseWinnerHoldMinSamples
 	}
+	if settings.AttemptReconnectBudgetMS <= 0 {
+		settings.AttemptReconnectBudgetMS = defaults.AttemptReconnectBudgetMS
+	}
+	if settings.AttemptReconnectMaxTries <= 0 {
+		settings.AttemptReconnectMaxTries = defaults.AttemptReconnectMaxTries
+	}
 	ReceiptTimeout = time.Duration(settings.ReceiptTimeoutMS) * time.Millisecond
 	FirstTokenTimeoutCap = time.Duration(settings.FirstTokenTimeoutFloorMS) * time.Millisecond
 	PerInputTokenFirstTokenLag = time.Duration(settings.PerInputTokenFirstTokenLagMS) * time.Millisecond
@@ -528,6 +547,10 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	PairwiseWinnerHold = time.Duration(settings.PairwiseWinnerHoldMS) * time.Millisecond
 	PairwiseWinnerHoldMinSpeedup = settings.PairwiseWinnerHoldMinSpeedup
 	PairwiseWinnerHoldMinSamples = settings.PairwiseWinnerHoldMinSamples
+	AttemptReconnectEnabled = settings.AttemptReconnectEnabled
+	AttemptReconnectBudget = time.Duration(settings.AttemptReconnectBudgetMS) * time.Millisecond
+	AttemptReconnectMaxTries = settings.AttemptReconnectMaxTries
+	AllowStreamResetOnFailover = settings.AllowStreamResetOnFailover
 }
 
 func normalizeRedundancySpeedPolicy(policy string) string {
@@ -650,6 +673,10 @@ func (e *Redundancy) Decide(primaryHostIdx int, inputTokens uint64) Decision {
 	if e.perf.IsUnresponsiveParticipant(primaryParticipant) {
 		return Decision{RunSecondary: true, Delay: 0, Reason: "primary_unresponsive", ImmediateAttempts: 1}
 	}
+
+	// Reconnect blips are recorded for observability only (R8). They must not
+	// change routing: forcing an immediate secondary would buy a second full
+	// generation and a second MsgStartInference for a transient TCP drop.
 
 	if RedundancySpeedPolicy != RedundancySpeedPolicyLegacy {
 		if decision, ok := e.decidePairwiseSpeedup(primaryHostIdx, inputTokens); ok {
@@ -898,9 +925,10 @@ type inflight struct {
 	// Blank SSE separators (empty lines from "\n\n" framing) are not events.
 	// deliveredPartial is bytes of the currently incomplete event (0 on a
 	// newline boundary). Updated on the attempt's writer goroutine only.
-	deliveredEvents  int64
-	deliveredPartial int64
-	deliveredForming []byte // incomplete line for delivered-prefix accounting
+	deliveredEvents       int64
+	deliveredPartial      int64
+	deliveredForming      []byte // incomplete line for delivered-prefix accounting
+	deliveredFirstEventFP uint64 // fnv of first delivered content line (R2 probe)
 
 	// classifyPartial keeps the tail after the last '\n' from prior Writes;
 	// used to reassemble fragmented SSE events for the classifier.
@@ -949,12 +977,48 @@ type inflight struct {
 	// reconnectTries counts same-nonce transport retries (R8). Distinct from
 	// attempt accounting — reconnect must not call RealSend again.
 	reconnectTries atomic.Int64
+	// reconnectLadderUsed ensures the post-content reconnect ladder runs at
+	// most once per attempt (further drops after a resume fall through to
+	// today's failure / R5 path).
+	reconnectLadderUsed  atomic.Bool
+	reconnectPenaltyOnce sync.Once
+	// resuming is set while a same-nonce reconnect ladder owns this attempt.
+	// done is already closed by then, so inflightDone consults this flag to
+	// keep the attempt "pending" for the race loop. Never mutate done itself:
+	// monitorInflight and the background finalizers read it concurrently.
+	// resumeDone is closed when the ladder goroutine exits; finalizers wait on
+	// it via waitInflightSettled so resp/err are stable before ProcessResponse.
+	resuming   atomic.Bool
+	resumeMu   sync.Mutex
+	resumeDone chan struct{}
 
 	// cancel unwinds the per-attempt context used by SendOnly. The background
 	// finalizer invokes it on losers that are still running SecondaryWaitAfterWinner
 	// after the winner has settled, so their transport goroutines return
 	// promptly and HandleTimeout can run against the abandoned nonce.
-	cancel context.CancelFunc
+	// Reconnect replaces it mid-flight, so all access goes through
+	// setCancel / cancelAttempt.
+	cancelMu sync.Mutex
+	cancel   context.CancelFunc
+}
+
+func (inf *inflight) setCancel(fn context.CancelFunc) {
+	inf.cancelMu.Lock()
+	inf.cancel = fn
+	inf.cancelMu.Unlock()
+}
+
+// cancelAttempt unwinds the attempt's current context, if any.
+func (inf *inflight) cancelAttempt() {
+	if inf == nil {
+		return
+	}
+	inf.cancelMu.Lock()
+	fn := inf.cancel
+	inf.cancelMu.Unlock()
+	if fn != nil {
+		fn()
+	}
 }
 
 func (inf *inflight) receiptAt() time.Time {
@@ -1163,6 +1227,13 @@ type raceGroup struct {
 	logCtx         context.Context
 	writeCtx       context.Context
 	escrow         string
+
+	// reservedWinner holds the client stream for a resumable crowned attempt
+	// during the same-nonce reconnect ladder (R4). While set, setWinner refuses
+	// any other nonce so a hedge secondary cannot splice a different generation
+	// onto an already-delivered prefix. Cleared explicitly when the ladder ends
+	// (not on a wall-clock expiry — the hedge may still be racing after budget).
+	reservedWinner uint64
 }
 
 func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) *raceGroup {
@@ -1178,12 +1249,60 @@ func newRaceGroup(logCtx, writeCtx context.Context, escrow string, w io.Writer) 
 func (rg *raceGroup) setWinner(nonce uint64) {
 	rg.mu.Lock()
 	defer rg.mu.Unlock()
+	if rg.reservedWinner != 0 && nonce != rg.reservedWinner {
+		logInferenceStage(rg.logCtx, rg.escrow, nonce, "winner_blocked_by_reservation",
+			"reserved_winner", rg.reservedWinner,
+		)
+		return
+	}
 	if rg.winner == 0 {
 		rg.winner = nonce
 		rg.decided.Store(true)
 		close(rg.winnerCh)
 		logInferenceStage(rg.logCtx, rg.escrow, nonce, "winner_selected")
 	}
+}
+
+func (rg *raceGroup) reserveWinner(nonce uint64) {
+	if rg == nil || nonce == 0 {
+		return
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	rg.reservedWinner = nonce
+	logInferenceStage(rg.logCtx, rg.escrow, nonce, "winner_reserved")
+}
+
+func (rg *raceGroup) clearReservation() {
+	if rg == nil {
+		return
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	if rg.reservedWinner == 0 {
+		return
+	}
+	nonce := rg.reservedWinner
+	rg.reservedWinner = 0
+	logInferenceStage(rg.logCtx, rg.escrow, nonce, "winner_reservation_cleared")
+}
+
+func (rg *raceGroup) hasReservation() bool {
+	if rg == nil {
+		return false
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	return rg.reservedWinner != 0
+}
+
+func (rg *raceGroup) reservedWinnerNonce() uint64 {
+	if rg == nil {
+		return 0
+	}
+	rg.mu.Lock()
+	defer rg.mu.Unlock()
+	return rg.reservedWinner
 }
 
 func (rg *raceGroup) promoteFallbackWinner(inf *inflight) error {
@@ -1231,6 +1350,9 @@ func (inf *inflight) recordDeliveredForward(p []byte) {
 		inf.deliveredForming = inf.deliveredForming[nl+1:]
 		if len(bytes.TrimSpace(line)) == 0 {
 			continue
+		}
+		if inf.deliveredEvents == 0 {
+			inf.deliveredFirstEventFP = sseEventFingerprint(line)
 		}
 		inf.deliveredEvents++
 		inf.deliveredPartial = 0
@@ -1923,7 +2045,7 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 	// no-op after natural completion; explicit invocation from the finalizer
 	// is what unwinds SendOnly for speculative losers that outlived the winner.
 	attemptCtx, cancel := withMetaDrain(ctx, clientFlag)
-	inf.cancel = cancel
+	inf.setCancel(cancel)
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	receiptHandler := func() {
 		inf.receiptOnce.Do(func() {
@@ -2032,17 +2154,21 @@ func (e *Redundancy) startInflight(ctx context.Context, inf *inflight, race *rac
 
 // reconnectInflight re-issues the same PreparedInference with a resume cursor.
 // It does not allocate a new nonce, call the picker, mutate triedParticipants,
-// or record RealSend (R8). The first SendOnly must already have finished
-// (inflightDone). On success, inf.err is cleared and inf.resp is merged so a
-// single later processInflightOnce still runs (R1).
+// or record RealSend (R8). The caller must ensure no prior SendOnly /
+// SendOnlyWithCursor is still running on this inflight (the reconnect ladder
+// serializes tries; awaitRace marks inf as resuming so the race loop treats the
+// resume as in-flight). On success, inf.err is cleared and inf.resp is merged
+// so a single later processInflightOnce still runs (R1).
+//
+// ctx should be the settle context (same parent startInflight uses). The send
+// runs under withMetaDrain so client disconnect still allows a bounded
+// meta/receipt drain, and setCancel republishes the cancel so winner hard-timeout
+// / loser finalizer can unwind the resumed stream.
 //
 // Step 4 wires this into the reconnect ladder; Step 3 exposes the primitive.
-func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams) error {
+func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race *raceGroup, params user.InferenceParams, clientFlag *cancelFlag) error {
 	if e == nil || inf == nil || inf.prepared == nil {
 		return fmt.Errorf("reconnect: missing inflight")
-	}
-	if !inflightDone(inf) {
-		return fmt.Errorf("reconnect: first send still in flight")
 	}
 	if race == nil {
 		race = newRaceGroup(ctx, ctx, inf.escrowID, io.Discard)
@@ -2054,15 +2180,20 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 	try := inf.reconnectTries.Add(1)
 	e.recordGatewayReconnectTry(inf, try)
 
+	attemptCtx, cancel := withMetaDrain(ctx, clientFlag)
+	inf.setCancel(cancel)
+	defer cancel()
+
 	rw := &raceWriter{group: race, nonce: inf.nonce, inf: inf}
 	// Primary resume is host-side (cursor on HostRequest). prefixSkipWriter is
 	// an R2 safety net that activates only when the host appears to re-emit
 	// from event 0 despite the cursor (see probe logic in Write).
 	stream := &prefixSkipWriter{
-		w:           rw,
-		skipEvents:  events,
-		skipPartial: partial,
-		probeResume: events > 0 || partial > 0,
+		w:            rw,
+		skipEvents:   events,
+		skipPartial:  partial,
+		probeResume:  events > 0 || partial > 0,
+		firstEventFP: inf.deliveredFirstEventFP,
 	}
 	receiptHandler := func() {
 		inf.receiptOnce.Do(func() {
@@ -2079,7 +2210,7 @@ func (e *Redundancy) reconnectInflight(ctx context.Context, inf *inflight, race 
 		"delivered_events", events,
 		"delivered_partial", partial,
 	)
-	resp, err := e.session.SendOnlyWithCursor(ctx, inf.prepared, stream, receiptHandler, events, partial)
+	resp, err := e.session.SendOnlyWithCursor(attemptCtx, inf.prepared, stream, receiptHandler, events, partial)
 	mergeInflightHostResponse(inf, resp, err)
 
 	if err != nil {
@@ -2188,6 +2319,367 @@ func (e *Redundancy) recordGatewayReconnectTry(inf *inflight, try int64) {
 	)
 }
 
+// attemptReconnectAllowed is the R0+R7 gate: setting on AND session protocol ≥ v5.
+func (e *Redundancy) attemptReconnectAllowed() bool {
+	if e == nil || e.session == nil || !AttemptReconnectEnabled {
+		return false
+	}
+	ver, err := types.ParseProtocolVersion(e.session.ProtocolVersion())
+	if err != nil {
+		return false
+	}
+	return types.ProtocolVersionAtLeast(ver, types.ProtocolV5)
+}
+
+func (e *Redundancy) shouldAttemptWinnerReconnect(inf *inflight) bool {
+	if e == nil || inf == nil || inf.probe {
+		return false
+	}
+	if !e.attemptReconnectAllowed() {
+		return false
+	}
+	// Only protect a delivered client prefix (R4). Pre-content failures keep
+	// today's attempt_failed escalation.
+	if inf.deliveredEvents == 0 && inf.contentChunks.Load() == 0 {
+		return false
+	}
+	return inf.reconnectLadderUsed.CompareAndSwap(false, true)
+}
+
+// winnerReconnectHedgeRequest asks awaitRace to start a reconnect-budget hedge
+// on the race loop goroutine (attempts / triedParticipants stay single-threaded).
+// The ladder waits on done so reservation is still held while the hedge starts.
+type winnerReconnectHedgeRequest struct {
+	trigger *inflight
+	done    chan struct{}
+}
+
+// spawnWinnerReconnectLadder re-arms the winner as in-flight and runs the
+// reconnect ladder in the background so awaitRace can keep servicing
+// winnerHardTimeoutC / stallC / client cancel while the resumed stream runs.
+func (e *Redundancy) spawnWinnerReconnectLadder(
+	streamCtx, settleCtx context.Context,
+	inf *inflight,
+	race *raceGroup,
+	params user.InferenceParams,
+	triedParticipants map[string]bool,
+	clientFlag *cancelFlag,
+	doneCh chan *inflight,
+	hedgeCh chan<- winnerReconnectHedgeRequest,
+) {
+	if e == nil || inf == nil {
+		return
+	}
+	// Mark the attempt as resuming instead of re-opening inf.done: hard timeout
+	// / inter-chunk stall keep arming and allInflightsDone will not short-circuit
+	// the race, without mutating a channel that monitorInflight and the
+	// background finalizers read concurrently.
+	resumeDone := make(chan struct{})
+	inf.resumeMu.Lock()
+	inf.resumeDone = resumeDone
+	inf.resumeMu.Unlock()
+	inf.resuming.Store(true)
+	go func() {
+		// Closed last so waitInflightSettled cannot release a finalizer while
+		// this goroutine is still touching inf.
+		defer close(resumeDone)
+		err := e.runWinnerReconnectLadder(streamCtx, settleCtx, inf, race, params, triedParticipants, clientFlag, hedgeCh)
+		if err != nil && inf.err == nil {
+			inf.err = err
+		}
+		inf.resuming.Store(false)
+		// Re-signal the race loop; the channel send publishes inf.err/inf.resp.
+		// If awaitRace has already given up, its finalizer waits on resumeDone.
+		select {
+		case doneCh <- inf:
+		case <-streamCtx.Done():
+		}
+	}()
+}
+
+// runWinnerReconnectLadder runs same-nonce reconnect tries under a reservation.
+//
+// R3: reconnect attempts run without blocking the budget timer. When
+// AttemptReconnectBudget expires without a successful resume, startHedge fires
+// and the ladder keeps trying — hedge and reconnect race under R4 (hedge
+// suppressed for client I/O while a delivered prefix exists).
+//
+// Hedge starts are requested via hedgeCh so awaitRace can append attempts on
+// its own goroutine. When hedgeCh is nil (direct/unit-test callers), the hedge
+// is started inline and the caller must supply a local attempts sink via the
+// optional syncHedge hook — see runWinnerReconnectLadderSync.
+//
+// Returns nil when a reconnect try succeeds; otherwise a resume-exhausted
+// error. Never promotes the hedge onto the client when a prefix was already
+// delivered (R4/R5).
+func (e *Redundancy) runWinnerReconnectLadder(
+	streamCtx, settleCtx context.Context,
+	inf *inflight,
+	race *raceGroup,
+	params user.InferenceParams,
+	triedParticipants map[string]bool,
+	clientFlag *cancelFlag,
+	hedgeCh chan<- winnerReconnectHedgeRequest,
+) error {
+	return e.runWinnerReconnectLadderWithHedge(streamCtx, settleCtx, inf, race, params, triedParticipants, clientFlag, hedgeCh, nil)
+}
+
+// runWinnerReconnectLadderSync is the unit-test entry that starts hedges inline
+// against a local attempts slice (same goroutine as the ladder).
+func (e *Redundancy) runWinnerReconnectLadderSync(
+	streamCtx, settleCtx context.Context,
+	inf *inflight,
+	race *raceGroup,
+	params user.InferenceParams,
+	attempts *[]*inflight,
+	triedParticipants map[string]bool,
+	clientFlag *cancelFlag,
+	doneCh chan *inflight,
+) error {
+	syncHedge := func() *inflight {
+		if attempts == nil || streamCtx.Err() != nil {
+			return nil
+		}
+		if len(*attempts) >= e.maxAttempts() {
+			return nil
+		}
+		next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_reconnect_budget", inf, "winner_reconnect_hedge", triedParticipants, clientFlag)
+		if next != nil {
+			*attempts = append(*attempts, next)
+			if doneCh != nil {
+				e.watchInflightDone(next, doneCh)
+			}
+		}
+		return next
+	}
+	return e.runWinnerReconnectLadderWithHedge(streamCtx, settleCtx, inf, race, params, triedParticipants, clientFlag, nil, syncHedge)
+}
+
+func (e *Redundancy) runWinnerReconnectLadderWithHedge(
+	streamCtx, settleCtx context.Context,
+	inf *inflight,
+	race *raceGroup,
+	params user.InferenceParams,
+	triedParticipants map[string]bool,
+	clientFlag *cancelFlag,
+	hedgeCh chan<- winnerReconnectHedgeRequest,
+	syncHedge func() *inflight,
+) error {
+	budget := AttemptReconnectBudget
+	if budget <= 0 {
+		budget = time.Second
+	}
+	maxTries := AttemptReconnectMaxTries
+	if maxTries <= 0 {
+		maxTries = 2
+	}
+	deadline := time.Now().Add(budget)
+	race.reserveWinner(inf.nonce)
+	defer race.clearReservation()
+	// Blip on every ladder exit (resume or exhausted), not at entry — avoids
+	// scoring before outcome and never writes Responsive:false failure samples.
+	defer e.recordReconnectBlipOnce(inf)
+
+	logRequestStage(settleCtx, "winner_reconnect_ladder_started",
+		"escrow", e.devshardID,
+		"winner_nonce", inf.nonce,
+		"host", inf.hostID,
+		"budget_ms", budget.Milliseconds(),
+		"max_tries", maxTries,
+		"delivered_events", inf.deliveredEvents,
+		"delivered_partial", inf.deliveredPartial,
+	)
+
+	hedgeStarted := false
+	startHedge := func() {
+		if hedgeStarted || streamCtx.Err() != nil {
+			return
+		}
+		hedgeStarted = true
+		if hedgeCh != nil {
+			req := winnerReconnectHedgeRequest{trigger: inf, done: make(chan struct{})}
+			select {
+			case hedgeCh <- req:
+				select {
+				case <-req.done:
+				case <-streamCtx.Done():
+				}
+			case <-streamCtx.Done():
+			}
+			return
+		}
+		if syncHedge == nil {
+			return
+		}
+		if next := syncHedge(); next != nil {
+			logRequestStage(settleCtx, "winner_reconnect_hedge_started",
+				"escrow", e.devshardID,
+				"winner_nonce", inf.nonce,
+				"hedge_nonce", next.nonce,
+				"hedge_host", next.hostID,
+			)
+		}
+	}
+
+	// Budget timer runs independently of reconnectInflight so a slow/hanging
+	// same-nonce resume cannot delay the hedge (R3).
+	var budgetTimer *time.Timer
+	if wait := time.Until(deadline); wait <= 0 {
+		startHedge()
+	} else {
+		budgetTimer = time.NewTimer(wait)
+		defer stopTimer(budgetTimer)
+	}
+	budgetCh := func() <-chan time.Time {
+		if budgetTimer == nil {
+			return nil
+		}
+		return budgetTimer.C
+	}
+	onBudget := func() {
+		if budgetTimer == nil {
+			return
+		}
+		budgetTimer = nil
+		startHedge()
+	}
+
+	type reconnectOutcome struct {
+		err error
+	}
+
+	var lastErr error
+	for try := 0; try < maxTries; try++ {
+		if err := streamCtx.Err(); err != nil {
+			return err
+		}
+		if time.Now().After(deadline) {
+			startHedge()
+			if budgetTimer != nil {
+				stopTimer(budgetTimer)
+				budgetTimer = nil
+			}
+		}
+
+		resultCh := make(chan reconnectOutcome, 1)
+		go func() {
+			// settleCtx parent matches startInflight: client disconnect is
+			// signaled via clientFlag / withMetaDrain, not stream cancel.
+			err := e.reconnectInflight(settleCtx, inf, race, params, clientFlag)
+			resultCh <- reconnectOutcome{err: err}
+		}()
+
+		var outcome reconnectOutcome
+		gotResult := false
+		for !gotResult {
+			select {
+			case <-streamCtx.Done():
+				inf.cancelAttempt()
+				<-resultCh // allow reconnect goroutine to exit
+				return streamCtx.Err()
+			case <-budgetCh():
+				onBudget()
+			case outcome = <-resultCh:
+				gotResult = true
+			}
+		}
+
+		lastErr = outcome.err
+		if lastErr == nil && inf.err != nil {
+			lastErr = inf.err
+		}
+		if lastErr == nil && inf.err == nil {
+			logRequestStage(settleCtx, "winner_reconnect_resumed",
+				"escrow", e.devshardID,
+				"winner_nonce", inf.nonce,
+				"host", inf.hostID,
+				"reconnect_try", inf.reconnectTries.Load(),
+				"hedge_started", hedgeStarted,
+			)
+			return nil
+		}
+		if try+1 >= maxTries {
+			break
+		}
+
+		backoff := reconnectTryBackoff
+		if backoff < 0 {
+			backoff = 0
+		}
+		timer := time.NewTimer(backoff)
+		backoffDone := false
+		for !backoffDone {
+			select {
+			case <-streamCtx.Done():
+				stopTimer(timer)
+				return streamCtx.Err()
+			case <-budgetCh():
+				onBudget()
+			case <-timer.C:
+				backoffDone = true
+			}
+		}
+	}
+
+	if !hedgeStarted {
+		if ch := budgetCh(); ch != nil {
+			select {
+			case <-streamCtx.Done():
+				return streamCtx.Err()
+			case <-ch:
+				onBudget()
+			}
+		} else {
+			startHedge()
+		}
+	}
+
+	if lastErr == nil {
+		lastErr = fmt.Errorf("inference: winner resume exhausted")
+	}
+	logRequestStage(settleCtx, "winner_reconnect_exhausted",
+		"escrow", e.devshardID,
+		"winner_nonce", inf.nonce,
+		"host", inf.hostID,
+		"reconnect_tries", inf.reconnectTries.Load(),
+		"hedge_started", hedgeStarted,
+		"error", lastErr,
+	)
+	_ = AllowStreamResetOnFailover // R5 opt-in wired in a later change; default remains fail.
+	return lastErr
+}
+
+// recordReconnectBlipOnce records that this participant needed a reconnect
+// ladder (R4/R8). Observability only: it does not write RequestSample failures,
+// call ObserveStalledWinner, or influence Decide / the picker.
+func (e *Redundancy) recordReconnectBlipOnce(inf *inflight) {
+	if e == nil || inf == nil {
+		return
+	}
+	inf.reconnectPenaltyOnce.Do(func() {
+		participantKey := e.participantKeyForHost(inf.hostIdx)
+		var blipCount int
+		if e.perf != nil {
+			e.perf.RecordReconnectBlip(participantKey)
+			blipCount = e.perf.ReconnectBlipCount(participantKey)
+		}
+		windowMS := ReconnectBlipWindow.Milliseconds()
+		if windowMS <= 0 {
+			windowMS = (5 * time.Minute).Milliseconds()
+		}
+		logInferenceStage(context.Background(), inf.escrowID, inf.nonce, "reconnect_blip",
+			"host", inf.hostID,
+			"participant_key", participantKey,
+			"blip_count", blipCount,
+			"window_ms", windowMS,
+		)
+	})
+}
+
+// maxPrefixSkipProbeBytes bounds prefixSkipWriter.forming while the resume
+// probe is undecided (blank-line / slow-start hosts must not grow unboundedly).
+const maxPrefixSkipProbeBytes = 64 << 10
+
 // prefixSkipWriter drops an already-delivered upstream prefix before forwarding
 // to the underlying writer. Safety net if a host re-emits from event 0 on
 // reconnect (R2). Blank SSE separator lines are not counted as events.
@@ -2196,9 +2688,8 @@ func (e *Redundancy) recordGatewayReconnectTry(inf *inflight, try int64) {
 // the host), the writer first decides whether the stream looks like a full
 // restart. A correct host emits only the remainder — which for a mid-event
 // break does not start a new "data:" line — and must not be event-skipped.
-// Event-boundary resumes are ambiguous without a content fingerprint, so the
-// probe trusts the host cursor and forwards as-is unless a mid-event restart
-// is detected.
+// Event-boundary resumes compare the first content line to firstEventFP (hash
+// of the first delivered event); a match means the host restarted from event 0.
 type prefixSkipWriter struct {
 	w            io.Writer
 	skipEvents   int64
@@ -2208,7 +2699,8 @@ type prefixSkipWriter struct {
 	doneSkipping bool
 	probeResume  bool
 	probed       bool
-	emitted      bool // true after forwarding a non-blank line
+	emitted      bool   // true after forwarding a non-blank line
+	firstEventFP uint64 // fingerprint of first delivered content line; 0 = unset
 }
 
 func (p *prefixSkipWriter) Write(b []byte) (int, error) {
@@ -2223,12 +2715,20 @@ func (p *prefixSkipWriter) Write(b []byte) (int, error) {
 		return p.w.Write(b)
 	}
 	p.forming = append(p.forming, b...)
+	undecidable := p.boundProbeForming()
 	if p.probeResume && !p.probed {
-		if decided, applySkip := p.decideProbe(); !decided {
+		decided, applySkip := p.decideProbe()
+		if !decided && undecidable {
+			// One oversized line with no boundary to compare: trust the host
+			// rather than truncating bytes the client still needs.
+			decided, applySkip = true, false
+		}
+		if !decided {
 			return len(b), nil
-		} else if !applySkip {
+		}
+		p.probed = true
+		if !applySkip {
 			// Host honored the cursor — forward the buffered remainder as-is.
-			p.probed = true
 			p.doneSkipping = true
 			out := p.forming
 			p.forming = nil
@@ -2240,7 +2740,6 @@ func (p *prefixSkipWriter) Write(b []byte) (int, error) {
 			}
 			return len(b), nil
 		}
-		p.probed = true
 		// applySkip: fall through and run event/partial skip on forming.
 	}
 	var forward []byte
@@ -2342,10 +2841,42 @@ func (p *prefixSkipWriter) decideProbe() (decided, applySkip bool) {
 		}
 		return true, false
 	}
-	// Event-boundary resume: host cursor is authoritative. A full restart
-	// also starts with "data:", so we cannot distinguish without a content
-	// fingerprint — trust the host (Step 2 cursor path).
+	// Event-boundary resume: wait for the first non-blank line, then compare
+	// to the fingerprint of the first event already delivered to the client.
+	nl := bytes.IndexByte(p.forming, '\n')
+	if nl == -1 {
+		return false, false
+	}
+	line := bytes.TrimSpace(p.forming[:nl])
+	if len(line) == 0 {
+		return false, false
+	}
+	if p.firstEventFP != 0 && sseEventFingerprint(line) == p.firstEventFP {
+		return true, true
+	}
 	return true, false
+}
+
+// boundProbeForming drops leading blank SSE separators so a host emitting only
+// newlines cannot grow the undecided probe buffer without limit. It never
+// discards content bytes: those are still owed to the client. When the buffer
+// is over the cap and holds one unterminated line, there is nothing left to
+// compare, so it reports undecidable and the caller gives up on the probe.
+func (p *prefixSkipWriter) boundProbeForming() (undecidable bool) {
+	if p == nil || !p.probeResume || p.probed {
+		return false
+	}
+	for len(p.forming) > maxPrefixSkipProbeBytes {
+		nl := bytes.IndexByte(p.forming, '\n')
+		if nl == -1 {
+			return true
+		}
+		if len(bytes.TrimSpace(p.forming[:nl])) != 0 {
+			return false
+		}
+		p.forming = p.forming[nl+1:]
+	}
+	return false
 }
 
 func isSSEFieldLine(line []byte) bool {
@@ -2360,13 +2891,21 @@ func isSSEFieldLine(line []byte) bool {
 	}
 }
 
+func sseEventFingerprint(line []byte) uint64 {
+	h := fnv.New64a()
+	_, _ = h.Write(line)
+	return h.Sum64()
+}
+
 // startDelayed waits for receipt or timeout, then starts a secondary if needed.
 // Returns nil if receipt arrived before timeout (no secondary needed).
 func (e *Redundancy) startAdditionalInflight(streamCtx, settleCtx context.Context, race *raceGroup, params user.InferenceParams, stage string, trigger *inflight, reason string, triedParticipants map[string]bool, clientFlag *cancelFlag) *inflight {
 	if streamCtx.Err() != nil {
 		return nil
 	}
-	if race.hasDecided() {
+	// After a crown, refuse new attempts unless a reconnect reservation is
+	// holding the winner — then the secondary is a suppressed hedge only (R4).
+	if race.hasDecided() && !race.hasReservation() {
 		return nil
 	}
 	fields := []any{"host", trigger.hostID}
@@ -2653,10 +3192,13 @@ func (e *Redundancy) winningInflightTerminalFailure(inf *inflight) (failed bool,
 }
 
 func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []*inflight, race *raceGroup, params user.InferenceParams, decision Decision, triedParticipants map[string]bool, clientFlag *cancelFlag) error {
-	doneCh := make(chan *inflight, e.maxAttempts()+1)
+	doneCh := make(chan *inflight, e.maxAttempts()+2)
 	for _, inf := range attempts {
 		e.watchInflightDone(inf, doneCh)
 	}
+	// Reconnect-budget hedges must be started on this goroutine so attempts /
+	// triedParticipants stay single-threaded (see RunInference comment).
+	reconnectHedgeCh := make(chan winnerReconnectHedgeRequest, 1)
 	requestStart := time.Now()
 	if len(attempts) > 0 && !attempts[0].sendTime.IsZero() {
 		requestStart = attempts[0].sendTime
@@ -2809,6 +3351,12 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			w := race.winnerNonce()
 			if w != 0 && inf != nil && inf.nonce == w {
 				if failed, err := e.winningInflightTerminalFailure(inf); failed {
+					if e.shouldAttemptWinnerReconnect(inf) {
+						// Run the ladder off the select loop so hard-timeout /
+						// stall / escalation keep firing during resume.
+						e.spawnWinnerReconnectLadder(streamCtx, settleCtx, inf, race, params, triedParticipants, clientFlag, doneCh, reconnectHedgeCh)
+						break
+					}
 					if escalationTimer != nil {
 						stopTimer(escalationTimer)
 					}
@@ -2943,8 +3491,22 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 					"output_bytes", winning.outputBytes.Load(),
 				)
 			})
-			if winning.cancel != nil {
-				winning.cancel()
+			winning.cancelAttempt()
+		case req := <-reconnectHedgeCh:
+			if req.trigger != nil && streamCtx.Err() == nil && len(attempts) < maxAttempts {
+				if next := e.startAdditionalInflight(streamCtx, settleCtx, race, params, "attempt_reconnect_budget", req.trigger, "winner_reconnect_hedge", triedParticipants, clientFlag); next != nil {
+					attempts = append(attempts, next)
+					e.watchInflightDone(next, doneCh)
+					logRequestStage(settleCtx, "winner_reconnect_hedge_started",
+						"escrow", e.devshardID,
+						"winner_nonce", req.trigger.nonce,
+						"hedge_nonce", next.nonce,
+						"hedge_host", next.hostID,
+					)
+				}
+			}
+			if req.done != nil {
+				close(req.done)
 			}
 		case <-winnerC:
 		case <-streamCtx.Done():
@@ -3424,7 +3986,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 	for _, inf := range pending {
 		inf := inf
 		go func() {
-			<-inf.done
+			waitInflightSettled(inf)
 			naturalDone <- inf
 		}()
 	}
@@ -3454,9 +4016,7 @@ func (e *Redundancy) waitForClientTimedOutAttempts(ctx context.Context, winnerNo
 					"host", inf.hostID,
 					"reason", reason,
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				inf.cancelAttempt()
 			}
 			for remaining > 0 {
 				<-naturalDone
@@ -3474,9 +4034,7 @@ func (e *Redundancy) cancelPendingInflights(ctx context.Context, attempts []*inf
 			"host", inf.hostID,
 			"reason", reason,
 		)
-		if inf.cancel != nil {
-			inf.cancel()
-		}
+		inf.cancelAttempt()
 	}
 }
 
@@ -3489,7 +4047,7 @@ func (e *Redundancy) waitForInflightsDoneUntil(ctx context.Context, attempts []*
 	for _, inf := range pending {
 		inf := inf
 		go func() {
-			<-inf.done
+			waitInflightSettled(inf)
 			done <- struct{}{}
 		}()
 	}
@@ -3539,7 +4097,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 	for _, inf := range pending {
 		inf := inf
 		go func() {
-			<-inf.done
+			waitInflightSettled(inf)
 			naturalDone <- inf
 		}()
 	}
@@ -3562,9 +4120,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 					"host", inf.hostID,
 					"reason", "winner_grace_expired",
 				)
-				if inf.cancel != nil {
-					inf.cancel()
-				}
+				inf.cancelAttempt()
 			}
 			// Drain the remaining signals. SendOnly honors ctx cancellation,
 			// so these should arrive promptly; the wait is unbounded so a
@@ -3582,9 +4138,7 @@ func (e *Redundancy) waitForPendingLosers(ctx context.Context, winnerNonce uint6
 func pendingInflights(attempts []*inflight) []*inflight {
 	var pending []*inflight
 	for _, inf := range attempts {
-		select {
-		case <-inf.done:
-		default:
+		if !inflightDone(inf) {
 			pending = append(pending, inf)
 		}
 	}
@@ -3601,11 +4155,29 @@ func allInflightsDone(attempts []*inflight) bool {
 }
 
 func inflightDone(inf *inflight) bool {
+	// A resuming attempt has a closed done channel but is still streaming
+	// through the same-nonce reconnect ladder.
+	if inf.resuming.Load() {
+		return false
+	}
 	select {
 	case <-inf.done:
 		return true
 	default:
 		return false
+	}
+}
+
+// waitInflightSettled blocks until the attempt's transport goroutine and any
+// same-nonce reconnect ladder have exited, so inf.resp / inf.err are stable
+// for finalization.
+func waitInflightSettled(inf *inflight) {
+	<-inf.done
+	inf.resumeMu.Lock()
+	resumeDone := inf.resumeDone
+	inf.resumeMu.Unlock()
+	if resumeDone != nil {
+		<-resumeDone
 	}
 }
 
@@ -4066,10 +4638,15 @@ func (e *Redundancy) recordWinnerTerminalFailureOnce(inf *inflight, params user.
 }
 
 func (e *Redundancy) processInflightOnce(inf *inflight) error {
+	if inf == nil {
+		return nil
+	}
+	// Do not consume processOnce on a nil resp — a later same-nonce reconnect
+	// may merge a receipt/mempool that still needs a single ProcessResponse.
+	if inf.resp == nil {
+		return inf.processErr
+	}
 	inf.processOnce.Do(func() {
-		if inf.resp == nil {
-			return
-		}
 		inf.processErr = e.session.ProcessResponse(inf.hostIdx, inf.resp, inf.nonce)
 	})
 	return inf.processErr

@@ -895,10 +895,13 @@ func (h *Host) pruneLiveStreamLocked(inferenceID uint64) {
 	if stream == nil {
 		return
 	}
-	if stream.Expired(time.Now()) {
-		stream.Close(ErrLiveStreamPruned)
-		delete(h.liveStreams, inferenceID)
+	if !stream.Expired(time.Now()) {
+		return
 	}
+	// Detach from the attach map so reconnects fail cleanly, but do not Close:
+	// Close would tear down the primary reader and discard in-flight ML output
+	// for a still-producing generation.
+	delete(h.liveStreams, inferenceID)
 }
 
 // executeAsync runs inference and adds MsgFinishInference to the mempool.
@@ -944,6 +947,9 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 		delete(h.liveStreams, inferenceID)
 		h.mu.Unlock()
 		stream.Close(nil)
+		// The caller writes devshard_meta to the same ResponseWriter, so the
+		// primary reader must be finished with it before we return.
+		stream.WaitPrimary()
 	}()
 
 	result, err := h.engine.Execute(ctx, *job)
@@ -1003,11 +1009,17 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 // AttachLiveStream joins an in-flight inference from the resume cursor and
 // blocks until the stream completes or the writer fails.
 func (h *Host) AttachLiveStream(inferenceID uint64, w http.ResponseWriter, deliveredEvents, deliveredPartial int64) error {
+	if err := validateResumeCursor(deliveredEvents, deliveredPartial); err != nil {
+		return err
+	}
 	h.mu.Lock()
 	h.pruneLiveStreamLocked(inferenceID)
 	stream := h.liveStreams[inferenceID]
 	h.mu.Unlock()
 	if stream == nil {
+		// Covers never-registered, drain→persist→forget, and TTL detach alike:
+		// prune removes the map entry without Close, so it surfaces here rather
+		// than as ErrLiveStreamPruned.
 		return ErrLiveStreamGone
 	}
 	return stream.Subscribe(w, deliveredEvents, deliveredPartial)

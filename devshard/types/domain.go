@@ -2,6 +2,7 @@ package types
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 )
 
@@ -82,6 +83,7 @@ const (
 	ProtocolV2             ProtocolVersion = "2"
 	ProtocolV3             ProtocolVersion = "3"
 	ProtocolV4             ProtocolVersion = "4"
+	ProtocolV5             ProtocolVersion = "5"
 	DefaultProtocolVersion                 = ProtocolV4
 )
 
@@ -91,6 +93,8 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	switch strings.TrimSpace(s) {
 	case "":
 		return DefaultProtocolVersion, nil
+	case string(ProtocolV5), "v5":
+		return ProtocolV5, nil
 	case string(ProtocolV4), "v4":
 		return ProtocolV4, nil
 	case string(ProtocolV1), "v1":
@@ -104,21 +108,43 @@ func ParseProtocolVersion(s string) (ProtocolVersion, error) {
 	}
 }
 
+// ProtocolVersionAtLeast reports whether a is at least b using numeric major
+// comparison on the normalized form (e.g. "v5" / "5" → 5).
+func ProtocolVersionAtLeast(a, b ProtocolVersion) bool {
+	an, aok := protocolMajor(a)
+	bn, bok := protocolMajor(b)
+	if !aok || !bok {
+		return false
+	}
+	return an >= bn
+}
+
+func protocolMajor(v ProtocolVersion) (int, bool) {
+	s := strings.TrimSpace(string(v))
+	s = strings.TrimPrefix(s, "v")
+	s = strings.TrimPrefix(s, "V")
+	n, err := strconv.Atoi(s)
+	if err != nil || n < 0 {
+		return 0, false
+	}
+	return n, true
+}
+
 // SessionConfig holds session-level parameters.
 type SessionConfig struct {
-	RefusalTimeout             int64  // seconds before reason=refused timeout
-	ExecutionTimeout           int64  // seconds before reason=execution timeout
-	TokenPrice                 uint64 // price per input / output token (flat per session)
-	CreateDevshardFee          uint64 // one-time fee charged when creating a devshard session
-	FeePerNonce                uint64 // fee charged per applied nonce (diff)
+	RefusalTimeout    int64  // seconds before reason=refused timeout
+	ExecutionTimeout  int64  // seconds before reason=execution timeout
+	TokenPrice        uint64 // price per input / output token (flat per session)
+	CreateDevshardFee uint64 // one-time fee charged when creating a devshard session
+	FeePerNonce       uint64 // fee charged per applied nonce (diff)
 	// VoteThreshold is frozen in state.Config at session creation (from escrow lane A).
 	// Consensus logic must read it only via state.StateMachine (applyValidationVote,
 	// applyTimeout); external packages use StateMachine.VoteThreshold() for display.
-	VoteThreshold              uint32
-	ValidationRate             uint32 // basis points (10000 = 100%, 1000 = 10%)
-	InferenceSealGraceNonces   uint32
-	InferenceSealGraceSeconds  uint32
-	AutoSealEveryNNonces       uint32
+	VoteThreshold             uint32
+	ValidationRate            uint32 // basis points (10000 = 100%, 1000 = 10%)
+	InferenceSealGraceNonces  uint32
+	InferenceSealGraceSeconds uint32
+	AutoSealEveryNNonces      uint32
 }
 
 // EscrowState is the full state of a devshard session.
@@ -128,16 +154,16 @@ type EscrowState struct {
 	// (WithStateRootAndProtocolVersion) and copied into settlement payloads. It
 	// matches CreateSessionParams.Version / host boundVersion (approved_versions.name).
 	StateRootAndProtocolVersion string
-	Config        SessionConfig
-	Group         []SlotAssignment
-	Balance       uint64
-	Fees          uint64 // total fees collected (devshard create + per-nonce)
-	Phase         SessionPhase
-	FinalizeNonce uint64
-	Inferences    map[uint64]*InferenceRecord
-	HostStats     map[uint32]*HostStats
-	WarmKeys      map[uint32]string // slot ID -> warm key address, lazily populated
-	LatestNonce   uint64
+	Config                      SessionConfig
+	Group                       []SlotAssignment
+	Balance                     uint64
+	Fees                        uint64 // total fees collected (devshard create + per-nonce)
+	Phase                       SessionPhase
+	FinalizeNonce               uint64
+	Inferences                  map[uint64]*InferenceRecord
+	HostStats                   map[uint32]*HostStats
+	WarmKeys                    map[uint32]string // slot ID -> warm key address, lazily populated
+	LatestNonce                 uint64
 	// SealedAcc is the Phase 1 incremental accumulator over sealed inference
 	// commitments (32 bytes). Updated on each SealInference and settlement drain.
 	SealedAcc []byte `json:"sealed_acc,omitempty"`

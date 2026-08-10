@@ -77,6 +77,12 @@ type RedundancySettings struct {
 	PairwiseWinnerHoldMS          int64   `json:"pairwise_winner_hold_ms"`
 	PairwiseWinnerHoldMinSpeedup  float64 `json:"pairwise_winner_hold_min_speedup"`
 	PairwiseWinnerHoldMinSamples  int     `json:"pairwise_winner_hold_min_samples"`
+	// Same-nonce reconnect (gateway-attempt-reconnect-plan.md R7). Still ANDed
+	// with the v5 protocol gate — enabling this alone does not activate ≤v4.
+	AttemptReconnectEnabled    bool  `json:"attempt_reconnect_enabled"`
+	AttemptReconnectBudgetMS   int64 `json:"attempt_reconnect_budget_ms"`
+	AttemptReconnectMaxTries   int   `json:"attempt_reconnect_max_tries"`
+	AllowStreamResetOnFailover bool  `json:"allow_stream_reset_on_failover"`
 }
 
 type PerfSettings struct {
@@ -164,6 +170,12 @@ func (s GatewaySettings) WithTuningDefaults() GatewaySettings {
 	}
 	if s.Redundancy.PairwiseWinnerHoldMinSamples == 0 {
 		s.Redundancy.PairwiseWinnerHoldMinSamples = redundancyDefaults.PairwiseWinnerHoldMinSamples
+	}
+	if s.Redundancy.AttemptReconnectBudgetMS <= 0 {
+		s.Redundancy.AttemptReconnectBudgetMS = redundancyDefaults.AttemptReconnectBudgetMS
+	}
+	if s.Redundancy.AttemptReconnectMaxTries <= 0 {
+		s.Redundancy.AttemptReconnectMaxTries = redundancyDefaults.AttemptReconnectMaxTries
 	}
 	if s.Perf == (PerfSettings{}) {
 		s.Perf = perfDefaults

@@ -648,6 +648,16 @@ func (sm *StateMachine) SnapshotState() types.EscrowState {
 	return *cloneEscrowState(sm.state)
 }
 
+// ProtocolVersion returns the session bind tag without cloning escrow state.
+func (sm *StateMachine) ProtocolVersion() string {
+	sm.mu.RLock()
+	defer sm.mu.RUnlock()
+	if sm.state == nil {
+		return ""
+	}
+	return sm.state.StateRootAndProtocolVersion
+}
+
 // SnapshotStateNoInferences returns a deep copy of the escrow state with the
 // (potentially large) inference map omitted. All other fields, including the
 // small per-slot maps, are copied. Use it for summary/state endpoints that do

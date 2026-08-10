@@ -249,8 +249,11 @@ the gateway still drops the already-delivered events/partial as a safety net.
 On mid-stream transport failure (or EOF before `devshard_meta`):
 
 1. Immediately same-nonce reconnect to the **same host**.
-2. Budget `AttemptReconnectBudget` (default **1s**), up to
-   `AttemptReconnectMaxTries` (default 2) with short backoff.
+2. Budget `AttemptReconnectBudget` (default **1s**) from the **first** drop, up to
+   `AttemptReconnectMaxTries` (default 2) with short backoff. Both are **per attempt,
+   not per drop**: a resumed stream that drops again spends the next try on the same
+   window, and the ladder is one-shot per nonce so a flapping host cannot chain
+   budget windows and defer escalation forever.
 3. Fail a try on error, disconnect, receipt-only when neither executing nor cached,
    or no content before budget ends.
 4. When the budget expires, escalate as today (**new nonce**, next participant) **and
@@ -272,6 +275,12 @@ While a reservation is held (`reservedWinner` / `reservedUntil`):
 
 A winner transport failure with a resumable nonce enters reservation instead of
 immediately becoming terminal `winner_failed_after_content`.
+
+**Quality feedback (not mid-stream switch).** When a winner needed reconnect,
+do not splice the secondary onto the client. Record a **reconnect blip** for
+future host selection (see R8). Blips are a degradation signal with a short
+memory — not a `Responsive: false` failure sample and not an immediate
+shadow quarantine.
 
 ### R5. Switching generations after bytes were delivered is opt-in
 
@@ -318,13 +327,22 @@ Rules:
    only (not a chain message). Cursor past buffer → resume failure → escalate.
 4. On drain complete: normal finish path, then drop the live buffer. Later reconnects
    use `hasCached` / payload storage + well-formed `replaySSEBody`.
-5. **`InflightReplayBufferTTL`** (aligned with drain deadline): prune stranded live
-   buffers from RAM if drain never persists. After prune: storage if present,
-   otherwise resume failure. Prefer drain→persist→forget; TTL is a safety net.
+5. **`InflightReplayBufferTTL`** (aligned with the streaming hard timeout): stranded live
+   buffers are **detached, not closed** — closing would discard a still-producing
+   generation's remaining output. So the TTL bounds attachability, not RAM. After prune:
+   storage if present, otherwise resume failure. Prefer drain→persist→forget; TTL is a
+   safety net. RAM itself is bounded by soft-cap → head-trim (default) or optional
+   spill; see reconnect-plan Step 5 / R9.
 6. No second vLLM call for the same nonce.
+7. **Bound the live log (reconnect-plan Step 5):** reconnect-only
+   `ErrSubscriberLagged` plus a primary **write deadline** (a stalled primary must not
+   pin the log); head-trim to the RAM cap, with cursors older than the retained window
+   failing as `ErrResumeCursorPast`. A partial body is **never** published into
+   `completedResponses` / payload store mid-flight — cached replay synthesizes `[DONE]`
+   and would silently truncate the client.
 
-Same fan-out shape as in-flight chat join, scoped to one reconnecting gateway
-connection.
+Append-only log + independent readers (primary as subscriber #0), scoped to one
+reconnecting gateway connection — same shape as in-flight chat join.
 
 ### R7. Settings (AND R0)
 
@@ -333,9 +351,10 @@ connection.
 | `ForceUpstreamStreaming` | `false` → `true` after soak | Always-stream flip (D1/D3/usage suppress) |
 | `AttemptReconnectEnabled` | `false` → `true` after soak | Master switch for R3/R4; still ANDed with R0 |
 | `AttemptReconnectBudgetMS` | `1000` | Ladder budget before escalating |
-| `AttemptReconnectMaxTries` | `2` | Reconnect sends per drop |
+| `AttemptReconnectMaxTries` | `2` | Reconnect sends per attempt (total, across all drops of that nonce) |
 | `AllowStreamResetOnFailover` | `false` | R5 opt-in |
-| `InflightReplayBufferTTL` (host) | align with drain deadline | Max RAM lifetime for live per-nonce buffer |
+| `InflightReplayBufferTTL` (host) | `30m` = `StreamingAttemptHardTimeout` | How long a live per-nonce buffer stays attachable (detach on expiry, no close) |
+| `ReconnectBlipWindow` | `5m` | Sliding window for per-participant reconnect blips |
 
 ### R8. Accounting
 
@@ -343,17 +362,59 @@ A reconnect must not look like a new attempt (no second `recordGatewayAttemptSta
 / `RealSend`). It is a transport try on the existing inflight: separate counters /
 latency, same nonce, one terminal record.
 
+#### Reconnect blips (timed degradation, not failure samples)
+
+Recording a reconnect as `RequestSample{Responsive: false}` (and leaving
+`sampleOnce` free so a later success also records) double-counts and can
+shadow-quarantine a healthy host after two transient TCP drops. Instead:
+
+```text
+Winner TCP drop
+    → reconnect ladder (same nonce)
+    → on ladder EXIT (resume success or exhausted), once per ladder:
+         RecordReconnectBlip(participantKey)
+    → PerfTracker keeps blip timestamps per participant
+         in ReconnectBlipWindow (default 5m); older timestamps drop out
+```
+
+**Blip** = one reconnect ladder run for a participant (not each try inside the
+ladder).
+
+Rules:
+
+1. **Record on exit, not entry.** Outcome is known; a ladder that never started
+   sending does not invent a blip at reservation time.
+2. **No `Responsive: false` from blips.** Successful resume still records a
+   normal success sample via `sampleOnce`. Exhausted resume keeps today's
+   `winner_failed_after_content` / real failure-sample paths.
+3. **Recorded, never routed on.** A blip changes neither `Decide` nor the
+   picker, and never calls `ObserveStalledWinner`. Reacting to a transient TCP
+   drop by forcing an immediate secondary costs a second full generation and a
+   second `MsgStartInference` per request on that participant — far more than
+   the drop itself. Quarantine remains for true failures / stalls; blips are an
+   operator/metrics signal (Step 7) about which hosts drop mid-stream.
+4. **Time decay.** Blips older than `ReconnectBlipWindow` no longer count, so
+   `ReconnectBlipCount` reflects recent behavior rather than lifetime history.
+
+#### Stream speed (bytes/sec)
+
+TTFB / CTTFL do not describe post-content throughput. Record terminal
+`stream_bps = outputBytes / elapsed_since_first_content` per attempt that
+forwarded content (observability only in the reconnect plan — not a `Decide`
+input). See reconnect-plan Step 7 for the Prometheus / OTel shape.
+
 ---
 
 ## Observability (design intent)
 
 - Counters for missing usage, drain detach/outcome, SSE oversize, reconnect results
   (`resumed` / `budget_expired` / `receipt_only` / `error` / `skipped_protocol`),
-  winner-continuity outcomes.
+  winner-continuity outcomes, reconnect blips, and stream bytes/sec (histogram +
+  bytes counter; optional participant rolling p50/p95).
 - After the gateway attempt-span model lands: child `attempt.reconnect` (try index,
   delivered offset, result), reconnect TTFB, time-to-first-*new*-chunk past the
-  delivered offset, and a clear signal when the race moves to another nonce
-  (`attempt.winner_switched` / `attempt.failover`).
+  delivered offset, stream bytes / bps on the attempt span, and a clear signal when
+  the race moves to another nonce (`attempt.winner_switched` / `attempt.failover`).
 
 ---
 

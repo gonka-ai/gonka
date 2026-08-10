@@ -87,6 +87,56 @@ func TestProxyTextStreamResponse_WriteFailureContinuesDrain(t *testing.T) {
 	require.Equal(t, beforeCompleted+1, testutil.ToFloat64(observability.InferenceDrainOutcomeCounterForTest(observability.DrainOutcomeCompleted)))
 }
 
+// hubDetachWriter models LiveStream: Write always succeeds, detach is async via ClientDetached.
+type hubDetachWriter struct {
+	header   http.Header
+	buf      bytes.Buffer
+	writes   int
+	detached bool
+}
+
+func (w *hubDetachWriter) Header() http.Header {
+	if w.header == nil {
+		w.header = make(http.Header)
+	}
+	return w.header
+}
+func (w *hubDetachWriter) WriteHeader(int) {}
+func (w *hubDetachWriter) Write(p []byte) (int, error) {
+	w.writes++
+	if w.writes >= 2 {
+		w.detached = true
+	}
+	return w.buf.Write(p)
+}
+func (w *hubDetachWriter) Flush()                      {}
+func (w *hubDetachWriter) ClientDetached() bool        { return w.detached }
+
+func TestProxyTextStreamResponse_ClientDetachedKeepsBuffering(t *testing.T) {
+	beforeDetach := testutil.ToFloat64(observability.InferenceClientDetachedDrainCounterForTest())
+
+	body := sseBody(
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"Hi"},"finish_reason":null}]}`,
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[{"index":0,"delta":{"content":"!"},"finish_reason":null}]}`,
+		`data: {"id":"c1","object":"chat.completion.chunk","model":"m","choices":[],"usage":{"prompt_tokens":9,"completion_tokens":2}}`,
+		`data: [DONE]`,
+	)
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+	w := &hubDetachWriter{}
+	processor := completionapi.NewExecutorResponseProcessor("inf-hub")
+
+	outcome := proxyTextStreamResponse(resp, w, processor, "inf-hub")
+	require.True(t, outcome.clientDetached)
+	require.True(t, outcome.sawDone)
+	require.NoError(t, outcome.err)
+	require.Equal(t, 4, w.writes, "must keep writing into the hub after detach")
+	require.Equal(t, beforeDetach+1, testutil.ToFloat64(observability.InferenceClientDetachedDrainCounterForTest()))
+}
+
 func TestProxyTextStreamResponse_DrainDeadlineCounted(t *testing.T) {
 	beforeDeadline := testutil.ToFloat64(observability.InferenceDrainOutcomeCounterForTest(observability.DrainOutcomeDeadline))
 
