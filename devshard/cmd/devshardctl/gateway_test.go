@@ -811,7 +811,6 @@ func TestAdminStateRedactsPrivateKey(t *testing.T) {
 		require.NoError(t, store.Close())
 	})
 	require.NoError(t, store.Initialize(GatewaySettings{
-		ChainREST:               "http://node:1317",
 		PublicAPI:               "http://api:9000",
 		DefaultModel:            "Qwen/Test",
 		DefaultRequestMaxTokens: 1000,
