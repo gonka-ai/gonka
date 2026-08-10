@@ -1,26 +1,145 @@
 # Release guide: `devshard-0.2.15-v5`
 
-Operator-facing notes for the v5 line. This guide is being assembled as v5
-features land; sections without content yet are placeholders.
+Operator-facing contract for the v5 deployment line.
 
 Previous line: [release-0.2.14-v4.md](./release-0.2.14-v4.md).
 Host evacuation: [versiond-host-evacuation.md](./versiond-host-evacuation.md).
 Rolling updates: [rolling-update.md](./rolling-update.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
 
-The base and HA Compose models use the v5 `edge-api`, `versiond`, `proxy`,
-`proxy-router`, and `versiond-router` images under `ghcr.io/product-science`,
-all tagged `0.2.15-devshard-v5`. The old `edge-api-router` image is retained only
-for the one-time v4 migration bridge. Before publishing this guide, run the
-**Release image smoke** workflow. It validates the exact Compose image contract,
-the steady-state and migration models, both router configurations, and the
-application readiness endpoints.
+The release is identified by Git tag `release/v0.2.15-devshard-v5`; its
+`edge-api`, `versiond`, `proxy`, `proxy-router`, and `versiond-router` images use
+tag `0.2.15-devshard-v5` under `ghcr.io/product-science`. The old
+`edge-api-router` image is retained only for the one-time v4 migration bridge.
+The machine-readable values live in
+[`devshard-v5-release.env`](../../deploy/join/devshard-v5-release.env), which is
+also consumed by the updater and release-image smoke test.
 
 ---
 
 ## Overview
 
-_TBD as v5 scope settles._
+This release converts the host-local devshard ingress and service pools to an
+actively checked HAProxy topology, adds a three-slot `versiond-router` fleet,
+and gives `versiond` and `edge-api` bounded graceful shutdown. It also provides
+the one-time, topology-aware migration from existing v0.2.15 join deployments:
+the updater preserves the effective Compose model, migrates local HA PostgreSQL
+to persistent storage, replaces application replicas behind traffic barriers,
+and commits the public-router cutover only after production-route checks pass.
+
+The first cutover is a **devshard maintenance operation**. The chain node and ML
+containers stay running, but the shared local PostgreSQL process is restarted
+when HA storage is used, and replacing the old public nginx terminates
+connections still owned by that container. Later application, policy-worker,
+and inner-router updates use the rolling contracts described below.
+
+## Host update contract
+
+The operational authority for the rollout is the dated entry on
+[Network Updates](https://gonka.ai/docs/network-updates/). That entry must name
+the immutable Git tag above, the UTC start and deadline, and the exact commands
+from this section. The publication source is
+[`network-update-0.2.15-v5.md`](./network-update-0.2.15-v5.md). Do not announce
+the release as available until the tag exists, the registry smoke passes, and
+that entry has been published in `gonka-ai/gonka-docs`.
+
+The functional deadline is before governance enables the first protocol route
+that requires this v5 per-version router contract. The release coordinator sets
+the earlier calendar deadline in Network Updates; an arbitrary date in source
+code would not be a network decision and is deliberately not inferred by the
+updater.
+
+### Exact command for a stock checkout
+
+`config.env` is ignored by Git and remains in place. From the repository root:
+
+```bash
+git fetch origin \
+  refs/tags/release/v0.2.15-devshard-v5:refs/tags/release/v0.2.15-devshard-v5
+git switch --detach release/v0.2.15-devshard-v5
+cd deploy/join
+
+./upgrade-devshard-v5.sh --preflight-only --strict-capacity
+./upgrade-devshard-v5.sh --acknowledge-maintenance
+```
+
+The first command validates the immutable updater source, Docker/Compose and
+tool versions, the actual running Compose topology, CPU/RAM/filesystem capacity,
+public port ownership, and PostgreSQL migration space. It does not run Compose
+pull or recreate, start, stop, or remove a deployment service, and it does not
+pull release application/router images. The PostgreSQL space probe uses a short
+read-only helper container (whose helper image Docker may fetch) and may create
+the configured empty target directory. The second command is rejected unless
+maintenance is acknowledged explicitly.
+
+### Existing local Compose changes
+
+The Host Quickstart historically asked operators to edit tracked Compose files,
+so a dirty `docker-compose.yml` is supported. Do not discard those changes and
+do not force-reset the repository. Preserve them on a local branch before
+merging the release tag:
+
+```bash
+git diff --binary HEAD -- deploy/join >"$HOME/gonka-compose-before-v5.patch"
+git switch -c "host-local-v5-$(date +%s)"
+git add -u -- deploy/join/docker-compose*.yml
+git commit -m "Preserve host-local Compose settings before devshard v5"
+git fetch origin \
+  refs/tags/release/v0.2.15-devshard-v5:refs/tags/release/v0.2.15-devshard-v5
+git merge --no-edit release/v0.2.15-devshard-v5
+cd deploy/join
+
+./upgrade-devshard-v5.sh --preflight-only --strict-capacity
+./upgrade-devshard-v5.sh --acknowledge-maintenance
+```
+
+`config.env` is not committed by this sequence. If Git reports a conflict,
+stop there: no deployment mutation has happened. Resolve the Compose merge and
+rerun the non-disruptive preflight. The updater requires all release-critical
+scripts and migration overlays to match the immutable tag byte-for-byte, but it
+does not require operator Compose files to match. It recovers their exact
+ordered list from running-container labels, renders the effective model, and
+prints the SHA-256 and origin (`release`, `local-override`, or `custom`) of every
+file before mutation. Custom override files remain part of replacement and
+rollback commands.
+
+### Compatibility matrix
+
+| Existing deployment | Supported | Preflight contract |
+| --- | --- | --- |
+| Standard v0.2.15 join stack (`versiond=single`, `edge-api=single`) | Yes | Existing `proxy`, `versiond`, and `edge-api` must belong to one valid Compose project |
+| v0.2.15 base plus `0.2.14-devshard-v4` HA versiond with local PostgreSQL | Yes | Shared Postgres identity must be unchanged; source volume and persistent target must pass the exact copy-space check |
+| v0.2.15 base plus `0.2.14-devshard-v4` HA versiond with managed/external PostgreSQL | Yes | Both replicas must retain identical `PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER`; the updater does not manage that database |
+| Single or three-replica edge-api | Yes | Existing topology is detected independently from versiond mode |
+| Observability and operator override files | Yes | The complete ordered file set must be present and render the required service/container/network contract |
+| Renamed core services, split Compose projects, Docker Swarm, or Kubernetes | No | Preflight fails before pull or service mutation; Kubernetes is a separate deployment track |
+| Pre-v0.2.15 base deployment, pre-v4 devshard, or custom application images | Not release-qualified | Upgrade to a supported v0.2.15 + devshard-v4 join contract or rehearse and qualify the custom source separately |
+
+The updater verifies its own scripts against the Git tag rather than requiring
+`HEAD` to equal the tag. This is what permits a local merge commit containing
+host Compose changes without permitting a locally edited migration algorithm.
+It resolves and prints the tag's full commit SHA; the production release gate
+is stricter and runs only when `HEAD` is that exact commit.
+
+### Maintenance and rollback boundary
+
+Schedule the first run outside PoC/cPoC, with no long inference or SSE request
+in flight, and update one host at a time. Budget up to 35 minutes for a slow
+`versiond` reconcile plus the local PostgreSQL copy time; normal healthy hosts
+usually finish earlier. The public nginx-to-HAProxy cutover is brief but closes
+the old container's established client connections.
+
+Application and router replacements retain captured immutable Docker image IDs
+until their postconditions pass. Local PostgreSQL has a stricter boundary:
+before the new database starts, the old anonymous volume is the physical
+rollback source; after v5 PostgreSQL accepts writes, the updater will not switch
+back automatically because doing so could fork database history. Keep that
+volume and a normal database backup through the rollback window. A failure past
+this boundary is database recovery, not an image rollback.
+
+Before publication, run the **Release image smoke** workflow against the tagged
+commit. It validates the exact Compose image contract, steady-state and
+migration models, router configurations, and application readiness endpoints.
 
 ## What's in this release
 
@@ -79,14 +198,17 @@ recover from shared Postgres if their selected versiond host leaves the pool.
 
 ### Topology-aware upgrade
 
-Run one command from `deploy/join` for every supported join topology:
+Use the same two-phase command from `deploy/join` for every supported join
+topology:
 
 ```bash
-./upgrade-devshard-v5.sh
+./upgrade-devshard-v5.sh --preflight-only --strict-capacity
+./upgrade-devshard-v5.sh --acknowledge-maintenance
 ```
 
-The command requires Docker Compose and `jq`. It checks both before changing
-the deployment. Existing v4 nginx and singleton-router containers remain the
+The preflight requires Docker Compose 2.20 or newer, `jq`, `curl`, `flock`,
+`sha256sum`, and Git. It checks them before changing the deployment. Existing
+v4 nginx and singleton-router containers remain the
 rollback path while application replicas are replaced. At the final step the
 script starts the independent router fleet and private policy workers, captures
 the exact old public nginx image, and switches the public listener to
@@ -618,6 +740,12 @@ daemon restart. Persist the corresponding replica count as `0` first.
 
 ## Upgrade / rollout checklist
 
+- [ ] Fetch immutable tag `release/v0.2.15-devshard-v5`; do not run an updater
+      copied from a branch or a mutable `main` checkout
+- [ ] Confirm the Network Updates entry names the same tag and an exact UTC
+      maintenance deadline; update one host at a time within that window
+- [ ] Preserve tracked host-local Compose changes on a local branch; keep the
+      generated binary patch until the upgrade and rollback window are closed
 - [ ] For HA, set `VERSIOND_VERSIONS` to every version this deployment serves — an
       undeclared version is refused, and the list must be updated *before*
       governance approves a new one
@@ -629,8 +757,9 @@ daemon restart. Persist the corresponding replica count as `0` first.
 - [ ] Confirm every versiond in the HA overlay has
       `DEVSHARD_STORAGE_MODE=postgres` and a reachable `PGHOST` before enabling
       `GONKA_HA`
-- [ ] Run `upgrade-devshard-v5.sh` without topology flags and verify its printed
-      `versiond` and `edge-api` modes match the existing installation
+- [ ] Run `upgrade-devshard-v5.sh --preflight-only --strict-capacity` and verify
+      its topology, Compose file SHA-256 values, source commit, public ports,
+      and reported `versiond` / `edge-api` modes
 - [ ] For HA, let the script finish its PostgreSQL disk-space preflight before
       stopping any service; migration needs the source size plus 10%. Use the
       in-place migration, not `down` or `--renew-anon-volumes`
@@ -645,6 +774,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
       the `v1 v2 v3` default
 - [ ] Use `upgrade-devshard-v5.sh` so a failed versiond replacement is rolled
       back before the legacy owner or router is touched
+- [ ] Start the mutating phase only with `--acknowledge-maintenance`; existing
+      public connections can close at the nginx-to-HAProxy cutover
 - [ ] For edge-api-multi, confirm auto-detection reports `edge-api=multi`; the
       script replaces every replica behind the migration barrier, then the
       final ingress cutover connects the ready pool directly to `proxy-router`

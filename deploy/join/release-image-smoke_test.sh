@@ -11,13 +11,15 @@ versiond_compat="$script_dir/docker-compose.versiond-v5-compat.yml"
 edge_compat="$script_dir/docker-compose.edge-api-v5-compat.yml"
 proxy_compat="$script_dir/docker-compose.proxy-v4-compat.yml"
 
-release_tag=0.2.15-devshard-v5
-edge_image="ghcr.io/product-science/edge-api:$release_tag"
-versiond_image="ghcr.io/product-science/versiond:$release_tag"
-edge_router_image="ghcr.io/product-science/edge-api-router:$release_tag"
-versiond_router_image="ghcr.io/product-science/versiond-router:$release_tag"
-proxy_policy_image="ghcr.io/product-science/proxy:$release_tag"
-proxy_router_image="ghcr.io/product-science/proxy-router:$release_tag"
+release_contract=$script_dir/devshard-v5-release.env
+# shellcheck disable=SC1090 # Runtime path is anchored to this script.
+source "$release_contract"
+edge_image=$DEVSHARD_V5_EDGE_API_IMAGE
+versiond_image=$DEVSHARD_V5_VERSIOND_IMAGE
+edge_router_image=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
+versiond_router_image=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
+proxy_policy_image=$DEVSHARD_V5_PROXY_POLICY_IMAGE
+proxy_router_image=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 
 # This test validates the shipped defaults, not an operator's local override.
 unset EDGE_API_IMAGE VERSIOND_IMAGE EDGE_API_ROUTER_IMAGE VERSIOND_ROUTER_IMAGE

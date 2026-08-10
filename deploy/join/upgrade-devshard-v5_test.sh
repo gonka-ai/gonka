@@ -6,6 +6,13 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
 
+# Unit tests exercise a working-tree build before the release tag exists.
+export DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE=true
+export DEVSHARD_V5_MAINTENANCE_ACK=true
+export DEVSHARD_V5_PREFLIGHT_CPUS=16
+export DEVSHARD_V5_PREFLIGHT_MEMORY_MIB=65536
+export DEVSHARD_V5_PREFLIGHT_DISK_GIB=1000
+
 fail() {
     echo "upgrade-devshard-v5_test: $*" >&2
     exit 1
@@ -23,6 +30,14 @@ printf 'EDGE_API_IMAGE=%s VERSIOND_IMAGE=%s EDGE_API_ROUTER_IMAGE=%s VERSIOND_RO
 printf ' ::' >>"$DOCKER_LOG"
 printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
+
+if [[ ${1:-} == info ]]; then
+    exit 0
+fi
+if [[ ${1:-} == compose && ${2:-} == version && ${3:-} == --short ]]; then
+    printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.20.0}"
+    exit 0
+fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ $# -eq 2 ]]; then
@@ -60,6 +75,13 @@ if [[ ${1:-} == inspect ]]; then
             ;;
         '{{index .Config.Labels "ai.gonka.component"}}')
             printf '%s\n' "${EXISTING_PROXY_COMPONENT-}"
+            ;;
+        '{{json .HostConfig.PortBindings}}')
+            jq -cn \
+                --arg http "${FAKE_PROXY_HTTP_PORT:-8000}" \
+                --arg https "${FAKE_PROXY_HTTPS_PORT:-8443}" \
+                '{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":$http}],
+                  "443/tcp":[{"HostIp":"0.0.0.0","HostPort":$https}]}'
             ;;
         '{{.Image}}') printf 'sha256:old-%s\n' "${4:-unknown}" ;;
         '{{.State.Running}}')
@@ -218,6 +240,8 @@ for arg in "$@"; do
     if [[ $arg == config ]]; then
         pg_host=${RENDERED_PGHOST:-devshard-postgres}
         jq -cn --arg pg "$pg_host" --arg join "$JOIN_DIR" \
+            --arg proxy_http "${RENDERED_PROXY_HTTP_PORT:-8000}" \
+            --arg proxy_https "${RENDERED_PROXY_HTTPS_PORT:-8443}" \
             --arg policy "${RENDERED_POLICY_NETWORK:-gonka-proxy-policy-front}" \
             --arg front "${RENDERED_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
             --arg back "${RENDERED_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
@@ -226,7 +250,10 @@ for arg in "$@"; do
                 "versiond-router-front":{name:$front},
                 "versiond-router-back":{name:$back}
             },services:{
-                proxy:{container_name:"proxy"},
+                proxy:{container_name:"proxy",ports:[
+                    {target:80,published:$proxy_http,protocol:"tcp"},
+                    {target:443,published:$proxy_https,protocol:"tcp"}
+                ]},
                 "proxy-policy":{},
                 versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
@@ -544,9 +571,138 @@ set -eu
 printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
 EOF
 chmod +x "$tmpdir/fleet" "$tmpdir/enable-router"
-printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\n' \
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\nexport DEVSHARD_V5_VERSIOND_IMAGE=untrusted-config-image\n' \
     "$tmpdir/postgres" "$tmpdir/fleet" "$tmpdir/enable-router" \
     "$tmpdir/upgrade-complete" >"$tmpdir/config.env"
+
+preflight_log=$tmpdir/preflight.log
+: >"$preflight_log"
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$preflight_log" \
+FAIL_SERVICE=none \
+EXISTING_CONTAINERS="proxy versiond versiond2 versiond-router devshard-postgres edge-api" \
+FAKE_STATE_DIR="$tmpdir/preflight-state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single --preflight-only \
+    >"$tmpdir/preflight.stdout" 2>"$tmpdir/preflight.stderr" || {
+        cat "$tmpdir/preflight.stderr" >&2
+        fail "read-only release preflight failed"
+    }
+assert_no_compose_mutation "$preflight_log"
+assert_not_contains "$preflight_log" "fleet "
+assert_not_contains "$preflight_log" "enable-router "
+assert_not_contains "$preflight_log" "VERSIOND_IMAGE=untrusted-config-image"
+assert_contains "$preflight_log" \
+    "VERSIOND_IMAGE=ghcr.io/product-science/versiond:0.2.15-devshard-v5"
+grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
+    cat "$tmpdir/preflight.stdout" >&2
+    fail "release preflight did not report success"
+}
+
+custom_port_log=$tmpdir/custom-port.log
+: >"$custom_port_log"
+RENDERED_PROXY_HTTP_PORT=9000 \
+FAKE_PROXY_HTTP_PORT=9000 \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$custom_port_log" \
+EXISTING_CONTAINERS="proxy versiond edge-api" \
+FAKE_STATE_DIR="$tmpdir/custom-port-state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode single --edge-mode single --preflight-only \
+    >"$tmpdir/custom-port.stdout" 2>"$tmpdir/custom-port.stderr" || {
+        cat "$tmpdir/custom-port.stderr" >&2
+        fail "release preflight rejected an effective local port override"
+    }
+assert_no_compose_mutation "$custom_port_log"
+grep -q 'public ports 9000/http' "$tmpdir/custom-port.stdout" || fail \
+    "release preflight did not use the effective Compose port override"
+
+undersized_log=$tmpdir/undersized.log
+: >"$undersized_log"
+if DEVSHARD_V5_PREFLIGHT_CPUS=1 \
+    DEVSHARD_V5_PREFLIGHT_MEMORY_MIB=1024 \
+    DEVSHARD_V5_PREFLIGHT_DISK_GIB=10 \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$undersized_log" \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/undersized-state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        --preflight-only --strict-capacity \
+        >"$tmpdir/undersized.stdout" 2>"$tmpdir/undersized.stderr"; then
+    fail "strict release preflight accepted an undersized host"
+fi
+assert_no_compose_mutation "$undersized_log"
+grep -q 'host capacity is below' "$tmpdir/undersized.stderr" || {
+    cat "$tmpdir/undersized.stderr" >&2
+    fail "strict capacity failure was not actionable"
+}
+
+wrong_port_log=$tmpdir/wrong-port.log
+: >"$wrong_port_log"
+if FAKE_PROXY_HTTP_PORT=9000 \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$wrong_port_log" \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/wrong-port-state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single --preflight-only \
+        >"$tmpdir/wrong-port.stdout" 2>"$tmpdir/wrong-port.stderr"; then
+    fail "release preflight accepted unexpected public port ownership"
+fi
+assert_no_compose_mutation "$wrong_port_log"
+grep -q 'does not own expected host port 8000' "$tmpdir/wrong-port.stderr" || {
+    cat "$tmpdir/wrong-port.stderr" >&2
+    fail "public port ownership failure was not actionable"
+}
+
+unacknowledged_log=$tmpdir/unacknowledged.log
+: >"$unacknowledged_log"
+if DEVSHARD_V5_MAINTENANCE_ACK=false \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$unacknowledged_log" \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/unacknowledged-state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        >"$tmpdir/unacknowledged.stdout" \
+        2>"$tmpdir/unacknowledged.stderr"; then
+    fail "one-time cutover ran without maintenance acknowledgement"
+fi
+assert_no_compose_mutation "$unacknowledged_log"
+grep -q -- '--acknowledge-maintenance' "$tmpdir/unacknowledged.stderr" || {
+    cat "$tmpdir/unacknowledged.stderr" >&2
+    fail "maintenance acknowledgement failure was not actionable"
+}
+
+cp "$tmpdir/config.env" "$tmpdir/config-with-ack.env"
+printf 'export DEVSHARD_V5_MAINTENANCE_ACK=true\n' \
+    >>"$tmpdir/config-with-ack.env"
+: >"$tmpdir/persisted-ack.log"
+if env -u DEVSHARD_V5_MAINTENANCE_ACK \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/persisted-ack.log" \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/persisted-ack-state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config-with-ack.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        >"$tmpdir/persisted-ack.stdout" \
+        2>"$tmpdir/persisted-ack.stderr"; then
+    fail "config.env persisted a maintenance acknowledgement"
+fi
+assert_no_compose_mutation "$tmpdir/persisted-ack.log"
 
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/unknown.log" \

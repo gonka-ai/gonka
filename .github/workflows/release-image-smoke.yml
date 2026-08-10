@@ -18,6 +18,13 @@ on:
       - deploy/join/legacy-router-upgrade-barrier_test.sh
       - deploy/join/upgrade-devshard-v5.sh
       - deploy/join/upgrade-devshard-v5_test.sh
+      - deploy/join/devshard-v5-release.env
+      - deploy/join/devshard-v5-release-contract.sh
+      - deploy/join/devshard-v5-release-contract_test.sh
+      - deploy/join/devshard-v5-release-gate.sh
+      - deploy/join/devshard-v5-release-gate_test.sh
+      - devshard/docs/network-update-0.2.15-v5.md
+      - devshard/docs/release-0.2.15-v5.md
       - deploy/join/compose-topology.sh
       - deploy/join/enable-router-ha.sh
       - deploy/join/enable-router-ha_test.sh
@@ -33,6 +40,15 @@ on:
       - versiond-router/haproxy.cfg.template
       - .github/workflows/release-image-smoke.yml
   workflow_dispatch:
+    inputs:
+      network_update_url:
+        description: 'Published gonka.ai Network Updates entry for this release'
+        required: true
+        type: string
+      upgrade_deadline_utc:
+        description: 'Published upgrade deadline (UTC RFC3339)'
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -55,6 +71,10 @@ jobs:
             deploy/join/legacy-router-upgrade-barrier.sh \
             deploy/join/legacy-router-upgrade-barrier_test.sh \
             deploy/join/compose-topology.sh \
+            deploy/join/devshard-v5-release-contract.sh \
+            deploy/join/devshard-v5-release-contract_test.sh \
+            deploy/join/devshard-v5-release-gate.sh \
+            deploy/join/devshard-v5-release-gate_test.sh \
             deploy/join/upgrade-devshard-v5.sh \
             deploy/join/upgrade-devshard-v5_test.sh \
             deploy/join/enable-router-ha.sh \
@@ -63,17 +83,31 @@ jobs:
             deploy/join/versiond-router-fleet_test.sh \
             deploy/join/versiond-compose-config_test.sh
           deploy/join/legacy-router-upgrade-barrier_test.sh
+          deploy/join/devshard-v5-release-contract_test.sh
+          deploy/join/devshard-v5-release-gate_test.sh
           deploy/join/upgrade-devshard-v5_test.sh
           deploy/join/enable-router-ha_test.sh
           deploy/join/versiond-compose-config_test.sh
 
   registry-smoke:
     name: Published image endpoints
+    needs: compose-contract
     if: github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Pull and smoke-test release images
         run: deploy/join/release-image-smoke_test.sh
+
+      - name: Verify published host update contract
+        env:
+          NETWORK_UPDATE_URL: ${{ inputs.network_update_url }}
+          UPGRADE_DEADLINE_UTC: ${{ inputs.upgrade_deadline_utc }}
+        run: |
+          deploy/join/devshard-v5-release-gate.sh \
+            --network-update-url "$NETWORK_UPDATE_URL" \
+            --deadline-utc "$UPGRADE_DEADLINE_UTC"

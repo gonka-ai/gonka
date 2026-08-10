@@ -4,10 +4,17 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
-release_tag=0.2.15-devshard-v5
+release_contract=$script_dir/devshard-v5-release.env
+# shellcheck source=deploy/join/devshard-v5-release-contract.sh
+source "$script_dir/devshard-v5-release-contract.sh"
+devshard_v5_load_release_contract "$release_contract"
+release_id=$DEVSHARD_V5_RELEASE_ID
 operation_id="$(date +%s%N)-$$"
 versiond_mode=auto
 edge_mode=auto
+preflight_only=false
+strict_capacity=false
+maintenance_ack=false
 compose_project_name=
 compose_project_directory=
 declare -a compose_file_args=()
@@ -34,6 +41,9 @@ Options:
   --compose-file FILE              repeat for the complete ordered model
   --compose-project-name NAME      must match the running Compose project
   --compose-project-directory DIR  must match the running Compose project
+  --preflight-only                 verify release and host without mutation
+  --strict-capacity                enforce Quickstart capacity recommendations
+  --acknowledge-maintenance        allow the one-time ingress/storage cutover
 
 Without --compose-file or COMPOSE_FILE, the script recovers the ordered file
 list and project identity from Docker Compose labels on the running services.
@@ -68,6 +78,18 @@ while [[ $# -gt 0 ]]; do
             compose_project_directory=$2
             shift 2
             ;;
+        --preflight-only)
+            preflight_only=true
+            shift
+            ;;
+        --strict-capacity)
+            strict_capacity=true
+            shift
+            ;;
+        --acknowledge-maintenance)
+            maintenance_ack=true
+            shift
+            ;;
         -h | --help)
             usage
             exit 0
@@ -91,7 +113,8 @@ esac
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
 while IFS= read -r name; do
     case $name in
-        COMPOSE_* | GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+        COMPOSE_* | GONKA_* | DEVSHARD_V5_* | VERSIOND_* | ROUTER_HA_* | \
+            PROXY_* | DOCKER_BIN)
             inherited_env[$name]=${!name}
             ;;
     esac
@@ -104,15 +127,41 @@ for name in "${!inherited_env[@]}"; do
     printf -v "$name" '%s' "${inherited_env[$name]}"
     export "${name?}"
 done
+# These two values are release/test controls, not node configuration. Do not
+# let a persistent config.env silently disable source verification or remember
+# a maintenance acknowledgement from an earlier operation.
+for name in DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE DEVSHARD_V5_MAINTENANCE_ACK; do
+    if [[ -z ${inherited_env[$name]+present} ]]; then
+        unset "$name"
+    fi
+done
+# config.env is operator input, while release identity and image references are
+# immutable distribution metadata. Reload the contract so similarly named
+# config keys cannot replace the tagged release artifacts.
+devshard_v5_load_release_contract "$release_contract"
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
 docker_bin=${DOCKER_BIN:-docker}
 fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
 upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
 
-command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
-command -v jq >/dev/null 2>&1 || fail "jq is required"
-# shellcheck source=deploy/join/compose-topology.sh
+if [[ $strict_capacity == false ]]; then
+    case ${DEVSHARD_V5_STRICT_CAPACITY:-false} in
+        true | 1 | yes) strict_capacity=true ;;
+        false | 0 | no) ;;
+        *) fail "DEVSHARD_V5_STRICT_CAPACITY must be true or false" ;;
+    esac
+fi
+if [[ $maintenance_ack == false ]]; then
+    case ${DEVSHARD_V5_MAINTENANCE_ACK:-false} in
+        true | 1 | yes) maintenance_ack=true ;;
+        false | 0 | no) ;;
+        *) fail "DEVSHARD_V5_MAINTENANCE_ACK must be true or false" ;;
+    esac
+fi
+devshard_v5_verify_dependencies "$docker_bin"
+devshard_v5_verify_release_source "$script_dir"
+# shellcheck disable=SC1091 # Runtime path is anchored to this script.
 source "$script_dir/compose-topology.sh"
 
 # A rollback gets the same startup budget as the corresponding forward
@@ -185,12 +234,12 @@ echo "Deployment topology: versiond=$versiond_mode, edge-api=$edge_mode"
 
 # Pin this operation to the exact release. The Compose files expose these
 # variables so a failed replacement can be recreated from its captured image.
-export EDGE_API_IMAGE="ghcr.io/product-science/edge-api:$release_tag"
-export VERSIOND_IMAGE="ghcr.io/product-science/versiond:$release_tag"
-export EDGE_API_ROUTER_IMAGE="ghcr.io/product-science/edge-api-router:$release_tag"
-export VERSIOND_ROUTER_IMAGE="ghcr.io/product-science/versiond-router:$release_tag"
-export PROXY_POLICY_IMAGE="ghcr.io/product-science/proxy:$release_tag"
-export PROXY_ROUTER_IMAGE="ghcr.io/product-science/proxy-router:$release_tag"
+export EDGE_API_IMAGE=$DEVSHARD_V5_EDGE_API_IMAGE
+export VERSIOND_IMAGE=$DEVSHARD_V5_VERSIOND_IMAGE
+export EDGE_API_ROUTER_IMAGE=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
+export VERSIOND_ROUTER_IMAGE=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
+export PROXY_POLICY_IMAGE=$DEVSHARD_V5_PROXY_POLICY_IMAGE
+export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 
 container_exists proxy || fail \
     "cannot recover the deployment Compose topology: public proxy container is missing"
@@ -210,13 +259,54 @@ if [[ $edge_mode == multi ]]; then
     compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
 fi
 
+devshard_v5_report_compose_files "$script_dir" "${GONKA_COMPOSE_FILES[@]}"
+devshard_v5_verify_capacity "$config_dir" "$strict_capacity"
+effective_compose_config=$("${GONKA_COMPOSE_COMMAND[@]}" config --format json)
+public_http_port=$(jq -er '
+    [.services.proxy.ports[]?
+     | select(.target == 80 and (.protocol // "tcp") == "tcp")
+     | (.published | tostring)]
+    | unique | select(length == 1) | .[0]
+' <<<"$effective_compose_config") || fail \
+    "effective Compose model must publish proxy port 80 on exactly one host port"
+public_https_port=$(jq -er '
+    [.services.proxy.ports[]?
+     | select(.target == 443 and (.protocol // "tcp") == "tcp")
+     | (.published | tostring)]
+    | unique | select(length <= 1) | (.[0] // "")
+' <<<"$effective_compose_config") || fail \
+    "effective Compose model publishes proxy port 443 on multiple host ports"
+devshard_v5_verify_public_ports \
+    "$docker_bin" proxy "$public_http_port" "$public_https_port"
+
+postgres_container=
+postgres_target_dir=
+if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+    postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
+    [[ -n $postgres_container ]] || fail \
+        "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
+    postgres_target_dir=$GONKA_COMPOSE_POSTGRES_DATA_DIR
+    env DOCKER_BIN="$docker_bin" \
+        "$script_dir/devshard-postgres-migration-preflight.sh" \
+        --source-container "$postgres_container" \
+        --target-dir "$postgres_target_dir"
+fi
+
+echo "Devshard v5 release preflight passed"
+if [[ $preflight_only == true ]]; then
+    exit 0
+fi
+
 existing_proxy_component=$(
     "$docker_bin" inspect --format \
         '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 )
+if [[ $existing_proxy_component != proxy-router && $maintenance_ack != true ]]; then
+    fail "the one-time v5 cutover restarts shared PostgreSQL when local HA storage is used and replaces the public listener, terminating existing ingress connections; schedule the maintenance window, run --preflight-only, then rerun with --acknowledge-maintenance"
+fi
 if [[ $existing_proxy_component == proxy-router ]]; then
-    if [[ ! -f $upgrade_marker || $(<"$upgrade_marker") != "$release_tag" ]]; then
-        fail "router HA is active, but application/storage upgrade $release_tag has no commit marker at $upgrade_marker; the proxy label alone does not prove that versiond, edge-api, and PostgreSQL were migrated"
+    if [[ ! -f $upgrade_marker || $(<"$upgrade_marker") != "$release_id" ]]; then
+        fail "router HA is active, but application/storage upgrade $release_id has no commit marker at $upgrade_marker; the proxy label alone does not prove that versiond, edge-api, and PostgreSQL were migrated"
     fi
     echo "The v5 router HA topology is already active; converging it idempotently"
     "$enable_router_bin" \
@@ -874,15 +964,6 @@ fi
 run_interruptible "${compose[@]}" pull "${pull_services[@]}"
 
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
-    postgres_container=$("${compose[@]}" ps --all --quiet devshard-postgres)
-    [[ -n $postgres_container ]] || fail \
-        "cannot preflight PostgreSQL migration: the existing container is missing; use the detached-volume recovery procedure"
-    postgres_target_dir=$GONKA_COMPOSE_POSTGRES_DATA_DIR
-    run_interruptible env DOCKER_BIN="$docker_bin" \
-        "$script_dir/devshard-postgres-migration-preflight.sh" \
-        --source-container "$postgres_container" \
-        --target-dir "$postgres_target_dir"
-
     echo "Migrating and starting devshard-postgres"
     active_service=devshard-postgres
     active_failure_strategy=stop
@@ -968,6 +1049,6 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
 esac
 marker_tmp=$upgrade_marker.tmp.$$
 mkdir -p "$(dirname -- "$upgrade_marker")"
-printf '%s\n' "$release_tag" >"$marker_tmp"
+printf '%s\n' "$release_id" >"$marker_tmp"
 mv -f "$marker_tmp" "$upgrade_marker"
 echo "Devshard v5 upgrade completed"
