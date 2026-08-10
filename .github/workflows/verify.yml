@@ -364,7 +364,7 @@ jobs:
 
       - name: Run MockEnv Tests and Generate JUnit Report
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork
-        run: go test ./cmd/devshardctl -run GatewayMockEnv -count=1 -v 2>&1 | go-junit-report -set-exit-code > mockenv-junit-report.xml
+        run: make gateway-mockenv-test-junit
 
       - name: Verify Docker Installation
         if: github.event_name != 'pull_request' || !github.event.pull_request.head.repo.fork

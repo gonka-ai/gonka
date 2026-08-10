@@ -1,10 +1,13 @@
-.PHONY: proto test integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
+.PHONY: proto test gateway-mockenv-test gateway-mockenv-test-junit integration-test stress-test fault-test ci-testenv-unit ci-testenv-integration devshard-gateway-release e2e e2e-test e2e-images
 
 DEVSHARD_VERSION ?= dev
 DEVSHARD_PROTOCOL_VERSION ?= v3
 DEVSHARD_GATEWAY_IMAGE ?= ghcr.io/gonka-ai/devshard-gateway
 DEVSHARD_GATEWAY_TAGS ?=
 PLATFORM ?= linux/amd64
+GATEWAY_MOCKENV_TEST_PACKAGE ?= ./cmd/devshardctl
+GATEWAY_MOCKENV_TEST_PATTERN ?= GatewayMockEnv
+GATEWAY_MOCKENV_JUNIT_REPORT ?= mockenv-junit-report.xml
 
 DEVSHARD_E2E_MOCK_CHAIN_IMAGE ?= devshard-mock-chain:local
 DEVSHARD_E2E_HOST_IMAGE ?= devshard-host:local
@@ -38,6 +41,12 @@ proto:
 
 test:
 	go test ./... -v
+
+gateway-mockenv-test:
+	go test $(GATEWAY_MOCKENV_TEST_PACKAGE) -run $(GATEWAY_MOCKENV_TEST_PATTERN) -count=1 -v
+
+gateway-mockenv-test-junit:
+	go test $(GATEWAY_MOCKENV_TEST_PACKAGE) -run $(GATEWAY_MOCKENV_TEST_PATTERN) -count=1 -v 2>&1 | go-junit-report -set-exit-code > $(GATEWAY_MOCKENV_JUNIT_REPORT)
 
 # Phase 11 — testenv v2 unit smoke (no Docker). Run from repo root paths via sub-makes.
 ci-testenv-unit:
