@@ -71,3 +71,4 @@ func TestRuntimeConfigNotifier_ConcurrentNotifyWait(t *testing.T) {
 		t.Fatal("deadlock in concurrent notify/wait")
 	}
 }
+

@@ -5,10 +5,10 @@ import (
 	"math"
 	"time"
 
+	"common/logging"
+	"common/nodemanager/gen"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/longpoll"
-	"decentralized-api/logging"
-	"devshard/nodemanager/gen"
 
 	"github.com/productscience/inference/x/inference/types"
 	"google.golang.org/grpc/codes"

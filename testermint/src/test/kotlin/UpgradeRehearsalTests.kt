@@ -3,6 +3,7 @@ import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import com.productscience.*
 import com.productscience.data.ActiveParticipant
+import com.productscience.data.INFERENCE_STAGE_SLACK_BLOCKS
 import com.productscience.data.OpenAIResponse
 import com.productscience.data.UpdateParams
 import org.assertj.core.api.Assertions.assertThat

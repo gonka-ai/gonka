@@ -23,7 +23,7 @@ All settings can be passed as flags or environment variables. Flags take precede
 | `--storage-path` | `DEVSHARD_STORAGE_PATH` | no | `~/.cache/gonka/devshard-<escrow-id>.db` | SQLite path for crash recovery |
 | - | `DEVSHARD_API_KEYS` | no | - | Comma-separated public API bearer keys |
 | - | `DEVSHARD_ADMIN_API_KEY` | no | - | Admin bearer key for finalize and `/v1/admin/*` endpoints |
-| - | `DEVSHARD_CHAIN_ID` | no | queried from REST | Chain ID used when signing admin-created escrow transactions |
+| - | `DEVSHARD_CHAIN_ID` | no | `gonka-mainnet` | Chain ID for signing escrow create/settle txs. Known values: `gonka-mainnet` (production), `gonka-testnet` (devnet/testnet), `gonka-test` (testenv mock-chain). |
 | - | `DEVSHARD_TX_FEE_AMOUNT` | no | `1000000` | Fee amount for admin-created escrow transactions |
 | - | `DEVSHARD_TX_FEE_DENOM` | no | `ngonka` | Fee denom for admin-created escrow transactions |
 | - | `DEVSHARD_TX_GAS_LIMIT` | no | `500000` | Fallback gas limit for admin-created escrow and settlement transactions |

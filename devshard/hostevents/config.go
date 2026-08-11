@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"devshard/nodemanager/gen"
+	"common/nodemanager/gen"
 )
 
 // Sink receives escrow host-events from the long-poll loop.

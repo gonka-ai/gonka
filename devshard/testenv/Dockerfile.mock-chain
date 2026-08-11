@@ -1,0 +1,17 @@
+# Production-shape mock-chain image (Phase 4 gencompose stub).
+# Build context: repo root (../.. from testenv/).
+FROM golang:1.25.9-alpine3.23 AS build
+RUN apk add --no-cache git ca-certificates
+COPY common/ /src/common
+COPY inference-chain/ /src/inference-chain
+WORKDIR /src/devshard
+COPY devshard/go.mod devshard/go.sum ./
+RUN go mod download
+COPY devshard/ .
+RUN CGO_ENABLED=0 go build -o /mockchain ./testenv/cmd/mockchain
+
+FROM alpine:3.21
+RUN apk add --no-cache ca-certificates wget
+COPY --from=build /mockchain /usr/local/bin/mockchain
+WORKDIR /app
+ENTRYPOINT ["mockchain"]

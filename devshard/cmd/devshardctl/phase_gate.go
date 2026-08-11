@@ -13,10 +13,15 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"common/chain"
+
+	inferencetypes "github.com/productscience/inference/x/inference/types"
 )
 
 const (
 	defaultChainPhasePollInterval = 5 * time.Second
+
 	// versionsTTLPollMultiplier scales the poll interval into how long a
 	// /v1/versions fetch stays fresh, so entries survive a couple of missed polls
 	// but never outlive the poller's cadence.
@@ -71,6 +76,8 @@ type ChainPhaseGate struct {
 	// scaleApplyHook's responsibility.
 	capacityState  *CapacityState
 	scaleApplyHook func(scale float64)
+
+	chainQuery chain.InferenceClient
 
 	// versions polls each candidate miner's /v1/versions endpoint
 	versions *VersionsCache
@@ -263,24 +270,24 @@ func NewChainPhaseGate(baseURL string, pollInterval time.Duration) *ChainPhaseGa
 	}
 }
 
-func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
+func (g *ChainPhaseGate) SetChainQueryClient(client chain.InferenceClient) {
 	if g == nil {
-		return
-	}
-	baseURL = strings.TrimSpace(baseURL)
-	if baseURL == "" {
 		return
 	}
 	g.mu.Lock()
 	defer g.mu.Unlock()
-	g.preservedSnapshotEndpoint = strings.TrimRight(baseURL, "/") + "/productscience/inference/inference/preserved_nodes_snapshot"
+	g.chainQuery = client
+}
+
+func (g *ChainPhaseGate) SetPreservedSnapshotBaseURL(baseURL string) {
+	_ = baseURL
 }
 
 func (g *ChainPhaseGate) Start() {
 	if g == nil {
 		return
 	}
-	if g.versions != nil {
+		if g.versions != nil {
 		// Derive a context whose lifetime matches the gate's stopCh so the
 		// versions poller stops cleanly without introducing a second lifecycle.
 		ctx, cancel := context.WithCancel(context.Background())
@@ -641,41 +648,56 @@ func (g *ChainPhaseGate) preservedSnapshotURL() string {
 }
 
 func (g *ChainPhaseGate) fetchPreservedSnapshotState(expectedAnchor int64) (*preservedSnapshotState, preservedSnapshotStatus, error) {
-	endpoint := g.preservedSnapshotURL()
-	if endpoint == "" {
+	qc := g.chainQueryClient()
+	if qc == nil {
 		return nil, preservedSnapshotUnavailable, nil
 	}
-	resp, err := g.client.Get(endpoint)
+	resp, err := qc.PreservedNodesSnapshot(context.Background(), &inferencetypes.QueryPreservedNodesSnapshotRequest{})
 	if err != nil {
 		return nil, preservedSnapshotUnavailable, err
 	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode == http.StatusNotFound || resp.StatusCode == http.StatusNotImplemented {
-		io.Copy(io.Discard, resp.Body)
-		return nil, preservedSnapshotUnavailable, nil
-	}
-	if resp.StatusCode != http.StatusOK {
-		io.Copy(io.Discard, resp.Body)
-		return nil, preservedSnapshotUnavailable, fmt.Errorf("preserved snapshot status %d", resp.StatusCode)
-	}
-
-	var payload chainPreservedNodesSnapshotResponse
-	if err := json.NewDecoder(resp.Body).Decode(&payload); err != nil {
-		return nil, preservedSnapshotUnavailable, err
-	}
-	if !payload.Found || payload.Snapshot == nil {
+	if resp == nil || !resp.Found || resp.Snapshot == nil {
 		return nil, preservedSnapshotMissingCurrent, nil
 	}
-	if expectedAnchor > 0 && int64(payload.Snapshot.EpisodeAnchorHeight) != expectedAnchor {
+	snapshot := preservedSnapshotFromProto(resp.Snapshot)
+	if expectedAnchor > 0 && int64(snapshot.EpisodeAnchorHeight) != expectedAnchor {
 		log.Printf(
 			"chain phase gate: preserved snapshot anchor mismatch expected=%d actual=%d",
 			expectedAnchor,
-			payload.Snapshot.EpisodeAnchorHeight,
+			snapshot.EpisodeAnchorHeight,
 		)
 		return nil, preservedSnapshotMissingCurrent, nil
 	}
-	return newPreservedSnapshotState(payload.Snapshot), preservedSnapshotCurrent, nil
+	return newPreservedSnapshotState(snapshot), preservedSnapshotCurrent, nil
+}
+
+func (g *ChainPhaseGate) chainQueryClient() chain.InferenceClient {
+	if g == nil {
+		return nil
+	}
+	g.mu.RLock()
+	defer g.mu.RUnlock()
+	return g.chainQuery
+}
+
+func preservedSnapshotFromProto(snapshot *inferencetypes.PreservedNodesSnapshot) *chainPreservedNodesSnapshot {
+	if snapshot == nil {
+		return nil
+	}
+	out := &chainPreservedNodesSnapshot{
+		EpisodeAnchorHeight: jsonInt64(snapshot.EpisodeAnchorHeight),
+	}
+	for _, modelNodes := range snapshot.GetModelPreservedNodes() {
+		entry := chainModelPreservedNodes{ModelID: modelNodes.GetModelId()}
+		for _, participant := range modelNodes.GetParticipants() {
+			entry.Participants = append(entry.Participants, chainParticipantPreservedNodes{
+				ParticipantID: participant.GetParticipantId(),
+				NodeIDs:       append([]string(nil), participant.GetNodeIds()...),
+			})
+		}
+		out.ModelPreservedNodes = append(out.ModelPreservedNodes, entry)
+	}
+	return out
 }
 
 func newPreservedSnapshotState(snapshot *chainPreservedNodesSnapshot) *preservedSnapshotState {
@@ -965,6 +987,7 @@ func rawPoCBlockingState(epochPhase, confirmationPhase string) (bool, string) {
 	return false, ""
 }
 
+
 func rawPoCGenerationState(epochPhase, confirmationPhase string) bool {
 	switch epochPhase {
 	case epochPhasePoCGenerate, epochPhasePoCGenerateWindDown:
@@ -1112,29 +1135,6 @@ func effectivePreservationMode(pocActive bool, preservation preservationMode) pr
 	return preservation
 }
 
-// participantNodes extracts the flat list of (model, nodeID, weight)
-func participantNodes(participant chainActiveParticipant) []participantNode {
-	var nodes []participantNode
-	for i, rawModel := range participant.Models {
-		model := strings.TrimSpace(rawModel)
-		if model == "" || i >= len(participant.MLNodes) {
-			continue
-		}
-		for _, node := range participant.MLNodes[i].MLNodes {
-			nodeID := strings.TrimSpace(node.NodeID)
-			if nodeID == "" {
-				continue
-			}
-			nodes = append(nodes, participantNode{
-				model:  model,
-				nodeID: nodeID,
-				weight: float64(node.PoCWeight),
-			})
-		}
-	}
-	return nodes
-}
-
 func participantModelAt(participant chainActiveParticipant, index int) string {
 	if index < 0 || index >= len(participant.Models) {
 		return ""
@@ -1261,6 +1261,29 @@ func parseFlexibleUint64(data []byte) (uint64, error) {
 	}
 
 	return 0, fmt.Errorf("unsupported uint64 value %s", string(data))
+}
+
+// participantNodes extracts the flat list of (model, nodeID, weight)
+func participantNodes(participant chainActiveParticipant) []participantNode {
+	var nodes []participantNode
+	for i, rawModel := range participant.Models {
+		model := strings.TrimSpace(rawModel)
+		if model == "" || i >= len(participant.MLNodes) {
+			continue
+		}
+		for _, node := range participant.MLNodes[i].MLNodes {
+			nodeID := strings.TrimSpace(node.NodeID)
+			if nodeID == "" {
+				continue
+			}
+			nodes = append(nodes, participantNode{
+				model:  model,
+				nodeID: nodeID,
+				weight: float64(node.PoCWeight),
+			})
+		}
+	}
+	return nodes
 }
 
 // Returns per model chain weight of the participant's PoC-validation-inference-capable nodes.

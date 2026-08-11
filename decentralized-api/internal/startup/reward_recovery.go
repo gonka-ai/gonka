@@ -6,13 +6,12 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/internal/seed"
-	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
 	"math"
 	"math/bits"
 	"sync/atomic"
 	"time"
 
+	"common/logging"
 	"github.com/productscience/inference/api/inference/inference"
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -23,7 +22,6 @@ const waitBetweenAttempts = 1000
 func NewRewardRecoveryChecker(
 	phaseTracker *chainphase.ChainPhaseTracker,
 	recorder *cosmosclient.InferenceCosmosClient,
-	validator *validation.InferenceValidator,
 	configManager *apiconfig.ConfigManager,
 ) *RewardRecoveryChecker {
 	return &RewardRecoveryChecker{
@@ -31,7 +29,6 @@ func NewRewardRecoveryChecker(
 		lastRecoveryBlockHeight: 0,
 		phaseTracker:            phaseTracker,
 		recorder:                recorder,
-		validator:               validator,
 		configManager:           configManager,
 	}
 }
@@ -42,7 +39,6 @@ type RewardRecoveryChecker struct {
 	autoRecoveryRunning     atomic.Bool
 	phaseTracker            *chainphase.ChainPhaseTracker
 	recorder                *cosmosclient.InferenceCosmosClient
-	validator               *validation.InferenceValidator
 	configManager           *apiconfig.ConfigManager
 }
 
@@ -183,47 +179,6 @@ func (c *RewardRecoveryChecker) AutoRewardRecovery() {
 		"seed", seedValue,
 		"totalAmount", totalAmount,
 		"address", address)
-
-	// Perform validation recovery using the same logic as the admin endpoint
-	missedInferences, err := c.validator.DetectMissedValidations(epochIndex, seedValue)
-	if err != nil {
-		logging.Error("[AutoRewardRecovery] Failed to detect missed validations during startup", types.Claims,
-			"epochIndex", epochIndex,
-			"error", err)
-		return
-	}
-
-	missedCount := len(missedInferences)
-	logging.Info("[AutoRewardRecovery] Startup recovery detected missed validations", types.Claims,
-		"epochIndex", epochIndex,
-		"missedCount", missedCount,
-		"address", address)
-
-	// Execute recovery validations if any were missed
-	if missedCount > 0 {
-		recoveredCount, err := c.validator.ExecuteRecoveryValidations(missedInferences)
-		if err != nil {
-			logging.Error("[AutoRewardRecovery] Failed to execute recovery validations during startup", types.Claims,
-				"epochIndex", epochIndex,
-				"missedCount", missedCount,
-				"error", err)
-			return
-		}
-
-		logging.Info("[AutoRewardRecovery] Startup recovery validations completed", types.Claims,
-			"epochIndex", epochIndex,
-			"recoveredCount", recoveredCount,
-			"missedCount", missedCount,
-			"address", address)
-
-		// Wait for validations to be recorded on-chain
-		if recoveredCount > 0 {
-			logging.Info("[AutoRewardRecovery] Waiting for startup recovery validations to be recorded on-chain", types.Claims,
-				"epochIndex", epochIndex,
-				"recoveredCount", recoveredCount)
-			c.validator.WaitForValidationsToBeRecorded()
-		}
-	}
 
 	// Attempt to claim rewards
 	err = c.recorder.ClaimRewards(&inference.MsgClaimRewards{

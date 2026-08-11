@@ -238,6 +238,10 @@ func (w *gatewayChatCacheCapture) statusCode() int {
 	return w.status
 }
 
+// cacheEntry builds a cache entry from the captured response, rejecting it
+// when the request itself failed (requestErr, e.g. a client disconnect) or
+// the response is not a deterministic, cacheable outcome (see
+// cacheableResponse).
 func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourceRequestID string, requestErr error) (cachedChatResponse, bool) {
 	if w == nil || w.writeErr != nil || w.body.Len() == 0 {
 		return cachedChatResponse{}, false
@@ -260,6 +264,10 @@ func (w *gatewayChatCacheCapture) cacheEntry(escrowID string, stream bool, sourc
 	}, true
 }
 
+// cacheableResponse reports whether a response is a deterministic outcome
+// safe to replay for a duplicate request: any 2xx, or a 400 whose OpenAI-style
+// error body is itself deterministic (bad request shape), as opposed to a
+// transient failure (rate limit, timeout, capability exhaustion, ...).
 func cacheableResponse(statusCode int, body []byte) bool {
 	if len(body) == 0 || responseBodyHasNonCacheableError(body) {
 		return false
@@ -297,6 +305,10 @@ func responseBodyHasRetriableCapabilityError(body []byte) bool {
 	return false
 }
 
+// isCacheableOpenAIErrorDetails reports whether an OpenAI-style error is a
+// deterministic function of the request (safe to replay verbatim for a
+// duplicate request) rather than a transient/runtime condition that could
+// resolve differently on retry.
 func isCacheableOpenAIErrorDetails(details sseErrorDetails) bool {
 	msg := strings.ToLower(details.Message)
 	typ := strings.ToLower(details.Type)

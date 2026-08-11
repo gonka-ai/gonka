@@ -218,7 +218,7 @@ func (am AppModule) BeginBlock(ctx context.Context) error {
 	}
 
 	// Cache epoch model metadata in transient store.
-	// This avoids repeated heavy model-group reads in MsgValidation.
+	// This avoids repeated heavy model-group reads during validation.
 	err = am.keeper.BuildEpochDataTransientCache(ctx)
 	if err != nil {
 		am.LogError("Failed to build epoch data transient cache", types.Validation, "error", err)

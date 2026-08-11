@@ -1,4 +1,4 @@
-.PHONY: build test e2e testapp build-docker docker-push release
+.PHONY: build test e2e e2e-clean-results e2e-build e2e-run e2e-report testapp build-docker docker-push release
 
 include ../scripts/blst-portable.mk
 
@@ -35,9 +35,35 @@ test:
 testapp:
 	mkdir -p build
 	go build -o build/testapp ./e2e/testapp
+	go build -ldflags "-X main.Version=testapp2 -X main.BinaryVersion=testapp2" -o build/testapp2 ./e2e/testapp
+	go build -ldflags "-X main.Version=testapp -X main.BinaryVersion=testapp-rollout" -o build/testapp-rollout ./e2e/testapp
 
-e2e: build testapp
-	docker compose -f e2e/docker-compose.yml up --build --abort-on-container-exit --exit-code-from tests
+e2e: e2e-clean-results e2e-build e2e-run e2e-report
+
+e2e-clean-results:
+	rm -rf build/test-results
+	mkdir -p build/test-results
+
+e2e-build:
+	docker compose -f e2e/docker-compose.yml build
+
+e2e-run:
+	docker compose -f e2e/docker-compose.yml up --no-build --abort-on-container-exit --exit-code-from tests
+	docker compose -f e2e/docker-compose.yml down -v
+	docker compose -f e2e/docker-compose.yml up --no-build -d oracle versiond
+	docker compose -f e2e/docker-compose.yml stop versiond
+	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e REGISTER_STARTUP_VERSION=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-register-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestRegisterStartupVersion$$'
+	docker compose -f e2e/docker-compose.yml start versiond
+	docker compose -f e2e/docker-compose.yml run --rm --no-deps -e EXPECT_INITIAL_TESTAPP=1 tests gotestsum --format testname --junitfile /app/test-results/reconcile-on-start-junit.xml -- -tags e2e ./e2e -v -timeout 300s -run '^TestStartupFromExistingOracleState$$'
+	docker compose -f e2e/docker-compose.yml down -v
+
+# e2e-report requires uv on PATH (install: pip install uv).
+e2e-report:
+	uvx junitparser merge --glob 'build/test-results/*-junit.xml' build/test-results/e2e-junit.xml
+	@status=0; \
+	uvx junitparser verify build/test-results/e2e-junit.xml || status=$$?; \
+	uvx junit2html --summary-matrix build/test-results/e2e-junit.xml; \
+	exit $$status
 
 build-docker:
 	$(eval PLATFORM=$(DOCKER_PLATFORM))

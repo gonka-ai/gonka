@@ -1,9 +1,9 @@
 package event_listener
 
 import (
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/logging"
 	"strconv"
 
 	"context"

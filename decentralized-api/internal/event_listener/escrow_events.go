@@ -1,15 +1,14 @@
 package event_listener
 
 import (
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
 
+	"common/logging"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/logging"
-
-	"devshard/bridge"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -19,9 +18,23 @@ const (
 	escrowSettledEvent = "devshard_escrow_settled"
 )
 
-// escrowQuerier is the subset of bridge used for slot membership on create/settle.
+// ErrEscrowNotFound is returned by escrowQuerier implementations when the
+// escrow does not exist on chain.
+var ErrEscrowNotFound = errors.New("event_listener: escrow not found")
+
+// EscrowSlotInfo is the minimal escrow membership info needed for host-event
+// slot filtering. It is intentionally decoupled from devshard's richer
+// bridge.EscrowInfo since decentralized-api does not depend on the devshard
+// module (devshard depends on common/decentralized-api's chain queries, not
+// the other way around).
+type EscrowSlotInfo struct {
+	EscrowID string
+	Slots    []string // host addresses, len == DevshardGroupSize
+}
+
+// escrowQuerier resolves escrow slot membership for host-event filtering.
 type escrowQuerier interface {
-	GetEscrow(escrowID string) (*bridge.EscrowInfo, error)
+	GetEscrow(escrowID string) (*EscrowSlotInfo, error)
 }
 
 type DevshardEscrowCreatedEventHandler struct{}

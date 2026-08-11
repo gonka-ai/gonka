@@ -10,7 +10,7 @@ services:
 
   node:
     container_name: node
-    image: ghcr.io/product-science/inferenced:0.2.14
+    image: ghcr.io/product-science/inferenced:0.2.15
     command: ["sh", "./init-docker.sh"]
     volumes:
       - .inference:/root/.inference
@@ -49,7 +49,7 @@ services:
 
   api:
     container_name: api
-    image: ghcr.io/product-science/api:0.2.14
+    image: ghcr.io/product-science/api:0.2.15-post3
     volumes:
       - .inference:/root/.inference
       - .dapi:/root/.dapi
@@ -87,9 +87,23 @@ services:
       - "127.0.0.1:9200:9200"
     restart: always
 
+  edge-api:
+    container_name: edge-api
+    image: ghcr.io/product-science/edge-api:0.2.15
+    environment:
+      - EDGE_API_PORT=18080
+      - CHAIN_GRPC_URL=node:9090
+      - CHAIN_RPC_URL=http://node:26657
+      - EDGE_API_OTEL_ENABLED=${EDGE_API_OTEL_ENABLED:-false}
+      - OTEL_ENDPOINT=${OTEL_ENDPOINT:-}
+      - OTEL_HEADERS=${OTEL_HEADERS:-}
+    depends_on:
+      - node
+    restart: always
+
   versiond:
     container_name: versiond
-    image: ghcr.io/product-science/versiond:0.2.14
+    image: ghcr.io/product-science/versiond:0.2.15
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
       - VERSIOND_BINARY_NAME=devshardd
@@ -119,7 +133,7 @@ services:
 
   bridge:
     container_name: bridge
-    image: ghcr.io/product-science/bridge:0.2.14-post3@sha256:06f1c8750941cd31c6f46ff037e0b43f71a9ba5a5e4c6b81da8c4d6748af67b5
+    image: ghcr.io/product-science/bridge:0.2.15
     restart: unless-stopped
     environment:
       - GETH_DATA_DIR=/data/geth
@@ -151,7 +165,7 @@ services:
 
   proxy:
     container_name: proxy
-    image: ghcr.io/product-science/proxy:0.2.14
+    image: ghcr.io/product-science/proxy:0.2.15
     ports:
       - "${API_PORT:-8000}:80"
       - "${API_SSL_PORT:-8443}:443"
@@ -179,6 +193,8 @@ services:
       - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
       - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
       - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
+      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
     volumes:
       - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
     depends_on:
@@ -186,6 +202,9 @@ services:
         condition: service_started
       api:
         condition: service_started
+      edge-api:
+        condition: service_started
+        required: false
       versiond:
         condition: service_started
       explorer:
@@ -203,7 +222,7 @@ services:
 
   proxy-ssl:
     container_name: proxy-ssl
-    image: ghcr.io/product-science/proxy-ssl:0.2.14
+    image: ghcr.io/product-science/proxy-ssl:0.2.15
     profiles:
       - ssl
     environment:

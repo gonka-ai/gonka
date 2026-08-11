@@ -1,0 +1,59 @@
+# edge-api overlay: canonical edge-api + 2 extras (3 total) and nginx
+# edge-api-router for round-robin Tier A query traffic.
+#
+# Paths are relative to --project-directory (repo root). Typical stack:
+#   base + genesis|join + edge-api [+ edge-api-router-proxy on genesis]
+#
+# Single-instance default is docker-compose-base.yml (edge-api only).
+# This overlay adds edge-api-2/3 and edge-api-router; pair with
+# docker-compose.edge-api-router-proxy.yml so proxy uses the router.
+
+x-edge-api: &edge-api
+  image: edge-api:latest
+  platform: ${DOCKER_PLATFORM:-linux/amd64}
+  build:
+    context: ${EDGE_API_BUILD_CONTEXT:-..}
+    dockerfile: edge-api/Dockerfile
+  environment:
+    EDGE_API_PORT: "18080"
+    CHAIN_GRPC_URL: ${KEY_NAME}-node:9090
+    CHAIN_RPC_URL: http://${KEY_NAME}-node:26657
+    EDGE_API_OTEL_ENABLED: ${EDGE_API_OTEL_ENABLED:-false}
+    OTEL_ENDPOINT: ${OTEL_ENDPOINT:-}
+    OTEL_HEADERS: ${OTEL_HEADERS:-}
+  depends_on:
+    - chain-node
+  networks:
+    - chain-public
+  restart: unless-stopped
+
+services:
+  edge-api-2:
+    <<: *edge-api
+    container_name: ${KEY_NAME}-edge-api-2
+
+  edge-api-3:
+    <<: *edge-api
+    container_name: ${KEY_NAME}-edge-api-3
+
+  edge-api-router:
+    image: edge-api-router:latest
+    build:
+      context: ${EDGE_API_BUILD_CONTEXT:-..}
+      dockerfile: edge-api-router/Dockerfile
+    container_name: ${KEY_NAME}-edge-api-router
+    environment:
+      EDGE_API_HOSTS: ${EDGE_API_HOSTS:-${KEY_NAME}-edge-api ${KEY_NAME}-edge-api-2 ${KEY_NAME}-edge-api-3}
+      EDGE_API_PORT: ${EDGE_API_PORT:-18080}
+    depends_on:
+      - edge-api
+      - edge-api-2
+      - edge-api-3
+    networks:
+      - chain-public
+    restart: unless-stopped
+
+networks:
+  chain-public:
+    name: chain-public
+    external: true

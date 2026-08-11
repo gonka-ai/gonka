@@ -376,9 +376,9 @@ func TestEscrowRotationPreparePromotesRegularEscrowsOnTempCreateFailure(t *testi
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store}
-	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
-	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g := &Gateway{store: store, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.prepareBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g.prepareBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -467,12 +467,33 @@ func TestEscrowRotationFinishDoesNotSettleTempWhenRegularCreateFails(t *testing.
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store}
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g := &Gateway{store: store, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
+}
+
+func TestNewRotationDevshardStateDoesNotForceRoutePrefix(t *testing.T) {
+	record := newRotationDevshardState(&CreateDevshardEscrowResult{EscrowID: 99}, EscrowRotationModelSettings{
+		ModelID:       "Qwen/Test",
+		PrivateKeyEnv: "DEVSHARD_PRIVATE_KEY",
+	}, rotationRoleTemp, 10)
+
+	require.Equal(t, "99", record.ID)
+	require.Equal(t, "Qwen/Test", record.Model)
+	require.Equal(t, "DEVSHARD_PRIVATE_KEY", record.PrivateKeyEnv)
+	require.Empty(t, record.RoutePrefix)
+	require.True(t, record.Active)
+	require.Equal(t, rotationRoleTemp, record.RotationRole)
+	require.EqualValues(t, 10, record.RotationEpoch)
+}
+
+// TestNewRotationDevshardStateDoesNotForceProtocolVersion is the 0.2.14 name;
+// protocol_version was replaced by route_prefix.
+func TestNewRotationDevshardStateDoesNotForceProtocolVersion(t *testing.T) {
+	TestNewRotationDevshardStateDoesNotForceRoutePrefix(t)
 }
 
 func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
@@ -538,7 +559,7 @@ func TestEscrowRotationSkipsCreateWhenModelAbsentFromNetwork(t *testing.T) {
 	)
 
 	g := &Gateway{store: store, capacity: capacity, rotationBreakers: make(map[string]*rotationBreaker)}
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 0, createAttempts, "must not create escrow for a model absent from the network")
 	require.Equal(t, []string{"12"}, settled, "stranded temp escrow must still be settled")
@@ -600,7 +621,7 @@ func TestEscrowRotationCreatesWhenModelPresentInNetwork(t *testing.T) {
 	)
 
 	g := &Gateway{store: store, capacity: capacity, rotationBreakers: make(map[string]*rotationBreaker)}
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 11}, settings)
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 11}, settings)
 
 	require.Equal(t, 2, createAttempts, "must create escrows for a model the network serves")
 }
@@ -654,8 +675,8 @@ func TestEscrowRotationFinishSettlesTempFromCurrentLatestEpoch(t *testing.T) {
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store}
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g := &Gateway{store: store, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 2, createAttempts)
 	require.Equal(t, []string{"12"}, settled)
@@ -719,8 +740,8 @@ func TestEscrowRotationPrepareDeactivatesRegularWithoutSettlementWhenSettlementD
 
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
-	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}}
-	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.prepareBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -787,8 +808,8 @@ func TestEscrowRotationFinishDeactivatesTempWithoutSettlementWhenSettlementDisab
 
 	rt := &devshardRuntime{id: "12"}
 	rt.active.Store(true)
-	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}}
-	g.finishBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g := &Gateway{store: store, runtimes: map[string]*devshardRuntime{"12": rt}, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.finishBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, 1, createAttempts)
 	require.Equal(t, 0, settleAttempts)
@@ -865,8 +886,8 @@ func TestEscrowRotationPrepareRotatesModelsIndependently(t *testing.T) {
 		gatewaySettleDevshardOnChain = oldSettle
 	})
 
-	g := &Gateway{store: store}
-	g.prepareBridgeEscrows(context.Background(),ChainPhaseSnapshot{EpochIndex: 10}, settings)
+	g := &Gateway{store: store, rotationBreakers: make(map[string]*rotationBreaker)}
+	g.prepareBridgeEscrows(context.Background(), ChainPhaseSnapshot{EpochIndex: 10}, settings)
 
 	require.Equal(t, []string{"13"}, settled)
 	state, ok, err := store.LoadState()
@@ -928,9 +949,10 @@ func TestEscrowRotationUsesEpochSwitchHeightDuringPoC(t *testing.T) {
 	})
 
 	g := &Gateway{
-		store:     store,
-		settings:  settings,
-		phaseGate: &ChainPhaseGate{},
+		store:            store,
+		settings:         settings,
+		phaseGate:        &ChainPhaseGate{},
+		rotationBreakers: make(map[string]*rotationBreaker),
 	}
 	g.phaseGate.storeSnapshot(ChainPhaseSnapshot{
 		BlockHeight:            350,

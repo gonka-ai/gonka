@@ -308,36 +308,19 @@ Important relationships:
 
 ### `ParticipantRequestLimiter`
 
-`ParticipantRequestLimiter` is a shared process-wide **reactive** limiter keyed
-by participant identity (gonka validator address, bech32). Automatic quarantine
-can also be scoped by model ID, so a participant can be suppressed for one model
-without suppressing unrelated models.
+`ParticipantRequestLimiter` is a shared process-wide **reactive** limiter keyed by participant identity (gonka validator address, bech32).
 
 It is responsible for:
 
-- probe-quarantining a host after upstream `429`/`503`, non-EOF inference
-  transport failures, inference `404`/`403`, timestamp drift, or EOF soft
-  failures that raise the unified strike counter to the threshold
-- shadow-quarantining a host after empty-stream soft failures that raise the
-  unified strike counter to the threshold, stalled winners, or during
-  post-quarantine probation
-- applying time-based quarantine (30 min for transport/empty-stream/stalled, 60
-  min for 429/503)
-- persisting throttle state, quarantine mode, expiry, `failure_strikes`, and
-  affected model IDs to `gateway.db` so it survives reboots
-- letting `Gateway` skip escrows whose participants are probe-quarantined for
-  the request model, while shadow-quarantined participants still receive
-  no-winner attempts
+- quarantining a host after upstream `429`/`503`, transport failures on inference paths, repeated empty streams, or stalled winners
+- applying time-based quarantine (30 min for transport/empty-stream/stalled, 60 min for 429/503)
+- persisting throttle state to `gateway.db` so it survives reboots
+- letting `Gateway` reject escrows whose participant set includes a quarantined host
 - providing an admin endpoint (`POST /v1/admin/participants/unquarantine`) to manually clear quarantine
 
 Transport failures on non-inference paths (verify-timeout, gossip, etc.) are logged but do **not** trigger quarantine.
 
-Hosts that have never triggered any quarantine signal are **not tracked** and are
-never rate-limited. When a tracked host's quarantine expires, the host enters
-shadow/no-winner probation with two remaining strikes. Each successful
-inference decrements the strike counter; when it reaches zero and tokens are
-recovered, the host is removed from tracking and its persistent record is
-deleted.
+Hosts that have never triggered any quarantine signal are **not tracked** and are never rate-limited. When a tracked host's quarantine expires and tokens recover to the full burst value, the host is removed from tracking and its persistent record is deleted.
 
 See [host-health.md](host-health.md) for the full quarantine trigger table, PerfTracker interaction, and diagnostic log signals.
 

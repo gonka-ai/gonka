@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"log"
-	"strings"
 
 	"devshard/signing"
 	"devshard/state"
@@ -149,10 +148,7 @@ func RecoverSession(
 		return nil, nil, fmt.Errorf("session version required for escrow %s", escrowID)
 	}
 
-	stateOpts := append(smOpts, state.WithVersion(types.EffectiveStateRootAndProtocolVersion))
-	if pv, ok := recoveredProtocolVersion(boundVersion); ok {
-		stateOpts = append(stateOpts, state.WithProtocolVersion(pv))
-	}
+	stateOpts := append(smOpts, state.WithVersion(recoveredVersion))
 
 	sm, err := state.NewStateMachine(
 		escrowID, meta.Config, meta.Group, meta.InitialBalance,
@@ -232,6 +228,12 @@ func RecoverSession(
 				escrowID, backfillFrom, snapNonce, len(backfillRecords))
 			for _, rec := range backfillRecords {
 				sess.diffs = append(sess.diffs, rec.Diff)
+				for slotID, sig := range rec.Signatures {
+					if _, ok := sess.signatures[rec.Nonce]; !ok {
+						sess.signatures[rec.Nonce] = make(map[uint32][]byte)
+					}
+					sess.signatures[rec.Nonce][slotID] = sig
+				}
 			}
 		}
 	}
@@ -242,6 +244,13 @@ func RecoverSession(
 		// new format with the (possibly-empty) cursor for next time.
 		if legacySnapshot || snapshotCursor == nil {
 			saveSnapshot(store, sm, escrowID, meta.LatestNonce, sess.hostSyncNonce)
+		}
+		// Snapshot-only path never runs the replay loop that restores
+		// signatures from DiffRecords. Reload the final-nonce signatures
+		// from the store so settlement can proceed without host round-trips
+		// when they were persisted before the restart.
+		if err := restoreSignaturesFromStore(sess, store, escrowID, meta.LatestNonce); err != nil {
+			return nil, nil, err
 		}
 		return finishRecover(sess, sm)
 	}
@@ -296,26 +305,59 @@ func RecoverSession(
 	return finishRecover(sess, sm)
 }
 
+// restoreSignaturesFromStore loads persisted signatures for nonce into the
+// session. Used on the snapshot-only recovery path where the replay loop
+// (the usual signature restorer) is skipped. Missing/empty is not an error —
+// CollectSignatures can still refill from hosts after ComputeStateRoot
+// fallback in fetchSignature.
+func restoreSignaturesFromStore(sess *Session, store storage.Storage, escrowID string, nonce uint64) error {
+	if store == nil || nonce == 0 {
+		return nil
+	}
+	sigs, err := store.GetSignatures(escrowID, nonce)
+	if err != nil {
+		return fmt.Errorf("get signatures at nonce %d: %w", nonce, err)
+	}
+	if len(sigs) == 0 {
+		return nil
+	}
+	if _, ok := sess.signatures[nonce]; !ok {
+		sess.signatures[nonce] = make(map[uint32][]byte)
+	}
+	for slotID, sig := range sigs {
+		sess.signatures[nonce][slotID] = sig
+	}
+	log.Printf("recover_session escrow=%s signatures_restored nonce=%d slots=%d", escrowID, nonce, len(sigs))
+	return nil
+}
+
 func finishRecover(sess *Session, sm *state.StateMachine) (*Session, *state.StateMachine, error) {
 	if err := sm.RebuildSealedInferenceIndex(); err != nil {
 		return nil, nil, fmt.Errorf("rebuild sealed inference index: %w", err)
 	}
-	return sess, sm, nil
-}
-
-// recoveredProtocolVersion derives protocol compatibility only from explicit
-// protocol-version tokens. Route versions like "v1" stay on the normal path
-// unless the caller provided WithProtocolVersion in smOpts.
-func recoveredProtocolVersion(boundVersion string) (types.ProtocolVersion, bool) {
-	raw := strings.TrimSpace(boundVersion)
-	if raw == "" {
-		return "", false
+	if sess.store == nil {
+		return sess, sm, nil
 	}
-	pv, err := types.ParseProtocolVersion(raw)
+	meta, err := sess.store.GetSessionMeta(sess.escrowID)
 	if err != nil {
-		return "", false
+		return nil, nil, fmt.Errorf("get session meta for validation obs rebuild: %w", err)
 	}
-	return pv, true
+	var records []types.DiffRecord
+	if meta.LatestNonce > 0 {
+		records, err = sess.store.GetDiffs(sess.escrowID, 1, meta.LatestNonce)
+		if err != nil {
+			return nil, nil, fmt.Errorf("get diffs for validation obs rebuild: %w", err)
+		}
+	}
+	if err := storage.RebuildValidationObsFromDiffs(
+		sess.store,
+		sess.escrowID,
+		records,
+		storage.SealedInferenceIDsSorted(sm.ExportSealedNonces()),
+	); err != nil {
+		return nil, nil, fmt.Errorf("rebuild validation obs: %w", err)
+	}
+	return sess, sm, nil
 }
 
 // saveSnapshot is the synchronous snapshot writer used during recovery.

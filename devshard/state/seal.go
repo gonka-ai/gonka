@@ -1,6 +1,7 @@
 package state
 
 import (
+	"encoding/json"
 	"fmt"
 	"slices"
 
@@ -229,6 +230,7 @@ func (sm *StateMachine) drainLiveIntoSealedAccLocked(sealNonce uint64) error {
 
 	for _, id := range ids {
 		rec := sm.state.Inferences[id]
+		sm.settleLiveRecordLocked(rec)
 		if err := sm.updateCommittedEntryLocked(id, rec); err != nil {
 			return fmt.Errorf("drain live inference %d: %w", id, err)
 		}
@@ -373,6 +375,10 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 	if len(candidates) == 0 && len(sealed) == 0 {
 		return
 	}
+	candidatesJSON, err := json.Marshal(candidates)
+	if err != nil {
+		candidatesJSON = []byte(fmt.Sprintf("marshal error: %v", err))
+	}
 	args := []any{
 		"subsystem", side,
 		"diagnostic", "auto_seal",
@@ -382,9 +388,9 @@ func (sm *StateMachine) logAutoSealDiagnosticLocked(
 		"inference_seal_grace_nonces", sealGraceNonces,
 		"inference_seal_grace_seconds", graceSeconds,
 		"state_clock_confirmed_at", stateClock,
+		"candidates", string(candidatesJSON),
 		"sealed_ids", sealed,
 		"sealed_count", len(sealed),
-		"candidates_count", len(candidates),
 		"live_inferences_count", len(sm.state.Inferences),
 	}
 	if clockWin.Known {
@@ -618,11 +624,34 @@ func (sm *StateMachine) persistLiveInferenceObsLocked(id uint64, rec *types.Infe
 	return sm.upsertInferenceObsLocked(id, sealNonce, rec)
 }
 
+// persistLiveInferenceObsBestEffortLocked upserts live inference obs for
+// observability only. Storage errors are logged and never fail the tx caller,
+// matching the auto-seal contract (recovery rebuilds from the diff journal).
+func (sm *StateMachine) persistLiveInferenceObsBestEffortLocked(id uint64, rec *types.InferenceRecord) {
+	if err := sm.persistLiveInferenceObsLocked(id, rec); err != nil {
+		logging.Warn("failed to persist live inference obs; continuing (best-effort, recovery rebuilds from diffs)",
+			"subsystem", "state",
+			"escrow_id", sm.state.EscrowID,
+			"inference_id", id,
+			"error", err,
+		)
+	}
+}
+
 // upsertInferenceObsLocked writes or updates the observability row for an inference.
 // On seal, DrainInferenceValidationObs moves live validation counters into sealed storage.
 // Caller must hold sm.mu.
 func (sm *StateMachine) upsertInferenceObsLocked(id, sealedNonce uint64, rec *types.InferenceRecord) error {
-	if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, inferenceObsRow(id, sealedNonce, rec)); err != nil {
+	row := inferenceObsRow(id, sealedNonce, rec)
+	// During a trial apply (persist-first validate/preview) buffer the write and
+	// replay it at commit, so obs is written exactly once and never for a diff
+	// that fails to persist. The row is resolved eagerly here because rec is
+	// mutated/restored after the trial apply returns.
+	if sm.obsDeferred != nil {
+		*sm.obsDeferred = append(*sm.obsDeferred, deferredObsWrite{id: id, row: row, drain: sealedNonce > 0})
+		return nil
+	}
+	if err := sm.inferenceStore.InsertSealedInference(sm.state.EscrowID, row); err != nil {
 		return err
 	}
 	if sealedNonce > 0 {

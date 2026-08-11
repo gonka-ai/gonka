@@ -11,7 +11,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Set up Go
-        uses: actions/setup-go@v3.0.0
+        uses: actions/setup-go@v5
         with:
           go-version: '1.24.2' # Replace with your Go version
 
@@ -54,6 +54,7 @@ jobs:
           files: |
             ./public-html/v2/inferenced/*.zip
             ./public-html/v2/dapi/*.zip
+            ./public-html/v2/edge-api/*.zip
 
       - name: Create tag artifact
         run: echo "${{ github.ref_name }}" > release_tag.txt

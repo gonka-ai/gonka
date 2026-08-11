@@ -2,7 +2,7 @@ package public
 
 import (
 	"bytes"
-	"decentralized-api/utils"
+	"common/utils"
 	"io"
 	"net/http"
 	"net/http/httptest"

@@ -19,12 +19,6 @@ scrape_configs:
       - url: http://api:9100/sd/devshardd
         refresh_interval: 15s
 
-  - job_name: devshard-gateway
-    metrics_path: /metrics
-    static_configs:
-      - targets:
-          - devshard-gateway:8080
-
   - job_name: gonka-node
     static_configs:
       - targets:
@@ -42,3 +36,4 @@ scrape_configs:
     static_configs:
       - targets:
           - cadvisor:8080
+

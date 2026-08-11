@@ -92,7 +92,7 @@ func TestAddAuthzGrantToGenesis_AddInitAndUpsert(t *testing.T) {
 	app := make(map[string]json.RawMessage)
 
 	// Prepare a MsgGrant with a GenericAuthorization
-	typeURL := "/inference.inference.MsgStartInference"
+	typeURL := "/inference.inference.MsgClaimRewards"
 	expire := time.Now().Add(24 * time.Hour)
 	genAuth := authztypes.NewGenericAuthorization(typeURL)
 	// Create deterministic bytes for addresses (20 bytes required)
@@ -169,7 +169,7 @@ func TestAddAuthzGrantToGenesis_AddInitAndUpsert(t *testing.T) {
 	}
 
 	// 3) Add different type_url – should append (now total 2)
-	genAuth3 := authztypes.NewGenericAuthorization("/inference.inference.MsgFinishInference")
+	genAuth3 := authztypes.NewGenericAuthorization("/inference.inference.MsgSubmitSeed")
 	msg3, err := authztypes.NewMsgGrant(sdk.MustAccAddressFromBech32(msg.Granter), sdk.MustAccAddressFromBech32(msg.Grantee), genAuth3, &newExpire)
 	if err != nil {
 		t.Fatalf("failed to create msg grant3: %v", err)

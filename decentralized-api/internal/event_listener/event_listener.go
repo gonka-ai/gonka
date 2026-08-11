@@ -9,9 +9,6 @@ import (
 	"decentralized-api/internal/bls"
 	"decentralized-api/internal/event_listener/chainevents"
 	"decentralized-api/internal/startup"
-	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
-	"decentralized-api/observability"
 	"decentralized-api/statsstorage"
 	"decentralized-api/upgrade"
 	"encoding/json"
@@ -21,6 +18,8 @@ import (
 	"strconv"
 	"sync/atomic"
 	"time"
+
+	"common/logging"
 
 	"github.com/gorilla/websocket"
 	"github.com/productscience/inference/x/inference/types"
@@ -44,7 +43,6 @@ const (
 type EventListener struct {
 	nodeBroker            *broker.Broker
 	configManager         *apiconfig.ConfigManager
-	validator             *validation.InferenceValidator
 	transactionRecorder   cosmosclient.InferenceCosmosClient
 	blsManager            *bls.BlsManager
 	nodeCaughtUp          atomic.Bool
@@ -96,7 +94,6 @@ func NewEventListener(
 	configManager *apiconfig.ConfigManager,
 	offChainValidator pocValidator,
 	nodeBroker *broker.Broker,
-	validator *validation.InferenceValidator,
 	transactionRecorder cosmosclient.InferenceCosmosClient,
 	phaseTracker *chainphase.ChainPhaseTracker,
 	cancelFunc context.CancelFunc,
@@ -111,14 +108,12 @@ func NewEventListener(
 		&transactionRecorder,
 		phaseTracker,
 		DefaultReconciliationConfig,
-		validator,
 	)
 
 	eventHandlers := []EventHandler{
 		&BlsTransactionEventHandler{},
 		&InferenceFinishedEventHandler{},
 		&InferenceStatusUpdatedEventHandler{},
-		&InferenceValidationEventHandler{},
 		&SubmitProposalEventHandler{},
 		&DevshardEscrowCreatedEventHandler{},
 		&DevshardEscrowSettledEventHandler{},
@@ -132,14 +127,13 @@ func NewEventListener(
 		nodeBroker:            nodeBroker,
 		transactionRecorder:   transactionRecorder,
 		configManager:         configManager,
-		validator:             validator,
 		phaseTracker:          phaseTracker,
 		dispatcher:            dispatcher,
 		cancelFunc:            cancelFunc,
 		blsManager:            blsManager,
 		eventHandlers:         eventHandlers,
 		blockObserver:         bo,
-		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, validator, configManager),
+		rewardRecoveryChecker: startup.NewRewardRecoveryChecker(phaseTracker, &transactionRecorder, configManager),
 	}
 	for _, opt := range opts {
 		opt(el)
@@ -503,19 +497,11 @@ func (e *InferenceFinishedEventHandler) CanHandle(event *chainevents.JSONRPCResp
 	return len(event.Result.Events["inference_finished.inference_id"]) > 0
 }
 
-func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
-	ids := event.Result.Events["inference_finished.inference_id"]
-	_, op := observability.Inference.StartValidationEvent(context.Background(), len(ids))
-	defer func() { op.FinishErr(&err) }()
-
-	if el.isNodeSynced() {
-		el.validator.SampleInferenceToValidate(ids, el.transactionRecorder)
-	}
+func (e *InferenceFinishedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, recErr := parseInferenceFinishedRecords(event.Result.Events)
-	err = recErr
+	records, err := parseInferenceFinishedRecords(event.Result.Events)
 	if err != nil {
 		logging.Warn("Failed to parse inference_finished records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -639,9 +625,6 @@ func parseEventInt64(events map[string][]string, key string, idx int) (int64, er
 	return parsed, nil
 }
 
-type InferenceValidationEventHandler struct {
-}
-
 type inferenceStatusUpdateRecord struct {
 	InferenceID string
 	Status      string
@@ -658,16 +641,11 @@ func (e *InferenceStatusUpdatedEventHandler) CanHandle(event *chainevents.JSONRP
 	return len(event.Result.Events["inference_status_updated.inference_id"]) > 0
 }
 
-func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) (err error) {
-	ids := event.Result.Events["inference_status_updated.inference_id"]
-	_, op := observability.Inference.StartStatusUpdateEvent(context.Background(), len(ids))
-	defer func() { op.FinishErr(&err) }()
-
+func (e *InferenceStatusUpdatedEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
 	if el.statsStorage == nil {
 		return nil
 	}
-	records, recErr := parseInferenceStatusUpdatedRecords(event.Result.Events)
-	err = recErr
+	records, err := parseInferenceStatusUpdatedRecords(event.Result.Events)
 	if err != nil {
 		logging.Warn("Failed to parse inference_status_updated records for stats storage", types.EventProcessing, "error", err)
 		return nil
@@ -709,22 +687,6 @@ func parseInferenceStatusUpdatedRecords(events map[string][]string) ([]inference
 		})
 	}
 	return records, nil
-}
-
-func (e *InferenceValidationEventHandler) GetName() string {
-	return "inference_validation"
-}
-
-func (e *InferenceValidationEventHandler) CanHandle(event *chainevents.JSONRPCResponse) bool {
-	needsRevalidation := event.Result.Events["inference_validation.needs_revalidation"]
-	return len(needsRevalidation) > 0 && needsRevalidation[0] == "true"
-}
-
-func (e *InferenceValidationEventHandler) Handle(event *chainevents.JSONRPCResponse, el *EventListener) error {
-	if el.isNodeSynced() {
-		el.validator.VerifyInvalidation(event.Result.Events, el.transactionRecorder)
-	}
-	return nil
 }
 
 type SubmitProposalEventHandler struct{}

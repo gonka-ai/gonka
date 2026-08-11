@@ -4,8 +4,8 @@ import (
 	"context"
 	"database/sql"
 	"decentralized-api/apiconfig"
+	"common/utils"
 	"decentralized-api/cosmosclient"
-	cosmos_client "decentralized-api/cosmosclient"
 	"decentralized-api/internal"
 	"errors"
 
@@ -408,7 +408,7 @@ func (q *BridgeQueue) commitReceipt(ctx context.Context, receipt BridgeReceipt, 
 // owner's Cosmos address from its public key. The same content fields feed the
 // confirmation query, so the on-chain content hash matches exactly.
 func (q *BridgeQueue) buildBridgeExchangeMsg(receipt BridgeReceipt, block BridgeBlock) (*types.MsgBridgeExchange, error) {
-	cosmosAddress, err := cosmos_client.PubKeyToAddress(receipt.OwnerPubKey)
+	cosmosAddress, err := utils.PubKeyToAddress(receipt.OwnerPubKey)
 	if err != nil {
 		return nil, fmt.Errorf("Bridge: Failed to derive Cosmos address from public key %q: %w", receipt.OwnerPubKey, err)
 	}
@@ -520,19 +520,22 @@ const (
 // Skip only when this feeder can never successfully vote this receipt.
 // Everything else (chain down, unknown msg, OOG, mint fail, epoch query, …)
 // stays retry so the cursor does not advance over uncertain state.
+//
+// BroadcastTxSync returns wrapped text (not typed sentinel errors), so we
+// match against types.Err*.Error() — the registered message text — rather than
+// duplicating literals here. Prefer ABCI codes later if the client surfaces them.
 func classifyBridgeExchangeSubmit(err error) (bridgeSubmitAction, string) {
 	switch {
 	case err == nil:
 		return bridgeSubmitRetry, bridgeRetryUncertain
-	case errContainsFold(err, "validator has already validated this transaction"):
+	case errContainsFold(err, types.ErrBridgeAlreadyValidated.Error()):
 		return bridgeSubmitSkip, bridgeSkipAlreadyValidated
-	case errContainsFold(err, "validator not in transaction's epoch group"):
+	case errContainsFold(err, types.ErrBridgeValidatorNotInTxEpochGroup.Error()):
 		return bridgeSubmitSkip, bridgeSkipNotInTxEpoch
-	case errContainsFold(err, "validator not in active participants"),
-		errContainsFold(err, "participant is not active"):
-		// Msg-body inactive check + CheckPermission ErrActiveParticipantNotFound.
+	case errContainsFold(err, types.ErrBridgeValidatorNotInActiveGroup.Error()),
+		errContainsFold(err, types.ErrActiveParticipantNotFound.Error()):
 		return bridgeSubmitSkip, bridgeSkipNotActive
-	case errContainsFold(err, "transaction content mismatch - potential attack detected"):
+	case errContainsFold(err, types.ErrBridgeContentMismatch.Error()):
 		return bridgeSubmitSkip, bridgeSkipContentMismatch
 	default:
 		return bridgeSubmitRetry, bridgeRetryUncertain

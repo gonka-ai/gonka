@@ -1,12 +1,12 @@
 package cosmosclient
 
 import (
+	"common/logging"
 	"context"
 	"crypto/rand"
 	"decentralized-api/apiconfig"
 	"decentralized-api/cosmosclient/tx_manager"
 	"decentralized-api/internal/nats/client"
-	"decentralized-api/logging"
 	"decentralized-api/utils"
 	"errors"
 	"fmt"
@@ -229,8 +229,6 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 	batchingCfg := config.GetTxBatchingConfig()
 	if !batchingCfg.Disabled {
 		batchConfig := tx_manager.BatchConfig{
-			FlushSize:                batchingCfg.FlushSize,
-			FlushTimeout:             time.Duration(batchingCfg.FlushTimeoutSeconds) * time.Second,
 			ValidationV2FlushSize:    batchingCfg.ValidationV2FlushSize,
 			ValidationV2FlushTimeout: time.Duration(batchingCfg.ValidationV2FlushTimeoutSeconds) * time.Second,
 		}
@@ -246,8 +244,7 @@ func NewInferenceCosmosClient(ctx context.Context, addressPrefix string, config 
 		client.batchConsumer = batchConsumer
 		client.batchingEnabled = true
 		logging.Info("Transaction batching enabled", inferencetypes.Messages,
-			"flushSize", batchingCfg.FlushSize,
-			"flushTimeoutSeconds", batchingCfg.FlushTimeoutSeconds,
+			"validationV2FlushSize", batchingCfg.ValidationV2FlushSize,
 			"validationV2FlushTimeoutSeconds", batchingCfg.ValidationV2FlushTimeoutSeconds)
 	}
 
@@ -259,9 +256,6 @@ type CosmosMessageClient interface {
 	SignBytes(seed []byte) ([]byte, error)
 	DecryptBytes(ciphertext []byte) ([]byte, error)
 	EncryptBytes(plaintext []byte) ([]byte, error)
-	StartInference(transaction *inferenceapi.MsgStartInference) error
-	FinishInference(transaction *inferenceapi.MsgFinishInference) error
-	ReportValidation(transaction *inferenceapi.MsgValidation) error
 	SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error
 	SubmitPocValidationsV2(transaction *inferencetypes.MsgSubmitPocValidationsV2) error
 	SubmitPoCV2StoreCommit(transaction *inferencetypes.MsgPoCV2StoreCommit) error
@@ -387,32 +381,6 @@ func (icc *InferenceCosmosClient) EncryptBytes(plaintext []byte) ([]byte, error)
 		return nil, err
 	}
 	return bytes, nil
-}
-
-func (icc *InferenceCosmosClient) StartInference(transaction *inferenceapi.MsgStartInference) error {
-	transaction.Creator = icc.Address
-	if icc.batchingEnabled {
-		return icc.batchConsumer.PublishStartInference(transaction)
-	}
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) FinishInference(transaction *inferenceapi.MsgFinishInference) error {
-	transaction.Creator = icc.Address
-	transaction.ExecutedBy = icc.Address
-	if icc.batchingEnabled {
-		return icc.batchConsumer.PublishFinishInference(transaction)
-	}
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
-}
-
-func (icc *InferenceCosmosClient) ReportValidation(transaction *inferenceapi.MsgValidation) error {
-	transaction.Creator = icc.Address
-	logging.Info("Reporting validation", inferencetypes.Validation, "value", transaction.Value, "type", fmt.Sprintf("%T", transaction), "creator", transaction.Creator)
-	_, err := icc.manager.SendTransactionAsyncWithRetry(transaction)
-	return err
 }
 
 func (icc *InferenceCosmosClient) SubmitNewUnfundedParticipant(transaction *inferenceapi.MsgSubmitNewUnfundedParticipant) error {

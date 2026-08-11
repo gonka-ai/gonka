@@ -1,7 +1,6 @@
 package com.productscience.data
 
 import com.google.gson.annotations.SerializedName
-import com.productscience.INFERENCE_STAGE_SLACK_BLOCKS
 
 data class EpochResponse(
     @SerializedName("block_height")
@@ -20,15 +19,51 @@ data class EpochResponse(
     @SerializedName("active_confirmation_poc_event")
     val activeConfirmationPocEvent: ConfirmationPoCEvent? = null
 ) {
-    val safeForInference: Boolean =
-        if (phase == EpochPhase.Inference) {
-            val blocksUntilEnd = nextEpochStages.pocStart - blockHeight
-            blocksUntilEnd > INFERENCE_STAGE_SLACK_BLOCKS
+    val safeForInference: Boolean
+        get() = if (phase == EpochPhase.Inference) {
+            nextEpochStages.pocStart - blockHeight > INFERENCE_STAGE_SLACK_BLOCKS
         } else {
             false
         }
 
+    fun findStageSafeInferenceBlock(
+        earliestBlock: Long,
+        minimumSlackBeforeNextPoc: Long = INFERENCE_STAGE_SLACK_BLOCKS,
+    ): StageSafeInferenceBlock? {
+        require(minimumSlackBeforeNextPoc >= 0) { "minimumSlackBeforeNextPoc must be non-negative" }
+
+        val epochLength = nextEpochStages.pocStart - epochStages.pocStart
+        require(epochLength > 0) { "epoch stages must advance across epochs" }
+
+        val firstInferenceWindowStart = epochStages.claimMoney + 1
+        val firstInferenceWindowNextPoc = epochStages.nextPocStart
+        val firstCandidateWindowIndex = maxOf(0L, (earliestBlock - firstInferenceWindowStart) / epochLength)
+
+        for (windowIndex in firstCandidateWindowIndex..firstCandidateWindowIndex + 1) {
+            val windowStart = firstInferenceWindowStart + windowIndex * epochLength
+            val nextPocStart = firstInferenceWindowNextPoc + windowIndex * epochLength
+            val candidateBlock = maxOf(blockHeight + 1, earliestBlock, windowStart)
+            val latestSafeBlock = nextPocStart - minimumSlackBeforeNextPoc - 1
+            if (candidateBlock <= latestSafeBlock) {
+                return StageSafeInferenceBlock(
+                    block = candidateBlock,
+                    inferenceWindowStart = windowStart,
+                    nextPocStart = nextPocStart,
+                )
+            }
+        }
+
+        return null
+    }
 }
+
+const val INFERENCE_STAGE_SLACK_BLOCKS = 3L
+
+data class StageSafeInferenceBlock(
+    val block: Long,
+    val inferenceWindowStart: Long,
+    val nextPocStart: Long,
+)
 
 data class LatestEpochDto(
     val index: Long,
@@ -110,6 +145,8 @@ data class EpochGroupDataResponse(
 data class EpochGroupData(
     @SerializedName("epoch_index")
     val epochIndex: Long = 0,
+    @SerializedName("epoch_group_id")
+    val epochGroupId: Long = 0,
     @SerializedName("poc_start_block_height")
     val pocStartBlockHeight: Long = 0,
     @SerializedName("model_id")

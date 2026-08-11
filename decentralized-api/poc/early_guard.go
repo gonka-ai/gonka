@@ -10,7 +10,7 @@ import (
 	"strconv"
 	"sync"
 
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/poc/earlyshare"
 
 	grpctypes "github.com/cosmos/cosmos-sdk/types/grpc"
@@ -93,9 +93,9 @@ func (g *EarlyShareGuard) DeleteStage(ctx context.Context, stageHeight int64) {
 // The query is pinned to the target block height (x-cosmos-block-height), so
 // the captured snapshot is the consensus state at exactly that height. Every
 // validator capturing the same stage therefore records identical checkpoints,
-// regardless of when in the window its capture actually runs — the capture can
-// be retried on later blocks and still lands on the same snapshot, as long as
-// the queried node retains state for the target height.
+// regardless of when in the window its capture actually runs: the capture can be
+// retried on later blocks and still lands on the same snapshot, as long as the
+// queried node retains state for the target height.
 func (g *EarlyShareGuard) MaybeCapture(ctx context.Context, qc earlyShareQueryClient, stageHeight, target, capturedAt int64) {
 	if !g.Enabled() || g.store == nil {
 		return
@@ -211,7 +211,8 @@ type earlyGuardOutcome int
 const (
 	earlyGuardPass earlyGuardOutcome = iota
 	earlyGuardVoteNo
-	earlyGuardRetry
+	earlyGuardRetry        // validatee did not answer; votes no once retries run out
+	earlyGuardAbstainRetry // we could not run the check; never votes
 )
 
 func earlyShareKey(participant, modelID string) string {
@@ -418,8 +419,8 @@ func (g *EarlyShareGuard) decide(
 }
 
 // checkInclusion verifies that sampled early artifacts are present unchanged in
-// the final commitment. Cryptographic mismatches are hard failures; transient
-// network errors ask the validator to retry in enforce mode.
+// the final commitment. A mismatch is a hard failure, an unreachable validatee is
+// a retry, and a request we cannot build is an abstain.
 func (g *EarlyShareGuard) checkInclusion(
 	ctx context.Context,
 	pf proofFetcher,
@@ -456,6 +457,9 @@ func (g *EarlyShareGuard) checkInclusion(
 		if isPermanentProofError(err) {
 			return earlyGuardVoteNo, fmt.Sprintf("inclusion_early_proof_invalid: %v", err)
 		}
+		if errors.Is(err, ErrLocalRequestFailure) {
+			return earlyGuardAbstainRetry, fmt.Sprintf("inclusion_early_proof_local_failure: %v", err)
+		}
 		logging.Debug("EarlyShareGuard: early inclusion proof unavailable (transient)", types.PoC,
 			"participant", work.address, "error", err)
 		return earlyGuardRetry, fmt.Sprintf("inclusion_early_proof_unavailable: %v", err)
@@ -481,6 +485,9 @@ func (g *EarlyShareGuard) checkInclusion(
 	if err != nil {
 		if isPermanentProofError(err) {
 			return earlyGuardVoteNo, fmt.Sprintf("inclusion_final_proof_invalid: %v", err)
+		}
+		if errors.Is(err, ErrLocalRequestFailure) {
+			return earlyGuardAbstainRetry, fmt.Sprintf("inclusion_final_proof_local_failure: %v", err)
 		}
 		logging.Debug("EarlyShareGuard: final by-nonce inclusion proof unavailable (transient)", types.PoC,
 			"participant", work.address, "error", err)

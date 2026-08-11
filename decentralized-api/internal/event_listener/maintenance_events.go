@@ -7,7 +7,7 @@ import (
 
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/event_listener/chainevents"
-	"decentralized-api/logging"
+	"common/logging"
 
 	"github.com/productscience/inference/x/inference/types"
 )

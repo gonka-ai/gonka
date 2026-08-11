@@ -37,6 +37,9 @@ func TestLoad_Defaults(t *testing.T) {
 	if cfg.BasePort != 5000 {
 		t.Errorf("BasePort = %d, want %d", cfg.BasePort, 5000)
 	}
+	if cfg.DrainKillGrace != DefaultDrainKillGrace {
+		t.Errorf("DrainKillGrace = %v, want %v", cfg.DrainKillGrace, DefaultDrainKillGrace)
+	}
 }
 
 func TestLoad_CustomValues(t *testing.T) {

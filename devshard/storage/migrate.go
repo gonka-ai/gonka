@@ -140,7 +140,7 @@ func MigrateLegacySQLite(legacyPath string, dest Storage, resolveEpoch EpochReso
 
 		version := ls.version
 		if version == "" {
-			version = types.SessionVersionV1
+			version = types.DefaultStateRootVersion
 		}
 		if err := dest.CreateSession(CreateSessionParams{
 			EscrowID:       ls.escrowID,

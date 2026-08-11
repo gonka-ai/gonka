@@ -2,7 +2,6 @@ package storage
 
 import (
 	"os"
-	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -43,33 +42,6 @@ func TestHasSQLiteSessions_corruptMeta(t *testing.T) {
 
 	_, err := HasSQLiteSessions(dir)
 	require.Error(t, err)
-}
-
-func TestHasSQLiteArtifacts_missingStore(t *testing.T) {
-	dir := filepath.Join(t.TempDir(), "missing")
-	ok, err := HasSQLiteArtifacts(dir)
-	require.NoError(t, err)
-	require.False(t, ok)
-}
-
-func TestHasSQLiteArtifacts_metaDB(t *testing.T) {
-	dir := t.TempDir()
-	db, err := openMetaDB(MetaDBPath(dir))
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
-	ok, err := HasSQLiteArtifacts(dir)
-	require.NoError(t, err)
-	require.True(t, ok)
-}
-
-func TestHasSQLiteArtifacts_epochDB(t *testing.T) {
-	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "epoch_7.db"), []byte{}, 0o644))
-
-	ok, err := HasSQLiteArtifacts(dir)
-	require.NoError(t, err)
-	require.True(t, ok)
 }
 
 func TestReadPGBound_absent(t *testing.T) {

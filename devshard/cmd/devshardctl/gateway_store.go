@@ -11,7 +11,8 @@ import (
 )
 
 type GatewaySettings struct {
-	ChainREST                      string                      `json:"chain_rest"`
+	ChainREST                      string                      `json:"chain_rest"` // deprecated: ignored for chain I/O
+	ChainGRPC                      string                      `json:"chain_grpc,omitempty"`
 	PublicAPI                      string                      `json:"public_api"`
 	DefaultModel                   string                      `json:"default_model"`
 	DefaultRequestMaxTokens        uint64                      `json:"default_request_max_tokens"`
@@ -95,7 +96,7 @@ type EscrowRotationModelSettings struct {
 	TempCount     int    `json:"temp_count"`
 	TargetCount   int    `json:"target_count"`
 	Amount        uint64 `json:"amount"`
-	PrivateKeyEnv string `json:"private_key_env"` // trimmed by WithTuningDefaults on settings load
+	PrivateKeyEnv string `json:"private_key_env"`
 }
 
 const (
@@ -389,9 +390,13 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 			active INTEGER NOT NULL DEFAULT 1,
 			rotation_role TEXT NOT NULL DEFAULT '',
 			rotation_epoch INTEGER NOT NULL DEFAULT 0,
-			settlement_pending INTEGER NOT NULL DEFAULT 0,
 			created_at TEXT NOT NULL,
 			updated_at TEXT NOT NULL
+		)`,
+		`CREATE TABLE IF NOT EXISTS gateway_suspicious_hosts (
+			participant_key TEXT PRIMARY KEY,
+			note TEXT NOT NULL DEFAULT '',
+			created_at TEXT NOT NULL
 		)`,
 	}
 	for _, stmt := range stmts {
@@ -440,9 +445,9 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate gateway disabled settings: %w", err)
 	}
-	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+	if err := ensureGatewayDevshardsColumn(db, "route_prefix", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate gateway devshards: %w", err)
+		return nil, fmt.Errorf("migrate gateway devshards route prefix: %w", err)
 	}
 	if err := ensureGatewayDevshardsColumn(db, "rotation_role", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
@@ -454,7 +459,11 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	}
 	if err := ensureGatewayDevshardsColumn(db, "settlement_pending", "INTEGER NOT NULL DEFAULT 0"); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("migrate gateway devshard settlement_pending: %w", err)
+		return nil, fmt.Errorf("migrate gateway devshard settlement pending: %w", err)
+	}
+	if err := ensureGatewayDevshardsColumn(db, "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate gateway devshard protocol version: %w", err)
 	}
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS participant_throttle_state (
 		participant_key TEXT PRIMARY KEY,
@@ -485,13 +494,33 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 		db.Close()
 		return nil, fmt.Errorf("init gateway rotation status table: %w", err)
 	}
-	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS gateway_suspicious_hosts (
-		participant_key TEXT PRIMARY KEY,
-		note TEXT NOT NULL DEFAULT '',
-		created_at TEXT NOT NULL
-	)`); err != nil {
+	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
-		return nil, fmt.Errorf("init gateway suspicious hosts table: %w", err)
+		return nil, fmt.Errorf("migrate participant throttle: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "empty_stream_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle streak: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "eof_transport_failure_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle eof streak: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "model_ids", "TEXT NOT NULL DEFAULT ''"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle model ids: %w", err)
+	}
+	if err := ensureColumn(db, "participant_throttle_state", "failure_strikes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("migrate participant throttle failure strikes: %w", err)
+	}
+	if _, err := db.Exec(`
+		UPDATE participant_throttle_state
+		SET failure_strikes = MAX(IFNULL(empty_stream_streak, 0), IFNULL(eof_transport_failure_streak, 0))
+		WHERE IFNULL(failure_strikes, 0) = 0
+		  AND (IFNULL(empty_stream_streak, 0) > 0 OR IFNULL(eof_transport_failure_streak, 0) > 0)`); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill participant throttle failure strikes: %w", err)
 	}
 	// Write-ahead intent for an escrow create (written before the on-chain tx).
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS escrow_rotation_commitments (
@@ -509,34 +538,6 @@ func NewGatewayStore(path string) (*GatewayStore, error) {
 	if err := ensureColumn(db, "escrow_rotation_commitments", "protocol_version", "TEXT NOT NULL DEFAULT ''"); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("migrate escrow rotation commitments protocol version: %w", err)
-	}
-	if err := ensureColumn(db, "participant_throttle_state", "quarantine_until_utc", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle: %w", err)
-	}
-	if err := ensureColumn(db, "participant_throttle_state", "empty_stream_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle streak: %w", err)
-	}
-	if err := ensureColumn(db, "participant_throttle_state", "eof_transport_failure_streak", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle eof streak: %w", err)
-	}
-	if err := ensureColumn(db, "participant_throttle_state", "model_ids", "TEXT NOT NULL DEFAULT ''"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle models: %w", err)
-	}
-	if err := ensureColumn(db, "participant_throttle_state", "failure_strikes", "INTEGER NOT NULL DEFAULT 0"); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle strikes: %w", err)
-	}
-	if _, err := db.Exec(`
-		UPDATE participant_throttle_state
-		SET failure_strikes = MAX(IFNULL(empty_stream_streak, 0), IFNULL(eof_transport_failure_streak, 0))
-		WHERE IFNULL(failure_strikes, 0) = 0
-		  AND (IFNULL(empty_stream_streak, 0) > 0 OR IFNULL(eof_transport_failure_streak, 0) > 0)`); err != nil {
-		db.Close()
-		return nil, fmt.Errorf("migrate participant throttle strike values: %w", err)
 	}
 
 	return &GatewayStore{db: db}, nil
@@ -661,8 +662,8 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 	state.Settings = state.Settings.WithTuningDefaults()
 
 	rows, err := s.db.Query(`
-		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-		       rotation_role, rotation_epoch, settlement_pending
+		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending
 		FROM gateway_devshards
 		ORDER BY id`)
 	if err != nil {
@@ -682,6 +683,7 @@ func (s *GatewayStore) LoadState() (GatewayState, bool, error) {
 			&active,
 			&devshard.CreatedAt,
 			&devshard.UpdatedAt,
+			&devshard.RoutePrefix,
 			&devshard.ProtocolVersion,
 			&devshard.RotationRole,
 			&devshard.RotationEpoch,
@@ -1023,6 +1025,259 @@ func (s *GatewayStore) LoadRotationStatuses(limit int) ([]GatewayRotationStatus,
 	return statuses, nil
 }
 
+func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
+	now := time.Now().UTC().Format(time.RFC3339Nano)
+	tx, err := s.db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin devshard upsert: %w", err)
+	}
+	defer tx.Rollback()
+	if err := s.upsertDevshardTx(tx, devshard, now); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
+	createdAt := now
+	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
+	// Preserve the existing settlement_pending marker so an unrelated upsert
+	// never silently clears a queued settlement; a brand-new row falls back
+	// to the value carried on devshard.
+	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
+	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
+	if _, err := tx.Exec(`
+		INSERT OR REPLACE INTO gateway_devshards (
+			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
+			protocol_version, rotation_role, rotation_epoch, settlement_pending
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		strings.TrimSpace(devshard.ID),
+		strings.TrimSpace(devshard.PrivateKeyHex),
+		strings.TrimSpace(devshard.PrivateKeyEnv),
+		strings.TrimSpace(devshard.Model),
+		strings.TrimSpace(devshard.StoragePath),
+		gatewayBoolToInt(devshard.Active),
+		createdAt,
+		now,
+		strings.TrimSpace(devshard.RoutePrefix),
+		strings.TrimSpace(devshard.ProtocolVersion),
+		strings.TrimSpace(devshard.RotationRole),
+		devshard.RotationEpoch,
+		settlementPending,
+	); err != nil {
+		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
+	}
+	return nil
+}
+
+// GetDevshard returns the registry record for a single devshard. The second
+// return value is false when no row exists for the id. It is used by lazy
+// hydration to look up the config of a non-resident devshard without loading
+// the entire registry.
+func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
+	id = strings.TrimSpace(id)
+	var devshard GatewayDevshardState
+	var active int
+	var settlementPending int
+	err := s.db.QueryRow(`
+		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, route_prefix,
+		       protocol_version, rotation_role, rotation_epoch, settlement_pending
+		FROM gateway_devshards
+		WHERE id = ?`, id).Scan(
+		&devshard.ID,
+		&devshard.PrivateKeyHex,
+		&devshard.PrivateKeyEnv,
+		&devshard.Model,
+		&devshard.StoragePath,
+		&active,
+		&devshard.CreatedAt,
+		&devshard.UpdatedAt,
+		&devshard.RoutePrefix,
+		&devshard.ProtocolVersion,
+		&devshard.RotationRole,
+		&devshard.RotationEpoch,
+		&settlementPending,
+	)
+	if err == sql.ErrNoRows {
+		return GatewayDevshardState{}, false, nil
+	}
+	if err != nil {
+		return GatewayDevshardState{}, false, fmt.Errorf("get devshard %s: %w", id, err)
+	}
+	devshard.Active = active != 0
+	devshard.SettlementPending = settlementPending != 0
+	return devshard, true, nil
+}
+
+func (s *GatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
+	res, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET settlement_pending = ?, updated_at = ?
+		WHERE id = ?`,
+		gatewayBoolToInt(pending),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("update devshard %s settlement_pending=%t: %w", id, pending, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("devshard %s not found", id)
+	}
+	return nil
+}
+
+func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
+	res, err := s.db.Exec(`
+		UPDATE gateway_devshards
+		SET active = ?, updated_at = ?
+		WHERE id = ?`,
+		gatewayBoolToInt(active),
+		time.Now().UTC().Format(time.RFC3339Nano),
+		strings.TrimSpace(id),
+	)
+	if err != nil {
+		return fmt.Errorf("update devshard %s active=%t: %w", id, active, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("devshard %s not found", id)
+	}
+	return nil
+}
+
+func (s *GatewayStore) DeleteDevshard(id string) error {
+	res, err := s.db.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, strings.TrimSpace(id))
+	if err != nil {
+		return fmt.Errorf("delete devshard %s: %w", id, err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return fmt.Errorf("rows affected for delete devshard %s: %w", id, err)
+	}
+	if n == 0 {
+		return fmt.Errorf("devshard %s not found", id)
+	}
+	return nil
+}
+
+// ParticipantThrottleRow represents a persisted reactive throttle state for one host.
+type ParticipantThrottleRow struct {
+	Key             string
+	ModelIDs        []string
+	Tokens          float64
+	LastRefillAt    time.Time
+	Status          int
+	QuarantineUntil time.Time // wall-clock end of unified quarantine; zero if unset
+	FailureStrikes  int
+}
+
+func (s *GatewayStore) SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	quarStr := ""
+	if !quarantineUntil.IsZero() {
+		quarStr = quarantineUntil.UTC().Format(time.RFC3339Nano)
+	}
+	_, err := s.db.Exec(`
+		INSERT OR REPLACE INTO participant_throttle_state
+			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, failure_strikes, model_ids)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, failureStrikes, strings.Join(normalizeGatewayModelIDs(modelIDs), ","))
+	if err != nil {
+		return fmt.Errorf("save participant throttle %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *GatewayStore) DeleteParticipantThrottle(key string) error {
+	if s == nil || s.db == nil {
+		return nil
+	}
+	_, err := s.db.Exec(`DELETE FROM participant_throttle_state WHERE participant_key = ?`, key)
+	if err != nil {
+		return fmt.Errorf("delete participant throttle %s: %w", key, err)
+	}
+	return nil
+}
+
+func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, error) {
+	if s == nil || s.db == nil {
+		return nil, nil
+	}
+	rows, err := s.db.Query(`
+		SELECT participant_key, tokens, last_refill_at, last_throttle_status,
+		       IFNULL(quarantine_until_utc, '') AS quarantine_until_utc,
+		       IFNULL(failure_strikes, 0) AS failure_strikes,
+		       IFNULL(model_ids, '') AS model_ids
+		FROM participant_throttle_state`)
+	if err != nil {
+		return nil, fmt.Errorf("load participant throttles: %w", err)
+	}
+	defer rows.Close()
+
+	var result []ParticipantThrottleRow
+	for rows.Next() {
+		var row ParticipantThrottleRow
+		var lastRefillStr, quarantineStr, modelIDsStr string
+		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status, &quarantineStr, &row.FailureStrikes, &modelIDsStr); err != nil {
+			return nil, fmt.Errorf("scan participant throttle: %w", err)
+		}
+		row.ModelIDs = splitGatewayModelIDs(modelIDsStr)
+		row.LastRefillAt, err = time.Parse(time.RFC3339Nano, lastRefillStr)
+		if err != nil {
+			return nil, fmt.Errorf("parse last_refill_at for %s: %w", row.Key, err)
+		}
+		if strings.TrimSpace(quarantineStr) != "" {
+			row.QuarantineUntil, err = time.Parse(time.RFC3339Nano, quarantineStr)
+			if err != nil {
+				return nil, fmt.Errorf("parse quarantine_until_utc for %s: %w", row.Key, err)
+			}
+		}
+		result = append(result, row)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return result, nil
+}
+
+func normalizeGatewayModelIDs(modelIDs []string) []string {
+	if len(modelIDs) == 0 {
+		return nil
+	}
+	seen := make(map[string]struct{}, len(modelIDs))
+	out := make([]string, 0, len(modelIDs))
+	for _, modelID := range modelIDs {
+		modelID = strings.TrimSpace(modelID)
+		if modelID == "" {
+			continue
+		}
+		if _, ok := seen[modelID]; ok {
+			continue
+		}
+		seen[modelID] = struct{}{}
+		out = append(out, modelID)
+	}
+	return out
+}
+
+func splitGatewayModelIDs(modelIDs string) []string {
+	modelIDs = strings.TrimSpace(modelIDs)
+	if modelIDs == "" {
+		return nil
+	}
+	return normalizeGatewayModelIDs(strings.Split(modelIDs, ","))
+}
+
 // GatewayEscrowCommitment is the write-ahead intent for one escrow create, keyed by tx hash.
 type GatewayEscrowCommitment struct {
 	TxHash          string
@@ -1057,26 +1312,12 @@ func (s *GatewayStore) SaveCommitment(c GatewayEscrowCommitment) error {
 		c.PrivateKeyEnv,
 		strings.TrimSpace(c.ProtocolVersion),
 		c.BlockHeight,
-		createdAt,
+		createdAt.Format(time.RFC3339Nano),
 	)
 	if err != nil {
 		return fmt.Errorf("save escrow commitment tx=%s: %w", c.TxHash, err)
 	}
 	return nil
-}
-
-func scanGatewayDBTime(raw string) time.Time {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return time.Time{}
-	}
-	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-		return t.UTC()
-	}
-	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", raw); err == nil {
-		return t.UTC()
-	}
-	return time.Time{}
 }
 
 // LoadCommitments returns all pending commitments (oldest first).
@@ -1197,147 +1438,6 @@ func (s *GatewayStore) DeleteSuspiciousHosts(participantKeys []string) ([]Gatewa
 	return s.LoadSuspiciousHosts()
 }
 
-func (s *GatewayStore) UpsertDevshard(devshard GatewayDevshardState) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
-	tx, err := s.db.Begin()
-	if err != nil {
-		return fmt.Errorf("begin devshard upsert: %w", err)
-	}
-	defer tx.Rollback()
-	if err := s.upsertDevshardTx(tx, devshard, now); err != nil {
-		return err
-	}
-	return tx.Commit()
-}
-
-func (s *GatewayStore) upsertDevshardTx(tx *sql.Tx, devshard GatewayDevshardState, now string) error {
-	createdAt := now
-	_ = tx.QueryRow(`SELECT created_at FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&createdAt)
-	// Preserve the existing settlement_pending marker so an unrelated upsert
-	// never silently clears a queued settlement; a brand-new row falls back
-	// to the value carried on devshard.
-	settlementPending := gatewayBoolToInt(devshard.SettlementPending)
-	_ = tx.QueryRow(`SELECT settlement_pending FROM gateway_devshards WHERE id = ?`, devshard.ID).Scan(&settlementPending)
-	if _, err := tx.Exec(`
-		INSERT OR REPLACE INTO gateway_devshards (
-			id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-			rotation_role, rotation_epoch, settlement_pending
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-		strings.TrimSpace(devshard.ID),
-		strings.TrimSpace(devshard.PrivateKeyHex),
-		strings.TrimSpace(devshard.PrivateKeyEnv),
-		strings.TrimSpace(devshard.Model),
-		strings.TrimSpace(devshard.StoragePath),
-		gatewayBoolToInt(devshard.Active),
-		createdAt,
-		now,
-		strings.TrimSpace(devshard.ProtocolVersion),
-		strings.TrimSpace(devshard.RotationRole),
-		devshard.RotationEpoch,
-		settlementPending,
-	); err != nil {
-		return fmt.Errorf("upsert gateway devshard %s: %w", devshard.ID, err)
-	}
-	return nil
-}
-
-// GetDevshard returns the registry record for a single devshard. The second
-// return value is false when no row exists for the id. It is used by lazy
-// hydration to look up the config of a non-resident devshard without loading
-// the entire registry.
-func (s *GatewayStore) GetDevshard(id string) (GatewayDevshardState, bool, error) {
-	id = strings.TrimSpace(id)
-	var devshard GatewayDevshardState
-	var active int
-	var settlementPending int
-	err := s.db.QueryRow(`
-		SELECT id, private_key_hex, private_key_env, model, storage_path, active, created_at, updated_at, protocol_version,
-		       rotation_role, rotation_epoch, settlement_pending
-		FROM gateway_devshards
-		WHERE id = ?`, id).Scan(
-		&devshard.ID,
-		&devshard.PrivateKeyHex,
-		&devshard.PrivateKeyEnv,
-		&devshard.Model,
-		&devshard.StoragePath,
-		&active,
-		&devshard.CreatedAt,
-		&devshard.UpdatedAt,
-		&devshard.ProtocolVersion,
-		&devshard.RotationRole,
-		&devshard.RotationEpoch,
-		&settlementPending,
-	)
-	if err == sql.ErrNoRows {
-		return GatewayDevshardState{}, false, nil
-	}
-	if err != nil {
-		return GatewayDevshardState{}, false, fmt.Errorf("get devshard %s: %w", id, err)
-	}
-	devshard.Active = active != 0
-	devshard.SettlementPending = settlementPending != 0
-	return devshard, true, nil
-}
-
-func (s *GatewayStore) SetDevshardActive(id string, active bool) error {
-	res, err := s.db.Exec(`
-		UPDATE gateway_devshards
-		SET active = ?, updated_at = ?
-		WHERE id = ?`,
-		gatewayBoolToInt(active),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(id),
-	)
-	if err != nil {
-		return fmt.Errorf("update devshard %s active=%t: %w", id, active, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
-func (s *GatewayStore) SetDevshardSettlementPending(id string, pending bool) error {
-	res, err := s.db.Exec(`
-		UPDATE gateway_devshards
-		SET settlement_pending = ?, updated_at = ?
-		WHERE id = ?`,
-		gatewayBoolToInt(pending),
-		time.Now().UTC().Format(time.RFC3339Nano),
-		strings.TrimSpace(id),
-	)
-	if err != nil {
-		return fmt.Errorf("update devshard %s settlement_pending=%t: %w", id, pending, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected for devshard %s: %w", id, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
-func (s *GatewayStore) DeleteDevshard(id string) error {
-	res, err := s.db.Exec(`DELETE FROM gateway_devshards WHERE id = ?`, strings.TrimSpace(id))
-	if err != nil {
-		return fmt.Errorf("delete devshard %s: %w", id, err)
-	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return fmt.Errorf("rows affected for delete devshard %s: %w", id, err)
-	}
-	if n == 0 {
-		return fmt.Errorf("devshard %s not found", id)
-	}
-	return nil
-}
-
 func normalizeParticipantKeys(keys []string) []string {
 	if len(keys) == 0 {
 		return nil
@@ -1358,86 +1458,18 @@ func normalizeParticipantKeys(keys []string) []string {
 	return normalized
 }
 
-// ParticipantThrottleRow represents a persisted reactive throttle state for one host.
-type ParticipantThrottleRow struct {
-	Key             string
-	ModelIDs        []string
-	Tokens          float64
-	LastRefillAt    time.Time
-	Status          int
-	QuarantineUntil time.Time // wall-clock end of unified quarantine; zero if unset
-	FailureStrikes  int
-}
-
-func (s *GatewayStore) SaveParticipantThrottle(key string, modelIDs []string, tokens float64, lastRefillAt time.Time, status int, quarantineUntil time.Time, failureStrikes int) error {
-	if s == nil || s.db == nil {
-		return nil
+func scanGatewayDBTime(raw string) time.Time {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}
 	}
-	quarStr := ""
-	if !quarantineUntil.IsZero() {
-		quarStr = quarantineUntil.UTC().Format(time.RFC3339Nano)
+	if t, err := time.Parse(time.RFC3339Nano, raw); err == nil {
+		return t.UTC()
 	}
-	_, err := s.db.Exec(`
-		INSERT OR REPLACE INTO participant_throttle_state
-			(participant_key, tokens, last_refill_at, last_throttle_status, quarantine_until_utc, failure_strikes, model_ids)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		key, tokens, lastRefillAt.UTC().Format(time.RFC3339Nano), status, quarStr, failureStrikes, strings.Join(normalizeModelIDs(modelIDs), ","))
-	if err != nil {
-		return fmt.Errorf("save participant throttle %s: %w", key, err)
+	if t, err := time.Parse("2006-01-02 15:04:05.999999999 -0700 MST", raw); err == nil {
+		return t.UTC()
 	}
-	return nil
-}
-
-func (s *GatewayStore) DeleteParticipantThrottle(key string) error {
-	if s == nil || s.db == nil {
-		return nil
-	}
-	_, err := s.db.Exec(`DELETE FROM participant_throttle_state WHERE participant_key = ?`, key)
-	if err != nil {
-		return fmt.Errorf("delete participant throttle %s: %w", key, err)
-	}
-	return nil
-}
-
-func (s *GatewayStore) LoadParticipantThrottles() ([]ParticipantThrottleRow, error) {
-	if s == nil || s.db == nil {
-		return nil, nil
-	}
-	rows, err := s.db.Query(`
-		SELECT participant_key, tokens, last_refill_at, last_throttle_status,
-		       IFNULL(quarantine_until_utc, '') AS quarantine_until_utc,
-		       IFNULL(failure_strikes, 0) AS failure_strikes,
-		       IFNULL(model_ids, '') AS model_ids
-		FROM participant_throttle_state`)
-	if err != nil {
-		return nil, fmt.Errorf("load participant throttles: %w", err)
-	}
-	defer rows.Close()
-
-	var result []ParticipantThrottleRow
-	for rows.Next() {
-		var row ParticipantThrottleRow
-		var lastRefillStr, quarantineStr, modelIDsStr string
-		if err := rows.Scan(&row.Key, &row.Tokens, &lastRefillStr, &row.Status, &quarantineStr, &row.FailureStrikes, &modelIDsStr); err != nil {
-			return nil, fmt.Errorf("scan participant throttle: %w", err)
-		}
-		row.ModelIDs = splitModelIDs(modelIDsStr)
-		row.LastRefillAt, err = time.Parse(time.RFC3339Nano, lastRefillStr)
-		if err != nil {
-			return nil, fmt.Errorf("parse last_refill_at for %s: %w", row.Key, err)
-		}
-		if strings.TrimSpace(quarantineStr) != "" {
-			row.QuarantineUntil, err = time.Parse(time.RFC3339Nano, quarantineStr)
-			if err != nil {
-				return nil, fmt.Errorf("parse quarantine_until_utc for %s: %w", row.Key, err)
-			}
-		}
-		result = append(result, row)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	return result, nil
+	return time.Time{}
 }
 
 func gatewayBoolToInt(v bool) int {

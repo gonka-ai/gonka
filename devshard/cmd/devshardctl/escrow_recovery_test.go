@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"common/chain"
+
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -70,7 +72,7 @@ func recoveryTestSettings() GatewaySettings {
 func stubRuntimeBuilder(t *testing.T) {
 	t.Helper()
 	saved := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(cfg RuntimeConfig, _, _ string, _ *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(cfg RuntimeConfig, _ runtimeBuildDeps) (*devshardRuntime, error) {
 		return &devshardRuntime{id: cfg.ID, model: cfg.Model}, nil
 	}
 	t.Cleanup(func() { gatewayRuntimeBuilder = saved })
@@ -96,7 +98,7 @@ func stubCreateOnChain(t *testing.T, txHash string, escrowID uint64) {
 func stubQueryTxEscrowID(t *testing.T, fn func(string) (uint64, bool, error)) {
 	t.Helper()
 	saved := gatewayQueryTxEscrowID
-	gatewayQueryTxEscrowID = func(_ context.Context, _ GatewaySettings, txHash string) (uint64, bool, error) {
+	gatewayQueryTxEscrowID = func(_ context.Context, _ *chain.Client, _ GatewaySettings, txHash string) (uint64, bool, error) {
 		return fn(txHash)
 	}
 	t.Cleanup(func() { gatewayQueryTxEscrowID = saved })
@@ -216,7 +218,7 @@ func TestCreateRotationEscrowPersistFailureRecoversViaCommitment(t *testing.T) {
 
 	// Force the persist to fail (runtime build error) on the create path.
 	savedBuilder := gatewayRuntimeBuilder
-	gatewayRuntimeBuilder = func(RuntimeConfig, string, string, *PerfTracker) (*devshardRuntime, error) {
+	gatewayRuntimeBuilder = func(RuntimeConfig, runtimeBuildDeps) (*devshardRuntime, error) {
 		return nil, errors.New("persist boom")
 	}
 	_, err := g.createRotationEscrow(context.Background(), settings, model, rotationRoleTemp, 10)

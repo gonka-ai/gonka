@@ -1,0 +1,114 @@
+name: devshard testenv
+
+on:
+  pull_request:
+    paths:
+      - 'devshard/testenv/**'
+      - 'devshard/chainoracle/**'
+      - 'devshard/runtimeconfig/**'
+      - 'devshard/runtimeparams/**'
+      - 'common/runtimeconfig/**'
+      - 'common/chain/**'
+      - 'decentralized-api/nodemanager/**'
+      - '.github/workflows/devshard-testenv.yml'
+  workflow_dispatch:
+    inputs:
+      integration:
+        description: 'Run all Docker citest suites (auto-discovered matrix, one runner each)'
+        required: false
+        type: boolean
+        default: false
+  issue_comment:
+    types: [created]
+
+jobs:
+  unit:
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    name: testenv unit
+    defaults:
+      run:
+        working-directory: ./devshard
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+          cache-dependency-path: |
+            devshard/go.sum
+            common/go.sum
+            decentralized-api/go.sum
+
+      - name: Run ci-testenv-unit
+        run: make ci-testenv-unit
+
+  # Enumerate the runnable citest suites from the testenv Makefile so new suites
+  # are picked up automatically (no workflow edit needed) and fanned out into the
+  # integration matrix below — one runner per suite.
+  discover:
+    if: |
+      (github.event_name == 'workflow_dispatch' && inputs.integration) ||
+      (
+        github.event_name == 'issue_comment' &&
+        github.event.issue.pull_request &&
+        contains(github.event.comment.body, '/run-testenv') &&
+        (
+          github.event.comment.author_association == 'OWNER' ||
+          github.event.comment.author_association == 'MEMBER'
+        )
+      )
+    runs-on: ubuntu-latest
+    name: discover testenv suites
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+
+      - name: List citest suite targets
+        id: list
+        working-directory: ./devshard/testenv
+        run: |
+          targets="$(make -s list-citest-targets)"
+          echo "Discovered citest suites:"
+          echo "$targets"
+          matrix="$(printf '%s\n' "$targets" | jq -R -s -c 'split("\n") | map(select(length > 0))')"
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+
+  integration:
+    needs: discover
+    runs-on: ubuntu-latest
+    name: testenv ${{ matrix.target }}
+    permissions:
+      contents: read
+      pull-requests: read
+    strategy:
+      fail-fast: false
+      matrix:
+        target: ${{ fromJson(needs.discover.outputs.matrix) }}
+    defaults:
+      run:
+        working-directory: ./devshard/testenv
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25.9'
+          cache-dependency-path: devshard/go.sum
+
+      # Each matrix job runs on its own runner with its own Docker daemon, so the
+      # fixed citest subnet (172.31.0.0/24) never collides across suites. Suites
+      # run in parallel across runners; tests within a suite stay sequential.
+      - name: Build linux devshardd
+        run: make build-devshardd
+
+      - name: Run ${{ matrix.target }}
+        run: make ${{ matrix.target }}

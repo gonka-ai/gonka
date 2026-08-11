@@ -1,8 +1,8 @@
 package broker
 
 import (
+	"common/logging"
 	"decentralized-api/chainphase"
-	"decentralized-api/logging"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"

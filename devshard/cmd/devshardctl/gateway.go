@@ -23,7 +23,10 @@ import (
 	"time"
 
 	devshardpkg "devshard"
+	"common/chain"
+	chaintx "common/chain/tx"
 	"devshard/bridge"
+	"devshard/runtimeparams"
 	"devshard/storage"
 	"devshard/transport"
 	"devshard/types"
@@ -36,6 +39,7 @@ type RuntimeConfig struct {
 	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
 	Model           string `json:"model,omitempty"`
 	StoragePath     string `json:"storage_path,omitempty"`
+	RoutePrefix     string `json:"route_prefix,omitempty"`
 	ProtocolVersion string `json:"protocol_version,omitempty"`
 }
 
@@ -54,11 +58,13 @@ type Gateway struct {
 	perfStore             *PerfStore
 	chatCache             *chatResponseCache
 	apiKeys               map[string]struct{}
-	suspiciousHosts       map[string]struct{}
 	baseStorageDir        string
 	rotatorStop           chan struct{}
 	rotatorDone           chan struct{}
 	rotationBreakers      map[string]*rotationBreaker
+	runtimeParams         *runtimeparams.Managed
+	runtimeParamsClose    func()
+	chainClient           *chain.Client
 	finalizeMu            sync.Mutex
 	settlementMu          sync.Mutex
 	settlementInFlight    map[string]struct{}
@@ -66,6 +72,8 @@ type Gateway struct {
 	replenishmentInFlight map[string]struct{}
 	mu                    sync.Mutex
 	roundRobinSeed        atomic.Uint64
+
+	suspiciousHosts map[string]struct{}
 }
 
 type devshardRuntime struct {
@@ -116,10 +124,9 @@ type runtimeStatus struct {
 	Phase                string `json:"phase,omitempty"`
 	Nonce                uint64 `json:"nonce,omitempty"`
 	Balance              uint64 `json:"balance,omitempty"`
-	ProtocolVersion      string `json:"protocol_version,omitempty"`
+	SessionVersion       string `json:"session_version,omitempty"`
 	ActiveRequests       int64  `json:"active_requests"`
 	ReservedTokens       int64  `json:"reserved_tokens"`
-	SettlementPending    bool   `json:"settlement_pending,omitempty"`
 	ChainPhase           string `json:"chain_phase,omitempty"`
 	ConfirmationPoCPhase string `json:"confirmation_poc_phase,omitempty"`
 	RequestsBlocked      bool   `json:"requests_blocked"`
@@ -230,16 +237,19 @@ func newRuntimeMux(proxy *Proxy) http.Handler {
 	mux.HandleFunc("GET /v1/state", proxy.handleState)
 	mux.HandleFunc("GET /v1/debug/pending", proxy.handleDebugPending)
 	mux.HandleFunc("GET /v1/debug/state", proxy.handleDebugState)
-	mux.HandleFunc("GET /v1/debug/inferences", proxy.handleDebugInferences)
 	mux.HandleFunc("GET /v1/debug/perf", proxy.handleDebugPerf)
 	mux.HandleFunc("GET /v1/debug/pairwise", proxy.handleDebugPairwise)
 	mux.HandleFunc("GET /v1/debug/signatures", proxy.handleDebugSignatures)
+	mux.HandleFunc("GET /v1/debug/inferences", proxy.handleDebugInferences)
 	mux.HandleFunc("POST /v1/debug/signatures/collect", proxy.handleCollectSignatures)
 	mux.HandleFunc("POST /v1/debug/sync-hosts", proxy.handleSyncHosts)
 	return mux
 }
 
-func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfTracker) (*devshardRuntime, error) {
+func buildRuntime(cfg RuntimeConfig, deps runtimeBuildDeps) (*devshardRuntime, error) {
+	if err := deps.validate(); err != nil {
+		return nil, err
+	}
 	legacyStoragePath := strings.TrimSpace(cfg.StoragePath)
 	keyHex := strings.TrimSpace(cfg.PrivateKeyHex)
 	if keyHex == "" && cfg.PrivateKeyEnv != "" {
@@ -249,45 +259,37 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, errRuntimePrivateKeyMissing)
 	}
 
-	model := cfg.Model
-	if model == "" {
-		model = defaultModel
-	}
-
 	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
 	if err := os.MkdirAll(cfg.StoragePath, 0o755); err != nil {
 		return nil, fmt.Errorf("runtime %s: create storage dir: %w", cfg.ID, err)
 	}
 
+	perf := deps.perf
 	if perf == nil {
 		perf = NewPerfTracker(nil)
 	}
 
-	pv, pvErr := types.ParseProtocolVersion(cfg.ProtocolVersion)
-	if pvErr != nil {
-		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, pvErr)
+	br := deps.bridge
+	if br == nil {
+		return nil, fmt.Errorf("runtime %s: chain bridge is required", cfg.ID)
 	}
-
-	br := newRESTBridgeForProtocol(chainREST, pv)
 	if err := migrateGatewayLegacyStorage(cfg.StoragePath, legacyStoragePath, cfg.ID, br); err != nil {
 		return nil, fmt.Errorf("runtime %s: migrate legacy storage: %w", cfg.ID, err)
 	}
-	routePrefix, routePrefixErr := resolveGatewayRoutePrefix()
-	if routePrefixErr != nil {
-		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, routePrefixErr)
+	escrow, err := br.GetEscrow(cfg.ID)
+	if err != nil {
+		return nil, fmt.Errorf("runtime %s: get escrow: %w", cfg.ID, err)
 	}
-	participantAdmission := modelScopedParticipantAdmission{
-		limiter: sharedParticipantRequestLimiter,
-		modelID: model,
-	}
+	model := resolveRuntimeModel(cfg.Model, escrow.ModelID, deps.defaultModel, cfg.ID)
+	routePrefix := resolveRuntimeRoutePrefix(cfg.RoutePrefix)
 	session, sm, err := user.NewHTTPSession(user.HTTPSessionConfig{
 		PrivateKeyHex:    keyHex,
 		EscrowID:         cfg.ID,
 		Bridge:           br,
 		StoragePath:      cfg.StoragePath,
 		RoutePrefix:      routePrefix,
-		RequestAdmission: participantAdmission,
-		ProtocolVersion:  pv,
+		RequestAdmission: sharedParticipantRequestLimiter,
+		Escrow:           escrow,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: create session: %w", cfg.ID, err)
@@ -301,9 +303,7 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 		perf,
 		len(session.Clients()),
 		model,
-		func(participantKey string) bool {
-			return sharedParticipantRequestLimiter.IsBlockedForModel(participantKey, model)
-		},
+		sharedParticipantRequestLimiter.IsBlocked,
 	)
 	redundancy.participantLimiter = sharedParticipantRequestLimiter
 	proxy := &Proxy{
@@ -329,6 +329,43 @@ func buildRuntime(cfg RuntimeConfig, chainREST, defaultModel string, perf *PerfT
 	return rt, nil
 }
 
+func (g *Gateway) runtimeBuildDeps(perf *PerfTracker) runtimeBuildDeps {
+	return g.runtimeBuildDepsFromSettings(perf, g.settings)
+}
+
+func (g *Gateway) runtimeBuildDepsFromSettings(perf *PerfTracker, settings GatewaySettings) runtimeBuildDeps {
+	return runtimeBuildDeps{
+		bridge:       g.chainBridge(),
+		chainClient:  g.chainClient,
+		defaultModel: firstNonEmpty(settings.DefaultModel, g.settings.DefaultModel),
+		perf:         perf,
+	}
+}
+
+func (g *Gateway) chainBridge() bridge.MainnetBridge {
+	if g == nil || g.chainClient == nil {
+		return nil
+	}
+	return bridge.NewGRPCBridge(g.chainClient)
+}
+
+func (g *Gateway) newChainTxManager(settings GatewaySettings, chainID, feeDenom string, feeAmount, gasLimit uint64) (*chaintx.Manager, error) {
+	if g == nil || g.chainClient == nil {
+		return nil, fmt.Errorf("chain gRPC client is not configured")
+	}
+	return newGatewayChainTxClient(g.chainClient.Conn(), settings, chainID, feeDenom, feeAmount, gasLimit)
+}
+
+func resolveRuntimeRoutePrefix(configured string) string {
+	if routePrefix := strings.TrimSpace(configured); routePrefix != "" {
+		return devshardpkg.NormalizeRoutePrefix(routePrefix)
+	}
+	if routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX")); routePrefix != "" {
+		return devshardpkg.NormalizeRoutePrefix(routePrefix)
+	}
+	return devshardpkg.DefaultRoutePrefix()
+}
+
 // defaultMaxConcurrentRuntimeBuilds caps parallel runtime builds at startup: a
 // small keep-alive pool against the shared node LCD, big enough to hide startup
 // latency, small enough to avoid a 429 storm. Overridable per deployment.
@@ -349,26 +386,37 @@ func resolveMaxConcurrentRuntimeBuilds() int {
 	return n
 }
 
-// buildRuntimeBridgeClient returns the HTTP client for chain-LCD queries, sized
-// so the bounded build fan-out reuses keep-alive connections instead of churning
-// them (the default MaxIdleConnsPerHost is only 2).
-func buildRuntimeBridgeClient(limit int) *http.Client {
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.MaxIdleConns = limit
-	transport.MaxIdleConnsPerHost = limit
-	return &http.Client{Timeout: 10 * time.Second, Transport: transport}
+func resolveGatewayRoutePrefix() (string, error) {
+	routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
+	if routePrefix == "" {
+		version := strings.TrimSpace(Version)
+		if version == "" {
+			version = "dev"
+		}
+		routePrefix = devshardpkg.VersionedRoutePrefix(version)
+	}
+	normalized, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
+	if err != nil {
+		return "", err
+	}
+	return normalized, nil
 }
 
-var (
-	runtimeBridgeClientOnce sync.Once
-	runtimeBridgeClient     *http.Client
-)
+func gatewayHostRoutePrefix(override string) string {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		return override
+	}
+	version := strings.TrimSpace(Version)
+	if version == "" {
+		version = "dev"
+	}
+	return devshardpkg.VersionedRoutePrefix(version)
+}
 
-func sharedRuntimeBridgeClient() *http.Client {
-	runtimeBridgeClientOnce.Do(func() {
-		runtimeBridgeClient = buildRuntimeBridgeClient(resolveMaxConcurrentRuntimeBuilds())
-	})
-	return runtimeBridgeClient
+func validateGatewayHostRoutePrefix(routePrefix string) error {
+	_, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
+	return err
 }
 
 // buildReadOnlyRuntime rehydrates a transient, read-only runtime from local
@@ -390,18 +438,13 @@ func buildReadOnlyRuntime(cfg RuntimeConfig, defaultModel string, perf *PerfTrac
 		model = defaultModel
 	}
 	cfg.StoragePath = normalizeStorageDir(cfg.StoragePath)
-	pv, pvErr := types.ParseProtocolVersion(cfg.ProtocolVersion)
-	if pvErr != nil {
-		return nil, fmt.Errorf("runtime %s: %w", cfg.ID, pvErr)
-	}
 	if perf == nil {
 		perf = NewPerfTracker(nil)
 	}
 	session, sm, err := user.NewLocalSession(user.LocalSessionConfig{
-		PrivateKeyHex:   keyHex,
-		EscrowID:        cfg.ID,
-		StoragePath:     cfg.StoragePath,
-		ProtocolVersion: pv,
+		PrivateKeyHex: keyHex,
+		EscrowID:      cfg.ID,
+		StoragePath:   cfg.StoragePath,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("runtime %s: rehydrate local session: %w", cfg.ID, err)
@@ -490,43 +533,6 @@ func isReadOnlyDevshardPath(method, innerPath string) bool {
 	return strings.HasPrefix(innerPath, "/v1/requests/")
 }
 
-func newRESTBridgeForProtocol(chainREST string, pv types.ProtocolVersion) *bridge.RESTBridge {
-	return bridge.NewRESTBridge(chainREST, bridge.WithHTTPClient(sharedRuntimeBridgeClient()))
-}
-
-func resolveGatewayRoutePrefix() (string, error) {
-	routePrefix := strings.TrimSpace(os.Getenv("DEVSHARD_ROUTE_PREFIX"))
-	if routePrefix == "" {
-		version := strings.TrimSpace(Version)
-		if version == "" {
-			version = "dev"
-		}
-		routePrefix = devshardpkg.VersionedRoutePrefix(version)
-	}
-	normalized, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
-	if err != nil {
-		return "", err
-	}
-	return normalized, nil
-}
-
-func gatewayHostRoutePrefix(override string) string {
-	override = strings.TrimSpace(override)
-	if override != "" {
-		return override
-	}
-	version := strings.TrimSpace(Version)
-	if version == "" {
-		version = "dev"
-	}
-	return devshardpkg.VersionedRoutePrefix(version)
-}
-
-func validateGatewayHostRoutePrefix(routePrefix string) error {
-	_, _, err := devshardpkg.ResolveRoutePrefix(routePrefix)
-	return err
-}
-
 // hostSlotCounts builds a slot-count map from a per-slot participant
 // key list. Empty keys (uncommon, but possible if a slot lacks a
 // validator address) are skipped.
@@ -557,7 +563,7 @@ func (rt *devshardRuntime) close() error {
 func (rt *devshardRuntime) retireClose(reason string) error {
 	if rt.session != nil {
 		if err := rt.session.FlushSnapshot(); err != nil {
-			log.Printf("runtime_retire_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
+			log.Printf("runtime_retire_flush_snapshot_error escrow=%s reason=%q error=%v", rt.id, reason, err)
 		}
 	}
 	return rt.close()
@@ -620,19 +626,19 @@ func sessionPhaseLabel(phase types.SessionPhase) string {
 
 func (rt *devshardRuntime) snapshot() runtimeStatus {
 	status := runtimeStatus{
-		ID:                rt.id,
-		Model:             rt.model,
-		Active:            rt.active.Load(),
-		ActiveRequests:    rt.activeUserRequests.Load(),
-		ReservedTokens:    rt.reservedTokens.Load(),
-		SettlementPending: rt.settlementPending.Load(),
+		ID:             rt.id,
+		Model:          rt.model,
+		Active:         rt.active.Load(),
+		ActiveRequests: rt.activeUserRequests.Load(),
+		ReservedTokens: rt.reservedTokens.Load(),
 	}
 	if rt.proxy != nil && rt.proxy.sm != nil && rt.proxy.session != nil {
 		phase := rt.proxy.sm.Phase()
 		status.Phase = sessionPhaseLabel(phase)
+		st := rt.proxy.sm.SnapshotState()
 		status.Nonce = rt.proxy.session.Nonce()
-		status.Balance = rt.proxy.sm.Balance()
-		status.ProtocolVersion = string(rt.proxy.sm.ProtocolVersion())
+		status.Balance = st.Balance
+		status.SessionVersion = st.StateRootAndProtocolVersion
 	}
 	if rt.proxy != nil && rt.proxy.phaseGate != nil {
 		snapshot := rt.proxy.phaseGate.Snapshot()
@@ -697,12 +703,12 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 		metrics:            NewDevshardMetrics(),
 		capacity:           NewCapacityState(),
 		chatCache:          newChatResponseCache(chatResponseCacheTTL, readInt64Env("DEVSHARD_CHAT_CACHE_MAX_BYTES", defaultChatCacheMaxBytes)),
-		suspiciousHosts:    make(map[string]struct{}),
 		settings: GatewaySettings{
 			DefaultModel: defaultModel,
 		},
 		rotationBreakers:   make(map[string]*rotationBreaker),
 		settlementInFlight: make(map[string]struct{}),
+		suspiciousHosts:    make(map[string]struct{}),
 	}
 	g.participantLimiter.SetMetrics(g.metrics)
 	g.metrics.AttachGateway(g)
@@ -713,26 +719,20 @@ func NewGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, defaultMod
 	return g
 }
 
-func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, perfArgs ...*PerfTracker) *Gateway {
+func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, settings GatewaySettings, baseStorageDir string, store *GatewayStore, chainClient *chain.Client, perfArgs ...*PerfTracker) *Gateway {
 	settings = settings.WithTuningDefaults()
 	applyGatewayTuningSettings(settings)
 	g := NewGateway(runtimes, limiter, settings.DefaultModel)
 	g.settings = settings
 	g.baseStorageDir = baseStorageDir
 	g.store = store
-	if store != nil {
-		if hosts, err := store.LoadSuspiciousHosts(); err != nil {
-			log.Printf("load suspicious hosts: %v", err)
-		} else {
-			g.replaceSuspiciousHosts(hosts)
-		}
-	}
+	g.chainClient = chainClient
 	if len(perfArgs) > 0 && perfArgs[0] != nil {
 		g.perf = perfArgs[0]
 	}
 	g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-	if g.phaseGate != nil {
-		g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
+	if g.phaseGate != nil && chainClient != nil {
+		g.phaseGate.SetChainQueryClient(chainClient.InferenceQueryClient())
 	}
 	if g.phaseGate != nil {
 		for _, rt := range g.runtimeOrder {
@@ -741,20 +741,19 @@ func NewManagedGateway(runtimes []*devshardRuntime, limiter *GatewayLimiter, set
 		g.attachCapacityStateToPhaseGate()
 		g.phaseGate.Start()
 	}
-	g.escrowChecker = NewEscrowChecker(func() string {
-		g.mu.Lock()
-		defer g.mu.Unlock()
-		return g.settings.ChainREST
-	})
+	g.escrowChecker = NewEscrowChecker(g.chainBridge)
 	for _, rt := range g.runtimeOrder {
 		g.attachEscrowChecker(rt)
 	}
-	go g.reconcileCommitments(context.Background(), settings)
-	g.startEscrowRotatorIfEnabled()
-	// Settle escrows left pending by a pre-restart drain. Runs synchronously
-	// so the store read completes before the gateway serves traffic; the
-	// settlements it schedules run in their own goroutines.
+	if g.store != nil {
+		if hosts, err := g.store.LoadSuspiciousHosts(); err != nil {
+			log.Printf("gateway: load suspicious hosts: %v", err)
+		} else {
+			g.replaceSuspiciousHosts(hosts)
+		}
+	}
 	g.reconcilePendingSettlements()
+	g.startEscrowRotatorIfEnabled()
 	go g.balanceCheckLoop()
 	return g
 }
@@ -768,12 +767,10 @@ func (g *Gateway) attachRuntimeSharedState(rt *devshardRuntime) {
 		limits := g.outputTokenLimitsForModel(firstNonEmpty(rt.model, g.settings.DefaultModel))
 		rt.proxy.defaultRequestMaxTokens = limits.DefaultMaxTokens
 		rt.proxy.requestMaxTokensCap = limits.MaxTokensCap
-		if rt.proxy.redundancy != nil {
-			rt.proxy.redundancy.suspiciousParticipant = g.isSuspiciousParticipant
-		}
 	}
 	g.attachMetrics(rt)
 	g.attachEscrowChecker(rt)
+	g.attachSuspiciousHosts(rt)
 	g.attachRaceCleanupBarrier(rt)
 	if g.capacity != nil {
 		g.capacity.SetEscrowMembership(rt.id, rt.participantSlotCounts)
@@ -950,7 +947,15 @@ func (g *Gateway) modelAccessError(r *http.Request, model string) error {
 		}
 		return &ModelAccessDeniedError{Model: model, Message: message, StatusCode: http.StatusUnauthorized}
 	default:
-		return nil
+		// Unknown / typo'd modes must not fall open. Treat as api_key.
+		if g.requestHasAPIKey(r) {
+			return nil
+		}
+		message := entry.AccessMessage
+		if message == "" {
+			message = fmt.Sprintf("model %q requires an API key", model)
+		}
+		return &ModelAccessDeniedError{Model: model, Message: message, StatusCode: http.StatusUnauthorized}
 	}
 }
 
@@ -974,37 +979,6 @@ func (g *Gateway) requestHasAPIKey(r *http.Request) bool {
 	_, ok = g.apiKeys[key]
 	g.mu.Unlock()
 	return ok
-}
-
-func (g *Gateway) isSuspiciousParticipant(participantKey string) bool {
-	if g == nil {
-		return false
-	}
-	participantKey = strings.TrimSpace(participantKey)
-	if participantKey == "" {
-		return false
-	}
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	_, ok := g.suspiciousHosts[participantKey]
-	return ok
-}
-
-func (g *Gateway) replaceSuspiciousHosts(hosts []GatewaySuspiciousHost) {
-	if g == nil {
-		return
-	}
-	next := make(map[string]struct{}, len(hosts))
-	for _, host := range hosts {
-		key := strings.TrimSpace(host.ParticipantKey)
-		if key == "" {
-			continue
-		}
-		next[key] = struct{}{}
-	}
-	g.mu.Lock()
-	g.suspiciousHosts = next
-	g.mu.Unlock()
 }
 
 func bearerToken(r *http.Request) (string, bool) {
@@ -1163,16 +1137,6 @@ func (g *Gateway) currentMaxConcurrentPer10000Weight() float64 {
 	return settings.MaxConcurrentPer10000Weight
 }
 
-func (g *Gateway) pocGenerationActive() bool {
-	if g != nil && g.phaseGate != nil {
-		snap := g.phaseGate.Snapshot()
-		if rawPoCGenerationState(snap.EpochPhase, snap.ConfirmationPoCPhase) {
-			return true
-		}
-	}
-	return false
-}
-
 func (g *Gateway) pocOrConfirmationPoCActive() bool {
 	if g != nil && g.phaseGate != nil {
 		switch g.phaseGate.Snapshot().BlockReason {
@@ -1271,6 +1235,9 @@ func (g *Gateway) capacityStatus(models []string, runtimeStatuses map[string]gat
 
 func (g *Gateway) Close() error {
 	var firstErr error
+	if g.runtimeParamsClose != nil {
+		g.runtimeParamsClose()
+	}
 	if g.phaseGate != nil {
 		g.phaseGate.Stop()
 	}
@@ -1299,19 +1266,9 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/v1/admin/devshards", g.handleAdminDevshards)
 	mux.HandleFunc("/v1/admin/devshards/", g.handleAdminDevshardAction)
 	mux.HandleFunc("/v1/admin/escrows", g.handleAdminEscrows)
-	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
 	mux.HandleFunc("/v1/admin/participants/unquarantine", g.handleAdminUnquarantine)
+	mux.HandleFunc("/v1/admin/suspicious-hosts", g.handleAdminSuspiciousHosts)
 	mux.HandleFunc("/v1/debug/rotation", g.handleDebugRotation)
-	mux.HandleFunc("/v1/finalize", g.handleSingleOnly)
-	mux.HandleFunc("/v1/state", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/inferences", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/perf", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/signatures/collect", g.handleSingleOnly)
-	mux.HandleFunc("/v1/debug/sync-hosts", g.handleSingleOnly)
 	mux.HandleFunc("/v1/debug/memstats", g.handleDebugMemStats)
 	// Runtime profiling, admin-gated (see isAdminPath). Mounted at the
 	// canonical /debug/pprof/ path so pprof.Index's sub-profile links resolve.
@@ -1320,6 +1277,16 @@ func (g *Gateway) Handler() http.Handler {
 	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
 	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
 	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+	mux.HandleFunc("/v1/finalize", g.handleSingleOnly)
+	mux.HandleFunc("/v1/state", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/pending", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/state", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/perf", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/pairwise", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/signatures", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/inferences", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/signatures/collect", g.handleSingleOnly)
+	mux.HandleFunc("/v1/debug/sync-hosts", g.handleSingleOnly)
 	mux.HandleFunc("/devshard/", g.handleDevshard)
 	return mux
 }
@@ -1414,7 +1381,6 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	body, model, inputTokens, err := g.parseChatReservation(r, g.settings.DefaultModel)
 	if err != nil {
 		logRequestStage(ctx, "gateway_parse_failed", "error", err)
-		g.recordGatewayRequestOutcome(firstNonEmpty(model, g.settings.DefaultModel), "invalid_request", "invalid_request")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), chatRequestErrorStatus(err, http.StatusBadRequest))
 		return
 	}
@@ -1424,13 +1390,11 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	requestModel := firstNonEmpty(model, g.settings.DefaultModel)
 	if err := g.validatePooledRequestedModel(requestModel); err != nil {
 		logRequestStage(ctx, "gateway_model_rejected", "model", requestModel, "error", err)
-		g.recordGatewayRequestOutcome(requestModel, "model_rejected", "model_rejected")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
 	if err := g.modelAccessError(r, requestModel); err != nil {
 		logRequestStage(ctx, "gateway_model_temporarily_unavailable", "model", requestModel, "error", err)
-		g.recordGatewayRequestOutcome(requestModel, "model_rejected", "model_access_rejected")
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
@@ -1440,7 +1404,6 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
 		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
 		g.recordCachedAccountingAlias(ctx, entry)
-		g.recordGatewayRequestOutcome(requestModel, "cached", "cache_hit")
 		serveCachedChatResponse(w, r, entry)
 		return
 	}
@@ -1450,10 +1413,8 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		g.refreshCapacityScale()
 		limitModel := requestModel
 		if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
-			reason := limiterReasonLabel(err)
-			g.metrics.RecordLimitRejection(reason)
-			g.recordGatewayRequestOutcome(limitModel, "gateway_limited", reason)
-			logRequestStage(ctx, "gateway_limiter_rejected", "reason", reason, "input_tokens", inputTokens)
+			g.metrics.RecordLimitRejection(limiterReasonLabel(err))
+			logRequestStage(ctx, "gateway_limiter_rejected", "reason", limiterReasonLabel(err), "input_tokens", inputTokens)
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusTooManyRequests)
 			return
 		}
@@ -1467,9 +1428,8 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		logRequestStage(ctx, "gateway_runtime_select_failed", "error", err)
 		if isParticipantRateLimitError(err) {
-			g.metrics.RecordParticipantLimitRejection("", requestModel, "pooled_route")
+			g.metrics.RecordParticipantLimitRejection("all", normalizeModelID(model), "pooled_route")
 		}
-		g.recordGatewayRequestOutcome(requestModel, "runtime_unavailable", gatewayRuntimeUnavailableReason(err))
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 		return
 	}
@@ -1480,7 +1440,7 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		sourceRequestID, _ := requestLogFromContext(ctx)
 		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
 			g.chatCache.Set(cacheKey, entry, time.Now())
-			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "status", entry.StatusCode, "content_type", entry.ContentType, "bytes", len(entry.Body))
+			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
 		}
 	}
 }
@@ -1609,7 +1569,7 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			sourceRequestID, _ := requestLogFromContext(ctx)
 			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
 				g.chatCache.Set(cacheKey, entry, time.Now())
-				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "status", entry.StatusCode, "content_type", entry.ContentType, "bytes", len(entry.Body))
+				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
 			}
 		}
 		return
@@ -1791,6 +1751,16 @@ func gatewayRuntimeUnavailableReason(err error) string {
 	default:
 		return "runtime_unavailable"
 	}
+}
+
+func (g *Gateway) pocGenerationActive() bool {
+	if g != nil && g.phaseGate != nil {
+		snap := g.phaseGate.Snapshot()
+		if rawPoCGenerationState(snap.EpochPhase, snap.ConfirmationPoCPhase) {
+			return true
+		}
+	}
+	return false
 }
 
 func (g *Gateway) recordCachedAccountingAlias(ctx context.Context, entry cachedChatResponse) {
@@ -2311,6 +2281,54 @@ func normalizeStorageDir(storagePath string) string {
 	return clean
 }
 
+// resolveAdminStoragePath resolves an admin-supplied storage_path relative to
+// baseStorageDir. Absolute paths (e.g. /etc/...) and ".." segments are rejected;
+// the result must be a subdirectory of the base (same containment rule as delete).
+func resolveAdminStoragePath(storagePath, baseStorageDir string) (string, error) {
+	baseStorageDir = filepath.Clean(strings.TrimSpace(baseStorageDir))
+	if baseStorageDir == "" || baseStorageDir == "." {
+		return "", fmt.Errorf("base storage dir is not configured")
+	}
+	storagePath = strings.TrimSpace(storagePath)
+	if storagePath == "" {
+		return "", fmt.Errorf("storage_path is required")
+	}
+	if filepath.IsAbs(storagePath) {
+		return "", fmt.Errorf("storage_path must be relative to the gateway base dir")
+	}
+	for _, part := range strings.Split(filepath.ToSlash(storagePath), "/") {
+		if part == ".." {
+			return "", fmt.Errorf("storage_path must not contain ..")
+		}
+	}
+	candidate := normalizeStorageDir(filepath.Join(baseStorageDir, storagePath))
+	if err := ensureStoragePathUnderBase(candidate, baseStorageDir); err != nil {
+		return "", err
+	}
+	return candidate, nil
+}
+
+// ensureStoragePathUnderBase reports whether storagePath (already cleaned) is a
+// strict subdirectory of baseStorageDir.
+func ensureStoragePathUnderBase(storagePath, baseStorageDir string) error {
+	storagePath = normalizeStorageDir(storagePath)
+	baseStorageDir = filepath.Clean(strings.TrimSpace(baseStorageDir))
+	if storagePath == "" {
+		return nil
+	}
+	if baseStorageDir == "" || baseStorageDir == "." {
+		return fmt.Errorf("base storage dir is not configured")
+	}
+	rel, err := filepath.Rel(baseStorageDir, storagePath)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return fmt.Errorf("refusing storage path outside base dir: %s", storagePath)
+	}
+	if rel == "." || storagePath == baseStorageDir {
+		return fmt.Errorf("refusing to use base storage dir as escrow path: %s", storagePath)
+	}
+	return nil
+}
+
 func migrateGatewayLegacyStorage(storageDir, originalStoragePath, escrowID string, br bridge.MainnetBridge) error {
 	storageDir = strings.TrimSpace(storageDir)
 	if storageDir == "" {
@@ -2374,7 +2392,7 @@ type adminDevshardRequest struct {
 	PrivateKeyEnv   string `json:"private_key_env,omitempty"`
 	Model           string `json:"model,omitempty"`
 	StoragePath     string `json:"storage_path,omitempty"`
-	ProtocolVersion string `json:"protocol_version,omitempty"`
+	RoutePrefix   string `json:"route_prefix,omitempty"`
 }
 
 type adminImportDevshardRequest struct {
@@ -2390,7 +2408,7 @@ type adminCreateEscrowRequest struct {
 	ModelID         string `json:"model_id,omitempty"`
 	Register        *bool  `json:"register,omitempty"`
 	StoragePath     string `json:"storage_path,omitempty"`
-	ProtocolVersion string `json:"protocol_version,omitempty"`
+	RoutePrefix     string `json:"route_prefix,omitempty"`
 	ChainID         string `json:"chain_id,omitempty"`
 	FeeDenom        string `json:"fee_denom,omitempty"`
 	FeeAmount       uint64 `json:"fee_amount,omitempty"`
@@ -2404,12 +2422,6 @@ type adminSettleEscrowRequest struct {
 	FeeDenom      string `json:"fee_denom,omitempty"`
 	FeeAmount     uint64 `json:"fee_amount,omitempty"`
 	GasLimit      uint64 `json:"gas_limit,omitempty"`
-}
-
-type adminSuspiciousHostsRequest struct {
-	ParticipantKey  string   `json:"participant_key,omitempty"`
-	ParticipantKeys []string `json:"participant_keys,omitempty"`
-	Note            string   `json:"note,omitempty"`
 }
 
 type adminSettingsRequest struct {
@@ -2530,11 +2542,10 @@ func (g *Gateway) handleAdminState(w http.ResponseWriter, r *http.Request) {
 		views = append(views, view)
 	}
 	writeJSON(w, map[string]any{
-		"settings":         state.Settings,
-		"devshards":        views,
-		"suspicious_hosts": state.SuspiciousHosts,
-		"limiter":          g.limiter.SnapshotWithModelCapacities(g.limiterModelCapacities(models, modelRuntimeStatuses)),
-		"capacity":         g.capacityStatus(models, modelRuntimeStatuses),
+		"settings":  state.Settings,
+		"devshards": views,
+		"limiter":   g.limiter.SnapshotWithModelCapacities(g.limiterModelCapacities(models, modelRuntimeStatuses)),
+		"capacity":  g.capacityStatus(models, modelRuntimeStatuses),
 	})
 }
 
@@ -2559,7 +2570,7 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 		g.mu.Lock()
 		settings := g.settings
 		if req.ChainREST != nil {
-			settings.ChainREST = strings.TrimSpace(*req.ChainREST)
+			log.Printf("admin settings: chain_rest is deprecated and ignored (use DEVSHARD_CHAIN_GRPC / chain_grpc)")
 		}
 		if req.PublicAPI != nil {
 			settings.PublicAPI = strings.TrimSpace(*req.PublicAPI)
@@ -2621,8 +2632,8 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 			g.phaseGate.Stop()
 		}
 		g.phaseGate = NewChainPhaseGate(settings.PublicAPI, 0)
-		if g.phaseGate != nil {
-			g.phaseGate.SetPreservedSnapshotBaseURL(settings.ChainREST)
+		if g.phaseGate != nil && g.chainClient != nil {
+			g.phaseGate.SetChainQueryClient(g.chainClient.InferenceQueryClient())
 		}
 		for _, rt := range g.runtimeOrder {
 			g.attachRuntimeSharedState(rt)
@@ -2649,59 +2660,6 @@ func (g *Gateway) handleAdminSettings(w http.ResponseWriter, r *http.Request) {
 	default:
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 	}
-}
-
-func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Request) {
-	if g.store == nil {
-		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
-		return
-	}
-	switch r.Method {
-	case http.MethodGet:
-		hosts, err := g.store.LoadSuspiciousHosts()
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
-			return
-		}
-		g.replaceSuspiciousHosts(hosts)
-		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
-	case http.MethodPost:
-		var req adminSuspiciousHostsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
-			return
-		}
-		hosts, err := g.store.UpsertSuspiciousHosts(adminSuspiciousParticipantKeys(req), req.Note)
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
-			return
-		}
-		g.replaceSuspiciousHosts(hosts)
-		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
-	case http.MethodDelete:
-		var req adminSuspiciousHostsRequest
-		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
-			return
-		}
-		hosts, err := g.store.DeleteSuspiciousHosts(adminSuspiciousParticipantKeys(req))
-		if err != nil {
-			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
-			return
-		}
-		g.replaceSuspiciousHosts(hosts)
-		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
-	default:
-		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
-	}
-}
-
-func adminSuspiciousParticipantKeys(req adminSuspiciousHostsRequest) []string {
-	keys := append([]string(nil), req.ParticipantKeys...)
-	if strings.TrimSpace(req.ParticipantKey) != "" {
-		keys = append(keys, req.ParticipantKey)
-	}
-	return normalizeParticipantKeys(keys)
 }
 
 func (g *Gateway) handleDebugRotation(w http.ResponseWriter, r *http.Request) {
@@ -3077,12 +3035,12 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	txClient, err := newGatewayRESTChainTxClient(g.settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
+	txMgr, err := g.newChainTxManager(g.settings, req.ChainID, req.FeeDenom, req.FeeAmount, req.GasLimit)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
-	result, err := txClient.CreateDevshardEscrow(r.Context(), signer, req.Amount, modelID, nil)
+	result, err := txMgr.CreateDevshardEscrow(r.Context(), signer, req.Amount, modelID)
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadGateway)
 		return
@@ -3108,7 +3066,7 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 			ID:              strconv.FormatUint(result.EscrowID, 10),
 			Model:           modelID,
 			StoragePath:     strings.TrimSpace(req.StoragePath),
-			ProtocolVersion: strings.TrimSpace(req.ProtocolVersion),
+			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: true,
 	}
@@ -3126,19 +3084,6 @@ func (g *Gateway) handleAdminEscrows(w http.ResponseWriter, r *http.Request) {
 	response["model"] = record.Model
 	response["storage_path"] = record.StoragePath
 	writeJSON(w, response)
-}
-
-func newGatewayRESTChainTxClient(settings GatewaySettings, chainID, feeDenom string, feeAmount, gasLimit uint64) (*RESTChainTxClient, error) {
-	return NewRESTChainTxClient(RESTChainTxConfig{
-		BaseURL:      settings.ChainREST,
-		TxQueryURL:   firstNonEmpty(os.Getenv("DEVSHARD_TX_QUERY_REST"), "http://node1.gonka.ai:8000/chain-api"),
-		ChainID:      firstNonEmpty(chainID, os.Getenv("DEVSHARD_CHAIN_ID")),
-		FeeDenom:     firstNonEmpty(feeDenom, os.Getenv("DEVSHARD_TX_FEE_DENOM")),
-		FeeAmount:    firstNonZeroUint64(feeAmount, uint64(readInt64Env("DEVSHARD_TX_FEE_AMOUNT", int64(defaultTxFeeAmount)))),
-		GasLimit:     firstNonZeroUint64(gasLimit, settings.TxGasLimit, uint64(readInt64Env("DEVSHARD_TX_GAS_LIMIT", int64(defaultTxGasLimit)))),
-		PollInterval: txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_INTERVAL_MS"), defaultTxPollInterval),
-		PollTimeout:  txSettingDurationMS(os.Getenv("DEVSHARD_TX_POLL_TIMEOUT_MS"), defaultTxPollTimeout),
-	})
 }
 
 func firstNonZeroUint64(values ...uint64) uint64 {
@@ -3162,7 +3107,7 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 		return record, fmt.Errorf("gateway state is not initialized")
 	}
 	if _, exists := g.runtimes[record.ID]; exists {
-		return record, fmt.Errorf("devshard %s: %w", record.ID, errDevshardAlreadyExists)
+		return record, fmt.Errorf("devshard %s already exists: %w", record.ID, errDevshardAlreadyExists)
 	}
 	if record.Model == "" {
 		record.Model = state.Settings.DefaultModel
@@ -3170,12 +3115,23 @@ func (g *Gateway) addCreatedEscrowRuntime(record GatewayDevshardState) (GatewayD
 	if record.StoragePath == "" {
 		record.StoragePath = defaultStoragePath(g.baseStorageDir, record.ID)
 	} else {
-		record.StoragePath = normalizeStorageDir(record.StoragePath)
+		resolved, resolveErr := resolveAdminStoragePath(record.StoragePath, g.baseStorageDir)
+		if resolveErr != nil {
+			// Allow already-absolute paths that remain under the base (legacy records).
+			normalized := normalizeStorageDir(record.StoragePath)
+			if err := ensureStoragePathUnderBase(normalized, g.baseStorageDir); err != nil {
+				return record, resolveErr
+			}
+			record.StoragePath = normalized
+		} else {
+			record.StoragePath = resolved
+		}
 	}
-	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
+	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, g.runtimeBuildDepsFromSettings(g.perf, state.Settings))
 	if err != nil {
 		return record, err
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		return record, err
@@ -3377,15 +3333,16 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	req.ID = strings.TrimSpace(req.ID)
-	req.StoragePath = normalizeStorageDir(req.StoragePath)
 	if req.ID == "" {
 		http.Error(w, `{"error":{"message":"id is required"}}`, http.StatusBadRequest)
 		return
 	}
-	if req.StoragePath == "" {
-		http.Error(w, `{"error":{"message":"storage_path is required for import"}}`, http.StatusBadRequest)
+	resolvedPath, err := resolveAdminStoragePath(req.StoragePath, g.baseStorageDir)
+	if err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	req.StoragePath = resolvedPath
 	hasKey := strings.TrimSpace(req.PrivateKey) != "" || strings.TrimSpace(req.PrivateKeyEnv) != ""
 	if !hasKey {
 		http.Error(w, `{"error":{"message":"private_key or private_key_env is required for import"}}`, http.StatusBadRequest)
@@ -3424,18 +3381,19 @@ func (g *Gateway) handleAdminImportDevshard(w http.ResponseWriter, r *http.Reque
 			PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
 			Model:           strings.TrimSpace(req.Model),
 			StoragePath:     req.StoragePath,
-			ProtocolVersion: strings.TrimSpace(req.ProtocolVersion),
+			RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 		},
 		Active: active,
 	}
 	if record.Model == "" {
 		record.Model = state.Settings.DefaultModel
 	}
-	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
+	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, g.runtimeBuildDepsFromSettings(g.perf, state.Settings))
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -3531,10 +3489,15 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 			record.Model = strings.TrimSpace(req.Model)
 		}
 		if strings.TrimSpace(req.StoragePath) != "" {
-			record.StoragePath = normalizeStorageDir(req.StoragePath)
+			resolved, err := resolveAdminStoragePath(req.StoragePath, g.baseStorageDir)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			record.StoragePath = resolved
 		}
-		if strings.TrimSpace(req.ProtocolVersion) != "" {
-			record.ProtocolVersion = strings.TrimSpace(req.ProtocolVersion)
+		if strings.TrimSpace(req.RoutePrefix) != "" {
+			record.RoutePrefix = strings.TrimSpace(req.RoutePrefix)
 		}
 		record.Active = true
 	} else {
@@ -3545,14 +3508,21 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 		}
 		record = GatewayDevshardState{
 			RuntimeConfig: RuntimeConfig{
-				ID:              req.ID,
-				PrivateKeyHex:   strings.TrimSpace(req.PrivateKey),
-				PrivateKeyEnv:   strings.TrimSpace(req.PrivateKeyEnv),
-				Model:           strings.TrimSpace(req.Model),
-				StoragePath:     normalizeStorageDir(req.StoragePath),
-				ProtocolVersion: strings.TrimSpace(req.ProtocolVersion),
+				ID:            req.ID,
+				PrivateKeyHex: strings.TrimSpace(req.PrivateKey),
+				PrivateKeyEnv: strings.TrimSpace(req.PrivateKeyEnv),
+				Model:         strings.TrimSpace(req.Model),
+				RoutePrefix:   strings.TrimSpace(req.RoutePrefix),
 			},
 			Active: true,
+		}
+		if strings.TrimSpace(req.StoragePath) != "" {
+			resolved, err := resolveAdminStoragePath(req.StoragePath, g.baseStorageDir)
+			if err != nil {
+				http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+				return
+			}
+			record.StoragePath = resolved
 		}
 	}
 
@@ -3580,15 +3550,17 @@ func (g *Gateway) handleAdminAddDevshard(w http.ResponseWriter, r *http.Request)
 	}
 	if record.StoragePath == "" {
 		record.StoragePath = defaultStoragePath(g.baseStorageDir, record.ID)
-	} else {
-		record.StoragePath = normalizeStorageDir(record.StoragePath)
+	} else if err := ensureStoragePathUnderBase(record.StoragePath, g.baseStorageDir); err != nil {
+		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+		return
 	}
 
-	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, state.Settings.ChainREST, state.Settings.DefaultModel, g.perf)
+	rt, err := gatewayRuntimeBuilder(record.RuntimeConfig, g.runtimeBuildDepsFromSettings(g.perf, state.Settings))
 	if err != nil {
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
 		return
 	}
+	record.Model = rt.model
 	if err := g.store.UpsertDevshard(record); err != nil {
 		rt.close()
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
@@ -3723,7 +3695,7 @@ func (g *Gateway) handleAdminCleanDevshard(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	if rt, ok := g.runtimes[id]; ok {
-		if rt.escrowHasBackgroundWork() {
+		if rt.activeUserRequests.Load() > 0 {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s has active requests"}}`, id), http.StatusConflict)
 			return
 		}
@@ -3777,6 +3749,103 @@ func (g *Gateway) handleAdminUnquarantine(w http.ResponseWriter, r *http.Request
 	})
 }
 
+func (g *Gateway) isSuspiciousParticipant(participantKey string) bool {
+	if g == nil {
+		return false
+	}
+	participantKey = strings.TrimSpace(participantKey)
+	if participantKey == "" {
+		return false
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	_, ok := g.suspiciousHosts[participantKey]
+	return ok
+}
+
+func (g *Gateway) replaceSuspiciousHosts(hosts []GatewaySuspiciousHost) {
+	if g == nil {
+		return
+	}
+	next := make(map[string]struct{}, len(hosts))
+	for _, host := range hosts {
+		key := strings.TrimSpace(host.ParticipantKey)
+		if key == "" {
+			continue
+		}
+		next[key] = struct{}{}
+	}
+	g.mu.Lock()
+	g.suspiciousHosts = next
+	g.mu.Unlock()
+}
+
+func (g *Gateway) attachSuspiciousHosts(rt *devshardRuntime) {
+	if g == nil || rt == nil || rt.proxy == nil || rt.proxy.redundancy == nil {
+		return
+	}
+	rt.proxy.redundancy.suspiciousParticipant = g.isSuspiciousParticipant
+}
+
+type adminSuspiciousHostsRequest struct {
+	ParticipantKey  string   `json:"participant_key,omitempty"`
+	ParticipantKeys []string `json:"participant_keys,omitempty"`
+	Note            string   `json:"note,omitempty"`
+}
+
+func adminSuspiciousParticipantKeys(req adminSuspiciousHostsRequest) []string {
+	keys := append([]string(nil), req.ParticipantKeys...)
+	if strings.TrimSpace(req.ParticipantKey) != "" {
+		keys = append(keys, req.ParticipantKey)
+	}
+	return normalizeParticipantKeys(keys)
+}
+
+func (g *Gateway) handleAdminSuspiciousHosts(w http.ResponseWriter, r *http.Request) {
+	if g.store == nil {
+		http.Error(w, `{"error":{"message":"gateway state store unavailable"}}`, http.StatusServiceUnavailable)
+		return
+	}
+	switch r.Method {
+	case http.MethodGet:
+		hosts, err := g.store.LoadSuspiciousHosts()
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusInternalServerError)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	case http.MethodPost:
+		var req adminSuspiciousHostsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		hosts, err := g.store.UpsertSuspiciousHosts(adminSuspiciousParticipantKeys(req), req.Note)
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	case http.MethodDelete:
+		var req adminSuspiciousHostsRequest
+		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		hosts, err := g.store.DeleteSuspiciousHosts(adminSuspiciousParticipantKeys(req))
+		if err != nil {
+			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), http.StatusBadRequest)
+			return
+		}
+		g.replaceSuspiciousHosts(hosts)
+		writeJSON(w, map[string]any{"suspicious_hosts": hosts})
+	default:
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func findGatewayDevshard(devshards []GatewayDevshardState, id string) (GatewayDevshardState, bool) {
 	for _, devshard := range devshards {
 		if devshard.ID == id {
@@ -3794,6 +3863,12 @@ func removeRuntime(runtimes []*devshardRuntime, id string) []*devshardRuntime {
 		}
 	}
 	return out
+}
+
+func (g *Gateway) sortRuntimeOrderLocked() {
+	slices.SortFunc(g.runtimeOrder, func(a, b *devshardRuntime) int {
+		return strings.Compare(a.id, b.id)
+	})
 }
 
 // retireRuntime drops a runtime from the in-memory registry and closes it,
@@ -3828,7 +3903,8 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 	if rt.escrowHasBackgroundWork() {
 		rt.retireReason = reason
 		rt.retirePending.Store(true)
-		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d pending_race_cleanup=%d", id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
+		log.Printf("runtime_retire_deferred escrow=%s reason=%q active_requests=%d pending_race_cleanup=%d",
+			id, reason, rt.activeUserRequests.Load(), rt.pendingRaceCleanup.Load())
 		return nil
 	}
 	delete(g.runtimes, id)
@@ -3837,12 +3913,6 @@ func (g *Gateway) retireRuntimeLocked(id, reason string) *devshardRuntime {
 		g.capacity.RemoveEscrow(id)
 	}
 	return rt
-}
-
-func (g *Gateway) sortRuntimeOrderLocked() {
-	slices.SortFunc(g.runtimeOrder, func(a, b *devshardRuntime) int {
-		return strings.Compare(a.id, b.id)
-	})
 }
 
 func (g *Gateway) attachMetrics(rt *devshardRuntime) {
@@ -3946,6 +4016,9 @@ func (g *Gateway) deactivateAndSettleDevshardByID(id, reason string) {
 // in-flight requests drain. The reason is stored before the flag so the
 // lock-free drain hook in releaseRuntime reads a consistent value.
 func (g *Gateway) markSettlementPending(id, reason string) {
+	if g == nil {
+		return
+	}
 	g.mu.Lock()
 	rt, ok := g.runtimes[id]
 	if ok {
@@ -3955,7 +4028,26 @@ func (g *Gateway) markSettlementPending(id, reason string) {
 	g.mu.Unlock()
 	if g.store != nil {
 		if err := g.store.SetDevshardSettlementPending(id, true); err != nil {
-			log.Printf("settlement_pending_persist_failed escrow=%s error=%v", id, err)
+			log.Printf("settlement_pending_persist_failed escrow=%s reason=%q error=%v", id, reason, err)
+		}
+	}
+}
+
+// clearSettlementPending is called after a successful settlement so a
+// restart-time reconcile does not re-settle the escrow.
+func (g *Gateway) clearSettlementPending(id string) {
+	if g == nil {
+		return
+	}
+	g.mu.Lock()
+	rt, ok := g.runtimes[id]
+	if ok {
+		rt.settlementPending.Store(false)
+	}
+	g.mu.Unlock()
+	if g.store != nil {
+		if err := g.store.SetDevshardSettlementPending(id, false); err != nil {
+			log.Printf("settlement_pending_clear_failed escrow=%s error=%v", id, err)
 		}
 	}
 }
@@ -3964,7 +4056,7 @@ func (g *Gateway) markSettlementPending(id, reason string) {
 // a restart. After a restart no requests are in flight, so each such escrow
 // can settle immediately. Hydrates the in-memory marker too.
 func (g *Gateway) reconcilePendingSettlements() {
-	if g.store == nil {
+	if g == nil || g.store == nil {
 		return
 	}
 	state, ok, err := g.store.LoadState()
@@ -3999,22 +4091,6 @@ func (g *Gateway) reconcilePendingSettlements() {
 		// from local storage when the devshard is not resident in memory.
 		log.Printf("settlement_reconcile_queued escrow=%s", devshard.ID)
 		g.scheduleAutoSettlement(devshard.ID, "startup_reconcile")
-	}
-}
-
-// clearSettlementPending is called after a successful settlement so a
-// restart-time reconcile does not re-settle the escrow.
-func (g *Gateway) clearSettlementPending(id string) {
-	g.mu.Lock()
-	rt, ok := g.runtimes[id]
-	if ok {
-		rt.settlementPending.Store(false)
-	}
-	g.mu.Unlock()
-	if g.store != nil {
-		if err := g.store.SetDevshardSettlementPending(id, false); err != nil {
-			log.Printf("settlement_pending_clear_failed escrow=%s error=%v", id, err)
-		}
 	}
 }
 
@@ -4095,7 +4171,6 @@ func (g *Gateway) replaceDepletedEscrow(ctx context.Context, id, modelID, reason
 		id, result.EscrowID, model.ModelID, reason, result.TxHash)
 	if !settings.EscrowRotation.SettlementEnabled {
 		g.deactivateDevshardByIDWithReason(id, reason)
-		g.retireRuntime(id, reason)
 	} else {
 		g.deactivateAndSettleDevshardByID(id, reason)
 	}
@@ -4145,7 +4220,7 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 			cancel()
 			if err == nil {
 				g.clearSettlementPending(id)
-				log.Printf("auto_settle_submitted escrow=%s reason=%s tx_hash=%s settler=%s",
+				log.Printf("auto_settle_confirmed escrow=%s reason=%s tx_hash=%s settler=%s",
 					id, reason, result.TxHash, result.Settler)
 				g.retireRuntime(id, reason)
 				return
@@ -4155,7 +4230,15 @@ func (g *Gateway) scheduleAutoSettlement(id, reason string) {
 			if attempt == autoSettlementMaxAttempts {
 				// Settlement exhausted its retries; free the in-memory runtime
 				// anyway so a permanently-unsettleable escrow cannot leak its
-				// SQLite store. On-disk state is preserved for manual recovery.
+				// store. On-disk state is preserved for manual recovery.
+				//
+				// The escrow stays SettlementPending (we do NOT clear the flag),
+				// so a later restart's reconcilePendingSettlements retries it.
+				// Log loudly: real escrow funds remain unsettled until then and
+				// this may need operator attention.
+				log.Printf("auto_settle_exhausted escrow=%s reason=%s attempts=%d last_error=%v "+
+					"settlement_pending=true action=will_retry_on_restart_or_reenable",
+					id, reason, autoSettlementMaxAttempts, err)
 				g.retireRuntime(id, reason)
 				return
 			}
@@ -4169,12 +4252,8 @@ func removeDevshardStorage(storagePath, baseStorageDir string) error {
 		return nil
 	}
 	storagePath = normalizeStorageDir(storagePath)
-	baseStorageDir = filepath.Clean(baseStorageDir)
-	if !strings.HasPrefix(storagePath, baseStorageDir+string(os.PathSeparator)) && storagePath != baseStorageDir {
-		return fmt.Errorf("refusing to delete storage outside base dir: %s", storagePath)
-	}
-	if storagePath == baseStorageDir {
-		return fmt.Errorf("refusing to delete base storage dir: %s", storagePath)
+	if err := ensureStoragePathUnderBase(storagePath, baseStorageDir); err != nil {
+		return err
 	}
 	return os.RemoveAll(storagePath)
 }
@@ -4207,18 +4286,75 @@ func finalizeRuntimeConfigs(runtimes []RuntimeConfig, defaultModel, baseStorageD
 	return out, nil
 }
 
-func buildRuntimes(configs []RuntimeConfig, chainREST, defaultModel string) ([]*devshardRuntime, error) {
+// resolveRuntimeModel picks the gateway runtime model label.
+// On-chain model_id wins when present so routing matches host assignment.
+func resolveRuntimeModel(configured, chainModelID, defaultModel, escrowID string) string {
+	configured = strings.TrimSpace(configured)
+	chainModelID = strings.TrimSpace(chainModelID)
+	defaultModel = strings.TrimSpace(defaultModel)
+	if chainModelID != "" {
+		if configured != "" && configured != chainModelID {
+			log.Printf("runtime %s: configured model %q differs from on-chain model_id %q; using on-chain",
+				escrowID, configured, chainModelID)
+		}
+		return chainModelID
+	}
+	if configured != "" {
+		return configured
+	}
+	return defaultModel
+}
+
+// persistRuntimeModel updates gateway.db when buildRuntime reconciled the model
+// from chain. Best-effort: failures are logged and do not abort startup.
+func persistRuntimeModel(store *GatewayStore, state *GatewayState, escrowID, model string) {
+	if store == nil || strings.TrimSpace(escrowID) == "" {
+		return
+	}
+	model = strings.TrimSpace(model)
+	record, ok, err := store.GetDevshard(escrowID)
+	if err != nil {
+		log.Printf("runtime %s: load devshard to persist model %q: %v", escrowID, model, err)
+		return
+	}
+	if !ok {
+		return
+	}
+	if strings.TrimSpace(record.Model) == model {
+		return
+	}
+	record.Model = model
+	if err := store.UpsertDevshard(record); err != nil {
+		log.Printf("runtime %s: persist on-chain model %q: %v", escrowID, model, err)
+		return
+	}
+	if state != nil {
+		for i := range state.Devshards {
+			if state.Devshards[i].ID == escrowID {
+				state.Devshards[i].Model = model
+				break
+			}
+		}
+	}
+	log.Printf("runtime %s: persisted model from chain model_id=%q", escrowID, model)
+}
+
+func buildRuntimes(configs []RuntimeConfig, deps runtimeBuildDeps) ([]*devshardRuntime, error) {
 	type result struct {
 		idx int
 		rt  *devshardRuntime
 		err error
 	}
 	t0 := time.Now()
-	perf := NewPerfTracker(nil)
+	perf := deps.perf
+	if perf == nil {
+		perf = NewPerfTracker(nil)
+	}
+	deps.perf = perf
 	ch := make(chan result, len(configs))
 	for i, cfg := range configs {
 		go func(idx int, cfg RuntimeConfig) {
-			rt, err := buildRuntime(cfg, chainREST, defaultModel, perf)
+			rt, err := buildRuntime(cfg, deps)
 			ch <- result{idx, rt, err}
 		}(i, cfg)
 	}

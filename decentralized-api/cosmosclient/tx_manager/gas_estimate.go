@@ -45,16 +45,9 @@ const (
 	// Doubled per retry attempt so OOG-on-underestimate eventually fits.
 	gasRetryMultiplier = 2.0
 
-	// Inference lifecycle (bypass-exempt).
-	gasStartInference  = uint64(250_000)
-	gasFinishInference = uint64(250_000)
-	gasValidation      = uint64(1_500_000) // outliers up to 2.1M observed
-
 	// PoC duty messages.
 	gasSubmitPocBatch         = uint64(500_000)
 	gasSubmitPocValidationsV2 = uint64(250_000)
-	gasInvalidateInference    = uint64(500_000)
-	gasRevalidateInference    = uint64(500_000)
 
 	// PoCV2StoreCommit linear formula. WARN: gasPoCV2Base mirrors
 	// FeeParams.base_validation_gas (default 500K), gasPoCV2PerCount
@@ -109,16 +102,6 @@ func estimateMsgGas(msg sdk.Msg) uint64 {
 // alone can't tell us, since several legit estimates equal the default.
 func lookupMsgGas(msg sdk.Msg) (uint64, bool) {
 	switch m := msg.(type) {
-	case *inferencetypes.MsgStartInference:
-		return gasStartInference, true
-	case *inferencetypes.MsgFinishInference:
-		return gasFinishInference, true
-	case *inferencetypes.MsgValidation:
-		return gasValidation, true
-	case *inferencetypes.MsgInvalidateInference:
-		return gasInvalidateInference, true
-	case *inferencetypes.MsgRevalidateInference:
-		return gasRevalidateInference, true
 	case *inferencetypes.MsgSubmitPocBatch:
 		return gasSubmitPocBatch, true
 	case *inferencetypes.MsgSubmitPocValidationsV2:

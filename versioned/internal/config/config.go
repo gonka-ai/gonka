@@ -9,15 +9,24 @@ import (
 	"time"
 )
 
+const DefaultDrainKillGrace = 10 * time.Minute
+
 type Config struct {
-	OracleURL     string
-	PollInterval  time.Duration
-	BinDir        string
-	DataDir       string
-	BinaryName    string
-	BasePort      int
-	Overrides     map[string]string // version name -> local binary path
-	ForceVersions []string          // version names that must run regardless of oracle
+	OracleURL         string
+	PollInterval      time.Duration
+	BinDir            string
+	DataDir           string
+	BinaryName        string
+	BasePort          int
+	ReadyPath         string
+	ReadyTimeout      time.Duration
+	DrainPath         string
+	DrainStatusPath   string
+	DrainTimeout      time.Duration
+	DrainPollInterval time.Duration
+	DrainKillGrace    time.Duration
+	Overrides         map[string]string // version name -> local binary path
+	ForceVersions     []string          // version names that must run regardless of oracle
 }
 
 func Load() (Config, error) {
@@ -27,14 +36,21 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		OracleURL:     oracleURL,
-		PollInterval:  parseDuration("VERSIOND_POLL_INTERVAL", 30*time.Second),
-		BinDir:        envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
-		DataDir:       envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
-		BinaryName:    envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
-		BasePort:      5000,
-		Overrides:     loadOverrides(),
-		ForceVersions: loadForceVersions(),
+		OracleURL:         oracleURL,
+		PollInterval:      parseDuration("VERSIOND_POLL_INTERVAL", 30*time.Second),
+		BinDir:            envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
+		DataDir:           envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
+		BinaryName:        envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
+		BasePort:          5000,
+		ReadyPath:         envOrDefault("VERSIOND_READY_PATH", "/ready"),
+		ReadyTimeout:      parseDuration("VERSIOND_READY_TIMEOUT", 60*time.Second),
+		DrainPath:         envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
+		DrainStatusPath:   envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
+		DrainTimeout:      parseDuration("VERSIOND_DRAIN_TIMEOUT", 15*time.Minute),
+		DrainPollInterval: parseDuration("VERSIOND_DRAIN_POLL_INTERVAL", time.Second),
+		DrainKillGrace:    parseDuration("VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace),
+		Overrides:         loadOverrides(),
+		ForceVersions:     loadForceVersions(),
 	}
 
 	slog.Info(

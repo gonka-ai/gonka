@@ -4,7 +4,7 @@ import (
 	"context"
 	"decentralized-api/apiconfig"
 	"decentralized-api/internal/nats/server"
-	"decentralized-api/logging"
+	"common/logging"
 	"decentralized-api/observability"
 	"encoding/hex"
 	"encoding/json"

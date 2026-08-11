@@ -9,9 +9,9 @@ import (
 	"sync"
 	"time"
 
+	"common/logging"
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
-	"decentralized-api/logging"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"

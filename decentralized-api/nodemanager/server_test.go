@@ -5,8 +5,8 @@ import (
 	"errors"
 	"testing"
 
+	"common/nodemanager/gen"
 	"decentralized-api/broker"
-	"devshard/nodemanager/gen"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/require"

@@ -314,10 +314,10 @@ func (p *sessionPicker) run() {
 		// No ghost outcome contacts the host; the kind is purely a
 		// log label (see ghostDispatcher doc).
 		var (
-			chosen              *pickerRequest
-			ghost               ghostKind
+			chosen    *pickerRequest
+			ghost     ghostKind
+			holdUntil time.Time
 			ghostParticipantKey string
-			holdUntil           time.Time
 		)
 		prepared, err := p.session.PrepareInferenceFn(func(b user.HostBinding) (user.InferenceParams, bool, error) {
 			p.mu.Lock()
@@ -453,20 +453,20 @@ func (p *sessionPicker) run() {
 
 		// Phase 4: dispatch.
 		if ghost != ghostNone {
-			fields := []any{
+			logFields := []any{
 				"reason", ghost.reason(),
 				"host_idx", prepared.HostIdx(),
 				"nonce", prepared.Nonce(),
 				"queue_depth", p.queueLen(),
 			}
 			if ghost == ghostThrottled {
-				fields = append(fields,
+				logFields = append(logFields,
 					"no_send", true,
 					"participant_key", ghostParticipantKey,
 					"model_id", p.model,
 				)
 			}
-			logRequestStage(p.logCtx, "session_picker_ghost_probe", fields...)
+			logRequestStage(p.logCtx, "session_picker_ghost_probe", logFields...)
 			if p.dispatchGhost != nil {
 				p.dispatchGhost(prepared, ghost, ghost.reason())
 			}

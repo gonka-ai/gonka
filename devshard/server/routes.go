@@ -16,9 +16,15 @@ import (
 // ErrInitializing means devshard storage is not ready to serve session state yet.
 var ErrInitializing = errors.New("devshard initializing")
 
-// SessionResolver resolves a lazy per-escrow transport server.
+// SessionResolver resolves an already-bound per-escrow transport server.
+// Implementations must never CreateSession / bind a protocol version.
 type SessionResolver interface {
-	SessionServer(escrowID string) (*transport.Server, error)
+	SessionServerExisting(escrowID string) (*transport.Server, error)
+}
+
+// OwnerChatBinder authenticates the escrow owner and may bind a new session.
+type OwnerChatBinder interface {
+	BindOwnerChat(c echo.Context) (*transport.Server, error)
 }
 
 // PayloadHandler serves GET /sessions/:id/payloads for a resolved session.
@@ -27,12 +33,13 @@ type PayloadHandler interface {
 }
 
 // RegisterLazySessionRoutes mounts the standard devshard HTTP surface on g.
-// Session servers are resolved lazily per request via SessionResolver.
-func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadHandler PayloadHandler) {
+// Observability and host protocol routes resolve existing sessions only.
+// Only owner chat may bind a new session (via OwnerChatBinder).
+func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, binder OwnerChatBinder, payloadHandler PayloadHandler) {
 	g.Use(observability.EchoMiddleware())
 	g.Use(observability.RequestIDMiddleware)
 
-	g.POST("/sessions/:id/chat/completions", withSessionAuth(resolver, true,
+	g.POST("/sessions/:id/chat/completions", withOwnerChat(binder, true,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleInference }))
 	g.POST("/sessions/:id/verify-timeout", withSessionAuth(resolver, false,
 		func(srv *transport.Server) echo.HandlerFunc { return srv.HandleVerifyTimeout }))
@@ -52,7 +59,7 @@ func RegisterLazySessionRoutes(g *echo.Group, resolver SessionResolver, payloadH
 
 	if payloadHandler != nil {
 		g.GET("/sessions/:id/payloads", func(c echo.Context) error {
-			srv, err := resolver.SessionServer(c.Param("id"))
+			srv, err := resolver.SessionServerExisting(c.Param("id"))
 			if err != nil {
 				recordSessionResolution(c, err, false)
 				return sessionHTTPError(c, err)
@@ -68,7 +75,7 @@ func withSession(
 	pick func(*transport.Server) echo.HandlerFunc,
 ) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		srv, err := resolver.SessionServer(c.Param("id"))
+		srv, err := resolver.SessionServerExisting(c.Param("id"))
 		if err != nil {
 			recordSessionResolution(c, err, false)
 			return sessionHTTPError(c, err)
@@ -84,13 +91,32 @@ func withSessionAuth(
 	pick func(*transport.Server) echo.HandlerFunc,
 ) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		srv, err := resolver.SessionServer(c.Param("id"))
+		srv, err := resolver.SessionServerExisting(c.Param("id"))
 		if err != nil {
 			recordSessionResolution(c, err, recordChatTerminal)
 			return sessionHTTPError(c, err)
 		}
 		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
-		return srv.AuthMiddleware(pick(srv))(c)
+		handler := pick(srv)
+		wrapped := srv.RateLimitMiddleware(recordChatTerminal)(handler)
+		return srv.AuthMiddleware(wrapped)(c)
+	}
+}
+
+func withOwnerChat(
+	binder OwnerChatBinder,
+	recordChatTerminal bool,
+	pick func(*transport.Server) echo.HandlerFunc,
+) echo.HandlerFunc {
+	return func(c echo.Context) error {
+		srv, err := binder.BindOwnerChat(c)
+		if err != nil {
+			recordSessionResolution(c, err, recordChatTerminal)
+			return sessionHTTPError(c, err)
+		}
+		observability.IncSessionResolution(routeLabel(c), observability.MetricStatusOK, observability.ReasonOK)
+		handler := pick(srv)
+		return srv.RateLimitMiddleware(recordChatTerminal)(handler)(c)
 	}
 }
 
@@ -107,8 +133,11 @@ func recordSessionResolution(c echo.Context, err error, recordChatTerminal bool)
 }
 
 func sessionResolutionStatus(err error) (observability.MetricStatus, observability.Reason) {
-	if errors.Is(err, ErrInitializing) {
+	if errors.Is(err, ErrInitializing) || errors.Is(err, storage.ErrStorageIndexRebuilding) {
 		return observability.MetricStatusError, observability.ReasonInitializing
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return observability.MetricStatusError, observability.ReasonSessionResolveErr
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return observability.MetricStatusError, observability.ReasonGetEscrowErr
@@ -118,6 +147,13 @@ func sessionResolutionStatus(err error) (observability.MetricStatus, observabili
 	}
 	if errors.Is(err, storage.ErrSessionEpochConflict) {
 		return observability.MetricStatusError, observability.ReasonEpochConflict
+	}
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		switch he.Code {
+		case http.StatusUnauthorized, http.StatusForbidden:
+			return observability.MetricStatusError, observability.ReasonOwnerErr
+		}
 	}
 	msg := err.Error()
 	switch {
@@ -154,8 +190,15 @@ func routeLabel(c echo.Context) string {
 }
 
 func sessionHTTPError(c echo.Context, err error) error {
-	if errors.Is(err, ErrInitializing) {
+	var he *echo.HTTPError
+	if errors.As(err, &he) {
+		return he
+	}
+	if errors.Is(err, ErrInitializing) || errors.Is(err, storage.ErrStorageIndexRebuilding) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorInitializing, err.Error())
+	}
+	if errors.Is(err, storage.ErrSessionNotFound) {
+		return echo.NewHTTPError(http.StatusNotFound, "session not found")
 	}
 	if errors.Is(err, bridge.ErrChainUnavailable) {
 		return transport.HTTPError(c, http.StatusServiceUnavailable, transport.DevshardErrorChainUnavailable, err.Error())

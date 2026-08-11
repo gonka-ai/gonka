@@ -163,18 +163,19 @@ jobs:
       - name: Make Docker Images
         env:
           GENESIS_OVERRIDES_FILE: "inference-chain/test_genesis_overrides.json"
-          USE_REGISTRY_CACHE: "1"
-          GHCR_CACHE_NAMESPACE: ${{ github.repository }}
+          USE_REGISTRY_CACHE: "0"
         run: |
           make build-docker
-          # devshardd self-checks build_version == the version versiond forces (dev via build/devshard-version).
-          DEVSHARD_VERSION=dev make devshardd-build
-          echo "=== devshard version (make DEVSHARD_VERSION / build/devshard-version) ==="
+          # Host Linux binaries for Testermint:
+          # - build/devshardd: mounted into versiond (VERSIOND_OVERRIDE)
+          # - build/devshardctl: docker-cp'd into *-api for startDevshardProxy
+          # Stamp both versiond route name and BinaryVersion as "testapp" for CI
+          # (matches VERSIOND_BINARY_NAME default / local-build-pixelplex e2e convention).
+          DEVSHARD_VERSION=testapp DEVSHARD_BINARY_VERSION=testapp make devshardd-build devshardctl-build
+          echo "=== devshard version (DEVSHARD_VERSION / build/devshard-version) ==="
           make -s print-devshard-version
           cat build/devshard-version
-          echo "=== devshard protocol version (DEVSHARD_PROTOCOL_VERSION / build/devshard-protocol-version) ==="
-          make -s print-devshard-protocol-version
-          cat build/devshard-protocol-version
+          ls -la build/devshardd build/devshardctl
           echo "=== Images immediately after build ==="
           docker images | head -20
 
@@ -187,6 +188,8 @@ jobs:
           docker save -o docker-images/proxy.tar ghcr.io/product-science/proxy:latest
           docker save -o docker-images/versiond.tar versiond:latest
           docker save -o docker-images/testapp-server.tar testapp-server:latest
+          docker save -o docker-images/edge-api.tar edge-api:latest
+          docker save -o docker-images/edge-api-router.tar edge-api-router:latest
           gzip docker-images/*.tar
           echo "=== Created files ==="
           ls -la docker-images/
@@ -198,14 +201,14 @@ jobs:
           path: docker-images/
           retention-days: 1
 
-      - name: Upload devshardd Host Binary
+      - name: Upload Devshard Host Binaries
         uses: actions/upload-artifact@v4
         with:
-          name: devshardd-host-binary
+          name: devshard-host-binaries
           path: |
             build/devshardd
+            build/devshardctl
             build/devshard-version
-            build/devshard-protocol-version
           retention-days: 1
 
       - name: Make Upgrade Build
@@ -251,10 +254,10 @@ jobs:
           name: docker-images
           path: docker-images/
 
-      - name: Download devshardd Host Binary
+      - name: Download Devshard Host Binaries
         uses: actions/download-artifact@v4
         with:
-          name: devshardd-host-binary
+          name: devshard-host-binaries
           path: build/
 
       - name: Load Docker Images
@@ -266,14 +269,17 @@ jobs:
           sudo docker load -i docker-images/proxy.tar || true
           sudo docker load -i docker-images/versiond.tar || true
           sudo docker load -i docker-images/testapp-server.tar || true
+          sudo docker load -i docker-images/edge-api.tar || true
+          sudo docker load -i docker-images/edge-api-router.tar || true
           rm -rf docker-images/
 
-      - name: Prepare devshardd Host Binary
+      - name: Prepare Devshard Host Binaries
         run: |
-          chmod +x build/devshardd
+          chmod +x build/devshardd build/devshardctl
           echo "=== devshard version stamp (for Testermint) ==="
           cat build/devshard-version 2>/dev/null || echo "(missing build/devshard-version)"
-          cat build/devshard-protocol-version 2>/dev/null || echo "(missing build/devshard-protocol-version)"
+          ls -la build/devshardd build/devshardctl
+          file build/devshardd build/devshardctl || true
 
       - name: Install Make
         run: |

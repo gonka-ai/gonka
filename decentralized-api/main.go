@@ -21,19 +21,14 @@ import (
 	"decentralized-api/statsstorage"
 	"net"
 
+	nmgen "common/nodemanager/gen"
 	"decentralized-api/nodemanager"
-	nmgen "devshard/nodemanager/gen"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/reflection"
 
-	internaldevshard "decentralized-api/internal/devshard"
-	"decentralized-api/internal/validation"
-	"decentralized-api/logging"
-	"decentralized-api/observability"
+	"common/logging"
 	"decentralized-api/participant"
-	devshardlogging "devshard/logging"
-	devshardobservability "devshard/observability"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -101,9 +96,6 @@ func main() {
 	if configManager.GetApiConfig().TestMode {
 		slog.SetLogLoggerLevel(slog.LevelDebug)
 	}
-	devshardlogging.SetLogger(devshardlogging.NewSlogAdapter("subsystem", devshardobservability.ServiceName))
-	devshardobservability.SetRuntime("api", configManager.GetCurrentNodeVersion(), "dapi_inprocess")
-	devshardobservability.SetBuildInfo("api", configManager.GetCurrentNodeVersion(), "")
 
 	natssrv := server.NewServer(configManager.GetNatsConfig())
 	if err := natssrv.Start(); err != nil {
@@ -132,9 +124,6 @@ func main() {
 		return
 	}
 	chainPhaseTracker.UpdateEpochParams(*params.Params.EpochParams)
-	if params.Params.DevshardEscrowParams != nil {
-		internaldevshard.SeedDevshardVersionsCache(configManager, params.Params.DevshardEscrowParams)
-	}
 
 	participantInfo, err := participant.NewCurrentParticipantInfo(recorder)
 	if err != nil {
@@ -206,23 +195,6 @@ func main() {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel() // Ensure resources are cleaned up
 
-	// Initialize OpenTelemetry. Returns a noop shutdown when disabled, so it
-	// is safe to defer unconditionally. Trace context propagation is wired in
-	// either case so downstream services see the trace ids.
-	shutdownObservability, err := observability.Init(ctx, observability.Config{
-		ServiceName:        observability.ServiceName,
-		ParticipantAddress: participantInfo.GetAddress(),
-	})
-	if err != nil {
-		logging.Error("Failed to initialize observability", types.System, "error", err)
-		return
-	}
-	defer func() {
-		shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer shutdownCancel()
-		_ = shutdownObservability(shutdownCtx)
-	}()
-
 	// Start periodic config auto-flush of dynamic data to DB
 	configManager.StartAutoFlush(ctx, 60*time.Second)
 
@@ -236,7 +208,6 @@ func main() {
 		defer statsStore.Close()
 	}
 
-	validator := validation.NewInferenceValidator(nodeBroker, configManager, recorder, chainPhaseTracker)
 	blsManager := bls.NewBlsManager(*recorder)
 	if db := configManager.SqlDb().GetDb(); db != nil {
 		if err := blsManager.SetDealerOpeningsDB(db); err != nil {
@@ -249,14 +220,13 @@ func main() {
 		configManager,
 		offChainValidator,
 		nodeBroker,
-		validator,
 		*recorder,
 		chainPhaseTracker,
 		cancel,
 		blsManager,
 		event_listener.WithStatsStorage(statsStore),
 		event_listener.WithHostEventRing(hostEventRing),
-		event_listener.WithEscrowQuerier(internaldevshard.NewChainBridge(recorder)),
+		event_listener.WithEscrowQuerier(event_listener.NewChainEscrowQuerier(recorder)),
 	)
 	go listener.Start(ctx)
 
@@ -311,7 +281,7 @@ func main() {
 
 	addr = fmt.Sprintf(":%v", configManager.GetApiConfig().AdminServerPort)
 	logging.Info("start admin server on addr", types.Server, "addr", addr)
-	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, validator, blockQueue, payloadStore)
+	adminServer := adminserver.NewServer(recorder, nodeBroker, configManager, blockQueue, payloadStore)
 	adminServer.Start(addr)
 
 	nmGrpcPort := configManager.GetApiConfig().NodeManagerGrpcPort

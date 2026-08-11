@@ -517,6 +517,39 @@ func TestFetchAndVerifyProofsByNonce_MissingNonce(t *testing.T) {
 	recorder.AssertExpectations(t)
 }
 
+// TestFetchAndVerifyProofsMarksSigningFailureAsLocal keeps a broken keyring from
+// looking like a validatee failure, which would vote -1 against every assigned
+// participant once retries ran out.
+func TestFetchAndVerifyProofsMarksSigningFailureAsLocal(t *testing.T) {
+	recorder := &cosmosclient.MockCosmosMessageClient{}
+	recorder.On("GetAccountAddress").Return("validator-address")
+	recorder.On("GetSignerAddress").Return("validator-signer")
+	recorder.On("SignBytes", mock.Anything).Return([]byte(nil), errors.New("keyring locked"))
+
+	client := &ProofClient{httpClient: http.DefaultClient, recorder: recorder}
+
+	_, err := client.FetchAndVerifyProofs(context.Background(), "http://participant", ProofRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 make([]byte, 32),
+		Count:                    1,
+		LeafIndices:              []uint32{0},
+		ParticipantAddress:       "participant",
+	})
+	assert.True(t, errors.Is(err, ErrLocalRequestFailure))
+
+	_, err = client.FetchAndVerifyProofsByNonce(context.Background(), "http://participant", ProofByNonceRequest{
+		PocStageStartBlockHeight: 100,
+		ModelId:                  "model-a",
+		RootHash:                 make([]byte, 32),
+		Count:                    1,
+		Nonces:                   []int32{42},
+		ParticipantAddress:       "participant",
+	})
+	assert.True(t, errors.Is(err, ErrLocalRequestFailure))
+	recorder.AssertExpectations(t)
+}
+
 func proofStrings(proof [][]byte) []string {
 	out := make([]string, len(proof))
 	for i, hash := range proof {

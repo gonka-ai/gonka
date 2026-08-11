@@ -198,6 +198,8 @@ echo "Starting cosmovisor and the chain"
 #  tail -f /dev/null
 #}
 
+# gRPC bind (0.0.0.0:9090) comes from app_overrides.toml via update_configs when REST_API_ACTIVE=true.
+
 cosmovisor run start &
 COSMOVISOR_PID=$!
 sleep 20 # wait for the first block

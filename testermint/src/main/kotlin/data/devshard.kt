@@ -157,8 +157,9 @@ enum class DevshardInferenceStatus(val value: Int) {
         fun fromAny(value: Any?): DevshardInferenceStatus {
             return when (value) {
                 is Number -> fromValue(value.toInt())
-                // /v1/state serializes status as a lowercase name (e.g. "finished",
-                // "timed_out"); /v1/inference used the numeric code. Accept both.
+                // /v1/debug/inferences serializes status as a lowercase name
+                // (e.g. "finished", "timed_out"); older endpoints used numeric
+                // codes. Accept both.
                 is String -> values().find { it.name.equals(value, ignoreCase = true) }
                     ?: value.toIntOrNull()?.let { fromValue(it) }
                     ?: UNSPECIFIED

@@ -334,6 +334,12 @@ func (ctx *RequestFilterContext) SyncRequestView() error {
 	}
 	req.MaxTokens = ctx.Request.MaxTokens
 	req.MaxCompletionTokens = ctx.Request.MaxCompletionTokens
+	// Preserve the client's ORIGINAL logprobs intent. PostLimits force-sets
+	// logprobs=true / top_logprobs=<forced> in the document for validation, so
+	// re-reading them here would capture the forced values, not what the client
+	// asked. DecodeRequest already captured the original before PostLimits ran.
+	req.Logprobs = ctx.Request.Logprobs
+	req.TopLogprobs = ctx.Request.TopLogprobs
 	ctx.Request = req
 	return nil
 }
@@ -361,6 +367,22 @@ func readChatRequestFields(doc *ChatRequestDocument, req *chatRequest) error {
 	}
 	if err := readUint64Field(doc, "n", &req.N); err != nil {
 		return err
+	}
+	// logprobs/top_logprobs: lenient capture of the client's original intent.
+	// Only an explicit boolean true (and a positive top_logprobs) counts as a
+	// request; any other shape is treated as "not requested" so we never reject a
+	// request the gateway previously accepted -- the PostLimits ForceLiteral
+	// rules overwrite both fields regardless of incoming type. Cf.
+	// logprobClientIntent and conditional response stripping.
+	if raw, ok := doc.Get("logprobs"); ok {
+		if b, isBool := raw.(bool); isBool {
+			req.Logprobs = b
+		}
+	}
+	if raw, ok := doc.Get("top_logprobs"); ok {
+		if n, isNum := devshard.JSONNumericUint64(raw); isNum {
+			req.TopLogprobs = n
+		}
 	}
 	return nil
 }
