@@ -74,7 +74,7 @@ func TestHTTPClient_Send_RoundTrip(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -145,7 +145,7 @@ func TestHTTPClient_GetDiffs(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -171,7 +171,7 @@ func TestHTTPClient_GetMempool(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -237,7 +237,7 @@ func TestHTTPClient_Send_SSE(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, streamSink, nil)
@@ -294,7 +294,7 @@ func TestHTTPClient_Send_UsesAdmissionController(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)
@@ -328,7 +328,7 @@ func TestHTTPClient_Send_ObservesUpstream503(t *testing.T) {
 			Prompt:      testutil.TestPrompt,
 			Model:       "llama",
 			InputLength: 100,
-			MaxTokens:   50,
+			MaxTokens:   testutil.TestMaxTokens,
 			StartedAt:   1000,
 		},
 	}, nil, nil)

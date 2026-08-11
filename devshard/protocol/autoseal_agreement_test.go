@@ -159,7 +159,7 @@ func (env *autoSealEnv) startConfirm(t *testing.T, inferenceID, startNonce uint6
 
 	executorSlot := uint32(inferenceID % uint64(len(env.group)))
 	execSig := testutil.SignExecutorReceipt(t, env.hostSigners[executorSlot], env.escrowID, inferenceID,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, confirmedAt)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, confirmedAt)
 	confirmTx := &types.DevshardTx{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{
 		InferenceId: inferenceID, ExecutorSig: execSig, ConfirmedAt: confirmedAt,
 	}}}

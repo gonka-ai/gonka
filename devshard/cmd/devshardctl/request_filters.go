@@ -9,6 +9,9 @@ import (
 	"net/http"
 	"sort"
 	"unicode/utf8"
+
+	"common/completionapi"
+	"devshard"
 )
 
 type chatRequest struct {
@@ -158,6 +161,34 @@ func (p ChatRequestPipeline) applyOutputTokenLimits(ctx *RequestFilterContext) {
 		ctx.Request.MaxTokens = maxTokens
 		ctx.Request.MaxCompletionTokens = 0
 	}
+	p.applyTokenBudgetFloor(ctx)
+}
+
+func (p ChatRequestPipeline) applyTokenBudgetFloor(ctx *RequestFilterContext) {
+	maxTokens := ctx.Request.MaxTokens
+	if maxTokens < completionapi.MinTokensFloor {
+		maxTokens = completionapi.MinTokensFloor
+	}
+	if _, ok := ctx.Document.Get("max_tokens"); ok {
+		ctx.Document.Set("max_tokens", maxTokens)
+	}
+	if _, ok := ctx.Document.Get("max_completion_tokens"); ok {
+		ctx.Document.Set("max_completion_tokens", maxTokens)
+		ctx.Request.MaxCompletionTokens = maxTokens
+	}
+	ctx.Request.MaxTokens = maxTokens
+
+	var minTokens uint64
+	if raw, ok := ctx.Document.Get("min_tokens"); ok {
+		minTokens, _ = devshard.JSONNumericUint64(raw)
+	}
+	if minTokens < completionapi.MinTokensFloor {
+		minTokens = completionapi.MinTokensFloor
+	}
+	if minTokens > maxTokens {
+		minTokens = maxTokens
+	}
+	ctx.Document.Set("min_tokens", minTokens)
 }
 
 func readLimitedChatRequestBody(r *http.Request) ([]byte, error) {

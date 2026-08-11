@@ -87,7 +87,7 @@ func setupRecoverableSession(
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 
 	for i := 0; i < numInferences; i++ {
@@ -128,7 +128,7 @@ func TestRecoverSession_HappyPath(t *testing.T) {
 	ctx := context.Background()
 	params := InferenceParams{
 		Model: "llama", Prompt: testutil.TestPrompt,
-		InputLength: 100, MaxTokens: 50, StartedAt: 1000,
+		InputLength: 100, MaxTokens: testutil.TestMaxTokens, StartedAt: 1000,
 	}
 	resp, err := session.SendInference(ctx, params)
 	require.NoError(t, err)
@@ -208,7 +208,7 @@ func TestRecoverSession_WarmKeyDelta(t *testing.T) {
 
 	// Nonce 1: StartInference + ConfirmStart (status -> Started). No warm keys yet.
 	confirmSig := testutil.SignExecutorReceipt(t, hosts[executorSlot], "escrow-1", 1,
-		testutil.TestPromptHash[:], "llama", 100, 50, 1000, 2000)
+		testutil.TestPromptHash[:], "llama", 100, testutil.TestMaxTokens, 1000, 2000)
 	txs1 := []*types.DevshardTx{
 		testutil.StartTx(1),
 		{Tx: &types.DevshardTx_ConfirmStart{ConfirmStart: &types.MsgConfirmStart{

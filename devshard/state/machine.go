@@ -10,6 +10,8 @@ import (
 
 	"google.golang.org/protobuf/proto"
 
+	"common/completionapi"
+
 	"devshard/logging"
 	"devshard/signing"
 	"devshard/storage"
@@ -898,6 +900,12 @@ func (sm *StateMachine) applyTx(tx *types.DevshardTx) error {
 func (sm *StateMachine) applyStartInference(msg *types.MsgStartInference) error {
 	if sm.state.Phase != types.PhaseActive {
 		return types.ErrSessionFinalizing
+	}
+
+	// A sub-floor reservation is refused by the executor's payload check, so the inference would sit
+	// pending until seal. Rejecting here keeps it out of state and off the balance.
+	if msg.MaxTokens < completionapi.MinTokensFloor {
+		return fmt.Errorf("%w: max_tokens %d, floor %d", types.ErrMaxTokensBelowFloor, msg.MaxTokens, completionapi.MinTokensFloor)
 	}
 
 	// Duplicate inference ID guard.

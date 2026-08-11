@@ -318,6 +318,73 @@ func TestEffectiveMaxTokens(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestEnforceTokenBudgetFloor(t *testing.T) {
+	tests := []struct {
+		name        string
+		requestMap  map[string]interface{}
+		expectedMin int
+		expectedMax int
+	}{
+		{"AbsentMinDefaultsToFloor", map[string]interface{}{"max_tokens": float64(100)}, 64, 100},
+		{"BelowFloorRaisedToFloor", map[string]interface{}{"min_tokens": float64(1), "max_tokens": float64(100)}, 64, 100},
+		{"AtFloorKept", map[string]interface{}{"min_tokens": float64(64), "max_tokens": float64(100)}, 64, 100},
+		{"AboveFloorKept", map[string]interface{}{"min_tokens": float64(80), "max_tokens": float64(100)}, 80, 100},
+		{"AboveMaxClampedToMax", map[string]interface{}{"min_tokens": float64(128), "max_tokens": float64(100)}, 100, 100},
+		{"SmallMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(100), "max_tokens": float64(50)}, 64, 64},
+		{"AbsentMaxUsesDefault", map[string]interface{}{}, 64, calculations.DefaultMaxTokens},
+		{"MaxCompletionTokensOnlyBelowFloor", map[string]interface{}{"max_completion_tokens": float64(50)}, 64, 64},
+		{"NegativeMinRaisedToFloor", map[string]interface{}{"min_tokens": float64(-5), "max_tokens": float64(100)}, 64, 100},
+		{"ZeroMaxRaisesBothToFloor", map[string]interface{}{"min_tokens": float64(10), "max_tokens": float64(0)}, 64, 64},
+		{"IntMinBelowFloor", map[string]interface{}{"min_tokens": 10, "max_tokens": float64(100)}, 64, 100},
+		{"UnusableMinTypeDefaultsToFloor", map[string]interface{}{"min_tokens": "oops", "max_tokens": float64(100)}, 64, 100},
+		{"IntMaxTokens", map[string]interface{}{"max_tokens": 200}, 64, 200},
+		{"IntMaxCompletionTokens", map[string]interface{}{"max_completion_tokens": 200}, 64, 200},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			EnforceTokenBudgetFloor(tt.requestMap)
+			require.Equal(t, tt.expectedMin, tt.requestMap["min_tokens"], "min_tokens")
+			require.Equal(t, tt.expectedMax, tt.requestMap["max_tokens"], "max_tokens")
+			require.Equal(t, tt.expectedMax, tt.requestMap["max_completion_tokens"], "max_completion_tokens")
+			require.GreaterOrEqual(t, tt.requestMap["min_tokens"].(int), MinTokensFloor, "floor invariant")
+		})
+	}
+}
+
+func TestModifyRequestBody_FloorsMinTokensAndStripsStopTokenIds(t *testing.T) {
+	body := `{"model":"m","max_tokens":10,"stop_token_ids":[7,9999999],"messages":[{"role":"user","content":"hi"}]}`
+	r, err := ModifyRequestBody([]byte(body), 7)
+	require.NoError(t, err)
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
+	require.EqualValues(t, 64, raw["min_tokens"])
+	require.EqualValues(t, 64, raw["max_tokens"])
+	require.EqualValues(t, 64, raw["max_completion_tokens"])
+	require.NotContains(t, raw, "stop_token_ids")
+}
+
+func TestEnforceTokenBudgetFloor_StripsStopTokenIds(t *testing.T) {
+	requestMap := map[string]interface{}{
+		"max_tokens":     float64(100),
+		"stop_token_ids": []interface{}{float64(7), float64(9999999)},
+	}
+	EnforceTokenBudgetFloor(requestMap)
+	require.NotContains(t, requestMap, "stop_token_ids")
+}
+
+func TestModifyRequestBody_KeepsClientMinTokensAboveFloor(t *testing.T) {
+	body := `{"model":"m","max_tokens":500,"min_tokens":128,"messages":[{"role":"user","content":"hi"}]}`
+	r, err := ModifyRequestBody([]byte(body), 7)
+	require.NoError(t, err)
+
+	var raw map[string]interface{}
+	require.NoError(t, json.Unmarshal(r.NewBody, &raw))
+	require.EqualValues(t, 128, raw["min_tokens"])
+	require.EqualValues(t, 500, raw["max_tokens"])
+}
+
 func TestModifyRequestBody_PreservesMultipartContent(t *testing.T) {
 	r, err := ModifyRequestBody([]byte(jsonBodyMultipartContent), 7)
 	require.NoError(t, err)
@@ -426,7 +493,21 @@ func TestModifyRequestBodyWithLogprobsMode_TestermintInferenceRequestPromptHash(
 
 	canonical, err := utils.CanonicalizeJSON(r.NewBody)
 	require.NoError(t, err)
-	require.Equal(t, "a5d657a116456a31026dea733abf558bf97d6ea1051e32d2a95ee9e67e2464f6", utils.GenerateSHA256Hash(canonical))
+	require.Equal(t, "957c3d8008b8a568b104403f4d44d82d054f05e60dc221ddca1b7ba2903a3424", utils.GenerateSHA256Hash(canonical))
+}
+
+// Cross-language vector: testermint reimplements ModifyRequestBody in Kotlin and both must emit
+// a byte-identical body, or the prompt hash a node computes and the one testermint expects drift
+// apart. Keep this input and hash in sync with testermint PromptHashingTests.kt.
+func TestModifyRequestBodyWithLogprobsMode_KotlinCrossLanguageVector(t *testing.T) {
+	body := []byte(`{"model":"Qwen/Qwen2.5-7B-Instruct","temperature":0.8,"messages":[{"role":"system","content":"Regardless of the language of the question, answer in english"},{"role":"user","content":"When did Hawaii become a state"}]}`)
+
+	r, err := ModifyRequestBodyWithLogprobsMode(body, 0, "processed_logprobs")
+	require.NoError(t, err)
+
+	canonical, err := utils.CanonicalizeJSON(r.NewBody)
+	require.NoError(t, err)
+	require.Equal(t, "840c921425b13906f6131af5db28c5f29f67e1b2e5703938cb41ecf08e8a7f96", utils.GenerateSHA256Hash(canonical))
 }
 
 // #6: top_logprobs is hard-pinned to ForcedTopLogprobs on every request — absent,

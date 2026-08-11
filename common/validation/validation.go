@@ -438,6 +438,23 @@ func ExecuteValidation(
 		)
 	}
 
+	// Verify the executor's stored output honored the min_tokens floor. min_tokens masks both EOS
+	// and stop-strings until the floor, and reasoning is disabled below 256 tokens, so a legitimate
+	// non-empty output is always >= min_tokens (confirmed empirically on the deployed vLLM:
+	// min_tokens=64 with a stop-string produced 101 tokens; a reasoning request that hit the length
+	// cap still had logprobs content == completion_tokens == 90). A shorter non-empty output means
+	// the executor ignored the floor. Empty outputs are handled by the presence/both-empty logic
+	// above; empty-sentinel errors are exempt.
+	if !isEmptySentinel && len(originalLogits) > 0 {
+		minTokens := completionapi.MinTokensOf(requestMap)
+		if minTokens > 0 && len(originalLogits) < minTokens {
+			logging.Warn("validation failed: output below min_tokens floor",
+				types.Validation, "inferenceId", inferenceID,
+				"outputTokens", len(originalLogits), "minTokens", minTokens)
+			return &InvalidInferenceResult{InferenceId: inferenceID, Reason: "Output shorter than min_tokens floor."}, nil
+		}
+	}
+
 	return CompareLogits(originalLogits, validationLogits, baseResult), nil
 }
 

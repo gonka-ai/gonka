@@ -18,6 +18,8 @@ type ModifiedRequest struct {
 	NewBody []byte
 }
 
+const MinTokensFloor = 64
+
 func ModifyRequestBody(requestBytes []byte, defaultSeed int32) (*ModifiedRequest, error) {
 	return ModifyRequestBodyWithLogprobsMode(requestBytes, defaultSeed, "")
 }
@@ -43,10 +45,7 @@ func ModifyRequestBodyWithLogprobsMode(requestBytes []byte, defaultSeed int32, l
 	// Pin top_logprobs to the protocol constant on both the original and the validation request; a larger client-supplied value must not pass through.
 	requestMap["top_logprobs"] = ForcedTopLogprobs
 
-	maxTokens := getMaxTokens(requestMap)
-
-	requestMap["max_tokens"] = maxTokens
-	requestMap["max_completion_tokens"] = maxTokens
+	EnforceTokenBudgetFloor(requestMap)
 	requestMap["skip_special_tokens"] = false
 	requestMap["return_token_ids"] = true
 	if _, ok := requestMap["seed"]; !ok {
@@ -154,6 +153,33 @@ func validateMessageContents(requestMap map[string]interface{}) error {
 	return nil
 }
 
+func EnforceTokenBudgetFloor(requestMap map[string]interface{}) {
+	maxTokens := max(getMaxTokens(requestMap), MinTokensFloor)
+	minTokens := min(max(getMinTokens(requestMap), MinTokensFloor), maxTokens)
+
+	requestMap["min_tokens"] = minTokens
+	requestMap["max_tokens"] = maxTokens
+	requestMap["max_completion_tokens"] = maxTokens
+
+	// Unsupported: min_tokens>0 makes vLLM mask stop-token logits, so an out-of-vocab id CUDA-asserts the node; the floor is always on, so drop stop_token_ids.
+	delete(requestMap, "stop_token_ids")
+}
+
+func getMinTokens(requestMap map[string]interface{}) int {
+	minTokensValue, ok := requestMap["min_tokens"]
+	if !ok {
+		return 0
+	}
+	switch value := minTokensValue.(type) {
+	case float64:
+		return int(value)
+	case int:
+		return value
+	default:
+		return 0
+	}
+}
+
 func getMaxTokens(requestMap map[string]interface{}) int {
 	if maxTokensValue, ok := requestMap["max_tokens"]; ok {
 		if maxTokensFloat, ok := maxTokensValue.(float64); ok {
@@ -183,6 +209,11 @@ func EffectiveMaxTokens(requestBytes []byte) (uint64, error) {
 		return 0, err
 	}
 	return uint64(getMaxTokens(requestMap)), nil
+}
+
+// MinTokensOf returns the min_tokens the request carries (0 if unset).
+func MinTokensOf(requestMap map[string]interface{}) int {
+	return getMinTokens(requestMap)
 }
 
 func getOriginalLogprobs(requestMap map[string]interface{}) *bool {

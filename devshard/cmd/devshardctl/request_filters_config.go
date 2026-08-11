@@ -35,8 +35,6 @@ const (
 	StopMaxEntries  = 16
 	StopMaxEntryLen = 256
 
-	StopTokenIdsMaxEntries = 64
-
 	BadWordsMaxEntries  = 64
 	BadWordsMaxEntryLen = 128
 
