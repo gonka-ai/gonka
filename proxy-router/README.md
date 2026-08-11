@@ -8,7 +8,9 @@ It has three independent data-plane responsibilities:
 2. distribute `/devshard` requests from those workers across ready
    `versiond-router` replicas, using route-specific health checks;
 3. distribute Tier A read-only requests directly across ready `edge-api`
-   replicas.
+   replicas;
+4. expose only DAPI's read-only `GET /versions` catalog on the isolated inner
+   router network.
 
 The nginx workers still own TLS, HTTP/2, CORS, rate limits, path rewrites, and
 the on-chain route table. This keeps one policy implementation while allowing
@@ -113,6 +115,7 @@ host-level outage. Multi-host ingress belongs in a later layer above this one
 | `127.0.0.1:8404/readyz?component=edge-api` | edge-api availability |
 | `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
 | `127.0.0.1:8405/metrics`, `proxy-router-metrics:8405/metrics` | HAProxy Prometheus exporter; internal only, no host port |
+| router-back `:9100/versions` | read-only bridge to DAPI's governance catalog; other methods and paths are rejected |
 | `/var/run/haproxy/haproxy.sock` | local Runtime API |
 
 The diagnostic Runtime API is a Unix socket with `operator` privileges, which
@@ -147,6 +150,10 @@ and cannot mutate routing.
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
+| `PROXY_ROUTER_CATALOG_BIND_HOST` | *(empty; disabled)* | DNS alias whose isolated interface receives the read-only catalog bridge |
+| `PROXY_ROUTER_CATALOG_PORT` | `9100` | catalog bridge listener port |
+| `PROXY_ROUTER_CATALOG_UPSTREAM_HOST` | *(empty)* | DAPI hostname; required when the bridge is enabled |
+| `PROXY_ROUTER_CATALOG_UPSTREAM_PORT` | `9100` | DAPI catalog port |
 | `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used by HAProxy service discovery; Docker Compose uses the default, while another runtime may inject its cluster DNS IP |
 
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every

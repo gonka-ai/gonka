@@ -14,6 +14,8 @@ test-render:
 	PROXY_ROUTER_OUT="$$tmpdir/proxy.cfg" \
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/versions.map" \
 	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
+	PROXY_ROUTER_CATALOG_BIND_HOST=localhost \
+	PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api \
 	VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
 	VERSIOND_VERSIONS='v4 v5' \
 	./entrypoint.sh; \
@@ -59,6 +61,16 @@ test-render:
 		|| fail "versionless session routes do not reuse the escrow routing key"; \
 	grep -q '^ *nameserver dns 10.96.0.10:53$$' "$$tmpdir/proxy.cfg" \
 		|| fail "the configured DNS resolver was not rendered"; \
+	grep -q '^frontend routing_catalog$$' "$$tmpdir/proxy.cfg" \
+		|| fail "the read-only catalog bridge was not rendered"; \
+	grep -q '^ *bind 127.0.0.1:9100$$' "$$tmpdir/proxy.cfg" \
+		|| fail "the catalog bridge is not bound to its isolated interface"; \
+	grep -q 'return status 405.*unless METH_GET' "$$tmpdir/proxy.cfg" \
+		|| fail "the catalog bridge accepts mutating methods"; \
+	grep -q 'return status 404.*unless { path /versions }' "$$tmpdir/proxy.cfg" \
+		|| fail "the catalog bridge exposes paths other than /versions"; \
+	grep -q 'server catalog api:9100 check' "$$tmpdir/proxy.cfg" \
+		|| fail "the catalog bridge does not target dapi"; \
 	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/proxy.cfg" \
 		|| fail "non-503 connection failover was removed"; \
 	awk '/^backend versiond_router_coarse$$/{inside=1; next} /^backend /{inside=0} \

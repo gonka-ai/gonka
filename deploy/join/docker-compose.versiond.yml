@@ -86,16 +86,6 @@ x-versiond: &versiond
   restart: always
 
 services:
-  # Expose only the existing read-only approved-versions endpoint to the inner
-  # router fleet. Routers consume the same governance snapshot as versiond and
-  # need no host-side allowlist update when a new name appears.
-  api:
-    networks:
-      default: {}
-      versiond-router-back:
-        aliases:
-          - versiond-routing-oracle
-
   devshard-postgres:
     container_name: devshard-postgres
     image: postgres:16-alpine
@@ -177,10 +167,19 @@ services:
       - VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=${VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
       - VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}
       - PROXY_ROUTER_VERSION_CAPACITY=${PROXY_ROUTER_VERSION_CAPACITY:-32}
+      # The router-back network must not expose DAPI's mutating callback
+      # listener. The existing HAProxy publishes only GET /versions there.
+      - PROXY_ROUTER_CATALOG_BIND_HOST=versiond-routing-oracle
+      - PROXY_ROUTER_CATALOG_PORT=9100
+      - PROXY_ROUTER_CATALOG_UPSTREAM_HOST=api
+      - PROXY_ROUTER_CATALOG_UPSTREAM_PORT=9100
     networks:
       default: {}
       proxy-policy-front: {}
       versiond-router-front: {}
+      versiond-router-back:
+        aliases:
+          - versiond-routing-oracle
 
 networks:
   versiond-router-front:

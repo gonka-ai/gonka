@@ -381,7 +381,7 @@ Run `prepare-networks` before the next main-project `up`, then run
 | `VERSIOND_LEGACY_HOST` | *(none)* | single host owning pre-HA SQLite data dirs. **Required** whenever `VERSIOND_NON_HA_VERSIONS` is non-empty — the router refuses to start otherwise, because the owner of one host's data cannot default to a name that resolves to the whole pool. Unused (and may be omitted) when no version is pinned |
 | `VERSIOND_NON_HA_VERSIONS` | *(empty)* | version path segments pinned to the legacy host, whitespace and/or comma separated |
 | `VERSIOND_VERSIONS` | *(empty)* | static bootstrap floor, whitespace and/or comma separated; governance additions are learned without changing it |
-| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint. The join fleet uses `http://versiond-routing-oracle:9100/versions` |
+| `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only `GET /versions` endpoint. Join Compose resolves `versiond-routing-oracle` to the path-restricted HAProxy bridge; DAPI's callback listener is not attached to this network |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | interval for discovering governance names |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog used at process start |

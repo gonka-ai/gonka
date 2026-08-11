@@ -115,6 +115,8 @@ backend edge_api_pool
     http-response set-header X-Edge-API-Upstream %[bc_dst]:%[bc_dst_port]
     server-template edgeapi ${EDGE_POOL_SLOTS} ${EDGE_POOL_HOST}:${EDGE_API_PORT} check inter 1s fall 1 rise 2 resolvers docker init-addr none init-state fully-down hash-key addr
 
+${CATALOG_PROXY_CONFIG}
+
 frontend admin
     option httplog
     bind 127.0.0.1:${ADMIN_PORT}

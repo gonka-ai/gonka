@@ -49,13 +49,20 @@ HAProxy frontends:
                                   shared PostgreSQL for HA versions
 ```
 
-`proxy-router` selects a ready router replica with `leastconn`. Every
+`proxy-router` selects a ready router replica with the same escrow-derived
+consistent hash used by the inner tier. Every
 `versiond-router` independently computes the same consistent-hash placement
 from the escrow ID and the same DNS-discovered `versiond` pool. Router replicas
 hold no shared routing state and do not need Redis, leader election, or
 replica-to-replica communication. Both router tiers independently project
 protocol names from dapi's existing governance `/versions` feed into local
 pre-rendered backend slots.
+
+DAPI itself is not attached to the router-back network. The existing public
+HAProxy is dual-homed and exposes a narrow bridge there: only
+`GET /versions` is forwarded to DAPI, while every other path or method is
+rejected before it reaches the callback listener. This is an HTTP security
+boundary that a second port in the same Docker container would not provide.
 
 The public `proxy-router` process is still a **single host-level failure
 domain**. This deployment protects against failure or replacement of an inner

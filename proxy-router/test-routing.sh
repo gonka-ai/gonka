@@ -15,11 +15,16 @@ containers=(
 tmpdir=$(mktemp -d)
 
 cleanup() {
+    status=$?
+    if (( status != 0 )); then
+        docker logs gonka-pr-proxy >&2 || true
+    fi
     docker rm -f "${containers[@]}" >/dev/null 2>&1 || true
     docker network rm "$network" >/dev/null 2>&1 || true
     docker volume rm "$state" >/dev/null 2>&1 || true
     docker image rm "$image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
+	return "$status"
 }
 trap cleanup EXIT
 
@@ -227,6 +232,9 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
+    -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
+    -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
+    -e PROXY_ROUTER_CATALOG_UPSTREAM_PORT=8080 \
     "$image" >/dev/null
 for name in a b; do
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
@@ -267,6 +275,16 @@ probe 'http://proxy-router:8405/metrics?scope=frontend' >"$tmpdir/proxy.metrics"
     "parent proxy metrics are not reachable on their internal network alias"
 grep -q '^haproxy_' "$tmpdir/proxy.metrics" || fail \
     "parent proxy returned no HAProxy metrics"
+probe http://proxy-router:9100/versions | grep -q '"initialized":true' \
+    || fail "read-only catalog bridge did not forward GET /versions"
+catalog_post_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
+    -w '%{http_code}' -X POST http://proxy-router:9100/versions)
+[[ $catalog_post_status == 405 ]] \
+    || fail "catalog bridge forwarded a mutating method (status $catalog_post_status)"
+catalog_path_status=$(docker exec gonka-pr-probe curl -sS -o /dev/null \
+    -w '%{http_code}' http://proxy-router:9100/private)
+[[ $catalog_path_status == 404 ]] \
+    || fail "catalog bridge exposed a non-catalog path (status $catalog_path_status)"
 
 proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
 printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
@@ -321,6 +339,9 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
     -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
+    -e PROXY_ROUTER_CATALOG_BIND_HOST=proxy-router \
+    -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
+    -e PROXY_ROUTER_CATALOG_UPSTREAM_PORT=8080 \
     "$image" >/dev/null
 for _ in $(seq 40); do
     if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then

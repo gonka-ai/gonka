@@ -146,12 +146,12 @@ if "proxy-policy-front" not in policy["networks"] or "proxy-policy-front" not in
 for network in ("versiond-router-front", "versiond-router-back"):
     if not defaults_config["networks"][network].get("external"):
         raise SystemExit(f"router fleet network {network} is still owned by main Compose")
-if "versiond-router-back" not in api["networks"]:
-    raise SystemExit("dapi governance catalog is not reachable from the inner router fleet")
-if "versiond-routing-oracle" not in api["networks"]["versiond-router-back"].get(
-    "aliases", []
-):
-    raise SystemExit("dapi has no stable governance-catalog alias on the router back network")
+if "versiond-router-back" in api.get("networks", {}):
+    raise SystemExit("dapi mutating listener is exposed to the router back network")
+if "versiond-router-back" not in proxy["networks"]:
+    raise SystemExit("read-only catalog bridge is not attached to the router back network")
+if "versiond-routing-oracle" not in proxy["networks"]["versiond-router-back"].get("aliases", []):
+    raise SystemExit("read-only catalog bridge has no stable router-back alias")
 
 defaults = proxy["environment"]
 cleared = cleared_config["services"]["proxy"]["environment"]
@@ -180,6 +180,8 @@ require(
     "parent metrics bind",
 )
 require(defaults, "PROXY_ROUTER_VERSION_CAPACITY", "32", "parent dynamic capacity")
+require(defaults, "PROXY_ROUTER_CATALOG_BIND_HOST", "versiond-routing-oracle", "catalog bridge bind")
+require(defaults, "PROXY_ROUTER_CATALOG_UPSTREAM_HOST", "api", "catalog bridge upstream")
 require(defaults, "HAPROXY_DNS_RESOLVER", "127.0.0.11:53", "parent DNS resolver")
 require(defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "parent catalog poll")
 require(

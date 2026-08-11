@@ -37,6 +37,10 @@ CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/ca
 NGINX_MODE="${NGINX_MODE:-http}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
 METRICS_BIND_HOST="${PROXY_ROUTER_METRICS_BIND_HOST:-}"
+CATALOG_BIND_HOST="${PROXY_ROUTER_CATALOG_BIND_HOST:-}"
+CATALOG_PROXY_PORT="${PROXY_ROUTER_CATALOG_PORT:-9100}"
+CATALOG_UPSTREAM_HOST="${PROXY_ROUTER_CATALOG_UPSTREAM_HOST:-}"
+CATALOG_UPSTREAM_PORT="${PROXY_ROUTER_CATALOG_UPSTREAM_PORT:-9100}"
 DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
 resolve_ipv4() {
@@ -53,6 +57,23 @@ if [ -n "$POLICY_BIND_HOST" ]; then
     esac
 else
     POLICY_BIND_ADDRESS=0.0.0.0
+fi
+
+if [ -n "$CATALOG_BIND_HOST" ]; then
+    if [ -z "$CATALOG_UPSTREAM_HOST" ]; then
+        echo "proxy-router: PROXY_ROUTER_CATALOG_UPSTREAM_HOST is required when the catalog bridge is enabled" >&2
+        exit 1
+    fi
+    CATALOG_BIND_ADDRESS=$(resolve_ipv4 "$CATALOG_BIND_HOST")
+    case "$CATALOG_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "proxy-router: cannot resolve catalog bind host '$CATALOG_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+elif [ -n "$CATALOG_UPSTREAM_HOST" ]; then
+    echo "proxy-router: PROXY_ROUTER_CATALOG_BIND_HOST is required when the catalog upstream is set" >&2
+    exit 1
 fi
 
 if [ -n "$METRICS_BIND_HOST" ]; then
@@ -90,12 +111,20 @@ for host in "$POLICY_POOL_HOST" "$ROUTER_POOL_HOST" "$EDGE_POOL_HOST"; do
             ;;
     esac
 done
+if [ -n "$CATALOG_UPSTREAM_HOST" ]; then
+    case "$CATALOG_UPSTREAM_HOST" in
+        *[!A-Za-z0-9._-]*)
+            echo "proxy-router: invalid catalog upstream hostname '$CATALOG_UPSTREAM_HOST'" >&2
+            exit 1
+            ;;
+    esac
+fi
 for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     "$ROUTER_ADMIN_PORT" "$EDGE_POOL_SLOTS" "$EDGE_API_PORT" \
     "$VERSIOND_FRONTEND_PORT" "$EDGE_FRONTEND_PORT" "$ADMIN_PORT" \
     "$MAX_CONNECTIONS" "$CONNECT_TIMEOUT" "$STREAM_IDLE" "$PUBLIC_IDLE" \
     "$VERSION_CAPACITY" "$CATALOG_POLL" "$CATALOG_FETCH_TIMEOUT" \
-    "$CATALOG_CACHE_MAX_AGE"; do
+    "$CATALOG_CACHE_MAX_AGE" "$CATALOG_PROXY_PORT" "$CATALOG_UPSTREAM_PORT"; do
     case "$value" in
         '' | *[!0-9]*)
             echo "proxy-router: invalid numeric setting '$value'" >&2
@@ -104,7 +133,8 @@ for value in "$POLICY_POOL_SLOTS" "$ROUTER_POOL_SLOTS" "$ROUTER_PORT" \
     esac
 done
 if [ "$VERSION_CAPACITY" -eq 0 ] || [ "$CATALOG_POLL" -eq 0 ] || \
-    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ]; then
+    [ "$CATALOG_FETCH_TIMEOUT" -eq 0 ] || [ "$CATALOG_CACHE_MAX_AGE" -eq 0 ] || \
+    [ "$CATALOG_PROXY_PORT" -eq 0 ] || [ "$CATALOG_UPSTREAM_PORT" -eq 0 ]; then
     echo "proxy-router: catalog capacity and timing values must be positive" >&2
     exit 1
 fi
@@ -170,7 +200,26 @@ VERSION_READY_RULES_FILE=$(mktemp)
 STATIC_VERSIONS_FILE=$(mktemp)
 CACHED_VERSIONS_FILE=$(mktemp)
 CACHED_DYNAMIC_VERSIONS_FILE=$(mktemp)
-trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE"' EXIT
+CATALOG_PROXY_FILE=$(mktemp)
+trap 'rm -f "$BACKENDS_FILE" "$ADMIN_RULES_FILE" "$VERSION_READY_RULES_FILE" "$STATIC_VERSIONS_FILE" "$CACHED_VERSIONS_FILE" "$CACHED_DYNAMIC_VERSIONS_FILE" "$CATALOG_PROXY_FILE"' EXIT
+if [ -n "$CATALOG_BIND_HOST" ]; then
+    cat > "$CATALOG_PROXY_FILE" <<EOF
+frontend routing_catalog
+    option httplog
+    bind ${CATALOG_BIND_ADDRESS}:${CATALOG_PROXY_PORT}
+    http-request return status 405 content-type text/plain string "method not allowed\\n" unless METH_GET
+    http-request return status 404 content-type text/plain string "not found\\n" unless { path /versions }
+    default_backend routing_catalog_api
+
+backend routing_catalog_api
+    option httpchk
+    http-check send meth GET uri /versions
+    http-check expect status 200
+    server catalog ${CATALOG_UPSTREAM_HOST}:${CATALOG_UPSTREAM_PORT} check resolvers docker init-addr none
+EOF
+else
+    printf '%s\n' '# Read-only routing catalog bridge is disabled.' > "$CATALOG_PROXY_FILE"
+fi
 : > "$VERSION_MAP"
 : > "$READY_VERSION_MAP"
 : > "$SLOT_MAP"
@@ -344,6 +393,10 @@ sed \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${PUBLIC_IDLE_SECONDS}|$PUBLIC_IDLE|g" \
     -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
+	-e "/\${CATALOG_PROXY_CONFIG}/{
+		r $CATALOG_PROXY_FILE
+		d
+	}" \
     -e "/\${VERSIOND_ROUTER_BACKENDS}/{
         r $BACKENDS_FILE
         d
