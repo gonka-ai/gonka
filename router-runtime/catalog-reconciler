@@ -143,7 +143,7 @@ urlencode() {
 
 validate_version() {
     case "$1" in
-        '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
+        '' | *[/?#%]* | *[[:space:]]* | *[[:cntrl:]]* | *\\* | *\"* | *\'* | . | ..)
             return 1
             ;;
     esac

@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
+	"unicode/utf8"
 )
 
 type VersionConfig struct {
@@ -110,14 +112,16 @@ func validateSHA256(versionName, hash string) (string, error) {
 }
 
 func validVersionName(name string) bool {
-	if name == "" || name == "." || name == ".." {
+	if name == "" || name == "." || name == ".." || !utf8.ValidString(name) {
 		return false
 	}
-	if strings.TrimSpace(name) != name {
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\?#%"'`) {
 		return false
 	}
-	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) {
-		return false
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
 	}
 	return filepath.Base(name) == name
 }

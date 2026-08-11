@@ -74,6 +74,19 @@ func TestFetch_RejectsInvalidVersionNames(t *testing.T) {
 	}
 }
 
+func TestValidVersionNameMatchesRoutingContract(t *testing.T) {
+	for _, name := range []string{"v5", "v4+hotfix", "v4}x", "v9;hotfix"} {
+		if !validVersionName(name) {
+			t.Errorf("validVersionName(%q) = false", name)
+		}
+	}
+	for _, name := range []string{"", ".", "..", " v5", "v 5", "v5/next", `v5\next`, "v5?x", "v5#x", "v5%x", `v5"x`, "v5'x", "v5\nnext"} {
+		if validVersionName(name) {
+			t.Errorf("validVersionName(%q) = true", name)
+		}
+	}
+}
+
 func TestFetch_RejectsDuplicateVersionNames(t *testing.T) {
 	payload := VersionConfig{
 		Versions: []Version{

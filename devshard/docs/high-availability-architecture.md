@@ -367,6 +367,12 @@ different databases.
 
 Therefore:
 
+Protocol version names are validated at the governance boundary and use the
+same grammar in `versiond` and both router tiers: a non-empty basename other
+than `.` or `..`, with no whitespace, control bytes, path separators, URL
+delimiters (`?`, `#`, `%`) or quotes. Names such as `v4+hotfix` and
+`v9;hotfix` remain valid.
+
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every
 > instance selects Postgres. SQLite is for single-instance / local-dev / tests

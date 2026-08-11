@@ -4,6 +4,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
+	"strings"
+	"unicode"
+	"unicode/utf8"
 
 	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -464,8 +467,11 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {
-		if v.Name == "" {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: name cannot be empty", i)
+		if v == nil {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: cannot be null", i)
+		}
+		if !validDevshardVersionName(v.Name) {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: invalid name %q", i, v.Name)
 		}
 		if v.Binary == "" {
 			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: binary cannot be empty", i)
@@ -497,6 +503,25 @@ func (p *DevshardEscrowParams) Validate() error {
 		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
 	}
 	return nil
+}
+
+// validDevshardVersionName is the consensus boundary shared by versiond and
+// its HAProxy projections. Names are URL path segments and Runtime API map
+// keys, so path separators, URL delimiters, quotes, whitespace and controls
+// are not representable safely. Other basename characters remain valid.
+func validDevshardVersionName(name string) bool {
+	if name == "" || name == "." || name == ".." || !utf8.ValidString(name) {
+		return false
+	}
+	if strings.ContainsAny(name, `/\?#%"'`) {
+		return false
+	}
+	for _, r := range name {
+		if unicode.IsSpace(r) || unicode.IsControl(r) {
+			return false
+		}
+	}
+	return true
 }
 
 func DefaultDelegationParams() *DelegationParams {
