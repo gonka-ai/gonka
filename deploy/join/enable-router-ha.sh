@@ -111,6 +111,8 @@ command -v flock >/dev/null 2>&1 || fail "flock is required"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 # shellcheck source=deploy/join/compose-topology.sh
 source "$script_dir/compose-topology.sh"
+# shellcheck source=deploy/join/deployment-lock.sh
+source "$script_dir/deployment-lock.sh"
 
 container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
@@ -164,7 +166,6 @@ case $pull_policy in always | missing | never) ;; *) fail "ROUTER_HA_PULL_POLICY
 cutover_timeout=${ROUTER_HA_CUTOVER_TIMEOUT_SECONDS:-60}
 case $cutover_timeout in '' | *[!0-9]* | 0) fail "ROUTER_HA_CUTOVER_TIMEOUT_SECONDS must be positive" ;; esac
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
-lock_file=${ROUTER_HA_CUTOVER_LOCK:-$config_dir/.gonka-router-ha-cutover.lock}
 
 proxy_component() {
     "$docker_bin" inspect --format '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
@@ -522,11 +523,7 @@ restore_proxy() {
     exit "$status"
 }
 
-if [[ ! -e $lock_file ]]; then
-    (umask 000; : >"$lock_file") || fail "cannot create router HA lock $lock_file"
-fi
-exec 9<"$lock_file"
-flock -n 9 || fail "another router HA cutover holds $lock_file"
+gonka_acquire_deployment_lock "$config_dir" || exit 1
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
 compose_project=$GONKA_COMPOSE_PROJECT

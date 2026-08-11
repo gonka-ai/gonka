@@ -26,10 +26,11 @@ write_fake_docker() {
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-printf 'EDGE_API_IMAGE=%s VERSIOND_IMAGE=%s EDGE_API_ROUTER_IMAGE=%s VERSIOND_ROUTER_IMAGE=%s PROXY_POLICY_IMAGE=%s PROXY_ROUTER_IMAGE=%s' \
+printf 'EDGE_API_IMAGE=%s VERSIOND_IMAGE=%s EDGE_API_ROUTER_IMAGE=%s VERSIOND_ROUTER_IMAGE=%s PROXY_POLICY_IMAGE=%s PROXY_ROUTER_IMAGE=%s DEVSHARD_POSTGRES_IMAGE=%s' \
     "${EDGE_API_IMAGE-}" "${VERSIOND_IMAGE-}" \
     "${EDGE_API_ROUTER_IMAGE-}" "${VERSIOND_ROUTER_IMAGE-}" \
-    "${PROXY_POLICY_IMAGE-}" "${PROXY_ROUTER_IMAGE-}" >>"$DOCKER_LOG"
+    "${PROXY_POLICY_IMAGE-}" "${PROXY_ROUTER_IMAGE-}" \
+    "${DEVSHARD_POSTGRES_IMAGE-}" >>"$DOCKER_LOG"
 printf ' ::' >>"$DOCKER_LOG"
 printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
@@ -91,13 +92,16 @@ if [[ ${1:-} == inspect ]]; then
         '{{.Config.Image}}|{{.State.Running}}|{{if .State.Health}}{{.State.Health.Status}}{{else}}none{{end}}')
             service=${4#cid-}
             image=old-$service
+            if [[ -f $FAKE_STATE_DIR/image-$service ]]; then
+                image=$(<"$FAKE_STATE_DIR/image-$service")
+            fi
             if [[ ${ASSUME_RELEASE_STATE-} == true ]]; then
                 case $service in
                     versiond | versiond2) image=$VERSIOND_IMAGE ;;
                     edge-api | edge-api2 | edge-api3) image=$EDGE_API_IMAGE ;;
                     proxy) image=$PROXY_ROUTER_IMAGE ;;
                     proxy-policy | proxy-policy2) image=$PROXY_POLICY_IMAGE ;;
-                    devshard-postgres) image=postgres:16-alpine ;;
+                    devshard-postgres) image=$DEVSHARD_POSTGRES_IMAGE ;;
                 esac
             fi
             printf '%s|true|healthy\n' "$image"
@@ -266,6 +270,7 @@ for arg in "$@"; do
     if [[ $arg == config ]]; then
         pg_host=${RENDERED_PGHOST:-devshard-postgres}
         jq -cn --arg pg "$pg_host" \
+            --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
             --arg proxy_http "${RENDERED_PROXY_HTTP_PORT:-8000}" \
@@ -287,7 +292,7 @@ for arg in "$@"; do
                 "proxy-policy2":{},
                 versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-                "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
+                "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
                 "edge-api3":{container_name:"edge-api3"}
@@ -333,6 +338,7 @@ if [[ $is_up == true ]]; then
         versiond-router) image=${VERSIOND_ROUTER_IMAGE-} ;;
         edge-api | edge-api2 | edge-api3) image=${EDGE_API_IMAGE-} ;;
         edge-api-router) image=${EDGE_API_ROUTER_IMAGE-} ;;
+        devshard-postgres) image=${DEVSHARD_POSTGRES_IMAGE-} ;;
     esac
 fi
 if [[ $is_up == true && $service == "${FAIL_SERVICE-}" ]]; then
@@ -344,6 +350,7 @@ if [[ $is_up == true ]]; then
     else
         rm -f "$FAKE_STATE_DIR/rollback-$service"
     fi
+    [[ -z $image ]] || printf '%s\n' "$image" >"$FAKE_STATE_DIR/image-$service"
     if [[ $no_start == true ]]; then
         rm -f "$FAKE_STATE_DIR/running-$service"
         : >"$FAKE_STATE_DIR/stopped-$service"
@@ -385,7 +392,7 @@ run_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
-    rm -f "$tmpdir/upgrade-complete"
+    rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
     if [[ ${PERSISTED_VERSIOND_BARRIER-} == true ]]; then
         : >"$state_dir/barrier-versiond-router"
     fi
@@ -437,7 +444,7 @@ run_auto_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
-    rm -f "$tmpdir/upgrade-complete"
+    rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
     : >"$log"
     if ! DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -475,7 +482,7 @@ run_postcondition_interrupted_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
-    rm -f "$tmpdir/upgrade-complete"
+    rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
     : >"$log"
     DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -525,7 +532,7 @@ run_interrupted_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
-    rm -f "$tmpdir/upgrade-complete"
+    rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
     : >"$log"
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -607,9 +614,14 @@ cat >"$tmpdir/enable-router" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
+printf '%s\n' "$PROXY_ROUTER_IMAGE" >"$FAKE_STATE_DIR/image-proxy"
+printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy"
+if [[ ${INCOMPLETE_INGRESS_STATE:-false} != true ]]; then
+    printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy2"
+fi
 EOF
 chmod +x "$tmpdir/fleet" "$tmpdir/enable-router"
-printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=false\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\nexport DEVSHARD_V5_VERSIOND_IMAGE=untrusted-config-image\n' \
+printf 'export DEVSHARD_POSTGRES_DATA_DIR=%q\nexport UPGRADE_ENABLE_ROUTER_HA=true\nexport VERSIOND_ROUTER_FLEET_BIN=%q\nexport ROUTER_HA_ENABLE_BIN=%q\nexport DEVSHARD_V5_UPGRADE_MARKER=%q\nexport DEVSHARD_V5_VERSIOND_IMAGE=untrusted-config-image\n' \
     "$tmpdir/postgres" "$tmpdir/fleet" "$tmpdir/enable-router" \
     "$tmpdir/upgrade-complete" >"$tmpdir/config.env"
 
@@ -639,7 +651,7 @@ grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
     fail "release preflight did not report success"
 }
 
-upgrade_lock=$tmpdir/.gonka-devshard-v5-upgrade.lock
+upgrade_lock=$tmpdir/.gonka-deployment.lock
 : >"$upgrade_lock"
 exec {upgrade_lock_fd}>"$upgrade_lock"
 flock -n "$upgrade_lock_fd"
@@ -659,11 +671,42 @@ if (
 ); then
     fail "a concurrent deployment upgrade acquired the global lock"
 fi
-grep -q 'another devshard upgrade holds' \
+grep -q 'another deployment operation holds' \
     "$tmpdir/locked-preflight.stderr" || fail \
     "global lock contention did not produce a useful error"
 flock -u "$upgrade_lock_fd"
 exec {upgrade_lock_fd}>&-
+
+# The first cutover must satisfy the same complete ingress postcondition as a
+# rerun. A healthy public proxy alone cannot commit a missing policy reserve.
+rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
+mkdir -p "$tmpdir/incomplete-ingress.state"
+if INCOMPLETE_INGRESS_STATE=true \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/incomplete-ingress.log" \
+    FAIL_SERVICE=none \
+    BLOCK_SERVICE=none \
+    BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/incomplete-ingress.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single \
+        >"$tmpdir/incomplete-ingress.stdout" \
+        2>"$tmpdir/incomplete-ingress.stderr"; then
+    fail "first cutover committed without the policy reserve"
+fi
+grep -q 'ingress state did not converge' "$tmpdir/incomplete-ingress.stderr" || {
+    cat "$tmpdir/incomplete-ingress.stderr" >&2
+    fail "incomplete ingress did not produce an actionable failure"
+}
+[[ ! -f $tmpdir/upgrade-complete ]] || fail \
+    "incomplete ingress wrote the final release marker"
+jq -e '.transaction.phase == "applications_verified"' \
+    "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "incomplete ingress did not preserve the last verified phase"
+rm -f "$tmpdir/upgrade-complete.in-progress"
 
 custom_port_log=$tmpdir/custom-port.log
 : >"$custom_port_log"
@@ -862,7 +905,7 @@ assert_no_compose_mutation "$tmpdir/wrong-project.log"
 
 # Exercise first-run recovery from runtime labels, without the committed
 # topology written by an earlier successful test case.
-rm -f "$tmpdir/upgrade-complete"
+rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
 if INCOMPATIBLE_COMPOSE_CONTAINER=versiond \
     DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/incompatible-metadata.log" \
@@ -1005,10 +1048,11 @@ versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
 
 # A public proxy-router label proves only that ingress cutover happened. It
 # must not suppress an unfinished application or PostgreSQL migration.
-rm -f "$tmpdir/upgrade-complete"
+rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
 mkdir -p "$tmpdir/active-without-marker.state"
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/active-without-marker.log" \
+    FAIL_SERVICE=versiond \
     EXISTING_PROXY_COMPONENT=proxy-router \
     EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy" \
     FAKE_STATE_DIR="$tmpdir/active-without-marker.state" \
@@ -1020,14 +1064,15 @@ if DOCKER_BIN="$tmpdir/docker" \
     2>"$tmpdir/active-without-marker.stderr"; then
     fail "proxy-router label was accepted as an upgrade commit"
 fi
-grep -q 'application state did not converge' "$tmpdir/active-without-marker.stderr" || {
-    cat "$tmpdir/active-without-marker.stderr" >&2
-    fail "incomplete cutover did not explain the missing upgrade commit"
-}
+[[ ! -f $tmpdir/upgrade-complete ]] || fail \
+    "failed application convergence wrote the final marker"
+jq -e '.transaction.phase == "prepared"' \
+    "$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+    "failed application convergence did not preserve its recovery journal"
 
 # A crash after the irreversible router cutover but before the atomic marker
 # write is recoverable only after exact images and health have been proven.
-rm -f "$tmpdir/upgrade-complete"
+rm -f "$tmpdir/upgrade-complete" "$tmpdir/upgrade-complete.in-progress"
 mkdir -p "$tmpdir/recovered-marker.state"
 ASSUME_RELEASE_STATE=true \
 DOCKER_BIN="$tmpdir/docker" \
@@ -1046,6 +1091,7 @@ jq -e '
     .release_id == "0.2.15-devshard-v5" and
     (.fingerprint | type == "string" and length == 64) and
     (.compose.files | length > 0) and
+    .images.postgres == "postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777" and
     .storage.postgres_identity == "shared-database"
 ' "$tmpdir/upgrade-complete" >/dev/null || fail \
     "verified cutover did not reconstruct the desired-state marker"
@@ -1053,6 +1099,36 @@ assert_contains "$tmpdir/recovered-marker.log" \
     "enable-router --versiond-mode ha --edge-mode single"
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
+
+# A process crash can happen after topology mutation but before the final
+# marker rename. The one-file journal must recover HA modes before inspecting a
+# degraded runtime, then disappear only after complete ingress verification.
+jq '. + {transaction:{phase:"ingress_verified",updated_at_unix:1}}' \
+    "$tmpdir/upgrade-complete" >"$tmpdir/upgrade-complete.in-progress"
+rm -f "$tmpdir/upgrade-complete"
+mkdir -p "$tmpdir/journal-missing-replicas.state"
+ASSUME_RELEASE_STATE=true \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/journal-missing-replicas.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/journal-missing-replicas.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    >"$tmpdir/journal-missing-replicas.stdout" \
+    2>"$tmpdir/journal-missing-replicas.stderr"
+grep -q 'Resuming the saved Compose topology' \
+    "$tmpdir/journal-missing-replicas.stdout" || fail \
+    "interrupted upgrade did not restore its saved topology"
+grep -q 'versiond=ha, edge-api=single' \
+    "$tmpdir/journal-missing-replicas.stdout" || fail \
+    "degraded runtime collapsed the journaled HA topology"
+assert_contains "$tmpdir/journal-missing-replicas.log" \
+    "--wait-timeout 2100 versiond2"
+[[ -f $tmpdir/upgrade-complete && \
+    ! -f $tmpdir/upgrade-complete.in-progress ]] || fail \
+    "successful journal recovery did not atomically finalize the marker"
 
 printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
 mkdir -p "$tmpdir/active-with-marker.state"

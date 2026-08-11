@@ -20,10 +20,11 @@ edge_router_image=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
 versiond_router_image=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
 proxy_policy_image=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 proxy_router_image=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
+postgres_image=$DEVSHARD_V5_POSTGRES_IMAGE
 
 # This test validates the shipped defaults, not an operator's local override.
 unset EDGE_API_IMAGE VERSIOND_IMAGE EDGE_API_ROUTER_IMAGE VERSIOND_ROUTER_IMAGE
-unset PROXY_POLICY_IMAGE PROXY_ROUTER_IMAGE
+unset PROXY_POLICY_IMAGE PROXY_ROUTER_IMAGE DEVSHARD_POSTGRES_IMAGE
 export VERSIOND_ROUTER_METRICS_NETWORK=join_default
 
 fail() {
@@ -112,6 +113,8 @@ check_compose_contract() {
         "http://127.0.0.1:8080/readyz" -f "$base"
     assert_image "versiond HA overlay" "$versiond_image" \
         "$(compose_image versiond -f "$base" -f "$versiond_overlay")"
+    assert_image "shared PostgreSQL" "$postgres_image" \
+        "$(compose_image devshard-postgres -f "$base" -f "$versiond_overlay")"
     assert_image "private proxy policy" "$proxy_policy_image" \
         "$(compose_image proxy-policy -f "$base")"
     assert_image "private proxy policy reserve" "$proxy_policy_image" \
@@ -190,6 +193,7 @@ case ${RELEASE_IMAGE_PULL:-true} in
         docker pull "$versiond_router_image"
         docker pull "$proxy_policy_image"
         docker pull "$proxy_router_image"
+        docker pull "$postgres_image"
         ;;
     false) ;;
     *) fail "RELEASE_IMAGE_PULL must be true or false" ;;
@@ -201,6 +205,9 @@ edge_router_image_id=$(docker image inspect "$edge_router_image" --format '{{.Id
 versiond_router_image_id=$(docker image inspect "$versiond_router_image" --format '{{.Id}}')
 proxy_policy_image_id=$(docker image inspect "$proxy_policy_image" --format '{{.Id}}')
 proxy_router_image_id=$(docker image inspect "$proxy_router_image" --format '{{.Id}}')
+postgres_image_id=$(docker image inspect "$postgres_image" --format '{{.Id}}')
+
+docker run --rm "$postgres_image_id" postgres --version >/dev/null
 
 # Router images are release artifacts too. Render-only mode executes their real
 # entrypoint and HAProxy config validation without requiring live upstreams.

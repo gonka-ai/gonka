@@ -26,6 +26,7 @@ on:
       - devshard/docs/network-update-0.2.15-v5.md
       - devshard/docs/release-0.2.15-v5.md
       - deploy/join/compose-topology.sh
+      - deploy/join/deployment-lock.sh
       - deploy/join/enable-router-ha.sh
       - deploy/join/enable-router-ha_test.sh
       - deploy/join/versiond-compose-config_test.sh
@@ -76,6 +77,7 @@ jobs:
             deploy/join/legacy-router-upgrade-barrier.sh \
             deploy/join/legacy-router-upgrade-barrier_test.sh \
             deploy/join/compose-topology.sh \
+            deploy/join/deployment-lock.sh \
             deploy/join/devshard-v5-release-contract.sh \
             deploy/join/devshard-v5-release-contract_test.sh \
             deploy/join/devshard-v5-release-gate.sh \

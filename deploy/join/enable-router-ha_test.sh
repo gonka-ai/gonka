@@ -239,7 +239,7 @@ chmod +x "$tmpdir/fleet"
 
 cat >"$tmpdir/config.env" <<EOF
 ROUTER_HA_PULL_POLICY=missing
-ROUTER_HA_CUTOVER_LOCK=$tmpdir/cutover.lock
+GONKA_DEPLOYMENT_LOCK=$tmpdir/deployment.lock
 VERSIOND_NON_HA_VERSIONS=v1
 VERSIOND_VERSIONS=v4
 EOF

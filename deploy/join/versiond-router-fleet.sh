@@ -107,11 +107,12 @@ wait_timeout=${VERSIOND_ROUTER_START_TIMEOUT_SECONDS:-60}
 version_wait_timeout=${VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS:-2100}
 pull_policy=${VERSIOND_ROUTER_PULL_POLICY:-always}
 config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
-lock_file=${VERSIOND_ROUTER_FLEET_LOCK:-$config_dir/.gonka-versiond-router-$fleet_id.lock}
 operation_id="$(date +%s%N)-$$"
 
 command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
 command -v flock >/dev/null 2>&1 || fail "flock is required"
+# shellcheck source=deploy/join/deployment-lock.sh
+source "$script_dir/deployment-lock.sh"
 
 case $min_ready in '' | *[!0-9]*) fail "VERSIOND_ROUTER_MIN_READY must be a non-negative integer" ;; esac
 case $pull_policy in always | missing | never) ;; *) fail "VERSIOND_ROUTER_PULL_POLICY must be always, missing, or never" ;; esac
@@ -694,6 +695,11 @@ placement_version_for_image() {
         '{{index .Config.Labels "ai.gonka.placement-protocol-version"}}' "$1"
 }
 
+cache_protocol_for_image() {
+    "$docker_bin" image inspect --format \
+        '{{index .Config.Labels "ai.gonka.catalog-cache-protocol-version"}}' "$1"
+}
+
 container_env_value() {
     local id=$1 key=$2 line
     while IFS= read -r line; do
@@ -783,6 +789,20 @@ container_env_value_or_legacy_default() {
     printf '%s\n' "${legacy_env_defaults[$key]}"
 }
 
+require_cache_compatible() {
+    local candidate=$1 candidate_protocol slot id running_image running_protocol
+    candidate_protocol=$(cache_protocol_for_image "$candidate")
+    [[ -n $candidate_protocol ]] || fail \
+        "candidate image has no catalog cache protocol label"
+    for slot in "${slots[@]}"; do
+        id=$(slot_id "$slot") || continue
+        running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
+        running_protocol=$(cache_protocol_for_image "$running_image")
+        [[ $running_protocol == "$candidate_protocol" ]] || fail \
+            "catalog cache protocol mismatch: candidate=$candidate_protocol slot-$slot=${running_protocol:-missing}; migrate the persistent cache before rollout"
+    done
+}
+
 running_placement_contract() {
     local id=$1 pool_host back_network legacy_host legacy_versions ha_versions
     local catalog_url coarse_readiness dns_resolver
@@ -804,6 +824,7 @@ require_placement_compatible() {
     candidate_version=$(placement_version_for_image "$candidate")
     [[ -n $candidate_version ]] || fail \
         "candidate image has no placement protocol label; refusing a mixed rollout"
+    require_cache_compatible "$candidate"
     candidate_contract=$(candidate_placement_contract)
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || continue
@@ -1312,6 +1333,7 @@ fleet_maintenance_rollout() {
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     [[ -n $(placement_version_for_image "$image") ]] || fail \
         "candidate image has no placement protocol label"
+    require_cache_compatible "$image"
     capture_maintenance_state
     maintenance_active=true
     trap maintenance_rollback ERR INT TERM HUP
@@ -1339,11 +1361,7 @@ fleet_maintenance_rollout() {
     done
 }
 
-if [[ ! -e $lock_file ]]; then
-    (umask 000; : >"$lock_file") || fail "cannot create fleet lock $lock_file"
-fi
-exec 9<"$lock_file"
-flock -n 9 || fail "another fleet operation holds $lock_file"
+gonka_acquire_deployment_lock "$config_dir" || exit 1
 
 # Runtime-discovered versions are part of the safety reserve even though they
 # are intentionally absent from the host-managed bootstrap environment.

@@ -8,6 +8,7 @@ base_image=gonka-versiond-router-fleet-test:$suffix
 updated_image=gonka-versiond-router-fleet-updated-test:$suffix
 image=$base_image
 bad_image=gonka-versiond-router-fleet-bad-test:$suffix
+incompatible_cache_image=gonka-versiond-router-fleet-cache-v2-test:$suffix
 proxy_image=gonka-proxy-router-fleet-test:$suffix
 front=gonka-versiond-router-front-$suffix
 back=gonka-versiond-router-back-$suffix
@@ -41,7 +42,7 @@ cleanup() {
     docker network rm "$front" "$back" "$metrics" \
         "gonka-versiond-router-orphan-$suffix" >/dev/null 2>&1 || true
     docker image rm "$base_image" "$updated_image" "$bad_image" \
-        "$proxy_image" >/dev/null 2>&1 || true
+        "$incompatible_cache_image" "$proxy_image" >/dev/null 2>&1 || true
     rm -rf "$tmpdir"
 }
 trap cleanup EXIT
@@ -158,6 +159,10 @@ cat >"$tmpdir/updated-router.Dockerfile" <<EOF
 FROM $image
 LABEL ai.gonka.test-revision="updated"
 EOF
+cat >"$tmpdir/incompatible-cache.Dockerfile" <<EOF
+FROM $image
+LABEL ai.gonka.catalog-cache-protocol-version="2"
+EOF
 
 "${fleet[@]}" prepare-networks
 [[ $(docker network inspect --format \
@@ -173,6 +178,8 @@ docker build -q -t "$image" -f "$script_dir/../../versiond-router/Dockerfile" \
 docker build -q -t "$updated_image" \
     -f "$tmpdir/updated-router.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$bad_image" -f "$tmpdir/bad-router.Dockerfile" "$tmpdir" >/dev/null
+docker build -q -t "$incompatible_cache_image" \
+    -f "$tmpdir/incompatible-cache.Dockerfile" "$tmpdir" >/dev/null
 docker build -q -t "$proxy_image" -f "$script_dir/../../proxy-router/Dockerfile" \
     "$script_dir/../.." >/dev/null
 docker run -d --name "gonka-router-fleet-backend-$suffix" \
@@ -250,6 +257,29 @@ for slot in "${slots[@]}"; do
     [[ $current_id == "${initial_ids[$slot]}" ]] || fail \
         "idempotent fleet apply recreated unchanged slot $slot"
 done
+
+# Candidate and rollback images mount the same per-slot cache volume. Refuse a
+# reader/writer protocol change before stopping the first healthy slot.
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$incompatible_cache_image|" \
+    "$tmpdir/config.env"
+if "${fleet[@]}" rollout >"$tmpdir/cache-protocol.out" 2>&1; then
+    fail "fleet rollout accepted an incompatible persistent cache protocol"
+fi
+grep -q 'catalog cache protocol mismatch' "$tmpdir/cache-protocol.out" || {
+    cat "$tmpdir/cache-protocol.out" >&2
+    fail "cache protocol refusal was not actionable"
+}
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    [[ $current_id == "${initial_ids[$slot]}" ]] || fail \
+        "cache protocol check mutated slot $slot"
+done
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
+    "$tmpdir/config.env"
+
 if VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS=1 \
     "${fleet[@]}" wait-version v4 >"$tmpdir/no-parent-gate.out" 2>&1; then
     fail "version activation gate succeeded without the parent proxy"
@@ -274,7 +304,7 @@ image=$updated_image
 
 # The default lock is tied to the deployment config, not to a caller's
 # per-user XDG runtime directory. A second user context must see the same lock.
-lock_file=$tmpdir/.gonka-versiond-router-$fleet_id.lock
+lock_file=$tmpdir/.gonka-deployment.lock
 lock_ready=$tmpdir/lock-ready
 lock_release=$tmpdir/lock-release
 chmod 0444 "$lock_file"
@@ -295,8 +325,18 @@ if XDG_RUNTIME_DIR="$tmpdir/another-user" "${fleet[@]}" status \
 fi
 printf 'release\n' >"$lock_release"
 wait "$lock_pid"
-grep -q 'another fleet operation holds' "$tmpdir/lock.out" || fail \
+grep -q 'another deployment operation holds' "$tmpdir/lock.out" || fail \
     "contended deployment lock did not identify the active operation"
+
+# upgrade -> cutover -> fleet is one operation. Descendants inherit fd 9 and
+# must reuse it instead of deadlocking on their parent's lock.
+(
+    exec 9<"$lock_file"
+    flock -n 9
+    export GONKA_DEPLOYMENT_LOCK=$lock_file
+    export GONKA_DEPLOYMENT_LOCK_HELD=$lock_file
+    "${fleet[@]}" status >/dev/null
+) || fail "an inherited deployment lock was not re-entrant"
 
 # Legacy pinning changes the escrow placement function. A mixed rolling fleet
 # is invalid; the explicit maintenance path drains every old router before any

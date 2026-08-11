@@ -225,15 +225,22 @@ the exact old public nginx image, and switches the public listener to
 singletons. If that cutover fails or is interrupted, the old public nginx is
 recreated from the captured image and the script exits non-zero.
 
-The updater takes one deployment-wide `.gonka-devshard-v5-upgrade.lock` next
-to `config.env`; a concurrent updater fails before mutation. Successful
-completion writes `.gonka-devshard-v5-upgrade-complete` atomically. This JSON
-marker records the release commit, topology modes, ordered Compose files,
-project identity, expected images, the verified PostgreSQL UUID, and a
-fingerprint of the rendered Compose model. It contains hashes and non-secret
-identities rather than configuration values, so secrets are not copied into
-the marker. The proxy container label alone is not evidence that
-PostgreSQL, versiond, and edge-api were migrated.
+The updater, router cutover, and standalone fleet commands all take the same
+deployment-wide `.gonka-deployment.lock` next to `config.env`; a concurrent
+mutation fails before changing Docker state, while nested updater calls inherit
+the same lock. During an upgrade, the atomic
+`.gonka-devshard-v5-upgrade-complete.in-progress` journal records the desired
+topology and the last verified phase. Rerunning the updater resumes that exact
+topology even if a replica or the public proxy disappeared after cutover.
+Successful completion writes `.gonka-devshard-v5-upgrade-complete` atomically
+and removes the journal. This JSON marker records the release commit, topology
+modes, ordered Compose files, project identity, expected image digests
+(including PostgreSQL), the verified PostgreSQL UUID, and a fingerprint of the
+rendered Compose model. It contains hashes and non-secret identities rather
+than configuration values, so secrets are not copied into either file. The
+proxy container label alone is not evidence that PostgreSQL, versiond, and
+edge-api were migrated; both application and ingress postconditions must pass
+before the final marker is committed.
 
 Rerunning the same upgrade is also the normal reconciliation path for this
 release. It restores the committed Compose model from the marker, converges
@@ -346,6 +353,10 @@ The v4 HA overlay left `devshard-postgres` on the anonymous
 overlay stores `PGDATA` in the stable `DEVSHARD_POSTGRES_DATA_DIR` bind
 (`./devshards/postgres` by default) and migrates an existing v4 cluster
 automatically. Base-only installations skip this entire path.
+The v5 Compose model and migration preflight resolve PostgreSQL from the same
+immutable multi-architecture digest in `devshard-v5-release.env`; a later move
+of the mutable `postgres:16-alpine` tag cannot change the database binary during
+retry or rollback.
 
 PostgreSQL is deliberately outside the image rollback contract above. Its v4
 source volume is retained and migration publishes an atomic copy into the

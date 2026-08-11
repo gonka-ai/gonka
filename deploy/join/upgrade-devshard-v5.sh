@@ -144,7 +144,7 @@ docker_bin=${DOCKER_BIN:-docker}
 fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
 upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
-upgrade_lock=${DEVSHARD_V5_UPGRADE_LOCK:-$config_dir/.gonka-devshard-v5-upgrade.lock}
+upgrade_journal=${DEVSHARD_V5_UPGRADE_JOURNAL:-$upgrade_marker.in-progress}
 
 if [[ $strict_capacity == false ]]; then
     case ${DEVSHARD_V5_STRICT_CAPACITY:-false} in
@@ -164,13 +164,9 @@ devshard_v5_verify_dependencies "$docker_bin"
 devshard_v5_verify_release_source "$script_dir"
 # shellcheck disable=SC1091 # Runtime path is anchored to this script.
 source "$script_dir/compose-topology.sh"
-
-if [[ ! -e $upgrade_lock ]]; then
-    (umask 000; : >"$upgrade_lock") || fail \
-        "cannot create deployment lock $upgrade_lock"
-fi
-exec 8<"$upgrade_lock"
-flock -n 8 || fail "another devshard upgrade holds $upgrade_lock"
+# shellcheck source=deploy/join/deployment-lock.sh
+source "$script_dir/deployment-lock.sh"
+gonka_acquire_deployment_lock "$config_dir" || exit 1
 
 # A rollback gets the same startup budget as the corresponding forward
 # replacement. UPGRADE_ROLLBACK_VERIFY_TIMEOUT remains an emergency override
@@ -248,7 +244,8 @@ verify_release_application_state() {
         service_instances_match_release versiond2 "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
         verify_shared_postgres_identity || return 1
         if [[ $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
-            service_instances_match_release devshard-postgres '' || return 1
+            service_instances_match_release devshard-postgres \
+                "$DEVSHARD_V5_POSTGRES_IMAGE" || return 1
         fi
     fi
     if [[ $edge_mode == multi ]]; then
@@ -303,7 +300,20 @@ converge_release_service() {
 
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$(service_startup_timeout "$service")" \
-        "$service" 8<&-
+        "$service"
+}
+
+write_upgrade_journal() {
+    local phase=$1 journal_tmp=$upgrade_journal.tmp.$$
+    case $phase in
+        prepared | applications_verified | ingress_verified) ;;
+        *) fail "internal error: invalid upgrade phase $phase" ;;
+    esac
+    mkdir -p "$(dirname -- "$upgrade_journal")"
+    jq -c --arg phase "$phase" \
+        '. + {transaction: {phase: $phase, updated_at_unix: (now | floor)}}' \
+        <<<"$desired_upgrade_marker" >"$journal_tmp"
+    mv -f "$journal_tmp" "$upgrade_journal"
 }
 
 write_upgrade_marker() {
@@ -316,55 +326,87 @@ write_upgrade_marker() {
     mkdir -p "$(dirname -- "$upgrade_marker")"
     printf '%s\n' "$marker" >"$marker_tmp"
     mv -f "$marker_tmp" "$upgrade_marker"
+    rm -f "$upgrade_journal"
+}
+
+upgrade_state_release() {
+    local state_file=$1
+    if jq -e 'type == "object"' "$state_file" >/dev/null 2>&1; then
+        jq -er '.release_id | strings | select(length > 0)' "$state_file"
+        return
+    fi
+    head -n1 "$state_file"
 }
 
 upgrade_marker_release() {
-    if jq -e 'type == "object"' "$upgrade_marker" >/dev/null 2>&1; then
-        jq -er '.release_id | strings | select(length > 0)' "$upgrade_marker"
-        return
-    fi
-    head -n1 "$upgrade_marker"
+    upgrade_state_release "$upgrade_marker"
 }
 
-restore_marker_topology() {
-	local marker_release marker_versiond_mode marker_edge_mode
+restore_saved_topology() {
+	local state_file='' state_release state_versiond_mode state_edge_mode
 
-    [[ -f $upgrade_marker ]] || return 0
-	jq -e '
+    if [[ -f $upgrade_marker ]] && jq -e '
 		type == "object" and .schema == 1 and
 		(.topology.versiond == "single" or .topology.versiond == "ha") and
 		(.topology.edge_api == "single" or .topology.edge_api == "multi") and
 		(.compose.files | type == "array" and length > 0) and
         (.compose.project | type == "string" and length > 0) and
         (.compose.project_directory | type == "string" and length > 0)
-    ' "$upgrade_marker" >/dev/null 2>&1 || return 0
-    marker_release=$(upgrade_marker_release) || fail \
-        "cannot read release identity from $upgrade_marker"
-	[[ $marker_release == "$release_id" ]] || return 0
-	marker_versiond_mode=$(jq -er '.topology.versiond' "$upgrade_marker")
-	marker_edge_mode=$(jq -er '.topology.edge_api' "$upgrade_marker")
+	' "$upgrade_marker" >/dev/null 2>&1 &&
+        [[ $(upgrade_marker_release) == "$release_id" ]]; then
+        state_file=$upgrade_marker
+        committed_marker_loaded=true
+    elif [[ -f $upgrade_journal ]]; then
+        jq -e '
+            type == "object" and .schema == 1 and
+            (.transaction.phase == "prepared" or
+             .transaction.phase == "applications_verified" or
+             .transaction.phase == "ingress_verified") and
+            (.topology.versiond == "single" or .topology.versiond == "ha") and
+            (.topology.edge_api == "single" or .topology.edge_api == "multi") and
+            (.compose.files | type == "array" and length > 0) and
+            (.compose.project | type == "string" and length > 0) and
+            (.compose.project_directory | type == "string" and length > 0)
+        ' "$upgrade_journal" >/dev/null 2>&1 || fail \
+            "invalid interrupted-upgrade journal $upgrade_journal"
+        state_release=$(upgrade_state_release "$upgrade_journal") || fail \
+            "cannot read release identity from $upgrade_journal"
+        [[ $state_release == "$release_id" ]] || fail \
+            "unfinished upgrade journal $upgrade_journal belongs to $state_release, not $release_id"
+        state_file=$upgrade_journal
+        interrupted_upgrade_loaded=true
+    else
+        return 0
+    fi
+
+	state_versiond_mode=$(jq -er '.topology.versiond' "$state_file")
+	state_edge_mode=$(jq -er '.topology.edge_api' "$state_file")
 	if [[ $versiond_mode == auto ]]; then
-		versiond_mode=$marker_versiond_mode
+		versiond_mode=$state_versiond_mode
 	fi
 	if [[ $edge_mode == auto ]]; then
-		edge_mode=$marker_edge_mode
+		edge_mode=$state_edge_mode
 	fi
 
     if ((${#compose_file_args[@]} == 0)) && [[ -z ${COMPOSE_FILE-} ]]; then
-        mapfile -t compose_file_args < <(jq -er '.compose.files[]' "$upgrade_marker")
+        mapfile -t compose_file_args < <(jq -er '.compose.files[]' "$state_file")
         export GONKA_COMPOSE_USE_COMMITTED_TOPOLOGY=true
-        echo "Using the committed Compose topology from $upgrade_marker"
+        if [[ $committed_marker_loaded == true ]]; then
+            echo "Using the committed Compose topology from $state_file"
+        else
+            echo "Resuming the saved Compose topology from $state_file"
+        fi
     fi
     [[ -n $compose_project_name ]] || \
-        compose_project_name=$(jq -er '.compose.project' "$upgrade_marker")
+        compose_project_name=$(jq -er '.compose.project' "$state_file")
 	[[ -n $compose_project_directory ]] || \
 		compose_project_directory=$(jq -er \
-			'.compose.project_directory' "$upgrade_marker")
-	committed_marker_loaded=true
+			'.compose.project_directory' "$state_file")
 }
 
 committed_marker_loaded=false
-restore_marker_topology
+interrupted_upgrade_loaded=false
+restore_saved_topology
 
 if [[ $versiond_mode == auto ]]; then
     if container_exists devshard-postgres ||
@@ -398,6 +440,7 @@ export EDGE_API_ROUTER_IMAGE=$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE
 export VERSIOND_ROUTER_IMAGE=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
 export PROXY_POLICY_IMAGE=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
+export DEVSHARD_POSTGRES_IMAGE=$DEVSHARD_V5_POSTGRES_IMAGE
 
 runtime_compose_containers=(proxy versiond edge-api)
 for container in proxy-policy proxy-policy2 versiond2 versiond-router devshard-postgres \
@@ -441,6 +484,7 @@ desired_upgrade_state=$(jq -cn \
     --arg versiond_router "$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE" \
     --arg proxy_policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE" \
     --arg proxy_router "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" \
+    --arg postgres "$DEVSHARD_V5_POSTGRES_IMAGE" \
     '{
         schema: 1,
         release_id: $release_id,
@@ -458,7 +502,8 @@ desired_upgrade_state=$(jq -cn \
             edge_api_router: $edge_api_router,
             versiond_router: $versiond_router,
             proxy_policy: $proxy_policy,
-            proxy_router: $proxy_router
+            proxy_router: $proxy_router,
+            postgres: $postgres
         }
     }')
 desired_fingerprint=$(
@@ -511,14 +556,16 @@ existing_proxy_component=$(
         '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 )
 if [[ $existing_proxy_component != proxy-router && \
-	$committed_marker_loaded != true && $maintenance_ack != true ]]; then
+	$committed_marker_loaded != true && $interrupted_upgrade_loaded != true && \
+    $maintenance_ack != true ]]; then
     fail "the one-time v5 cutover restarts shared PostgreSQL when local HA storage is used and replaces the public listener, terminating existing ingress connections; schedule the maintenance window, run --preflight-only, then rerun with --acknowledge-maintenance"
 fi
+if [[ $existing_proxy_component == proxy-router && -f $upgrade_marker && \
+    $(upgrade_marker_release) != "$release_id" ]]; then
+    fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
+fi
+write_upgrade_journal prepared
 if [[ $existing_proxy_component == proxy-router ]]; then
-    if [[ -f $upgrade_marker && \
-        $(upgrade_marker_release) != "$release_id" ]]; then
-        fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
-    fi
     if [[ ! -f $upgrade_marker ]]; then
         warn "router HA is active without its commit marker; reconciling the complete release state"
     elif ! jq -e --arg fingerprint "$desired_fingerprint" \
@@ -545,13 +592,15 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     else
         converge_release_service edge-api
     fi
-    "$enable_router_bin" \
-        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
-        "${GONKA_COMPOSE_FORWARD_ARGS[@]}" 8<&-
     verify_release_application_state || fail \
         "application state did not converge to $release_id"
+    write_upgrade_journal applications_verified
+    "$enable_router_bin" \
+        --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+        "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
     verify_release_ingress_state || fail \
         "ingress state did not converge to $release_id"
+    write_upgrade_journal ingress_verified
     write_upgrade_marker
     echo "Devshard v5 release state is converged"
     exit 0
@@ -591,10 +640,9 @@ last_captured_version_baseline=
 run_interruptible() {
     local status=0
 
-    # The parent keeps the deployment lock. Children must not inherit its file
-    # description, otherwise a short-lived CLI that forks can retain the lock
-    # after this process has handled a signal and exited.
-    "$@" 8<&- &
+    # Mutation children inherit fd 9. If the parent is interrupted, the shared
+    # deployment lock therefore remains held until the active child is reaped.
+    "$@" &
     foreground_pid=$!
     wait "$foreground_pid" || status=$?
     foreground_pid=
@@ -1097,7 +1145,7 @@ handle_signal() {
         interrupted_pid=$foreground_pid
         kill -TERM "$interrupted_pid" 2>/dev/null || true
         (
-            exec 8<&-
+            exec 9<&-
             sleep 5
             kill -KILL "$interrupted_pid" 2>/dev/null || true
         ) &
@@ -1281,6 +1329,9 @@ else
     replace_service edge-api "$(service_startup_timeout edge-api)" stop
 fi
 
+verify_release_application_state || fail \
+    "application state did not converge to $release_id"
+write_upgrade_journal applications_verified
 cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
@@ -1297,5 +1348,8 @@ if [[ $versiond_mode == ha ]]; then
     verify_shared_postgres_identity || fail \
         "versiond replicas did not converge on one PostgreSQL identity"
 fi
+verify_release_ingress_state || fail \
+    "ingress state did not converge to $release_id"
+write_upgrade_journal ingress_verified
 write_upgrade_marker
 echo "Devshard v5 upgrade completed"

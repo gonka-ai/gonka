@@ -88,7 +88,8 @@ x-versiond: &versiond
 services:
   devshard-postgres:
     container_name: devshard-postgres
-    image: postgres:16-alpine
+    image: >-
+      ${DEVSHARD_POSTGRES_IMAGE:-postgres@sha256:57c72fd2a128e416c7fcc499958864df5301e940bca0a56f58fddf30ffc07777}
     environment:
       POSTGRES_DB: ${DEVSHARD_POSTGRES_DB:-devshardd}
       POSTGRES_USER: ${DEVSHARD_POSTGRES_USER:-devshardd}

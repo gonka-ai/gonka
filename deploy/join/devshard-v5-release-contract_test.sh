@@ -15,6 +15,18 @@ fail() {
 source "$script_dir/devshard-v5-release-contract.sh"
 devshard_v5_load_release_contract "$script_dir/devshard-v5-release.env"
 
+sed 's|^DEVSHARD_V5_POSTGRES_IMAGE=.*|DEVSHARD_V5_POSTGRES_IMAGE=postgres:16-alpine|' \
+    "$script_dir/devshard-v5-release.env" >"$tmpdir/mutable-postgres.env"
+if (devshard_v5_load_release_contract "$tmpdir/mutable-postgres.env") \
+    >"$tmpdir/mutable-postgres.stdout" 2>"$tmpdir/mutable-postgres.stderr"; then
+    fail "release contract accepted a mutable PostgreSQL tag"
+fi
+grep -q 'POSTGRES_IMAGE must use an immutable sha256 digest' \
+    "$tmpdir/mutable-postgres.stderr" || {
+        cat "$tmpdir/mutable-postgres.stderr" >&2
+        fail "mutable PostgreSQL failure was not actionable"
+    }
+
 devshard_v5_version_at_least 2.20.0 2.20.0 || fail "equal version failed"
 devshard_v5_version_at_least v2.31.1 2.20.0 || fail "newer version failed"
 if devshard_v5_version_at_least 2.19.9 2.20.0; then

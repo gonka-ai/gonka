@@ -2,8 +2,12 @@
 
 set -Eeuo pipefail
 
+script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
+# shellcheck source=deploy/join/devshard-v5-release.env
+# shellcheck disable=SC1091 # Runtime path is anchored to this script.
+source "$script_dir/devshard-v5-release.env"
 docker_bin=${DOCKER_BIN:-docker}
-helper_image=${POSTGRES_MIGRATION_HELPER_IMAGE:-postgres:16-alpine}
+helper_image=${POSTGRES_MIGRATION_HELPER_IMAGE:-$DEVSHARD_V5_POSTGRES_IMAGE}
 source_container=
 source_volume=
 target_dir=

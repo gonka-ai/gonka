@@ -30,12 +30,17 @@ devshard_v5_load_release_contract() {
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
         DEVSHARD_V5_PROXY_ROUTER_IMAGE \
+        DEVSHARD_V5_POSTGRES_IMAGE \
         DEVSHARD_V5_MIN_COMPOSE_VERSION \
         DEVSHARD_V5_RECOMMENDED_CPUS \
         DEVSHARD_V5_RECOMMENDED_MEMORY_MIB; do
         [[ -n ${!name:-} ]] || devshard_v5_contract_error \
             "release contract has no $name" || return
     done
+    [[ $DEVSHARD_V5_POSTGRES_IMAGE =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
+        devshard_v5_contract_error \
+            "DEVSHARD_V5_POSTGRES_IMAGE must use an immutable sha256 digest" || \
+        return
     [[ $DEVSHARD_V5_RELEASE_ID =~ ^[A-Za-z0-9._-]+$ ]] || \
         devshard_v5_contract_error "invalid release ID" || return
     [[ $DEVSHARD_V5_RELEASE_GIT_TAG == release/* ]] || \
@@ -49,7 +54,8 @@ devshard_v5_load_release_contract() {
         DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
-        DEVSHARD_V5_PROXY_ROUTER_IMAGE; do
+        DEVSHARD_V5_PROXY_ROUTER_IMAGE \
+        DEVSHARD_V5_POSTGRES_IMAGE; do
         [[ ${!name} == *":$DEVSHARD_V5_RELEASE_IMAGE_TAG" || \
             ${!name} =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
             devshard_v5_contract_error \
@@ -67,7 +73,8 @@ devshard_v5_verify_release_image_digests() {
         DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
-        DEVSHARD_V5_PROXY_ROUTER_IMAGE; do
+        DEVSHARD_V5_PROXY_ROUTER_IMAGE \
+        DEVSHARD_V5_POSTGRES_IMAGE; do
         [[ ${!name} =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
             devshard_v5_contract_error \
                 "$name must be pinned as repo@sha256:digest before publication" || \
@@ -116,6 +123,7 @@ deploy/join/devshard-v5-release.env
 deploy/join/devshard-v5-release-contract.sh
 deploy/join/devshard-v5-release-gate.sh
 deploy/join/upgrade-devshard-v5.sh
+deploy/join/deployment-lock.sh
 deploy/join/compose-topology.sh
 deploy/join/devshard-postgres-entrypoint.sh
 deploy/join/devshard-postgres-migration-preflight.sh

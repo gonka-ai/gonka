@@ -190,6 +190,11 @@ same bounded `versiond_dynamic_<n>` namespace; restarting a router does not
 replenish consumed capacity. Startup fails loudly if a fresh cache needs more
 dynamic slots than the configured capacity. Schema-1 caches written by earlier
 router images are accepted as revision zero and upgraded automatically.
+The image label `ai.gonka.catalog-cache-protocol-version` is the rollback
+contract for this shared volume. A replacement is rejected before mutation
+when the candidate and running readers differ; a protocol change therefore
+requires an explicit cache migration instead of starting an old rollback image
+on a newer, unreadable snapshot.
 
 Catalog URL, poll interval, fetch timeout, and capacity are validated before
 HAProxy starts. Transient fetch failures preserve the last admitted map and are
