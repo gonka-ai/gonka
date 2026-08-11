@@ -35,6 +35,24 @@ if [[ ${1:-} == inspect ]]; then
             '{{.Image}}') printf 'sha256:old-proxy\n' ;;
             '{{range .Config.Env}}{{println .}}{{end}}')
                 case ${4:-} in
+                    proxy)
+                        printf '%s\n' \
+                            'NGINX_MODE=http' \
+                            'PROXY_POLICY_POOL_SLOTS=7' \
+                            'PROXY_ROUTER_PUBLIC_IDLE_SECONDS=86400' \
+                            'HAPROXY_DNS_RESOLVER=127.0.0.11:53' \
+                            'VERSIOND_ROUTER_POOL_HOST=versiond-router-fleet' \
+                            'VERSIOND_ROUTER_FLEET_CAPACITY=16' \
+                            'VERSIOND_NON_HA_VERSIONS=v1' \
+                            'VERSIOND_VERSIONS=v4' \
+                            'VERSIOND_ROUTING_CATALOG_URL=http://versiond-routing-oracle:9100/versions' \
+                            'VERSIOND_ROUTING_CATALOG_POLL_SECONDS=5' \
+                            'VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=3' \
+                            'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=86400' \
+                            'PROXY_ROUTER_VERSION_CAPACITY=32' \
+                            'EDGE_API_POOL_HOST=edge-api-pool' \
+                            'EDGE_API_PORT=18080'
+                        ;;
                     versiond | versiond2)
                         printf 'PGHOST=devshard-postgres\nPGDATABASE=devshardd\nPGUSER=devshardd\n'
                         ;;
@@ -108,6 +126,12 @@ if [[ ${1:-} == compose ]]; then
             printf 'rollback-versiond %s\n' \
                 "${PROXY_V4_VERSIOND_SERVICE_NAME:-}" >>"$DOCKER_LOG"
             printf 'proxy-policy\n' >"$STATE_DIR/current"
+            exit 0
+        fi
+        if [[ ${PROXY_ROUTER_IMAGE:-} == gonka/router-ha-proxy-rollback:* ]]; then
+            printf 'rollback-current slots=%s\n' \
+                "${PROXY_POLICY_POOL_SLOTS:-}" >>"$DOCKER_LOG"
+            printf 'proxy-router\n' >"$STATE_DIR/current"
             exit 0
         fi
         if [[ ${SIGNAL_CUTOVER:-false} == true ]]; then
@@ -231,15 +255,30 @@ grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/signal.log" || fail \
 
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env
-if grep -q '^docker tag ' "$tmpdir/idempotent.log"; then
-    fail "idempotent convergence manufactured a public proxy rollback tag"
-fi
+grep -q '^docker tag ' "$tmpdir/idempotent.log" || fail \
+    "day-2 convergence did not arm public proxy rollback"
+grep -q 'docker image rm gonka/router-ha-proxy-rollback:' \
+    "$tmpdir/idempotent.log" || fail \
+    "successful day-2 convergence retained its temporary rollback image"
 grep -q 'docker rm -f versiond-router' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence left the migration singleton behind"
 grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence skipped strict parent admission verification"
 grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence did not apply router fleet image/config updates"
+
+if INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/day2-failure.log" env FAIL_CUTOVER=true; then
+    fail "failed day-2 public proxy update was reported as successful"
+fi
+grep -q '^rollback-current slots=7$' "$tmpdir/day2-failure.log" || fail \
+    "day-2 rollback did not restore the captured routing environment"
+if grep -q 'docker-compose.proxy-v4-compat.yml' \
+    "$tmpdir/day2-failure.log"; then
+    fail "day-2 rollback incorrectly restored the migration nginx"
+fi
+grep -q '^fleet verify-admission$' "$tmpdir/day2-failure.log" || fail \
+    "day-2 rollback did not verify parent admission"
 
 if run_cutover "$tmpdir/wrong-network.log" env WRONG_NETWORK_OWNERSHIP=true; then
     fail "cutover accepted an existing network owned by another Compose model"

@@ -130,7 +130,9 @@ usually finish earlier. The public nginx-to-HAProxy cutover is brief but closes
 the old container's established client connections.
 
 Application and router replacements retain captured immutable Docker image IDs
-until their postconditions pass. Local PostgreSQL has a stricter boundary:
+until their postconditions pass. A later public-router update also captures its
+live routing environment and restores both image and environment if admission
+fails. Local PostgreSQL has a stricter boundary:
 before the new database starts, the old anonymous volume is the physical
 rollback source; after v5 PostgreSQL accepts writes, the updater will not switch
 back automatically because doing so could fork database history. Keep that
@@ -246,11 +248,12 @@ is ready, not a zero-interruption router rollout. Subsequent inner-router and
 policy-worker replacements are rolling; the remaining single public HAProxy is
 the documented host-level failure domain for this release.
 
-The script sources `config.env`, detects two independent axes from the existing
-containers, and recovers the actual Compose project from Docker's
-`com.docker.compose.project.*` labels. The recovered contract includes the
-ordered Compose file list and project working directory; replacement, rollback,
-and final router cutover all use that same contract:
+On the first run, the script sources `config.env`, detects two independent axes
+from the existing containers, and recovers the actual Compose project from
+Docker's `com.docker.compose.project.*` labels. The recovered contract includes
+the ordered Compose file list and project working directory; replacement,
+rollback, and final router cutover all use that same contract. Successful runs
+commit this model to the upgrade marker, which is authoritative on later runs:
 
 | Axis | Standard mode | HA / multi mode |
 | --- | --- | --- |

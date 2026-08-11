@@ -10,6 +10,8 @@ compose_project_name=
 compose_project_directory=
 rollback_pending=false
 rollback_image=
+rollback_kind=
+declare -A rollback_env=()
 declare -A inherited_env=()
 declare -a migration_routes=()
 declare -a compose_file_args=()
@@ -164,6 +166,47 @@ proxy_component() {
     "$docker_bin" inspect --format '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 }
 
+proxy_env_value() {
+    local name=$1 line
+
+    while IFS= read -r line; do
+        case $line in
+            "$name="*) printf '%s\n' "${line#*=}"; return 0 ;;
+        esac
+    done < <("$docker_bin" inspect --format \
+        '{{range .Config.Env}}{{println .}}{{end}}' proxy)
+    return 1
+}
+
+arm_proxy_rollback() {
+    local kind=$1 old_image key
+
+    old_image=$("$docker_bin" inspect --format '{{.Image}}' proxy)
+    rollback_image="gonka/router-ha-proxy-rollback:$(date +%s%N)-$$"
+    "$docker_bin" tag "$old_image" "$rollback_image"
+    rollback_kind=$kind
+    rollback_env=()
+    if [[ $kind == current ]]; then
+        for key in \
+            NGINX_MODE PROXY_POLICY_POOL_SLOTS \
+            PROXY_ROUTER_PUBLIC_IDLE_SECONDS HAPROXY_DNS_RESOLVER \
+            VERSIOND_ROUTER_POOL_HOST VERSIOND_ROUTER_FLEET_CAPACITY \
+            VERSIOND_NON_HA_VERSIONS VERSIOND_VERSIONS \
+            VERSIOND_ROUTING_CATALOG_URL \
+            VERSIOND_ROUTING_CATALOG_POLL_SECONDS \
+            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS \
+            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS \
+            PROXY_ROUTER_VERSION_CAPACITY EDGE_API_POOL_HOST EDGE_API_PORT; do
+            rollback_env[$key]=$(proxy_env_value "$key" || true)
+        done
+    fi
+    rollback_pending=true
+    trap 'restore_proxy "$?"' EXIT
+    trap 'exit 129' HUP
+    trap 'exit 130' INT
+    trap 'exit 143' TERM
+}
+
 wait_component() {
     local component=$1 deadline=$((SECONDS + cutover_timeout))
     while ((SECONDS < deadline)); do
@@ -253,22 +296,52 @@ remove_migration_routers() {
     [[ $edge_mode != multi ]] || remove_migration_container edge-api-router
 }
 
-restore_v4_proxy() {
+restore_proxy() {
     local status=${1:-$?}
     trap - EXIT INT TERM HUP
     if [[ $rollback_pending == true && -n $rollback_image ]]; then
-        warn "public ingress cutover failed; restoring the captured nginx image"
+        warn "public ingress update failed; restoring the captured proxy"
         "$docker_bin" rm -f proxy >/dev/null 2>&1 || true
-        local versiond_service=versiond edge_service=
-        [[ $versiond_mode == ha ]] && versiond_service=versiond-router
-        [[ $edge_mode == multi ]] && edge_service=edge-api-router
-        if PROXY_V4_IMAGE=$rollback_image \
-            PROXY_V4_VERSIOND_SERVICE_NAME=$versiond_service \
-            PROXY_V4_EDGE_API_SERVICE_NAME=$edge_service \
-            "${compose[@]}" -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
-                up -d --no-deps --force-recreate --wait \
+        local versiond_service=versiond edge_service='' restored=false
+        if [[ $rollback_kind == v4 ]]; then
+            [[ $versiond_mode == ha ]] && versiond_service=versiond-router
+            [[ $edge_mode == multi ]] && edge_service=edge-api-router
+            if PROXY_V4_IMAGE=$rollback_image \
+                PROXY_V4_VERSIOND_SERVICE_NAME=$versiond_service \
+                PROXY_V4_EDGE_API_SERVICE_NAME=$edge_service \
+                "${compose[@]}" -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
+                    up -d --no-deps --force-recreate --wait \
+                    --wait-timeout "$cutover_timeout" proxy; then
+                restored=true
+            fi
+        elif NGINX_MODE="${rollback_env[NGINX_MODE]}" \
+            PROXY_POLICY_POOL_SLOTS="${rollback_env[PROXY_POLICY_POOL_SLOTS]}" \
+            PROXY_ROUTER_PUBLIC_IDLE_SECONDS="${rollback_env[PROXY_ROUTER_PUBLIC_IDLE_SECONDS]}" \
+            HAPROXY_DNS_RESOLVER="${rollback_env[HAPROXY_DNS_RESOLVER]}" \
+            VERSIOND_ROUTER_POOL_HOST="${rollback_env[VERSIOND_ROUTER_POOL_HOST]}" \
+            VERSIOND_ROUTER_FLEET_CAPACITY="${rollback_env[VERSIOND_ROUTER_FLEET_CAPACITY]}" \
+            VERSIOND_NON_HA_VERSIONS="${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
+            VERSIOND_VERSIONS="${rollback_env[VERSIOND_VERSIONS]}" \
+            VERSIOND_ROUTING_CATALOG_URL="${rollback_env[VERSIOND_ROUTING_CATALOG_URL]}" \
+            VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
+            PROXY_ROUTER_VERSION_CAPACITY="${rollback_env[PROXY_ROUTER_VERSION_CAPACITY]}" \
+            EDGE_API_POOL_HOST="${rollback_env[EDGE_API_POOL_HOST]}" \
+            EDGE_API_PORT="${rollback_env[EDGE_API_PORT]}" \
+            PROXY_ROUTER_IMAGE=$rollback_image \
+            "${compose[@]}" up -d --no-deps --force-recreate --wait \
                 --wait-timeout "$cutover_timeout" proxy; then
-            warn "the previous public nginx was restored"
+            restored=true
+        fi
+        if [[ $restored == true && $rollback_kind == current ]]; then
+            [[ $versiond_mode != ha ]] || run_fleet verify-admission || \
+                restored=false
+            [[ $edge_mode != multi || $restored != true ]] || \
+                wait_component edge-api || restored=false
+        fi
+        if [[ $restored == true ]]; then
+            warn "the previous public proxy was restored"
         else
             warn "automatic public proxy rollback failed; immediate operator action is required"
         fi
@@ -317,13 +390,17 @@ fi
 "${compose[@]}" up -d --no-deps --wait \
     --wait-timeout "$cutover_timeout" proxy-policy
 
-# A repeated run converges the current topology without manufacturing a
-# rollback image from the already-current proxy-router.
+# A repeated run is also a real update path. Keep the exact previous proxy
+# image and routing environment armed until the new public path is admitted.
 if [[ $(proxy_component) == proxy-router ]]; then
+    arm_proxy_rollback current
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
     [[ $edge_mode != multi ]] || wait_component edge-api
+    rollback_pending=false
+    trap - EXIT INT TERM HUP
+    "$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
     remove_migration_routers
     echo "Router HA topology is already active"
     exit 0
@@ -331,14 +408,7 @@ fi
 
 container_exists proxy || fail "the existing public proxy container is missing"
 [[ $versiond_mode != ha ]] || capture_migration_route_baseline
-old_image=$($docker_bin inspect --format '{{.Image}}' proxy)
-rollback_image="gonka/router-ha-proxy-rollback:$(date +%s%N)-$$"
-"$docker_bin" tag "$old_image" "$rollback_image"
-rollback_pending=true
-trap 'restore_v4_proxy "$?"' EXIT
-trap 'exit 129' HUP
-trap 'exit 130' INT
-trap 'exit 143' TERM
+arm_proxy_rollback v4
 
 echo "Switching the public listener to proxy-router"
 if ! "${compose[@]}" up -d --no-deps --force-recreate --wait \
