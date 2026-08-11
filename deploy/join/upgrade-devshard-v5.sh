@@ -246,6 +246,7 @@ verify_release_application_state() {
     service_instances_match_release edge-api "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
     if [[ $versiond_mode == ha ]]; then
         service_instances_match_release versiond2 "$DEVSHARD_V5_VERSIOND_IMAGE" || return 1
+        verify_shared_postgres_identity || return 1
         if [[ $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
             service_instances_match_release devshard-postgres '' || return 1
         fi
@@ -253,6 +254,32 @@ verify_release_application_state() {
     if [[ $edge_mode == multi ]]; then
         service_instances_match_release edge-api2 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
         service_instances_match_release edge-api3 "$DEVSHARD_V5_EDGE_API_IMAGE" || return 1
+    fi
+}
+
+versiond_storage_identity() {
+    local service=$1 container identity
+    container=$("${GONKA_COMPOSE_COMMAND[@]}" ps --quiet "$service")
+    [[ -n $container ]] || return 1
+    identity=$("$docker_bin" exec "$container" wget -qO- -T 5 \
+        http://127.0.0.1:8080/internal/storage-identity | \
+        jq -er '.identity | strings | select(length > 0)') || return 1
+    printf '%s\n' "$identity"
+}
+
+verify_shared_postgres_identity() {
+    local first second
+    first=$(versiond_storage_identity versiond) || {
+        warn "cannot read the database identity through versiond"
+        return 1
+    }
+    second=$(versiond_storage_identity versiond2) || {
+        warn "cannot read the database identity through versiond2"
+        return 1
+    }
+    if [[ $first != "$second" ]]; then
+        warn "versiond replicas use different PostgreSQL databases ($first != $second)"
+        return 1
     fi
 }
 
@@ -1235,5 +1262,9 @@ case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
         ;;
     *) fail "UPGRADE_ENABLE_ROUTER_HA must be true or false" ;;
 esac
+if [[ $versiond_mode == ha ]]; then
+    verify_shared_postgres_identity || fail \
+        "versiond replicas did not converge on one PostgreSQL identity"
+fi
 write_upgrade_marker
 echo "Devshard v5 upgrade completed"

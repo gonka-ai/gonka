@@ -360,8 +360,10 @@ the whole pool.
 Before changing an HA Compose deployment, the updater also requires `versiond`
 and `versiond2` to resolve the same non-empty `(PGHOST, PGPORT, PGDATABASE,
 PGUSER)` tuple and refuses an implicit endpoint change from the running
-containers. This is a deployment preflight; PostgreSQL itself remains the
-runtime consistency authority.
+containers. After replacement it reads the durable database UUID through each
+supervisor and commits the update only when both UUIDs match. The tuple is the
+early deployment preflight; the UUID is proof against aliases that resolve to
+different databases.
 
 Therefore:
 

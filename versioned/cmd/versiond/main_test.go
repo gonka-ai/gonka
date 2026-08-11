@@ -1010,7 +1010,7 @@ func TestReadinessIsServedOnTheTrafficListener(t *testing.T) {
 	mgr := process.NewManager(config.Config{BasePort: 5000})
 
 	response := httptest.NewRecorder()
-	publicHandler(mgr, hostLifecycle).ServeHTTP(
+	publicHandler(mgr, hostLifecycle, nil).ServeHTTP(
 		response,
 		httptest.NewRequest(http.MethodGet, "/readyz", nil),
 	)
@@ -1023,6 +1023,35 @@ func TestReadinessIsServedOnTheTrafficListener(t *testing.T) {
 	}
 	if got := response.Header().Get("Cache-Control"); got != "no-store" {
 		t.Fatalf("/readyz Cache-Control = %q, want no-store", got)
+	}
+}
+
+type staticStorageIdentity string
+
+func (s staticStorageIdentity) StorageIdentity(context.Context) (string, error) {
+	return string(s), nil
+}
+
+func TestStorageIdentityIsLocalOnly(t *testing.T) {
+	handler := storageIdentityHandler(staticStorageIdentity("database-1"))
+
+	external := httptest.NewRequest(http.MethodGet, "/internal/storage-identity", nil)
+	external.RemoteAddr = "192.0.2.10:1234"
+	externalResponse := httptest.NewRecorder()
+	handler.ServeHTTP(externalResponse, external)
+	if externalResponse.Code != http.StatusNotFound {
+		t.Fatalf("external storage identity status = %d, want 404", externalResponse.Code)
+	}
+
+	local := httptest.NewRequest(http.MethodGet, "/internal/storage-identity", nil)
+	local.RemoteAddr = "127.0.0.1:1234"
+	localResponse := httptest.NewRecorder()
+	handler.ServeHTTP(localResponse, local)
+	if localResponse.Code != http.StatusOK {
+		t.Fatalf("local storage identity status = %d, want 200", localResponse.Code)
+	}
+	if got := localResponse.Body.String(); got != "{\"identity\":\"database-1\"}\n" {
+		t.Fatalf("local storage identity response = %q", got)
 	}
 }
 

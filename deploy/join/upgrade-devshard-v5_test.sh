@@ -200,6 +200,14 @@ if [[ ${1:-} == exec ]]; then
             exit 1
         fi
         case $container:$probe_url in
+            cid-versiond*:http://127.0.0.1:8080/internal/storage-identity)
+                if [[ $service == versiond2 && -n ${VERSIOND2_STORAGE_IDENTITY-} ]]; then
+                    jq -cn --arg identity "$VERSIOND2_STORAGE_IDENTITY" '{identity:$identity}'
+                else
+                    printf '{"identity":"shared-database"}\n'
+                fi
+                exit 0
+                ;;
             cid-versiond*:http://127.0.0.1:8080/healthz)
                 if [[ $is_rollback == true && \
                     $service == "${ROLLBACK_EMPTY_VERSIOND_SERVICE-}" ]]; then
@@ -400,6 +408,7 @@ run_upgrade() {
         STOPPED_VERSIOND_SERVICE="${STOPPED_VERSIOND_SERVICE-}" \
         TARGET_ROUTER_MISSING_VERSION="${TARGET_ROUTER_MISSING_VERSION-}" \
         VERSIOND2_UNIQUE_VERSION="${VERSIOND2_UNIQUE_VERSION-}" \
+        VERSIOND2_STORAGE_IDENTITY="${VERSIOND2_STORAGE_IDENTITY-}" \
         UPGRADE_ROLLBACK_VERIFY_TIMEOUT="${UPGRADE_ROLLBACK_VERIFY_TIMEOUT-}" \
         UPGRADE_ROLLBACK_VERIFY_INTERVAL="${UPGRADE_ROLLBACK_VERIFY_INTERVAL:-1}" \
         UPGRADE_ROLLBACK_STABILITY_CHECKS="${UPGRADE_ROLLBACK_STABILITY_CHECKS:-1}" \
@@ -447,6 +456,7 @@ run_auto_upgrade() {
         RENDERED_ROUTER_FRONT_NETWORK="${RENDERED_ROUTER_FRONT_NETWORK-}" \
         RENDERED_ROUTER_BACK_NETWORK="${RENDERED_ROUTER_BACK_NETWORK-}" \
         INCOMPATIBLE_COMPOSE_CONTAINER="${INCOMPATIBLE_COMPOSE_CONTAINER-}" \
+        VERSIOND2_STORAGE_IDENTITY="${VERSIOND2_STORAGE_IDENTITY-}" \
         "$script_dir/upgrade-devshard-v5.sh" >"$stdout" 2>"$tmpdir/stderr"; then
         cat "$tmpdir/stderr" >&2
         fail "automatic topology upgrade failed"
@@ -895,6 +905,13 @@ grep -q 'versiond=ha, edge-api=single' "$tmpdir/ha.stdout" || fail \
 assert_contains "$tmpdir/ha.log" "docker-compose.versiond.yml"
 assert_not_contains "$tmpdir/ha.log" "docker-compose.edge-api-multi.yml"
 assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
+
+VERSIOND2_STORAGE_IDENTITY=another-database \
+    run_upgrade single none "$tmpdir/postgres-identity.log"
+grep -q 'versiond replicas use different PostgreSQL databases' "$tmpdir/stderr" || {
+    cat "$tmpdir/stderr" >&2
+    fail "different live PostgreSQL identities did not produce a useful error"
+}
 
 cat >"$tmpdir/managed-postgres.yml" <<'EOF'
 services:

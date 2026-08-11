@@ -201,6 +201,21 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 )`,
 		},
 	},
+	{
+		ID:   13,
+		Name: "devshard_storage_identity",
+		Statements: []string{`
+CREATE TABLE IF NOT EXISTS devshard_storage_identity (
+    singleton BOOLEAN PRIMARY KEY DEFAULT TRUE CHECK (singleton),
+    identity  UUID    NOT NULL
+)`, `
+INSERT INTO devshard_storage_identity (singleton, identity)
+VALUES (
+    TRUE,
+    md5(current_database() || clock_timestamp()::text || random()::text)::uuid
+)
+ON CONFLICT (singleton) DO NOTHING`},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

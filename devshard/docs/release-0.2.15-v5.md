@@ -353,7 +353,10 @@ the override and does not pull, recreate, or preflight the local
 `devshard-postgres` service. Before any mutation it compares `PGHOST`, `PGPORT`,
 `PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
 identity change, disagreement between replicas, or non-Postgres HA storage is a
-hard failure rather than an attempted migration.
+hard failure rather than an attempted migration. Before committing the update,
+the script also reads the schema UUID through both replacement supervisors and
+requires an exact match; equal connection strings alone are not treated as
+proof that both aliases reach the same database.
 
 The first stock local-PostgreSQL HA v4-to-v5 cutover is a **devshard maintenance
 operation**, not a rolling update. It restarts the one shared PostgreSQL
