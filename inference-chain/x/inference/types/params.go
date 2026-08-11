@@ -62,6 +62,10 @@ const (
 
 	DynamicPricingEstimatedBlockSeconds = uint64(5)
 	MaxRollingWindowBlocks              = uint64(500)
+	// MaxDevshardApprovedVersions is the consensus-side capacity guaranteed by
+	// the shipped version routers. Version names are append-only, so governance
+	// must raise this bound together with router capacity in a software upgrade.
+	MaxDevshardApprovedVersions = 32
 )
 
 func UtilizationWindowToBlocks(utilizationWindowSeconds uint64) uint64 {
@@ -464,6 +468,9 @@ func (p *DevshardEscrowParams) Validate() error {
 	}
 	if p.MaxNonce == 0 {
 		return fmt.Errorf("devshard escrow max_nonce must be positive")
+	}
+	if len(p.ApprovedVersions) > MaxDevshardApprovedVersions {
+		return fmt.Errorf("devshard_escrow_params.approved_versions has %d entries, maximum is %d", len(p.ApprovedVersions), MaxDevshardApprovedVersions)
 	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {

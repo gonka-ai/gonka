@@ -64,3 +64,48 @@ func TestMsgUpdateParams(t *testing.T) {
 		})
 	}
 }
+
+func TestMsgUpdateParamsApprovedVersionsAreAppendOnly(t *testing.T) {
+	k, ms, ctx := setupMsgServer(t)
+	current := types.DefaultParams()
+	current.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
+		approvedVersion("v4", "a"),
+		approvedVersion("v5", "b"),
+	}
+	require.NoError(t, k.SetParams(ctx, current))
+	wctx := sdk.UnwrapSDKContext(ctx)
+
+	t.Run("remove", func(t *testing.T) {
+		proposed := types.DefaultParams()
+		proposed.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
+			approvedVersion("v5", "b"),
+		}
+		_, err := ms.UpdateParams(wctx, &types.MsgUpdateParams{
+			Authority: k.GetAuthority(),
+			Params:    proposed,
+		})
+		require.ErrorContains(t, err, `approved devshard version "v4" cannot be removed`)
+	})
+
+	t.Run("update binary and add", func(t *testing.T) {
+		proposed := types.DefaultParams()
+		proposed.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
+			approvedVersion("v5", "c"),
+			approvedVersion("v4", "d"),
+			approvedVersion("v6", "e"),
+		}
+		_, err := ms.UpdateParams(wctx, &types.MsgUpdateParams{
+			Authority: k.GetAuthority(),
+			Params:    proposed,
+		})
+		require.NoError(t, err)
+	})
+}
+
+func approvedVersion(name, binarySuffix string) *types.DevshardApprovedVersion {
+	return &types.DevshardApprovedVersion{
+		Name:   name,
+		Binary: "https://example.invalid/devshard-" + binarySuffix + ".zip",
+		Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}
+}

@@ -1,6 +1,7 @@
 package types_test
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -103,4 +104,16 @@ func TestDevshardEscrowParams_ValidateVersionNameContract(t *testing.T) {
 	p := types.DefaultDevshardEscrowParams()
 	p.ApprovedVersions = []*types.DevshardApprovedVersion{nil}
 	require.ErrorContains(t, p.Validate(), "cannot be null")
+}
+
+func TestDevshardEscrowParams_ValidateApprovedVersionCapacity(t *testing.T) {
+	p := types.DefaultDevshardEscrowParams()
+	for i := 0; i <= types.MaxDevshardApprovedVersions; i++ {
+		p.ApprovedVersions = append(p.ApprovedVersions, &types.DevshardApprovedVersion{
+			Name:   fmt.Sprintf("v%d", i),
+			Binary: "https://example.invalid/devshard.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		})
+	}
+	require.ErrorContains(t, p.Validate(), "maximum is 32")
 }
