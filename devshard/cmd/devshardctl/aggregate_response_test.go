@@ -351,6 +351,18 @@ func TestHandleAggregatedPath_SpilledBodyFoldsViaOpenReader(t *testing.T) {
 	require.Contains(t, msg["content"].(string), "w39")
 }
 
+func TestConfigureAggregateResponseFromEnv_SpoolDirMode0700(t *testing.T) {
+	restoreAggregateCaps(t)
+	base := t.TempDir()
+	t.Setenv("GATEWAY_AGGREGATE_SPOOL_DIR", "")
+	configureAggregateResponseFromEnv(base)
+	dir := currentAggregateSpoolDir()
+	require.NotEmpty(t, dir)
+	info, err := os.Stat(dir)
+	require.NoError(t, err)
+	require.Equal(t, os.FileMode(0o700), info.Mode().Perm())
+}
+
 func TestConfigureAggregateResponseFromEnv(t *testing.T) {
 	restoreAggregateCaps(t)
 	base := t.TempDir()

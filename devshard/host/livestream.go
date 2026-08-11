@@ -92,7 +92,11 @@ type liveStreamLimits struct {
 	writeTimeout time.Duration
 }
 
+var liveStreamLimitsMu sync.RWMutex
+
 func currentLiveStreamLimits() liveStreamLimits {
+	liveStreamLimitsMu.RLock()
+	defer liveStreamLimitsMu.RUnlock()
 	return liveStreamLimits{
 		ringBytes:    LiveStreamRingBytes,
 		maxRAMBytes:  LiveStreamMaxRAMBytes,
@@ -101,6 +105,12 @@ func currentLiveStreamLimits() liveStreamLimits {
 		stallTimeout: LiveStreamReaderStallTimeout,
 		writeTimeout: LiveStreamPrimaryWriteTimeout,
 	}
+}
+
+func setLiveStreamRingBytes(n int64) {
+	liveStreamLimitsMu.Lock()
+	defer liveStreamLimitsMu.Unlock()
+	LiveStreamRingBytes = n
 }
 
 // LiveStream is a per-inference append-only byte log with independent readers.

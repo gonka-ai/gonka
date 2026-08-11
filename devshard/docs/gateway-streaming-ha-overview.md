@@ -5,7 +5,8 @@
 **Detail / checklists:**  
 [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) (design),  
 [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) (always-stream steps),  
-[gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) (reconnect steps).
+[gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) (reconnect steps),  
+[spool-shared-library.md](./spool-shared-library.md) (shared scratch spool APIs & practices; [migration plan](./spool-shared-library-plan.md)).
 
 ---
 
@@ -32,7 +33,7 @@ Two complementary motivations:
 | Host ML drain independent of the gateway writer | Done (parent Step 3) |
 | Same-nonce reconnect, winner continuity, spool-backed LiveStream resume tiers | Done (reconnect Steps 1–5e); **default-off**, gated to protocol ≥ `v5` |
 | Gateway SSE event size cap (1 MiB) | Done (parent Step 12) |
-| Force upstream `stream` / client aggregator / intent | **Not yet** (parent Steps 5–11) |
+| Force upstream `stream` / client aggregator / intent / Step 11 escalation | Done (parent Steps 5–11; `InterChunkStallTimeout` wiring still a follow-up) |
 | Citest e2e (admin + v2 gate + v5 mid-stream resume) | Done (reconnect Step 7; `make citest-attempt-reconnect`) |
 | Soft-signal persist, full Prometheus/OTel | **Deferred** (reconnect Steps 6 / 8 / 5f–5g) |
 | Cross-instance `devshardd` HA / ML reattach on host reboot | **Deferred** (reconnect Step 10; needs separated mock MLNodes from `ak/devshard-observability-e2e` + MLNode keep-alive) |
@@ -70,7 +71,7 @@ sequenceDiagram
   participant M as ML
 
   C->>G: chat.completions (stream intent)
-  Note over G: Normalize; (future) force stream=true upstream
+  Note over G: Normalize; force stream=true + include_usage when ForceUpstreamStreaming
   G->>H: HostRequest + nonce N
   H->>M: POST streamed completion
   M-->>H: SSE chunks
@@ -182,6 +183,8 @@ Host-side buffering makes resume possible without a second vLLM call. `LiveStrea
 
 The log lives on disk in a per-generation **spool**, and RAM holds only a small trailing window of it. The two are not a mode switch and not a fallback: the spool file *is* the log, and the RAM window is a cache of its tail. That is what makes hot RAM independent of reader behaviour — a reader that stops consuming falls out of the window and is served from disk instead of pinning it.
 
+Scratch-disk mechanics (directory lifecycle, anonymous files, caps, budgets) are shared with the gateway’s aggregate spill path. Design, APIs, and usage practices: **[spool-shared-library.md](./spool-shared-library.md)**. Migration / divergence fixes: [spool-shared-library-plan.md](./spool-shared-library-plan.md).
+
 ### 4.1 Storage tiers
 
 ```text
@@ -275,7 +278,7 @@ Clocks that bound producing / holding a winner derive from protocol **`Execution
 | Attempt reconnect max tries | **2** per nonce | Gateway | Tries exhausted | Release reservation; fail or let secondary crown per R4/R5 |
 | Inter-chunk stall (log / policy) | 30s log threshold; 60s setting | Gateway | Winner silent after content | Stall signal / abort path for hung winner |
 | Streaming attempt hard timeout | `ExecutionTimeout` | Gateway | Crowned winner exceeds budget | Terminal winner failure |
-| Non-stream no-content / max wait | `ExecutionTimeout` today | Gateway | Pre–always-stream path | Long wait / reduced-`max_tokens` retry — **removed when always-stream forces streaming escalation** |
+| Non-stream no-content / max wait | `ExecutionTimeout` | Gateway | Only when `!ForceUpstreamStreaming` and client `stream:false` | Long wait / reduced-`max_tokens` retry — **disarmed under always-stream (Step 11)**; use first-token + inter-chunk instead |
 | Host ML / drain deadline | `ExecutionTimeout` | Host | Detached client still generating | Stop drain; set `PartialResponse*`; no unbounded orphan GPU |
 | `InflightReplayBufferTTL` | `ExecutionTimeout` | Host | Live attach map entry aged out | **Detach** attachability (do not abort finish); reconnect uses storage or fails cleanly |
 | LiveStream write deadline (per chunk) | 30s | Host | One ≤256 KiB reader write does not complete | Primary: `ClientDetached`, keep producing. Reconnect: `ErrSubscriberLagged` |
@@ -390,7 +393,7 @@ plan Step 10 (scenarios HA1–HA4).
 
 ## 8. E2E scenarios — always-streaming design (`testenv` / citest)
 
-**Status:** Host prerequisites landed; gateway force/aggregate (`ForceUpstreamStreaming`) still to land. Scenarios below are the acceptance matrix for that flip.
+**Status:** Gateway force/aggregate and Step 11 escalation unification are in; remaining rows are soak / reconnect / e2e acceptance.
 
 | # | Scenario | Assert |
 |---|---|---|
@@ -398,7 +401,7 @@ plan Step 10 (scenarios HA1–HA4).
 | A2 | `stream: true` client + force-upstream on | SSE unchanged; no trailing usage chunk unless client asked `include_usage` |
 | A3 | Differential | Aggregated JSON matches mock’s own non-streaming JSON field-for-field (fixed seed) |
 | A4 | Cache isolation | Identical normalized bodies, different client stream intent → different cache keys / shapes |
-| A5 | Escalation under always-stream | Dead host / no first token for a `stream: false` client escalates on **first-token** budget, not the old 140s reduced-`max_tokens` path |
+| A5 | Escalation under always-stream ✅ | Dead host / no first token for a `stream: false` client escalates on **first-token** / `attempt_failed`, not reduced-`max_tokens` (`force_upstream_escalation_test.go`) |
 | A6 | Mid-stream disconnect + drain | Host publishes `MsgFinishInference` with non-zero input tokens; same-nonce reconnect replays full body |
 | A7 | Streamed replay format | Reconnect to completed streamed inference parses as a normal chunk sequence (not `{"events":[…]}` as one line) |
 | A8 | SSE oversize | Malicious unterminated `data:` aborts with `ErrSSEEventTooLarge` under limit+ε; legal near-limit chunk still parses |

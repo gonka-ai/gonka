@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"time"
 
@@ -277,7 +278,11 @@ func buildHostManager(
 	)
 	manager.SetAvailabilityProvider(availabilityTracker)
 	manager.SetMaxNonceProvider(runtimeparams.MaxNonceFromSnapshot(chainParams))
-	if err := manager.SetLiveStreamSpoolDir(filepath.Join(cfg.DataDir, "livestream-spool")); err != nil {
+	liveSpoolDir := strings.TrimSpace(os.Getenv("DEVSHARDD_LIVESTREAM_SPOOL_DIR"))
+	if liveSpoolDir == "" {
+		liveSpoolDir = filepath.Join(cfg.DataDir, "livestream-spool")
+	}
+	if err := manager.SetLiveStreamSpoolDir(liveSpoolDir); err != nil {
 		slog.Warn("live stream spool unavailable; mid-flight reconnect disabled", "error", err)
 	}
 	manager.SetBinaryVersion(cfg.BinaryLogVersion)

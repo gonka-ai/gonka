@@ -817,8 +817,7 @@ func TestCompletionFolder_LogprobsSpillReadFailureIsSurfaced(t *testing.T) {
 	require.False(t, early)
 	require.True(t, f.choices[0].lp.spilled)
 
-	require.NoError(t, f.choices[0].lp.fileBuf.Flush())
-	require.NoError(t, f.choices[0].lp.file.Close()) // reads now fail
+	require.NoError(t, f.choices[0].lp.corruptForTest()) // reads now fail
 
 	out, ok := f.result()
 	require.True(t, ok)
@@ -827,6 +826,57 @@ func TestCompletionFolder_LogprobsSpillReadFailureIsSurfaced(t *testing.T) {
 
 // The spool budget is per request, not per choice: two choices spilling
 // logprobs share one disk ceiling.
+func TestAggregateSSEStream_LogprobsSpillTakesSpoolSlot(t *testing.T) {
+	prevMem, prevResp := currentAggregateByteLimits()
+	prevDir := currentAggregateSpoolDir()
+	t.Cleanup(func() {
+		setAggregateByteLimitsForTest(prevMem, prevResp)
+		setAggregateSpoolDir(prevDir)
+		resetAggregateSpoolSlots(defaultAggregateMaxConcurrentSpools)
+	})
+	dir := t.TempDir()
+	setAggregateSpoolDir(dir)
+	resetAggregateSpoolSlots(1)
+	setAggregateByteLimitsForTest(1, 1<<20)
+
+	// Occupy the only spool slot with a body buffer spill.
+	body := newAggregateResponseBuffer()
+	defer func() { _ = body.Close() }()
+	_, err := body.Write([]byte("xx"))
+	require.NoError(t, err)
+	require.True(t, body.Spilled())
+
+	got := aggregateSSEStream(sseData(
+		`{"id":"c","choices":[{"index":0,"delta":{"content":"hi"},"logprobs":{"content":[{"token":"hi","logprob":-0.5}]},"finish_reason":"stop"}]}`,
+	), logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true})
+	require.True(t, isAggregateFoldTooLargePayload(got),
+		"logprobs spill must take a spool slot and fail the fold when none remain: %s", got)
+}
+
+func TestCompletionFolder_LogprobsSpillIsAnonymous(t *testing.T) {
+	prevMem, prevResp := currentAggregateByteLimits()
+	prevDir := currentAggregateSpoolDir()
+	t.Cleanup(func() {
+		setAggregateByteLimitsForTest(prevMem, prevResp)
+		setAggregateSpoolDir(prevDir)
+	})
+	dir := t.TempDir()
+	setAggregateSpoolDir(dir)
+	setAggregateByteLimitsForTest(1, 1<<20)
+
+	f := newCompletionFolder(logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true})
+	defer f.close()
+	_, early := f.ingest([]byte(`{"id":"c","choices":[{"index":0,"logprobs":{"content":[{"token":"hi","logprob":-0.5}]}}]}`))
+	require.False(t, early)
+	require.True(t, f.choices[0].lp.spilled)
+	entries, err := os.ReadDir(dir)
+	require.NoError(t, err)
+	for _, e := range entries {
+		require.False(t, strings.HasPrefix(e.Name(), "agg-lp-"), "named logprobs spill %s", e.Name())
+		require.False(t, strings.Contains(e.Name(), ".ndjson"), "visible ndjson spill %s", e.Name())
+	}
+}
+
 func TestAggregateSSEStream_LogprobsDiskBudgetIsPerRequest(t *testing.T) {
 	prevMem, prevResp := currentAggregateByteLimits()
 	prevDir := currentAggregateSpoolDir()

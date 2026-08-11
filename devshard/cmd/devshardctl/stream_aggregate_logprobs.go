@@ -1,27 +1,24 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"io"
-	"os"
+
+	"devshard/spool"
 )
 
 // logprobStore holds logprobs.content[] entries as NDJSON (one JSON value per
 // line) so the fold never retains map[string]any trees (R4).
 //
-// Entries stay in memory while the fold RAM budget has room and spill to a
-// spool file only once it does not, mirroring aggregateResponseBuffer: a
-// typical logprobs answer costs no disk I/O at all. Both halves are charged to
-// the request-wide foldBudget, so N choices share one RAM and one disk ceiling.
+// Entries stay in memory while the fold RAM budget has room and spill through
+// spool.Dir (slot + unlink-at-create) once it does not. Both halves are charged
+// to the request-wide foldBudget.
 type logprobStore struct {
 	mem     bytes.Buffer
 	emit    []byte // spilled bytes read back at emit time; alive until close
-	file    *os.File
-	fileBuf *bufio.Writer
-	path    string
+	file    *spool.File
 	nMem    int64
 	nDisk   int64
 	entries int
@@ -76,10 +73,11 @@ func (s *logprobStore) appendRaw(raw []byte, b *foldBudget) error {
 	if err := b.chargeDisk(need); err != nil {
 		return err
 	}
-	if _, err := s.fileBuf.Write(framed); err != nil {
-		return err
-	}
-	if err := s.fileBuf.WriteByte('\n'); err != nil {
+	line := append(append([]byte(nil), framed...), '\n')
+	if _, err := s.file.Write(line); err != nil {
+		if errors.Is(err, spool.ErrFileTooLarge) {
+			return fmt.Errorf("%w: logprobs disk", ErrAggregateFoldTooLarge)
+		}
 		return err
 	}
 	s.nDisk += need
@@ -103,27 +101,38 @@ func frameNDJSONEntry(raw []byte) ([]byte, bool) {
 	return compact.Bytes(), true
 }
 
-// spill moves the store to a spool file and reclassifies already-charged RAM
-// bytes as disk bytes, so the request-wide budget stays exact across the switch.
+// spill moves the store onto a spool.Dir file (slot + anonymous inode) and
+// reclassifies already-charged RAM bytes as disk bytes.
 func (s *logprobStore) spill(b *foldBudget) error {
-	f, err := os.CreateTemp(b.spoolDir, "agg-lp-*.ndjson")
+	dir := currentAggregateDir()
+	if dir == nil || !dir.Enabled() {
+		return fmt.Errorf("%w: logprobs spool unavailable", ErrAggregateFoldTooLarge)
+	}
+	f, err := dir.Create()
 	if err != nil {
-		return err
+		if errors.Is(err, spool.ErrNoCapacity) {
+			return fmt.Errorf("%w: logprobs spool capacity", ErrAggregateFoldTooLarge)
+		}
+		return fmt.Errorf("%w: logprobs spill: %v", ErrAggregateFoldTooLarge, err)
 	}
 	s.file = f
-	s.path = f.Name()
-	s.fileBuf = bufio.NewWriterSize(f, aggregateSpoolWriteBufferBytes)
 	s.spilled = true
 	if s.nMem > 0 {
 		if err := b.moveToDisk(s.nMem); err != nil {
+			_ = f.Close()
+			s.file = nil
+			s.spilled = false
 			return err
 		}
-		if _, err := s.fileBuf.Write(s.mem.Bytes()); err != nil {
+		if _, err := f.Write(s.mem.Bytes()); err != nil {
+			_ = f.Close()
+			s.file = nil
+			s.spilled = false
 			return err
 		}
 		s.nDisk += s.nMem
 		s.nMem = 0
-		s.mem = bytes.Buffer{} // release the buffer, not just its length
+		s.mem = bytes.Buffer{}
 	}
 	return nil
 }
@@ -137,14 +146,12 @@ func (s *logprobStore) contentRawMessages() ([]json.RawMessage, error) {
 	}
 	data := s.mem.Bytes()
 	if s.spilled {
-		if err := s.fileBuf.Flush(); err != nil {
-			return nil, err
-		}
-		if _, err := s.file.Seek(0, io.SeekStart); err != nil {
+		r, err := s.file.Reader()
+		if err != nil {
 			return nil, err
 		}
 		buf := bytes.NewBuffer(make([]byte, 0, s.nDisk))
-		if _, err := buf.ReadFrom(s.file); err != nil {
+		if _, err := buf.ReadFrom(r); err != nil {
 			return nil, err
 		}
 		s.emit = buf.Bytes()
@@ -177,22 +184,21 @@ func (s *logprobStore) close() {
 	if s == nil {
 		return
 	}
-	if s.fileBuf != nil {
-		_ = s.fileBuf.Flush()
-		s.fileBuf = nil
-	}
 	if s.file != nil {
-		name := s.path
 		_ = s.file.Close()
 		s.file = nil
-		if name != "" {
-			_ = os.Remove(name)
-		}
-		s.path = ""
 	}
 	s.mem = bytes.Buffer{}
 	s.emit = nil
 	s.nMem = 0
+}
+
+// corruptForTest closes the underlying spool fd so emit-time reads fail.
+func (s *logprobStore) corruptForTest() error {
+	if s == nil || s.file == nil {
+		return errors.New("no spilled file")
+	}
+	return s.file.CorruptForTest()
 }
 
 var topLogprobsKeyMarker = []byte(`"top_logprobs"`)

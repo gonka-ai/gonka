@@ -885,36 +885,80 @@ func TestLiveStream_ReleaseRemovesSpoolFiles(t *testing.T) {
 	require.NoError(t, err)
 	waitSpooled(t, stream, 1)
 
+	// Anonymous (unlinked) files: ls is empty while open.
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Len(t, entries, 2, "expected .log and .idx")
+	require.Empty(t, entries, "spool inodes are anonymous while open")
+	require.True(t, stream.SpoolActive())
+	require.Greater(t, stream.SpooledBytes(), int64(0))
+	st, ok := LiveSpoolDirStats(dir)
+	require.True(t, ok)
+	require.True(t, st.Enabled)
 
 	stream.Close(nil)
 	stream.Release()
 
 	deadline := time.After(2 * time.Second)
 	for {
-		entries, err = os.ReadDir(dir)
-		require.NoError(t, err)
-		if len(entries) == 0 {
+		if !stream.SpoolActive() {
 			break
 		}
 		select {
 		case <-deadline:
-			t.Fatalf("spool files not removed: %v", entries)
+			t.Fatal("spool still active after Release")
 		default:
 			time.Sleep(5 * time.Millisecond)
 		}
 	}
+	entries, err = os.ReadDir(dir)
+	require.NoError(t, err)
+	require.Empty(t, entries)
+}
+
+func TestLiveStream_SpoolFileCapDisablesResume(t *testing.T) {
+	prev := liveStreamMaxSpoolBytes
+	t.Cleanup(func() { liveStreamMaxSpoolBytes = prev })
+	liveStreamMaxSpoolBytes = 32
+
+	dir := t.TempDir()
+	// Drop cached Dir so the new MaxFileBytes is picked up.
+	liveDirsMu.Lock()
+	delete(liveDirs, dir)
+	liveDirsMu.Unlock()
+
+	stream := newLiveStream()
+	require.NoError(t, stream.enableSpool(dir, "escrow-cap", 1))
+	big := []byte("data: " + strings.Repeat("x", 64) + "\n\n")
+	_, err := stream.Write(big)
+	require.NoError(t, err)
+	// Pump should fail the spool; generation keeps going without resume.
+	deadline := time.After(2 * time.Second)
+	for stream.SpoolActive() {
+		select {
+		case <-deadline:
+			t.Fatal("expected spool to fail after exceeding MaxFileBytes")
+		default:
+			time.Sleep(5 * time.Millisecond)
+		}
+	}
+	require.False(t, stream.SpoolActive())
+	stream.Close(nil)
+	stream.Release()
 }
 
 func TestPrepareLiveStreamSpoolDir_ClearsLeftovers(t *testing.T) {
 	dir := t.TempDir()
-	require.NoError(t, os.WriteFile(dir+"/stale.log", []byte("junk"), 0o600))
+	require.NoError(t, os.WriteFile(dir+"/ls-stale.scratch", []byte("junk"), 0o600))
+	require.NoError(t, os.WriteFile(dir+"/keep-me.txt", []byte("x"), 0o600))
 	require.NoError(t, PrepareLiveStreamSpoolDir(dir))
 	entries, err := os.ReadDir(dir)
 	require.NoError(t, err)
-	require.Empty(t, entries)
+	names := map[string]bool{}
+	for _, e := range entries {
+		names[e.Name()] = true
+	}
+	require.False(t, names["ls-stale.scratch"], "prefix-scoped sweep must remove ls-* leftovers")
+	require.True(t, names["keep-me.txt"], "sibling files must survive Prepare")
 }
 
 // A far-behind reconnect must be written in bounded chunks: one giant write
