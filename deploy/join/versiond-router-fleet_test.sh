@@ -11,6 +11,7 @@ bad_image=gonka-versiond-router-fleet-bad-test:$suffix
 proxy_image=gonka-proxy-router-fleet-test:$suffix
 front=gonka-versiond-router-front-$suffix
 back=gonka-versiond-router-back-$suffix
+metrics=gonka-versiond-router-metrics-$suffix
 prefix=gonka-versiond-router-test-$suffix
 fleet_id=gonka-versiond-router-test-$suffix
 tmpdir=$(mktemp -d)
@@ -22,6 +23,7 @@ cleanup() {
         VERSIOND_ROUTER_SLOT=$slot \
             VERSIOND_ROUTER_FRONT_NETWORK=$front \
             VERSIOND_ROUTER_BACK_NETWORK=$back \
+            VERSIOND_ROUTER_METRICS_NETWORK=$metrics \
             VERSIOND_ROUTER_IMAGE=$image \
             docker compose --project-directory "$script_dir" \
                 --project-name "$prefix-$slot" \
@@ -36,7 +38,7 @@ cleanup() {
         gonka-router-fleet-foreign-$suffix >/dev/null 2>&1 || true
     docker compose -p "gonka-router-fleet-main-$suffix" \
         -f "$tmpdir/main.yml" down --timeout 1 >/dev/null 2>&1 || true
-    docker network rm "$front" "$back" \
+    docker network rm "$front" "$back" "$metrics" \
         "gonka-versiond-router-orphan-$suffix" >/dev/null 2>&1 || true
     docker image rm "$base_image" "$updated_image" "$bad_image" \
         "$proxy_image" >/dev/null 2>&1 || true
@@ -93,6 +95,7 @@ cat >"$tmpdir/config.env" <<EOF
 VERSIOND_ROUTER_IMAGE=$image
 VERSIOND_ROUTER_FRONT_NETWORK=$front
 VERSIOND_ROUTER_BACK_NETWORK=$back
+VERSIOND_ROUTER_METRICS_NETWORK=$metrics
 VERSIOND_ROUTER_PROJECT_PREFIX=$prefix
 VERSIOND_ROUTER_FLEET_ID=$fleet_id
 VERSIOND_ROUTER_FLEET_SLOTS="0 1 2"
@@ -106,6 +109,11 @@ VERSIOND_NON_HA_VERSIONS=
 VERSIOND_VERSIONS=v4
 EOF
 fleet=(env GONKA_CONFIG_ENV="$tmpdir/config.env" "$script_dir/versiond-router-fleet.sh")
+
+docker network create --internal \
+    --label com.docker.compose.network=default \
+    --label com.docker.compose.project="gonka-router-fleet-main-$suffix" \
+    "$metrics" >/dev/null
 
 cat >"$tmpdir/main.yml" <<EOF
 services:
@@ -173,7 +181,9 @@ docker run -d --name "gonka-router-fleet-backend-$suffix" \
     python:3.12-alpine python /app.py >/dev/null
 
 "${fleet[@]}" up >/dev/null
-"${fleet[@]}" status >/dev/null
+bootstrap_status=$("${fleet[@]}" status)
+grep -q '^PARENT_ADMISSION not-applicable ' <<<"$bootstrap_status" || fail \
+    "fleet status did not distinguish pre-cutover local health from parent admission"
 
 # `apply` is also the recovery path. It restores absent and non-ready capacity
 # before considering any healthy slot for replacement.
@@ -354,6 +364,7 @@ docker run -d --name "gonka-router-fleet-proxy-$suffix" \
     "$proxy_image" >/dev/null
 docker run -d --name "gonka-router-fleet-probe-$suffix" \
     --network "$front" curlimages/curl:8.12.1 sleep 300 >/dev/null
+docker network connect "$metrics" "gonka-router-fleet-probe-$suffix"
 probe=(docker exec "gonka-router-fleet-probe-$suffix" curl -fsS \
     --connect-timeout 2 --max-time 10)
 for _ in $(seq 60); do
@@ -366,6 +377,29 @@ docker exec "gonka-router-fleet-proxy-$suffix" /bin/busybox wget \
     -q -O /dev/null 'http://127.0.0.1:8404/readyz?version=v4' \
     >/dev/null \
     || fail "top HAProxy did not observe the router fleet"
+
+for slot in "${slots[@]}"; do
+    id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    metrics_ip=$(docker inspect --format \
+        "{{with index .NetworkSettings.Networks \"$metrics\"}}{{.IPAddress}}{{end}}" \
+        "$id")
+    [[ -n $metrics_ip ]] || fail "slot $slot has no metrics-network address"
+    "${probe[@]}" "http://$metrics_ip:8405/metrics?scope=frontend" \
+        >"$tmpdir/router-$slot.metrics" || fail \
+        "Prometheus endpoint is not reachable for router slot $slot"
+    grep -q '^haproxy_' "$tmpdir/router-$slot.metrics" || fail \
+        "router slot $slot returned no HAProxy metrics"
+    if "${probe[@]}" "http://$metrics_ip:8404/livez" >/dev/null 2>&1; then
+        fail "router slot $slot exposes its admin listener on the metrics network"
+    fi
+    if "${probe[@]}" "http://$metrics_ip:8080/v4/sessions/metrics/chat" \
+        >/dev/null 2>&1; then
+        fail "router slot $slot exposes its data listener on the metrics network"
+    fi
+done
 
 # The catalog endpoint is part of the routing contract: two routers learning
 # approved names from different authorities must never coexist in one ring. The
@@ -402,6 +436,30 @@ for i in $(seq 10); do
 done
 "${fleet[@]}" verify-admission v4 >/dev/null || fail \
     "strict admission rejected the complete live v4 fleet"
+admitted_status=$("${fleet[@]}" status)
+grep -qx 'PARENT_ADMISSION admitted' <<<"$admitted_status" || fail \
+    "fleet status did not report end-to-end parent admission"
+
+# Container health alone is insufficient: a healthy fleet that the active
+# parent cannot reach must make the ordinary status command fail.
+docker network disconnect "$front" "gonka-router-fleet-proxy-$suffix"
+parent_status_failed=false
+for _ in $(seq 20); do
+    if ! "${fleet[@]}" status >"$tmpdir/parent-status.out" 2>&1; then
+        if grep -q 'parent admission is incomplete' "$tmpdir/parent-status.out"; then
+            parent_status_failed=true
+            break
+        fi
+    fi
+    sleep 0.5
+done
+[[ $parent_status_failed == true ]] || fail \
+    "fleet status accepted slots that were absent from the active parent"
+docker network connect --alias proxy-router "$front" \
+    "gonka-router-fleet-proxy-$suffix"
+"${fleet[@]}" verify-admission v4 >/dev/null || fail \
+    "parent admission did not recover after reconnecting the test proxy"
+
 "${fleet[@]}" wait-version v4 >/dev/null || fail \
     "machine activation gate rejected end-to-end ready v4"
 if VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS=2 \
@@ -599,6 +657,7 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_FLEET_ID=$fleet_id \
     VERSIOND_ROUTER_FRONT_NETWORK=$front \
     VERSIOND_ROUTER_BACK_NETWORK=$back \
+    VERSIOND_ROUTER_METRICS_NETWORK=$metrics \
     VERSIOND_ROUTER_IMAGE=$image \
     VERSIOND_NON_HA_VERSIONS='' \
     VERSIOND_VERSIONS='' \
@@ -621,6 +680,7 @@ VERSIOND_ROUTER_SLOT=0 \
     VERSIOND_ROUTER_FLEET_ID=$fleet_id \
     VERSIOND_ROUTER_FRONT_NETWORK=$front \
     VERSIOND_ROUTER_BACK_NETWORK=$back \
+    VERSIOND_ROUTER_METRICS_NETWORK=$metrics \
     VERSIOND_ROUTER_IMAGE=$image \
     VERSIOND_NON_HA_VERSIONS='' \
     VERSIOND_VERSIONS=v4 \

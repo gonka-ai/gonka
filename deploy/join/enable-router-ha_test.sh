@@ -87,6 +87,7 @@ if [[ ${1:-} == compose ]]; then
     done
     if [[ $action == config ]]; then
         jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
+            default:{name:"gonka-test_default"},
             "proxy-policy-front":{name:"gonka-proxy-policy-front"},
             "versiond-router-front":{name:"gonka-versiond-router-front"},
             "versiond-router-back":{name:"gonka-versiond-router-back"}
@@ -107,6 +108,11 @@ if [[ ${1:-} == compose ]]; then
             printf 'rollback-versiond %s\n' \
                 "${PROXY_V4_VERSIOND_SERVICE_NAME:-}" >>"$DOCKER_LOG"
             printf 'proxy-policy\n' >"$STATE_DIR/current"
+            exit 0
+        fi
+        if [[ ${SIGNAL_CUTOVER:-false} == true ]]; then
+            kill -TERM "$PPID"
+            sleep 0.1
             exit 0
         fi
         if [[ ${FAIL_CUTOVER:-false} == true ]]; then
@@ -213,6 +219,15 @@ grep -q '^rollback-versiond versiond-router$' \
 if grep -q 'docker rm -f versiond-router' "$tmpdir/admission-failure.log"; then
     fail "admission failure removed the upstream required by v4 rollback"
 fi
+
+set +e
+run_cutover "$tmpdir/signal.log" env SIGNAL_CUTOVER=true
+signal_status=$?
+set -e
+[[ $signal_status -eq 143 ]] || fail \
+    "TERM during cutover returned $signal_status instead of 143"
+grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/signal.log" || fail \
+    "TERM during cutover did not run the armed public proxy rollback"
 
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env

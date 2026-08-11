@@ -56,6 +56,40 @@ CATALOG_CACHE_FILE="${VERSIOND_ROUTING_CATALOG_CACHE_FILE:-/var/lib/gonka-router
 CATALOG_CACHE_MAX_AGE="${VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS:-86400}"
 CATALOG_STATUS_FILE="${VERSIOND_ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-router/catalog-status.json}"
 CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
+FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
+METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
+
+resolve_ipv4() {
+    getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
+}
+
+if [ -n "$FRONT_BIND_HOST" ]; then
+    FRONT_BIND_ADDRESS=$(resolve_ipv4 "$FRONT_BIND_HOST")
+    case "$FRONT_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "versiond-router: cannot resolve front bind host '$FRONT_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+    ADMIN_LOOPBACK_BIND="    bind 127.0.0.1:$ADMIN_PORT"
+else
+    FRONT_BIND_ADDRESS=
+    ADMIN_LOOPBACK_BIND="    # The wildcard admin bind also covers loopback."
+fi
+
+if [ -n "$METRICS_BIND_HOST" ]; then
+    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    case "$METRICS_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "versiond-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+    METRICS_NETWORK_BIND="    bind $METRICS_BIND_ADDRESS:8405"
+else
+    METRICS_BIND_ADDRESS=127.0.0.1
+    METRICS_NETWORK_BIND="    # No network metrics bind configured."
+fi
 
 # Booleans use one grammar, shared with devshardd's reading of GONKA_HA:
 # 1/true/yes are on, empty/0/false/no are off, anything else refuses to start.
@@ -426,6 +460,9 @@ sed \
     -e "s|\${DYNAMIC_READY_GUARD}|$DYNAMIC_READY_GUARD|g" \
     -e "s|\${MAX_CONNECTIONS}|$MAXCONN|g" \
     -e "s|\${ADMIN_PORT}|$ADMIN_PORT|g" \
+    -e "s|\${FRONT_BIND_ADDRESS}|$FRONT_BIND_ADDRESS|g" \
+    -e "s|\${ADMIN_LOOPBACK_BIND}|$ADMIN_LOOPBACK_BIND|g" \
+    -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${MAX_BODY_BYTES}|$MAX_BODY_BYTES|g" \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \

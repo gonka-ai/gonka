@@ -75,7 +75,7 @@ resolvers docker
     hold timeout 5s
 
 frontend versiond_in
-    bind :8080
+    bind ${FRONT_BIND_ADDRESS}:8080
     maxconn ${MAX_CONNECTIONS}
 
     # This is a trusted router-to-devshardd signal, never client input. Backends
@@ -140,7 +140,8 @@ ${POOL_BACKENDS}
 # a separate port: public requests must never be able to turn readiness into a
 # routing oracle or bypass the data-plane policy on :8080.
 frontend router_admin
-    bind :${ADMIN_PORT}
+${ADMIN_LOOPBACK_BIND}
+    bind ${FRONT_BIND_ADDRESS}:${ADMIN_PORT}
     mode http
     http-request return status 200 content-type text/plain string "live\n" if { path /livez }
 ${ROUTER_READY_RULES}
@@ -153,5 +154,6 @@ backend router_admin_not_found
 
 frontend metrics
     bind 127.0.0.1:8405
+${METRICS_NETWORK_BIND}
     http-request use-service prometheus-exporter if { path /metrics }
     http-request deny

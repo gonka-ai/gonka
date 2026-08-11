@@ -12,6 +12,7 @@ GONKA_COMPOSE_POSTGRES_MODE=none
 GONKA_COMPOSE_POSTGRES_HOST=
 GONKA_COMPOSE_POSTGRES_DATA_DIR=
 GONKA_COMPOSE_POLICY_NETWORK=
+GONKA_COMPOSE_DEFAULT_NETWORK=
 GONKA_COMPOSE_ROUTER_FRONT_NETWORK=
 GONKA_COMPOSE_ROUTER_BACK_NETWORK=
 
@@ -420,6 +421,11 @@ gonka_compose_resolve() {
         '.networks["proxy-policy-front"].name | strings | select(length > 0)' \
         <<<"$config") || fail \
         "resolved Compose topology has no proxy-policy-front network"
+    # shellcheck disable=SC2034 # Exported to the sourcing upgrade drivers.
+    GONKA_COMPOSE_DEFAULT_NETWORK=$(jq -er \
+        '.networks.default.name | strings | select(length > 0)' \
+        <<<"$config") || fail \
+        "resolved Compose topology has no default network for internal router metrics"
     if [[ $versiond_mode == ha ]]; then
         gonka_compose_require_service "$config" versiond2 versiond2
         GONKA_COMPOSE_ROUTER_FRONT_NETWORK=$(jq -er \

@@ -110,7 +110,7 @@ host-level outage. Multi-host ingress belongs in a later layer above this one
 | `127.0.0.1:8404/readyz?component=versiond` | coarse router-fleet availability |
 | `127.0.0.1:8404/readyz?component=edge-api` | edge-api availability |
 | `127.0.0.1:8404/readyz?version=<v>` | end-to-end router capacity for one bootstrap or governance version |
-| `127.0.0.1:8405/metrics` | HAProxy Prometheus exporter |
+| `127.0.0.1:8405/metrics`, `proxy-router-metrics:8405/metrics` | HAProxy Prometheus exporter; internal only, no host port |
 | `/var/run/haproxy/haproxy.sock` | local Runtime API |
 
 The diagnostic Runtime API is a Unix socket with `operator` privileges, which
@@ -144,6 +144,7 @@ and cannot mutate routing.
 | `PROXY_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server inactivity timeout |
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
+| `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
 
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do
@@ -164,7 +165,9 @@ without restarting HAProxy.
 
 The main Compose project owns `proxy-router`, the private policy network, and
 the policy workers. It does not own the inner router slots or their two external
-networks. The fleet creates/validates those networks, so main-stack `down`
+data-plane networks. Router slots also join the main project's default network
+through a metrics-only listener so the shipped Prometheus can discover every
+slot. The fleet creates/validates the data-plane networks, so main-stack `down`
 cannot remove infrastructure required by stopped slots. Use:
 
 ```bash
@@ -175,9 +178,11 @@ deploy/join/versiond-router-fleet.sh status
 deploy/join/versiond-router-fleet.sh rollout
 ```
 
-The rollout checks both each slot's effective runtime route view and the parent
-proxy's actual admission state for the coarse route and every currently
-available version. It replaces one slot only after that reserve is visible at
+`status` checks both each slot's effective runtime route view and, when the
+active parent is `proxy-router`, the slot's actual parent admission. Before the
+one-time cutover it reports parent admission as not applicable rather than
+confusing local bootstrap health with production admission. The rollout checks
+the same two layers and replaces one slot only after that reserve is visible at
 both levels. A failed slot is restored from the exact pre-rollout image and
 environment.
 

@@ -292,6 +292,10 @@ Operator signals (versiond / host logs and Prometheus):
 - `reconcile_fast_forward` — expected on failover onto a lagging replica.
 - `diff_persist_retry` / `devshard_diff_persist_retry_total` — transient Postgres blips.
 - `diff_fork_detected` / `devshard_diff_fork_detected_total` — **must stay 0** in healthy HA; non-zero means real divergence and needs alert investigation.
+- `proxy-router` and every `versiond-router` slot expose HAProxy's read-only
+  Prometheus exporter on the internal Compose network. The shipped Prometheus
+  uses a fixed parent target and DNS discovery for the slot fleet; no metrics
+  port is published on the host.
 
 Gateway catch-up and sticky failover remain independent. HAProxy redispatches
 connection failures for every method and permits L7 retries only for

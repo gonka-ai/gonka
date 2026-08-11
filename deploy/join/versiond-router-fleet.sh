@@ -173,6 +173,7 @@ candidate_placement_contract() {
 slot_compose() {
     local slot=$1
     shift
+    [[ -n ${VERSIOND_ROUTER_METRICS_NETWORK:-} ]] || resolve_metrics_network
     VERSIOND_ROUTER_SLOT=$slot VERSIOND_ROUTER_FLEET_ID=$fleet_id "$docker_bin" compose \
         --project-directory "$script_dir" \
         --project-name "$project_prefix-$slot" \
@@ -399,14 +400,15 @@ wait_parent_admission() {
     return 1
 }
 
-verify_parent_fleet_admission() {
-    local route slot address state missing deadline
-    local -A required=()
+declare -A admission_required_routes=()
+collect_required_admission_routes() {
+    local route
 
+    admission_required_routes=()
     for route in "$@"; do
         [[ -n ${expected_routes[$route]-} ]] || fail \
             "required admission route '$route' is not declared by this fleet"
-        required[$route]=1
+        admission_required_routes[$route]=1
     done
     # Preserve every route the fleet already serves even when the caller has no
     # external baseline (for example, an idempotent cutover retry). Completely
@@ -414,50 +416,62 @@ verify_parent_fleet_admission() {
     # protocol versions ahead of governance activation.
     for route in "${!expected_routes[@]}"; do
         if (( $(route_ready_count "$route") > 0 )); then
-            required[$route]=1
+            admission_required_routes[$route]=1
         fi
     done
+}
+
+parent_admission_error=
+check_parent_fleet_admission_once() {
+    local route slot address state
+
+    parent_admission_error=
+    for slot in "${slots[@]}"; do
+        if ! slot_ready "$slot"; then
+            parent_admission_error="slot $slot is not healthy"
+            return 1
+        fi
+        if ! address=$(slot_front_ip "$slot"); then
+            parent_admission_error="slot $slot has no front-network address"
+            return 1
+        fi
+        if parent_route_admitted --coarse "$address"; then
+            :
+        else
+            state=$?
+            parent_admission_error="parent does not admit slot $slot for coarse routing (status $state)"
+            return 1
+        fi
+        for route in "${!admission_required_routes[@]}"; do
+            if ! slot_route_ready "$slot" "$route"; then
+                parent_admission_error="slot $slot cannot serve required route $route"
+                return 1
+            fi
+            if parent_route_admitted "$route" "$address"; then
+                continue
+            else
+                state=$?
+                parent_admission_error="parent does not admit slot $slot for required route $route (status $state)"
+                return 1
+            fi
+        done
+    done
+}
+
+verify_parent_fleet_admission() {
+    local deadline
+
+    collect_required_admission_routes "$@"
 
     parent_proxy_active || fail \
         "cannot verify fleet admission: the active parent is not proxy-router"
     require_parent_diagnostic
     deadline=$((SECONDS + wait_timeout))
     while ((SECONDS < deadline)); do
-        missing=
-        for slot in "${slots[@]}"; do
-            if ! slot_ready "$slot"; then
-                missing="slot $slot is not healthy"
-                break
-            fi
-            if ! address=$(slot_front_ip "$slot"); then
-                missing="slot $slot has no front-network address"
-                break
-            fi
-            if parent_route_admitted --coarse "$address"; then
-                :
-            else
-                state=$?
-                missing="parent does not admit slot $slot for coarse routing (status $state)"
-                break
-            fi
-            for route in "${!required[@]}"; do
-                if ! slot_route_ready "$slot" "$route"; then
-                    missing="slot $slot cannot serve required route $route"
-                    break 2
-                fi
-                if parent_route_admitted "$route" "$address"; then
-                    continue
-                else
-                    state=$?
-                fi
-                missing="parent does not admit slot $slot for required route $route (status $state)"
-                break 2
-            done
-        done
-        [[ -z $missing ]] && return 0
+        check_parent_fleet_admission_once && return 0
         sleep 1
     done
-    echo "versiond-router-fleet: admission verification timed out: $missing" >&2
+    echo "versiond-router-fleet: admission verification timed out: $parent_admission_error" >&2
     return 1
 }
 
@@ -639,6 +653,12 @@ prepare_networks() {
         versiond-router-back
 }
 
+prepare_slot_networks() {
+    prepare_networks
+    resolve_metrics_network
+    ensure_metrics_network
+}
+
 pull_router_image() {
     [[ $pull_policy == never ]] || \
         slot_compose "${slots[0]}" pull --policy "$pull_policy" router
@@ -677,6 +697,75 @@ container_env_value() {
     done < <("$docker_bin" inspect --format \
         '{{range .Config.Env}}{{println .}}{{end}}' "$id")
     return 1
+}
+
+resolve_metrics_network() {
+    local slot id recorded parent project network ownership
+    local resolved=${VERSIOND_ROUTER_METRICS_NETWORK:-}
+
+    if [[ -z $resolved ]]; then
+        for slot in "${slots[@]}"; do
+            id=$(slot_id "$slot") || continue
+            recorded=$(container_env_value \
+                "$id" VERSIOND_ROUTER_METRICS_NETWORK_NAME) || continue
+            [[ -z $resolved || $resolved == "$recorded" ]] || fail \
+                "router slots record different metrics networks: $resolved and $recorded"
+            resolved=$recorded
+        done
+    fi
+
+    if [[ -z $resolved ]]; then
+        parent=${PROXY_ROUTER_CONTAINER:-proxy}
+        project=$("$docker_bin" inspect --format \
+            '{{or (index .Config.Labels "com.docker.compose.project") ""}}' \
+            "$parent" 2>/dev/null) || project=
+        if [[ -n $project ]]; then
+            # Docker's Go-template variables are literals for the Docker CLI.
+            # shellcheck disable=SC2016
+            while IFS= read -r network; do
+                [[ -n $network ]] || continue
+                ownership=$("$docker_bin" network inspect --format \
+                    '{{or (index .Labels "com.docker.compose.network") ""}}|{{or (index .Labels "com.docker.compose.project") ""}}' \
+                    "$network" 2>/dev/null) || continue
+                [[ $ownership == "default|$project" ]] || continue
+                [[ -z $resolved ]] || fail \
+                    "parent proxy is attached to multiple Compose default networks"
+                resolved=$network
+            done < <("$docker_bin" inspect --format \
+                '{{range $name, $network := .NetworkSettings.Networks}}{{println $name}}{{end}}' \
+                "$parent")
+        fi
+    fi
+
+    case $resolved in
+        '' )
+            fail "cannot identify the main Compose default network for router metrics; set VERSIOND_ROUTER_METRICS_NETWORK explicitly"
+            ;;
+        *[!A-Za-z0-9_.-]*)
+            fail "invalid VERSIOND_ROUTER_METRICS_NETWORK '$resolved'"
+            ;;
+    esac
+    VERSIOND_ROUTER_METRICS_NETWORK=$resolved
+    export VERSIOND_ROUTER_METRICS_NETWORK
+}
+
+ensure_metrics_network() {
+    local network=$VERSIOND_ROUTER_METRICS_NETWORK
+    local parent=${PROXY_ROUTER_CONTAINER:-proxy} attached ownership
+
+    "$docker_bin" network inspect "$network" >/dev/null 2>&1 || fail \
+        "main Compose metrics network $network does not exist"
+    attached=$("$docker_bin" inspect --format \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "$parent" 2>/dev/null) || attached=
+    if [[ -n $attached ]]; then
+        return 0
+    fi
+    ownership=$("$docker_bin" network inspect --format \
+        '{{or (index .Labels "com.docker.compose.network") ""}}' \
+        "$network")
+    [[ $ownership == default ]] || fail \
+        "metrics network $network is neither attached to $parent nor a Compose default network"
 }
 
 container_env_value_or_legacy_default() {
@@ -1095,12 +1184,28 @@ fleet_status() {
             fi
         done
     done
+    if parent_proxy_active; then
+        if ! parent_diagnostic_available; then
+            warn "active parent proxy has no route-status diagnostic"
+            bad=1
+        else
+            collect_required_admission_routes
+            if check_parent_fleet_admission_once; then
+                printf 'PARENT_ADMISSION admitted\n'
+            else
+                warn "parent admission is incomplete: $parent_admission_error"
+                bad=1
+            fi
+        fi
+    else
+        printf 'PARENT_ADMISSION not-applicable (active parent is not proxy-router)\n'
+    fi
     return "$bad"
 }
 
 fleet_up() {
     local slot
-    prepare_networks
+    prepare_slot_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -1126,7 +1231,7 @@ fleet_apply() {
     # converge a partial fleet, while duplicates and unknown slots still fail
     # before the first mutation.
     validate_inventory_structure
-    prepare_networks
+    prepare_slot_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     require_placement_compatible "$candidate_image"
@@ -1136,7 +1241,7 @@ fleet_apply() {
 
 fleet_rollout() {
     local slot id old_image rollback_tag key route candidate_image_id replacement_status
-    prepare_networks
+    prepare_slot_networks
     pull_router_image
     candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     candidate_image_id=$($docker_bin image inspect --format '{{.Id}}' "$candidate_image") || fail \
@@ -1191,7 +1296,7 @@ fleet_maintenance_rollout() {
         1 | true | yes) ;;
         *) fail "maintenance-rollout requires VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true" ;;
     esac
-    prepare_networks
+    prepare_slot_networks
     pull_router_image
     image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
     [[ -n $(placement_version_for_image "$image") ]] || fail \
@@ -1265,7 +1370,7 @@ case $command in
         ;;
     start)
         [[ $# == 2 ]] || fail "start requires exactly one SLOT"
-        prepare_networks
+        prepare_slot_networks
         pull_router_image
         candidate_image=${VERSIOND_ROUTER_IMAGE:-ghcr.io/product-science/versiond-router:0.2.15-devshard-v5}
         require_placement_compatible "$candidate_image"

@@ -705,7 +705,7 @@ Day-to-day operations:
 | Take `versiond2` out of service temporarily | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml stop versiond2` |
 | Put it back / replace it | `source ./config.env && docker compose -f docker-compose.yml -f docker-compose.versiond.yml up -d --no-deps --wait --wait-timeout 2100 versiond2` |
 | Decommission `versiond2` permanently | persist `VERSIOND2_REPLICAS=0` in `config.env`, then run the `stop` and `rm` commands in the [host evacuation runbook](./versiond-host-evacuation.md#permanent-membership-changes) |
-| Inspect the router fleet | `source ./config.env && ./versiond-router-fleet.sh status` |
+| Inspect the router fleet and parent admission | `source ./config.env && ./versiond-router-fleet.sh status` |
 | Roll router image or configuration | persist `config.env`, then run `./enable-router-ha.sh --versiond-mode ha --edge-mode auto`; its fleet `apply` rolls changed slots and refreshes the top map |
 | Change legacy pins / placement pool | schedule devshard maintenance and use the runbook's acknowledged `maintenance-rollout`; mixed placement is rejected |
 
@@ -799,7 +799,7 @@ daemon restart. Persist the corresponding replica count as `0` first.
       the supervisors behind the compatibility router, starts the independent
       router slots, and commits the public cutover only after component checks
 - [ ] For HA, require `versiond-router-fleet.sh status` to report every expected
-      slot healthy and no duplicate or orphan owner
+      slot healthy, no duplicate or orphan owner, and `PARENT_ADMISSION admitted`
 
 ## Known follow-ups
 

@@ -222,6 +222,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     "$image" >/dev/null
 for name in a b; do
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
@@ -258,6 +259,10 @@ unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null 
     'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
 [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
     "unknown governance version readiness did not fail closed"
+probe 'http://proxy-router:8405/metrics?scope=frontend' >"$tmpdir/proxy.metrics" || fail \
+    "parent proxy metrics are not reachable on their internal network alias"
+grep -q '^haproxy_' "$tmpdir/proxy.metrics" || fail \
+    "parent proxy returned no HAProxy metrics"
 
 proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
 printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
@@ -311,6 +316,7 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
     -e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
     -e PROXY_ROUTER_VERSION_CAPACITY=1 \
+    -e PROXY_ROUTER_METRICS_BIND_HOST=proxy-router \
     "$image" >/dev/null
 for _ in $(seq 40); do
     if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then

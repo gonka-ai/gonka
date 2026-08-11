@@ -24,6 +24,7 @@ proxy_router_image=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 # This test validates the shipped defaults, not an operator's local override.
 unset EDGE_API_IMAGE VERSIOND_IMAGE EDGE_API_ROUTER_IMAGE VERSIOND_ROUTER_IMAGE
 unset PROXY_POLICY_IMAGE PROXY_ROUTER_IMAGE
+export VERSIOND_ROUTER_METRICS_NETWORK=join_default
 
 fail() {
     echo "release-image-smoke_test: $*" >&2

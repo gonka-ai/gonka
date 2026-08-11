@@ -19,6 +19,23 @@ scrape_configs:
       - url: http://api:9100/sd/devshardd
         refresh_interval: 15s
 
+  - job_name: proxy-router
+    params:
+      no-maint: [""]
+    static_configs:
+      - targets:
+          - proxy-router-metrics:8405
+
+  - job_name: versiond-router
+    params:
+      no-maint: [""]
+    dns_sd_configs:
+      - names:
+          - versiond-router-metrics
+        type: A
+        port: 8405
+        refresh_interval: 15s
+
   - job_name: gonka-node
     static_configs:
       - targets:
@@ -36,4 +53,3 @@ scrape_configs:
     static_configs:
       - targets:
           - cadvisor:8080
-

@@ -126,5 +126,6 @@ backend admin_not_found
 frontend metrics
     option httplog
     bind 127.0.0.1:8405
+${METRICS_NETWORK_BIND}
     http-request use-service prometheus-exporter if { path /metrics }
     http-request deny

@@ -36,6 +36,7 @@ CATALOG_STATUS_FILE="${VERSIOND_ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-rout
 CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
 NGINX_MODE="${NGINX_MODE:-http}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
+METRICS_BIND_HOST="${PROXY_ROUTER_METRICS_BIND_HOST:-}"
 
 resolve_ipv4() {
     getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
@@ -51,6 +52,20 @@ if [ -n "$POLICY_BIND_HOST" ]; then
     esac
 else
     POLICY_BIND_ADDRESS=0.0.0.0
+fi
+
+if [ -n "$METRICS_BIND_HOST" ]; then
+    METRICS_BIND_ADDRESS=$(resolve_ipv4 "$METRICS_BIND_HOST")
+    case "$METRICS_BIND_ADDRESS" in
+        '' | *[!0-9.]*)
+            echo "proxy-router: cannot resolve metrics bind host '$METRICS_BIND_HOST' to IPv4" >&2
+            exit 1
+            ;;
+    esac
+    METRICS_NETWORK_BIND="    bind $METRICS_BIND_ADDRESS:8405"
+else
+    METRICS_BIND_ADDRESS=127.0.0.1
+    METRICS_NETWORK_BIND="    # No network metrics bind configured."
 fi
 
 bool_env() {
@@ -309,6 +324,7 @@ sed \
     -e "s|\${VERSIOND_FRONTEND_PORT}|$VERSIOND_FRONTEND_PORT|g" \
     -e "s|\${EDGE_FRONTEND_PORT}|$EDGE_FRONTEND_PORT|g" \
     -e "s|\${POLICY_BIND_ADDRESS}|$POLICY_BIND_ADDRESS|g" \
+    -e "s|\${METRICS_NETWORK_BIND}|$METRICS_NETWORK_BIND|g" \
     -e "s|\${EDGE_POOL_HOST}|$EDGE_POOL_HOST|g" \
     -e "s|\${EDGE_POOL_SLOTS}|$EDGE_POOL_SLOTS|g" \
     -e "s|\${EDGE_API_PORT}|$EDGE_API_PORT|g" \

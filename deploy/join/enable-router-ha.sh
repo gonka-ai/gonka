@@ -180,6 +180,7 @@ run_fleet() {
     GONKA_CONFIG_ENV=$config_env \
     VERSIOND_ROUTER_FRONT_NETWORK=$GONKA_COMPOSE_ROUTER_FRONT_NETWORK \
     VERSIOND_ROUTER_BACK_NETWORK=$GONKA_COMPOSE_ROUTER_BACK_NETWORK \
+    VERSIOND_ROUTER_METRICS_NETWORK=$GONKA_COMPOSE_DEFAULT_NETWORK \
         "$fleet_bin" "$@"
 }
 
@@ -253,8 +254,8 @@ remove_migration_routers() {
 }
 
 restore_v4_proxy() {
-    local status=$?
-    trap - EXIT ERR INT TERM HUP
+    local status=${1:-$?}
+    trap - EXIT INT TERM HUP
     if [[ $rollback_pending == true && -n $rollback_image ]]; then
         warn "public ingress cutover failed; restoring the captured nginx image"
         "$docker_bin" rm -f proxy >/dev/null 2>&1 || true
@@ -334,7 +335,10 @@ old_image=$($docker_bin inspect --format '{{.Image}}' proxy)
 rollback_image="gonka/router-ha-proxy-rollback:$(date +%s%N)-$$"
 "$docker_bin" tag "$old_image" "$rollback_image"
 rollback_pending=true
-trap restore_v4_proxy EXIT ERR INT TERM HUP
+trap 'restore_v4_proxy "$?"' EXIT
+trap 'exit 129' HUP
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 echo "Switching the public listener to proxy-router"
 if ! "${compose[@]}" up -d --no-deps --force-recreate --wait \
@@ -348,7 +352,7 @@ fi
     "proxy-router cannot reach a ready edge-api"
 
 rollback_pending=false
-trap - EXIT ERR INT TERM HUP
+trap - EXIT INT TERM HUP
 "$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
 
 # These singleton migration bridges are outside the steady-state model. Remove

@@ -6,6 +6,9 @@ services:
       - VERSIOND_ROUTER_SLOT=${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}
       - VERSIOND_POOL_HOST=${VERSIOND_POOL_HOST:-versiond-pool}
       - VERSIOND_ROUTER_BACK_NETWORK_NAME=${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+      - VERSIOND_ROUTER_METRICS_NETWORK_NAME=${VERSIOND_ROUTER_METRICS_NETWORK:?VERSIOND_ROUTER_METRICS_NETWORK is required}
+      - VERSIOND_ROUTER_FRONT_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-front
+      - VERSIOND_ROUTER_METRICS_BIND_HOST=versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-metrics
       - VERSIOND_PORT=8080
       - VERSIOND_ROUTER_ADMIN_PORT=8404
       - GONKA_HA=true
@@ -28,7 +31,12 @@ services:
           # Keep the steady-state fleet distinct from the transitional
           # singleton used by the reversible v4 -> v5 ingress cutover.
           - versiond-router-fleet
+          - versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-front
       back: {}
+      metrics:
+        aliases:
+          - versiond-router-metrics
+          - versiond-router-${VERSIOND_ROUTER_SLOT:?VERSIOND_ROUTER_SLOT is required}-metrics
     volumes:
       - router-state:/var/lib/gonka-router
     healthcheck:
@@ -63,6 +71,9 @@ networks:
   back:
     external: true
     name: ${VERSIOND_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}
+  metrics:
+    external: true
+    name: ${VERSIOND_ROUTER_METRICS_NETWORK:?VERSIOND_ROUTER_METRICS_NETWORK is required}
 
 volumes:
   router-state:

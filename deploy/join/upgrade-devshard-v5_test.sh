@@ -260,6 +260,7 @@ for arg in "$@"; do
             --arg front "${RENDERED_ROUTER_FRONT_NETWORK:-gonka-versiond-router-front}" \
             --arg back "${RENDERED_ROUTER_BACK_NETWORK:-gonka-versiond-router-back}" \
             '{name:"gonka-test",networks:{
+                default:{name:"gonka-test_default"},
                 "proxy-policy-front":{name:$policy},
                 "versiond-router-front":{name:$front},
                 "versiond-router-back":{name:$back}

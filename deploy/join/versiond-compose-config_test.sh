@@ -5,6 +5,7 @@ set -Eeuo pipefail
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 tmpdir=$(mktemp -d)
 trap 'rm -rf "$tmpdir"' EXIT
+export VERSIOND_ROUTER_METRICS_NETWORK=join_default
 
 compose=(
     docker compose
@@ -111,6 +112,18 @@ if "versiond-router-fleet" not in slot_defaults_config["networks"]["front"].get(
     raise SystemExit("router slot does not publish the dedicated fleet DNS alias")
 if "versiond-router" in slot_defaults_config["networks"]["front"].get("aliases", []):
     raise SystemExit("router slot still shares the migration singleton DNS alias")
+if "versiond-router-test-front" not in slot_defaults_config["networks"]["front"].get(
+    "aliases", []
+):
+    raise SystemExit("router slot has no unique data-plane bind alias")
+if "versiond-router-metrics" not in slot_defaults_config["networks"]["metrics"].get(
+    "aliases", []
+):
+    raise SystemExit("router slot has no shared Prometheus discovery alias")
+if "versiond-router-test-metrics" not in slot_defaults_config["networks"][
+    "metrics"
+].get("aliases", []):
+    raise SystemExit("router slot has no unique metrics bind alias")
 
 if "versiond-router" in defaults_config["services"]:
     raise SystemExit("the main Compose project still owns a versiond-router replica")
@@ -120,6 +133,8 @@ policy = defaults_config["services"]["proxy-policy"]
 api = defaults_config["services"]["api"]
 if "versiond-router-front" not in proxy["networks"]:
     raise SystemExit("public HAProxy is not attached to the router front network")
+if "proxy-router-metrics" not in proxy["networks"]["default"].get("aliases", []):
+    raise SystemExit("public HAProxy has no internal Prometheus alias")
 if policy["environment"].get("VERSIOND_SERVICE_NAME") != "proxy-policy-ingress":
     raise SystemExit("nginx policy workers do not use the public HAProxy distributor")
 if policy["environment"].get("VERSIOND_SERVICE_IS_ABSOLUTE") != "true":
@@ -158,6 +173,12 @@ require(
     "http://api:9100/versions",
     "parent governance catalog",
 )
+require(
+    defaults,
+    "PROXY_ROUTER_METRICS_BIND_HOST",
+    "proxy-router-metrics",
+    "parent metrics bind",
+)
 require(defaults, "PROXY_ROUTER_VERSION_CAPACITY", "32", "parent dynamic capacity")
 require(defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "parent catalog poll")
 require(
@@ -185,6 +206,24 @@ require(
     "slot governance catalog",
 )
 require(slot_defaults, "VERSIOND_ROUTER_VERSION_CAPACITY", "32", "slot dynamic capacity")
+require(
+    slot_defaults,
+    "VERSIOND_ROUTER_FRONT_BIND_HOST",
+    "versiond-router-test-front",
+    "slot data-plane bind",
+)
+require(
+    slot_defaults,
+    "VERSIOND_ROUTER_METRICS_NETWORK_NAME",
+    "join_default",
+    "slot metrics network",
+)
+require(
+    slot_defaults,
+    "VERSIOND_ROUTER_METRICS_BIND_HOST",
+    "versiond-router-test-metrics",
+    "slot metrics bind",
+)
 require(slot_defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "slot catalog poll")
 require(
     slot_defaults,
@@ -228,5 +267,14 @@ for service in ("versiond", "versiond2"):
         f"{service} managed PostgreSQL override",
     )
 PY
+
+grep -q '^  - job_name: proxy-router$' "$script_dir/observability/prometheus.yml" || {
+    echo "versiond-compose-config_test: Prometheus does not scrape proxy-router" >&2
+    exit 1
+}
+grep -q '^  - job_name: versiond-router$' "$script_dir/observability/prometheus.yml" || {
+    echo "versiond-compose-config_test: Prometheus does not discover router slots" >&2
+    exit 1
+}
 
 echo "versiond-compose-config_test: ok"

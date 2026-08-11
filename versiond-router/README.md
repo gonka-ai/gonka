@@ -305,9 +305,12 @@ deployment declaration.
 ## Looking at the pool
 
 Fleet status is inspected with
-`deploy/join/versiond-router-fleet.sh status`. To inspect one router's measured
-versiond pool, run its internal `pool-status` formatter with `docker exec`. Its
-output looks like this:
+`deploy/join/versiond-router-fleet.sh status`. It fails when an expected slot is
+locally unhealthy, has stale route declarations, or is not admitted by the
+active parent `proxy-router`. Before that parent exists during initial cutover,
+the output marks parent admission as not applicable. To inspect one router's
+measured versiond pool, run its internal `pool-status` formatter with
+`docker exec`. Its output looks like this:
 
 ```text
 versiond_pool_v4
@@ -382,6 +385,9 @@ Run `prepare-networks` before the next main-project `up`, then run
 | `VERSIOND_ROUTER_STREAM_IDLE_SECONDS` | `1200` | client/server idle timeout |
 | `VERSIOND_ROUTER_TUNNEL_TIMEOUT_SECONDS` | `86400` | upgraded/CONNECT idle timeout; independent of SSE |
 | `VERSIOND_ROUTER_ADMIN_PORT` | `8404` | private route-readiness listener consumed by `proxy-router` and fleet health checks |
+| `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty; all interfaces)* | unique per-slot front-network alias used to keep data and admin listeners off the metrics network |
+| `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | unique per-slot alias whose interface receives the read-only Prometheus listener |
+| `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected by fleet tooling)* | main Compose default network used only for Prometheus discovery; recorded in each slot for recovery |
 | `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its explicit longer drain timeout |
 | `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | one-command acknowledgement required by `maintenance-rollout`; do not persist `true` |
 
@@ -411,7 +417,7 @@ would then not match the name at all.
 
 | Endpoint | Where | Notes |
 | --- | --- | --- |
-| `/metrics` | `127.0.0.1:8405` inside the container | Prometheus exporter; loopback only, never published |
+| `/metrics` | loopback and `versiond-router-metrics:8405` on the main internal Compose network | read-only Prometheus exporter; no host port |
 | `/livez` | private admin port `8404` | HAProxy process is serving the admin listener |
 | `/readyz` | private admin port `8404` | coarse backend has capacity |
 | `/readyz?version=<v>` | private admin port `8404` | the matching version backend has capacity |
@@ -421,14 +427,19 @@ would then not match the name at all.
 | `X-Versiond-Backend` | response header | HA backend name, or the stable `versiond_legacy` label for any pinned version |
 
 Neither the metrics endpoint nor the admin socket is reachable from outside the
-container, and the container runs as the unprivileged `haproxy` user with all
-Linux capabilities dropped and `no-new-privileges`. Root is used only at build
-time to install `jq`/`socat` and hand over writable directories. Socket mode
+Docker deployment. Each slot binds metrics only to its unique alias on the main
+Compose network; the shared `versiond-router-metrics` alias lets Prometheus use
+DNS service discovery for every slot. Its data and admin listeners bind to a
+different, unique front-network alias, so joining the metrics network does not
+expose those control or data paths there. No host port is published. The container
+runs as the unprivileged `haproxy` user with all Linux capabilities dropped and
+`no-new-privileges`. Root is used only at build time to install `jq`/`socat` and
+hand over writable directories. Socket mode
 `0600` protects the container boundary, not one process from another: HAProxy,
 the entrypoint, and the reconciler intentionally share one Unix user and form
 one trust domain. Strong per-process isolation would require a separate sidecar
-or a narrow privileged broker. Scrape metrics with a sidecar or
-`docker compose exec`.
+or a narrow privileged broker. The shipped Prometheus scrapes the parent
+`proxy-router` directly and discovers all inner router-slot addresses over DNS.
 
 ## Tests
 
