@@ -143,6 +143,7 @@ and cannot mutate routing.
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only dapi `GET /versions` endpoint; join Compose uses `http://api:9100/versions` |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | governance-name discovery interval |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | one catalog request timeout |
+| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready inner routers required before publishing a newly learned governance name; does not retract an active route during later degradation |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog loaded before startup |
 | `PROXY_ROUTER_VERSION_CAPACITY` | `32` | backends reserved for names added after process start |
 | `EDGE_API_POOL_HOST` | `edge-api-pool` | edge-api DNS alias |

@@ -310,6 +310,28 @@ done
 printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+for _ in $(seq 30); do
+    if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+        | jq -e '.state == "activation-pending" and .dynamic_slots_used == 1' \
+            >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+    | jq -e '.state == "activation-pending"' >/dev/null \
+    || fail "a one-router governance version did not remain a candidate"
+unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
+    'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
+[[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
+    "top distributor published v9 before its two-router activation reserve"
+docker rm -f gonka-pr-router-a >/dev/null
+docker run -d --name gonka-pr-router-a --network "$network" \
+    --network-alias versiond-router-fleet \
+    -e NAME=a -e 'SERVES=v4 v5 v9' -e GENERIC_READY=true \
+    -e DATA_ENABLED=true -e MISSING_VERSIONLESS=true \
+    -v "$tmpdir/upstream.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
 for _ in $(seq 40); do
     if proxy_admin '/readyz?version=v9' >/dev/null 2>&1; then
         break
@@ -318,6 +340,13 @@ for _ in $(seq 40); do
 done
 proxy_admin '/readyz?version=v9' >/dev/null \
     || fail "top distributor did not admit governance v9"
+docker rm -f gonka-pr-router-a >/dev/null
+docker run -d --name gonka-pr-router-a --network "$network" \
+    --network-alias versiond-router-fleet \
+    -e NAME=a -e SERVES=v4 -e GENERIC_READY=true \
+    -e DATA_ENABLED=true -e MISSING_VERSIONLESS=true \
+    -v "$tmpdir/upstream.py:/app.py:ro" \
+    python:3.12-alpine python /app.py >/dev/null
 [[ $(probe http://proxy-router:18081/v9/sessions/dynamic/healthz) == b ]] \
     || fail "dynamically learned v9 did not reach its route-ready router"
 docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \

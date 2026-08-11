@@ -157,8 +157,12 @@ append-only; removal requires a future drain-and-reclaim protocol. This prevents
 a warming or stale dapi replica from erasing learned routes.
 
 Governance approval is itself what makes the name appear in `/versions`, so this
-feed cannot prove readiness before approval. Network activation automation must
-approve/install first, then wait before directing new sessions to that version:
+feed cannot prove readiness before approval. Each router assigns the new name
+to an inert backend and starts health checks, but does not publish the request
+map until at least `VERSIOND_ROUTING_ACTIVATION_MIN_READY` upstreams are ready.
+Once published, ordinary degradation below that reserve does not retract the
+route. Network activation automation should still wait for every host before
+directing new sessions to that version:
 
 ```bash
 cd deploy/join
@@ -384,6 +388,7 @@ Run `prepare-networks` before the next main-project `up`, then run
 | `VERSIOND_ROUTING_CATALOG_URL` | *(empty)* | read-only `GET /versions` endpoint. Join Compose resolves `versiond-routing-oracle` to the path-restricted HAProxy bridge; DAPI's callback listener is not attached to this network |
 | `VERSIOND_ROUTING_CATALOG_POLL_SECONDS` | `5` | interval for discovering governance names |
 | `VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS` | `3` | timeout for one catalog request |
+| `VERSIOND_ROUTING_ACTIVATION_MIN_READY` | `2` | ready upstreams required before a newly learned governance name is published; does not retract an already active route |
 | `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` | `86400` | maximum age of the persistent last-known-good catalog used at process start |
 | `VERSIOND_ROUTING_ACTIVATION_TIMEOUT_SECONDS` | `2100` | fleet `wait-version` deadline; a host workflow setting, not a router-container setting |
 | `VERSIOND_ROUTER_VERSION_CAPACITY` | `32` | inert per-version backends reserved for names added after process start |

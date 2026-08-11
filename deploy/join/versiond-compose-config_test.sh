@@ -192,6 +192,12 @@ require(
 )
 require(
     defaults,
+    "VERSIOND_ROUTING_ACTIVATION_MIN_READY",
+    "2",
+    "parent activation reserve",
+)
+require(
+    defaults,
     "VERSIOND_ROUTER_POOL_HOST",
     "versiond-router-fleet",
     "steady-state fleet DNS",
@@ -234,6 +240,12 @@ require(
     "VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS",
     "3",
     "slot catalog timeout",
+)
+require(
+    slot_defaults,
+    "VERSIOND_ROUTING_ACTIVATION_MIN_READY",
+    "2",
+    "slot activation reserve",
 )
 require(slot_cleared, "VERSIOND_NON_HA_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_VERSIONS", "", "slot explicit empty")

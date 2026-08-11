@@ -48,6 +48,7 @@ if [[ ${1:-} == inspect ]]; then
                             'VERSIOND_ROUTING_CATALOG_URL=http://versiond-routing-oracle:9100/versions' \
                             'VERSIOND_ROUTING_CATALOG_POLL_SECONDS=5' \
                             'VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=3' \
+                            'VERSIOND_ROUTING_ACTIVATION_MIN_READY=2' \
                             'VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS=86400' \
                             'PROXY_ROUTER_VERSION_CAPACITY=32' \
                             'EDGE_API_POOL_HOST=edge-api-pool' \

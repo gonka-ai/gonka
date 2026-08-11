@@ -280,12 +280,34 @@ test-version-routing:
 	printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 20); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 1' \
+				>/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "activation-pending"' >/dev/null \
+		|| fail "a one-host governance version did not remain a candidate"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?version=v9')" = 503 ] \
+		|| fail "v9 was published before its two-host activation reserve"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES="v4 v9" -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
 	for i in $$(seq 30); do \
 		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null; then break; fi; \
 		sleep 0.5; \
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
 		|| fail "governance v9 never became an admitted inner-router route"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES=v4 -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=false -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/dynamic/chat)" = b ] \
 		|| fail "dynamically learned v9 did not reach its ready host"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
@@ -343,6 +365,11 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "revision-error"' >/dev/null \
 		|| fail "a regressing catalog revision was not rejected"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES="v4 v9;hotfix" -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
 	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9;hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
@@ -352,7 +379,7 @@ test-version-routing:
 	done; \
 	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%3Bhotfix' >/dev/null \
 		|| fail "encoded admin readiness did not follow the dynamic governance map"; \
-	[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9;hotfix/sessions/escaped/chat')" = b ] \
+	[[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9;hotfix/sessions/escaped/chat')" =~ ^(a|b)$$ ]] \
 		|| fail "a routable governance name requiring Runtime API escaping was corrupted"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -Fqx 'v9;hotfix' \

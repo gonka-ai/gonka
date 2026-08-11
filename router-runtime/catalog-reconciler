@@ -18,6 +18,7 @@ backend_prefix=${ROUTING_CATALOG_BACKEND_PREFIX:?ROUTING_CATALOG_BACKEND_PREFIX 
 backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAPACITY is required}
 server_prefix=${ROUTING_CATALOG_SERVER_PREFIX:?ROUTING_CATALOG_SERVER_PREFIX is required}
 server_capacity=${ROUTING_CATALOG_SERVER_CAPACITY:?ROUTING_CATALOG_SERVER_CAPACITY is required}
+activation_min_ready=${ROUTING_CATALOG_ACTIVATION_MIN_READY:-2}
 excluded_versions=${ROUTING_CATALOG_EXCLUDE:-}
 cache_file=${ROUTING_CATALOG_CACHE_FILE:-}
 cache_bin=${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}
@@ -27,7 +28,8 @@ log() {
     printf '%s\n' "$component: $*" >&2
 }
 
-for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" "$server_capacity"; do
+for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" \
+    "$server_capacity" "$activation_min_ready"; do
     case "$value" in
         '' | *[!0-9]* | 0)
             log "catalog timing and capacity values must be positive integers"
@@ -35,6 +37,10 @@ for value in "$poll_seconds" "$fetch_timeout" "$backend_capacity" "$server_capac
             ;;
     esac
 done
+[ "$activation_min_ready" -le "$server_capacity" ] || {
+    log "catalog activation reserve exceeds backend server capacity"
+    exit 1
+}
 
 case "$catalog_url" in
     '') exit 0 ;;
@@ -256,6 +262,14 @@ enable_slot() {
     done
 }
 
+ready_server_count() {
+    backend=$1
+    runtime "show stat" 2>/dev/null | awk -F, -v backend="$backend" '
+        $1 == backend && $2 != "BACKEND" && $18 ~ /^UP/ { ready++ }
+        END { print ready + 0 }
+    '
+}
+
 publish_version() {
     version=$1 backend=$2
     escaped_version=$(runtime_key "$version")
@@ -331,6 +345,12 @@ reconcile_catalog() {
         fi
 
         enable_slot "$backend" || return 1
+        ready=$(ready_server_count "$backend") || return 1
+        if [ "$ready" -lt "$activation_min_ready" ]; then
+            activation_version=$version
+            activation_ready=$ready
+            return 3
+        fi
         publish_version "$version" "$backend" || return 1
         publish_readiness "$encoded" "$backend" || return 1
         version_state=$(map_snapshot "$version_map") || return 1
@@ -356,6 +376,9 @@ while :; do
         if [ "$reconcile_status" -eq 2 ]; then
             set_state capacity-exhausted \
                 "no free backend slot for governance version '$capacity_missing'" "$used"
+        elif [ "$reconcile_status" -eq 3 ]; then
+            set_state activation-pending \
+                "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends" "$used"
         elif [ "$reconcile_status" -ne 0 ]; then
             set_state runtime-error "HAProxy rejected a catalog projection" "$used"
         elif ! persist_catalog; then

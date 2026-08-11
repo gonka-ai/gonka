@@ -101,7 +101,9 @@ Membership and eligibility are derived from runtime state:
   question;
 - `VERSIOND_VERSIONS` is only a bootstrap floor. New approved names are added to
   both tiers through local Unix Runtime API sockets without a container reload;
-  a map entry is published only after its backend health checks are enabled;
+  a candidate backend starts health checks immediately, but its map entry is
+  published only after the configured ready reserve is present at that tier.
+  Later degradation does not retract an admitted route;
 - each tier atomically persists its last fully projected governance snapshot;
   replacement processes validate and pre-render a fresh snapshot before
   listening, while stale or corrupt cache data falls back to the bootstrap floor;
