@@ -4,7 +4,10 @@ import (
 	"common/logging"
 	"context"
 	"decentralized-api/mlnodeclient"
+	"errors"
+	"fmt"
 	"net/url"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -64,48 +67,54 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	// Idempotency check - skip redeploy if already running correct model
-	if state, err := worker.GetClient().NodeState(ctx); err == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
-		if healthy, _ := worker.GetClient().InferenceHealth(ctx); healthy {
-			// Check if loaded model matches expected
-			modelMatches := true
-			expectedModel, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
-			if ok && expectedModel != "" {
-				if loadedModels, err := worker.GetClient().GetLoadedModels(ctx); err != nil {
-					logging.Debug("GetLoadedModels failed, assuming model match", types.Nodes, "node_id", worker.nodeId, "error", err)
-				} else if len(loadedModels) > 0 && loadedModels[0] != expectedModel {
-					logging.Info("Model mismatch detected, will redeploy", types.Nodes,
-						"node_id", worker.nodeId, "loaded", loadedModels[0], "expected", expectedModel)
-					modelMatches = false
-				}
-			}
+	client := worker.GetClient()
+	state, stateErr := client.NodeState(ctx)
+	healthyServing := false
+	if stateErr == nil && state.State == mlnodeclient.MlNodeState_INFERENCE {
+		healthyServing, _ = client.InferenceHealth(ctx)
+	}
 
-			if modelMatches {
-				// Stop any running PoC V2 (runs inside inference/vLLM)
-				if pocStatus, err := worker.GetClient().GetPowStatusV2(ctx); err != nil {
-					logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", worker.nodeId, "error", err)
-				} else if pocStatus != nil {
-					logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", worker.nodeId, "status", pocStatus.Status)
-					if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
-						if _, err := worker.GetClient().StopPowV2(ctx); err != nil {
-							logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", worker.nodeId, "error", err)
-						}
-					}
-				}
+	selectedModel, err := selectInferenceModel(worker)
+	if err != nil {
+		if healthyServing && !worker.node.State.DeploymentUpdatePending {
+			logging.Warn("Could not resolve model for healthy node; keeping existing inference deployment", types.Nodes,
+				"node_id", worker.nodeId, "error", err)
+			return keepHealthyInference(ctx, client, result, worker.nodeId)
+		}
+		result.Error = err.Error()
+		result.FinalStatus = types.HardwareNodeStatus_FAILED
+		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
+		return result
+	}
+	localConfig := worker.node.Node.Models[selectedModel.Id]
+	deployment := worker.broker.ResolveModelDeployment(*selectedModel, localConfig)
+	if healthyServing {
+		modelMatches := true
+		if state.LoadedModel != "" && state.LoadedModel != deployment.LoadModel {
+			logging.Info("Loaded model source mismatch detected, will redeploy", types.Nodes,
+				"node_id", worker.nodeId, "loaded", state.LoadedModel, "expected", deployment.LoadModel)
+			modelMatches = false
+		}
+		if loadedModels, err := client.GetLoadedModels(ctx); err != nil {
+			logging.Debug("GetLoadedModels failed, assuming served model match", types.Nodes, "node_id", worker.nodeId, "error", err)
+		} else if len(loadedModels) > 0 && !loadedModelsContain(loadedModels, deployment.GovernanceID) {
+			logging.Info("Served model mismatch detected, will redeploy", types.Nodes,
+				"node_id", worker.nodeId, "loaded", loadedModels, "expected", deployment.GovernanceID)
+			modelMatches = false
+		}
 
-				logging.Info("Node already in healthy inference state", types.Nodes, "node_id", worker.nodeId)
-				result.Succeeded = true
-				result.FinalStatus = types.HardwareNodeStatus_INFERENCE
-				result.FinalPocStatus = PocStatusIdle
-				return result
-			}
+		if modelMatches && !worker.node.State.DeploymentUpdatePending {
+			return keepHealthyInference(ctx, client, result, worker.nodeId)
 		}
 	}
 
-	// Redeploy: stop and start with correct model
+	if healthyServing && localConfig.ModelOverride != nil {
+		if deferred := ensureOverrideReady(ctx, client, deployment, result, worker.nodeId); deferred != nil {
+			return *deferred
+		}
+	}
 
-	// Stop node first
-	if err := worker.GetClient().Stop(ctx); err != nil {
+	if err := client.Stop(ctx); err != nil {
 		logging.Error("Failed to stop node for inference up", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -113,68 +122,9 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		return result
 	}
 
-	var selectedModel *types.Model
-	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
-	if ok && expectedModelID != "" {
-		if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
-			selectedModel = &model
-		}
-	}
-
-	if selectedModel == nil {
-		govModels, err := worker.broker.chainBridge.GetGovernanceModels()
-		if err != nil {
-			result.Succeeded = false
-			result.Error = "Failed to get governance models: " + err.Error()
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		if !ok || expectedModelID == "" {
-			result.Succeeded = false
-			result.Error = "No epoch models available for this node"
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		for i := range govModels.Model {
-			if govModels.Model[i].Id == expectedModelID {
-				selectedModel = &govModels.Model[i]
-				break
-			}
-		}
-
-		if selectedModel == nil {
-			result.Succeeded = false
-			result.Error = "No epoch models available for this node"
-			result.FinalStatus = types.HardwareNodeStatus_FAILED
-			logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-			return result
-		}
-
-		logging.Info("No epoch model snapshot configured for this node, using deterministic configured governance model", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
-	}
-
-	if selectedModel == nil || selectedModel.Id == "" {
-		result.Succeeded = false
-		result.Error = "Could not select a model from epoch models"
-		result.FinalStatus = types.HardwareNodeStatus_FAILED
-		logging.Error(result.Error, types.Nodes, "node_id", worker.nodeId)
-		return result
-	}
-
-	logging.Info("Selected model for inference", types.Nodes, "node_id", worker.nodeId, "selectedModel", selectedModel)
-
-	// Merge epoch model args with local ones
-	var localArgs []string
-	if localModelConfig, ok := worker.node.Node.Models[selectedModel.Id]; ok {
-		localArgs = localModelConfig.Args
-	}
-	mergedArgs := worker.broker.MergeModelArgs(selectedModel.ModelArgs, localArgs)
-
-	if err := worker.GetClient().InferenceUp(ctx, selectedModel.Id, mergedArgs); err != nil {
+	logging.Info("Selected model deployment for inference", types.Nodes,
+		"node_id", worker.nodeId, "governance_model", deployment.GovernanceID, "load_model", deployment.LoadModel)
+	if err := client.InferenceUp(ctx, deployment.LoadModel, deployment.Args); err != nil {
 		logging.Error("Failed to bring up inference", types.Nodes, "node_id", worker.nodeId, "error", err)
 		result.Succeeded = false
 		result.Error = err.Error()
@@ -183,9 +133,106 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		result.Succeeded = true
 		result.FinalStatus = types.HardwareNodeStatus_INFERENCE
 		result.FinalPocStatus = PocStatusIdle
+		result.DeploymentApplied = true
+		result.DeploymentModelID = deployment.GovernanceID
+		result.DeploymentUsesOverride = localConfig.ModelOverride != nil
+		if result.DeploymentUsesOverride {
+			result.DeploymentFingerprint = deployment.Fingerprint()
+		}
 		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
 	}
 	return result
+}
+
+func keepHealthyInference(
+	ctx context.Context,
+	client mlnodeclient.MLNodeClient,
+	result NodeResult,
+	nodeID string,
+) NodeResult {
+	if pocStatus, err := client.GetPowStatusV2(ctx); err != nil {
+		logging.Debug("GetPowStatusV2 failed during inference transition", types.Nodes, "node_id", nodeID, "error", err)
+	} else if pocStatus != nil {
+		logging.Debug("GetPowStatusV2 status during inference transition", types.Nodes, "node_id", nodeID, "status", pocStatus.Status)
+		if pocStatus.Status == "GENERATING" || pocStatus.Status == "VALIDATING" {
+			if _, err := client.StopPowV2(ctx); err != nil {
+				logging.Debug("StopPowV2 during inference transition failed", types.Nodes, "node_id", nodeID, "error", err)
+			}
+		}
+	}
+	logging.Info("Node already in healthy inference state", types.Nodes, "node_id", nodeID)
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+	result.FinalPocStatus = PocStatusIdle
+	return result
+}
+
+func selectInferenceModel(worker *NodeWorker) (*types.Model, error) {
+	expectedModelID, ok := worker.broker.resolveSupportedNodeModelID(worker.node.State.EpochMLNodes, worker.node.Node.Models)
+	if !ok || expectedModelID == "" {
+		return nil, errors.New("no epoch models available for this node")
+	}
+	if model, exists := worker.node.State.EpochModels[expectedModelID]; exists {
+		return &model, nil
+	}
+
+	govModels, err := worker.broker.chainBridge.GetGovernanceModels()
+	if err != nil {
+		return nil, fmt.Errorf("failed to get governance models: %w", err)
+	}
+	for i := range govModels.Model {
+		if govModels.Model[i].Id == expectedModelID {
+			return &govModels.Model[i], nil
+		}
+	}
+	return nil, errors.New("no epoch models available for this node")
+}
+
+func ensureOverrideReady(
+	ctx context.Context,
+	client mlnodeclient.MLNodeClient,
+	deployment ModelDeployment,
+	result NodeResult,
+	nodeID string,
+) *NodeResult {
+	var commit *string
+	if deployment.LoadCommit != "" {
+		commit = &deployment.LoadCommit
+	}
+	model := mlnodeclient.Model{HfRepo: deployment.LoadModel, HfCommit: commit}
+	status, err := client.CheckModelStatus(ctx, model)
+	if err != nil {
+		var notImplemented *mlnodeclient.ErrAPINotImplemented
+		if errors.As(err, &notImplemented) {
+			return nil
+		}
+		logging.Warn("Failed to check override cache readiness; deferring redeploy", types.Nodes,
+			"node_id", nodeID, "model", deployment.LoadModel, "error", err)
+		return deferredDeploymentResult(result)
+	}
+	switch status.Status {
+	case mlnodeclient.ModelStatusDownloaded:
+		return nil
+	case mlnodeclient.ModelStatusNotFound, mlnodeclient.ModelStatusPartial:
+		if _, err := client.DownloadModel(ctx, model); err != nil {
+			logging.Warn("Failed to start override download", types.Nodes,
+				"node_id", nodeID, "model", deployment.LoadModel, "error", err)
+		}
+		return deferredDeploymentResult(result)
+	case mlnodeclient.ModelStatusDownloading:
+		return deferredDeploymentResult(result)
+	default:
+		return deferredDeploymentResult(result)
+	}
+}
+
+func deferredDeploymentResult(result NodeResult) *NodeResult {
+	result.Succeeded = true
+	result.FinalStatus = types.HardwareNodeStatus_INFERENCE
+	result.FinalPocStatus = PocStatusIdle
+	result.DeploymentDeferred = true
+	result.DeploymentRetryAfter = time.Now().Add(time.Minute)
+	return &result
 }
 
 // NoOpNodeCommand is a command that does nothing (used as placeholder)

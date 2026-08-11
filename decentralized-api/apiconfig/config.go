@@ -2,6 +2,7 @@ package apiconfig
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"decentralized-api/poc/earlyshare"
@@ -165,6 +166,23 @@ func ValidateInferenceNodeBasic(node InferenceNodeConfig) []string {
 	if len(node.Models) == 0 {
 		errors = append(errors, "at least one model must be specified")
 	}
+	for modelID, model := range node.Models {
+		if model.ModelOverride == nil {
+			continue
+		}
+		if strings.TrimSpace(model.ModelOverride.HfRepo) == "" {
+			errors = append(errors, fmt.Sprintf("model %s override hf_repo is required", modelID))
+		}
+		if commit := model.ModelOverride.HfCommit; commit != "" && !hfCommitPattern.MatchString(commit) {
+			errors = append(errors, fmt.Sprintf("model %s override hf_commit must be a 40-character lowercase hexadecimal commit hash", modelID))
+		}
+		for _, arg := range model.Args {
+			key := strings.SplitN(arg, "=", 2)[0]
+			if reservedModelOverrideArgs[key] {
+				errors = append(errors, fmt.Sprintf("model %s override cannot use reserved argument %s", modelID, key))
+			}
+		}
+	}
 
 	return errors
 }
@@ -180,6 +198,10 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 				modelCopy.Args = make([]string, len(v.Args))
 				copy(modelCopy.Args, v.Args)
 			}
+			if v.ModelOverride != nil {
+				overrideCopy := *v.ModelOverride
+				modelCopy.ModelOverride = &overrideCopy
+			}
 			result.Models[k] = modelCopy
 		}
 	}
@@ -193,7 +215,21 @@ func (n InferenceNodeConfig) DeepCopy() InferenceNodeConfig {
 }
 
 type ModelConfig struct {
-	Args []string `json:"args"`
+	Args          []string       `koanf:"args" json:"args"`
+	ModelOverride *ModelOverride `koanf:"model_override" json:"model_override,omitempty"`
+}
+
+type ModelOverride struct {
+	HfRepo   string `koanf:"hf_repo" json:"hf_repo"`
+	HfCommit string `koanf:"hf_commit" json:"hf_commit"`
+}
+
+var hfCommitPattern = regexp.MustCompile(`^[0-9a-f]{40}$`)
+
+var reservedModelOverrideArgs = map[string]bool{
+	"--model":             true,
+	"--revision":          true,
+	"--served-model-name": true,
 }
 
 type Hardware struct {

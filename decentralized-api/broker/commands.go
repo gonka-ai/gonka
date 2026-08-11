@@ -2,7 +2,9 @@ package broker
 
 import (
 	"common/logging"
+	"context"
 	"decentralized-api/apiconfig"
+	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 )
@@ -61,7 +63,10 @@ func (c GetNodesCommand) Execute(b *Broker) {
 			for model, modelArgs := range nodeWithState.Node.Models {
 				newArgs := make([]string, len(modelArgs.Args))
 				copy(newArgs, modelArgs.Args)
-				nodeCopy.Models[model] = ModelArgs{Args: newArgs}
+				nodeCopy.Models[model] = ModelArgs{
+					Args:          newArgs,
+					ModelOverride: copyModelOverride(modelArgs.ModelOverride),
+				}
 			}
 		}
 
@@ -143,12 +148,18 @@ const (
 )
 
 type NodeResult struct {
-	Succeeded         bool
-	FinalStatus       types.HardwareNodeStatus // The status the node ended up in
-	OriginalTarget    types.HardwareNodeStatus // The status it was trying to achieve
-	FinalPocStatus    PocStatus
-	OriginalPocTarget PocStatus
-	Error             string
+	Succeeded              bool
+	FinalStatus            types.HardwareNodeStatus // The status the node ended up in
+	OriginalTarget         types.HardwareNodeStatus // The status it was trying to achieve
+	FinalPocStatus         PocStatus
+	OriginalPocTarget      PocStatus
+	Error                  string
+	DeploymentApplied      bool
+	DeploymentDeferred     bool
+	DeploymentRetryAfter   time.Time
+	DeploymentFingerprint  string
+	DeploymentModelID      string
+	DeploymentUsesOverride bool
 }
 
 type UpdateNodeResultCommand struct {
@@ -226,6 +237,29 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 	node.State.UpdateStatusWithPocStatusNow(c.Result.FinalStatus, c.Result.FinalPocStatus)
 	node.State.ReconcileInfo = nil
 	node.State.cancelInFlightTask = nil
+	if c.Result.DeploymentDeferred {
+		node.State.DeploymentUpdatePending = true
+		node.State.DeploymentRetryAfter = c.Result.DeploymentRetryAfter
+	} else if c.Result.DeploymentApplied {
+		node.State.DeploymentUpdatePending = false
+		node.State.DeploymentRetryAfter = time.Time{}
+		if c.Result.DeploymentModelID != "" && b.configManager != nil {
+			var err error
+			if c.Result.DeploymentUsesOverride && c.Result.DeploymentFingerprint != "" {
+				err = b.configManager.SetAppliedDeploymentFingerprint(
+					context.Background(), c.NodeId, c.Result.DeploymentModelID, c.Result.DeploymentFingerprint,
+				)
+			} else {
+				err = b.configManager.DeleteAppliedDeploymentFingerprint(
+					context.Background(), c.NodeId, c.Result.DeploymentModelID,
+				)
+			}
+			if err != nil {
+				logging.Warn("Failed to persist applied model deployment state", types.Config,
+					"node_id", c.NodeId, "model_id", c.Result.DeploymentModelID, "error", err)
+			}
+		}
+	}
 	if !c.Result.Succeeded {
 		node.State.FailureReason = c.Result.Error
 	} else {

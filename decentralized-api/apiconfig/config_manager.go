@@ -571,6 +571,44 @@ func (cm *ConfigManager) SetNodes(nodes []InferenceNodeConfig) error {
 	return nil
 }
 
+const appliedDeploymentPrefix = "applied_model_deployment/"
+
+func appliedDeploymentKey(nodeID, modelID string) string {
+	encode := func(value string) string {
+		return base64.RawURLEncoding.EncodeToString([]byte(value))
+	}
+	return appliedDeploymentPrefix + encode(nodeID) + "/" + encode(modelID)
+}
+
+func (cm *ConfigManager) SetAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID, fingerprint string) error {
+	if cm == nil || cm.sqlDb == nil {
+		return nil
+	}
+	return KVSetString(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID), fingerprint)
+}
+
+func (cm *ConfigManager) GetAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID string) (string, bool, error) {
+	if cm == nil || cm.sqlDb == nil {
+		return "", false, nil
+	}
+	return KVGetString(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID))
+}
+
+func (cm *ConfigManager) DeleteAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID string) error {
+	if cm == nil || cm.sqlDb == nil {
+		return nil
+	}
+	return KVDelete(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID))
+}
+
+func (cm *ConfigManager) DeleteAppliedDeploymentsForNode(ctx context.Context, nodeID string) error {
+	if cm == nil || cm.sqlDb == nil {
+		return nil
+	}
+	prefix := appliedDeploymentPrefix + base64.RawURLEncoding.EncodeToString([]byte(nodeID)) + "/"
+	return KVDeletePrefix(ctx, cm.sqlDb.GetDb(), prefix)
+}
+
 func (cm *ConfigManager) CreateWorkerKey() (string, error) {
 	workerKey := ed25519.GenPrivKey()
 	workerPublicKey := workerKey.PubKey()

@@ -2,15 +2,26 @@ package broker
 
 import (
 	"context"
+	"decentralized-api/apiconfig"
 	"decentralized-api/mlnodeclient"
 	"errors"
+	"net/http"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
+
+type noModelCacheClient struct {
+	*mlnodeclient.MockClient
+}
+
+func (c *noModelCacheClient) CheckModelStatus(context.Context, mlnodeclient.Model) (*mlnodeclient.ModelStatusResponse, error) {
+	return nil, mlnodeclient.NewAPINotImplementedError("/api/v1/models/status", http.StatusNotFound)
+}
 
 func createTestNode(id string) *NodeWithState {
 	return createTestNodeWithStatus(id, types.HardwareNodeStatus_UNKNOWN)
@@ -256,6 +267,132 @@ func TestNodeWorker_MLClientInteraction(t *testing.T) {
 	assert.Equal(t, 1, mockClient.GetInferenceUpCalled(), "InferenceUp should be called once")
 	assert.Equal(t, "test-model", mockClient.LastInferenceModel, "Model should be captured")
 	assert.Equal(t, []string{"--arg1", "--arg2"}, mockClient.LastInferenceArgs, "Args should be captured")
+}
+
+func TestInferenceUpNodeCommand_DeploysOverrideWithAlias(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_STOPPED)
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	node.Node.Models = map[string]ModelArgs{
+		"MiniMaxAI/MiniMax-M2.7": {
+			ModelOverride: &apiconfig.ModelOverride{
+				HfRepo:   "host/custom-minimax",
+				HfCommit: commit,
+			},
+		},
+	}
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.EpochModels["MiniMaxAI/MiniMax-M2.7"] = types.Model{Id: "MiniMaxAI/MiniMax-M2.7"}
+	node.State.EpochMLNodes["MiniMaxAI/MiniMax-M2.7"] = types.MLNodeInfo{NodeId: node.Node.Id}
+	client := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+	require.True(t, result.DeploymentApplied)
+	require.True(t, result.DeploymentUsesOverride)
+	require.Equal(t, "MiniMaxAI/MiniMax-M2.7", result.DeploymentModelID)
+	require.Equal(t, "host/custom-minimax", client.LastInferenceModel)
+	require.Equal(t, []string{
+		"--revision", commit,
+		"--served-model-name", "MiniMaxAI/MiniMax-M2.7",
+	}, client.LastInferenceArgs)
+}
+
+func TestInferenceUpNodeCommand_HealthyNodeSurvivesModelResolutionFailure(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)
+	client := mlnodeclient.NewMockClient()
+	client.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	client.InferenceIsHealthy = true
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, result.FinalStatus)
+	require.Equal(t, 0, client.GetStopCalled())
+	require.Equal(t, 0, client.GetInferenceUpCalled())
+}
+
+func TestInferenceUpNodeCommand_DirtyNodeFailsModelResolutionFailure(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.DeploymentUpdatePending = true
+	client := mlnodeclient.NewMockClient()
+	client.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	client.InferenceIsHealthy = true
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.False(t, result.Succeeded)
+	require.Equal(t, types.HardwareNodeStatus_FAILED, result.FinalStatus)
+	require.Equal(t, 0, client.GetStopCalled())
+}
+
+func TestInferenceUpNodeCommand_DefersHealthyOverrideUntilDownloaded(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)
+	commit := "0123456789abcdef0123456789abcdef01234567"
+	node.Node.Models = map[string]ModelArgs{
+		"MiniMaxAI/MiniMax-M2.7": {
+			ModelOverride: &apiconfig.ModelOverride{
+				HfRepo:   "host/custom-minimax",
+				HfCommit: commit,
+			},
+		},
+	}
+	node.State.DeploymentUpdatePending = true
+	node.State.EpochModels["MiniMaxAI/MiniMax-M2.7"] = types.Model{Id: "MiniMaxAI/MiniMax-M2.7"}
+	node.State.EpochMLNodes["MiniMaxAI/MiniMax-M2.7"] = types.MLNodeInfo{NodeId: node.Node.Id}
+	client := mlnodeclient.NewMockClient()
+	client.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	client.InferenceIsHealthy = true
+	client.LastInferenceModel = "MiniMaxAI/MiniMax-M2.7"
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+	require.True(t, result.DeploymentDeferred)
+	require.False(t, result.DeploymentApplied)
+	require.Equal(t, types.HardwareNodeStatus_INFERENCE, result.FinalStatus)
+	require.Equal(t, 0, client.GetStopCalled())
+	require.NotNil(t, client.LastModelDownload)
+	require.Equal(t, "host/custom-minimax", client.LastModelDownload.HfRepo)
+}
+
+func TestInferenceUpNodeCommand_OlderMLNodeDoesNotBlockOverride(t *testing.T) {
+	b := NewTestBroker2(5)
+	node := createTestNodeWithStatus("test-node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{
+		"MiniMaxAI/MiniMax-M2.7": {
+			ModelOverride: &apiconfig.ModelOverride{HfRepo: "host/custom-minimax"},
+		},
+	}
+	node.State.DeploymentUpdatePending = true
+	node.State.EpochModels["MiniMaxAI/MiniMax-M2.7"] = types.Model{Id: "MiniMaxAI/MiniMax-M2.7"}
+	node.State.EpochMLNodes["MiniMaxAI/MiniMax-M2.7"] = types.MLNodeInfo{NodeId: node.Node.Id}
+	mock := mlnodeclient.NewMockClient()
+	mock.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	mock.InferenceIsHealthy = true
+	mock.LastInferenceModel = "MiniMaxAI/MiniMax-M2.7"
+	client := &noModelCacheClient{MockClient: mock}
+	worker := NewNodeWorkerWithClient(node.Node.Id, node, client, b)
+	defer worker.Shutdown()
+
+	result := (InferenceUpNodeCommand{}).Execute(context.Background(), worker)
+
+	require.True(t, result.Succeeded)
+	require.True(t, result.DeploymentApplied)
+	require.Equal(t, 1, mock.GetStopCalled())
+	require.Equal(t, "host/custom-minimax", mock.LastInferenceModel)
 }
 
 func TestNodeWorkGroup_AddRemoveWorkers(t *testing.T) {
