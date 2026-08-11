@@ -68,7 +68,7 @@ func (s *lifecycleState) middleware(next echo.HandlerFunc) echo.HandlerFunc {
 func isLifecycleBypassPath(path string) bool {
 	clean := "/" + strings.Trim(strings.TrimSpace(path), "/")
 	switch clean {
-	case "/healthz", "/metrics":
+	case "/healthz", "/metrics", "/clock":
 		return true
 	default:
 		return false

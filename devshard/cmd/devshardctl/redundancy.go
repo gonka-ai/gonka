@@ -603,6 +603,10 @@ type Redundancy struct {
 	onRaceCleanupStart func()
 	onRaceCleanupDone  func()
 
+	// onHostObserved fires on first successful non-probe inference per host
+	// (gateway host-ping target set). Must not touch quarantine/routing.
+	onHostObserved func(hostIdx int, participantKey string)
+
 	suspiciousParticipant func(participantKey string) bool
 }
 
@@ -4036,6 +4040,9 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		case responsive:
 			e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
 		}
+	}
+	if responsive && !longNonStreamEmptyExempt && e.onHostObserved != nil {
+		e.onHostObserved(inf.hostIdx, participantKey)
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveRequestSample(e.devshardID, sample)

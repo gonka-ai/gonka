@@ -256,6 +256,22 @@ func NewHTTPClient(baseURL, escrowID string, signer signing.Signer, cfgs ...Clie
 	}
 }
 
+// BaseURL returns the dial base URL for this host (no route prefix).
+func (c *HTTPClient) BaseURL() string {
+	if c == nil {
+		return ""
+	}
+	return c.baseURL
+}
+
+// RoutePrefix returns the versioned path prefix (e.g. /devshard/v2).
+func (c *HTTPClient) RoutePrefix() string {
+	if c == nil {
+		return ""
+	}
+	return c.routePrefix
+}
+
 // WithoutAdmission returns a shallow copy of the client with admission control
 // disabled. Used by finalize/signature collection paths that must reach
 // quarantined hosts to complete settlement. Returns any so callers across

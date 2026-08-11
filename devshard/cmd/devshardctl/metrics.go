@@ -14,6 +14,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/collectors"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"common/probe"
+
 	"devshard/transport"
 )
 
@@ -53,6 +55,19 @@ type DevshardMetrics struct {
 	quarantineTransitions *prometheus.CounterVec
 	noWinnerAttempts      *prometheus.CounterVec
 	timeoutActions        *prometheus.CounterVec
+
+	// Host ping observability (common/probe sink). Fleet warm RTT histogram
+	// cannot share the gauge name, so it uses _warm_rtt_seconds.
+	hostPingUp              *prometheus.GaugeVec
+	hostPingRTT             *prometheus.GaugeVec
+	hostPingWarmRTT         prometheus.Histogram
+	hostPingDivergence      *prometheus.GaugeVec
+	hostPingLastProbe       *prometheus.GaugeVec
+	hostPingProbeKind       *prometheus.GaugeVec
+	hostPingTargets         prometheus.Gauge
+	hostPingTicks           prometheus.Counter
+	hostPingTicksSkipped    prometheus.Counter
+	hostPingParticipantInfo *prometheus.GaugeVec
 }
 
 type GatewaySlotDecisionMetric struct {
@@ -333,6 +348,73 @@ func NewDevshardMetrics() *DevshardMetrics {
 			},
 			[]string{"participant_key", "model", "kind", "action", "reason"},
 		),
+		hostPingUp: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_up",
+				Help: "Whether the last host ping probe succeeded (1) or failed (0).",
+			},
+			[]string{"host"},
+		),
+		hostPingRTT: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_rtt_seconds",
+				Help: "Last warm host ping RTT in seconds.",
+			},
+			[]string{"host"},
+		),
+		hostPingWarmRTT: prometheus.NewHistogram(
+			prometheus.HistogramOpts{
+				Name:    "devshard_gateway_host_ping_warm_rtt_seconds",
+				Help:    "Fleet-wide warm host ping RTT distribution (no host label).",
+				Buckets: prometheus.ExponentialBuckets(0.001, 2, 14),
+			},
+		),
+		hostPingDivergence: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_clock_divergence_seconds",
+				Help: "Last estimated clock divergence versus a host; omitted when no timestamp is available.",
+			},
+			[]string{"host", "source"},
+		),
+		hostPingLastProbe: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_last_probe_timestamp_seconds",
+				Help: "Unix timestamp of the last host ping probe attempt.",
+			},
+			[]string{"host"},
+		),
+		hostPingProbeKind: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_probe_kind",
+				Help: "Sticky probe capability kind for a host (info-style gauge).",
+			},
+			[]string{"host", "kind"},
+		),
+		hostPingTargets: prometheus.NewGauge(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_targets",
+				Help: "Number of dial targets currently probed by the gateway host ping job.",
+			},
+		),
+		hostPingTicks: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_host_ping_ticks_total",
+				Help: "Total host ping scheduler ticks started.",
+			},
+		),
+		hostPingTicksSkipped: prometheus.NewCounter(
+			prometheus.CounterOpts{
+				Name: "devshard_gateway_host_ping_ticks_skipped_total",
+				Help: "Total host ping scheduler ticks skipped because a prior tick was still in flight.",
+			},
+		),
+		hostPingParticipantInfo: prometheus.NewGaugeVec(
+			prometheus.GaugeOpts{
+				Name: "devshard_gateway_host_ping_participant_info",
+				Help: "Mapping from dial host to participant_key for host ping targets.",
+			},
+			[]string{"host", "participant_key"},
+		),
 	}
 
 	registry.MustRegister(
@@ -367,6 +449,16 @@ func NewDevshardMetrics() *DevshardMetrics {
 		m.quarantineTransitions,
 		m.noWinnerAttempts,
 		m.timeoutActions,
+		m.hostPingUp,
+		m.hostPingRTT,
+		m.hostPingWarmRTT,
+		m.hostPingDivergence,
+		m.hostPingLastProbe,
+		m.hostPingProbeKind,
+		m.hostPingTargets,
+		m.hostPingTicks,
+		m.hostPingTicksSkipped,
+		m.hostPingParticipantInfo,
 	)
 
 	m.handler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
@@ -648,6 +740,114 @@ func (m *DevshardMetrics) ObserveStreamCadence(participantKey, model string, max
 	if meanGap > 0 {
 		m.participantMeanChunkGap.WithLabelValues(labels...).Observe(meanGap.Seconds())
 	}
+}
+
+func (m *DevshardMetrics) ObserveHostPingResult(r probe.Result) {
+	if m == nil {
+		return
+	}
+	host := strings.TrimSpace(r.Key)
+	if host == "" {
+		return
+	}
+	if r.Up {
+		m.hostPingUp.WithLabelValues(host).Set(1)
+	} else {
+		m.hostPingUp.WithLabelValues(host).Set(0)
+	}
+	at := r.At
+	if at.IsZero() {
+		at = time.Now()
+	}
+	m.hostPingLastProbe.WithLabelValues(host).Set(float64(at.Unix()))
+
+	kind := r.Kind.String()
+	for _, k := range []string{probe.KindClock.String(), probe.KindDate.String(), probe.KindHealth.String(), probe.KindNone.String()} {
+		v := 0.0
+		if k == kind {
+			v = 1
+		}
+		m.hostPingProbeKind.WithLabelValues(host, k).Set(v)
+	}
+
+	if r.Up && r.ConnReused && r.RTT > 0 {
+		sec := r.RTT.Seconds()
+		m.hostPingRTT.WithLabelValues(host).Set(sec)
+		m.hostPingWarmRTT.Observe(sec)
+	}
+
+	if r.HasDivergence {
+		src := r.DivergenceSource.String()
+		if src == "" || src == probe.KindNone.String() {
+			src = kind
+		}
+		m.hostPingDivergence.WithLabelValues(host, src).Set(r.Divergence.Seconds())
+	} else {
+		m.hostPingDivergence.DeleteLabelValues(host, probe.KindClock.String())
+		m.hostPingDivergence.DeleteLabelValues(host, probe.KindDate.String())
+	}
+}
+
+func (m *DevshardMetrics) SetHostPingParticipantInfo(host, participantKey string, present bool) {
+	if m == nil {
+		return
+	}
+	host = strings.TrimSpace(host)
+	participantKey = strings.TrimSpace(participantKey)
+	if host == "" || participantKey == "" {
+		return
+	}
+	if present {
+		m.hostPingParticipantInfo.WithLabelValues(host, participantKey).Set(1)
+		return
+	}
+	m.hostPingParticipantInfo.DeleteLabelValues(host, participantKey)
+}
+
+func (m *DevshardMetrics) DeleteHostPingMetrics(host string, participants []string) {
+	if m == nil {
+		return
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return
+	}
+	m.hostPingUp.DeleteLabelValues(host)
+	m.hostPingRTT.DeleteLabelValues(host)
+	m.hostPingLastProbe.DeleteLabelValues(host)
+	for _, src := range []string{probe.KindClock.String(), probe.KindDate.String()} {
+		m.hostPingDivergence.DeleteLabelValues(host, src)
+	}
+	for _, k := range []string{probe.KindClock.String(), probe.KindDate.String(), probe.KindHealth.String(), probe.KindNone.String()} {
+		m.hostPingProbeKind.DeleteLabelValues(host, k)
+	}
+	for _, pk := range participants {
+		pk = strings.TrimSpace(pk)
+		if pk != "" {
+			m.hostPingParticipantInfo.DeleteLabelValues(host, pk)
+		}
+	}
+}
+
+func (m *DevshardMetrics) SetHostPingTargets(n int) {
+	if m == nil {
+		return
+	}
+	m.hostPingTargets.Set(float64(n))
+}
+
+func (m *DevshardMetrics) IncHostPingTicks() {
+	if m == nil {
+		return
+	}
+	m.hostPingTicks.Inc()
+}
+
+func (m *DevshardMetrics) IncHostPingTicksSkipped() {
+	if m == nil {
+		return
+	}
+	m.hostPingTicksSkipped.Inc()
 }
 
 func metricLabel(value, fallback string) string {

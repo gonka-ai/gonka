@@ -638,8 +638,10 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
         location ~ ^/devshard/[^/]+/metrics\$ {
             rewrite ^ /devshard/metrics last;
         }
-        # /devshard/{version}/healthz is NOT rewritten — it must reach that child.
+        # /devshard/{version}/healthz and /devshard/{version}/clock are NOT
+        # rewritten — they must reach that child (host-ping observability).
         # Versionless /devshard/healthz is versiond's own supervisor health (mux).
+        # Do NOT add a bare location = /clock; clients probe via RoutePrefix.
         # Versionless public observability — tighter than exempt protocol limits
         location ~ ^/devshard/sessions/[^/]+/(diffs|mempool|signatures)\$ {
             set \$limit_zone_name \"DEVSHARD_OBS\";
@@ -1299,7 +1301,7 @@ if [ "${DISABLE_DEVSHARD_PROXY}" != "true" ]; then
     echo "   /devshard/*    -> Versiond (devshard binaries)"
     echo "   /devshard/{v}/sessions/*/diffs|mempool|signatures -> rewrite /devshard/sessions/..."
     echo "   /devshard/{v}/stats/* /metrics -> rewrite versionless (internal)"
-    echo "   /devshard/{v}/healthz -> child (not rewritten); /devshard/healthz -> versiond"
+    echo "   /devshard/{v}/healthz|/clock -> child (not rewritten); /devshard/healthz -> versiond"
     echo "   /devshard/sessions|stats|metrics|healthz -> obs rate limit ${DEVSHARD_OBS_RATE_LIMIT_VAL}r/${DEVSHARD_OBS_RATE_UNIT}"
     echo "   /v1/devshard/* -> /devshard/v1/* (legacy rewrite)"
 fi

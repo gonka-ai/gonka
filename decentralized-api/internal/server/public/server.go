@@ -13,7 +13,6 @@ import (
 	"decentralized-api/poc/artifacts"
 	"decentralized-api/statsstorage"
 	"net/http"
-	"net/url"
 	"time"
 
 	echoMiddleware "github.com/labstack/echo/v4/middleware"
@@ -147,12 +146,6 @@ func NewServer(
 		return mlnodeMetricsHandler(c)
 	}, echomw.Gzip())
 
-	// dapi's own Prometheus exposition on the public listener so the join
-	// proxy can scrape behind metrics_zone (api_backend = public port).
-	// The ML server (port 9100) also serves /metrics for the direct
-	// Prometheus job — same default registry.
-	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
-
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
@@ -207,7 +200,9 @@ func (s *Server) mlNodeMetricsTargets() ([]observability.MLNodeTarget, error) {
 	}
 	targets := make([]observability.MLNodeTarget, 0, len(nodes))
 	for _, n := range nodes {
-		target, err := url.JoinPath(n.Node.PoCUrl(), "/api/v1/metrics")
+		// Shared helper with the mlnode ping job so federation and ping
+		// cannot drift onto different dial bases (PoCUrl, not PoCUrlWithVersion).
+		target, err := observability.JoinMLNodePoCPath(n.Node.PoCUrl(), observability.MLNodeMetricsPath)
 		if err != nil {
 			// unreachable for PoCUrl's format, but a silently vanished node
 			// is the exact failure class this endpoint must not have

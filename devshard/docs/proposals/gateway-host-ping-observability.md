@@ -1,8 +1,8 @@
 # Proposal: Host / MLNode ping observability (RTT + clock divergence)
 
-**Status:** Draft / proposal  
+**Status:** In progress — Steps 0–4 implemented in tree; Steps 5–6 deferred (see below)  
 **Related:** Gateway host health; dapi mlnode metrics federation ([PR #1469](https://github.com/gonka-ai/gonka/pull/1469))  
-**Implementation + test plan:** [../host-ping-observability-plan.md](../host-ping-observability-plan.md) — shared probe primitive in `common/probe`, six steps, per-step exit criteria  
+**Shared library:** `common/probe` (registry-free; callers own Prometheus)  
 **Scope:**
 
 1. **Gateway → `devshardd`** — periodic pings to distinct hosts backing opened, *used* escrows.
@@ -10,7 +10,7 @@
 
 Prometheus: per-target RTT, up, probe kind, probe freshness, and estimated clock divergence — coarse (~1 s) from the standard HTTP `Date` header today, sub-millisecond once a ping endpoint ships.
 
-This is a design note only; it does not change code by itself. Claims about current behaviour were checked against the code and are cited inline; **nothing described here exists yet** — neither surface has a probe job, and `devshardd` and mlnode have no ping endpoint. Dapi also does not serve `/metrics` today, but that is a **regression** rather than a gap: the route existed and was removed in `b53fd8fcd` ([PR #1482](https://github.com/gonka-ai/gonka/pull/1482)) — see Surface B.
+Claims about current behaviour were checked against the code and are cited inline. **Implemented in tree:** `common/probe`, gateway host-ping job (Surface A), `devshardd` `/clock`, dapi ML-port `/metrics` restore, and dapi mlnode ping job (Surface B against `/readyz` until Step 5). **Deferred:** mlnode `/api/v1/clock` (Step 5) and dashboards/alerts/soak (Step 6) — see [Deferred work](#deferred-work-steps-56).
 
 ---
 
@@ -40,7 +40,7 @@ Existing timing signals do not cover this: `PerfTracker` / `RequestSample` recor
 
 | Tier | Endpoint | Server time source | Divergence resolution |
 |---|---|---|---|
-| Preferred | New lightweight **ping/pong** (`GET /ping` on `devshardd`, `GET /api/v1/ping` on mlnode) | Explicit `t_recv` / `t_send` unix ns | sub-millisecond |
+| Preferred | New lightweight **clock** (`GET /clock` on `devshardd`, `GET /api/v1/clock` on mlnode) | Explicit `t_recv` / `t_send` unix ns | sub-millisecond |
 | Fallback A | Existing cheap **liveness** + standard HTTP **`Date`** response header | `Date` (RFC 7231, whole seconds) | ~1 s — enough for gross skew |
 | Fallback B | Cheap liveness, no usable `Date` | none | RTT / up only |
 
@@ -85,7 +85,7 @@ A response that is reachable but carries no parseable timestamp is `up=1` with *
 Keep the handler **O(1) and allocation-light**:
 
 - No GPU / manager / escrow work.
-- `204` + headers `X-Server-Recv-Ns` / `X-Server-Send-Ns`, **or** minimal JSON `{"recv_unix_ns":…,"send_unix_ns":…}`. Fixed schema, no optional fields.
+- **Normative wire format:** `204` + headers `X-Server-Recv-Ns` / `X-Server-Send-Ns` (see [Appendix: MLNode handoff](#appendix-mlnode-handoff--how-dapi-connects-what-to-add); same contract for `devshardd`). Prober may also accept JSON `{"recv_unix_ns":…,"send_unix_ns":…}` as a parse fallback — do not ship JSON *instead of* the headers.
 - **Unit is unix nanoseconds, always** — the field/header name carries the unit so a prober can never mis-scale by 10⁶. (Do not leave "ns or ms" to the implementer; a silent ms/ns mix-up shows up as a plausible-looking multi-hour divergence.)
 - Timestamps taken at handler entry and immediately before write; no auth, no tracing middleware — same bypass list that already excludes `/healthz` and `/metrics` (`devshard/cmd/devshardd/lifecycle.go:isLifecycleBypassPath`, `devshard/observability/middleware.go`).
 
@@ -105,7 +105,7 @@ Two consequences the naive design gets wrong:
 1. **The 5 s cache does not save you.** At a 10–30 s probe interval every probe lands after TTL expiry, so *each* probe pays full NVML enumeration. A cache only helps when probes are faster than the TTL, which is the opposite of the intended interval. Probing `/health` on a schedule is therefore strictly worse than probing nothing.
 2. **`/readyz` measures runner health, not path latency** on inference nodes, so its RTT is not comparable across service states.
 
-⇒ For Surface B, either ship the ping endpoint or accept that fallback RTT is a *composite* signal (documented as such, and not compared against Surface A numbers). Health routes are mounted at the **root** (`/livez`, `/readyz`), while API routers use `API_PREFIX = "/api/v1"` — so ping lives at `/api/v1/ping` and the fallback does **not**.
+⇒ For Surface B, either ship the ping endpoint or accept that fallback RTT is a *composite* signal (documented as such, and not compared against Surface A numbers). Health routes are mounted at the **root** (`/livez`, `/readyz`), while API routers use `API_PREFIX = "/api/v1"` — so ping lives at `/api/v1/clock` and the fallback does **not**.
 
 ---
 
@@ -139,7 +139,7 @@ Dapi: build target list from the same broker enumeration as `MLNodeMetricsHandle
 
 ### 4. Capability sticky + cheap fallback
 
-- Cache `probe_kind ∈ {ping, date, health}` per target; re-discover only on observed version change, TTL expiry, or sustained ping failures that look like “endpoint gone”.
+- Cache `probe_kind ∈ {clock, date, health}` per target; re-discover only on observed version change, TTL expiry, or sustained ping failures that look like “endpoint gone”.
 - Distinguish **“endpoint absent”** (404/405 ⇒ demote capability) from **“target down”** (timeout, connection refused ⇒ `up=0`, keep capability). Demoting on a timeout would let one outage permanently downgrade a healthy host to coarse divergence until the next TTL.
 - Fallback must not call heavy mlnode `/health`; otherwise RTT measures handler cost (NVML + managers) rather than path latency.
 
@@ -152,7 +152,7 @@ Prefer **last-value gauges** for the “ping map” (aligned with `mlnode_up{nod
 | `…_ping_up{…}` | gauge 0/1 | Last probe success |
 | `…_ping_rtt_seconds{…}` | gauge | Last warm RTT (both probe kinds) |
 | `…_clock_divergence_seconds{…,source="ping\|date"}` | gauge | Last divergence; **omit** series entirely when no timestamp is available |
-| `…_ping_probe_kind{…,kind="ping\|date\|health"}` | gauge 1 info-style | Sticky capability |
+| `…_ping_probe_kind{…,kind="clock\|date\|health"}` | gauge 1 info-style | Sticky capability |
 | `…_ping_targets` | gauge | Size of in-memory set |
 
 Optional low-cardinality histogram of RTT **without** host label (fleet distribution only). Avoid `histogram × host` unless scrape budget is proven.
@@ -229,9 +229,9 @@ Config: `DEVSHARD_GATEWAY_HOST_PING_INTERVAL`, concurrency, timeout, capability 
 
 ### `devshardd` work
 
-Add a lightweight ping handler at **child** `GET /ping` (root-mounted, like child `/healthz`), registered on the existing middleware-bypass list. Keep `/healthz` for fallback and k8s probes. **Not required for phase 1** (see rollout).
+Add a lightweight ping handler at **child** `GET /clock` (root-mounted, like child `/healthz`), registered on the existing middleware-bypass list. Keep `/healthz` for fallback and k8s probes. **Not required for phase 1** (see rollout).
 
-**versiond path (load-bearing):** `devshardd` is never dialed bare — `versiond` owns the listen port and requires a version prefix (`versioned/internal/proxy/proxy.go`). The gateway already has each escrow’s `RoutePrefix` (`/devshard/<version>`); probe URLs are therefore `{host}{RoutePrefix}/ping` (and `{host}{RoutePrefix}/healthz` for fallback). Bare `{host}/ping` does not reach a child; bare `{host}/healthz` is versiond’s *supervisor* health, not the serving binary. Details and Decision D4: [implementation plan](../host-ping-observability-plan.md).
+**versiond path (load-bearing):** `devshardd` is never dialed bare — `versiond` owns the listen port and requires a version prefix (`versioned/internal/proxy/proxy.go`). The gateway already has each escrow’s `RoutePrefix` (`/devshard/<version>`); probe URLs are therefore `{host}{RoutePrefix}/clock` (and `{host}{RoutePrefix}/healthz` for fallback). Bare `{host}/clock` does not reach a child; bare `{host}/healthz` is versiond’s *supervisor* health, not the serving binary. Details and Decision D4: [implementation plan](../host-ping-observability-plan.md).
 
 ---
 
@@ -249,7 +249,7 @@ Health routes are root-mounted; only API routes carry `API_PREFIX = "/api/v1"`:
 
 | Kind | Path |
 |---|---|
-| Ping | `{PoCUrl}/api/v1/ping` (new; carries timestamps) |
+| Ping | `{PoCUrl}/api/v1/clock` (new; carries timestamps) |
 | Fallback | `{PoCUrl}/readyz` — **root**, not `/api/v1/readyz`; never `/health` or `/livez` (identical heavy handler, see above) |
 
 Build with `url.JoinPath` as federation does — `PoCUrl()` already includes `PoCSegment`, so naive string concatenation breaks segmented hosts.
@@ -273,7 +273,7 @@ Mirror gateway naming under dapi / observability package:
 - s.e.Server.ConnState = devshardobservability.ConnState("ml")
 ```
 
-Restore that contract **exactly as at the #1469 merge** (`ee21535`), adapted only where dapi no longer has an in-process `devshardobservability.Registry()` (`MetricsHandler` / empty `MergedMetricsHandler`). Also expose `/metrics` **publicly behind the nginx `metrics_zone`** (same pattern #1469 used for federation). Full restore checklist, tests, and sequencing are in the [implementation plan Step 0](../host-ping-observability-plan.md). Consequences still live today: `decentralized_api_*` gauges are gathered by nobody, `api:9100/metrics` and `api:9100/sd/devshardd` are dead scrape/SD targets, and the observability docs still claim they work. Note also that dapi's existing metrics use the **default** registry with `prometheus.MustRegister` (not `promauto`), while `mlnode_up` is synthesized into federation output and is *not* a registered gauge — so "aligned with `mlnode_up`" is a naming analogy, not a shared instrument.
+Restore that contract **exactly as at the #1469 merge** (`ee21535`), adapted only where dapi no longer has an in-process `devshardobservability.Registry()` (`MetricsHandler` / empty `MergedMetricsHandler`). Do **not** add new public nginx locations — [#1469](https://github.com/gonka-ai/gonka/pull/1469)’s `/v1/mlnodes/metrics` and `/api/v1/mlnodes/metrics` remain the only public metrics paths; dapi’s own registry is scraped at `api:9100/metrics`. Full restore checklist, tests, and sequencing are in the [implementation plan Step 0](../host-ping-observability-plan.md). Consequences still live today: `decentralized_api_*` gauges are gathered by nobody, `api:9100/metrics` and `api:9100/sd/devshardd` are dead scrape/SD targets, and the observability docs still claim they work. Note also that dapi's existing metrics use the **default** registry with `prometheus.MustRegister` (not `promauto`), while `mlnode_up` is synthesized into federation output and is *not* a registered gauge — so "aligned with `mlnode_up`" is a naming analogy, not a shared instrument.
 
 Three-state nuance vs federation `mlnode_up`:
 
@@ -282,7 +282,7 @@ Three-state nuance vs federation `mlnode_up`:
 
 ### Mlnode work
 
-Add `/api/v1/ping` returning receive/send unix-ns timestamps with negligible work. Optionally add a truly trivial liveness route so fallback RTT is meaningful on old images — note that "slim `/livez`" is **not** a small change, because `/livez` currently shares its handler (and 5s cache) with `/health`; splitting them changes existing k8s probe behaviour and needs its own review.
+Add `/api/v1/clock` returning receive/send unix-ns timestamps with negligible work. Optionally add a truly trivial liveness route so fallback RTT is meaningful on old images — note that "slim `/livez`" is **not** a small change, because `/livez` currently shares its handler (and 5s cache) with `/health`; splitting them changes existing k8s probe behaviour and needs its own review.
 
 ### Scheduler placement
 
@@ -296,15 +296,45 @@ Kill switch (same spirit as `DAPI_API__MLNODE_METRICS_DISABLED`): disable the pi
 
 The original framing coupled everything to a new endpoint on both `devshardd` and mlnode, which puts the whole feature behind image rollout across a heterogeneous fleet. It decomposes cleanly instead:
 
-| Phase | Prober change | Server change | What you get |
-|---|---|---|---|
-| **1** | Gateway ping job against `/healthz` + `Date` | **none** | RTT + up + ~1s divergence on today's hosts |
-| **2** | — | `devshardd` ping handler | sub-ms divergence, de-biased RTT; capability flips per host as versions roll |
-| **3** | dapi ping job (needs `/metrics` mounted) | mlnode `/api/v1/ping` | same for the local ML fleet |
+| Phase | Prober change | Server change | What you get | Status |
+|---|---|---|---|---|
+| **1** | Gateway ping job against `/healthz` + `Date` | **none** | RTT + up + ~1s divergence on today's hosts | **done** (gateway + `common/probe`) |
+| **2** | — | `devshardd` `/clock` (versioned wire path) | sub-ms divergence, de-biased RTT; capability flips per host | **done** |
+| **3a** | dapi ping job (needs ML-port `/metrics`) | fallback `{PoCUrl}/readyz` | fleet map on `api:9100/metrics` even before mlnode `/clock` | **done** |
+| **3b** | — | mlnode `/api/v1/clock` | `probe_kind="clock"` on Surface B | **deferred** (Step 5) |
+| **ops** | dashboards / alerts / soak | — | operator-facing SLOs | **deferred** (Step 6) |
 
 Phase 1 is the cheapest way to learn whether these gauges are actually load-bearing for operators before spending server-side changes and a fleet upgrade on precision. It also exercises the target-set refcount, scheduler, and cleanup paths — the parts most likely to have bugs — while the only consumer is a dashboard.
 
-Phase 3 is last because it carries the two real prerequisites: a mounted dapi `/metrics` route, and an mlnode fallback that is not `/health`.
+Phase 3a lands the dapi job against `/readyz` + `Date` (and sticky demotion when `/api/v1/clock` 404s). Phase 3b (mlnode ping) is optional precision for Surface B and is tracked below as deferred work.
+
+---
+
+## Deferred work (Steps 5–6)
+
+This section is the shareable follow-up plan. The longer working checklist lived in `host-ping-observability-plan.md` (local); **commit and track remaining work here**.
+
+### Step 5 — mlnode ping endpoint (proposal phase 3b)
+
+- Mount `GET /api/v1/clock` under existing `API_PREFIX = "/api/v1"` returning `204` + `X-Server-Recv-Ns` / `X-Server-Send-Ns` (unix ns). No GPU, NVML, manager, DB, or cache work.
+- Bypass auth / tracing / response-cache for this path (do **not** share the `/health` 5s cache).
+- If an nginx / join-proxy fronts mlnode, allowlist `/api/v1/clock` in the same change.
+- Do **not** change `/health` / `/livez` / `/readyz` in the same PR. Optional split of slim `/livez` from `/health` is a **separately reviewed** change (they share one handler + 5s cache today).
+- Unit test: status, both headers, ns scale, `send >= recv`, no manager/GPU mocks required.
+- **Exit:** dapi reports `probe_kind="clock"` for upgraded mlnodes; ping p99 stays flat while `/health` load is unchanged. Old images keep sticky `date`/`readyz` fallback.
+
+Contract details and checklist: [Ping endpoint shape](#ping-endpoint-shape-both-devshardd-and-mlnode) and the [mlnode PR checklist](#checklist-for-the-mlnode-pr) in the appendix.
+
+### Step 6 — Dashboards, alerts, soak
+
+- Panels per surface (`devshard_gateway_host_ping_*`, `dapi_mlnode_ping_*`): up, warm RTT (gauge + fleet histogram), divergence by `source`, target count, tick rate / skips.
+- Alerts: staleness (`time() - last_probe_timestamp > 3×interval`), `rate(ticks_total) == 0`, sustained `ticks_skipped`, `|divergence| > 2s` for `source="date"` and a tighter bound for `source="clock"`.
+- 24 h soak on a real fleet: `_targets` flat (no refcount leak), no probe-attributable host load, zero quarantine transitions correlated with probe failures; alert rules fire on a deliberately stopped prober.
+
+### Related follow-ups (not blocking Step 5/6)
+
+- `citest-host-ping` full-stack gate for Surface A (gateway → versiond → `devshardd`); Surface B stays on dapi unit/router tests + mlnode Python handler test.
+- Fault-injection citest cells (skewed ping headers, sticky 404 demote, kill switch) where not already covered by unit tests.
 
 ---
 
@@ -345,3 +375,79 @@ Corollary: the ping job must be able to fail loudly without degrading service. T
 - Killing the ping job (env switch) leaves inference behaviour byte-identical; no probe result reaches quarantine or routing.
 - A stalled prober is detectable: freshness gauge goes stale and `…_ping_ticks_total` stops advancing, rather than gauges silently reporting a healthy fleet.
 - Divergence is reported with `source`, and no divergence series is emitted when no timestamp was parsed.
+
+---
+
+## Appendix: MLNode handoff — how dapi connects, what to add
+
+This section is the **normative contract** for the mlnode team. Dapi (Surface B) probes each broker-listed node; sub-millisecond clock divergence requires the ping endpoint below. Until it ships, dapi falls back to `{PoCUrl}/readyz` (RTT / up only — do not treat that RTT as comparable to a true ping).
+
+### How dapi connects
+
+| Item | Value |
+|---|---|
+| Target list | Same as federation ([PR #1469](https://github.com/gonka-ai/gonka/pull/1469)): `GetNodes()` → un-versioned `PoCUrl()` + `node_id` |
+| Preferred probe | `GET {PoCUrl}/api/v1/clock` |
+| Fallback probe | `GET {PoCUrl}/readyz` (root-mounted; **never** `/health` or `/livez`) |
+| Interval | Config; default ~10–30s; per-target timeout ≪ interval |
+| Auth | None — ping must answer without API keys / signed headers |
+| Metrics consumer | Dapi’s own `/metrics` (`dapi_mlnode_*`); **not** `/v1/mlnodes/metrics` federation |
+
+Capability sticky: first successful ping → stay on `ping`; definitive `404` / `405` → demote to fallback and stop alternating per tick. Timeout / connection refused → `up=0`, capability **unchanged**.
+
+### Required endpoint (mlnode)
+
+Freeze one wire format so it matches the Go `devshardd` / `common/probe.Handler` contract.
+
+```
+GET /api/v1/clock
+```
+
+| Requirement | Spec |
+|---|---|
+| Status | `204 No Content` |
+| Body | empty |
+| Headers (required) | `X-Server-Recv-Ns: <unix_ns>` — wall clock at **handler entry** |
+| | `X-Server-Send-Ns: <unix_ns>` — wall clock **immediately before** the response is written |
+| Value format | Decimal integer string, **unix nanoseconds** (e.g. `1735689600123456789`). Never ms/µs. Never float. |
+| Ordering | `send_ns >= recv_ns` on the same clock |
+| Side effects | None — no GPU, NVML, manager health, inference, DB, or cache |
+| Middleware | Exclude from auth, tracing, and any response-cache decorator (do **not** share the `/health` 5s cache) |
+| Other methods | `POST`/`PUT`/… → `405` (capability demotion treats 405 like “endpoint absent”) |
+
+**Optional alternate** (prober also parses, but do not ship this instead of headers): `200` + `Content-Type: application/json` body `{"recv_unix_ns":<int>,"send_unix_ns":<int>}` — same units/semantics, no optional fields.
+
+### Example (acceptance)
+
+```http
+GET /api/v1/clock HTTP/1.1
+Host: mlnode:8080
+
+HTTP/1.1 204 No Content
+Date: Tue, 11 Aug 2026 16:00:00 GMT
+X-Server-Recv-Ns: 1786454400123456789
+X-Server-Send-Ns: 1786454400123456901
+```
+
+```bash
+curl -si "http://${MLNODE}/api/v1/clock"
+# expect: HTTP/1.1 204
+# expect: X-Server-Recv-Ns and X-Server-Send-Ns present, digit-only, send >= recv
+# expect: empty body; handler p99 stays flat under a 10–30s probe loop
+# expect: /health handler load unchanged while ping is probed
+```
+
+### Checklist for the mlnode PR
+
+1. Mount `GET /api/v1/clock` under the existing `API_PREFIX = "/api/v1"` router (not at root next to `/readyz`).
+2. Capture recv ns at entry; capture send ns immediately before returning; set both headers; return `204`.
+3. Bypass auth / tracing / response cache for this path.
+4. Unit test: status, both headers, ns scale (value ≈ `time.time_ns()`), `send >= recv`, no manager/GPU mocks required to succeed.
+5. If an nginx / join-proxy fronts mlnode, **allowlist** `/api/v1/clock` in the same change — a proxy `404` makes dapi stick to fallback permanently (see Shared probe contract).
+6. Do **not** change `/health` / `/livez` / `/readyz` behaviour in the same PR (splitting slim `/livez` is a separate review).
+
+### Out of scope for mlnode
+
+- Emitting Prometheus series itself for this feature (dapi owns `dapi_mlnode_ping_*`).
+- NTP sync or correcting clocks from these timestamps.
+- Feeding ping results into scheduling / quarantine (dapi hard invariant; mlnode should not invent a control-plane use either).
