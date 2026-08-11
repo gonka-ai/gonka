@@ -20,6 +20,9 @@ services:
   proxy-policy:
     environment: *observability-proxy-environment
 
+  proxy-policy2:
+    environment: *observability-proxy-environment
+
   jaeger:
     container_name: jaeger
     image: cr.jaegertracing.io/jaegertracing/jaeger:2.17.0

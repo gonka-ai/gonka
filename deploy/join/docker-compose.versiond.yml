@@ -154,6 +154,12 @@ services:
       - VERSIOND_SERVICE_IS_ABSOLUTE=true
       - VERSIOND_PORT=18081
 
+  proxy-policy2:
+    environment:
+      - VERSIOND_SERVICE_NAME=proxy-policy-ingress
+      - VERSIOND_SERVICE_IS_ABSOLUTE=true
+      - VERSIOND_PORT=18081
+
   proxy:
     environment:
       - VERSIOND_ROUTER_POOL_HOST=${VERSIOND_ROUTER_POOL_HOST:-versiond-router-fleet}

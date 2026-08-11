@@ -184,6 +184,9 @@ EOF
 docker network create "$network" >/dev/null
 docker volume create "$state" >/dev/null
 docker build -q -t "$image" -f Dockerfile .. >/dev/null
+[[ $(docker image inspect -f \
+    '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$image") == 1 ]] \
+    || fail "public proxy image has no stable policy contract label"
 
 docker run -d --name gonka-pr-catalog --network "$network" \
     --network-alias routing-catalog \
@@ -236,11 +239,15 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_PORT=8080 \
     "$image" >/dev/null
-for name in a b; do
+start_policy() {
+    local name=$1
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
         --network "$network" --network-alias proxy-policy \
         -v "$tmpdir/policy.conf:/etc/nginx/nginx.conf:ro" \
         nginx:1.28-alpine3.21 >/dev/null
+}
+for name in a b; do
+    start_policy "$name"
 done
 docker run -d --name gonka-pr-probe --network "$network" \
     curlimages/curl:8.12.1 sleep 300 >/dev/null
@@ -277,6 +284,45 @@ proxy_admin '/readyz?version=v4' >/dev/null \
     || fail "top-level v4 readiness did not follow the router pool"
 proxy_admin '/readyz?version=v5' >/dev/null \
     || fail "top-level v5 readiness did not follow the router pool"
+
+# The deployment rolls the two fixed policy slots reserve-first. Keep POSTs in
+# flight while each slot is replaced and require both continuity and exactly-once
+# execution through the surviving worker.
+rollout_errors=$tmpdir/policy-rollout-errors
+: >"$rollout_errors"
+rollout_before=$(probe http://gonka-pr-router-b:8404/count)
+(
+    for i in $(seq 1 80); do
+        if ! probe -X POST -H 'Content-Type: application/json' \
+            -d "request=policy-roll-$i" \
+            http://proxy-router/devshard/v5/sessions/policy-roll/chat \
+            >/dev/null; then
+            printf '%s\n' "$i" >>"$rollout_errors"
+        fi
+        sleep 0.02
+    done
+) &
+rollout_probe_pid=$!
+for name in b a; do
+    docker rm -f "gonka-pr-policy-$name" >/dev/null
+    start_policy "$name"
+    policy_ip=$(docker inspect -f \
+        "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+        "gonka-pr-policy-$name")
+    for _ in $(seq 30); do
+        proxy_backend_addr_up policy_http "$policy_ip" && break
+        sleep 0.1
+    done
+    proxy_backend_addr_up policy_http "$policy_ip" || fail \
+        "replacement policy-$name was not admitted before the next slot"
+done
+wait "$rollout_probe_pid"
+[[ ! -s $rollout_errors ]] || fail \
+    "policy rollout dropped POSTs: $(tr '\n' ' ' <"$rollout_errors")"
+rollout_after=$(probe http://gonka-pr-router-b:8404/count)
+[[ $((rollout_after - rollout_before)) == 80 ]] || fail \
+    "80 policy-rollout POSTs produced $((rollout_after - rollout_before)) executions"
+
 unknown_response=$(docker exec gonka-pr-proxy /bin/busybox wget -S -O /dev/null \
     'http://127.0.0.1:8404/readyz?version=v9' 2>&1 || true)
 [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \

@@ -1,3 +1,61 @@
+x-proxy-policy: &proxy-policy
+  image: >-
+    ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
+  environment:
+    - NGINX_MODE=${NGINX_MODE:-http}
+    - PROXY_PROTOCOL=true
+    - PROXY_PROTOCOL_PEER=proxy-policy-ingress
+    - SERVER_NAME=${SERVER_NAME:-}
+    - GONKA_API_PORT=9000
+    - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
+    - EXEMPT_CONN_LIMIT=200
+    - GONKA_API_BLOCKED_ROUTES=poc-batches training
+    - CHAIN_RPC_PORT=26657
+    - CHAIN_API_PORT=1317
+    - CHAIN_GRPC_PORT=9090
+    - DASHBOARD_PORT=5173
+    - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
+    - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
+    - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
+    - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
+    - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
+    - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
+    - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
+    - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
+    - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
+    - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
+    - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
+    - EDGE_API_PORT=${EDGE_API_PORT:-18080}
+  volumes:
+    - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
+  networks:
+    default: {}
+    proxy-policy-front:
+      aliases:
+        - proxy-policy-front
+  depends_on:
+    node:
+      condition: service_started
+    api:
+      condition: service_started
+    edge-api:
+      condition: service_started
+      required: false
+    versiond:
+      condition: service_started
+    explorer:
+      condition: service_started
+    proxy-ssl:
+      condition: service_healthy
+      required: false
+  restart: unless-stopped
+  healthcheck:
+    test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/health"]
+    interval: 2s
+    timeout: 3s
+    retries: 3
+    start_period: 10s
+
 services:
   tmkms:
     image: ghcr.io/product-science/tmkms-softsign-with-keygen:0.2.15
@@ -198,70 +256,18 @@ services:
     depends_on:
       - api
 
-  # Private nginx policy workers retain the established TLS, CORS, rate-limit,
-  # rewrite and on-chain routing contract. They do not publish host ports. The
-  # public HAProxy below sends PROXY v2 so both replicas see the real client IP.
+  # Two fixed slots make ordinary Compose updates dependency-ordered and let the
+  # release driver roll back one worker without replacing the healthy reserve.
+  # Both retain the established TLS, CORS, rate-limit, rewrite and on-chain
+  # routing contract. The public HAProxy sends PROXY v2 so they see the client IP.
+  proxy-policy2:
+    <<: *proxy-policy
+
   proxy-policy:
-    image: >-
-      ${PROXY_POLICY_IMAGE:-ghcr.io/product-science/proxy:0.2.15-devshard-v5}
-    deploy:
-      replicas: ${PROXY_POLICY_REPLICAS:-2}
-    environment:
-      - NGINX_MODE=${NGINX_MODE:-http}
-      - PROXY_PROTOCOL=true
-      - PROXY_PROTOCOL_PEER=proxy-policy-ingress
-      - SERVER_NAME=${SERVER_NAME:-}
-      - GONKA_API_PORT=9000
-      - GONKA_API_EXEMPT_ROUTES=chat inference poc/proofs subnet devshard
-      - EXEMPT_CONN_LIMIT=200
-      - GONKA_API_BLOCKED_ROUTES=poc-batches training
-      - CHAIN_RPC_PORT=26657
-      - CHAIN_API_PORT=1317
-      - CHAIN_GRPC_PORT=9090
-      - DASHBOARD_PORT=5173
-      # SSL enablement (entrypoint enables SSL if CERT_ISSUER_DOMAIN is set)
-      - CERT_ISSUER_DOMAIN=${CERT_ISSUER_DOMAIN:-}
-      - PROXY_ADD_NODE_PREFIX=${PROXY_ADD_NODE_PREFIX:-false}
-      # Optional: override proxy-ssl discovery
-      - PROXY_SSL_SERVICE_NAME=${PROXY_SSL_SERVICE_NAME:-proxy-ssl}
-      - PROXY_SSL_PORT=${PROXY_SSL_PORT:-8080}
-      - DISABLE_GONKA_API=${DISABLE_GONKA_API:-false}
-      - DISABLE_CHAIN_API=${DISABLE_CHAIN_API:-true}
-      - DISABLE_CHAIN_RPC=${DISABLE_CHAIN_RPC:-true}
-      - DISABLE_CHAIN_GRPC=${DISABLE_CHAIN_GRPC:-true}
-      - DISABLE_VALIDATOR_WHITELIST=${DISABLE_VALIDATOR_WHITELIST:-true}
-      - DISABLE_FAIL2BAN=${DISABLE_FAIL2BAN:-true}
-      - EDGE_API_SERVICE_NAME=${EDGE_API_SERVICE_NAME:-}
-      - EDGE_API_PORT=${EDGE_API_PORT:-18080}
-    volumes:
-      - ${SSL_CERT_SOURCE:-./secrets/nginx-ssl}:/etc/nginx/ssl
-    networks:
-      default: {}
-      proxy-policy-front:
-        aliases:
-          - proxy-policy-front
+    <<: *proxy-policy
     depends_on:
-      node:
-        condition: service_started
-      api:
-        condition: service_started
-      edge-api:
-        condition: service_started
-        required: false
-      versiond:
-        condition: service_started
-      explorer:
-        condition: service_started
-      proxy-ssl:
+      proxy-policy2:
         condition: service_healthy
-        required: false
-    restart: unless-stopped
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://127.0.0.1:8081/health"]
-      interval: 30s
-      timeout: 10s
-      retries: 3
-      start_period: 10s
 
   # The only public listener. It balances the policy workers in TCP mode and
   # owns the active, route-aware versiond-router and edge-api pools on private
@@ -317,6 +323,11 @@ services:
       timeout: 3s
       retries: 10
       start_period: 15s
+    depends_on:
+      proxy-policy:
+        condition: service_healthy
+      proxy-policy2:
+        condition: service_healthy
 
   proxy-ssl:
     container_name: proxy-ssl

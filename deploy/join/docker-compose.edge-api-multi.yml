@@ -75,6 +75,12 @@ services:
       - EDGE_API_SERVICE_IS_ABSOLUTE=true
       - EDGE_API_PORT=18082
 
+  proxy-policy2:
+    environment:
+      - EDGE_API_SERVICE_NAME=proxy-policy-ingress
+      - EDGE_API_SERVICE_IS_ABSOLUTE=true
+      - EDGE_API_PORT=18082
+
   proxy:
     environment:
       - EDGE_API_POOL_HOST=${EDGE_API_POOL_HOST:-edge-api-pool}

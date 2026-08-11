@@ -294,7 +294,8 @@ verify_shared_postgres_identity() {
 
 verify_release_ingress_state() {
     service_instances_match_release proxy "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" || return 1
-    service_instances_match_release proxy-policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE"
+    service_instances_match_release proxy-policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE" || return 1
+    service_instances_match_release proxy-policy2 "$DEVSHARD_V5_PROXY_POLICY_IMAGE"
 }
 
 converge_release_service() {
@@ -399,7 +400,7 @@ export PROXY_POLICY_IMAGE=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 
 runtime_compose_containers=(proxy versiond edge-api)
-for container in proxy-policy versiond2 versiond-router devshard-postgres \
+for container in proxy-policy proxy-policy2 versiond2 versiond-router devshard-postgres \
     edge-api2 edge-api3 edge-api-router; do
     container_exists "$container" && runtime_compose_containers+=("$container")
 done

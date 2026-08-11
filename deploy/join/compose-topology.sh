@@ -427,6 +427,7 @@ gonka_compose_resolve() {
 
     gonka_compose_require_service "$config" proxy proxy
     gonka_compose_require_service "$config" proxy-policy
+    gonka_compose_require_service "$config" proxy-policy2
     gonka_compose_require_service "$config" versiond versiond
     gonka_compose_require_service "$config" edge-api edge-api
     # shellcheck disable=SC2034 # Exported to the sourcing upgrade driver.

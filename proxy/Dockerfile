@@ -8,7 +8,8 @@ RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o sidecar main.go
 # Final Stage
 FROM nginx:1.28-alpine3.21
 
-LABEL ai.gonka.component="proxy-policy"
+LABEL ai.gonka.component="proxy-policy" \
+      ai.gonka.proxy-policy-contract="1"
 
 # Install curl, gettext (for envsubst), jq, bash (for setup-ssl.sh), and
 # apache2-utils (htpasswd for observability UI basic auth).

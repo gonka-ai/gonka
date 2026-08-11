@@ -1,6 +1,7 @@
 FROM haproxy:3.2-alpine
 
-LABEL ai.gonka.component="proxy-router"
+LABEL ai.gonka.component="proxy-router" \
+      ai.gonka.proxy-policy-contract="1"
 
 USER root
 RUN apk add --no-cache jq socat \

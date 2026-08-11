@@ -96,7 +96,7 @@ if [[ ${1:-} == inspect ]]; then
                     versiond | versiond2) image=$VERSIOND_IMAGE ;;
                     edge-api | edge-api2 | edge-api3) image=$EDGE_API_IMAGE ;;
                     proxy) image=$PROXY_ROUTER_IMAGE ;;
-                    proxy-policy) image=$PROXY_POLICY_IMAGE ;;
+                    proxy-policy | proxy-policy2) image=$PROXY_POLICY_IMAGE ;;
                     devshard-postgres) image=postgres:16-alpine ;;
                 esac
             fi
@@ -284,6 +284,7 @@ for arg in "$@"; do
                     {target:443,published:$proxy_https,protocol:"tcp"}
                 ]},
                 "proxy-policy":{},
+                "proxy-policy2":{},
                 versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},

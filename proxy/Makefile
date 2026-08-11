@@ -40,6 +40,8 @@ test-render:
 	fail() { echo "test-render: $$1" >&2; exit 1; }; \
 	touch "$$tmpdir/nginx.conf"; \
 	docker build -q -t "$$image" . >/dev/null; \
+	[ "$$(docker image inspect -f '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$$image")" = 1 ] \
+		|| fail "policy image has no stable ingress contract label"; \
 	docker run --rm \
 		-e NGINX_MODE=http \
 		-e PROXY_PROTOCOL=true \

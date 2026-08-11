@@ -21,7 +21,7 @@ the service-pool distributors to scale and restart independently.
 ```text
 client
   -> proxy-router :80/:443
-  -> proxy-policy x N
+  -> proxy-policy2 + proxy-policy (fixed rolling slots)
        -> ordinary routes -> existing services
        -> /devshard/* -> proxy-router :18081 -> versiond-router fleet
        -> Tier A /v1/* -> proxy-router :18082 -> edge-api pool
@@ -81,7 +81,7 @@ from dapi's read-only governance `/versions` feed into pre-rendered inactive
 backends through a local Unix Runtime API socket. The process has no shared
 routing database, leader, or peer protocol. It does not need Redis:
 
-- `proxy-policy` resolves to private nginx workers;
+- `proxy-policy-front` resolves to both private nginx policy slots;
 - `versiond-router-fleet` resolves only to the independently managed router
   slots; the distinct name prevents a transitional singleton from satisfying
   fleet readiness during the one-time upgrade;
@@ -132,7 +132,7 @@ and cannot mutate routing.
 
 | Variable | Default | Meaning |
 | --- | --- | --- |
-| `PROXY_POLICY_POOL_HOST` | `proxy-policy` | policy-worker DNS alias; Compose uses the private `proxy-policy-front` alias |
+| `PROXY_POLICY_POOL_HOST` | `proxy-policy` | policy-worker DNS alias; Compose sets the shared private `proxy-policy-front` alias |
 | `PROXY_POLICY_POOL_SLOTS` | `4` | reserved policy-worker slots |
 | `VERSIOND_ROUTER_POOL_HOST` | `versiond-router-fleet` | router-fleet DNS alias |
 | `VERSIOND_ROUTER_FLEET_CAPACITY` | `16` | reserved router slots |

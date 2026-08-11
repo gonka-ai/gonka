@@ -114,6 +114,8 @@ check_compose_contract() {
         "$(compose_image versiond -f "$base" -f "$versiond_overlay")"
     assert_image "private proxy policy" "$proxy_policy_image" \
         "$(compose_image proxy-policy -f "$base")"
+    assert_image "private proxy policy reserve" "$proxy_policy_image" \
+        "$(compose_image proxy-policy2 -f "$base")"
     assert_image "public proxy router" "$proxy_router_image" \
         "$(compose_image proxy -f "$base")"
     assert_healthcheck_url "public proxy readiness" proxy \
@@ -123,6 +125,8 @@ check_compose_contract() {
         VERSIOND_ROUTER_POOL_HOST versiond-router-fleet \
         -f "$base" -f "$versiond_overlay"
     assert_healthcheck_url "private policy healthcheck" proxy-policy \
+        "http://127.0.0.1:8081/health" -f "$base"
+    assert_healthcheck_url "private policy reserve healthcheck" proxy-policy2 \
         "http://127.0.0.1:8081/health" -f "$base"
     assert_service_absent "steady-state versiond model" versiond-router \
         -f "$base" -f "$versiond_overlay"

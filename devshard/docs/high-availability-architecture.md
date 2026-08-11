@@ -28,7 +28,7 @@ HAProxy frontends:
     |
     | TCP + PROXY v2, active checks
     v
- proxy-policy x N (private nginx)
+ proxy-policy slots A/B (private nginx)
     |
     +-- ordinary /v1, chain, dashboard --> existing services
     |
@@ -91,7 +91,7 @@ replica* of that service receives it.
 
 Membership and eligibility are derived from runtime state:
 
-- `server-template` follows the `proxy-policy`, `versiond-router-fleet`,
+- `server-template` follows the `proxy-policy-front`, `versiond-router-fleet`,
   `versiond-pool`, and `edge-api-pool` DNS aliases;
 - a TCP listener check gates private nginx policy workers, while active
   `/readyz` checks gate application and router pools; `init-state fully-down`
@@ -127,8 +127,16 @@ container, not from sibling processes inside it. The shipped Compose services
 drop Linux capabilities and enable `no-new-privileges`. Strong process-to-process
 isolation would require a separate sidecar or a narrow privileged broker and is
 not part of this deployment model.
-- marking a backend unready affects new selections but does not move or close
-  an established stream.
+
+The two policy workers are fixed Compose slots rather than one scaled service.
+Updates reconcile `proxy-policy2` first and wait until the public HAProxy admits
+its address, then reconcile `proxy-policy`. Both images declare immutable
+`ai.gonka.proxy-policy-contract=1`; the updater rejects a rolling change of this
+wire contract before replacing either slot. A failure restores each slot's
+captured image and original replica count. The same reserve-first dependency is
+present in the Compose model, so an ordinary `docker compose up` cannot replace
+both workers in parallel. Marking any backend unready affects only new
+selections; it does not move or close an established stream.
 
 Both HAProxy layers retry connection failures, empty responses, and `502` only.
 They disable L7 replay for non-idempotent methods: once a POST may have reached
@@ -438,7 +446,7 @@ highly-available edge-api.
 | Service | Stateless? | Multi-instance today | Shared state needed for HA |
 |---------|-----------|----------------------|----------------------------|
 | `proxy-router` | yes | one public instance; host-level SPOF accepted here | none |
-| `proxy-policy` | yes | **yes**, private nginx replicas | shared TLS certificate volume |
+| `proxy-policy`, `proxy-policy2` | yes | **yes**, two fixed private nginx slots | shared TLS certificate volume |
 | `edge-api` | yes | **yes**, balanced directly by `proxy-router` | none |
 | `versiond-router` | yes | **yes**, independent fixed slots | none |
 | `versiond` + `devshardd` | per-escrow state | **yes**, sticky hash behind router fleet | **shared Postgres** |

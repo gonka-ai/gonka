@@ -18,6 +18,18 @@ set -Eeuo pipefail
 printf 'docker' >>"$DOCKER_LOG"
 printf ' %q' "$@" >>"$DOCKER_LOG"
 printf '\n' >>"$DOCKER_LOG"
+if [[ -n ${PROXY_POLICY_IMAGE-} ]]; then
+    printf 'policy-image=%q\n' "$PROXY_POLICY_IMAGE" >>"$DOCKER_LOG"
+fi
+
+if [[ ${1:-} == image && ${2:-} == inspect ]]; then
+    case ${!#} in
+        candidate-policy) printf '%s\n' "${CANDIDATE_POLICY_CONTRACT:-1}" ;;
+        candidate-proxy) printf '%s\n' "${CANDIDATE_PROXY_CONTRACT:-1}" ;;
+        *) printf '1\n' ;;
+    esac
+    exit 0
+fi
 
 if [[ ${1:-} == inspect ]]; then
     if [[ ${2:-} == --format ]]; then
@@ -32,7 +44,21 @@ if [[ ${1:-} == inspect ]]; then
             *ai.gonka.component*)
                 [[ -f $STATE_DIR/current ]] && cat "$STATE_DIR/current"
                 ;;
-            '{{.Image}}') printf 'sha256:old-proxy\n' ;;
+            *ai.gonka.proxy-policy-contract*)
+                printf '%s\n' "${CURRENT_PROXY_CONTRACT:-1}"
+                ;;
+            '{{.Image}}')
+                case ${4:-} in
+                    cid-proxy-policy*) printf 'sha256:old-policy\n' ;;
+                    *) printf 'sha256:old-proxy\n' ;;
+                esac
+                ;;
+            *NetworkSettings.Networks*)
+                case ${4:-} in
+                    cid-proxy-policy2) printf '172.30.0.12\n' ;;
+                    cid-proxy-policy) printf '172.30.0.11\n' ;;
+                esac
+                ;;
             '{{range .Config.Env}}{{println .}}{{end}}')
                 case ${4:-} in
                     proxy)
@@ -63,7 +89,10 @@ if [[ ${1:-} == inspect ]]; then
         exit 0
     fi
     case ${2:-} in
-        proxy | versiond | versiond2 | devshard-postgres | versiond-router | \
+        proxy)
+            [[ ${PROXY_EXISTS:-true} == true ]]
+            ;;
+        versiond | versiond2 | devshard-postgres | versiond-router | \
         edge-api | edge-api2 | edge-api3 | edge-api-router)
             exit 0
             ;;
@@ -101,8 +130,8 @@ if [[ ${1:-} == compose ]]; then
     service=
     for arg in "$@"; do
         [[ $arg == *docker-compose.proxy-v4-compat.yml ]] && compat=true
-        case $arg in config | pull | up) action=$arg ;; esac
-        case $arg in proxy | proxy-policy) service=$arg ;; esac
+        case $arg in config | pull | up | ps | rm) action=$arg ;; esac
+        case $arg in proxy | proxy-policy | proxy-policy2) service=$arg ;; esac
     done
     if [[ $action == config ]]; then
         jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
@@ -111,8 +140,9 @@ if [[ ${1:-} == compose ]]; then
             "versiond-router-front":{name:"gonka-versiond-router-front"},
             "versiond-router-back":{name:"gonka-versiond-router-back"}
         },services:{
-            proxy:{container_name:"proxy"},
-            "proxy-policy":{},
+            proxy:{container_name:"proxy",image:"candidate-proxy"},
+            "proxy-policy":{image:"candidate-policy"},
+            "proxy-policy2":{image:"candidate-policy"},
             versiond:{container_name:"versiond",environment:{PGHOST:"devshard-postgres",PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
             versiond2:{container_name:"versiond2",environment:{PGHOST:"devshard-postgres",PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
             "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
@@ -120,6 +150,29 @@ if [[ ${1:-} == compose ]]; then
             "edge-api2":{container_name:"edge-api2"},
             "edge-api3":{container_name:"edge-api3"}
         }}'
+        exit 0
+    fi
+    if [[ $action == ps ]]; then
+        if [[ -f $STATE_DIR/present-$service ]]; then
+            if [[ $service == proxy-policy && \
+                ${INITIAL_POLICY_A_REPLICAS:-1} == 2 ]]; then
+                printf 'cid-%s-1\ncid-%s-2\n' "$service" "$service"
+            else
+                printf 'cid-%s\n' "$service"
+            fi
+        fi
+        exit 0
+    fi
+    if [[ $action == rm ]]; then
+        rm -f "$STATE_DIR/present-$service"
+        exit 0
+    fi
+    if [[ $action == up && $service == proxy-policy* ]]; then
+        if [[ $service == "${FAIL_POLICY_SERVICE-}" && \
+            ${PROXY_POLICY_IMAGE-} != gonka/router-ha-policy-rollback:* ]]; then
+            exit 1
+        fi
+        : >"$STATE_DIR/present-$service"
         exit 0
     fi
     if [[ $action == up && $service == proxy ]]; then
@@ -156,6 +209,15 @@ if [[ ${1:-} == exec && ${2:-} == versiond-router && \
     exit 1
 fi
 
+if [[ ${1:-} == exec && ${2:-} == proxy && \
+    ${3:-} == /bin/sh && ${4:-} == -ec && \
+    ${5:-} == *'show servers state'* ]]; then
+    printf '# header\n# header2\n'
+    printf '1 policy 1 policy1 172.30.0.11 2 0\n'
+    printf '1 policy 2 policy2 172.30.0.12 2 0\n'
+    exit 0
+fi
+
 case ${1:-} in
     exec | tag | rm) exit 0 ;;
     image) exit 0 ;;
@@ -187,9 +249,13 @@ run_cutover() {
     shift
     : >"$log"
     rm -f "$tmpdir/current"
+    rm -f "$tmpdir"/present-proxy-policy*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
         printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
     fi
+    for service in ${INITIAL_POLICY_SERVICES-}; do
+        : >"$tmpdir/present-$service"
+    done
     env DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
         STATE_DIR="$tmpdir" \
@@ -211,10 +277,12 @@ grep -q 'network create .*com.docker.compose.network=proxy-policy-front' \
 grep -q 'network connect --alias proxy-policy-ingress' \
     "$tmpdir/success.log" || fail \
     "legacy public proxy was not attached to the private policy network"
-policy_line=$(grep -n ' up .*proxy-policy' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+policy_line=$(grep -n ' up .*proxy-policy$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
+policy2_line=$(grep -n ' up .*proxy-policy2$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 proxy_line=$(grep -n ' up .*proxy$' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
-[[ -n $policy_line && -n $proxy_line && $policy_line -lt $proxy_line ]] || fail \
-    "policy workers were not ready before the public cutover"
+[[ -n $policy2_line && -n $policy_line && -n $proxy_line && \
+    $policy2_line -lt $policy_line && $policy_line -lt $proxy_line ]] || fail \
+    "policy slots were not rolled reserve-first before the public cutover"
 grep -q 'docker rm -f versiond-router' "$tmpdir/success.log" || fail \
     "singleton versiond-router was not removed after commit"
 grep -q 'docker rm -f edge-api-router' "$tmpdir/success.log" || fail \
@@ -254,6 +322,7 @@ set -e
 grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/signal.log" || fail \
     "TERM during cutover did not run the armed public proxy rollback"
 
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/idempotent.log" env
 grep -q '^docker tag ' "$tmpdir/idempotent.log" || fail \
@@ -268,10 +337,55 @@ grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
 grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence did not apply router fleet image/config updates"
 
-if INITIAL_PROXY_COMPONENT=proxy-router \
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/day2-failure.log" env FAIL_CUTOVER=true; then
     fail "failed day-2 public proxy update was reported as successful"
 fi
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/policy-failure.log" env \
+        FAIL_POLICY_SERVICE=proxy-policy; then
+    fail "failed policy slot update was reported as successful"
+fi
+grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy-' \
+    "$tmpdir/policy-failure.log" || fail \
+    "failed policy generation did not restore the captured active slot"
+grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy2-' \
+    "$tmpdir/policy-failure.log" || fail \
+    "failed policy generation did not restore the captured reserve slot"
+
+if INITIAL_POLICY_SERVICES=proxy-policy INITIAL_POLICY_A_REPLICAS=2 \
+    run_cutover "$tmpdir/scaled-policy-failure.log" env \
+        FAIL_POLICY_SERVICE=proxy-policy; then
+    fail "failed migration from the scaled policy service succeeded"
+fi
+grep -q -- '--scale proxy-policy=2 proxy-policy$' \
+    "$tmpdir/scaled-policy-failure.log" || fail \
+    "rollback did not restore the scaled service's original replica count"
+
+if run_cutover "$tmpdir/contract-mismatch.log" env \
+    CANDIDATE_PROXY_CONTRACT=2; then
+    fail "an incompatible policy/proxy wire contract was accepted"
+fi
+if grep -q ' up .*proxy-policy' "$tmpdir/contract-mismatch.log"; then
+    fail "contract mismatch was detected after policy mutation"
+fi
+
+run_cutover "$tmpdir/missing-proxy.log" env PROXY_EXISTS=false
+grep -q ' up .*proxy$' "$tmpdir/missing-proxy.log" || fail \
+    "missing committed public proxy was not recreated"
+if grep -q '^docker tag sha256:old-proxy ' "$tmpdir/missing-proxy.log"; then
+    fail "missing public proxy armed a fictitious image rollback"
+fi
+
+if run_cutover "$tmpdir/missing-proxy-failure.log" env \
+    PROXY_EXISTS=false FAIL_CUTOVER=true; then
+    fail "failed recreation of an absent public proxy succeeded"
+fi
+grep -q '^docker rm -f proxy$' "$tmpdir/missing-proxy-failure.log" || fail \
+    "failed recreation did not restore the committed absent state"
 grep -q '^rollback-current slots=7$' "$tmpdir/day2-failure.log" || fail \
     "day-2 rollback did not restore the captured routing environment"
 if grep -q 'docker-compose.proxy-v4-compat.yml' \

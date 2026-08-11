@@ -11,10 +11,15 @@ compose_project_directory=
 rollback_pending=false
 rollback_image=
 rollback_kind=
+policy_rollback_pending=false
 declare -A rollback_env=()
+declare -A policy_rollback_images=()
+declare -A policy_rollback_replicas=()
 declare -A inherited_env=()
 declare -a migration_routes=()
 declare -a compose_file_args=()
+policy_services=(proxy-policy2 proxy-policy)
+policy_contract_version=1
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -128,9 +133,8 @@ if [[ $edge_mode == auto ]]; then
     fi
 fi
 
-container_exists proxy || fail \
-    "cannot recover the deployment Compose topology: public proxy container is missing"
-runtime_compose_containers=(proxy versiond edge-api)
+runtime_compose_containers=(versiond edge-api)
+container_exists proxy && runtime_compose_containers+=(proxy)
 for container in versiond2 devshard-postgres edge-api2 edge-api3; do
     container_exists "$container" && runtime_compose_containers+=("$container")
 done
@@ -178,9 +182,23 @@ proxy_env_value() {
     return 1
 }
 
+install_rollback_traps() {
+	trap 'restore_proxy "$?"' EXIT
+	trap 'exit 129' HUP
+	trap 'exit 130' INT
+	trap 'exit 143' TERM
+}
+
 arm_proxy_rollback() {
     local kind=$1 old_image key
 
+	if [[ $kind == absent ]]; then
+		rollback_kind=$kind
+		rollback_image=
+		rollback_pending=true
+		install_rollback_traps
+		return 0
+	fi
     old_image=$("$docker_bin" inspect --format '{{.Image}}' proxy)
     rollback_image="gonka/router-ha-proxy-rollback:$(date +%s%N)-$$"
     "$docker_bin" tag "$old_image" "$rollback_image"
@@ -202,10 +220,143 @@ arm_proxy_rollback() {
         done
     fi
     rollback_pending=true
-    trap 'restore_proxy "$?"' EXIT
-    trap 'exit 129' HUP
-    trap 'exit 130' INT
-    trap 'exit 143' TERM
+	install_rollback_traps
+}
+
+capture_policy_rollback() {
+	local service id image rollback_tag first_image
+	local -a ids=()
+
+	for service in "${policy_services[@]}"; do
+		mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
+		policy_rollback_replicas[$service]=${#ids[@]}
+		((${#ids[@]} > 0)) || continue
+		first_image=
+		for id in "${ids[@]}"; do
+			image=$("$docker_bin" inspect --format '{{.Image}}' "$id")
+			if [[ -n $first_image && $image != "$first_image" ]]; then
+				fail "$service has mixed image generations; refusing an ambiguous rollback"
+			fi
+			first_image=$image
+		done
+		rollback_tag="gonka/router-ha-policy-rollback:$service-$(date +%s%N)-$$"
+		"$docker_bin" tag "$first_image" "$rollback_tag"
+		policy_rollback_images[$service]=$rollback_tag
+	done
+	policy_rollback_pending=true
+	install_rollback_traps
+}
+
+restore_policy_slots() {
+	local service replicas rollback_tag restored=true
+
+	# Restore the original scaled service before removing/restoring the reserve.
+	# This preserves at least one healthy generation throughout compensation.
+	for service in proxy-policy proxy-policy2; do
+		replicas=${policy_rollback_replicas[$service]:-0}
+		rollback_tag=${policy_rollback_images[$service]-}
+		if ((replicas == 0)); then
+			"${compose[@]}" rm -s -f "$service" >/dev/null || restored=false
+			continue
+		fi
+		if [[ -z $rollback_tag ]] || ! PROXY_POLICY_IMAGE=$rollback_tag \
+			"${compose[@]}" up -d --no-deps --force-recreate --wait \
+			--wait-timeout "$cutover_timeout" --scale "$service=$replicas" \
+			"$service"; then
+			restored=false
+		fi
+	done
+	$restored
+}
+
+cleanup_policy_rollback() {
+	local image
+	for image in "${policy_rollback_images[@]}"; do
+		"$docker_bin" image rm "$image" >/dev/null 2>&1 || true
+	done
+}
+
+image_policy_contract() {
+	"$docker_bin" image inspect --format \
+		'{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$1"
+}
+
+verify_policy_contract() {
+	local config policy_image proxy_image policy_contract proxy_contract current_contract
+	config=$("${compose[@]}" config --format json)
+	policy_image=$(jq -er '.services["proxy-policy"].image' <<<"$config")
+	proxy_image=$(jq -er '.services.proxy.image' <<<"$config")
+	[[ $(jq -er '.services["proxy-policy2"].image' <<<"$config") == "$policy_image" ]] ||
+		fail "proxy-policy slots do not use one candidate image"
+	policy_contract=$(image_policy_contract "$policy_image") || fail \
+		"cannot read proxy-policy contract from $policy_image"
+	proxy_contract=$(image_policy_contract "$proxy_image") || fail \
+		"cannot read proxy-policy contract from $proxy_image"
+	[[ $policy_contract == "$policy_contract_version" && \
+		$policy_contract == "$proxy_contract" ]] || fail \
+		"candidate proxy-policy contract '$policy_contract' does not match proxy-router '$proxy_contract'"
+	if [[ $(proxy_component) == proxy-router ]]; then
+		current_contract=$("$docker_bin" inspect --format \
+			'{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' proxy)
+		[[ $current_contract == "$policy_contract" ]] || fail \
+			"rolling policy update changes ingress contract $current_contract -> $policy_contract; use a maintenance migration"
+	fi
+}
+
+policy_address_admitted() {
+	local backend=$1 address=$2
+	"$docker_bin" exec proxy /bin/sh -ec \
+		"printf 'show servers state $backend\\n' | socat stdio /var/run/haproxy/haproxy.sock" |
+		awk -v address="$address" '
+			NR > 2 && $5 == address {
+				found = 1
+				if ($6 == 2 && $7 == 0) exit 0
+				exit 1
+			}
+			END { if (!found) exit 1 }
+		'
+}
+
+wait_policy_admission() {
+	local service=$1 deadline=$((SECONDS + cutover_timeout)) mode id address ready
+	local -a ids=()
+	mode=$(proxy_env_value NGINX_MODE || true)
+	mode=${mode:-http}
+	while ((SECONDS < deadline)); do
+		mapfile -t ids < <("${compose[@]}" ps --quiet "$service")
+		ready=true
+		((${#ids[@]} > 0)) || ready=false
+		for id in "${ids[@]}"; do
+			address=$("$docker_bin" inspect --format \
+				"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
+				"$id")
+			[[ $address =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
+				ready=false
+				continue
+			}
+			if [[ $mode != https ]] && ! policy_address_admitted policy_http "$address"; then
+				ready=false
+			fi
+			if [[ $mode != http ]] && ! policy_address_admitted policy_https "$address"; then
+				ready=false
+			fi
+		done
+		[[ $ready == true ]] && return 0
+		sleep 1
+	done
+	return 1
+}
+
+roll_policy_slots() {
+	local service
+	for service in "${policy_services[@]}"; do
+		"${compose[@]}" up -d --no-deps --wait \
+			--wait-timeout "$cutover_timeout" "$service"
+		if [[ $(proxy_component) == proxy-router ]]; then
+			wait_policy_admission "$service" || fail \
+				"$service is healthy but was not admitted by the public proxy"
+		fi
+	done
 }
 
 wait_component() {
@@ -298,44 +449,49 @@ remove_migration_routers() {
 }
 
 restore_proxy() {
-    local status=${1:-$?}
+	local status=${1:-$?} proxy_restored=true policy_restored=true
     trap - EXIT INT TERM HUP
-    if [[ $rollback_pending == true && -n $rollback_image ]]; then
+    if [[ $rollback_pending == true ]]; then
         warn "public ingress update failed; restoring the captured proxy"
-        "$docker_bin" rm -f proxy >/dev/null 2>&1 || true
         local versiond_service=versiond edge_service='' restored=false
-        if [[ $rollback_kind == v4 ]]; then
-            [[ $versiond_mode == ha ]] && versiond_service=versiond-router
-            [[ $edge_mode == multi ]] && edge_service=edge-api-router
-            if PROXY_V4_IMAGE=$rollback_image \
-                PROXY_V4_VERSIOND_SERVICE_NAME=$versiond_service \
-                PROXY_V4_EDGE_API_SERVICE_NAME=$edge_service \
-                "${compose[@]}" -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
-                    up -d --no-deps --force-recreate --wait \
-                    --wait-timeout "$cutover_timeout" proxy; then
-                restored=true
-            fi
-        elif NGINX_MODE="${rollback_env[NGINX_MODE]}" \
-            PROXY_POLICY_POOL_SLOTS="${rollback_env[PROXY_POLICY_POOL_SLOTS]}" \
-            PROXY_ROUTER_PUBLIC_IDLE_SECONDS="${rollback_env[PROXY_ROUTER_PUBLIC_IDLE_SECONDS]}" \
-            HAPROXY_DNS_RESOLVER="${rollback_env[HAPROXY_DNS_RESOLVER]}" \
-            VERSIOND_ROUTER_POOL_HOST="${rollback_env[VERSIOND_ROUTER_POOL_HOST]}" \
-            VERSIOND_ROUTER_FLEET_CAPACITY="${rollback_env[VERSIOND_ROUTER_FLEET_CAPACITY]}" \
-            VERSIOND_NON_HA_VERSIONS="${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
-            VERSIOND_VERSIONS="${rollback_env[VERSIOND_VERSIONS]}" \
-            VERSIOND_ROUTING_CATALOG_URL="${rollback_env[VERSIOND_ROUTING_CATALOG_URL]}" \
-            VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
-            VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
-            VERSIOND_ROUTING_ACTIVATION_MIN_READY="${rollback_env[VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
-            VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
-            PROXY_ROUTER_VERSION_CAPACITY="${rollback_env[PROXY_ROUTER_VERSION_CAPACITY]}" \
-            EDGE_API_POOL_HOST="${rollback_env[EDGE_API_POOL_HOST]}" \
-            EDGE_API_PORT="${rollback_env[EDGE_API_PORT]}" \
-            PROXY_ROUTER_IMAGE=$rollback_image \
-            "${compose[@]}" up -d --no-deps --force-recreate --wait \
-                --wait-timeout "$cutover_timeout" proxy; then
-            restored=true
-        fi
+		if [[ $rollback_kind == absent ]]; then
+			"$docker_bin" rm -f proxy >/dev/null 2>&1 || true
+			restored=true
+		else
+			"$docker_bin" rm -f proxy >/dev/null 2>&1 || true
+			if [[ $rollback_kind == v4 ]]; then
+				[[ $versiond_mode == ha ]] && versiond_service=versiond-router
+				[[ $edge_mode == multi ]] && edge_service=edge-api-router
+				if PROXY_V4_IMAGE=$rollback_image \
+					PROXY_V4_VERSIOND_SERVICE_NAME=$versiond_service \
+					PROXY_V4_EDGE_API_SERVICE_NAME=$edge_service \
+					"${compose[@]}" -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
+						up -d --no-deps --force-recreate --wait \
+						--wait-timeout "$cutover_timeout" proxy; then
+					restored=true
+				fi
+			elif NGINX_MODE="${rollback_env[NGINX_MODE]}" \
+				PROXY_POLICY_POOL_SLOTS="${rollback_env[PROXY_POLICY_POOL_SLOTS]}" \
+				PROXY_ROUTER_PUBLIC_IDLE_SECONDS="${rollback_env[PROXY_ROUTER_PUBLIC_IDLE_SECONDS]}" \
+				HAPROXY_DNS_RESOLVER="${rollback_env[HAPROXY_DNS_RESOLVER]}" \
+				VERSIOND_ROUTER_POOL_HOST="${rollback_env[VERSIOND_ROUTER_POOL_HOST]}" \
+				VERSIOND_ROUTER_FLEET_CAPACITY="${rollback_env[VERSIOND_ROUTER_FLEET_CAPACITY]}" \
+				VERSIOND_NON_HA_VERSIONS="${rollback_env[VERSIOND_NON_HA_VERSIONS]}" \
+				VERSIOND_VERSIONS="${rollback_env[VERSIOND_VERSIONS]}" \
+				VERSIOND_ROUTING_CATALOG_URL="${rollback_env[VERSIOND_ROUTING_CATALOG_URL]}" \
+				VERSIOND_ROUTING_CATALOG_POLL_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_POLL_SECONDS]}" \
+				VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
+				VERSIOND_ROUTING_ACTIVATION_MIN_READY="${rollback_env[VERSIOND_ROUTING_ACTIVATION_MIN_READY]}" \
+				VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
+				PROXY_ROUTER_VERSION_CAPACITY="${rollback_env[PROXY_ROUTER_VERSION_CAPACITY]}" \
+				EDGE_API_POOL_HOST="${rollback_env[EDGE_API_POOL_HOST]}" \
+				EDGE_API_PORT="${rollback_env[EDGE_API_PORT]}" \
+				PROXY_ROUTER_IMAGE=$rollback_image \
+				"${compose[@]}" up -d --no-deps --force-recreate --wait \
+					--wait-timeout "$cutover_timeout" proxy; then
+				restored=true
+			fi
+		fi
         if [[ $restored == true && $rollback_kind == current ]]; then
             [[ $versiond_mode != ha ]] || run_fleet verify-admission || \
                 restored=false
@@ -343,11 +499,26 @@ restore_proxy() {
                 wait_component edge-api || restored=false
         fi
         if [[ $restored == true ]]; then
-            warn "the previous public proxy was restored"
+			if [[ $rollback_kind == absent ]]; then
+				warn "the failed public proxy was removed"
+			else
+				warn "the previous public proxy was restored"
+			fi
         else
+			proxy_restored=false
             warn "automatic public proxy rollback failed; immediate operator action is required"
         fi
     fi
+	if [[ $policy_rollback_pending == true ]]; then
+		warn "ingress update failed; restoring the captured proxy-policy slots"
+		if restore_policy_slots; then
+			warn "the previous proxy-policy generation was restored"
+		else
+			policy_restored=false
+			warn "automatic proxy-policy rollback failed; immediate operator action is required"
+		fi
+	fi
+	[[ $proxy_restored == true && $policy_restored == true ]] || status=1
     exit "$status"
 }
 
@@ -386,31 +557,50 @@ if container_exists proxy; then
     fi
 fi
 
-if [[ $pull_policy != never ]]; then
-    "${compose[@]}" pull --policy "$pull_policy" proxy-policy proxy
+current_proxy_component=$(proxy_component)
+proxy_was_absent=false
+if ! container_exists proxy; then
+	proxy_was_absent=true
+	warn "public proxy is absent; rebuilding it from the resolved Compose topology"
+elif [[ $current_proxy_component != proxy-router ]]; then
+	[[ $versiond_mode != ha ]] || capture_migration_route_baseline
 fi
-"${compose[@]}" up -d --no-deps --wait \
-    --wait-timeout "$cutover_timeout" proxy-policy
 
-# A repeated run is also a real update path. Keep the exact previous proxy
-# image and routing environment armed until the new public path is admitted.
-if [[ $(proxy_component) == proxy-router ]]; then
-    arm_proxy_rollback current
+if [[ $pull_policy != never ]]; then
+	"${compose[@]}" pull --policy "$pull_policy" \
+		proxy-policy2 proxy-policy proxy
+fi
+verify_policy_contract
+capture_policy_rollback
+if [[ $proxy_was_absent == true ]]; then
+	arm_proxy_rollback absent
+elif [[ $current_proxy_component == proxy-router ]]; then
+	arm_proxy_rollback current
+else
+	arm_proxy_rollback v4
+fi
+
+# The reserve slot is always reconciled first. The fixed service dependency
+# preserves the same order for an ordinary `docker compose up`.
+roll_policy_slots
+
+# A repeated run is also a real update path. Keep both the exact previous proxy
+# and the policy generation armed until the complete public path is admitted.
+if [[ $current_proxy_component == proxy-router ]]; then
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
     [[ $edge_mode != multi ]] || wait_component edge-api
     rollback_pending=false
+	policy_rollback_pending=false
     trap - EXIT INT TERM HUP
-    "$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
+	[[ -z $rollback_image ]] || \
+		"$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
+	cleanup_policy_rollback
     remove_migration_routers
     echo "Router HA topology is already active"
     exit 0
 fi
-
-container_exists proxy || fail "the existing public proxy container is missing"
-[[ $versiond_mode != ha ]] || capture_migration_route_baseline
-arm_proxy_rollback v4
 
 echo "Switching the public listener to proxy-router"
 if ! "${compose[@]}" up -d --no-deps --force-recreate --wait \
@@ -424,8 +614,11 @@ fi
     "proxy-router cannot reach a ready edge-api"
 
 rollback_pending=false
+policy_rollback_pending=false
 trap - EXIT INT TERM HUP
-"$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
+[[ -z $rollback_image ]] || \
+	"$docker_bin" image rm "$rollback_image" >/dev/null 2>&1 || true
+cleanup_policy_rollback
 
 # These singleton migration bridges are outside the steady-state model. Remove
 # them only after the new public path has passed all component checks.

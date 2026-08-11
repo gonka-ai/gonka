@@ -130,17 +130,26 @@ if "versiond-router" in defaults_config["services"]:
 
 proxy = defaults_config["services"]["proxy"]
 policy = defaults_config["services"]["proxy-policy"]
+policy2 = defaults_config["services"]["proxy-policy2"]
 api = defaults_config["services"]["api"]
 if "versiond-router-front" not in proxy["networks"]:
     raise SystemExit("public HAProxy is not attached to the router front network")
 if "proxy-router-metrics" not in proxy["networks"]["default"].get("aliases", []):
     raise SystemExit("public HAProxy has no internal Prometheus alias")
-if policy["environment"].get("VERSIOND_SERVICE_NAME") != "proxy-policy-ingress":
-    raise SystemExit("nginx policy workers do not use the public HAProxy distributor")
-if policy["environment"].get("VERSIOND_SERVICE_IS_ABSOLUTE") != "true":
-    raise SystemExit("the internal HAProxy service name can still receive KEY_NAME prefixing")
-if policy["environment"].get("PROXY_PROTOCOL_PEER") != "proxy-policy-ingress":
-    raise SystemExit("nginx policy workers do not derive trust from the private ingress peer")
+for service, worker in (("proxy-policy", policy), ("proxy-policy2", policy2)):
+    if worker["environment"].get("VERSIOND_SERVICE_NAME") != "proxy-policy-ingress":
+        raise SystemExit(f"{service} does not use the public HAProxy distributor")
+    if worker["environment"].get("VERSIOND_SERVICE_IS_ABSOLUTE") != "true":
+        raise SystemExit(f"{service} can still receive KEY_NAME prefixing")
+    if worker["environment"].get("PROXY_PROTOCOL_PEER") != "proxy-policy-ingress":
+        raise SystemExit(f"{service} does not derive trust from the private ingress peer")
+if "deploy" in policy and policy["deploy"].get("replicas", 1) != 1:
+    raise SystemExit("proxy-policy remains a scaled all-at-once service")
+if policy.get("depends_on", {}).get("proxy-policy2", {}).get("condition") != "service_healthy":
+    raise SystemExit("ordinary Compose updates do not reconcile the reserve policy slot first")
+for service in ("proxy-policy", "proxy-policy2"):
+    if proxy.get("depends_on", {}).get(service, {}).get("condition") != "service_healthy":
+        raise SystemExit(f"public proxy can start before {service} is healthy")
 if "proxy-policy-front" not in policy["networks"] or "proxy-policy-front" not in proxy["networks"]:
     raise SystemExit("public HAProxy and policy workers do not share the isolated front network")
 for network in ("versiond-router-front", "versiond-router-back"):
@@ -251,7 +260,7 @@ require(slot_cleared, "VERSIOND_NON_HA_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_VERSIONS", "", "slot explicit empty")
 require(slot_cleared, "VERSIOND_ROUTER_ALLOW_COARSE_READINESS", "true", "slot coarse")
 
-for service in ("proxy", "proxy-policy"):
+for service in ("proxy", "proxy-policy", "proxy-policy2"):
     environment = observability[service]["environment"]
     require(environment, "JAEGER_ENABLED", "true", f"{service} observability")
     require(environment, "GRAFANA_ENABLED", "true", f"{service} observability")

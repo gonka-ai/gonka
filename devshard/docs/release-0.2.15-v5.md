@@ -266,8 +266,14 @@ The standard Host Quickstart therefore selects `versiond=single` and
 `edge-api=single` automatically. Its existing ML, observability, and local
 override files remain in the model even though only services owned by this
 upgrade are targeted. In particular, the observability overlay supplies Jaeger
-and Grafana routing variables to both the v4 rollback proxy and the v5
-`proxy-policy` nginx replicas.
+and Grafana routing variables to both the v4 rollback proxy and the fixed v5
+`proxy-policy2` and `proxy-policy` nginx slots. The updater replaces
+the reserve slot first, waits for end-to-end admission by the public HAProxy,
+and only then replaces the active slot. Both sides declare policy wire-contract
+version `1`; a future incompatible contract requires an explicit maintenance
+migration instead of silently entering a mixed generation. Until the public
+proxy and both slots pass their postconditions, their captured images remain
+armed for rollback.
 
 Normally no Compose arguments are needed. For a deliberately changed or
 ambiguous deployment, pass the complete model through `COMPOSE_FILE` (and
