@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"devshard/internal/testutil"
+	"devshard/signing"
 	"devshard/storage"
 	"devshard/stub"
 )
@@ -91,14 +92,14 @@ func TestCreateRejectsNonCanonicalEscrowID(t *testing.T) {
 	require.ErrorContains(t, err, "invalid escrow id")
 }
 
-func TestRecoverSessionsSkipsNonCanonicalStoredSessions(t *testing.T) {
-	store := newManagerTestStore(t)
-	_, _, hostSigner := createStoredSession(t, store, "9905", 7, 0)
+func seedNonCanonicalStoredSession(t *testing.T, store storage.Storage, canonical, alias string) *signing.Secp256k1Signer {
+	t.Helper()
+	_, _, hostSigner := createStoredSession(t, store, canonical, 7, 0)
 
-	meta, err := store.GetSessionMeta("9905")
+	meta, err := store.GetSessionMeta(canonical)
 	require.NoError(t, err)
 	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
-		EscrowID:       "09905",
+		EscrowID:       alias,
 		EpochID:        meta.EpochID,
 		Version:        meta.Version,
 		CreatorAddr:    meta.CreatorAddr,
@@ -106,10 +107,44 @@ func TestRecoverSessionsSkipsNonCanonicalStoredSessions(t *testing.T) {
 		Group:          meta.Group,
 		InitialBalance: meta.InitialBalance,
 	}))
+	return hostSigner
+}
+
+func TestRecoverSessionsRetiresNonCanonicalStoredSessions(t *testing.T) {
+	store := newManagerTestStore(t)
+	hostSigner := seedNonCanonicalStoredSession(t, store, "9905", "09905")
 
 	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
 		testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
 	require.NoError(t, mgr.RecoverSessions())
 
 	require.Equal(t, []string{"9905"}, mgr.ActiveEscrowIDs())
+
+	meta, err := store.GetSessionMeta("09905")
+	require.NoError(t, err)
+	require.NotEqual(t, "active", meta.Status, "non-canonical row must be retired, not left active")
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	require.Equal(t, "9905", active[0].EscrowID)
+}
+
+func TestStatsDetailCannotResurrectNonCanonicalSession(t *testing.T) {
+	store := newManagerTestStore(t)
+	hostSigner := seedNonCanonicalStoredSession(t, store, "9906", "09906")
+
+	mgr := NewHostManager(currentEpochStore{Storage: store, epoch: 7}, hostSigner,
+		stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
+		testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+
+	rec := requestStats(t, mgr, statsTestRoutePrefix, "/stats/shards/09906")
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+
+	_, loaded := mgr.existingServer("09906")
+	require.False(t, loaded, "alias session must not be loaded into memory")
+	require.Empty(t, mgr.ActiveEscrowIDs())
+
+	_, err := mgr.SessionServerExisting("09906")
+	require.ErrorContains(t, err, "invalid escrow id")
 }
