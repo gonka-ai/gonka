@@ -47,10 +47,16 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 		return next(ctx, tx, simulate)
 	}
 
-	// Check if ALL messages are fee-exempt network duties.
+	// Check if ALL messages are fee-exempt network duties performed by an
+	// authorized actor. An unauthorized actor simply does not get the waiver:
+	// GonkaFeeChecker then applies MinGasPriceNgonka, so a zero-fee spam tx
+	// fails CheckTx on ErrInsufficientFee and never reaches the mempool.
+	// Withholding the waiver rather than rejecting the tx keeps a false
+	// negative here from turning into a liveness failure for consensus-critical
+	// PoC / BLS traffic.
 	allExempt := true
 	for _, msg := range msgs {
-		if !isNetworkDuty(msg, d.InferenceKeeper) {
+		if !isNetworkDuty(ctx, msg, d.InferenceKeeper) {
 			allExempt = false
 			break
 		}
@@ -82,12 +88,13 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 	return next(ctx, tx, simulate)
 }
 
-// isNetworkDuty checks if a message is a fee-exempt network duty. It unwraps
-// x/authz MsgExec exactly one level (the DAPI's normal use case), then calls
-// isExemptMessageType on the inner messages. Nested MsgExec wrappers are not
-// allowed — they fail closed. Real-world use has no need for nested MsgExec
-// and allowing arbitrary recursion is unnecessary complexity.
-func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+// isNetworkDuty checks if a message is a fee-exempt network duty whose actor is
+// authorized to claim the exemption. It unwraps x/authz MsgExec exactly one
+// level (the DAPI's normal use case), then checks the inner messages. Nested
+// MsgExec wrappers are not allowed — they fail closed. Real-world use has no
+// need for nested MsgExec and allowing arbitrary recursion is unnecessary
+// complexity.
+func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 	if execMsg, ok := msg.(*authztypes.MsgExec); ok {
 		if ik == nil {
 			return false // fail closed
@@ -102,17 +109,114 @@ func isNetworkDuty(msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 			if _, isNestedExec := unwrapped.(*authztypes.MsgExec); isNestedExec {
 				return false
 			}
-			if !isExemptMessageType(unwrapped) {
+			if !isAuthorizedNetworkDuty(ctx, unwrapped, ik) {
 				return false
 			}
 		}
 		return true
 	}
-	return isExemptMessageType(msg)
+	return isAuthorizedNetworkDuty(ctx, msg, ik)
+}
+
+// isAuthorizedNetworkDuty reports whether msg is an exempt duty type AND its
+// protocol actor is authorized to perform that duty.
+//
+// The type check alone is not sufficient (#1539): the ante chain waives fees at
+// index 11 but only verifies signatures at index 19, so a type-only exemption
+// hands any funded account free, unauthenticated block space. The real
+// authorization for these types runs in the message handlers, i.e. in
+// DeliverTx — after mempool admission and block inclusion.
+//
+// The actor is read from the message body, never from the tx signer: in
+// warm-key mode the DAPI wraps duty messages in authz MsgExec signed by the
+// grantee while the Creator/Settler field names the cold account that is the
+// actual protocol participant (tx_manager.go broadcastMessagesAtAttempt).
+// Checking the signer would reject that production path.
+//
+// Fails closed on a nil keeper so a misconfigured ante chain cannot grant the
+// waiver.
+func isAuthorizedNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
+	auth, exempt := dutyAuthorizationFor(msg)
+	if !exempt {
+		return false
+	}
+	if ik == nil {
+		return false // fail closed
+	}
+	if auth.escrowAllowList {
+		return ik.IsAllowedEscrowCreator(ctx, auth.actor)
+	}
+	return ik.IsRegisteredParticipant(ctx, auth.actor)
+}
+
+// dutyAuthorization describes who must be authorized for a fee-exempt duty and
+// against which registry, mirroring the handler's own permission requirement.
+type dutyAuthorization struct {
+	// actor is the address named in the message body as the protocol
+	// participant performing the duty (Creator, or Settler for escrow
+	// settlement) — not the tx signer.
+	actor string
+	// escrowAllowList selects the devshard escrow allowlist instead of the
+	// participant registry, matching EscrowAllowListPermission.
+	escrowAllowList bool
+}
+
+// dutyAuthorizationFor returns the authorization requirement for a fee-exempt
+// duty message, and whether the type is exempt at all.
+//
+// Keep the exempt set here identical to isExemptMessageType: that function
+// remains the single source of truth for *which types* are duties, while this
+// one adds *who* may claim the waiver for each.
+func dutyAuthorizationFor(msg sdk.Msg) (dutyAuthorization, bool) {
+	switch m := msg.(type) {
+	// Participant-gated duties. Handlers require ParticipantPermission
+	// (PoC batch / seed / hardware diff), ActiveParticipantPermission OR
+	// PreviousActiveParticipantPermission (claim rewards), or a blocklist
+	// check on Creator (PoC V2 validations, weight distribution — declared
+	// NoPermission). Registration is a superset of all of these.
+	case *inferencetypes.MsgSubmitPocBatch:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitPocValidationsV2:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgMLNodeWeightDistribution:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitSeed:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgSubmitHardwareDiff:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *inferencetypes.MsgClaimRewards:
+		return dutyAuthorization{actor: m.Creator}, true
+
+	// Devshard escrow settlement is allowlist-restricted rather than
+	// participant-gated (EscrowAllowListPermission).
+	case *inferencetypes.MsgSettleDevshardEscrow:
+		return dutyAuthorization{actor: m.Settler, escrowAllowList: true}, true
+
+	// BLS DKG duties. Each handler scans the epoch's own participant list for
+	// Creator; requiring registration is weaker and cannot reject a member of
+	// that list, while still excluding arbitrary accounts.
+	case *blstypes.MsgSubmitDealerPart:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitVerificationVector:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitGroupKeyValidationSignature:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgSubmitPartialSignature:
+		return dutyAuthorization{actor: m.Creator}, true
+	case *blstypes.MsgRespondDealerComplaints:
+		return dutyAuthorization{actor: m.Creator}, true
+
+	default:
+		return dutyAuthorization{}, false
+	}
 }
 
 // isExemptMessageType returns true for messages that are protocol obligations.
 // These are already rate-limited by timing windows, duplicate checks, or allowlists.
+//
+// Type membership alone no longer grants the waiver — see dutyAuthorizationFor
+// and isAuthorizedNetworkDuty for the signer-authorization requirement added
+// for #1539.
 func isExemptMessageType(msg sdk.Msg) bool {
 	switch msg.(type) {
 	// PoC duty messages (throttled by PocPeriodValidationDecorator window checks).
