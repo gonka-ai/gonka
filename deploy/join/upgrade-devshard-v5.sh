@@ -268,7 +268,7 @@ versiond_storage_identity() {
 }
 
 verify_shared_postgres_identity() {
-    local first second
+    local first second committed=
     first=$(versiond_storage_identity versiond) || {
         warn "cannot read the database identity through versiond"
         return 1
@@ -281,6 +281,15 @@ verify_shared_postgres_identity() {
         warn "versiond replicas use different PostgreSQL databases ($first != $second)"
         return 1
     fi
+    if [[ -f $upgrade_marker ]] && jq -e 'type == "object"' \
+        "$upgrade_marker" >/dev/null 2>&1; then
+        committed=$(jq -r '.storage.postgres_identity // ""' "$upgrade_marker")
+    fi
+    if [[ -n $committed && $first != "$committed" ]]; then
+        warn "PostgreSQL identity changed from committed $committed to $first"
+        return 1
+    fi
+    verified_postgres_identity=$first
 }
 
 verify_release_ingress_state() {
@@ -297,9 +306,14 @@ converge_release_service() {
 }
 
 write_upgrade_marker() {
-    local marker_tmp=$upgrade_marker.tmp.$$
+    local marker=$desired_upgrade_marker marker_tmp=$upgrade_marker.tmp.$$
+    if [[ $versiond_mode == ha ]]; then
+        [[ -n $verified_postgres_identity ]] || verify_shared_postgres_identity
+        marker=$(jq -c --arg identity "$verified_postgres_identity" \
+            '. + {storage: {postgres_identity: $identity}}' <<<"$marker")
+    fi
     mkdir -p "$(dirname -- "$upgrade_marker")"
-    printf '%s\n' "$desired_upgrade_marker" >"$marker_tmp"
+    printf '%s\n' "$marker" >"$marker_tmp"
     mv -f "$marker_tmp" "$upgrade_marker"
 }
 
@@ -441,6 +455,7 @@ desired_fingerprint=$(
 )
 desired_upgrade_marker=$(jq -c --arg fingerprint "$desired_fingerprint" \
     '. + {fingerprint: $fingerprint}' <<<"$desired_upgrade_state")
+verified_postgres_identity=
 public_http_port=$(jq -er '
     [.services.proxy.ports[]?
      | select(.target == 80 and (.protocol // "tcp") == "tcp")

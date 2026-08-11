@@ -229,9 +229,10 @@ The updater takes one deployment-wide `.gonka-devshard-v5-upgrade.lock` next
 to `config.env`; a concurrent updater fails before mutation. Successful
 completion writes `.gonka-devshard-v5-upgrade-complete` atomically. This JSON
 marker records the release commit, topology modes, ordered Compose files,
-project identity, expected images, and a fingerprint of the rendered Compose
-model. It contains hashes rather than configuration values, so secrets are not
-copied into the marker. The proxy container label alone is not evidence that
+project identity, expected images, the verified PostgreSQL UUID, and a
+fingerprint of the rendered Compose model. It contains hashes and non-secret
+identities rather than configuration values, so secrets are not copied into
+the marker. The proxy container label alone is not evidence that
 PostgreSQL, versiond, and edge-api were migrated.
 
 Rerunning the same upgrade is also the normal reconciliation path for this

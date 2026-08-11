@@ -1044,7 +1044,8 @@ jq -e '
     .schema == 1 and
     .release_id == "0.2.15-devshard-v5" and
     (.fingerprint | type == "string" and length == 64) and
-    (.compose.files | length > 0)
+    (.compose.files | length > 0) and
+    .storage.postgres_identity == "shared-database"
 ' "$tmpdir/upgrade-complete" >/dev/null || fail \
     "verified cutover did not reconstruct the desired-state marker"
 assert_contains "$tmpdir/recovered-marker.log" \
@@ -1083,6 +1084,30 @@ assert_contains "$tmpdir/active-with-marker.log" \
 jq -e '.schema == 1 and (.compose.files | length > 0)' \
     "$tmpdir/upgrade-complete" >/dev/null || fail \
     "legacy marker was not upgraded to the desired-state schema"
+
+database_drift_marker=$tmpdir/database-drift-marker
+jq '.storage.postgres_identity = "previous-database"' \
+    "$tmpdir/upgrade-complete" >"$database_drift_marker"
+if ASSUME_RELEASE_STATE=true \
+    DEVSHARD_V5_UPGRADE_MARKER="$database_drift_marker" \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/database-drift.log" \
+    EXISTING_PROXY_COMPONENT=proxy-router \
+    EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+    FAKE_STATE_DIR="$tmpdir/active-with-marker.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$tmpdir/database-drift.stdout" \
+        2>"$tmpdir/database-drift.stderr"; then
+    fail "rerun accepted a different PostgreSQL database than the committed deployment"
+fi
+grep -q 'PostgreSQL identity changed from committed' \
+    "$tmpdir/database-drift.stderr" || {
+    cat "$tmpdir/database-drift.stderr" >&2
+    fail "committed PostgreSQL identity drift did not produce a useful error"
+}
 
 # Once committed, the marker is the recovery authority. Drifted labels are a
 # hint about current containers, not permission to forget the known topology.
