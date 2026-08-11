@@ -37,7 +37,12 @@ read_cache() {
     tmp=$(mktemp)
     trap 'rm -f "$tmp"' EXIT
     if ! jq -er '
-        select(.schema == 1)
+        select(
+            .schema == 1 or
+            (.schema == 2 and .initialized == true and
+             (.revision | type) == "number" and .revision >= 0 and
+             (.revision | floor) == .revision)
+        )
         | select((.fetched_at_unix | type) == "number")
         | select(.fetched_at_unix >= 0 and (.fetched_at_unix | floor) == .fetched_at_unix)
         | select((.versions | type) == "array")
@@ -64,7 +69,10 @@ read_cache() {
 }
 
 write_cache() {
-    names=$1 cache=$2
+    names=$1 cache=$2 revision=$3
+    case "$revision" in
+        '' | *[!0-9]*) fail "REVISION must be a non-negative integer" ;;
+    esac
     [ -f "$names" ] || fail "names file does not exist: $names"
     validate_names "$names"
     directory=$(dirname -- "$cache")
@@ -72,9 +80,10 @@ write_cache() {
     tmp=$(mktemp "$directory/.catalog-cache.XXXXXX")
     trap 'rm -f "$tmp"' EXIT
     now=$(date +%s)
-    if ! jq -Rn --argjson now "$now" '
+    if ! jq -Rn --argjson now "$now" --argjson revision "$revision" '
         [inputs] | sort | unique
-        | {schema: 1, fetched_at_unix: $now, versions: .}
+        | {schema: 2, initialized: true, revision: $revision,
+           fetched_at_unix: $now, versions: .}
     ' < "$names" > "$tmp"; then
         fail "cannot encode snapshot"
     fi
@@ -89,8 +98,8 @@ case ${1:-} in
         read_cache "$2" "$3"
         ;;
     write)
-        [ "$#" -eq 3 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE"
-        write_cache "$2" "$3"
+        [ "$#" -eq 4 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE REVISION"
+        write_cache "$2" "$3" "$4"
         ;;
-    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE" ;;
+    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE REVISION" ;;
 esac

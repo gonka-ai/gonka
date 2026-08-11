@@ -118,7 +118,7 @@ threading.Event().wait()
 PY
 
 mkdir "$tmpdir/catalog"
-printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"}]}' \
+printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v4"},{"name":"v5"}]}' \
     >"$tmpdir/catalog/versions.json"
 cat >"$tmpdir/catalog.py" <<'PY'
 import http.server
@@ -269,7 +269,7 @@ grep -q '^haproxy_' "$tmpdir/proxy.metrics" || fail \
     "parent proxy returned no HAProxy metrics"
 
 proxy_id=$(docker inspect -f '{{.Id}}' gonka-pr-proxy)
-printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
 for _ in $(seq 30); do
@@ -289,7 +289,7 @@ for version in v9 v10; do
     [[ $unknown_response == *'503 Service Unavailable'* ]] || fail \
         "capacity preflight partially published $version"
 done
-printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
 for _ in $(seq 40); do
@@ -355,7 +355,26 @@ for worker in a b; do
     [[ $worker_route == b ]] || fail \
         "policy worker $worker did not re-resolve the replaced proxy-router"
 done
-printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+printf '%s\n' '{"schema":1,"initialized":false,"revision":3,"versions":[]}' \
+    >"$tmpdir/catalog/versions.next"
+mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+sleep 2
+proxy_admin '/readyz?version=v9' >/dev/null \
+    || fail "an uninitialized catalog replaced the last accepted route view"
+printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+    >"$tmpdir/catalog/versions.next"
+mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
+for _ in $(seq 20); do
+    if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+        | jq -e '.state == "revision-error"' >/dev/null 2>&1; then
+        break
+    fi
+    sleep 0.25
+done
+docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status --state \
+    | jq -e '.state == "revision-error"' >/dev/null \
+    || fail "a regressing top-level catalog revision was not rejected"
+printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
     >"$tmpdir/catalog/versions.next"
 mv "$tmpdir/catalog/versions.next" "$tmpdir/catalog/versions.json"
 for _ in $(seq 30); do

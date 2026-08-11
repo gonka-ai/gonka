@@ -100,9 +100,14 @@ Membership and eligibility are derived from runtime state:
   listening, while stale or corrupt cache data falls back to the bootstrap floor;
   cached additions continue to consume their bounded dynamic slots after a
   restart, and a capacity reduction below that fresh state fails startup;
+- dapi returns `503` until it has published its first chain snapshot. After
+  initialization the catalog carries an immutable, monotonically increasing
+  revision. Routers reject revision rollback, same-revision content changes,
+  and removals; the current catalog contract is append-only;
 - consistent hashing with `hash-key addr` keeps escrow placement stable across
-  DNS answer order and inner-router restarts, while top-level router and
-  `edge-api` selection use `leastconn` for long requests;
+  DNS answer order and inner-router restarts. The public versiond distributor
+  uses the same escrow key to select an inner router; `edge-api` uses
+  `leastconn` for long requests;
 
 HAProxy and the catalog reconciler inside one router container intentionally run
 as the same unprivileged Unix user. They therefore form one container-level trust

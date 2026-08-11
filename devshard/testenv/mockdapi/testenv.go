@@ -88,11 +88,11 @@ func mountTestenvProxy(g *echo.Group, admin *adminface.Client, refresh func(cont
 		if versions == nil {
 			return echo.NewHTTPError(http.StatusServiceUnavailable, "mock-dapi versions not configured")
 		}
-		current, err := versions.Versions(c.Request().Context())
+		catalog, err := versions.VersionCatalog(c.Request().Context())
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 		}
-		return c.JSON(http.StatusOK, cosrv.VersionConfig{Versions: current})
+		return c.JSON(http.StatusOK, catalog)
 	})
 	g.POST("/testenv/versions", func(c echo.Context) error {
 		if versions == nil {

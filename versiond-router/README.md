@@ -148,6 +148,14 @@ learn it independently. A same-name SHA update does not even consume a new slot;
 it remains the existing `version -> backend` mapping and is handled by
 `versiond`'s child rolling update.
 
+The catalog is authoritative only when it contains `schema: 1`,
+`initialized: true`, and a non-negative integer `revision`. Dapi returns `503`
+before its first atomically published chain snapshot. Routers reject an older
+revision, a different payload under the same revision, and any snapshot that
+removes an already accepted name. The current governance contract is therefore
+append-only; removal requires a future drain-and-reclaim protocol. This prevents
+a warming or stale dapi replica from erasing learned routes.
+
 Governance approval is itself what makes the name appear in `/versions`, so this
 feed cannot prove readiness before approval. Network activation automation must
 approve/install first, then wait before directing new sessions to that version:
@@ -165,8 +173,8 @@ aggregate this per-host result. A future pre-approval gate would require a
 separate signed staged-version feed; the approved-version endpoint cannot expose
 information governance has not published yet.
 
-Catalog additions are monotonic for one router process. Every fully projected
-snapshot is also committed atomically to the slot's persistent state volume.
+Catalog additions are monotonic across process replacements. Every fully
+projected revision is also committed atomically to the slot's persistent state volume.
 On replacement, a fresh snapshot is validated and rendered before HAProxy
 starts, so names learned after the image was built do not disappear merely
 because dapi is temporarily unavailable. The default maximum age is 24 hours;
@@ -174,9 +182,8 @@ a stale, corrupt, or future-dated snapshot is ignored and startup falls back to
 the static bootstrap floor. Cached non-bootstrap names are restored into the
 same bounded `versiond_dynamic_<n>` namespace; restarting a router does not
 replenish consumed capacity. Startup fails loudly if a fresh cache needs more
-dynamic slots than the configured capacity. Removing a name makes its child and health capacity
-disappear immediately; the runtime slot is retained until replacement, while
-the next valid cache snapshot no longer contains it.
+dynamic slots than the configured capacity. Schema-1 caches written by earlier
+router images are accepted as revision zero and upgraded automatically.
 
 Catalog URL, poll interval, fetch timeout, and capacity are validated before
 HAProxy starts. Transient fetch failures preserve the last admitted map and are

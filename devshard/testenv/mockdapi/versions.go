@@ -9,11 +9,12 @@ import (
 
 type versionStore struct {
 	mu       sync.RWMutex
+	revision int64
 	versions []cosrv.Version
 }
 
 func newVersionStore(versions []cosrv.Version) *versionStore {
-	return &versionStore{versions: cloneVersions(versions)}
+	return &versionStore{revision: 1, versions: cloneVersions(versions)}
 }
 
 func (s *versionStore) Versions(context.Context) ([]cosrv.Version, error) {
@@ -22,9 +23,21 @@ func (s *versionStore) Versions(context.Context) ([]cosrv.Version, error) {
 	return cloneVersions(s.versions), nil
 }
 
+func (s *versionStore) VersionCatalog(context.Context) (cosrv.VersionConfig, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return cosrv.VersionConfig{
+		Schema:      1,
+		Initialized: true,
+		Revision:    s.revision,
+		Versions:    cloneVersions(s.versions),
+	}, nil
+}
+
 func (s *versionStore) Set(versions []cosrv.Version) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.revision++
 	s.versions = cloneVersions(versions)
 }
 

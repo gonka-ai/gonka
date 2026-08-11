@@ -159,7 +159,7 @@ test-version-routing:
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
 		> "$$tmpdir/upstream.py"; \
 	mkdir "$$tmpdir/catalog"; \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
 		'import http.server, json' \
@@ -277,7 +277,7 @@ test-version-routing:
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
-	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -316,7 +316,7 @@ test-version-routing:
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
 		|| fail "inner router lost a learned route when restarted without dapi"; \
 	docker start gonka-vp-catalog >/dev/null; \
-	printf '%s\n' '{"versions":[{"name":"v10"},{"name":"v10"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	sleep 2; \
@@ -326,7 +326,24 @@ test-version-routing:
 	fi; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-invalid/chat)" = b ] \
 		|| fail "an invalid catalog snapshot removed the last valid route view"; \
-	printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v9"},{"name":"v9;hotfix"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":false,"revision":3,"versions":[]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	sleep 2; \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-uninitialized/chat)" = b ] \
+		|| fail "an uninitialized catalog replaced the last accepted route view"; \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+		> "$$tmpdir/catalog/versions.next"; \
+	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
+	for i in $$(seq 10); do \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "revision-error"' >/dev/null 2>&1; then break; fi; \
+		sleep 0.5; \
+	done; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "revision-error"' >/dev/null \
+		|| fail "a regressing catalog revision was not rejected"; \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9;hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -340,7 +357,7 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -Fqx 'v9;hotfix' \
 		|| fail "runtime catalog lost the literal semicolon in a governance name"; \
-	printf '%s\n' '{"versions":[{"name":"v4"},{"name":"v9"},{"name":"v9;hotfix"},{"name":"v10"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9;hotfix"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \

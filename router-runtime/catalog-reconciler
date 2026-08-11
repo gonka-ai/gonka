@@ -61,6 +61,24 @@ cleanup() {
 trap cleanup EXIT
 trap 'exit 0' HUP INT TERM
 last_state=starting
+last_names=$tmpdir/last.names
+: > "$last_names"
+last_revision=-1
+
+if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
+    [ -x "$cache_bin" ] || {
+        log "catalog cache exists but $cache_bin is unavailable"
+        exit 1
+    }
+    if ! "$cache_bin" read "$cache_file" 2147483647 > "$last_names"; then
+        log "cannot validate the last accepted catalog snapshot"
+        exit 1
+    fi
+    last_revision=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || {
+        log "cannot read the last accepted catalog revision"
+        exit 1
+    }
+fi
 
 set_state() {
     state=$1 detail=$2 used=${3:-0}
@@ -137,8 +155,14 @@ fetch_catalog() {
     if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
         return 1
     fi
-    # A valid empty snapshot is not an error: static bootstrap routes keep
-    # working while dapi warms its governance cache.
+    if ! catalog_revision=$(jq -er '
+        select(.schema == 1 and .initialized == true)
+        | select((.revision | type) == "number")
+        | select(.revision >= 0 and (.revision | floor) == .revision)
+        | .revision
+    ' "$body"); then
+        return 1
+    fi
     if ! jq -r '
         .versions as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
@@ -156,10 +180,31 @@ fetch_catalog() {
     LC_ALL=C sort -u "$names" -o "$names"
 }
 
+validate_catalog_progression() {
+    if ! jq -ne --argjson current "$catalog_revision" --argjson previous "$last_revision" \
+        '$current >= $previous'; then
+        return 1
+    fi
+    if [ "$catalog_revision" = "$last_revision" ]; then
+        cmp -s "$last_names" "$tmpdir/catalog.names"
+        return
+    fi
+    removed=$(awk '
+        NR == FNR { current[$0] = 1; next }
+        !($0 in current) { print; exit }
+    ' "$tmpdir/catalog.names" "$last_names")
+    [ -z "$removed" ]
+}
+
 persist_catalog() {
     [ -n "$cache_file" ] || return 0
     [ -x "$cache_bin" ] || return 1
-    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file"
+    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" "$catalog_revision"
+}
+
+accept_catalog() {
+    cp "$tmpdir/catalog.names" "$last_names"
+    last_revision=$catalog_revision
 }
 
 map_snapshot() {
@@ -299,6 +344,9 @@ while :; do
         set_state runtime-unavailable "HAProxy Runtime API is not ready"
     elif ! fetch_catalog; then
         set_state fetch-error "cannot fetch or validate $catalog_url"
+    elif ! validate_catalog_progression; then
+        set_state revision-error \
+            "catalog revision regressed, changed in place, or removed a version"
     else
         reconcile_status=0
         reconcile_catalog || reconcile_status=$?
@@ -313,6 +361,7 @@ while :; do
         elif ! persist_catalog; then
             set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
         else
+            accept_catalog
             set_state ready "catalog and runtime maps are current" "$used"
         fi
     fi

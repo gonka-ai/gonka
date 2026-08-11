@@ -164,6 +164,12 @@ machine-readable projection state, including `capacity-exhausted`, for log and
 host monitoring. The entrypoint restarts an unexpectedly exited reconciler
 without restarting HAProxy.
 
+Catalog snapshots must be initialized and revisioned. Revisions never decrease,
+the content of one revision is immutable, and the accepted version set is
+append-only. An uninitialized, stale-revision, or removal snapshot leaves the
+last admitted routes unchanged. Existing schema-1 caches are accepted as
+revision zero and upgraded automatically on the next successful projection.
+
 ## Operations
 
 The main Compose project owns `proxy-router`, the private policy network, and

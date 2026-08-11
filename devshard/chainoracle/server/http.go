@@ -22,12 +22,22 @@ type Version struct {
 
 // VersionConfig is the JSON body for GET /versions (versiond oracle contract).
 type VersionConfig struct {
-	Versions []Version `json:"versions"`
+	Schema      int       `json:"schema"`
+	Initialized bool      `json:"initialized"`
+	Revision    int64     `json:"revision"`
+	Versions    []Version `json:"versions"`
 }
 
 // VersionProvider returns the currently approved versions.
 type VersionProvider interface {
 	Versions(context.Context) ([]Version, error)
+}
+
+// VersionCatalogProvider atomically exposes the catalog revision together with
+// its versions. Dynamic test providers implement this in addition to
+// VersionProvider.
+type VersionCatalogProvider interface {
+	VersionCatalog(context.Context) (VersionConfig, error)
 }
 
 // VersionProviderFunc adapts a function to VersionProvider.
@@ -66,16 +76,27 @@ func Mount(g *echo.Group, cfg Config) {
 
 func handleVersions(versions []Version) echo.HandlerFunc {
 	return func(c echo.Context) error {
-		return c.JSON(http.StatusOK, VersionConfig{Versions: versions})
+		return c.JSON(http.StatusOK, VersionConfig{
+			Schema: 1, Initialized: true, Revision: 1, Versions: versions,
+		})
 	}
 }
 
 func handleVersionProvider(provider VersionProvider) echo.HandlerFunc {
 	return func(c echo.Context) error {
+		if catalogProvider, ok := provider.(VersionCatalogProvider); ok {
+			catalog, err := catalogProvider.VersionCatalog(c.Request().Context())
+			if err != nil {
+				return echo.NewHTTPError(http.StatusBadGateway, err.Error())
+			}
+			return c.JSON(http.StatusOK, catalog)
+		}
 		versions, err := provider.Versions(c.Request().Context())
 		if err != nil {
 			return echo.NewHTTPError(http.StatusBadGateway, err.Error())
 		}
-		return c.JSON(http.StatusOK, VersionConfig{Versions: versions})
+		return c.JSON(http.StatusOK, VersionConfig{
+			Schema: 1, Initialized: true, Revision: 1, Versions: versions,
+		})
 	}
 }

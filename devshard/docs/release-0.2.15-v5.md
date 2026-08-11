@@ -594,16 +594,19 @@ advertising the new protocol as generally available. A
 true pre-approval gate would require a separate signed staged-version feed; it
 cannot be inferred from `approved_versions`.
 
-Catalog additions are monotonic within a running process, and each router tier
-atomically persists its last fully projected snapshot. A replacement validates
+Catalog additions are monotonic across replacements, and each router tier
+atomically persists its last fully projected revision. Dapi returns `503` until
+the first chain snapshot is initialized. Routers reject a decreasing revision,
+different content at the same revision, and removal of an accepted name. The
+v5 catalog contract is append-only; a future removal protocol must drain the
+version before reclaiming its route slot. A replacement validates
 and pre-renders a snapshot no older than
 `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` (24 hours by default), so a
 temporary dapi outage at startup does not erase versions learned after the
 image was built. Stale, corrupt, or future-dated cache data is ignored and the
-shipped `v4` through `v8` bootstrap floor remains routable. Removed versions
-lose healthy children and fail closed without immediately freeing their runtime
-slot; they disappear from the next valid cache and therefore from the next
-render. Cached additions retain dynamic-slot assignments across restarts, so a
+shipped `v4` through `v8` bootstrap floor remains routable. Existing schema-1
+caches are treated as revision zero and upgraded automatically. Cached additions
+retain dynamic-slot assignments across restarts, so a
 restart cannot silently replenish capacity; reducing capacity below a fresh
 cache fails startup. The defaults allow 32 additions between router releases;
 capacity exhaustion is a persistent degraded projection state and the new name
