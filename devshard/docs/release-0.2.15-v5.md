@@ -7,11 +7,12 @@ Host evacuation: [versiond-host-evacuation.md](./versiond-host-evacuation.md).
 Rolling updates: [rolling-update.md](./rolling-update.md).
 Architecture: [high-availability-architecture.md](./high-availability-architecture.md).
 
-The release is identified by Git tag `release/v0.2.15-devshard-v5`; its
-`edge-api`, `versiond`, `proxy`, `proxy-router`, and `versiond-router` images use
-tag `0.2.15-devshard-v5` under `ghcr.io/product-science`. The old
-`edge-api-router` image is retained only for the one-time v4 migration bridge.
-The machine-readable values live in
+The release is identified by Git tag `release/v0.2.15-devshard-v5`. Images are
+published under staging tag `0.2.15-devshard-v5`, then the machine-readable
+release contract is pinned to each final `repo@sha256:...` manifest before the
+Git tag is created. The release gate and host updater reject mutable image tags
+outside explicit unreleased testing. The old `edge-api-router` image is retained
+only for the one-time v4 migration bridge. The machine-readable values live in
 [`devshard-v5-release.env`](../../deploy/join/devshard-v5-release.env), which is
 also consumed by the updater and release-image smoke test.
 

@@ -50,9 +50,27 @@ devshard_v5_load_release_contract() {
         DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
         DEVSHARD_V5_PROXY_POLICY_IMAGE \
         DEVSHARD_V5_PROXY_ROUTER_IMAGE; do
-        [[ ${!name} == *":$DEVSHARD_V5_RELEASE_IMAGE_TAG" ]] || \
+        [[ ${!name} == *":$DEVSHARD_V5_RELEASE_IMAGE_TAG" || \
+            ${!name} =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
             devshard_v5_contract_error \
-                "$name does not use release image tag $DEVSHARD_V5_RELEASE_IMAGE_TAG" || \
+                "$name must use release tag $DEVSHARD_V5_RELEASE_IMAGE_TAG during staging or an immutable sha256 digest" || \
+            return
+    done
+}
+
+devshard_v5_verify_release_image_digests() {
+    local name
+
+    for name in \
+        DEVSHARD_V5_EDGE_API_IMAGE \
+        DEVSHARD_V5_VERSIOND_IMAGE \
+        DEVSHARD_V5_EDGE_API_ROUTER_IMAGE \
+        DEVSHARD_V5_VERSIOND_ROUTER_IMAGE \
+        DEVSHARD_V5_PROXY_POLICY_IMAGE \
+        DEVSHARD_V5_PROXY_ROUTER_IMAGE; do
+        [[ ${!name} =~ ^[^[:space:]@]+@sha256:[0-9a-f]{64}$ ]] || \
+            devshard_v5_contract_error \
+                "$name must be pinned as repo@sha256:digest before publication" || \
             return
     done
 }
@@ -129,6 +147,8 @@ devshard_v5_verify_release_source() {
         *) devshard_v5_contract_error \
             "DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE must be true or false" || return ;;
     esac
+
+    devshard_v5_verify_release_image_digests || return
 
     repo_root=$(git -C "$script_dir" rev-parse --show-toplevel 2>/dev/null) || \
         devshard_v5_contract_error \

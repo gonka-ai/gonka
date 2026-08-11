@@ -36,6 +36,24 @@ git -C "$repo" commit -qm 'release contract fixture'
 git -c tag.gpgSign=false -c tag.forceSignAnnotated=false \
     -C "$repo" tag --no-sign "$DEVSHARD_V5_RELEASE_GIT_TAG"
 
+if DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE=false \
+    devshard_v5_verify_release_source "$repo/deploy/join" \
+    >"$tmpdir/mutable.stdout" 2>"$tmpdir/mutable.stderr"; then
+    fail "production release accepted mutable image tags"
+fi
+grep -q 'must be pinned as repo@sha256:digest' "$tmpdir/mutable.stderr" || {
+    cat "$tmpdir/mutable.stderr" >&2
+    fail "mutable image failure was not actionable"
+}
+
+digest=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+DEVSHARD_V5_EDGE_API_IMAGE=${DEVSHARD_V5_EDGE_API_IMAGE%:*}@sha256:$digest
+DEVSHARD_V5_VERSIOND_IMAGE=${DEVSHARD_V5_VERSIOND_IMAGE%:*}@sha256:$digest
+DEVSHARD_V5_EDGE_API_ROUTER_IMAGE=${DEVSHARD_V5_EDGE_API_ROUTER_IMAGE%:*}@sha256:$digest
+DEVSHARD_V5_VERSIOND_ROUTER_IMAGE=${DEVSHARD_V5_VERSIOND_ROUTER_IMAGE%:*}@sha256:$digest
+DEVSHARD_V5_PROXY_POLICY_IMAGE=${DEVSHARD_V5_PROXY_POLICY_IMAGE%:*}@sha256:$digest
+DEVSHARD_V5_PROXY_ROUTER_IMAGE=${DEVSHARD_V5_PROXY_ROUTER_IMAGE%:*}@sha256:$digest
+
 DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE=false \
     devshard_v5_verify_release_source "$repo/deploy/join" \
     >"$tmpdir/source.stdout" 2>"$tmpdir/source.stderr" || {
