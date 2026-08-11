@@ -48,12 +48,20 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 	}
 
 	// Check if ALL messages are fee-exempt network duties performed by an
-	// authorized actor. An unauthorized actor simply does not get the waiver:
-	// GonkaFeeChecker then applies MinGasPriceNgonka, so a zero-fee spam tx
-	// fails CheckTx on ErrInsufficientFee and never reaches the mempool.
-	// Withholding the waiver rather than rejecting the tx keeps a false
-	// negative here from turning into a liveness failure for consensus-critical
-	// PoC / BLS traffic.
+	// authorized actor. An unauthorized actor simply does not get the waiver, so
+	// GonkaFeeChecker goes on to enforce MinGasPriceNgonka against the tx.
+	//
+	// Note what that does and does not accomplish today: MinGasPriceNgonka is 0
+	// on the live network (v0_2_12 upgrade handler, "temporary due to issue in
+	// gas estimations"), and GonkaFeeChecker returns early when the minimum is
+	// zero, accepting any fee. So while the minimum stays 0, withholding the
+	// waiver keeps nothing out of the mempool on its own — NetworkDutySigner
+	// Decorator is what rejects unauthorized duty txs. Once governance raises
+	// the minimum above zero, withholding starts failing those txs on
+	// ErrInsufficientFee as well.
+	//
+	// Withholding rather than rejecting here keeps a false negative from
+	// turning into a liveness failure for consensus-critical PoC / BLS traffic.
 	allExempt := true
 	for _, msg := range msgs {
 		if !isNetworkDuty(ctx, msg, d.InferenceKeeper) {
@@ -94,6 +102,11 @@ func (d NetworkDutyFeeBypassDecorator) AnteHandle(ctx sdk.Context, tx sdk.Tx, si
 // MsgExec wrappers are not allowed — they fail closed. Real-world use has no
 // need for nested MsgExec and allowing arbitrary recursion is unnecessary
 // complexity.
+//
+// Not recursing is safe here because the failure mode is withholding the waiver,
+// never granting it. Nested wrappers cannot be used to smuggle a duty past this
+// function into a free transaction. NetworkDutySignerDecorator does descend
+// (see checkMessage), because there the failure mode is admitting a tx.
 func isNetworkDuty(ctx sdk.Context, msg sdk.Msg, ik *inferencemodulekeeper.Keeper) bool {
 	if execMsg, ok := msg.(*authztypes.MsgExec); ok {
 		if ik == nil {

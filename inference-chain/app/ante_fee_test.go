@@ -394,6 +394,15 @@ func TestIsNetworkDuty_ExemptTypeAloneIsNotEnough(t *testing.T) {
 		"the type itself is still a duty type")
 }
 
+// TestMaxMsgExecNestingDepthMirrored pins the nesting limit to the copy in
+// ante_network_duty_checktx_test.go, which lives in package app_test and cannot
+// see the unexported constant. Without this, raising the limit here would
+// silently stop that package's depth test from exceeding it.
+func TestMaxMsgExecNestingDepthMirrored(t *testing.T) {
+	require.Equal(t, 5, maxMsgExecNestingDepth,
+		"update dutyMaxExecNesting in ante_network_duty_checktx_test.go to match")
+}
+
 // --- GonkaFeeChecker tests ---
 
 func TestGonkaFeeChecker_SufficientFee(t *testing.T) {

@@ -22,6 +22,11 @@ import (
 // logic can mutate grant state, which must not happen during CheckTx. Existence
 // plus expiry is the strongest check available without side effects, and
 // DeliverTx still runs the full authz dispatch.
+//
+// Passing the ante handler's sdk.Context directly is correct: sdk.Context
+// implements context.Context, and UnwrapSDKContext type-asserts it back before
+// falling back to the SdkContextKey value, so the query reaches the same store
+// the ante chain is reading. No WithContext wrapping is needed.
 func (k Keeper) HasGrantForMsg(ctx sdk.Context, granter, grantee, msgTypeURL string) bool {
 	if granter == "" || grantee == "" {
 		return false

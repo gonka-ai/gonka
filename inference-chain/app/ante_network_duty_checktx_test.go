@@ -42,6 +42,11 @@ type dutyCheckTxFixture struct {
 
 const dutyEpochIndex = uint64(400)
 
+// dutyMaxExecNesting mirrors the unexported app.maxMsgExecNestingDepth, which
+// this external test package cannot reach. TestMaxMsgExecNestingDepthMirrored in
+// ante_fee_test.go (package app) pins the two together.
+const dutyMaxExecNesting = 5
+
 func setupDutyCheckTx(t *testing.T) dutyCheckTxFixture {
 	t.Helper()
 	testApp := createTestApp(t)
@@ -197,6 +202,88 @@ func TestNetworkDuty_CheckTx_MsgExec_AdmitsGrantedWarmKey(t *testing.T) {
 
 	require.Equal(t, uint32(0), resp.Code,
 		"granted warm key acting for a registered participant must be admitted; log=%q", resp.Log)
+}
+
+// TestNetworkDuty_CheckTx_NestedMsgExec_RejectsBrokenGrantChain closes the
+// nesting hole: unwrapping only one MsgExec level would let an attacker wrap a
+// duty inside a MsgExec naming the *legitimate* warm key, so the inner grant
+// check passes on a grant the attacker does not hold. The decorator therefore
+// walks the whole chain, requiring a grant at each level as authz DispatchActions
+// does.
+func TestNetworkDuty_CheckTx_NestedMsgExec_RejectsBrokenGrantChain(t *testing.T) {
+	f := setupDutyCheckTx(t)
+
+	// Inner: grantee (who does hold a grant from participant) executing the
+	// participant's claim. Outer: outsider executing that MsgExec, with no
+	// grant from grantee for MsgExec.
+	inner := authztypes.NewMsgExec(f.grantee, []sdk.Msg{claimRewardsFor(f.participant)})
+	outer := authztypes.NewMsgExec(f.outsider, []sdk.Msg{&inner})
+
+	resp := runDutyCheckTx(t, f, []sdk.Msg{&outer}, f.outsider, f.outsiderPriv)
+
+	require.NotEqual(t, uint32(0), resp.Code,
+		"nested MsgExec must not bypass the duty signer check (got code=0 log=%q)", resp.Log)
+	require.True(t,
+		strings.Contains(strings.ToLower(resp.Log), strings.ToLower(authztypes.ErrNoAuthorizationFound.Error())),
+		"log must report the missing grant for the MsgExec wrapper; got code=%d log=%q", resp.Code, resp.Log)
+}
+
+// TestNetworkDuty_CheckTx_NestedMsgExec_AdmitsCompleteGrantChain guards against
+// over-rejection of nesting: when every link in the chain is granted, the tx is
+// admitted. Without this the nesting fix could become a liveness bug for any
+// future delegation topology.
+func TestNetworkDuty_CheckTx_NestedMsgExec_AdmitsCompleteGrantChain(t *testing.T) {
+	f := setupDutyCheckTx(t)
+
+	// Complete the chain: outsider gets a grant from grantee for MsgExec, so
+	// outsider(MsgExec) -> grantee(MsgExec) -> participant(claim) is authorized
+	// end to end.
+	ctx := f.testApp.NewUncachedContext(false, cmtproto.Header{
+		Height:  f.testApp.LastBlockHeight(),
+		ChainID: TallyTestChainID,
+		Time:    time.Now().UTC(),
+	})
+	expiry := time.Now().UTC().Add(365 * 24 * time.Hour)
+	require.NoError(t, f.testApp.AuthzKeeper.SaveGrant(
+		ctx, f.outsider, f.grantee,
+		authztypes.NewGenericAuthorization(sdk.MsgTypeURL(&authztypes.MsgExec{})),
+		&expiry,
+	))
+	_, err := f.testApp.FinalizeBlock(&abci.RequestFinalizeBlock{
+		Height: f.testApp.LastBlockHeight() + 1,
+		Time:   time.Now().UTC(),
+	})
+	require.NoError(t, err)
+	_, err = f.testApp.Commit()
+	require.NoError(t, err)
+
+	inner := authztypes.NewMsgExec(f.grantee, []sdk.Msg{claimRewardsFor(f.participant)})
+	outer := authztypes.NewMsgExec(f.outsider, []sdk.Msg{&inner})
+
+	resp := runDutyCheckTx(t, f, []sdk.Msg{&outer}, f.outsider, f.outsiderPriv)
+
+	require.Equal(t, uint32(0), resp.Code,
+		"a fully granted nested chain must be admitted; log=%q", resp.Log)
+}
+
+// TestNetworkDuty_CheckTx_NestedMsgExec_RejectsPastDepthLimit asserts the
+// unwrapping bound. Ante work in CheckTx is not gas-metered, so an unbounded
+// walk would itself be a spam vector; past the limit the tree cannot be
+// inspected, so it is rejected rather than admitted.
+func TestNetworkDuty_CheckTx_NestedMsgExec_RejectsPastDepthLimit(t *testing.T) {
+	f := setupDutyCheckTx(t)
+
+	// Build a wrapper chain deeper than the inspection limit around a duty.
+	var msg sdk.Msg = claimRewardsFor(f.participant)
+	for i := 0; i <= dutyMaxExecNesting; i++ {
+		wrapped := authztypes.NewMsgExec(f.outsider, []sdk.Msg{msg})
+		msg = &wrapped
+	}
+
+	resp := runDutyCheckTx(t, f, []sdk.Msg{msg}, f.outsider, f.outsiderPriv)
+
+	require.NotEqual(t, uint32(0), resp.Code,
+		"MsgExec nested past the inspection limit must be rejected (got code=0 log=%q)", resp.Log)
 }
 
 // TestNetworkDuty_CheckTx_NonDutyUnaffected confirms the decorator is scoped to
