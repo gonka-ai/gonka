@@ -37,6 +37,8 @@ make citest-stack                 # all core stack behavior tests
 make citest-validation-lease-race # validation lease race only
 make citest-versiond-rolling-update
 make citest-escrow-longpoll       # escrow long-poll warm (rebuilds devshardd)
+make citest-force-upstream-streaming  # always-stream + aggregate spill (see streaming-ha-scenarios.md)
+make citest-attempt-reconnect         # same-nonce reconnect (rebuilds v2/v5)
 ```
 
 Or run a single scenario:
@@ -379,12 +381,16 @@ persistence across the multi-host topology, not only mock-chain or gateway in-me
 
 | Suite | Command | Scenarios |
 |-------|---------|-----------|
+| Streaming HA (force-upstream) | `make citest-force-upstream-streaming` | Client shape / usage / logprobs / cache / aggregate spill — [`streaming-ha-scenarios.md`](./streaming-ha-scenarios.md) |
+| Same-nonce reconnect | `make citest-attempt-reconnect` | Admin + v2 gate + v5 mid-stream resume — [`attempt-reconnect-scenarios.md`](./attempt-reconnect-scenarios.md) |
 | gRPC transport | `make citest-grpc-transport` | G1–G4 ✅ ([`chain-transport-consolidation.md`](./chain-transport-consolidation.md)) |
 | Adversarial | `make citest-adversarial` | A1–A4 (fault injection on mock-openai / mock-chain) |
 | Observability | `make citest-observability` | O1 Jaeger + Loki + Prometheus smoke |
 | Gateway smoke | `TESTENV_GATEWAY_SMOKE=1` | Phase 7 wiring without full citest tag |
 
 See [`README.md`](../README.md) for adversarial and observability detail.
+Design overview that points here:
+[`../../docs/gateway-streaming-ha-overview.md`](../../docs/gateway-streaming-ha-overview.md) §7.
 
 ## G1 — gRPC escrow create ✅
 
@@ -513,7 +519,8 @@ pattern and **no `t.Parallel()`**.
 - They are grouped into separate Makefile targets (`citest-stack`,
   `citest-validation-lease-race`, `citest-versiond-rolling-update`,
   `citest-adversarial`, `citest-grpc-transport`, `citest-observability`,
-  `citest-escrow-longpoll`) so CI can fan them out to **separate runners** — the
+  `citest-escrow-longpoll`, `citest-force-upstream-streaming`,
+  `citest-attempt-reconnect`) so CI can fan them out to **separate runners** — the
   supported form of parallelism today. CI enumerates these targets automatically
   with `make list-citest-targets` (excludes the `citest-images` /
   `citest-stack-build` helpers) and builds a GitHub Actions matrix from the list,

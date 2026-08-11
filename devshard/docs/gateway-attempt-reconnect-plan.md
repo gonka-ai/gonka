@@ -2,6 +2,7 @@
 
 Status: core landed (Steps 1–5e + 5g phase 1 + 7); deferred Steps 5f / 5g phase 2 / 6 / 8–10.
 Overview (flows / timeouts / observability / e2e): [gateway-streaming-ha-overview.md](./gateway-streaming-ha-overview.md)  
+**Citest scenarios / how to run:** [../testenv/docs/attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md) (`make citest-attempt-reconnect`).  
 Design (no steps): [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md)
 Parent: [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) — Step 4 references this
 document. Requires that plan's Step 2 (well-formed streamed replay) and Step 3 (independent ML
@@ -1310,6 +1311,8 @@ service). The injector lives in `host/livestream_fault_testenvci.go` behind
 `//go:build testenvci` and is compiled out of release binaries, so the v5 leg builds
 with `DEVSHARD_BUILD_TAGS=testenvci`; `host/livestream_fault.go` is the production
 no-op. Run target: `make -C devshard/testenv citest-attempt-reconnect`.
+Scenario listing, coverage matrix, and run instructions:
+[../testenv/docs/attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md).
 
 Citest coverage landed:
 - `TestAttemptReconnect_AdminEnables` — admin knobs apply in-process
@@ -1665,6 +1668,8 @@ verified to fail without them.
 
 ## Related
 
+- [../testenv/docs/attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md) —
+  citest scenario index + how to run `citest-attempt-reconnect`
 - [gateway-streaming-ha-overview.md](./gateway-streaming-ha-overview.md) — overview (flows /
   timeouts / observability / e2e)
 - [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) — consolidated design

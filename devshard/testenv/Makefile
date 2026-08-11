@@ -73,7 +73,8 @@ dev-logs: ## Follow dev overlay logs.
 .PHONY: citest-images citest-stack citest-stack-build list-citest-targets
 .PHONY: citest-validation-lease-race citest-escrow-longpoll
 .PHONY: citest-versiond-rolling-update citest-adversarial
-.PHONY: citest-observability citest-grpc-transport citest-attempt-reconnect test-gateway-smoke
+.PHONY: citest-observability citest-grpc-transport citest-attempt-reconnect
+.PHONY: citest-force-upstream-streaming test-gateway-smoke
 
 # citest-images and citest-stack-build are build/helper rules, not standalone
 # suites, so they are excluded from the auto-discovered CI matrix.
@@ -116,6 +117,9 @@ citest-attempt-reconnect: ## Same-nonce reconnect citest (admin + v2 protocol ga
 	$(MAKE) build-devshardd DEVSHARD_VERSION=v5 DEVSHARD_BUILD_TAGS=testenvci
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestAttemptReconnect_V5MidStreamDetachResumesSameNonce' -count=1 -v -timeout 30m
 	$(MAKE) build-devshardd DEVSHARD_VERSION=v2
+
+citest-force-upstream-streaming: citest-images ## Force-upstream streaming + aggregate spill citest (gates Step 14).
+	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestGatewayForcedStream|TestGatewayAggregateSpill|TestGatewayAggregateOversize' -count=1 -v -timeout 60m
 
 citest-grpc-transport: citest-images ## Phase 12b G1–G4 gRPC-only gateway citest (see docs/chain-transport-consolidation.md).
 	TESTENV_CITEST=1 go test -tags=testenvci ./citest/ -run 'TestG1_|TestG2_|TestG3_' -count=1 -v -timeout 30m

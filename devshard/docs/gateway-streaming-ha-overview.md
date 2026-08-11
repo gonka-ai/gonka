@@ -6,7 +6,8 @@
 [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) (design),  
 [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) (always-stream steps),  
 [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) (reconnect steps),  
-[spool-shared-library.md](./spool-shared-library.md) (shared scratch spool APIs & practices; [migration plan](./spool-shared-library-plan.md)).
+[spool-shared-library.md](./spool-shared-library.md) (shared scratch spool APIs & practices; [migration plan](./spool-shared-library-plan.md)).  
+**Citest scenarios:** [../testenv/docs/streaming-ha-scenarios.md](../testenv/docs/streaming-ha-scenarios.md) (`citest-force-upstream-streaming`), [../testenv/docs/attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md) (`citest-attempt-reconnect`).
 
 ---
 
@@ -34,7 +35,8 @@ Two complementary motivations:
 | Same-nonce reconnect, winner continuity, spool-backed LiveStream resume tiers | Done (reconnect Steps 1–5e); **default-off**, gated to protocol ≥ `v5` |
 | Gateway SSE event size cap (1 MiB) | Done (parent Step 12) |
 | Force upstream `stream` / client aggregator / intent / Step 11 escalation | Done (parent Steps 5–11; `InterChunkStallTimeout` wiring still a follow-up) |
-| Citest e2e (admin + v2 gate + v5 mid-stream resume) | Done (reconnect Step 7; `make citest-attempt-reconnect`) |
+| Citest e2e — same-nonce reconnect (admin + v2 gate + v5 mid-stream resume) | Done (reconnect Step 7; `make citest-attempt-reconnect`) — [scenarios](../testenv/docs/attempt-reconnect-scenarios.md) |
+| Citest e2e — force-upstream shape / usage / logprobs / cache / spill | Done (always-stream Step 14 gate; `make citest-force-upstream-streaming`) — [scenarios](../testenv/docs/streaming-ha-scenarios.md#force-upstream-streaming-make-citest-force-upstream-streaming) |
 | Soft-signal persist, full Prometheus/OTel | **Deferred** (reconnect Steps 6 / 8 / 5f–5g) |
 | Cross-instance `devshardd` HA / ML reattach on host reboot | **Deferred** (reconnect Step 10; needs separated mock MLNodes from `ak/devshard-observability-e2e` + MLNode keep-alive) |
 
@@ -358,26 +360,26 @@ Carrier: SSE **comment** lines injected at the subscriber writer (`: devshard-ts
 
 ---
 
-## 7. E2E scenarios — connection reattempts (`testenv` / citest)
+## 7. E2E scenarios (`testenv` / citest)
 
-**Status:** Citest landed (`TestAttemptReconnect_*`, `make citest-attempt-reconnect`). Unit coverage in `redundancy_reconnect_test.go` and host `livestream_*_test.go`. Soft-signal persist / full Prometheus+OTel / default-on soak remain deferred in the reconnect plan.
+Scenario tables, Makefile targets, and the landed ↔ still-planned matrix live in
+**[testenv/docs/streaming-ha-scenarios.md](../testenv/docs/streaming-ha-scenarios.md)**.
 
-| # | Scenario | Assert |
+| Suite | Command | Status |
 |---|---|---|
-| 1 | Mid-stream drop, **v5**, reconnect on | One complete non-duplicated completion; exactly one `MsgFinishInference`. Variants: resume from **storage** after drain+forget; cursor **inside** the RAM window; cursor **older** than the window → served from the spool, byte-identical; spool disabled → clean escalate |
-| 2 | Mid-stream drop, **v4**, reconnect on | No same-nonce resend; today’s escalate / `winner_failed_after_content` contract |
-| 3 | Host permanently down after drop, v5 | Escalation after budget; outcome matches today’s failure contract |
-| 4 | Streaming **and** non-streaming clients, fixed seed | Resumed vs uninterrupted agree on aggregated **content + usage** (not raw bytes — chunk ids rewrite) |
-| 5 | Helpers | `killableClient` / `streamContentThenErrClient`; `mockopenai` `PartialStream` |
-| 6 | **R4 winner continuity** | A delivers prefix and drops; B races ahead while A resumes slowly → client sees **only A**; B is loser; one blip on A; routing unchanged |
-| 7 | **Second drop after resume** | Ladder is one-shot per nonce — no fresh 1s window; lands in `winner_failed_after_content` |
-| 8 | **Reconnect while client already gone** | Nonce finishes once; delivered prefix does **not** advance over swallowed post-disconnect bytes |
+| Force-upstream streaming + aggregate spill | `make -C devshard/testenv citest-force-upstream-streaming` | Done (shape / usage / logprobs / differential / cache / flag flip / spill / oversize) |
+| Same-nonce reconnect | `make -C devshard/testenv citest-attempt-reconnect` | Done (admin + v2 gate + v5 mid-stream resume); more variants still planned — [attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md) |
+| Escalation under always-stream | unit: `force_upstream_escalation_test.go` | Done |
+| SSE event size cap | unit: `transport/` | Done |
+| Soft-signal persist / Prometheus+OTel / default-on soak | — | Deferred (reconnect Steps 6 / 8 / 5f–5g) |
+| Cross-instance host HA / ML reattach | — | Deferred (reconnect Step 10; needs mock-ML split + MLNode keep-alive) |
 
-Suggested layout: `devshard/testenv/citest` + `devshard/cmd/devshardctl/e2e`, with stacks stamped to protocol `v5` via version-name harness (do not fake the gate by only flipping `AttemptReconnectEnabled`).
+Stacks must be stamped to protocol `v5` via the version-name harness for resume
+tests — do not fake the gate by only flipping `AttemptReconnectEnabled`.
 
 ### 7.1 Cross-instance host HA / ML reattach (reconnect plan Step 10)
 
-Same-process reconnect (above) is not enough when the sticky `devshardd` **reboots** or
+Same-process reconnect is not enough when the sticky `devshardd` **reboots** or
 failover lands on another HA replica: live state is process-local, and today tearing down
 the host→ML connection aborts generation. Multi-instance topology + shared Postgres already
 exist ([high-availability-architecture.md](./high-availability-architecture.md)); HA citest
@@ -386,28 +388,9 @@ disconnect** so another `devshardd` can reattach to the same job.
 
 **Defer e2e until after `ak/devshard-observability-e2e` merges** — that branch separates mock
 ML nodes from `devshardd`, which is required to reboot a host without killing the stream
-source. See [issue #1466](https://github.com/gonka-ai/gonka/issues/1466) §4 and reconnect
-plan Step 10 (scenarios HA1–HA4).
-
----
-
-## 8. E2E scenarios — always-streaming design (`testenv` / citest)
-
-**Status:** Gateway force/aggregate and Step 11 escalation unification are in; remaining rows are soak / reconnect / e2e acceptance.
-
-| # | Scenario | Assert |
-|---|---|---|
-| A1 | `stream: false` client + force-upstream on | Client gets `application/json` `chat.completion`; mock ML saw a **streaming** request; usage present |
-| A2 | `stream: true` client + force-upstream on | SSE unchanged; no trailing usage chunk unless client asked `include_usage` |
-| A3 | Differential | Aggregated JSON matches mock’s own non-streaming JSON field-for-field (fixed seed) |
-| A4 | Cache isolation | Identical normalized bodies, different client stream intent → different cache keys / shapes |
-| A5 | Escalation under always-stream ✅ | Dead host / no first token for a `stream: false` client escalates on **first-token** / `attempt_failed`, not reduced-`max_tokens` (`force_upstream_escalation_test.go`) |
-| A6 | Mid-stream disconnect + drain | Host publishes `MsgFinishInference` with non-zero input tokens; same-nonce reconnect replays full body |
-| A7 | Streamed replay format | Reconnect to completed streamed inference parses as a normal chunk sequence (not `{"events":[…]}` as one line) |
-| A8 | SSE oversize | Malicious unterminated `data:` aborts with `ErrSSEEventTooLarge` under limit+ε; legal near-limit chunk still parses |
-| A9 | Soak / dashboards | TTFT populated for essentially all chat; no `response_timeout_reduced_max_tokens`; missing-usage and sse-oversize counters stay at zero outside fault tests |
-
-Existing unedited e2e that must keep passing once the aggregator lands: `TestE2E_NonStreamingHappyPath`, shape/cache isolation tests, streaming suites, `non_streaming_corner_cases_test.go`.
+source. See [issue #1466](https://github.com/gonka-ai/gonka/issues/1466) §4, reconnect
+plan Step 10 (HA1–HA4), and the deferred rows in
+[attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md#plan-scenarios--coverage).
 
 ---
 
@@ -415,6 +398,9 @@ Existing unedited e2e that must keep passing once the aggregator lands: `TestE2E
 
 | Doc | Role |
 |---|---|
+| [../testenv/docs/streaming-ha-scenarios.md](../testenv/docs/streaming-ha-scenarios.md) | Citest scenario index for force-upstream streaming |
+| [../testenv/docs/attempt-reconnect-scenarios.md](../testenv/docs/attempt-reconnect-scenarios.md) | Citest scenario index + how to run same-nonce reconnect |
+| [../testenv/docs/scenarios.md](../testenv/docs/scenarios.md) | Core stack citest index |
 | [proposals/always-stream-upstream.md](./proposals/always-stream-upstream.md) | Consolidated design (always-stream + reconnect) |
 | [gateway-always-stream-upstream-plan.md](./gateway-always-stream-upstream-plan.md) | Always-stream implementation steps / rollout |
 | [gateway-attempt-reconnect-plan.md](./gateway-attempt-reconnect-plan.md) | Reconnect + LiveStream Step 5 detail; Step 10 cross-instance HA |

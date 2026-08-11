@@ -26,10 +26,19 @@ func GatewayChatClient() *http.Client {
 
 // ChatCompletionRequest is a minimal OpenAI chat payload for gateway citest.
 type ChatCompletionRequest struct {
-	Model     string        `json:"model"`
-	Messages  []ChatMessage `json:"messages"`
-	MaxTokens int           `json:"max_tokens,omitempty"`
-	Stream    bool          `json:"stream,omitempty"`
+	Model         string              `json:"model"`
+	Messages      []ChatMessage       `json:"messages"`
+	MaxTokens     int                 `json:"max_tokens,omitempty"`
+	Stream        bool                `json:"stream,omitempty"`
+	StreamOptions *ChatStreamOptions  `json:"stream_options,omitempty"`
+	Logprobs      bool                `json:"logprobs,omitempty"`
+	TopLogprobs   int                 `json:"top_logprobs,omitempty"`
+	Seed          *int                `json:"seed,omitempty"`
+}
+
+// ChatStreamOptions is the OpenAI stream_options object.
+type ChatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 // ChatMessage is one chat message.
@@ -40,14 +49,25 @@ type ChatMessage struct {
 
 // ChatCompletionResponse is the non-stream OpenAI-shaped JSON body.
 type ChatCompletionResponse struct {
+	Object  string `json:"object"`
+	Model   string `json:"model"`
 	Choices []struct {
 		Message struct {
 			Content string `json:"content"`
 			Role    string `json:"role"`
 		} `json:"message"`
-		FinishReason string `json:"finish_reason"`
+		FinishReason string          `json:"finish_reason"`
+		Logprobs     json.RawMessage `json:"logprobs"`
 	} `json:"choices"`
-	Model string `json:"model"`
+	Usage map[string]any `json:"usage"`
+}
+
+// GatewayChatHTTPResult is the raw HTTP response from /v1/chat/completions.
+type GatewayChatHTTPResult struct {
+	Status      int
+	ContentType string
+	Body        []byte
+	Header      http.Header
 }
 
 // PostGatewayChatCompletion posts non-stream /v1/chat/completions and requires HTTP 200.
@@ -226,6 +246,83 @@ func TryPostGatewayChatCompletionStream(client *http.Client, gatewayURL, adminAP
 		return content, fmt.Errorf("stream assembled empty content")
 	}
 	return content, nil
+}
+
+// PostGatewayChatHTTP posts /v1/chat/completions and returns status, headers, and body.
+// Unlike PostGatewayChatCompletion it does not require HTTP 200.
+func PostGatewayChatHTTP(t *testing.T, client *http.Client, gatewayURL, adminAPIKey string, req ChatCompletionRequest) GatewayChatHTTPResult {
+	t.Helper()
+	if client == nil {
+		client = GatewayChatClient()
+	}
+	data, err := json.Marshal(req)
+	require.NoError(t, err)
+	httpReq, err := http.NewRequest(http.MethodPost, gatewayURL+"/v1/chat/completions", bytes.NewReader(data))
+	require.NoError(t, err)
+	httpReq.Header.Set("Content-Type", "application/json")
+	if req.Stream {
+		httpReq.Header.Set("Accept", "text/event-stream")
+	}
+	if adminAPIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+adminAPIKey)
+	}
+	resp, err := client.Do(httpReq)
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	return GatewayChatHTTPResult{
+		Status:      resp.StatusCode,
+		ContentType: resp.Header.Get("Content-Type"),
+		Body:        body,
+		Header:      resp.Header.Clone(),
+	}
+}
+
+// ParseSSEDataChunks returns JSON payloads from SSE data: lines (excluding [DONE]).
+func ParseSSEDataChunks(body []byte) ([]map[string]any, bool) {
+	var chunks []map[string]any
+	sawDone := false
+	scanner := bufio.NewScanner(bytes.NewReader(body))
+	// Large SSE events (padded mock responses) can exceed the default 64 KiB buffer.
+	scanner.Buffer(make([]byte, 0, 64*1024), 2*1024*1024)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "data: [DONE]" {
+			sawDone = true
+			continue
+		}
+		if !strings.HasPrefix(line, "data: ") {
+			continue
+		}
+		payload := strings.TrimPrefix(line, "data: ")
+		var chunk map[string]any
+		if err := json.Unmarshal([]byte(payload), &chunk); err != nil {
+			continue
+		}
+		chunks = append(chunks, chunk)
+	}
+	return chunks, sawDone
+}
+
+// AssembleSSEContent concatenates delta.content from SSE chunks.
+func AssembleSSEContent(chunks []map[string]any) string {
+	var assembled strings.Builder
+	for _, chunk := range chunks {
+		choices, _ := chunk["choices"].([]any)
+		if len(choices) == 0 {
+			continue
+		}
+		choice, _ := choices[0].(map[string]any)
+		delta, _ := choice["delta"].(map[string]any)
+		if delta == nil {
+			continue
+		}
+		if s, ok := delta["content"].(string); ok {
+			assembled.WriteString(s)
+		}
+	}
+	return assembled.String()
 }
 
 func postGatewayJSON(client *http.Client, url, adminAPIKey string, payload, dest any) error {
