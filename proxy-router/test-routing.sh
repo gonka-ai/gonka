@@ -416,6 +416,10 @@ proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" \
 docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \
     /etc/haproxy/version-router.map | grep -qx v9 \
     || fail "top distributor runtime catalog does not report v9"
+if docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \
+    /etc/haproxy/version-router.map | grep -q '^version='; then
+    fail "top distributor diagnostics exposed readiness projection keys as versions"
+fi
 [[ $(docker inspect -f '{{.Id}}' gonka-pr-proxy) == "$proxy_id" ]] \
     || fail "learning v9 replaced the top distributor"
 [[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b)$ ]] \

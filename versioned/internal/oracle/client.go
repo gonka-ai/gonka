@@ -7,15 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"path/filepath"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 type VersionConfig struct {
-	Versions []Version `json:"versions"`
+	Schema      int       `json:"schema"`
+	Initialized bool      `json:"initialized"`
+	Revision    int64     `json:"revision"`
+	Versions    []Version `json:"versions"`
 }
 
 type Version struct {
@@ -78,10 +78,23 @@ func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
 		return VersionConfig{}, fmt.Errorf("decode response: %w", err)
 	}
-	if err := validateVersions(cfg.Versions); err != nil {
+	if err := validateCatalog(cfg); err != nil {
 		return VersionConfig{}, err
 	}
 	return cfg, nil
+}
+
+func validateCatalog(cfg VersionConfig) error {
+	if cfg.Schema != 1 {
+		return fmt.Errorf("unsupported oracle catalog schema %d", cfg.Schema)
+	}
+	if !cfg.Initialized {
+		return fmt.Errorf("oracle catalog is not initialized")
+	}
+	if cfg.Revision < 0 {
+		return fmt.Errorf("oracle catalog revision must be non-negative, got %d", cfg.Revision)
+	}
+	return validateVersions(cfg.Versions)
 }
 
 func validateVersions(versions []Version) error {
@@ -112,16 +125,19 @@ func validateSHA256(versionName, hash string) (string, error) {
 }
 
 func validVersionName(name string) bool {
-	if name == "" || name == "." || name == ".." || !utf8.ValidString(name) {
+	if len(name) == 0 || len(name) > 64 || !asciiAlphaNumeric(name[0]) {
 		return false
 	}
-	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\?#%"'`) {
-		return false
-	}
-	for _, r := range name {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
+	for i := 1; i < len(name); i++ {
+		if !asciiAlphaNumeric(name[i]) && !strings.ContainsRune("._+~-", rune(name[i])) {
 			return false
 		}
 	}
-	return filepath.Base(name) == name
+	return true
+}
+
+func asciiAlphaNumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9'
 }

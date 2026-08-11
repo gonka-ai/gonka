@@ -28,7 +28,7 @@ TEMPLATE="${VERSIOND_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 OUT="${VERSIOND_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 MAP="${VERSIOND_ROUTER_NON_HA_MAP:-/etc/haproxy/non_ha.map}"
 VERSIONS_MAP="${VERSIOND_ROUTER_VERSIONS_MAP:-/etc/haproxy/versions.map}"
-READY_VERSIONS_MAP="${VERSIOND_ROUTER_READY_VERSIONS_MAP:-${OUT}.ready-versions.map}"
+READY_VERSIONS_MAP="$VERSIONS_MAP"
 SLOT_MAP="${VERSIOND_ROUTER_SLOT_MAP:-${OUT}.version-slots.map}"
 READY_RULES="${VERSIOND_ROUTER_READY_RULES:-${OUT}.ready.rules}"
 POOL_TEMPLATE="${VERSIOND_ROUTER_POOL_TEMPLATE:-/etc/haproxy/pool-backend.cfg.template}"
@@ -197,14 +197,11 @@ safe_id() {
 # Refuse names that cannot be represented as the literal path segment used for
 # routing. This applies equally to HA and legacy declarations.
 validate_version() {
-    case "$1" in
-        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
-            echo "versiond-router: version '$1' cannot be routed: a path segment" >&2
-            echo "  cannot carry / ? # % or whitespace literally, so the request path" >&2
-            echo "  would not match the name governance approved" >&2
-            exit 1
-            ;;
-    esac
+	if ! printf '%s\n' "$1" | LC_ALL=C grep -Eq \
+		'^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'; then
+		echo "versiond-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
+		exit 1
+	fi
 }
 
 # Return an HAProxy-safe backend name without losing the version's identity.
@@ -245,7 +242,6 @@ render_backend() {
 
 : > "$MAP"
 : > "$VERSIONS_MAP"
-: > "$READY_VERSIONS_MAP"
 : > "$SLOT_MAP"
 POOL_BACKENDS_FILE="$(mktemp)"
 STATIC_VERSIONS_FILE="$(mktemp)"
@@ -500,8 +496,7 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_COMPONENT=versiond-router \
         ROUTING_CATALOG_URL="$CATALOG_URL" \
         ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
-        ROUTING_CATALOG_VERSION_MAP="$VERSIONS_MAP" \
-        ROUTING_CATALOG_READY_MAP="$READY_VERSIONS_MAP" \
+        ROUTING_CATALOG_PROJECTION_MAP="$VERSIONS_MAP" \
         ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
         ROUTING_CATALOG_BACKEND_PREFIX=versiond_dynamic_ \
         ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \

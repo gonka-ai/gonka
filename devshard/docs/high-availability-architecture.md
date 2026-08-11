@@ -380,10 +380,22 @@ different databases.
 Therefore:
 
 Protocol version names are validated at the governance boundary and use the
-same grammar in `versiond` and both router tiers: a non-empty basename other
-than `.` or `..`, with no whitespace, control bytes, path separators, URL
-delimiters (`?`, `#`, `%`) or quotes. Names such as `v4+hotfix` and
-`v9;hotfix` remain valid.
+same ASCII grammar in `versiond` and both router tiers:
+`[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}`. This is the common subset that can be
+used unchanged as a URL path segment, an HAProxy map key, and a local binary
+name. Names such as `v4+hotfix` remain valid; Unicode, commas, semicolons, path
+delimiters, quotes, whitespace, and control characters are rejected before
+governance can publish them.
+
+Each router stores data routing (`v5`) and admission (`version=v5`) as keys in
+one HAProxy map. A Runtime API transaction publishes both keys together, so a
+parent router cannot admit a child router before that child can route the same
+version.
+
+Each `versiond` also keeps the last accepted full catalog under its own
+`VERSIOND_DATA_DIR`. The snapshot is fsynced before process reconciliation.
+After restart, lower revisions, in-place changes and version removals are
+rejected, so a stale DAPI replica cannot roll children back or remove them.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

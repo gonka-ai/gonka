@@ -6,7 +6,7 @@ TEMPLATE="${PROXY_ROUTER_TEMPLATE:-/etc/haproxy/haproxy.cfg.template}"
 BACKEND_TEMPLATE="${PROXY_ROUTER_BACKEND_TEMPLATE:-/etc/haproxy/versiond-backend.cfg.template}"
 OUT="${PROXY_ROUTER_OUT:-/etc/haproxy/haproxy.cfg}"
 VERSION_MAP="${PROXY_ROUTER_VERSION_MAP:-/etc/haproxy/version-router.map}"
-READY_VERSION_MAP="${PROXY_ROUTER_READY_VERSION_MAP:-${OUT}.ready-versions.map}"
+READY_VERSION_MAP="$VERSION_MAP"
 SLOT_MAP="${PROXY_ROUTER_SLOT_MAP:-${OUT}.version-slots.map}"
 HAPROXY_BIN="${HAPROXY_BIN:-haproxy}"
 
@@ -181,12 +181,11 @@ safe_id() {
 }
 
 validate_version() {
-    case "$1" in
-        *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
-            echo "proxy-router: version '$1' cannot be represented as a path segment" >&2
-            exit 1
-            ;;
-    esac
+	if ! printf '%s\n' "$1" | LC_ALL=C grep -Eq \
+		'^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'; then
+		echo "proxy-router: invalid version name '$1'; expected ASCII [A-Za-z0-9][A-Za-z0-9._+~-]{0,63}" >&2
+		exit 1
+	fi
 }
 
 backend_name() {
@@ -225,7 +224,6 @@ else
     printf '%s\n' '# Read-only routing catalog bridge is disabled.' > "$CATALOG_PROXY_FILE"
 fi
 : > "$VERSION_MAP"
-: > "$READY_VERSION_MAP"
 : > "$SLOT_MAP"
 : > "$BACKENDS_FILE"
 : > "$VERSION_READY_RULES_FILE"
@@ -423,8 +421,7 @@ run_catalog_reconciler() {
         ROUTING_CATALOG_COMPONENT=proxy-router \
         ROUTING_CATALOG_URL="$CATALOG_URL" \
         ROUTING_CATALOG_RUNTIME_SOCKET=/var/run/haproxy/reconciler.sock \
-        ROUTING_CATALOG_VERSION_MAP="$VERSION_MAP" \
-        ROUTING_CATALOG_READY_MAP="$READY_VERSION_MAP" \
+        ROUTING_CATALOG_PROJECTION_MAP="$VERSION_MAP" \
         ROUTING_CATALOG_SLOT_MAP="$SLOT_MAP" \
         ROUTING_CATALOG_BACKEND_PREFIX=versiond_routers_dynamic_ \
         ROUTING_CATALOG_BACKEND_CAPACITY="$VERSION_CAPACITY" \

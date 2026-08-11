@@ -44,7 +44,10 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 }
 
 func validateApprovedVersionProgression(current, proposed *types.DevshardEscrowParams) error {
-	if current == nil || proposed == nil {
+	if proposed == nil {
+		return fmt.Errorf("devshard escrow params cannot be removed")
+	}
+	if current == nil {
 		return nil
 	}
 	proposedNames := make(map[string]struct{}, len(proposed.ApprovedVersions))

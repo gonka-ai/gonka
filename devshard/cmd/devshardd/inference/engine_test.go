@@ -1,7 +1,9 @@
 package inference
 
 import (
+	"bufio"
 	"context"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
@@ -102,6 +104,100 @@ func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "devshard-test-key", gotKey)
 	require.True(t, receivedAfterDispatch.Load(), "dispatch must be durable before the server receives a request")
+}
+
+func TestExecuteMLRequestDoesNotReplayDispatchedPOST(t *testing.T) {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+
+	var posts atomic.Int32
+	serverDone := make(chan error, 1)
+	go func() {
+		conn, acceptErr := listener.Accept()
+		if acceptErr != nil {
+			serverDone <- acceptErr
+			return
+		}
+		reader := bufio.NewReader(conn)
+		warmup, readErr := http.ReadRequest(reader)
+		if readErr != nil {
+			_ = conn.Close()
+			serverDone <- fmt.Errorf("read warmup request: %w", readErr)
+			return
+		}
+		_, _ = io.Copy(io.Discard, warmup.Body)
+		_ = warmup.Body.Close()
+		if warmup.Method != http.MethodGet {
+			_ = conn.Close()
+			serverDone <- fmt.Errorf("warmup method = %s, want GET", warmup.Method)
+			return
+		}
+		_, _ = io.WriteString(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
+
+		request, readErr := http.ReadRequest(reader)
+		if readErr != nil {
+			_ = conn.Close()
+			serverDone <- fmt.Errorf("read dispatched request: %w", readErr)
+			return
+		}
+		_, _ = io.Copy(io.Discard, request.Body)
+		_ = request.Body.Close()
+		if request.Method != http.MethodPost {
+			_ = conn.Close()
+			serverDone <- fmt.Errorf("dispatched method = %s, want POST", request.Method)
+			return
+		}
+		posts.Add(1)
+		// The side effect happened, but no response byte reached the client.
+		_ = conn.Close()
+
+		// A replayable request makes net/http open a second connection here. The
+		// fixed request returns to the caller, which closes the listener instead.
+		retryConn, retryErr := listener.Accept()
+		if retryErr != nil {
+			serverDone <- nil
+			return
+		}
+		defer retryConn.Close()
+		retry, retryErr := http.ReadRequest(bufio.NewReader(retryConn))
+		if retryErr != nil {
+			serverDone <- fmt.Errorf("read replayed request: %w", retryErr)
+			return
+		}
+		_, _ = io.Copy(io.Discard, retry.Body)
+		_ = retry.Body.Close()
+		posts.Add(1)
+		_, _ = io.WriteString(retryConn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
+		serverDone <- nil
+	}()
+
+	transport := &http.Transport{}
+	t.Cleanup(transport.CloseIdleConnections)
+	client := &http.Client{Transport: transport}
+	endpoint := "http://" + listener.Addr().String()
+	warmupResp, err := client.Get(endpoint + "/warmup")
+	require.NoError(t, err)
+	require.NoError(t, warmupResp.Body.Close())
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: endpoint, NodeId: "node-1"}, nil
+		},
+	})
+	eng := newTestEngine(ml, nil, nil)
+	eng.httpClient = client
+	resp, err := eng.executeMLRequest(
+		context.Background(), "model-a", "escrow-a", "devshard-test-key",
+		[]byte(`{"request":true}`), func(string) error { return nil },
+	)
+	if resp != nil {
+		_ = resp.Body.Close()
+	}
+	require.Error(t, err)
+	require.NoError(t, listener.Close())
+	require.NoError(t, <-serverDone)
+	require.Equal(t, int32(1), posts.Load(), "a dispatched ML POST must never be replayed by net/http")
 }
 
 func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {

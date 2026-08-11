@@ -33,6 +33,8 @@ test-render:
 		|| fail "public TCP backend idle timeout does not cover upgraded streams"; \
 	grep -q '^v5 versiond_routers_v5$$' "$$tmpdir/versions.map" \
 		|| fail "declared versions are not mapped to route-aware router pools"; \
+	grep -q '^version=v5 versiond_routers_v5$$' "$$tmpdir/versions.map" \
+		|| fail "data routing and readiness are not rendered in one projection"; \
 	grep -q '^backend versiond_routers_v5$$' "$$tmpdir/proxy.cfg" \
 		|| fail "v5 router backend was not rendered"; \
 	[ "$$(grep -c '^backend versiond_routers_dynamic_' "$$tmpdir/proxy.cfg")" -eq 32 ] \

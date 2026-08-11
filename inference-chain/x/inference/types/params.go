@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"math"
 	"strings"
-	"unicode"
-	"unicode/utf8"
 
 	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -517,18 +515,21 @@ func (p *DevshardEscrowParams) Validate() error {
 // keys, so path separators, URL delimiters, quotes, whitespace and controls
 // are not representable safely. Other basename characters remain valid.
 func validDevshardVersionName(name string) bool {
-	if name == "" || name == "." || name == ".." || !utf8.ValidString(name) {
+	if len(name) == 0 || len(name) > 64 || !asciiAlphaNumeric(name[0]) {
 		return false
 	}
-	if strings.ContainsAny(name, `/\?#%"'`) {
-		return false
-	}
-	for _, r := range name {
-		if unicode.IsSpace(r) || unicode.IsControl(r) {
+	for i := 1; i < len(name); i++ {
+		if !asciiAlphaNumeric(name[i]) && !strings.ContainsRune("._+~-", rune(name[i])) {
 			return false
 		}
 	}
 	return true
+}
+
+func asciiAlphaNumeric(value byte) bool {
+	return value >= 'a' && value <= 'z' ||
+		value >= 'A' && value <= 'Z' ||
+		value >= '0' && value <= '9'
 }
 
 func DefaultDelegationParams() *DelegationParams {
@@ -827,10 +828,11 @@ func (p Params) Validate() error {
 		}
 	}
 
-	if p.DevshardEscrowParams != nil {
-		if err := p.DevshardEscrowParams.Validate(); err != nil {
-			return err
-		}
+	if p.DevshardEscrowParams == nil {
+		return fmt.Errorf("devshard escrow params cannot be nil")
+	}
+	if err := p.DevshardEscrowParams.Validate(); err != nil {
+		return err
 	}
 
 	if p.DelegationParams != nil {

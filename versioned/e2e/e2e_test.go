@@ -111,7 +111,7 @@ func TestAddVersion(t *testing.T) {
 	}
 }
 
-func TestRemoveVersion(t *testing.T) {
+func TestCatalogRemovalKeepsAcceptedVersionRunning(t *testing.T) {
 	zip1, hash1 := buildTestappZip(t)
 	zip2, hash2 := buildTestapp2Zip(t)
 
@@ -123,12 +123,14 @@ func TestRemoveVersion(t *testing.T) {
 	waitForVersion(t, "testapp2", 90*time.Second)
 
 	deleteVersion(t, "testapp")
-	waitForVersionGone(t, "testapp", 90*time.Second)
+	waitForPollCycles(3)
 
-	var resp map[string]string
-	getJSON(t, fmt.Sprintf("%s/testapp2/", versiondURL), &resp)
-	if resp["prefix"] != "testapp2" {
-		t.Errorf("testapp2 prefix = %q", resp["prefix"])
+	for _, version := range []string{"testapp", "testapp2"} {
+		var resp map[string]string
+		getJSON(t, fmt.Sprintf("%s/%s/", versiondURL, version), &resp)
+		if resp["prefix"] != version {
+			t.Errorf("%s prefix = %q", version, resp["prefix"])
+		}
 	}
 }
 

@@ -11,8 +11,7 @@ catalog_url=${ROUTING_CATALOG_URL:-}
 poll_seconds=${ROUTING_CATALOG_POLL_SECONDS:-5}
 fetch_timeout=${ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS:-3}
 runtime_socket=${ROUTING_CATALOG_RUNTIME_SOCKET:-/var/run/haproxy/reconciler.sock}
-version_map=${ROUTING_CATALOG_VERSION_MAP:?ROUTING_CATALOG_VERSION_MAP is required}
-ready_map=${ROUTING_CATALOG_READY_MAP:?ROUTING_CATALOG_READY_MAP is required}
+projection_map=${ROUTING_CATALOG_PROJECTION_MAP:?ROUTING_CATALOG_PROJECTION_MAP is required}
 slot_map=${ROUTING_CATALOG_SLOT_MAP:?ROUTING_CATALOG_SLOT_MAP is required}
 backend_prefix=${ROUTING_CATALOG_BACKEND_PREFIX:?ROUTING_CATALOG_BACKEND_PREFIX is required}
 backend_capacity=${ROUTING_CATALOG_BACKEND_CAPACITY:?ROUTING_CATALOG_BACKEND_CAPACITY is required}
@@ -142,11 +141,7 @@ urlencode() {
 }
 
 validate_version() {
-    case "$1" in
-        '' | *[/?#%]* | *[[:space:]]* | *[[:cntrl:]]* | *\\* | *\"* | *\'* | . | ..)
-            return 1
-            ;;
-    esac
+	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
 }
 
 version_excluded() {
@@ -284,23 +279,14 @@ prepare_map_transaction() {
 	printf '%s\n' "$transaction"
 }
 
-publish_plan_map() {
-	map=$1 kind=$2
-	case "$kind" in
-		version) flag_field=4 ;;
-		readiness) flag_field=5 ;;
-		*) return 1 ;;
-	esac
-	if ! awk -v field="$flag_field" '$field == 1 { found = 1 } END { exit !found }' \
+publish_projection() {
+	map=$projection_map
+	if ! awk '$4 == 1 || $5 == 1 { found = 1 } END { exit !found }' \
 		"$tmpdir/projection.plan"; then
 		return 0
 	fi
 
 	transaction=$(prepare_map_transaction "$map") || return 1
-	case "$kind" in
-		version) current_map=$tmpdir/version.current ;;
-		readiness) current_map=$tmpdir/readiness.current ;;
-	esac
 	# `prepare map` creates an empty replacement, not a copy. Seed the
 	# transaction with the complete live view before adding this revision.
 	while read -r _ key value; do
@@ -309,47 +295,35 @@ publish_plan_map() {
 		escaped_value=$(runtime_key "$value")
 		response=$(runtime "add map @$transaction $map $escaped_key $escaped_value" 2>&1) || return 1
 		[ -z "$response" ] || return 1
-	done < "$current_map"
+	done < "$tmpdir/projection.current"
 	while read -r version encoded backend publish_version_entry publish_ready_entry; do
-		case "$kind" in
-			version)
-				[ "$publish_version_entry" -eq 1 ] || continue
-				key=$version
-				;;
-			readiness)
-				[ "$publish_ready_entry" -eq 1 ] || continue
-				key="version=$encoded"
-				;;
-		esac
-		escaped_key=$(runtime_key "$key")
 		escaped_backend=$(runtime_key "$backend")
-		response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
-		[ -z "$response" ] || return 1
+		if [ "$publish_version_entry" -eq 1 ]; then
+			escaped_key=$(runtime_key "$version")
+			response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
+			[ -z "$response" ] || return 1
+		fi
+		if [ "$publish_ready_entry" -eq 1 ]; then
+			escaped_key=$(runtime_key "version=$encoded")
+			response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
+			[ -z "$response" ] || return 1
+		fi
 	done < "$tmpdir/projection.plan"
 	response=$(runtime "commit map @$transaction $map" 2>&1) || return 1
 	[ -z "$response" ] || return 1
 
 	while read -r version encoded backend publish_version_entry publish_ready_entry; do
-		case "$kind" in
-			version)
-				[ "$publish_version_entry" -eq 1 ] || continue
-				key=$version
-				;;
-			readiness)
-				[ "$publish_ready_entry" -eq 1 ] || continue
-				key="version=$encoded"
-				;;
-		esac
-		map_value_is "$map" "$key" "$backend" || return 1
+		[ "$publish_version_entry" -ne 1 ] || \
+			map_value_is "$map" "$version" "$backend" || return 1
+		[ "$publish_ready_entry" -ne 1 ] || \
+			map_value_is "$map" "version=$encoded" "$backend" || return 1
 	done < "$tmpdir/projection.plan"
 }
 
 publish_catalog() {
-	# Admin readiness may safely lead the data map, but traffic must never lead
-	# readiness. The data map is committed last and makes every addition in the
-	# accepted governance revision visible in one Runtime API transaction.
-	publish_plan_map "$ready_map" readiness || return 1
-	publish_plan_map "$version_map" version || return 1
+	# Data routing and parent admission are keys in one HAProxy map. One map
+	# transaction is their shared visibility point, so neither can lead the other.
+	publish_projection || return 1
 	while read -r version _ _ publish_version_entry _; do
 		[ "$publish_version_entry" -eq 1 ] || continue
 		log "declared governance version '$version'"
@@ -357,11 +331,11 @@ publish_catalog() {
 }
 
 prepare_catalog() {
-	version_state=$(map_snapshot "$version_map") || return 1
-	ready_state=$(map_snapshot "$ready_map") || return 1
+	projection_state=$(map_snapshot "$projection_map") || return 1
+	version_state=$projection_state
+	ready_state=$projection_state
 	slot_state=$(map_snapshot "$slot_map") || return 1
-	printf '%s\n' "$version_state" > "$tmpdir/version.current"
-	printf '%s\n' "$ready_state" > "$tmpdir/readiness.current"
+	printf '%s\n' "$projection_state" > "$tmpdir/projection.current"
 	: > "$tmpdir/projection.plan"
 
     # Capacity is checked before the first Runtime API mutation. Without this

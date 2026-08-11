@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -55,6 +56,12 @@ func run(ctx context.Context) error {
 	mgr := process.NewManager(cfg)
 	hostLifecycle := host.NewController()
 	oracleClient := oracle.NewClient(cfg.OracleURL)
+	catalogStore, err := oracle.OpenCatalogStore(
+		filepath.Join(cfg.DataDir, ".versiond", "catalog.json"),
+	)
+	if err != nil {
+		return fmt.Errorf("open version catalog: %w", err)
+	}
 
 	lookup, err := sessionversion.OpenFromEnv(ctx)
 	if err != nil {
@@ -92,7 +99,7 @@ func run(ctx context.Context) error {
 	pollDone := make(chan struct{})
 	go func() {
 		defer close(pollDone)
-		runPollLoop(pollCtx, cfg.PollInterval, oracleClient, mgr)
+		runPollLoop(pollCtx, cfg.PollInterval, oracleClient, catalogStore, mgr)
 	}()
 
 	select {
@@ -133,9 +140,13 @@ func runPollLoop(
 	ctx context.Context,
 	interval time.Duration,
 	oracleClient *oracle.Client,
+	catalogStore *oracle.CatalogStore,
 	mgr *process.Manager,
 ) {
-	reconcileOnce(ctx, oracleClient, mgr)
+	if catalog, ok := catalogStore.Current(); ok {
+		reconcileCatalog(ctx, catalog, mgr)
+	}
+	reconcileOnce(ctx, oracleClient, catalogStore, mgr)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -143,13 +154,18 @@ func runPollLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcileOnce(ctx, oracleClient, mgr)
+			reconcileOnce(ctx, oracleClient, catalogStore, mgr)
 		}
 	}
 }
 
-func reconcileOnce(ctx context.Context, oracleClient *oracle.Client, mgr *process.Manager) {
-	versions, err := oracleClient.Fetch(ctx)
+func reconcileOnce(
+	ctx context.Context,
+	oracleClient *oracle.Client,
+	catalogStore *oracle.CatalogStore,
+	mgr *process.Manager,
+) {
+	candidate, err := oracleClient.Fetch(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			mgr.ReportReconcileError(fmt.Errorf("oracle fetch: %w", err))
@@ -157,14 +173,17 @@ func reconcileOnce(ctx context.Context, oracleClient *oracle.Client, mgr *proces
 		}
 		return
 	}
-	// An empty API response is treated as an upstream fault while this host owns
-	// children. Intentional removals still arrive as a non-empty desired set.
-	if len(versions.Versions) == 0 && len(mgr.Status()) > 0 {
-		mgr.ReportReconcileError(errors.New("oracle returned an empty version list"))
-		slog.Warn("oracle returned empty version list, keeping current versions")
+	catalog, _, err := catalogStore.Accept(candidate)
+	if err != nil {
+		mgr.ReportReconcileError(fmt.Errorf("oracle catalog: %w", err))
+		slog.Error("oracle catalog rejected, keeping current versions", "error", err)
 		return
 	}
-	if err := mgr.Reconcile(ctx, versions.Versions); err != nil &&
+	reconcileCatalog(ctx, catalog, mgr)
+}
+
+func reconcileCatalog(ctx context.Context, catalog oracle.VersionConfig, mgr *process.Manager) {
+	if err := mgr.Reconcile(ctx, catalog.Versions); err != nil &&
 		!errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
 		slog.Error("reconcile failed", "error", err)
 	}

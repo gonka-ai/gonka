@@ -182,7 +182,7 @@ test-version-routing:
 		--network-alias routing-catalog \
 		-v "$$tmpdir/catalog:/data:ro" -v "$$tmpdir/catalog.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	for spec in "a:v4:false:false" "b:v4 v5 v9 v9;hotfix v10:true:true"; do \
+	for spec in "a:v4:false:false" "b:v4 v5 v9 v9+hotfix v10:true:true"; do \
 		name=$${spec%%:*}; rest=$${spec#*:}; \
 		serves=$${rest%%:*}; rest=$${rest#*:}; \
 		generic_ready=$${rest%%:*}; readyz_supported=$${rest##*:}; \
@@ -389,24 +389,28 @@ test-version-routing:
 		|| fail "a regressing catalog revision was not rejected"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
-		-e NAME=a -e SERVES="v4 v9;hotfix" -e GENERIC_READY=false \
+		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9;hotfix"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
-		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%3Bhotfix' >/dev/null; then break; fi; \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null; then break; fi; \
 		sleep 0.5; \
 	done; \
-	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%3Bhotfix' >/dev/null \
+	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9%2Bhotfix' >/dev/null \
 		|| fail "encoded admin readiness did not follow the dynamic governance map"; \
-	[[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9;hotfix/sessions/escaped/chat')" =~ ^(a|b)$$ ]] \
+	[[ "$$(curl -fsS -m 3 'http://127.0.0.1:18132/v9+hotfix/sessions/escaped/chat')" =~ ^(a|b)$$ ]] \
 		|| fail "a routable governance name requiring Runtime API escaping was corrupted"; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
-		/etc/haproxy/versions.map | grep -Fqx 'v9;hotfix' \
-		|| fail "runtime catalog lost the literal semicolon in a governance name"; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9;hotfix"},{"name":"v11"}]}' \
+		/etc/haproxy/versions.map | grep -Fqx 'v9+hotfix' \
+		|| fail "runtime catalog lost the governance version name"; \
+	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
+		/etc/haproxy/versions.map | grep -q '^version='; then \
+		fail "runtime catalog diagnostics exposed readiness projection keys as versions"; \
+	fi; \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -544,7 +548,13 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 	fi; \
 	grep -q '^[[:space:]]*use_backend %\[var(txn.ver),map_str' "$$tmpdir/mixed.cfg" \
 		|| fail "requests are not routed to their version's pool"; \
-	printf 'v4 versiond_pool_v4\nv5 versiond_pool_v5\n' > "$$tmpdir/want.versions.map"; \
+	printf '%s\n' \
+		'v4 versiond_pool_v4' 'version=v4 versiond_pool_v4' \
+		'v5 versiond_pool_v5' 'version=v5 versiond_pool_v5' \
+		'version=v1 versiond_legacy_v1' \
+		'version=v2 versiond_legacy_v2' \
+		'version=v3 versiond_legacy_v3' \
+		> "$$tmpdir/want.versions.map"; \
 	diff -u "$$tmpdir/want.versions.map" "$$tmpdir/mixed.versions.map" \
 		|| fail "declared versions rendered incorrectly"; \
 	for backend in versiond_ha_pool versiond_pool_v4 versiond_pool_v5 \

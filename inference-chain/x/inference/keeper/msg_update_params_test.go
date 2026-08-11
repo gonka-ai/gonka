@@ -87,6 +87,16 @@ func TestMsgUpdateParamsApprovedVersionsAreAppendOnly(t *testing.T) {
 		require.ErrorContains(t, err, `approved devshard version "v4" cannot be removed`)
 	})
 
+	t.Run("remove whole catalog", func(t *testing.T) {
+		proposed := types.DefaultParams()
+		proposed.DevshardEscrowParams = nil
+		_, err := ms.UpdateParams(wctx, &types.MsgUpdateParams{
+			Authority: k.GetAuthority(),
+			Params:    proposed,
+		})
+		require.ErrorContains(t, err, "devshard escrow params cannot be nil")
+	})
+
 	t.Run("update binary and add", func(t *testing.T) {
 		proposed := types.DefaultParams()
 		proposed.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{

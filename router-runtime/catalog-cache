@@ -11,11 +11,7 @@ fail() {
 }
 
 validate_version() {
-    case "$1" in
-        '' | *[/?#%]* | *[[:space:]]* | *\\* | *\"* | *\'* | . | ..)
-            return 1
-            ;;
-    esac
+	printf '%s\n' "$1" | LC_ALL=C grep -Eq '^[A-Za-z0-9][A-Za-z0-9._+~-]{0,63}$'
 }
 
 validate_names() {

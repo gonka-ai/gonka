@@ -92,6 +92,12 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, idempote
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
+		// The durable execution FSM has crossed its dispatch boundary before Do.
+		// A reused connection may fail after the ML node executed the POST but
+		// before a response byte arrives. net/http otherwise treats this request as
+		// replayable because bytes.Reader populated GetBody and Idempotency-Key is
+		// present. Backend deduplication is defense in depth, not a prerequisite.
+		httpReq.GetBody = nil
 		httpReq.Header.Set("Content-Type", "application/json")
 		httpReq.Header.Set("Idempotency-Key", idempotencyKey)
 		observability.InjectRequestContext(ctx, httpReq.Header)

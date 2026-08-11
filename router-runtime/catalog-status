@@ -17,4 +17,4 @@ socket=${ROUTING_CATALOG_STATUS_SOCKET:-/var/run/haproxy/haproxy.sock}
 map=${1:?usage: catalog-status MAP_FILE | --state [STATUS_FILE]}
 
 printf 'show map %s\n' "$map" | socat - "UNIX-CONNECT:$socket" | \
-    awk 'NF >= 3 { print $2 }' | LC_ALL=C sort -u
+    awk 'NF >= 3 && $2 !~ /^version=/ { print $2 }' | LC_ALL=C sort -u

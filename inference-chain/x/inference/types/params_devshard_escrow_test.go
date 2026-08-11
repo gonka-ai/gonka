@@ -2,6 +2,7 @@ package types_test
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -83,7 +84,7 @@ func TestDevshardEscrowParams_ValidateVersionNameContract(t *testing.T) {
 			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		}}
 	}
-	valid := []string{"v5", "v4+hotfix", "v4}x", "v9;hotfix"}
+	valid := []string{"v5", "v4+hotfix", "v4.release_1", "V9~hotfix"}
 	for _, name := range valid {
 		t.Run("valid_"+name, func(t *testing.T) {
 			p := types.DefaultDevshardEscrowParams()
@@ -92,7 +93,12 @@ func TestDevshardEscrowParams_ValidateVersionNameContract(t *testing.T) {
 		})
 	}
 
-	invalid := []string{"", ".", "..", " v5", "v 5", "v5/next", `v5\next`, "v5?x", "v5#x", "v5%x", `v5"x`, "v5'x", "v5\nnext"}
+	invalid := []string{
+		"", ".", "..", "+v5", "_v5", " v5", "v 5", "v5/next",
+		`v5\next`, "v5?x", "v5#x", "v5%x", `v5"x`, "v5'x",
+		"v5,next", "v5;next", "v5}next", "vé", "v5\nnext",
+		"v" + strings.Repeat("a", 64),
+	}
 	for _, name := range invalid {
 		t.Run("invalid_"+name, func(t *testing.T) {
 			p := types.DefaultDevshardEscrowParams()
