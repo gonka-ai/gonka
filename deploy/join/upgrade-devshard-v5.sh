@@ -145,6 +145,13 @@ fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
 upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
 upgrade_journal=${DEVSHARD_V5_UPGRADE_JOURNAL:-$upgrade_marker.in-progress}
+[[ $(dirname -- "$upgrade_marker") == "$(dirname -- "$upgrade_journal")" ]] || fail \
+	"upgrade marker and journal must share one directory for atomic commit"
+transaction_id=$operation_id
+base_fingerprint=none
+saved_desired_fingerprint=
+saved_compose_config_sha=
+saved_base_fingerprint=
 
 if [[ $strict_capacity == false ]]; then
     case ${DEVSHARD_V5_STRICT_CAPACITY:-false} in
@@ -278,7 +285,12 @@ verify_shared_postgres_identity() {
         warn "versiond replicas use different PostgreSQL databases ($first != $second)"
         return 1
     fi
-    if [[ -f $upgrade_marker ]] && jq -e 'type == "object"' \
+    if [[ -f $upgrade_journal ]] && jq -e 'type == "object"' \
+		"$upgrade_journal" >/dev/null 2>&1; then
+		committed=$(jq -r '.transaction.postgres_identity // ""' \
+			"$upgrade_journal")
+	fi
+    if [[ -z $committed && -f $upgrade_marker ]] && jq -e 'type == "object"' \
         "$upgrade_marker" >/dev/null 2>&1; then
         committed=$(jq -r '.storage.postgres_identity // ""' "$upgrade_marker")
     fi
@@ -304,29 +316,67 @@ converge_release_service() {
 }
 
 write_upgrade_journal() {
-    local phase=$1 journal_tmp=$upgrade_journal.tmp.$$
+    local phase=$1 existing_transaction='{}' journal
     case $phase in
         prepared | applications_verified | ingress_verified) ;;
         *) fail "internal error: invalid upgrade phase $phase" ;;
     esac
-    mkdir -p "$(dirname -- "$upgrade_journal")"
-    jq -c --arg phase "$phase" \
-        '. + {transaction: {phase: $phase, updated_at_unix: (now | floor)}}' \
-        <<<"$desired_upgrade_marker" >"$journal_tmp"
-    mv -f "$journal_tmp" "$upgrade_journal"
+    if [[ -f $upgrade_journal ]]; then
+		existing_transaction=$(jq -c '.transaction // {}' "$upgrade_journal") || fail \
+			"cannot preserve active transaction metadata"
+	fi
+	journal=$(jq -c \
+		--arg id "$transaction_id" --arg phase "$phase" \
+		--arg base "$base_fingerprint" \
+		--arg desired "$desired_fingerprint" \
+		--arg compose_sha "$compose_config_sha" \
+		--arg postgres_identity "$verified_postgres_identity" \
+		--argjson existing "$existing_transaction" '
+		. + {transaction: ($existing + {
+			id: $id,
+			phase: $phase,
+			base_fingerprint: $base,
+			desired_fingerprint: $desired,
+			compose_config_sha256: $compose_sha,
+			updated_at_unix: (now | floor)
+		})}
+		| if $postgres_identity == "" then .
+		  else .transaction.postgres_identity = $postgres_identity end
+	' <<<"$desired_upgrade_marker") || fail "cannot encode upgrade journal"
+	atomic_write_upgrade_state "$upgrade_journal" "$journal"
+}
+
+atomic_write_upgrade_state() {
+	local path=$1 payload=$2 directory tmp
+	directory=$(dirname -- "$path")
+	mkdir -p "$directory"
+	tmp=$(mktemp "$directory/.gonka-upgrade-state.XXXXXX")
+	printf '%s\n' "$payload" >"$tmp"
+	chmod 600 "$tmp"
+	sync -f "$tmp"
+	mv -f "$tmp" "$path"
+	sync -f "$directory"
 }
 
 write_upgrade_marker() {
-    local marker=$desired_upgrade_marker marker_tmp=$upgrade_marker.tmp.$$
+    local marker directory
+	[[ -f $upgrade_journal ]] || fail \
+		"active upgrade journal disappeared before commit"
     if [[ $versiond_mode == ha ]]; then
         [[ -n $verified_postgres_identity ]] || verify_shared_postgres_identity
-        marker=$(jq -c --arg identity "$verified_postgres_identity" \
-            '. + {storage: {postgres_identity: $identity}}' <<<"$marker")
+		marker=$(jq -c --arg identity "$verified_postgres_identity" '
+			.storage = {postgres_identity: $identity}
+		' "$upgrade_journal") || fail "cannot finalize PostgreSQL identity"
+		atomic_write_upgrade_state "$upgrade_journal" "$marker"
     fi
-    mkdir -p "$(dirname -- "$upgrade_marker")"
-    printf '%s\n' "$marker" >"$marker_tmp"
-    mv -f "$marker_tmp" "$upgrade_marker"
-    rm -f "$upgrade_journal"
+	jq -e '
+		.transaction.phase == "ingress_verified" and
+		((.transaction.ingress.rollback_models? // null) == null)
+	' "$upgrade_journal" >/dev/null || fail \
+		"upgrade journal is not safe to commit"
+	directory=$(dirname -- "$upgrade_marker")
+	mv -f "$upgrade_journal" "$upgrade_marker"
+	sync -f "$directory"
 }
 
 upgrade_state_release() {
@@ -345,23 +395,19 @@ upgrade_marker_release() {
 restore_saved_topology() {
 	local state_file='' state_release state_versiond_mode state_edge_mode
 
-    if [[ -f $upgrade_marker ]] && jq -e '
-		type == "object" and .schema == 1 and
-		(.topology.versiond == "single" or .topology.versiond == "ha") and
-		(.topology.edge_api == "single" or .topology.edge_api == "multi") and
-		(.compose.files | type == "array" and length > 0) and
-        (.compose.project | type == "string" and length > 0) and
-        (.compose.project_directory | type == "string" and length > 0)
-	' "$upgrade_marker" >/dev/null 2>&1 &&
-        [[ $(upgrade_marker_release) == "$release_id" ]]; then
-        state_file=$upgrade_marker
-        committed_marker_loaded=true
-    elif [[ -f $upgrade_journal ]]; then
+    # An active transaction always outranks the last committed marker. Falling
+    # back to the marker here would silently forget a partially applied newer
+    # desired state after a crash.
+    if [[ -f $upgrade_journal ]]; then
         jq -e '
-            type == "object" and .schema == 1 and
+            type == "object" and .schema == 2 and
             (.transaction.phase == "prepared" or
              .transaction.phase == "applications_verified" or
              .transaction.phase == "ingress_verified") and
+			(.transaction.id | type == "string" and length > 0) and
+			(.transaction.base_fingerprint | type == "string" and length > 0) and
+			(.transaction.desired_fingerprint | type == "string" and length == 64) and
+			(.transaction.compose_config_sha256 | type == "string" and length == 64) and
             (.topology.versiond == "single" or .topology.versiond == "ha") and
             (.topology.edge_api == "single" or .topology.edge_api == "multi") and
             (.compose.files | type == "array" and length > 0) and
@@ -375,6 +421,22 @@ restore_saved_topology() {
             "unfinished upgrade journal $upgrade_journal belongs to $state_release, not $release_id"
         state_file=$upgrade_journal
         interrupted_upgrade_loaded=true
+		transaction_id=$(jq -er '.transaction.id' "$state_file")
+		operation_id=$transaction_id
+		saved_base_fingerprint=$(jq -er '.transaction.base_fingerprint' "$state_file")
+		saved_desired_fingerprint=$(jq -er '.transaction.desired_fingerprint' "$state_file")
+		saved_compose_config_sha=$(jq -er '.transaction.compose_config_sha256' "$state_file")
+    elif [[ -f $upgrade_marker ]] && jq -e '
+		type == "object" and (.schema == 1 or .schema == 2) and
+		(.topology.versiond == "single" or .topology.versiond == "ha") and
+		(.topology.edge_api == "single" or .topology.edge_api == "multi") and
+		(.compose.files | type == "array" and length > 0) and
+        (.compose.project | type == "string" and length > 0) and
+        (.compose.project_directory | type == "string" and length > 0)
+	' "$upgrade_marker" >/dev/null 2>&1 &&
+        [[ $(upgrade_marker_release) == "$release_id" ]]; then
+        state_file=$upgrade_marker
+        committed_marker_loaded=true
     else
         return 0
     fi
@@ -486,7 +548,7 @@ desired_upgrade_state=$(jq -cn \
     --arg proxy_router "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" \
     --arg postgres "$DEVSHARD_V5_POSTGRES_IMAGE" \
     '{
-        schema: 1,
+        schema: 2,
         release_id: $release_id,
         release_commit: $release_commit,
         topology: {versiond: $versiond_mode, edge_api: $edge_mode},
@@ -512,6 +574,31 @@ desired_fingerprint=$(
 desired_upgrade_marker=$(jq -c --arg fingerprint "$desired_fingerprint" \
     '. + {fingerprint: $fingerprint}' <<<"$desired_upgrade_state")
 verified_postgres_identity=
+if [[ $interrupted_upgrade_loaded == true ]]; then
+	verified_postgres_identity=$(jq -r \
+		'.transaction.postgres_identity // ""' "$upgrade_journal")
+elif [[ -f $upgrade_marker ]] && jq -e 'type == "object"' \
+	"$upgrade_marker" >/dev/null 2>&1; then
+	verified_postgres_identity=$(jq -r \
+		'.storage.postgres_identity // ""' "$upgrade_marker")
+fi
+current_base_fingerprint=none
+if [[ -f $upgrade_marker ]]; then
+	current_base_fingerprint=$(jq -er \
+		'.fingerprint | strings | select(length == 64)' \
+		"$upgrade_marker" 2>/dev/null || printf 'none\n')
+fi
+if [[ $interrupted_upgrade_loaded == true ]]; then
+	[[ $saved_base_fingerprint == "$current_base_fingerprint" ]] || fail \
+		"active transaction $transaction_id was based on $saved_base_fingerprint, but committed base is now $current_base_fingerprint; explicit recovery is required"
+	[[ $saved_desired_fingerprint == "$desired_fingerprint" ]] || fail \
+		"active transaction $transaction_id targets a different immutable release state; restore the saved Compose inputs or explicitly abort it"
+	[[ $saved_compose_config_sha == "$compose_config_sha" ]] || fail \
+		"effective Compose model changed during active transaction $transaction_id; restore the saved override files before resuming"
+	base_fingerprint=$saved_base_fingerprint
+else
+	base_fingerprint=$current_base_fingerprint
+fi
 public_http_port=$(jq -er '
     [.services.proxy.ports[]?
      | select(.target == 80 and (.protocol // "tcp") == "tcp")
@@ -569,7 +656,7 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     if [[ ! -f $upgrade_marker ]]; then
         warn "router HA is active without its commit marker; reconciling the complete release state"
     elif ! jq -e --arg fingerprint "$desired_fingerprint" \
-        '.schema == 1 and .fingerprint == $fingerprint' \
+		'(.schema == 1 or .schema == 2) and .fingerprint == $fingerprint' \
         "$upgrade_marker" >/dev/null 2>&1; then
         warn "the committed release state differs from the requested state; reconciling it"
     fi
@@ -595,7 +682,9 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     verify_release_application_state || fail \
         "application state did not converge to $release_id"
     write_upgrade_journal applications_verified
-    "$enable_router_bin" \
+	ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+	ROUTER_HA_TRANSACTION_ID=$transaction_id \
+	"$enable_router_bin" \
         --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
         "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
     verify_release_ingress_state || fail \
@@ -1211,6 +1300,24 @@ replace_service() {
     if run_interruptible "${compose[@]}" \
         up -d --no-deps --force-recreate --wait \
         --wait-timeout "$wait_timeout" "$service"; then
+		if [[ $versiond_mode == ha && \
+			($service == versiond || $service == versiond2) ]]; then
+			local observed_identity
+			observed_identity=$(versiond_storage_identity "$service") || {
+				warn "$service became ready but did not expose its PostgreSQL identity"
+				return 1
+			}
+			if [[ -n $verified_postgres_identity && \
+				$observed_identity != "$verified_postgres_identity" ]]; then
+				warn "$service uses PostgreSQL identity $observed_identity, expected $verified_postgres_identity"
+				return 1
+			fi
+			verified_postgres_identity=$observed_identity
+			# Persist the storage fence before another supervisor or ingress
+			# resource can be replaced. A resumed transaction must prove the
+			# same database identity before it can commit.
+			write_upgrade_journal prepared
+		fi
         active_service=
         active_failure_strategy=
         return 0
@@ -1335,7 +1442,9 @@ write_upgrade_journal applications_verified
 cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
-        run_interruptible "$enable_router_bin" \
+		ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+		ROUTER_HA_TRANSACTION_ID=$transaction_id \
+		run_interruptible "$enable_router_bin" \
             --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
             "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
         ;;

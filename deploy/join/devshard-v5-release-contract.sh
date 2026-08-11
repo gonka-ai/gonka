@@ -97,7 +97,7 @@ devshard_v5_version_at_least() {
 devshard_v5_verify_dependencies() {
     local docker_bin=$1 command compose_version
 
-    for command in jq curl flock sha256sum git getconf awk df timeout python3; do
+    for command in jq curl flock sha256sum git getconf awk df timeout python3 sync; do
         command -v "$command" >/dev/null 2>&1 || \
             devshard_v5_contract_error "$command is required" || return
     done

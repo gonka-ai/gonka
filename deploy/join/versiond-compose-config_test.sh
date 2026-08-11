@@ -67,7 +67,18 @@ JAEGER_BASIC_AUTH_PASSWORD=test-secret GRAFANA_ENABLED=true \
 GRAFANA_ADMIN_PASSWORD=test-secret PROXY_V4_IMAGE=test/proxy:v4 \
     "${observability_compose[@]}" \
         -f "$script_dir/docker-compose.proxy-v4-compat.yml" \
-        config --format json >"$tmpdir/observability-rollback.json"
+        config --format json >"$tmpdir/observability-rollback-base.json"
+# enable-router-ha derives operator-owned environment additions from the
+# effective model before freezing the immutable v4 rollback generation.
+jq --slurpfile current "$tmpdir/observability.json" '
+    .services.proxy.environment += (
+        $current[0].services.proxy.environment
+        | with_entries(select(.key | test("^(JAEGER_|GRAFANA_)")))
+    )
+    | del(.services.proxy.environment.VERSIOND_SERVICE_NAME)
+    | del(.services.proxy.environment.VERSIOND_PORT)
+' "$tmpdir/observability-rollback-base.json" \
+    >"$tmpdir/observability-rollback.json"
 
 cat >"$tmpdir/managed-postgres.yml" <<'EOF'
 services:
@@ -277,6 +288,47 @@ require(
     "true",
     "v4 proxy rollback observability",
 )
+
+if observability_rollback["networks"] != {"default": None}:
+    raise SystemExit(
+        f"v4 rollback retained v5 proxy networks: {observability_rollback['networks']!r}"
+    )
+if {volume["target"] for volume in observability_rollback["volumes"]} != {
+    "/etc/nginx/ssl"
+}:
+    raise SystemExit("v4 rollback retained the HAProxy state volume")
+for field in ("cap_add", "cap_drop", "security_opt"):
+    if field in observability_rollback:
+        raise SystemExit(f"v4 rollback retained HAProxy-only {field}")
+if set(observability_rollback["depends_on"]) != {
+    "api",
+    "edge-api",
+    "explorer",
+    "node",
+    "proxy-ssl",
+    "versiond",
+}:
+    raise SystemExit("v4 rollback retained the v5 policy-worker dependency graph")
+if observability_rollback["healthcheck"] != {
+    "test": ["CMD", "curl", "-f", "http://localhost/health"],
+    "timeout": "10s",
+    "interval": "30s",
+    "retries": 3,
+    "start_period": "10s",
+}:
+    raise SystemExit("v4 rollback does not restore the old nginx health contract")
+for key in (
+    "HAPROXY_DNS_RESOLVER",
+    "PROXY_POLICY_POOL_HOST",
+    "PROXY_ROUTER_POLICY_BIND_HOST",
+    "PROXY_ROUTER_VERSION_CAPACITY",
+    "VERSIOND_ROUTER_POOL_HOST",
+    "VERSIOND_ROUTING_CATALOG_URL",
+    "VERSIOND_SERVICE_NAME",
+    "VERSIOND_PORT",
+):
+    if key in observability_rollback["environment"]:
+        raise SystemExit(f"v4 single-router rollback retained v5 environment {key}")
 require(
     observability_rollback["environment"],
     "GRAFANA_ENABLED",

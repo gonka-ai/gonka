@@ -47,12 +47,25 @@ if [[ ${1:-} == inspect ]]; then
             *ai.gonka.proxy-policy-contract*)
                 printf '%s\n' "${CURRENT_PROXY_CONTRACT:-1}"
                 ;;
+			*com.docker.compose.config-hash*)
+				case ${4:-} in
+					cid-proxy-policy2*) printf '%s\n' "${POLICY2_CONFIG_HASH:-hash-proxy-policy2}" ;;
+					cid-proxy-policy*) printf '%s\n' "${POLICY_CONFIG_HASH:-hash-proxy-policy}" ;;
+					proxy) printf '%s\n' "${PROXY_CONFIG_HASH:-hash-proxy}" ;;
+				esac
+				;;
             '{{.Image}}')
                 case ${4:-} in
                     cid-proxy-policy*) printf 'sha256:old-policy\n' ;;
                     *) printf 'sha256:old-proxy\n' ;;
                 esac
                 ;;
+			'{{.Config.Image}}')
+				case ${4:-} in
+					cid-proxy-policy*) printf 'old-policy-ref\n' ;;
+					*) printf 'old-proxy-ref\n' ;;
+				esac
+				;;
             *NetworkSettings.Networks*)
                 case ${4:-} in
                     cid-proxy-policy2) printf '172.30.0.12\n' ;;
@@ -128,12 +141,22 @@ if [[ ${1:-} == compose ]]; then
     compat=false
     action=
     service=
+	config_hash=false
+	model_file=
+	previous=
     for arg in "$@"; do
         [[ $arg == *docker-compose.proxy-v4-compat.yml ]] && compat=true
+		[[ $previous == -f ]] && model_file=$arg
+		[[ $arg == --hash ]] && config_hash=true
         case $arg in config | pull | up | ps | rm) action=$arg ;; esac
         case $arg in proxy | proxy-policy | proxy-policy2) service=$arg ;; esac
+		previous=$arg
     done
     if [[ $action == config ]]; then
+		if [[ $config_hash == true ]]; then
+			printf '%s hash-%s\n' "$service" "$service"
+			exit 0
+		fi
         jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
             default:{name:"gonka-test_default"},
             "proxy-policy-front":{name:"gonka-proxy-policy-front"},
@@ -168,6 +191,17 @@ if [[ ${1:-} == compose ]]; then
         exit 0
     fi
     if [[ $action == up && $service == proxy-policy* ]]; then
+		if [[ -f $model_file && $model_file == *.gonka-rollback-model.* ]]; then
+			printf 'policy-image=%s\n' \
+				"$(jq -r --arg service "$service" '.services[$service].image' "$model_file")" \
+				>>"$DOCKER_LOG"
+			: >"$STATE_DIR/present-$service"
+			exit 0
+		fi
+		if [[ $service == "${KILL_POLICY_SERVICE-}" ]]; then
+			kill -KILL "$PPID"
+			exit 137
+		fi
         if [[ $service == "${FAIL_POLICY_SERVICE-}" && \
             ${PROXY_POLICY_IMAGE-} != gonka/router-ha-policy-rollback:* ]]; then
             exit 1
@@ -176,6 +210,17 @@ if [[ ${1:-} == compose ]]; then
         exit 0
     fi
     if [[ $action == up && $service == proxy ]]; then
+		if [[ -f $model_file && $model_file == *.gonka-rollback-model.* ]]; then
+			printf 'rollback-model-image %s\n' \
+				"$(jq -r '.services.proxy.image' "$model_file")" >>"$DOCKER_LOG"
+			if jq -e '.services.proxy.environment.VERSIOND_SERVICE_NAME' \
+				"$model_file" >/dev/null 2>&1; then
+				printf 'proxy-policy\n' >"$STATE_DIR/current"
+			else
+				printf 'proxy-router\n' >"$STATE_DIR/current"
+			fi
+			exit 0
+		fi
         if [[ $compat == true ]]; then
             printf 'rollback-versiond %s\n' \
                 "${PROXY_V4_VERSIOND_SERVICE_NAME:-}" >>"$DOCKER_LOG"
@@ -291,12 +336,21 @@ verify_line=$(grep -n '^fleet verify-admission ' "$tmpdir/success.log" | head -n
 remove_line=$(grep -n 'docker rm -f versiond-router' "$tmpdir/success.log" | head -n1 | cut -d: -f1)
 [[ -n $verify_line && -n $remove_line && $verify_line -lt $remove_line ]] || fail \
     "migration singleton was removed before fleet admission was committed"
+jq -e '
+    .transaction.ingress.state == "committed" and
+    .transaction.ingress.touched ==
+        ["policy:proxy-policy2", "policy:proxy-policy", "proxy"]
+' "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+    "successful cutover did not persist its exact mutation order"
+[[ $(stat -c '%a' "$tmpdir/.gonka-router-ha-transaction.json") == 600 ]] || fail \
+    "ingress transaction journal is not private"
 
 if run_cutover "$tmpdir/failure.log" env FAIL_CUTOVER=true; then
     fail "failed public proxy replacement was reported as successful"
 fi
-grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/failure.log" || fail \
-    "failed cutover did not use the v4 rollback model"
+grep -q 'gonka-rollback-model\..* up .*proxy$' \
+	"$tmpdir/failure.log" || fail \
+    "failed cutover did not use the durable v4 rollback model"
 grep -q ' up .*proxy$' "$tmpdir/failure.log" || fail \
     "failed cutover did not recreate the public nginx"
 
@@ -306,8 +360,8 @@ fi
 grep -q '^fleet verify-admission v1 v4$' \
     "$tmpdir/admission-failure.log" || fail \
     "failed admission scenario did not reach the commit gate"
-grep -q '^rollback-versiond versiond-router$' \
-    "$tmpdir/admission-failure.log" || fail \
+grep -q 'gonka-rollback-model\..* up .*proxy$' \
+	"$tmpdir/admission-failure.log" || fail \
     "admission failure did not preserve the singleton-backed v4 rollback"
 if grep -q 'docker rm -f versiond-router' "$tmpdir/admission-failure.log"; then
     fail "admission failure removed the upstream required by v4 rollback"
@@ -319,7 +373,8 @@ signal_status=$?
 set -e
 [[ $signal_status -eq 143 ]] || fail \
     "TERM during cutover returned $signal_status instead of 143"
-grep -q 'docker-compose.proxy-v4-compat.yml' "$tmpdir/signal.log" || fail \
+grep -q 'gonka-rollback-model\..* up .*proxy$' \
+	"$tmpdir/signal.log" || fail \
     "TERM during cutover did not run the armed public proxy rollback"
 
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
@@ -356,6 +411,49 @@ grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy2-' \
     "$tmpdir/policy-failure.log" || fail \
     "failed policy generation did not restore the captured reserve slot"
 
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/reserve-failure.log" env \
+        FAIL_POLICY_SERVICE=proxy-policy2; then
+    fail "failed reserve policy slot update was reported as successful"
+fi
+grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy2-' \
+    "$tmpdir/reserve-failure.log" || fail \
+    "failed reserve slot was not restored"
+if grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy-' \
+    "$tmpdir/reserve-failure.log"; then
+    fail "rollback replaced the untouched active policy slot"
+fi
+
+set +e
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/crash.log" env KILL_POLICY_SERVICE=proxy-policy2
+crash_status=$?
+set -e
+[[ $crash_status -ne 0 ]] || fail "SIGKILL during policy mutation returned success"
+jq -e '.transaction.ingress.state == "active" and
+       .transaction.ingress.touched == ["policy:proxy-policy2"]' \
+    "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+    "SIGKILL did not leave a replayable touched-resource journal"
+INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/crash-recovery.log" env
+recovery_line=$(grep -n 'gonka-rollback-model\..* up .*proxy-policy2$' \
+    "$tmpdir/crash-recovery.log" | head -n1 | cut -d: -f1)
+apply_line=$(grep -n '^fleet apply$' "$tmpdir/crash-recovery.log" | head -n1 | cut -d: -f1)
+[[ -n $recovery_line && -n $apply_line && $recovery_line -lt $apply_line ]] || fail \
+    "restart did not recover the interrupted ingress transaction before new mutation"
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/config-drift.log" env POLICY2_CONFIG_HASH=unexpected; then
+    fail "policy config drift was accepted without an exact rollback model"
+fi
+if grep -q ' up .*proxy-policy' "$tmpdir/config-drift.log"; then
+    fail "policy config drift was detected after mutation"
+fi
+
 if INITIAL_POLICY_SERVICES=proxy-policy INITIAL_POLICY_A_REPLICAS=2 \
     run_cutover "$tmpdir/scaled-policy-failure.log" env \
         FAIL_POLICY_SERVICE=proxy-policy; then
@@ -386,12 +484,9 @@ if run_cutover "$tmpdir/missing-proxy-failure.log" env \
 fi
 grep -q '^docker rm -f proxy$' "$tmpdir/missing-proxy-failure.log" || fail \
     "failed recreation did not restore the committed absent state"
-grep -q '^rollback-current slots=7$' "$tmpdir/day2-failure.log" || fail \
-    "day-2 rollback did not restore the captured routing environment"
-if grep -q 'docker-compose.proxy-v4-compat.yml' \
-    "$tmpdir/day2-failure.log"; then
-    fail "day-2 rollback incorrectly restored the migration nginx"
-fi
+grep -q 'gonka-rollback-model\..* up .*proxy$' \
+	"$tmpdir/day2-failure.log" || fail \
+    "day-2 rollback did not restore its immutable Compose model"
 grep -q '^fleet verify-admission$' "$tmpdir/day2-failure.log" || fail \
     "day-2 rollback did not verify parent admission"
 

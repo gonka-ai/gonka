@@ -27,9 +27,9 @@ grep -q 'POSTGRES_IMAGE must use an immutable sha256 digest' \
         fail "mutable PostgreSQL failure was not actionable"
     }
 
-devshard_v5_version_at_least 2.20.0 2.20.0 || fail "equal version failed"
-devshard_v5_version_at_least v2.31.1 2.20.0 || fail "newer version failed"
-if devshard_v5_version_at_least 2.19.9 2.20.0; then
+devshard_v5_version_at_least 2.24.4 2.24.4 || fail "equal version failed"
+devshard_v5_version_at_least v2.31.1 2.24.4 || fail "newer version failed"
+if devshard_v5_version_at_least 2.24.3 2.24.4; then
     fail "older version passed"
 fi
 

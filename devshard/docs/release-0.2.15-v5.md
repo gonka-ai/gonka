@@ -209,7 +209,7 @@ topology:
 ./upgrade-devshard-v5.sh --acknowledge-maintenance
 ```
 
-The preflight requires Docker Compose 2.20 or newer, `jq`, `curl`, `flock`,
+The preflight requires Docker Compose 2.24.4 or newer, `jq`, `curl`, `flock`,
 `sha256sum`, Python 3, and Git. It checks them before changing the deployment.
 The Quickstart's 1 TB NVMe recommendation remains operational guidance, not a
 numeric upgrade gate: marketed capacity and formatted filesystem capacity are
@@ -222,8 +222,11 @@ rollback path while application replicas are replaced. At the final step the
 script starts the independent router fleet and private policy workers, captures
 the exact old public nginx image, and switches the public listener to
 `proxy-router`. It verifies component readiness before deleting the migration
-singletons. If that cutover fails or is interrupted, the old public nginx is
-recreated from the captured image and the script exits non-zero.
+singletons. Before mutation, the updater proves that its rendered rollback
+generation has the same Compose config hash as the running service. If cutover
+fails or is interrupted, only resources recorded as touched are restored in
+reverse order from that exact journaled generation, and the script exits
+non-zero.
 
 The updater, router cutover, and standalone fleet commands all take the same
 deployment-wide `.gonka-deployment.lock` next to `config.env`; a concurrent
@@ -232,15 +235,25 @@ the same lock. During an upgrade, the atomic
 `.gonka-devshard-v5-upgrade-complete.in-progress` journal records the desired
 topology and the last verified phase. Rerunning the updater resumes that exact
 topology even if a replica or the public proxy disappeared after cutover.
-Successful completion writes `.gonka-devshard-v5-upgrade-complete` atomically
-and removes the journal. This JSON marker records the release commit, topology
+Successful completion atomically renames that verified journal to
+`.gonka-devshard-v5-upgrade-complete`; there is no separate marker-write /
+journal-delete window. This JSON marker records the release commit, topology
 modes, ordered Compose files, project identity, expected image digests
 (including PostgreSQL), the verified PostgreSQL UUID, and a fingerprint of the
-rendered Compose model. It contains hashes and non-secret identities rather
-than configuration values, so secrets are not copied into either file. The
+rendered Compose model. While ingress replacement is active, the mode-`0600`
+journal temporarily embeds the exact previous Compose generation, including
+its environment, so crash recovery does not depend on changed files. Those
+rollback bytes are removed before commit; the final marker contains only
+hashes, non-secret identities, and transaction receipts. The
 proxy container label alone is not evidence that PostgreSQL, versiond, and
 edge-api were migrated; both application and ingress postconditions must pass
 before the final marker is committed.
+
+On the first migration, the storage UUID becomes available when the first v5
+`versiond` has initialized the identity row in the shared database. The updater
+persists it immediately, before replacing another supervisor or ingress
+resource. Every later `versiond` and every resumed transaction must report that
+same UUID.
 
 Rerunning the same upgrade is also the normal reconciliation path for this
 release. It restores the committed Compose model from the marker, converges
@@ -841,11 +854,10 @@ daemon restart. Persist the corresponding replica count as `0` first.
   not in this release.
 - Public ingress: one host-local `proxy-router` remains a failure domain. A
   provider LB, VIP, or Kubernetes Service above multiple hosts is a later layer.
-- Version names: the router now routes any name that can appear literally in a
-  path segment, but one containing `/`, `?`, `#`, `%` or whitespace cannot be
-  routed at all, because the request path would no longer match the name.
-  Narrowing the chain's parameter validation to a routable grammar is the proper
-  fix.
+- Storage: the shipped local PostgreSQL is a single host-local failure domain,
+  not a database HA cluster. Multi-host deployments require a managed/operator
+  PostgreSQL service with synchronous durability and effective RPO=0 for the
+  execution fence.
 - Reconcile failures have no machine-readable exposure. They belong in a metric,
   not bolted onto the `/healthz` array that existing clients parse; versiond has
   no metrics endpoint of its own yet.

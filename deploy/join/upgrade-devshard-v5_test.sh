@@ -39,7 +39,7 @@ if [[ ${1:-} == info ]]; then
     exit 0
 fi
 if [[ ${1:-} == compose && ${2:-} == version && ${3:-} == --short ]]; then
-    printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.20.0}"
+    printf '%s\n' "${FAKE_COMPOSE_VERSION:-2.24.4}"
     exit 0
 fi
 
@@ -952,7 +952,8 @@ assert_contains "$tmpdir/ha.log" "--wait-timeout 2100 devshard-postgres"
 
 VERSIOND2_STORAGE_IDENTITY=another-database \
     run_upgrade single none "$tmpdir/postgres-identity.log"
-grep -q 'versiond replicas use different PostgreSQL databases' "$tmpdir/stderr" || {
+grep -q 'versiond uses PostgreSQL identity shared-database, expected another-database' \
+	"$tmpdir/stderr" || {
     cat "$tmpdir/stderr" >&2
     fail "different live PostgreSQL identities did not produce a useful error"
 }
@@ -1087,7 +1088,7 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
     >"$tmpdir/recovered-marker.stdout" \
     2>"$tmpdir/recovered-marker.stderr"
 jq -e '
-    .schema == 1 and
+    .schema == 2 and
     .release_id == "0.2.15-devshard-v5" and
     (.fingerprint | type == "string" and length == 64) and
     (.compose.files | length > 0) and
@@ -1100,12 +1101,23 @@ assert_contains "$tmpdir/recovered-marker.log" \
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
 
-# A process crash can happen after topology mutation but before the final
-# marker rename. The one-file journal must recover HA modes before inspecting a
-# degraded runtime, then disappear only after complete ingress verification.
-jq '. + {transaction:{phase:"ingress_verified",updated_at_unix:1}}' \
+# A process crash can happen during a day-2 transaction while the previous
+# committed marker still exists. The active journal must win, recover its HA
+# mode before inspecting a degraded runtime, then atomically replace the old
+# marker only after complete ingress verification.
+jq -c '.topology.versiond = "single" | .fingerprint = ("a" * 64)' \
+    "$tmpdir/upgrade-complete" >"$tmpdir/previous-marker"
+jq '. as $state | . + {transaction:{
+			id:"test-resume-1",
+			phase:"ingress_verified",
+			base_fingerprint:("a" * 64),
+			desired_fingerprint:$state.fingerprint,
+			compose_config_sha256:$state.compose.config_sha256,
+			postgres_identity:$state.storage.postgres_identity,
+			updated_at_unix:1
+		}}' \
     "$tmpdir/upgrade-complete" >"$tmpdir/upgrade-complete.in-progress"
-rm -f "$tmpdir/upgrade-complete"
+mv "$tmpdir/previous-marker" "$tmpdir/upgrade-complete"
 mkdir -p "$tmpdir/journal-missing-replicas.state"
 ASSUME_RELEASE_STATE=true \
 DOCKER_BIN="$tmpdir/docker" \
@@ -1129,6 +1141,41 @@ assert_contains "$tmpdir/journal-missing-replicas.log" \
 [[ -f $tmpdir/upgrade-complete && \
     ! -f $tmpdir/upgrade-complete.in-progress ]] || fail \
     "successful journal recovery did not atomically finalize the marker"
+jq -e '.topology.versiond == "ha" and .transaction.id == "test-resume-1"' \
+    "$tmpdir/upgrade-complete" >/dev/null || fail \
+    "active transaction did not replace the older committed marker"
+
+# Compose inputs are part of the transaction precondition. A changed rendered
+# model must fail before any service or router mutation.
+hash_drift_marker=$tmpdir/hash-drift-marker
+hash_drift_journal=$hash_drift_marker.in-progress
+cp "$tmpdir/upgrade-complete" "$hash_drift_marker"
+jq '. as $state | . + {transaction:{
+			id:"test-compose-drift",
+			phase:"prepared",
+			base_fingerprint:$state.fingerprint,
+			desired_fingerprint:$state.fingerprint,
+			compose_config_sha256:("0" * 64),
+			postgres_identity:$state.storage.postgres_identity,
+			updated_at_unix:1
+		}}' "$hash_drift_marker" >"$hash_drift_journal"
+if ASSUME_RELEASE_STATE=true \
+    DEVSHARD_V5_UPGRADE_MARKER="$hash_drift_marker" \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/hash-drift.log" \
+    EXISTING_PROXY_COMPONENT=proxy-router \
+    EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+    FAKE_STATE_DIR="$tmpdir/journal-missing-replicas.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        >"$tmpdir/hash-drift.stdout" 2>"$tmpdir/hash-drift.stderr"; then
+    fail "active transaction accepted a changed Compose model"
+fi
+grep -q 'effective Compose model changed during active transaction' \
+    "$tmpdir/hash-drift.stderr" || fail \
+    "Compose transaction drift did not produce a useful error"
+assert_no_compose_mutation "$tmpdir/hash-drift.log"
 
 printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
 mkdir -p "$tmpdir/active-with-marker.state"
@@ -1158,7 +1205,7 @@ assert_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 2100 versiond"
 assert_contains "$tmpdir/active-with-marker.log" \
     "--wait-timeout 180 edge-api"
-jq -e '.schema == 1 and (.compose.files | length > 0)' \
+jq -e '.schema == 2 and (.compose.files | length > 0)' \
     "$tmpdir/upgrade-complete" >/dev/null || fail \
     "legacy marker was not upgraded to the desired-state schema"
 
@@ -1345,6 +1392,9 @@ assert_contains "$tmpdir/versiond-router.log" \
     "VERSIOND_HOSTS=versiond\\ versiond2"
 assert_contains "$tmpdir/versiond-router.log" \
     'exec cid-versiond-router /bin/busybox wget -q -T 3 -O /dev/null http://127.0.0.1:8080/v3/healthz'
+jq -e '.transaction.postgres_identity == "shared-database"' \
+	"$tmpdir/upgrade-complete.in-progress" >/dev/null || fail \
+	"the first upgraded supervisor did not durably fence PostgreSQL identity"
 
 ROLLBACK_MISSING_ROUTE_SERVICE=versiond-router \
 UPGRADE_ROLLBACK_VERIFY_TIMEOUT=1 \

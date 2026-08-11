@@ -70,6 +70,14 @@ router or policy worker, not against loss of the host, Docker daemon, public
 listener, or its network. A future multi-host ingress (provider LB, VIP, or
 Kubernetes Service) belongs above this layer and is outside this change.
 
+The stock Compose `devshard-postgres` is likewise one process and one
+host-local storage failure domain. It makes several `versiond` processes share
+one execution ledger, but it is not database HA. A multi-host production
+deployment must use a managed or operator-controlled PostgreSQL primary with
+synchronous durability and an effective RPO of zero for acknowledged
+execution-state writes; losing a committed `dispatched` fence can otherwise
+permit the same ML operation to be sent again after failover.
+
 | Path (public) | Backend | Purpose |
 |---------------|---------|---------|
 | 22 Tier A `/v1/*` query routes | `proxy-router :18082` → ready `edge-api` | Read-only chain queries |

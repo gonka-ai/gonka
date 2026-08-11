@@ -359,16 +359,20 @@ grep -q 'use maintenance-rollout to avoid mixed escrow placement' \
 if "${fleet[@]}" maintenance-rollout >"$tmpdir/unacked-maintenance.out" 2>&1; then
     fail "maintenance outage was accepted without explicit acknowledgement"
 fi
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$bad_image|" \
+    "$tmpdir/config.env"
 if VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE=true \
     "${fleet[@]}" maintenance-rollout \
     >"$tmpdir/maintenance-rollback.out" 2>&1; then
-    fail "invalid maintenance candidate unexpectedly started"
+    fail "route-dead maintenance candidate unexpectedly committed"
 fi
 grep -q 'the exact previous router fleet was restored' \
     "$tmpdir/maintenance-rollback.out" || {
     cat "$tmpdir/maintenance-rollback.out" >&2
     fail "failed maintenance candidate did not restore the previous fleet"
 }
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
+    "$tmpdir/config.env"
 sed -i '/^VERSIOND_ROUTING_CATALOG_URL=$/d' "$tmpdir/config.env"
 cat >>"$tmpdir/config.env" <<'EOF'
 VERSIOND_ROUTER_ALLOW_COARSE_READINESS=true
