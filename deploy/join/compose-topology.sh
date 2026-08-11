@@ -226,12 +226,20 @@ gonka_compose_validate_postgres_identity() {
     local docker_bin=$1 config=$2
     shift 2
     local -a runtime_containers=("$@")
-    local versiond_host versiond2_host storage_mode container key expected actual
+    local versiond_host storage_mode container key expected actual
+    local versiond_value versiond2_value
 
-    versiond_host=$(jq -r '.services.versiond.environment.PGHOST // ""' <<<"$config")
-    versiond2_host=$(jq -r '.services.versiond2.environment.PGHOST // ""' <<<"$config")
-    [[ -n $versiond_host && $versiond_host == "$versiond2_host" ]] || fail \
-        "HA versiond services must resolve the same non-empty PGHOST; got versiond='${versiond_host:-unset}', versiond2='${versiond2_host:-unset}'"
+    for key in PGHOST PGPORT PGDATABASE PGUSER; do
+        versiond_value=$(jq -r --arg key "$key" \
+            'if $key == "PGPORT" then (.services.versiond.environment[$key] // "5432") else (.services.versiond.environment[$key] // "") end' \
+            <<<"$config")
+        versiond2_value=$(jq -r --arg key "$key" \
+            'if $key == "PGPORT" then (.services.versiond2.environment[$key] // "5432") else (.services.versiond2.environment[$key] // "") end' \
+            <<<"$config")
+        [[ -n $versiond_value && $versiond_value == "$versiond2_value" ]] || fail \
+            "HA versiond services must use the same non-empty $key; got versiond='${versiond_value:-unset}', versiond2='${versiond2_value:-unset}'"
+        [[ $key != PGHOST ]] || versiond_host=$versiond_value
+    done
     for container in versiond versiond2; do
         [[ " ${runtime_containers[*]} " == *" $container "* ]] || continue
         "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue

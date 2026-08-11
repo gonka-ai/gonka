@@ -332,6 +332,19 @@ The crucial property for multi-instance:
   cross-instance validation-lease table (`devshard_validation_leases`) that
   guarantees only one devshardd validates each `(escrow_id, inference_id)` pair.
 
+Postgres readiness is live, not a startup latch. Each devshardd probes its pool
+once per second; two consecutive failures remove that child from `/ready`, and
+two consecutive successes admit it again. The index-rebuild gate remains an
+independent prerequisite. This keeps a child whose database connection was lost
+out of every per-version hash ring without making a single transient probe flap
+the whole pool.
+
+Before changing an HA Compose deployment, the updater also requires `versiond`
+and `versiond2` to resolve the same non-empty `(PGHOST, PGPORT, PGDATABASE,
+PGUSER)` tuple and refuses an implicit endpoint change from the running
+containers. This is a deployment preflight; PostgreSQL itself remains the
+runtime consistency authority.
+
 Therefore:
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared

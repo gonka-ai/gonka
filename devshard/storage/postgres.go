@@ -46,6 +46,11 @@ type Postgres struct {
 	readyOnce   sync.Once
 	indexErr    error
 	indexCancel context.CancelFunc
+	healthReady bool
+	healthFails int
+	healthOKs   int
+	healthStop  context.CancelFunc
+	healthDone  chan struct{}
 }
 
 const (
@@ -65,6 +70,11 @@ const (
 	// after a failed (often timed-out) create, so it must not extend the lock
 	// hold time by another full op timeout during an outage.
 	postgresLivePresenceTimeout = 2 * time.Second
+	// postgresHealthInterval and postgresHealthTimeout keep /ready tied to the
+	// live database without issuing a SQL probe for every router health check.
+	postgresHealthInterval = time.Second
+	postgresHealthTimeout  = time.Second
+	postgresHealthQuorum   = 2
 	// postgresIndexRepairBatchSize caps rows per DELETE/INSERT when repairing
 	// devshard_session_index so a large divergence does not hold one giant lock.
 	postgresIndexRepairBatchSize = 1000
@@ -160,9 +170,66 @@ func NewPostgres(ctx context.Context) (*Postgres, error) {
 		knownEpochs: make(map[uint64]struct{}),
 		escrowIdx:   make(map[string]uint64),
 		readyCh:     make(chan struct{}),
+		healthReady: true,
+		healthDone:  make(chan struct{}),
 	}
+	s.startHealthMonitor()
 	s.startIndexRebuild()
 	return s, nil
+}
+
+func (s *Postgres) startHealthMonitor() {
+	ctx, cancel := context.WithCancel(context.Background())
+	s.mu.Lock()
+	s.healthStop = cancel
+	s.mu.Unlock()
+	go func() {
+		defer close(s.healthDone)
+		ticker := time.NewTicker(postgresHealthInterval)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				probeCtx, probeCancel := context.WithTimeout(ctx, postgresHealthTimeout)
+				err := s.pool.Ping(probeCtx)
+				probeCancel()
+				changed, ready := s.recordHealthProbe(err == nil)
+				if changed {
+					if ready {
+						slog.Info("devshard storage: postgres readiness recovered")
+					} else {
+						slog.Warn("devshard storage: postgres readiness lost", "error", err)
+					}
+				}
+			}
+		}
+	}()
+}
+
+func (s *Postgres) recordHealthProbe(ok bool) (changed, ready bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	previous := s.healthReady
+	if ok {
+		s.healthFails = 0
+		if s.healthOKs < postgresHealthQuorum {
+			s.healthOKs++
+		}
+		if s.healthOKs >= postgresHealthQuorum {
+			s.healthReady = true
+		}
+	} else {
+		s.healthOKs = 0
+		if s.healthFails < postgresHealthQuorum {
+			s.healthFails++
+		}
+		if s.healthFails >= postgresHealthQuorum {
+			s.healthReady = false
+		}
+	}
+	return previous != s.healthReady, s.healthReady
 }
 
 func (s *Postgres) startIndexRebuild() {
@@ -229,11 +296,17 @@ func (s *Postgres) indexReadyErr() error {
 	return nil
 }
 
-// Ready reports whether the session index rebuild has completed successfully.
+// Ready reports whether the session index is usable and the live database has
+// passed the health hysteresis contract.
 func (s *Postgres) Ready() bool {
 	select {
 	case <-s.readyCh:
-		return s.indexReadyErr() == nil
+		if s.indexReadyErr() != nil {
+			return false
+		}
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		return s.healthReady
 	default:
 		return false
 	}
@@ -415,14 +488,25 @@ func (s *Postgres) insertMissingSessionIndex(ctx context.Context, escrows []stri
 // releases the pool. Subsequent calls return immediately.
 func (s *Postgres) Close() error {
 	s.mu.Lock()
-	cancel := s.indexCancel
+	indexCancel := s.indexCancel
+	healthCancel := s.healthStop
+	healthDone := s.healthDone
 	s.mu.Unlock()
-	if cancel != nil {
-		cancel()
+	if indexCancel != nil {
+		indexCancel()
+	}
+	if healthCancel != nil {
+		healthCancel()
 	}
 	select {
 	case <-s.readyCh:
 	case <-time.After(postgresOpTimeout):
+	}
+	if healthDone != nil {
+		select {
+		case <-healthDone:
+		case <-time.After(postgresHealthTimeout):
+		}
 	}
 	s.pool.Close()
 	return nil

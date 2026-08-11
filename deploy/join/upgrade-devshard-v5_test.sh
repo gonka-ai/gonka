@@ -253,7 +253,9 @@ fi
 for arg in "$@"; do
     if [[ $arg == config ]]; then
         pg_host=${RENDERED_PGHOST:-devshard-postgres}
-        jq -cn --arg pg "$pg_host" --arg join "$JOIN_DIR" \
+        jq -cn --arg pg "$pg_host" \
+            --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
+            --arg join "$JOIN_DIR" \
             --arg proxy_http "${RENDERED_PROXY_HTTP_PORT:-8000}" \
             --arg proxy_https "${RENDERED_PROXY_HTTPS_PORT:-8443}" \
             --arg policy "${RENDERED_POLICY_NETWORK:-gonka-proxy-policy-front}" \
@@ -271,7 +273,7 @@ for arg in "$@"; do
                 ]},
                 "proxy-policy":{},
                 versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-                versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+                versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 "devshard-postgres":{container_name:"devshard-postgres",volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
@@ -907,6 +909,26 @@ grep -q 'refuse an implicit PostgreSQL identity change' \
     fail "PostgreSQL endpoint change did not produce a useful error"
 }
 assert_no_compose_mutation "$tmpdir/postgres-switch.log"
+
+if RENDERED_PGDATABASE2=other-devshard \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/postgres-split.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+    FAKE_STATE_DIR="$tmpdir/postgres-split.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$tmpdir/postgres-split.stdout" \
+        2>"$tmpdir/postgres-split.stderr"; then
+    fail "upgrade accepted versiond services connected to different databases"
+fi
+grep -q 'same non-empty PGDATABASE' "$tmpdir/postgres-split.stderr" || {
+    cat "$tmpdir/postgres-split.stderr" >&2
+    fail "split PostgreSQL database did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/postgres-split.log"
 versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")
 versiond2_up_line=$(line_number "$tmpdir/ha.log" \

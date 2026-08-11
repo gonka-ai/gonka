@@ -147,7 +147,9 @@ accepted and counted for its full response or rejected before its handler runs.
 Late chain-ready callbacks cannot move a draining process back to serving.
 
 1. **`GET /ready` (admin)** — `200` when chain-event subscriptions report ready
-   and the child is not draining; otherwise `503`. versiond also requires
+   and the child is not draining, its storage index is built, and its live
+   PostgreSQL probe is healthy; otherwise `503`. PostgreSQL uses two-failure /
+   two-success hysteresis around a one-second probe. versiond also requires
    public `/healthz` `2xx` before publishing the route for admin-capable
    children (`waitForChildServingReady`).
 2. **`GET /drain/status` (admin)** — `{ready, draining, inflight}` from the
