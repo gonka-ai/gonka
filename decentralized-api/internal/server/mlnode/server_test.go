@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"decentralized-api/apiconfig"
@@ -13,11 +14,13 @@ import (
 	"decentralized-api/chainphase"
 	"decentralized-api/cosmosclient"
 	"decentralized-api/mlnodeclient"
+	"decentralized-api/observability"
 	"decentralized-api/poc/artifacts"
 
 	"github.com/productscience/inference/x/inference/types"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 type stubBrokerChainBridge struct {
@@ -127,6 +130,63 @@ func newMLNodeTestBroker(t *testing.T, phase types.EpochPhase, modelIDs ...strin
 	}
 
 	return testBroker
+}
+
+func TestMetricsRoute_ExposesDefaultRegistry(t *testing.T) {
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA))
+	require.NotNil(t, server.e.Server.ConnState, "ConnState hook must be wired (regression for b53fd8fcd)")
+
+	// Seed a decentralized_api_* series so the exposition is non-vacuous.
+	tracer := &observability.InferenceTracer{}
+	_, op := tracer.StartRequest(t.Context(), http.MethodGet)
+	op.Finish(nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	body := rec.Body.String()
+	require.Contains(t, body, "decentralized_api_inference_active_operations")
+	require.Contains(t, body, "go_")
+}
+
+func TestDevshardSDTargets_Shape(t *testing.T) {
+	cm := &apiconfig.ConfigManager{}
+	cm.SetDevshardVersions(apiconfig.DevshardVersionsCache{
+		Versions: []apiconfig.DevshardVersion{
+			{Name: "v2", Binary: "https://example/v2", SHA256: "abc"},
+			{Name: "v4", Binary: "https://example/v4", SHA256: "def"},
+			{Name: "", Binary: "ignored", SHA256: "x"},
+		},
+	})
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA), WithConfigManager(cm))
+
+	req := httptest.NewRequest(http.MethodGet, "/sd/devshardd", nil)
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	var groups []prometheusTargetGroup
+	require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &groups))
+	require.Len(t, groups, 2)
+	require.Equal(t, []string{"versiond:8080"}, groups[0].Targets)
+	require.Equal(t, "v2", groups[0].Labels["version"])
+	require.Equal(t, "/v2/metrics", groups[0].Labels["__metrics_path__"])
+	require.Equal(t, "devshardd", groups[0].Labels["service"])
+	require.Equal(t, "v4", groups[1].Labels["version"])
+	require.Equal(t, "/v4/metrics", groups[1].Labels["__metrics_path__"])
+}
+
+func TestDevshardSDTargets_EmptyWithoutConfigManager(t *testing.T) {
+	server := NewServer(nil, newMLNodeTestBroker(t, types.PoCGeneratePhase, testModelA))
+
+	req := httptest.NewRequest(http.MethodGet, "/sd/devshardd", nil)
+	rec := httptest.NewRecorder()
+	server.e.ServeHTTP(rec, req)
+
+	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, "[]", strings.TrimSpace(rec.Body.String()))
 }
 
 func TestV2GeneratedCallbackRequiresModelScopedRoute(t *testing.T) {

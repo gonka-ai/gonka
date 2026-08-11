@@ -147,6 +147,12 @@ func NewServer(
 		return mlnodeMetricsHandler(c)
 	}, echomw.Gzip())
 
+	// dapi's own Prometheus exposition on the public listener so the join
+	// proxy can scrape behind metrics_zone (api_backend = public port).
+	// The ML server (port 9100) also serves /metrics for the direct
+	// Prometheus job — same default registry.
+	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
+
 	v2 := e.Group("/v2/")
 	v2.GET("participants/:address", s.getParticipantByAddress)
 	v2.GET("accounts/:address", s.getAccountByAddress)
