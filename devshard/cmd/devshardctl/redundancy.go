@@ -897,6 +897,11 @@ type inflight struct {
 
 	usageComplTokens atomic.Int64
 
+	// A host emits one token format for the whole answer, so the first chunk carrying logprobs settles
+	// it and the rest are not parsed.
+	logprobsJudged  bool
+	logprobsDecoded bool
+
 	suspiciousWinnerDeferredLog sync.Once
 
 	// shortContentResponseBody optionally preserves raw streamed bytes so
@@ -1376,6 +1381,11 @@ func (rw *raceWriter) takeParseable(p []byte) []byte {
 func (rw *raceWriter) classifyParseable(parseable []byte) (hasContent, hasError bool) {
 	if len(parseable) == 0 {
 		return false, false
+	}
+	if !rw.inf.logprobsJudged {
+		if decoded, found := sseChunkLogprobsDecoded(parseable); found {
+			rw.inf.logprobsJudged, rw.inf.logprobsDecoded = true, decoded
+		}
 	}
 	if src, ok := sseChunkContentSource(parseable); ok {
 		hasContent = true
@@ -2832,6 +2842,10 @@ func (e *Redundancy) recordGatewayAttemptTerminal(inf *inflight, params user.Inf
 	if !ok {
 		deliveryReason = gatewayAttemptFailureReason(inf, e.session)
 	}
+	if inf.logprobsDecoded {
+		e.accounting.LogprobsDecoded(inf.escrowID, inf.nonce)
+	}
+	e.accounting.AttemptTiming(inf.escrowID, inf.nonce, attemptTiming(inf))
 	e.accounting.Usage(inf.escrowID, inf.nonce, winnerNonce, deliveryReason)
 	if e.metrics == nil {
 		return

@@ -1,13 +1,5 @@
 package accounting
 
-import (
-	"cmp"
-	"fmt"
-	"maps"
-	"slices"
-	"strings"
-)
-
 // Thresholds are constants rather than configuration: a per-deployment one would let two gateways
 // report the same host differently. neverCritical is the ceiling of a finding that stops at warning,
 // since no rate exceeds 1.
@@ -26,6 +18,11 @@ const (
 	gatewayThrottleWarning   = 0.10
 	quarantineWarning        = 0.10
 	unknownReasonWarning     = 0.05
+	slowReceiptWarning       = 0.05
+	slowChunkWarning         = 0.05
+	clockDriftWarning        = 0.01
+	decodedLogprobsWarning   = 0.001
+	decodedLogprobsCritical  = 0.01
 	neverCritical            = 2.0
 )
 
@@ -42,6 +39,10 @@ const (
 	FindingChainDisagreement   = "ledger_disagrees_with_chain"
 	FindingLedgerOvercounted   = "ledger_overcounted"
 	FindingUnknownReasons      = "reasons_unknown"
+	FindingDecodedLogprobs     = "logprobs_not_token_ids"
+	FindingSlowReceipts        = "slow_receipts"
+	FindingSlowChunks          = "slow_chunks"
+	FindingClockDrift          = "clock_drift"
 )
 
 type Severity string
@@ -51,11 +52,14 @@ const (
 	SeverityCritical Severity = "critical"
 )
 
+// Finding names a condition and the numbers it was flagged on, nothing more. What each code means and
+// what to check lives in docs/accounting-findings.md, so an explanation is written once instead of
+// crossing the network with every response.
 type Finding struct {
 	Code     string   `json:"code"`
 	Severity Severity `json:"severity"`
-	Observed string   `json:"observed"`
-	Detail   string   `json:"detail"`
+	Part     uint64   `json:"part"`
+	Whole    uint64   `json:"whole,omitempty"` // zero when the finding counts rather than measures a rate
 }
 
 // findingsFor reads only what the record already carries, so a finding and the numbers beside it in
@@ -80,90 +84,63 @@ func findingsFor(record ParticipantRecord) []Finding {
 		}
 	}
 	add(ratio(unfinished, reached, executionTimeoutWarning, executionTimeoutCritical,
-		FindingExecutionTimeouts, "nonces were acknowledged and never finished",
-		"Accepted the work and delivered nothing, so the nonce is held to the execution deadline "+
-			"instead of freed at the refusal one. Check the output length against the host's decode rate."))
+		FindingExecutionTimeouts))
 	add(ratio(refused, reached, refusalWarning, refusalCritical,
-		FindingRefusals, "nonces were never acknowledged",
-		"The host did not take the work. Cheaper than a timeout but still spends the nonce; points at "+
-			"capacity or reachability rather than speed."))
+		FindingRefusals))
 	add(ratio(record.Dispositions[DispositionFinishedUnused], delivered, unusedAnswerWarning, neverCritical,
-		FindingUnusedAnswers, "finished answers were not used",
-		"Finished after another host had already answered. A throughput problem, not an availability one."))
+		FindingUnusedAnswers))
 	add(ratio(record.ProtocolMisses, record.AssignedNonces, protocolMissWarning, protocolMissCritical,
-		FindingProtocolMisses, "assigned nonces were recorded as missed on chain",
-		"The chain's own verdict, from settled host statistics — the number that costs the host its "+
-			"reward. It should track the applied timeouts above."))
+		FindingProtocolMisses))
 	add(ratio(record.ProtocolInvalid, record.AssignedNonces, protocolInvalidWarning, protocolInvalidCritical,
-		FindingProtocolInvalid, "assigned nonces were invalidated on chain",
-		"A validator replayed the work and got a different answer. Not about speed — check the model "+
-			"and runtime version the host serves."))
+		FindingProtocolInvalid))
 	if record.UnresolvedChallenges > 0 {
 		findings = append(findings, Finding{
-			Code:     FindingUnresolvedChallenge,
-			Severity: SeverityWarning,
-			Observed: fmt.Sprintf("%d challenges have no verdict yet", record.UnresolvedChallenges),
-			Detail: "A dispute with no verdict yet. Until it resolves the nonce counts as neither valid " +
-				"nor invalid.",
+			Code: FindingUnresolvedChallenge, Severity: SeverityWarning, Part: record.UnresolvedChallenges,
 		})
 	}
 	add(ratio(ghostsBecause(record, NoSendParticipantThrottled), record.AssignedNonces, gatewayThrottleWarning, neverCritical,
-		FindingGatewayThrottled, "assigned nonces were burned without being sent",
-		"Our decision, not the host's failure. The per-host window narrows after failures and widens "+
-			"as they stop, so this trails the other findings."))
+		FindingGatewayThrottled))
 	add(ratio(countersWhere(record, wasQuarantined), record.AssignedNonces, quarantineWarning, neverCritical,
-		FindingQuarantined, "assigned nonces were handled under quarantine",
-		"Our reaction too: the host was being probed, shadowed, or held on probation, so these nonces "+
-			"were not served the way a healthy host's are."))
+		FindingQuarantined))
 	add(ratio(record.UnknownReasonTotal, record.AssignedNonces, unknownReasonWarning, neverCritical,
-		FindingUnknownReasons, "classified nonces carry a reason this ledger could not name",
-		"A gap in this gateway's instrumentation, not a host fault: a terminal state reached through a "+
-			"path the ledger cannot name."))
+		FindingUnknownReasons))
 
-	if total, breakdown := failureOrigins(record); total > 0 && reachedIncludingExcused >= findingMinimumVolume {
+	add(ratio(countersWhere(record, receiptWasSlow), delivered+unfinished, slowReceiptWarning, neverCritical,
+		FindingSlowReceipts))
+	add(ratio(countersWhere(record, chunkWasSlow), delivered, slowChunkWarning, neverCritical,
+		FindingSlowChunks))
+	add(ratio(countersWhere(record, clockHasDrifted), delivered+unfinished, clockDriftWarning, neverCritical,
+		FindingClockDrift))
+	add(ratio(countersWhere(record, logprobsWereDecoded), delivered, decodedLogprobsWarning, decodedLogprobsCritical,
+		FindingDecodedLogprobs))
+
+	if total := countersWhere(record, failedWithoutAnswer); total > 0 && reachedIncludingExcused >= findingMinimumVolume {
 		findings = append(findings, Finding{
-			Code:     FindingFailureOrigins,
-			Severity: SeverityWarning,
-			Observed: fmt.Sprintf("%d of %d nonces reached this participant and produced no usable answer: %s",
-				total, reachedIncludingExcused, breakdown),
-			Detail: "Who ended each failure. Only host_response is the host's; gateway_policy and client " +
-				"are already excluded from the rates above. A failure during PoC is expected.",
+			Code: FindingFailureOrigins, Severity: SeverityWarning, Part: total, Whole: reachedIncludingExcused,
 		})
 	}
-	// The two halves of the cross-check are not the same kind of number. Drift between this gateway
-	// and the chain is expected while an escrow is live, so it waits for volume; a ledger that counted
-	// more nonces than the slot was ever given is a broken invariant at any volume.
 	if drift := record.CrossChecks.ErrorCount - record.Overclassified; drift > 0 && record.AssignedNonces >= findingMinimumVolume {
 		findings = append(findings, Finding{
-			Code:     FindingChainDisagreement,
-			Severity: SeverityWarning,
-			Observed: fmt.Sprintf("%d nonces the ledger and the chain disagree about: %d applied timeouts against %d chain misses, %d recorded invalid against %d chain invalid",
-				drift, record.CrossChecks.TimeoutApplied, record.CrossChecks.HostMissed,
-				record.CrossChecks.RecordedInvalid, record.CrossChecks.HostInvalid),
-			Detail: "Expected drift while an escrow is live, and it converges on its own. A gap that " +
-				"survives settlement means one of the two is wrong.",
+			Code: FindingChainDisagreement, Severity: SeverityWarning, Part: drift, Whole: record.AssignedNonces,
 		})
 	}
 	if record.Overclassified > 0 {
 		findings = append(findings, Finding{
-			Code:     FindingLedgerOvercounted,
-			Severity: SeverityWarning,
-			Observed: fmt.Sprintf("%d beyond the %d nonces the chain assigned", record.Overclassified, record.AssignedNonces),
-			Detail: "More nonces than the chain assigned, so one of the two is wrong. No host behaviour " +
-				"produces this — report it.",
+			Code: FindingLedgerOvercounted, Severity: SeverityWarning,
+			Part: record.Overclassified, Whole: record.AssignedNonces,
 		})
 	}
 	return findings
 }
 
-// ratio takes the denominator once, so the rate that decides and the numbers that explain it cannot
+// ratio takes the denominator once, so the rate that decides and the numbers reported beside it cannot
 // disagree about what they were measured against.
-func ratio(part, whole uint64, warning, critical float64, code, what, detail string) (Finding, bool) {
+func ratio(part, whole uint64, warning, critical float64, code string) (Finding, bool) {
 	severity, flagged := rate(part, whole, warning, critical)
 	if !flagged {
 		return Finding{}, false
 	}
-	return Finding{Code: code, Severity: severity, Observed: observed(part, whole, what), Detail: detail}, true
+	return Finding{Code: code, Severity: severity, Part: part, Whole: whole}, true
 }
 
 func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
@@ -180,9 +157,14 @@ func rate(part, whole uint64, warning, critical float64) (Severity, bool) {
 	return "", false
 }
 
-func observed(part, whole uint64, what string) string {
-	return fmt.Sprintf("%d of %d %s (%.1f%%)", part, whole, what, 100*float64(part)/float64(whole))
+func failedWithoutAnswer(key CounterKey) bool {
+	return key.Disposition == DispositionUnfinishedRefused || key.Disposition == DispositionUnfinishedExecution
 }
+
+func logprobsWereDecoded(key CounterKey) bool { return key.LogprobsDecoded }
+func receiptWasSlow(key CounterKey) bool      { return key.SlowReceipt }
+func chunkWasSlow(key CounterKey) bool        { return key.SlowChunk }
+func clockHasDrifted(key CounterKey) bool     { return key.ClockDrifted }
 
 func countersWhere(record ParticipantRecord, match func(CounterKey) bool) uint64 {
 	var total uint64
@@ -210,37 +192,6 @@ func blamesHost(key CounterKey) bool {
 
 func wasQuarantined(key CounterKey) bool {
 	return key.QuarantineMode != "" && key.QuarantineMode != QuarantineNone
-}
-
-func failureOrigins(record ParticipantRecord) (uint64, string) {
-	counts := make(map[string]uint64)
-	var total uint64
-	for _, counter := range record.Counters {
-		if counter.Key.Disposition != DispositionUnfinishedRefused &&
-			counter.Key.Disposition != DispositionUnfinishedExecution {
-			continue
-		}
-		label := string(counter.Key.FailureOrigin)
-		if label == "" {
-			label = string(FailureTransportUnknown)
-		}
-		if counter.Key.DispatchPhase == PhasePoC || counter.Key.TimeoutEvaluationPhase == PhasePoC {
-			label += " during PoC"
-		}
-		counts[label] += counter.Count
-		total += counter.Count
-	}
-	ordered := slices.SortedFunc(maps.Keys(counts), func(left, right string) int {
-		if counts[left] != counts[right] {
-			return cmp.Compare(counts[right], counts[left])
-		}
-		return strings.Compare(left, right)
-	})
-	described := make([]string, 0, len(ordered))
-	for _, label := range ordered {
-		described = append(described, fmt.Sprintf("%s (%d)", label, counts[label]))
-	}
-	return total, strings.Join(described, ", ")
 }
 
 func ghostsBecause(record ParticipantRecord, reason NoSendReason) uint64 {

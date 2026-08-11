@@ -122,6 +122,8 @@ func (t *Tracker) Query(filter QueryFilter) []ParticipantRecord {
 			record.AssignedNonces += slotRecord.AssignedNonces
 			record.ProtocolMisses += slotRecord.ProtocolMisses
 			record.ProtocolInvalid += slotRecord.ProtocolInvalid
+			record.RequiredValidations += slotRecord.RequiredValidations
+			record.CompletedValidations += slotRecord.CompletedValidations
 			record.UnresolvedChallenges += slotRecord.UnresolvedChallenges
 			record.InFlight += slotRecord.InFlight
 			record.TimeoutPending += slotRecord.TimeoutPending
@@ -263,6 +265,8 @@ func buildSlotRecord(escrow *escrowView, slot uint32, now time.Time) SlotRecord 
 	if stats, ok := escrow.hostStats[slot]; ok {
 		record.ProtocolMisses = uint64(stats.Missed)
 		record.ProtocolInvalid = uint64(stats.Invalid)
+		record.RequiredValidations = uint64(stats.RequiredValidations)
+		record.CompletedValidations = uint64(stats.CompletedValidations)
 	}
 	if accounted < assigned {
 		record.Unclassified = assigned - accounted
@@ -319,6 +323,8 @@ func (t *Tracker) Epochs(filter QueryFilter) []EpochSummary {
 			}
 			summary.AssignedNonces += record.AssignedNonces
 			summary.ProtocolMisses += record.ProtocolMisses
+			summary.RequiredValidations += record.RequiredValidations
+			summary.CompletedValidations += record.CompletedValidations
 			summary.ProtocolInvalid += record.ProtocolInvalid
 			summary.UnresolvedChallenges += record.UnresolvedChallenges
 			summary.InFlight += record.InFlight

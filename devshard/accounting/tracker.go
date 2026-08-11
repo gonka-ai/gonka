@@ -52,6 +52,10 @@ type nonceState struct {
 	Quarantine        QuarantineMode
 	NoSendReason      NoSendReason
 	FailureOrigin     FailureOrigin
+	LogprobsDecoded   bool
+	SlowReceipt       bool
+	SlowChunk         bool
+	ClockDrifted      bool
 	DetailReason      string
 	DeliveryReason    string
 	TimeoutKind       TimeoutKind
@@ -338,6 +342,34 @@ func (t *Tracker) RecordUsage(escrowID string, nonce uint64, usage Usage, delive
 		}
 		s.Usage = normalizeUsage(usage)
 		s.DeliveryReason = normalizeDetailReason(deliveryReason)
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+// RecordLogprobsDecoded marks an answer whose logprobs named tokens by text rather than by id. A
+// validator replays an inference from those ids, so it votes such an answer invalid.
+func (t *Tracker) RecordLogprobsDecoded(escrowID string, nonce uint64) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.LogprobsDecoded = true
+		e.reclassify(nonce, s, t.nowUTC())
+		return nil
+	})
+}
+
+func (t *Tracker) RecordAttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) error {
+	return t.withEscrow(escrowID, func(e *escrowState) error {
+		s, err := e.liveNonce(nonce)
+		if err != nil {
+			return err
+		}
+		s.SlowReceipt = timing.receiptWasSlow()
+		s.SlowChunk = timing.chunkWasSlow()
+		s.ClockDrifted = timing.clockHasDrifted()
 		e.reclassify(nonce, s, t.nowUTC())
 		return nil
 	})
@@ -661,6 +693,10 @@ func (s *nonceState) counterKey(meta EscrowMetadata, now time.Time) (CounterKey,
 		QuarantineMode:         s.Quarantine,
 		NoSendReason:           s.NoSendReason,
 		FailureOrigin:          s.FailureOrigin,
+		LogprobsDecoded:        s.LogprobsDecoded,
+		SlowReceipt:            s.SlowReceipt,
+		SlowChunk:              s.SlowChunk,
+		ClockDrifted:           s.ClockDrifted,
 		DetailReason:           s.DetailReason,
 		DeliveryReason:         s.DeliveryReason,
 		TimeoutKind:            s.TimeoutKind,

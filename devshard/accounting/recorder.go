@@ -218,6 +218,24 @@ func (r *Recorder) Usage(escrowID string, nonce, winnerNonce uint64, deliveryRea
 	}
 }
 
+func (r *Recorder) LogprobsDecoded(escrowID string, nonce uint64) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordLogprobsDecoded(escrowID, nonce); err != nil {
+		log.Printf("gateway accounting logprobs escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
+func (r *Recorder) AttemptTiming(escrowID string, nonce uint64, timing AttemptTiming) {
+	if r == nil || r.tracker == nil {
+		return
+	}
+	if err := r.tracker.RecordAttemptTiming(escrowID, nonce, timing); err != nil {
+		log.Printf("gateway accounting timing escrow=%s nonce=%d: %v", escrowID, nonce, err)
+	}
+}
+
 func (r *Recorder) TimeoutResult(
 	escrowID string,
 	nonce uint64,

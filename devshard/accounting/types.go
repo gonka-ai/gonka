@@ -143,6 +143,25 @@ type VerdictRecord struct {
 	Kind  ProtocolKind
 }
 
+const (
+	SlowReceiptAfter  = 5 * time.Second
+	SlowChunkGapAfter = 1500 * time.Millisecond
+	ClockDriftBeyond  = 5 * time.Second
+)
+
+type AttemptTiming struct {
+	Acknowledgement time.Duration
+	MaxChunkGap     time.Duration
+	ClockOffset     time.Duration
+	ClockMeasured   bool
+}
+
+func (t AttemptTiming) receiptWasSlow() bool { return t.Acknowledgement > SlowReceiptAfter }
+func (t AttemptTiming) chunkWasSlow() bool   { return t.MaxChunkGap > SlowChunkGapAfter }
+func (t AttemptTiming) clockHasDrifted() bool {
+	return t.ClockMeasured && (t.ClockOffset > ClockDriftBeyond || t.ClockOffset < -ClockDriftBeyond)
+}
+
 type CounterKey struct {
 	SlotID                 uint32         `json:"slot_id"`
 	Disposition            Disposition    `json:"disposition"`
@@ -151,6 +170,10 @@ type CounterKey struct {
 	QuarantineMode         QuarantineMode `json:"quarantine_mode,omitempty"`
 	NoSendReason           NoSendReason   `json:"no_send_reason,omitempty"`
 	FailureOrigin          FailureOrigin  `json:"failure_origin,omitempty"`
+	LogprobsDecoded        bool           `json:"logprobs_decoded,omitempty"`
+	SlowReceipt            bool           `json:"slow_receipt,omitempty"`
+	SlowChunk              bool           `json:"slow_chunk,omitempty"`
+	ClockDrifted           bool           `json:"clock_drifted,omitempty"`
 	DetailReason           string         `json:"detail_reason,omitempty"`
 	DeliveryReason         string         `json:"delivery_reason,omitempty"`
 	TimeoutKind            TimeoutKind    `json:"timeout_kind,omitempty"`
@@ -179,6 +202,8 @@ type SlotRecord struct {
 	DeliveryReasons       map[string]uint64         `json:"delivery_reasons,omitempty"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	RecordedInvalid       uint64                    `json:"recorded_invalid_transitions"`
 	InFlight              uint64                    `json:"in_flight"`
@@ -210,6 +235,8 @@ type ParticipantRecord struct {
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
@@ -232,6 +259,8 @@ type EpochSummary struct {
 	TimeoutOutcomes       map[TimeoutOutcome]uint64 `json:"timeout_outcomes"`
 	ProtocolMisses        uint64                    `json:"protocol_misses"`
 	ProtocolInvalid       uint64                    `json:"protocol_invalid"`
+	RequiredValidations   uint64                    `json:"required_validations"`
+	CompletedValidations  uint64                    `json:"completed_validations"`
 	UnresolvedChallenges  uint64                    `json:"unresolved_challenges"`
 	InFlight              uint64                    `json:"in_flight"`
 	TimeoutPending        uint64                    `json:"timeout_pending"`
