@@ -48,13 +48,15 @@ The data request still goes to that router's port 8080. Separating health and
 traffic ports keeps lifecycle state off the public API. Versionless requests use
 the coarse `/readyz` check.
 
-Selection among eligible routers is `leastconn`, which distributes long SSE
-streams without requiring shared state. The selected inner router then applies
-the deterministic escrow consistent hash. All router replicas use the same
-pool, hash key, and legacy pins, so they independently reach the same placement.
-Their active-check views can differ for a few seconds around a host failure; in
-that interval a later request may recover on another versiond from shared
-PostgreSQL. This is why HA versions cannot use per-host SQLite.
+Selection among eligible routers uses the same escrow-derived consistent hash
+as the inner router. Versioned session paths, versionless session observability
+paths, and `/stats/shards/<escrow>` therefore stay on one router replica and one
+`versiond` placement. All router replicas use the same pool, hash key, and
+legacy pins, so they independently reach the same placement. Their active-check
+views can differ briefly around a host failure; for versionless GETs only, a
+route-local `404` is retried on another eligible host. POSTs are never replayed
+after they may have reached an application. HA versions must use shared
+PostgreSQL because affinity is placement, not exclusive ownership.
 
 ## Failure boundary
 
@@ -145,6 +147,7 @@ and cannot mutate routing.
 | `PROXY_ROUTER_PUBLIC_IDLE_SECONDS` | `86400` | TCP inactivity timeout before nginx, including WebSocket/TLS connections |
 | `PROXY_ROUTER_CONNECT_TIMEOUT_SECONDS` | `2` | upstream connect timeout |
 | `PROXY_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | internal DNS alias whose interface receives the read-only Prometheus listener; join Compose uses `proxy-router-metrics` |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used by HAProxy service discovery; Docker Compose uses the default, while another runtime may inject its cluster DNS IP |
 
 `VERSIOND_NON_HA_VERSIONS` and the bootstrap `VERSIOND_VERSIONS` must match every
 inner router. Runtime additions come from the same catalog on both tiers and do

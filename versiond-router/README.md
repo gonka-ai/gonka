@@ -41,11 +41,15 @@ Every backend is rendered from `pool-backend.cfg.template`, so the routing
 policy cannot drift between them. HA backends use the DNS pool; each legacy
 backend uses one slot pointed at the explicit SQLite owner.
 
-Within `versiond_ha_pool` the server is chosen by **consistent hash** of the
-escrow id taken from the path (`/{version}/sessions/{escrow}/...`); other paths
-hash by the path itself so non-session traffic still spreads. Consistent hashing
-means adding or removing one host re-homes roughly `1/N` of sessions instead of
-reshuffling all of them.
+Within every backend the server is chosen by **consistent hash**. Versioned
+session paths, versionless session observability paths, and
+`/stats/shards/<escrow>` all use the escrow id; unrelated paths use the complete
+normalized path so non-session traffic still spreads. Consistent hashing means
+adding or removing one host re-homes roughly `1/N` of sessions instead of
+reshuffling all of them. If router health views briefly diverge, the coarse
+backend may retry a versionless GET that receives a route-local `404`; explicit
+version routes retain their authoritative `404`, and non-idempotent requests
+are never replayed.
 
 The ring is keyed on each server's **address** (`hash-key addr`), not on the
 `server-template` slot it happens to occupy. That distinction is load-bearing:
@@ -388,6 +392,7 @@ Run `prepare-networks` before the next main-project `up`, then run
 | `VERSIOND_ROUTER_FRONT_BIND_HOST` | *(empty; all interfaces)* | unique per-slot front-network alias used to keep data and admin listeners off the metrics network |
 | `VERSIOND_ROUTER_METRICS_BIND_HOST` | *(empty; loopback)* | unique per-slot alias whose interface receives the read-only Prometheus listener |
 | `VERSIOND_ROUTER_METRICS_NETWORK` | *(auto-detected by fleet tooling)* | main Compose default network used only for Prometheus discovery; recorded in each slot for recovery |
+| `HAPROXY_DNS_RESOLVER` | `127.0.0.11:53` | numeric DNS nameserver used for pool membership; it is part of the fleet placement contract |
 | `VERSIOND_ROUTER_STOP_GRACE_PERIOD` | `10s` | routine Compose cleanup ceiling; fleet rollout supplies its explicit longer drain timeout |
 | `VERSIOND_ROUTER_ALLOW_MAINTENANCE_OUTAGE` | `false` | one-command acknowledgement required by `maintenance-rollout`; do not persist `true` |
 

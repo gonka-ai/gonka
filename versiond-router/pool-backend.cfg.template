@@ -36,8 +36,8 @@ backend ${BACKEND_NAME}
     # where a POST is written into a connection the peer is already closing.
     http-reuse safe
 
-    option redispatch
-    retry-on conn-failure empty-response 502
+    option redispatch 1
+    ${RETRY_ON}
     retries 2
     # Mirrors nginx's absent non_idempotent: connection-level redispatch for
     # everything, request replay only for idempotent methods.

@@ -39,6 +39,7 @@ serves = set(os.environ.get("SERVES", "").split())
 generic_ready = os.environ.get("GENERIC_READY", "true") == "true"
 data_enabled = os.environ.get("DATA_ENABLED", "true") == "true"
 data_port = int(os.environ.get("DATA_PORT", "8080"))
+missing_versionless = os.environ.get("MISSING_VERSIONLESS", "false") == "true"
 post_count = 0
 lock = threading.Lock()
 
@@ -56,6 +57,8 @@ class Data(http.server.BaseHTTPRequestHandler):
     def do_GET(self):
         if self.path == "/readyz":
             return self.reply(200, "ready")
+        if missing_versionless and self.path.startswith("/sessions/retry-404-"):
+            return self.reply(404, "route not owned here")
         if self.path.endswith("/headers"):
             return self.reply(
                 200,
@@ -193,6 +196,7 @@ for spec in 'a:v4:true:true' 'b:v4 v5 v9:true:true' 'bad:v4:true:false'; do
         --network-alias versiond-router-fleet \
         -e "NAME=$name" -e "SERVES=$serves" \
         -e "GENERIC_READY=$generic" -e "DATA_ENABLED=$enabled" \
+        -e "MISSING_VERSIONLESS=$([[ $name == a ]] && echo true || echo false)" \
         -v "$tmpdir/upstream.py:/app.py:ro" \
         python:3.12-alpine python /app.py >/dev/null
 done
@@ -413,6 +417,36 @@ probe_ip=$(docker inspect -f \
     gonka-pr-probe)
 [[ $(probe http://proxy-router/devshard/v5/sessions/full-path/headers) == "$probe_ip|http" ]] \
     || fail "client IP or forwarded protocol was overwritten after nginx policy"
+
+# Both routing layers derive the same key from every escrow-scoped path. The
+# outer choice must therefore stay stable when a client switches between the
+# versioned API and its versionless observability endpoints.
+for escrow in sticky-a sticky-b sticky-c sticky-d; do
+    versioned=$(probe "http://proxy-router:18081/v4/sessions/$escrow/healthz")
+    diffs=$(probe "http://proxy-router:18081/sessions/$escrow/diffs")
+    stats=$(probe "http://proxy-router:18081/stats/shards/$escrow")
+    [[ $versioned == "$diffs" && $versioned == "$stats" ]] || fail \
+        "escrow $escrow moved between router replicas: $versioned/$diffs/$stats"
+done
+
+# A short health-view divergence can send a versionless lookup to a router that
+# does not own the local route. GET may retry its 404; the matching POST policy
+# remains protected by disable-l7-retry.
+docker stop gonka-pr-router-bad >/dev/null
+sleep 2
+retry_escrow=
+for candidate in $(seq 1 100); do
+    retry_escrow="retry-404-$candidate"
+    [[ $(probe "http://proxy-router:18081/v4/sessions/$retry_escrow/healthz") == a ]] \
+        && break
+    retry_escrow=
+done
+[[ -n $retry_escrow ]] || fail "could not select router a for the 404 retry probe"
+[[ $(probe "http://proxy-router:18081/sessions/$retry_escrow/diffs") == b ]] \
+    || fail "versionless GET did not recover from a route-local 404"
+docker start gonka-pr-router-bad >/dev/null
+sleep 2
+
 case $(probe http://proxy-router/tier-a/status) in
     edge-a | edge-b) ;;
     *) fail "public Tier A path did not reach the direct edge-api pool" ;;

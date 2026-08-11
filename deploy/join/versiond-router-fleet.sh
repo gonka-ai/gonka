@@ -20,6 +20,7 @@ declare -A legacy_env_defaults=(
     [VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]=86400
     [VERSIOND_ROUTER_ALLOW_COARSE_READINESS]=false
     [VERSIOND_ROUTER_VERSION_CAPACITY]=32
+    [HAPROXY_DNS_RESOLVER]=127.0.0.11:53
 )
 maintenance_required_routes=()
 maintenance_keys=(
@@ -34,6 +35,7 @@ maintenance_keys=(
     VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS
     VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS
     VERSIOND_ROUTER_VERSION_CAPACITY
+    HAPROXY_DNS_RESOLVER
 )
 
 fail() {
@@ -79,7 +81,7 @@ EOF
 [[ -f $config_env ]] || fail "configuration file not found: $config_env"
 while IFS= read -r name; do
     case $name in
-        GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+        GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | HAPROXY_* | DOCKER_BIN)
             inherited_env[$name]=${!name}
             ;;
     esac
@@ -144,7 +146,8 @@ normalize_versions() {
 
 placement_contract() {
     local pool_host=$1 back_network=$2 legacy_host=$3 legacy_versions=$4
-    local ha_versions=$5 catalog_url=$6 coarse_readiness=$7 normalized routing_mode
+    local ha_versions=$5 catalog_url=$6 coarse_readiness=$7 dns_resolver=$8
+    local normalized routing_mode
     normalized=$(normalize_versions "$legacy_versions")
     [[ -n $normalized ]] || legacy_host=
     if [[ -n $catalog_url ]]; then
@@ -154,9 +157,9 @@ placement_contract() {
     else
         routing_mode=coarse
     fi
-    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s;routing-mode=%s;catalog-url=%s;coarse-readiness=%s\n' \
+    printf 'pool=%s;back-network=%s;legacy-host=%s;legacy-versions=%s;routing-mode=%s;catalog-url=%s;coarse-readiness=%s;dns-resolver=%s\n' \
         "$pool_host" "$back_network" "$legacy_host" "$normalized" \
-        "$routing_mode" "$catalog_url" "$coarse_readiness"
+        "$routing_mode" "$catalog_url" "$coarse_readiness" "$dns_resolver"
 }
 
 candidate_placement_contract() {
@@ -167,7 +170,8 @@ candidate_placement_contract() {
         "${VERSIOND_NON_HA_VERSIONS-v1 v2 v3}" \
         "${VERSIOND_VERSIONS-v4 v5 v6 v7 v8}" \
         "${VERSIOND_ROUTING_CATALOG_URL-http://versiond-routing-oracle:9100/versions}" \
-        "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}"
+        "${VERSIOND_ROUTER_ALLOW_COARSE_READINESS:-false}" \
+        "${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 }
 
 slot_compose() {
@@ -779,7 +783,7 @@ container_env_value_or_legacy_default() {
 
 running_placement_contract() {
     local id=$1 pool_host back_network legacy_host legacy_versions ha_versions
-    local catalog_url coarse_readiness
+    local catalog_url coarse_readiness dns_resolver
     pool_host=$(container_env_value "$id" VERSIOND_POOL_HOST) || return 1
     back_network=$(container_env_value "$id" VERSIOND_ROUTER_BACK_NETWORK_NAME) || return 1
     legacy_host=$(container_env_value "$id" VERSIOND_LEGACY_HOST) || return 1
@@ -787,8 +791,9 @@ running_placement_contract() {
     ha_versions=$(container_env_value "$id" VERSIOND_VERSIONS) || return 1
     catalog_url=$(container_env_value_or_legacy_default "$id" VERSIOND_ROUTING_CATALOG_URL) || return 1
     coarse_readiness=$(container_env_value_or_legacy_default "$id" VERSIOND_ROUTER_ALLOW_COARSE_READINESS) || return 1
+    dns_resolver=$(container_env_value_or_legacy_default "$id" HAPROXY_DNS_RESOLVER) || return 1
     placement_contract "$pool_host" "$back_network" "$legacy_host" \
-        "$legacy_versions" "$ha_versions" "$catalog_url" "$coarse_readiness"
+        "$legacy_versions" "$ha_versions" "$catalog_url" "$coarse_readiness" "$dns_resolver"
 }
 
 require_placement_compatible() {
@@ -938,6 +943,7 @@ maintenance_rollback() {
                 VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
                 VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${maintenance_env[$slot:VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
                 VERSIOND_ROUTER_VERSION_CAPACITY="${maintenance_env[$slot:VERSIOND_ROUTER_VERSION_CAPACITY]}" \
+                HAPROXY_DNS_RESOLVER="${maintenance_env[$slot:HAPROXY_DNS_RESOLVER]}" \
                 slot_compose "$slot" up -d --wait \
                     --wait-timeout "$wait_timeout" router; then
                 ok=false
@@ -969,6 +975,7 @@ rollback_current() {
             VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS]}" \
             VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS="${rollback_env[VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS]}" \
             VERSIOND_ROUTER_VERSION_CAPACITY="${rollback_env[VERSIOND_ROUTER_VERSION_CAPACITY]}" \
+            HAPROXY_DNS_RESOLVER="${rollback_env[HAPROXY_DNS_RESOLVER]}" \
             slot_compose "$current_slot" up -d --wait \
                 --wait-timeout "$wait_timeout" router && \
             wait_rollback_routes "$current_slot"; then

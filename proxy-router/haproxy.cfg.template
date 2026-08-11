@@ -29,7 +29,7 @@ defaults
     timeout check 3s
 
 resolvers docker
-    nameserver dns 127.0.0.11:53
+    nameserver dns ${DNS_RESOLVER}
     accepted_payload_size 8192
     resolve_retries 3
     timeout resolve 1s
@@ -80,6 +80,10 @@ frontend versiond_router_in
     maxconn ${MAX_CONNECTIONS}
 
     http-request set-var(txn.canonpath) path,regsub(^/devshard/,/)
+    http-request set-var(txn.hashkey) var(txn.canonpath)
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
     # The policy worker has already derived these from its trusted PROXY peer.
     # Preserve them; src here is only the policy container.

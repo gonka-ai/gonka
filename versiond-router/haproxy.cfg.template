@@ -61,7 +61,7 @@ defaults
     timeout check 3s
 
 resolvers docker
-    nameserver dns 127.0.0.11:53
+    nameserver dns ${DNS_RESOLVER}
     # The default 512-byte EDNS payload cannot carry all addresses represented
     # by the 64 server-template slots. Keep DNS capacity aligned with pool size.
     accepted_payload_size 8192
@@ -101,6 +101,8 @@ frontend versiond_in
     # pin themselves to a chosen host.
     http-request set-var(txn.hashkey) var(txn.canonpath)
     http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/[^/]+/sessions/[^/]+ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(3,/) if { var(txn.canonpath) -m reg ^/sessions/[^/]+/(diffs|mempool|signatures)$ }
+    http-request set-var(txn.hashkey) var(txn.canonpath),field(4,/) if { var(txn.canonpath) -m reg ^/stats/shards/[^/]+$ }
 
     http-request set-var(txn.ver) var(txn.canonpath),field(2,/)
 

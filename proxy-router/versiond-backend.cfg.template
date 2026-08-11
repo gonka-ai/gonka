@@ -1,13 +1,14 @@
 backend ${BACKEND_NAME}
-    balance leastconn
+    balance hash var(txn.hashkey)
+    hash-type consistent
 
     option httpchk
     ${READY_CHECK_SEND}
     http-check expect status 200
 
     http-reuse safe
-    option redispatch
-    retry-on conn-failure empty-response 502
+    option redispatch 1
+    ${RETRY_ON}
     retries 2
     # A request that may already have reached a router must not be replayed.
     http-request disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS

@@ -78,16 +78,28 @@ test-hash-ring:
 		for escrow in a b c d e f g h; do \
 			curl -s -o /dev/null -m 3 \
 				"http://127.0.0.1:18131/v4/sessions/esc-$$escrow/chat" || true; \
+			curl -s -o /dev/null -m 3 \
+				"http://127.0.0.1:18131/sessions/esc-$$escrow/diffs" || true; \
+			curl -s -o /dev/null -m 3 \
+				"http://127.0.0.1:18131/stats/shards/esc-$$escrow" || true; \
 		done; \
 		docker logs gonka-hash-probe 2>&1 \
-			| awk '/^PICK .*sessions/ { print $$2, $$3 }' | sort; \
+			| awk '/^PICK .*(sessions|stats\/shards)/ { print $$2, $$3 }' | sort; \
 		docker rm -f gonka-hash-probe >/dev/null 2>&1 || true; \
 	}; \
 	probe "127.0.0.2 127.0.0.3 127.0.0.4 127.0.0.5" > "$$tmpdir/forward"; \
 	probe "127.0.0.5 127.0.0.4 127.0.0.3 127.0.0.2" > "$$tmpdir/reversed"; \
 	probe "127.0.0.4 127.0.0.2 127.0.0.5 127.0.0.3" > "$$tmpdir/shuffled"; \
-	[ "$$(wc -l < "$$tmpdir/forward")" -eq 8 ] \
-		|| fail "expected one routing decision per escrow, got: $$(cat "$$tmpdir/forward")"; \
+	[ "$$(wc -l < "$$tmpdir/forward")" -eq 24 ] \
+		|| fail "expected three routing decisions per escrow, got: $$(cat "$$tmpdir/forward")"; \
+	awk '{ n=split($$1, p, "/"); \
+		if (p[2] == "sessions") escrow=p[3]; \
+		else if (p[2] == "stats") escrow=p[4]; \
+		else escrow=p[4]; \
+		if (server[escrow] != "" && server[escrow] != $$2) exit 1; \
+		server[escrow]=$$2 \
+	}' "$$tmpdir/forward" \
+		|| fail "versioned and versionless paths for one escrow chose different hosts"; \
 	diff -u "$$tmpdir/forward" "$$tmpdir/reversed" \
 		|| fail "reversing the slot order moved sessions: the ring follows the slot, not the host"; \
 	diff -u "$$tmpdir/forward" "$$tmpdir/shuffled" \
@@ -365,6 +377,7 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 	VERSIOND_LEGACY_HOST=versiond \
 	VERSIOND_NON_HA_VERSIONS='v1,v2 v3' \
 	GONKA_HA=true \
+	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
 	VERSIOND_VERSIONS='v4,v5' \
 	VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
 	VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
@@ -377,6 +390,10 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "HA pool is not a DNS-resolved server-template"; \
 	grep -q '^[[:space:]]*hash-type consistent' "$$tmpdir/mixed.cfg" \
 		|| fail "HA pool lost consistent hashing"; \
+	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/mixed.cfg" \
+		|| fail "versionless session routes do not reuse the escrow routing key"; \
+	grep -q '^[[:space:]]*nameserver dns 10.96.0.10:53$$' "$$tmpdir/mixed.cfg" \
+		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q '^[[:space:]]*server-template versiond .*hash-key addr' "$$tmpdir/mixed.cfg" \
 		|| fail "pool servers must hash by address; by slot id a router restart re-homes every session"; \
 	grep -q '^[[:space:]]*http-check send meth GET uri /readyz' "$$tmpdir/mixed.cfg" \
@@ -395,6 +412,14 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		|| fail "legacy backends do not point at the single VERSIOND_LEGACY_HOST"; \
 	grep -q '^[[:space:]]*retry-on conn-failure empty-response 502' "$$tmpdir/mixed.cfg" \
 		|| fail "failover no longer excludes 503"; \
+	awk '/^backend versiond_ha_pool$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /retry-on conn-failure empty-response 502 404/{found=1} END{exit !found}' \
+		"$$tmpdir/mixed.cfg" \
+		|| fail "versionless GET requests cannot retry a route-local 404"; \
+	awk '/^backend versiond_pool_v5$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /retry-on conn-failure empty-response 502$$/{found=1} \
+		inside && /retry-on .* 404/{bad=1} END{exit !found || bad}' "$$tmpdir/mixed.cfg" \
+		|| fail "explicit version backends retry authoritative 404 responses"; \
 	grep -q '^[[:space:]]*http-request disable-l7-retry if !METH_GET' "$$tmpdir/mixed.cfg" \
 		|| fail "non-idempotent requests could be replayed"; \
 	grep -q '^[[:space:]]*bind 127.0.0.1:8405' "$$tmpdir/mixed.cfg" \
@@ -657,6 +682,14 @@ test-render: test-compose-contract test-hash-ring test-version-routing
 		VERSIOND_PORT=invalid \
 		./entrypoint.sh 2>/dev/null; then \
 		fail "a non-numeric port was accepted"; \
+	fi; \
+	if HAPROXY_BIN=true VERSIOND_ROUTER_RENDER_ONLY=1 \
+		VERSIOND_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		VERSIOND_ROUTER_POOL_TEMPLATE=./pool-backend.cfg.template \
+		VERSIOND_ROUTER_OUT="$$tmpdir/bad-dns.cfg" \
+		HAPROXY_DNS_RESOLVER='dns service:53' \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unsafe DNS resolver token was accepted"; \
 	fi; \
 	for cfg in mixed allha; do \
 		docker run --rm --user "$$(id -u):$$(id -g)" -v "$$tmpdir:$$tmpdir:ro" $(HAPROXY_IMAGE) \

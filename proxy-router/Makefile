@@ -13,6 +13,7 @@ test-render:
 	PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
 	PROXY_ROUTER_OUT="$$tmpdir/proxy.cfg" \
 	PROXY_ROUTER_VERSION_MAP="$$tmpdir/versions.map" \
+	HAPROXY_DNS_RESOLVER=10.96.0.10:53 \
 	VERSIOND_NON_HA_VERSIONS='v1 v2 v3' \
 	VERSIOND_VERSIONS='v4 v5' \
 	./entrypoint.sh; \
@@ -50,10 +51,24 @@ test-render:
 		|| fail "top-level version readiness is not route-aware"; \
 	grep -q 'server-template router 16 versiond-router-fleet:8080 check port 8404' "$$tmpdir/proxy.cfg" \
 		|| fail "router data and admin ports are not separated"; \
-	grep -q '^ *balance leastconn$$' "$$tmpdir/proxy.cfg" \
-		|| fail "long streams are not distributed with leastconn"; \
+	grep -q '^ *balance hash var(txn.hashkey)$$' "$$tmpdir/proxy.cfg" \
+		|| fail "router selection is not sticky by the canonical escrow key"; \
+	grep -q '^ *hash-type consistent$$' "$$tmpdir/proxy.cfg" \
+		|| fail "router pools lost consistent hashing"; \
+	grep -q 'set-var(txn.hashkey).*field(3,/).*sessions' "$$tmpdir/proxy.cfg" \
+		|| fail "versionless session routes do not reuse the escrow routing key"; \
+	grep -q '^ *nameserver dns 10.96.0.10:53$$' "$$tmpdir/proxy.cfg" \
+		|| fail "the configured DNS resolver was not rendered"; \
 	grep -q 'retry-on conn-failure empty-response 502' "$$tmpdir/proxy.cfg" \
 		|| fail "non-503 connection failover was removed"; \
+	awk '/^backend versiond_router_coarse$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /retry-on conn-failure empty-response 502 404/{found=1} END{exit !found}' \
+		"$$tmpdir/proxy.cfg" \
+		|| fail "versionless GET requests cannot retry a route-local 404"; \
+	awk '/^backend versiond_routers_v5$$/{inside=1; next} /^backend /{inside=0} \
+		inside && /retry-on conn-failure empty-response 502$$/{found=1} \
+		inside && /retry-on .* 404/{bad=1} END{exit !found || bad}' "$$tmpdir/proxy.cfg" \
+		|| fail "explicit version backends retry authoritative 404 responses"; \
 	grep -q 'disable-l7-retry if !METH_GET !METH_HEAD !METH_OPTIONS' "$$tmpdir/proxy.cfg" \
 		|| fail "non-idempotent replay protection was removed"; \
 	grep -q 'http-check send meth GET uri /readyz' "$$tmpdir/proxy.cfg" \
@@ -91,6 +106,14 @@ test-render:
 		VERSIOND_ROUTING_CATALOG_FETCH_TIMEOUT_SECONDS=0 \
 		./entrypoint.sh >/dev/null 2>&1; then \
 		fail "a zero catalog fetch timeout was accepted"; \
+	fi; \
+	if HAPROXY_BIN=true PROXY_ROUTER_RENDER_ONLY=1 \
+		PROXY_ROUTER_TEMPLATE=./haproxy.cfg.template \
+		PROXY_ROUTER_BACKEND_TEMPLATE=./versiond-backend.cfg.template \
+		PROXY_ROUTER_OUT="$$tmpdir/invalid-dns.cfg" \
+		HAPROXY_DNS_RESOLVER='dns service:53' \
+		./entrypoint.sh >/dev/null 2>&1; then \
+		fail "an unsafe DNS resolver token was accepted"; \
 	fi; \
 	HAPROXY_BIN=true \
 	PROXY_ROUTER_RENDER_ONLY=1 \

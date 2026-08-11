@@ -58,6 +58,7 @@ CATALOG_STATUS_FILE="${VERSIOND_ROUTING_CATALOG_STATUS_FILE:-/var/lib/gonka-rout
 CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/catalog-cache}"
 FRONT_BIND_HOST="${VERSIOND_ROUTER_FRONT_BIND_HOST:-}"
 METRICS_BIND_HOST="${VERSIOND_ROUTER_METRICS_BIND_HOST:-}"
+DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
 resolve_ipv4() {
     getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
@@ -147,6 +148,10 @@ case "$CATALOG_URL" in
         exit 1
         ;;
 esac
+if ! printf '%s\n' "$DNS_RESOLVER" | grep -Eq '^(\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:.]+)(:[0-9]+)?$'; then
+    echo "versiond-router: HAPROXY_DNS_RESOLVER must be a numeric IP with an optional port" >&2
+    exit 1
+fi
 
 ha_header_for() {
     if [ -n "$HA_DEPLOYMENT" ]; then
@@ -216,6 +221,10 @@ backend_name() {
 # One shared fragment renders both HA pools and single-owner legacy backends, so
 # their hashing, retry, and path-rewrite policies cannot drift apart.
 render_backend() {
+    retry_on='retry-on conn-failure empty-response 502'
+    if [ "$1" = versiond_ha_pool ]; then
+        retry_on="$retry_on 404"
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$1|g" \
         -e "s|\${READY_CHECK_SEND}|$2|g" \
@@ -225,6 +234,7 @@ render_backend() {
         -e "s|\${BACKEND_SLOTS}|$5|g" \
         -e "s|\${REQUEST_HA_HEADER}|$6|g" \
         -e "s|\${RESPONSE_BACKEND}|$7|g" \
+        -e "s|\${RETRY_ON}|$retry_on|g" \
         -e "s|\${SERVER_STATE}|$8|g" \
         "$POOL_TEMPLATE"
 }
@@ -467,6 +477,7 @@ sed \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${TUNNEL_TIMEOUT_SECONDS}|$TUNNEL_TIMEOUT|g" \
+    -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "/\${ROUTER_READY_RULES}/{
         r $READY_RULES
         d

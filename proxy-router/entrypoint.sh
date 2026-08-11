@@ -37,6 +37,7 @@ CATALOG_CACHE_BIN="${ROUTING_CATALOG_CACHE_BIN:-/usr/local/lib/router-runtime/ca
 NGINX_MODE="${NGINX_MODE:-http}"
 POLICY_BIND_HOST="${PROXY_ROUTER_POLICY_BIND_HOST:-}"
 METRICS_BIND_HOST="${PROXY_ROUTER_METRICS_BIND_HOST:-}"
+DNS_RESOLVER="${HAPROXY_DNS_RESOLVER:-127.0.0.11:53}"
 
 resolve_ipv4() {
     getent ahostsv4 "$1" | awk 'NR == 1 { print $1 }'
@@ -114,6 +115,10 @@ case "$CATALOG_URL" in
         exit 1
         ;;
 esac
+if ! printf '%s\n' "$DNS_RESOLVER" | grep -Eq '^(\[[0-9A-Fa-f:]+\]|[0-9A-Fa-f:.]+)(:[0-9]+)?$'; then
+    echo "proxy-router: HAPROXY_DNS_RESOLVER must be a numeric IP with an optional port" >&2
+    exit 1
+fi
 
 case "$NGINX_MODE" in
     http | https | both) ;;
@@ -195,6 +200,10 @@ render_router_backend() {
     backend=$1
     ready_check=$2
     server_state=$3
+    retry_on='retry-on conn-failure empty-response 502'
+    if [ "$backend" = versiond_router_coarse ]; then
+        retry_on="$retry_on 404"
+    fi
     sed \
         -e "s|\${BACKEND_NAME}|$backend|g" \
         -e "s|\${READY_CHECK_SEND}|$ready_check|g" \
@@ -202,6 +211,7 @@ render_router_backend() {
         -e "s|\${ROUTER_POOL_HOST}|$ROUTER_POOL_HOST|g" \
         -e "s|\${ROUTER_PORT}|$ROUTER_PORT|g" \
         -e "s|\${ROUTER_ADMIN_PORT}|$ROUTER_ADMIN_PORT|g" \
+        -e "s|\${RETRY_ON}|$retry_on|g" \
         -e "s|\${SERVER_STATE}|$server_state|g" \
         "$BACKEND_TEMPLATE" >> "$BACKENDS_FILE"
 }
@@ -333,6 +343,7 @@ sed \
     -e "s|\${CONNECT_TIMEOUT_SECONDS}|$CONNECT_TIMEOUT|g" \
     -e "s|\${STREAM_IDLE_SECONDS}|$STREAM_IDLE|g" \
     -e "s|\${PUBLIC_IDLE_SECONDS}|$PUBLIC_IDLE|g" \
+    -e "s|\${DNS_RESOLVER}|$DNS_RESOLVER|g" \
     -e "/\${VERSIOND_ROUTER_BACKENDS}/{
         r $BACKENDS_FILE
         d

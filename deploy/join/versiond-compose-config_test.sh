@@ -180,6 +180,7 @@ require(
     "parent metrics bind",
 )
 require(defaults, "PROXY_ROUTER_VERSION_CAPACITY", "32", "parent dynamic capacity")
+require(defaults, "HAPROXY_DNS_RESOLVER", "127.0.0.11:53", "parent DNS resolver")
 require(defaults, "VERSIOND_ROUTING_CATALOG_POLL_SECONDS", "5", "parent catalog poll")
 require(
     defaults,
@@ -206,6 +207,7 @@ require(
     "slot governance catalog",
 )
 require(slot_defaults, "VERSIOND_ROUTER_VERSION_CAPACITY", "32", "slot dynamic capacity")
+require(slot_defaults, "HAPROXY_DNS_RESOLVER", "127.0.0.11:53", "slot DNS resolver")
 require(
     slot_defaults,
     "VERSIOND_ROUTER_FRONT_BIND_HOST",
