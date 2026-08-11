@@ -129,26 +129,26 @@ one counter.
 ```mermaid
 sequenceDiagram
   participant P as Proxy.handleAggregated
-  participant B as spool.Buffer<br/>(body)
+  participant B as spool.Buffer body
   participant D as spool.Dir
-  participant F as Fold / logprobStore
+  participant F as Fold and logprobStore
 
-  P->>B: Write(SSE chunks)
+  P->>B: Write SSE chunks
   alt under RAM threshold
     B-->>B: keep in mem
   else RAM full, Dir enabled
-    B->>D: Create()
-    D-->>B: File (unlinked inode)
-    B->>B: spill mem → File
+    B->>D: Create
+    D-->>B: File unlinked inode
+    B->>B: spill mem to File
   else spill impossible
-    B-->>B: DegradeToRAM under Slots<br/>or keep maxMemory
+    B-->>B: DegradeToRAM under Slots or keep maxMemory
   end
-  P->>B: OpenReader()
+  P->>B: OpenReader
   B-->>P: io.Reader
   P->>F: aggregateSSEStreamReader
-  F->>D: Create() for logprobs spill
-  F->>F: charge foldBudget; NDJSON on File
-  P->>B: Close()
+  F->>D: Create for logprobs spill
+  F->>F: charge foldBudget and write NDJSON on File
+  P->>B: Close
 ```
 
 ### 4.2 Host — live-stream resume
