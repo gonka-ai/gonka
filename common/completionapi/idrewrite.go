@@ -26,60 +26,71 @@ var (
 	errIDNotFound    = errors.New("no depth-1 \"id\" key")
 )
 
-// findTopLevelIDSpan returns the byte span of the depth-1 `"id":"…"` pair,
-// from the opening quote of the key through the closing quote of the value.
-// Nested "id" keys (e.g. choices[].delta.tool_calls[].id) are skipped.
-func findTopLevelIDSpan(body []byte) (int, int, error) {
+// findTopLevelKeySpan returns the byte span of a depth-1 `"key":value` pair:
+// keyStart is the opening quote of the key, valStart/valEnd bound the value.
+// Nested keys are skipped.
+func findTopLevelKeySpan(body []byte, wantKey string) (keyStart, valStart, valEnd int, err error) {
 	i := skipJSONSpace(body, 0)
 	if i >= len(body) || body[i] != '{' {
-		return 0, 0, errNotJSONObject
+		return 0, 0, 0, errNotJSONObject
 	}
 	i++
 	for {
 		i = skipJSONSpace(body, i)
 		if i >= len(body) || body[i] == '}' {
-			return 0, 0, errIDNotFound
+			return 0, 0, 0, errIDNotFound
 		}
 		if body[i] != '"' {
-			return 0, 0, fmt.Errorf("expected object key at %d", i)
+			return 0, 0, 0, fmt.Errorf("expected object key at %d", i)
 		}
-		keyStart := i
+		keyStart = i
 		keyEnd, err := skipJSONString(body, i)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
 		key := body[keyStart+1 : keyEnd-1]
 
 		i = skipJSONSpace(body, keyEnd)
 		if i >= len(body) || body[i] != ':' {
-			return 0, 0, fmt.Errorf("expected ':' at %d", i)
+			return 0, 0, 0, fmt.Errorf("expected ':' at %d", i)
 		}
 		i = skipJSONSpace(body, i+1)
-		valStart := i
-		valEnd, err := skipJSONValue(body, i)
+		valStart = i
+		valEnd, err = skipJSONValue(body, i)
 		if err != nil {
-			return 0, 0, err
+			return 0, 0, 0, err
 		}
-		if string(key) == "id" {
-			if body[valStart] != '"' {
-				return 0, 0, fmt.Errorf("depth-1 id is not a string")
-			}
-			return keyStart, valEnd, nil
+		if string(key) == wantKey {
+			return keyStart, valStart, valEnd, nil
 		}
 
 		i = skipJSONSpace(body, valEnd)
 		if i >= len(body) {
-			return 0, 0, errIDNotFound
+			return 0, 0, 0, errIDNotFound
 		}
 		switch body[i] {
 		case ',':
 			i++
 		case '}':
-			return 0, 0, errIDNotFound
+			return 0, 0, 0, errIDNotFound
 		default:
-			return 0, 0, fmt.Errorf("unexpected byte %q at %d", body[i], i)
+			return 0, 0, 0, fmt.Errorf("unexpected byte %q at %d", body[i], i)
 		}
 	}
+}
+
+// findTopLevelIDSpan returns the byte span of the depth-1 `"id":"…"` pair,
+// from the opening quote of the key through the closing quote of the value.
+// Nested "id" keys (e.g. choices[].delta.tool_calls[].id) are skipped.
+func findTopLevelIDSpan(body []byte) (int, int, error) {
+	keyStart, valStart, valEnd, err := findTopLevelKeySpan(body, "id")
+	if err != nil {
+		return 0, 0, err
+	}
+	if body[valStart] != '"' {
+		return 0, 0, fmt.Errorf("depth-1 id is not a string")
+	}
+	return keyStart, valEnd, nil
 }
 
 func skipJSONSpace(b []byte, i int) int {

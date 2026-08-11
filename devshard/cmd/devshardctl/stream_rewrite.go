@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+
+	"common/completionapi"
 )
 
 // logprobClientIntent records whether the client's ORIGINAL request asked for
@@ -77,10 +79,15 @@ type rewriteLogprob struct {
 // Only if a host sent SSE-wrapped chat.completion JSON do we synthesize
 // chat.completion.chunk events for the client. The synthetic role chunk exists
 // only in that streaming rewrite.
-func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
+//
+// When streamIntent.wantsUsage is false, forced include_usage output is removed
+// — trailing usage-only chunks are dropped and a usage pair riding along with
+// choices is stripped. Step 10, same class of leak as forced logprobs.
+func rewriteStreamingPayload(p []byte, intent logprobClientIntent, streamIntent streamClientIntent) []byte {
 	needsCompletionRewrite := bytes.Contains(p, []byte(`data: {`)) && bytes.Contains(p, []byte(`"message"`))
 	needsInternalFieldsFilter := containsAnyInternalField(p)
-	if !needsCompletionRewrite && !needsInternalFieldsFilter {
+	needsUsageSuppress := !streamIntent.wantsUsage && bytes.Contains(p, []byte(`"usage"`))
+	if !needsCompletionRewrite && !needsInternalFieldsFilter && !needsUsageSuppress {
 		return p
 	}
 
@@ -100,10 +107,15 @@ func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
 			continue
 		}
 		payload := bytes.TrimSpace(event[len("data: "):])
-		rewritten, ok := rewriteStreamingDataEvent(payload, intent)
+		payload, drop, usageStripped := suppressForcedUsage(payload, streamIntent)
+		if drop {
+			changed = true
+			continue
+		}
+		rewritten, ok := rewriteStreamingDataEvent(payload, intent, streamIntent)
 		if !ok {
 			filtered := filterClientInternalFields(payload, intent)
-			if !bytes.Equal(filtered, payload) {
+			if !bytes.Equal(filtered, payload) || usageStripped {
 				fmt.Fprintf(&out, "data: %s\n\n", filtered)
 				changed = true
 				continue
@@ -120,7 +132,43 @@ func rewriteStreamingPayload(p []byte, intent logprobClientIntent) []byte {
 	return out.Bytes()
 }
 
-func rewriteStreamingDataEvent(payload []byte, intent logprobClientIntent) ([]byte, bool) {
+// suppressForcedUsage keeps usage the client never asked for out of a single
+// SSE data payload, so no top-level usage key survives to a client who did not
+// set stream_options.include_usage. A usage-only trailer is dropped whole; a
+// host that puts usage on the same chunk as its choices loses only the usage
+// pair, so content is never dropped along with it.
+//
+// Returns the payload to emit, whether the whole event should be dropped, and
+// whether the payload was rewritten. Cheap byte gate first, then a depth-1 span
+// lookup — the content path never pays a full parse.
+func suppressForcedUsage(payload []byte, streamIntent streamClientIntent) (out []byte, drop, stripped bool) {
+	if streamIntent.wantsUsage || !bytes.Contains(payload, []byte(`"usage"`)) {
+		return payload, false, false
+	}
+	if _, ok := completionapi.TopLevelJSONValue(payload, "usage"); !ok {
+		// Nested usage only (or not a JSON object): nothing forced to remove.
+		return payload, false, false
+	}
+	choices, hasChoices := completionapi.TopLevelJSONValue(payload, "choices")
+	if !hasChoices || isEmptyJSONArray(choices) {
+		return nil, true, true
+	}
+	rewritten, ok := completionapi.RemoveTopLevelUsage(payload)
+	if !ok {
+		return payload, false, false
+	}
+	return rewritten, false, true
+}
+
+func isEmptyJSONArray(v []byte) bool {
+	v = bytes.TrimSpace(v)
+	if len(v) < 2 || v[0] != '[' || v[len(v)-1] != ']' {
+		return false
+	}
+	return len(bytes.TrimSpace(v[1:len(v)-1])) == 0
+}
+
+func rewriteStreamingDataEvent(payload []byte, intent logprobClientIntent, streamIntent streamClientIntent) ([]byte, bool) {
 	var resp streamingRewritePayload
 	if err := json.Unmarshal(payload, &resp); err != nil {
 		return nil, false
@@ -173,7 +221,7 @@ func rewriteStreamingDataEvent(payload []byte, intent logprobClientIntent) ([]by
 	}
 
 	trimmedUsage := bytes.TrimSpace(resp.Usage)
-	if len(trimmedUsage) > 0 && !bytes.Equal(trimmedUsage, []byte("null")) {
+	if streamIntent.wantsUsage && len(trimmedUsage) > 0 && !bytes.Equal(trimmedUsage, []byte("null")) {
 		evt := map[string]any{
 			"id":      resp.ID,
 			"object":  "chat.completion.chunk",

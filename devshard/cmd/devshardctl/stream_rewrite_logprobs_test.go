@@ -67,7 +67,7 @@ func TestFilterClientInternalFields_StripsLogprobsByDefault(t *testing.T) {
 func TestRewriteStreamingPayload_ReconstructsLogprobsInSynthesizedChunks(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion","created":123,"model":"Qwen","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.5,"bytes":[72,105],"top_logprobs":[{"token":"Hi","logprob":-0.5},{"token":"Hey","logprob":-1.5}]}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true})
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true}, streamClientIntent{wantsStream: true, wantsUsage: true})
 	events := parseSSEChunks(t, string(rewritten))
 
 	// role chunk, content chunk, usage chunk.
@@ -88,7 +88,7 @@ func TestRewriteStreamingPayload_ReconstructsLogprobsInSynthesizedChunks(t *test
 func TestRewriteStreamingPayload_ReconstructsLogprobsWithoutTopWhenNotRequested(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion","created":123,"model":"Qwen","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.5,"bytes":[72,105],"top_logprobs":[{"token":"Hi","logprob":-0.5},{"token":"Hey","logprob":-1.5}]}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: false})
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: false}, streamClientIntent{})
 	events := parseSSEChunks(t, string(rewritten))
 
 	entry := events[1]["choices"].([]any)[0].(map[string]any)["logprobs"].(map[string]any)["content"].([]any)[0].(map[string]any)
@@ -103,7 +103,7 @@ func TestRewriteStreamingPayload_ReconstructsLogprobsWithoutTopWhenNotRequested(
 func TestRewriteStreamingPayload_KeepsLogprobsInExistingChunksWhenRequested(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion.chunk","choices":[{"index":0,"delta":{"content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.1,"top_logprobs":[{"token":"Hi","logprob":-0.1}]}]},"finish_reason":null}]}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true})
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true}, streamClientIntent{})
 	events := parseSSEChunks(t, string(rewritten))
 
 	require.Len(t, events, 1)
@@ -119,7 +119,7 @@ func TestRewriteStreamingPayload_KeepsLogprobsInExistingChunksWhenRequested(t *t
 func TestRewriteStreamingPayload_StripsInternalFieldsEvenWhenLogprobsRequested(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion","created":123,"model":"Qwen","prompt_token_ids":[1,2],"prompt_logprobs":[{"x":1}],"choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"token_ids":[3,4],"logprobs":{"content":[{"token":"Hi","logprob":-0.5,"bytes":[72,105],"top_logprobs":[{"token":"Hi","logprob":-0.5}]}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true})
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{keepLogprobs: true, keepTopLogprobs: true}, streamClientIntent{})
 
 	require.NotContains(t, string(rewritten), "token_ids")
 	require.NotContains(t, string(rewritten), "prompt_logprobs")
@@ -131,7 +131,7 @@ func TestRewriteStreamingPayload_StripsInternalFieldsEvenWhenLogprobsRequested(t
 func TestRewriteStreamingPayload_OmitsLogprobsInSynthesizedChunksByDefault(t *testing.T) {
 	payload := []byte(`data: {"id":"cmpl-1","object":"chat.completion","created":123,"model":"Qwen","choices":[{"index":0,"message":{"role":"assistant","content":"Hi"},"logprobs":{"content":[{"token":"Hi","logprob":-0.5,"top_logprobs":[{"token":"Hi","logprob":-0.5}]}]},"finish_reason":"stop"}],"usage":{"prompt_tokens":7,"completion_tokens":1}}` + "\n\n")
 
-	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{})
+	rewritten := rewriteStreamingPayload(payload, logprobClientIntent{}, streamClientIntent{})
 
 	require.NotContains(t, string(rewritten), "logprob")
 }

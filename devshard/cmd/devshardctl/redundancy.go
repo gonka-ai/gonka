@@ -380,8 +380,13 @@ func requestFlagsForLog(params user.InferenceParams) string {
 		ParseError          string `json:"parse_error,omitempty"`
 	}
 
+	// InferenceParams.Stream is the client's ask (proxy sets it from chatRequest
+	// before ForceUpstreamStreaming rewrites the prompt). Never re-derive stream
+	// from params.Prompt — with forcing on the wire body is always stream:true (F6).
+	stream := params.Stream
 	flags := requestFlags{
 		Model:           params.Model,
+		Stream:          &stream,
 		InputTokens:     params.InputLength,
 		SignedMaxTokens: params.MaxTokens,
 		StartedAt:       params.StartedAt,
@@ -395,9 +400,6 @@ func requestFlagsForLog(params user.InferenceParams) string {
 
 	if model, ok := raw["model"].(string); ok {
 		flags.Model = model
-	}
-	if stream, ok := raw["stream"].(bool); ok {
-		flags.Stream = &stream
 	}
 	flags.MaxTokens = raw["max_tokens"]
 	flags.MaxCompletionTokens = raw["max_completion_tokens"]
@@ -445,7 +447,31 @@ var (
 	AttemptReconnectMaxTries   = 2
 	AllowStreamResetOnFailover = false
 	reconnectTryBackoff        = 50 * time.Millisecond
+
+	// forceUpstreamStreaming forces stream:true + include_usage on the
+	// normalized prompt. Client shape still follows streamClientIntent.
+	// atomic.Bool so admin ApplyRedundancySettings flips are race-safe with
+	// readers; request paths still snapshot once (F3).
+	forceUpstreamStreaming atomic.Bool
 )
+
+// ForceUpstreamStreamingEnabled reports the current always-stream-upstream flag.
+func ForceUpstreamStreamingEnabled() bool {
+	return forceUpstreamStreaming.Load()
+}
+
+// setForceUpstreamStreaming updates the process-wide flag (admin / tests).
+func setForceUpstreamStreaming(on bool) {
+	forceUpstreamStreaming.Store(on)
+}
+
+// streamingEscalationPolicy is true when first-token / attempt_failed escalation
+// applies and the legacy non-stream reduced-max_tokens + no-content timers are
+// suppressed. ForceUpstreamStreaming means every attempt is a real SSE stream
+// even when params.Stream (client ask) is false.
+func streamingEscalationPolicy(params user.InferenceParams) bool {
+	return params.Stream || ForceUpstreamStreamingEnabled()
+}
 
 func DefaultRedundancySettings() RedundancySettings {
 	executionTimeoutMS := types.DefaultExecutionTimeoutSeconds * 1000
@@ -473,6 +499,7 @@ func DefaultRedundancySettings() RedundancySettings {
 		AttemptReconnectBudgetMS:      1000,
 		AttemptReconnectMaxTries:      2,
 		AllowStreamResetOnFailover:    false,
+		ForceUpstreamStreaming:        false,
 	}
 }
 
@@ -565,6 +592,7 @@ func ApplyRedundancySettings(settings RedundancySettings) {
 	AttemptReconnectBudget = time.Duration(settings.AttemptReconnectBudgetMS) * time.Millisecond
 	AttemptReconnectMaxTries = settings.AttemptReconnectMaxTries
 	AllowStreamResetOnFailover = settings.AllowStreamResetOnFailover
+	setForceUpstreamStreaming(settings.ForceUpstreamStreaming)
 }
 
 func normalizeRedundancySpeedPolicy(policy string) string {
@@ -1997,6 +2025,10 @@ func (e *Redundancy) RunInference(ctx context.Context, params user.InferencePara
 	logInferenceStage(ctx, primary.escrowID, primary.nonce, "decision_made", decisionFields...)
 	race := newRaceGroup(settleCtx, ctx, e.devshardID, w)
 	race.clientFlag = clientFlag
+	// Fence client writes before the handler closes / reuses the sink
+	// (handleAggregated closes the aggregate spool; late winner Write must not
+	// touch a closed buffer). detachClient is idempotent under clientMu.
+	defer race.detachClient()
 	attempts := []*inflight{primary}
 
 	// Always start the primary.
@@ -3444,7 +3476,9 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		}
 		var reducedFallbackTimer *time.Timer
 		var reducedFallbackC <-chan time.Time
-		if !params.Stream && !reducedMaxTokensFallbackStarted && winner == 0 {
+		// Step 11: under always-stream, first-token + inter-chunk cover these
+		// failure modes; keep the timers only for legacy !ForceUpstreamStreaming.
+		if !streamingEscalationPolicy(params) && !reducedMaxTokensFallbackStarted && winner == 0 {
 			wait := time.Until(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay))
 			if wait < 0 {
 				wait = 0
@@ -3454,7 +3488,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 		}
 		var nonStreamingTimeoutTimer *time.Timer
 		var nonStreamingTimeoutC <-chan time.Time
-		if !params.Stream && winner == 0 {
+		if !streamingEscalationPolicy(params) && winner == 0 {
 			wait := time.Until(requestStart.Add(nonStreamingNoContentTimeout))
 			if wait < 0 {
 				wait = 0
@@ -3489,7 +3523,7 @@ func (e *Redundancy) awaitRace(streamCtx, settleCtx context.Context, attempts []
 			}
 		}
 		if allInflightsDone(attempts) && escalationC == nil {
-			if !params.Stream && winner == 0 && time.Now().Before(requestStart.Add(nonStreamingNoContentTimeout)) {
+			if !streamingEscalationPolicy(params) && winner == 0 && time.Now().Before(requestStart.Add(nonStreamingNoContentTimeout)) {
 				if !reducedMaxTokensFallbackStarted && time.Now().Before(requestStart.Add(nonStreamingReducedMaxTokensFallbackDelay)) && len(attempts) < maxAttempts {
 					trigger := attempts[len(attempts)-1]
 					trigger.escalated = true
@@ -3789,7 +3823,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 		if inflightFinished(inf) {
 			return escalationTrigger{}, false
 		}
-		if !params.Stream {
+		if !streamingEscalationPolicy(params) {
 			return escalationTrigger{}, false
 		}
 		return escalationTrigger{
@@ -3810,7 +3844,7 @@ func (e *Redundancy) escalationForInflight(inf *inflight, params user.InferenceP
 			reason:   "receipt_timeout",
 		}, true
 	}
-	if !params.Stream {
+	if !streamingEscalationPolicy(params) {
 		return escalationTrigger{}, false
 	}
 	if inf.hasFirstToken() {
@@ -4418,7 +4452,9 @@ func (e *Redundancy) longResponseFailureExempt(inf *inflight) bool {
 }
 
 func longNonStreamEmptyFailureExempt(inf *inflight, params user.InferenceParams) bool {
-	if inf == nil || inf.probe || params.Stream || inf.sendTime.IsZero() {
+	// Step 11: under always-stream the "long empty non-stream" shape no longer
+	// occurs; keeping the exempt would mask genuinely empty SSE streams.
+	if inf == nil || inf.probe || streamingEscalationPolicy(params) || inf.sendTime.IsZero() {
 		return false
 	}
 	if !isEmptyStreamAttempt(inf) {

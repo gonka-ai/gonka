@@ -95,11 +95,27 @@ func (c *chatResponseCache) sweepExpiredLocked(now time.Time) {
 	}
 }
 
-func chatCacheKey(model string, body []byte) string {
+// chatCacheKey digests model + normalized body + full streamClientIntent.
+// The client shape must be mixed in separately: once upstream stream /
+// include_usage are forced, clients that differ only in stream or usage intent
+// share a byte-identical body and would otherwise collide (SSE served to a JSON
+// client, or a usage chunk stripped for one client and served to another).
+func chatCacheKey(model string, body []byte, intent streamClientIntent) string {
 	h := sha256.New()
 	io.WriteString(h, strings.TrimSpace(model))
 	h.Write([]byte{0})
 	h.Write(body)
+	h.Write([]byte{0})
+	if intent.wantsStream {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
+	if intent.wantsUsage {
+		h.Write([]byte{1})
+	} else {
+		h.Write([]byte{0})
+	}
 	return hex.EncodeToString(h.Sum(nil))
 }
 

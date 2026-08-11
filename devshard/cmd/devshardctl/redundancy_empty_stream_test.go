@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"sync/atomic"
@@ -506,6 +507,7 @@ func TestRequestFlagsForLogOmitsPromptBody(t *testing.T) {
 		InputLength: 123,
 		MaxTokens:   1024,
 		StartedAt:   1777975740,
+		Stream:      true,
 	}
 
 	flags := requestFlagsForLog(params)
@@ -527,6 +529,19 @@ func TestRequestFlagsForLogOmitsPromptBody(t *testing.T) {
 	require.NotContains(t, flags, "secret prompt")
 	require.NotContains(t, flags, "messages\":[")
 	require.NotContains(t, flags, "tools\":[")
+}
+
+func TestRequestFlagsForLog_UsesClientStreamAskNotForcedPrompt(t *testing.T) {
+	// Forced-upstream body says stream:true; client asked for JSON (stream:false).
+	params := user.InferenceParams{
+		Model:  "Qwen/Test",
+		Prompt: []byte(`{"model":"Qwen/Test","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hi"}]}`),
+		Stream: false,
+	}
+	flags := requestFlagsForLog(params)
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(flags), &parsed))
+	require.Equal(t, false, parsed["stream"], "request_flags.stream must be the client ask, not the forced wire body")
 }
 
 func TestRaceWriter_MessageContentCountsAsConvertibleContent(t *testing.T) {

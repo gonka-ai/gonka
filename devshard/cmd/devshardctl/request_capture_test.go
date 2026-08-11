@@ -64,7 +64,7 @@ func TestCaptureAllAttemptsFailedRequestWritesSeparateFile(t *testing.T) {
 	require.Equal(t, "all_attempts_failed", record.Kind)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "escrow-7", record.Escrow)
-	require.True(t, record.Stream)
+	require.Equal(t, true, record.Stream)
 	require.Contains(t, record.Error, "all attempts failed")
 	require.Contains(t, string(record.Body), `"stream": true`)
 }
@@ -112,7 +112,7 @@ func TestCaptureEmptyStreamAttemptRequestWritesSeparateFileWithAttempts(t *testi
 	require.Equal(t, "empty_stream_attempt", record.Kind)
 	require.Equal(t, "Qwen/Test", record.Model)
 	require.Equal(t, "escrow-7", record.Escrow)
-	require.True(t, record.Stream)
+	require.Equal(t, true, record.Stream)
 	require.Contains(t, string(record.Body), `"stream": true`)
 	require.NotEmpty(t, record.RequestFlags)
 	require.Len(t, record.Attempts, 2)
@@ -186,6 +186,73 @@ func TestCaptureShortContentAttemptRequestWritesResponseBodyForShortAttempt(t *t
 	require.NoError(t, err)
 	require.Equal(t, rawResponse, decoded)
 	require.Empty(t, record.Attempts[1].ResponseBodyBase64)
+}
+
+func TestPeekRejectedBodyStream_BoolAbsentAndUnknown(t *testing.T) {
+	require.Equal(t, false, peekRejectedBodyStream([]byte(`{"messages":[]}`)))
+	require.Equal(t, true, peekRejectedBodyStream([]byte(`{"stream":true}`)))
+	require.Equal(t, false, peekRejectedBodyStream([]byte(`{"stream":false}`)))
+	require.Equal(t, "unknown", peekRejectedBodyStream([]byte(`{"stream":"true"}`)))
+	require.Equal(t, "unknown", peekRejectedBodyStream([]byte(`{"stream":1}`)))
+	require.Equal(t, "unknown", peekRejectedBodyStream([]byte(`not-json`)))
+}
+
+func TestCaptureFilterRejectedRequest_RecordsUnknownStream(t *testing.T) {
+	captureDir := t.TempDir()
+	setRequestCaptureStore(&requestCaptureStore{dir: captureDir})
+	t.Cleanup(func() { setRequestCaptureStore(nil) })
+
+	req := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", strings.NewReader(`{
+		"model": "Qwen/Test",
+		"stream": "true",
+		"unsupported_field": true,
+		"messages": [{"role": "user", "content": "hello"}]
+	}`))
+	ctx, _ := ensureRequestLogContext(req.Context())
+	req = req.WithContext(ctx)
+
+	_, _, err := prepareChatRequestBody(req)
+	require.Error(t, err)
+
+	record := requireSingleCapturedRequest(t, captureDir, "filter_rejected")
+	require.Equal(t, "unknown", record.Stream)
+}
+
+func TestCaptureEmptyStreamAttemptRequest_UsesClientStreamAskWithForcedBody(t *testing.T) {
+	captureDir := t.TempDir()
+	setRequestCaptureStore(&requestCaptureStore{dir: captureDir})
+	t.Cleanup(func() { setRequestCaptureStore(nil) })
+
+	ctx, _ := ensureRequestLogContext(t.Context())
+	attempts := []*inflight{
+		{
+			hostIdx:                 1,
+			hostID:                  "host-empty",
+			escrowID:                "escrow-7",
+			nonce:                   11,
+			resp:                    &host.HostResponse{ConfirmedAt: 123, Receipt: []byte("receipt"), StreamBytesRead: 14},
+			err:                     errEmptyStream,
+			emptyResponseBodySample: "data: [DONE]\n\n",
+		},
+	}
+	attempts[0].setReceiptAt(time.Now())
+	attempts[0].outputBytes.Store(14)
+
+	// Wire prompt is forced stream:true; client asked stream:false.
+	captureEmptyStreamAttemptRequest(ctx, "escrow-7", user.InferenceParams{
+		Model:  "Qwen/Test",
+		Prompt: []byte(`{"model":"Qwen/Test","stream":true,"stream_options":{"include_usage":true},"messages":[{"role":"user","content":"hello"}]}`),
+		Stream: false,
+	}, attempts, 0)
+
+	record := requireSingleCapturedRequest(t, captureDir, "empty_stream_attempt")
+	require.Equal(t, false, record.Stream)
+	var flags map[string]any
+	require.NoError(t, json.Unmarshal([]byte(record.RequestFlags), &flags))
+	require.Equal(t, false, flags["stream"])
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(record.Body, &body))
+	require.Equal(t, true, body["stream"], "stored body keeps the forced wire value")
 }
 
 func TestConfigureRequestCaptureStoreDefaultsUnderGatewayDBDirectory(t *testing.T) {

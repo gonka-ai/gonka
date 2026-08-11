@@ -83,6 +83,10 @@ type RedundancySettings struct {
 	AttemptReconnectBudgetMS   int64 `json:"attempt_reconnect_budget_ms"`
 	AttemptReconnectMaxTries   int   `json:"attempt_reconnect_max_tries"`
 	AllowStreamResetOnFailover bool  `json:"allow_stream_reset_on_failover"`
+	// ForceUpstreamStreaming makes the gateway always send stream:true +
+	// stream_options.include_usage to hosts. Client response shape still follows
+	// the original stream ask (SSE vs aggregated JSON).
+	ForceUpstreamStreaming bool `json:"force_upstream_streaming"`
 }
 
 type PerfSettings struct {

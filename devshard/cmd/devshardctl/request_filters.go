@@ -17,6 +17,9 @@ type chatRequest struct {
 	MaxTokens           uint64 `json:"max_tokens"`
 	MaxCompletionTokens uint64 `json:"max_completion_tokens"`
 	N                   uint64 `json:"n"`
+	// StreamOptions captures the client's ORIGINAL stream_options.include_usage
+	// ask (decoded before any PostLimits force). Drives streamClientIntent.
+	StreamOptions chatStreamOptions `json:"stream_options"`
 	// Logprobs and TopLogprobs capture the client's ORIGINAL logprobs intent,
 	// read by DecodeRequest before the PostLimits stage force-enables logprobs
 	// upstream for validation (see the logprobs/top_logprobs ForceLiteral rules
@@ -27,6 +30,12 @@ type chatRequest struct {
 	// logprobClientIntent.
 	Logprobs    bool   `json:"logprobs"`
 	TopLogprobs uint64 `json:"top_logprobs"`
+}
+
+// chatStreamOptions is the decoded client stream_options object. Only
+// include_usage is whitelisted by StreamOptionsValidator.
+type chatStreamOptions struct {
+	IncludeUsage bool `json:"include_usage"`
 }
 
 type outputTokenLimits struct {

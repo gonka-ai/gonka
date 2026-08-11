@@ -230,15 +230,30 @@ func (p *Proxy) handleChatCompletions(w http.ResponseWriter, r *http.Request) {
 		StartedAt:   time.Now().Unix(),
 		Stream:      req.Stream,
 	}
-	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model, "stream", req.Stream, "input_tokens", params.InputLength)
+	// The gateway already parsed the client's request and force-rewrote the body
+	// before forwarding it here, so the body we just normalized reports the
+	// forced shape, not the client's ask. Prefer the pinned intent whenever the
+	// gateway supplied one; fall back to the body for direct-to-runtime callers.
+	intent, intentSource := resolveClientRequestIntent(ctx, req)
+	streamIntent := intent.stream
+	params.Stream = streamIntent.wantsStream
 
-	// Carry the client's original logprobs intent to the response strip boundary.
-	r = r.WithContext(withLogprobClientIntent(r.Context(), logprobClientIntentFromRequest(req)))
+	upstreamStream := streamIntent.wantsStream || ForceUpstreamStreamingEnabled()
+	logRequestStage(ctx, "proxy_request_started", "escrow", p.escrowID, "model", model,
+		"stream", streamIntent.wantsStream, "stream_upstream", upstreamStream,
+		"stream_include_usage", streamIntent.wantsUsage, "intent_source", intentSource,
+		"input_tokens", params.InputLength)
 
-	if req.Stream {
+	// Carry the client's original logprobs / stream intent to the response boundary.
+	r = r.WithContext(withLogprobClientIntent(r.Context(), intent.logprob))
+	r = r.WithContext(withStreamClientIntent(r.Context(), streamIntent))
+
+	if streamIntent.wantsStream {
 		p.handleStreaming(w, r, params)
 	} else {
-		p.handleNonStreaming(w, r, params)
+		// Aggregated JSON for clients that asked for stream:false. Upstream may
+		// still be streamed once ForceUpstreamStreaming is on; shape is decided here.
+		p.handleAggregated(w, r, params)
 	}
 }
 
@@ -268,6 +283,7 @@ type deferredWriter struct {
 	requestID      string
 	clientFlag     *cancelFlag
 	logprobIntent  logprobClientIntent
+	streamIntent   streamClientIntent
 	started        bool
 	bytesWritten   int64
 	sawDone        bool
@@ -280,7 +296,15 @@ type deferredWriter struct {
 
 func newDeferredWriter(ctx context.Context, w http.ResponseWriter, escrow string, flag *cancelFlag) *deferredWriter {
 	rid, _ := requestLogFromContext(ctx)
-	return &deferredWriter{ctx: ctx, w: w, escrow: escrow, requestID: rid, clientFlag: flag, logprobIntent: logprobClientIntentFromContext(ctx)}
+	return &deferredWriter{
+		ctx:           ctx,
+		w:             w,
+		escrow:        escrow,
+		requestID:     rid,
+		clientFlag:    flag,
+		logprobIntent: logprobClientIntentFromContext(ctx),
+		streamIntent:  streamClientIntentFromContext(ctx),
+	}
 }
 
 func (d *deferredWriter) Write(p []byte) (int, error) {
@@ -307,7 +331,7 @@ func (d *deferredWriter) Write(p []byte) (int, error) {
 		d.w.WriteHeader(http.StatusOK)
 		d.started = true
 	}
-	rewritten := rewriteStreamingPayload(p, d.logprobIntent)
+	rewritten := rewriteStreamingPayload(p, d.logprobIntent, d.streamIntent)
 	if bytes.Contains(rewritten, sseDoneMarker) {
 		d.sawDone = true
 	}
@@ -547,18 +571,29 @@ func logProxyResponseFinished(ctx context.Context, escrowID, outcome string, dw 
 	logRequestStage(ctx, "proxy_response_finished", kv...)
 }
 
-func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
-	var buf bytes.Buffer
+// handleAggregated runs inference and returns one chat.completion JSON object.
+// Named for the client response shape, not the upstream framing: once upstream
+// streaming is forced, this path aggregates SSE chunks via aggregateSSEStreamReader.
+//
+// The winner body is accumulated in an aggregateResponseBuffer (F4): ≤2 MiB in
+// RAM, spilling to the aggregate spool up to GATEWAY_AGGREGATE_MAX_RESPONSE_BYTES
+// when disk is available. Oversize aborts with ErrAggregateResponseTooLarge.
+// Folding uses OpenReader so spilled bodies are scanned line-by-line.
+func (p *Proxy) handleAggregated(w http.ResponseWriter, r *http.Request, params user.InferenceParams) {
+	buf := newAggregateResponseBuffer()
+	defer func() { _ = buf.Close() }()
+
 	flag := newCancelFlag()
 	stopClientWatch := watchClientCancel(r, flag)
 	defer stopClientWatch()
 
-	err := p.redundancy.RunInference(context.Background(), params, &buf, flag)
+	err := p.redundancy.RunInference(context.Background(), params, buf, flag)
 	if flag.Gone() {
 		return
 	}
 	if err != nil {
-		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err)
+		logRequestStage(r.Context(), "proxy_request_failed", "escrow", p.escrowID, "error", err,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 		var hostErr *hostApplicationError
 		if errors.As(err, &hostErr) {
 			writeJSONPayload(w, hostErr.statusCode(), hostErr.jsonPayload())
@@ -568,10 +603,21 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 
-	assembled := assembleSSEChunks(buf.String())
-	assembled = filterClientInternalFields(assembled, logprobClientIntentFromContext(r.Context()))
+	src, err := buf.OpenReader()
+	if err != nil {
+		logRequestStage(r.Context(), "proxy_aggregate_read_failed", "escrow", p.escrowID, "error", err)
+		writeGatewayJSONError(w, http.StatusBadGateway, err.Error())
+		return
+	}
+	assembled := aggregateSSEStreamReader(src, logprobClientIntentFromContext(r.Context()))
 	if rid, ok := requestLogFromContext(r.Context()); ok {
 		w.Header().Set("X-Request-Id", rid)
+	}
+	if isAggregateFoldTooLargePayload(assembled) {
+		logRequestStage(r.Context(), "proxy_aggregate_fold_too_large", "escrow", p.escrowID,
+			"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
+		writeGatewayJSONError(w, gatewayStatusCodeForError(ErrAggregateFoldTooLarge), ErrAggregateFoldTooLarge.Error())
+		return
 	}
 	if details, ok := jsonErrorPayloadDetails(assembled); ok {
 		writeJSONPayload(w, (&hostApplicationError{details: details, payload: assembled}).statusCode(), assembled)
@@ -579,27 +625,8 @@ func (p *Proxy) handleNonStreaming(w http.ResponseWriter, r *http.Request, param
 		return
 	}
 	writeJSONPayload(w, http.StatusOK, assembled)
-	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID)
-}
-
-// assembleSSEChunks extracts the last data line from SSE output as the response.
-func assembleSSEChunks(raw string) []byte {
-	var lastData string
-	for _, line := range strings.Split(raw, "\n") {
-		line = strings.TrimSpace(line)
-		if !strings.HasPrefix(line, "data: ") {
-			continue
-		}
-		data := strings.TrimPrefix(line, "data: ")
-		if data == "[DONE]" {
-			continue
-		}
-		lastData = data
-	}
-	if lastData != "" {
-		return []byte(lastData)
-	}
-	return []byte(`{"error":{"message":"no response data"}}`)
+	logRequestStage(r.Context(), "proxy_request_completed", "escrow", p.escrowID,
+		"aggregate_bytes", buf.Len(), "aggregate_spilled", buf.Spilled())
 }
 
 func (p *Proxy) settlementJSON() (SettlementJSON, error) {

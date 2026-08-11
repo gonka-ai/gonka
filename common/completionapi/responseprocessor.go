@@ -42,12 +42,15 @@ func (rt *ExecutorResponseProcessor) ProcessJsonResponse(responseBytes []byte) (
 func (rt *ExecutorResponseProcessor) ProcessStreamedResponse(line string) (string, error) {
 	var err error
 	rt.rewriteBuf, err = rt.patcher.rewrite(rt.rewriteBuf[:0], []byte(line))
-	updatedLine := string(rt.rewriteBuf)
 	if err != nil {
 		// Preserve prior semantics: retain the original line on rewrite failure
 		// so finish still has something to inspect, then surface the error.
-		updatedLine = line
+		rt.rewriteBuf = append(rt.rewriteBuf[:0], line...)
 	}
+	if stripped, changed := stripTopLevelNullUsageFromSSELine(rt.rewriteBuf); changed {
+		rt.rewriteBuf = append(rt.rewriteBuf[:0], stripped...)
+	}
+	updatedLine := string(rt.rewriteBuf)
 	rt.streamedResponse = append(rt.streamedResponse, updatedLine)
 	return updatedLine, err
 }

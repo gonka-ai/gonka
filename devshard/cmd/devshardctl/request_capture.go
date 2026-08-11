@@ -36,15 +36,17 @@ type requestCaptureOptions struct {
 }
 
 type capturedChatRequest struct {
-	RequestID    string                `json:"request_id,omitempty"`
-	CapturedAt   string                `json:"captured_at"`
-	Kind         string                `json:"kind"`
-	Error        string                `json:"error,omitempty"`
-	Method       string                `json:"method,omitempty"`
-	Path         string                `json:"path,omitempty"`
-	Model        string                `json:"model,omitempty"`
-	Escrow       string                `json:"escrow,omitempty"`
-	Stream       bool                  `json:"stream,omitempty"`
+	RequestID  string `json:"request_id,omitempty"`
+	CapturedAt string `json:"captured_at"`
+	Kind       string `json:"kind"`
+	Error      string `json:"error,omitempty"`
+	Method     string `json:"method,omitempty"`
+	Path       string `json:"path,omitempty"`
+	Model      string `json:"model,omitempty"`
+	Escrow     string `json:"escrow,omitempty"`
+	// Stream is the client's stream ask for forensics: JSON bool true/false, or
+	// the string "unknown" when a rejected body had a non-bool stream value (F6).
+	Stream       any                   `json:"stream,omitempty"`
 	RequestFlags string                `json:"request_flags,omitempty"`
 	Attempts     []capturedChatAttempt `json:"attempts,omitempty"`
 	Body         json.RawMessage       `json:"body,omitempty"`
@@ -162,7 +164,7 @@ func captureFilterRejectedRequest(r *http.Request, body []byte, err error, model
 		Path:       requestPath(r),
 		Model:      firstNonEmpty(model, chatRequestModel(body)),
 		Escrow:     escrow,
-		Stream:     chatRequestStream(body),
+		Stream:     peekRejectedBodyStream(body),
 	}
 	setCapturedRequestBody(&record, body)
 	_ = store.write(record)
@@ -389,12 +391,27 @@ func requestPath(r *http.Request) string {
 	return r.URL.Path
 }
 
-func chatRequestStream(body []byte) bool {
-	var req chatRequest
-	if err := json.Unmarshal(body, &req); err != nil {
+// peekRejectedBodyStream reads the client's stream ask from a raw
+// (pre-normalize) body for forensic capture of filter-rejected requests.
+// Successful paths use InferenceParams.Stream (client ask) instead.
+//
+// Returns bool true/false when stream is a JSON bool or absent (absent ⇒ false),
+// or the string "unknown" when the value is present but not a bool — e.g.
+// `"stream":"true"`, which used to decode as false and invert the client's ask (F6).
+func peekRejectedBodyStream(body []byte) any {
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		return "unknown"
+	}
+	v, ok := raw["stream"]
+	if !ok || v == nil {
 		return false
 	}
-	return req.Stream
+	b, ok := v.(bool)
+	if !ok {
+		return "unknown"
+	}
+	return b
 }
 
 func safeFilenameComponent(value string) string {

@@ -282,6 +282,10 @@ type RequestFilterContext struct {
 	AdminAuthenticated bool
 	Request            chatRequest
 	RoutedModel        string
+	// ForceUpstreamStreaming is snapshotted once at context creation so the
+	// stream and stream_options PostLimits rules cannot observe a mid-request
+	// admin flip (F3).
+	ForceUpstreamStreaming bool
 }
 
 func newRequestFilterContext(body []byte, adminAuthenticated bool, limits outputTokenLimits) (*RequestFilterContext, error) {
@@ -290,9 +294,10 @@ func newRequestFilterContext(body []byte, adminAuthenticated bool, limits output
 		return nil, err
 	}
 	return &RequestFilterContext{
-		Document:           ChatRequestDocument{raw: raw},
-		OutputLimits:       normalizedOutputTokenLimits(limits),
-		AdminAuthenticated: adminAuthenticated,
+		Document:               ChatRequestDocument{raw: raw},
+		OutputLimits:           normalizedOutputTokenLimits(limits),
+		AdminAuthenticated:     adminAuthenticated,
+		ForceUpstreamStreaming: ForceUpstreamStreamingEnabled(),
 	}, nil
 }
 
@@ -335,12 +340,14 @@ func (ctx *RequestFilterContext) SyncRequestView() error {
 	}
 	req.MaxTokens = ctx.Request.MaxTokens
 	req.MaxCompletionTokens = ctx.Request.MaxCompletionTokens
-	// Preserve the client's ORIGINAL logprobs intent. PostLimits force-sets
-	// logprobs=true / top_logprobs=<forced> in the document for validation, so
-	// re-reading them here would capture the forced values, not what the client
-	// asked. DecodeRequest already captured the original before PostLimits ran.
+	// Preserve the client's ORIGINAL logprobs / stream intent. PostLimits may
+	// force logprobs, stream, and stream_options on the wire for validation /
+	// upstream streaming; re-reading them here would capture the forced values,
+	// not what the client asked. DecodeRequest already captured the originals.
 	req.Logprobs = ctx.Request.Logprobs
 	req.TopLogprobs = ctx.Request.TopLogprobs
+	req.Stream = ctx.Request.Stream
+	req.StreamOptions = ctx.Request.StreamOptions
 	ctx.Request = req
 	return nil
 }
@@ -359,6 +366,16 @@ func readChatRequestFields(doc *ChatRequestDocument, req *chatRequest) error {
 			return badChatRequest("parse request: stream must be a boolean")
 		}
 		req.Stream = b
+	}
+	// stream_options: lenient capture of include_usage after PreValidation sanitize.
+	// Wrong wrapper shapes were already rejected or stripped; treat anything else
+	// as "not requested" so we never fail a request the gateway previously accepted.
+	if raw, ok := doc.Get("stream_options"); ok && raw != nil {
+		if m, isMap := raw.(map[string]any); isMap {
+			if v, isBool := m["include_usage"].(bool); isBool {
+				req.StreamOptions.IncludeUsage = v
+			}
+		}
 	}
 	if err := readUint64Field(doc, "max_tokens", &req.MaxTokens); err != nil {
 		return err
@@ -570,15 +587,21 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.MetadataValidator{},
 				}),
+			// stream: type-checked in DecodeRequest; PostLimits may force true when
+			// ForceUpstreamStreaming is on (client ask preserved on chatRequest.Stream).
+			newParameter("stream").
+				withRule(RequestFilterStagePostLimits, forceUpstreamStreamParameter{}),
 			// stream_options: sub-field whitelist. Only `include_usage` survives;
 			// `continuous_usage_stats` is stripped to neutralize vLLM-project/vllm#9028
 			// (per-chunk usage counter is wrong under chunked prefill), and any other /
 			// future sub-field is default-stripped. If nothing remains the field is dropped
-			// so the upstream does not receive an empty `{}` object.
+			// so the upstream does not receive an empty `{}` object. PostLimits may force
+			// include_usage when ForceUpstreamStreaming is on.
 			newParameter("stream_options").
 				withRule(RequestFilterStagePreValidation, DocumentValidatorHandler{
 					Validator: paramvalidators.StreamOptionsValidator{},
-				}),
+				}).
+				withRule(RequestFilterStagePostLimits, forceUpstreamStreamOptionsParameter{}),
 			newParameter("return_token_ids").
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.ForceLiteralParameter{Value: true}}),
 			newParameter("logprobs").
@@ -665,11 +688,10 @@ func defaultVLLMParameterCatalog() VLLMParameterCatalog {
 				withRule(RequestFilterStagePostLimits, ParameterHandlerAdapter{Handler: paramvalidators.SanitizeFloatParameter{StripNonFinite: true}}).
 				withRule(RequestFilterStagePostLimits, rejectInvalidTopK),
 		},
-		// model and stream are type-checked during the typed parse (string / bool); register
-		// them as known so the whitelist keeps them.
+		// model is type-checked during the typed parse (string); register it as
+		// known so the whitelist keeps it. stream has its own newParameter entry.
 		newParameters([]string{
 			"model",
-			"stream",
 		}),
 		// The remaining boolean flags are pass-through fields, so validate their type here.
 		newParameters([]string{"skip_special_tokens", "detokenize", "parallel_tool_calls"},
@@ -795,4 +817,32 @@ func newParameters(names []string, rules ...ParameterRule) []VLLMParameter {
 
 func floatPointer(value float64) *float64 {
 	return &value
+}
+
+// forceUpstreamStreamParameter sets stream=true when the request-scoped
+// ForceUpstreamStreaming snapshot is on (F3).
+type forceUpstreamStreamParameter struct{}
+
+func (forceUpstreamStreamParameter) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
+	if ctx == nil || !ctx.ForceUpstreamStreaming {
+		return nil
+	}
+	return ParameterHandlerAdapter{
+		Handler: paramvalidators.ForceLiteralParameter{Value: true},
+	}.Apply(ctx, parameter)
+}
+
+// forceUpstreamStreamOptionsParameter sets stream_options.include_usage when
+// the request-scoped ForceUpstreamStreaming snapshot is on (F3).
+type forceUpstreamStreamOptionsParameter struct{}
+
+func (forceUpstreamStreamOptionsParameter) Apply(ctx *RequestFilterContext, parameter VLLMParameter) error {
+	if ctx == nil || !ctx.ForceUpstreamStreaming {
+		return nil
+	}
+	return ParameterHandlerAdapter{
+		Handler: paramvalidators.ForceLiteralParameter{
+			Value: map[string]any{"include_usage": true},
+		},
+	}.Apply(ctx, parameter)
 }

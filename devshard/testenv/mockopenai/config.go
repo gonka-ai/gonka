@@ -74,9 +74,24 @@ type ChatMessage struct {
 	Content string `json:"content"`
 }
 
-// completionText derives deterministic assistant text from the request body.
+// completionText derives deterministic assistant text from model + messages.
+// stream / stream_options are excluded so a forced-upstream streaming request
+// yields the same seed as the equivalent non-streaming request.
 func completionText(body []byte) string {
-	sum := sha256.Sum256(body)
+	var req struct {
+		Model    string        `json:"model"`
+		Messages []ChatMessage `json:"messages"`
+	}
+	seed := body
+	if err := json.Unmarshal(body, &req); err == nil {
+		if canonical, err := json.Marshal(struct {
+			Model    string        `json:"model"`
+			Messages []ChatMessage `json:"messages"`
+		}{Model: req.Model, Messages: req.Messages}); err == nil {
+			seed = canonical
+		}
+	}
+	sum := sha256.Sum256(seed)
 	return "mock-openai:" + hex.EncodeToString(sum[:8])
 }
 

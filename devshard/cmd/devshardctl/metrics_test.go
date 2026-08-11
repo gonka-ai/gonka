@@ -240,6 +240,7 @@ func TestGatewayAttemptMetricClassifiers(t *testing.T) {
 	require.Equal(t, "error_stream", gatewayAttemptFailureReason(errorStreamAttempt, nil))
 	require.Equal(t, "eof_transport", gatewayAttemptFailureReason(&inflight{err: io.EOF}, nil))
 	require.Equal(t, "sse_event_too_large", gatewayAttemptFailureReason(&inflight{err: transport.ErrSSEEventTooLarge}, nil))
+	require.Equal(t, "aggregate_response_too_large", gatewayAttemptFailureReason(&inflight{err: ErrAggregateResponseTooLarge}, nil))
 	require.Equal(t, "phase_transition_aborted", gatewayAttemptFailureReason(&inflight{phaseTransitionAborted: true}, nil))
 
 	require.Equal(t, "user_visible_winner", gatewayAttemptVisibility(&inflight{nonce: 7}, 7, true))

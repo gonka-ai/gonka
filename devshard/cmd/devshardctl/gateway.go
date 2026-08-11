@@ -1406,12 +1406,16 @@ func (g *Gateway) handleSingleOnly(w http.ResponseWriter, r *http.Request) {
 func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 	ctx, _ := ensureRequestLogContext(r.Context())
 	r = r.WithContext(ctx)
-	body, model, inputTokens, err := g.parseChatReservation(r, g.settings.DefaultModel)
+	body, model, inputTokens, intent, err := g.parseChatReservation(r, g.settings.DefaultModel)
 	if err != nil {
 		logRequestStage(ctx, "gateway_parse_failed", "error", err)
 		http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), chatRequestErrorStatus(err, http.StatusBadRequest))
 		return
 	}
+	// body is normalized (stream / logprobs forced); the runtime proxy must not
+	// re-derive the client's ask from it.
+	streamIntent := intent.stream
+	r = r.WithContext(withClientRequestIntent(r.Context(), intent))
 	fields := []any{"model", firstNonEmpty(model, g.settings.DefaultModel), "input_tokens", inputTokens}
 	fields = append(fields, g.apiKeyLogFields(r)...)
 	logRequestStage(ctx, "gateway_request_received", fields...)
@@ -1427,15 +1431,14 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	cacheKey := chatCacheKey(requestModel, body)
-	stream := chatRequestStream(body)
+	cacheKey := chatCacheKey(requestModel, body, streamIntent)
 	if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
-		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", stream)
+		logRequestStage(ctx, "gateway_cache_hit", "escrow", entry.EscrowID, "model", requestModel, "stream", streamIntent.wantsStream)
 		g.recordCachedAccountingAlias(ctx, entry)
 		serveCachedChatResponse(w, r, entry)
 		return
 	}
-	logRequestStage(ctx, "gateway_cache_miss", "model", requestModel, "stream", stream)
+	logRequestStage(ctx, "gateway_cache_miss", "model", requestModel, "stream", streamIntent.wantsStream)
 
 	if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 		g.refreshCapacityScale()
@@ -1466,9 +1469,9 @@ func (g *Gateway) handlePooledChat(w http.ResponseWriter, r *http.Request) {
 
 	if capture := g.serveChatToRuntime(rt, "/v1/chat/completions", body, w, r); capture != nil {
 		sourceRequestID, _ := requestLogFromContext(ctx)
-		if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
+		if entry, ok := capture.cacheEntry(rt.id, streamIntent.wantsStream, sourceRequestID, r.Context().Err()); ok {
 			g.chatCache.Set(cacheKey, entry, time.Now())
-			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", stream, "bytes", len(entry.Body))
+			logRequestStage(ctx, "gateway_cache_stored", "escrow", rt.id, "model", requestModel, "stream", streamIntent.wantsStream, "bytes", len(entry.Body))
 		}
 	}
 }
@@ -1543,13 +1546,15 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":"devshard %s is unavailable for new inferences: %s"}}`, devshardID, reason), http.StatusConflict)
 			return
 		}
-		body, model, inputTokens, err := g.parseChatReservation(r, firstNonEmpty(rt.model, g.settings.DefaultModel))
+		body, model, inputTokens, intent, err := g.parseChatReservation(r, firstNonEmpty(rt.model, g.settings.DefaultModel))
 		if err != nil {
 			logRequestStage(ctx, "gateway_devshard_parse_failed", "escrow", devshardID, "error", err)
 			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "invalid_request", "invalid_request")
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), chatRequestErrorStatus(err, http.StatusBadRequest))
 			return
 		}
+		streamIntent := intent.stream
+		r = r.WithContext(withClientRequestIntent(r.Context(), intent))
 		if err := rt.validateRequestedModel(model); err != nil {
 			logRequestStage(ctx, "gateway_devshard_model_rejected", "escrow", devshardID, "model", model, "error", err)
 			g.recordGatewayRequestOutcome(firstNonEmpty(model, rt.model, g.settings.DefaultModel), "model_rejected", "model_rejected")
@@ -1563,16 +1568,15 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, fmt.Sprintf(`{"error":{"message":%q}}`, err.Error()), gatewayStatusCodeForError(err))
 			return
 		}
-		cacheKey := chatCacheKey(limitModel, body)
-		stream := chatRequestStream(body)
+		cacheKey := chatCacheKey(limitModel, body, streamIntent)
 		if entry, ok := g.chatCache.Get(cacheKey, time.Now()); ok {
-			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", stream)
+			logRequestStage(ctx, "gateway_devshard_cache_hit", "escrow", entry.EscrowID, "model", limitModel, "stream", streamIntent.wantsStream)
 			g.recordCachedAccountingAlias(ctx, entry)
 			g.recordGatewayRequestOutcome(limitModel, "cached", "cache_hit")
 			serveCachedChatResponse(w, r, entry)
 			return
 		}
-		logRequestStage(ctx, "gateway_devshard_cache_miss", "escrow", devshardID, "model", limitModel, "stream", stream)
+		logRequestStage(ctx, "gateway_devshard_cache_miss", "escrow", devshardID, "model", limitModel, "stream", streamIntent.wantsStream)
 		if capacityAwareLimitsEnabled() || !relaxedPoCBypassActive() {
 			g.refreshCapacityScale()
 			if err := g.limiter.AcquireForModelWithCapacity(limitModel, inputTokens, g.limiterCapacityForModel(limitModel)); err != nil {
@@ -1595,9 +1599,9 @@ func (g *Gateway) handleDevshard(w http.ResponseWriter, r *http.Request) {
 
 		if capture := g.serveChatToRuntime(rt, innerPath, body, w, r); capture != nil {
 			sourceRequestID, _ := requestLogFromContext(ctx)
-			if entry, ok := capture.cacheEntry(rt.id, stream, sourceRequestID, r.Context().Err()); ok {
+			if entry, ok := capture.cacheEntry(rt.id, streamIntent.wantsStream, sourceRequestID, r.Context().Err()); ok {
 				g.chatCache.Set(cacheKey, entry, time.Now())
-				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", stream, "bytes", len(entry.Body))
+				logRequestStage(ctx, "gateway_devshard_cache_stored", "escrow", rt.id, "model", limitModel, "stream", streamIntent.wantsStream, "bytes", len(entry.Body))
 			}
 		}
 		return
@@ -2235,10 +2239,10 @@ func cloneURL(u *url.URL) *url.URL {
 	return &clone
 }
 
-func (g *Gateway) parseChatReservation(r *http.Request, defaultModel string) ([]byte, string, int64, error) {
+func (g *Gateway) parseChatReservation(r *http.Request, defaultModel string) ([]byte, string, int64, clientRequestIntent, error) {
 	body, err := readLimitedChatRequestBody(r)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", 0, clientRequestIntent{}, err
 	}
 	originalBody := append([]byte(nil), body...)
 	logResponseFormatDiagnostics(r.Context(), body)
@@ -2248,11 +2252,15 @@ func (g *Gateway) parseChatReservation(r *http.Request, defaultModel string) ([]
 	updatedBody, req, err := normalizeChatRequestForAuthAndLimits(body, requestHasAdminAuth(r), limits, routedModel)
 	if err != nil {
 		captureFilterRejectedRequest(r, originalBody, err, model, "")
-		return nil, "", 0, err
+		return nil, "", 0, clientRequestIntent{}, err
 	}
 
 	inputTokens := estimatePromptTokens(updatedBody)
-	return updatedBody, req.Model, inputTokens, nil
+	intent := clientRequestIntent{
+		stream:  streamClientIntentFromRequest(req),
+		logprob: logprobClientIntentFromRequest(req),
+	}
+	return updatedBody, req.Model, inputTokens, intent, nil
 }
 
 func chatRequestModel(body []byte) string {
@@ -2514,6 +2522,7 @@ type adminRedundancyRequest struct {
 	AttemptReconnectBudgetMS      *int64   `json:"attempt_reconnect_budget_ms,omitempty"`
 	AttemptReconnectMaxTries      *int     `json:"attempt_reconnect_max_tries,omitempty"`
 	AllowStreamResetOnFailover    *bool    `json:"allow_stream_reset_on_failover,omitempty"`
+	ForceUpstreamStreaming        *bool    `json:"force_upstream_streaming,omitempty"`
 }
 
 type adminPerfRequest struct {
@@ -2857,6 +2866,9 @@ func applyRedundancyRequest(settings *RedundancySettings, req *adminRedundancyRe
 	}
 	if req.AllowStreamResetOnFailover != nil {
 		settings.AllowStreamResetOnFailover = *req.AllowStreamResetOnFailover
+	}
+	if req.ForceUpstreamStreaming != nil {
+		settings.ForceUpstreamStreaming = *req.ForceUpstreamStreaming
 	}
 }
 
