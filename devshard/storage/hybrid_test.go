@@ -12,6 +12,7 @@ import (
 )
 
 type recordingStorage struct {
+	executionStoreStub
 	lastMethod     string
 	activeSessions []ActiveSession
 }

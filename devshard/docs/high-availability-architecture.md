@@ -136,12 +136,14 @@ an application, infrastructure cannot safely guess whether retrying it would
 execute the operation twice. The application closes the remaining split-routing
 window with a durable Postgres execution claim keyed by
 `(epoch, escrow, inference)`: only the claim owner calls the ML engine, while a
-second replica waits for and replays the committed result. Pending claims are
-never stolen automatically because a crashed owner may already have delivered
-its POST. The same stable identity is forwarded to the ML node as
-`Idempotency-Key`; backend support narrows the unavoidable crash window between
-the external side effect and the durable result commit. Established SSE streams
-remain on the connections that accepted them and are not moved during drain.
+second replica waits for and replays the committed result. The durable execution
+FSM is `claimed -> dispatched -> completed`; `claimed -> abandoned` is allowed
+only before any request byte can be sent. An expired `claimed` lease is fenced
+and retried, while `dispatched` is never stolen because the POST may already
+have taken effect. The engine does not rotate to another ML node after crossing
+that boundary. The same stable identity is forwarded as `Idempotency-Key` for
+backends that also support deduplication. Established SSE streams remain on the
+connections that accepted them and are not moved during drain.
 
 ---
 

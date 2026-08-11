@@ -77,7 +77,10 @@ func TestExecutionIdempotencyKey(t *testing.T) {
 
 func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
 	var gotKey string
+	var dispatched atomic.Bool
+	var receivedAfterDispatch atomic.Bool
 	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		receivedAfterDispatch.Store(dispatched.Load())
 		gotKey = r.Header.Get("Idempotency-Key")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
@@ -90,10 +93,15 @@ func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
 		},
 	})
 	eng := newTestEngine(ml, nil, nil)
-	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", "devshard-test-key", []byte(`{}`))
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", "devshard-test-key", []byte(`{}`), func(target string) error {
+		require.Equal(t, mlSrv.URL, target)
+		dispatched.Store(true)
+		return nil
+	})
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.Equal(t, "devshard-test-key", gotKey)
+	require.True(t, receivedAfterDispatch.Load(), "dispatch must be durable before the server receives a request")
 }
 
 func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
@@ -129,7 +137,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42", true,
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -175,7 +183,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	mgr.Observe("model-a", "node-1", mlSrv.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -214,7 +222,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", true,
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -251,7 +259,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	mgr.Observe("model-a", "node-good", good.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -264,6 +272,41 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	assert.Equal(t, int32(1), hits2.Load())
 }
 
+func TestDoWithLockedNode_ExecuteDoesNotRotateAfterDispatch(t *testing.T) {
+	var acquires, badHits, goodHits atomic.Int32
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		badHits.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(bad.Close)
+	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		goodHits.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(good.Close)
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			attempt := acquires.Add(1)
+			if attempt == 1 {
+				return &nmgen.AcquireMLNodeResponse{LockId: "lock-bad", Endpoint: bad.URL, NodeId: "node-bad"}, nil
+			}
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-good", Endpoint: good.URL, NodeId: "node-good"}, nil
+		},
+	})
+	eng := newTestEngine(ml, nil, nil)
+
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "escrow-a", false,
+		func(endpoint string) (*http.Response, error) {
+			return http.Get(endpoint)
+		})
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Equal(t, int32(1), acquires.Load())
+	require.Equal(t, int32(1), badHits.Load())
+	require.Zero(t, goodHits.Load(), "an ambiguous execution must not move to another ML node")
+}
+
 func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	ml := startEngineMLClient(t, &engineMockNM{
 		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
@@ -274,7 +317,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -340,7 +383,7 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -404,7 +447,7 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -485,7 +528,7 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})

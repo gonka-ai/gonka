@@ -880,40 +880,69 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 
 	defer h.ReleaseExecution(inferenceID)
 
-	executionStore, _ := h.store.(storage.ExecutionStore)
+	executionStore := h.store
 	var fence uint64
 	if executionStore != nil {
-		claim, err := executionStore.ClaimExecution(ctx, job.EpochID, job.EscrowID, inferenceID, h.executionOwner)
+		var replay *devshard.ExecuteResult
+		var err error
+		fence, replay, err = h.acquireExecution(ctx, executionStore, *job)
 		if err != nil {
-			return nil, h.executionFailure(ctx, inferenceID, "claim execution", err)
+			return nil, h.executionFailure(ctx, inferenceID, "acquire execution", err)
 		}
-		switch {
-		case claim.Status == storage.ExecutionCompleted:
-			result, err := decodeExecutionResult(claim.Result)
-			if err != nil {
-				return nil, h.executionFailure(ctx, inferenceID, "decode completed execution", err)
-			}
-			result.ReplayResponse = true
-			return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, result)
-		case !claim.Acquired:
-			result, err := h.waitForExecutionResult(ctx, executionStore, *job)
-			if err != nil {
-				return nil, h.executionFailure(ctx, inferenceID, "wait for execution owner", err)
-			}
-			result.ReplayResponse = true
-			return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, result)
-		default:
-			fence = claim.Fence
+		if replay != nil {
+			replay.ReplayResponse = true
+			return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, replay)
 		}
 	}
 
-	result, err := h.engine.Execute(ctx, *job)
+	executionJob := *job
+	var dispatched atomic.Bool
+	if executionStore != nil {
+		executionJob.BeforeDispatch = func(target string) error {
+			markCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionResultCommitTimeout)
+			defer cancel()
+			if err := executionStore.MarkExecutionDispatched(
+				markCtx,
+				job.EpochID,
+				job.EscrowID,
+				inferenceID,
+				h.executionOwner,
+				fence,
+				target,
+			); err != nil {
+				return err
+			}
+			dispatched.Store(true)
+			return nil
+		}
+	}
+
+	result, err := h.engine.Execute(ctx, executionJob)
 	if err != nil {
+		if executionStore != nil && !dispatched.Load() {
+			abandonCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionResultCommitTimeout)
+			abandonErr := executionStore.AbandonExecution(
+				abandonCtx,
+				job.EpochID,
+				job.EscrowID,
+				inferenceID,
+				h.executionOwner,
+				fence,
+			)
+			cancel()
+			if abandonErr != nil {
+				err = errors.Join(err, fmt.Errorf("abandon undispatched execution claim: %w", abandonErr))
+			}
+		}
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
 	if executionStore != nil {
+		if !dispatched.Load() {
+			return nil, h.executionFailure(ctx, inferenceID, "execute inference",
+				errors.New("inference engine returned success without crossing the dispatch boundary"))
+		}
 		encoded, err := json.Marshal(result)
 		if err != nil {
 			return nil, h.executionFailure(ctx, inferenceID, "encode execution result", err)
@@ -971,20 +1000,34 @@ func (h *Host) publishExecutionResult(ctx context.Context, inferenceID uint64, e
 	return result, nil
 }
 
-func (h *Host) waitForExecutionResult(ctx context.Context, store storage.ExecutionStore, job devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+func (h *Host) acquireExecution(ctx context.Context, store storage.ExecutionStore, job devshard.ExecuteRequest) (uint64, *devshard.ExecuteResult, error) {
 	ticker := time.NewTicker(executionResultPollInterval)
 	defer ticker.Stop()
 	for {
-		claim, err := store.GetExecution(ctx, job.EpochID, job.EscrowID, job.InferenceID)
+		claim, err := store.ClaimExecution(ctx, job.EpochID, job.EscrowID, job.InferenceID, h.executionOwner)
 		if err != nil {
-			return nil, err
+			return 0, nil, err
 		}
-		if claim.Status == storage.ExecutionCompleted {
-			return decodeExecutionResult(claim.Result)
+		switch {
+		case claim.Acquired && claim.Status == storage.ExecutionClaimed:
+			return claim.Fence, nil, nil
+		case claim.Acquired:
+			return 0, nil, fmt.Errorf("acquired claim has invalid state %q", claim.Status)
+		case claim.Status == storage.ExecutionCompleted:
+			result, err := decodeExecutionResult(claim.Result)
+			return 0, result, err
+		case claim.Status == storage.ExecutionClaimed,
+			claim.Status == storage.ExecutionDispatched:
+			// Poll ClaimExecution rather than GetExecution so an abandoned or
+			// expired pre-dispatch lease can be acquired without another request.
+		case claim.Status == storage.ExecutionAbandoned:
+			continue
+		default:
+			return 0, nil, fmt.Errorf("execution claim has invalid state %q", claim.Status)
 		}
 		select {
 		case <-ctx.Done():
-			return nil, ctx.Err()
+			return 0, nil, ctx.Err()
 		case <-ticker.C:
 		}
 	}

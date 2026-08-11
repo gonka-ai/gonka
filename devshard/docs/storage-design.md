@@ -305,12 +305,22 @@ contains an unguessable process owner, a monotonic fencing token, and the final
 serialized result. Another replica cannot execute; it waits for `completed` and
 replays that result.
 
-Pending execution claims have no TTL takeover. After an owner crash, it is
-impossible to distinguish "POST never sent" from "POST accepted but response
-lost" without cooperation from the ML backend. Retrying automatically would
-trade availability for duplicate execution, so the inference instead follows
-the existing protocol timeout. A deterministic `Idempotency-Key` is also sent
-to the ML node for backends that support deduplication.
+The row follows an explicit state machine:
+
+```text
+claimed --request not sent--> abandoned --new fence--> claimed
+   |
+   +--durable dispatch boundary--> dispatched --result commit--> completed
+```
+
+An expired `claimed` lease may be acquired with a new fence. The stale owner
+must persist that fence immediately before sending and therefore cannot send
+after takeover. `dispatched` has no TTL takeover: without a shared ML-side
+`GetResult(idempotency_key)`, a lost response is indistinguishable from a POST
+that already took effect. Execution also stops rotating across ML nodes after
+dispatch. This gives the external side effect strict at-most-once behaviour;
+completed results remain replayable. A deterministic `Idempotency-Key` is sent
+as an additional backend-side guard, not as the correctness boundary.
 
 SQLite keeps the previous local-only behaviour. Multi-instance execution
 fencing, like shared validation leases, requires Postgres-only storage.

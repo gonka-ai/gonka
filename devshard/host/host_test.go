@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"runtime/pprof"
 	"sync"
@@ -1057,7 +1058,37 @@ type blockingSharedExecutionEngine struct {
 	result  devshard.ExecuteResult
 }
 
-func (e *blockingSharedExecutionEngine) Execute(ctx context.Context, _ devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+type boundaryExecutionEngine struct {
+	dispatch bool
+	err      error
+	result   devshard.ExecuteResult
+	calls    atomic.Int32
+	effects  atomic.Int32
+}
+
+func (e *boundaryExecutionEngine) Execute(_ context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.calls.Add(1)
+	if e.dispatch {
+		if req.BeforeDispatch != nil {
+			if err := req.BeforeDispatch("boundary-node"); err != nil {
+				return nil, err
+			}
+		}
+		e.effects.Add(1)
+	}
+	if e.err != nil {
+		return nil, e.err
+	}
+	result := e.result
+	return &result, nil
+}
+
+func (e *blockingSharedExecutionEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	if req.BeforeDispatch != nil {
+		if err := req.BeforeDispatch("shared-node"); err != nil {
+			return nil, err
+		}
+	}
 	e.calls.Add(1)
 	e.once.Do(func() { close(e.started) })
 	select {
@@ -1149,6 +1180,91 @@ func TestHost_DurableExecutionClaimRunsMLEffectOnce(t *testing.T) {
 	for _, replica := range replicas {
 		require.NotNil(t, findMempoolFinish(replica.MempoolTxs()))
 	}
+}
+
+func TestHost_PreDispatchFailureCanBeRetried(t *testing.T) {
+	hostSigners := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := testutil.DefaultConfig(len(group))
+	sharedStore := storage.NewMemory()
+	failed := &boundaryExecutionEngine{err: errors.New("request was not sent")}
+	succeeded := &boundaryExecutionEngine{
+		dispatch: true,
+		result: devshard.ExecuteResult{
+			ResponseHash: []byte("hash"),
+		},
+	}
+
+	newReplica := func(signer signing.Signer, engine devshard.InferenceEngine) *Host {
+		t.Helper()
+		stateStore := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), signing.NewSecp256k1Verifier(), stateStore)
+		require.NoError(t, err)
+		h, err := NewHost(sm, signer, engine, "escrow-1", group, nil,
+			WithStorage(sharedStore), WithEpochID(42))
+		require.NoError(t, err)
+		return h
+	}
+	job := &devshard.ExecuteRequest{InferenceID: 1, EscrowID: "escrow-1", EpochID: 42}
+
+	_, err := newReplica(hostSigners[0], failed).RunExecution(context.Background(), job)
+	require.ErrorContains(t, err, "request was not sent")
+	claim, err := sharedStore.GetExecution(context.Background(), 42, "escrow-1", 1)
+	require.NoError(t, err)
+	require.Equal(t, storage.ExecutionAbandoned, claim.Status)
+
+	result, err := newReplica(hostSigners[1], succeeded).RunExecution(context.Background(), job)
+	require.NoError(t, err)
+	require.Equal(t, []byte("hash"), result.ResponseHash)
+	require.Equal(t, int32(1), succeeded.effects.Load())
+	claim, err = sharedStore.GetExecution(context.Background(), 42, "escrow-1", 1)
+	require.NoError(t, err)
+	require.Equal(t, storage.ExecutionCompleted, claim.Status)
+}
+
+func TestHost_AmbiguousDispatchIsNotRetriedByAnotherReplica(t *testing.T) {
+	hostSigners := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := testutil.DefaultConfig(len(group))
+	sharedStore := storage.NewMemory()
+	ambiguous := &boundaryExecutionEngine{dispatch: true, err: errors.New("response lost after dispatch")}
+	standby := &boundaryExecutionEngine{dispatch: true}
+
+	newReplica := func(signer signing.Signer, engine devshard.InferenceEngine) *Host {
+		t.Helper()
+		stateStore := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), signing.NewSecp256k1Verifier(), stateStore)
+		require.NoError(t, err)
+		h, err := NewHost(sm, signer, engine, "escrow-1", group, nil,
+			WithStorage(sharedStore), WithEpochID(42))
+		require.NoError(t, err)
+		return h
+	}
+	job := &devshard.ExecuteRequest{InferenceID: 1, EscrowID: "escrow-1", EpochID: 42}
+
+	_, err := newReplica(hostSigners[0], ambiguous).RunExecution(context.Background(), job)
+	require.ErrorContains(t, err, "response lost after dispatch")
+	claim, err := sharedStore.GetExecution(context.Background(), 42, "escrow-1", 1)
+	require.NoError(t, err)
+	require.Equal(t, storage.ExecutionDispatched, claim.Status)
+	require.Equal(t, int32(1), ambiguous.effects.Load())
+
+	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+	defer cancel()
+	_, err = newReplica(hostSigners[1], standby).RunExecution(ctx, job)
+	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.Zero(t, standby.calls.Load(), "a dispatched claim must never execute on another replica")
+	require.Equal(t, int32(1), ambiguous.effects.Load(), "the external effect must run at most once")
 }
 
 func (e *countingEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {

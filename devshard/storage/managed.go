@@ -317,27 +317,23 @@ func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, 
 }
 
 func (m *ManagedStorage) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
-	es, ok := m.inner.(ExecutionStore)
-	if !ok {
-		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
-	}
-	return es.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
+	return m.inner.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
 }
 
 func (m *ManagedStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
-	es, ok := m.inner.(ExecutionStore)
-	if !ok {
-		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
-	}
-	return es.GetExecution(ctx, epochID, escrowID, inferenceID)
+	return m.inner.GetExecution(ctx, epochID, escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
+	return m.inner.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence, target)
+}
+
+func (m *ManagedStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
+	return m.inner.AbandonExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence)
 }
 
 func (m *ManagedStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
-	es, ok := m.inner.(ExecutionStore)
-	if !ok {
-		return fmt.Errorf("storage backend does not support execution claims")
-	}
-	return es.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
+	return m.inner.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
 }
 
 var _ Storage = (*ManagedStorage)(nil)

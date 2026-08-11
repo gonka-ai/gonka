@@ -822,11 +822,7 @@ func (h *HybridStorage) ClaimExecution(ctx context.Context, epochID uint64, escr
 	if err != nil {
 		return ExecutionClaim{}, err
 	}
-	es, ok := b.(ExecutionStore)
-	if !ok {
-		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
-	}
-	return es.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
+	return b.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
 }
 
 func (h *HybridStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
@@ -834,11 +830,23 @@ func (h *HybridStorage) GetExecution(ctx context.Context, epochID uint64, escrow
 	if err != nil {
 		return ExecutionClaim{}, err
 	}
-	es, ok := b.(ExecutionStore)
-	if !ok {
-		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
+	return b.GetExecution(ctx, epochID, escrowID, inferenceID)
+}
+
+func (h *HybridStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, target string) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
 	}
-	return es.GetExecution(ctx, epochID, escrowID, inferenceID)
+	return b.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence, target)
+}
+
+func (h *HybridStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	return b.AbandonExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence)
 }
 
 func (h *HybridStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
@@ -846,11 +854,7 @@ func (h *HybridStorage) CompleteExecution(ctx context.Context, epochID uint64, e
 	if err != nil {
 		return err
 	}
-	es, ok := b.(ExecutionStore)
-	if !ok {
-		return fmt.Errorf("storage backend does not support execution claims")
-	}
-	return es.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
+	return b.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
 }
 
 func (h *HybridStorage) Close() error {

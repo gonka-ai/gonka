@@ -65,6 +65,7 @@ func (s *rangeCountingStorage) pruneBefore(cutoff uint64) error {
 }
 
 type legacyOnlyStorage struct {
+	executionStoreStub
 	inner           *Memory
 	failEpoch       uint64
 	failed          bool

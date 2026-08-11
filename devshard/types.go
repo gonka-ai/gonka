@@ -16,6 +16,11 @@ type ExecuteRequest struct {
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.
 	ResponseWriter http.ResponseWriter
+
+	// BeforeDispatch is called synchronously after the target is selected and
+	// the HTTP request is built, but before any request byte can be sent. HA
+	// execution uses it to durably cross the at-most-once dispatch boundary.
+	BeforeDispatch func(target string) error
 }
 
 // ExecuteResult contains the outcome of an inference execution.

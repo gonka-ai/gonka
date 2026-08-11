@@ -216,6 +216,23 @@ VALUES (
 )
 ON CONFLICT (singleton) DO NOTHING`},
 	},
+	{
+		ID:   14,
+		Name: "devshard_execution_dispatch_fsm",
+		Statements: []string{
+			`ALTER TABLE devshard_execution_claims
+	ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'claimed'
+	    CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned')),
+	    ADD COLUMN IF NOT EXISTS target TEXT,
+	    ADD COLUMN IF NOT EXISTS dispatched_at TIMESTAMPTZ,
+	    ADD COLUMN IF NOT EXISTS abandoned_at TIMESTAMPTZ`,
+			`UPDATE devshard_execution_claims
+SET phase = CASE status
+    WHEN 'completed' THEN 'completed'
+    ELSE 'dispatched'
+END`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.
