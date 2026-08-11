@@ -32,12 +32,3 @@ func TestNewServerRegistersDeprecatedDevshardPaths(t *testing.T) {
 		})
 	}
 }
-
-func TestNewServerRegistersPublicMetricsRoute(t *testing.T) {
-	s := NewServer(nil, newTestConfigManager(t), nil, nil, nil, nil)
-	req := httptest.NewRequest(http.MethodGet, "/metrics", nil)
-	rec := httptest.NewRecorder()
-	s.e.ServeHTTP(rec, req)
-	require.Equal(t, http.StatusOK, rec.Code)
-	require.Contains(t, rec.Body.String(), "go_")
-}

@@ -623,6 +623,10 @@ type Redundancy struct {
 	raceCleanupCtx    context.Context
 	raceCleanupCancel context.CancelFunc
 
+	// onHostObserved fires on first successful non-probe inference per host
+	// (gateway host-ping target set). Must not touch quarantine/routing.
+	onHostObserved func(hostIdx int, participantKey string)
+
 	suspiciousParticipant func(participantKey string) bool
 }
 
@@ -4477,6 +4481,9 @@ func (e *Redundancy) recordSample(inf *inflight, params user.InferenceParams, re
 		case responsive:
 			e.participantLimiter.ObserveSuccessfulInferenceForModel(participantKey, e.model)
 		}
+	}
+	if responsive && e.onHostObserved != nil {
+		e.onHostObserved(inf.hostIdx, participantKey)
 	}
 	if e.metrics != nil {
 		e.metrics.ObserveRequestSample(e.devshardID, sample)

@@ -6,6 +6,7 @@ import (
 	"github.com/labstack/echo/v4"
 	"github.com/labstack/echo/v4/middleware"
 
+	"common/probe"
 	"devshard/heightsync"
 	"devshard/observability"
 )
@@ -26,6 +27,9 @@ func buildServer(lifecycle *lifecycleState) *echo.Echo {
 	_ = heightsync.RegisterLogPlaneMetrics(observability.Registry())
 	e.GET("/metrics", echo.WrapHandler(observability.MetricsHandler()))
 	e.GET("/healthz", func(c echo.Context) error { return c.String(http.StatusOK, "ok") })
+	// Child-only clock contract. Gateway probes {RoutePrefix}/clock; versiond
+	// strips the version segment. Do not mount this on versiond's mux.
+	e.GET("/clock", echo.WrapHandler(probe.Handler(nil)))
 
 	return e
 }
