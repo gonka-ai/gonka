@@ -173,6 +173,9 @@ func (m *HostManager) SessionServerExisting(escrowID string) (*transport.Server,
 // Auth context (sender + body) is injected for HandleInference.
 func (m *HostManager) BindOwnerChat(c echo.Context) (*transport.Server, error) {
 	escrowID := c.Param("id")
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, echo.NewHTTPError(http.StatusBadRequest, err.Error())
+	}
 	addr, body, err := transport.VerifyPOSTAuth(c, m.verifier, escrowID, 0)
 	if err != nil {
 		return nil, err
@@ -361,6 +364,9 @@ func (m *HostManager) EvictBefore(cutoffEpoch uint64) int {
 }
 
 func (m *HostManager) create(escrowID string, escrow *bridge.EscrowInfo) (*transport.Server, error) {
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, err
+	}
 	if escrow == nil {
 		var err error
 		escrow, err = m.bridge.GetEscrow(escrowID)
@@ -429,6 +435,11 @@ func (m *HostManager) RecoverSessions() error {
 	}
 
 	for _, active := range escrowIDs {
+		if err := devshardpkg.ValidateEscrowID(active.EscrowID); err != nil {
+			logging.Error("skipping devshard session with non-canonical escrow id", inferenceTypes.System,
+				"escrow_id", active.EscrowID, "error", err)
+			continue
+		}
 		if _, err := m.recoverAndStoreSession(active.EscrowID); err != nil {
 			if errors.Is(err, storage.ErrSessionVersionConflict) {
 				logging.Info("skipping devshard session with foreign version", inferenceTypes.System,

@@ -61,7 +61,7 @@ func signedPOST(t *testing.T, e *echo.Echo, signer *signing.Secp256k1Signer, pat
 }
 
 func TestObsGET_DoesNotBindSession(t *testing.T) {
-	const escrowID = "obs-unbound"
+	const escrowID = "9701"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 
 	e := echo.New()
@@ -81,7 +81,7 @@ func TestObsGET_DoesNotBindSession(t *testing.T) {
 }
 
 func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
-	const escrowID = "obs-unbound-2"
+	const escrowID = "9702"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -101,7 +101,7 @@ func TestObsMempoolSignatures_DoNotBindSession(t *testing.T) {
 }
 
 func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
-	const escrowID = "gossip-unbound"
+	const escrowID = "9703"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -115,7 +115,7 @@ func TestGossipUnbound_DoesNotBindSession(t *testing.T) {
 }
 
 func TestOwnerChat_BindsSession(t *testing.T) {
-	const escrowID = "owner-bind"
+	const escrowID = "9704"
 	mgr, store, user, _ := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -140,7 +140,7 @@ func (b *countingGetEscrowBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo
 }
 
 func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
-	const escrowID = "owner-bind-once"
+	const escrowID = "9705"
 	store := newManagerTestStore(t)
 	hosts := make([]*signing.Secp256k1Signer, 3)
 	for i := range hosts {
@@ -176,7 +176,7 @@ func TestOwnerChat_FirstBindSingleGetEscrow(t *testing.T) {
 }
 
 func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
-	const escrowID = "non-owner-bind"
+	const escrowID = "9706"
 	mgr, store, _, hostSigner := setupBindTestManager(t, escrowID)
 	e := echo.New()
 	mgr.Register(e.Group(""))
@@ -190,7 +190,7 @@ func TestNonOwnerChat_DoesNotBindSession(t *testing.T) {
 }
 
 func TestSessionServerExisting_NoCreate(t *testing.T) {
-	const escrowID = "existing-miss"
+	const escrowID = "9707"
 	mgr, store, _, _ := setupBindTestManager(t, escrowID)
 
 	_, err := mgr.SessionServerExisting(escrowID)

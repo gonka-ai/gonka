@@ -1,0 +1,115 @@
+package session
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+
+	"github.com/labstack/echo/v4"
+	"github.com/stretchr/testify/require"
+
+	"devshard/internal/testutil"
+	"devshard/storage"
+	"devshard/stub"
+)
+
+func TestLeadingZeroEscrowAliasRejectedAtBind(t *testing.T) {
+	const escrowID = "9901"
+	const alias = "09901"
+
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+
+	rec := signedPOST(t, e, user, "/sessions/"+escrowID+"/chat/completions", escrowID, body)
+	_, err := store.GetSessionMeta(escrowID)
+	require.NoError(t, err, "canonical bind must create the session; http=%d body=%s", rec.Code, rec.Body.String())
+
+	aliasRec := signedPOST(t, e, user, "/sessions/"+alias+"/chat/completions", alias, body)
+	require.Equal(t, http.StatusBadRequest, aliasRec.Code, "body: %s", aliasRec.Body.String())
+
+	_, err = store.GetSessionMeta(alias)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound, "alias must not create a second durable session")
+
+	active, err := store.ListActiveSessions()
+	require.NoError(t, err)
+	require.Len(t, active, 1)
+	require.Equal(t, escrowID, active[0].EscrowID)
+	require.Equal(t, []string{escrowID}, mgr.ActiveEscrowIDs())
+}
+
+func TestLeadingZeroEscrowAliasRejectedOnSessionRoutes(t *testing.T) {
+	const escrowID = "9902"
+	const alias = "09902"
+	mgr, _, _, hostSigner := setupBindTestManager(t, escrowID)
+	e := echo.New()
+	mgr.Register(e.Group(""))
+
+	for _, path := range []string{
+		"/sessions/" + alias + "/diffs",
+		"/sessions/" + alias + "/mempool",
+		"/sessions/" + alias + "/signatures",
+	} {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		rec := httptest.NewRecorder()
+		e.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusBadRequest, rec.Code, "path=%s body=%s", path, rec.Body.String())
+	}
+
+	gossip := signedPOST(t, e, hostSigner, "/sessions/"+alias+"/gossip/nonce", alias, []byte(`{"nonce":1}`))
+	require.Equal(t, http.StatusBadRequest, gossip.Code, "body: %s", gossip.Body.String())
+}
+
+func TestBindOwnerChatRejectsAliasBeforeAuth(t *testing.T) {
+	const escrowID = "9903"
+	const alias = "009903"
+	mgr, store, user, _ := setupBindTestManager(t, escrowID)
+
+	e := echo.New()
+	e.POST("/sessions/:id/chat/completions", func(c echo.Context) error {
+		_, err := mgr.BindOwnerChat(c)
+		return err
+	})
+
+	body := []byte(`{"model":"m","messages":[{"role":"user","content":"hi"}]}`)
+	rec := signedPOST(t, e, user, "/sessions/"+alias+"/chat/completions", alias, body)
+	require.Equal(t, http.StatusBadRequest, rec.Code, "body: %s", rec.Body.String())
+
+	_, err := store.GetSessionMeta(alias)
+	require.ErrorIs(t, err, storage.ErrSessionNotFound)
+}
+
+func TestCreateRejectsNonCanonicalEscrowID(t *testing.T) {
+	mgr, _, _, _ := setupBindTestManager(t, "9904")
+
+	_, err := mgr.create("09904", nil)
+	require.ErrorContains(t, err, "invalid escrow id")
+
+	_, err = mgr.getOrCreate("09904", nil)
+	require.ErrorContains(t, err, "invalid escrow id")
+}
+
+func TestRecoverSessionsSkipsNonCanonicalStoredSessions(t *testing.T) {
+	store := newManagerTestStore(t)
+	_, _, hostSigner := createStoredSession(t, store, "9905", 7, 0)
+
+	meta, err := store.GetSessionMeta("9905")
+	require.NoError(t, err)
+	require.NoError(t, store.CreateSession(storage.CreateSessionParams{
+		EscrowID:       "09905",
+		EpochID:        meta.EpochID,
+		Version:        meta.Version,
+		CreatorAddr:    meta.CreatorAddr,
+		Config:         meta.Config,
+		Group:          meta.Group,
+		InitialBalance: meta.InitialBalance,
+	}))
+
+	mgr := NewHostManager(store, hostSigner, stub.NewInferenceEngine(), stub.NewValidationEngine(), nil,
+		testutil.RuntimeTestVersion, &mockBridge{}, nil, nil)
+	require.NoError(t, mgr.RecoverSessions())
+
+	require.Equal(t, []string{"9905"}, mgr.ActiveEscrowIDs())
+}

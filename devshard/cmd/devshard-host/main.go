@@ -29,7 +29,7 @@ import (
 
 const (
 	defaultPort     = "8080"
-	defaultEscrowID = "escrow-1"
+	defaultEscrowID = "1"
 )
 
 func main() {
