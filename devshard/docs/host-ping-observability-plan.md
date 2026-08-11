@@ -2,7 +2,7 @@
 
 **Proposal:** [proposals/gateway-host-ping-observability.md](./proposals/gateway-host-ping-observability.md)
 **Related:** dapi mlnode metrics federation ([PR #1469](https://github.com/gonka-ai/gonka/pull/1469)); `spool` promotion precedent ([spool-shared-library-plan.md](./spool-shared-library-plan.md) §D1, Phase 4)
-**Status:** plan, not started
+**Status:** plan — Step 0 implemented (metrics restore + tests)
 
 Two probers (gateway → `devshardd`, dapi → mlnode) need the same probe primitive: one cheap HTTP request per target per interval, yielding reachability, RTT, and clock divergence. This plan lands that primitive **once** in `common/probe`, then wires the two callers in dependency order so each step is shippable and observable on its own.
 

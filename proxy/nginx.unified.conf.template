@@ -198,6 +198,36 @@ http {
             proxy_send_timeout 30s;
         }
 
+        # dapi's own /metrics (default registry). Decoupled from API_STATUS so
+        # DISABLE_GONKA_API does not silence monitoring — same policy as
+        # /v1/mlnodes/metrics. Direct scrapers still use api:9100/metrics.
+        location = /metrics {
+            set $$limit_zone_name "METRICS";
+            ${LIMIT_REQ_RULE_METRICS}
+            ${LIMIT_CONN_RULE_METRICS}
+            ${CORS_CONFIG}
+            proxy_pass http://api_backend/metrics;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+        location = /api/metrics {
+            set $$limit_zone_name "METRICS";
+            ${LIMIT_REQ_RULE_METRICS}
+            ${LIMIT_CONN_RULE_METRICS}
+            ${CORS_CONFIG}
+            proxy_pass http://api_backend/metrics;
+            proxy_set_header Host $$host;
+            proxy_set_header X-Real-IP $$remote_addr;
+            proxy_set_header X-Forwarded-For $$proxy_add_x_forwarded_for;
+            proxy_set_header X-Forwarded-Proto $$scheme;
+            proxy_read_timeout 30s;
+            proxy_send_timeout 30s;
+        }
+
         # Dynamic API Versions (e.g. /v1/, /v2/)
         ${API_VERSION_LOCATIONS}
 
