@@ -348,10 +348,12 @@ gonka_compose_resolve() {
 
     if ((${#selected[@]} > 0)); then
         selected_encoded=$(gonka_compose_encode_files selected)
-        for required in "${observed[@]}"; do
-            gonka_compose_contains_sequence "$selected_encoded" "$required" || fail \
-                "explicit Compose topology omits or reorders a file recorded by running containers; include the complete existing model before adding overrides"
-        done
+        if [[ ${GONKA_COMPOSE_USE_COMMITTED_TOPOLOGY:-false} != true ]]; then
+            for required in "${observed[@]}"; do
+                gonka_compose_contains_sequence "$selected_encoded" "$required" || fail \
+                    "explicit Compose topology omits or reorders a file recorded by running containers; include the complete existing model before adding overrides"
+            done
+        fi
     else
         ((${#observed[@]} > 0)) || fail \
             "cannot recover Compose topology from running containers; pass --compose-file for every file in the deployment model"
@@ -388,7 +390,7 @@ gonka_compose_resolve() {
     if [[ -n $directory_override ]]; then
         GONKA_COMPOSE_PROJECT_DIRECTORY=$(gonka_compose_canonical_directory \
             "$directory_override" "$invocation_dir")
-        if ((${#selected[@]} == 0)); then
+        if [[ -n $runtime_working_dir ]]; then
             [[ $GONKA_COMPOSE_PROJECT_DIRECTORY == "$runtime_working_dir" ]] || fail \
                 "Compose project-directory override '$GONKA_COMPOSE_PROJECT_DIRECTORY' does not match running project directory '$runtime_working_dir'"
         fi

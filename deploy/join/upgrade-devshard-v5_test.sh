@@ -4,7 +4,11 @@ set -Eeuo pipefail
 
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 tmpdir=$(mktemp -d)
-trap 'rm -rf "$tmpdir"' EXIT
+if [[ ${KEEP_TEST_TMPDIR:-false} == true ]]; then
+    echo "upgrade-devshard-v5_test tmpdir: $tmpdir" >&2
+else
+    trap 'rm -rf "$tmpdir"' EXIT
+fi
 
 # Unit tests exercise a working-tree build before the release tag exists.
 export DEVSHARD_V5_ALLOW_UNRELEASED_SOURCE=true
@@ -372,6 +376,7 @@ run_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
+    rm -f "$tmpdir/upgrade-complete"
     if [[ ${PERSISTED_VERSIOND_BARRIER-} == true ]]; then
         : >"$state_dir/barrier-versiond-router"
     fi
@@ -422,6 +427,7 @@ run_auto_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
+    rm -f "$tmpdir/upgrade-complete"
     : >"$log"
     if ! DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -458,6 +464,7 @@ run_postcondition_interrupted_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
+    rm -f "$tmpdir/upgrade-complete"
     : >"$log"
     DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -507,6 +514,7 @@ run_interrupted_upgrade() {
 
     rm -rf "$state_dir"
     mkdir -p "$state_dir"
+    rm -f "$tmpdir/upgrade-complete"
     : >"$log"
     if DOCKER_BIN="$tmpdir/docker" \
         DOCKER_LOG="$log" \
@@ -619,6 +627,32 @@ grep -q 'Devshard v5 release preflight passed' "$tmpdir/preflight.stdout" || {
     cat "$tmpdir/preflight.stdout" >&2
     fail "release preflight did not report success"
 }
+
+upgrade_lock=$tmpdir/.gonka-devshard-v5-upgrade.lock
+: >"$upgrade_lock"
+exec {upgrade_lock_fd}>"$upgrade_lock"
+flock -n "$upgrade_lock_fd"
+if (
+    exec {upgrade_lock_fd}>&-
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/locked-preflight.log" \
+    FAIL_SERVICE=none \
+    EXISTING_CONTAINERS="proxy versiond edge-api" \
+    FAKE_STATE_DIR="$tmpdir/locked-preflight.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+        "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode single --edge-mode single --preflight-only \
+        >"$tmpdir/locked-preflight.stdout" \
+        2>"$tmpdir/locked-preflight.stderr"
+); then
+    fail "a concurrent deployment upgrade acquired the global lock"
+fi
+grep -q 'another devshard upgrade holds' \
+    "$tmpdir/locked-preflight.stderr" || fail \
+    "global lock contention did not produce a useful error"
+flock -u "$upgrade_lock_fd"
+exec {upgrade_lock_fd}>&-
 
 custom_port_log=$tmpdir/custom-port.log
 : >"$custom_port_log"
@@ -815,6 +849,9 @@ grep -q "does not match running project 'gonka-test'" \
 }
 assert_no_compose_mutation "$tmpdir/wrong-project.log"
 
+# Exercise first-run recovery from runtime labels, without the committed
+# topology written by an earlier successful test case.
+rm -f "$tmpdir/upgrade-complete"
 if INCOMPATIBLE_COMPOSE_CONTAINER=versiond \
     DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/incompatible-metadata.log" \
@@ -951,6 +988,7 @@ versiond_up_line=$(line_number_regex "$tmpdir/ha.log" \
 # A public proxy-router label proves only that ingress cutover happened. It
 # must not suppress an unfinished application or PostgreSQL migration.
 rm -f "$tmpdir/upgrade-complete"
+mkdir -p "$tmpdir/active-without-marker.state"
 if DOCKER_BIN="$tmpdir/docker" \
     DOCKER_LOG="$tmpdir/active-without-marker.log" \
     EXISTING_PROXY_COMPONENT=proxy-router \
@@ -964,7 +1002,7 @@ if DOCKER_BIN="$tmpdir/docker" \
     2>"$tmpdir/active-without-marker.stderr"; then
     fail "proxy-router label was accepted as an upgrade commit"
 fi
-grep -q 'cannot recover the missing commit marker' "$tmpdir/active-without-marker.stderr" || {
+grep -q 'application state did not converge' "$tmpdir/active-without-marker.stderr" || {
     cat "$tmpdir/active-without-marker.stderr" >&2
     fail "incomplete cutover did not explain the missing upgrade commit"
 }
@@ -972,6 +1010,7 @@ grep -q 'cannot recover the missing commit marker' "$tmpdir/active-without-marke
 # A crash after the irreversible router cutover but before the atomic marker
 # write is recoverable only after exact images and health have been proven.
 rm -f "$tmpdir/upgrade-complete"
+mkdir -p "$tmpdir/recovered-marker.state"
 ASSUME_RELEASE_STATE=true \
 DOCKER_BIN="$tmpdir/docker" \
 DOCKER_LOG="$tmpdir/recovered-marker.log" \
@@ -984,14 +1023,21 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
     --versiond-mode ha --edge-mode single \
     >"$tmpdir/recovered-marker.stdout" \
     2>"$tmpdir/recovered-marker.stderr"
-[[ $(<"$tmpdir/upgrade-complete") == 0.2.15-devshard-v5 ]] || fail \
-    "verified cutover did not reconstruct the missing commit marker"
+jq -e '
+    .schema == 1 and
+    .release_id == "0.2.15-devshard-v5" and
+    (.fingerprint | type == "string" and length == 64) and
+    (.compose.files | length > 0)
+' "$tmpdir/upgrade-complete" >/dev/null || fail \
+    "verified cutover did not reconstruct the desired-state marker"
 assert_contains "$tmpdir/recovered-marker.log" \
     "enable-router --versiond-mode ha --edge-mode single"
-grep -q 'Recovered the verified' "$tmpdir/recovered-marker.stdout" || fail \
+grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
 
 printf '0.2.15-devshard-v5\n' >"$tmpdir/upgrade-complete"
+mkdir -p "$tmpdir/active-with-marker.state"
+ASSUME_RELEASE_STATE=true \
 DOCKER_BIN="$tmpdir/docker" \
 DOCKER_LOG="$tmpdir/active-with-marker.log" \
 EXISTING_PROXY_COMPONENT=proxy-router \
@@ -1009,6 +1055,37 @@ assert_contains "$tmpdir/active-with-marker.log" \
     "--compose-project-name gonka-test"
 assert_contains "$tmpdir/active-with-marker.log" \
     "--compose-file $script_dir/docker-compose.versiond.yml"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--wait-timeout 2100 devshard-postgres"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--wait-timeout 2100 versiond2"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--wait-timeout 2100 versiond"
+assert_contains "$tmpdir/active-with-marker.log" \
+    "--wait-timeout 180 edge-api"
+jq -e '.schema == 1 and (.compose.files | length > 0)' \
+    "$tmpdir/upgrade-complete" >/dev/null || fail \
+    "legacy marker was not upgraded to the desired-state schema"
+
+# Once committed, the marker is the recovery authority. Drifted labels are a
+# hint about current containers, not permission to forget the known topology.
+mkdir -p "$tmpdir/marker-topology.state"
+ASSUME_RELEASE_STATE=true \
+INCOMPATIBLE_COMPOSE_CONTAINER=versiond \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/marker-topology.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/marker-topology.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/marker-topology.stdout" \
+    2>"$tmpdir/marker-topology.stderr"
+grep -q 'Using the committed Compose topology' \
+    "$tmpdir/marker-topology.stdout" || fail \
+    "rerun did not recover the committed Compose topology"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"

@@ -144,6 +144,7 @@ docker_bin=${DOCKER_BIN:-docker}
 fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
 enable_router_bin=${ROUTER_HA_ENABLE_BIN:-$script_dir/enable-router-ha.sh}
 upgrade_marker=${DEVSHARD_V5_UPGRADE_MARKER:-$config_dir/.gonka-devshard-v5-upgrade-complete}
+upgrade_lock=${DEVSHARD_V5_UPGRADE_LOCK:-$config_dir/.gonka-devshard-v5-upgrade.lock}
 
 if [[ $strict_capacity == false ]]; then
     case ${DEVSHARD_V5_STRICT_CAPACITY:-false} in
@@ -163,6 +164,13 @@ devshard_v5_verify_dependencies "$docker_bin"
 devshard_v5_verify_release_source "$script_dir"
 # shellcheck disable=SC1091 # Runtime path is anchored to this script.
 source "$script_dir/compose-topology.sh"
+
+if [[ ! -e $upgrade_lock ]]; then
+    (umask 000; : >"$upgrade_lock") || fail \
+        "cannot create deployment lock $upgrade_lock"
+fi
+exec 8<"$upgrade_lock"
+flock -n 8 || fail "another devshard upgrade holds $upgrade_lock"
 
 # A rollback gets the same startup budget as the corresponding forward
 # replacement. UPGRADE_ROLLBACK_VERIFY_TIMEOUT remains an emergency override
@@ -253,11 +261,53 @@ verify_release_ingress_state() {
     service_instances_match_release proxy-policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE"
 }
 
+converge_release_service() {
+    local service=$1
+
+    "${compose[@]}" up -d --no-deps --wait \
+        --wait-timeout "$(service_startup_timeout "$service")" \
+        "$service" 8<&-
+}
+
 write_upgrade_marker() {
     local marker_tmp=$upgrade_marker.tmp.$$
     mkdir -p "$(dirname -- "$upgrade_marker")"
-    printf '%s\n' "$release_id" >"$marker_tmp"
+    printf '%s\n' "$desired_upgrade_marker" >"$marker_tmp"
     mv -f "$marker_tmp" "$upgrade_marker"
+}
+
+upgrade_marker_release() {
+    if jq -e 'type == "object"' "$upgrade_marker" >/dev/null 2>&1; then
+        jq -er '.release_id | strings | select(length > 0)' "$upgrade_marker"
+        return
+    fi
+    head -n1 "$upgrade_marker"
+}
+
+restore_marker_topology() {
+    local marker_release
+
+    [[ -f $upgrade_marker ]] || return 0
+    jq -e '
+        type == "object" and .schema == 1 and
+        (.compose.files | type == "array" and length > 0) and
+        (.compose.project | type == "string" and length > 0) and
+        (.compose.project_directory | type == "string" and length > 0)
+    ' "$upgrade_marker" >/dev/null 2>&1 || return 0
+    marker_release=$(upgrade_marker_release) || fail \
+        "cannot read release identity from $upgrade_marker"
+    [[ $marker_release == "$release_id" ]] || return 0
+
+    if ((${#compose_file_args[@]} == 0)) && [[ -z ${COMPOSE_FILE-} ]]; then
+        mapfile -t compose_file_args < <(jq -er '.compose.files[]' "$upgrade_marker")
+        export GONKA_COMPOSE_USE_COMMITTED_TOPOLOGY=true
+        echo "Using the committed Compose topology from $upgrade_marker"
+    fi
+    [[ -n $compose_project_name ]] || \
+        compose_project_name=$(jq -er '.compose.project' "$upgrade_marker")
+    [[ -n $compose_project_directory ]] || \
+        compose_project_directory=$(jq -er \
+            '.compose.project_directory' "$upgrade_marker")
 }
 
 if [[ $versiond_mode == auto ]]; then
@@ -284,6 +334,8 @@ if [[ $edge_mode == auto ]]; then
 fi
 echo "Deployment topology: versiond=$versiond_mode, edge-api=$edge_mode"
 
+restore_marker_topology
+
 # Pin this operation to the exact release. The Compose files expose these
 # variables so a failed replacement can be recreated from its captured image.
 export EDGE_API_IMAGE=$DEVSHARD_V5_EDGE_API_IMAGE
@@ -296,7 +348,8 @@ export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 container_exists proxy || fail \
     "cannot recover the deployment Compose topology: public proxy container is missing"
 runtime_compose_containers=(proxy versiond edge-api)
-for container in versiond2 devshard-postgres edge-api2 edge-api3; do
+for container in proxy-policy versiond2 versiond-router devshard-postgres \
+    edge-api2 edge-api3 edge-api-router; do
     container_exists "$container" && runtime_compose_containers+=("$container")
 done
 gonka_compose_resolve \
@@ -314,6 +367,53 @@ fi
 devshard_v5_report_compose_files "$script_dir" "${GONKA_COMPOSE_FILES[@]}"
 devshard_v5_verify_capacity "$config_dir" "$strict_capacity"
 effective_compose_config=$("${GONKA_COMPOSE_COMMAND[@]}" config --format json)
+compose_config_sha=$(
+    jq -Sc . <<<"$effective_compose_config" | sha256sum | awk '{print $1}'
+)
+compose_files_json=$(
+    printf '%s\n' "${GONKA_COMPOSE_FILES[@]}" | jq -Rsc \
+        'split("\n") | map(select(length > 0))'
+)
+desired_upgrade_state=$(jq -cn \
+    --arg release_id "$release_id" \
+    --arg release_commit "$DEVSHARD_V5_RELEASE_COMMIT" \
+    --arg versiond_mode "$versiond_mode" \
+    --arg edge_mode "$edge_mode" \
+    --arg project "$GONKA_COMPOSE_PROJECT" \
+    --arg project_directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" \
+    --arg config_sha256 "$compose_config_sha" \
+    --argjson files "$compose_files_json" \
+    --arg edge_api "$DEVSHARD_V5_EDGE_API_IMAGE" \
+    --arg versiond "$DEVSHARD_V5_VERSIOND_IMAGE" \
+    --arg edge_api_router "$DEVSHARD_V5_EDGE_API_ROUTER_IMAGE" \
+    --arg versiond_router "$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE" \
+    --arg proxy_policy "$DEVSHARD_V5_PROXY_POLICY_IMAGE" \
+    --arg proxy_router "$DEVSHARD_V5_PROXY_ROUTER_IMAGE" \
+    '{
+        schema: 1,
+        release_id: $release_id,
+        release_commit: $release_commit,
+        topology: {versiond: $versiond_mode, edge_api: $edge_mode},
+        compose: {
+            project: $project,
+            project_directory: $project_directory,
+            files: $files,
+            config_sha256: $config_sha256
+        },
+        images: {
+            edge_api: $edge_api,
+            versiond: $versiond,
+            edge_api_router: $edge_api_router,
+            versiond_router: $versiond_router,
+            proxy_policy: $proxy_policy,
+            proxy_router: $proxy_router
+        }
+    }')
+desired_fingerprint=$(
+    printf '%s' "$desired_upgrade_state" | sha256sum | awk '{print $1}'
+)
+desired_upgrade_marker=$(jq -c --arg fingerprint "$desired_fingerprint" \
+    '. + {fingerprint: $fingerprint}' <<<"$desired_upgrade_state")
 public_http_port=$(jq -er '
     [.services.proxy.ports[]?
      | select(.target == 80 and (.protocol // "tcp") == "tcp")
@@ -357,29 +457,45 @@ if [[ $existing_proxy_component != proxy-router && $maintenance_ack != true ]]; 
     fail "the one-time v5 cutover restarts shared PostgreSQL when local HA storage is used and replaces the public listener, terminating existing ingress connections; schedule the maintenance window, run --preflight-only, then rerun with --acknowledge-maintenance"
 fi
 if [[ $existing_proxy_component == proxy-router ]]; then
-    if [[ -f $upgrade_marker && $(<"$upgrade_marker") != "$release_id" ]]; then
+    if [[ -f $upgrade_marker && \
+        $(upgrade_marker_release) != "$release_id" ]]; then
         fail "router HA is active, but commit marker $upgrade_marker belongs to another release"
     fi
     if [[ ! -f $upgrade_marker ]]; then
-        warn "router HA is active without its commit marker; verifying the complete release state before recovery"
-        verify_release_application_state || fail \
-            "cannot recover the missing commit marker: application or storage state does not match $release_id"
-        "$enable_router_bin" \
-            --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
-            "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
-        if ! verify_release_application_state || \
-            ! verify_release_ingress_state; then
-            fail "cannot recover the missing commit marker: the converged serving tier does not match $release_id"
-        fi
-        write_upgrade_marker
-        echo "Recovered the verified $release_id upgrade commit marker"
-        exit 0
+        warn "router HA is active without its commit marker; reconciling the complete release state"
+    elif ! jq -e --arg fingerprint "$desired_fingerprint" \
+        '.schema == 1 and .fingerprint == $fingerprint' \
+        "$upgrade_marker" >/dev/null 2>&1; then
+        warn "the committed release state differs from the requested state; reconciling it"
     fi
-    echo "The v5 router HA topology is already active; converging it idempotently"
+
+    echo "The v5 router HA topology is active; converging every release service idempotently"
+    if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+        converge_release_service devshard-postgres
+    fi
+    if [[ $versiond_mode == ha ]]; then
+        for service in versiond2 versiond; do
+            converge_release_service "$service"
+        done
+    else
+        converge_release_service versiond
+    fi
+    if [[ $edge_mode == multi ]]; then
+        for service in edge-api2 edge-api3 edge-api; do
+            converge_release_service "$service"
+        done
+    else
+        converge_release_service edge-api
+    fi
     "$enable_router_bin" \
         --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
-        "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
-    echo "Devshard v5 upgrade already completed"
+        "${GONKA_COMPOSE_FORWARD_ARGS[@]}" 8<&-
+    verify_release_application_state || fail \
+        "application state did not converge to $release_id"
+    verify_release_ingress_state || fail \
+        "ingress state did not converge to $release_id"
+    write_upgrade_marker
+    echo "Devshard v5 release state is converged"
     exit 0
 fi
 
@@ -417,7 +533,10 @@ last_captured_version_baseline=
 run_interruptible() {
     local status=0
 
-    "$@" &
+    # The parent keeps the deployment lock. Children must not inherit its file
+    # description, otherwise a short-lived CLI that forks can retain the lock
+    # after this process has handled a signal and exited.
+    "$@" 8<&- &
     foreground_pid=$!
     wait "$foreground_pid" || status=$?
     foreground_pid=
@@ -920,6 +1039,7 @@ handle_signal() {
         interrupted_pid=$foreground_pid
         kill -TERM "$interrupted_pid" 2>/dev/null || true
         (
+            exec 8<&-
             sleep 5
             kill -KILL "$interrupted_pid" 2>/dev/null || true
         ) &

@@ -222,17 +222,22 @@ the exact old public nginx image, and switches the public listener to
 singletons. If that cutover fails or is interrupted, the old public nginx is
 recreated from the captured image and the script exits non-zero.
 
-Successful completion writes `.gonka-devshard-v5-upgrade-complete` next to
-`config.env`. That marker is the commit record for application, storage, and
-router cutover together. A later run accepts an already-active `proxy-router`
-only with that marker; the proxy container label alone is not evidence that
+The updater takes one deployment-wide `.gonka-devshard-v5-upgrade.lock` next
+to `config.env`; a concurrent updater fails before mutation. Successful
+completion writes `.gonka-devshard-v5-upgrade-complete` atomically. This JSON
+marker records the release commit, topology modes, ordered Compose files,
+project identity, expected images, and a fingerprint of the rendered Compose
+model. It contains hashes rather than configuration values, so secrets are not
+copied into the marker. The proxy container label alone is not evidence that
 PostgreSQL, versiond, and edge-api were migrated.
 
 Rerunning the same upgrade is also the normal reconciliation path for this
-release. When router HA is already active, it pulls the requested inner-router
-image, rolls changed slots one at a time, and leaves image/config-current slots
-untouched before reconverging the public route map. A main-project `pull` or
-`up -d` alone cannot update slot projects that it does not own.
+release. It restores the committed Compose model from the marker, converges
+PostgreSQL and each application replica in HA-safe order, rolls changed router
+slots one at a time, reconverges public ingress, verifies every expected image
+and health check, and rewrites the marker only after success. Image/config-
+current containers remain untouched. A main-project `pull` or `up -d` alone
+cannot update slot projects that it does not own.
 
 The one-time public-listener replacement cannot preserve connections owned by
 the old nginx container because both implementations own the same host ports.
