@@ -130,6 +130,11 @@ func NewTestBroker() *Broker {
 	}
 	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "").Return(parentGroupResp, nil)
 	mockChainBridge.On("GetEpochGroupDataByModelId", uint64(100), "model1").Return(model1EpochData, nil)
+	// nodeSyncWorker ticks every 60s; long/repeated tests must not panic on SyncNodes.
+	mockChainBridge.On("GetHardwareNodes").Return(&types.QueryHardwareNodesResponse{
+		Nodes: &types.HardwareNodes{HardwareNodes: []*types.HardwareNode{}},
+	}, nil).Maybe()
+	mockChainBridge.On("SubmitHardwareDiff", mock.Anything).Return(nil).Maybe()
 
 	mockConfigManager := &apiconfig.ConfigManager{}
 	return NewBroker(mockChainBridge, phaseTracker, participantInfo, "", mlnodeclient.NewMockClientFactory(), mockConfigManager)
@@ -860,27 +865,60 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	// Wait for InferenceUpAllCommand to complete
 	<-inferenceUpCommand.Response
 
-	// Wait for reconciliation to actually bring the node to INFERENCE status
-	// by polling until the mock client's InferenceUp has been called
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) {
-		allClients := mockFactory.GetAllClients()
-		for _, client := range allClients {
-			if client.GetInferenceUpCalled() > 0 {
-				// InferenceUp was called, wait a bit for status to propagate
-				time.Sleep(50 * time.Millisecond)
-				return
+	// Wait until the node is fully stable for inference in broker state.
+	// CurrentStatus can become INFERENCE before in-flight reconciliation clears,
+	// and a reconciling node is considered unavailable.
+	// Also require the mock to report INFERENCE: reconciliation may call Stop()
+	// first, and a concurrent status query that observed STOPPED must not leave
+	// CurrentStatus poisoned after we return (PrevStatus CAS is the main guard).
+	brokerDeadline := time.Now().Add(2 * time.Second)
+	for time.Now().Before(brokerDeadline) {
+		mockClient.Mu.Lock()
+		mockOK := mockClient.CurrentState == mlnodeclient.MlNodeState_INFERENCE && mockClient.InferenceIsHealthy
+		mockClient.Mu.Unlock()
+
+		nodes, _ := broker.GetNodes()
+		for _, n := range nodes {
+			if n.Node.Id == node.Id &&
+				n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+				n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+				n.State.ReconcileInfo == nil &&
+				mockOK {
+				// Drain any in-flight status update already queued, then re-check.
+				time.Sleep(20 * time.Millisecond)
+				nodes2, _ := broker.GetNodes()
+				for _, n2 := range nodes2 {
+					if n2.Node.Id == node.Id &&
+						n2.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+						n2.State.ReconcileInfo == nil {
+						return
+					}
+				}
 			}
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 
-	// Fallback: manually set status if reconciliation didn't complete in time
+	// Fallback: force mock + broker status if reconciliation didn't finish in time.
+	// PrevStatus must match CurrentStatus (CAS in SetNodesActualStatusCommand).
+	prevStatus := types.HardwareNodeStatus_UNKNOWN
+	if nodes, err := broker.GetNodes(); err == nil {
+		for _, n := range nodes {
+			if n.Node.Id == node.Id {
+				prevStatus = n.State.CurrentStatus
+				break
+			}
+		}
+	}
+	mockClient.Mu.Lock()
+	mockClient.CurrentState = mlnodeclient.MlNodeState_INFERENCE
+	mockClient.InferenceIsHealthy = true
+	mockClient.Mu.Unlock()
 	setStatusCommand := NewSetNodesActualStatusCommand(
 		[]StatusUpdate{
 			{
 				NodeId:     node.Id,
-				PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+				PrevStatus: prevStatus,
 				NewStatus:  types.HardwareNodeStatus_INFERENCE,
 				Timestamp:  time.Now(),
 			},
@@ -889,23 +927,15 @@ func registerNodeAndSetInferenceStatus(t *testing.T, broker *Broker, node apicon
 	queueMessage(t, broker, setStatusCommand)
 	<-setStatusCommand.Response
 
-	// Wait until the node is fully stable for inference in broker state.
-	// CurrentStatus can become INFERENCE before in-flight reconciliation clears,
-	// and a reconciling node is considered unavailable.
-	brokerDeadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(brokerDeadline) {
-		nodes, _ := broker.GetNodes()
-		for _, n := range nodes {
-			if n.Node.Id == node.Id &&
-				n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
-				n.State.ReconcileInfo == nil {
-				return
-			}
+	nodes, _ := broker.GetNodes()
+	for _, n := range nodes {
+		if n.Node.Id == node.Id &&
+			n.State.IntendedStatus == types.HardwareNodeStatus_INFERENCE &&
+			n.State.CurrentStatus == types.HardwareNodeStatus_INFERENCE &&
+			n.State.ReconcileInfo == nil {
+			return
 		}
-		time.Sleep(10 * time.Millisecond)
 	}
-
 	t.Fatalf("Node did not reach INFERENCE status in time")
 }
 
@@ -2291,4 +2321,29 @@ func TestSetNodesActualStatusCommand_MlNodeVersion(t *testing.T) {
 	<-cmd.Response
 
 	assert.Equal(t, "v3.0.0", node.State.MlNodeVersion)
+}
+
+func TestSetNodesActualStatusCommand_SkipsStalePrevMismatch(t *testing.T) {
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.StatusTimestamp = time.Now().Add(-time.Second)
+
+	broker := &Broker{
+		nodes: map[string]*NodeWithState{
+			"node-1": node,
+		},
+	}
+
+	// Stale probe observed UNKNOWN→STOPPED while reconciliation already finalized INFERENCE.
+	cmd := NewSetNodesActualStatusCommand([]StatusUpdate{
+		{
+			NodeId:     "node-1",
+			PrevStatus: types.HardwareNodeStatus_UNKNOWN,
+			NewStatus:  types.HardwareNodeStatus_STOPPED,
+			Timestamp:  time.Now(),
+		},
+	})
+	cmd.Execute(broker)
+	<-cmd.Response
+
+	assert.Equal(t, types.HardwareNodeStatus_INFERENCE, node.State.CurrentStatus)
 }
