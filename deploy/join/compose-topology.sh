@@ -382,10 +382,13 @@ gonka_compose_resolve() {
     if [[ -z $project_override ]]; then
         project_override=${COMPOSE_PROJECT_NAME-}
     fi
-    if [[ -n $project_override && $project_override != "$runtime_project" ]]; then
-        fail "Compose project override '$project_override' does not match running project '$runtime_project'"
-    fi
-    GONKA_COMPOSE_PROJECT=$runtime_project
+	if [[ -n $runtime_project && -n $project_override && \
+		$project_override != "$runtime_project" ]]; then
+		fail "Compose project override '$project_override' does not match running project '$runtime_project'"
+	fi
+	GONKA_COMPOSE_PROJECT=${project_override:-$runtime_project}
+	[[ -n $GONKA_COMPOSE_PROJECT ]] || fail \
+		"cannot determine the Compose project name from runtime state or an explicit/committed topology"
 
     if [[ -n $directory_override ]]; then
         GONKA_COMPOSE_PROJECT_DIRECTORY=$(gonka_compose_canonical_directory \

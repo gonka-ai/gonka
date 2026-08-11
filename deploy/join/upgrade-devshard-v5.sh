@@ -326,18 +326,28 @@ upgrade_marker_release() {
 }
 
 restore_marker_topology() {
-    local marker_release
+	local marker_release marker_versiond_mode marker_edge_mode
 
     [[ -f $upgrade_marker ]] || return 0
-    jq -e '
-        type == "object" and .schema == 1 and
-        (.compose.files | type == "array" and length > 0) and
+	jq -e '
+		type == "object" and .schema == 1 and
+		(.topology.versiond == "single" or .topology.versiond == "ha") and
+		(.topology.edge_api == "single" or .topology.edge_api == "multi") and
+		(.compose.files | type == "array" and length > 0) and
         (.compose.project | type == "string" and length > 0) and
         (.compose.project_directory | type == "string" and length > 0)
     ' "$upgrade_marker" >/dev/null 2>&1 || return 0
     marker_release=$(upgrade_marker_release) || fail \
         "cannot read release identity from $upgrade_marker"
-    [[ $marker_release == "$release_id" ]] || return 0
+	[[ $marker_release == "$release_id" ]] || return 0
+	marker_versiond_mode=$(jq -er '.topology.versiond' "$upgrade_marker")
+	marker_edge_mode=$(jq -er '.topology.edge_api' "$upgrade_marker")
+	if [[ $versiond_mode == auto ]]; then
+		versiond_mode=$marker_versiond_mode
+	fi
+	if [[ $edge_mode == auto ]]; then
+		edge_mode=$marker_edge_mode
+	fi
 
     if ((${#compose_file_args[@]} == 0)) && [[ -z ${COMPOSE_FILE-} ]]; then
         mapfile -t compose_file_args < <(jq -er '.compose.files[]' "$upgrade_marker")
@@ -346,10 +356,14 @@ restore_marker_topology() {
     fi
     [[ -n $compose_project_name ]] || \
         compose_project_name=$(jq -er '.compose.project' "$upgrade_marker")
-    [[ -n $compose_project_directory ]] || \
-        compose_project_directory=$(jq -er \
-            '.compose.project_directory' "$upgrade_marker")
+	[[ -n $compose_project_directory ]] || \
+		compose_project_directory=$(jq -er \
+			'.compose.project_directory' "$upgrade_marker")
+	committed_marker_loaded=true
 }
+
+committed_marker_loaded=false
+restore_marker_topology
 
 if [[ $versiond_mode == auto ]]; then
     if container_exists devshard-postgres ||
@@ -375,8 +389,6 @@ if [[ $edge_mode == auto ]]; then
 fi
 echo "Deployment topology: versiond=$versiond_mode, edge-api=$edge_mode"
 
-restore_marker_topology
-
 # Pin this operation to the exact release. The Compose files expose these
 # variables so a failed replacement can be recreated from its captured image.
 export EDGE_API_IMAGE=$DEVSHARD_V5_EDGE_API_IMAGE
@@ -386,8 +398,6 @@ export VERSIOND_ROUTER_IMAGE=$DEVSHARD_V5_VERSIOND_ROUTER_IMAGE
 export PROXY_POLICY_IMAGE=$DEVSHARD_V5_PROXY_POLICY_IMAGE
 export PROXY_ROUTER_IMAGE=$DEVSHARD_V5_PROXY_ROUTER_IMAGE
 
-container_exists proxy || fail \
-    "cannot recover the deployment Compose topology: public proxy container is missing"
 runtime_compose_containers=(proxy versiond edge-api)
 for container in proxy-policy versiond2 versiond-router devshard-postgres \
     edge-api2 edge-api3 edge-api-router; do
@@ -470,8 +480,12 @@ public_https_port=$(jq -er '
     | unique | select(length <= 1) | (.[0] // "")
 ' <<<"$effective_compose_config") || fail \
     "effective Compose model publishes proxy port 443 on multiple host ports"
-devshard_v5_verify_public_ports \
-    "$docker_bin" proxy "$public_http_port" "$public_https_port"
+if container_exists proxy; then
+	devshard_v5_verify_public_ports \
+		"$docker_bin" proxy "$public_http_port" "$public_https_port"
+else
+	warn "public proxy is absent; the committed Compose model will recreate it and Docker will enforce exclusive ownership of ports $public_http_port${public_https_port:+ and $public_https_port}"
+fi
 
 postgres_container=
 postgres_target_dir=
@@ -495,7 +509,8 @@ existing_proxy_component=$(
     "$docker_bin" inspect --format \
         '{{index .Config.Labels "ai.gonka.component"}}' proxy 2>/dev/null || true
 )
-if [[ $existing_proxy_component != proxy-router && $maintenance_ack != true ]]; then
+if [[ $existing_proxy_component != proxy-router && \
+	$committed_marker_loaded != true && $maintenance_ack != true ]]; then
     fail "the one-time v5 cutover restarts shared PostgreSQL when local HA storage is used and replaces the public listener, terminating existing ingress connections; schedule the maintenance window, run --preflight-only, then rerun with --acknowledge-maintenance"
 fi
 if [[ $existing_proxy_component == proxy-router ]]; then

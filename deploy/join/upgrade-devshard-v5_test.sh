@@ -1126,8 +1126,51 @@ GONKA_CONFIG_ENV="$tmpdir/config.env" \
     >"$tmpdir/marker-topology.stdout" \
     2>"$tmpdir/marker-topology.stderr"
 grep -q 'Using the committed Compose topology' \
-    "$tmpdir/marker-topology.stdout" || fail \
-    "rerun did not recover the committed Compose topology"
+	"$tmpdir/marker-topology.stdout" || fail \
+	"rerun did not recover the committed Compose topology"
+
+# Explicit CLI modes win, but an automatic rerun must use the committed modes
+# before inspecting a degraded runtime. Missing replicas are desired-state
+# drift, not permission to collapse HA into a singleton topology.
+mkdir -p "$tmpdir/marker-missing-replicas.state"
+ASSUME_RELEASE_STATE=true \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/marker-missing-replicas.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/marker-missing-replicas.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+	"$script_dir/upgrade-devshard-v5.sh" \
+	>"$tmpdir/marker-missing-replicas.stdout" \
+	2>"$tmpdir/marker-missing-replicas.stderr"
+grep -q 'versiond=ha, edge-api=single' \
+	"$tmpdir/marker-missing-replicas.stdout" || fail \
+	"runtime loss changed the committed topology modes"
+assert_contains "$tmpdir/marker-missing-replicas.log" \
+	"--wait-timeout 2100 versiond2"
+
+# The public proxy is desired state too. Losing its container must not discard
+# the committed Compose identity or require a second maintenance acknowledgement.
+mkdir -p "$tmpdir/marker-missing-proxy.state"
+sed 's/UPGRADE_ENABLE_ROUTER_HA=false/UPGRADE_ENABLE_ROUTER_HA=true/' \
+	"$tmpdir/config.env" >"$tmpdir/config-recover-proxy.env"
+DEVSHARD_V5_MAINTENANCE_ACK=false \
+ASSUME_RELEASE_STATE=true \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/marker-missing-proxy.log" \
+EXISTING_PROXY_COMPONENT='' \
+EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/marker-missing-proxy.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config-recover-proxy.env" \
+	"$script_dir/upgrade-devshard-v5.sh" \
+	>"$tmpdir/marker-missing-proxy.stdout" \
+	2>"$tmpdir/marker-missing-proxy.stderr"
+assert_contains "$tmpdir/marker-missing-proxy.log" \
+	"enable-router --versiond-mode ha --edge-mode single"
+grep -q 'public proxy is absent' "$tmpdir/marker-missing-proxy.stderr" || fail \
+	"missing proxy recovery was not reported"
 
 run_upgrade single devshard-postgres "$tmpdir/postgres-failure.log"
 assert_contains "$tmpdir/postgres-failure.log" " stop devshard-postgres"
