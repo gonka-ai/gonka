@@ -158,8 +158,10 @@ a warming or stale dapi replica from erasing learned routes.
 
 Governance approval is itself what makes the name appear in `/versions`, so this
 feed cannot prove readiness before approval. Each router assigns the new name
-to an inert backend and starts health checks, but does not publish the request
-map until at least `VERSIOND_ROUTING_ACTIVATION_MIN_READY` upstreams are ready.
+to an inert backend and starts health checks. When one revision adds several
+names, none is published until every new backend has at least
+`VERSIOND_ROUTING_ACTIVATION_MIN_READY` upstreams. The router then durably
+commits the complete revision and atomically replaces its HAProxy request map.
 Once published, ordinary degradation below that reserve does not retract the
 route. Network activation automation should still wait for every host before
 directing new sessions to that version:

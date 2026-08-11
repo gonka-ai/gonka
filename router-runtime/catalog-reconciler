@@ -270,29 +270,99 @@ ready_server_count() {
     '
 }
 
-publish_version() {
-    version=$1 backend=$2
-    escaped_version=$(runtime_key "$version")
-    escaped_backend=$(runtime_key "$backend")
-    response=$(runtime "add map $version_map $escaped_version $escaped_backend" 2>&1) || return 1
-    [ -z "$response" ] || map_value_is "$version_map" "$version" "$backend"
-    map_value_is "$version_map" "$version" "$backend"
+prepare_map_transaction() {
+	map=$1
+	response=$(runtime "prepare map $map" 2>&1) || return 1
+	transaction=$(printf '%s\n' "$response" | awk '
+		$1 == "New" && $2 == "version" && $3 == "created:" && $4 ~ /^[0-9]+$/ {
+			print $4
+		}
+	')
+	case "$transaction" in
+		'' | *[!0-9]*) return 1 ;;
+	esac
+	printf '%s\n' "$transaction"
 }
 
-publish_readiness() {
-    encoded=$1 backend=$2
-    key="version=$encoded"
-    escaped_key=$(runtime_key "$key")
-    escaped_backend=$(runtime_key "$backend")
-    response=$(runtime "add map $ready_map $escaped_key $escaped_backend" 2>&1) || return 1
-    [ -z "$response" ] || map_value_is "$ready_map" "$key" "$backend"
-    map_value_is "$ready_map" "$key" "$backend"
+publish_plan_map() {
+	map=$1 kind=$2
+	case "$kind" in
+		version) flag_field=4 ;;
+		readiness) flag_field=5 ;;
+		*) return 1 ;;
+	esac
+	if ! awk -v field="$flag_field" '$field == 1 { found = 1 } END { exit !found }' \
+		"$tmpdir/projection.plan"; then
+		return 0
+	fi
+
+	transaction=$(prepare_map_transaction "$map") || return 1
+	case "$kind" in
+		version) current_map=$tmpdir/version.current ;;
+		readiness) current_map=$tmpdir/readiness.current ;;
+	esac
+	# `prepare map` creates an empty replacement, not a copy. Seed the
+	# transaction with the complete live view before adding this revision.
+	while read -r _ key value; do
+		[ -n "$key" ] || continue
+		escaped_key=$(runtime_key "$key")
+		escaped_value=$(runtime_key "$value")
+		response=$(runtime "add map @$transaction $map $escaped_key $escaped_value" 2>&1) || return 1
+		[ -z "$response" ] || return 1
+	done < "$current_map"
+	while read -r version encoded backend publish_version_entry publish_ready_entry; do
+		case "$kind" in
+			version)
+				[ "$publish_version_entry" -eq 1 ] || continue
+				key=$version
+				;;
+			readiness)
+				[ "$publish_ready_entry" -eq 1 ] || continue
+				key="version=$encoded"
+				;;
+		esac
+		escaped_key=$(runtime_key "$key")
+		escaped_backend=$(runtime_key "$backend")
+		response=$(runtime "add map @$transaction $map $escaped_key $escaped_backend" 2>&1) || return 1
+		[ -z "$response" ] || return 1
+	done < "$tmpdir/projection.plan"
+	response=$(runtime "commit map @$transaction $map" 2>&1) || return 1
+	[ -z "$response" ] || return 1
+
+	while read -r version encoded backend publish_version_entry publish_ready_entry; do
+		case "$kind" in
+			version)
+				[ "$publish_version_entry" -eq 1 ] || continue
+				key=$version
+				;;
+			readiness)
+				[ "$publish_ready_entry" -eq 1 ] || continue
+				key="version=$encoded"
+				;;
+		esac
+		map_value_is "$map" "$key" "$backend" || return 1
+	done < "$tmpdir/projection.plan"
 }
 
-reconcile_catalog() {
-    version_state=$(map_snapshot "$version_map") || return 1
-    ready_state=$(map_snapshot "$ready_map") || return 1
-    slot_state=$(map_snapshot "$slot_map") || return 1
+publish_catalog() {
+	# Admin readiness may safely lead the data map, but traffic must never lead
+	# readiness. The data map is committed last and makes every addition in the
+	# accepted governance revision visible in one Runtime API transaction.
+	publish_plan_map "$ready_map" readiness || return 1
+	publish_plan_map "$version_map" version || return 1
+	while read -r version _ _ publish_version_entry _; do
+		[ "$publish_version_entry" -eq 1 ] || continue
+		log "declared governance version '$version'"
+	done < "$tmpdir/projection.plan"
+}
+
+prepare_catalog() {
+	version_state=$(map_snapshot "$version_map") || return 1
+	ready_state=$(map_snapshot "$ready_map") || return 1
+	slot_state=$(map_snapshot "$slot_map") || return 1
+	printf '%s\n' "$version_state" > "$tmpdir/version.current"
+	printf '%s\n' "$ready_state" > "$tmpdir/readiness.current"
+	: > "$tmpdir/projection.plan"
 
     # Capacity is checked before the first Runtime API mutation. Without this
     # preflight a snapshot with N+1 new names and N free slots would publish a
@@ -319,44 +389,47 @@ reconcile_catalog() {
     done < "$tmpdir/catalog.names"
     [ -z "$capacity_missing" ] || return 2
 
-    while IFS= read -r version; do
-        [ -n "$version" ] || continue
-        version_excluded "$version" && continue
-        encoded=$(urlencode "$version")
-        backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
-        if [ -n "$backend" ]; then
-            if ! printf '%s\n' "$ready_state" | mapped_backend "version=$encoded" \
-                | grep -Fqx "$backend"; then
-                publish_readiness "$encoded" "$backend" || return 1
-                ready_state=$(map_snapshot "$ready_map") || return 1
-            fi
-            continue
-        fi
+	while IFS= read -r version; do
+		[ -n "$version" ] || continue
+		version_excluded "$version" && continue
+		encoded=$(urlencode "$version")
+		backend=$(printf '%s\n' "$version_state" | mapped_backend "$version")
+		publish_version_entry=0
+		if [ -z "$backend" ]; then
+			backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
+			if [ -z "$backend" ]; then
+				backend=$(printf '%s\n' "$slot_state" | free_slot)
+				if [ -z "$backend" ]; then
+					capacity_missing=$version
+					return 2
+				fi
+				assign_slot "$backend" "$encoded" || return 1
+				slot_state=$(map_snapshot "$slot_map") || return 1
+			fi
+			enable_slot "$backend" || return 1
+			publish_version_entry=1
+		fi
+		publish_ready_entry=0
+		if ! printf '%s\n' "$ready_state" | mapped_backend "version=$encoded" \
+			| grep -Fqx "$backend"; then
+			publish_ready_entry=1
+		fi
+		printf '%s %s %s %s %s\n' "$version" "$encoded" "$backend" \
+			"$publish_version_entry" "$publish_ready_entry" \
+			>> "$tmpdir/projection.plan"
+	done < "$tmpdir/catalog.names"
 
-        backend=$(printf '%s\n' "$slot_state" | slot_for_encoded_version "$encoded")
-        if [ -z "$backend" ]; then
-            backend=$(printf '%s\n' "$slot_state" | free_slot)
-            if [ -z "$backend" ]; then
-                capacity_missing=$version
-                return 2
-            fi
-            assign_slot "$backend" "$encoded" || return 1
-            slot_state=$(map_snapshot "$slot_map") || return 1
-        fi
-
-        enable_slot "$backend" || return 1
-        ready=$(ready_server_count "$backend") || return 1
-        if [ "$ready" -lt "$activation_min_ready" ]; then
-            activation_version=$version
-            activation_ready=$ready
-            return 3
-        fi
-        publish_version "$version" "$backend" || return 1
-        publish_readiness "$encoded" "$backend" || return 1
-        version_state=$(map_snapshot "$version_map") || return 1
-        ready_state=$(map_snapshot "$ready_map") || return 1
-        log "declared governance version '$version' in backend $backend"
-    done < "$tmpdir/catalog.names"
+	# No route in this revision becomes visible until every new backend has the
+	# configured reserve. Slot assignment and checks are staging mutations only.
+	while read -r version _ backend publish_version_entry _; do
+		[ "$publish_version_entry" -eq 1 ] || continue
+		ready=$(ready_server_count "$backend") || return 1
+		if [ "$ready" -lt "$activation_min_ready" ]; then
+			activation_version=$version
+			activation_ready=$ready
+			return 3
+		fi
+	done < "$tmpdir/projection.plan"
 }
 
 while :; do
@@ -368,8 +441,8 @@ while :; do
         set_state revision-error \
             "catalog revision regressed, changed in place, or removed a version"
     else
-        reconcile_status=0
-        reconcile_catalog || reconcile_status=$?
+		reconcile_status=0
+		prepare_catalog || reconcile_status=$?
         used=$(map_snapshot "$slot_map" 2>/dev/null | \
             awk -v prefix="$backend_prefix" \
                 'index($2, prefix) == 1 && $3 != "__unassigned__" {n++} END {print n + 0}')
@@ -379,14 +452,20 @@ while :; do
         elif [ "$reconcile_status" -eq 3 ]; then
             set_state activation-pending \
                 "governance version '$activation_version' has $activation_ready/$activation_min_ready ready backends" "$used"
-        elif [ "$reconcile_status" -ne 0 ]; then
-            set_state runtime-error "HAProxy rejected a catalog projection" "$used"
-        elif ! persist_catalog; then
-            set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
-        else
-            accept_catalog
-            set_state ready "catalog and runtime maps are current" "$used"
-        fi
+		elif [ "$reconcile_status" -ne 0 ]; then
+			set_state runtime-error "HAProxy rejected a catalog projection" "$used"
+		elif ! persist_catalog; then
+			set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
+		else
+			# The cache is the durable commit point. A process crash after this point
+			# restores the whole revision before the catalog endpoint is available.
+			accept_catalog
+			if publish_catalog; then
+				set_state ready "catalog and runtime maps are current" "$used"
+			else
+				set_state runtime-error "HAProxy rejected an accepted catalog projection" "$used"
+			fi
+		fi
     fi
     sleep "$poll_seconds"
 done

@@ -254,6 +254,16 @@ proxy_admin() {
         "http://127.0.0.1:8404$1"
 }
 
+proxy_backend_addr_up() {
+    local backend=$1 address=$2
+    docker exec gonka-pr-proxy sh -c \
+        "printf 'show stat\\n' | socat - UNIX-CONNECT:/var/run/haproxy/haproxy.sock" \
+        | awk -F, -v backend="$backend" -v address="$address" '
+            $1 == backend && $18 ~ /^UP/ && index($0, address) { found = 1 }
+            END { exit !found }
+        '
+}
+
 for _ in $(seq 60); do
     if proxy_admin /readyz >/dev/null 2>&1 &&
         proxy_admin '/readyz?component=versiond' >/dev/null 2>&1 &&
@@ -347,6 +357,14 @@ docker run -d --name gonka-pr-router-a --network "$network" \
     -e DATA_ENABLED=true -e MISSING_VERSIONLESS=true \
     -v "$tmpdir/upstream.py:/app.py:ro" \
     python:3.12-alpine python /app.py >/dev/null
+router_a_ip=$(docker inspect -f "{{with index .NetworkSettings.Networks \"$network\"}}{{.IPAddress}}{{end}}" \
+    gonka-pr-router-a)
+for _ in $(seq 40); do
+    proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" && break
+    sleep 0.25
+done
+proxy_backend_addr_up versiond_routers_v4 "$router_a_ip" \
+    || fail "parent router did not admit replacement router-a for v4"
 [[ $(probe http://proxy-router:18081/v9/sessions/dynamic/healthz) == b ]] \
     || fail "dynamically learned v9 did not reach its route-ready router"
 docker exec gonka-pr-proxy /usr/local/lib/router-runtime/catalog-status \

@@ -103,6 +103,8 @@ Membership and eligibility are derived from runtime state:
   both tiers through local Unix Runtime API sockets without a container reload;
   a candidate backend starts health checks immediately, but its map entry is
   published only after the configured ready reserve is present at that tier.
+  All additions in one revision pass this gate together; after the revision is
+  durably cached, each tier atomically replaces its data routing map.
   Later degradation does not retract an admitted route;
 - each tier atomically persists its last fully projected governance snapshot;
   replacement processes validate and pre-render a fresh snapshot before

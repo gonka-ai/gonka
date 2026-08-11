@@ -204,7 +204,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
-		-e VERSIOND_ROUTER_VERSION_CAPACITY=2 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -277,32 +277,54 @@ test-version-routing:
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 1' \
+			| jq -e '.state == "activation-pending" and .dynamic_slots_used == 2' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "activation-pending"' >/dev/null \
-		|| fail "a one-host governance version did not remain a candidate"; \
-	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
-		'http://127.0.0.1:18134/readyz?version=v9')" = 503 ] \
-		|| fail "v9 was published before its two-host activation reserve"; \
+		|| fail "one-host governance versions did not remain candidates"; \
+	for version in v9 v10; do \
+		[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+			"http://127.0.0.1:18134/readyz?version=$$version")" = 503 ] \
+			|| fail "$$version was published before the revision reserve"; \
+	done; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
 	for i in $$(seq 30); do \
-		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null; then break; fi; \
+		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+			| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
-	curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
-		|| fail "governance v9 never became an admitted inner-router route"; \
+	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
+		| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
+			>/dev/null || fail "v10 did not hold the multi-add revision pending"; \
+	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
+		'http://127.0.0.1:18134/readyz?version=v9')" = 503 ] \
+		|| fail "ready v9 was partially published while v10 was still pending"; \
+	docker rm -f gonka-vp-a >/dev/null; \
+	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
+		-e NAME=a -e SERVES="v4 v9 v10" -e GENERIC_READY=false \
+		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
+		python:3.12-alpine python /app.py >/dev/null; \
+	for i in $$(seq 30); do \
+		if curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v9' >/dev/null \
+			&& curl -fsS -m 3 'http://127.0.0.1:18134/readyz?version=v10' >/dev/null; then break; fi; \
+		sleep 0.5; \
+	done; \
+	for version in v9 v10; do \
+		curl -fsS -m 3 "http://127.0.0.1:18134/readyz?version=$$version" >/dev/null \
+			|| fail "governance revision did not admit $$version"; \
+	done; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES=v4 -e GENERIC_READY=false \
@@ -327,7 +349,7 @@ test-version-routing:
 		-e VERSIOND_POOL_HOST=versiond-pool -e VERSIOND_VERSIONS="v4 v5" \
 		-e VERSIOND_ROUTING_CATALOG_URL=http://routing-catalog:8080/versions \
 		-e VERSIOND_ROUTING_CATALOG_POLL_SECONDS=1 \
-		-e VERSIOND_ROUTER_VERSION_CAPACITY=2 \
+		-e VERSIOND_ROUTER_VERSION_CAPACITY=3 \
 		-e VERSIOND_LEGACY_HOST=gonka-vp-legacy \
 		-e VERSIOND_NON_HA_VERSIONS="v1 v2" \
 		gonka-versiond-router-probe >/dev/null; \
@@ -338,12 +360,12 @@ test-version-routing:
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
 		|| fail "inner router lost a learned route when restarted without dapi"; \
 	docker start gonka-vp-catalog >/dev/null; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v10"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v11"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	sleep 2; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
-		/etc/haproxy/versions.map | grep -qx v10; then \
+		/etc/haproxy/versions.map | grep -qx v11; then \
 		fail "an invalid duplicate catalog snapshot changed the route map"; \
 	fi; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-invalid/chat)" = b ] \
@@ -370,7 +392,7 @@ test-version-routing:
 		-e NAME=a -e SERVES="v4 v9;hotfix" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9;hotfix"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9;hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -384,28 +406,28 @@ test-version-routing:
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
 		/etc/haproxy/versions.map | grep -Fqx 'v9;hotfix' \
 		|| fail "runtime catalog lost the literal semicolon in a governance name"; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v9;hotfix"},{"name":"v10"}]}' \
+	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9;hotfix"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 2' \
+			| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 3' \
 				>/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status \
-		/etc/haproxy/versions.map | grep -qx v10; then \
-		fail "catalog capacity exhaustion silently published v10"; \
+		/etc/haproxy/versions.map | grep -qx v11; then \
+		fail "catalog capacity exhaustion silently published v11"; \
 	fi; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 2' \
+		| jq -e '.state == "capacity-exhausted" and .dynamic_slots_used == 3' \
 			>/dev/null || { \
 			docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state >&2; \
 			fail "catalog capacity exhaustion is not exposed as persistent degraded state"; \
 		}; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
-		http://127.0.0.1:18132/v10/sessions/capacity/chat)" = 503 ] \
-		|| fail "capacity-exhausted v10 was routed without an assigned backend"; \
+		http://127.0.0.1:18132/v11/sessions/capacity/chat)" = 503 ] \
+		|| fail "capacity-exhausted v11 was routed without an assigned backend"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/persisted/chat)" = b ] \
 		|| fail "a later catalog snapshot removed an already admitted route"; \
 	echo "test-version-routing: ok"
