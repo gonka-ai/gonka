@@ -297,6 +297,24 @@ write into an HTTP 500. Conflicting bytes remain a hard error (real fork).
 
 See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consistency.md).
 
+### Inference Execution Is Fenced in Shared Storage
+
+Decision: before calling the ML engine, a host atomically claims
+`(epoch_id, escrow_id, inference_id)` in `devshard_execution_claims`. The row
+contains an unguessable process owner, a monotonic fencing token, and the final
+serialized result. Another replica cannot execute; it waits for `completed` and
+replays that result.
+
+Pending execution claims have no TTL takeover. After an owner crash, it is
+impossible to distinguish "POST never sent" from "POST accepted but response
+lost" without cooperation from the ML backend. Retrying automatically would
+trade availability for duplicate execution, so the inference instead follows
+the existing protocol timeout. A deterministic `Idempotency-Key` is also sent
+to the ML node for backends that support deduplication.
+
+SQLite keeps the previous local-only behaviour. Multi-instance execution
+fencing, like shared validation leases, requires Postgres-only storage.
+
 ### Legacy Migration Is Resumable
 
 Decision: `MigrateLegacySQLite` is idempotent at the migration layer; live

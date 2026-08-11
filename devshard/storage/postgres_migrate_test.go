@@ -25,7 +25,8 @@ func (t *postgresPartitionDDLTracer) TraceQueryStart(ctx context.Context, _ *pgx
 	return ctx
 }
 
-func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {}
+func (t *postgresPartitionDDLTracer) TraceQueryEnd(context.Context, *pgx.Conn, pgx.TraceQueryEndData) {
+}
 
 func (t *postgresPartitionDDLTracer) record(sql string) {
 	upper := strings.ToUpper(sql)
@@ -105,6 +106,9 @@ func TestMigratePostgres_Idempotent(t *testing.T) {
 	exists, err := migrate.TableExistsPG(ctx, pool, "devshard_escrow_cache")
 	require.NoError(t, err)
 	require.True(t, exists, "missing table devshard_escrow_cache")
+	exists, err = migrate.TableExistsPG(ctx, pool, "devshard_execution_claims")
+	require.NoError(t, err)
+	require.True(t, exists, "missing table devshard_execution_claims")
 
 	var indexCount int
 	err = pool.QueryRow(ctx, `

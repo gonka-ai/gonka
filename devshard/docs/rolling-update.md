@@ -622,6 +622,9 @@ consumes unchanged, which is the point of putting it on the traffic listener.
   live governance route projection, route-aware router selection, policy-worker
   failover, edge-api distribution, and no duplicate POST execution when one
   router data port is unavailable.
+- **execution fencing:** the storage and host race tests run two independent
+  owners against one execution claim, assert one ML call, reject stale fencing
+  tokens, and replay the durable result from the losing replica.
 - **full stack (`devshard/testenv`):**
   `TestVersiondRollingUpdateSameVersionSHA` covers Postgres overlap and SSE
   continuity, and `TestVersiondRollingUpdateHybridFallback` covers the

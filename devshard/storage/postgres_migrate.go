@@ -181,6 +181,26 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 			`CREATE INDEX IF NOT EXISTS devshard_escrow_cache_by_epoch ON devshard_escrow_cache(epoch_id)`,
 		},
 	},
+	{
+		ID:   12,
+		Name: "devshard_execution_claims",
+		Statements: []string{
+			`CREATE SEQUENCE IF NOT EXISTS devshard_execution_fence_seq`,
+			`CREATE TABLE IF NOT EXISTS devshard_execution_claims (
+    epoch_id     BIGINT      NOT NULL,
+    escrow_id    TEXT        NOT NULL,
+    inference_id BIGINT      NOT NULL,
+    owner_id     TEXT        NOT NULL,
+    fence        BIGINT      NOT NULL DEFAULT nextval('devshard_execution_fence_seq'),
+    status       TEXT        NOT NULL DEFAULT 'pending'
+                     CHECK (status IN ('pending', 'completed')),
+    result       BYTEA,
+    claimed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
+    completed_at TIMESTAMPTZ,
+    PRIMARY KEY (epoch_id, escrow_id, inference_id)
+)`,
+		},
+	},
 }
 
 // MigratePostgres applies all pending devshard Postgres parent-table migrations.

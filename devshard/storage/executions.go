@@ -1,0 +1,189 @@
+package storage
+
+import (
+	"context"
+	"errors"
+	"fmt"
+
+	"github.com/jackc/pgx/v5"
+)
+
+// ExecutionStatus is the durable state of one inference execution.
+type ExecutionStatus string
+
+const (
+	ExecutionPending   ExecutionStatus = "pending"
+	ExecutionCompleted ExecutionStatus = "completed"
+)
+
+var (
+	ErrExecutionNotFound      = errors.New("execution claim not found")
+	ErrExecutionClaimNotOwned = errors.New("execution claim not owned or not pending")
+)
+
+// ExecutionClaim is returned for both a newly acquired and an existing claim.
+// Result is populated only for completed executions.
+type ExecutionClaim struct {
+	Acquired bool
+	Fence    uint64
+	Status   ExecutionStatus
+	Result   []byte
+}
+
+// ExecutionStore serializes the external ML side effect across devshardd
+// replicas sharing a database. A pending claim is deliberately not stolen:
+// after an owner crash, repeating an ML POST cannot be proven safe.
+type ExecutionStore interface {
+	ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error)
+	GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error)
+	CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error
+}
+
+type executionKey struct {
+	epochID     uint64
+	escrowID    string
+	inferenceID uint64
+}
+
+type memoryExecution struct {
+	ownerID string
+	fence   uint64
+	status  ExecutionStatus
+	result  []byte
+}
+
+func (m *Memory) ClaimExecution(_ context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.executionClaims == nil {
+		m.executionClaims = make(map[executionKey]memoryExecution)
+	}
+	key := executionKey{epochID: epochID, escrowID: escrowID, inferenceID: inferenceID}
+	if existing, ok := m.executionClaims[key]; ok {
+		return memoryExecutionClaim(existing, false), nil
+	}
+	m.nextExecutionFence++
+	claim := memoryExecution{ownerID: ownerID, fence: m.nextExecutionFence, status: ExecutionPending}
+	m.executionClaims[key] = claim
+	return memoryExecutionClaim(claim, true), nil
+}
+
+func (m *Memory) GetExecution(_ context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	claim, ok := m.executionClaims[executionKey{epochID: epochID, escrowID: escrowID, inferenceID: inferenceID}]
+	if !ok {
+		return ExecutionClaim{}, ErrExecutionNotFound
+	}
+	return memoryExecutionClaim(claim, false), nil
+}
+
+func (m *Memory) CompleteExecution(_ context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := executionKey{epochID: epochID, escrowID: escrowID, inferenceID: inferenceID}
+	claim, ok := m.executionClaims[key]
+	if !ok || claim.status != ExecutionPending || claim.ownerID != ownerID || claim.fence != fence {
+		return ErrExecutionClaimNotOwned
+	}
+	claim.status = ExecutionCompleted
+	claim.result = append([]byte(nil), result...)
+	m.executionClaims[key] = claim
+	return nil
+}
+
+func memoryExecutionClaim(claim memoryExecution, acquired bool) ExecutionClaim {
+	return ExecutionClaim{
+		Acquired: acquired,
+		Fence:    claim.fence,
+		Status:   claim.status,
+		Result:   append([]byte(nil), claim.result...),
+	}
+}
+
+func (m *Memory) pruneExecutionClaimsBefore(cutoff uint64) {
+	for key := range m.executionClaims {
+		if key.epochID < cutoff {
+			delete(m.executionClaims, key)
+		}
+	}
+}
+
+// SQLite is single-instance by contract, so its execution claim is local and
+// always granted. Multi-instance deployments are required to use Postgres.
+func (s *SQLite) ClaimExecution(_ context.Context, _ uint64, _ string, _ uint64, _ string) (ExecutionClaim, error) {
+	return ExecutionClaim{Acquired: true, Fence: 1, Status: ExecutionPending}, nil
+}
+
+func (s *SQLite) GetExecution(_ context.Context, _ uint64, _ string, _ uint64) (ExecutionClaim, error) {
+	return ExecutionClaim{}, ErrExecutionNotFound
+}
+
+func (s *SQLite) CompleteExecution(_ context.Context, _ uint64, _ string, _ uint64, _ string, _ uint64, _ []byte) error {
+	return nil
+}
+
+func (s *Postgres) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
+	if err := s.WaitReady(ctx); err != nil {
+		return ExecutionClaim{}, err
+	}
+	queryCtx, cancel := context.WithTimeout(ctx, postgresOpTimeout)
+	defer cancel()
+	var fence uint64
+	err := s.pool.QueryRow(queryCtx, `
+INSERT INTO devshard_execution_claims (epoch_id, escrow_id, inference_id, owner_id)
+VALUES ($1, $2, $3, $4)
+ON CONFLICT (epoch_id, escrow_id, inference_id) DO NOTHING
+RETURNING fence`, epochID, escrowID, inferenceID, ownerID).Scan(&fence)
+	if err == nil {
+		return ExecutionClaim{Acquired: true, Fence: fence, Status: ExecutionPending}, nil
+	}
+	if !errors.Is(err, pgx.ErrNoRows) {
+		return ExecutionClaim{}, fmt.Errorf("execution claim %s/%d: %w", escrowID, inferenceID, err)
+	}
+	return s.getExecution(queryCtx, epochID, escrowID, inferenceID)
+}
+
+func (s *Postgres) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
+	queryCtx, cancel := context.WithTimeout(ctx, postgresOpTimeout)
+	defer cancel()
+	return s.getExecution(queryCtx, epochID, escrowID, inferenceID)
+}
+
+func (s *Postgres) getExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
+	var claim ExecutionClaim
+	err := s.pool.QueryRow(ctx, `
+SELECT fence, status, result
+FROM devshard_execution_claims
+WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3`, epochID, escrowID, inferenceID).
+		Scan(&claim.Fence, &claim.Status, &claim.Result)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return ExecutionClaim{}, ErrExecutionNotFound
+	}
+	if err != nil {
+		return ExecutionClaim{}, fmt.Errorf("get execution claim %s/%d: %w", escrowID, inferenceID, err)
+	}
+	return claim, nil
+}
+
+func (s *Postgres) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
+	queryCtx, cancel := context.WithTimeout(ctx, postgresOpTimeout)
+	defer cancel()
+	tag, err := s.pool.Exec(queryCtx, `
+UPDATE devshard_execution_claims
+SET status = 'completed', result = $6, completed_at = now()
+WHERE epoch_id = $1 AND escrow_id = $2 AND inference_id = $3
+  AND owner_id = $4 AND fence = $5 AND status = 'pending'`,
+		epochID, escrowID, inferenceID, ownerID, fence, result)
+	if err != nil {
+		return fmt.Errorf("complete execution claim %s/%d: %w", escrowID, inferenceID, err)
+	}
+	if tag.RowsAffected() != 1 {
+		return ErrExecutionClaimNotOwned
+	}
+	return nil
+}
+
+var _ ExecutionStore = (*Memory)(nil)
+var _ ExecutionStore = (*SQLite)(nil)
+var _ ExecutionStore = (*Postgres)(nil)

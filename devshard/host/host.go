@@ -3,6 +3,9 @@ package host
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -63,8 +66,8 @@ type HostResponse struct {
 	ConfirmedAt        int64  // executor wall-clock timestamp, 0 if not executor
 	Mempool            []*types.DevshardTx
 	ExecutionJob       *devshard.ExecuteRequest // non-nil if this host is the executor and execution is deferred
-	CachedResponseBody []byte // non-nil when reconnecting to a completed inference
-	StreamBytesRead    int64  // total bytes read from the host HTTP response body (SSE streams only)
+	CachedResponseBody []byte                   // non-nil when reconnecting to a completed inference
+	StreamBytesRead    int64                    // total bytes read from the host HTTP response body (SSE streams only)
 	InferenceID        uint64
 	ReceiptExpected    bool
 	ReceiptReason      observability.Reason
@@ -87,28 +90,30 @@ type AcceptanceChecker interface {
 }
 
 const (
-	defaultValidationWorkers   = 20
-	defaultValidationQueueSize = 20_000
+	defaultValidationWorkers     = 20
+	defaultValidationQueueSize   = 20_000
+	executionResultPollInterval  = 100 * time.Millisecond
+	executionResultCommitTimeout = 10 * time.Second
 )
 
 // Host processes user requests: applies diffs, executes inference, signs state.
 type Host struct {
-	mu           sync.Mutex
-	sm           *state.StateMachine
-	signer       signing.Signer
-	verifier     signing.Verifier
-	engine       devshard.InferenceEngine
+	mu                 sync.Mutex
+	sm                 *state.StateMachine
+	signer             signing.Signer
+	verifier           signing.Verifier
+	engine             devshard.InferenceEngine
 	validator          devshard.ValidationEngine // optional, nil = no validation
 	validationRecorder devshard.ValidationCompletionRecorder
 	escrowID           string
 	epochID            uint64
 	slotIDs            map[uint32]bool
 	group              []types.SlotAssignment
-	mempool      *Mempool
-	checker      AcceptanceChecker
-	store        storage.Storage // optional, nil = no persistence
-	gsp          *gossip.Gossip  // optional, nil = no gossip pruning
-	availability devshard.AvailabilityProvider
+	mempool            *Mempool
+	checker            AcceptanceChecker
+	store              storage.Storage // optional, nil = no persistence
+	gsp                *gossip.Gossip  // optional, nil = no gossip pruning
+	availability       devshard.AvailabilityProvider
 
 	snapshotInFlight      atomic.Bool  // prevents overlapping async snapshot writes
 	validationObsInFlight atomic.Int32 // caps concurrent async validation-obs writes
@@ -122,6 +127,7 @@ type Host struct {
 	validating         map[uint64]struct{} // inference IDs with queued or in-flight validation
 	validationQueue    chan validateJob
 	completedResponses map[uint64][]byte // inference ID -> cached ML response body
+	executionOwner     string            // unique owner for durable execution claims
 	ownSeed            int64             // deterministic seed derived from signer + escrowID
 
 	validationLifecycleMu sync.RWMutex
@@ -193,28 +199,41 @@ func NewHost(
 	if err != nil {
 		return nil, fmt.Errorf("derive seed: %w", err)
 	}
+	executionOwner, err := newExecutionOwner()
+	if err != nil {
+		return nil, err
+	}
 
 	h := &Host{
-		sm:                    sm,
-		signer:                signer,
-		engine:                engine,
-		escrowID:              escrowID,
-		slotIDs:               slotIDs,
-		group:                 group,
-		mempool:               NewMempool(),
-		checker:               checker,
-		slotToAddr:            slotToAddr,
-		addrToSlots:           addrToSlots,
-		sortedSlots:           sortedSlots,
-		executing:             make(map[uint64]struct{}),
-		validating:            make(map[uint64]struct{}),
-		completedResponses:    make(map[uint64][]byte),
-		ownSeed:               ownSeed,
+		sm:                 sm,
+		signer:             signer,
+		engine:             engine,
+		escrowID:           escrowID,
+		slotIDs:            slotIDs,
+		group:              group,
+		mempool:            NewMempool(),
+		checker:            checker,
+		slotToAddr:         slotToAddr,
+		addrToSlots:        addrToSlots,
+		sortedSlots:        sortedSlots,
+		executing:          make(map[uint64]struct{}),
+		validating:         make(map[uint64]struct{}),
+		completedResponses: make(map[uint64][]byte),
+		executionOwner:     executionOwner,
+		ownSeed:            ownSeed,
 	}
 	for _, opt := range opts {
 		opt(h)
 	}
 	return h, nil
+}
+
+func newExecutionOwner() (string, error) {
+	var id [16]byte
+	if _, err := rand.Read(id[:]); err != nil {
+		return "", fmt.Errorf("generate execution owner: %w", err)
+	}
+	return hex.EncodeToString(id[:]), nil
 }
 
 // Start launches background workers owned by this host. Callers should invoke
@@ -861,13 +880,55 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 
 	defer h.ReleaseExecution(inferenceID)
 
+	executionStore, _ := h.store.(storage.ExecutionStore)
+	var fence uint64
+	if executionStore != nil {
+		claim, err := executionStore.ClaimExecution(ctx, job.EpochID, job.EscrowID, inferenceID, h.executionOwner)
+		if err != nil {
+			return nil, h.executionFailure(ctx, inferenceID, "claim execution", err)
+		}
+		switch {
+		case claim.Status == storage.ExecutionCompleted:
+			result, err := decodeExecutionResult(claim.Result)
+			if err != nil {
+				return nil, h.executionFailure(ctx, inferenceID, "decode completed execution", err)
+			}
+			result.ReplayResponse = true
+			return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, result)
+		case !claim.Acquired:
+			result, err := h.waitForExecutionResult(ctx, executionStore, *job)
+			if err != nil {
+				return nil, h.executionFailure(ctx, inferenceID, "wait for execution owner", err)
+			}
+			result.ReplayResponse = true
+			return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, result)
+		default:
+			fence = claim.Fence
+		}
+	}
+
 	result, err := h.engine.Execute(ctx, *job)
 	if err != nil {
 		reason, where := observability.ErrorReason(err, observability.ReasonExecuteErr, observability.WhereHostExecute)
 		return nil, observability.FailReceiptOrphan(ctx, h.escrowID, reason, where,
 			observability.StageFinished, "execute failed", err, "inference_id", inferenceID)
 	}
+	if executionStore != nil {
+		encoded, err := json.Marshal(result)
+		if err != nil {
+			return nil, h.executionFailure(ctx, inferenceID, "encode execution result", err)
+		}
+		commitCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), executionResultCommitTimeout)
+		defer cancel()
+		if err := executionStore.CompleteExecution(commitCtx, job.EpochID, job.EscrowID, inferenceID, h.executionOwner, fence, encoded); err != nil {
+			return nil, h.executionFailure(ctx, inferenceID, "commit execution result", err)
+		}
+	}
 
+	return h.publishExecutionResult(ctx, inferenceID, executorSlot, diffNonce, result)
+}
+
+func (h *Host) publishExecutionResult(ctx context.Context, inferenceID uint64, executorSlot uint32, diffNonce uint64, result *devshard.ExecuteResult) (*devshard.ExecuteResult, error) {
 	finishMsg := &types.MsgFinishInference{
 		InferenceId:  inferenceID,
 		ResponseHash: result.ResponseHash,
@@ -908,6 +969,42 @@ func (h *Host) RunExecution(ctx context.Context, job *devshard.ExecuteRequest) (
 	observability.SetMempoolSize(h.escrowID, h.mempool.Len())
 
 	return result, nil
+}
+
+func (h *Host) waitForExecutionResult(ctx context.Context, store storage.ExecutionStore, job devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	ticker := time.NewTicker(executionResultPollInterval)
+	defer ticker.Stop()
+	for {
+		claim, err := store.GetExecution(ctx, job.EpochID, job.EscrowID, job.InferenceID)
+		if err != nil {
+			return nil, err
+		}
+		if claim.Status == storage.ExecutionCompleted {
+			return decodeExecutionResult(claim.Result)
+		}
+		select {
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		case <-ticker.C:
+		}
+	}
+}
+
+func decodeExecutionResult(encoded []byte) (*devshard.ExecuteResult, error) {
+	if len(encoded) == 0 {
+		return nil, errors.New("completed execution has no result")
+	}
+	var result devshard.ExecuteResult
+	if err := json.Unmarshal(encoded, &result); err != nil {
+		return nil, fmt.Errorf("decode execution result: %w", err)
+	}
+	return &result, nil
+}
+
+func (h *Host) executionFailure(ctx context.Context, inferenceID uint64, action string, err error) error {
+	return observability.FailReceiptOrphan(ctx, h.escrowID,
+		observability.ReasonExecuteErr, observability.WhereHostExecute,
+		observability.StageFinished, action, err, "inference_id", inferenceID)
 }
 
 // validateJob captures data needed to run validateAsync outside the mutex.
@@ -1021,7 +1118,7 @@ func (h *Host) startValidationWorkers(q <-chan validateJob, count int) {
 	for i := 0; i < count; i++ {
 		go func() {
 			for job := range q {
-				h.validateAsync(context.Background(), job)
+				h.validateAsync(context.Background(), job, q)
 			}
 		}()
 	}
@@ -1043,7 +1140,7 @@ func (h *Host) enqueueValidation(job validateJob) {
 	case q <- job:
 		h.validationLifecycleMu.RUnlock()
 		observability.IncValidation(observability.StageValidationPicked, observability.MetricStatusQueued)
-		observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	default:
 		h.validationLifecycleMu.RUnlock()
 		h.mu.Lock()
@@ -1078,7 +1175,7 @@ func (h *Host) hasMempoolValidationOrVote(infID uint64) bool {
 // when Challenged. Re-reads status after Validate returns to catch races where
 // another host challenged the inference while this validator was running.
 // Called outside the mutex.
-func (h *Host) validateAsync(ctx context.Context, job validateJob) {
+func (h *Host) validateAsync(ctx context.Context, job validateJob, q <-chan validateJob) {
 	ctx, _ = logging.WithRequestID(ctx, fmt.Sprintf("validate-%d", job.inferenceID))
 	observability.IncValidation(observability.StageValidationStarted, observability.MetricStatusOK)
 	observability.Log(ctx, observability.LevelInfo, "validation started", observability.StageValidationStarted, observability.WhereHostValidate, h.escrowID, "", nil,
@@ -1090,9 +1187,7 @@ func (h *Host) validateAsync(ctx context.Context, job validateJob) {
 		h.mu.Lock()
 		delete(h.validating, job.inferenceID)
 		h.mu.Unlock()
-		if h.validationQueue != nil {
-			observability.SetValidationQueueDepth(h.escrowID, len(h.validationQueue))
-		}
+		observability.SetValidationQueueDepth(h.escrowID, len(q))
 	}()
 
 	result, err := h.validator.Validate(ctx, devshard.ValidateRequest{

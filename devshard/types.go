@@ -27,6 +27,11 @@ type ExecuteResult struct {
 	PartialResponse       bool
 	PartialResponseReason string
 	PartialResponseWhere  string
+
+	// ReplayResponse is set when this result came from the shared execution
+	// store rather than the live ML stream. Transports must replay ResponseBody
+	// to the client in that case. It is runtime metadata and is not persisted.
+	ReplayResponse bool `json:"-"`
 }
 
 // ValidateRequest contains the data needed to validate an inference.

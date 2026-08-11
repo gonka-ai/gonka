@@ -3,6 +3,8 @@ package inference
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/http"
@@ -79,11 +81,11 @@ func NewEngine(
 // falls back to the passive ML-node cache.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body)
+		return e.executeMLRequest(ctx, model, req.EscrowID, executionIdempotencyKey(req), body)
 	}, e.chainParams)
 }
 
-func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID, idempotencyKey string, body []byte) (*http.Response, error) {
 	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
@@ -91,6 +93,7 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
 		httpReq.Header.Set("Content-Type", "application/json")
+		httpReq.Header.Set("Idempotency-Key", idempotencyKey)
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
 		return e.httpClient.Do(httpReq)
@@ -99,6 +102,11 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 		return nil, fmt.Errorf("execute inference: %w", err)
 	}
 	return resp, nil
+}
+
+func executionIdempotencyKey(req devshard.ExecuteRequest) string {
+	sum := sha256.Sum256([]byte(fmt.Sprintf("%d\x00%s\x00%d", req.EpochID, req.EscrowID, req.InferenceID)))
+	return "devshard-" + hex.EncodeToString(sum[:])
 }
 
 // doWithLockedNode tries NodeManager gRPC first. On success it records the

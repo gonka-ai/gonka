@@ -1049,6 +1049,108 @@ type countingEngine struct {
 	last  devshard.ExecuteRequest
 }
 
+type blockingSharedExecutionEngine struct {
+	calls   atomic.Int32
+	started chan struct{}
+	release chan struct{}
+	once    sync.Once
+	result  devshard.ExecuteResult
+}
+
+func (e *blockingSharedExecutionEngine) Execute(ctx context.Context, _ devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
+	e.calls.Add(1)
+	e.once.Do(func() { close(e.started) })
+	select {
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	case <-e.release:
+		result := e.result
+		result.ResponseBody = append([]byte(nil), e.result.ResponseBody...)
+		result.ResponseHash = append([]byte(nil), e.result.ResponseHash...)
+		return &result, nil
+	}
+}
+
+func TestHost_DurableExecutionClaimRunsMLEffectOnce(t *testing.T) {
+	hostSigners := []*signing.Secp256k1Signer{
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+		testutil.MustGenerateKey(t),
+	}
+	user := testutil.MustGenerateKey(t)
+	group := testutil.MakeGroup(hostSigners)
+	config := testutil.DefaultConfig(len(group))
+	verifier := signing.NewSecp256k1Verifier()
+	sharedStore := storage.NewMemory()
+	body := []byte(`{"id":"result"}`)
+	hash := sha256.Sum256(body)
+	engine := &blockingSharedExecutionEngine{
+		started: make(chan struct{}),
+		release: make(chan struct{}),
+		result: devshard.ExecuteResult{
+			ResponseHash: hash[:],
+			InputTokens:  10,
+			OutputTokens: 20,
+			ResponseBody: body,
+		},
+	}
+
+	newReplica := func() *Host {
+		t.Helper()
+		stateStore := testutil.MustMemoryStore(t, "escrow-1", user.Address(), config, group, 10000)
+		sm, err := state.NewStateMachine("escrow-1", config, group, 10000, user.Address(), verifier, stateStore)
+		require.NoError(t, err)
+		h, err := NewHost(sm, hostSigners[1], engine, "escrow-1", group, nil,
+			WithStorage(sharedStore), WithEpochID(42))
+		require.NoError(t, err)
+		return h
+	}
+
+	replicas := []*Host{newReplica(), newReplica()}
+	require.NotEqual(t, replicas[0].executionOwner, replicas[1].executionOwner)
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+	defer cancel()
+
+	type executionOutcome struct {
+		result *devshard.ExecuteResult
+		err    error
+	}
+	outcomes := make(chan executionOutcome, len(replicas))
+	for _, replica := range replicas {
+		replica := replica
+		go func() {
+			result, err := replica.RunExecution(ctx, &devshard.ExecuteRequest{
+				InferenceID: 1,
+				EscrowID:    "escrow-1",
+				EpochID:     42,
+			})
+			outcomes <- executionOutcome{result: result, err: err}
+		}()
+	}
+
+	select {
+	case <-engine.started:
+	case <-ctx.Done():
+		t.Fatal("ML execution did not start")
+	}
+	close(engine.release)
+
+	replayed := 0
+	for range replicas {
+		outcome := <-outcomes
+		require.NoError(t, outcome.err)
+		require.Equal(t, body, outcome.result.ResponseBody)
+		if outcome.result.ReplayResponse {
+			replayed++
+		}
+	}
+	require.Equal(t, int32(1), engine.calls.Load(), "only the claim owner may call the ML engine")
+	require.Equal(t, 1, replayed, "the non-owner must return the durable result as a replay")
+	for _, replica := range replicas {
+		require.NotNil(t, findMempoolFinish(replica.MempoolTxs()))
+	}
+}
+
 func (e *countingEngine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	e.calls++
 	e.last = req

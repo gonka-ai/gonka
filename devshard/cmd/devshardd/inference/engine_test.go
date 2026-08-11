@@ -13,6 +13,7 @@ import (
 
 	mlnodeclient "common/nodemanager"
 	nmgen "common/nodemanager/gen"
+	"devshard"
 	"devshard/observability"
 
 	"github.com/stretchr/testify/assert"
@@ -64,6 +65,35 @@ func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity 
 		capacity:   capacity,
 		httpClient: http.DefaultClient,
 	}
+}
+
+func TestExecutionIdempotencyKey(t *testing.T) {
+	req := devshard.ExecuteRequest{EpochID: 7, EscrowID: "escrow-a", InferenceID: 11}
+	key := executionIdempotencyKey(req)
+	require.Equal(t, key, executionIdempotencyKey(req))
+	require.NotEqual(t, key, executionIdempotencyKey(devshard.ExecuteRequest{EpochID: 7, EscrowID: "escrow-a", InferenceID: 12}))
+	require.Contains(t, key, "devshard-")
+}
+
+func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
+	var gotKey string
+	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotKey = r.Header.Get("Idempotency-Key")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(mlSrv.Close)
+
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
+		},
+	})
+	eng := newTestEngine(ml, nil, nil)
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", "devshard-test-key", []byte(`{}`))
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	require.Equal(t, "devshard-test-key", gotKey)
 }
 
 func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
@@ -474,4 +504,3 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 	}
 	assert.Equal(t, int32(1), maxInFlight.Load(), "capacity-unknown node must be bounded, not unbounded")
 }
-

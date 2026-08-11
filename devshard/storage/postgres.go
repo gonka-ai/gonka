@@ -1605,6 +1605,9 @@ func (s *Postgres) PruneEpoch(epochID uint64) error {
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id = $1`, epochID); err != nil {
 		return fmt.Errorf("prune escrow cache for epoch %d: %w", epochID, err)
 	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_execution_claims WHERE epoch_id = $1`, epochID); err != nil {
+		return fmt.Errorf("prune execution claims for epoch %d: %w", epochID, err)
+	}
 
 	s.mu.Lock()
 	delete(s.knownEpochs, epochID)
@@ -1663,6 +1666,9 @@ func (s *Postgres) pruneBefore(cutoff uint64) error {
 	}
 	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_escrow_cache WHERE epoch_id < $1`, cutoff); err != nil {
 		return fmt.Errorf("prune escrow cache before epoch %d: %w", cutoff, err)
+	}
+	if _, err := s.pool.Exec(ctx, `DELETE FROM devshard_execution_claims WHERE epoch_id < $1`, cutoff); err != nil {
+		return fmt.Errorf("prune execution claims before epoch %d: %w", cutoff, err)
 	}
 
 	s.mu.Lock()

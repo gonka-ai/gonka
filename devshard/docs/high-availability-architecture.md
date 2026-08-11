@@ -122,9 +122,15 @@ not part of this deployment model.
 Both HAProxy layers retry connection failures, empty responses, and `502` only.
 They disable L7 replay for non-idempotent methods: once a POST may have reached
 an application, infrastructure cannot safely guess whether retrying it would
-execute the operation twice. End-to-end exactly-once semantics therefore still
-require an application idempotency key. Established SSE streams remain on the
-connections that accepted them and are not moved during drain.
+execute the operation twice. The application closes the remaining split-routing
+window with a durable Postgres execution claim keyed by
+`(epoch, escrow, inference)`: only the claim owner calls the ML engine, while a
+second replica waits for and replays the committed result. Pending claims are
+never stolen automatically because a crashed owner may already have delivered
+its POST. The same stable identity is forwarded to the ML node as
+`Idempotency-Key`; backend support narrows the unavoidable crash window between
+the external side effect and the durable result commit. Established SSE streams
+remain on the connections that accepted them and are not moved during drain.
 
 ---
 
@@ -331,6 +337,9 @@ The crucial property for multi-instance:
 - **Postgres is a shared, multi-writer DB.** It provides the real
   cross-instance validation-lease table (`devshard_validation_leases`) that
   guarantees only one devshardd validates each `(escrow_id, inference_id)` pair.
+  It also owns `devshard_execution_claims`, the durable owner/fencing token and
+  completed result for each inference execution. This prevents divergent router
+  health views from producing two ML calls.
 
 Postgres readiness is live, not a startup latch. Each devshardd probes its pool
 once per second; two consecutive failures remove that child from `/ready`, and

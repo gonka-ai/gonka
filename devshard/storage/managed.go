@@ -316,4 +316,29 @@ func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, 
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
+func (m *ManagedStorage) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
+	es, ok := m.inner.(ExecutionStore)
+	if !ok {
+		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
+}
+
+func (m *ManagedStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
+	es, ok := m.inner.(ExecutionStore)
+	if !ok {
+		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.GetExecution(ctx, epochID, escrowID, inferenceID)
+}
+
+func (m *ManagedStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
+	es, ok := m.inner.(ExecutionStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
+}
+
 var _ Storage = (*ManagedStorage)(nil)
+var _ ExecutionStore = (*ManagedStorage)(nil)

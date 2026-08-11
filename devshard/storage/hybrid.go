@@ -761,7 +761,6 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
-
 func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -818,6 +817,42 @@ func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, i
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
+func (h *HybridStorage) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return ExecutionClaim{}, err
+	}
+	es, ok := b.(ExecutionStore)
+	if !ok {
+		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
+}
+
+func (h *HybridStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return ExecutionClaim{}, err
+	}
+	es, ok := b.(ExecutionStore)
+	if !ok {
+		return ExecutionClaim{}, fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.GetExecution(ctx, epochID, escrowID, inferenceID)
+}
+
+func (h *HybridStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
+	b, err := h.routed(escrowID)
+	if err != nil {
+		return err
+	}
+	es, ok := b.(ExecutionStore)
+	if !ok {
+		return fmt.Errorf("storage backend does not support execution claims")
+	}
+	return es.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
+}
+
 func (h *HybridStorage) Close() error {
 	h.mu.Lock()
 	stop := h.reconnectStop
@@ -846,3 +881,4 @@ func (h *HybridStorage) Close() error {
 
 var _ Storage = (*HybridStorage)(nil)
 var _ LeaseStore = (*HybridStorage)(nil)
+var _ ExecutionStore = (*HybridStorage)(nil)
