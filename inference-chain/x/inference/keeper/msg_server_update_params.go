@@ -2,8 +2,6 @@ package keeper
 
 import (
 	"context"
-	"fmt"
-	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -16,10 +14,11 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 		return nil, err
 	}
 
-	ctx := sdk.UnwrapSDKContext(goCtx)
-	if err := k.ValidateParamsUpdate(ctx, req.Params); err != nil {
+	if err := req.Params.Validate(); err != nil {
 		return nil, errorsmod.Wrap(err, "invalid params")
 	}
+
+	ctx := sdk.UnwrapSDKContext(goCtx)
 	if err := k.SetParams(ctx, req.Params); err != nil {
 		return nil, err
 	}
@@ -31,41 +30,4 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 	}
 
 	return &types.MsgUpdateParamsResponse{}, nil
-}
-
-func validateApprovedVersionProgression(current, proposed *types.DevshardEscrowParams) error {
-	if proposed == nil {
-		return fmt.Errorf("devshard escrow params cannot be removed")
-	}
-	if current == nil {
-		return nil
-	}
-	proposedVersions := make(map[string]*types.DevshardApprovedVersion, len(proposed.ApprovedVersions))
-	for _, version := range proposed.ApprovedVersions {
-		// proposed has already passed Params.Validate; keep this helper robust
-		// against corrupt legacy state rather than panic while comparing it.
-		if version == nil {
-			return fmt.Errorf("proposed approved devshard version cannot be null")
-		}
-		proposedVersions[version.Name] = version
-	}
-	for _, version := range current.ApprovedVersions {
-		if version == nil {
-			return fmt.Errorf("current approved devshard version cannot be null")
-		}
-		proposedVersion, ok := proposedVersions[version.Name]
-		if !ok {
-			return fmt.Errorf(
-				"approved devshard version %q cannot be removed; version names are append-only",
-				version.Name,
-			)
-		}
-		if !strings.EqualFold(version.Sha256, proposedVersion.Sha256) {
-			return fmt.Errorf(
-				"approved devshard version %q sha256 is immutable; add a new version name for a new artifact",
-				version.Name,
-			)
-		}
-	}
-	return nil
 }

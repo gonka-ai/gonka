@@ -16,11 +16,6 @@ type ExecuteRequest struct {
 	// ResponseWriter, if set, receives the raw ML node response as it streams.
 	// The engine should write inference output here for real-time forwarding.
 	ResponseWriter http.ResponseWriter
-
-	// BeforeDispatch is called synchronously after the target is selected and
-	// the HTTP request is built, but before any request byte can be sent. HA
-	// execution uses it to durably cross the at-most-once dispatch boundary.
-	BeforeDispatch func() error
 }
 
 // ExecuteResult contains the outcome of an inference execution.
@@ -32,11 +27,6 @@ type ExecuteResult struct {
 	PartialResponse       bool
 	PartialResponseReason string
 	PartialResponseWhere  string
-
-	// ReplayResponse is set when this result came from the shared execution
-	// store rather than the live ML stream. Transports must replay ResponseBody
-	// to the client in that case. It is runtime metadata and is not persisted.
-	ReplayResponse bool `json:"-"`
 }
 
 // ValidateRequest contains the data needed to validate an inference.

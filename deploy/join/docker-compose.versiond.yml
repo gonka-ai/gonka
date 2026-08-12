@@ -21,8 +21,6 @@ x-versiond: &versiond
     ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
   environment:
     - VERSIOND_ORACLE_URL=http://api:9100/versions
-    - VERSIOND_CONSENSUS_PARAMS_URL=http://node:1317/productscience/inference/inference/params
-    - VERSIOND_CONSENSUS_STATUS_URL=http://node:26657/status
     - VERSIOND_BINARY_NAME=devshardd
     - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
     # Keep serving after /readyz starts failing, so the router observes the

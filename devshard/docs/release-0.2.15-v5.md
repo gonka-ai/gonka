@@ -642,9 +642,9 @@ only after the assignment succeeds.
 Therefore a normal new version requires **no host-side `config.env` edit and no
 router replacement**. Until a host has the child running, it is not in that
 version's pool; existing versions continue unchanged. Governance permanently
-binds an existing version name to its SHA. A mirror URL may change for the same
-SHA; a new artifact must be approved under a new version name. This keeps the
-name-only router correct even when a host is partitioned from catalog updates.
+controls the version feed, while versiond retains its existing same-name
+blue/green binary replacement behavior. The router uses only the version name
+and does not introduce new artifact-governance rules.
 
 The approved catalog cannot announce a name before governance approves it. A
 release coordinator must therefore treat approval as the start of convergence,
@@ -663,12 +663,12 @@ advertising the new protocol as generally available. A
 true pre-approval gate would require a separate signed staged-version feed; it
 cannot be inferred from `approved_versions`.
 
-Catalog additions are monotonic across replacements, and each router tier
-atomically persists its last fully projected revision. Dapi returns `503` until
-the first chain snapshot is initialized. Routers reject a decreasing revision,
-different content at the same revision, and removal of an accepted name. The
-v5 catalog contract is append-only; a future removal protocol must drain the
-version before reclaiming its route slot. A replacement validates
+Catalog additions are monotonic across router replacements, and each router tier
+atomically persists its last fully projected snapshot. Routers consume DAPI's
+existing `{"versions":[...]}` response and retain their last admitted map on
+malformed input or removal of an accepted name. This is an HA projection rule,
+not a change to governance;
+route removal requires a future explicit drain procedure. A replacement validates
 and pre-renders a snapshot no older than
 `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` (24 hours by default), so a
 temporary dapi outage at startup does not erase versions learned after the
@@ -678,23 +678,17 @@ uses `catalog-v2.json`. On the first replacement it validates and atomically
 migrates a fresh legacy `catalog.json`; stale or invalid legacy data is ignored
 and fetched again. The old file remains untouched for exact-image rollback, so
 the fleet can roll from protocol 1 to 2 without an operator migration. Existing
-schema-1 payloads remain readable as revision zero. Cached additions
+schema-1 cache payloads remain readable as local generation zero. Cached additions
 retain dynamic-slot assignments across restarts, so a
 restart cannot silently replenish capacity; reducing capacity below a fresh
 cache fails startup. The defaults allow 32 additions between router releases;
 capacity exhaustion is a persistent degraded projection state and the new name
 remains `503` instead of using the coarse pool.
 
-A fresh `versiond` data directory does not trust the first DAPI response by
-shape alone. It requires the local consensus node to be caught up and compares
-the complete `(name, binary, sha256)` set with the node's inference params
-before persisting or starting children. Existing durable last-known-good data
-still permits serving during a temporary DAPI or node API outage. The same full
-catalog validator and append-only progression check run in both governance
-messages and the v0.2.15 consensus upgrade handler. There is deliberately no
-grandfathering for an invalid historical name or hash: release coordination
-must audit the live params before scheduling the chain upgrade, and the handler
-fails before `SetParams` if the complete resulting catalog is invalid.
+`versiond` continues to consume the existing DAPI version contract. This release
+does not change consensus validation or governance mutation rules. Router-side
+catalog validation only protects the bounded HAProxy projection from malformed
+or stale input.
 
 Coarse mode is an explicit two-part opt-in and changes the placement-readiness
 source. Persist both lines in `config.env`, then apply it in a maintenance
@@ -936,8 +930,8 @@ daemon restart. Persist the corresponding replica count as `0` first.
   provider LB, VIP, or Kubernetes Service above multiple hosts is a later layer.
 - Storage: the shipped local PostgreSQL is a single host-local failure domain,
   not a database HA cluster. Multi-host deployments require a managed/operator
-  PostgreSQL service with synchronous durability and effective RPO=0 for the
-  execution fence.
+  PostgreSQL service with synchronous durability and an RPO appropriate for
+  acknowledged devshard state.
 - Reconcile failures have no machine-readable exposure. They belong in a metric,
   not bolted onto the `/healthz` array that existing clients parse; versiond has
   no metrics endpoint of its own yet.
@@ -947,6 +941,6 @@ daemon restart. Persist the corresponding replica count as `0` first.
 | Doc | Use |
 | --- | --- |
 | [versiond-host-evacuation.md](./versiond-host-evacuation.md) | Whole-host evacuation / replacement design and operator contract (Track B) |
-| [rolling-update.md](./rolling-update.md) | Child blue/green + drain machinery (Track A), immutable production artifact identity, and §1.8 host draining |
+| [rolling-update.md](./rolling-update.md) | Child blue/green + drain machinery (Track A) and §1.8 host draining |
 | [versiond-router/README.md](../../versiond-router/README.md) | Router routing, per-version health checks, and how to read the pool |
 | [release-0.2.14-v4.md](./release-0.2.14-v4.md) | Previous release line |

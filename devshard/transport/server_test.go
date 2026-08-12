@@ -3,7 +3,6 @@ package transport
 import (
 	"context"
 	"encoding/hex"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -206,71 +205,6 @@ func TestServer_Inference_ValidAuth(t *testing.T) {
 	require.NotNil(t, receipt.StateSig)
 	require.NotNil(t, receipt.Receipt) // single host is always executor
 	require.NotEmpty(t, meta.Mempool)
-}
-
-func TestServer_Inference_ReplaysDurableResultFromPeer(t *testing.T) {
-	hostSigner := testutil.MustGenerateKey(t)
-	userSigner := testutil.MustGenerateKey(t)
-	group := testutil.MakeGroup([]*signing.Secp256k1Signer{hostSigner})
-	config := testutil.DefaultConfig(1)
-	verifier := signing.NewSecp256k1Verifier()
-	sharedStore := storage.NewMemory()
-	require.NoError(t, sharedStore.CreateSession(storage.CreateSessionParams{
-		EscrowID:       "escrow-1",
-		EpochID:        42,
-		Version:        testutil.RuntimeTestVersion,
-		Config:         config,
-		Group:          group,
-		InitialBalance: 100000,
-	}))
-
-	newReplica := func(engine devshard.InferenceEngine) *echo.Echo {
-		t.Helper()
-		stateStore := testutil.MustMemoryStore(t, "escrow-1", userSigner.Address(), config, group, 100000)
-		sm, err := state.NewStateMachine("escrow-1", config, group, 100000, userSigner.Address(), verifier, stateStore)
-		require.NoError(t, err)
-		h, err := host.NewHost(sm, hostSigner, engine, "escrow-1", group, nil,
-			host.WithStorage(sharedStore), host.WithEpochID(42))
-		require.NoError(t, err)
-		srv, err := NewServer(h, sharedStore, verifier, userSigner.Address())
-		require.NoError(t, err)
-		e := echo.New()
-		registerServer(e.Group(testRoutePrefix), srv)
-		return e
-	}
-
-	diff := testutil.SignDiff(t, userSigner, "escrow-1", 1, []*types.DevshardTx{testutil.StartTx(1)})
-	dj, err := DiffToJSON(diff)
-	require.NoError(t, err)
-	body, err := json.Marshal(InferenceRequest{
-		Diffs: []DiffJSON{dj},
-		Nonce: 1,
-		Payload: &PayloadJSON{
-			Prompt: testutil.TestPrompt, Model: "llama", InputLength: 100, MaxTokens: 50, StartedAt: 1000,
-		},
-	})
-	require.NoError(t, err)
-
-	post := func(e *echo.Echo) *httptest.ResponseRecorder {
-		t.Helper()
-		ts := time.Now().Unix()
-		sig, signErr := SignRequest(userSigner, "escrow-1", body, ts)
-		require.NoError(t, signErr)
-		req := httptest.NewRequest(http.MethodPost, testRoutePrefix+"/sessions/escrow-1/chat/completions", strings.NewReader(string(body)))
-		req.Header.Set(HeaderSignature, hex.EncodeToString(sig))
-		req.Header.Set(HeaderTimestamp, fmt.Sprintf("%d", ts))
-		rec := httptest.NewRecorder()
-		e.ServeHTTP(rec, req)
-		return rec
-	}
-
-	first := post(newReplica(stub.NewInferenceEngine()))
-	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
-
-	second := post(newReplica(stub.NewFailingEngine(errors.New("peer must not execute"))))
-	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
-	require.Contains(t, second.Body.String(), `data: {"choices"`)
-	require.Contains(t, second.Body.String(), "data: [DONE]")
 }
 
 func TestServer_Inference_NoAuth(t *testing.T) {

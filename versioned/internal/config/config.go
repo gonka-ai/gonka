@@ -19,10 +19,7 @@ const (
 )
 
 type Config struct {
-	HA                 bool
 	OracleURL          string
-	ConsensusParamsURL string
-	ConsensusStatusURL string
 	PollInterval       time.Duration
 	BinDir             string
 	DataDir            string
@@ -47,40 +44,17 @@ func Load() (Config, error) {
 		return Config{}, fmt.Errorf("VERSIOND_ORACLE_URL is required")
 	}
 
-	ha, err := HADeployment()
-	if err != nil {
-		return Config{}, err
-	}
-
 	cfg := Config{
-		HA:                 ha,
-		OracleURL:          oracleURL,
-		ConsensusParamsURL: os.Getenv("VERSIOND_CONSENSUS_PARAMS_URL"),
-		ConsensusStatusURL: os.Getenv("VERSIOND_CONSENSUS_STATUS_URL"),
-		BinDir:             envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
-		DataDir:            envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
-		BinaryName:         envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
-		BasePort:           5000,
-		ReadyPath:          envOrDefault("VERSIOND_READY_PATH", "/ready"),
-		DrainPath:          envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
-		DrainStatusPath:    envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
-		Overrides:          loadOverrides(),
-		ForceVersions:      loadForceVersions(),
-	}
-	if (cfg.ConsensusParamsURL == "") != (cfg.ConsensusStatusURL == "") {
-		return Config{}, fmt.Errorf(
-			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL must be configured together",
-		)
-	}
-	if cfg.HA && cfg.ConsensusParamsURL == "" {
-		return Config{}, fmt.Errorf(
-			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL are required when GONKA_HA=true",
-		)
-	}
-	if cfg.HA && len(cfg.Overrides) > 0 {
-		return Config{}, fmt.Errorf(
-			"VERSIOND_OVERRIDE_* is not allowed when GONKA_HA=true: HA artifact identity must come from the verified consensus catalog",
-		)
+		OracleURL:       oracleURL,
+		BinDir:          envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
+		DataDir:         envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
+		BinaryName:      envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
+		BasePort:        5000,
+		ReadyPath:       envOrDefault("VERSIOND_READY_PATH", "/ready"),
+		DrainPath:       envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
+		DrainStatusPath: envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
+		Overrides:       loadOverrides(),
+		ForceVersions:   loadForceVersions(),
 	}
 	for _, d := range []struct {
 		dst      *time.Duration
@@ -130,24 +104,6 @@ func Load() (Config, error) {
 	}
 
 	return cfg, nil
-}
-
-// HADeployment parses the deployment-wide HA switch with the same closed
-// grammar used by devshardd. Since this flag enables fail-closed storage and
-// catalog checks, an unknown value is an error rather than an implicit "off".
-func HADeployment() (bool, error) {
-	raw := os.Getenv("GONKA_HA")
-	switch strings.ToLower(strings.TrimSpace(raw)) {
-	case "1", "true", "yes":
-		return true, nil
-	case "", "0", "false", "no":
-		return false, nil
-	default:
-		return false, fmt.Errorf(
-			"GONKA_HA=%q is not a boolean; use 1/true/yes or 0/false/no",
-			raw,
-		)
-	}
 }
 
 // ListenAddr returns the hardcoded listen address.

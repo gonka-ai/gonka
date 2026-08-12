@@ -20,16 +20,12 @@ type Version struct {
 }
 
 type VersionConfig struct {
-	Schema      int       `json:"schema"`
-	Initialized bool      `json:"initialized"`
-	Revision    int64     `json:"revision"`
-	Versions    []Version `json:"versions"`
+	Versions []Version `json:"versions"`
 }
 
 type store struct {
 	mu       sync.RWMutex
 	versions []Version
-	revision int64
 	binDir   string
 	fail     bool
 }
@@ -51,10 +47,6 @@ func main() {
 		var cfg VersionConfig
 		if err := json.Unmarshal(data, &cfg); err == nil {
 			s.versions = cfg.Versions
-			s.revision = cfg.Revision
-			if s.revision < 1 {
-				s.revision = 1
-			}
 			log.Printf("loaded %d initial versions", len(s.versions))
 		}
 	}
@@ -64,19 +56,14 @@ func main() {
 		case http.MethodGet:
 			s.mu.RLock()
 			fail := s.fail
-			cfg := VersionConfig{
-				Schema:      1,
-				Initialized: true,
-				Revision:    s.revision,
-				Versions:    append([]Version(nil), s.versions...),
-			}
+			versions := append([]Version(nil), s.versions...)
 			s.mu.RUnlock()
 			if fail {
 				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
 				return
 			}
 			w.Header().Set("Content-Type", "application/json")
-			json.NewEncoder(w).Encode(cfg)
+			json.NewEncoder(w).Encode(VersionConfig{Versions: versions})
 		case http.MethodDelete:
 			if s.failureEnabled() {
 				http.Error(w, "oracle failure enabled", http.StatusInternalServerError)
@@ -84,7 +71,6 @@ func main() {
 			}
 			s.mu.Lock()
 			s.versions = nil
-			s.revision++
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:
@@ -122,7 +108,6 @@ func main() {
 			if !found {
 				s.versions = append(s.versions, v)
 			}
-			s.revision++
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusOK)
 			json.NewEncoder(w).Encode(v)
@@ -138,7 +123,6 @@ func main() {
 					break
 				}
 			}
-			s.revision++
 			s.mu.Unlock()
 			w.WriteHeader(http.StatusNoContent)
 		default:

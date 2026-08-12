@@ -761,6 +761,7 @@ func (h *HybridStorage) pruneBefore(cutoff uint64) error {
 	return nil
 }
 
+
 func (h *HybridStorage) ClearValidationObs(escrowID string) error {
 	b, err := h.routed(escrowID)
 	if err != nil {
@@ -817,46 +818,6 @@ func (h *HybridStorage) OwnsPendingLease(ctx context.Context, escrowID string, i
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
-func (h *HybridStorage) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
-	b, err := h.routed(escrowID)
-	if err != nil {
-		return ExecutionClaim{}, err
-	}
-	return b.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
-}
-
-func (h *HybridStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
-	b, err := h.routed(escrowID)
-	if err != nil {
-		return ExecutionClaim{}, err
-	}
-	return b.GetExecution(ctx, epochID, escrowID, inferenceID)
-}
-
-func (h *HybridStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
-	b, err := h.routed(escrowID)
-	if err != nil {
-		return err
-	}
-	return b.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence)
-}
-
-func (h *HybridStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
-	b, err := h.routed(escrowID)
-	if err != nil {
-		return err
-	}
-	return b.AbandonExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence)
-}
-
-func (h *HybridStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
-	b, err := h.routed(escrowID)
-	if err != nil {
-		return err
-	}
-	return b.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
-}
-
 func (h *HybridStorage) Close() error {
 	h.mu.Lock()
 	stop := h.reconnectStop
@@ -885,4 +846,3 @@ func (h *HybridStorage) Close() error {
 
 var _ Storage = (*HybridStorage)(nil)
 var _ LeaseStore = (*HybridStorage)(nil)
-var _ ExecutionStore = (*HybridStorage)(nil)

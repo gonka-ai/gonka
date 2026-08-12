@@ -403,12 +403,6 @@ func (s *Server) HandleInference(c echo.Context) (err error) {
 			logging.Error("deferred execution failed", "subsystem", "server", "error", execErr)
 			return nil
 		}
-		if execResult != nil && execResult.ReplayResponse {
-			if werr := replaySSEBody(w, execResult.ResponseBody); werr != nil {
-				observability.RecordReceiptNoExecutionInterrupted(ctx, s.host.EscrowID(), resp.InferenceID, resp.Nonce, observability.ReasonCachedReplayErr, observability.WhereRuntimeWriteClientResponse)
-				return nil
-			}
-		}
 		if execResult != nil && execResult.PartialResponse {
 			finishReason = observability.Reason(execResult.PartialResponseReason)
 			if finishReason == "" {

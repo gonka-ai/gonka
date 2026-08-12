@@ -234,7 +234,7 @@ func TestPromoteHostWhenAvailableHonorsDrainState(t *testing.T) {
 	t.Run("starting host becomes serving", func(t *testing.T) {
 		provider := &fakeHostAvailabilityProvider{
 			available:  make(chan struct{}, 1),
-			conditions: process.Conditions{Available: true, CatalogAdmitted: true},
+			conditions: process.Conditions{Available: true},
 		}
 		provider.available <- struct{}{}
 		hostLifecycle := host.NewController()
@@ -249,7 +249,7 @@ func TestPromoteHostWhenAvailableHonorsDrainState(t *testing.T) {
 	t.Run("draining host cannot be reopened", func(t *testing.T) {
 		provider := &fakeHostAvailabilityProvider{
 			available:  make(chan struct{}, 1),
-			conditions: process.Conditions{Available: true, CatalogAdmitted: true},
+			conditions: process.Conditions{Available: true},
 		}
 		provider.available <- struct{}{}
 		hostLifecycle := host.NewController()
@@ -300,7 +300,7 @@ func TestBeginHostDrainCannotRaceAvailabilityPromotion(t *testing.T) {
 
 	provider := &fakeHostAvailabilityProvider{
 		available:  make(chan struct{}, 1),
-		conditions: process.Conditions{Available: true, CatalogAdmitted: true},
+		conditions: process.Conditions{Available: true},
 	}
 	provider.available <- struct{}{}
 	promoteHostWhenAvailable(context.Background(), provider, hostLifecycle)
@@ -876,9 +876,7 @@ func TestShutdownHostChildIdleTimeoutForcesAndContinues(t *testing.T) {
 
 func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	status := host.Snapshot{State: host.StateServing, Accepting: true, Ready: true}
-	conditions := process.Conditions{
-		Available: true, Serving: true, Converged: true, CatalogAdmitted: true,
-	}
+	conditions := process.Conditions{Available: true, Serving: true, Converged: true}
 	if !versiondReady(status, conditions) {
 		t.Fatal("serving host with a running child is not ready")
 	}
@@ -892,9 +890,8 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	}
 	conditions.Serving = true
 
-	// Installing a newly appended version can make every host progress at once.
-	// Evicting them all would take the existing pools down, so progressing must
-	// stay host-ready; per-version readiness gates the new route separately.
+	// A routine same-name SHA bump makes every host progress at once. Evicting
+	// them all would take the pool down, so progressing must stay ready.
 	conditions.Progressing = true
 	if !versiondReady(status, conditions) {
 		t.Fatal("progressing host lost readiness; the whole pool would drop out")
@@ -906,12 +903,6 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 		t.Fatal("host that never converged is ready")
 	}
 	conditions.Converged = true
-
-	conditions.CatalogAdmitted = false
-	if versiondReady(status, conditions) {
-		t.Fatal("host serving only an unverified persisted catalog is ready")
-	}
-	conditions.CatalogAdmitted = true
 
 	// Every versiond reads the same oracle, so a failed reconcile is almost
 	// always failing everywhere at once. Gating on it would turn an oracle blip
@@ -940,12 +931,6 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 type fakeVersionServer map[string]bool
 
 func (f fakeVersionServer) ServesVersion(name string) bool { return f[name] }
-func (f fakeVersionServer) CatalogAdmitted() bool          { return true }
-
-type unadmittedVersionServer map[string]bool
-
-func (f unadmittedVersionServer) ServesVersion(name string) bool { return f[name] }
-func (f unadmittedVersionServer) CatalogAdmitted() bool          { return false }
 
 // The question a balancer actually has is about the version it is about to
 // route, and a host missing one version must keep serving the others.
@@ -958,9 +943,6 @@ func TestVersiondReadyForVersionAnswersPerVersion(t *testing.T) {
 	}
 	if versiondReadyForVersion(status, serves, "v5") {
 		t.Fatal("host without a v5 route is ready for v5")
-	}
-	if versiondReadyForVersion(status, unadmittedVersionServer{"v4": true}, "v4") {
-		t.Fatal("persisted v4 route was admitted before its artifact catalog was verified")
 	}
 
 	// No convergence latch and no view of the desired set: a host that has never

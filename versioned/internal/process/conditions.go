@@ -12,11 +12,10 @@ type Conditions struct {
 	Serving bool
 	// Converged latches once the manager has run every desired version at least
 	// once. It never clears, so a later download or restart does not retract it.
-	Converged       bool
-	CatalogAdmitted bool
-	Desired         int
-	Running         int
-	ReconcileError  string
+	Converged      bool
+	Desired        int
+	Running        int
+	ReconcileError string
 }
 
 func (m *Manager) Conditions() Conditions {
@@ -35,7 +34,6 @@ func (m *Manager) Conditions() Conditions {
 	conditions.Progressing = progressing && conditions.ReconcileError == ""
 	conditions.Degraded = conditions.ReconcileError != ""
 	conditions.Converged = m.everConverged
-	conditions.CatalogAdmitted = m.catalogAdmitted
 	return conditions
 }
 

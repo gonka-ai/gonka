@@ -1,7 +1,9 @@
 #!/bin/sh
 
-# Monotonically projects governance version names into pre-rendered HAProxy
-# backend slots. The data plane remains fail-closed: a version is published in
+# Monotonically projects version names into pre-rendered HAProxy backend slots.
+# The source keeps its existing {"versions":[...]} contract; generation numbers
+# are local cache metadata, not a governance or DAPI revision. The data plane
+# remains fail-closed: a version is published in
 # the request map only after its slot has been assigned and its servers have
 # been enabled for active health checks.
 set -eu
@@ -68,7 +70,7 @@ trap 'exit 0' HUP INT TERM
 last_state=starting
 last_names=$tmpdir/last.names
 : > "$last_names"
-last_revision=-1
+last_generation=-1
 
 if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
     [ -x "$cache_bin" ] || {
@@ -79,8 +81,8 @@ if [ -n "$cache_file" ] && [ -f "$cache_file" ]; then
         log "cannot validate the last accepted catalog snapshot"
         exit 1
     fi
-    last_revision=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || {
-        log "cannot read the last accepted catalog revision"
+    last_generation=$(jq -er 'if .schema == 2 then .revision else 0 end' "$cache_file") || {
+        log "cannot read the last accepted catalog generation"
         exit 1
     }
 fi
@@ -156,15 +158,9 @@ fetch_catalog() {
     if ! wget -q -T "$fetch_timeout" -O "$body" "$catalog_url"; then
         return 1
     fi
-    if ! catalog_revision=$(jq -er '
-        select(.schema == 1 and .initialized == true)
-        | select((.revision | type) == "number")
-        | select(.revision >= 0 and (.revision | floor) == .revision)
-        | .revision
-    ' "$body"); then
-        return 1
-    fi
     if ! jq -r '
+        if type != "object" then error("catalog is not an object") else . end
+        |
         .versions as $versions
         | if ($versions | type) != "array" then error("versions is not an array") else $versions end
         | .[]
@@ -182,30 +178,28 @@ fetch_catalog() {
 }
 
 validate_catalog_progression() {
-    if ! jq -ne --argjson current "$catalog_revision" --argjson previous "$last_revision" \
-        '$current >= $previous'; then
-        return 1
-    fi
-    if [ "$catalog_revision" = "$last_revision" ]; then
-        cmp -s "$last_names" "$tmpdir/catalog.names"
-        return
-    fi
     removed=$(awk '
         NR == FNR { current[$0] = 1; next }
         !($0 in current) { print; exit }
     ' "$tmpdir/catalog.names" "$last_names")
-    [ -z "$removed" ]
+    [ -z "$removed" ] || return 1
+
+    if [ "$last_generation" -ge 0 ] && cmp -s "$last_names" "$tmpdir/catalog.names"; then
+        catalog_generation=$last_generation
+    else
+        catalog_generation=$((last_generation + 1))
+    fi
 }
 
 persist_catalog() {
     [ -n "$cache_file" ] || return 0
     [ -x "$cache_bin" ] || return 1
-    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" "$catalog_revision"
+    "$cache_bin" write "$tmpdir/catalog.names" "$cache_file" "$catalog_generation"
 }
 
 accept_catalog() {
     cp "$tmpdir/catalog.names" "$last_names"
-    last_revision=$catalog_revision
+    last_generation=$catalog_generation
 }
 
 map_snapshot() {
@@ -288,7 +282,7 @@ publish_projection() {
 
 	transaction=$(prepare_map_transaction "$map") || return 1
 	# `prepare map` creates an empty replacement, not a copy. Seed the
-	# transaction with the complete live view before adding this revision.
+	# transaction with the complete live view before adding this projection.
 	while read -r _ key value; do
 		[ -n "$key" ] || continue
 		escaped_key=$(runtime_key "$key")
@@ -393,7 +387,7 @@ prepare_catalog() {
 			>> "$tmpdir/projection.plan"
 	done < "$tmpdir/catalog.names"
 
-	# No route in this revision becomes visible until every new backend has the
+	# No route in this projection becomes visible until every new backend has the
 	# configured reserve. Slot assignment and checks are staging mutations only.
 	while read -r version _ backend publish_version_entry _; do
 		[ "$publish_version_entry" -eq 1 ] || continue
@@ -412,8 +406,8 @@ while :; do
     elif ! fetch_catalog; then
         set_state fetch-error "cannot fetch or validate $catalog_url"
     elif ! validate_catalog_progression; then
-        set_state revision-error \
-            "catalog revision regressed, changed in place, or removed a version"
+        set_state projection-error \
+            "catalog removed a previously projected version"
     else
 		reconcile_status=0
 		prepare_catalog || reconcile_status=$?
@@ -432,7 +426,7 @@ while :; do
 			set_state cache-error "cannot persist the last valid catalog snapshot" "$used"
 		else
 			# The cache is the durable commit point. A process crash after this point
-			# restores the whole revision before the catalog endpoint is available.
+			# restores the whole projection before the catalog endpoint is available.
 			accept_catalog
 			if publish_catalog; then
 				set_state ready "catalog and runtime maps are current" "$used"

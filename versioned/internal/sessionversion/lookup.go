@@ -20,7 +20,7 @@ type Lookup struct {
 
 // OpenFromEnv connects using libpq env (PGHOST/PGUSER/… or DATABASE_URL).
 // Returns (nil, nil) when Postgres is not configured or explicitly disabled.
-func OpenFromEnv(ctx context.Context, ha bool) (*Lookup, error) {
+func OpenFromEnv(ctx context.Context) (*Lookup, error) {
 	if os.Getenv("VERSIOND_DISABLE_SESSION_LOOKUP") == "true" {
 		slog.Info("session version lookup disabled by VERSIOND_DISABLE_SESSION_LOOKUP")
 		return nil, nil
@@ -31,12 +31,6 @@ func OpenFromEnv(ctx context.Context, ha bool) (*Lookup, error) {
 	}
 
 	connString := os.Getenv("DATABASE_URL")
-	if connString != "" && pgEnvironmentConfigured() {
-		return nil, errors.New("DATABASE_URL cannot be combined with PG* connection variables; use one PostgreSQL configuration")
-	}
-	if connString != "" && ha {
-		return nil, errors.New("DATABASE_URL is unsupported in HA; use PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD so versiond and its children share one database")
-	}
 	cfg, err := pgxpool.ParseConfig(connString)
 	if err != nil {
 		return nil, fmt.Errorf("parse postgres config: %w", err)
@@ -63,21 +57,7 @@ func postgresConfigured() bool {
 	if os.Getenv("DATABASE_URL") != "" {
 		return true
 	}
-	return pgEnvironmentConfigured()
-}
-
-func pgEnvironmentConfigured() bool {
-	for _, name := range []string{
-		"PGHOST", "PGPORT", "PGDATABASE", "PGUSER", "PGPASSWORD",
-		"PGPASSFILE", "PGSERVICE", "PGSERVICEFILE", "PGSSLMODE",
-		"PGSSLCERT", "PGSSLKEY", "PGSSLROOTCERT", "PGSSLPASSWORD",
-		"PGAPPNAME", "PGCONNECT_TIMEOUT", "PGTARGETSESSIONATTRS",
-	} {
-		if os.Getenv(name) != "" {
-			return true
-		}
-	}
-	return false
+	return os.Getenv("PGHOST") != "" || os.Getenv("PGDATABASE") != ""
 }
 
 // Close releases the pool.

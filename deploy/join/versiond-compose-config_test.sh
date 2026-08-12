@@ -357,18 +357,6 @@ for service in ("versiond", "versiond2"):
         "managed-postgres.internal",
         f"{service} managed PostgreSQL override",
     )
-    require(
-        managed_postgres[service]["environment"],
-        "VERSIOND_CONSENSUS_PARAMS_URL",
-        "http://node:1317/productscience/inference/inference/params",
-        f"{service} consensus params trust anchor",
-    )
-    require(
-        managed_postgres[service]["environment"],
-        "VERSIOND_CONSENSUS_STATUS_URL",
-        "http://node:26657/status",
-        f"{service} consensus sync trust anchor",
-    )
     postgres_dependency = managed_postgres_external[service].get(
         "depends_on", {}
     ).get("devshard-postgres")

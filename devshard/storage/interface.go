@@ -61,7 +61,6 @@ var ErrStorageIndexRebuilding = errors.New("devshard postgres session index is r
 // CreateSession and from a startup scan, so callers do not pass epoch_id
 // on every operation.
 type Storage interface {
-	ExecutionStore
 	CreateSession(params CreateSessionParams) error
 	MarkSettled(escrowID string) error
 	ListActiveSessions() ([]ActiveSession, error)
@@ -182,8 +181,8 @@ type ActiveSession struct {
 // state root) for GET /v1/state after RAM prune. Late MsgValidation on
 // sealed ids still returns ErrInferenceSealed and does not read this snapshot.
 type InferenceRow struct {
-	InferenceID        uint64
-	SealedNonce        uint64
+	InferenceID uint64
+	SealedNonce uint64
 	ObsPresent         bool
 	SealedStatus       uint32
 	SealedExecutorSlot uint32

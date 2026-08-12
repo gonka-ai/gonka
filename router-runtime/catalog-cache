@@ -1,6 +1,6 @@
 #!/bin/sh
 
-# Persistent, validated cache for the approved-version routing catalog.
+# Persistent, validated cache for the router's version-name projection.
 # HAProxy maps are process-local; this snapshot lets a replacement process
 # render the last known-good routes before the catalog endpoint is reachable.
 set -eu
@@ -67,9 +67,9 @@ read_cache() {
 }
 
 write_cache() {
-    names=$1 cache=$2 revision=$3
-    case "$revision" in
-        '' | *[!0-9]*) fail "REVISION must be a non-negative integer" ;;
+    names=$1 cache=$2 generation=$3
+    case "$generation" in
+        '' | *[!0-9]*) fail "GENERATION must be a non-negative integer" ;;
     esac
     [ -f "$names" ] || fail "names file does not exist: $names"
     validate_names "$names"
@@ -78,9 +78,9 @@ write_cache() {
     tmp=$(mktemp "$directory/.catalog-cache.XXXXXX")
     trap 'rm -f "$tmp"' EXIT
     now=$(date +%s)
-    if ! jq -Rn --argjson now "$now" --argjson revision "$revision" '
+    if ! jq -Rn --argjson now "$now" --argjson generation "$generation" '
         [inputs] | sort | unique
-        | {schema: 2, initialized: true, revision: $revision,
+        | {schema: 2, initialized: true, revision: $generation,
            fetched_at_unix: $now, versions: .}
     ' < "$names" > "$tmp"; then
         fail "cannot encode snapshot"
@@ -98,7 +98,7 @@ migrate_cache() {
     [ ! -e "$destination" ] || fail "destination cache already exists: $destination"
 
     # Validate with the new reader before publishing. Preserve the original
-    # revision and timestamp so migration cannot make stale data fresh.
+    # local generation and timestamp so migration cannot make stale data fresh.
     read_cache "$source" "$max_age" >/dev/null
     directory=$(dirname -- "$destination")
     [ -d "$directory" ] || fail "cache directory does not exist: $directory"

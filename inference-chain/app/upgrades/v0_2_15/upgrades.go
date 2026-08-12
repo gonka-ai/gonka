@@ -160,15 +160,9 @@ func migrateWarmKeyGrantMarker(ctx context.Context, authzKeeper AuthzMigrationKe
 }
 
 func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSON string) error {
-	params, err := k.GetParams(ctx)
-	if err != nil {
-		return fmt.Errorf("get inference params: %w", err)
-	}
-	if params.DevshardEscrowParams == nil {
-		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
-	}
 	if infoJSON == "" {
-		return validateExistingDevshardCatalog(ctx, k, params)
+		k.LogInfo("no upgrade info, skipping devshard approved versions", types.Upgrades)
+		return nil
 	}
 
 	var info UpgradeInfo
@@ -176,7 +170,16 @@ func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSO
 		return fmt.Errorf("unmarshal upgrade info: %w", err)
 	}
 	if len(info.ApprovedVersions) == 0 {
-		return validateExistingDevshardCatalog(ctx, k, params)
+		k.LogInfo("no devshard approved versions in upgrade info, skipping", types.Upgrades)
+		return nil
+	}
+
+	params, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("get inference params: %w", err)
+	}
+	if params.DevshardEscrowParams == nil {
+		params.DevshardEscrowParams = types.DefaultDevshardEscrowParams()
 	}
 
 	replacedCount := 0
@@ -203,9 +206,6 @@ func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSO
 		}
 	}
 
-	if err := k.ValidateParamsUpdate(ctx, params); err != nil {
-		return fmt.Errorf("validate inference params update: %w", err)
-	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return fmt.Errorf("set inference params: %w", err)
 	}
@@ -213,20 +213,6 @@ func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSO
 		"provided", len(info.ApprovedVersions),
 		"appended", len(info.ApprovedVersions)-replacedCount,
 		"replaced", replacedCount)
-	return nil
-}
-
-func validateExistingDevshardCatalog(ctx context.Context, k keeper.Keeper, params types.Params) error {
-	if len(params.DevshardEscrowParams.ApprovedVersions) == 0 {
-		return fmt.Errorf(
-			"upgrade info has no approved versions and the current devshard catalog is empty",
-		)
-	}
-	if err := k.ValidateParamsUpdate(ctx, params); err != nil {
-		return fmt.Errorf("validate existing inference params: %w", err)
-	}
-	k.LogInfo("upgrade info has no devshard catalog; validated current approved versions", types.Upgrades,
-		"approved_versions", len(params.DevshardEscrowParams.ApprovedVersions))
 	return nil
 }
 

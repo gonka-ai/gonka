@@ -1,8 +1,6 @@
 package types_test
 
 import (
-	"fmt"
-	"strings"
 	"testing"
 
 	"github.com/cosmos/gogoproto/proto"
@@ -74,52 +72,4 @@ func TestDevshardEscrowParams_Validate_RejectsInvalidPhase4(t *testing.T) {
 		p.VoteThresholdFactor = 101
 		require.ErrorContains(t, p.Validate(), "vote_threshold_factor")
 	})
-}
-
-func TestDevshardEscrowParams_ValidateVersionNameContract(t *testing.T) {
-	setVersion := func(p *types.DevshardEscrowParams, name string) {
-		p.ApprovedVersions = []*types.DevshardApprovedVersion{{
-			Name:   name,
-			Binary: "https://example.invalid/devshard.zip",
-			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		}}
-	}
-	valid := []string{"v5", "v4+hotfix", "v4.release_1", "V9~hotfix"}
-	for _, name := range valid {
-		t.Run("valid_"+name, func(t *testing.T) {
-			p := types.DefaultDevshardEscrowParams()
-			setVersion(p, name)
-			require.NoError(t, p.Validate())
-		})
-	}
-
-	invalid := []string{
-		"", ".", "..", "+v5", "_v5", " v5", "v 5", "v5/next",
-		`v5\next`, "v5?x", "v5#x", "v5%x", `v5"x`, "v5'x",
-		"v5,next", "v5;next", "v5}next", "vé", "v5\nnext",
-		"v" + strings.Repeat("a", 64),
-	}
-	for _, name := range invalid {
-		t.Run("invalid_"+name, func(t *testing.T) {
-			p := types.DefaultDevshardEscrowParams()
-			setVersion(p, name)
-			require.ErrorContains(t, p.Validate(), "invalid name")
-		})
-	}
-
-	p := types.DefaultDevshardEscrowParams()
-	p.ApprovedVersions = []*types.DevshardApprovedVersion{nil}
-	require.ErrorContains(t, p.Validate(), "cannot be null")
-}
-
-func TestDevshardEscrowParams_ValidateApprovedVersionCapacity(t *testing.T) {
-	p := types.DefaultDevshardEscrowParams()
-	for i := 0; i <= types.MaxDevshardApprovedVersions; i++ {
-		p.ApprovedVersions = append(p.ApprovedVersions, &types.DevshardApprovedVersion{
-			Name:   fmt.Sprintf("v%d", i),
-			Binary: "https://example.invalid/devshard.zip",
-			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		})
-	}
-	require.ErrorContains(t, p.Validate(), "maximum is 32")
 }

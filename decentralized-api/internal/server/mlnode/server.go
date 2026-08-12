@@ -65,27 +65,9 @@ func NewServer(recorder cosmos_client.CosmosMessageClient, broker *broker.Broker
 
 func (s *Server) getVersions(c echo.Context) error {
 	if s.configManager == nil {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{
-			"error": "version catalog is not initialized",
-		})
+		return c.JSON(http.StatusOK, apiconfig.DevshardVersionsCache{Versions: []apiconfig.DevshardVersion{}})
 	}
-	snapshot := s.configManager.RuntimeConfigSnapshot(0)
-	if !snapshot.Initialized {
-		return c.JSON(http.StatusServiceUnavailable, map[string]string{
-			"error": "version catalog is not initialized",
-		})
-	}
-	return c.JSON(http.StatusOK, struct {
-		Schema      int                         `json:"schema"`
-		Initialized bool                        `json:"initialized"`
-		Revision    int64                       `json:"revision"`
-		Versions    []apiconfig.DevshardVersion `json:"versions"`
-	}{
-		Schema:      1,
-		Initialized: true,
-		Revision:    snapshot.ParamsBlockHeight,
-		Versions:    snapshot.ApprovedVersions,
-	})
+	return c.JSON(http.StatusOK, s.configManager.GetDevshardVersions())
 }
 
 func (s *Server) Start(addr string) {

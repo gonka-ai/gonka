@@ -162,8 +162,6 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 	var cfg cosrv.VersionConfig
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cfg))
 	require.Len(t, cfg.Versions, 1)
-	require.True(t, cfg.Initialized)
-	require.Equal(t, int64(1), cfg.Revision)
 	require.Equal(t, "v2", cfg.Versions[0].Name)
 	require.NotEmpty(t, cfg.Versions[0].Binary)
 
@@ -186,9 +184,7 @@ func TestMockDAPI_VersionsJSON(t *testing.T) {
 
 	cfg = cosrv.VersionConfig{}
 	require.NoError(t, json.NewDecoder(resp.Body).Decode(&cfg))
-	require.Equal(t, updated.Versions, cfg.Versions)
-	require.True(t, cfg.Initialized)
-	require.Equal(t, int64(2), cfg.Revision)
+	require.Equal(t, updated, cfg)
 }
 
 func TestMockDAPI_BlockStreamMonotonic(t *testing.T) {

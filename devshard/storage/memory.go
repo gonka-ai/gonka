@@ -41,31 +41,29 @@ type snapshotData struct {
 }
 
 type sessionData struct {
-	escrowID               string
-	epochID                uint64
-	version                string
-	creatorAddr            string
-	config                 types.SessionConfig
-	group                  []types.SlotAssignment
-	balance                uint64
-	diffs                  []types.DiffRecord
-	nonceToIndex           map[uint64]int
-	lastFinalized          uint64
-	status                 string // "active", "settled"
-	snapshot               *snapshotData
-	inferences             map[uint64]InferenceRow
-	inferenceValidationObs map[uint64]map[uint32]SlotValidationObs
-	sealedValidationObs    map[uint64]map[uint32]SlotValidationObs
+	escrowID      string
+	epochID       uint64
+	version       string
+	creatorAddr   string
+	config        types.SessionConfig
+	group         []types.SlotAssignment
+	balance       uint64
+	diffs         []types.DiffRecord
+	nonceToIndex  map[uint64]int
+	lastFinalized uint64
+	status        string // "active", "settled"
+	snapshot      *snapshotData
+	inferences              map[uint64]InferenceRow
+	inferenceValidationObs  map[uint64]map[uint32]SlotValidationObs
+	sealedValidationObs     map[uint64]map[uint32]SlotValidationObs
 }
 
 // Memory is an in-memory storage implementation for testing.
 type Memory struct {
-	mu                 sync.RWMutex
-	sessions           map[string]*sessionData
-	validationLeases   map[string]map[uint64]memoryLease
-	executionClaims    map[executionKey]memoryExecution
-	nextExecutionFence uint64
-	escrowCache        map[string]EscrowCacheInfo
+	mu               sync.RWMutex
+	sessions         map[string]*sessionData
+	validationLeases map[string]map[uint64]memoryLease
+	escrowCache      map[string]EscrowCacheInfo
 }
 
 func NewMemory() *Memory {
@@ -97,15 +95,15 @@ func (m *Memory) CreateSession(params CreateSessionParams) error {
 	}
 
 	m.sessions[params.EscrowID] = &sessionData{
-		escrowID:               params.EscrowID,
-		epochID:                params.EpochID,
-		version:                requestedVersion,
-		creatorAddr:            params.CreatorAddr,
-		config:                 params.Config,
-		group:                  copyGroup(params.Group),
-		balance:                params.InitialBalance,
-		nonceToIndex:           make(map[uint64]int),
-		status:                 "active",
+		escrowID:     params.EscrowID,
+		epochID:      params.EpochID,
+		version:      requestedVersion,
+		creatorAddr:  params.CreatorAddr,
+		config:       params.Config,
+		group:        copyGroup(params.Group),
+		balance:      params.InitialBalance,
+		nonceToIndex: make(map[uint64]int),
+		status:       "active",
 		inferences:             make(map[uint64]InferenceRow),
 		inferenceValidationObs: make(map[uint64]map[uint32]SlotValidationObs),
 		sealedValidationObs:    make(map[uint64]map[uint32]SlotValidationObs),
@@ -492,11 +490,6 @@ func (m *Memory) PruneEpoch(epochID uint64) error {
 		}
 	}
 	m.pruneValidationLeasesBefore(epochID + 1)
-	for key := range m.executionClaims {
-		if key.epochID == epochID {
-			delete(m.executionClaims, key)
-		}
-	}
 	for id, info := range m.escrowCache {
 		if info.EpochID == epochID {
 			delete(m.escrowCache, id)
@@ -515,7 +508,6 @@ func (m *Memory) pruneBefore(cutoff uint64) error {
 		}
 	}
 	m.pruneValidationLeasesBefore(cutoff)
-	m.pruneExecutionClaimsBefore(cutoff)
 	for id, info := range m.escrowCache {
 		if info.EpochID < cutoff {
 			delete(m.escrowCache, id)

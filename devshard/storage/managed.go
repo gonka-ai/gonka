@@ -316,25 +316,4 @@ func (m *ManagedStorage) OwnsPendingLease(ctx context.Context, escrowID string, 
 	return ls.OwnsPendingLease(ctx, escrowID, inferenceID, instanceAddr)
 }
 
-func (m *ManagedStorage) ClaimExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string) (ExecutionClaim, error) {
-	return m.inner.ClaimExecution(ctx, epochID, escrowID, inferenceID, ownerID)
-}
-
-func (m *ManagedStorage) GetExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64) (ExecutionClaim, error) {
-	return m.inner.GetExecution(ctx, epochID, escrowID, inferenceID)
-}
-
-func (m *ManagedStorage) MarkExecutionDispatched(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
-	return m.inner.MarkExecutionDispatched(ctx, epochID, escrowID, inferenceID, ownerID, fence)
-}
-
-func (m *ManagedStorage) AbandonExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64) error {
-	return m.inner.AbandonExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence)
-}
-
-func (m *ManagedStorage) CompleteExecution(ctx context.Context, epochID uint64, escrowID string, inferenceID uint64, ownerID string, fence uint64, result []byte) error {
-	return m.inner.CompleteExecution(ctx, epochID, escrowID, inferenceID, ownerID, fence, result)
-}
-
 var _ Storage = (*ManagedStorage)(nil)
-var _ ExecutionStore = (*ManagedStorage)(nil)

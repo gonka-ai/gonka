@@ -188,11 +188,6 @@ services:
       ${VERSIOND_IMAGE:-ghcr.io/product-science/versiond:0.2.15-devshard-v5}
     environment:
       - VERSIOND_ORACLE_URL=http://api:9100/versions
-      # A fresh versiond accepts DAPI's catalog only after it matches the
-      # locally verified consensus state. No operator-managed revision is
-      # required during upgrades or scale-out.
-      - VERSIOND_CONSENSUS_PARAMS_URL=http://node:1317/productscience/inference/inference/params
-      - VERSIOND_CONSENSUS_STATUS_URL=http://node:26657/status
       - VERSIOND_BINARY_NAME=devshardd
       - VERSIOND_HOST_SHUTDOWN_BUDGET=${VERSIOND_HOST_SHUTDOWN_BUDGET:-25m}
       - NODE_MANAGER_ADDR=api:${NODE_MANAGER_GRPC_PORT:-9400}

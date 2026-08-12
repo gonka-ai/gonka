@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
 	"sync"
 	"syscall"
 	"time"
@@ -55,28 +54,10 @@ func run(ctx context.Context) error {
 
 	mgr := process.NewManager(cfg)
 	hostLifecycle := host.NewController()
-	oracleOptions := make([]oracle.ClientOption, 0, 1)
-	if cfg.ConsensusParamsURL != "" {
-		oracleOptions = append(oracleOptions, oracle.WithCatalogVerifier(
-			oracle.NewConsensusVerifier(
-				cfg.ConsensusParamsURL,
-				cfg.ConsensusStatusURL,
-			),
-		))
-	}
-	oracleClient := oracle.NewClient(cfg.OracleURL, oracleOptions...)
-	catalogStore, err := oracle.OpenCatalogStore(
-		filepath.Join(cfg.DataDir, ".versiond", "catalog.json"),
-	)
-	if err != nil {
-		return fmt.Errorf("open version catalog: %w", err)
-	}
+	oracleClient := oracle.NewClient(cfg.OracleURL)
 
-	lookup, err := sessionversion.OpenFromEnv(ctx, cfg.HA)
+	lookup, err := sessionversion.OpenFromEnv(ctx)
 	if err != nil {
-		if cfg.HA {
-			return fmt.Errorf("open HA session version lookup: %w", err)
-		}
 		slog.Warn("session version lookup unavailable; versionless obs will fan-out", "error", err)
 		lookup = nil
 	}
@@ -111,7 +92,7 @@ func run(ctx context.Context) error {
 	pollDone := make(chan struct{})
 	go func() {
 		defer close(pollDone)
-		runPollLoop(pollCtx, cfg.PollInterval, oracleClient, catalogStore, mgr)
+		runPollLoop(pollCtx, cfg.PollInterval, oracleClient, mgr)
 	}()
 
 	select {
@@ -152,17 +133,9 @@ func runPollLoop(
 	ctx context.Context,
 	interval time.Duration,
 	oracleClient *oracle.Client,
-	catalogStore *oracle.CatalogStore,
 	mgr *process.Manager,
 ) {
-	// Prefer a fresh, consensus-verified catalog before starting persisted LKG
-	// children. This avoids spending a full download/readiness budget on an old
-	// snapshot before versiond even asks what governance currently requires.
-	if !reconcileOnce(ctx, oracleClient, catalogStore, mgr) {
-		if catalog, ok := catalogStore.Current(); ok {
-			reconcileCatalog(ctx, catalog, mgr)
-		}
-	}
+	reconcileOnce(ctx, oracleClient, mgr)
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 	for {
@@ -170,48 +143,31 @@ func runPollLoop(
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			reconcileOnce(ctx, oracleClient, catalogStore, mgr)
+			reconcileOnce(ctx, oracleClient, mgr)
 		}
 	}
 }
 
-func reconcileOnce(
-	ctx context.Context,
-	oracleClient *oracle.Client,
-	catalogStore *oracle.CatalogStore,
-	mgr *process.Manager,
-) bool {
-	candidate, err := oracleClient.Fetch(ctx)
+func reconcileOnce(ctx context.Context, oracleClient *oracle.Client, mgr *process.Manager) {
+	versions, err := oracleClient.Fetch(ctx)
 	if err != nil {
 		if ctx.Err() == nil {
 			mgr.ReportReconcileError(fmt.Errorf("oracle fetch: %w", err))
 			slog.Error("oracle fetch failed, keeping current versions", "error", err)
 		}
-		return false
+		return
 	}
-	catalog, _, err := catalogStore.Accept(candidate)
-	if err != nil {
-		mgr.ReportReconcileError(fmt.Errorf("oracle catalog: %w", err))
-		slog.Error("oracle catalog rejected, keeping current versions", "error", err)
-		return false
+	// An empty API response is treated as an upstream fault while this host owns
+	// children. Intentional removals still arrive as a non-empty desired set.
+	if len(versions.Versions) == 0 && len(mgr.Status()) > 0 {
+		mgr.ReportReconcileError(errors.New("oracle returned an empty version list"))
+		slog.Warn("oracle returned empty version list, keeping current versions")
+		return
 	}
-	if err := reconcileCatalog(ctx, catalog, mgr); err == nil {
-		if !mgr.AdmitCatalog(catalog.Versions) {
-			mgr.ReportReconcileError(errors.New("verified catalog is not represented by the active artifact routes"))
-			slog.Error("verified catalog has not reached active artifact routes")
-		}
+	if err := mgr.Reconcile(ctx, versions.Versions); err != nil &&
+		!errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
+		slog.Error("reconcile failed", "error", err)
 	}
-	return true
-}
-
-func reconcileCatalog(ctx context.Context, catalog oracle.VersionConfig, mgr *process.Manager) error {
-	if err := mgr.Reconcile(ctx, catalog.Versions); err != nil {
-		if !errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
-			slog.Error("reconcile failed", "error", err)
-		}
-		return err
-	}
-	return nil
 }
 
 type hostAvailabilityProvider interface {
@@ -230,8 +186,7 @@ func promoteHostWhenAvailable(
 			return
 		case <-mgr.Available():
 		}
-		conditions := mgr.Conditions()
-		if !conditions.Available || !conditions.CatalogAdmitted {
+		if !mgr.Conditions().Available {
 			continue
 		}
 		// Promotion and BeginDrain race under the controller lock. If drain won,
@@ -537,10 +492,10 @@ func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
 // Conditions.Degraded and the logs, and are not a readiness gate.
 //
 // For the same reason Converged is a latch rather than a live check: requiring
-// live convergence would evict every host that is still installing a newly
-// appended version or restarting one child. A host that has never run its
-// desired set stays out of rotation; later background work does not retract
-// host-level readiness.
+// convergence would evict the whole pool on a routine same-name SHA bump,
+// because every host starts downloading at once. A host that has never run its
+// desired set stays out of rotation; a later download does not retract
+// readiness.
 //
 // This host-level answer is necessarily coarse: it cannot say that one version
 // out of several is missing here. versiondReadyForVersion answers that precisely
@@ -556,8 +511,7 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 		hostStatus.Accepting &&
 		conditions.Available &&
 		conditions.Serving &&
-		conditions.Converged &&
-		conditions.CatalogAdmitted
+		conditions.Converged
 }
 
 // versiondReadyForVersion answers "may this host take traffic for this one
@@ -570,15 +524,11 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 // at once, or the announce window would not empty the host.
 func versiondReadyForVersion(
 	hostStatus host.Snapshot,
-	mgr interface {
-		ServesVersion(string) bool
-		CatalogAdmitted() bool
-	},
+	mgr interface{ ServesVersion(string) bool },
 	version string,
 ) bool {
 	return hostStatus.Ready &&
 		hostStatus.Accepting &&
-		mgr.CatalogAdmitted() &&
 		mgr.ServesVersion(version)
 }
 

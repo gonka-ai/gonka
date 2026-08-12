@@ -4,7 +4,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"math"
-	"strings"
 
 	sdkmath "cosmossdk.io/math"
 	paramtypes "github.com/cosmos/cosmos-sdk/x/params/types"
@@ -60,10 +59,6 @@ const (
 
 	DynamicPricingEstimatedBlockSeconds = uint64(5)
 	MaxRollingWindowBlocks              = uint64(500)
-	// MaxDevshardApprovedVersions is the consensus-side capacity guaranteed by
-	// the shipped version routers. Version names are append-only, so governance
-	// must raise this bound together with router capacity in a software upgrade.
-	MaxDevshardApprovedVersions = 32
 )
 
 func UtilizationWindowToBlocks(utilizationWindowSeconds uint64) uint64 {
@@ -467,16 +462,10 @@ func (p *DevshardEscrowParams) Validate() error {
 	if p.MaxNonce == 0 {
 		return fmt.Errorf("devshard escrow max_nonce must be positive")
 	}
-	if len(p.ApprovedVersions) > MaxDevshardApprovedVersions {
-		return fmt.Errorf("devshard_escrow_params.approved_versions has %d entries, maximum is %d", len(p.ApprovedVersions), MaxDevshardApprovedVersions)
-	}
 	seen := make(map[string]struct{}, len(p.ApprovedVersions))
 	for i, v := range p.ApprovedVersions {
-		if v == nil {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: cannot be null", i)
-		}
-		if !validDevshardVersionName(v.Name) {
-			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: invalid name %q", i, v.Name)
+		if v.Name == "" {
+			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: name cannot be empty", i)
 		}
 		if v.Binary == "" {
 			return fmt.Errorf("devshard_escrow_params.approved_versions[%d]: binary cannot be empty", i)
@@ -508,28 +497,6 @@ func (p *DevshardEscrowParams) Validate() error {
 		return fmt.Errorf("devshard escrow vote_threshold_factor (%d) must be in (0, 100]", p.VoteThresholdFactor)
 	}
 	return nil
-}
-
-// validDevshardVersionName is the consensus boundary shared by versiond and
-// its HAProxy projections. Names are URL path segments and Runtime API map
-// keys, so path separators, URL delimiters, quotes, whitespace and controls
-// are not representable safely. Other basename characters remain valid.
-func validDevshardVersionName(name string) bool {
-	if len(name) == 0 || len(name) > 64 || !asciiAlphaNumeric(name[0]) {
-		return false
-	}
-	for i := 1; i < len(name); i++ {
-		if !asciiAlphaNumeric(name[i]) && !strings.ContainsRune("._+~-", rune(name[i])) {
-			return false
-		}
-	}
-	return true
-}
-
-func asciiAlphaNumeric(value byte) bool {
-	return value >= 'a' && value <= 'z' ||
-		value >= 'A' && value <= 'Z' ||
-		value >= '0' && value <= '9'
 }
 
 func DefaultDelegationParams() *DelegationParams {
@@ -828,11 +795,10 @@ func (p Params) Validate() error {
 		}
 	}
 
-	if p.DevshardEscrowParams == nil {
-		return fmt.Errorf("devshard escrow params cannot be nil")
-	}
-	if err := p.DevshardEscrowParams.Validate(); err != nil {
-		return err
+	if p.DevshardEscrowParams != nil {
+		if err := p.DevshardEscrowParams.Validate(); err != nil {
+			return err
+		}
 	}
 
 	if p.DelegationParams != nil {

@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"testing"
 )
 
@@ -16,9 +15,6 @@ const (
 
 func TestFetch(t *testing.T) {
 	want := VersionConfig{
-		Schema:      1,
-		Initialized: true,
-		Revision:    42,
 		Versions: []Version{
 			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: testSHA256A},
 		},
@@ -59,9 +55,6 @@ func TestFetch_ServerError(t *testing.T) {
 
 func TestFetch_RejectsInvalidVersionNames(t *testing.T) {
 	payload := VersionConfig{
-		Schema:      1,
-		Initialized: true,
-		Revision:    1,
 		Versions: []Version{
 			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: testSHA256A},
 			{Name: "", Binary: "http://example.com/empty.zip", SHA256: testSHA256B},
@@ -81,29 +74,8 @@ func TestFetch_RejectsInvalidVersionNames(t *testing.T) {
 	}
 }
 
-func TestValidVersionNameMatchesRoutingContract(t *testing.T) {
-	for _, name := range []string{"v5", "v4+hotfix", "v4.release_1", "V9~hotfix"} {
-		if !validVersionName(name) {
-			t.Errorf("validVersionName(%q) = false", name)
-		}
-	}
-	for _, name := range []string{
-		"", ".", "..", "+v5", "_v5", " v5", "v 5", "v5/next",
-		`v5\next`, "v5?x", "v5#x", "v5%x", `v5"x`, "v5'x",
-		"v5,next", "v5;next", "v5}next", "vé", "v5\nnext",
-		"v" + strings.Repeat("a", 64),
-	} {
-		if validVersionName(name) {
-			t.Errorf("validVersionName(%q) = true", name)
-		}
-	}
-}
-
 func TestFetch_RejectsDuplicateVersionNames(t *testing.T) {
 	payload := VersionConfig{
-		Schema:      1,
-		Initialized: true,
-		Revision:    1,
 		Versions: []Version{
 			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: testSHA256A},
 			{Name: "v1", Binary: "http://example.com/v1-r2.zip", SHA256: testSHA256B},
@@ -122,9 +94,6 @@ func TestFetch_RejectsDuplicateVersionNames(t *testing.T) {
 
 func TestFetch_RejectsInvalidSHA256(t *testing.T) {
 	payload := VersionConfig{
-		Schema:      1,
-		Initialized: true,
-		Revision:    1,
 		Versions: []Version{
 			{Name: "v1", Binary: "http://example.com/v1.zip", SHA256: "../escape"},
 		},
@@ -137,31 +106,6 @@ func TestFetch_RejectsInvalidSHA256(t *testing.T) {
 	c := NewClient(srv.URL)
 	if _, err := c.Fetch(context.Background()); err == nil {
 		t.Fatal("expected invalid oracle sha256 to fail fetch")
-	}
-}
-
-func TestFetchRejectsInvalidCatalogEnvelope(t *testing.T) {
-	tests := []struct {
-		name    string
-		catalog VersionConfig
-	}{
-		{name: "missing schema", catalog: VersionConfig{Initialized: true, Revision: 1}},
-		{name: "future schema", catalog: VersionConfig{Schema: 2, Initialized: true, Revision: 1}},
-		{name: "not initialized", catalog: VersionConfig{Schema: 1, Revision: 1}},
-		{name: "negative revision", catalog: VersionConfig{Schema: 1, Initialized: true, Revision: -1}},
-	}
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if err := json.NewEncoder(w).Encode(tt.catalog); err != nil {
-					t.Errorf("encode response: %v", err)
-				}
-			}))
-			defer srv.Close()
-			if _, err := NewClient(srv.URL).Fetch(context.Background()); err == nil {
-				t.Fatal("expected invalid catalog envelope to fail fetch")
-			}
-		})
 	}
 }
 

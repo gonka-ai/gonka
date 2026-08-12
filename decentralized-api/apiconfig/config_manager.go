@@ -361,9 +361,7 @@ func (cm *ConfigManager) RuntimeConfigSnapshot(currentEpochID uint64) RuntimeCon
 	cm.runtimePublishMu.RUnlock()
 
 	if published.initialized {
-		snapshot := runtimeConfigSnapshotFromContent(height, currentEpochID, published.content)
-		snapshot.Initialized = true
-		return snapshot
+		return runtimeConfigSnapshotFromContent(height, currentEpochID, published.content)
 	}
 
 	return runtimeConfigSnapshotFromContent(height, currentEpochID, cm.liveRuntimeConfigContent())

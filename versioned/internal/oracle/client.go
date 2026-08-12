@@ -7,15 +7,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"path/filepath"
 	"strings"
 	"time"
 )
 
 type VersionConfig struct {
-	Schema      int       `json:"schema"`
-	Initialized bool      `json:"initialized"`
-	Revision    int64     `json:"revision"`
-	Versions    []Version `json:"versions"`
+	Versions []Version `json:"versions"`
 }
 
 type Version struct {
@@ -48,34 +46,15 @@ func (v Version) ResolvedSHA256() (string, error) {
 type Client struct {
 	url        string
 	httpClient *http.Client
-	verifier   CatalogVerifier
 }
 
-type ClientOption func(*Client)
-
-// CatalogVerifier independently authenticates a catalog before it can become
-// versiond's durable desired state.
-type CatalogVerifier interface {
-	Verify(context.Context, VersionConfig) error
-}
-
-func WithCatalogVerifier(verifier CatalogVerifier) ClientOption {
-	return func(client *Client) {
-		client.verifier = verifier
-	}
-}
-
-func NewClient(oracleURL string, options ...ClientOption) *Client {
-	client := &Client{
+func NewClient(oracleURL string) *Client {
+	return &Client{
 		url: oracleURL,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
-	for _, option := range options {
-		option(client)
-	}
-	return client
 }
 
 func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
@@ -97,28 +76,10 @@ func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
 		return VersionConfig{}, fmt.Errorf("decode response: %w", err)
 	}
-	if err := validateCatalog(cfg); err != nil {
+	if err := validateVersions(cfg.Versions); err != nil {
 		return VersionConfig{}, err
 	}
-	if c.verifier != nil {
-		if err := c.verifier.Verify(ctx, cfg); err != nil {
-			return VersionConfig{}, fmt.Errorf("verify oracle catalog against consensus: %w", err)
-		}
-	}
 	return cfg, nil
-}
-
-func validateCatalog(cfg VersionConfig) error {
-	if cfg.Schema != 1 {
-		return fmt.Errorf("unsupported oracle catalog schema %d", cfg.Schema)
-	}
-	if !cfg.Initialized {
-		return fmt.Errorf("oracle catalog is not initialized")
-	}
-	if cfg.Revision < 0 {
-		return fmt.Errorf("oracle catalog revision must be non-negative, got %d", cfg.Revision)
-	}
-	return validateVersions(cfg.Versions)
 }
 
 func validateVersions(versions []Version) error {
@@ -149,19 +110,14 @@ func validateSHA256(versionName, hash string) (string, error) {
 }
 
 func validVersionName(name string) bool {
-	if len(name) == 0 || len(name) > 64 || !asciiAlphaNumeric(name[0]) {
+	if name == "" || name == "." || name == ".." {
 		return false
 	}
-	for i := 1; i < len(name); i++ {
-		if !asciiAlphaNumeric(name[i]) && !strings.ContainsRune("._+~-", rune(name[i])) {
-			return false
-		}
+	if strings.TrimSpace(name) != name {
+		return false
 	}
-	return true
-}
-
-func asciiAlphaNumeric(value byte) bool {
-	return value >= 'a' && value <= 'z' ||
-		value >= 'A' && value <= 'Z' ||
-		value >= '0' && value <= '9'
+	if filepath.IsAbs(name) || strings.ContainsAny(name, `/\`) {
+		return false
+	}
+	return filepath.Base(name) == name
 }

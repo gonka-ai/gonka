@@ -163,8 +163,8 @@ not change escrow placement.
 
 Invalid catalog URL, timing, or capacity values fail startup. Every fully
 projected snapshot is atomically persisted before the HAProxy request map is
-atomically replaced. All additions in one revision pass their ready reserve
-together, so a partially ready revision cannot expose only a prefix. A replacement renders a fresh
+atomically replaced. All additions observed in one poll pass their ready reserve
+together, so a partially ready projection cannot expose only a prefix. A replacement renders a fresh
 snapshot before HAProxy starts, so a transient dapi failure does not erase
 learned routes; stale, corrupt, and future-dated snapshots fail closed to the
 bootstrap floor. Cached additions remain assigned to bounded dynamic slots, so
@@ -174,11 +174,12 @@ machine-readable projection state, including `capacity-exhausted`, for log and
 host monitoring. The entrypoint restarts an unexpectedly exited reconciler
 without restarting HAProxy.
 
-Catalog snapshots must be initialized and revisioned. Revisions never decrease,
-the content of one revision is immutable, and the accepted version set is
-append-only. An uninitialized, stale-revision, or removal snapshot leaves the
-last admitted routes unchanged. Existing schema-1 payloads are accepted as
-revision zero. Cache protocol 2 uses `catalog-v2.json`; the first startup
+The router consumes DAPI's existing `{"versions":[...]}` response. Names must
+be valid and unique, and the local projection only grows without an explicit
+maintenance operation. A malformed or removal snapshot leaves the last admitted
+routes unchanged. This is a local HA safety policy, not a governance rule.
+Existing schema-1 cache payloads are accepted as local generation zero. Cache
+protocol 2 uses `catalog-v2.json`; the first startup
 validates and atomically migrates a fresh legacy `catalog.json` while retaining
 the original for rollback. Invalid or stale legacy data is ignored and obtained
 again from DAPI, with the static bootstrap floor remaining fail-closed.

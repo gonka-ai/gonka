@@ -144,24 +144,23 @@ not run the version. Existing version routes are untouched throughout.
 
 Consequently, a normal new governance name requires **no `config.env` edit, no
 router rollout, and no hoster action**. Both inner routers and `proxy-router`
-learn it independently. Governance binds each existing name to one SHA; new
-bytes use a new name and therefore a new slot. A URL-only mirror change keeps
-the existing mapping and does not restart the child.
+learn it independently. Artifact replacement remains versiond's existing
+blue/green concern; the router selects by version name and does not redefine
+governance rules.
 
-The catalog is authoritative only when it contains `schema: 1`,
-`initialized: true`, and a non-negative integer `revision`. Dapi returns `503`
-before its first atomically published chain snapshot. Routers reject an older
-revision, a different payload under the same revision, and any snapshot that
-removes an already accepted name. The current governance contract is therefore
-append-only; removal requires a future drain-and-reclaim protocol. This prevents
-a warming or stale dapi replica from erasing learned routes.
+The router consumes DAPI's existing `{"versions":[...]}` response and ignores
+artifact fields because placement is keyed only by version name. It validates
+names and duplicates, and rejects a snapshot that removes an already projected
+name. This is a local router safety rule: removal requires a future
+drain-and-reclaim operation and does not alter the governance contract. It also
+prevents a warming or stale DAPI replica from erasing learned routes.
 
 Governance approval is itself what makes the name appear in `/versions`, so this
 feed cannot prove readiness before approval. Each router assigns the new name
-to an inert backend and starts health checks. When one revision adds several
+to an inert backend and starts health checks. When one poll adds several
 names, none is published until every new backend has at least
 `VERSIOND_ROUTING_ACTIVATION_MIN_READY` upstreams. The router then durably
-commits the complete revision and atomically replaces its HAProxy request map.
+commits the complete projection and atomically replaces its HAProxy request map.
 Once published, ordinary degradation below that reserve does not retract the
 route. Network activation automation should still wait for every host before
 directing new sessions to that version:
@@ -180,7 +179,7 @@ separate signed staged-version feed; the approved-version endpoint cannot expose
 information governance has not published yet.
 
 Catalog additions are monotonic across process replacements. Every fully
-projected revision is also committed atomically to the slot's persistent state volume.
+projected snapshot is also committed atomically to the slot's persistent state volume.
 On replacement, a fresh snapshot is validated and rendered before HAProxy
 starts, so names learned after the image was built do not disappear merely
 because dapi is temporarily unavailable. The default maximum age is 24 hours;
@@ -189,9 +188,9 @@ the static bootstrap floor. Cached non-bootstrap names are restored into the
 same bounded `versiond_dynamic_<n>` namespace; restarting a router does not
 replenish consumed capacity. Startup fails loudly if a fresh cache needs more
 dynamic slots than the configured capacity. Schema-1 cache payloads written by
-earlier router images are accepted as revision zero. Cache protocol 2 uses
+earlier router images are accepted as local generation zero. Cache protocol 2 uses
 `catalog-v2.json`; on first startup it validates and atomically copies a fresh
-legacy `catalog.json`, preserving its timestamp and revision. Stale or invalid
+legacy `catalog.json`, preserving its timestamp and local generation. Stale or invalid
 legacy data is ignored and fetched again, while the original file remains
 available to the exact rollback image.
 The image label `ai.gonka.catalog-cache-protocol-version` is the rollback

@@ -29,9 +29,6 @@ func NewInferenceEngine() *InferenceEngine {
 }
 
 func (e *InferenceEngine) Execute(_ context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	if err := markDispatched(req); err != nil {
-		return nil, err
-	}
 	if req.ResponseWriter != nil {
 		// Write mock SSE events to the response writer.
 		if rw, ok := req.ResponseWriter.(http.Flusher); ok {
@@ -58,22 +55,12 @@ type ConfigurableEngine struct {
 }
 
 func (e *ConfigurableEngine) Execute(_ context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
-	if err := markDispatched(req); err != nil {
-		return nil, err
-	}
 	if r, ok := e.Override[req.InferenceID]; ok {
 		cp := r
 		return &cp, nil
 	}
 	cp := e.Default
 	return &cp, nil
-}
-
-func markDispatched(req devshard.ExecuteRequest) error {
-	if req.BeforeDispatch == nil {
-		return nil
-	}
-	return req.BeforeDispatch()
 }
 
 // FailingEngine always returns an error from Execute.

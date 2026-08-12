@@ -79,31 +79,20 @@ func NewEngine(
 // falls back to the passive ML-node cache.
 func (e *Engine) Execute(ctx context.Context, req devshard.ExecuteRequest) (*devshard.ExecuteResult, error) {
 	return executeInference(ctx, req, e.payloadStore, e.phase.EpochID(), func(ctx context.Context, model string, body []byte) (*http.Response, error) {
-		return e.executeMLRequest(ctx, model, req.EscrowID, body, req.BeforeDispatch)
+		return e.executeMLRequest(ctx, model, req.EscrowID, body)
 	}, e.chainParams)
 }
 
-func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte, beforeDispatch func() error) (*http.Response, error) {
-	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, false, func(endpoint string) (*http.Response, error) {
+func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, body []byte) (*http.Response, error) {
+	resp, err := e.doWithLockedNode(ctx, observability.PathExecute, model, escrowID, func(endpoint string) (*http.Response, error) {
 		url := endpoint + "/v1/chat/completions"
 		httpReq, reqErr := http.NewRequestWithContext(ctx, http.MethodPost, url, bytes.NewReader(body))
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
-		// The dispatch marker provides at-most-once semantics. Prevent any future
-		// transport configuration (including HTTPS/HTTP2) from replaying the body.
-		httpReq.GetBody = nil
 		httpReq.Header.Set("Content-Type", "application/json")
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)
-		if err := ctx.Err(); err != nil {
-			return nil, err
-		}
-		if beforeDispatch != nil {
-			if err := beforeDispatch(); err != nil {
-				return nil, fmt.Errorf("mark inference dispatched: %w", err)
-			}
-		}
 		return e.httpClient.Do(httpReq)
 	})
 	if err != nil {
@@ -122,7 +111,6 @@ func (e *Engine) doWithLockedNode(
 	path observability.Path,
 	model string,
 	escrowID string,
-	retryAfterDispatch bool,
 	fn func(endpoint string) (*http.Response, error),
 ) (*http.Response, error) {
 	var excluded []string
@@ -141,7 +129,7 @@ func (e *Engine) doWithLockedNode(
 				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, ctx.Err())
 			}
 			if shouldFallback(err) {
-				return e.doWithFallbackNodes(ctx, path, model, excludedSet, retryAfterDispatch, fn, err)
+				return e.doWithFallbackNodes(ctx, path, model, excludedSet, fn, err)
 			}
 
 			// dapi up but no nodes (ResourceExhausted) or other transient
@@ -198,9 +186,6 @@ func (e *Engine) doWithLockedNode(
 		if outcome == mlnodegen.ReleaseOutcome_SUCCESS {
 			return resp, nil
 		}
-		if !retryAfterDispatch {
-			return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
-		}
 
 		if acq.NodeId != "" {
 			excluded = append(excluded, acq.NodeId)
@@ -226,7 +211,6 @@ func (e *Engine) doWithFallbackNodes(
 	path observability.Path,
 	model string,
 	excluded map[string]struct{},
-	retryAfterDispatch bool,
 	fn func(endpoint string) (*http.Response, error),
 	acquireErr error,
 ) (*http.Response, error) {
@@ -313,9 +297,6 @@ func (e *Engine) doWithFallbackNodes(
 			if lastErr == nil {
 				lastErr = errors.New("mlnode fallback: transport error")
 			}
-			if !retryAfterDispatch {
-				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
-			}
 			if nodeID != "" {
 				excluded[nodeID] = struct{}{}
 			}
@@ -328,9 +309,6 @@ func (e *Engine) doWithFallbackNodes(
 				lastErr = fmt.Errorf("upstream status %d", resp.StatusCode)
 			} else {
 				lastErr = errors.New("mlnode fallback: upstream 5xx")
-			}
-			if !retryAfterDispatch {
-				return nil, observability.Classify(lastReason, observability.WhereEngineMLNodeCall, lastErr)
 			}
 			if nodeID != "" {
 				excluded[nodeID] = struct{}{}

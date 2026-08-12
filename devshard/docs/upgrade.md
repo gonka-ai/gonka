@@ -42,11 +42,10 @@ allowed binaries. Each entry carries:
 
 sha256 is the real identity. The URL is only a download hint. If two proposals
 point at different mirrors but the same hash, operators do not restart
-anything. Consensus permanently binds an approved name to that hash. A proposal
-for different bytes must append a new version name; changing the hash in place
-is rejected. This lets routers use the version name as an immutable data-plane
-identity even while hosts observe governance at different times. See
-[rolling-update.md](./rolling-update.md) for the child lifecycle mechanics.
+anything. If the name stays the same but the hash changes, versiond downloads
+the new binary first and then rolls to it: on Postgres, blue/green overlap and
+drain; otherwise exclusive stop/start. See [rolling-update.md](./rolling-update.md)
+for the child lifecycle mechanics.
 
 Versiond re-hashes cached binaries on startup so a tampered file on disk is
 detected before any traffic is routed to it.
@@ -119,10 +118,9 @@ Two strings, same governance slot:
 | Binary build id | `0.2.14-v4-r2` | Link-time build stamp: logs, `--print-binary-version`, versiond `/healthz`, and `GET …/stats/shards` `binary_version` |
 
 Protocol name is what binds sessions and settlements. Binary build id identifies
-the exact running build in logs and diagnostics. Production governance does not
-approve two SHA values under one protocol name; a new artifact receives a new
-name. The distinct build id remains useful for detecting packaging mistakes,
-local overrides, and mixed pre-contract deployments.
+the exact running build in logs and diagnostics. The distinct build id is useful
+for observing a same-name rolling update, detecting packaging mistakes, and
+distinguishing local overrides.
 
 | Build / runtime | Mechanism |
 |-----------------|-----------|

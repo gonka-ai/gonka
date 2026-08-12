@@ -159,7 +159,7 @@ test-version-routing:
 		'http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()' \
 		> "$$tmpdir/upstream.py"; \
 	mkdir "$$tmpdir/catalog"; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"}]}' \
 		> "$$tmpdir/catalog/versions.json"; \
 	printf '%s\n' \
 		'import http.server, json' \
@@ -285,7 +285,7 @@ test-version-routing:
 	[ "$$health" = 200 ] \
 		|| fail "the guard broke the router's own /healthz (got $$health)"; \
 	router_id=$$(docker inspect -f '{{.Id}}' gonka-vp-router); \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":2,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 20); do \
@@ -300,7 +300,7 @@ test-version-routing:
 	for version in v9 v10; do \
 		[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 			"http://127.0.0.1:18134/readyz?version=$$version")" = 503 ] \
-			|| fail "$$version was published before the revision reserve"; \
+			|| fail "$$version was published before the projection reserve"; \
 	done; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
@@ -315,7 +315,7 @@ test-version-routing:
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
 		| jq -e '.state == "activation-pending" and (.detail | contains("v10"))' \
-			>/dev/null || fail "v10 did not hold the multi-add revision pending"; \
+			>/dev/null || fail "v10 did not hold the multi-add projection pending"; \
 	[ "$$(curl -s -o /dev/null -w '%{http_code}' -m 3 \
 		'http://127.0.0.1:18134/readyz?version=v9')" = 503 ] \
 		|| fail "ready v9 was partially published while v10 was still pending"; \
@@ -331,7 +331,7 @@ test-version-routing:
 	done; \
 	for version in v9 v10; do \
 		curl -fsS -m 3 "http://127.0.0.1:18134/readyz?version=$$version" >/dev/null \
-			|| fail "governance revision did not admit $$version"; \
+			|| fail "catalog projection did not admit $$version"; \
 	done; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
@@ -368,7 +368,7 @@ test-version-routing:
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/cache/chat)" = b ] \
 		|| fail "inner router lost a learned route when restarted without dapi"; \
 	docker start gonka-vp-catalog >/dev/null; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v11"},{"name":"v11"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v11"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	sleep 2; \
@@ -378,29 +378,29 @@ test-version-routing:
 	fi; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-invalid/chat)" = b ] \
 		|| fail "an invalid catalog snapshot removed the last valid route view"; \
-	printf '%s\n' '{"schema":1,"initialized":false,"revision":3,"versions":[]}' \
+	printf '%s\n' '{"versions":"not-an-array"}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	sleep 2; \
-	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-uninitialized/chat)" = b ] \
-		|| fail "an uninitialized catalog replaced the last accepted route view"; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":1,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"}]}' \
+	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v9/sessions/after-malformed/chat)" = b ] \
+		|| fail "a malformed catalog replaced the last accepted route view"; \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 10); do \
 		if docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-			| jq -e '.state == "revision-error"' >/dev/null 2>&1; then break; fi; \
+			| jq -e '.state == "projection-error"' >/dev/null 2>&1; then break; fi; \
 		sleep 0.5; \
 	done; \
 	docker exec gonka-vp-router /usr/local/lib/router-runtime/catalog-status --state \
-		| jq -e '.state == "revision-error"' >/dev/null \
-		|| fail "a regressing catalog revision was not rejected"; \
+		| jq -e '.state == "projection-error"' >/dev/null \
+		|| fail "a catalog removal was not rejected"; \
 	docker rm -f gonka-vp-a >/dev/null; \
 	docker run -d --name gonka-vp-a --network $$net --network-alias versiond-pool \
 		-e NAME=a -e SERVES="v4 v9+hotfix" -e GENERIC_READY=false \
 		-e READYZ_SUPPORTED=true -v "$$tmpdir/upstream.py:/app.py:ro" \
 		python:3.12-alpine python /app.py >/dev/null; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":3,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \
@@ -418,7 +418,7 @@ test-version-routing:
 		/etc/haproxy/versions.map | grep -q '^version='; then \
 		fail "runtime catalog diagnostics exposed readiness projection keys as versions"; \
 	fi; \
-	printf '%s\n' '{"schema":1,"initialized":true,"revision":4,"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
+	printf '%s\n' '{"versions":[{"name":"v1"},{"name":"v2"},{"name":"v4"},{"name":"v5"},{"name":"v9"},{"name":"v10"},{"name":"v9+hotfix"},{"name":"v11"}]}' \
 		> "$$tmpdir/catalog/versions.next"; \
 	mv "$$tmpdir/catalog/versions.next" "$$tmpdir/catalog/versions.json"; \
 	for i in $$(seq 30); do \

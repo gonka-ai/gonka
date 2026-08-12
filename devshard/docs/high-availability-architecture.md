@@ -75,8 +75,8 @@ host-local storage failure domain. It makes several `versiond` processes share
 one execution ledger, but it is not database HA. A multi-host production
 deployment must use a managed or operator-controlled PostgreSQL primary with
 synchronous durability and an effective RPO of zero for acknowledged
-execution-state writes; losing a committed `dispatched` fence can otherwise
-permit the same ML operation to be sent again after failover.
+devshard state. The Compose topology in this document does not provide database
+failover.
 
 | Path (public) | Backend | Purpose |
 |---------------|---------|---------|
@@ -111,18 +111,19 @@ Membership and eligibility are derived from runtime state:
   both tiers through local Unix Runtime API sockets without a container reload;
   a candidate backend starts health checks immediately, but its map entry is
   published only after the configured ready reserve is present at that tier.
-  All additions in one revision pass this gate together; after the revision is
-  durably cached, each tier atomically replaces its data routing map.
+  All additions observed in one poll pass this gate together; after the
+  projection is durably cached, each tier atomically replaces its data routing map.
   Later degradation does not retract an admitted route;
 - each tier atomically persists its last fully projected governance snapshot;
   replacement processes validate and pre-render a fresh snapshot before
   listening, while stale or corrupt cache data falls back to the bootstrap floor;
   cached additions continue to consume their bounded dynamic slots after a
   restart, and a capacity reduction below that fresh state fails startup;
-- dapi returns `503` until it has published its first chain snapshot. After
-  initialization the catalog carries an immutable, monotonically increasing
-  revision. Routers reject revision rollback, same-revision content changes,
-  and removals; the current catalog contract is append-only;
+- routers consume DAPI's existing `{"versions":[...]}` response. Projections
+  accept monotonic additions and retain the last admitted map on malformed or
+  removal snapshots. Removing a route therefore requires an explicit
+  drain-and-maintenance procedure rather than changing governance semantics in
+  the HA layer;
 - consistent hashing with `hash-key addr` keeps escrow placement stable across
   DNS answer order and inner-router restarts. The public versiond distributor
   uses the same escrow key to select an inner router; `edge-api` uses
@@ -151,19 +152,9 @@ selections; it does not move or close an established stream.
 Both HAProxy layers retry connection failures, empty responses, and `502` only.
 They disable L7 replay for non-idempotent methods: once a POST may have reached
 an application, infrastructure cannot safely guess whether retrying it would
-execute the operation twice. The application closes the remaining split-routing
-window with a durable Postgres execution claim keyed by
-`(epoch, escrow, inference)`: only the claim owner calls the ML engine, while a
-second replica waits for a bounded commit window and replays the committed
-result. The durable execution FSM is `claimed -> dispatched -> completed`;
-`claimed -> abandoned` is allowed
-only before any request byte can be sent. An expired `claimed` lease is fenced
-and retried, while `dispatched` is never stolen because the POST may already
-have taken effect. A dispatched operation with no durable result becomes an
-explicit uncertain outcome after the bounded commit window; it is not polled
-forever. The engine does not rotate to another ML node after crossing that
-boundary. Established SSE streams remain on the connections that accepted them
-and are not moved during drain.
+execute the operation twice. This HA layer does not change devshard inference
+execution semantics. Established SSE streams remain on the connections that
+accepted them and are not moved during drain.
 
 ---
 
@@ -240,9 +231,8 @@ A supervisor + version-prefix reverse proxy:
 - **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix /
   versionless obs proxy.
 - **Overrides:** `VERSIOND_OVERRIDE_<name>` (local binary), `VERSIOND_FORCE`
-  (force-run a version) are single-instance/development controls. HA refuses
-  local artifact overrides because its startup identity must come from the
-  verified consensus catalog.
+  (force-run a version) are local development and recovery controls. Production
+  HA deployments should leave them unset.
 
 ### devshardd (`devshard/cmd/devshardd/`)
 
@@ -372,9 +362,6 @@ The crucial property for multi-instance:
 - **Postgres is a shared, multi-writer DB.** It provides the real
   cross-instance validation-lease table (`devshard_validation_leases`) that
   guarantees only one devshardd validates each `(escrow_id, inference_id)` pair.
-  It also owns `devshard_execution_claims`, the durable owner/fencing token and
-  completed result for each inference execution. This prevents divergent router
-  health views from producing two ML calls.
 
 Postgres readiness is live, not a startup latch. Each devshardd probes its pool
 once per second; two consecutive failures remove that child from `/ready`, and
@@ -413,21 +400,11 @@ one HAProxy map. A Runtime API transaction publishes both keys together, so a
 parent router cannot admit a child router before that child can route the same
 version.
 
-Each `versiond` also keeps the last accepted full catalog under its own
-`VERSIOND_DATA_DIR`. The snapshot is fsynced before process reconciliation.
-After restart, lower revisions, in-place changes and version removals are
-rejected, so a stale DAPI replica cannot roll children back or remove them. A
-fresh store additionally compares DAPI's complete artifact set at the catalog's
-exact consensus height with the local, caught-up consensus node before accepting
-its first revision. On every process start, persisted LKG children remain
-outside the load-balancer pool until a freshly verified catalog is represented
-by the exact active artifact routes. This startup proof latches. Consensus
-permanently binds each version name to one SHA: a mirror URL may change for the
-same bytes, while a new artifact must use a new version name. Therefore a host
-partitioned before an update may omit the new name, but cannot serve different
-bytes under a name shared with updated hosts. HA mode refuses to start without
-both local consensus endpoints. The Compose contract configures them; no
-revision floor is maintained by the operator.
+`versiond` continues to consume the existing DAPI version feed and applies its
+existing checksum verification and blue/green child lifecycle. A failed poll
+keeps the currently running children in place. The HA routers independently
+cache only their bounded name-to-backend projection; they do not redefine the
+governance or artifact-update contract.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

@@ -11,12 +11,6 @@ Operator requirement:
 > 3. once the new instance is reachable we route **new** requests to it, while
 >    the old instance keeps **draining** its in-flight requests.
 
-This is the supervisor's local blue/green primitive. The production HA
-governance catalog uses a stricter identity contract: `(version name, SHA)` is
-immutable. Governance may change a download mirror while keeping the SHA, but a
-new artifact is approved under a new version name. That rule prevents two
-partitioned hosts from serving different bytes under the same router key.
-
 This document describes:
 
 1. **Part 1 — versiond (implemented).** Blue/green + drain for governance
@@ -530,21 +524,16 @@ starting` for supervised retry.
 
 #### Readiness answers "can I serve", not "did the last poll succeed"
 
-`/readyz` requires a fresh catalog fetch and, at process startup, an exact match
-between that verified catalog and the active artifact routes. The archive SHA,
-not its download URL, is the artifact identity: changing mirrors for identical
-bytes does not force a replacement. Consensus rejects changing the SHA of an
-existing name; a new artifact is appended under a new name. A partitioned host
-can therefore keep serving the older catalog without creating an A/B split
-inside any one router pool. It simply does not enter the pool for a version name
-it has not observed and installed.
+`/readyz` requires that the manager has reconciled every desired version at least
+once, and this latches. A host that has served, then starts downloading a new
+archive for a routine same-name SHA bump, stays ready throughout. Retracting
+readiness there would evict every host in the pool at the same moment. Failure to
+*ever* reconcile an approved version does keep the host out of the coarse pool.
 
-A host that fails to install one particular new version stays out of *that
-version's* pool and keeps serving the others. An oracle fetch failure does not
-invent a new desired identity and therefore does not clear readiness for the
-last verified catalog. Reconcile failures are reported through the `Degraded`
-condition and logs; per-version readiness follows the actual child route and
-its continuously refreshed serving state.
+A host that fails to install one particular version drops out of *that version's*
+pool through the per-version check, and keeps serving the others. A failed oracle
+poll is reported through the `Degraded` condition and logs; it does not withdraw
+routes whose children are still serving.
 
 #### Operator procedure
 
@@ -627,9 +616,6 @@ consumes unchanged, which is the point of putting it on the traffic listener.
   live governance route projection, route-aware router selection, policy-worker
   failover, edge-api distribution, and no duplicate POST execution when one
   router data port is unavailable.
-- **execution fencing:** the storage and host race tests run two independent
-  owners against one execution claim, assert one ML call, reject stale fencing
-  tokens, and replay the durable result from the losing replica.
 - **full stack (`devshard/testenv`):**
   `TestVersiondRollingUpdateSameVersionSHA` covers Postgres overlap and SSE
   continuity, and `TestVersiondRollingUpdateHybridFallback` covers the

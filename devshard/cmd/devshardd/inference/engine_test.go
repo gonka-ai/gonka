@@ -1,14 +1,11 @@
 package inference
 
 import (
-	"bufio"
 	"context"
-	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -25,12 +22,6 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
-
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
-	return f(request)
-}
 
 type engineMockNM struct {
 	nmgen.UnimplementedNodeManagerServer
@@ -75,153 +66,6 @@ func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity 
 	}
 }
 
-func TestExecuteMLRequestMarksDispatchedBeforeSending(t *testing.T) {
-	var dispatched atomic.Bool
-	var receivedAfterDispatch atomic.Bool
-	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		receivedAfterDispatch.Store(dispatched.Load())
-		w.WriteHeader(http.StatusOK)
-		_, _ = w.Write([]byte(`{"ok":true}`))
-	}))
-	t.Cleanup(mlSrv.Close)
-
-	ml := startEngineMLClient(t, &engineMockNM{
-		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: mlSrv.URL, NodeId: "node-1"}, nil
-		},
-	})
-	eng := newTestEngine(ml, nil, nil)
-	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", []byte(`{}`), func() error {
-		dispatched.Store(true)
-		return nil
-	})
-	require.NoError(t, err)
-	require.NoError(t, resp.Body.Close())
-	require.True(t, receivedAfterDispatch.Load(), "dispatch must be durable before the server receives a request")
-}
-
-func TestExecuteMLRequestDisablesTransportBodyReplay(t *testing.T) {
-	ml := startEngineMLClient(t, &engineMockNM{
-		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-			return &nmgen.AcquireMLNodeResponse{
-				LockId: "lock-1", Endpoint: "http://ml.invalid", NodeId: "node-1",
-			}, nil
-		},
-	})
-	eng := newTestEngine(ml, nil, nil)
-	eng.httpClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
-		if request.GetBody != nil {
-			t.Fatal("dispatched ML request exposes a replayable body")
-		}
-		return &http.Response{
-			StatusCode: http.StatusOK,
-			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
-			Header:     make(http.Header),
-			Request:    request,
-		}, nil
-	})}
-
-	response, err := eng.executeMLRequest(
-		context.Background(), "model-a", "escrow-a", []byte(`{}`), nil,
-	)
-	require.NoError(t, err)
-	require.NoError(t, response.Body.Close())
-}
-
-func TestExecuteMLRequestDoesNotReplayDispatchedPOST(t *testing.T) {
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = listener.Close() })
-
-	var posts atomic.Int32
-	serverDone := make(chan error, 1)
-	go func() {
-		conn, acceptErr := listener.Accept()
-		if acceptErr != nil {
-			serverDone <- acceptErr
-			return
-		}
-		reader := bufio.NewReader(conn)
-		warmup, readErr := http.ReadRequest(reader)
-		if readErr != nil {
-			_ = conn.Close()
-			serverDone <- fmt.Errorf("read warmup request: %w", readErr)
-			return
-		}
-		_, _ = io.Copy(io.Discard, warmup.Body)
-		_ = warmup.Body.Close()
-		if warmup.Method != http.MethodGet {
-			_ = conn.Close()
-			serverDone <- fmt.Errorf("warmup method = %s, want GET", warmup.Method)
-			return
-		}
-		_, _ = io.WriteString(conn, "HTTP/1.1 204 No Content\r\nContent-Length: 0\r\n\r\n")
-
-		request, readErr := http.ReadRequest(reader)
-		if readErr != nil {
-			_ = conn.Close()
-			serverDone <- fmt.Errorf("read dispatched request: %w", readErr)
-			return
-		}
-		_, _ = io.Copy(io.Discard, request.Body)
-		_ = request.Body.Close()
-		if request.Method != http.MethodPost {
-			_ = conn.Close()
-			serverDone <- fmt.Errorf("dispatched method = %s, want POST", request.Method)
-			return
-		}
-		posts.Add(1)
-		// The side effect happened, but no response byte reached the client.
-		_ = conn.Close()
-
-		// A replayable request makes net/http open a second connection here. The
-		// fixed request returns to the caller, which closes the listener instead.
-		retryConn, retryErr := listener.Accept()
-		if retryErr != nil {
-			serverDone <- nil
-			return
-		}
-		defer retryConn.Close()
-		retry, retryErr := http.ReadRequest(bufio.NewReader(retryConn))
-		if retryErr != nil {
-			serverDone <- fmt.Errorf("read replayed request: %w", retryErr)
-			return
-		}
-		_, _ = io.Copy(io.Discard, retry.Body)
-		_ = retry.Body.Close()
-		posts.Add(1)
-		_, _ = io.WriteString(retryConn, "HTTP/1.1 200 OK\r\nContent-Length: 2\r\nConnection: close\r\n\r\n{}")
-		serverDone <- nil
-	}()
-
-	transport := &http.Transport{}
-	t.Cleanup(transport.CloseIdleConnections)
-	client := &http.Client{Transport: transport}
-	endpoint := "http://" + listener.Addr().String()
-	warmupResp, err := client.Get(endpoint + "/warmup")
-	require.NoError(t, err)
-	require.NoError(t, warmupResp.Body.Close())
-
-	ml := startEngineMLClient(t, &engineMockNM{
-		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-			return &nmgen.AcquireMLNodeResponse{LockId: "lock-1", Endpoint: endpoint, NodeId: "node-1"}, nil
-		},
-	})
-	eng := newTestEngine(ml, nil, nil)
-	eng.httpClient = client
-	resp, err := eng.executeMLRequest(
-		context.Background(), "model-a", "escrow-a",
-		[]byte(`{"request":true}`), func() error { return nil },
-	)
-	if resp != nil {
-		_ = resp.Body.Close()
-	}
-	require.Error(t, err)
-	require.NoError(t, listener.Close())
-	require.NoError(t, <-serverDone)
-	require.Equal(t, int32(1), posts.Load(), "a dispatched ML POST must never be replayed by net/http")
-}
-
 func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	var releases atomic.Int32
 	mlHits := atomic.Int32{}
@@ -255,7 +99,7 @@ func TestDoWithLockedNode_GRPCSuccessObserves(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42", true,
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "42",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -301,7 +145,7 @@ func TestDoWithLockedNode_UnavailableFallsBack(t *testing.T) {
 	mgr.Observe("model-a", "node-1", mlSrv.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -340,7 +184,7 @@ func TestDoWithLockedNode_ResourceExhaustedDoesNotFallback(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
 	defer cancel()
 
-	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "", true,
+	resp, err := eng.doWithLockedNode(ctx, observability.PathExecute, "model-a", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -377,7 +221,7 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	mgr.Observe("model-a", "node-good", good.URL)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -390,41 +234,6 @@ func TestDoWithLockedNode_FallbackRotatesOn5xx(t *testing.T) {
 	assert.Equal(t, int32(1), hits2.Load())
 }
 
-func TestDoWithLockedNode_ExecuteDoesNotRotateAfterDispatch(t *testing.T) {
-	var acquires, badHits, goodHits atomic.Int32
-	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		badHits.Add(1)
-		w.WriteHeader(http.StatusBadGateway)
-	}))
-	t.Cleanup(bad.Close)
-	good := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		goodHits.Add(1)
-		w.WriteHeader(http.StatusOK)
-	}))
-	t.Cleanup(good.Close)
-
-	ml := startEngineMLClient(t, &engineMockNM{
-		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
-			attempt := acquires.Add(1)
-			if attempt == 1 {
-				return &nmgen.AcquireMLNodeResponse{LockId: "lock-bad", Endpoint: bad.URL, NodeId: "node-bad"}, nil
-			}
-			return &nmgen.AcquireMLNodeResponse{LockId: "lock-good", Endpoint: good.URL, NodeId: "node-good"}, nil
-		},
-	})
-	eng := newTestEngine(ml, nil, nil)
-
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "escrow-a", false,
-		func(endpoint string) (*http.Response, error) {
-			return http.Get(endpoint)
-		})
-	require.Error(t, err)
-	require.Nil(t, resp)
-	require.Equal(t, int32(1), acquires.Load())
-	require.Equal(t, int32(1), badHits.Load())
-	require.Zero(t, goodHits.Load(), "an ambiguous execution must not move to another ML node")
-}
-
 func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	ml := startEngineMLClient(t, &engineMockNM{
 		acquireFunc: func(_ context.Context, _ *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
@@ -435,7 +244,7 @@ func TestDoWithLockedNode_FallbackEmptyCacheFails(t *testing.T) {
 	mgr := mlnodeclient.NewManager(time.Hour)
 	eng := newTestEngine(ml, mgr, nil)
 
-	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+	resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 		func(endpoint string) (*http.Response, error) {
 			return http.Get(endpoint)
 		})
@@ -501,7 +310,7 @@ func TestFallback_RespectsLocalInFlight(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -565,7 +374,7 @@ func TestFallback_NoCapacityUnbounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})
@@ -646,7 +455,7 @@ func TestFallback_UnknownNodeBounded(t *testing.T) {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "", true,
+			resp, err := eng.doWithLockedNode(context.Background(), observability.PathExecute, "model-a", "",
 				func(endpoint string) (*http.Response, error) {
 					return http.Get(endpoint)
 				})

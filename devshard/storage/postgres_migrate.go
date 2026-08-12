@@ -182,25 +182,8 @@ CREATE TABLE IF NOT EXISTS devshard_escrow_cache (
 		},
 	},
 	{
-		ID:   12,
-		Name: "devshard_execution_claims",
-		Statements: []string{
-			`CREATE SEQUENCE IF NOT EXISTS devshard_execution_fence_seq`,
-			`CREATE TABLE IF NOT EXISTS devshard_execution_claims (
-    epoch_id     BIGINT      NOT NULL,
-    escrow_id    TEXT        NOT NULL,
-    inference_id BIGINT      NOT NULL,
-    owner_id     TEXT        NOT NULL,
-    fence        BIGINT      NOT NULL DEFAULT nextval('devshard_execution_fence_seq'),
-    phase        TEXT        NOT NULL DEFAULT 'claimed'
-                     CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned')),
-    result       BYTEA,
-    claimed_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
-    PRIMARY KEY (epoch_id, escrow_id, inference_id)
-)`,
-		},
-	},
-	{
+		// Migration 12 was used by an unreleased HA prototype. Keep the next ID
+		// stable so databases created by that prototype can converge safely.
 		ID:   13,
 		Name: "devshard_storage_identity",
 		Statements: []string{`
@@ -214,30 +197,6 @@ VALUES (
     md5(current_database() || clock_timestamp()::text || random()::text)::uuid
 )
 ON CONFLICT (singleton) DO NOTHING`},
-	},
-	{
-		ID:   14,
-		Name: "devshard_execution_dispatch_fsm",
-		Statements: []string{
-			`ALTER TABLE devshard_execution_claims
-	ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'claimed'
-	    CHECK (phase IN ('claimed', 'dispatched', 'completed', 'abandoned'))`,
-			`DO $$
-BEGIN
-    IF EXISTS (
-        SELECT 1 FROM information_schema.columns
-        WHERE table_schema = 'public'
-          AND table_name = 'devshard_execution_claims'
-          AND column_name = 'status'
-    ) THEN
-        EXECUTE 'UPDATE devshard_execution_claims
-                 SET phase = CASE status
-                     WHEN ''completed'' THEN ''completed''
-                     ELSE ''dispatched''
-                 END';
-    END IF;
-END $$`,
-		},
 	},
 }
 

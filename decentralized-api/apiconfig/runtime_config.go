@@ -5,9 +5,6 @@ import "time"
 // RuntimeConfigSnapshot is the immutable view of chain-driven runtime params
 // served to devshardd via NodeManager GetRuntimeConfig gRPC.
 type RuntimeConfigSnapshot struct {
-	// Initialized is true only after chain-driven runtime params have been
-	// published atomically at least once.
-	Initialized bool
 	// ParamsBlockHeight is the chain block height at which the last published runtime
 	// revision was recorded (see ApplyRuntimeConfigBlockIfChanged). It advances together
 	// with the published content snapshot; cache writes alone do not move it.
