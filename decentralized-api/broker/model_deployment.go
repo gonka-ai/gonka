@@ -143,24 +143,26 @@ func (b *Broker) refreshDeploymentUpdatePendingFromApplied(nodeID string) {
 	if !ok {
 		return
 	}
-	fingerprint := b.ResolveModelDeployment(model, local).Fingerprint()
-	applied, found, err := b.configManager.GetAppliedDeploymentFingerprint(context.Background(), nodeID, modelID)
+	expected := b.ResolveModelDeployment(model, local)
+	applied, found, err := b.configManager.GetAppliedDeployment(context.Background(), nodeID)
 	if err != nil {
 		logging.Warn("Failed to load applied model deployment", types.Config,
 			"node_id", nodeID, "model_id", modelID, "error", err)
 		return
 	}
-	if local.ModelOverride == nil && !found {
-		return
-	}
-	if found && applied == fingerprint {
-		return
-	}
 
+	if !found ||
+		applied.ModelID != expected.GovernanceID ||
+		applied.Fingerprint != expected.Fingerprint() {
+		b.markDeploymentUpdatePending(nodeID)
+	}
+}
+
+func (b *Broker) markDeploymentUpdatePending(nodeID string) {
 	b.mu.Lock()
+	defer b.mu.Unlock()
 	if current, ok := b.nodes[nodeID]; ok {
 		current.State.DeploymentUpdatePending = true
 		current.State.DeploymentRetryAfter = time.Time{}
 	}
-	b.mu.Unlock()
 }

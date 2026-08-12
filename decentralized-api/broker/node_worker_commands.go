@@ -108,8 +108,8 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		}
 	}
 
-	if healthyServing && localConfig.ModelOverride != nil {
-		if deferred := ensureOverrideReady(ctx, client, deployment, result, worker.nodeId); deferred != nil {
+	if healthyServing {
+		if deferred := ensureDeploymentReady(ctx, client, deployment, result, worker.nodeId); deferred != nil {
 			return *deferred
 		}
 	}
@@ -136,9 +136,7 @@ func (c InferenceUpNodeCommand) Execute(ctx context.Context, worker *NodeWorker)
 		result.DeploymentApplied = true
 		result.DeploymentModelID = deployment.GovernanceID
 		result.DeploymentUsesOverride = localConfig.ModelOverride != nil
-		if result.DeploymentUsesOverride {
-			result.DeploymentFingerprint = deployment.Fingerprint()
-		}
+		result.DeploymentFingerprint = deployment.Fingerprint()
 		logging.Info("Successfully brought up inference on node", types.Nodes, "node_id", worker.nodeId)
 	}
 	return result
@@ -188,7 +186,7 @@ func selectInferenceModel(worker *NodeWorker) (*types.Model, error) {
 	return nil, errors.New("no epoch models available for this node")
 }
 
-func ensureOverrideReady(
+func ensureDeploymentReady(
 	ctx context.Context,
 	client mlnodeclient.MLNodeClient,
 	deployment ModelDeployment,
@@ -199,27 +197,31 @@ func ensureOverrideReady(
 	if deployment.LoadCommit != "" {
 		commit = &deployment.LoadCommit
 	}
-	model := mlnodeclient.Model{HfRepo: deployment.LoadModel, HfCommit: commit}
-	status, err := client.CheckModelStatus(ctx, model)
+
+	target := mlnodeclient.Model{
+		HfRepo:   deployment.LoadModel,
+		HfCommit: commit,
+	}
+	status, err := client.CheckModelStatus(ctx, target)
 	if err != nil {
 		var notImplemented *mlnodeclient.ErrAPINotImplemented
 		if errors.As(err, &notImplemented) {
+			// Preserve compatibility with older MLNodes.
 			return nil
 		}
-		logging.Warn("Failed to check override cache readiness; deferring redeploy", types.Nodes,
+		logging.Warn("Failed to check deployment cache readiness; deferring redeploy", types.Nodes,
 			"node_id", nodeID, "model", deployment.LoadModel, "error", err)
 		return deferredDeploymentResult(result)
 	}
+
 	switch status.Status {
 	case mlnodeclient.ModelStatusDownloaded:
 		return nil
 	case mlnodeclient.ModelStatusNotFound, mlnodeclient.ModelStatusPartial:
-		if _, err := client.DownloadModel(ctx, model); err != nil {
-			logging.Warn("Failed to start override download", types.Nodes,
+		if _, err := client.DownloadModel(ctx, target); err != nil {
+			logging.Warn("Failed to start target model download", types.Nodes,
 				"node_id", nodeID, "model", deployment.LoadModel, "error", err)
 		}
-		return deferredDeploymentResult(result)
-	case mlnodeclient.ModelStatusDownloading:
 		return deferredDeploymentResult(result)
 	default:
 		return deferredDeploymentResult(result)

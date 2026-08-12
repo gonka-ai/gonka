@@ -241,23 +241,32 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 		node.State.DeploymentUpdatePending = true
 		node.State.DeploymentRetryAfter = c.Result.DeploymentRetryAfter
 	} else if c.Result.DeploymentApplied {
-		node.State.DeploymentUpdatePending = false
 		node.State.DeploymentRetryAfter = time.Time{}
-		if c.Result.DeploymentModelID != "" && b.configManager != nil {
-			var err error
-			if c.Result.DeploymentUsesOverride && c.Result.DeploymentFingerprint != "" {
-				err = b.configManager.SetAppliedDeploymentFingerprint(
-					context.Background(), c.NodeId, c.Result.DeploymentModelID, c.Result.DeploymentFingerprint,
-				)
-			} else {
-				err = b.configManager.DeleteAppliedDeploymentFingerprint(
-					context.Background(), c.NodeId, c.Result.DeploymentModelID,
-				)
-			}
+		if c.Result.DeploymentModelID != "" && c.Result.DeploymentFingerprint != "" && b.configManager != nil {
+			err := b.configManager.SetAppliedDeployment(
+				context.Background(),
+				c.NodeId,
+				apiconfig.AppliedDeploymentState{
+					ModelID:     c.Result.DeploymentModelID,
+					Fingerprint: c.Result.DeploymentFingerprint,
+				},
+			)
 			if err != nil {
+				node.State.DeploymentUpdatePending = true
 				logging.Warn("Failed to persist applied model deployment state", types.Config,
 					"node_id", c.NodeId, "model_id", c.Result.DeploymentModelID, "error", err)
+			} else {
+				node.State.DeploymentUpdatePending = false
+				logging.Info("Persisted applied model deployment state", types.Config,
+					"node_id", c.NodeId, "model_id", c.Result.DeploymentModelID)
 			}
+		} else {
+			node.State.DeploymentUpdatePending = false
+			logging.Warn("Skipping applied model deployment persist", types.Config,
+				"node_id", c.NodeId,
+				"model_id", c.Result.DeploymentModelID,
+				"has_fingerprint", c.Result.DeploymentFingerprint != "",
+				"has_config_manager", b.configManager != nil)
 		}
 	}
 	if !c.Result.Succeeded {

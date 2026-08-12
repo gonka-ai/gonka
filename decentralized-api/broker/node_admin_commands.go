@@ -248,16 +248,6 @@ func (c UpdateNode) Execute(b *Broker) {
 		models[model] = modelArgsFromConfig(config)
 	}
 	deploymentChanged := !modelArgsMapsEqual(existing.Node.Models, models)
-	if b.configManager != nil {
-		for modelID := range existing.Node.Models {
-			if _, stillConfigured := models[modelID]; !stillConfigured {
-				if err := b.configManager.DeleteAppliedDeploymentFingerprint(context.Background(), c.Node.Id, modelID); err != nil {
-					logging.Warn("Failed to delete stale applied deployment", types.Config,
-						"node_id", c.Node.Id, "model_id", modelID, "error", err)
-				}
-			}
-		}
-	}
 
 	updated := Node{
 		Host:             c.Node.Host,

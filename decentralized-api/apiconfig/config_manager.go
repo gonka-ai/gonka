@@ -571,42 +571,52 @@ func (cm *ConfigManager) SetNodes(nodes []InferenceNodeConfig) error {
 	return nil
 }
 
-const appliedDeploymentPrefix = "applied_model_deployment/"
-
-func appliedDeploymentKey(nodeID, modelID string) string {
-	encode := func(value string) string {
-		return base64.RawURLEncoding.EncodeToString([]byte(value))
-	}
-	return appliedDeploymentPrefix + encode(nodeID) + "/" + encode(modelID)
+type AppliedDeploymentState struct {
+	ModelID     string `json:"model_id"`
+	Fingerprint string `json:"fingerprint"`
 }
 
-func (cm *ConfigManager) SetAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID, fingerprint string) error {
+const appliedDeploymentPrefix = "applied_model_deployment/current/"
+const legacyAppliedDeploymentPrefix = "applied_model_deployment/"
+
+func appliedDeploymentKey(nodeID string) string {
+	encodedNodeID := base64.RawURLEncoding.EncodeToString([]byte(nodeID))
+	return appliedDeploymentPrefix + encodedNodeID
+}
+
+func (cm *ConfigManager) SetAppliedDeployment(
+	ctx context.Context,
+	nodeID string,
+	deployment AppliedDeploymentState,
+) error {
 	if cm == nil || cm.sqlDb == nil {
 		return nil
 	}
-	return KVSetString(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID), fingerprint)
+	return KVSetJSON(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID), deployment)
 }
 
-func (cm *ConfigManager) GetAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID string) (string, bool, error) {
+func (cm *ConfigManager) GetAppliedDeployment(ctx context.Context, nodeID string) (AppliedDeploymentState, bool, error) {
 	if cm == nil || cm.sqlDb == nil {
-		return "", false, nil
+		return AppliedDeploymentState{}, false, nil
 	}
-	return KVGetString(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID))
-}
-
-func (cm *ConfigManager) DeleteAppliedDeploymentFingerprint(ctx context.Context, nodeID, modelID string) error {
-	if cm == nil || cm.sqlDb == nil {
-		return nil
+	var deployment AppliedDeploymentState
+	ok, err := KVGetJSON(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID), &deployment)
+	if err != nil || !ok {
+		return AppliedDeploymentState{}, ok, err
 	}
-	return KVDelete(ctx, cm.sqlDb.GetDb(), appliedDeploymentKey(nodeID, modelID))
+	return deployment, true, nil
 }
 
 func (cm *ConfigManager) DeleteAppliedDeploymentsForNode(ctx context.Context, nodeID string) error {
 	if cm == nil || cm.sqlDb == nil {
 		return nil
 	}
-	prefix := appliedDeploymentPrefix + base64.RawURLEncoding.EncodeToString([]byte(nodeID)) + "/"
-	return KVDeletePrefix(ctx, cm.sqlDb.GetDb(), prefix)
+	db := cm.sqlDb.GetDb()
+	if err := KVDelete(ctx, db, appliedDeploymentKey(nodeID)); err != nil {
+		return err
+	}
+	encodedNodeID := base64.RawURLEncoding.EncodeToString([]byte(nodeID))
+	return KVDeletePrefix(ctx, db, legacyAppliedDeploymentPrefix+encodedNodeID+"/")
 }
 
 func (cm *ConfigManager) CreateWorkerKey() (string, error) {

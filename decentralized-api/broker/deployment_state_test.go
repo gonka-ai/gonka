@@ -83,12 +83,18 @@ func TestDeploymentUpdateReadyHonorsRetryBackoff(t *testing.T) {
 	require.True(t, deploymentUpdateReady(node, now))
 }
 
-func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
+func testDeploymentConfigManager(t *testing.T) *apiconfig.ConfigManager {
+	t.Helper()
 	dir := t.TempDir()
 	configPath := filepath.Join(dir, "config.yaml")
 	require.NoError(t, os.WriteFile(configPath, []byte("api:\n  port: 8080\n"), 0o644))
 	manager, err := apiconfig.LoadConfigManagerWithPaths(configPath, filepath.Join(dir, "gonka.db"), "")
 	require.NoError(t, err)
+	return manager
+}
+
+func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
 
 	const modelID = "MiniMaxAI/MiniMax-M2.7"
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
@@ -109,19 +115,77 @@ func TestRefreshDeploymentUpdatePendingFromApplied(t *testing.T) {
 
 	node.State.DeploymentUpdatePending = false
 	deployment := b.ResolveModelDeployment(node.State.EpochModels[modelID], node.Node.Models[modelID])
-	require.NoError(t, manager.SetAppliedDeploymentFingerprint(
-		context.Background(), node.Node.Id, modelID, deployment.Fingerprint(),
+	require.NoError(t, manager.SetAppliedDeployment(
+		context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+			ModelID:     modelID,
+			Fingerprint: deployment.Fingerprint(),
+		},
 	))
 	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
 	require.False(t, node.State.DeploymentUpdatePending)
 }
 
-func TestNonOverrideDeploymentDeletesStaleAppliedFingerprint(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte("api:\n  port: 8080\n"), 0o644))
-	manager, err := apiconfig.LoadConfigManagerWithPaths(configPath, filepath.Join(dir, "gonka.db"), "")
+func TestRefreshMarksDefaultDeploymentDirtyWhenUnrecorded(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	const modelID = "MiniMaxAI/MiniMax-M2.7"
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{modelID: {}}
+	node.State.EpochModels[modelID] = types.Model{Id: modelID}
+	node.State.EpochMLNodes[modelID] = types.MLNodeInfo{NodeId: node.Node.Id}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestRefreshMarksDirtyWhenPreviousModelReturns(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	const modelA = "model-a"
+	const modelB = "model-b"
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{
+		modelA: {ModelOverride: &apiconfig.ModelOverride{HfRepo: "host/model-a"}},
+		modelB: {ModelOverride: &apiconfig.ModelOverride{HfRepo: "host/model-b"}},
+	}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+
+	node.State.EpochModels[modelA] = types.Model{Id: modelA}
+	node.State.EpochMLNodes[modelA] = types.MLNodeInfo{NodeId: node.Node.Id}
+	appliedA := b.ResolveModelDeployment(node.State.EpochModels[modelA], node.Node.Models[modelA])
+	require.NoError(t, manager.SetAppliedDeployment(context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+		ModelID:     modelA,
+		Fingerprint: appliedA.Fingerprint(),
+	}))
+
+	node.State.EpochModels = map[string]types.Model{modelB: {Id: modelB}}
+	node.State.EpochMLNodes = map[string]types.MLNodeInfo{modelB: {NodeId: node.Node.Id}}
+	appliedB := b.ResolveModelDeployment(node.State.EpochModels[modelB], node.Node.Models[modelB])
+	require.NoError(t, manager.SetAppliedDeployment(context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+		ModelID:     modelB,
+		Fingerprint: appliedB.Fingerprint(),
+	}))
+	got, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
 	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, modelB, got.ModelID)
+
+	node.State.EpochModels = map[string]types.Model{modelA: {Id: modelA}}
+	node.State.EpochMLNodes = map[string]types.MLNodeInfo{modelA: {NodeId: node.Node.Id}}
+	node.State.DeploymentUpdatePending = false
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestDefaultDeploymentRecordsAppliedState(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
 
 	const modelID = "MiniMaxAI/MiniMax-M2.7"
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
@@ -134,33 +198,93 @@ func TestNonOverrideDeploymentDeletesStaleAppliedFingerprint(t *testing.T) {
 	b := NewTestBroker()
 	b.configManager = manager
 	b.nodes[node.Node.Id] = node
-	require.NoError(t, manager.SetAppliedDeploymentFingerprint(
-		context.Background(), node.Node.Id, modelID, "old-override",
-	))
 
 	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
-		Succeeded:         true,
-		FinalStatus:       types.HardwareNodeStatus_INFERENCE,
-		OriginalTarget:    types.HardwareNodeStatus_INFERENCE,
-		FinalPocStatus:    PocStatusIdle,
-		OriginalPocTarget: PocStatusIdle,
-		DeploymentApplied: true,
-		DeploymentModelID: modelID,
+		Succeeded:             true,
+		FinalStatus:           types.HardwareNodeStatus_INFERENCE,
+		OriginalTarget:        types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:        PocStatusIdle,
+		OriginalPocTarget:     PocStatusIdle,
+		DeploymentApplied:     true,
+		DeploymentModelID:     modelID,
+		DeploymentFingerprint: "default-fingerprint",
 	})
 	command.Execute(b)
 
-	_, found, err := manager.GetAppliedDeploymentFingerprint(context.Background(), node.Node.Id, modelID)
+	got, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
 	require.NoError(t, err)
-	require.False(t, found)
+	require.True(t, found)
+	require.Equal(t, modelID, got.ModelID)
+	require.Equal(t, "default-fingerprint", got.Fingerprint)
 	require.False(t, node.State.DeploymentUpdatePending)
 }
 
-func TestRemovedOverrideWithStaleFingerprintMarksNodeDirty(t *testing.T) {
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, "config.yaml")
-	require.NoError(t, os.WriteFile(configPath, []byte("api:\n  port: 8080\n"), 0o644))
-	manager, err := apiconfig.LoadConfigManagerWithPaths(configPath, filepath.Join(dir, "gonka.db"), "")
+func TestPersistenceFailureKeepsDeploymentPending(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	require.NoError(t, manager.SqlDb().GetDb().Close())
+
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.DeploymentUpdatePending = true
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:    types.HardwareNodeStatus_INFERENCE,
+		PocStatus: PocStatusIdle,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:             true,
+		FinalStatus:           types.HardwareNodeStatus_INFERENCE,
+		OriginalTarget:        types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:        PocStatusIdle,
+		OriginalPocTarget:     PocStatusIdle,
+		DeploymentApplied:     true,
+		DeploymentModelID:     "model-a",
+		DeploymentFingerprint: "fp",
+	})
+	command.Execute(b)
+
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestRejectedDeploymentDoesNotPersistFingerprint(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.DeploymentUpdatePending = true
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:    types.HardwareNodeStatus_INFERENCE,
+		PocStatus: PocStatusIdle,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+	require.NoError(t, manager.SetAppliedDeployment(context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+		ModelID:     "model-a",
+		Fingerprint: "old-commit",
+	}))
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:         false,
+		FinalStatus:       types.HardwareNodeStatus_FAILED,
+		OriginalTarget:    types.HardwareNodeStatus_INFERENCE,
+		OriginalPocTarget: PocStatusIdle,
+		Error:             "start inference failed with HTTP 409",
+	})
+	command.Execute(b)
+
+	got, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
 	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "old-commit", got.Fingerprint)
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestRemovedOverrideWithStaleFingerprintMarksNodeDirty(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
 
 	const modelID = "MiniMaxAI/MiniMax-M2.7"
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
@@ -171,12 +295,50 @@ func TestRemovedOverrideWithStaleFingerprintMarksNodeDirty(t *testing.T) {
 		nodes:         map[string]*NodeWithState{node.Node.Id: node},
 		configManager: manager,
 	}
-	require.NoError(t, manager.SetAppliedDeploymentFingerprint(
-		context.Background(), node.Node.Id, modelID, "old-override",
+	require.NoError(t, manager.SetAppliedDeployment(
+		context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+			ModelID:     modelID,
+			Fingerprint: "old-override",
+		},
 	))
 
 	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
 
+	require.True(t, node.State.DeploymentUpdatePending)
+}
+
+func TestCommitOnlyFingerprintChangeMarksNodeDirty(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+
+	const modelID = "MiniMaxAI/MiniMax-M2.7"
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.Node.Models = map[string]ModelArgs{
+		modelID: {
+			ModelOverride: &apiconfig.ModelOverride{
+				HfRepo:   "host/custom-minimax",
+				HfCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
+	}
+	node.State.EpochModels[modelID] = types.Model{Id: modelID}
+	node.State.EpochMLNodes[modelID] = types.MLNodeInfo{NodeId: node.Node.Id}
+	b := &Broker{
+		nodes:         map[string]*NodeWithState{node.Node.Id: node},
+		configManager: manager,
+	}
+	old := b.ResolveModelDeployment(node.State.EpochModels[modelID], node.Node.Models[modelID])
+	require.NoError(t, manager.SetAppliedDeployment(context.Background(), node.Node.Id, apiconfig.AppliedDeploymentState{
+		ModelID:     modelID,
+		Fingerprint: old.Fingerprint(),
+	}))
+
+	node.Node.Models[modelID] = ModelArgs{
+		ModelOverride: &apiconfig.ModelOverride{
+			HfRepo:   "host/custom-minimax",
+			HfCommit: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		},
+	}
+	b.refreshDeploymentUpdatePendingFromApplied(node.Node.Id)
 	require.True(t, node.State.DeploymentUpdatePending)
 }
 
