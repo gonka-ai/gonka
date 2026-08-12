@@ -160,6 +160,7 @@ type NodeResult struct {
 	DeploymentFingerprint  string
 	DeploymentModelID      string
 	DeploymentUsesOverride bool
+	DeploymentGeneration   uint64
 }
 
 type UpdateNodeResultCommand struct {
@@ -219,6 +220,17 @@ func (c UpdateNodeResultCommand) Execute(b *Broker) {
 			"original_poc_target", c.Result.OriginalPocTarget,
 			"current_reconciling_target", node.State.ReconcileInfo.Status,
 			"current_reconciling_poc_target", node.State.ReconcileInfo.PocStatus,
+			"blockHeight", blockHeight)
+		c.Response <- false
+		return
+	}
+
+	if node.State.ReconcileInfo.Generation != c.Result.DeploymentGeneration {
+		logging.Info("Ignoring stale result for node. deployment generation mismatch", types.Nodes,
+			"node_id", c.NodeId,
+			"original_target", c.Result.OriginalTarget,
+			"result_generation", c.Result.DeploymentGeneration,
+			"current_generation", node.State.ReconcileInfo.Generation,
 			"blockHeight", blockHeight)
 		c.Response <- false
 		return

@@ -223,6 +223,9 @@ type NodeState struct {
 	PoCValidationInference  bool      `json:"poc_validation_inference"`
 	DeploymentUpdatePending bool      `json:"deployment_update_pending"`
 	DeploymentRetryAfter    time.Time `json:"deployment_retry_after,omitempty"`
+	// DeploymentGeneration increments for each dispatched reconciliation so
+	// late results from a cancelled attempt cannot be applied to a newer one.
+	DeploymentGeneration uint64 `json:"deployment_generation,omitempty"`
 
 	// Epoch data for this node, keyed by model_id.
 	// We currently expect one item in each map.
@@ -246,8 +249,9 @@ func (s NodeState) MarshalJSON() ([]byte, error) {
 }
 
 type ReconcileInfo struct {
-	Status    types.HardwareNodeStatus `json:"status"`
-	PocStatus PocStatus                `json:"poc_status"`
+	Status     types.HardwareNodeStatus `json:"status"`
+	PocStatus  PocStatus                `json:"poc_status"`
+	Generation uint64                   `json:"generation,omitempty"`
 }
 
 func (s *NodeState) UpdateStatusAt(time time.Time, status types.HardwareNodeStatus) {
@@ -1027,9 +1031,12 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		ctx, cancel := context.WithCancel(context.Background())
 		intendedStatusCopy := currentNode.State.IntendedStatus
 		pocIntendedStatusCopy := currentNode.State.PocIntendedStatus
+		currentNode.State.DeploymentGeneration++
+		generation := currentNode.State.DeploymentGeneration
 		currentNode.State.ReconcileInfo = &ReconcileInfo{
-			Status:    intendedStatusCopy,
-			PocStatus: pocIntendedStatusCopy,
+			Status:     intendedStatusCopy,
+			PocStatus:  pocIntendedStatusCopy,
+			Generation: generation,
 		}
 		currentNode.State.cancelInFlightTask = cancel
 
@@ -1063,7 +1070,7 @@ func (b *Broker) reconcile(epochState chainphase.EpochState) {
 		if cmd != nil {
 			logging.Info("Dispatching reconciliation command", types.Nodes,
 				"node_id", id, "target_status", node.State.IntendedStatus, "target_poc_status", node.State.PocIntendedStatus, "blockHeight", blockHeight)
-			if !worker.Submit(ctx, cmd) {
+			if !worker.submit(ctx, cmd, generation) {
 				logging.Error("Failed to submit reconciliation command", types.Nodes, "node_id", id, "blockHeight", blockHeight)
 				cancel()
 				b.mu.Lock()

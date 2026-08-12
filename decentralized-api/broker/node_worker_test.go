@@ -88,6 +88,30 @@ func TestNodeWorker_BasicOperation(t *testing.T) {
 	}
 }
 
+func TestNodeWorker_StampsDeploymentGenerationOnResult(t *testing.T) {
+	broker := NewTestBroker2(1)
+	node := createTestNode("test-node-1")
+	mockClient := mlnodeclient.NewMockClient()
+	worker := NewNodeWorkerWithClient("test-node-1", node, mockClient, broker)
+	defer worker.Shutdown()
+
+	cmd := &TestCommand{
+		ExecuteFn: func(ctx context.Context, worker *NodeWorker) NodeResult {
+			return NodeResult{Succeeded: true, FinalStatus: types.HardwareNodeStatus_INFERENCE}
+		},
+	}
+	require.True(t, worker.submit(context.Background(), cmd, 7))
+
+	select {
+	case receivedCmd := <-broker.highPriorityCommands:
+		updateCmd, ok := receivedCmd.(UpdateNodeResultCommand)
+		require.True(t, ok)
+		require.Equal(t, uint64(7), updateCmd.Result.DeploymentGeneration)
+	case <-time.After(100 * time.Millisecond):
+		t.Fatal("timed out waiting for broker to receive command")
+	}
+}
+
 func TestNodeWorker_ErrorHandling(t *testing.T) {
 	broker := NewTestBroker2(1)
 	node := createTestNode("test-node-1")

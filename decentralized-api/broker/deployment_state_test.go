@@ -70,6 +70,81 @@ func TestUpdateNodeResultCommand_ClearsDirtyAfterAppliedDeployment(t *testing.T)
 	require.True(t, node.State.DeploymentRetryAfter.IsZero())
 }
 
+func TestUpdateNodeResultCommand_RejectsStaleDeploymentGeneration(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.DeploymentUpdatePending = true
+	node.State.DeploymentGeneration = 2
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:     types.HardwareNodeStatus_INFERENCE,
+		PocStatus:  PocStatusIdle,
+		Generation: 2,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:             true,
+		FinalStatus:           types.HardwareNodeStatus_INFERENCE,
+		OriginalTarget:        types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:        PocStatusIdle,
+		OriginalPocTarget:     PocStatusIdle,
+		DeploymentApplied:     true,
+		DeploymentModelID:     "model-a",
+		DeploymentFingerprint: "fingerprint-a",
+		DeploymentGeneration:  1,
+	})
+	command.Execute(b)
+
+	require.True(t, node.State.DeploymentUpdatePending)
+	require.NotNil(t, node.State.ReconcileInfo)
+	require.Equal(t, uint64(2), node.State.ReconcileInfo.Generation)
+
+	_, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.False(t, found)
+}
+
+func TestUpdateNodeResultCommand_AcceptsMatchingDeploymentGeneration(t *testing.T) {
+	manager := testDeploymentConfigManager(t)
+	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
+	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
+	node.State.DeploymentUpdatePending = true
+	node.State.DeploymentGeneration = 2
+	node.State.ReconcileInfo = &ReconcileInfo{
+		Status:     types.HardwareNodeStatus_INFERENCE,
+		PocStatus:  PocStatusIdle,
+		Generation: 2,
+	}
+	b := NewTestBroker()
+	b.configManager = manager
+	b.nodes[node.Node.Id] = node
+
+	command := NewUpdateNodeResultCommand(node.Node.Id, NodeResult{
+		Succeeded:             true,
+		FinalStatus:           types.HardwareNodeStatus_INFERENCE,
+		OriginalTarget:        types.HardwareNodeStatus_INFERENCE,
+		FinalPocStatus:        PocStatusIdle,
+		OriginalPocTarget:     PocStatusIdle,
+		DeploymentApplied:     true,
+		DeploymentModelID:     "model-b",
+		DeploymentFingerprint: "fingerprint-b",
+		DeploymentGeneration:  2,
+	})
+	command.Execute(b)
+
+	require.False(t, node.State.DeploymentUpdatePending)
+	require.Nil(t, node.State.ReconcileInfo)
+
+	got, found, err := manager.GetAppliedDeployment(context.Background(), node.Node.Id)
+	require.NoError(t, err)
+	require.True(t, found)
+	require.Equal(t, "model-b", got.ModelID)
+	require.Equal(t, "fingerprint-b", got.Fingerprint)
+}
+
 func TestDeploymentUpdateReadyHonorsRetryBackoff(t *testing.T) {
 	node := createTestNodeWithStatus("node-1", types.HardwareNodeStatus_INFERENCE)
 	node.State.IntendedStatus = types.HardwareNodeStatus_INFERENCE
