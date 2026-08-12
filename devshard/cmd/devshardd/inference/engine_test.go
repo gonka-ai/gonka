@@ -15,7 +15,6 @@ import (
 
 	mlnodeclient "common/nodemanager"
 	nmgen "common/nodemanager/gen"
-	"devshard"
 	"devshard/observability"
 
 	"github.com/stretchr/testify/assert"
@@ -69,21 +68,11 @@ func newTestEngine(ml *mlnodeclient.Client, mgr *mlnodeclient.Manager, capacity 
 	}
 }
 
-func TestExecutionIdempotencyKey(t *testing.T) {
-	req := devshard.ExecuteRequest{EpochID: 7, EscrowID: "escrow-a", InferenceID: 11}
-	key := executionIdempotencyKey(req)
-	require.Equal(t, key, executionIdempotencyKey(req))
-	require.NotEqual(t, key, executionIdempotencyKey(devshard.ExecuteRequest{EpochID: 7, EscrowID: "escrow-a", InferenceID: 12}))
-	require.Contains(t, key, "devshard-")
-}
-
-func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
-	var gotKey string
+func TestExecuteMLRequestMarksDispatchedBeforeSending(t *testing.T) {
 	var dispatched atomic.Bool
 	var receivedAfterDispatch atomic.Bool
 	mlSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		receivedAfterDispatch.Store(dispatched.Load())
-		gotKey = r.Header.Get("Idempotency-Key")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte(`{"ok":true}`))
 	}))
@@ -95,14 +84,13 @@ func TestExecuteMLRequestForwardsIdempotencyKey(t *testing.T) {
 		},
 	})
 	eng := newTestEngine(ml, nil, nil)
-	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", "devshard-test-key", []byte(`{}`), func(target string) error {
+	resp, err := eng.executeMLRequest(context.Background(), "model-a", "escrow-a", []byte(`{}`), func(target string) error {
 		require.Equal(t, mlSrv.URL, target)
 		dispatched.Store(true)
 		return nil
 	})
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
-	require.Equal(t, "devshard-test-key", gotKey)
 	require.True(t, receivedAfterDispatch.Load(), "dispatch must be durable before the server receives a request")
 }
 
@@ -188,7 +176,7 @@ func TestExecuteMLRequestDoesNotReplayDispatchedPOST(t *testing.T) {
 	eng := newTestEngine(ml, nil, nil)
 	eng.httpClient = client
 	resp, err := eng.executeMLRequest(
-		context.Background(), "model-a", "escrow-a", "devshard-test-key",
+		context.Background(), "model-a", "escrow-a",
 		[]byte(`{"request":true}`), func(string) error { return nil },
 	)
 	if resp != nil {

@@ -315,12 +315,11 @@ claimed --request not sent--> abandoned --new fence--> claimed
 
 An expired `claimed` lease may be acquired with a new fence. The stale owner
 must persist that fence immediately before sending and therefore cannot send
-after takeover. `dispatched` has no TTL takeover: without a shared ML-side
-`GetResult(idempotency_key)`, a lost response is indistinguishable from a POST
-that already took effect. Execution also stops rotating across ML nodes after
-dispatch. This gives the external side effect strict at-most-once behaviour;
-completed results remain replayable. A deterministic `Idempotency-Key` is sent
-as an additional backend-side guard, not as the correctness boundary.
+after takeover. `dispatched` has no TTL takeover: without a shared ML-side result
+lookup, a lost response is indistinguishable from a POST that already took
+effect. Execution also stops rotating across ML nodes after dispatch. This gives
+the external side effect strict at-most-once behaviour; completed results remain
+replayable.
 
 SQLite keeps the previous local-only behaviour. Multi-instance execution
 fencing, like shared validation leases, requires Postgres-only storage.
