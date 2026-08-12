@@ -144,9 +144,9 @@ not run the version. Existing version routes are untouched throughout.
 
 Consequently, a normal new governance name requires **no `config.env` edit, no
 router rollout, and no hoster action**. Both inner routers and `proxy-router`
-learn it independently. A same-name SHA update does not even consume a new slot;
-it remains the existing `version -> backend` mapping and is handled by
-`versiond`'s child rolling update.
+learn it independently. Governance binds each existing name to one SHA; new
+bytes use a new name and therefore a new slot. A URL-only mirror change keeps
+the existing mapping and does not restart the child.
 
 The catalog is authoritative only when it contains `schema: 1`,
 `initialized: true`, and a non-negative integer `revision`. Dapi returns `503`

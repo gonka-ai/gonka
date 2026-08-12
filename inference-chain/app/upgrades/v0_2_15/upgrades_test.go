@@ -98,7 +98,7 @@ func TestMigrateWarmKeyGrantMarkerSkipsExistingGrant(t *testing.T) {
 	require.Nil(t, authzKeeper.saved)
 }
 
-func TestApplyDevshardApprovedVersionsAppendsAndReplaces(t *testing.T) {
+func TestApplyDevshardApprovedVersionsAppendsAndUpdatesMirrors(t *testing.T) {
 	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
 
 	params, err := k.GetParams(ctx)
@@ -120,7 +120,7 @@ func TestApplyDevshardApprovedVersionsAppendsAndReplaces(t *testing.T) {
 			{
 				"name": "v1",
 				"binary": "https://example.com/devshardd-v1-new.zip",
-				"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+				"sha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 			},
 			{
 				"name": "v2",
@@ -138,7 +138,7 @@ func TestApplyDevshardApprovedVersionsAppendsAndReplaces(t *testing.T) {
 		{
 			Name:   "v1",
 			Binary: "https://example.com/devshardd-v1-new.zip",
-			Sha256: "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 		},
 		{
 			Name:   "v2",
@@ -146,6 +146,29 @@ func TestApplyDevshardApprovedVersionsAppendsAndReplaces(t *testing.T) {
 			Sha256: "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
 		},
 	}, got.DevshardEscrowParams.ApprovedVersions)
+}
+
+func TestApplyDevshardApprovedVersionsRejectsSameNameNewSHA(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
+		Name:   "v1",
+		Binary: "https://example.com/devshardd-v1.zip",
+		Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+	}}
+	require.NoError(t, k.SetParams(ctx, params))
+
+	err = applyDevshardApprovedVersions(ctx, k, `{
+		"approved_versions": [{
+			"name": "v1",
+			"binary": "https://example.com/devshardd-v1-new.zip",
+			"sha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		}]
+	}`)
+	require.ErrorContains(t, err, `approved devshard version "v1" sha256 is immutable`)
 }
 
 func TestApplyDevshardApprovedVersionsRejectsNullVersion(t *testing.T) {

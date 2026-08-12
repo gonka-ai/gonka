@@ -97,7 +97,22 @@ func TestMsgUpdateParamsApprovedVersionsAreAppendOnly(t *testing.T) {
 		require.ErrorContains(t, err, "devshard escrow params cannot be nil")
 	})
 
-	t.Run("update binary and add", func(t *testing.T) {
+	t.Run("replace sha", func(t *testing.T) {
+		proposed := types.DefaultParams()
+		proposed.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
+			approvedVersion("v4", "a"),
+			approvedVersion("v5", "b"),
+		}
+		proposed.DevshardEscrowParams.ApprovedVersions[0].Sha256 =
+			"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		_, err := ms.UpdateParams(wctx, &types.MsgUpdateParams{
+			Authority: k.GetAuthority(),
+			Params:    proposed,
+		})
+		require.ErrorContains(t, err, `approved devshard version "v4" sha256 is immutable`)
+	})
+
+	t.Run("update mirror and add", func(t *testing.T) {
 		proposed := types.DefaultParams()
 		proposed.DevshardEscrowParams.ApprovedVersions = []*types.DevshardApprovedVersion{
 			approvedVersion("v5", "c"),

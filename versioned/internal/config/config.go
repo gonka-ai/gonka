@@ -10,9 +10,8 @@ import (
 )
 
 const (
-	DefaultDrainKillGrace       = 10 * time.Minute
-	DefaultHostShutdownBudget   = 25 * time.Minute
-	DefaultArtifactRolloutGrace = 15 * time.Minute
+	DefaultDrainKillGrace     = 10 * time.Minute
+	DefaultHostShutdownBudget = 25 * time.Minute
 	// DefaultDrainAnnounce must exceed the load balancer's health-check
 	// detection time (interval x fall) so no request is refused before the
 	// balancer has withdrawn this upstream.
@@ -20,27 +19,26 @@ const (
 )
 
 type Config struct {
-	HA                   bool
-	OracleURL            string
-	ConsensusParamsURL   string
-	ConsensusStatusURL   string
-	PollInterval         time.Duration
-	BinDir               string
-	DataDir              string
-	BinaryName           string
-	BasePort             int
-	ReadyPath            string
-	ReadyTimeout         time.Duration
-	DrainPath            string
-	DrainStatusPath      string
-	DrainTimeout         time.Duration
-	DrainPollInterval    time.Duration
-	DrainKillGrace       time.Duration
-	HostShutdownBudget   time.Duration
-	DrainAnnounce        time.Duration
-	ArtifactRolloutGrace time.Duration
-	Overrides            map[string]string // version name -> local binary path
-	ForceVersions        []string          // version names that must run regardless of oracle
+	HA                 bool
+	OracleURL          string
+	ConsensusParamsURL string
+	ConsensusStatusURL string
+	PollInterval       time.Duration
+	BinDir             string
+	DataDir            string
+	BinaryName         string
+	BasePort           int
+	ReadyPath          string
+	ReadyTimeout       time.Duration
+	DrainPath          string
+	DrainStatusPath    string
+	DrainTimeout       time.Duration
+	DrainPollInterval  time.Duration
+	DrainKillGrace     time.Duration
+	HostShutdownBudget time.Duration
+	DrainAnnounce      time.Duration
+	Overrides          map[string]string // version name -> local binary path
+	ForceVersions      []string          // version names that must run regardless of oracle
 }
 
 func Load() (Config, error) {
@@ -95,7 +93,6 @@ func Load() (Config, error) {
 	}{
 		{&cfg.PollInterval, "VERSIOND_POLL_INTERVAL", 30 * time.Second, false},
 		{&cfg.ReadyTimeout, "VERSIOND_READY_TIMEOUT", 60 * time.Second, false},
-		{&cfg.ArtifactRolloutGrace, "VERSIOND_ARTIFACT_ROLLOUT_GRACE", DefaultArtifactRolloutGrace, false},
 		{&cfg.DrainTimeout, "VERSIOND_DRAIN_TIMEOUT", 15 * time.Minute, false},
 		{&cfg.DrainPollInterval, "VERSIOND_DRAIN_POLL_INTERVAL", time.Second, false},
 		{&cfg.DrainKillGrace, "VERSIOND_DRAIN_KILL_GRACE", DefaultDrainKillGrace, false},

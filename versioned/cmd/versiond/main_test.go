@@ -892,8 +892,9 @@ func TestVersiondReadyTracksTrafficCapacityNotConvergence(t *testing.T) {
 	}
 	conditions.Serving = true
 
-	// A routine same-name SHA bump makes every host progress at once. Evicting
-	// them all would take the pool down, so progressing must stay ready.
+	// Installing a newly appended version can make every host progress at once.
+	// Evicting them all would take the existing pools down, so progressing must
+	// stay host-ready; per-version readiness gates the new route separately.
 	conditions.Progressing = true
 	if !versiondReady(status, conditions) {
 		t.Fatal("progressing host lost readiness; the whole pool would drop out")

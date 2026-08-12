@@ -259,9 +259,9 @@ caller could abuse — it exposes strictly less than `/healthz` already does.
 - the manager has run every desired version at least once (`Converged`).
 
 `Converged` latches. Once a versiond has run its full desired set, a later
-download or child restart does not retract it. Without the latch, a routine
-same-name SHA bump would briefly un-converge every host at once and evict the
-entire pool — the failure mode readiness exists to prevent.
+catalog expansion, download, or child restart does not retract it. Without the
+latch, adding a version could briefly un-converge every host at once and evict
+all existing pools — the failure mode readiness exists to prevent.
 
 `/readyz?version=<v>` is the question the balancer actually has, and it needs no
 convergence latch and no view of the desired set: either a running child serves

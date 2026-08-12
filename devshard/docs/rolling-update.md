@@ -11,6 +11,12 @@ Operator requirement:
 > 3. once the new instance is reachable we route **new** requests to it, while
 >    the old instance keeps **draining** its in-flight requests.
 
+This is the supervisor's local blue/green primitive. The production HA
+governance catalog uses a stricter identity contract: `(version name, SHA)` is
+immutable. Governance may change a download mirror while keeping the SHA, but a
+new artifact is approved under a new version name. That rule prevents two
+partitioned hosts from serving different bytes under the same router key.
+
 This document describes:
 
 1. **Part 1 — versiond (implemented).** Blue/green + drain for governance
@@ -327,7 +333,6 @@ The implementation exposes these settings from
 |---|---|---|
 | `VERSIOND_READY_PATH` | `/ready` | devshardd admin readiness path; public `/healthz` must also pass before routing |
 | `VERSIOND_READY_TIMEOUT` | `60s` | max wait for new child to become ready before aborting swap |
-| `VERSIOND_ARTIFACT_ROLLOUT_GRACE` | `15m` | bounded lease during which the previously admitted SHA may keep serving while a same-name replacement is prepared; repeated catalog polls do not extend it |
 | `VERSIOND_DRAIN_PATH` | `/drain` | path versiond POSTs to put the old child into drain mode |
 | `VERSIOND_DRAIN_STATUS_PATH` | `/drain/status` | path versiond polls for the old child's in-flight count |
 | `VERSIOND_DRAIN_TIMEOUT` | `15m` | shared deadline for old proxy leases and child in-flight work before `SIGTERM` |
@@ -528,24 +533,18 @@ starting` for supervised retry.
 `/readyz` requires a fresh catalog fetch and, at process startup, an exact match
 between that verified catalog and the active artifact routes. The archive SHA,
 not its download URL, is the artifact identity: changing mirrors for identical
-bytes does not force a replacement. The startup proof latches, but per-version
-artifact eligibility does not. During a routine same-name SHA bump the old
-generation receives one bounded `VERSIOND_ARTIFACT_ROLLOUT_GRACE` lease so
-blue/green downloads do not evict the whole fleet at once. Publishing the new
-SHA restores exact readiness. A failed replacement stops answering ready for
-that version when the lease expires; polling the same catalog cannot extend it.
-The temporary mixed-generation window is therefore bounded rather than
-permanent.
+bytes does not force a replacement. Consensus rejects changing the SHA of an
+existing name; a new artifact is appended under a new name. A partitioned host
+can therefore keep serving the older catalog without creating an A/B split
+inside any one router pool. It simply does not enter the pool for a version name
+it has not observed and installed.
 
-A host that fails to install one particular version drops out of *that version's*
-pool when its rollout lease expires, and keeps serving the others.
-
-An oracle fetch failure does not invent a new desired identity and therefore
-does not clear readiness for the last verified catalog. A valid newer catalog
-whose archive cannot be installed is different: the old SHA remains available
-only for the bounded rollout lease described above. Reconcile failures are also
-reported through the `Degraded` condition and logs; readiness changes only when
-the artifact lease or the actual child serving state changes.
+A host that fails to install one particular new version stays out of *that
+version's* pool and keeps serving the others. An oracle fetch failure does not
+invent a new desired identity and therefore does not clear readiness for the
+last verified catalog. Reconcile failures are reported through the `Degraded`
+condition and logs; per-version readiness follows the actual child route and
+its continuously refreshed serving state.
 
 #### Operator procedure
 

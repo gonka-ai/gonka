@@ -417,17 +417,17 @@ Each `versiond` also keeps the last accepted full catalog under its own
 `VERSIOND_DATA_DIR`. The snapshot is fsynced before process reconciliation.
 After restart, lower revisions, in-place changes and version removals are
 rejected, so a stale DAPI replica cannot roll children back or remove them. A
-fresh store additionally compares DAPI's complete artifact set and revision
-bound with the local, caught-up consensus node before accepting its first
-revision. On every process start, persisted LKG children remain outside the
-load-balancer pool until a freshly verified catalog is represented by the exact
-active artifact routes. This startup proof latches, while each later same-name
-SHA replacement has a bounded compatibility lease: the old generation remains
-eligible during blue/green preparation but is removed from that version's pool
-if the approved SHA is not published before the lease expires. Binary URLs are
-mirrors; SHA is the artifact identity. HA mode refuses to start without both
-local consensus endpoints. The Compose contract configures them; no revision
-floor is maintained by the operator.
+fresh store additionally compares DAPI's complete artifact set at the catalog's
+exact consensus height with the local, caught-up consensus node before accepting
+its first revision. On every process start, persisted LKG children remain
+outside the load-balancer pool until a freshly verified catalog is represented
+by the exact active artifact routes. This startup proof latches. Consensus
+permanently binds each version name to one SHA: a mirror URL may change for the
+same bytes, while a new artifact must use a new version name. Therefore a host
+partitioned before an update may omit the new name, but cannot serve different
+bytes under a name shared with updated hosts. HA mode refuses to start without
+both local consensus endpoints. The Compose contract configures them; no
+revision floor is maintained by the operator.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

@@ -5,6 +5,7 @@ on:
     paths:
       - deploy/join/docker-compose.yml
       - deploy/join/docker-compose.versiond.yml
+      - deploy/join/docker-compose.versiond-external-postgres.yml
       - deploy/join/docker-compose.edge-api-multi.yml
       - deploy/join/docker-compose.observability.yml
       - deploy/join/docker-compose.versiond-v5-compat.yml

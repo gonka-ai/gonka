@@ -261,6 +261,12 @@ editing an override or relevant environment value during a run therefore
 causes rollback/failure instead of mixing two deployment generations.
 The outer updater also passes this exact fingerprint into the router cutover,
 which checks it before fleet work and again before ingress commit.
+For direct incident recovery, `enable-router-ha.sh --recover-only` reads the
+project identity, topology modes, timeout, and immutable rollback Compose model
+from the active transaction journal before reading `config.env`; a damaged
+forward config therefore cannot prevent restoration of the last committed
+ingress generation. Journals from builds predating that embedded recovery
+context fail closed and require the originating release files.
 
 On the first migration, the storage UUID becomes available when the first v5
 `versiond` has initialized the identity row in the shared database. The updater
@@ -577,7 +583,6 @@ The join Compose defaults are:
 | Setting | Default | Role |
 | --- | --- | --- |
 | `VERSIOND_DRAIN_ANNOUNCE` | `5s` | Keep serving after `/readyz` starts failing, so the balancer notices first. Counts against the shutdown budget; `0` = no balancer; below `5s` refuses to boot |
-| `VERSIOND_ARTIFACT_ROLLOUT_GRACE` | `15m` | Maximum compatibility window for an old SHA during a same-name governance rollout; a failed replacement leaves that version's pool after this deadline |
 | `VERSIOND_HEALTH_START_PERIOD` | `30m` | Compose startup allowance for downloads and first reconcile. A successful `/readyz` check marks the host healthy immediately; ordered upgrades wait at most 35 minutes |
 | `VERSIOND_HOST_SHUTDOWN_BUDGET` | `25m` | Internal absolute deadline; expiry forces remaining work and reaps children |
 | `VERSIOND_STOP_GRACE_PERIOD` | `30m` | Compose `stop_grace_period`, the outer Docker `SIGKILL` backstop |
@@ -585,8 +590,7 @@ The join Compose defaults are:
 Before upgrading, audit custom versiond duration values. Duration settings now
 use Go duration syntax and fail startup on malformed or non-positive values
 instead of silently falling back to defaults. Use values with units such as
-`15m` or `1s`; bare numbers, `VERSIOND_DRAIN_TIMEOUT=0`, and
-`VERSIOND_ARTIFACT_ROLLOUT_GRACE=0` are invalid. Only
+`15m` or `1s`; bare numbers and `VERSIOND_DRAIN_TIMEOUT=0` are invalid. Only
 `VERSIOND_DRAIN_ANNOUNCE=0` is accepted, where it explicitly declares that no
 balancer announcement window is needed.
 
@@ -637,9 +641,10 @@ only after the assignment succeeds.
 
 Therefore a normal new version requires **no host-side `config.env` edit and no
 router replacement**. Until a host has the child running, it is not in that
-version's pool; existing versions continue unchanged. A same-name SHA update
-uses the existing backend and remains entirely inside `versiond`'s blue/green
-child update.
+version's pool; existing versions continue unchanged. Governance permanently
+binds an existing version name to its SHA. A mirror URL may change for the same
+SHA; a new artifact must be approved under a new version name. This keeps the
+name-only router correct even when a host is partitioned from catalog updates.
 
 The approved catalog cannot announce a name before governance approves it. A
 release coordinator must therefore treat approval as the start of convergence,
@@ -774,6 +779,45 @@ docker compose \
 ./enable-router-ha.sh --versiond-mode ha --edge-mode multi
 ```
 
+For a fresh HA installation backed by managed PostgreSQL, keep the provider
+connection settings in an operator override and include the external-database
+overlay in every Compose command:
+
+```yaml
+# docker-compose.managed-postgres.yml
+services:
+  versiond:
+    environment: &managed-postgres
+      PGHOST: postgres.example.internal
+      PGPORT: "5432"
+      PGDATABASE: devshardd
+      PGUSER: devshardd
+      PGPASSWORD: ${DEVSHARD_POSTGRES_PASSWORD:?required}
+  versiond2:
+    environment: *managed-postgres
+```
+
+```bash
+source ./config.env
+./versiond-router-fleet.sh prepare-networks
+docker compose \
+  -f docker-compose.yml \
+  -f docker-compose.versiond.yml \
+  -f docker-compose.versiond-external-postgres.yml \
+  -f docker-compose.managed-postgres.yml \
+  up -d --wait --wait-timeout 2100
+./enable-router-ha.sh \
+  --versiond-mode ha --edge-mode single \
+  --compose-file docker-compose.yml \
+  --compose-file docker-compose.versiond.yml \
+  --compose-file docker-compose.versiond-external-postgres.yml \
+  --compose-file docker-compose.managed-postgres.yml
+```
+
+The external overlay disables the bundled `devshard-postgres` service; it does
+not invent provider credentials. Both supervisors must resolve the same
+`PGHOST`, `PGPORT`, `PGDATABASE`, and `PGUSER` tuple.
+
 On a cold start, the first `up -d` may expose an unready public proxy while the
 application pool is still starting; no existing traffic exists yet. The second
 command converges the independently owned router slots and verifies the final
@@ -903,6 +947,6 @@ daemon restart. Persist the corresponding replica count as `0` first.
 | Doc | Use |
 | --- | --- |
 | [versiond-host-evacuation.md](./versiond-host-evacuation.md) | Whole-host evacuation / replacement design and operator contract (Track B) |
-| [rolling-update.md](./rolling-update.md) | Same-name SHA blue/green + drain (Track A) and §1.8 host draining |
+| [rolling-update.md](./rolling-update.md) | Child blue/green + drain machinery (Track A), immutable production artifact identity, and §1.8 host draining |
 | [versiond-router/README.md](../../versiond-router/README.md) | Router routing, per-version health checks, and how to read the pool |
 | [release-0.2.14-v4.md](./release-0.2.14-v4.md) | Previous release line |

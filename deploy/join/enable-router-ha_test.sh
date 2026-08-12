@@ -526,6 +526,19 @@ jq -e '.transaction.ingress.state == "active" and
        .transaction.ingress.touched == ["policy:proxy-policy2"]' \
     "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "SIGKILL did not leave a replayable touched-resource journal"
+cp "$tmpdir/config.env" "$tmpdir/config.env.saved"
+printf 'this forward config is intentionally invalid\n' >"$tmpdir/config.env"
+: >"$tmpdir/configless-recovery.log"
+env DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/configless-recovery.log" \
+    STATE_DIR="$tmpdir" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/enable-router-ha.sh" --recover-only
+mv "$tmpdir/config.env.saved" "$tmpdir/config.env"
+jq -e '.transaction.ingress.state == "rolled_back"' \
+    "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
+    "config-independent recovery did not finish the embedded rollback model"
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/crash-recovery.log" env

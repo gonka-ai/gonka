@@ -17,7 +17,11 @@ func TestConsensusVerifierRequiresCurrentConsensusArtifacts(t *testing.T) {
 	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
 		fmt.Fprintf(w, `{"result":{"sync_info":{"catching_up":%t,"latest_block_height":"100"}}}`, catchingUp)
 	})
-	mux.HandleFunc("/params", func(w http.ResponseWriter, _ *http.Request) {
+	mux.HandleFunc("/params", func(w http.ResponseWriter, r *http.Request) {
+		if got := r.Header.Get("x-cosmos-block-height"); got != "42" {
+			t.Errorf("params height = %q, want 42", got)
+		}
+		w.Header().Set("x-cosmos-block-height", "42")
 		fmt.Fprintf(w, `{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v5","binary":"https://example.invalid/v5.zip","sha256":"%s"}]}}}`, consensusSHA)
 	})
 	server := httptest.NewServer(mux)
@@ -53,6 +57,7 @@ func TestClientDoesNotReturnCatalogRejectedByConsensusVerifier(t *testing.T) {
 		fmt.Fprint(w, `{"result":{"sync_info":{"catching_up":false,"latest_block_height":"100"}}}`)
 	})
 	mux.HandleFunc("/params", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("x-cosmos-block-height", "42")
 		fmt.Fprint(w, `{"params":{"devshard_escrow_params":{"approved_versions":[]}}}`)
 	})
 	server := httptest.NewServer(mux)
@@ -63,6 +68,28 @@ func TestClientDoesNotReturnCatalogRejectedByConsensusVerifier(t *testing.T) {
 	))
 	if _, err := client.Fetch(context.Background()); err == nil {
 		t.Fatal("Fetch returned a catalog that did not match consensus")
+	}
+}
+
+func TestConsensusVerifierRejectsParamsFromAnotherHeight(t *testing.T) {
+	const sha = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/status", func(w http.ResponseWriter, _ *http.Request) {
+		fmt.Fprint(w, `{"result":{"sync_info":{"catching_up":false,"latest_block_height":"100"}}}`)
+	})
+	mux.HandleFunc("/params", func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("x-cosmos-block-height", "43")
+		fmt.Fprintf(w, `{"params":{"devshard_escrow_params":{"approved_versions":[{"name":"v5","binary":"https://example.invalid/v5.zip","sha256":"%s"}]}}}`, sha)
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+
+	verifier := NewConsensusVerifier(server.URL+"/params", server.URL+"/status")
+	err := verifier.Verify(context.Background(), catalogForTest(42, Version{
+		Name: "v5", Binary: "https://example.invalid/v5.zip", SHA256: sha,
+	}))
+	if err == nil {
+		t.Fatal("Verify accepted params from a different consensus height")
 	}
 }
 

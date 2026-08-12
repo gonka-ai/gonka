@@ -43,7 +43,7 @@ func (v *ConsensusVerifier) Verify(ctx context.Context, candidate VersionConfig)
 			latestHeight,
 		)
 	}
-	versions, err := v.fetchApprovedVersions(ctx)
+	versions, err := v.fetchApprovedVersions(ctx, candidate.Revision)
 	if err != nil {
 		return err
 	}
@@ -81,7 +81,7 @@ func (v *ConsensusVerifier) fetchConsensusStatus(ctx context.Context) (bool, int
 	return *response.Result.SyncInfo.CatchingUp, height, nil
 }
 
-func (v *ConsensusVerifier) fetchApprovedVersions(ctx context.Context) ([]Version, error) {
+func (v *ConsensusVerifier) fetchApprovedVersions(ctx context.Context, height int64) ([]Version, error) {
 	var response struct {
 		Params struct {
 			DevshardEscrowParams *struct {
@@ -89,13 +89,53 @@ func (v *ConsensusVerifier) fetchApprovedVersions(ctx context.Context) ([]Versio
 			} `json:"devshard_escrow_params"`
 		} `json:"params"`
 	}
-	if err := v.getJSON(ctx, v.paramsURL, &response); err != nil {
+	if err := v.getJSONAtHeight(ctx, v.paramsURL, height, &response); err != nil {
 		return nil, fmt.Errorf("read consensus inference params: %w", err)
 	}
 	if response.Params.DevshardEscrowParams == nil {
 		return nil, fmt.Errorf("consensus response has no devshard escrow params")
 	}
 	return response.Params.DevshardEscrowParams.ApprovedVersions, nil
+}
+
+func (v *ConsensusVerifier) getJSONAtHeight(
+	ctx context.Context,
+	endpoint string,
+	height int64,
+	target any,
+) error {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("create request: %w", err)
+	}
+	wantedHeight := strconv.FormatInt(height, 10)
+	req.Header.Set("x-cosmos-block-height", wantedHeight)
+	resp, err := v.httpClient.Do(req)
+	if err != nil {
+		return fmt.Errorf("request %s: %w", endpoint, err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("%s returned status %d", endpoint, resp.StatusCode)
+	}
+	observedHeight := resp.Header.Get("x-cosmos-block-height")
+	if observedHeight == "" {
+		// grpc-gateway exposes response metadata with this prefix on some SDK
+		// versions while others copy the canonical header directly.
+		observedHeight = resp.Header.Get("grpc-metadata-x-cosmos-block-height")
+	}
+	if observedHeight != wantedHeight {
+		return fmt.Errorf(
+			"%s returned consensus height %q, want %s",
+			endpoint,
+			observedHeight,
+			wantedHeight,
+		)
+	}
+	if err := json.NewDecoder(resp.Body).Decode(target); err != nil {
+		return fmt.Errorf("decode %s: %w", endpoint, err)
+	}
+	return nil
 }
 
 func (v *ConsensusVerifier) getJSON(ctx context.Context, endpoint string, target any) error {

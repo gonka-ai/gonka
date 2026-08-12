@@ -3,6 +3,7 @@ package keeper
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	errorsmod "cosmossdk.io/errors"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -39,22 +40,29 @@ func validateApprovedVersionProgression(current, proposed *types.DevshardEscrowP
 	if current == nil {
 		return nil
 	}
-	proposedNames := make(map[string]struct{}, len(proposed.ApprovedVersions))
+	proposedVersions := make(map[string]*types.DevshardApprovedVersion, len(proposed.ApprovedVersions))
 	for _, version := range proposed.ApprovedVersions {
 		// proposed has already passed Params.Validate; keep this helper robust
 		// against corrupt legacy state rather than panic while comparing it.
 		if version == nil {
 			return fmt.Errorf("proposed approved devshard version cannot be null")
 		}
-		proposedNames[version.Name] = struct{}{}
+		proposedVersions[version.Name] = version
 	}
 	for _, version := range current.ApprovedVersions {
 		if version == nil {
 			return fmt.Errorf("current approved devshard version cannot be null")
 		}
-		if _, ok := proposedNames[version.Name]; !ok {
+		proposedVersion, ok := proposedVersions[version.Name]
+		if !ok {
 			return fmt.Errorf(
 				"approved devshard version %q cannot be removed; version names are append-only",
+				version.Name,
+			)
+		}
+		if !strings.EqualFold(version.Sha256, proposedVersion.Sha256) {
+			return fmt.Errorf(
+				"approved devshard version %q sha256 is immutable; add a new version name for a new artifact",
 				version.Name,
 			)
 		}

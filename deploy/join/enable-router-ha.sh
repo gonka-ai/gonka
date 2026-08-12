@@ -25,9 +25,12 @@ declare -A policy_rollback_container_ids=()
 declare -A inherited_env=()
 declare -a migration_routes=()
 declare -a compose_file_args=()
+declare -a compose=()
 policy_services=(proxy-policy2 proxy-policy)
 policy_contract_version=1
 catalog_cache_protocol_version=2
+recovery_context_only=false
+recovery_model_file=
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -100,32 +103,8 @@ done
 
 case $versiond_mode in auto | single | ha) ;; *) fail "invalid versiond mode" ;; esac
 case $edge_mode in auto | single | multi) ;; *) fail "invalid edge-api mode" ;; esac
-[[ -f $config_env ]] || fail "configuration file not found: $config_env"
-while IFS= read -r name; do
-    case $name in
-        COMPOSE_* | GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
-            inherited_env[$name]=${!name}
-            ;;
-    esac
-done < <(compgen -e)
-set -a
-# shellcheck disable=SC1090
-source "$config_env"
-set +a
-for name in "${!inherited_env[@]}"; do
-    printf -v "$name" '%s' "${inherited_env[$name]}"
-    export "${name?}"
-done
-docker_bin=${DOCKER_BIN:-docker}
-fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
-
-command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
-command -v flock >/dev/null 2>&1 || fail "flock is required"
-command -v jq >/dev/null 2>&1 || fail "jq is required"
-# shellcheck source=deploy/join/compose-topology.sh
-source "$script_dir/compose-topology.sh"
-# shellcheck source=deploy/join/deployment-lock.sh
-source "$script_dir/deployment-lock.sh"
+config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
+transaction_journal=${ROUTER_HA_TRANSACTION_JOURNAL:-$config_dir/.gonka-router-ha-transaction.json}
 
 container_exists() {
     "$docker_bin" inspect "$1" >/dev/null 2>&1
@@ -142,38 +121,109 @@ container_generation_available() {
 	esac
 }
 
-if [[ $versiond_mode == auto ]]; then
-    if container_exists devshard-postgres || container_exists versiond2 || \
-        container_exists versiond-router; then
-        versiond_mode=ha
-    else
-        versiond_mode=single
-    fi
-fi
-if [[ $edge_mode == auto ]]; then
-    if container_exists edge-api2 || container_exists edge-api3 || \
-        container_exists edge-api-router; then
-        edge_mode=multi
-    else
-        edge_mode=single
-    fi
-fi
+initialize_base_tools() {
+	docker_bin=${DOCKER_BIN:-docker}
+	command -v "$docker_bin" >/dev/null 2>&1 || fail "$docker_bin is required"
+	command -v flock >/dev/null 2>&1 || fail "flock is required"
+	command -v jq >/dev/null 2>&1 || fail "jq is required"
+	# shellcheck source=deploy/join/deployment-lock.sh disable=SC1091
+	source "$script_dir/deployment-lock.sh"
+}
 
-runtime_compose_containers=(versiond edge-api)
-container_exists proxy && runtime_compose_containers+=(proxy)
-for container in versiond2 devshard-postgres edge-api2 edge-api3; do
-    container_exists "$container" && runtime_compose_containers+=("$container")
-done
-gonka_compose_resolve \
-    "$docker_bin" "$script_dir" "$versiond_mode" "$edge_mode" \
-    "$compose_project_name" "$compose_project_directory" \
-    compose_file_args runtime_compose_containers
-compose=("${GONKA_COMPOSE_COMMAND[@]}")
+initialize_forward_context() {
+	local name container
+	local -a runtime_compose_containers=(versiond edge-api)
+	[[ -f $config_env ]] || fail "configuration file not found: $config_env"
+	while IFS= read -r name; do
+		case $name in
+			COMPOSE_* | GONKA_* | VERSIOND_* | ROUTER_HA_* | PROXY_* | DOCKER_BIN)
+				inherited_env[$name]=${!name}
+				;;
+		esac
+	done < <(compgen -e)
+	set -a
+	# shellcheck disable=SC1090
+	source "$config_env"
+	set +a
+	for name in "${!inherited_env[@]}"; do
+		printf -v "$name" '%s' "${inherited_env[$name]}"
+		export "${name?}"
+	done
 
-expected_compose_sha=${ROUTER_HA_EXPECTED_COMPOSE_SHA256:-}
-if [[ -n $expected_compose_sha && ! $expected_compose_sha =~ ^[0-9a-f]{64}$ ]]; then
-	fail "ROUTER_HA_EXPECTED_COMPOSE_SHA256 must be a lowercase SHA-256"
-fi
+	initialize_base_tools
+	fleet_bin=${VERSIOND_ROUTER_FLEET_BIN:-$script_dir/versiond-router-fleet.sh}
+	# shellcheck source=deploy/join/compose-topology.sh disable=SC1091
+	source "$script_dir/compose-topology.sh"
+
+	if [[ $versiond_mode == auto ]]; then
+		if container_exists devshard-postgres || container_exists versiond2 || \
+			container_exists versiond-router; then
+			versiond_mode=ha
+		else
+			versiond_mode=single
+		fi
+	fi
+	if [[ $edge_mode == auto ]]; then
+		if container_exists edge-api2 || container_exists edge-api3 || \
+			container_exists edge-api-router; then
+			edge_mode=multi
+		else
+			edge_mode=single
+		fi
+	fi
+
+	container_exists proxy && runtime_compose_containers+=(proxy)
+	for container in versiond2 devshard-postgres edge-api2 edge-api3; do
+		container_exists "$container" && runtime_compose_containers+=("$container")
+	done
+	gonka_compose_resolve \
+		"$docker_bin" "$script_dir" "$versiond_mode" "$edge_mode" \
+		"$compose_project_name" "$compose_project_directory" \
+		compose_file_args runtime_compose_containers
+	compose=("${GONKA_COMPOSE_COMMAND[@]}")
+
+	expected_compose_sha=${ROUTER_HA_EXPECTED_COMPOSE_SHA256:-}
+	if [[ -n $expected_compose_sha && ! $expected_compose_sha =~ ^[0-9a-f]{64}$ ]]; then
+		fail "ROUTER_HA_EXPECTED_COMPOSE_SHA256 must be a lowercase SHA-256"
+	fi
+	pull_policy=${ROUTER_HA_PULL_POLICY:-always}
+	case $pull_policy in
+		always | missing | never) ;;
+		*) fail "ROUTER_HA_PULL_POLICY must be always, missing, or never" ;;
+	esac
+	cutover_timeout=${ROUTER_HA_CUTOVER_TIMEOUT_SECONDS:-60}
+	case $cutover_timeout in
+		'' | *[!0-9]* | 0) fail "ROUTER_HA_CUTOVER_TIMEOUT_SECONDS must be positive" ;;
+	esac
+	transaction_id=${ROUTER_HA_TRANSACTION_ID:-router-ha-$(date +%s%N)-$$}
+}
+
+initialize_recovery_context() {
+	[[ -f $transaction_journal ]] || return 0
+	[[ $(jq -r '.transaction.ingress.state // ""' "$transaction_journal") == active ]] || return 0
+	jq -e '.transaction.ingress.recovery | type == "object"' \
+		"$transaction_journal" >/dev/null || fail \
+		"active ingress journal lacks self-contained recovery context; repair config.env and rerun recovery with the originating release"
+	GONKA_COMPOSE_PROJECT=$(jq -er '.transaction.ingress.recovery.compose_project' \
+		"$transaction_journal")
+	GONKA_COMPOSE_PROJECT_DIRECTORY=$(jq -er \
+		'.transaction.ingress.recovery.compose_project_directory' "$transaction_journal")
+	versiond_mode=$(jq -er '.transaction.ingress.recovery.versiond_mode' \
+		"$transaction_journal")
+	edge_mode=$(jq -er '.transaction.ingress.recovery.edge_mode' \
+		"$transaction_journal")
+	policy_network=$(jq -er '.transaction.ingress.recovery.policy_network' \
+		"$transaction_journal")
+	cutover_timeout=$(jq -er '.transaction.ingress.recovery.cutover_timeout' \
+		"$transaction_journal")
+	recovery_model_file=$(mktemp "$config_dir/.gonka-recovery-model.XXXXXX.json")
+	jq -c '.transaction.ingress.rollback_models.policy' \
+		"$transaction_journal" >"$recovery_model_file"
+	chmod 600 "$recovery_model_file"
+	compose=("$docker_bin" compose --project-name "$GONKA_COMPOSE_PROJECT" \
+		--project-directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" -f "$recovery_model_file")
+	recovery_context_only=true
+}
 
 current_outer_compose_sha() {
 	local rendered
@@ -205,14 +255,6 @@ ensure_compose_network() {
         --label "com.docker.compose.project=$project" \
         "$name" >/dev/null
 }
-pull_policy=${ROUTER_HA_PULL_POLICY:-always}
-case $pull_policy in always | missing | never) ;; *) fail "ROUTER_HA_PULL_POLICY must be always, missing, or never" ;; esac
-cutover_timeout=${ROUTER_HA_CUTOVER_TIMEOUT_SECONDS:-60}
-case $cutover_timeout in '' | *[!0-9]* | 0) fail "ROUTER_HA_CUTOVER_TIMEOUT_SECONDS must be positive" ;; esac
-config_dir=$(cd -- "$(dirname -- "$config_env")" && pwd -P)
-transaction_journal=${ROUTER_HA_TRANSACTION_JOURNAL:-$config_dir/.gonka-router-ha-transaction.json}
-transaction_id=${ROUTER_HA_TRANSACTION_ID:-router-ha-$(date +%s%N)-$$}
-
 container_config_hash() {
 	"$docker_bin" inspect --format \
 		'{{index .Config.Labels "com.docker.compose.config-hash"}}' "$1"
@@ -496,11 +538,20 @@ begin_ingress_transaction() {
 	desired_sha=$(printf '%s' "$current_model" | sha256sum | awk '{print $1}')
 	write_ingress_record "$(jq -cn \
 		--arg id "$transaction_id" --arg desired_sha "$desired_sha" \
+		--arg compose_project "$GONKA_COMPOSE_PROJECT" \
+		--arg compose_project_directory "$GONKA_COMPOSE_PROJECT_DIRECTORY" \
+		--arg versiond_mode "$versiond_mode" --arg edge_mode "$edge_mode" \
+		--arg policy_network "$policy_network" \
+		--argjson cutover_timeout "$cutover_timeout" \
 		--argjson policies "$policies" --argjson proxy "$proxy" \
 		--argjson policy_model "$policy_model" \
 		--argjson proxy_model "$proxy_model" \
 		'{schema: 1, id: $id, state: "active", desired_compose_sha256: $desired_sha,
 		  touched: [], policies: $policies, proxy: $proxy,
+		  recovery: {compose_project: $compose_project,
+		    compose_project_directory: $compose_project_directory,
+		    versiond_mode: $versiond_mode, edge_mode: $edge_mode,
+		    policy_network: $policy_network, cutover_timeout: $cutover_timeout},
 		  rollback_models: {policy: $policy_model, proxy: $proxy_model}}')"
 	rollback_pending=true
 	policy_rollback_pending=true
@@ -579,7 +630,7 @@ restore_policy_slot() {
 }
 
 restore_public_proxy() {
-	local kind expected_id= current_id= identity_known=false
+	local kind expected_id='' current_id='' identity_known=false
 	kind=$(jq -er '.transaction.ingress.proxy.kind' "$transaction_journal") || return 1
 	if jq -e '.transaction.ingress.proxy | has("container_id")' \
 		"$transaction_journal" >/dev/null 2>&1; then
@@ -602,7 +653,13 @@ restore_public_proxy() {
 		up -d --no-deps --force-recreate --wait \
 		--wait-timeout "$cutover_timeout" proxy || return 1
 	if [[ $kind == current ]]; then
-		[[ $versiond_mode != ha ]] || run_fleet verify-admission || return 1
+		if [[ $versiond_mode == ha ]]; then
+			if $recovery_context_only; then
+				wait_component versiond || return 1
+			else
+				run_fleet verify-admission || return 1
+			fi
+		fi
 		[[ $edge_mode != multi ]] || wait_component edge-api || return 1
 	fi
 }
@@ -880,14 +937,22 @@ restore_proxy() {
     exit "$status"
 }
 
+if [[ $recover_only == true ]]; then
+	initialize_base_tools
+	gonka_acquire_deployment_lock "$config_dir" || exit 1
+	initialize_recovery_context
+	trap '[[ -z ${recovery_model_file:-} ]] || rm -f "$recovery_model_file"' EXIT
+	recover_interrupted_ingress
+	[[ -z $recovery_model_file ]] || rm -f "$recovery_model_file"
+	echo "Ingress transaction recovery completed"
+	exit 0
+fi
+
+initialize_forward_context
 compose_project=$GONKA_COMPOSE_PROJECT
 policy_network=$GONKA_COMPOSE_POLICY_NETWORK
 gonka_acquire_deployment_lock "$config_dir" || exit 1
 recover_interrupted_ingress
-if [[ $recover_only == true ]]; then
-	echo "Ingress transaction recovery completed"
-	exit 0
-fi
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
 verify_outer_compose_generation

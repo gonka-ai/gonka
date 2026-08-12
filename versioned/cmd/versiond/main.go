@@ -195,11 +195,6 @@ func reconcileOnce(
 		slog.Error("oracle catalog rejected, keeping current versions", "error", err)
 		return false
 	}
-	if err := mgr.ObserveVerifiedCatalog(catalog.Versions); err != nil {
-		mgr.ReportReconcileError(fmt.Errorf("verified catalog identity: %w", err))
-		slog.Error("verified catalog identity rejected", "error", err)
-		return false
-	}
 	if err := reconcileCatalog(ctx, catalog, mgr); err == nil {
 		if !mgr.AdmitCatalog(catalog.Versions) {
 			mgr.ReportReconcileError(errors.New("verified catalog is not represented by the active artifact routes"))
@@ -542,10 +537,10 @@ func storageIdentityHandler(reader storageIdentityReader) http.HandlerFunc {
 // Conditions.Degraded and the logs, and are not a readiness gate.
 //
 // For the same reason Converged is a latch rather than a live check: requiring
-// convergence would evict the whole pool on a routine same-name SHA bump,
-// because every host starts downloading at once. A host that has never run its
-// desired set stays out of rotation; a later download does not retract
-// readiness.
+// live convergence would evict every host that is still installing a newly
+// appended version or restarting one child. A host that has never run its
+// desired set stays out of rotation; later background work does not retract
+// host-level readiness.
 //
 // This host-level answer is necessarily coarse: it cannot say that one version
 // out of several is missing here. versiondReadyForVersion answers that precisely
