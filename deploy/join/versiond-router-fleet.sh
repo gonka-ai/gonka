@@ -792,14 +792,22 @@ container_env_value_or_legacy_default() {
 require_cache_compatible() {
     local candidate=$1 candidate_protocol slot id running_image running_protocol
     candidate_protocol=$(cache_protocol_for_image "$candidate")
-    [[ -n $candidate_protocol ]] || fail \
-        "candidate image has no catalog cache protocol label"
+    [[ $candidate_protocol =~ ^[0-9]+$ ]] || fail \
+        "candidate image has no numeric catalog cache protocol label"
     for slot in "${slots[@]}"; do
         id=$(slot_id "$slot") || continue
         running_image=$($docker_bin inspect --format '{{.Image}}' "$id")
         running_protocol=$(cache_protocol_for_image "$running_image")
-        [[ $running_protocol == "$candidate_protocol" ]] || fail \
-            "catalog cache protocol mismatch: candidate=$candidate_protocol slot-$slot=${running_protocol:-missing}; migrate the persistent cache before rollout"
+        [[ $running_protocol =~ ^[0-9]+$ ]] || fail \
+            "slot $slot has no numeric catalog cache protocol label"
+        # Protocol generations own distinct files in the per-slot state volume.
+        # One-step upgrades are safe and automatic; the previous file remains
+        # untouched for exact-image rollback. Skipping a generation or an
+        # operator-requested downgrade is ambiguous and fails.
+        if ((candidate_protocol != running_protocol && \
+            candidate_protocol != running_protocol + 1)); then
+            fail "catalog cache protocol mismatch: candidate=$candidate_protocol slot-$slot=$running_protocol; roll forward one protocol generation at a time"
+        fi
     done
 }
 

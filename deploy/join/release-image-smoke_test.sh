@@ -207,6 +207,13 @@ proxy_policy_image_id=$(docker image inspect "$proxy_policy_image" --format '{{.
 proxy_router_image_id=$(docker image inspect "$proxy_router_image" --format '{{.Id}}')
 postgres_image_id=$(docker image inspect "$postgres_image" --format '{{.Id}}')
 
+versiond_cache_protocol=$(docker image inspect "$versiond_router_image_id" \
+    --format '{{index .Config.Labels "ai.gonka.catalog-cache-protocol-version"}}')
+proxy_cache_protocol=$(docker image inspect "$proxy_router_image_id" \
+    --format '{{index .Config.Labels "ai.gonka.catalog-cache-protocol-version"}}')
+[[ $versiond_cache_protocol == 2 && $proxy_cache_protocol == 2 ]] || fail \
+    "router images must publish catalog cache protocol 2 (versiond=${versiond_cache_protocol:-missing}, proxy=${proxy_cache_protocol:-missing})"
+
 docker run --rm "$postgres_image_id" postgres --version >/dev/null
 
 # Router images are release artifacts too. Render-only mode executes their real

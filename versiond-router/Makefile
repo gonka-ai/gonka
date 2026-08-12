@@ -178,6 +178,10 @@ test-version-routing:
 	docker volume create $$state >/dev/null; \
 	docker build -q -t gonka-versiond-router-probe \
 		-f Dockerfile .. >/dev/null; \
+	cache_now=$$(date +%s); \
+	docker run --rm --user 0:0 -e CACHE_NOW=$$cache_now \
+		-v $$state:/state --entrypoint sh gonka-versiond-router-probe -c \
+		'printf "{\"schema\":1,\"fetched_at_unix\":%s,\"versions\":[\"v4\",\"v5\"]}\n" "$$CACHE_NOW" > /state/catalog.json; chown -R haproxy:haproxy /state'; \
 	docker run -d --name gonka-vp-catalog --network $$net \
 		--network-alias routing-catalog \
 		-v "$$tmpdir/catalog:/data:ro" -v "$$tmpdir/catalog.py:/app.py:ro" \
@@ -212,6 +216,10 @@ test-version-routing:
 		curl -s -o /dev/null -m 2 http://127.0.0.1:18132/v4/sessions/warm/x && break; \
 		sleep 0.5; \
 	done; \
+	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
+		|| fail "inner router did not migrate the legacy catalog cache"; \
+	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
+		|| fail "inner router removed the rollback catalog cache"; \
 	sleep 4; \
 	for spec in 'v1:200' 'v2:503' 'v4:200' 'v5:200' 'v9:503'; do \
 		version=$${spec%%:*}; want=$${spec##*:}; \
@@ -339,7 +347,7 @@ test-version-routing:
 		|| fail "learning v9 replaced the router container"; \
 	[ "$$(curl -fsS -m 3 http://127.0.0.1:18132/v4/sessions/still-live/chat)" = b ] \
 		|| fail "learning v9 disrupted the existing v4 route"; \
-	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog.json \
+	docker exec gonka-vp-router test -s /var/lib/gonka-router/catalog-v2.json \
 		|| fail "inner router did not persist its learned catalog"; \
 	docker stop gonka-vp-catalog >/dev/null; \
 	docker rm -f gonka-vp-router >/dev/null; \

@@ -15,26 +15,15 @@ func (k msgServer) UpdateParams(goCtx context.Context, req *types.MsgUpdateParam
 		return nil, err
 	}
 
-	if err := req.Params.Validate(); err != nil {
-		return nil, errorsmod.Wrap(err, "invalid params")
-	}
-
 	ctx := sdk.UnwrapSDKContext(goCtx)
-	current, err := k.GetParams(ctx)
-	if err != nil {
-		return nil, err
-	}
-	if err := validateApprovedVersionProgression(
-		current.DevshardEscrowParams,
-		req.Params.DevshardEscrowParams,
-	); err != nil {
+	if err := k.ValidateParamsUpdate(ctx, req.Params); err != nil {
 		return nil, errorsmod.Wrap(err, "invalid params")
 	}
 	if err := k.SetParams(ctx, req.Params); err != nil {
 		return nil, err
 	}
 
-	err = k.PrecomputeSPRTValues(ctx)
+	err := k.PrecomputeSPRTValues(ctx)
 	if err != nil {
 		k.LogError("Failed to precompute SPRT values", types.Validation, "error", err)
 		return nil, err

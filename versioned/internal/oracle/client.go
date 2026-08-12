@@ -48,15 +48,34 @@ func (v Version) ResolvedSHA256() (string, error) {
 type Client struct {
 	url        string
 	httpClient *http.Client
+	verifier   CatalogVerifier
 }
 
-func NewClient(oracleURL string) *Client {
-	return &Client{
+type ClientOption func(*Client)
+
+// CatalogVerifier independently authenticates a catalog before it can become
+// versiond's durable desired state.
+type CatalogVerifier interface {
+	Verify(context.Context, VersionConfig) error
+}
+
+func WithCatalogVerifier(verifier CatalogVerifier) ClientOption {
+	return func(client *Client) {
+		client.verifier = verifier
+	}
+}
+
+func NewClient(oracleURL string, options ...ClientOption) *Client {
+	client := &Client{
 		url: oracleURL,
 		httpClient: &http.Client{
 			Timeout: 10 * time.Second,
 		},
 	}
+	for _, option := range options {
+		option(client)
+	}
+	return client
 }
 
 func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
@@ -80,6 +99,11 @@ func (c *Client) Fetch(ctx context.Context) (VersionConfig, error) {
 	}
 	if err := validateCatalog(cfg); err != nil {
 		return VersionConfig{}, err
+	}
+	if c.verifier != nil {
+		if err := c.verifier.Verify(ctx, cfg); err != nil {
+			return VersionConfig{}, fmt.Errorf("verify oracle catalog against consensus: %w", err)
+		}
 	}
 	return cfg, nil
 }

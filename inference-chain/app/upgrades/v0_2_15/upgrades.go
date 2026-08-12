@@ -206,6 +206,9 @@ func applyDevshardApprovedVersions(ctx context.Context, k keeper.Keeper, infoJSO
 		}
 	}
 
+	if err := k.ValidateParamsUpdate(ctx, params); err != nil {
+		return fmt.Errorf("validate inference params update: %w", err)
+	}
 	if err := k.SetParams(ctx, params); err != nil {
 		return fmt.Errorf("set inference params: %w", err)
 	}

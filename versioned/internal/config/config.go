@@ -20,6 +20,8 @@ const (
 
 type Config struct {
 	OracleURL          string
+	ConsensusParamsURL string
+	ConsensusStatusURL string
 	PollInterval       time.Duration
 	BinDir             string
 	DataDir            string
@@ -45,16 +47,23 @@ func Load() (Config, error) {
 	}
 
 	cfg := Config{
-		OracleURL:       oracleURL,
-		BinDir:          envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
-		DataDir:         envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
-		BinaryName:      envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
-		BasePort:        5000,
-		ReadyPath:       envOrDefault("VERSIOND_READY_PATH", "/ready"),
-		DrainPath:       envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
-		DrainStatusPath: envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
-		Overrides:       loadOverrides(),
-		ForceVersions:   loadForceVersions(),
+		OracleURL:          oracleURL,
+		ConsensusParamsURL: os.Getenv("VERSIOND_CONSENSUS_PARAMS_URL"),
+		ConsensusStatusURL: os.Getenv("VERSIOND_CONSENSUS_STATUS_URL"),
+		BinDir:             envOrDefault("VERSIOND_BIN_DIR", "/opt/versiond/bin"),
+		DataDir:            envOrDefault("VERSIOND_DATA_DIR", "/opt/versiond/data"),
+		BinaryName:         envOrDefault("VERSIOND_BINARY_NAME", "devshard"),
+		BasePort:           5000,
+		ReadyPath:          envOrDefault("VERSIOND_READY_PATH", "/ready"),
+		DrainPath:          envOrDefault("VERSIOND_DRAIN_PATH", "/drain"),
+		DrainStatusPath:    envOrDefault("VERSIOND_DRAIN_STATUS_PATH", "/drain/status"),
+		Overrides:          loadOverrides(),
+		ForceVersions:      loadForceVersions(),
+	}
+	if (cfg.ConsensusParamsURL == "") != (cfg.ConsensusStatusURL == "") {
+		return Config{}, fmt.Errorf(
+			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL must be configured together",
+		)
 	}
 	for _, d := range []struct {
 		dst      *time.Duration

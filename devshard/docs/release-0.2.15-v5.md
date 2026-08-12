@@ -249,6 +249,14 @@ proxy container label alone is not evidence that PostgreSQL, versiond, and
 edge-api were migrated; both application and ingress postconditions must pass
 before the final marker is committed.
 
+If the process stops during ingress replacement, the next ordinary updater run
+restores the journaled ingress generation immediately after resolving the saved
+Compose topology. It does this before capacity checks, PostgreSQL preflight,
+image pulls, or application startup. The updater also re-renders and hashes the
+effective Compose model before every later mutation and before marker commit;
+editing an override or relevant environment value during a run therefore
+causes rollback/failure instead of mixing two deployment generations.
+
 On the first migration, the storage UUID becomes available when the first v5
 `versiond` has initialized the identity row in the shared database. The updater
 persists it immediately, before replacing another supervisor or ingress
@@ -382,7 +390,12 @@ The local migration runs only when the effective Compose model gives both
 `versiond` replicas `PGHOST=devshard-postgres`. A custom model may point both
 replicas at the same managed PostgreSQL host; in that case the updater preserves
 the override and does not pull, recreate, or preflight the local
-`devshard-postgres` service. Before any mutation it compares `PGHOST`, `PGPORT`,
+`devshard-postgres` service. It automatically adds
+`docker-compose.versiond-external-postgres.yml`, which removes the local
+dependency and keeps the bundled database out of later Compose operations; the
+hoster does not select another upgrade mode. HA rejects `DATABASE_URL` so the
+supervisor's session lookup and its children cannot resolve different
+databases. Before any mutation it compares `PGHOST`, `PGPORT`,
 `PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
 identity change, disagreement between replicas, or non-Postgres HA storage is a
 hard failure rather than an attempted migration. Before committing the update,
@@ -647,13 +660,28 @@ and pre-renders a snapshot no older than
 `VERSIOND_ROUTING_CATALOG_CACHE_MAX_AGE_SECONDS` (24 hours by default), so a
 temporary dapi outage at startup does not erase versions learned after the
 image was built. Stale, corrupt, or future-dated cache data is ignored and the
-shipped `v4` through `v8` bootstrap floor remains routable. Existing schema-1
-caches are treated as revision zero and upgraded automatically. Cached additions
+shipped `v4` through `v8` bootstrap floor remains routable. Cache protocol 2
+uses `catalog-v2.json`. On the first replacement it validates and atomically
+migrates a fresh legacy `catalog.json`; stale or invalid legacy data is ignored
+and fetched again. The old file remains untouched for exact-image rollback, so
+the fleet can roll from protocol 1 to 2 without an operator migration. Existing
+schema-1 payloads remain readable as revision zero. Cached additions
 retain dynamic-slot assignments across restarts, so a
 restart cannot silently replenish capacity; reducing capacity below a fresh
 cache fails startup. The defaults allow 32 additions between router releases;
 capacity exhaustion is a persistent degraded projection state and the new name
 remains `503` instead of using the coarse pool.
+
+A fresh `versiond` data directory does not trust the first DAPI response by
+shape alone. It requires the local consensus node to be caught up and compares
+the complete `(name, binary, sha256)` set with the node's inference params
+before persisting or starting children. Existing durable last-known-good data
+still permits serving during a temporary DAPI or node API outage. The same full
+catalog validator and append-only progression check run in both governance
+messages and the v0.2.15 consensus upgrade handler. There is deliberately no
+grandfathering for an invalid historical name or hash: release coordination
+must audit the live params before scheduling the chain upgrade, and the handler
+fails before `SetParams` if the complete resulting catalog is invalid.
 
 Coarse mode is an explicit two-part opt-in and changes the placement-readiness
 source. Persist both lines in `config.env`, then apply it in a maintenance

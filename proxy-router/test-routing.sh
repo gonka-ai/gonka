@@ -187,6 +187,10 @@ docker build -q -t "$image" -f Dockerfile .. >/dev/null
 [[ $(docker image inspect -f \
     '{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' "$image") == 1 ]] \
     || fail "public proxy image has no stable policy contract label"
+cache_now=$(date +%s)
+docker run --rm --user 0:0 -e "CACHE_NOW=$cache_now" \
+    -v "$state:/state" --entrypoint sh "$image" -c \
+    'printf "{\"schema\":1,\"fetched_at_unix\":%s,\"versions\":[\"v4\",\"v5\"]}\n" "$CACHE_NOW" > /state/catalog.json; chown -R haproxy:haproxy /state'
 
 docker run -d --name gonka-pr-catalog --network "$network" \
     --network-alias routing-catalog \
@@ -239,6 +243,15 @@ docker run -d --name gonka-pr-proxy --network "$network" \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_HOST=routing-catalog \
     -e PROXY_ROUTER_CATALOG_UPSTREAM_PORT=8080 \
     "$image" >/dev/null
+for _ in $(seq 40); do
+    docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
+        >/dev/null 2>&1 && break
+    sleep 0.25
+done
+docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
+    || fail "top distributor did not migrate the legacy catalog cache"
+docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
+    || fail "top distributor removed the rollback catalog cache"
 start_policy() {
     local name=$1
     docker run -d --name "gonka-pr-policy-$name" --hostname "policy-$name" \
@@ -424,7 +437,7 @@ fi
     || fail "learning v9 replaced the top distributor"
 [[ $(probe http://proxy-router:18081/v4/sessions/still-live/healthz) =~ ^(a|b)$ ]] \
     || fail "learning v9 disrupted the existing v4 route"
-docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog.json \
+docker exec gonka-pr-proxy test -s /var/lib/gonka-router/catalog-v2.json \
     || fail "top distributor did not persist its learned catalog"
 docker stop gonka-pr-catalog >/dev/null
 docker rm -f gonka-pr-proxy >/dev/null

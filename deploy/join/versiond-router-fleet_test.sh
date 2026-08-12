@@ -8,7 +8,7 @@ base_image=gonka-versiond-router-fleet-test:$suffix
 updated_image=gonka-versiond-router-fleet-updated-test:$suffix
 image=$base_image
 bad_image=gonka-versiond-router-fleet-bad-test:$suffix
-incompatible_cache_image=gonka-versiond-router-fleet-cache-v2-test:$suffix
+incompatible_cache_image=gonka-versiond-router-fleet-cache-v1-test:$suffix
 proxy_image=gonka-proxy-router-fleet-test:$suffix
 front=gonka-versiond-router-front-$suffix
 back=gonka-versiond-router-back-$suffix
@@ -93,7 +93,7 @@ http.server.ThreadingHTTPServer(("", 8080), H).serve_forever()
 PY
 
 cat >"$tmpdir/config.env" <<EOF
-VERSIOND_ROUTER_IMAGE=$image
+VERSIOND_ROUTER_IMAGE=$incompatible_cache_image
 VERSIOND_ROUTER_FRONT_NETWORK=$front
 VERSIOND_ROUTER_BACK_NETWORK=$back
 VERSIOND_ROUTER_METRICS_NETWORK=$metrics
@@ -161,7 +161,7 @@ LABEL ai.gonka.test-revision="updated"
 EOF
 cat >"$tmpdir/incompatible-cache.Dockerfile" <<EOF
 FROM $image
-LABEL ai.gonka.catalog-cache-protocol-version="2"
+LABEL ai.gonka.catalog-cache-protocol-version="1"
 EOF
 
 "${fleet[@]}" prepare-networks
@@ -258,12 +258,31 @@ for slot in "${slots[@]}"; do
         "idempotent fleet apply recreated unchanged slot $slot"
 done
 
-# Candidate and rollback images mount the same per-slot cache volume. Refuse a
-# reader/writer protocol change before stopping the first healthy slot.
+# A protocol bump uses a distinct cache file and is rolled out without an
+# operator migration. The previous file remains available to the captured
+# rollback image.
+sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$image|" \
+    "$tmpdir/config.env"
+"${fleet[@]}" rollout >/dev/null
+for slot in "${slots[@]}"; do
+    current_id=$(docker ps -q \
+        --filter label=ai.gonka.component=versiond-router \
+        --filter "label=ai.gonka.fleet=$fleet_id" \
+        --filter "label=ai.gonka.slot=$slot")
+    current_protocol=$(docker inspect --format \
+        '{{index .Config.Labels "ai.gonka.catalog-cache-protocol-version"}}' \
+        "$current_id")
+    [[ $current_protocol == 2 ]] || fail \
+        "automatic cache protocol upgrade left slot $slot on $current_protocol"
+    initial_ids[$slot]=$current_id
+done
+
+# A requested downgrade is ambiguous even though rollback inside the active
+# rollout remains safe. Refuse it before stopping the first healthy slot.
 sed -i "s|^VERSIOND_ROUTER_IMAGE=.*|VERSIOND_ROUTER_IMAGE=$incompatible_cache_image|" \
     "$tmpdir/config.env"
 if "${fleet[@]}" rollout >"$tmpdir/cache-protocol.out" 2>&1; then
-    fail "fleet rollout accepted an incompatible persistent cache protocol"
+    fail "fleet rollout accepted a catalog cache protocol downgrade"
 fi
 grep -q 'catalog cache protocol mismatch' "$tmpdir/cache-protocol.out" || {
     cat "$tmpdir/cache-protocol.out" >&2

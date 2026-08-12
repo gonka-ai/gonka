@@ -188,13 +188,18 @@ a stale, corrupt, or future-dated snapshot is ignored and startup falls back to
 the static bootstrap floor. Cached non-bootstrap names are restored into the
 same bounded `versiond_dynamic_<n>` namespace; restarting a router does not
 replenish consumed capacity. Startup fails loudly if a fresh cache needs more
-dynamic slots than the configured capacity. Schema-1 caches written by earlier
-router images are accepted as revision zero and upgraded automatically.
+dynamic slots than the configured capacity. Schema-1 cache payloads written by
+earlier router images are accepted as revision zero. Cache protocol 2 uses
+`catalog-v2.json`; on first startup it validates and atomically copies a fresh
+legacy `catalog.json`, preserving its timestamp and revision. Stale or invalid
+legacy data is ignored and fetched again, while the original file remains
+available to the exact rollback image.
 The image label `ai.gonka.catalog-cache-protocol-version` is the rollback
-contract for this shared volume. A replacement is rejected before mutation
-when the candidate and running readers differ; a protocol change therefore
-requires an explicit cache migration instead of starting an old rollback image
-on a newer, unreadable snapshot.
+contract for this shared volume. The fleet permits the same protocol or one
+forward generation at a time. Forward migration is automatic because each
+generation owns a distinct cache file; skipped generations and requested
+downgrades are rejected before mutation. An interrupted rollout still restores
+the exact previous image and its untouched cache.
 
 Catalog URL, poll interval, fetch timeout, and capacity are validated before
 HAProxy starts. Transient fetch failures preserve the last admitted map and are

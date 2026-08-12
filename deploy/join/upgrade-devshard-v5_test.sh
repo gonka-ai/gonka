@@ -270,6 +270,7 @@ for arg in "$@"; do
     if [[ $arg == config ]]; then
         pg_host=${RENDERED_PGHOST:-devshard-postgres}
         jq -cn --arg pg "$pg_host" \
+            --arg database_url "${RENDERED_DATABASE_URL:-}" \
             --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
@@ -290,8 +291,8 @@ for arg in "$@"; do
                 ]},
                 "proxy-policy":{},
                 "proxy-policy2":{},
-                versiond:{container_name:"versiond",environment:{PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-                versiond2:{container_name:"versiond2",environment:{PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+                versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+                versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
@@ -614,6 +615,14 @@ cat >"$tmpdir/enable-router" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
+if [[ " $* " == *" --recover-only "* ]]; then
+    tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.recover.XXXXXX")
+    jq '.transaction.ingress.state = "rolled_back" |
+        del(.transaction.ingress.rollback_models)' \
+        "$ROUTER_HA_TRANSACTION_JOURNAL" >"$tmp"
+    mv "$tmp" "$ROUTER_HA_TRANSACTION_JOURNAL"
+    exit 0
+fi
 printf '%s\n' "$PROXY_ROUTER_IMAGE" >"$FAKE_STATE_DIR/image-proxy"
 printf '%s\n' "$PROXY_POLICY_IMAGE" >"$FAKE_STATE_DIR/image-proxy-policy"
 if [[ ${INCOMPLETE_INGRESS_STATE:-false} != true ]]; then
@@ -978,6 +987,8 @@ RENDERED_ROUTER_BACK_NETWORK=custom-router-back \
         "$tmpdir/managed-postgres.log" "$tmpdir/managed-postgres.stdout"
 assert_contains "$tmpdir/managed-postgres.log" \
     "-f $tmpdir/managed-postgres.yml"
+assert_contains "$tmpdir/managed-postgres.log" \
+    "-f $script_dir/docker-compose.versiond-external-postgres.yml"
 assert_not_contains "$tmpdir/managed-postgres.log" " pull devshard-postgres"
 assert_not_contains "$tmpdir/managed-postgres.log" \
     "--wait-timeout 2100 devshard-postgres"
@@ -1028,6 +1039,28 @@ grep -q 'same non-empty PGDATABASE' "$tmpdir/postgres-split.stderr" || {
     fail "split PostgreSQL database did not produce a useful error"
 }
 assert_no_compose_mutation "$tmpdir/postgres-split.log"
+
+if RENDERED_DATABASE_URL=postgres://other/database \
+    DOCKER_BIN="$tmpdir/docker" \
+    DOCKER_LOG="$tmpdir/postgres-dsn.log" \
+    FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+    EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+    FAKE_STATE_DIR="$tmpdir/postgres-dsn.state" \
+    JOIN_DIR="$script_dir" \
+    GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+        --versiond-mode ha --edge-mode single \
+        >"$tmpdir/postgres-dsn.stdout" \
+        2>"$tmpdir/postgres-dsn.stderr"; then
+    fail "upgrade accepted DATABASE_URL in an HA topology"
+fi
+grep -q 'HA versiond must not set DATABASE_URL' \
+    "$tmpdir/postgres-dsn.stderr" || {
+    cat "$tmpdir/postgres-dsn.stderr" >&2
+    fail "ambiguous PostgreSQL DSN did not produce a useful error"
+}
+assert_no_compose_mutation "$tmpdir/postgres-dsn.log"
+
 versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")
 versiond2_up_line=$(line_number "$tmpdir/ha.log" \
@@ -1100,6 +1133,45 @@ assert_contains "$tmpdir/recovered-marker.log" \
     "enable-router --versiond-mode ha --edge-mode single"
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
+
+# Recovery of an already active ingress transaction must precede upgrade
+# preflight and every slow application `up --wait`; otherwise a missing public
+# listener can remain down for the complete versiond startup budget.
+cp "$tmpdir/upgrade-complete" "$tmpdir/early-ingress-marker"
+jq '. as $committed | . + {transaction: {
+        id: "test-early-ingress",
+        phase: "applications_verified",
+        base_fingerprint: $committed.fingerprint,
+        desired_fingerprint: $committed.fingerprint,
+        compose_config_sha256: $committed.compose.config_sha256,
+        postgres_identity: $committed.storage.postgres_identity,
+        ingress: {
+            state: "active",
+            rollback_models: {policy: {}, proxy: {}},
+            touched: []
+        }
+    }}' "$tmpdir/upgrade-complete" \
+    >"$tmpdir/early-ingress-marker.in-progress"
+mkdir -p "$tmpdir/early-ingress.state"
+ASSUME_RELEASE_STATE=true \
+DEVSHARD_V5_UPGRADE_MARKER="$tmpdir/early-ingress-marker" \
+DOCKER_BIN="$tmpdir/docker" \
+DOCKER_LOG="$tmpdir/early-ingress.log" \
+EXISTING_PROXY_COMPONENT=proxy-router \
+EXISTING_CONTAINERS="versiond versiond2 devshard-postgres edge-api proxy proxy-policy" \
+FAKE_STATE_DIR="$tmpdir/early-ingress.state" \
+JOIN_DIR="$script_dir" \
+GONKA_CONFIG_ENV="$tmpdir/config.env" \
+    "$script_dir/upgrade-devshard-v5.sh" \
+    --versiond-mode ha --edge-mode single \
+    >"$tmpdir/early-ingress.stdout" 2>"$tmpdir/early-ingress.stderr"
+recovery_line=$(line_number "$tmpdir/early-ingress.log" \
+    "enable-router --recover-only")
+application_line=$(line_number_regex "$tmpdir/early-ingress.log" \
+    ' up .*--wait-timeout 2100 versiond2$')
+[[ -n $recovery_line && -n $application_line && \
+    $recovery_line -lt $application_line ]] || fail \
+    "active ingress transaction was recovered after application convergence"
 
 # A process crash can happen during a day-2 transaction while the previous
 # committed marker still exists. The active journal must win, recover its HA

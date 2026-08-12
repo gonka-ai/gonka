@@ -1,6 +1,8 @@
 FROM haproxy:3.2-alpine
 
+ARG CATALOG_CACHE_PROTOCOL_VERSION=2
 LABEL ai.gonka.component="proxy-router" \
+      ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}" \
       ai.gonka.proxy-policy-contract="1"
 
 USER root

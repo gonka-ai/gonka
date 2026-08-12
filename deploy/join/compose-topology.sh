@@ -227,7 +227,14 @@ gonka_compose_validate_postgres_identity() {
     shift 2
     local -a runtime_containers=("$@")
     local versiond_host storage_mode container key expected actual
-    local versiond_value versiond2_value
+    local versiond_value versiond2_value database_url
+
+    for container in versiond versiond2; do
+		database_url=$(jq -r --arg service "$container" \
+			'.services[$service].environment.DATABASE_URL // ""' <<<"$config")
+		[[ -z $database_url ]] || fail \
+			"HA $container must not set DATABASE_URL; use the shared PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD contract"
+	done
 
     for key in PGHOST PGPORT PGDATABASE PGUSER; do
         versiond_value=$(jq -r --arg key "$key" \

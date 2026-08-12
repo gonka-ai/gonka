@@ -1,7 +1,7 @@
 FROM haproxy:3.2-alpine
 
 ARG PLACEMENT_PROTOCOL_VERSION=1
-ARG CATALOG_CACHE_PROTOCOL_VERSION=1
+ARG CATALOG_CACHE_PROTOCOL_VERSION=2
 LABEL ai.gonka.component="versiond-router" \
       ai.gonka.placement-protocol-version="${PLACEMENT_PROTOCOL_VERSION}" \
       ai.gonka.catalog-cache-protocol-version="${CATALOG_CACHE_PROTOCOL_VERSION}"

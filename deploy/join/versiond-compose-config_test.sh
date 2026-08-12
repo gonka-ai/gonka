@@ -85,18 +85,31 @@ services:
   versiond:
     environment:
       PGHOST: managed-postgres.internal
+    depends_on:
+      custom-secret:
+        condition: service_started
   versiond2:
     environment:
       PGHOST: managed-postgres.internal
+    depends_on:
+      custom-secret:
+        condition: service_started
+  custom-secret:
+    image: alpine:3.21
 EOF
 env DEVSHARD_POSTGRES_PASSWORD=test \
     "${compose[@]}" -f "$tmpdir/managed-postgres.yml" config --format json \
     >"$tmpdir/managed-postgres.json"
+env DEVSHARD_POSTGRES_PASSWORD=test \
+    "${compose[@]}" -f "$tmpdir/managed-postgres.yml" \
+    -f "$script_dir/docker-compose.versiond-external-postgres.yml" \
+    config --format json >"$tmpdir/managed-postgres-external.json"
 
 python3 - "$tmpdir/defaults.json" "$tmpdir/cleared.json" \
     "$tmpdir/slot-defaults.json" "$tmpdir/slot-cleared.json" \
     "$tmpdir/observability.json" "$tmpdir/managed-postgres.json" \
-    "$tmpdir/observability-rollback.json" <<'PY'
+    "$tmpdir/observability-rollback.json" \
+    "$tmpdir/managed-postgres-external.json" <<'PY'
 import json
 import sys
 
@@ -114,6 +127,7 @@ slot_cleared = load(sys.argv[4])["services"]["router"]["environment"]
 observability = load(sys.argv[5])["services"]
 managed_postgres = load(sys.argv[6])["services"]
 observability_rollback = load(sys.argv[7])["services"]["proxy"]
+managed_postgres_external = load(sys.argv[8])["services"]
 
 if slot_defaults_config["labels"].get("ai.gonka.fleet") != "gonka-versiond-router":
     raise SystemExit("router slot has no stable fleet ownership label")
@@ -343,6 +357,32 @@ for service in ("versiond", "versiond2"):
         "managed-postgres.internal",
         f"{service} managed PostgreSQL override",
     )
+    require(
+        managed_postgres[service]["environment"],
+        "VERSIOND_CONSENSUS_PARAMS_URL",
+        "http://node:1317/productscience/inference/inference/params",
+        f"{service} consensus params trust anchor",
+    )
+    require(
+        managed_postgres[service]["environment"],
+        "VERSIOND_CONSENSUS_STATUS_URL",
+        "http://node:26657/status",
+        f"{service} consensus sync trust anchor",
+    )
+    postgres_dependency = managed_postgres_external[service].get(
+        "depends_on", {}
+    ).get("devshard-postgres")
+    if postgres_dependency is not None and postgres_dependency.get(
+        "required", True
+    ):
+        raise SystemExit(f"{service} still requires local PostgreSQL")
+    if "custom-secret" not in managed_postgres_external[service].get(
+        "depends_on", {}
+    ):
+        raise SystemExit(f"{service} lost an operator-owned dependency")
+
+if "devshard-postgres" in managed_postgres_external:
+    raise SystemExit("external PostgreSQL topology still starts local PostgreSQL")
 PY
 
 grep -q '^  - job_name: proxy-router$' "$script_dir/observability/prometheus.yml" || {

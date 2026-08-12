@@ -310,9 +310,24 @@ verify_release_ingress_state() {
 converge_release_service() {
     local service=$1
 
+	verify_compose_model_unchanged
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$(service_startup_timeout "$service")" \
         "$service"
+}
+
+current_compose_config_sha() {
+	local rendered
+	rendered=$("${GONKA_COMPOSE_COMMAND[@]}" config --format json) || return 1
+	jq -Sc . <<<"$rendered" | sha256sum | awk '{print $1}'
+}
+
+verify_compose_model_unchanged() {
+	local current
+	current=$(current_compose_config_sha) || fail \
+		"effective Compose model no longer renders"
+	[[ $current == "$compose_config_sha" ]] || fail \
+		"effective Compose model changed during this upgrade; restore the recorded files and rerun"
 }
 
 write_upgrade_journal() {
@@ -513,12 +528,43 @@ gonka_compose_resolve \
     "$docker_bin" "$script_dir" "$versiond_mode" "$edge_mode" \
     "$compose_project_name" "$compose_project_directory" \
     compose_file_args runtime_compose_containers
+
+# Managed PostgreSQL is inferred from the effective, operator-supplied model.
+# Add the no-local-DB projection automatically and persist it in the committed
+# Compose file list, so the host does not need another upgrade option or manual
+# edit to avoid starting the bundled database later.
+if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == external ]]; then
+	external_postgres_overlay=$script_dir/docker-compose.versiond-external-postgres.yml
+	if [[ " ${GONKA_COMPOSE_FILES[*]} " != *" $external_postgres_overlay "* ]]; then
+		GONKA_COMPOSE_FILES+=("$external_postgres_overlay")
+		GONKA_COMPOSE_COMMAND+=(-f "$external_postgres_overlay")
+		GONKA_COMPOSE_FORWARD_ARGS+=(--compose-file "$external_postgres_overlay")
+	fi
+fi
 compose=("${GONKA_COMPOSE_COMMAND[@]}")
 if [[ $versiond_mode == ha ]]; then
     compose+=(-f "$script_dir/docker-compose.versiond-v5-compat.yml")
 fi
 if [[ $edge_mode == multi ]]; then
     compose+=(-f "$script_dir/docker-compose.edge-api-v5-compat.yml")
+fi
+
+# An ingress transaction may have been interrupted after the public listener
+# changed. Recover it as soon as the saved topology can be rendered, before
+# capacity checks, PostgreSQL preflight, image pulls, or application startup.
+# The ingress journal carries exact rollback models, so recovery does not wait
+# for the slow forward path to become healthy again.
+if [[ -f $upgrade_journal ]] && jq -e \
+	'.transaction.ingress.state == "active"' "$upgrade_journal" \
+	>/dev/null 2>&1; then
+	[[ $preflight_only == false ]] || fail \
+		"an interrupted ingress transaction requires a normal run for automatic rollback; --preflight-only never mutates the deployment"
+	echo "Recovering interrupted ingress transaction before upgrade preflight"
+	ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
+	ROUTER_HA_TRANSACTION_ID=$transaction_id \
+	"$enable_router_bin" --recover-only \
+		--versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
+		"${GONKA_COMPOSE_FORWARD_ARGS[@]}"
 fi
 
 devshard_v5_report_compose_files "$script_dir" "${GONKA_COMPOSE_FILES[@]}"
@@ -599,6 +645,7 @@ if [[ $interrupted_upgrade_loaded == true ]]; then
 else
 	base_fingerprint=$current_base_fingerprint
 fi
+
 public_http_port=$(jq -er '
     [.services.proxy.ports[]?
      | select(.target == 80 and (.protocol // "tcp") == "tcp")
@@ -682,6 +729,7 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     verify_release_application_state || fail \
         "application state did not converge to $release_id"
     write_upgrade_journal applications_verified
+	verify_compose_model_unchanged
 	ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
 	ROUTER_HA_TRANSACTION_ID=$transaction_id \
 	"$enable_router_bin" \
@@ -690,6 +738,7 @@ if [[ $existing_proxy_component == proxy-router ]]; then
     verify_release_ingress_state || fail \
         "ingress state did not converge to $release_id"
     write_upgrade_journal ingress_verified
+	verify_compose_model_unchanged
     write_upgrade_marker
     echo "Devshard v5 release state is converged"
     exit 0
@@ -1294,6 +1343,7 @@ replace_service() {
         rollback | stop) ;;
         *) fail "internal error: unknown failure strategy $failure_strategy" ;;
     esac
+	verify_compose_model_unchanged
     echo "Replacing $service"
     active_service=$service
     active_failure_strategy=$failure_strategy
@@ -1365,6 +1415,7 @@ fi
 run_interruptible "${compose[@]}" pull "${pull_services[@]}"
 
 if [[ $versiond_mode == ha && $GONKA_COMPOSE_POSTGRES_MODE == local ]]; then
+	verify_compose_model_unchanged
     echo "Migrating and starting devshard-postgres"
     active_service=devshard-postgres
     active_failure_strategy=stop
@@ -1442,6 +1493,7 @@ write_upgrade_journal applications_verified
 cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
+		verify_compose_model_unchanged
 		ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
 		ROUTER_HA_TRANSACTION_ID=$transaction_id \
 		run_interruptible "$enable_router_bin" \
@@ -1460,5 +1512,6 @@ fi
 verify_release_ingress_state || fail \
     "ingress state did not converge to $release_id"
 write_upgrade_journal ingress_verified
+verify_compose_model_unchanged
 write_upgrade_marker
 echo "Devshard v5 upgrade completed"

@@ -23,11 +23,18 @@ if [[ -n ${PROXY_POLICY_IMAGE-} ]]; then
 fi
 
 if [[ ${1:-} == image && ${2:-} == inspect ]]; then
-    case ${!#} in
-        candidate-policy) printf '%s\n' "${CANDIDATE_POLICY_CONTRACT:-1}" ;;
-        candidate-proxy) printf '%s\n' "${CANDIDATE_PROXY_CONTRACT:-1}" ;;
-        *) printf '1\n' ;;
-    esac
+	if [[ ${4:-} == *ai.gonka.catalog-cache-protocol-version* ]]; then
+		case ${!#} in
+			candidate-proxy) printf '%s\n' "${CANDIDATE_PROXY_CACHE_PROTOCOL-2}" ;;
+			*) printf '%s\n' "${CANDIDATE_ROUTER_CACHE_PROTOCOL-2}" ;;
+		esac
+	else
+		case ${!#} in
+			candidate-policy) printf '%s\n' "${CANDIDATE_POLICY_CONTRACT:-1}" ;;
+			candidate-proxy) printf '%s\n' "${CANDIDATE_PROXY_CONTRACT:-1}" ;;
+			*) printf '1\n' ;;
+		esac
+	fi
     exit 0
 fi
 
@@ -157,7 +164,7 @@ if [[ ${1:-} == compose ]]; then
 			printf '%s hash-%s\n' "$service" "$service"
 			exit 0
 		fi
-        jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
+        model=$(jq -cn --arg join "$JOIN_DIR" '{name:"gonka-test",networks:{
             default:{name:"gonka-test_default"},
             "proxy-policy-front":{name:"gonka-proxy-policy-front"},
             "versiond-router-front":{name:"gonka-versiond-router-front"},
@@ -172,7 +179,13 @@ if [[ ${1:-} == compose ]]; then
             "edge-api":{container_name:"edge-api"},
             "edge-api2":{container_name:"edge-api2"},
             "edge-api3":{container_name:"edge-api3"}
-        }}'
+        }}')
+        if [[ -f $STATE_DIR/model-drift ]]; then
+            jq -c '.services.proxy.environment.TEST_MODEL_DRIFT = "true"' \
+                <<<"$model"
+        else
+            printf '%s\n' "$model"
+        fi
         exit 0
     fi
     if [[ $action == ps ]]; then
@@ -207,6 +220,9 @@ if [[ ${1:-} == compose ]]; then
             exit 1
         fi
         : >"$STATE_DIR/present-$service"
+        if [[ $service == "${DRIFT_AFTER_POLICY_SERVICE-}" ]]; then
+            : >"$STATE_DIR/model-drift"
+        fi
         exit 0
     fi
     if [[ $action == up && $service == proxy ]]; then
@@ -294,6 +310,7 @@ run_cutover() {
     shift
     : >"$log"
     rm -f "$tmpdir/current"
+    rm -f "$tmpdir/model-drift"
     rm -f "$tmpdir"/present-proxy-policy*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
         printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
@@ -392,6 +409,37 @@ grep -q '^fleet verify-admission$' "$tmpdir/idempotent.log" || fail \
 grep -q '^fleet apply$' "$tmpdir/idempotent.log" || fail \
     "idempotent convergence did not apply router fleet image/config updates"
 
+# If only slot B is admitted, update the failed A first. A fixed B->A order
+# would stop the final serving policy worker and drop all public traffic.
+INITIAL_POLICY_SERVICES=proxy-policy2 \
+INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/degraded-policy.log" env
+policy_line=$(grep -n ' up .*proxy-policy$' "$tmpdir/degraded-policy.log" | head -n1 | cut -d: -f1)
+policy2_line=$(grep -n ' up .*proxy-policy2$' "$tmpdir/degraded-policy.log" | head -n1 | cut -d: -f1)
+[[ -n $policy_line && -n $policy2_line && $policy_line -lt $policy2_line ]] || fail \
+    "degraded rollout stopped the only admitted policy worker first"
+
+if INITIAL_POLICY_SERVICES='' INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/no-policy-reserve.log" env; then
+    fail "rollout proceeded without an admitted policy reserve"
+fi
+if grep -q ' up .*proxy-policy' "$tmpdir/no-policy-reserve.log"; then
+    fail "missing policy reserve was detected after mutation"
+fi
+
+if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
+    INITIAL_PROXY_COMPONENT=proxy-router \
+    run_cutover "$tmpdir/mid-rollout-drift.log" env \
+        DRIFT_AFTER_POLICY_SERVICE=proxy-policy2; then
+    fail "ingress rollout mixed two Compose generations"
+fi
+if grep -q ' up .*proxy$' "$tmpdir/mid-rollout-drift.log"; then
+    fail "Compose drift was detected after public proxy mutation"
+fi
+grep -q 'policy-image=gonka/router-ha-policy-rollback:proxy-policy2-' \
+    "$tmpdir/mid-rollout-drift.log" || fail \
+    "Compose drift did not restore the policy slot already touched"
+
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/day2-failure.log" env FAIL_CUTOVER=true; then
@@ -466,6 +514,18 @@ grep -q -- '--scale proxy-policy=2 proxy-policy$' \
 if run_cutover "$tmpdir/contract-mismatch.log" env \
     CANDIDATE_PROXY_CONTRACT=2; then
     fail "an incompatible policy/proxy wire contract was accepted"
+fi
+
+if run_cutover "$tmpdir/cache-contract-mismatch.log" env \
+    CANDIDATE_PROXY_CACHE_PROTOCOL=''; then
+    fail "proxy-router without a cache protocol was accepted"
+fi
+if run_cutover "$tmpdir/cache-contract-old.log" env \
+    CANDIDATE_PROXY_CACHE_PROTOCOL=1; then
+    fail "proxy-router with an old cache protocol was accepted"
+fi
+if grep -q ' up .*proxy-policy' "$tmpdir/cache-contract-mismatch.log"; then
+    fail "cache protocol mismatch was detected after policy mutation"
 fi
 if grep -q ' up .*proxy-policy' "$tmpdir/contract-mismatch.log"; then
     fail "contract mismatch was detected after policy mutation"

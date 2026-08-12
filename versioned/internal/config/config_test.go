@@ -60,6 +60,16 @@ func TestLoad_Defaults(t *testing.T) {
 	}
 }
 
+func TestLoad_RequiresCompleteConsensusVerifierConfiguration(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+	t.Setenv("VERSIOND_CONSENSUS_PARAMS_URL", "http://node.test/params")
+	t.Setenv("VERSIOND_CONSENSUS_STATUS_URL", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted only one consensus verifier endpoint")
+	}
+}
+
 func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_ORACLE_URL", "http://custom:9090/v")
 	t.Setenv("VERSIOND_POLL_INTERVAL", "10s")

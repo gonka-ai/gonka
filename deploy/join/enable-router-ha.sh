@@ -6,6 +6,7 @@ script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd -P)
 config_env=${GONKA_CONFIG_ENV:-$script_dir/config.env}
 versiond_mode=auto
 edge_mode=auto
+recover_only=false
 compose_project_name=
 compose_project_directory=
 rollback_pending=false
@@ -24,6 +25,7 @@ declare -a migration_routes=()
 declare -a compose_file_args=()
 policy_services=(proxy-policy2 proxy-policy)
 policy_contract_version=1
+catalog_cache_protocol_version=2
 
 fail() {
     echo "enable-router-ha: $*" >&2
@@ -47,6 +49,7 @@ Options:
   --compose-file FILE              repeat for the complete ordered model
   --compose-project-name NAME      must match the running Compose project
   --compose-project-directory DIR  must match the running Compose project
+  --recover-only                   recover an active transaction and exit
 
 Without --compose-file or COMPOSE_FILE, the script recovers the ordered file
 list and project identity from Docker Compose labels on the running services.
@@ -80,6 +83,10 @@ while (($# > 0)); do
                 "--compose-project-directory requires a value"
             compose_project_directory=$2
             shift 2
+            ;;
+        --recover-only)
+            recover_only=true
+            shift
             ;;
         -h | --help)
             usage
@@ -460,6 +467,18 @@ begin_ingress_transaction() {
 	install_rollback_traps
 }
 
+verify_ingress_model_unchanged() {
+	local expected current_model current
+	expected=$(jq -er '.transaction.ingress.desired_compose_sha256' \
+		"$transaction_journal") || fail \
+		"cannot read ingress Compose fingerprint"
+	current_model=$("${compose[@]}" --profile '*' config --format json) || fail \
+		"cannot render ingress Compose model"
+	current=$(printf '%s' "$current_model" | sha256sum | awk '{print $1}')
+	[[ $current == "$expected" ]] || fail \
+		"Compose model changed during ingress transaction; restoring the recorded generation before retry"
+}
+
 write_journal_model() {
 	local expression=$1 output=$2
 	jq -c "$expression" "$transaction_journal" >"$output" || return 1
@@ -589,6 +608,7 @@ image_policy_contract() {
 
 verify_policy_contract() {
 	local config policy_image proxy_image policy_contract proxy_contract current_contract
+	local proxy_cache_protocol
 	config=$("${compose[@]}" config --format json)
 	policy_image=$(jq -er '.services["proxy-policy"].image' <<<"$config")
 	proxy_image=$(jq -er '.services.proxy.image' <<<"$config")
@@ -601,6 +621,11 @@ verify_policy_contract() {
 	[[ $policy_contract == "$policy_contract_version" && \
 		$policy_contract == "$proxy_contract" ]] || fail \
 		"candidate proxy-policy contract '$policy_contract' does not match proxy-router '$proxy_contract'"
+	proxy_cache_protocol=$("$docker_bin" image inspect --format \
+		'{{index .Config.Labels "ai.gonka.catalog-cache-protocol-version"}}' \
+		"$proxy_image") || fail "cannot read proxy-router cache protocol"
+	[[ $proxy_cache_protocol == "$catalog_cache_protocol_version" ]] || fail \
+		"candidate proxy-router cache protocol '${proxy_cache_protocol:-missing}' does not match required '$catalog_cache_protocol_version'"
 	if [[ $(proxy_component) == proxy-router ]]; then
 		current_contract=$("$docker_bin" inspect --format \
 			'{{index .Config.Labels "ai.gonka.proxy-policy-contract"}}' proxy)
@@ -623,31 +648,32 @@ policy_address_admitted() {
 		'
 }
 
-wait_policy_admission() {
-	local service=$1 deadline=$((SECONDS + cutover_timeout)) mode id address ready
+policy_service_admitted() {
+	local service=$1 mode id address
 	local -a ids=()
 	mode=$(proxy_env_value NGINX_MODE || true)
 	mode=${mode:-http}
+	mapfile -t ids < <("${compose[@]}" ps --quiet "$service")
+	((${#ids[@]} > 0)) || return 1
+	for id in "${ids[@]}"; do
+		address=$("$docker_bin" inspect --format \
+			"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
+			"$id")
+		[[ $address =~ ^[0-9]+(\.[0-9]+){3}$ ]] || return 1
+		if [[ $mode != https ]] && ! policy_address_admitted policy_http "$address"; then
+			return 1
+		fi
+		if [[ $mode != http ]] && ! policy_address_admitted policy_https "$address"; then
+			return 1
+		fi
+	done
+	return 0
+}
+
+wait_policy_admission() {
+	local service=$1 deadline=$((SECONDS + cutover_timeout))
 	while ((SECONDS < deadline)); do
-		mapfile -t ids < <("${compose[@]}" ps --quiet "$service")
-		ready=true
-		((${#ids[@]} > 0)) || ready=false
-		for id in "${ids[@]}"; do
-			address=$("$docker_bin" inspect --format \
-				"{{with index .NetworkSettings.Networks \"$policy_network\"}}{{.IPAddress}}{{end}}" \
-				"$id")
-			[[ $address =~ ^[0-9]+(\.[0-9]+){3}$ ]] || {
-				ready=false
-				continue
-			}
-			if [[ $mode != https ]] && ! policy_address_admitted policy_http "$address"; then
-				ready=false
-			fi
-			if [[ $mode != http ]] && ! policy_address_admitted policy_https "$address"; then
-				ready=false
-			fi
-		done
-		[[ $ready == true ]] && return 0
+		policy_service_admitted "$service" && return 0
 		sleep 1
 	done
 	return 1
@@ -655,7 +681,18 @@ wait_policy_admission() {
 
 roll_policy_slots() {
 	local service
-	for service in "${policy_services[@]}"; do
+	local -a rollout=("${policy_services[@]}")
+	if [[ $(proxy_component) == proxy-router ]]; then
+		if policy_service_admitted proxy-policy; then
+			rollout=(proxy-policy2 proxy-policy)
+		elif policy_service_admitted proxy-policy2; then
+			rollout=(proxy-policy proxy-policy2)
+		else
+			fail "no policy worker is admitted by the public proxy; refusing to stop either replica"
+		fi
+	fi
+	for service in "${rollout[@]}"; do
+		verify_ingress_model_unchanged
 		record_ingress_touch "policy:$service"
 		"${compose[@]}" up -d --no-deps --wait \
 			--wait-timeout "$cutover_timeout" "$service"
@@ -774,6 +811,10 @@ compose_project=$GONKA_COMPOSE_PROJECT
 policy_network=$GONKA_COMPOSE_POLICY_NETWORK
 gonka_acquire_deployment_lock "$config_dir" || exit 1
 recover_interrupted_ingress
+if [[ $recover_only == true ]]; then
+	echo "Ingress transaction recovery completed"
+	exit 0
+fi
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
@@ -833,11 +874,13 @@ roll_policy_slots
 # A repeated run is also a real update path. Keep both the exact previous proxy
 # and the policy generation armed until the complete public path is admitted.
 if [[ $current_proxy_component == proxy-router ]]; then
+	verify_ingress_model_unchanged
 	record_ingress_touch proxy
     "${compose[@]}" up -d --no-deps --wait \
         --wait-timeout "$cutover_timeout" proxy
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
     [[ $edge_mode != multi ]] || wait_component edge-api
+	verify_ingress_model_unchanged
 	commit_ingress_transaction
     remove_migration_routers
     echo "Router HA topology is already active"
@@ -845,6 +888,7 @@ if [[ $current_proxy_component == proxy-router ]]; then
 fi
 
 echo "Switching the public listener to proxy-router"
+verify_ingress_model_unchanged
 record_ingress_touch proxy
 if ! "${compose[@]}" up -d --no-deps --force-recreate --wait \
     --wait-timeout "$cutover_timeout" proxy; then
@@ -856,6 +900,7 @@ fi
 [[ $edge_mode != multi ]] || wait_component edge-api || fail \
     "proxy-router cannot reach a ready edge-api"
 
+verify_ingress_model_unchanged
 commit_ingress_transaction
 
 # These singleton migration bridges are outside the steady-state model. Remove

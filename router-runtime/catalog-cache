@@ -62,6 +62,8 @@ read_cache() {
         exit 2
     fi
     LC_ALL=C sort -u "$tmp.names"
+    rm -f "$tmp" "$tmp.names"
+    trap - EXIT
 }
 
 write_cache() {
@@ -84,7 +86,29 @@ write_cache() {
         fail "cannot encode snapshot"
     fi
     chmod 600 "$tmp"
+    sync "$tmp"
     mv -f "$tmp" "$cache"
+    sync "$directory"
+    trap - EXIT
+}
+
+migrate_cache() {
+    source=$1 destination=$2 max_age=$3
+    [ -f "$source" ] || fail "source cache does not exist: $source"
+    [ ! -e "$destination" ] || fail "destination cache already exists: $destination"
+
+    # Validate with the new reader before publishing. Preserve the original
+    # revision and timestamp so migration cannot make stale data fresh.
+    read_cache "$source" "$max_age" >/dev/null
+    directory=$(dirname -- "$destination")
+    [ -d "$directory" ] || fail "cache directory does not exist: $directory"
+    tmp=$(mktemp "$directory/.catalog-cache-migrate.XXXXXX")
+    trap 'rm -f "$tmp"' EXIT
+    cat "$source" > "$tmp"
+    chmod 600 "$tmp"
+    sync "$tmp"
+    mv -f "$tmp" "$destination"
+    sync "$directory"
     trap - EXIT
 }
 
@@ -97,5 +121,9 @@ case ${1:-} in
         [ "$#" -eq 4 ] || fail "usage: catalog-cache write NAMES_FILE CACHE_FILE REVISION"
         write_cache "$2" "$3" "$4"
         ;;
-    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE REVISION" ;;
+    migrate)
+        [ "$#" -eq 4 ] || fail "usage: catalog-cache migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS"
+        migrate_cache "$2" "$3" "$4"
+        ;;
+    *) fail "usage: catalog-cache read FILE MAX_AGE_SECONDS | write NAMES_FILE CACHE_FILE REVISION | migrate SOURCE_FILE CACHE_FILE MAX_AGE_SECONDS" ;;
 esac

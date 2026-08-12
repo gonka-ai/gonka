@@ -137,8 +137,10 @@ isolation would require a separate sidecar or a narrow privileged broker and is
 not part of this deployment model.
 
 The two policy workers are fixed Compose slots rather than one scaled service.
-Updates reconcile `proxy-policy2` first and wait until the public HAProxy admits
-its address, then reconcile `proxy-policy`. Both images declare immutable
+Before mutation, the updater asks the public HAProxy which slot is admitted. It
+reconciles the other slot first, waits for admission, and only then replaces the
+original reserve. If neither slot is admitted it stops before touching either.
+Both images declare immutable
 `ai.gonka.proxy-policy-contract=1`; the updater rejects a rolling change of this
 wire contract before replacing either slot. A failure restores each slot's
 captured image and original replica count. The same reserve-first dependency is
@@ -229,7 +231,7 @@ A supervisor + version-prefix reverse proxy:
   (`internal/proxy/proxy.go`, `rebuildRoutes`).
 - **Versionless observability:** also serves `/sessions/…/diffs|mempool|signatures`,
   `/stats/…`, `/metrics` without a version prefix. With shared Postgres
-  (`PGHOST` / `DATABASE_URL`), session-scoped routes look up
+  (`PGHOST`, or `DATABASE_URL` only for non-HA deployments), session-scoped routes look up
   `sessions.version` and forward to that child; unbound → 404. Without PG
   (SQLite-only), fan-out across children. See
   [versionless-observability-plan.md](./versionless-observability-plan.md).
@@ -383,7 +385,10 @@ PGUSER)` tuple and refuses an implicit endpoint change from the running
 containers. After replacement it reads the durable database UUID through each
 supervisor and commits the update only when both UUIDs match. The tuple is the
 early deployment preflight; the UUID is proof against aliases that resolve to
-different databases.
+different databases. `DATABASE_URL` is rejected in HA because devshardd reads
+the libpq `PG*` environment; allowing both contracts could make supervisor
+lookups and child writes use different databases. When the resolved host is
+external, the updater automatically applies the no-local-PostgreSQL overlay.
 
 Therefore:
 
@@ -403,7 +408,11 @@ version.
 Each `versiond` also keeps the last accepted full catalog under its own
 `VERSIOND_DATA_DIR`. The snapshot is fsynced before process reconciliation.
 After restart, lower revisions, in-place changes and version removals are
-rejected, so a stale DAPI replica cannot roll children back or remove them.
+rejected, so a stale DAPI replica cannot roll children back or remove them. A
+fresh store additionally compares DAPI's complete artifact set with the local,
+caught-up consensus node before accepting its first revision. The Compose
+contract configures both local endpoints; no revision floor is maintained by
+the operator.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

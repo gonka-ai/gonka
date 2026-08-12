@@ -131,6 +131,7 @@ deploy/join/legacy-router-upgrade-barrier.sh
 deploy/join/enable-router-ha.sh
 deploy/join/versiond-router-fleet.sh
 deploy/join/docker-compose.versiond-v5-compat.yml
+deploy/join/docker-compose.versiond-external-postgres.yml
 deploy/join/docker-compose.edge-api-v5-compat.yml
 deploy/join/docker-compose.proxy-v4-compat.yml
 deploy/join/versiond-router-slot/docker-compose.yml

@@ -2,6 +2,8 @@ package v0_2_15
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"testing"
 	"time"
 
@@ -152,4 +154,93 @@ func TestApplyDevshardApprovedVersionsRejectsNullVersion(t *testing.T) {
 	err := applyDevshardApprovedVersions(ctx, k, `{"approved_versions":[null]}`)
 
 	require.EqualError(t, err, "approved_versions[0] cannot be null")
+}
+
+func TestApplyDevshardApprovedVersionsUsesConsensusValidation(t *testing.T) {
+	tests := []struct {
+		name    string
+		version *inferencetypes.DevshardApprovedVersion
+		want    string
+	}{
+		{
+			name: "invalid name",
+			version: &inferencetypes.DevshardApprovedVersion{
+				Name:   "v5;candidate",
+				Binary: "https://example.com/devshardd-v5.zip",
+				Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+			want: "invalid name",
+		},
+		{
+			name: "invalid sha",
+			version: &inferencetypes.DevshardApprovedVersion{
+				Name:   "v5",
+				Binary: "https://example.com/devshardd-v5.zip",
+				Sha256: "not-a-sha",
+			},
+			want: "sha256 must be 64 hex characters",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+			before, err := k.GetParams(ctx)
+			require.NoError(t, err)
+			encoded, err := json.Marshal(UpgradeInfo{
+				ApprovedVersions: []*inferencetypes.DevshardApprovedVersion{tt.version},
+			})
+			require.NoError(t, err)
+
+			err = applyDevshardApprovedVersions(ctx, k, string(encoded))
+			require.ErrorContains(t, err, tt.want)
+			after, getErr := k.GetParams(ctx)
+			require.NoError(t, getErr)
+			require.Equal(t, before, after)
+		})
+	}
+}
+
+func TestApplyDevshardApprovedVersionsRejectsCatalogOverCapacity(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	info := UpgradeInfo{}
+	for i := 0; i <= inferencetypes.MaxDevshardApprovedVersions; i++ {
+		info.ApprovedVersions = append(info.ApprovedVersions,
+			&inferencetypes.DevshardApprovedVersion{
+				Name:   fmt.Sprintf("v%d", i),
+				Binary: "https://example.com/devshardd.zip",
+				Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			})
+	}
+	encoded, err := json.Marshal(info)
+	require.NoError(t, err)
+
+	err = applyDevshardApprovedVersions(ctx, k, string(encoded))
+	require.ErrorContains(t, err, "maximum is 32")
+}
+
+func TestApplyDevshardApprovedVersionsDoesNotGrandfatherInvalidCatalog(t *testing.T) {
+	k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+	params, err := k.GetParams(ctx)
+	require.NoError(t, err)
+	params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+	params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{
+		{
+			Name:   "legacy;invalid",
+			Binary: "https://example.com/legacy.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		},
+	}
+	// SetParams is intentionally a raw store primitive. This simulates state
+	// written by software from before the catalog grammar became consensus.
+	require.NoError(t, k.SetParams(ctx, params))
+
+	err = applyDevshardApprovedVersions(ctx, k, `{
+		"approved_versions":[{
+			"name":"v5",
+			"binary":"https://example.com/v5.zip",
+			"sha256":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		}]
+	}`)
+	require.ErrorContains(t, err, "legacy;invalid")
 }

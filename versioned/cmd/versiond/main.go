@@ -55,7 +55,16 @@ func run(ctx context.Context) error {
 
 	mgr := process.NewManager(cfg)
 	hostLifecycle := host.NewController()
-	oracleClient := oracle.NewClient(cfg.OracleURL)
+	oracleOptions := make([]oracle.ClientOption, 0, 1)
+	if cfg.ConsensusParamsURL != "" {
+		oracleOptions = append(oracleOptions, oracle.WithCatalogVerifier(
+			oracle.NewConsensusVerifier(
+				cfg.ConsensusParamsURL,
+				cfg.ConsensusStatusURL,
+			),
+		))
+	}
+	oracleClient := oracle.NewClient(cfg.OracleURL, oracleOptions...)
 	catalogStore, err := oracle.OpenCatalogStore(
 		filepath.Join(cfg.DataDir, ".versiond", "catalog.json"),
 	)
@@ -65,6 +74,9 @@ func run(ctx context.Context) error {
 
 	lookup, err := sessionversion.OpenFromEnv(ctx)
 	if err != nil {
+		if os.Getenv("GONKA_HA") == "true" {
+			return fmt.Errorf("open HA session version lookup: %w", err)
+		}
 		slog.Warn("session version lookup unavailable; versionless obs will fan-out", "error", err)
 		lookup = nil
 	}

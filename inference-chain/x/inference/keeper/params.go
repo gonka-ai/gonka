@@ -2,6 +2,7 @@ package keeper
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/cosmos/cosmos-sdk/runtime"
 	sdk "github.com/cosmos/cosmos-sdk/types"
@@ -34,6 +35,23 @@ func (k Keeper) GetParams(ctx context.Context) (params types.Params, err error) 
 		return *cached, nil
 	}
 	return k.getParamsFromStore(ctx)
+}
+
+// ValidateParamsUpdate applies the complete consensus contract for replacing
+// inference params. Callers that mutate Params outside MsgUpdateParams (for
+// example a software-upgrade handler) must use this before SetParams.
+func (k Keeper) ValidateParamsUpdate(ctx context.Context, proposed types.Params) error {
+	if err := proposed.Validate(); err != nil {
+		return err
+	}
+	current, err := k.GetParams(ctx)
+	if err != nil {
+		return fmt.Errorf("get current params: %w", err)
+	}
+	return validateApprovedVersionProgression(
+		current.DevshardEscrowParams,
+		proposed.DevshardEscrowParams,
+	)
 }
 
 // InjectParamsIntoContext returns a new context with the params cached.

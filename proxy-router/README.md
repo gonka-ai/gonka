@@ -177,8 +177,11 @@ without restarting HAProxy.
 Catalog snapshots must be initialized and revisioned. Revisions never decrease,
 the content of one revision is immutable, and the accepted version set is
 append-only. An uninitialized, stale-revision, or removal snapshot leaves the
-last admitted routes unchanged. Existing schema-1 caches are accepted as
-revision zero and upgraded automatically on the next successful projection.
+last admitted routes unchanged. Existing schema-1 payloads are accepted as
+revision zero. Cache protocol 2 uses `catalog-v2.json`; the first startup
+validates and atomically migrates a fresh legacy `catalog.json` while retaining
+the original for rollback. Invalid or stale legacy data is ignored and obtained
+again from DAPI, with the static bootstrap floor remaining fail-closed.
 
 ## Operations
 
