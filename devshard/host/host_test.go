@@ -1262,7 +1262,7 @@ func TestHost_AmbiguousDispatchIsNotRetriedByAnotherReplica(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
 	defer cancel()
 	_, err = newReplica(hostSigners[1], standby).RunExecution(ctx, job)
-	require.ErrorIs(t, err, context.DeadlineExceeded)
+	require.ErrorIs(t, err, storage.ErrExecutionOutcomeUncertain)
 	require.Zero(t, standby.calls.Load(), "a dispatched claim must never execute on another replica")
 	require.Equal(t, int32(1), ambiguous.effects.Load(), "the external effect must run at most once")
 }

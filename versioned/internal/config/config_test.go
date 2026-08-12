@@ -70,6 +70,35 @@ func TestLoad_RequiresCompleteConsensusVerifierConfiguration(t *testing.T) {
 	}
 }
 
+func TestLoad_HARequiresConsensusVerifierConfiguration(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+	t.Setenv("GONKA_HA", "true")
+	t.Setenv("VERSIOND_CONSENSUS_PARAMS_URL", "")
+	t.Setenv("VERSIOND_CONSENSUS_STATUS_URL", "")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted HA mode without local consensus verification")
+	}
+
+	t.Setenv("VERSIOND_CONSENSUS_PARAMS_URL", "http://node.test/params")
+	t.Setenv("VERSIOND_CONSENSUS_STATUS_URL", "http://node.test/status")
+	if _, err := Load(); err != nil {
+		t.Fatalf("Load rejected complete HA consensus configuration: %v", err)
+	}
+}
+
+func TestLoad_HARejectsLocalArtifactOverrides(t *testing.T) {
+	t.Setenv("VERSIOND_ORACLE_URL", "http://oracle.test/versions")
+	t.Setenv("GONKA_HA", "true")
+	t.Setenv("VERSIOND_CONSENSUS_PARAMS_URL", "http://node.test/params")
+	t.Setenv("VERSIOND_CONSENSUS_STATUS_URL", "http://node.test/status")
+	t.Setenv("VERSIOND_OVERRIDE_v5", "/tmp/devshardd-v5")
+
+	if _, err := Load(); err == nil {
+		t.Fatal("Load accepted a local artifact override in HA mode")
+	}
+}
+
 func TestLoad_CustomValues(t *testing.T) {
 	t.Setenv("VERSIOND_ORACLE_URL", "http://custom:9090/v")
 	t.Setenv("VERSIOND_POLL_INTERVAL", "10s")

@@ -90,6 +90,9 @@ func (e *Engine) executeMLRequest(ctx context.Context, model, escrowID string, b
 		if reqErr != nil {
 			return nil, observability.Classify(observability.ReasonApplicationErr, observability.WhereEngineMLNodeCall, reqErr)
 		}
+		// The dispatch marker provides at-most-once semantics. Prevent any future
+		// transport configuration (including HTTPS/HTTP2) from replaying the body.
+		httpReq.GetBody = nil
 		httpReq.Header.Set("Content-Type", "application/json")
 		observability.InjectRequestContext(ctx, httpReq.Header)
 		observability.AttachRequestID(httpReq)

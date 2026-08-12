@@ -2790,6 +2790,60 @@ func TestServesVersion_ReadinessIsPerGeneration(t *testing.T) {
 	_ = old
 }
 
+func TestAdmitCatalogRejectsStalePersistedArtifactBeforeOpeningReadiness(t *testing.T) {
+	const (
+		oldSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		newSHA = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+	)
+	m := NewManager(config.Config{BasePort: 5000, ReadyPath: "/ready"})
+	stale := &child{
+		status:        statusRunning,
+		version:       oracle.Version{Name: "v5", Binary: "https://example.invalid/v5-old.zip", SHA256: oldSHA},
+		archiveSHA256: oldSHA,
+	}
+	stale.serving.Store(true)
+	stale.servingAt.Store(time.Now().UnixNano())
+	m.mu.Lock()
+	m.processes["v5"] = stale
+	m.rebuildRoutes()
+	m.mu.Unlock()
+
+	desired := []oracle.Version{{
+		Name: "v5", Binary: "https://example.invalid/v5-new.zip", SHA256: newSHA,
+	}}
+	if m.AdmitCatalog(desired) {
+		t.Fatal("stale persisted artifact admitted as the current consensus catalog")
+	}
+	if m.CatalogAdmitted() {
+		t.Fatal("failed catalog admission opened the startup latch")
+	}
+
+	m.mu.Lock()
+	current := &child{status: statusRunning, version: desired[0], archiveSHA256: newSHA}
+	current.serving.Store(true)
+	current.servingAt.Store(time.Now().UnixNano())
+	m.processes["v5"] = current
+	m.rebuildRoutes()
+	m.mu.Unlock()
+	if !m.CatalogAdmitted() {
+		t.Fatal("asynchronous exact route publication did not open the verified startup latch")
+	}
+	if !m.AdmitCatalog(desired) {
+		t.Fatal("exact active artifact did not remain admissible")
+	}
+
+	// A later same-name rollout must not retract the startup proof and
+	// simultaneously evict the whole fleet while replacements download.
+	if m.AdmitCatalog([]oracle.Version{{
+		Name: "v5", Binary: "https://example.invalid/v5-next.zip", SHA256: oldSHA,
+	}}) {
+		t.Fatal("future artifact was admitted before its active route existed")
+	}
+	if !m.CatalogAdmitted() {
+		t.Fatal("verified startup latch was retracted")
+	}
+}
+
 func waitFor(timeout time.Duration, cond func() bool) bool {
 	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {

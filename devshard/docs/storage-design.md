@@ -302,8 +302,8 @@ See [proposals/ha-diff-persist-consistency.md](./proposals/ha-diff-persist-consi
 Decision: before calling the ML engine, a host atomically claims
 `(epoch_id, escrow_id, inference_id)` in `devshard_execution_claims`. The row
 contains an unguessable process owner, a monotonic fencing token, and the final
-serialized result. Another replica cannot execute; it waits for `completed` and
-replays that result.
+serialized result. Another replica cannot execute; it waits for the bounded
+result-commit window and replays `completed` when it arrives.
 
 The row follows an explicit state machine:
 
@@ -317,9 +317,10 @@ An expired `claimed` lease may be acquired with a new fence. The stale owner
 must persist that fence immediately before sending and therefore cannot send
 after takeover. `dispatched` has no TTL takeover: without a shared ML-side result
 lookup, a lost response is indistinguishable from a POST that already took
-effect. Execution also stops rotating across ML nodes after dispatch. This gives
-the external side effect strict at-most-once behaviour; completed results remain
-replayable.
+effect. If no result is committed within the bounded window, the caller gets an
+explicit uncertain-outcome error rather than polling forever. Execution also
+stops rotating across ML nodes after dispatch. This gives the external side
+effect strict at-most-once behaviour; completed results remain replayable.
 
 SQLite keeps the previous local-only behaviour. Multi-instance execution
 fencing, like shared validation leases, requires Postgres-only storage.

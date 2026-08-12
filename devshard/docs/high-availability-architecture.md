@@ -154,13 +154,16 @@ an application, infrastructure cannot safely guess whether retrying it would
 execute the operation twice. The application closes the remaining split-routing
 window with a durable Postgres execution claim keyed by
 `(epoch, escrow, inference)`: only the claim owner calls the ML engine, while a
-second replica waits for and replays the committed result. The durable execution
-FSM is `claimed -> dispatched -> completed`; `claimed -> abandoned` is allowed
+second replica waits for a bounded commit window and replays the committed
+result. The durable execution FSM is `claimed -> dispatched -> completed`;
+`claimed -> abandoned` is allowed
 only before any request byte can be sent. An expired `claimed` lease is fenced
 and retried, while `dispatched` is never stolen because the POST may already
-have taken effect. The engine does not rotate to another ML node after crossing
-that boundary. Established SSE streams remain on the connections that accepted
-them and are not moved during drain.
+have taken effect. A dispatched operation with no durable result becomes an
+explicit uncertain outcome after the bounded commit window; it is not polled
+forever. The engine does not rotate to another ML node after crossing that
+boundary. Established SSE streams remain on the connections that accepted them
+and are not moved during drain.
 
 ---
 
@@ -237,7 +240,9 @@ A supervisor + version-prefix reverse proxy:
 - **HTTP:** `:8080`, `GET /healthz` (per-child status) + version-prefix /
   versionless obs proxy.
 - **Overrides:** `VERSIOND_OVERRIDE_<name>` (local binary), `VERSIOND_FORCE`
-  (force-run a version).
+  (force-run a version) are single-instance/development controls. HA refuses
+  local artifact overrides because its startup identity must come from the
+  verified consensus catalog.
 
 ### devshardd (`devshard/cmd/devshardd/`)
 
@@ -386,8 +391,10 @@ supervisor and commits the update only when both UUIDs match. The tuple is the
 early deployment preflight; the UUID is proof against aliases that resolve to
 different databases. `DATABASE_URL` is rejected in HA because devshardd reads
 the libpq `PG*` environment; allowing both contracts could make supervisor
-lookups and child writes use different databases. When the resolved host is
-external, the updater automatically applies the no-local-PostgreSQL overlay.
+lookups and child writes use different databases. `PGSERVICE` and
+`PGSERVICEFILE` are rejected for the same reason: a service file can override
+the tuple after it was verified. When the resolved host is external, the
+updater automatically applies the no-local-PostgreSQL overlay.
 
 Therefore:
 
@@ -408,10 +415,14 @@ Each `versiond` also keeps the last accepted full catalog under its own
 `VERSIOND_DATA_DIR`. The snapshot is fsynced before process reconciliation.
 After restart, lower revisions, in-place changes and version removals are
 rejected, so a stale DAPI replica cannot roll children back or remove them. A
-fresh store additionally compares DAPI's complete artifact set with the local,
-caught-up consensus node before accepting its first revision. The Compose
-contract configures both local endpoints; no revision floor is maintained by
-the operator.
+fresh store additionally compares DAPI's complete artifact set and revision
+bound with the local, caught-up consensus node before accepting its first
+revision. On every process start, persisted LKG children remain outside the
+load-balancer pool until a freshly verified catalog is represented by the exact
+active artifact routes. This startup proof then latches so a later same-name SHA
+rollout does not evict the whole fleet. HA mode refuses to start without both
+local consensus endpoints. The Compose contract configures them; no revision
+floor is maintained by the operator.
 
 > **Running multiple versiond/devshardd instances (HA) requires the shared
 > `devshard-postgres` backend — not a DB-per-instance.** Set `PGHOST` so every

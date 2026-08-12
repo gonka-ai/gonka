@@ -227,13 +227,19 @@ gonka_compose_validate_postgres_identity() {
     shift 2
     local -a runtime_containers=("$@")
     local versiond_host storage_mode container key expected actual
-    local versiond_value versiond2_value database_url
+    local versiond_value versiond2_value database_url service_value
 
     for container in versiond versiond2; do
 		database_url=$(jq -r --arg service "$container" \
 			'.services[$service].environment.DATABASE_URL // ""' <<<"$config")
 		[[ -z $database_url ]] || fail \
 			"HA $container must not set DATABASE_URL; use the shared PGHOST/PGPORT/PGDATABASE/PGUSER/PGPASSWORD contract"
+		for key in PGSERVICE PGSERVICEFILE; do
+			service_value=$(jq -r --arg service "$container" --arg key "$key" \
+				'.services[$service].environment[$key] // ""' <<<"$config")
+			[[ -z $service_value ]] || fail \
+				"HA $container must not set $key; libpq service files can override the verified PostgreSQL identity"
+		done
 	done
 
     for key in PGHOST PGPORT PGDATABASE PGUSER; do
@@ -250,6 +256,12 @@ gonka_compose_validate_postgres_identity() {
     for container in versiond versiond2; do
         [[ " ${runtime_containers[*]} " == *" $container "* ]] || continue
         "$docker_bin" inspect "$container" >/dev/null 2>&1 || continue
+		for key in PGSERVICE PGSERVICEFILE; do
+			actual=$(gonka_compose_container_env \
+				"$docker_bin" "$container" "$key") || actual=
+			[[ -z $actual ]] || fail \
+				"running HA $container sets $key; refuse a PostgreSQL identity that bypasses the normalized Compose contract"
+		done
         for key in PGHOST PGDATABASE PGUSER; do
             expected=$(jq -r --arg service "$container" --arg key "$key" \
                 '.services[$service].environment[$key] // ""' <<<"$config")

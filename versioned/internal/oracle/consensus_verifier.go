@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strconv"
 	"time"
 )
 
@@ -28,12 +29,19 @@ func NewConsensusVerifier(paramsURL, statusURL string) *ConsensusVerifier {
 }
 
 func (v *ConsensusVerifier) Verify(ctx context.Context, candidate VersionConfig) error {
-	catchingUp, err := v.fetchCatchingUp(ctx)
+	catchingUp, latestHeight, err := v.fetchConsensusStatus(ctx)
 	if err != nil {
 		return err
 	}
 	if catchingUp {
 		return fmt.Errorf("local consensus node is catching up")
+	}
+	if candidate.Revision <= 0 || candidate.Revision > latestHeight {
+		return fmt.Errorf(
+			"DAPI catalog revision %d is outside local consensus height 1..%d",
+			candidate.Revision,
+			latestHeight,
+		)
 	}
 	versions, err := v.fetchApprovedVersions(ctx)
 	if err != nil {
@@ -48,21 +56,29 @@ func (v *ConsensusVerifier) Verify(ctx context.Context, candidate VersionConfig)
 	return nil
 }
 
-func (v *ConsensusVerifier) fetchCatchingUp(ctx context.Context) (bool, error) {
+func (v *ConsensusVerifier) fetchConsensusStatus(ctx context.Context) (bool, int64, error) {
 	var response struct {
 		Result struct {
 			SyncInfo struct {
-				CatchingUp *bool `json:"catching_up"`
+				CatchingUp        *bool  `json:"catching_up"`
+				LatestBlockHeight string `json:"latest_block_height"`
 			} `json:"sync_info"`
 		} `json:"result"`
 	}
 	if err := v.getJSON(ctx, v.statusURL, &response); err != nil {
-		return false, fmt.Errorf("read consensus sync status: %w", err)
+		return false, 0, fmt.Errorf("read consensus sync status: %w", err)
 	}
 	if response.Result.SyncInfo.CatchingUp == nil {
-		return false, fmt.Errorf("consensus status response has no catching_up flag")
+		return false, 0, fmt.Errorf("consensus status response has no catching_up flag")
 	}
-	return *response.Result.SyncInfo.CatchingUp, nil
+	height, err := strconv.ParseInt(response.Result.SyncInfo.LatestBlockHeight, 10, 64)
+	if err != nil || height <= 0 {
+		return false, 0, fmt.Errorf(
+			"consensus status has invalid latest_block_height %q",
+			response.Result.SyncInfo.LatestBlockHeight,
+		)
+	}
+	return *response.Result.SyncInfo.CatchingUp, height, nil
 }
 
 func (v *ConsensusVerifier) fetchApprovedVersions(ctx context.Context) ([]Version, error) {

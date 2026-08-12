@@ -26,8 +26,11 @@ const (
 const executionClaimLease = 2 * time.Minute
 
 var (
-	ErrExecutionNotFound      = errors.New("execution claim not found")
-	ErrExecutionClaimNotOwned = errors.New("execution claim state, owner, or fence does not match")
+	ErrExecutionNotFound         = errors.New("execution claim not found")
+	ErrExecutionClaimNotOwned    = errors.New("execution claim state, owner, or fence does not match")
+	ErrExecutionOutcomeUncertain = errors.New(
+		"execution was dispatched but its result was not durably recorded",
+	)
 )
 
 // ExecutionClaim is returned for both a newly acquired and an existing claim.

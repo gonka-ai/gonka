@@ -524,8 +524,10 @@ starting` for supervised retry.
 
 #### Readiness answers "can I serve", not "did the last poll succeed"
 
-`/readyz` requires that the manager has reconciled every desired version at least
-once, and this latches. A host that has served, then starts downloading a new
+`/readyz` requires a fresh catalog fetch and, at process startup, an exact match
+between that verified catalog and the active artifact routes. It also requires
+that the manager has reconciled every desired version at least once. These
+startup conditions latch. A host that has served, then starts downloading a new
 archive for a routine same-name SHA bump, stays ready throughout. Retracting
 readiness there would evict every host in the pool at the same moment —
 governance publishes to all of them at once — which is precisely the outage

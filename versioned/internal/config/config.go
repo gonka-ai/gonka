@@ -65,6 +65,16 @@ func Load() (Config, error) {
 			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL must be configured together",
 		)
 	}
+	if os.Getenv("GONKA_HA") == "true" && cfg.ConsensusParamsURL == "" {
+		return Config{}, fmt.Errorf(
+			"VERSIOND_CONSENSUS_PARAMS_URL and VERSIOND_CONSENSUS_STATUS_URL are required when GONKA_HA=true",
+		)
+	}
+	if os.Getenv("GONKA_HA") == "true" && len(cfg.Overrides) > 0 {
+		return Config{}, fmt.Errorf(
+			"VERSIOND_OVERRIDE_* is not allowed when GONKA_HA=true: HA artifact identity must come from the verified consensus catalog",
+		)
+	}
 	for _, d := range []struct {
 		dst      *time.Duration
 		key      string

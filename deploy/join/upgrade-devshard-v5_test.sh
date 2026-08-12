@@ -121,6 +121,8 @@ if [[ ${1:-} == inspect ]]; then
                 versiond | versiond2)
                     printf 'PGHOST=%s\nPGDATABASE=devshardd\nPGUSER=devshardd\n' \
                         "${RUNTIME_PGHOST:-devshard-postgres}"
+					[[ -z ${RUNTIME_PGSERVICE:-} ]] || \
+						printf 'PGSERVICE=%s\n' "$RUNTIME_PGSERVICE"
                     ;;
                 versiond-router)
                     printf 'VERSIOND_HOSTS=versiond versiond2\n'
@@ -270,7 +272,9 @@ for arg in "$@"; do
     if [[ $arg == config ]]; then
         pg_host=${RENDERED_PGHOST:-devshard-postgres}
         jq -cn --arg pg "$pg_host" \
-            --arg database_url "${RENDERED_DATABASE_URL:-}" \
+			--arg database_url "${RENDERED_DATABASE_URL:-}" \
+			--arg pgservice "${RENDERED_PGSERVICE:-}" \
+			--arg pgservicefile "${RENDERED_PGSERVICEFILE:-}" \
             --arg postgres_image "${DEVSHARD_POSTGRES_IMAGE-}" \
             --arg pg2db "${RENDERED_PGDATABASE2:-devshardd}" \
             --arg join "$JOIN_DIR" \
@@ -291,8 +295,8 @@ for arg in "$@"; do
                 ]},
                 "proxy-policy":{},
                 "proxy-policy2":{},
-                versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
-                versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond:{container_name:"versiond",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGHOST:$pg,PGDATABASE:"devshardd",PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
+				versiond2:{container_name:"versiond2",environment:{DATABASE_URL:$database_url,PGSERVICE:$pgservice,PGSERVICEFILE:$pgservicefile,PGHOST:$pg,PGDATABASE:$pg2db,PGUSER:"devshardd",PGPORT:"5432",DEVSHARD_STORAGE_MODE:"postgres"}},
                 "devshard-postgres":{container_name:"devshard-postgres",image:$postgres_image,volumes:[{type:"bind",source:($join + "/devshards/postgres"),target:"/var/lib/postgresql/gonka"}]},
                 "edge-api":{container_name:"edge-api"},
                 "edge-api2":{container_name:"edge-api2"},
@@ -615,6 +619,8 @@ cat >"$tmpdir/enable-router" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 printf 'enable-router %s\n' "$*" >>"$DOCKER_LOG"
+printf 'enable-router-compose %s\n' \
+    "${ROUTER_HA_EXPECTED_COMPOSE_SHA256-}" >>"$DOCKER_LOG"
 if [[ " $* " == *" --recover-only "* ]]; then
     tmp=$(mktemp "$(dirname -- "$ROUTER_HA_TRANSACTION_JOURNAL")/.recover.XXXXXX")
     jq '.transaction.ingress.state = "rolled_back" |
@@ -1061,6 +1067,47 @@ grep -q 'HA versiond must not set DATABASE_URL' \
 }
 assert_no_compose_mutation "$tmpdir/postgres-dsn.log"
 
+for service_variable in RENDERED_PGSERVICE RENDERED_PGSERVICEFILE; do
+	service_log="$tmpdir/postgres-${service_variable,,}.log"
+	if env "$service_variable=unverified-service" \
+		DOCKER_BIN="$tmpdir/docker" \
+		DOCKER_LOG="$service_log" \
+		FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+		EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+		FAKE_STATE_DIR="$tmpdir/postgres-${service_variable,,}.state" \
+		JOIN_DIR="$script_dir" \
+		GONKA_CONFIG_ENV="$tmpdir/config.env" \
+		"$script_dir/upgrade-devshard-v5.sh" \
+			--versiond-mode ha --edge-mode single \
+			>"$tmpdir/postgres-${service_variable,,}.stdout" \
+			2>"$tmpdir/postgres-${service_variable,,}.stderr"; then
+		fail "upgrade accepted $service_variable in an HA topology"
+	fi
+	grep -q "must not set ${service_variable#RENDERED_}" \
+		"$tmpdir/postgres-${service_variable,,}.stderr" || fail \
+		"$service_variable did not produce a useful error"
+	assert_no_compose_mutation "$service_log"
+done
+
+if RUNTIME_PGSERVICE=unverified-service \
+	DOCKER_BIN="$tmpdir/docker" \
+	DOCKER_LOG="$tmpdir/postgres-runtime-pgservice.log" \
+	FAIL_SERVICE=none BLOCK_SERVICE=none BLOCK_SIGNAL=none \
+	EXISTING_CONTAINERS="proxy versiond versiond2 edge-api" \
+	FAKE_STATE_DIR="$tmpdir/postgres-runtime-pgservice.state" \
+	JOIN_DIR="$script_dir" \
+	GONKA_CONFIG_ENV="$tmpdir/config.env" \
+	"$script_dir/upgrade-devshard-v5.sh" \
+		--versiond-mode ha --edge-mode single \
+		>"$tmpdir/postgres-runtime-pgservice.stdout" \
+		2>"$tmpdir/postgres-runtime-pgservice.stderr"; then
+	fail "upgrade accepted PGSERVICE from a running HA supervisor"
+fi
+grep -q 'running HA versiond sets PGSERVICE' \
+	"$tmpdir/postgres-runtime-pgservice.stderr" || fail \
+	"runtime PGSERVICE did not produce a useful error"
+assert_no_compose_mutation "$tmpdir/postgres-runtime-pgservice.log"
+
 versiond_barrier_line=$(line_number "$tmpdir/ha.log" \
     "--env VERSIOND_HOSTS=versiond versiond-router")
 versiond2_up_line=$(line_number "$tmpdir/ha.log" \
@@ -1131,6 +1178,9 @@ jq -e '
     "verified cutover did not reconstruct the desired-state marker"
 assert_contains "$tmpdir/recovered-marker.log" \
     "enable-router --versiond-mode ha --edge-mode single"
+grep -Eq '^enable-router-compose [0-9a-f]{64}$' \
+    "$tmpdir/recovered-marker.log" || fail \
+    "outer upgrade did not bind ingress to its Compose generation"
 grep -q 'release state is converged' "$tmpdir/recovered-marker.stdout" || fail \
     "marker recovery was not reported"
 

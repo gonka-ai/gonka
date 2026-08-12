@@ -730,9 +730,11 @@ if [[ $existing_proxy_component == proxy-router ]]; then
         "application state did not converge to $release_id"
     write_upgrade_journal applications_verified
 	verify_compose_model_unchanged
-	ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
-	ROUTER_HA_TRANSACTION_ID=$transaction_id \
-	"$enable_router_bin" \
+	env \
+		ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
+		ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+		ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
+		"$enable_router_bin" \
         --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
         "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
     verify_release_ingress_state || fail \
@@ -1494,9 +1496,11 @@ cleanup_rollback_tags
 case ${UPGRADE_ENABLE_ROUTER_HA:-true} in
     true | 1 | yes)
 		verify_compose_model_unchanged
-		ROUTER_HA_TRANSACTION_JOURNAL=$upgrade_journal \
-		ROUTER_HA_TRANSACTION_ID=$transaction_id \
-		run_interruptible "$enable_router_bin" \
+		run_interruptible env \
+			ROUTER_HA_TRANSACTION_JOURNAL="$upgrade_journal" \
+			ROUTER_HA_TRANSACTION_ID="$transaction_id" \
+			ROUTER_HA_EXPECTED_COMPOSE_SHA256="$compose_config_sha" \
+			"$enable_router_bin" \
             --versiond-mode "$versiond_mode" --edge-mode "$edge_mode" \
             "${GONKA_COMPOSE_FORWARD_ARGS[@]}"
         ;;

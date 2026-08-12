@@ -13,6 +13,7 @@ rollback_pending=false
 rollback_image=
 rollback_image_ref=
 rollback_config_hash=
+rollback_container_id=
 rollback_kind=
 rollback_proxy_model=null
 policy_rollback_pending=false
@@ -20,6 +21,7 @@ declare -A policy_rollback_images=()
 declare -A policy_rollback_image_refs=()
 declare -A policy_rollback_config_hashes=()
 declare -A policy_rollback_replicas=()
+declare -A policy_rollback_container_ids=()
 declare -A inherited_env=()
 declare -a migration_routes=()
 declare -a compose_file_args=()
@@ -156,6 +158,26 @@ gonka_compose_resolve \
     "$compose_project_name" "$compose_project_directory" \
     compose_file_args runtime_compose_containers
 compose=("${GONKA_COMPOSE_COMMAND[@]}")
+
+expected_compose_sha=${ROUTER_HA_EXPECTED_COMPOSE_SHA256:-}
+if [[ -n $expected_compose_sha && ! $expected_compose_sha =~ ^[0-9a-f]{64}$ ]]; then
+	fail "ROUTER_HA_EXPECTED_COMPOSE_SHA256 must be a lowercase SHA-256"
+fi
+
+current_outer_compose_sha() {
+	local rendered
+	rendered=$("${compose[@]}" config --format json) || return 1
+	jq -Sc . <<<"$rendered" | sha256sum | awk '{print $1}'
+}
+
+verify_outer_compose_generation() {
+	local current
+	[[ -n $expected_compose_sha ]] || return 0
+	current=$(current_outer_compose_sha) || fail \
+		"cannot render the Compose generation owned by the outer upgrade"
+	[[ $current == "$expected_compose_sha" ]] || fail \
+		"Compose model differs from the generation prepared by the outer upgrade; refusing a mixed application/ingress commit"
+}
 
 ensure_compose_network() {
     local key=$1 name=$2 project=$3 ownership
@@ -347,10 +369,12 @@ arm_proxy_rollback() {
 		rollback_image=
 		rollback_image_ref=
 		rollback_config_hash=
+		rollback_container_id=
 		rollback_proxy_model=null
 		return 0
 	fi
     old_image=$("$docker_bin" inspect --format '{{.Image}}' proxy)
+	rollback_container_id=$("$docker_bin" inspect --format '{{.Id}}' proxy)
     old_ref=$("$docker_bin" inspect --format '{{.Config.Image}}' proxy)
     actual_hash=$(container_config_hash proxy) || fail \
 		"cannot read the running proxy Compose config hash"
@@ -383,6 +407,8 @@ capture_policy_rollback() {
 	for service in "${policy_services[@]}"; do
 		mapfile -t ids < <("${compose[@]}" ps --all --quiet "$service")
 		policy_rollback_replicas[$service]=${#ids[@]}
+		policy_rollback_container_ids[$service]=$(printf '%s\n' "${ids[@]}" | \
+			jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
 		((${#ids[@]} > 0)) || continue
 		first_image=
 		first_ref=
@@ -417,7 +443,7 @@ capture_policy_rollback() {
 
 begin_ingress_transaction() {
 	local current_model policy_model proxy_model=null policies='{}' proxy
-	local service replicas image image_ref config_hash desired_sha
+	local service replicas image image_ref config_hash container_ids desired_sha
 	current_model=$("${compose[@]}" --profile '*' config --format json) || fail \
 		"cannot render the immutable ingress transaction model"
 	policy_model=$current_model
@@ -426,12 +452,14 @@ begin_ingress_transaction() {
 		image=${policy_rollback_images[$service]-}
 		image_ref=${policy_rollback_image_refs[$service]-}
 		config_hash=${policy_rollback_config_hashes[$service]-}
+		container_ids=${policy_rollback_container_ids[$service]:-[]}
 		policies=$(jq -c \
 			--arg service "$service" --argjson replicas "$replicas" \
 			--arg image "$image" --arg image_ref "$image_ref" \
-			--arg config_hash "$config_hash" \
+			--arg config_hash "$config_hash" --argjson container_ids "$container_ids" \
 			'. + {($service): {replicas: $replicas, rollback_image: $image,
-				image_ref: $image_ref, config_hash: $config_hash}}' \
+				image_ref: $image_ref, config_hash: $config_hash,
+				container_ids: $container_ids}}' \
 			<<<"$policies")
 		if [[ -n $image ]]; then
 			policy_model=$(jq -c --arg service "$service" --arg image "$image" \
@@ -442,8 +470,9 @@ begin_ingress_transaction() {
 	proxy=$(jq -cn --arg kind "$rollback_kind" \
 		--arg image "$rollback_image" --arg image_ref "$rollback_image_ref" \
 		--arg config_hash "$rollback_config_hash" \
+		--arg container_id "$rollback_container_id" \
 		'{kind: $kind, rollback_image: $image, image_ref: $image_ref,
-		  config_hash: $config_hash}')
+		  config_hash: $config_hash, container_id: $container_id}')
 	case $rollback_kind in
 		absent) ;;
 		current | v4)
@@ -500,7 +529,17 @@ rollback_compose() {
 }
 
 restore_policy_slot() {
-	local service=$1 replicas
+	local service=$1 replicas expected_ids current_ids
+	expected_ids=$(jq -cer --arg service "$service" \
+		'.transaction.ingress.policies[$service].container_ids' \
+		"$transaction_journal" 2>/dev/null || true)
+	if [[ -n $expected_ids ]]; then
+		current_ids=$("${compose[@]}" ps --all --quiet "$service" | \
+			jq -Rsc 'split("\n") | map(select(length > 0)) | sort')
+		if [[ $current_ids == "$expected_ids" ]]; then
+			return 0
+		fi
+	fi
 	replicas=$(jq -er --arg service "$service" \
 		'.transaction.ingress.policies[$service].replicas' \
 		"$transaction_journal") || return 1
@@ -519,8 +558,16 @@ restore_policy_slot() {
 }
 
 restore_public_proxy() {
-	local kind
+	local kind expected_id current_id=
 	kind=$(jq -er '.transaction.ingress.proxy.kind' "$transaction_journal") || return 1
+	expected_id=$(jq -r '.transaction.ingress.proxy.container_id // empty' \
+		"$transaction_journal") || return 1
+	if container_exists proxy; then
+		current_id=$("$docker_bin" inspect --format '{{.Id}}' proxy) || return 1
+	fi
+	if [[ $current_id == "$expected_id" ]]; then
+		return 0
+	fi
 	if [[ $kind == absent ]]; then
 		"$docker_bin" rm -f proxy >/dev/null 2>&1 || true
 		return 0
@@ -817,6 +864,7 @@ if [[ $recover_only == true ]]; then
 fi
 
 echo "Preparing router HA topology: versiond=$versiond_mode edge-api=$edge_mode"
+verify_outer_compose_generation
 ensure_compose_network proxy-policy-front "$policy_network" "$compose_project"
 if [[ $versiond_mode == ha ]]; then
     # `apply` is the lifecycle bridge between the main Compose project and the
@@ -824,6 +872,7 @@ if [[ $versiond_mode == ha ]]; then
     # existing deployment it pulls and rolls only slots whose image or rendered
     # Compose contract changed.
     run_fleet apply
+	verify_outer_compose_generation
 fi
 
 # During the one-time cutover the old public nginx still owns the `proxy`
@@ -881,6 +930,7 @@ if [[ $current_proxy_component == proxy-router ]]; then
     [[ $versiond_mode != ha ]] || run_fleet verify-admission
     [[ $edge_mode != multi ]] || wait_component edge-api
 	verify_ingress_model_unchanged
+	verify_outer_compose_generation
 	commit_ingress_transaction
     remove_migration_routers
     echo "Router HA topology is already active"
@@ -901,6 +951,7 @@ fi
     "proxy-router cannot reach a ready edge-api"
 
 verify_ingress_model_unchanged
+verify_outer_compose_generation
 commit_ingress_transaction
 
 # These singleton migration bridges are outside the steady-state model. Remove

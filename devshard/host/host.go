@@ -1002,6 +1002,13 @@ func (h *Host) publishExecutionResult(ctx context.Context, inferenceID uint64, e
 func (h *Host) acquireExecution(ctx context.Context, store storage.ExecutionStore, job devshard.ExecuteRequest) (uint64, *devshard.ExecuteResult, error) {
 	ticker := time.NewTicker(executionResultPollInterval)
 	defer ticker.Stop()
+	var dispatchedTimer *time.Timer
+	var dispatchedDeadline <-chan time.Time
+	defer func() {
+		if dispatchedTimer != nil {
+			dispatchedTimer.Stop()
+		}
+	}()
 	for {
 		claim, err := store.ClaimExecution(ctx, job.EpochID, job.EscrowID, job.InferenceID, h.executionOwner)
 		if err != nil {
@@ -1015,10 +1022,17 @@ func (h *Host) acquireExecution(ctx context.Context, store storage.ExecutionStor
 		case claim.Status == storage.ExecutionCompleted:
 			result, err := decodeExecutionResult(claim.Result)
 			return 0, result, err
-		case claim.Status == storage.ExecutionClaimed,
-			claim.Status == storage.ExecutionDispatched:
+		case claim.Status == storage.ExecutionClaimed:
 			// Poll ClaimExecution rather than GetExecution so an abandoned or
 			// expired pre-dispatch lease can be acquired without another request.
+		case claim.Status == storage.ExecutionDispatched:
+			// A live owner may still commit the result, so allow one bounded commit
+			// window. After it expires there is no safe retry or future transition
+			// we can rely on without ML-side result lookup.
+			if dispatchedTimer == nil {
+				dispatchedTimer = time.NewTimer(executionResultCommitTimeout)
+				dispatchedDeadline = dispatchedTimer.C
+			}
 		case claim.Status == storage.ExecutionAbandoned:
 			continue
 		default:
@@ -1026,8 +1040,13 @@ func (h *Host) acquireExecution(ctx context.Context, store storage.ExecutionStor
 		}
 		select {
 		case <-ctx.Done():
+			if dispatchedTimer != nil {
+				return 0, nil, errors.Join(storage.ErrExecutionOutcomeUncertain, ctx.Err())
+			}
 			return 0, nil, ctx.Err()
 		case <-ticker.C:
+		case <-dispatchedDeadline:
+			return 0, nil, storage.ErrExecutionOutcomeUncertain
 		}
 	}
 }

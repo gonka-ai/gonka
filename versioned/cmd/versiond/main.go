@@ -191,14 +191,22 @@ func reconcileOnce(
 		slog.Error("oracle catalog rejected, keeping current versions", "error", err)
 		return
 	}
-	reconcileCatalog(ctx, catalog, mgr)
+	if err := reconcileCatalog(ctx, catalog, mgr); err == nil {
+		if !mgr.AdmitCatalog(catalog.Versions) {
+			mgr.ReportReconcileError(errors.New("verified catalog is not represented by the active artifact routes"))
+			slog.Error("verified catalog has not reached active artifact routes")
+		}
+	}
 }
 
-func reconcileCatalog(ctx context.Context, catalog oracle.VersionConfig, mgr *process.Manager) {
-	if err := mgr.Reconcile(ctx, catalog.Versions); err != nil &&
-		!errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
-		slog.Error("reconcile failed", "error", err)
+func reconcileCatalog(ctx context.Context, catalog oracle.VersionConfig, mgr *process.Manager) error {
+	if err := mgr.Reconcile(ctx, catalog.Versions); err != nil {
+		if !errors.Is(err, process.ErrHostDraining) && ctx.Err() == nil {
+			slog.Error("reconcile failed", "error", err)
+		}
+		return err
 	}
+	return nil
 }
 
 type hostAvailabilityProvider interface {
@@ -217,7 +225,8 @@ func promoteHostWhenAvailable(
 			return
 		case <-mgr.Available():
 		}
-		if !mgr.Conditions().Available {
+		conditions := mgr.Conditions()
+		if !conditions.Available || !conditions.CatalogAdmitted {
 			continue
 		}
 		// Promotion and BeginDrain race under the controller lock. If drain won,
@@ -542,7 +551,8 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 		hostStatus.Accepting &&
 		conditions.Available &&
 		conditions.Serving &&
-		conditions.Converged
+		conditions.Converged &&
+		conditions.CatalogAdmitted
 }
 
 // versiondReadyForVersion answers "may this host take traffic for this one
@@ -555,11 +565,15 @@ func versiondReady(hostStatus host.Snapshot, conditions process.Conditions) bool
 // at once, or the announce window would not empty the host.
 func versiondReadyForVersion(
 	hostStatus host.Snapshot,
-	mgr interface{ ServesVersion(string) bool },
+	mgr interface {
+		ServesVersion(string) bool
+		CatalogAdmitted() bool
+	},
 	version string,
 ) bool {
 	return hostStatus.Ready &&
 		hostStatus.Accepting &&
+		mgr.CatalogAdmitted() &&
 		mgr.ServesVersion(version)
 }
 

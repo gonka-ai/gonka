@@ -67,6 +67,17 @@ if [[ ${1:-} == inspect ]]; then
                     *) printf 'sha256:old-proxy\n' ;;
                 esac
                 ;;
+			'{{.Id}}')
+				case ${4:-} in
+					proxy)
+						if [[ -f $STATE_DIR/generation-proxy ]]; then
+							printf 'cid-proxy-new\n'
+						else
+							printf 'cid-proxy\n'
+						fi
+						;;
+				esac
+				;;
 			'{{.Config.Image}}')
 				case ${4:-} in
 					cid-proxy-policy*) printf 'old-policy-ref\n' ;;
@@ -75,8 +86,8 @@ if [[ ${1:-} == inspect ]]; then
 				;;
             *NetworkSettings.Networks*)
                 case ${4:-} in
-                    cid-proxy-policy2) printf '172.30.0.12\n' ;;
-                    cid-proxy-policy) printf '172.30.0.11\n' ;;
+                    cid-proxy-policy2*) printf '172.30.0.12\n' ;;
+                    cid-proxy-policy*) printf '172.30.0.11\n' ;;
                 esac
                 ;;
             '{{range .Config.Env}}{{println .}}{{end}}')
@@ -110,7 +121,7 @@ if [[ ${1:-} == inspect ]]; then
     fi
     case ${2:-} in
         proxy)
-            [[ ${PROXY_EXISTS:-true} == true ]]
+			[[ ${PROXY_EXISTS:-true} == true || -f $STATE_DIR/generation-proxy ]]
             ;;
         versiond | versiond2 | devshard-postgres | versiond-router | \
         edge-api | edge-api2 | edge-api3 | edge-api-router)
@@ -190,11 +201,14 @@ if [[ ${1:-} == compose ]]; then
     fi
     if [[ $action == ps ]]; then
         if [[ -f $STATE_DIR/present-$service ]]; then
+			suffix=
+			[[ ! -f $STATE_DIR/generation-$service ]] || suffix=-new
             if [[ $service == proxy-policy && \
                 ${INITIAL_POLICY_A_REPLICAS:-1} == 2 ]]; then
-                printf 'cid-%s-1\ncid-%s-2\n' "$service" "$service"
+				printf 'cid-%s-1%s\ncid-%s-2%s\n' \
+					"$service" "$suffix" "$service" "$suffix"
             else
-                printf 'cid-%s\n' "$service"
+				printf 'cid-%s%s\n' "$service" "$suffix"
             fi
         fi
         exit 0
@@ -209,6 +223,7 @@ if [[ ${1:-} == compose ]]; then
 				"$(jq -r --arg service "$service" '.services[$service].image' "$model_file")" \
 				>>"$DOCKER_LOG"
 			: >"$STATE_DIR/present-$service"
+			rm -f "$STATE_DIR/generation-$service"
 			exit 0
 		fi
 		if [[ $service == "${KILL_POLICY_SERVICE-}" ]]; then
@@ -217,9 +232,11 @@ if [[ ${1:-} == compose ]]; then
 		fi
         if [[ $service == "${FAIL_POLICY_SERVICE-}" && \
             ${PROXY_POLICY_IMAGE-} != gonka/router-ha-policy-rollback:* ]]; then
+			: >"$STATE_DIR/generation-$service"
             exit 1
         fi
         : >"$STATE_DIR/present-$service"
+		: >"$STATE_DIR/generation-$service"
         if [[ $service == "${DRIFT_AFTER_POLICY_SERVICE-}" ]]; then
             : >"$STATE_DIR/model-drift"
         fi
@@ -235,6 +252,7 @@ if [[ ${1:-} == compose ]]; then
 			else
 				printf 'proxy-router\n' >"$STATE_DIR/current"
 			fi
+			rm -f "$STATE_DIR/generation-proxy"
 			exit 0
 		fi
         if [[ $compat == true ]]; then
@@ -255,9 +273,11 @@ if [[ ${1:-} == compose ]]; then
             exit 0
         fi
         if [[ ${FAIL_CUTOVER:-false} == true ]]; then
+			: >"$STATE_DIR/generation-proxy"
             exit 1
         fi
         printf 'proxy-router\n' >"$STATE_DIR/current"
+		: >"$STATE_DIR/generation-proxy"
     fi
     exit 0
 fi
@@ -280,7 +300,11 @@ if [[ ${1:-} == exec && ${2:-} == proxy && \
 fi
 
 case ${1:-} in
-    exec | tag | rm) exit 0 ;;
+    exec | tag) exit 0 ;;
+	rm)
+		[[ ${3:-} != proxy ]] || rm -f "$STATE_DIR/generation-proxy"
+		exit 0
+		;;
     image) exit 0 ;;
 esac
 exit 0
@@ -294,6 +318,9 @@ printf 'fleet %s\n' "$*" >>"$DOCKER_LOG"
 if [[ ${1:-} == verify-admission && \
     ${FLEET_ADMISSION_FAIL:-false} == true ]]; then
     exit 1
+fi
+if [[ ${1:-} == apply && ${FLEET_COMPOSE_DRIFT:-false} == true ]]; then
+	: >"$STATE_DIR/model-drift"
 fi
 EOF
 chmod +x "$tmpdir/fleet"
@@ -312,6 +339,7 @@ run_cutover() {
     rm -f "$tmpdir/current"
     rm -f "$tmpdir/model-drift"
     rm -f "$tmpdir"/present-proxy-policy*
+	rm -f "$tmpdir"/generation-proxy*
     if [[ -n ${INITIAL_PROXY_COMPONENT:-} ]]; then
         printf '%s\n' "$INITIAL_PROXY_COMPONENT" >"$tmpdir/current"
     fi
@@ -356,7 +384,10 @@ remove_line=$(grep -n 'docker rm -f versiond-router' "$tmpdir/success.log" | hea
 jq -e '
     .transaction.ingress.state == "committed" and
     .transaction.ingress.touched ==
-        ["policy:proxy-policy2", "policy:proxy-policy", "proxy"]
+        ["policy:proxy-policy2", "policy:proxy-policy", "proxy"] and
+    .transaction.ingress.policies["proxy-policy"].container_ids == [] and
+    .transaction.ingress.policies["proxy-policy2"].container_ids == [] and
+    .transaction.ingress.proxy.container_id == "cid-proxy"
 ' "$tmpdir/.gonka-router-ha-transaction.json" >/dev/null || fail \
     "successful cutover did not persist its exact mutation order"
 [[ $(stat -c '%a' "$tmpdir/.gonka-router-ha-transaction.json") == 600 ]] || fail \
@@ -390,9 +421,9 @@ signal_status=$?
 set -e
 [[ $signal_status -eq 143 ]] || fail \
     "TERM during cutover returned $signal_status instead of 143"
-grep -q 'gonka-rollback-model\..* up .*proxy$' \
-	"$tmpdir/signal.log" || fail \
-    "TERM during cutover did not run the armed public proxy rollback"
+if grep -q 'gonka-rollback-model\..* up .*proxy$' "$tmpdir/signal.log"; then
+	fail "TERM before Docker mutation unnecessarily recreated the public proxy"
+fi
 
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
@@ -487,11 +518,12 @@ jq -e '.transaction.ingress.state == "active" and
 INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
 INITIAL_PROXY_COMPONENT=proxy-router \
     run_cutover "$tmpdir/crash-recovery.log" env
-recovery_line=$(grep -n 'gonka-rollback-model\..* up .*proxy-policy2$' \
-    "$tmpdir/crash-recovery.log" | head -n1 | cut -d: -f1)
 apply_line=$(grep -n '^fleet apply$' "$tmpdir/crash-recovery.log" | head -n1 | cut -d: -f1)
-[[ -n $recovery_line && -n $apply_line && $recovery_line -lt $apply_line ]] || fail \
-    "restart did not recover the interrupted ingress transaction before new mutation"
+[[ -n $apply_line ]] || fail "restart did not continue after journal recovery"
+if grep -q 'gonka-rollback-model\..* up .*proxy-policy2$' \
+    "$tmpdir/crash-recovery.log"; then
+	fail "journal intent without a Docker mutation recreated an unchanged policy slot"
+fi
 
 if INITIAL_POLICY_SERVICES="proxy-policy proxy-policy2" \
     INITIAL_PROXY_COMPONENT=proxy-router \
@@ -514,6 +546,27 @@ grep -q -- '--scale proxy-policy=2 proxy-policy$' \
 if run_cutover "$tmpdir/contract-mismatch.log" env \
     CANDIDATE_PROXY_CONTRACT=2; then
     fail "an incompatible policy/proxy wire contract was accepted"
+fi
+
+if run_cutover "$tmpdir/outer-compose-drift.log" env \
+	ROUTER_HA_EXPECTED_COMPOSE_SHA256=0000000000000000000000000000000000000000000000000000000000000000; then
+	fail "router cutover accepted a different Compose generation than the outer upgrade"
+fi
+
+outer_compose_sha=$(DOCKER_LOG=/dev/null STATE_DIR="$tmpdir" JOIN_DIR="$script_dir" \
+	"$tmpdir/docker" compose config --format json | jq -Sc . | \
+	sha256sum | awk '{print $1}')
+if run_cutover "$tmpdir/outer-compose-mid-fleet-drift.log" env \
+	ROUTER_HA_EXPECTED_COMPOSE_SHA256="$outer_compose_sha" \
+	FLEET_COMPOSE_DRIFT=true; then
+	fail "router cutover committed Compose drift introduced during fleet rollout"
+fi
+if grep -q ' up .*\(proxy-policy\|proxy\)$' \
+	"$tmpdir/outer-compose-mid-fleet-drift.log"; then
+	fail "mid-fleet Compose drift was detected after ingress mutation"
+fi
+if grep -q ' up .*\(proxy-policy\|proxy\)$' "$tmpdir/outer-compose-drift.log"; then
+	fail "outer Compose generation drift was detected after ingress mutation"
 fi
 
 if run_cutover "$tmpdir/cache-contract-mismatch.log" env \

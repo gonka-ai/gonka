@@ -89,6 +89,17 @@ assert_environment() {
         "$description resolves to $actual, expected $expected"
 }
 
+assert_environment_absent() {
+	local description=$1 service=$2 key=$3
+	shift 3
+
+	DEVSHARD_POSTGRES_PASSWORD=compose-contract \
+		docker compose "$@" config --format json 2>/dev/null |
+		jq -e --arg service "$service" --arg key "$key" \
+			'.services[$service].environment | has($key) | not' \
+			>/dev/null || fail "$description unexpectedly overrides $key"
+}
+
 assert_hardened() {
     local description=$1 service=$2
     shift 2
@@ -161,12 +172,12 @@ check_compose_contract() {
         compose_image proxy -f "$base" -f "$versiond_overlay" \
             -f "$edge_overlay" -f "$proxy_compat")
     assert_image "public nginx rollback" sha256:captured-proxy "$rollback_proxy"
-    PROXY_V4_IMAGE=sha256:captured-proxy \
-        PROXY_V4_VERSIOND_SERVICE_NAME=versiond-router \
-        PROXY_V4_EDGE_API_SERVICE_NAME=edge-api-router \
-        assert_environment "public nginx rollback protocol" proxy \
-            PROXY_PROTOCOL false -f "$base" -f "$versiond_overlay" \
-            -f "$edge_overlay" -f "$proxy_compat"
+	PROXY_V4_IMAGE=sha256:captured-proxy \
+		PROXY_V4_VERSIOND_SERVICE_NAME=versiond-router \
+		PROXY_V4_EDGE_API_SERVICE_NAME=edge-api-router \
+		assert_environment_absent "public nginx rollback protocol" proxy \
+			PROXY_PROTOCOL -f "$base" -f "$versiond_overlay" \
+			-f "$edge_overlay" -f "$proxy_compat"
     PROXY_V4_IMAGE=sha256:captured-proxy \
         PROXY_V4_VERSIOND_SERVICE_NAME=versiond-router \
         PROXY_V4_EDGE_API_SERVICE_NAME=edge-api-router \

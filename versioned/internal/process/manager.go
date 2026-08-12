@@ -106,23 +106,25 @@ func (c *child) Done() <-chan struct{} {
 }
 
 type Manager struct {
-	cfg             config.Config
-	processes       map[string]*child
-	draining        map[string][]*child
-	children        map[*child]struct{}
-	downloading     map[string]struct{}
-	allocatedPorts  map[int]struct{}
-	reservedPorts   map[int]struct{}
-	operations      map[uint64]controlOperation
-	nextOperationID uint64
-	conditions      Conditions
-	everConverged   bool
-	available       chan struct{}
-	childCtx        context.Context
-	cancelChildren  context.CancelFunc
-	hostDraining    bool
-	mu              sync.Mutex
-	routes          atomic.Value // proxy.RouteTable
+	cfg              config.Config
+	processes        map[string]*child
+	draining         map[string][]*child
+	children         map[*child]struct{}
+	downloading      map[string]struct{}
+	allocatedPorts   map[int]struct{}
+	reservedPorts    map[int]struct{}
+	operations       map[uint64]controlOperation
+	nextOperationID  uint64
+	conditions       Conditions
+	everConverged    bool
+	catalogAdmitted  bool
+	admissionCatalog []oracle.Version
+	available        chan struct{}
+	childCtx         context.Context
+	cancelChildren   context.CancelFunc
+	hostDraining     bool
+	mu               sync.Mutex
+	routes           atomic.Value // proxy.RouteTable
 }
 
 func NewManager(cfg config.Config) *Manager {
@@ -272,6 +274,61 @@ func (m *Manager) ServesVersion(name string) bool {
 	running := c != nil && c.status == statusRunning
 	m.mu.Unlock()
 	return running && c.servingFresh()
+}
+
+// AdmitCatalog opens the startup readiness gate after an independently
+// verified catalog is represented by the exact artifact generations currently
+// published in the route table. The gate is intentionally a latch: a later
+// same-name artifact update must not evict every host while the fleet downloads
+// the replacement concurrently.
+func (m *Manager) AdmitCatalog(desired []oracle.Version) bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.admissionCatalog = append(m.admissionCatalog[:0], desired...)
+	routes, ok := m.routes.Load().(proxy.RouteTable)
+	return ok && m.admitCatalogLocked(routes)
+}
+
+// admitCatalogLocked rechecks a previously verified startup catalog whenever
+// route publication advances asynchronously after Reconcile returns.
+func (m *Manager) admitCatalogLocked(routes proxy.RouteTable) bool {
+	if len(m.admissionCatalog) == 0 {
+		return false
+	}
+	for _, version := range m.admissionCatalog {
+		desiredSHA, err := version.ResolvedSHA256()
+		if err != nil {
+			return false
+		}
+		child := m.processes[version.Name]
+		if child == nil || child.status != statusRunning ||
+			child.version.Binary != version.Binary ||
+			routes[version.Name] != child.proxyTarget {
+			return false
+		}
+		if _, overridden := m.cfg.Overrides[version.Name]; overridden {
+			if !strings.HasPrefix(child.archiveSHA256, "override:") {
+				return false
+			}
+		} else if !strings.EqualFold(child.archiveSHA256, desiredSHA) {
+			return false
+		}
+	}
+	m.catalogAdmitted = true
+	select {
+	case m.available <- struct{}{}:
+	default:
+	}
+	return true
+}
+
+// CatalogAdmitted reports whether this process has reconciled at least one
+// independently verified catalog since startup. A persisted LKG alone is not
+// sufficient to enter an HA load-balancer pool.
+func (m *Manager) CatalogAdmitted() bool {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.catalogAdmitted
 }
 
 // watchChildReadiness keeps one generation's serving flag current. It is bound to
@@ -2204,6 +2261,7 @@ func (m *Manager) rebuildRoutes() {
 		}
 	}
 	m.routes.Store(routes)
+	m.admitCatalogLocked(routes)
 	if len(routes) > 0 {
 		select {
 		case m.available <- struct{}{}:

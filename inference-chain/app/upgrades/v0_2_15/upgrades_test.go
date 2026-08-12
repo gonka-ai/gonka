@@ -244,3 +244,42 @@ func TestApplyDevshardApprovedVersionsDoesNotGrandfatherInvalidCatalog(t *testin
 	}`)
 	require.ErrorContains(t, err, "legacy;invalid")
 }
+
+func TestApplyDevshardApprovedVersionsValidatesLiveCatalogWhenInfoIsEmpty(t *testing.T) {
+	t.Run("empty live catalog", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		err := applyDevshardApprovedVersions(ctx, k, "")
+		require.ErrorContains(t, err, "current devshard catalog is empty")
+	})
+
+	t.Run("invalid live catalog", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+		params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
+			Name:   "invalid;legacy",
+			Binary: "https://example.com/legacy.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}}
+		require.NoError(t, k.SetParams(ctx, params))
+
+		err = applyDevshardApprovedVersions(ctx, k, `{}`)
+		require.ErrorContains(t, err, "invalid;legacy")
+	})
+
+	t.Run("valid live catalog", func(t *testing.T) {
+		k, ctx, _ := keepertest.InferenceKeeperReturningMocks(t)
+		params, err := k.GetParams(ctx)
+		require.NoError(t, err)
+		params.DevshardEscrowParams = inferencetypes.DefaultDevshardEscrowParams()
+		params.DevshardEscrowParams.ApprovedVersions = []*inferencetypes.DevshardApprovedVersion{{
+			Name:   "v4",
+			Binary: "https://example.com/v4.zip",
+			Sha256: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}}
+		require.NoError(t, k.SetParams(ctx, params))
+
+		require.NoError(t, applyDevshardApprovedVersions(ctx, k, ""))
+	})
+}

@@ -224,9 +224,10 @@ the exact old public nginx image, and switches the public listener to
 `proxy-router`. It verifies component readiness before deleting the migration
 singletons. Before mutation, the updater proves that its rendered rollback
 generation has the same Compose config hash as the running service. If cutover
-fails or is interrupted, only resources recorded as touched are restored in
-reverse order from that exact journaled generation, and the script exits
-non-zero.
+fails or is interrupted, resources recorded as touched are compared with their
+journaled container generation. Unchanged resources are left running; only an
+actually replaced resource is restored in reverse order from the exact saved
+generation. The script exits non-zero.
 
 The updater, router cutover, and standalone fleet commands all take the same
 deployment-wide `.gonka-deployment.lock` next to `config.env`; a concurrent
@@ -256,6 +257,8 @@ image pulls, or application startup. The updater also re-renders and hashes the
 effective Compose model before every later mutation and before marker commit;
 editing an override or relevant environment value during a run therefore
 causes rollback/failure instead of mixing two deployment generations.
+The outer updater also passes this exact fingerprint into the router cutover,
+which checks it before fleet work and again before ingress commit.
 
 On the first migration, the storage UUID becomes available when the first v5
 `versiond` has initialized the identity row in the shared database. The updater
@@ -395,7 +398,8 @@ the override and does not pull, recreate, or preflight the local
 dependency and keeps the bundled database out of later Compose operations; the
 hoster does not select another upgrade mode. HA rejects `DATABASE_URL` so the
 supervisor's session lookup and its children cannot resolve different
-databases. Before any mutation it compares `PGHOST`, `PGPORT`,
+databases; it also rejects `PGSERVICE` and `PGSERVICEFILE`, which can override
+the checked tuple through a libpq service file. Before any mutation it compares `PGHOST`, `PGPORT`,
 `PGDATABASE`, and `PGUSER` with the existing containers. An implicit database
 identity change, disagreement between replicas, or non-Postgres HA storage is a
 hard failure rather than an attempted migration. Before committing the update,

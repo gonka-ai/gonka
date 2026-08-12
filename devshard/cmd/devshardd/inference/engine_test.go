@@ -8,6 +8,7 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -24,6 +25,12 @@ import (
 	"google.golang.org/grpc/credentials/insecure"
 	"google.golang.org/grpc/status"
 )
+
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
 
 type engineMockNM struct {
 	nmgen.UnimplementedNodeManagerServer
@@ -91,6 +98,34 @@ func TestExecuteMLRequestMarksDispatchedBeforeSending(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, resp.Body.Close())
 	require.True(t, receivedAfterDispatch.Load(), "dispatch must be durable before the server receives a request")
+}
+
+func TestExecuteMLRequestDisablesTransportBodyReplay(t *testing.T) {
+	ml := startEngineMLClient(t, &engineMockNM{
+		acquireFunc: func(context.Context, *nmgen.AcquireMLNodeRequest) (*nmgen.AcquireMLNodeResponse, error) {
+			return &nmgen.AcquireMLNodeResponse{
+				LockId: "lock-1", Endpoint: "http://ml.invalid", NodeId: "node-1",
+			}, nil
+		},
+	})
+	eng := newTestEngine(ml, nil, nil)
+	eng.httpClient = &http.Client{Transport: roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if request.GetBody != nil {
+			t.Fatal("dispatched ML request exposes a replayable body")
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			Header:     make(http.Header),
+			Request:    request,
+		}, nil
+	})}
+
+	response, err := eng.executeMLRequest(
+		context.Background(), "model-a", "escrow-a", []byte(`{}`), nil,
+	)
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
 }
 
 func TestExecuteMLRequestDoesNotReplayDispatchedPOST(t *testing.T) {
