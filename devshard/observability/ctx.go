@@ -130,6 +130,7 @@ const (
 	ReasonGetEscrowErr                Reason = "get_escrow_err"
 	ReasonStorageErr                  Reason = "storage_err"
 	ReasonSessionResolveErr           Reason = "session_resolve_err"
+	ReasonInvalidEscrowID             Reason = "invalid_escrow_id"
 	ReasonModifyRequestErr            Reason = "modify_request_err"
 	ReasonCanonicalizePromptErr       Reason = "canonicalize_prompt_err"
 	ReasonPayloadStoreErr             Reason = "payload_store_err"

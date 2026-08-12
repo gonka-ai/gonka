@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"common/chain"
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/testenv/mockchain/grpcface"
 	"devshard/testenv/mockchain/seed"
@@ -72,6 +73,14 @@ func TestGRPCBridge_GetEscrow_MapsSessionConfigFields(t *testing.T) {
 	require.Equal(t, uint32(67), info.VoteThresholdFactor)
 	require.Equal(t, int64(5), info.RefusalTimeout)
 	require.Equal(t, int64(17), info.ExecutionTimeout)
+}
+
+func TestGRPCBridge_GetEscrow_RejectsNonCanonicalID(t *testing.T) {
+	b := startGRPCBridge(t)
+	for _, raw := range []string{"01", "001", "0", ""} {
+		_, err := b.GetEscrow(raw)
+		require.ErrorIs(t, err, devshardpkg.ErrInvalidEscrowID, "escrow id %q", raw)
+	}
 }
 
 func TestGRPCBridge_GetEscrow_NotFound(t *testing.T) {

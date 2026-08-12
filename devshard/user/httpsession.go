@@ -108,6 +108,9 @@ func NewHTTPSession(cfg HTTPSessionConfig) (*Session, *state.StateMachine, error
 	if cfg.RoutePrefix == "" {
 		return nil, nil, fmt.Errorf("RoutePrefix is required; use /devshard/{version}")
 	}
+	if err := devshardpkg.ValidateEscrowID(cfg.EscrowID); err != nil {
+		return nil, nil, err
+	}
 
 	signer, err := signing.SignerFromHex(cfg.PrivateKeyHex)
 	if err != nil {

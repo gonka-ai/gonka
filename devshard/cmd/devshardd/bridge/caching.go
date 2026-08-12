@@ -3,6 +3,7 @@ package bridge
 import (
 	"log/slog"
 
+	devshardpkg "devshard"
 	"devshard/bridge"
 	"devshard/storage"
 )
@@ -39,6 +40,9 @@ func NewCachingEscrowBridge(inner bridge.MainnetBridge, store EscrowCacheStore, 
 // cache row exists, it serves the cached metadata instead, returning the live
 // error only when the cache also has nothing.
 func (b *CachingEscrowBridge) GetEscrow(escrowID string) (*bridge.EscrowInfo, error) {
+	if err := devshardpkg.ValidateEscrowID(escrowID); err != nil {
+		return nil, err
+	}
 	info, err := b.MainnetBridge.GetEscrow(escrowID)
 	if err == nil {
 		return info, nil
